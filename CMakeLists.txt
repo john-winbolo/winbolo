@@ -71,6 +71,12 @@ FetchContent_Declare(
     GIT_TAG        v1.7.18
     SYSTEM
 )
+FetchContent_Declare(
+    curl
+    GIT_REPOSITORY https://github.com/curl/curl.git
+    GIT_TAG        curl-8_12_1
+    SYSTEM
+)
 
 # Fetch SDL first (needed by everything)
 FetchContent_MakeAvailable(sdl3)
@@ -445,8 +451,25 @@ set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 else() # NOT iOS — Desktop targets (Windows, Linux, macOS)
 
-# libcurl for WinBolo.net HTTP/HTTPS
-find_package(CURL REQUIRED)
+# libcurl for WinBolo.net HTTP/HTTPS (built from source via FetchContent)
+set(BUILD_SHARED_LIBS_SAVE_CURL "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
+set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
+set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(curl)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
+# Provide the CURL::libcurl alias that the rest of the build expects
+if(NOT TARGET CURL::libcurl)
+    add_library(CURL::libcurl ALIAS libcurl_shared)
+endif()
 
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
