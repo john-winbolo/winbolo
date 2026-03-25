@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0"
+          xmlns="urn:schemas-microsoft-com:asm.v1"
+          xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+	<asmv3:assemblyIdentity version="1.0.1.8" name="WinBolo"/>
+	<!-- DO NOT specify <asmv3:requestedExecutionLevel>; this will cause WritePrivateProfileString to fail,
+	     breaking WinBolo.INI access via file virtualization. -->
+	<asmv3:application>
+		<!-- System (Enhanced) == DPI-unaware + GDI scaling -->
+		<asmv3:windowsSettings>
+			<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">unaware</dpiAwareness>
+			<gdiScaling xmlns="http://schemas.microsoft.com/SMI/2017/WindowsSettings">true</gdiScaling>
+		</asmv3:windowsSettings>
+	</asmv3:application>
+</assembly>

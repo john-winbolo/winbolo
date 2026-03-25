@@ -1,0 +1,1544 @@
+/*
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+*Name:          Game Front
+*Filename:      gamefront.c (SDL3)
+*Author:        John Morrison
+*Purpose:
+*  SDL3 cross-platform game front-end: init/shutdown,
+*  setup dialog state machine, preferences I/O,
+*  and all functions declared in gamefront.h.
+*
+*  Uses GetPrivateProfileString / WritePrivateProfileString
+*  provided by server/posix_stubs on non-Win32 platforms.
+*********************************************************/
+
+/* MSVC: include crtdbg before SDL to avoid _malloca redefinition warning */
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
+
+/* SDL3 must come before bolo headers (#pragma pack assertions). */
+#include <SDL3/SDL.h>
+
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
+#if defined(__IPHONEOS__)
+#include <dirent.h>
+#endif
+#ifndef _MSC_VER
+#include <strings.h>
+#endif
+#include <ctype.h>
+#include <time.h>
+
+#include "../../bolo/screen.h"
+#include "../../bolo/client_sim.h"
+#include "../../bolo/global.h"
+#include "../../bolo/players.h"
+#include "../../bolo/gui_message.h"
+#include "../brainsHandler.h"
+#include "../clientmutex.h"
+#include "../gamefront.h"
+#include "../../server/threads.h"
+#include "../../bolo/bot_manager.h"
+#include "../Input.h"
+#include "../lang.h"
+#include "../sound.h"
+#include "../winbolo.h"
+#include "sdl3draw.h"
+#include "sdl3imgui.h"
+#include "luabrainshandler.h"
+#include "dialog_backend.h"
+#include "bg_game.h"
+
+/* String resource IDs — integer IDs into the lang.c lookup table */
+#include "../aresource.h"
+
+#include "../../bolo/everard_map.h"
+#include "../../bolo/platform_net.h"
+#include "../../bolo/transport_udp.h"
+
+#ifndef DEFAULT_UDP_PORT
+#define DEFAULT_UDP_PORT 27500
+#endif
+
+/* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
+#ifndef _WIN32
+extern void preferencesGetPreferenceFile(char *dest);
+extern DWORD GetPrivateProfileString(const char *section, const char *key,
+                                      const char *def, char *dest,
+                                      DWORD size, const char *file);
+extern int WritePrivateProfileString(const char *section, const char *key,
+                                      const char *value, const char *file);
+#endif
+
+/* Number of bot players for local/practice games */
+#define LOCAL_GAME_NUM_BOTS 0
+
+/* -------------------------------------------------------
+ * getPreferenceFilePath — return absolute path to WinBolo.ini
+ *
+ * Uses SDL_GetPrefPath so settings survive across sessions
+ * regardless of CWD.  On Windows this also avoids the Win32
+ * WritePrivateProfileString pitfall of writing to C:\Windows.
+ * ------------------------------------------------------- */
+static const char *getPreferenceFilePath(void) {
+  static char path[FILENAME_MAX];
+  static bool resolved = false;
+  if (!resolved) {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(path, sizeof(path), "%sWinBolo.ini", prefDir);
+    } else {
+      /* Fallback to relative path if SDL_GetPrefPath fails */
+      snprintf(path, sizeof(path), "%s", "WinBolo.ini");
+    }
+    resolved = true;
+  }
+  return path;
+}
+
+/* Forward declarations */
+static bool gameFrontDialogs(void);
+extern void sdl3MessageHandler(const char *message, const char *title);
+
+/* Find the brain script — try several paths */
+static bool findBrainPath(char *out, size_t outLen) {
+    const char *candidates[] = {
+        "Brains/NewAutopilot/init.lua",
+        "brains/NewAutopilot/init.lua",
+        "data/Brains/NewAutopilot/init.lua",
+    };
+    for (int i = 0; i < 3; i++) {
+        FILE *f = fopen(candidates[i], "r");
+        if (f) {
+            fclose(f);
+            snprintf(out, outLen, "%s", candidates[i]);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* -------------------------------------------------------
+ * Game playing options (global state)
+ * ------------------------------------------------------- */
+char fileName[FILENAME_MAX];
+char password[MAP_STR_SIZE];
+bool hiddenMines;
+aiType compTanks = aiNone;
+gameType gametype;
+int32_t startDelay;
+int32_t timeLen;
+bool gameFrontRemeber;
+int gameFrontBotCount = LOCAL_GAME_NUM_BOTS;
+char gameFrontBrainPath[FILENAME_MAX] = "";
+GameFrontBotSetup gameFrontBotSetupData = {0};
+
+/* UDP stuff */
+char gameFrontName[PLAYER_NAME_LEN];
+char gameFrontUdpAddress[FILENAME_MAX];
+unsigned short gameFrontMyUdp;
+unsigned short gameFrontTargetUdp;
+
+char gameFrontTrackerAddr[FILENAME_MAX];
+unsigned short gameFrontTrackerPort;
+bool gameFrontTrackerEnabled;
+
+/* Winbolo.net settings */
+char gameFrontWbnPass[FILENAME_MAX];
+bool gameFrontWbnUse;
+bool gameFrontWbnSavePass;
+
+/* Dialog states */
+openingStates dlgState = openStart;
+
+bool isServer = FALSE;
+
+bool useAutoslow;
+bool useAutohide;
+
+bool wantRejoin;
+
+/* Human player's ClientSim — owned by the frontend */
+ClientSim humanSimStorage;
+ClientSim *humanSim = NULL;
+
+/* Server-authoritative single-player state */
+static ServerSim *spServerSim = NULL;
+static Transport spTransport;
+static bool spServerSimActive = FALSE;
+
+/* UDP multiplayer transport state */
+static Transport udpTransport;
+static bool udpTransportActive = FALSE;
+static BYTE udpPlayerNum = 0;
+
+/* Chat send callback for new transport — wraps transportUdpClientSendChat */
+static void gameFrontChatSendCallback(uint8_t destPlayer, const char *message) {
+    if (udpTransportActive) {
+        transportUdpClientSendChat(&udpTransport, destPlayer, message);
+    }
+}
+
+/* Name change send callback for new transport */
+static void gameFrontNameChangeSendCallback(const char *newName) {
+    if (udpTransportActive) {
+        transportUdpClientSendNameChange(&udpTransport, newName);
+    }
+}
+
+/* Alliance callbacks for new transport */
+static void gameFrontAllianceRequestCallback(uint8_t toPlayer) {
+    if (udpTransportActive) {
+        transportUdpClientSendAllianceRequest(&udpTransport, toPlayer);
+    }
+}
+
+static void gameFrontAllianceAcceptCallback(uint8_t toPlayer) {
+    if (udpTransportActive) {
+        transportUdpClientSendAllianceAccept(&udpTransport, toPlayer);
+    }
+}
+
+static void gameFrontAllianceLeaveCallback(void) {
+    if (udpTransportActive) {
+        transportUdpClientSendAllianceLeave(&udpTransport);
+    }
+}
+
+static void gameFrontLockToggleCallback(bool allow) {
+    if (udpTransportActive) {
+        transportUdpClientSendLockToggle(&udpTransport, allow);
+    }
+}
+
+extern bool isTutorial;
+
+/* Used to set the preferences — defined in winbolo.c */
+extern int frameRate;
+extern bool showGunsight;
+extern bool soundEffects;
+extern bool backgroundSound;
+extern bool useSoundKeepalive;
+extern bool showNewswireMessages;
+extern bool showAssistantMessages;
+extern bool showAIMessages;
+extern bool showNetworkStatusMessages;
+extern bool showNetworkDebugMessages;
+extern bool autoScrollingEnabled;
+extern BYTE zoomFactor;
+extern bool showPillLabels;
+extern bool showBaseLabels;
+extern bool labelSelf;
+extern labelLen labelMsg;
+extern labelLen labelTank;
+
+/* Helper: itoa replacement for portability */
+static void intToStr(int val, char *buf, int bufSize) {
+  snprintf(buf, bufSize, "%d", val);
+}
+
+static void longToStr(long val, char *buf, int bufSize) {
+  snprintf(buf, bufSize, "%ld", val);
+}
+
+/* -------------------------------------------------------
+ * gameFrontStart — initialise game subsystems
+ * ------------------------------------------------------- */
+bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {
+  bool OKStart;
+
+  isTutorial = FALSE;
+  password[0] = '\0';
+  gameFrontName[0] = '\0';
+  gameFrontUdpAddress[0] = '\0';
+  wantRejoin = FALSE;
+  langSetup();
+
+  /* Read preferences */
+  gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
+
+  /* Process the command line argument */
+  if (cmdLine != NULL) {
+    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
+    fileName[FILENAME_MAX - 1] = '\0';
+  } else {
+    fileName[0] = '\0';
+  }
+
+  /* Initialise game subsystems */
+  OKStart = TRUE;
+  if (isLoaded == FALSE) {
+    if (!SDL_Init(0)) {
+      OKStart = FALSE;
+    }
+
+    if (sdl3DrawSetup(windowGetZoomFactor()) == FALSE) {
+      OKStart = FALSE;
+    }
+
+    if (soundSetup() == FALSE) {
+      /* Sound failure is non-fatal — disable sound */
+      soundEffects = FALSE;
+    }
+
+    if (brainsHandlerLoadBrains() == FALSE) {
+      /* Brain loading failure is non-fatal */
+    }
+  }
+
+  if (OKStart == FALSE) {
+    gameFrontEnd(keys, FALSE, TRUE);
+    return FALSE;
+  }
+
+  /* Handle winbolo:// URL links */
+  dlgState = openStart;
+  if (strncmp(fileName, "winbolo://", 10) == 0) {
+    if (strcmp(fileName, "winbolo:///") != 0) {
+      gameFrontSetAddressFromWebLink(fileName);
+      dlgState = openInternetManual;
+    }
+    fileName[0] = '\0';
+  }
+
+  /* Setup the player's previous name */
+  if (gameFrontRemeber) {
+    playersSetMyLastPlayerName(gameFrontName);
+  }
+
+  guiMessageSetHandler(sdl3MessageHandler);
+  if (gameFrontDialogs() == FALSE) {
+    gameFrontEnd(keys, FALSE, TRUE);
+    return FALSE;
+  }
+
+  screenSetAiTypeCS(humanSim, compTanks);
+
+  if (isTutorial == FALSE) {
+    clientMutexWaitFor();
+    screenSetTankAutoSlowdownCS(humanSim, useAutoslow);
+    screenSetTankAutoHideGunsightCS(humanSim, useAutohide);
+    clientMutexRelease();
+  }
+
+  if (out_cs) {
+    *out_cs = humanSim;
+  }
+  return TRUE;
+}
+
+/* -------------------------------------------------------
+ * gameFrontEnd — shutdown game subsystems
+ * ------------------------------------------------------- */
+void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
+  clientMutexWaitFor();
+  if (gamePlayed == TRUE && humanSim != NULL) {
+    useAutoslow = screenGetTankAutoSlowdownCS(humanSim);
+    useAutohide = screenGetTankAutoHideGunsightCS(humanSim);
+  }
+  brainsHandlerShutdown();
+  /* Clean up server-authoritative single-player state.
+   * clientSimDestroy() frees the shared game objects (map, bases, etc.) and
+   * the client's predicted tank. The server's tanks are separate deep copies
+   * since Phase 4 prediction, so we must free them here before screenDestroy
+   * invalidates the shared map/bases/pills pointers.
+   * We still must NOT call serverSimDestroy (would double-free map etc.). */
+  if (spServerSimActive) {
+    /* Destroy bot brains before cleaning up tanks */
+    botManagerDestroy(spServerSim);
+    /* Free server's tanks — they're separate from the client's predicted
+     * tanks (which are deep copies since Phase 4 prediction).
+     * LGMs are still shared (not deep-copied), so screenDestroy frees them. */
+    {
+      BYTE i;
+      for (i = 0; i < MAX_TANKS; i++) {
+        if (spServerSim->sim.tanks[i] != NULL) {
+          tankDestroy(&spServerSim->sim, &spServerSim->sim.tanks[i]);
+        }
+      }
+    }
+    transportLocalDestroy(&spTransport);
+    serverSimClearActive(spServerSim);
+    free(spServerSim);
+    spServerSim = NULL;
+    spServerSimActive = FALSE;
+  }
+  if (udpTransportActive) {
+    clientSimSetChatSendFunc(humanSim, NULL);
+    clientSimSetNameChangeSendFunc(humanSim, NULL);
+    clientSimSetAllianceRequestFunc(humanSim, NULL);
+    clientSimSetAllianceAcceptFunc(humanSim, NULL);
+    clientSimSetAllianceLeaveFunc(humanSim, NULL);
+    clientSimSetLockToggleSendFunc(humanSim, NULL);
+    transportUdpClientDestroy(&udpTransport);
+    udpTransportActive = FALSE;
+  }
+  gameFrontPutPrefs(keys);
+  if (humanSim != NULL) {
+    netDestroy(humanSim);
+    clientSimDestroy(humanSim);
+    humanSim = NULL;
+  }
+  if (isQuiting == TRUE) {
+    sdl3ImguiCleanup();
+    sdl3DrawCleanup();
+    soundCleanup();
+    langCleanup();
+  }
+  if (isServer == TRUE) {
+    gameFrontShutdownServer();
+    isServer = FALSE;
+  }
+  clientMutexRelease();
+  threadsDestroy();
+}
+
+/* -------------------------------------------------------
+ * gameFrontDialogs — setup dialog state machine
+ * ------------------------------------------------------- */
+/* Pick a random .map file from data/maps/ for the background game */
+static bool pickRandomMap(char *out, size_t outLen) {
+    const char *dir = "data/maps";
+    int count = 0;
+
+#if defined(__IPHONEOS__)
+    /* SDL_GlobDirectory doesn't work with the iOS app bundle filesystem.
+     * Use opendir/readdir directly instead. */
+    {
+        char *mapFiles[256];
+        DIR *d = opendir(dir);
+        if (!d) {
+            SDL_Log("[BgGame] pickRandomMap: opendir('%s') failed", dir);
+            return false;
+        }
+        struct dirent *ent;
+        while ((ent = readdir(d)) != NULL && count < 256) {
+            size_t len = strlen(ent->d_name);
+            if (len > 4 && strcasecmp(ent->d_name + len - 4, ".map") == 0 &&
+                strcasecmp(ent->d_name, "Inbuilt Tutorial.map") != 0) {
+                mapFiles[count] = SDL_strdup(ent->d_name);
+                count++;
+            }
+        }
+        closedir(d);
+        if (count == 0) {
+            SDL_Log("[BgGame] pickRandomMap: no .map files in '%s'", dir);
+            return false;
+        }
+        int idx = rand() % count;
+        SDL_snprintf(out, outLen, "%s/%s", dir, mapFiles[idx]);
+        SDL_Log("[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
+        for (int i = 0; i < count; i++) SDL_free(mapFiles[i]);
+        return true;
+    }
+#else
+    char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
+    if (!list || count == 0) {
+        SDL_Log("[BgGame] pickRandomMap: SDL_GlobDirectory found 0 maps in '%s'", dir);
+        if (list) SDL_free(list);
+        return false;
+    }
+    /* Filter out the inbuilt tutorial map */
+    int filtered = 0;
+    for (int i = 0; i < count; i++) {
+        if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0) {
+            list[filtered++] = list[i];
+        }
+    }
+    if (filtered == 0) {
+        SDL_Log("[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
+        SDL_free(list);
+        return false;
+    }
+    int idx = rand() % filtered;
+    SDL_snprintf(out, outLen, "%s/%s", dir, list[idx]);
+    SDL_Log("[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
+    SDL_free(list);
+    return true;
+#endif
+}
+
+static bool gameFrontDialogs(void) {
+  bool done = FALSE;
+  bool userQuit = FALSE;
+
+  SDL_Log("[BgGame] gameFrontDialogs entered, dlgState=%d", dlgState);
+
+  /* Disable render logical presentation during dialogs so that ImGui
+   * touch/mouse coordinates match the rendering coordinates.  On Android
+   * (non-tablet), sdl3DrawSetup sets a logical presentation for the game
+   * view which would otherwise cause a coordinate mismatch in ImGui. */
+  sdl3DrawDisableLogicalPresentation();
+
+  /* Create shared background game for all pre-game dialogs */
+  BgGame bg;
+  bool hasBg = false;
+  {
+    srand((unsigned)time(NULL));
+    char mapPath[512];
+    if (pickRandomMap(mapPath, sizeof(mapPath))) {
+      hasBg = bgGameCreate(&bg, mapPath, sdl3DrawGetRenderer());
+    }
+  }
+  SDL_Log("[BgGame] hasBg=%d", hasBg);
+  if (hasBg) bgGameSetShared(&bg);
+
+  while (done == FALSE) {
+    switch (dlgState) {
+    case openStart:
+      dlgState = openWelcome;
+      break;
+    case openWelcome: {
+      const DialogBackend *db = dialogBackendGet();
+      int result = db->welcomeShow();
+      if (result < 0) {
+        done = TRUE;
+        userQuit = TRUE;
+      } else {
+        dlgState = (openingStates)result;
+      }
+      break;
+    }
+    case openLang:
+      /* Language dialog disabled on SDL3 */
+      dlgState = openWelcome;
+      break;
+    case openSkins:
+      /* Skins dialog not yet ported */
+      dlgState = openWelcome;
+      break;
+    case openUdp:
+    case openInternetManual:
+    case openLanManual: {
+      const DialogBackend *db = dialogBackendGet();
+      openingStates prev = dlgState;
+      db->udpSetupShow();
+      /* dlgState already updated by gameFrontSetDlgState inside the dialog
+       * (OnJoin/OnNew/OnCancel all call gameFrontSetDlgState before EndModal).
+       * If the dialog stub didn't change state, fall back to welcome. */
+      if (dlgState == prev) dlgState = openWelcome;
+      break;
+    }
+    case openSetup:
+    case openInternetSetup:
+    case openLanSetup:
+    case openUdpSetup: {
+      const DialogBackend *db = dialogBackendGet();
+      openingStates prev = dlgState;
+      if (db->gameSetupShow(humanSim)) {
+        gameFrontSetDlgState(openFinished);
+      } else {
+        /* Go back to the parent dialog, not the welcome screen */
+        if (prev == openInternetSetup) dlgState = openInternet;
+        else if (prev == openLanSetup) dlgState = openLan;
+        else if (prev == openUdpSetup) dlgState = openUdp;
+        else dlgState = openWelcome;
+      }
+      break;
+    }
+    case openInternet: {
+      const DialogBackend *db = dialogBackendGet();
+      openingStates prev = dlgState;
+      db->gameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
+      if (dlgState == prev) dlgState = openWelcome;
+      break;
+    }
+    case openLan: {
+      const DialogBackend *db = dialogBackendGet();
+      openingStates prev = dlgState;
+      db->gameBrowserShow(langGetText(STR_GAMEFRONT_LANFINDER_TITLE), FALSE);
+      if (dlgState == prev) dlgState = openWelcome;
+      break;
+    }
+    case openTutorial:
+      gameFrontLoadTutorial();
+      screenNetSetupTankGoCS(humanSim);
+      isTutorial = TRUE;
+      dlgState = openFinished;
+      break;
+    case openSettings: {
+      const DialogBackend *db = dialogBackendGet();
+      db->settingsShow();
+      dlgState = openWelcome;
+      break;
+    }
+    case openFinished:
+      done = TRUE;
+      break;
+    default:
+      done = TRUE;
+      break;
+    }
+  }
+
+  /* Clean up shared background game */
+  bgGameSetShared(NULL);
+  if (hasBg) bgGameDestroy(&bg);
+
+  /* Restore render logical presentation for the game view (Android). */
+  sdl3DrawRestoreLogicalPresentation();
+
+  return !userQuit;
+}
+
+/* -------------------------------------------------------
+ * gameFrontSetDlgState — dialog state machine transitions
+ * ------------------------------------------------------- */
+bool gameFrontSetDlgState(openingStates newState) {
+  bool returnValue = TRUE;
+  openingStates prevState = dlgState;
+
+  if ((dlgState == openInternet || dlgState == openLan || dlgState == openUdp ||
+       dlgState == openLanManual || dlgState == openInternetManual) &&
+      newState == openUdpJoin) {
+    humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
+            gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
+    fflush(stderr);
+
+    /* Create UDP client transport for the new protocol */
+    udpTransport = transportUdpClientCreate(humanSim, gameFrontUdpAddress,
+                                             gameFrontTargetUdp,
+                                             gameFrontName, password);
+    if (transportUdpClientGetJoinState(&udpTransport) == UDP_CLIENT_ERROR) {
+      const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
+      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
+                               (reason && reason[0]) ? reason : langGetText(STR_GAMEFRONTERR_JOINGAME), NULL);
+      transportUdpClientDestroy(&udpTransport);
+      clientSimDestroy(humanSim);
+      gameFrontShutdownServer();
+      dlgState = prevState;
+      returnValue = FALSE;
+    } else {
+      /* Wait for join handshake. Break early if we enter the lobby
+       * (lobby-enabled servers send PACKET_LOBBY_STATE before map chunks,
+       * so inLobby may become true while map is still downloading). */
+      int joinWaitTicks = 0;
+      while (joinWaitTicks < 1500) {  /* 30 second timeout */
+        UdpClientJoinState js = transportUdpClientGetJoinState(&udpTransport);
+        if (js != UDP_CLIENT_JOINING && js != UDP_CLIENT_DOWNLOADING_MAP) break;
+        if (humanSim->inLobby) break;  /* Enter lobby immediately */
+        udpTransport.tick(udpTransport.ctx);
+        SDL_Delay(20);
+        joinWaitTicks++;
+      }
+
+      UdpClientJoinState finalState = transportUdpClientGetJoinState(&udpTransport);
+      if (finalState == UDP_CLIENT_CONNECTED || humanSim->inLobby) {
+        udpPlayerNum = transportUdpClientGetPlayerNum(&udpTransport);
+        udpTransportActive = TRUE;
+
+        /* Store server address in ClientSim for brain info */
+        {
+          struct sockaddr_in saddr;
+          memset(&saddr, 0, sizeof(saddr));
+          saddr.sin_family = AF_INET;
+          saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
+          if (saddr.sin_addr.s_addr == INADDR_NONE) {
+            struct hostent *he = gethostbyname(gameFrontUdpAddress);
+            if (he) memcpy(&saddr.sin_addr, he->h_addr_list[0], he->h_length);
+          }
+          humanSim->serverAddress = saddr.sin_addr;
+          humanSim->serverPort = gameFrontTargetUdp;
+        }
+
+        clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
+        clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
+        clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
+        clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
+        clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
+        clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
+
+        if (humanSim->inLobby) {
+          /* Lobby path: enter lobby immediately, map downloads in background.
+           * The lobby UI shows a progress bar and gates the ready button
+           * on mapDownloadComplete. Deferred map loading happens when
+           * the lobby exits (game start). */
+          humanSim->netStat = netLobby;
+          dlgState = openFinished;
+        } else {
+          /* No-lobby path: map already downloaded, load it now */
+          const BYTE *mapData;
+          int mapLen = 0;
+          gameType serverGame;
+          bool serverHiddenMines;
+          int32_t serverStartDelay, serverGameLen;
+          bool mapLoadOk = TRUE;
+
+          mapData = transportUdpClientGetMapData(&udpTransport, &mapLen);
+          transportUdpClientGetGameSettings(&udpTransport, &serverGame,
+                                             &serverHiddenMines,
+                                             &serverStartDelay,
+                                             &serverGameLen);
+
+          if (mapData != NULL && mapLen > 0) {
+            gametype = serverGame;
+            hiddenMines = serverHiddenMines;
+            startDelay = serverStartDelay;
+            timeLen = serverGameLen;
+
+            clientSimDestroy(humanSim);
+
+            if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen,
+                                         "Network Game", serverGame,
+                                         serverHiddenMines, serverStartDelay,
+                                         serverGameLen, gameFrontName,
+                                         (BYTE)udpPlayerNum, FALSE) == FALSE) {
+              mapLoadOk = FALSE;
+            } else {
+              screenSetLocalTransportCS(humanSim, false);
+              /* Re-set network callbacks cleared by clientSimDestroy above */
+              clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
+              clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
+              clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
+              clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
+              clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
+              clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
+            }
+          } else {
+            mapLoadOk = FALSE;
+          }
+
+          if (!mapLoadOk) {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
+                                     "Failed to load map from server", NULL);
+            clientSimSetChatSendFunc(humanSim, NULL);
+            clientSimSetNameChangeSendFunc(humanSim, NULL);
+            clientSimSetLockToggleSendFunc(humanSim, NULL);
+            transportUdpClientDestroy(&udpTransport);
+            udpTransportActive = FALSE;
+            gameFrontShutdownServer();
+            dlgState = prevState;
+            returnValue = FALSE;
+          } else {
+            clientMutexWaitFor();
+            screenNetSetupTankGoCS(humanSim);
+            clientMutexRelease();
+            dlgState = openFinished;
+          }
+        }
+      } else {
+        const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
+                                 (reason && reason[0]) ? reason : langGetText(NETERR_SERVERCONNECT), NULL);
+        transportUdpClientDestroy(&udpTransport);
+        clientSimDestroy(humanSim);
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        returnValue = FALSE;
+      }
+    }
+  } else if ((dlgState == openInternetManual || dlgState == openInternetSetup) &&
+             newState == openWelcome) {
+    dlgState = openInternet;
+  } else if ((dlgState == openLanManual || dlgState == openLanSetup) &&
+             newState == openWelcome) {
+    dlgState = openLan;
+  } else if ((dlgState == openUdpSetup || dlgState == openInternetSetup ||
+              dlgState == openLanSetup) && newState == openFinished) {
+    /* Start network game as host */
+    dlgState = newState;
+    if (gameFrontSetupServer() == TRUE) {
+      humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+      if (netSetup(humanSim, netUdp, gameFrontMyUdp, "127.0.0.1", gameFrontTargetUdp,
+                   password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
+                   gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
+                   gameFrontWbnPass) == FALSE) {
+        wantRejoin = FALSE;
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
+                                 "Unable to start server", NULL);
+        netDestroy(humanSim);
+        clientSimDestroy(humanSim);
+        gameFrontShutdownServer();
+        returnValue = FALSE;
+        dlgState = openStart;
+      } else {
+        dlgState = openFinished;
+      }
+    } else {
+      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
+                               "Error starting server", NULL);
+      dlgState = openStart;
+    }
+  } else if (dlgState == openSetup && newState == openFinished) {
+    dlgState = openFinished;
+    /* New architecture: ServerSim owns the map and all game state.
+     * Create the server sim, then load the map on the client side
+     * using the same compressed data the UDP path uses. */
+    {
+        bool simOk = FALSE;
+        spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
+        if (spServerSim != NULL) {
+          if (strcmp(fileName, "") != 0) {
+            simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
+          } else {
+            BYTE emap[6000] = E_MAP;
+            simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+          }
+        }
+        if (simOk) {
+          /* Single-player: no lobby, run immediately */
+          spServerSim->lobbyEnabled = false;
+          spServerSim->state = serverStateRunning;
+          serverSimAddPlayer(spServerSim, 0, gameFrontName);
+          (*spServerSim->sim.plyrs).myPlayerNum = 0;
+          spTransport = transportLocalCreate(spServerSim, 0);
+          spServerSimActive = TRUE;
+          /* Load map/bases/pills on client via compressed map (same as UDP path) */
+          humanSim = &humanSimStorage;
+          {
+            BYTE compressedMap[65536];
+            int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
+            if (compLen > 0) {
+              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, "Local Game",
+                                       gametype, hiddenMines, startDelay,
+                                       timeLen, gameFrontName, 0, FALSE);
+            } else {
+              clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
+            }
+          }
+          /* Set up networking state after ClientSim is fully initialized */
+          netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
+                   password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
+                   gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
+                   gameFrontWbnPass);
+          /* Sync tank state from initial snapshot */
+          {
+            SnapshotHeader snapHdr;
+            TankSnapshot snapTanks[MAX_TANKS];
+            ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
+            ExplosionSnapshot snapExplosions[MAX_SNAPSHOT_EXPLOSIONS];
+            BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
+            PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
+            GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
+            serverSimBuildSnapshot(spServerSim, 0, &snapHdr,
+                                   snapTanks, MAX_TANKS,
+                                   snapShells, MAX_SNAPSHOT_SHELLS,
+                                   snapExplosions, MAX_SNAPSHOT_EXPLOSIONS,
+                                   snapBases, MAX_SNAPSHOT_BASES,
+                                   snapPills, MAX_SNAPSHOT_PILLS,
+                                   snapEvents, MAX_SNAPSHOT_EVENTS);
+            clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
+                                   snapShells, snapHdr.shellCount,
+                                   snapExplosions, snapHdr.explosionCount,
+                                   snapBases, snapHdr.baseCount,
+                                   snapPills, snapHdr.pillCount,
+                                   snapEvents, snapHdr.reliableEventCount, 0);
+          }
+          screenNetSetupTankGoCS(humanSim);
+          /* Destroy background game before adding real bots — bgGameDestroy
+           * calls botManagerDestroy which would wipe bots we add below. */
+          {
+            BgGame *sharedBg = bgGameGetShared();
+            if (sharedBg != NULL) {
+              bgGameDestroy(sharedBg);
+              bgGameSetShared(NULL);
+            }
+          }
+          /* Add bot brains for local game if AI is enabled */
+          botManagerInit();
+          {
+            /* Resolve brain path for lobby "Add Bot" support and initial bots */
+            char brainPath[FILENAME_MAX];
+            bool haveBrain = false;
+            if (gameFrontBrainPath[0] != '\0') {
+              SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
+              haveBrain = true;
+            } else if (compTanks != aiNone) {
+              haveBrain = findBrainPath(brainPath, sizeof(brainPath));
+            }
+            /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
+            if (haveBrain) {
+              strncpy(spServerSim->botBrainPath, brainPath, sizeof(spServerSim->botBrainPath) - 1);
+              spServerSim->botBrainPath[sizeof(spServerSim->botBrainPath) - 1] = '\0';
+              spServerSim->botAiType = compTanks;
+            }
+            if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+              ClientSim *clientSim = humanSim;
+              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
+                BYTE slot = (BYTE)(bi + 1);
+                char botName[32];
+                snprintf(botName, sizeof(botName), "Bot %d", slot);
+                /* Use per-bot brain path if set, otherwise fall back to default */
+                const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
+                if (botBrain[0] == '\0') botBrain = brainPath;
+                botManagerAddBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
+                /* Register bot name on the client side so the player list shows it */
+                playersSetPlayer(clientSim, &clientSim->sim.plyrs, slot, botName, "AI",
+                                 0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
+                /* Apply team number */
+                uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
+                if (team > 0) {
+                  spServerSim->lobbyPlayers[slot].teamNumber = team;
+                  clientSim->lobbySlots[slot].teamNumber = team;
+                }
+              }
+              /* Apply human player team number */
+              if (gameFrontBotSetupData.playerTeamNumber > 0) {
+                spServerSim->lobbyPlayers[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
+                clientSim->lobbySlots[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
+              }
+              /* Apply team alliances — players with same non-zero team become allies */
+              for (int a = 0; a < 16; a++) {
+                if (!spServerSim->playerConnected[a]) continue;
+                if (spServerSim->lobbyPlayers[a].teamNumber == 0) continue;
+                for (int b = a + 1; b < 16; b++) {
+                  if (!spServerSim->playerConnected[b]) continue;
+                  if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
+                    playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, (BYTE)a, (BYTE)b, TRUE);
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          if (spServerSim != NULL) {
+            free(spServerSim);
+            spServerSim = NULL;
+          }
+          returnValue = FALSE;
+        }
+      }
+  } else {
+    dlgState = newState;
+  }
+
+  return returnValue;
+}
+
+/* -------------------------------------------------------
+ * Simple getter/setter functions
+ * ------------------------------------------------------- */
+
+void gameFrontGetCmdArg(char *getName) {
+  strcpy(getName, fileName);
+}
+
+void gameFrontSetFileName(char *getName) {
+  strcpy(fileName, getName);
+}
+
+void gameFrontSetGameOptions(char *pword, gameType gt, bool hm, aiType ai, int32_t sd, int32_t tlimit, bool justPass) {
+  strcpy(password, pword);
+  if (justPass == FALSE) {
+    gametype = gt;
+    hiddenMines = hm;
+    compTanks = ai;
+    if (compTanks == aiNone) {
+      brainsHandlerSet(FALSE);
+    } else {
+      brainsHandlerSet(TRUE);
+    }
+    startDelay = sd;
+    timeLen = tlimit;
+  }
+}
+
+void gameFrontGetGameOptions(char *pword, gameType *gt, bool *hm, aiType *ai, int32_t *sd, int32_t *tlimit) {
+  strcpy(pword, password);
+  *gt = gametype;
+  *hm = hiddenMines;
+  *ai = compTanks;
+  *sd = startDelay;
+  *tlimit = timeLen;
+}
+
+void gameFrontSetBotOptions(int count, const char *brainPath) {
+  gameFrontBotCount = count;
+  if (brainPath) {
+    SDL_strlcpy(gameFrontBrainPath, brainPath, FILENAME_MAX);
+  } else {
+    gameFrontBrainPath[0] = '\0';
+  }
+}
+
+void gameFrontGetBotOptions(int *count, char *brainPath, size_t brainPathSize) {
+  *count = gameFrontBotCount;
+  SDL_strlcpy(brainPath, gameFrontBrainPath, brainPathSize);
+}
+
+void gameFrontSetBotSetup(const GameFrontBotSetup *setup) {
+  memcpy(&gameFrontBotSetupData, setup, sizeof(GameFrontBotSetup));
+  /* Keep legacy fields in sync */
+  gameFrontBotCount = setup->count;
+  if (setup->count > 0 && setup->bots[0].brainPath[0] != '\0') {
+    SDL_strlcpy(gameFrontBrainPath, setup->bots[0].brainPath, FILENAME_MAX);
+  } else {
+    gameFrontBrainPath[0] = '\0';
+  }
+}
+
+void gameFrontGetBotSetup(GameFrontBotSetup *setup) {
+  memcpy(setup, &gameFrontBotSetupData, sizeof(GameFrontBotSetup));
+}
+
+void gameFrontGetUdpOptions(char *pn, char *add, unsigned short *theirUdp, unsigned short *myUdp) {
+  strcpy(pn, gameFrontName);
+  strcpy(add, gameFrontUdpAddress);
+  *myUdp = gameFrontMyUdp;
+  *theirUdp = gameFrontTargetUdp;
+}
+
+void gameFrontSetUdpOptions(char *pn, char *add, unsigned short theirUdp, unsigned short myUdp) {
+  strcpy(gameFrontName, pn);
+  strcpy(gameFrontUdpAddress, add);
+  gameFrontMyUdp = myUdp;
+  gameFrontTargetUdp = theirUdp;
+}
+
+void gameFrontGetPassword(char *pword) {
+  password[0] = '\0';
+  sdl3ImguiShowPassword();
+  /* TODO: this needs to block until the ImGui modal returns.
+   * For now just return the current password. */
+  strcpy(pword, password);
+}
+
+void gameFrontGetPlayerName(char *pn) {
+  strcpy(pn, gameFrontName);
+}
+
+void gameFrontSetPlayerName(char *pn) {
+  strcpy(gameFrontName, pn);
+}
+
+void gameFrontSetAIType(aiType ait) {
+  compTanks = ait;
+  if (humanSim != NULL) {
+    screenSetAiTypeCS(humanSim, compTanks);
+  }
+  if (compTanks == aiNone) {
+    brainsHandlerSet(FALSE);
+  } else {
+    brainsHandlerSet(TRUE);
+  }
+}
+
+void gameFrontSetRemeber(bool isSet) {
+  gameFrontRemeber = isSet;
+}
+
+bool gameFrontGetRemeber(void) {
+  return gameFrontRemeber;
+}
+
+void gameFrontGetTrackerOptions(char *address, unsigned short *port, bool *enabled) {
+  strcpy(address, gameFrontTrackerAddr);
+  *port = gameFrontTrackerPort;
+  *enabled = gameFrontTrackerEnabled;
+}
+
+void gameFrontSetTrackerOptions(char *address, unsigned short port, bool enabled) {
+  strcpy(gameFrontTrackerAddr, address);
+  gameFrontTrackerPort = port;
+  gameFrontTrackerEnabled = enabled;
+}
+
+void gameFrontEnableRejoin(void) {
+  wantRejoin = TRUE;
+}
+
+void gameFrontSetWinbolonetSettings(char *pw, bool useWbn, bool savePass) {
+  strcpy(gameFrontWbnPass, pw);
+  gameFrontWbnUse = useWbn;
+  gameFrontWbnSavePass = savePass;
+}
+
+void gameFrontGetWinbolonetSettings(char *pw, bool *useWbn, bool *savePass) {
+  *useWbn = gameFrontWbnUse;
+  *savePass = gameFrontWbnSavePass;
+  strcpy(pw, gameFrontWbnPass);
+}
+
+void gameFrontSetRegistryKeys(void) {
+  /* No-op on non-Win32 */
+}
+
+void gameFrontSetAddressFromWebLink(char *address) {
+  char *tok;
+  char *ptr;
+
+  gameFrontTargetUdp = 0;
+  ptr = address + strlen("winbolo://");
+  tok = strtok(ptr, ":");
+  if (tok != NULL) {
+    strcpy(gameFrontUdpAddress, tok);
+    tok = strtok(NULL, ":");
+    if (tok != NULL) {
+      gameFrontTargetUdp = atoi(tok);
+    }
+  }
+}
+
+void gameFrontReloadSkins(void) {
+  sdl3DrawCleanup();
+  soundCleanup();
+  sdl3DrawSetup(1);
+  if (soundSetup() == FALSE) {
+    /* Non-fatal */
+  }
+}
+
+void gameFrontShutdownServer(void) {
+  /* TODO: implement server shutdown for hosted games */
+}
+
+bool gameFrontPreferencesExist(void) {
+  FILE *fp;
+  const char *path = getPreferenceFilePath();
+
+  fp = fopen(path, "r");
+  if (fp != NULL) {
+    fclose(fp);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+bool gameFrontSetupServer(void) {
+  /* TODO: implement in-process or external server start */
+  return FALSE;
+}
+
+bool gameFrontLoadInBuiltMap(void) {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4305)
+#endif
+  BYTE emap[6000] = E_MAP;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+  return screenLoadCompressedMapCS(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
+}
+
+bool gameFrontLoadTutorial(void) {
+  const char *basePath = SDL_GetBasePath();
+  char mapPath[FILENAME_MAX];
+  FILE *fp;
+
+  if (basePath == NULL) {
+    return FALSE;
+  }
+
+  snprintf(mapPath, FILENAME_MAX, "%sInbuilt Tutorial.map", basePath);
+  fp = fopen(mapPath, "rb");
+  if (fp == NULL) {
+    snprintf(mapPath, FILENAME_MAX, "%s../../winbolo/src/gui/win32/Inbuilt Tutorial.map", basePath);
+    fp = fopen(mapPath, "rb");
+  }
+
+  if (fp != NULL) {
+    fclose(fp);
+    return screenLoadMapCS(humanSim, mapPath, gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+  }
+  return FALSE;
+}
+
+/* -------------------------------------------------------
+ * gameFrontGetPrefs — read preferences from INI file
+ * ------------------------------------------------------- */
+bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
+  char buff[FILENAME_MAX];
+  char def[FILENAME_MAX];
+  const char *prefsFile = getPreferenceFilePath();
+
+  /* Player Name */
+  strcpy(def, langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
+  GetPrivateProfileString("SETTINGS", "Player Name", def, gameFrontName, sizeof(gameFrontName), prefsFile);
+
+  /* Target Address */
+  def[0] = '\0';
+  GetPrivateProfileString("SETTINGS", "Target Address", def, gameFrontUdpAddress, FILENAME_MAX, prefsFile);
+
+  /* Target UDP Port */
+  intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
+  GetPrivateProfileString("SETTINGS", "Target UDP Port", def, buff, FILENAME_MAX, prefsFile);
+  gameFrontMyUdp = atoi(buff);
+  gameFrontTargetUdp = atoi(buff);
+  /* My UDP Port */
+  intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
+  GetPrivateProfileString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX, prefsFile);
+  gameFrontMyUdp = atoi(buff);
+
+  /* Driving keys */
+  intToStr(DEFAULT_FORWARD, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Forward", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiForward = atoi(buff);
+  intToStr(DEFAULT_BACKWARD, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Backwards", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiBackward = atoi(buff);
+  intToStr(DEFAULT_LEFT, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Left", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiLeft = atoi(buff);
+  intToStr(DEFAULT_RIGHT, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Right", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiRight = atoi(buff);
+
+  /* Shooting, mines, gunsights */
+  intToStr(DEFAULT_SHOOT, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Shoot", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiShoot = atoi(buff);
+  intToStr(DEFAULT_LAY_MINE, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Lay Mine", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiLayMine = atoi(buff);
+  intToStr(DEFAULT_SCROLL_GUNINCREASE, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Increase Range", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiGunIncrease = atoi(buff);
+  intToStr(DEFAULT_SCROLL_GUNDECREASE, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Decrease Range", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiGunDecrease = atoi(buff);
+
+  /* Views */
+  intToStr(DEFAULT_TANKVIEW, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Tank View", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiTankView = atoi(buff);
+  intToStr(DEFAULT_PILLVIEW, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Pill View", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiPillView = atoi(buff);
+  intToStr(DEFAULT_ALLYVIEW, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Ally View", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiAllyView = atoi(buff);
+  intToStr(DEFAULT_LGMVIEW, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "LGM View", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiLGMView = atoi(buff);
+  intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Base View", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiBaseView = atoi(buff);
+
+  /* Scrolling */
+  intToStr(DEFAULT_SCROLLUP, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Scroll Up", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiScrollUp = atoi(buff);
+  intToStr(DEFAULT_SCROLLDOWN, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Scroll Down", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiScrollDown = atoi(buff);
+  intToStr(DEFAULT_SCROLLLEFT, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Scroll Left", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiScrollLeft = atoi(buff);
+  intToStr(DEFAULT_SCROLLRIGHT, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Scroll Right", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiScrollRight = atoi(buff);
+
+  /* Quick keys */
+  intToStr(DEFAULT_QUICKTREE, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Quick Tree", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiQuickTree = atoi(buff);
+  intToStr(DEFAULT_QUICKROAD, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Quick Road", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiQuickRoad = atoi(buff);
+  intToStr(DEFAULT_QUICKWALL, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Quick Wall", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiQuickWall = atoi(buff);
+  intToStr(DEFAULT_QUICKPILLBOX, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Quick Pillbox", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiQuickPillbox = atoi(buff);
+  intToStr(DEFAULT_QUICKMINE, def, sizeof(def));
+  GetPrivateProfileString("KEYS", "Quick Mine", def, buff, FILENAME_MAX, prefsFile);
+  keys->kiQuickMine = atoi(buff);
+
+  /* Remember */
+  GetPrivateProfileString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontRemeber = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Game Options */
+  GetPrivateProfileString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX, prefsFile);
+  hiddenMines = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("GAME OPTIONS", "Allow Computer Tanks", "0", buff, FILENAME_MAX, prefsFile);
+  compTanks = atoi(buff);
+  GetPrivateProfileString("GAME OPTIONS", "Game Type", "1", buff, FILENAME_MAX, prefsFile);
+  gametype = atoi(buff);
+  GetPrivateProfileString("GAME OPTIONS", "Start Delay", "0", buff, FILENAME_MAX, prefsFile);
+  startDelay = atoi(buff);
+  longToStr(UNLIMITED_GAME_TIME, def, sizeof(def));
+  GetPrivateProfileString("GAME OPTIONS", "Time Length", def, buff, FILENAME_MAX, prefsFile);
+  timeLen = (int32_t)atol(buff);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", "Yes", buff, FILENAME_MAX, prefsFile);
+#else
+  GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", "No", buff, FILENAME_MAX, prefsFile);
+#endif
+  *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", "No", buff, FILENAME_MAX, prefsFile);
+  *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Tracker options */
+  GetPrivateProfileString("TRACKER", "Address", TRACKER_ADDRESS, gameFrontTrackerAddr, FILENAME_MAX, prefsFile);
+  intToStr(TRACKER_PORT, def, sizeof(def));
+  GetPrivateProfileString("TRACKER", "Port", def, buff, FILENAME_MAX, prefsFile);
+  gameFrontTrackerPort = atoi(buff);
+  GetPrivateProfileString("TRACKER", "Enabled", "No", buff, FILENAME_MAX, prefsFile);
+  gameFrontTrackerEnabled = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Menu Items */
+  intToStr(FRAME_RATE_30, def, sizeof(def));
+  GetPrivateProfileString("MENU", "Frame Rate", def, buff, FILENAME_MAX, prefsFile);
+  frameRate = atoi(buff);
+  GetPrivateProfileString("MENU", "Show Gunsight", "No", buff, FILENAME_MAX, prefsFile);
+  showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX, prefsFile);
+  soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Allow Background Sound", "Yes", buff, FILENAME_MAX, prefsFile);
+  backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX, prefsFile);
+  useSoundKeepalive = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  showNewswireMessages = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  showAssistantMessages = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show AI Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  showAIMessages = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show Network Status Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  showNetworkStatusMessages = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show Network Debug Messages", "No", buff, FILENAME_MAX, prefsFile);
+  showNetworkDebugMessages = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Autoscroll Enabled", "No", buff, FILENAME_MAX, prefsFile);
+  autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX, prefsFile);
+  showPillLabels = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Show Base Labels", "No", buff, FILENAME_MAX, prefsFile);
+  showBaseLabels = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX, prefsFile);
+  labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Window Size", "1", buff, FILENAME_MAX, prefsFile);
+  zoomFactor = atoi(buff);
+  GetPrivateProfileString("MENU", "Message Label Size", "1", buff, FILENAME_MAX, prefsFile);
+  labelMsg = atoi(buff);
+  GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
+  labelTank = atoi(buff);
+
+  /* Winbolo.net */
+  GetPrivateProfileString("WINBOLO.NET", "Password", "", gameFrontWbnPass, FILENAME_MAX, prefsFile);
+  GetPrivateProfileString("WINBOLO.NET", "Active", "No", buff, FILENAME_MAX, prefsFile);
+  gameFrontWbnUse = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("WINBOLO.NET", "Save Password", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontWbnSavePass = YESNO_TO_TRUEFALSE(buff[0]);
+
+  return TRUE;
+}
+
+/* -------------------------------------------------------
+ * gameFrontPutPrefs — write preferences to INI file
+ * ------------------------------------------------------- */
+void gameFrontPutPrefs(keyItems *keys) {
+  char playerName[PLAYER_NAME_LEN];
+  char buff[FILENAME_MAX];
+  const char *prefsFile = getPreferenceFilePath();
+
+  /* Player Name */
+  if (((humanSim != NULL && humanSim->networkGameType == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !(humanSim->inLobby)) {
+    screenGetPlayerNameCS(humanSim, playerName);
+    strcpy(gameFrontName, playerName);
+    WritePrivateProfileString("SETTINGS", "Player Name", playerName, prefsFile);
+  } else {
+    WritePrivateProfileString("SETTINGS", "Player Name", gameFrontName, prefsFile);
+  }
+
+  /* Target Address */
+  WritePrivateProfileString("SETTINGS", "Target Address", gameFrontUdpAddress, prefsFile);
+
+  /* Ports */
+  intToStr(gameFrontTargetUdp, buff, sizeof(buff));
+  WritePrivateProfileString("SETTINGS", "Target UDP Port", buff, prefsFile);
+  intToStr(gameFrontMyUdp, buff, sizeof(buff));
+  WritePrivateProfileString("SETTINGS", "UDP Port", buff, prefsFile);
+
+  /* Languages */
+  langGetFileName(buff);
+  WritePrivateProfileString("SETTINGS", "Language", buff, prefsFile);
+
+  /* Keys — driving */
+  intToStr(keys->kiForward, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Forward", buff, prefsFile);
+  intToStr(keys->kiBackward, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Backwards", buff, prefsFile);
+  intToStr(keys->kiLeft, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Left", buff, prefsFile);
+  intToStr(keys->kiRight, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Right", buff, prefsFile);
+
+  /* Shooting, mines, gunsight */
+  intToStr(keys->kiShoot, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Shoot", buff, prefsFile);
+  intToStr(keys->kiLayMine, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Lay Mine", buff, prefsFile);
+  intToStr(keys->kiGunIncrease, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Increase Range", buff, prefsFile);
+  intToStr(keys->kiGunDecrease, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Decrease Range", buff, prefsFile);
+
+  /* Views */
+  intToStr(keys->kiTankView, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Tank View", buff, prefsFile);
+  intToStr(keys->kiPillView, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Pill View", buff, prefsFile);
+  intToStr(keys->kiAllyView, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Ally View", buff, prefsFile);
+  intToStr(keys->kiLGMView, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "LGM View", buff, prefsFile);
+  intToStr(keys->kiBaseView, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Base View", buff, prefsFile);
+
+  /* Scrolling */
+  intToStr(keys->kiScrollUp, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Scroll Up", buff, prefsFile);
+  intToStr(keys->kiScrollDown, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Scroll Down", buff, prefsFile);
+  intToStr(keys->kiScrollLeft, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Scroll Left", buff, prefsFile);
+  intToStr(keys->kiScrollRight, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Scroll Right", buff, prefsFile);
+
+  /* Quick keys */
+  intToStr(keys->kiQuickTree, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Quick Tree", buff, prefsFile);
+  intToStr(keys->kiQuickRoad, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Quick Road", buff, prefsFile);
+  intToStr(keys->kiQuickWall, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Quick Wall", buff, prefsFile);
+  intToStr(keys->kiQuickPillbox, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Quick Pillbox", buff, prefsFile);
+  intToStr(keys->kiQuickMine, buff, sizeof(buff));
+  WritePrivateProfileString("KEYS", "Quick Mine", buff, prefsFile);
+
+  /* Remember */
+  WritePrivateProfileString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber), prefsFile);
+
+  /* Options */
+  WritePrivateProfileString("GAME OPTIONS", "Hidden Mines", TRUEFALSE_TO_STR(hiddenMines), prefsFile);
+  intToStr(compTanks, buff, sizeof(buff));
+  WritePrivateProfileString("GAME OPTIONS", "Allow Computer Tanks", buff, prefsFile);
+  intToStr(gametype, buff, sizeof(buff));
+  WritePrivateProfileString("GAME OPTIONS", "Game Type", buff, prefsFile);
+  intToStr(startDelay, buff, sizeof(buff));
+  WritePrivateProfileString("GAME OPTIONS", "Start Delay", buff, prefsFile);
+  intToStr(timeLen, buff, sizeof(buff));
+  WritePrivateProfileString("GAME OPTIONS", "Time Length", buff, prefsFile);
+  WritePrivateProfileString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow), prefsFile);
+  WritePrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide), prefsFile);
+
+  /* Tracker */
+  WritePrivateProfileString("TRACKER", "Address", gameFrontTrackerAddr, prefsFile);
+  intToStr(gameFrontTrackerPort, buff, sizeof(buff));
+  WritePrivateProfileString("TRACKER", "Port", buff, prefsFile);
+  WritePrivateProfileString("TRACKER", "Enabled", TRUEFALSE_TO_STR(gameFrontTrackerEnabled), prefsFile);
+
+  /* Menu Items */
+  intToStr(frameRate, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Frame Rate", buff, prefsFile);
+  WritePrivateProfileString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight), prefsFile);
+  WritePrivateProfileString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects), prefsFile);
+  WritePrivateProfileString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound), prefsFile);
+  WritePrivateProfileString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive), prefsFile);
+  WritePrivateProfileString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages), prefsFile);
+  WritePrivateProfileString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages), prefsFile);
+  WritePrivateProfileString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages), prefsFile);
+  WritePrivateProfileString("MENU", "Show Network Status Messages", TRUEFALSE_TO_STR(showNetworkStatusMessages), prefsFile);
+  WritePrivateProfileString("MENU", "Show Network Debug Messages", TRUEFALSE_TO_STR(showNetworkDebugMessages), prefsFile);
+  WritePrivateProfileString("MENU", "Autoscroll Enabled", TRUEFALSE_TO_STR(autoScrollingEnabled), prefsFile);
+  WritePrivateProfileString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels), prefsFile);
+  WritePrivateProfileString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels), prefsFile);
+  WritePrivateProfileString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf), prefsFile);
+  intToStr(zoomFactor, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Window Size", buff, prefsFile);
+  intToStr(labelMsg, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Message Label Size", buff, prefsFile);
+  intToStr(labelTank, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Tank Label Size", buff, prefsFile);
+
+  /* Winbolo.net */
+  if (gameFrontWbnSavePass == TRUE) {
+    WritePrivateProfileString("WINBOLO.NET", "Password", gameFrontWbnPass, prefsFile);
+  } else {
+    WritePrivateProfileString("WINBOLO.NET", "Password", "", prefsFile);
+  }
+  WritePrivateProfileString("WINBOLO.NET", "Active", TRUEFALSE_TO_STR(gameFrontWbnUse), prefsFile);
+  WritePrivateProfileString("WINBOLO.NET", "Save Password", TRUEFALSE_TO_STR(gameFrontWbnSavePass), prefsFile);
+}
+
+ServerSim *gameFrontGetServerSim(void) {
+  return spServerSimActive ? spServerSim : NULL;
+}
+
+Transport *gameFrontGetTransport(void) {
+  if (spServerSimActive) return &spTransport;
+  if (udpTransportActive) return &udpTransport;
+  return NULL;
+}
+
+BYTE gameFrontGetPlayerNum(void) {
+  if (spServerSimActive) return 0;
+  if (udpTransportActive) return udpPlayerNum;
+  return 0;
+}
+
+bool gameFrontLoadDeferredMap(ClientSim *cs) {
+  const BYTE *mapData;
+  int mapLen = 0;
+  gameType serverGame;
+  bool serverHiddenMines;
+  int32_t serverStartDelay, serverGameLen;
+
+  mapData = transportUdpClientGetMapData(&udpTransport, &mapLen);
+  transportUdpClientGetGameSettings(&udpTransport, &serverGame,
+                                     &serverHiddenMines,
+                                     &serverStartDelay,
+                                     &serverGameLen);
+
+  if (mapData == NULL || mapLen <= 0) {
+    return FALSE;
+  }
+
+  gametype = serverGame;
+  hiddenMines = serverHiddenMines;
+  startDelay = serverStartDelay;
+  timeLen = serverGameLen;
+
+  /* Preserve lobby flag across destroy/create — clientSimCreate clears it,
+   * but we need it to survive so game-over can return to lobby again. */
+  bool wasInLobby = cs->inLobby;
+
+  clientSimDestroy(cs);
+
+  if (screenLoadCompressedMapCS(cs, (BYTE *)mapData, mapLen,
+                               "Network Game", serverGame,
+                               serverHiddenMines, serverStartDelay,
+                               serverGameLen, gameFrontName,
+                               (BYTE)udpPlayerNum, FALSE) == FALSE) {
+    return FALSE;
+  }
+
+  screenSetLocalTransportCS(cs, false);
+  cs->inLobby = wasInLobby;
+  cs->mapDownloadComplete = true;
+  clientSimSetChatSendFunc(cs, gameFrontChatSendCallback);
+  clientSimSetNameChangeSendFunc(cs, gameFrontNameChangeSendCallback);
+  clientSimSetAllianceRequestFunc(cs, gameFrontAllianceRequestCallback);
+  clientSimSetAllianceAcceptFunc(cs, gameFrontAllianceAcceptCallback);
+  clientSimSetAllianceLeaveFunc(cs, gameFrontAllianceLeaveCallback);
+  clientSimSetLockToggleSendFunc(cs, gameFrontLockToggleCallback);
+
+  clientMutexWaitFor();
+  screenNetSetupTankGoCS(cs);
+  clientMutexRelease();
+
+  return TRUE;
+}
+

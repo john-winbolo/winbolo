@@ -1,0 +1,1898 @@
+/*
+ * $Id$
+ *
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+*Name:          SDL3 Draw Mirror
+*Filename:      sdl3draw.c
+*Purpose:
+*  Phase 1-5 SDL3 mirror renderer. Opens a second window
+*  alongside the Win32/DirectDraw window. Phase 2 adds the
+*  background bitmap. Phase 3 adds scrolling map tiles.
+*  Phase 4 adds sprites (shells/tanks/LGMs), status panel
+*  render targets, bar textures and man-status circle.
+*  Phase 5 adds text via SDL_ttf: tank labels, messages,
+*  kills/deaths counter, pill-view and net-failed overlays.
+*  Functions are prefixed sdl3Draw* to avoid symbol
+*  collision while both renderers coexist.
+*********************************************************/
+
+/* Must be included before any bolo headers that use #pragma pack */
+#include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#endif
+
+#include "sdl3draw.h"
+#include "sdl3imgui.h"
+#include "cursor.h"
+#include "mapview.h"
+#include "../clientmutex.h"
+#include "../tiles.h"
+#include "../ui_mode.h"
+#include "tileloader.h"
+#include "../../bolo/global.h"
+#include "../../bolo/screen.h"
+#include "../../bolo/client_sim.h"
+#include "../../bolo/tank.h"
+#include "../gamefront.h"
+#include "../../bolo/tilenum.h"
+#include "../positions.h"
+#include "../../bolo/screenbullet.h"
+#include "../../bolo/screentank.h"
+#include "../../bolo/screenlgm.h"
+
+/* From gui/winbolo.h (can't include directly — Win32 headers) */
+#ifndef NO_SELECT
+#define NO_SELECT -1
+#endif
+
+static SDL_Window   *gWindow        = NULL;
+static SDL_Renderer *gRenderer      = NULL;
+static SDL_Texture  *gBackgroundTex = NULL;
+static SDL_Texture  *gTilesTex      = NULL;
+static int           gZoomFactor    = 1;
+
+/* Phase 4 render-target textures.
+   Status icon panels (bases/pills/tanks) are drawn directly to the
+   framebuffer each frame rather than cached in off-screen textures,
+   which avoids render-target-switching issues. */
+static SDL_Texture *gManStatusTex   = NULL;  /* MAN_STATUS_WIDTH*zf x MAN_STATUS_HEIGHT*zf */
+static SDL_Texture *gTankBarsTex    = NULL;  /* TOTALWIDTH x HEIGHT */
+static SDL_Texture *gBaseBarsTex    = NULL;  /* MAX_WIDTH x TOTALHEIGHT */
+
+static buildSelect  gCurrentBuildSelect = BsTrees;
+
+/* Frame rate counting (mirrors g_dwFrame* in win32/draw.c) */
+static DWORD g_dwFrameTime  = 0;
+static DWORD g_dwFrameCount = 0;
+static DWORD g_dwFrameTotal = 0;
+
+/* Phase 5 — SDL_ttf fonts.
+   gFontMsg  : newswire / overlay text (slightly smaller — fits more chars)
+   gFontKD   : kills/deaths counters   (slightly larger  — easier to read) */
+static TTF_Font    *gFontMsg  = NULL;
+static TTF_Font    *gFontKD   = NULL;
+static TTF_Font    *gFontTiny  = NULL;  /* tiny font for pill/base status panel labels */
+static TTF_Font    *gFontLabel = NULL;  /* larger font for pill/base labels in main view */
+
+/* Tank label texture cache (one per player slot, 0-15) */
+#define SDL3_MAX_PLAYERS 16
+#define SDL3_MAX_NAME_LEN 64
+static SDL_Texture *gLabelTex[SDL3_MAX_PLAYERS];
+static char         gLabelStr[SDL3_MAX_PLAYERS][SDL3_MAX_NAME_LEN];
+
+/* Last scroll offsets used when rendering tank labels (set each frame) */
+static int          gCurrentEdgeX = 0;
+static int          gCurrentEdgeY = 0;
+
+/* Network-failed flag: set by sdl3DrawSetNetFailed() before each frame */
+static bool         gNetFailed    = false;
+
+/* Death static effect state */
+static int          gStaticLast   = 0;
+
+/* Guard: only blit gManStatusTex after sdl3DrawSetManStatus has drawn into it.
+   Prevents a one-frame artifact where the LGM arrow points top-left before
+   the first real angle is computed. */
+static bool         gManStatusReady = false;
+
+/* Tablet viewport bounds — set each frame by sdl3DrawMainScreen(),
+   read by sdl3DrawGetTabletViewport(). */
+static int          gTabletVpX = 0, gTabletVpY = 0;
+static int          gTabletVpW = 0, gTabletVpH = 0;
+static int          gTabletVpZoom = 0;
+
+/* Configurable status panel origins (zoomed pixel coords).
+   -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
+   Set by sdl3DrawSetStatusPanelOrigins() for tablet mode. */
+static float        gStatusTanksOrgX = -1, gStatusTanksOrgY = -1;
+static float        gStatusPillsOrgX = -1, gStatusPillsOrgY = -1;
+static float        gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
+
+/* Cached text drawn by sdl3DrawMessages / sdl3DrawKillsDeaths.
+   Both functions just store values here; sdl3DrawMainScreen (and
+   sdl3DrawRedrawAll) render them into the frame before SDL_RenderPresent
+   so everything is composited in a single present. */
+#define SDL3_MSG_LEN 512
+static char gMsgTop[SDL3_MSG_LEN];
+static char gMsgBottom[SDL3_MSG_LEN];
+static int  gCachedKills  = 0;
+static int  gCachedDeaths = 0;
+
+/* Texture cache for message / KD text — avoids per-frame surface->texture churn.
+   Each entry stores the rendered texture plus the string it was built from.
+   Invalidated when the visible substring changes. */
+static SDL_Texture *gTexMsgTop    = NULL;
+static SDL_Texture *gTexMsgBot    = NULL;
+static SDL_Texture *gTexKills     = NULL;
+static SDL_Texture *gTexDeaths    = NULL;
+static char         gTexMsgTopStr[SDL3_MSG_LEN];
+static char         gTexMsgBotStr[SDL3_MSG_LEN];
+static char         gTexKillsStr[16];
+static char         gTexDeathsStr[16];
+static int          gTexMsgTopW, gTexMsgTopH;
+static int          gTexMsgBotW, gTexMsgBotH;
+static int          gTexKillsW,  gTexKillsH;
+static int          gTexDeathsW, gTexDeathsH;
+
+/* Source-rect lookup tables for tiles now live in mapview.c (mapViewPosX/Y). */
+
+/* Screen dimensions at zoom=1 (matches SCREEN_SIZE_X/Y in winbolo.h) */
+#define SDL3_SCREEN_W 515
+#define SDL3_SCREEN_H 325
+
+
+/*********************************************************
+*NAME:          sdl3RenderText
+*PURPOSE:
+*  Renders a text string with the game font directly onto
+*  the current render target at (x, y) in screen pixels.
+*  No-op if font is NULL or text is NULL/empty.
+*********************************************************/
+static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float x, float y) {
+  if (!font || !gRenderer || !text || text[0] == '\0') return;
+
+  SDL_Surface *sSurf = TTF_RenderText_Blended(font, text, 0, fg);
+  if (!sSurf) return;
+  SDL_Texture *tTex = SDL_CreateTextureFromSurface(gRenderer, sSurf);
+  if (tTex) {
+    SDL_FRect d = { x, y, (float)sSurf->w, (float)sSurf->h };
+    SDL_RenderTexture(gRenderer, tTex, NULL, &d);
+    SDL_DestroyTexture(tTex);
+  }
+  SDL_DestroySurface(sSurf);
+}
+
+/*********************************************************
+*NAME:          sdl3UpdateTextCache
+*PURPOSE:
+*  Re-renders a text texture only when the string changes.
+*  Compares text against prevStr; if different, destroys
+*  the old texture and creates a new one. Stores the new
+*  string, texture, and dimensions via the out-pointers.
+*********************************************************/
+static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
+                                SDL_Color fg,
+                                SDL_Texture **tex, char *prevStr, size_t prevSize,
+                                int *outW, int *outH) {
+  if (!text || text[0] == '\0') {
+    if (*tex) { SDL_DestroyTexture(*tex); *tex = NULL; }
+    prevStr[0] = '\0';
+    *outW = *outH = 0;
+    return;
+  }
+  if (*tex && SDL_strcmp(text, prevStr) == 0) return; /* unchanged */
+
+  if (*tex) { SDL_DestroyTexture(*tex); *tex = NULL; }
+  SDL_Surface *surf = TTF_RenderText_Blended(font, text, 0, fg);
+  if (!surf) { prevStr[0] = '\0'; *outW = *outH = 0; return; }
+  *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
+  *outW = surf->w;
+  *outH = surf->h;
+  SDL_DestroySurface(surf);
+  SDL_strlcpy(prevStr, text, prevSize);
+}
+
+/* sdl3SetupDrawArrays moved to mapview.c as mapViewInit() */
+/* (old sdl3SetupDrawArrays body removed — now in mapview.c) */
+/* Builds the sprite sheet from individual SVG/PNG files (with BMP fallback)
+ * and creates gTilesTex from the assembled surface. */
+static bool sdl3LoadTiles(void) {
+  if (gTilesTex != NULL) {
+    return TRUE;
+  }
+
+  SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
+  if (!sheet) {
+    SDL_Log("sdl3LoadTiles: tileLoaderBuildSheet failed");
+    return FALSE;
+  }
+
+  gTilesTex = SDL_CreateTextureFromSurface(gRenderer, sheet);
+  SDL_DestroySurface(sheet);
+  if (gTilesTex == NULL) {
+    SDL_Log("sdl3LoadTiles: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
+    return FALSE;
+  }
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
+  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
+  return TRUE;
+}
+
+/* Loads data/background.bmp as gBackgroundTex. */
+static bool sdl3LoadBackground(void) {
+  if (gBackgroundTex != NULL) {
+    return TRUE;
+  }
+
+  SDL_Surface *surf = SDL_LoadBMP("data/background.bmp");
+  if (surf == NULL) {
+    SDL_Log("sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
+    return FALSE;
+  }
+
+  gBackgroundTex = SDL_CreateTextureFromSurface(gRenderer, surf);
+  SDL_DestroySurface(surf);
+  if (gBackgroundTex == NULL) {
+    SDL_Log("sdl3DrawBackground: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
+    return FALSE;
+  }
+  SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          sdl3CreateRenderTarget
+*PURPOSE:
+*  Helper: create a render-target texture of given size,
+*  clear it to black, and set blend mode on it.
+*  Returns NULL on failure.
+*********************************************************/
+static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
+  SDL_Texture *tex = SDL_CreateTexture(gRenderer,
+                                       SDL_PIXELFORMAT_RGBA8888,
+                                       SDL_TEXTUREACCESS_TARGET,
+                                       w, h);
+  if (tex == NULL) {
+    SDL_Log("sdl3CreateRenderTarget: failed %dx%d: %s", w, h, SDL_GetError());
+    return NULL;
+  }
+  /* No premultiplied alpha when drawing into the target */
+  SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+  SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+  SDL_SetRenderTarget(gRenderer, tex);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+  SDL_SetRenderTarget(gRenderer, NULL);
+  return tex;
+}
+
+/*********************************************************
+*NAME:          sdl3RenderStatusPanels
+*PURPOSE:
+*  Blits all persistent status-panel textures to the
+*  main framebuffer at their zoomed screen positions,
+*  then draws the current build-select indent overlay.
+*********************************************************/
+static void sdl3RenderStatusPanels(void) {
+  int zf = gZoomFactor;
+
+  /* Status icon panels (bases/pills/tanks) are drawn directly to the
+     framebuffer by sdl3DrawSet*StatusClear / sdl3DrawStatus* calls that
+     occur before sdl3RenderStatusPanels in each frame.  Only the
+     man-status circle and resource bars still use render-target textures. */
+
+  if (gManStatusTex && gManStatusReady) {
+    SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_BLEND);
+    /* Texture is (MAN_STATUS_WIDTH+2)*(MAN_STATUS_HEIGHT+2)*zf to give the
+       circle 1px padding on each edge — blit at same screen position but
+       allow the extra pixels to show by expanding the dest rect by 2*zf. */
+    SDL_FRect d = { (float)(zf * MAN_STATUS_X), (float)(zf * MAN_STATUS_Y),
+                    (float)(zf * (MAN_STATUS_WIDTH  + 2)),
+                    (float)(zf * (MAN_STATUS_HEIGHT + 2)) };
+    SDL_RenderTexture(gRenderer, gManStatusTex, NULL, &d);
+  }
+  if (gTankBarsTex) {
+    SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_BLEND);
+    SDL_FRect d = { (float)(zf * STATUS_TANK_SHELLS), (float)(zf * STATUS_TANK_BARS_TOP),
+                    (float)(zf * STATUS_TANK_BARS_TOTALWIDTH), (float)(zf * STATUS_TANK_BARS_HEIGHT) };
+    SDL_RenderTexture(gRenderer, gTankBarsTex, NULL, &d);
+  }
+  if (gBaseBarsTex) {
+    SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_BLEND);
+    SDL_FRect d = { (float)(zf * STATUS_BASE_BARS_LEFT), (float)(zf * STATUS_BASE_BARS_TOP),
+                    (float)(zf * STATUS_BASE_BARS_MAX_WIDTH), (float)(zf * STATUS_BASE_BARS_TOTALHEIGHT) };
+    SDL_RenderTexture(gRenderer, gBaseBarsTex, NULL, &d);
+  }
+
+  /* Draw current build-select indent (ON tile) over the background */
+  if (gTilesTex) {
+    int bx, by, dotX, dotY;
+    switch (gCurrentBuildSelect) {
+      case BsTrees:
+        bx = BS_TREE_OFFSET_X; by = BS_TREE_OFFSET_Y;
+        dotX = BS_DOT_TREE_OFFSET_X; dotY = BS_DOT_TREE_OFFSET_Y;
+        break;
+      case BsRoad:
+        bx = BS_ROAD_OFFSET_X; by = BS_ROAD_OFFSET_Y;
+        dotX = BS_DOT_ROAD_OFFSET_X; dotY = BS_DOT_ROAD_OFFSET_Y;
+        break;
+      case BsBuilding:
+        bx = BS_BUILDING_OFFSET_X; by = BS_BUILDING_OFFSET_Y;
+        dotX = BS_DOT_BUILDING_OFFSET_X; dotY = BS_DOT_BUILDING_OFFSET_Y;
+        break;
+      case BsPillbox:
+        bx = BS_PILLBOX_OFFSET_X; by = BS_PILLBOX_OFFSET_Y;
+        dotX = BS_DOT_PILLBOX_OFFSET_X; dotY = BS_DOT_PILLBOX_OFFSET_Y;
+        break;
+      default: /* BsMine */
+        bx = BS_MINE_OFFSET_X; by = BS_MINE_OFFSET_Y;
+        dotX = BS_DOT_MINE_OFFSET_X; dotY = BS_DOT_MINE_OFFSET_Y;
+        break;
+    }
+    /* Large indent tile */
+    SDL_FRect iSrc = { (float)INDENT_ON_X, (float)INDENT_ON_Y,
+                       (float)BS_ITEM_SIZE_X, (float)BS_ITEM_SIZE_Y };
+    SDL_FRect iDst = { (float)(zf * bx), (float)(zf * by),
+                       (float)(zf * BS_ITEM_SIZE_X), (float)(zf * BS_ITEM_SIZE_Y) };
+    SDL_RenderTexture(gRenderer, gTilesTex, &iSrc, &iDst);
+
+    /* Small dot tile */
+    SDL_FRect dSrc = { (float)INDENT_DOT_ON_X, (float)INDENT_DOT_ON_Y,
+                       (float)BS_DOT_ITEM_SIZE_X, (float)BS_DOT_ITEM_SIZE_Y };
+    SDL_FRect dDst = { (float)(zf * dotX), (float)(zf * dotY),
+                       (float)(zf * BS_DOT_ITEM_SIZE_X), (float)(zf * BS_DOT_ITEM_SIZE_Y) };
+    SDL_RenderTexture(gRenderer, gTilesTex, &dSrc, &dDst);
+  }
+}
+
+/*--------------------------------------------------------
+ * Helper: look up (dstX, dstY) within a status panel for
+ * item number n (1-based) using the positions.h grid.
+ * type: 0=base, 1=pill, 2=tank
+ *--------------------------------------------------------*/
+static void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
+  /* All three panels share the same grid layout */
+  int startX, startY, gapX, gapY, itemW;
+  (void)type;
+  startX = STATUS_BASE_1_X;  /* == STATUS_PILLBOX_1_X == STATUS_TANKS_1_X == 4 */
+  startY = STATUS_BASE_1_Y;  /* == 4 */
+  gapX   = STATUS_ITEM_GAP_X;
+  gapY   = STATUS_ITEM_GAP_Y;
+  itemW  = STATUS_ITEM_SIZE_X;
+
+  /* Positions 1-6: row 0; 7-8 and 9-10: row 1 (with gap in middle for center icon);
+     11-16: row 2. This matches the positions.h explicit macros. */
+  int col, row;
+  if (n <= 6) {
+    col = n - 1;
+    row = 0;
+  } else if (n <= 8) {
+    col = n - 7;
+    row = 1;
+  } else if (n <= 10) {
+    col = (n - 9) + 4; /* cols 4,5 in row 1 */
+    row = 1;
+  } else {
+    col = n - 11;
+    row = 2;
+  }
+
+  *outX = startX + col * (gapX + itemW);
+  *outY = startY + row * (gapY + STATUS_ITEM_SIZE_Y);
+}
+
+/*********************************************************
+*NAME:          sdl3RenderCachedText
+*PURPOSE:
+*  Renders the cached message lines and kills/deaths onto
+*  the current render target. Called just before every
+*  SDL_RenderPresent so text is composited in one pass.
+*********************************************************/
+static void sdl3RenderCachedText(void) {
+  if (!gRenderer) return;
+  int zf = gZoomFactor;
+  SDL_Color white = {200, 200, 200, 255};
+
+  if (gFontMsg) {
+    /* Clip to the newswire rectangle so text doesn't bleed outside the border */
+    SDL_Rect msgClip = {
+      zf * MESSAGE_LEFT,
+      zf * MESSAGE_TOP,
+      zf * MESSAGE_WIDTH,
+      zf * MESSAGE_HEIGHT
+    };
+    SDL_SetRenderClipRect(gRenderer, &msgClip);
+
+    if (gMsgTop[0] != '\0') {
+      /* Show only the rightmost characters that fit in the display width. */
+      size_t fitLen = 0;
+      const char *topStr = gMsgTop;
+      size_t topLen = SDL_strlen(gMsgTop);
+      TTF_MeasureString(gFontMsg, gMsgTop, topLen, zf * MESSAGE_WIDTH, NULL, &fitLen);
+      if (fitLen < topLen) {
+        topStr = gMsgTop + (topLen - fitLen);
+      }
+      sdl3UpdateTextCache(gFontMsg, topStr, white,
+                          &gTexMsgTop, gTexMsgTopStr, sizeof(gTexMsgTopStr),
+                          &gTexMsgTopW, &gTexMsgTopH);
+      if (gTexMsgTop) {
+        SDL_FRect d = { (float)(zf * MESSAGE_TOP_LINE_X),
+                        (float)(zf * MESSAGE_TOP_LINE_Y),
+                        (float)gTexMsgTopW, (float)gTexMsgTopH };
+        SDL_RenderTexture(gRenderer, gTexMsgTop, NULL, &d);
+      }
+    } else {
+      sdl3UpdateTextCache(gFontMsg, "", white,
+                          &gTexMsgTop, gTexMsgTopStr, sizeof(gTexMsgTopStr),
+                          &gTexMsgTopW, &gTexMsgTopH);
+    }
+
+    if (gMsgBottom[0] != '\0') {
+      size_t fitLen = 0;
+      const char *botStr = gMsgBottom;
+      size_t botLen = SDL_strlen(gMsgBottom);
+      TTF_MeasureString(gFontMsg, gMsgBottom, botLen, zf * MESSAGE_WIDTH, NULL, &fitLen);
+      if (fitLen < botLen) {
+        botStr = gMsgBottom + (botLen - fitLen);
+      }
+      sdl3UpdateTextCache(gFontMsg, botStr, white,
+                          &gTexMsgBot, gTexMsgBotStr, sizeof(gTexMsgBotStr),
+                          &gTexMsgBotW, &gTexMsgBotH);
+      if (gTexMsgBot) {
+        SDL_FRect d = { (float)(zf * MESSAGE_BOTTOM_LINE_X),
+                        (float)(zf * MESSAGE_BOTTOM_LINE_Y),
+                        (float)gTexMsgBotW, (float)gTexMsgBotH };
+        SDL_RenderTexture(gRenderer, gTexMsgBot, NULL, &d);
+      }
+    } else {
+      sdl3UpdateTextCache(gFontMsg, "", white,
+                          &gTexMsgBot, gTexMsgBotStr, sizeof(gTexMsgBotStr),
+                          &gTexMsgBotW, &gTexMsgBotH);
+    }
+
+    SDL_SetRenderClipRect(gRenderer, NULL);
+  }
+
+  if (gFontKD) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", gCachedKills  > 99 ? 99 : gCachedKills);
+    sdl3UpdateTextCache(gFontKD, buf, white,
+                        &gTexKills, gTexKillsStr, sizeof(gTexKillsStr),
+                        &gTexKillsW, &gTexKillsH);
+    if (gTexKills) {
+      SDL_FRect d = { (float)(zf * STATUS_KILLS_LEFT),
+                      (float)(zf * STATUS_KILLS_TOP),
+                      (float)gTexKillsW, (float)gTexKillsH };
+      SDL_RenderTexture(gRenderer, gTexKills, NULL, &d);
+    }
+
+    snprintf(buf, sizeof(buf), "%d", gCachedDeaths > 99 ? 99 : gCachedDeaths);
+    sdl3UpdateTextCache(gFontKD, buf, white,
+                        &gTexDeaths, gTexDeathsStr, sizeof(gTexDeathsStr),
+                        &gTexDeathsW, &gTexDeathsH);
+    if (gTexDeaths) {
+      SDL_FRect d = { (float)(zf * STATUS_DEATHS_LEFT),
+                      (float)(zf * STATUS_DEATHS_TOP),
+                      (float)gTexDeathsW, (float)gTexDeathsH };
+      SDL_RenderTexture(gRenderer, gTexDeaths, NULL, &d);
+    }
+  }
+}
+
+int sdl3DrawGetZoomFactor(void) {
+  return gZoomFactor;
+}
+
+SDL_Window *sdl3DrawGetWindow(void) {
+  return gWindow;
+}
+
+SDL_Renderer *sdl3DrawGetRenderer(void) {
+  return gRenderer;
+}
+
+SDL_Texture *sdl3DrawGetTilesTexture(void) {
+  return gTilesTex;
+}
+
+void sdl3DrawDisableLogicalPresentation(void) {
+  if (gRenderer) {
+    SDL_SetRenderLogicalPresentation(gRenderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+  }
+}
+
+void sdl3DrawRestoreLogicalPresentation(void) {
+  if (!gRenderer) return;
+#ifdef __ANDROID__
+  if (!uiModeIsTablet()) {
+    SDL_SetRenderLogicalPresentation(gRenderer,
+                                     gZoomFactor * SDL3_SCREEN_W,
+                                     gZoomFactor * SDL3_SCREEN_H,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    return;
+  }
+#endif
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  if (uiModeIsTablet()) {
+    /* Re-apply the mobile tablet logical presentation (same logic as setup) */
+    int ww, wh;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    int gameUnit = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y;
+    int curZoom = wh / gameUnit;
+    if (curZoom < 1) curZoom = 1;
+    int used = gameUnit * curZoom;
+    if ((wh - used) * 100 / wh > 15) {
+      int nextZoom = curZoom + 1;
+      int logH = gameUnit * nextZoom;
+      int logW = ww * logH / wh;
+      SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
+                                       SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    }
+  }
+#endif
+}
+
+void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
+  if (!ev) return;
+  switch (ev->type) {
+    case SDL_EVENT_MOUSE_MOTION: {
+      cursorMove((int)ev->motion.x, (int)ev->motion.y);
+      BYTE cx = 0, cy = 0;
+      if (cursorPos(NULL, &cx, &cy)) {
+        if (cx > 16 || cy > 16) cx = 100;
+        screenSetCursorPosCS(cs, cx, cy);
+      } else {
+        screenSetCursorPosCS(cs, 0, 0);
+      }
+      break;
+    }
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+      if (ev->button.button == SDL_BUTTON_LEFT) {
+        BYTE xVal = 0, yVal = 0;
+        if (cursorPos(NULL, &xVal, &yVal)) {
+          clientMutexWaitFor();
+          screenManMoveCS(cs, getBuildCurrentSelectCS(cs));
+          clientMutexRelease();
+        } else {
+          /* Check if click landed on one of the 5 build-select buttons */
+          int xPos = (int)ev->button.x;
+          int yPos = (int)ev->button.y;
+          int zf = gZoomFactor;
+          buildSelect newSelect = NO_SELECT;
+          if (xPos >= zf * BS_TREE_OFFSET_X && xPos <= zf * (BS_TREE_OFFSET_X + BS_ITEM_SIZE_X) &&
+              yPos >= zf * BS_TREE_OFFSET_Y && yPos <= zf * (BS_TREE_OFFSET_Y + BS_ITEM_SIZE_Y)) {
+            newSelect = BsTrees;
+          } else if (xPos >= zf * BS_ROAD_OFFSET_X && xPos <= zf * (BS_ROAD_OFFSET_X + BS_ITEM_SIZE_X) &&
+                     yPos >= zf * BS_ROAD_OFFSET_Y && yPos <= zf * (BS_ROAD_OFFSET_Y + BS_ITEM_SIZE_Y)) {
+            newSelect = BsRoad;
+          } else if (xPos >= zf * BS_BUILDING_OFFSET_X && xPos <= zf * (BS_BUILDING_OFFSET_X + BS_ITEM_SIZE_X) &&
+                     yPos >= zf * BS_BUILDING_OFFSET_Y && yPos <= zf * (BS_BUILDING_OFFSET_Y + BS_ITEM_SIZE_Y)) {
+            newSelect = BsBuilding;
+          } else if (xPos >= zf * BS_PILLBOX_OFFSET_X && xPos <= zf * (BS_PILLBOX_OFFSET_X + BS_ITEM_SIZE_X) &&
+                     yPos >= zf * BS_PILLBOX_OFFSET_Y && yPos <= zf * (BS_PILLBOX_OFFSET_Y + BS_ITEM_SIZE_Y)) {
+            newSelect = BsPillbox;
+          } else if (xPos >= zf * BS_MINE_OFFSET_X && xPos <= zf * (BS_MINE_OFFSET_X + BS_ITEM_SIZE_X) &&
+                     yPos >= zf * BS_MINE_OFFSET_Y && yPos <= zf * (BS_MINE_OFFSET_Y + BS_ITEM_SIZE_Y)) {
+            newSelect = BsMine;
+          }
+          if (newSelect != NO_SELECT && newSelect != getBuildCurrentSelectCS(cs)) {
+            sdl3DrawSelectIndentsOff(getBuildCurrentSelectCS(cs), 0, 0);
+            sdl3DrawSelectIndentsOn(newSelect, 0, 0);
+            setBuildCurrentSelectCS(cs, newSelect);
+          }
+        }
+      }
+      break;
+    }
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+      cursorLeaveWindow();
+      break;
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+      cursorAcquireCursor();
+      break;
+  }
+}
+
+bool sdl3DrawSetup(int zoomFactor) {
+  gZoomFactor = zoomFactor;
+
+  /* Phase 5 — initialise SDL_ttf and open font */
+  bool ttfOk = TTF_Init();
+  if (ttfOk) {
+#if defined(__EMSCRIPTEN__)
+    const char *fontPath = "/data/CourierPrime-Regular.ttf";
+#elif defined(__ANDROID__)
+    /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
+     * asset manager when given a relative path.  Don't prepend BasePath. */
+    const char *fontPath = "data/CourierPrime-Regular.ttf";
+#else
+    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
+    /* Use SDL_GetBasePath() to resolve font path relative to the executable,
+       so it works regardless of CWD */
+    const char *base = SDL_GetBasePath();
+    static char fontBuf[1024];
+    if (base) {
+      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
+    } else {
+      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
+    }
+    const char *fontPath = fontBuf;
+#endif
+    gFontMsg  = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
+    gFontKD   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
+    gFontTiny  = TTF_OpenFont(fontPath,  8 * gZoomFactor); /* pill/base status labels */
+    gFontLabel = TTF_OpenFont(fontPath, 10 * gZoomFactor); /* pill/base main view labels */
+  }
+
+  /* Clear label cache */
+  for (int i = 0; i < SDL3_MAX_PLAYERS; i++) {
+    gLabelTex[i] = NULL;
+    gLabelStr[i][0] = '\0';
+  }
+
+#ifdef __EMSCRIPTEN__
+  /* Pre-size the canvas so SDL3's external_size probe sees the right
+     dimensions (it temporarily sets the canvas to 1x1 and checks CSS). */
+  {
+    int cw = zoomFactor * SDL3_SCREEN_W;
+    int ch = zoomFactor * SDL3_SCREEN_H;
+    emscripten_set_canvas_element_size("#canvas", cw, ch);
+    emscripten_set_element_css_size("#canvas", (double)cw, (double)ch);
+  }
+#endif
+
+  if (uiModeIsTablet()) {
+    /* Tablet mode: fullscreen window, no fixed-size chrome */
+    gWindow = SDL_CreateWindow("WinBolo SDL3", 0, 0,
+                               SDL_WINDOW_FULLSCREEN);
+  } else {
+    gWindow = SDL_CreateWindow("WinBolo SDL3",
+                               zoomFactor * SDL3_SCREEN_W,
+                               zoomFactor * SDL3_SCREEN_H,
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
+                               0);
+#else
+                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+#endif
+  }
+  if (gWindow == NULL) {
+    SDL_Log("sdl3DrawSetup: SDL_CreateWindow failed: %s", SDL_GetError());
+    return FALSE;
+  }
+
+  gRenderer = SDL_CreateRenderer(gWindow, NULL);
+  if (gRenderer == NULL) {
+    SDL_Log("sdl3DrawSetup: SDL_CreateRenderer failed: %s", SDL_GetError());
+    SDL_DestroyWindow(gWindow);
+    gWindow = NULL;
+    return FALSE;
+  }
+
+  SDL_SetRenderVSync(gRenderer, 1);
+
+#ifdef __ANDROID__
+  if (!uiModeIsTablet()) {
+    /* On Android with desktop mode: set a logical presentation so SDL3
+       scales our fixed-size layout to fit the screen. */
+    SDL_SetRenderLogicalPresentation(gRenderer,
+                                     zoomFactor * SDL3_SCREEN_W,
+                                     zoomFactor * SDL3_SCREEN_H,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+  }
+#endif
+
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  if (uiModeIsTablet()) {
+    /* On mobile in tablet mode, the screen may be too small for integer
+       zoom to fill the height well (e.g. 402pt → zoom 1 uses only 60%).
+       Set a logical presentation so the next integer zoom fits exactly. */
+    int ww, wh;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    int gameUnit = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y; /* 240 */
+    int curZoom = wh / gameUnit;
+    if (curZoom < 1) curZoom = 1;
+    int used = gameUnit * curZoom;
+    /* If more than 15% of screen height is wasted, bump to next zoom */
+    if ((wh - used) * 100 / wh > 15) {
+      int nextZoom = curZoom + 1;
+      int logH = gameUnit * nextZoom;
+      int logW = ww * logH / wh;
+      SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
+                                       SDL_LOGICAL_PRESENTATION_LETTERBOX);
+      SDL_Log("sdl3DrawSetup: mobile tablet logical presentation %dx%d (zoom %d)",
+              logW, logH, nextZoom);
+    }
+  }
+#endif
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+  SDL_RenderPresent(gRenderer);
+
+  /* Set up the SDL cursor (crosshair inside game area, system cursor outside) */
+  cursorSetup();
+
+  /* Pre-populate source-rect lookup tables at 1x (SDL3 scales dest rects) */
+  mapViewInit();
+
+  /* Load tiles now so status panels can draw during game init, before the
+     first sdl3DrawMainScreen call. */
+  sdl3LoadTiles();
+
+  /* Create Phase 4 render-target textures.
+     Man-status is created at zoom-factor resolution so the circle is drawn
+     at actual screen pixels — no upscaling means no clipping or jaggedness.
+     Add 2 pixels of padding so the arrow can reach the circle edge without
+     being clipped.  Status icon panels (bases/pills/tanks) are drawn
+     directly to the framebuffer so they need no render-target texture. */
+  gManStatusTex   = sdl3CreateRenderTarget((MAN_STATUS_WIDTH  + 2) * gZoomFactor,
+                                           (MAN_STATUS_HEIGHT + 2) * gZoomFactor);
+  gTankBarsTex    = sdl3CreateRenderTarget(STATUS_TANK_BARS_TOTALWIDTH, STATUS_TANK_BARS_HEIGHT);
+  gBaseBarsTex    = sdl3CreateRenderTarget(STATUS_BASE_BARS_MAX_WIDTH,  STATUS_BASE_BARS_TOTALHEIGHT);
+
+  return TRUE;
+}
+
+void sdl3DrawCleanup(void) {
+  tileLoaderCleanup();
+  cursorCleanup();
+
+  /* ImGui cleanup before destroying renderer/window */
+  sdl3ImguiCleanup();
+
+  /* Phase 5 — destroy label cache, text caches, and shut down TTF */
+  for (int i = 0; i < SDL3_MAX_PLAYERS; i++) {
+    if (gLabelTex[i]) { SDL_DestroyTexture(gLabelTex[i]); gLabelTex[i] = NULL; }
+    gLabelStr[i][0] = '\0';
+  }
+  if (gTexMsgTop)  { SDL_DestroyTexture(gTexMsgTop);  gTexMsgTop  = NULL; }
+  if (gTexMsgBot)  { SDL_DestroyTexture(gTexMsgBot);  gTexMsgBot  = NULL; }
+  if (gTexKills)   { SDL_DestroyTexture(gTexKills);   gTexKills   = NULL; }
+  if (gTexDeaths)  { SDL_DestroyTexture(gTexDeaths);  gTexDeaths  = NULL; }
+  if (gFontMsg)  { TTF_CloseFont(gFontMsg);  gFontMsg  = NULL; }
+  if (gFontKD)   { TTF_CloseFont(gFontKD);   gFontKD   = NULL; }
+  if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
+  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
+  TTF_Quit();
+
+  if (gManStatusTex)   { SDL_DestroyTexture(gManStatusTex);   gManStatusTex   = NULL; }
+  if (gTankBarsTex)    { SDL_DestroyTexture(gTankBarsTex);    gTankBarsTex    = NULL; }
+  if (gBaseBarsTex)    { SDL_DestroyTexture(gBaseBarsTex);    gBaseBarsTex    = NULL; }
+  if (gTilesTex) {
+    SDL_DestroyTexture(gTilesTex);
+    gTilesTex = NULL;
+  }
+  if (gBackgroundTex) {
+    SDL_DestroyTexture(gBackgroundTex);
+    gBackgroundTex = NULL;
+  }
+  if (gRenderer) {
+    SDL_DestroyRenderer(gRenderer);
+    gRenderer = NULL;
+  }
+  if (gWindow) {
+    SDL_DestroyWindow(gWindow);
+    gWindow = NULL;
+  }
+}
+
+/* sdl3DrawShells, sdl3DrawTanks, sdl3DrawLGMs moved to mapview.c
+   as mapViewDrawShells/Tanks/LGMs. */
+
+/*--------------------------------------------------------
+ * Draw tank labels only (separate pass after mapViewDrawTanks).
+ *--------------------------------------------------------*/
+static void sdl3DrawTankLabels(screenTanks *tks) {
+  BYTE total = screenTanksGetNumEntries(tks);
+  for (BYTE count = 1; count <= total; count++) {
+    BYTE mx, my, px, py, frame, playerNum;
+    char playerName[256];
+    screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum, playerName);
+    sdl3DrawTankLabel(playerName, playerNum, mx, my, px, py);
+  }
+}
+
+void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
+                        screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
+                        RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
+                        int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
+                        bool useCursor, BYTE cursorLeft, BYTE cursorTop, tank *tank) {
+  (void)rcWindow;
+
+  if (gRenderer == NULL) {
+    return;
+  }
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  bool tabletMode = uiModeIsTablet();
+
+  /* Effective zoom: in tablet mode, compute a scale that fits the 15x15
+     tile game view to the screen, then centre it. */
+  int effectiveZoom = gZoomFactor;
+  int tabletOriginX = 0, tabletOriginY = 0;
+
+  if (tabletMode) {
+    int ww, wh;
+    /* Use logical presentation size if set, otherwise render output size */
+    {
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+      if (ww <= 0 || wh <= 0) {
+        SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+      }
+    }
+    /* Integer zoom that fits 15 tiles in both dimensions */
+    int zoomX = ww / (MAIN_SCREEN_SIZE_X * TILE_SIZE_X);
+    int zoomY = wh / (MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y);
+    effectiveZoom = (zoomX < zoomY) ? zoomX : zoomY;
+    if (effectiveZoom < 1) effectiveZoom = 1;
+    /* Centre the game area */
+    int gamePixW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom;
+    int gamePixH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * effectiveZoom;
+    tabletOriginX = (ww - gamePixW) / 2;
+    tabletOriginY = (wh - gamePixH) / 2;
+    /* Store for sdl3DrawGetTabletViewport() */
+    gTabletVpX = tabletOriginX;
+    gTabletVpY = tabletOriginY;
+    gTabletVpW = gamePixW;
+    gTabletVpH = gamePixH;
+    gTabletVpZoom = effectiveZoom;
+  } else if (!tabletMode) {
+    gTabletVpX = gTabletVpY = gTabletVpW = gTabletVpH = gTabletVpZoom = 0;
+  }
+
+  if (!tabletMode && sdl3LoadBackground()) {
+    SDL_FRect bgDest = { 0.0f, 0.0f,
+                         (float)(gZoomFactor * SDL3_SCREEN_W),
+                         (float)(gZoomFactor * SDL3_SCREEN_H) };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
+  }
+
+  /* In tablet mode, temporarily override gZoomFactor so that sprite
+     helper functions (sdl3DrawShells/Tanks/LGMs) and gunsight code
+     that reference gZoomFactor directly pick up the tablet scale. */
+  int savedZoomFactor = gZoomFactor;
+  if (tabletMode) {
+    gZoomFactor = effectiveZoom;
+  }
+
+  if (sdl3LoadTiles()) {
+    int tileW  = TILE_SIZE_X * gZoomFactor;
+    int tileH  = TILE_SIZE_Y * gZoomFactor;
+    int originX, originY, gameW, gameH;
+
+    if (tabletMode) {
+      originX = tabletOriginX;
+      originY = tabletOriginY;
+    } else {
+      originX = MAIN_OFFSET_X * gZoomFactor;
+      originY = MAIN_OFFSET_Y * gZoomFactor;
+    }
+    gameW = MAIN_SCREEN_SIZE_X * tileW;
+    gameH = MAIN_SCREEN_SIZE_Y * tileH;
+
+    SDL_Rect gameClip = {
+      originX, originY,
+      gameW, gameH
+    };
+    SDL_SetRenderClipRect(gRenderer, &gameClip);
+
+    if (srtDelay > 0) {
+      /* Black out the game area during start delay */
+      SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+      SDL_FRect blackRect = { (float)originX, (float)originY,
+                               (float)gameW, (float)gameH };
+      SDL_RenderFillRect(gRenderer, &blackRect);
+
+      /* Render "Game Starts in X" countdown text centred in the black area */
+      if (gFontMsg) {
+        char str[64];
+        long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
+        snprintf(str, sizeof(str), "Game Starts in %ld", secs);
+        SDL_Color white = {200, 200, 200, 255};
+        SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
+        if (sMeasure) {
+          float tx = (float)originX + ((float)gameW - (float)sMeasure->w) * 0.5f;
+          float ty = (float)originY + ((float)gameH - (float)sMeasure->h) * 0.5f;
+          SDL_DestroySurface(sMeasure);
+          sdl3RenderText(gFontMsg, str, white, tx, ty);
+        }
+      }
+    } else if (!isPillView && tankGetDeathWait(tank) != 0 &&
+               ((tankGetLastTankDeath(tank) == LAST_DEATH_BY_DEEPSEA && tankGetDeathWait(tank) < STATIC_ON_TICKS_DEEPSEA) ||
+                (tankGetLastTankDeath(tank) == LAST_DEATH_BY_SHELL   && tankGetDeathWait(tank) < STATIC_ON_TICKS_SHELL) ||
+                (tankGetLastTankDeath(tank) == LAST_DEATH_BY_MINES   && tankGetDeathWait(tank) < STATIC_ON_TICKS_MINES))) {
+      /* Tank died and is waiting to respawn — draw static noise over the game area */
+      if (tankGetDeathWait(tank) != gStaticLast) {
+        gStaticLast = tankGetDeathWait(tank);
+        int staticTilesX = (tileW > 0) ? (gameW / tileW + 1) : 16;
+        int staticTilesY = (tileH > 0) ? (gameH / tileH + 1) : 16;
+        for (int sx = 0; sx < staticTilesY; sx++) {
+          for (int sy = 0; sy < staticTilesX; sy++) {
+            int staticOffset = rand() % (TILE_FILE_X / TILE_SIZE_X);
+            SDL_FRect staticSrc = {
+              (float)(STATIC_X + staticOffset),
+              (float)STATIC_Y,
+              (float)TILE_SIZE_X,
+              (float)TILE_SIZE_Y
+            };
+            SDL_FRect staticDest = {
+              (float)(originX + sy * tileW),
+              (float)(originY + sx * tileH),
+              (float)tileW,
+              (float)tileH
+            };
+            SDL_RenderTexture(gRenderer, gTilesTex, &staticSrc, &staticDest);
+          }
+        }
+      }
+    } else {
+      /* Draw map tiles via mapview */
+      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor };
+      mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Draw pillbox/base number labels (needs fonts — stays here) */
+      if (gFontLabel) {
+        BYTE lx = 0, ly = 0;
+        bool lDone = FALSE;
+        while (!lDone) {
+          BYTE pos = screenGetPos(value, lx, ly);
+          bool isPill = (pos == PILL_EVIL_15 || (pos >= PILL_EVIL_14 && pos <= PILL_EVIL_0) ||
+                         (pos >= PILL_GOOD_15 && pos <= PILL_GOOD_0));
+          bool isBase = (pos == BASE_GOOD || pos == BASE_NEUTRAL || pos == BASE_EVIL);
+          int labelNum = -1;
+          if (isPill && showPillLabels) {
+            labelNum = screenPillNumPosCS(cs, lx, ly) - 1;
+          } else if (isBase && showBaseLabels) {
+            labelNum = screenBaseNumPosCS(cs, lx, ly) - 1;
+          }
+          if (labelNum >= 0) {
+            SDL_FRect dest = {
+              (float)(originX + ((int)lx - 1) * tileW - edgeX),
+              (float)(originY + ((int)ly - 1) * tileH - edgeY),
+              (float)tileW,
+              (float)tileH
+            };
+            char str[4];
+            sprintf(str, "%d", labelNum);
+            SDL_Color white = {200, 200, 200, 255};
+            TTF_Font *labelFont = isBase ? gFontTiny : gFontLabel;
+            SDL_Surface *surf = TTF_RenderText_Blended(labelFont, str, 0, white);
+            if (surf) {
+              SDL_Texture *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
+              if (tex) {
+                float tw = (float)surf->w;
+                float th = (float)surf->h;
+                float tx, ty;
+                if (isBase) {
+                  tx = dest.x;
+                  ty = dest.y;
+                } else {
+                  tx = dest.x + (dest.w - tw) * 0.5f;
+                  ty = dest.y + (dest.h - th) * 0.5f;
+                }
+                SDL_FRect bgRect = { tx - 1.0f, ty - 1.0f, tw + 2.0f, th + 2.0f };
+                SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+                SDL_RenderFillRect(gRenderer, &bgRect);
+                SDL_FRect d = { tx, ty, tw, th };
+                SDL_RenderTexture(gRenderer, tex, NULL, &d);
+                SDL_DestroyTexture(tex);
+              }
+              SDL_DestroySurface(surf);
+            }
+          }
+          lx++;
+          if (lx == MAIN_BACK_BUFFER_SIZE_X) {
+            lx = 0; ly++;
+            if (ly == MAIN_BACK_BUFFER_SIZE_Y) lDone = TRUE;
+          }
+        }
+      }
+
+      /* Gunsight overlay */
+      if (gs->mapX != NO_GUNSIGHT) {
+        SDL_FRect gsSrc = { (float)GUNSIGHT_X, (float)GUNSIGHT_Y,
+                            (float)TILE_SIZE_X, (float)TILE_SIZE_Y };
+        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
+        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
+        SDL_FRect gsDest = {
+          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
+          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
+          (float)tileW, (float)tileH
+        };
+        SDL_RenderTexture(gRenderer, gTilesTex, &gsSrc, &gsDest);
+      }
+
+      /* Build-mode cursor overlay */
+      if (useCursor) {
+        SDL_FRect curSrc = { (float)MOUSE_SQUARE_X, (float)MOUSE_SQUARE_Y,
+                             (float)TILE_SIZE_X, (float)TILE_SIZE_Y };
+        SDL_FRect curDest = {
+          (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX),
+          (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY),
+          (float)tileW, (float)tileH
+        };
+        SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
+      }
+
+      /* Sprites via mapview */
+      gCurrentEdgeX = edgeX;
+      gCurrentEdgeY = edgeY;
+      mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
+      mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
+      /* Tank labels (needs fonts — separate pass after tank sprites) */
+      sdl3DrawTankLabels(tks);
+      mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Phase 5 overlays (inside clip rect so they stay within the game area) */
+      if (isPillView) {
+        sdl3DrawPillInView();
+      }
+      if (gNetFailed) {
+        sdl3DrawNetFailed();
+      }
+    }
+
+    SDL_SetRenderClipRect(gRenderer, NULL);
+  }
+
+  /* Refresh status panel textures every frame so bases/pills/tanks
+     stay current without depending on sdl3DrawRedrawAll firing on WM_PAINT. */
+  if (tabletMode) {
+    /* In tablet mode, position status grids in the left gutter using the
+       same SDL rendering as desktop (BLENDMODE_NONE for correct icons).
+       Only show if the gutter is wide enough (>= 100px). */
+    int leftGutter = tabletOriginX;
+    if (leftGutter >= 100) {
+      int zf = gZoomFactor; /* currently set to effectiveZoom */
+      float gutterX = 4.0f;
+      float gutterY = 4.0f;
+      float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
+      float gridGap = 4.0f;
+      sdl3DrawSetStatusPanelOrigins(
+        gutterX, gutterY,                         /* tanks */
+        gutterX, gutterY + gridH + gridGap,        /* pills */
+        gutterX, gutterY + 2*(gridH + gridGap));   /* bases */
+      sdl3DrawTabletStatusGrids(cs);
+      sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1); /* reset */
+    }
+  } else {
+    sdl3DrawSetBasesStatusClear();
+    {
+      BYTE total = basesGetNumBases(&cs->sim.bs);
+      for (BYTE i = 1; i <= total; i++) {
+        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBaseLabels);
+      }
+    }
+    sdl3DrawSetPillsStatusClear();
+    {
+      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      for (BYTE i = 1; i <= total; i++) {
+        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillLabels);
+      }
+    }
+    sdl3DrawSetTanksStatusClear();
+    for (BYTE i = 1; i <= MAX_TANKS; i++) {
+      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+    }
+
+    sdl3RenderStatusPanels();
+    sdl3RenderCachedText();
+  }
+
+  /* Frame rate counting */
+  g_dwFrameCount++;
+  {
+    DWORD now = (DWORD)SDL_GetTicks();
+    DWORD elapsed = now - g_dwFrameTime;
+    if (elapsed > 1000) {
+      g_dwFrameTotal = g_dwFrameCount;
+      g_dwFrameTime = now;
+      g_dwFrameCount = 0;
+    }
+  }
+
+  /* Restore original zoom factor after tablet-mode override */
+  gZoomFactor = savedZoomFactor;
+}
+
+void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
+                       bool showPillsStatus, bool showBasesStatus) {
+  (void)rcWindow;
+  if (gRenderer == NULL) return;
+
+  bool tabletMode = uiModeIsTablet();
+
+  sdl3DrawSelectIndentsOn(value, 0, 0);
+
+  /* Clear and draw background first so that status draws go on top */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  if (!tabletMode && sdl3LoadBackground()) {
+    SDL_FRect dest = {
+      0.0f, 0.0f,
+      (float)(gZoomFactor * SDL3_SCREEN_W),
+      (float)(gZoomFactor * SDL3_SCREEN_H)
+    };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &dest);
+  }
+
+  if (tabletMode) {
+    /* Tablet: render status grids in gutter if space allows */
+    if (gTabletVpX >= 100) {
+      int zf = gZoomFactor;
+      float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
+      float gridGap = 4.0f;
+      sdl3DrawSetStatusPanelOrigins(4.0f, 4.0f,
+                                    4.0f, 4.0f + gridH + gridGap,
+                                    4.0f, 4.0f + 2*(gridH + gridGap));
+      sdl3DrawTabletStatusGrids(cs);
+      sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
+    }
+  } else {
+    sdl3DrawSetBasesStatusClear();
+    {
+      BYTE total = basesGetNumBases(&cs->sim.bs);
+      for (BYTE i = 1; i <= total; i++) {
+        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBasesStatus);
+      }
+    }
+    sdl3DrawSetPillsStatusClear();
+    {
+      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      for (BYTE i = 1; i <= total; i++) {
+        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillsStatus);
+      }
+    }
+    sdl3DrawSetTanksStatusClear();
+    for (BYTE i = 1; i <= MAX_TANKS; i++) {
+      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+    }
+
+    sdl3RenderStatusPanels();
+    sdl3RenderCachedText();
+  }
+}
+
+void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
+  (void)rcWindow;
+  if (!gRenderer) return;
+
+  int zf = gZoomFactor;
+  bool tabletMode = uiModeIsTablet();
+
+  /* Draw the full UI chrome (background, status icons, panels, newswire)
+   * exactly as sdl3DrawRedrawAll does, so everything except the playfield
+   * area remains visible during map download. */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  if (!tabletMode && sdl3LoadBackground()) {
+    SDL_FRect dest = {
+      0.0f, 0.0f,
+      (float)(zf * SDL3_SCREEN_W),
+      (float)(zf * SDL3_SCREEN_H)
+    };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &dest);
+  }
+
+  if (tabletMode) {
+    if (gTabletVpX >= 100) {
+      int gridZf = gZoomFactor;
+      float gridH = (float)(gridZf * STATUS_TANKS_HEIGHT);
+      float gridGap = 4.0f;
+      sdl3DrawSetStatusPanelOrigins(4.0f, 4.0f,
+                                    4.0f, 4.0f + gridH + gridGap,
+                                    4.0f, 4.0f + 2*(gridH + gridGap));
+      sdl3DrawTabletStatusGrids(cs);
+      sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
+    }
+  } else {
+    sdl3DrawSetBasesStatusClear();
+    {
+      BYTE total = basesGetNumBases(&cs->sim.bs);
+      for (BYTE i = 1; i <= total; i++) {
+        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
+      }
+    }
+    sdl3DrawSetPillsStatusClear();
+    {
+      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      for (BYTE i = 1; i <= total; i++) {
+        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
+      }
+    }
+    sdl3DrawSetTanksStatusClear();
+    for (BYTE i = 1; i <= MAX_TANKS; i++) {
+      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+    }
+    sdl3RenderStatusPanels();
+    sdl3RenderCachedText();
+  }
+
+  /* Fill the playfield area black, then draw white progress bar from the top. */
+  SDL_FRect playfield;
+  if (tabletMode) {
+    int ww, wh;
+    {
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+      if (ww <= 0 || wh <= 0) {
+        SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+      }
+    }
+    int tzX = ww / (MAIN_SCREEN_SIZE_X * TILE_SIZE_X);
+    int tzY = wh / (MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y);
+    int tz = (tzX < tzY) ? tzX : tzY;
+    if (tz < 1) tz = 1;
+    int gpW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * tz;
+    int gpH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * tz;
+    playfield = (SDL_FRect){
+      (float)((ww - gpW) / 2), (float)((wh - gpH) / 2),
+      (float)gpW, (float)gpH
+    };
+  } else {
+    playfield = (SDL_FRect){
+      (float)(zf * MAIN_OFFSET_X),
+      (float)(zf * MAIN_OFFSET_Y),
+      (float)(zf * MAIN_SCREEN_SIZE_X * TILE_SIZE_X),
+      (float)(zf * MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y)
+    };
+  }
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, &playfield);
+
+  if (!justBlack) {
+    /* Map netGetDownloadPos() (0–255) to playfield height.
+     * The back-buffer is (MAIN_SCREEN_SIZE_Y+2)*TILE_SIZE_Y = 272 pixels;
+     * the playfield occupies rows TILE_SIZE_Y..TILE_SIZE_Y+MAIN_SCREEN_SIZE_Y*TILE_SIZE_Y.
+     * The download position is a raw pixel count from the top of the back buffer,
+     * so subtract the TILE_SIZE_Y row offset and clamp. */
+    int downloadRaw = (int)netGetDownloadPos();
+    int visibleY = downloadRaw - TILE_SIZE_Y;
+    if (visibleY < 0) visibleY = 0;
+    int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y;
+    if (visibleY > playfieldH) visibleY = playfieldH;
+
+    SDL_FRect bar = {
+      (float)(zf * MAIN_OFFSET_X),
+      (float)(zf * MAIN_OFFSET_Y),
+      (float)(zf * MAIN_SCREEN_SIZE_X * TILE_SIZE_X),
+      (float)(zf * visibleY)
+    };
+    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, 255);
+    SDL_RenderFillRect(gRenderer, &bar);
+  }
+}
+
+void sdl3DrawMainScreenBlack(RECT *rcWindow) {
+  (void)rcWindow;
+  if (gRenderer == NULL) {
+    return;
+  }
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+}
+
+int drawGetFrameRate(void) {
+  return (int)g_dwFrameTotal;
+}
+
+/* -------------------------------------------------------
+ * Phase 4 — Status panel implementations
+ * ------------------------------------------------------- */
+
+/* Helper: get panel origin in zoomed pixels, using override if set */
+static void statusPanelOrigin(int panelType, int zf, float *ox, float *oy) {
+  switch (panelType) {
+    case 0: /* bases */
+      *ox = (gStatusBasesOrgX >= 0) ? gStatusBasesOrgX : (float)(zf * STATUS_BASES_LEFT);
+      *oy = (gStatusBasesOrgY >= 0) ? gStatusBasesOrgY : (float)(zf * STATUS_BASES_TOP);
+      break;
+    case 1: /* pills */
+      *ox = (gStatusPillsOrgX >= 0) ? gStatusPillsOrgX : (float)(zf * STATUS_PILLS_LEFT);
+      *oy = (gStatusPillsOrgY >= 0) ? gStatusPillsOrgY : (float)(zf * STATUS_PILLS_TOP);
+      break;
+    default: /* tanks */
+      *ox = (gStatusTanksOrgX >= 0) ? gStatusTanksOrgX : (float)(zf * STATUS_TANKS_LEFT);
+      *oy = (gStatusTanksOrgY >= 0) ? gStatusTanksOrgY : (float)(zf * STATUS_TANKS_TOP);
+      break;
+  }
+}
+
+void sdl3DrawSetBasesStatusClear(void) {
+  if (!gRenderer) return;
+  int zf = gZoomFactor;
+  float orgX, orgY;
+  statusPanelOrigin(0, zf, &orgX, &orgY);
+  /* Black out bases panel area directly on the framebuffer */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_FRect area = { orgX, orgY,
+                     (float)(zf * STATUS_BASES_WIDTH), (float)(zf * STATUS_BASES_HEIGHT) };
+  SDL_RenderFillRect(gRenderer, &area);
+  /* Centre base icon (full tile sprite, not the small status icon) */
+  if (gTilesTex) {
+    SDL_FRect src = { (float)BASE_GOOD_X, (float)BASE_GOOD_Y,
+                      (float)TILE_SIZE_X,  (float)TILE_SIZE_Y };
+    SDL_FRect dst = {
+      orgX + (float)(zf * STATUS_BASES_MIDDLE_ICON_X),
+      orgY + (float)(zf * STATUS_BASES_MIDDLE_ICON_Y),
+      (float)(zf * TILE_SIZE_X), (float)(zf * TILE_SIZE_Y)
+    };
+    SDL_RenderTexture(gRenderer, gTilesTex, &src, &dst);
+  }
+}
+
+void sdl3DrawStatusBase(BYTE baseNum, baseAlliance ba, bool labels) {
+  if (!gRenderer || !gTilesTex) return;
+  if (baseNum < 1 || baseNum > 16) return;
+
+  int srcX, srcY;
+  switch (ba) {
+    case baseDead:      srcX=STATUS_ITEM_DEAD_X;      srcY=STATUS_ITEM_DEAD_Y;      break;
+    case baseNeutral:   srcX=STATUS_BASE_NEUTRAL_X;   srcY=STATUS_BASE_NEUTRAL_Y;   break;
+    case baseOwnGood:   srcX=STATUS_BASE_GOOD_X;      srcY=STATUS_BASE_GOOD_Y;      break;
+    case baseAllieGood: srcX=STATUS_BASE_ALLIEGOOD_X; srcY=STATUS_BASE_ALLIEGOOD_Y; break;
+    case baseEvil:      srcX=STATUS_BASE_EVIL_X;      srcY=STATUS_BASE_EVIL_Y;      break;
+    default:            srcX=STATUS_BASE_NEUTRAL_X;   srcY=STATUS_BASE_NEUTRAL_Y;   break;
+  }
+
+  int itemX, itemY;
+  sdl3StatusItemPos(baseNum, 0, &itemX, &itemY);
+  int zf = gZoomFactor;
+  float orgX, orgY;
+  statusPanelOrigin(0, zf, &orgX, &orgY);
+  SDL_FRect src = { (float)srcX, (float)srcY,
+                    (float)STATUS_ITEM_SIZE_X, (float)STATUS_ITEM_SIZE_Y };
+  SDL_FRect dst = {
+    orgX + (float)(zf * itemX),
+    orgY + (float)(zf * itemY),
+    (float)(zf * STATUS_ITEM_SIZE_X), (float)(zf * STATUS_ITEM_SIZE_Y)
+  };
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_NONE);
+  SDL_RenderTexture(gRenderer, gTilesTex, &src, &dst);
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
+
+  if (labels == TRUE && gFontTiny) {
+    char str[4];
+    SDL_Color white = {200, 200, 200, 255};
+    sprintf(str, "%d", baseNum - 1);
+    sdl3RenderText(gFontTiny, str, white, dst.x, dst.y);
+  }
+}
+
+void sdl3DrawCopyBasesStatus(int x, int y) {
+  (void)x; (void)y;
+  /* Icons drawn directly to framebuffer — no-op. */
+}
+
+void sdl3DrawSetPillsStatusClear(void) {
+  if (!gRenderer) return;
+  int zf = gZoomFactor;
+  float orgX, orgY;
+  statusPanelOrigin(1, zf, &orgX, &orgY);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_FRect area = { orgX, orgY,
+                     (float)(zf * STATUS_PILLS_WIDTH), (float)(zf * STATUS_PILLS_HEIGHT) };
+  SDL_RenderFillRect(gRenderer, &area);
+  /* Centre pill icon (full tile PILL_GOOD15 sprite) */
+  if (gTilesTex) {
+    SDL_FRect src = { (float)PILL_GOOD15_X, (float)PILL_GOOD15_Y,
+                      (float)TILE_SIZE_X,   (float)TILE_SIZE_Y };
+    SDL_FRect dst = {
+      orgX + (float)(zf * STATUS_PILLS_MIDDLE_ICON_X),
+      orgY + (float)(zf * STATUS_PILLS_MIDDLE_ICON_Y),
+      (float)(zf * TILE_SIZE_X), (float)(zf * TILE_SIZE_Y)
+    };
+    SDL_RenderTexture(gRenderer, gTilesTex, &src, &dst);
+  }
+}
+
+void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels) {
+  if (!gRenderer || !gTilesTex) return;
+  if (pillNum < 1 || pillNum > 16) return;
+
+  int srcX, srcY;
+  switch (pa) {
+    case pillDead:      srcX=STATUS_ITEM_DEAD_X;           srcY=STATUS_ITEM_DEAD_Y;           break;
+    case pillNeutral:   srcX=STATUS_PILLBOX_NEUTRAL_X;     srcY=STATUS_PILLBOX_NEUTRAL_Y;     break;
+    case pillGood:      srcX=STATUS_PILLBOX_GOOD_X;        srcY=STATUS_PILLBOX_GOOD_Y;        break;
+    case pillAllie:     srcX=STATUS_PILLBOX_ALLIEGOOD_X;   srcY=STATUS_PILLBOX_ALLIEGOOD_Y;   break;
+    case pillTankGood:  srcX=STATUS_PILLBOX_TANKGOOD_X;    srcY=STATUS_PILLBOX_TANKGOOD_Y;    break;
+    case pillTankAllie: srcX=STATUS_PILLBOX_TANKALLIE_X;   srcY=STATUS_PILLBOX_TANKALLIE_Y;   break;
+    case pillTankEvil:  srcX=STATUS_PILLBOX_TANKEVIL_X;    srcY=STATUS_PILLBOX_TANKEVIL_Y;    break;
+    case pillEvil:      srcX=STATUS_PILLBOX_EVIL_X;        srcY=STATUS_PILLBOX_EVIL_Y;        break;
+    default:            srcX=STATUS_PILLBOX_NEUTRAL_X;     srcY=STATUS_PILLBOX_NEUTRAL_Y;     break;
+  }
+
+  int itemX, itemY;
+  sdl3StatusItemPos(pillNum, 1, &itemX, &itemY);
+  int zf = gZoomFactor;
+  float orgX, orgY;
+  statusPanelOrigin(1, zf, &orgX, &orgY);
+  SDL_FRect src = { (float)srcX, (float)srcY,
+                    (float)STATUS_ITEM_SIZE_X, (float)STATUS_ITEM_SIZE_Y };
+  SDL_FRect dst = {
+    orgX + (float)(zf * itemX),
+    orgY + (float)(zf * itemY),
+    (float)(zf * STATUS_ITEM_SIZE_X), (float)(zf * STATUS_ITEM_SIZE_Y)
+  };
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_NONE);
+  SDL_RenderTexture(gRenderer, gTilesTex, &src, &dst);
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
+
+  if (labels == TRUE && gFontTiny) {
+    char str[4];
+    SDL_Color white = {200, 200, 200, 255};
+    sprintf(str, "%d", pillNum - 1);
+    sdl3RenderText(gFontTiny, str, white, dst.x, dst.y);
+  }
+}
+
+void sdl3DrawCopyPillsStatus(int x, int y) {
+  (void)x; (void)y;
+  /* Icons drawn directly to framebuffer — no-op. */
+}
+
+void sdl3DrawSetTanksStatusClear(void) {
+  if (!gRenderer) return;
+  int zf = gZoomFactor;
+  float orgX, orgY;
+  statusPanelOrigin(2, zf, &orgX, &orgY);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_FRect area = { orgX, orgY,
+                     (float)(zf * STATUS_TANKS_WIDTH), (float)(zf * STATUS_TANKS_HEIGHT) };
+  SDL_RenderFillRect(gRenderer, &area);
+  /* Centre tank icon (full tile TANK_SELF_0 sprite) */
+  if (gTilesTex) {
+    SDL_FRect src = { (float)TANK_SELF_0_X, (float)TANK_SELF_0_Y,
+                      (float)TILE_SIZE_X,   (float)TILE_SIZE_Y };
+    SDL_FRect dst = {
+      orgX + (float)(zf * STATUS_TANKS_MIDDLE_ICON_X),
+      orgY + (float)(zf * STATUS_TANKS_MIDDLE_ICON_Y),
+      (float)(zf * TILE_SIZE_X), (float)(zf * TILE_SIZE_Y)
+    };
+    SDL_RenderTexture(gRenderer, gTilesTex, &src, &dst);
+  }
+}
+
+void sdl3DrawStatusTank(BYTE tankNum, tankAlliance ta) {
+  if (!gRenderer || !gTilesTex) return;
+  if (tankNum < 1 || tankNum > 16) return;
+
+  int srcX, srcY;
+  switch (ta) {
+    case tankNone: srcX=STATUS_TANK_NONE_X; srcY=STATUS_TANK_NONE_Y; break;
+    case tankSelf: srcX=STATUS_TANK_SELF_X; srcY=STATUS_TANK_SELF_Y; break;
+    case tankAllie:srcX=STATUS_TANK_GOOD_X; srcY=STATUS_TANK_GOOD_Y; break;
+    case tankEvil: srcX=STATUS_TANK_EVIL_X; srcY=STATUS_TANK_EVIL_Y; break;
+    default:       srcX=STATUS_TANK_NONE_X; srcY=STATUS_TANK_NONE_Y; break;
+  }
+
+  int itemX, itemY;
+  sdl3StatusItemPos(tankNum, 2, &itemX, &itemY);
+  int zf = gZoomFactor;
+  float orgX, orgY;
+  statusPanelOrigin(2, zf, &orgX, &orgY);
+  SDL_FRect src = { (float)srcX, (float)srcY,
+                    (float)STATUS_ITEM_SIZE_X, (float)STATUS_ITEM_SIZE_Y };
+  SDL_FRect dst = {
+    orgX + (float)(zf * itemX),
+    orgY + (float)(zf * itemY),
+    (float)(zf * STATUS_ITEM_SIZE_X), (float)(zf * STATUS_ITEM_SIZE_Y)
+  };
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_NONE);
+  SDL_RenderTexture(gRenderer, gTilesTex, &src, &dst);
+  SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
+}
+
+void sdl3DrawCopyTanksStatus(int x, int y) {
+  (void)x; (void)y;
+  /* Icons drawn directly to framebuffer — no-op. */
+}
+
+void sdl3DrawStatusTankBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+  (void)x; (void)y;
+  if (!gRenderer || !gTankBarsTex) return;
+
+  SDL_SetRenderTarget(gRenderer, gTankBarsTex);
+  SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_NONE);
+
+  /* Black background */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  /* Green bars — heights in 1x pixels, bars grow from bottom */
+  SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
+
+  int h = STATUS_TANK_BARS_HEIGHT;
+  int bw = STATUS_TANK_BARS_WIDTH;
+
+  SDL_FRect rShells = { 0.0f,
+                        (float)(h - BAR_TANK_MULTIPLY * shells),
+                        (float)bw,
+                        (float)(BAR_TANK_MULTIPLY * shells) };
+  SDL_FRect rMines  = { (float)STATUS_TANK_MINES,
+                        (float)(h - BAR_TANK_MULTIPLY * mines),
+                        (float)bw,
+                        (float)(BAR_TANK_MULTIPLY * mines) };
+  SDL_FRect rArmour = { (float)STATUS_TANK_ARMOUR,
+                        (float)(h - BAR_TANK_MULTIPLY * armour),
+                        (float)bw,
+                        (float)(BAR_TANK_MULTIPLY * armour) };
+  SDL_FRect rTrees  = { (float)STATUS_TANK_TREES,
+                        (float)(h - BAR_TANK_MULTIPLY * trees),
+                        (float)bw,
+                        (float)(BAR_TANK_MULTIPLY * trees) };
+
+  if (shells > 0) SDL_RenderFillRect(gRenderer, &rShells);
+  if (mines  > 0) SDL_RenderFillRect(gRenderer, &rMines);
+  if (armour > 0) SDL_RenderFillRect(gRenderer, &rArmour);
+  if (trees  > 0) SDL_RenderFillRect(gRenderer, &rTrees);
+
+  SDL_SetRenderTarget(gRenderer, NULL);
+}
+
+void sdl3DrawCopyTankStatusBars(int x, int y) {
+  (void)x; (void)y;
+  /* Panel texture is read by sdl3RenderStatusPanels each frame — no-op. */
+}
+
+void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, bool redraw) {
+  (void)x; (void)y; (void)redraw;
+  if (!gRenderer || !gBaseBarsTex) return;
+
+  SDL_SetRenderTarget(gRenderer, gBaseBarsTex);
+  SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_NONE);
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  if (shells != 0 || mines != 0 || armour != 0) {
+    SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
+
+    int bh = STATUS_BASE_BARS_HEIGHT;
+    float mult = (float)(2.0 / 3.0);
+
+    SDL_FRect rShells = { 0.0f, 0.0f,
+                          (float)(shells * mult), (float)bh };
+    SDL_FRect rMines  = { 0.0f, (float)STATUS_BASE_MINES,
+                          (float)(mines  * mult), (float)bh };
+    SDL_FRect rArmour = { 0.0f, (float)STATUS_BASE_ARMOUR,
+                          (float)(armour * mult), (float)bh };
+
+    if (shells > 0) SDL_RenderFillRect(gRenderer, &rShells);
+    if (mines  > 0) SDL_RenderFillRect(gRenderer, &rMines);
+    if (armour > 0) SDL_RenderFillRect(gRenderer, &rArmour);
+  }
+
+  SDL_SetRenderTarget(gRenderer, NULL);
+}
+
+void sdl3DrawCopyBasesStatusBars(int x, int y) {
+  (void)x; (void)y;
+  /* Panel texture is read by sdl3RenderStatusPanels each frame — no-op. */
+}
+
+void sdl3DrawSetManClear(void) {
+  gManStatusReady = false;
+  if (!gRenderer || !gManStatusTex) return;
+  SDL_SetRenderTarget(gRenderer, gManStatusTex);
+  SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+  SDL_SetRenderTarget(gRenderer, NULL);
+}
+
+void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
+  (void)x; (void)y;
+  if (!gRenderer || !gManStatusTex) return;
+
+  /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
+  double dbAngle, dbTemp;
+  int addX, addY;
+  int cx = MAN_STATUS_CENTER_X;
+  int cy = MAN_STATUS_CENTER_Y;
+
+  TURNTYPE a = angle + BRADIANS_SOUTH;
+  if (a >= BRADIANS_MAX) a -= BRADIANS_MAX;
+
+  if (a >= BRADIANS_NORTH && a < BRADIANS_EAST) {
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
+  } else if (a >= BRADIANS_EAST && a < BRADIANS_SOUTH) {
+    a = (float)BRADIANS_SOUTH - a;
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
+  } else if (a >= BRADIANS_SOUTH && a < BRADIANS_WEST) {
+    a = (float)BRADIANS_WEST - a;
+    a = (float)BRADIANS_EAST - a;
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
+  } else {
+    a = (float)BRADIANS_MAX - a;
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
+  }
+
+  /* Texture is (MAN_STATUS_WIDTH+2)*(MAN_STATUS_HEIGHT+2)*zf — 1px padding on
+     each edge so the circle outline never clips. Shift center by +1 to match. */
+  int zf = gZoomFactor;
+  int scx = (MAN_STATUS_CENTER_X + 1) * zf;
+  int scy = (MAN_STATUS_CENTER_Y + 1) * zf;
+  int r   = (MAN_STATUS_RADIUS - 1) * zf;
+
+  /* Re-compute arrow endpoint in zoom-factor space */
+  int sAddX = addX * zf;
+  int sAddY = addY * zf;
+
+  SDL_SetRenderTarget(gRenderer, gManStatusTex);
+  SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  if (isDead) {
+    /* Filled circle in red/orange using scan lines */
+    SDL_SetRenderDrawColor(gRenderer, 200, 80, 0, 255);
+    for (int dy = -r; dy <= r; dy++) {
+      int dx = (int)sqrtf((float)(r * r - dy * dy));
+      SDL_RenderLine(gRenderer,
+                     (float)(scx - dx), (float)(scy + dy),
+                     (float)(scx + dx), (float)(scy + dy));
+    }
+  } else {
+    /* Outline circle using parametric line segments */
+    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, 255);
+    int steps = 4 * r * 4;  /* ~4 steps per pixel of circumference */
+    if (steps < 64) steps = 64;
+    for (int i = 0; i < steps; i++) {
+      double a1 = (RADIANS_MAX * i) / steps;
+      double a2 = (RADIANS_MAX * (i + 1)) / steps;
+      SDL_RenderLine(gRenderer,
+                     (float)(scx + r * cos(a1)), (float)(scy + r * sin(a1)),
+                     (float)(scx + r * cos(a2)), (float)(scy + r * sin(a2)));
+    }
+    /* Arrow from centre to endpoint */
+    SDL_RenderLine(gRenderer, (float)scx, (float)scy, (float)sAddX, (float)sAddY);
+  }
+
+  SDL_SetRenderTarget(gRenderer, NULL);
+  gManStatusReady = true;
+}
+
+void sdl3DrawCopyManStatus(int x, int y) {
+  (void)x; (void)y;
+  /* flushed via sdl3RenderStatusPanels each frame */
+}
+
+void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y) {
+  (void)x; (void)y;
+  gCurrentBuildSelect = value;
+}
+
+void sdl3DrawSelectIndentsOff(buildSelect value, int x, int y) {
+  (void)value; (void)x; (void)y;
+  /* No-op: background.bmp already shows all buttons in off state */
+}
+
+void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay) {
+  (void)rcWindow;
+  if (srtDelay <= 0 || gRenderer == NULL) return;
+  int originX = MAIN_OFFSET_X * gZoomFactor;
+  int originY = MAIN_OFFSET_Y * gZoomFactor;
+  int tileW   = TILE_SIZE_X   * gZoomFactor;
+  int tileH   = TILE_SIZE_Y   * gZoomFactor;
+  int areaW   = MAIN_SCREEN_SIZE_X * tileW;
+  int areaH   = MAIN_SCREEN_SIZE_Y * tileH;
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_FRect r = { (float)originX, (float)originY,
+                  (float)areaW, (float)areaH };
+  SDL_RenderFillRect(gRenderer, &r);
+
+  /* Render "Game Starts in X" countdown text centred in the blacked-out area */
+  if (gFontMsg) {
+    char str[64];
+    long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
+    snprintf(str, sizeof(str), "Game Starts in %ld", secs);
+    SDL_Color white = {200, 200, 200, 255};
+    /* Measure text width to centre it */
+    SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
+    if (sMeasure) {
+      float tx = (float)originX + ((float)areaW - (float)sMeasure->w) * 0.5f;
+      float ty = (float)originY + ((float)areaH - (float)sMeasure->h) * 0.5f;
+      SDL_DestroySurface(sMeasure);
+      sdl3RenderText(gFontMsg, str, white, tx, ty);
+    }
+  }
+}
+
+void sdl3DrawSetNetFailed(bool v) {
+  gNetFailed = v;
+}
+
+void sdl3DrawNetFailed(void) {
+  if (!gRenderer) return;
+  SDL_Color white = {200, 200, 200, 255};
+  int originX = MAIN_OFFSET_X * gZoomFactor;
+  int originY = MAIN_OFFSET_Y * gZoomFactor;
+  float tx = (float)(originX + 3 * TILE_SIZE_X * gZoomFactor);
+  float ty = (float)(originY + 8 * TILE_SIZE_Y * gZoomFactor);
+  sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
+}
+
+void sdl3DrawPillInView(void) {
+  if (!gRenderer) return;
+  SDL_Color white = {200, 200, 200, 255};
+  int originX = MAIN_OFFSET_X * gZoomFactor;
+  int originY = MAIN_OFFSET_Y * gZoomFactor;
+  float tx = (float)(originX + TILE_SIZE_X * gZoomFactor);
+  float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor);
+  sdl3RenderText(gFontMsg, "Pillbox View", white, tx, ty);
+}
+
+void sdl3DrawMessages(int x, int y, char *top, char *bottom) {
+  (void)x; (void)y;
+  /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
+  if (top)    SDL_strlcpy(gMsgTop,    top,    SDL3_MSG_LEN);
+  else        gMsgTop[0] = '\0';
+  if (bottom) SDL_strlcpy(gMsgBottom, bottom, SDL3_MSG_LEN);
+  else        gMsgBottom[0] = '\0';
+}
+
+void sdl3DrawGetCachedMessages(const char **top, const char **bottom) {
+  if (top)    *top    = gMsgTop;
+  if (bottom) *bottom = gMsgBottom;
+}
+
+void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
+  (void)x; (void)y;
+  /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
+  gCachedKills  = kills;
+  gCachedDeaths = deaths;
+}
+
+void sdl3DrawTankLabel(char *str, BYTE playerNum,
+                       BYTE mx, BYTE my, BYTE px, BYTE py) {
+  if (!gRenderer || !str || str[0] == '\0') return;
+  if (playerNum >= SDL3_MAX_PLAYERS) return;
+
+  /* Rebuild the cached texture if the name changed */
+  if (strncmp(gLabelStr[playerNum], str, SDL3_MAX_NAME_LEN - 1) != 0) {
+    if (gLabelTex[playerNum]) {
+      SDL_DestroyTexture(gLabelTex[playerNum]);
+      gLabelTex[playerNum] = NULL;
+    }
+    strncpy(gLabelStr[playerNum], str, SDL3_MAX_NAME_LEN - 1);
+    gLabelStr[playerNum][SDL3_MAX_NAME_LEN - 1] = '\0';
+
+    if (gFontMsg) {
+      SDL_Color fg = {200, 200, 200, 255};
+      SDL_Surface *sFg = TTF_RenderText_Blended(gFontMsg, str, 0, fg);
+      if (sFg) {
+        gLabelTex[playerNum] = SDL_CreateTextureFromSurface(gRenderer, sFg);
+        SDL_DestroySurface(sFg);
+      }
+    }
+  }
+
+  if (!gLabelTex[playerNum]) return;
+
+  /* Compute screen position matching sdl3DrawTanks placement.
+     In tablet mode, gZoomFactor is temporarily set to the tablet scale
+     and the origin is centred on screen rather than at MAIN_OFFSET. */
+  int originX, originY;
+  if (uiModeIsTablet()) {
+    int ww, wh;
+    {
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+      if (ww <= 0 || wh <= 0) {
+        SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+      }
+    }
+    int gamePixW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * gZoomFactor;
+    int gamePixH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor;
+    originX = (ww - gamePixW) / 2;
+    originY = (wh - gamePixH) / 2;
+  } else {
+    originX = MAIN_OFFSET_X * gZoomFactor;
+    originY = MAIN_OFFSET_Y * gZoomFactor;
+  }
+  int tileW   = TILE_SIZE_X   * gZoomFactor;
+  int tileH   = TILE_SIZE_Y   * gZoomFactor;
+  int apx = (int)px + 2;
+  int apy = (int)py + 2;
+  int bbx = (int)mx * TILE_SIZE_X + apx;
+  int bby = (int)my * TILE_SIZE_Y + apy;
+  float sx = (float)(originX - tileW + bbx * gZoomFactor - gCurrentEdgeX);
+  float sy = (float)(originY - tileH + bby * gZoomFactor - gCurrentEdgeY);
+
+  /* Place label to the right of the tank sprite (matches Win32 behaviour) */
+  float texW, texH;
+  SDL_GetTextureSize(gLabelTex[playerNum], &texW, &texH);
+  sx += (float)tileW;
+
+  /* Clip label to game-area left edge */
+  if (sx < (float)originX) sx = (float)originX;
+
+  SDL_SetTextureBlendMode(gLabelTex[playerNum], SDL_BLENDMODE_BLEND);
+  SDL_FRect d = { sx, sy, texW, texH };
+  SDL_RenderTexture(gRenderer, gLabelTex[playerNum], NULL, &d);
+}
+
+void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom) {
+  if (x) *x = gTabletVpX;
+  if (y) *y = gTabletVpY;
+  if (w) *w = gTabletVpW;
+  if (h) *h = gTabletVpH;
+  if (zoom) *zoom = gTabletVpZoom;
+}
+
+void sdl3DrawSetStatusPanelOrigins(float tanksX, float tanksY,
+                                    float pillsX, float pillsY,
+                                    float basesX, float basesY) {
+  gStatusTanksOrgX = tanksX;
+  gStatusTanksOrgY = tanksY;
+  gStatusPillsOrgX = pillsX;
+  gStatusPillsOrgY = pillsY;
+  gStatusBasesOrgX = basesX;
+  gStatusBasesOrgY = basesY;
+}
+
+void sdl3DrawTabletStatusGrids(ClientSim *cs) {
+  if (!gRenderer || !gTilesTex) return;
+
+  sdl3DrawSetBasesStatusClear();
+  {
+    BYTE total = basesGetNumBases(&cs->sim.bs);
+    for (BYTE i = 1; i <= total; i++) {
+      sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
+    }
+  }
+  sdl3DrawSetPillsStatusClear();
+  {
+    BYTE total = pillsGetNumPills(&cs->sim.pb);
+    for (BYTE i = 1; i <= total; i++) {
+      sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
+    }
+  }
+  sdl3DrawSetTanksStatusClear();
+  for (BYTE i = 1; i <= MAX_TANKS; i++) {
+    sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+  }
+}

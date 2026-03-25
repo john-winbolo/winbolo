@@ -1,0 +1,721 @@
+/*
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ * Name:          imgui_lobby.cpp
+ * Purpose:       ImGui Lobby dialog.
+ *                Blocking modal loop that shows the lobby
+ *                while waiting for the game to start.
+ *********************************************************/
+
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+
+#include <SDL3/SDL.h>
+
+#include "imgui.h"
+#include "../../imgui_theme.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_sdlrenderer3.h"
+#include "imgui_dialog_utils.h"
+
+extern "C" {
+#include "../sdl3draw.h"
+#include "../../gamefront.h"
+#include "../../../bolo/global.h"
+#include "../../../bolo/client_sim.h"
+#include "../../../bolo/transport.h"
+#include "../../../bolo/transport_udp.h"
+#include "../../../bolo/bolo_map.h"
+#include "../../../bolo/pillbox.h"
+#include "../../../bolo/bases.h"
+#include "../../../bolo/starts.h"
+#include "../../../bolo/platform_net.h"
+#include "../flags.h"
+#include "imgui_lobby.h"
+}
+
+#define MAX_TANKS 16
+#define CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
+#define MAP_PREVIEW_SIZE 256
+
+static const int DIALOG_W = 900;
+static const int DIALOG_H = 700;
+
+/* Terrain color lookup (RGBA) */
+static void terrainColor(BYTE terrain, uint8_t *r, uint8_t *g, uint8_t *b) {
+    /* Strip mine overlay to get base terrain */
+    if (terrain >= MINE_START && terrain <= MINE_END) {
+        terrain -= MINE_SUBTRACT;
+    }
+    switch (terrain) {
+        case BUILDING:      *r = 128; *g = 128; *b = 128; break;
+        case RIVER:         *r = 0;   *g = 80;  *b = 200; break;
+        case SWAMP:         *r = 0;   *g = 100; *b = 0;   break;
+        case CRATER:        *r = 139; *g = 90;  *b = 43;  break;
+        case ROAD:          *r = 80;  *g = 80;  *b = 80;  break;
+        case FOREST:        *r = 0;   *g = 140; *b = 0;   break;
+        case RUBBLE:        *r = 180; *g = 160; *b = 130; break;
+        case GRASS:         *r = 100; *g = 200; *b = 50;  break;
+        case HALFBUILDING:  *r = 160; *g = 160; *b = 160; break;
+        case BOAT:          *r = 0;   *g = 80;  *b = 200; break;
+        case DEEP_SEA:
+        default:            *r = 0;   *g = 0;   *b = 80;  break;
+    }
+}
+
+/* Bounding box of interesting (non-sea) terrain in the map preview */
+struct MapBounds {
+    int minX, minY, maxX, maxY;
+};
+
+/* Build a 256x256 RGBA minimap from compressed map data.
+ * Returns an SDL_Texture* or NULL on failure.
+ * bounds is filled with the bounding box of non-sea terrain. */
+static SDL_Texture *buildMapPreview(SDL_Renderer *renderer,
+                                     const BYTE *compressedData, int dataLen,
+                                     MapBounds *bounds) {
+    map mp;
+    pillboxes pb;
+    bases bs;
+    starts ss;
+
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+
+    if (!mapLoadCompressedMap(&mp, &pb, &bs, &ss,
+                              (BYTE *)compressedData, dataLen)) {
+        mapDestroy(&mp);
+        pillsDestroy(&pb);
+        basesDestroy(&bs);
+        startsDestroy(&ss);
+        return NULL;
+    }
+
+    uint8_t *pixels = (uint8_t *)malloc(MAP_PREVIEW_SIZE * MAP_PREVIEW_SIZE * 4);
+    if (!pixels) {
+        mapDestroy(&mp);
+        pillsDestroy(&pb);
+        basesDestroy(&bs);
+        startsDestroy(&ss);
+        return NULL;
+    }
+
+    /* Render terrain and compute bounding box of non-sea tiles */
+    bounds->minX = MAP_PREVIEW_SIZE;
+    bounds->minY = MAP_PREVIEW_SIZE;
+    bounds->maxX = 0;
+    bounds->maxY = 0;
+    for (int y = 0; y < MAP_PREVIEW_SIZE; y++) {
+        for (int x = 0; x < MAP_PREVIEW_SIZE; x++) {
+            int idx = (y * MAP_PREVIEW_SIZE + x) * 4;
+            BYTE t = mapGetPos(&mp, (BYTE)x, (BYTE)y);
+            terrainColor(t, &pixels[idx], &pixels[idx+1], &pixels[idx+2]);
+            pixels[idx+3] = 255;
+            /* Track non-sea terrain for zoom */
+            BYTE base = t;
+            if (base >= MINE_START && base <= MINE_END) base -= MINE_SUBTRACT;
+            if (base != DEEP_SEA) {
+                if (x < bounds->minX) bounds->minX = x;
+                if (y < bounds->minY) bounds->minY = y;
+                if (x > bounds->maxX) bounds->maxX = x;
+                if (y > bounds->maxY) bounds->maxY = y;
+            }
+        }
+    }
+    /* If no non-sea terrain found, show entire map */
+    if (bounds->minX > bounds->maxX) {
+        bounds->minX = 0; bounds->minY = 0;
+        bounds->maxX = MAP_PREVIEW_SIZE - 1; bounds->maxY = MAP_PREVIEW_SIZE - 1;
+    }
+
+    /* Overlay pillboxes (red) */
+    BYTE numPills = pillsGetNumPills(&pb);
+    for (int i = 0; i < numPills; i++) {
+        int px = pb->item[i].x;
+        int py = pb->item[i].y;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                int nx = px + dx, ny = py + dy;
+                if (nx >= 0 && nx < MAP_PREVIEW_SIZE && ny >= 0 && ny < MAP_PREVIEW_SIZE) {
+                    int idx = (ny * MAP_PREVIEW_SIZE + nx) * 4;
+                    pixels[idx] = 255; pixels[idx+1] = 0; pixels[idx+2] = 0; pixels[idx+3] = 255;
+                }
+            }
+        }
+    }
+
+    /* Overlay bases (white) */
+    BYTE numBases = basesGetNumBases(&bs);
+    for (int i = 0; i < numBases; i++) {
+        int bx = bs->item[i].x;
+        int by = bs->item[i].y;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                int nx = bx + dx, ny = by + dy;
+                if (nx >= 0 && nx < MAP_PREVIEW_SIZE && ny >= 0 && ny < MAP_PREVIEW_SIZE) {
+                    int idx = (ny * MAP_PREVIEW_SIZE + nx) * 4;
+                    pixels[idx] = 255; pixels[idx+1] = 255; pixels[idx+2] = 255; pixels[idx+3] = 255;
+                }
+            }
+        }
+    }
+
+    /* Overlay starts (yellow) */
+    BYTE numStarts = startsGetNumStarts(&ss);
+    for (int i = 0; i < numStarts; i++) {
+        int sx = ss->item[i].x;
+        int sy = ss->item[i].y;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                int nx = sx + dx, ny = sy + dy;
+                if (nx >= 0 && nx < MAP_PREVIEW_SIZE && ny >= 0 && ny < MAP_PREVIEW_SIZE) {
+                    int idx = (ny * MAP_PREVIEW_SIZE + nx) * 4;
+                    pixels[idx] = 255; pixels[idx+1] = 255; pixels[idx+2] = 0; pixels[idx+3] = 255;
+                }
+            }
+        }
+    }
+
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(
+        MAP_PREVIEW_SIZE, MAP_PREVIEW_SIZE, SDL_PIXELFORMAT_RGBA32,
+        pixels, MAP_PREVIEW_SIZE * 4);
+    SDL_Texture *tex = NULL;
+    if (surface) {
+        tex = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_DestroySurface(surface);
+    }
+
+    free(pixels);
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    return tex;
+}
+
+static const char *gameTypeStr(gameType gt) {
+    switch (gt) {
+        case gameOpen:             return "Open";
+        case gameTournament:       return "Tournament";
+        case gameStrictTournament: return "Strict Tournament";
+        default:                   return "Unknown";
+    }
+}
+
+static const char *aiTypeStr(uint8_t ai) {
+    switch (ai) {
+        case 0:  return "No";
+        case 1:  return "Yes";
+        case 2:  return "Yes (Advantage)";
+        case 3:  return "Yes (Full)";
+        default: return "Unknown";
+    }
+}
+
+static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
+    if (ticks <= 0) {
+        SDL_snprintf(buf, bufSize, "Unlimited");
+        return;
+    }
+    int totalSecs = ticks / 50;
+    int hours = totalSecs / 3600;
+    int mins = (totalSecs % 3600) / 60;
+    int secs = totalSecs % 60;
+    if (hours > 0) {
+        SDL_snprintf(buf, bufSize, "%dh %02dm %02ds", hours, mins, secs);
+    } else if (mins > 0) {
+        SDL_snprintf(buf, bufSize, "%dm %02ds", mins, secs);
+    } else {
+        SDL_snprintf(buf, bufSize, "%ds", secs);
+    }
+}
+
+extern "C" int imguiLobbyShow(ClientSim *cs) {
+    SDL_Window *window = sdl3DrawGetWindow();
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (!window || !renderer) return 0;
+
+    /* Save logical presentation */
+    int savedLogW = 0, savedLogH = 0;
+    SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
+
+    /* Get screen size and compute UI scale */
+    int screenW, screenH;
+    SDL_GetWindowSize(window, &screenW, &screenH);
+    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    float s = dialogComputeScale(screenW, screenH);
+
+#if !BOLO_MOBILE
+    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    dialogSetWindowTitle(window, "Game Lobby");
+    SDL_SetWindowResizable(window, true);
+#endif
+    SDL_ShowWindow(window);
+    SDL_RaiseWindow(window);
+
+    /* Set up ImGui context */
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr;
+
+    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
+    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer3_Init(renderer);
+    dialogApplyScaling(s);
+
+    /* Chat state */
+    char chatInput[CHAT_INPUT_SIZE];
+    chatInput[0] = '\0';
+
+    /* Team combo items */
+    static const char *teamItems[] = {
+        "None", "1", "2", "3", "4", "5", "6", "7", "8",
+        "9", "10", "11", "12", "13", "14", "15", "16"
+    };
+
+    /* Map preview texture state */
+    SDL_Texture *mapPreviewTex = NULL;
+    bool mapPreviewBuilt = false;
+    MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
+
+    int result = 0;
+    bool running = true;
+
+    while (running) {
+        Uint64 frameCapStart = dialogFrameCapBegin();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            ImGui_ImplSDL3_ProcessEvent(&ev);
+            if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            if (ev.type == SDL_EVENT_QUIT) {
+                running = false;
+            }
+            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                ev.window.windowID == SDL_GetWindowID(window)) {
+                running = false;
+            }
+        }
+
+        /* Tick transport to receive lobby packets */
+        Transport *transport = gameFrontGetTransport();
+        if (transport) {
+            transport->tick(transport->ctx);
+        }
+
+        /* Check for game start */
+        if (cs->netStat == netRunning) {
+            result = 1;
+            running = false;
+            break;
+        }
+
+        /* Check for server disconnect/shutdown */
+        if (transport) {
+            UdpClientJoinState js = transportUdpClientGetJoinState(transport);
+            if (js == UDP_CLIENT_SERVER_SHUTDOWN || js == UDP_CLIENT_ERROR) {
+                result = 0;
+                running = false;
+                break;
+            }
+        }
+
+        /* Build map preview once download completes */
+        if (cs->mapDownloadComplete && !mapPreviewBuilt && transport) {
+            int mapLen = 0;
+            const BYTE *mapData = transportUdpClientGetMapData(transport, &mapLen);
+            if (mapData && mapLen > 0) {
+                mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds);
+            }
+            mapPreviewBuilt = true;
+        }
+
+        /* Query window size */
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+
+        /* Full-screen host window */
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
+        ImGui::Begin("##LobbyBg", nullptr,
+                     ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+        BYTE myPlayerNum = gameFrontGetPlayerNum();
+
+        /* --- Header: Server info line --- */
+        {
+            char serverStr[64];
+            SDL_snprintf(serverStr, sizeof(serverStr), "%s:%u",
+                         inet_ntoa(cs->serverAddress), cs->serverPort);
+
+            char timeStr[32];
+            formatTimeLimit(cs->lobbyTimeLimit, timeStr, sizeof(timeStr));
+
+            ImGui::Text("Server: %s", serverStr);
+            ImGui::SameLine(0, 16);
+            ImGui::Text("Game: %s", gameTypeStr(cs->lobbyGameType));
+            ImGui::SameLine(0, 16);
+            ImGui::Text("Mines: %s", cs->lobbyHiddenMines ? "Hidden" : "Visible");
+            ImGui::SameLine(0, 16);
+            ImGui::Text("AI: %s", aiTypeStr(cs->lobbyAiType));
+            ImGui::SameLine(0, 16);
+            ImGui::Text("Time: %s", timeStr);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        /* --- Main content: Players (left) + Map Preview (right) --- */
+        {
+            float mapPanelW = (MAP_PREVIEW_SIZE + 20) * s;
+            float availW = ImGui::GetContentRegionAvail().x;
+            float playerPanelW = availW - mapPanelW - 8.0f;
+            float panelH = ImGui::GetContentRegionAvail().y
+                           - ImGui::GetTextLineHeightWithSpacing() * 9  /* chat + buttons */
+                           - 40.0f * s;
+
+            /* Left: Player table */
+            ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, panelH), ImGuiChildFlags_None);
+
+            if (ImGui::BeginTable("##PlayerTable", 6,
+                                  ImGuiTableFlags_Borders |
+                                  ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_SizingStretchProp |
+                                  ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, 30.0f * s);
+                ImGui::TableSetupColumn("Player Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
+                ImGui::TableSetupColumn("Team", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                ImGui::TableSetupColumn("Ready", ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                ImGui::TableHeadersRow();
+
+                bool botsAllowed = (cs->lobbyAiType != 0);
+
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("%d", i);
+
+                    if (cs->lobbySlots[i].connected) {
+                        bool isMe = (i == myPlayerNum);
+
+                        /* Player Name (with flag icon) */
+                        ImGui::TableSetColumnIndex(1);
+                        if (cs->lobbySlots[i].countryCode[0] != '\0') {
+                            SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
+                            if (flagTex) {
+                                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                                ImGui::SameLine();
+                            }
+                        }
+                        if (cs->lobbySlots[i].isBot) {
+                            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
+                                               "%s [Bot]", cs->lobbySlots[i].playerName);
+                        } else if (isMe) {
+                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
+                                               "%s (You)", cs->lobbySlots[i].playerName);
+                        } else {
+                            ImGui::Text("%s", cs->lobbySlots[i].playerName);
+                        }
+
+                        /* Ping */
+                        ImGui::TableSetColumnIndex(2);
+                        if (cs->lobbySlots[i].pingMs > 0) {
+                            ImVec4 pingColor;
+                            if (cs->lobbySlots[i].pingMs < 50)        pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
+                            else if (cs->lobbySlots[i].pingMs < 150)   pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
+                            else                                        pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                            ImGui::TextColored(pingColor, "%dms", (int)cs->lobbySlots[i].pingMs);
+                        } else {
+                            ImGui::TextDisabled("-");
+                        }
+
+                        /* Team */
+                        ImGui::TableSetColumnIndex(3);
+                        if (isMe && transport) {
+                            int teamIdx = cs->lobbySlots[i].teamNumber;
+                            ImGui::SetNextItemWidth(-1);
+                            char comboId[16];
+                            SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
+                            if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
+                                transportUdpClientSendTeamSet(transport, (uint8_t)teamIdx);
+                            }
+                        } else {
+                            if (cs->lobbySlots[i].teamNumber > 0) {
+                                ImGui::Text("%d", cs->lobbySlots[i].teamNumber);
+                            } else {
+                                ImGui::TextDisabled("None");
+                            }
+                        }
+
+                        /* Ready */
+                        ImGui::TableSetColumnIndex(4);
+                        if (cs->lobbySlots[i].ready) {
+                            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Yes");
+                        } else {
+                            ImGui::TextDisabled("No");
+                        }
+
+                        /* Action */
+                        ImGui::TableSetColumnIndex(5);
+                        if (cs->lobbySlots[i].isBot && transport) {
+                            char btnId[16];
+                            SDL_snprintf(btnId, sizeof(btnId), "Remove##%d", i);
+                            if (ImGui::SmallButton(btnId)) {
+                                transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                            }
+                        }
+                    } else {
+                        /* Empty slot */
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextDisabled("---");
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextDisabled("-");
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::TextDisabled("-");
+                        ImGui::TableSetColumnIndex(4);
+                        ImGui::TextDisabled("-");
+                        ImGui::TableSetColumnIndex(5);
+                        if (botsAllowed && transport) {
+                            char btnId[16];
+                            SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
+                            if (ImGui::SmallButton(btnId)) {
+                                transportUdpClientSendAddBot(transport);
+                            }
+                        }
+                    }
+                }
+                ImGui::EndTable();
+            }
+
+            ImGui::EndChild(); /* ##PlayerPanel */
+
+            ImGui::SameLine(0, 8.0f);
+
+            /* Right: Map preview + info */
+            ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, panelH), ImGuiChildFlags_Borders);
+
+            if (!cs->mapDownloadComplete) {
+                /* Map downloading - show progress */
+                ImGui::Text("Downloading map...");
+                ImGui::Spacing();
+                float progress = (float)netGetDownloadPos() / 255.0f;
+                ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
+                ImGui::Spacing();
+            } else if (mapPreviewTex) {
+                /* Compute UV coordinates to zoom into the interesting area with padding */
+                int pad = 4;
+                int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
+                int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
+                int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
+                int by1 = mapBounds.maxY + pad; if (by1 >= MAP_PREVIEW_SIZE) by1 = MAP_PREVIEW_SIZE - 1;
+                /* Make the region square so the preview isn't distorted */
+                int bw = bx1 - bx0;
+                int bh = by1 - by0;
+                if (bw > bh) {
+                    int diff = bw - bh;
+                    by0 -= diff / 2;
+                    by1 += (diff + 1) / 2;
+                    if (by0 < 0) { by1 -= by0; by0 = 0; }
+                    if (by1 >= MAP_PREVIEW_SIZE) { by0 -= (by1 - MAP_PREVIEW_SIZE + 1); by1 = MAP_PREVIEW_SIZE - 1; }
+                    if (by0 < 0) by0 = 0;
+                } else if (bh > bw) {
+                    int diff = bh - bw;
+                    bx0 -= diff / 2;
+                    bx1 += (diff + 1) / 2;
+                    if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
+                    if (bx1 >= MAP_PREVIEW_SIZE) { bx0 -= (bx1 - MAP_PREVIEW_SIZE + 1); bx1 = MAP_PREVIEW_SIZE - 1; }
+                    if (bx0 < 0) bx0 = 0;
+                }
+                ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
+                ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
+
+                /* Map preview image - fit to available panel width */
+                float panelWidth = ImGui::GetContentRegionAvail().x;
+                float previewSize = panelWidth;
+                float availH = ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing() * 5;
+                if (availH < previewSize) previewSize = availH;
+                /* Center the preview */
+                float offsetX = (panelWidth - previewSize) * 0.5f;
+                if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+                ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
+            } else {
+                ImGui::Text("Map preview unavailable");
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            /* Map info */
+            ImGui::Text("Map: %s", cs->mapName);
+            ImGui::Text("Pillboxes: %d", cs->lobbyPillCount);
+            ImGui::Text("Bases: %d", cs->lobbyBaseCount);
+            ImGui::Text("Starts: %d", cs->lobbyStartCount);
+
+            ImGui::EndChild(); /* ##MapPanel */
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        /* --- Chat section --- */
+        ImGui::Text("Chat");
+        {
+            float chatHeight = ImGui::GetTextLineHeightWithSpacing() * 4;
+            ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
+            ImGui::TextUnformatted(cs->lobbyChatHistory);
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
+        }
+
+        {
+            float btnW = 60.0f * s;
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+            bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
+                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if ((ImGui::Button("Send", ImVec2(btnW, 0)) || enterPressed) &&
+                chatInput[0] != '\0' && transport) {
+                transportUdpClientSendChat(transport, 0xFF, chatInput);
+                const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
+                    ? cs->lobbySlots[myPlayerNum].playerName : "Me";
+                clientSimAppendLobbyChat(cs, myName, chatInput);
+                chatInput[0] = '\0';
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        /* --- Bottom buttons --- */
+        {
+            bool myReady = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
+                           ? cs->lobbySlots[myPlayerNum].ready : false;
+            bool canReady = cs->mapDownloadComplete;
+
+            if (!canReady) ImGui::BeginDisabled();
+            const char *readyLabel = myReady ? "Unready" : "Ready";
+            if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
+                if (transport) {
+                    transportUdpClientSendReady(transport, !myReady);
+                }
+            }
+            if (!canReady) ImGui::EndDisabled();
+
+            ImGui::SameLine(0, 20);
+            if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
+                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                ImGui::OpenPopup("Leave Game?##lobby");
+            }
+        }
+
+        /* --- Leave confirmation popup --- */
+        if (ImGui::BeginPopupModal("Leave Game?##lobby", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Are you sure you want to leave this game?");
+            ImGui::Spacing();
+            if (ImGui::Button("Yes", ImVec2(80 * s, 0))) {
+                ImGui::CloseCurrentPopup();
+                result = 0;
+                running = false;
+            }
+            ImGui::SameLine(0.0f, 8.0f);
+            if (ImGui::Button("No", ImVec2(80 * s, 0)) ||
+                ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        /* --- Countdown overlay --- */
+        if (cs->netStat == netLobbyCountdown && cs->countdownSeconds > 0) {
+            char countdownText[32];
+            SDL_snprintf(countdownText, sizeof(countdownText),
+                         "Starting in %d...", cs->countdownSeconds);
+            ImVec2 textSize = ImGui::CalcTextSize(countdownText);
+            ImVec2 winSize = ImGui::GetWindowSize();
+            ImGui::SetCursorPos(ImVec2(
+                (winSize.x - textSize.x) * 0.5f,
+                (winSize.y - textSize.y) * 0.5f
+            ));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+            float origScale = ImGui::GetFont()->Scale;
+            ImGui::GetFont()->Scale = 3.0f;
+            ImGui::PushFont(ImGui::GetFont());
+            textSize = ImGui::CalcTextSize(countdownText);
+            ImGui::SetCursorPos(ImVec2(
+                (winSize.x - textSize.x) * 0.5f,
+                (winSize.y - textSize.y) * 0.5f
+            ));
+            ImGui::Text("%s", countdownText);
+            ImGui::GetFont()->Scale = origScale;
+            ImGui::PopFont();
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::End(); /* ##LobbyBg */
+
+        ImGui::Render();
+        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+        SDL_RenderClear(renderer);
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
+        SDL_RenderPresent(renderer);
+        dialogFrameCapEnd(frameCapStart);
+    }
+
+    /* Clean up map preview texture */
+    if (mapPreviewTex) {
+        SDL_DestroyTexture(mapPreviewTex);
+    }
+
+    /* Tear down ImGui */
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+
+    /* Restore logical presentation */
+    dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
+
+#if !BOLO_MOBILE
+    SDL_SetWindowResizable(window, true);
+#endif
+
+    SDL_FlushEvent(SDL_EVENT_QUIT);
+
+    return result;
+}
