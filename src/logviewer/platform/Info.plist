@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>             <string>Log Viewer</string>
+    <key>CFBundleIdentifier</key>       <string>com.winbolo.logviewer</string>
+    <key>CFBundleVersion</key>          <string>1.01</string>
+    <key>CFBundleShortVersionString</key><string>1.01</string>
+    <key>CFBundleExecutable</key>       <string>Log Viewer</string>
+    <key>CFBundlePackageType</key>      <string>APPL</string>
+    <key>NSHighResolutionCapable</key>  <true/>
+    <key>NSHumanReadableCopyright</key> <string>Copyright 1998-2008 John Morrison</string>
+    <!-- Allow opening .wbv files by drag-and-drop -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>        <string>WinBolo Log File</string>
+            <key>CFBundleTypeExtensions</key>  <array><string>wbv</string></array>
+            <key>CFBundleTypeRole</key>        <string>Viewer</string>
+        </dict>
+    </array>
+</dict>
+</plist>

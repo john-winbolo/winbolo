@@ -1,0 +1,6 @@
+// WinBoloDS server Windows resources (minimal)
+
+#include "winbolods_resource.h"
+
+// Application icon
+IDI_ICON1 ICON "winbolods.ico"

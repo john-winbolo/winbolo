@@ -1,0 +1,1481 @@
+/*
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ *Name:          Server Simulation
+ *Filename:      server_sim.c
+ *Author:        John Morrison
+ *Purpose:
+ *  Standalone authoritative game simulation. Runs the
+ *  full game from InputPacket inputs, independent of
+ *  servercore.c and screen.c.
+ *********************************************************/
+
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
+
+#include "../bolo/global.h"
+#include "../bolo/bolo_map.h"
+#include "../bolo/pillbox.h"
+#include "../bolo/bases.h"
+#include "../bolo/starts.h"
+#include "../bolo/tank.h"
+#include "../bolo/shells.h"
+#include "../bolo/lgm.h"
+#include "../bolo/explosions.h"
+#include "../bolo/mines.h"
+#include "../bolo/minesexp.h"
+#include "../bolo/floodfill.h"
+#include "../bolo/building.h"
+#include "../bolo/rubble.h"
+#include "../bolo/swamp.h"
+#include "../bolo/grass.h"
+#include "../bolo/tankexp.h"
+#include "../bolo/treegrow.h"
+#include "../bolo/gametype.h"
+#include "../bolo/players.h"
+#include "../bolo/log.h"
+#include "../bolo/util.h"
+#include "../bolo/input_packet.h"
+#include "../bolo/messages.h"
+#include "../bolo/sounddist.h"
+#include "server_sim.h"
+
+/* Viewport culling — margin in map squares beyond the visible 15×15 screen */
+#define SNAPSHOT_SCREEN_SIZE 15
+#define SNAPSHOT_VIEWPORT_MARGIN 20
+#define MAX_VIEWPORTS (1 + MAX_SNAPSHOT_PILLS)  /* tank + owned pills */
+
+typedef struct {
+    int minMX, maxMX, minMY, maxMY;
+} ViewportRect;
+
+static bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
+    int i;
+    for (i = 0; i < count; i++) {
+        if (mx >= vps[i].minMX && mx <= vps[i].maxMX &&
+            my >= vps[i].minMY && my <= vps[i].maxMY) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Forward declaration for server console message callback */
+extern void serverMessageConsoleMessage(char *msg);
+
+/* Forward declarations for snapshot helpers used before their definitions */
+static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
+static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
+
+/* Forward declarations for lobby functions used before their definitions */
+void serverSimLobbyCheckAllReady(ServerSim *sim);
+void serverSimStartGame(ServerSim *sim);
+
+/* Active sim pointer — when non-NULL, servercore.c routing functions
+ * access sim state directly instead of using legacy globals. */
+static ServerSim *activeSim = NULL;
+
+/* Map change callback: records terrain changes as game events during tick */
+static void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
+    if (activeSim != NULL) {
+        GameEvent ev;
+        ev.type = EVENT_MAP_CHANGE;
+        memset(ev.data, 0, sizeof(ev.data));
+        ev.data[0] = x;
+        ev.data[1] = y;
+        ev.data[2] = terrain;
+        serverSimAddEvent(activeSim, &ev);
+    }
+}
+
+ServerSim *serverSimGetActive(void) {
+    return activeSim;
+}
+
+/*********************************************************
+ *NAME:          translateInputToTankButton
+ *PURPOSE:
+ *  Converts an InputPacket button bitmask to the existing
+ *  tankButton enum value.
+ *
+ *ARGUMENTS:
+ *  buttons - The bitmask from InputPacket.buttons
+ *********************************************************/
+static tankButton translateInputToTankButton(uint8_t buttons) {
+    bool accel = (buttons & INPUT_BTN_ACCEL) != 0;
+    bool decel = (buttons & INPUT_BTN_DECEL) != 0;
+    bool left  = (buttons & INPUT_BTN_LEFT)  != 0;
+    bool right = (buttons & INPUT_BTN_RIGHT) != 0;
+
+    /* If both accel and decel, they cancel out */
+    if (accel && decel) {
+        accel = FALSE;
+        decel = FALSE;
+    }
+    /* If both left and right, they cancel out */
+    if (left && right) {
+        left = FALSE;
+        right = FALSE;
+    }
+
+    if (left && accel)  return TLEFTACCEL;
+    if (right && accel) return TRIGHTACCEL;
+    if (left && decel)  return TLEFTDECEL;
+    if (right && decel) return TRIGHTDECEL;
+    if (left)           return TLEFT;
+    if (right)          return TRIGHT;
+    if (accel)          return TACCEL;
+    if (decel)          return TDECEL;
+    return TNONE;
+}
+
+/* Map assistant message strings to wire IDs for EVENT_ASSISTANT_MSG */
+static uint8_t assistantMsgStringToId(const char *bottom) {
+    if (strcmp(bottom, "You cannot build until your new man parachutes in") == 0) return ASSIST_MSG_MAN_DEAD;
+    if (strcmp(bottom, "There is no tree to farm there") == 0) return ASSIST_MSG_NO_TREE;
+    if (strcmp(bottom, "You cannot build that there") == 0) return ASSIST_MSG_NO_BUILD;
+    if (strcmp(bottom, "The man cannot build under your boat") == 0) return ASSIST_MSG_NO_BUILD_BOAT;
+    if (strcmp(bottom, "You don't have the trees you require to build that") == 0) return ASSIST_MSG_INSUFFICIENT_TREES;
+    if (strcmp(bottom, "The man cannot build on a tank") == 0) return ASSIST_MSG_BUILDTANK;
+    if (strcmp(bottom, "That pillbox does not need repairing") == 0) return ASSIST_MSG_PILL_NO_REPAIR;
+    if (strcmp(bottom, "You have no pillbox to place") == 0) return ASSIST_MSG_NO_PILLS;
+    if (strcmp(bottom, "You have no mines to place") == 0) return ASSIST_MSG_INSUFFICIENT_MINES;
+    if (strcmp(bottom, "The man cannot build on a mine. It would kill him.") == 0) return ASSIST_MSG_PILL_ON_MINE;
+    if (strcmp(bottom, "Tank Sunk in Deep Sea") == 0) return ASSIST_MSG_TANK_SUNK;
+    return 0;
+}
+
+/* Server-side messageAdd callback — emits EVENT_ASSISTANT_MSG for assistant messages */
+static void serverSimCbMessageAdd(void *ctx, messageType msgType, char *top, char *bottom) {
+    ServerSim *sim = (ServerSim *)ctx;
+    (void)top;
+
+    if (msgType == assistantMessage) {
+        uint8_t msgId = assistantMsgStringToId(bottom);
+        if (msgId != 0) {
+            GameEvent ev;
+            ev.type = EVENT_ASSISTANT_MSG;
+            memset(ev.data, 0, sizeof(ev.data));
+            ev.data[0] = sim->currentTickPlayer;
+            ev.data[1] = msgId;
+            serverSimAddEvent(sim, &ev);
+        }
+    }
+}
+
+static void serverSimCbSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_SOUND;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = (uint8_t)value;
+    ev.data[1] = mx;
+    ev.data[2] = my;
+    serverSimAddEvent(sim, &ev);
+}
+
+static void serverSimCbSoundDistShoot(void *ctx, BYTE mx, BYTE my, BYTE owner) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_SOUND_SHOOT;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = (uint8_t)shootNear;
+    ev.data[1] = mx;
+    ev.data[2] = my;
+    ev.data[3] = owner;
+    serverSimAddEvent(sim, &ev);
+}
+
+static void serverSimCbSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPlayer) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_SOUND_TANK_HIT;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = (uint8_t)hitTankNear;
+    ev.data[1] = mx;
+    ev.data[2] = my;
+    ev.data[3] = hitPlayer;
+    serverSimAddEvent(sim, &ev);
+}
+
+static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_TANK_KILLED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = killer;
+    ev.data[1] = killed;
+    serverSimAddEvent(sim, &ev);
+}
+
+static void serverSimCbCenterTank(void *ctx) {
+    (void)ctx;
+    /* No-op on server */
+}
+
+static void serverSimCbConsoleMessage(void *ctx, char *msg) {
+    (void)ctx;
+    serverMessageConsoleMessage(msg);
+}
+
+static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    BYTE count;
+
+    srand((unsigned int) time(NULL));
+    memset(sim, 0, sizeof(ServerSim));
+
+    sim->startDelay = startDelay;
+    sim->gameLength = gameLen;
+    sim->originalGameLength = gameLen;
+    sim->tick = 0;
+    sim->state = serverStateLobby;
+    sim->lobbyEnabled = TRUE;
+    sim->countdownTicks = 0;
+    sim->hadPlayersEver = FALSE;
+    sim->quitOnWin = FALSE;
+    sim->autoCloseOnEmpty = FALSE;
+    sim->cachedMapData = NULL;
+    sim->cachedMapDataLen = 0;
+    sim->sim.hiddenMines = hiddenMines;
+    sim->sim.isServer = TRUE;
+    sim->sim.isLocalTransport = TRUE;
+    sim->sim.inStartFind = FALSE;
+    sim->timeCreated = (uint32_t)time(NULL);
+    sim->serverPort = 0;
+    memset(sim->mapName, 0, MAP_STR_SIZE);
+    memset(sim->lobbyPlayers, 0, sizeof(sim->lobbyPlayers));
+
+    /* Set up server callbacks */
+    sim->sim.callbacks.messageAdd = serverSimCbMessageAdd;
+    sim->sim.callbacks.soundDist = serverSimCbSoundDist;
+    sim->sim.callbacks.soundDistShoot = serverSimCbSoundDistShoot;
+    sim->sim.callbacks.soundDistTankHit = serverSimCbSoundDistTankHit;
+    sim->sim.callbacks.tankKill = serverSimCbTankKill;
+    sim->sim.callbacks.centerTank = serverSimCbCenterTank;
+    sim->sim.callbacks.consoleMessage = serverSimCbConsoleMessage;
+    sim->sim.callbacks.ctx = sim;
+
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->sim.tanks[count] = NULL;
+        sim->sim.lgmen[count] = NULL;
+        sim->inputQueueHead[count] = 0;
+        sim->inputQueueTail[count] = 0;
+        sim->playerConnected[count] = FALSE;
+    }
+
+    gameTypeSet(&sim->sim.game, game);
+    logCreate();
+
+    mapCreate(&sim->sim.mp);
+    pillsCreate(&sim->sim.pb);
+    startsCreate(&sim->sim.ss);
+    basesCreate(&sim->sim.bs);
+    playersCreate(&sim->sim.plyrs, TRUE);
+    sim->sim.shs = shellsCreate();
+    explosionsCreate(&sim->sim.expl);
+    rubbleCreate(&sim->sim.rbl);
+    buildingCreate(&sim->sim.blds);
+    grassCreate(&sim->sim.grs);
+    swampCreate(&sim->sim.swp);
+    floodCreate(&sim->sim.ff);
+    tkExplosionCreate(&sim->sim.tankExplosions);
+    minesCreate(&sim->sim.mns, hiddenMines);
+    minesExpCreate(&sim->sim.minesExplosions);
+    treeGrowCreate();
+}
+
+bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
+
+    if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        return FALSE;
+    }
+
+    /* Store map name (basename without path) for info packet responses */
+    {
+        const char *base = mapFileName;
+        const char *p;
+        for (p = mapFileName; *p; p++) {
+            if (*p == '/' || *p == '\\') {
+                base = p + 1;
+            }
+        }
+        strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Cache the initial map state for between-round resets */
+    {
+        BYTE tempBuf[65536];
+        int len = serverSimGetCompressedMap(sim, tempBuf);
+        sim->cachedMapData = malloc(len);
+        if (sim->cachedMapData != NULL) {
+            memcpy(sim->cachedMapData, tempBuf, len);
+            sim->cachedMapDataLen = len;
+        }
+    }
+
+    sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
+    return TRUE;
+}
+
+bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
+
+    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, buff, buffLen) == FALSE) {
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Cache the initial map state for between-round resets */
+    {
+        BYTE tempBuf[65536];
+        int len = serverSimGetCompressedMap(sim, tempBuf);
+        sim->cachedMapData = malloc(len);
+        if (sim->cachedMapData != NULL) {
+            memcpy(sim->cachedMapData, tempBuf, len);
+            sim->cachedMapDataLen = len;
+        }
+    }
+
+    sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
+    return TRUE;
+}
+
+void serverSimDestroy(ServerSim *sim) {
+    BYTE count;
+
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (sim->sim.tanks[count] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[count]);
+        }
+        if (sim->sim.lgmen[count] != NULL) {
+            lgmDestroy(&sim->sim.lgmen[count]);
+        }
+    }
+
+    shellsDestroy(&sim->sim.shs);
+    mapDestroy(&sim->sim.mp);
+    pillsDestroy(&sim->sim.pb);
+    basesDestroy(&sim->sim.bs);
+    startsDestroy(&sim->sim.ss);
+    playersDestroy(&sim->sim.plyrs);
+    explosionsDestroy(&sim->sim.expl);
+    minesDestroy(&sim->sim.mns);
+    floodDestroy(&sim->sim.ff);
+    buildingDestroy(&sim->sim.blds);
+    tkExplosionDestroy(&sim->sim.tankExplosions);
+    minesExpDestroy(&sim->sim.minesExplosions);
+    rubbleDestroy(&sim->sim.rbl);
+    swampDestroy(&sim->sim.swp);
+    grassDestroy(&sim->sim.grs);
+
+    sim->state = serverStateGameOver;
+
+    /* Free cached map data */
+    if (sim->cachedMapData != NULL) {
+        free(sim->cachedMapData);
+        sim->cachedMapData = NULL;
+        sim->cachedMapDataLen = 0;
+    }
+
+    /* Clear the active sim pointer if it points to this sim */
+    if (activeSim == sim) {
+        activeSim = NULL;
+    }
+}
+
+void serverSimTick(ServerSim *sim) {
+    BYTE count;
+    bool isKeysTick;
+    BYTE numTanks;
+    tank tanksArray[MAX_TANKS];
+    lgm *lgmPtrs[MAX_TANKS];
+    InputPacket currentInputs[MAX_TANKS];
+    bool hasInput[MAX_TANKS];
+
+    /* State machine gate — only run simulation in running state */
+    switch (sim->state) {
+    case serverStateLobby:
+        /* No simulation but still advance tick for periodic lobby broadcasts. */
+        sim->tick++;
+        return;
+    case serverStateCountdown:
+        sim->countdownTicks--;
+        if (sim->countdownTicks <= 0) {
+            serverSimStartGame(sim);
+        }
+        return;
+    case serverStateGameOver:
+        sim->countdownTicks--;
+        if (sim->countdownTicks <= 0) {
+            serverSimReturnToLobby(sim);
+        }
+        return;
+    case serverStateRunning:
+        break; /* Fall through to existing simulation code */
+    }
+
+    /* Clear event buffer for this tick */
+    sim->eventCount = 0;
+
+    /* Set active sim so servercore.c routing functions access sim state directly */
+    activeSim = sim;
+
+    /* Install map change callback to emit EVENT_MAP_CHANGE during tick */
+    mapSetChangeCallback(simMapChangeCallback);
+
+    if (sim->startDelay > 0) {
+        sim->startDelay--;
+        sim->tick++;
+        mapSetChangeCallback(NULL);
+        return;
+    }
+
+    if (sim->gameLength > 0) {
+        sim->gameLength--;
+        if (sim->gameLength == 0) {
+            mapSetChangeCallback(NULL);
+            serverSimConsoleMessage("Game time limit reached.");
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
+    /* Server tick parity controls world systems only.
+     * Per-player keys vs game is determined by the INPUT's tick parity,
+     * so client/server parity is always aligned regardless of when
+     * the client joined. */
+    isKeysTick = (sim->tick % 2) == 1;
+
+    /* Dequeue one input per player for this tick, skipping duplicates.
+     * Redundant UDP packets can queue the same tick number multiple times
+     * because serverHandleInput's dedup check uses lastProcessedInput which
+     * isn't updated until dequeue time.  Drain any stale/duplicate entries
+     * so each tick number is only processed once. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        hasInput[count] = FALSE;
+        while (sim->inputQueueHead[count] != sim->inputQueueTail[count]) {
+            uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
+            currentInputs[count] = sim->inputQueue[count][tail];
+            sim->inputQueueTail[count]++;
+            if (currentInputs[count].tick > sim->lastProcessedInput[count]) {
+                hasInput[count] = TRUE;
+                break;
+            }
+            /* Duplicate or stale input — discard and try the next one */
+        }
+    }
+
+    /* Per-player tank processing: use each input's tick parity */
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
+            continue;
+        }
+        sim->currentTickPlayer = count;
+        if (hasInput[count]) {
+            bool inputIsKeys = (currentInputs[count].tick % 2) == 1;
+            tankButton tb = translateInputToTankButton(currentInputs[count].buttons);
+
+            /* Apply gunsight adjustment */
+            if (currentInputs[count].gunsightAdj == 1) {
+                tankGunsightIncrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+            } else if (currentInputs[count].gunsightAdj == 2) {
+                tankGunsightDecrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+            }
+
+            sim->lastProcessedInput[count] = currentInputs[count].tick;
+
+            if (inputIsKeys) {
+                /* Keys tick: turning only */
+                BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
+                BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
+                tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, tb);
+            } else {
+                /* Game tick: full update (turning + accel + movement) */
+                bool shoot = (currentInputs[count].actions & INPUT_ACTION_FIRE) != 0;
+                tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
+                lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
+
+                /* Handle mine laying */
+                if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
+                    tankLayMine(&sim->sim, &sim->sim.tanks[count]);
+                }
+
+                /* Handle LGM build requests.  buildAction is 1-based in
+                 * InputPacket (0=none, 1=BsTrees, 2=BsRoad, ...) but
+                 * lgmAddRequest expects 0-based enum values. */
+                if (currentInputs[count].buildAction != 0) {
+                    lgmAddRequest(&sim->sim, &sim->sim.lgmen[count],
+                                  &sim->sim.tanks[count],
+                                  currentInputs[count].buildX,
+                                  currentInputs[count].buildY,
+                                  currentInputs[count].buildAction - 1);
+                }
+            }
+        } else if (!isKeysTick) {
+            /* No input but it's a world-system game tick — still run
+             * tankUpdate with TNONE so physics (deceleration, etc.) apply */
+            tankUpdate(&sim->sim, &sim->sim.tanks[count], TNONE, FALSE, FALSE);
+        }
+    }
+
+    /* World systems: run on even server ticks (game ticks) */
+    if (!isKeysTick) {
+        /* Update pillboxes — pass all tanks so pills can target closest enemy */
+        pillsUpdate(&sim->sim, sim->sim.tanks, sim->playerConnected, MAX_TANKS);
+
+        /* Base stock restocking */
+        basesUpdate(&sim->sim, NULL);
+
+        /* Server-authoritative base refueling */
+        {
+            BYTE numBases = basesGetNumBases(&sim->sim.bs);
+            bool baseOccupied[MAX_BASES];
+            BYTE b;
+
+            memset(baseOccupied, FALSE, sizeof(baseOccupied));
+
+            for (count = 0; count < MAX_TANKS; count++) {
+                WORLD twx, twy;
+                BYTE tx, ty, baseNum;
+                if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
+                    continue;
+                }
+                if (tankGetArmour(&sim->sim.tanks[count]) > TANK_FULL_ARMOUR) {
+                    continue;
+                }
+                tankGetWorld(&sim->sim.tanks[count], &twx, &twy);
+                tx = (BYTE)(twx >> TANK_SHIFT_MAPSIZE);
+                ty = (BYTE)(twy >> TANK_SHIFT_MAPSIZE);
+                baseNum = basesGetBaseNum(&sim->sim.bs, tx, ty);
+                if (baseNum != BASE_NOT_FOUND) {
+                    baseOccupied[baseNum - 1] = TRUE;
+                    if ((*sim->sim.bs).item[baseNum - 1].justStopped == FALSE) {
+                        basesRefueling(&sim->sim, &sim->sim.tanks[count], baseNum);
+                    } else {
+                        (*sim->sim.bs).item[baseNum - 1].justStopped = FALSE;
+                        (*sim->sim.bs).item[baseNum - 1].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+                    }
+                }
+            }
+
+            for (b = 0; b < numBases; b++) {
+                if (!baseOccupied[b]) {
+                    (*sim->sim.bs).item[b].justStopped = TRUE;
+                }
+            }
+        }
+
+        /* Build arrays for multi-tank subsystem updates */
+        numTanks = 0;
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
+                tanksArray[numTanks] = sim->sim.tanks[count];
+                lgmPtrs[numTanks] = &sim->sim.lgmen[count];
+                numTanks++;
+            }
+        }
+
+        /* Update world systems */
+        tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);
+        shellsUpdate(&sim->sim, tanksArray, numTanks, lgmPtrs, &sim->sim.ss);
+        {
+            shells q = sim->sim.shs;
+            while (q != NULL) {
+                q->packSent = TRUE;
+                q = q->next;
+            }
+        }
+        minesExpUpdate(&sim->sim, lgmPtrs, numTanks, tanksArray, &sim->sim.ss);
+        explosionsUpdate(&sim->sim.expl);
+        floodUpdate(&sim->sim);
+        treeGrowUpdate(&sim->sim);
+    }
+
+    /* Clear map change callback */
+    mapSetChangeCallback(NULL);
+
+    /* Diff pills and emit update events for any that changed */
+    {
+        PillSnapshot currentPills[MAX_SNAPSHOT_PILLS];
+        int np = serverSimGetPills(sim, currentPills, MAX_SNAPSHOT_PILLS);
+        int p;
+        for (p = 0; p < np; p++) {
+            if (memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
+                GameEvent ev;
+                ev.type = EVENT_PILL_UPDATE;
+                memset(ev.data, 0, sizeof(ev.data));
+                ev.data[0] = (uint8_t)p;
+                ev.data[1] = currentPills[p].x;
+                ev.data[2] = currentPills[p].y;
+                ev.data[3] = currentPills[p].owner;
+                ev.data[4] = currentPills[p].armour;
+                ev.data[5] = currentPills[p].speed;
+                ev.data[6] = currentPills[p].inTank;
+                serverSimAddEvent(sim, &ev);
+            }
+        }
+        memcpy(sim->prevPills, currentPills, np * sizeof(PillSnapshot));
+        sim->prevPillCount = (uint8_t)np;
+    }
+
+    /* Diff bases and emit update events for any that changed */
+    {
+        BaseSnapshot currentBases[MAX_SNAPSHOT_BASES];
+        int nb = serverSimGetBases(sim, currentBases, MAX_SNAPSHOT_BASES);
+        int b;
+        for (b = 0; b < nb; b++) {
+            if (memcmp(&currentBases[b], &sim->prevBases[b], sizeof(BaseSnapshot)) != 0) {
+                GameEvent ev;
+                ev.type = EVENT_BASE_UPDATE;
+                memset(ev.data, 0, sizeof(ev.data));
+                ev.data[0] = (uint8_t)b;
+                ev.data[1] = currentBases[b].owner;
+                ev.data[2] = currentBases[b].armour;
+                ev.data[3] = currentBases[b].shells;
+                ev.data[4] = currentBases[b].mines;
+                serverSimAddEvent(sim, &ev);
+            }
+        }
+        memcpy(sim->prevBases, currentBases, nb * sizeof(BaseSnapshot));
+        sim->prevBaseCount = (uint8_t)nb;
+    }
+
+    /* Check game-win condition */
+    if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
+        mapSetChangeCallback(NULL);
+        serverSimConsoleMessage("Game won!");
+        serverSimEnterGameOver(sim);
+        sim->tick++;
+        return;
+    }
+
+    sim->tick++;
+}
+
+void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
+    BYTE p = input->playerNum;
+    uint8_t head, next;
+    InputPacket sanitized;
+    if (p >= MAX_TANKS || !sim->playerConnected[p]) {
+        return;
+    }
+
+    /* Sanitize input fields before queuing */
+    sanitized = *input;
+    sanitized.buttons &= (INPUT_BTN_ACCEL | INPUT_BTN_DECEL | INPUT_BTN_LEFT | INPUT_BTN_RIGHT);
+    sanitized.actions &= (INPUT_ACTION_FIRE | INPUT_ACTION_LAY_MINE);
+    /* buildAction is 1-based (0=none, 1=BsTrees..5=BsMine); zero out if invalid */
+    if (sanitized.buildAction > 5) {
+        sanitized.buildAction = 0;
+    }
+    /* gunsightAdj: 0=none, 1=increase, 2=decrease */
+    if (sanitized.gunsightAdj > 2) {
+        sanitized.gunsightAdj = 0;
+    }
+
+    head = sim->inputQueueHead[p];
+    next = (head + 1) & (SERVER_INPUT_QUEUE_SIZE - 1);
+    /* Drop input if queue is full (shouldn't happen in practice) */
+    if (next == (sim->inputQueueTail[p] & (SERVER_INPUT_QUEUE_SIZE - 1))) {
+        return;
+    }
+    sim->inputQueue[p][head & (SERVER_INPUT_QUEUE_SIZE - 1)] = sanitized;
+    sim->inputQueueHead[p] = head + 1;
+    sim->playerPing[p] = sanitized.pingMs;
+}
+
+void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+
+    /* Clean up any leftover state from a previous player in this slot */
+    if (sim->sim.tanks[playerNum] != NULL) {
+        tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
+        sim->sim.tanks[playerNum] = NULL;
+    }
+    if (sim->sim.lgmen[playerNum] != NULL) {
+        lgmDestroy(&sim->sim.lgmen[playerNum]);
+        sim->sim.lgmen[playerNum] = NULL;
+    }
+    sim->inputQueueHead[playerNum] = 0;
+    sim->inputQueueTail[playerNum] = 0;
+    sim->lastProcessedInput[playerNum] = 0;
+
+    sim->playerConnected[playerNum] = TRUE;
+    sim->hadPlayersEver = TRUE;
+
+    /* Initialize lobby player state */
+    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    sim->lobbyPlayers[playerNum].ready = FALSE;
+    sim->lobbyPlayers[playerNum].isBot = FALSE;
+
+    /* Set active sim so routing functions access sim state during tankCreate */
+    activeSim = sim;
+
+    /* Only create tank immediately in running state (no-lobby mode or mid-game join).
+     * In lobby state, tanks are created at game start. */
+    if (sim->state == serverStateRunning) {
+        tankCreate(&sim->sim, &sim->sim.tanks[playerNum]);
+        sim->sim.lgmen[playerNum] = lgmCreate(playerNum);
+        basesUpdateTimer(playerNum);
+    }
+
+    /* Register player in sim's players struct so message formatting
+     * (e.g. "Player captured a base") uses the correct name. */
+    if (playerName != NULL) {
+        playersSetPlayer(NULL, &sim->sim.plyrs, playerNum, (char *)playerName, "??",
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+    }
+}
+
+void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) return;
+    sim->playerConnected[playerNum] = FALSE;
+    if (sim->sim.tanks[playerNum] != NULL) {
+        tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
+        sim->sim.tanks[playerNum] = NULL;
+    }
+    if (sim->sim.lgmen[playerNum] != NULL) {
+        lgmDestroy(&sim->sim.lgmen[playerNum]);
+        sim->sim.lgmen[playerNum] = NULL;
+    }
+    sim->inputQueueHead[playerNum] = 0;
+    sim->inputQueueTail[playerNum] = 0;
+    sim->lastProcessedInput[playerNum] = 0;
+    sim->playerPing[playerNum] = 0;
+
+    /* Clear lobby state */
+    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    sim->lobbyPlayers[playerNum].ready = FALSE;
+    sim->lobbyPlayers[playerNum].isBot = FALSE;
+
+    /* If in countdown and someone disconnects, revert to lobby */
+    if (sim->lobbyEnabled && sim->state == serverStateCountdown) {
+        sim->state = serverStateLobby;
+        sim->countdownTicks = 0;
+        serverSimConsoleMessage("Countdown cancelled — player disconnected.");
+    }
+
+    /* Re-check all-ready after disconnect (may need to re-trigger or cancel) */
+    if (sim->lobbyEnabled && sim->state == serverStateLobby) {
+        serverSimLobbyCheckAllReady(sim);
+    }
+
+    /* Notify clients that this player left */
+    {
+        GameEvent ev;
+        ev.type = EVENT_PLAYER_LEAVE;
+        memset(ev.data, 0, sizeof(ev.data));
+        ev.data[0] = playerNum;
+        serverSimAddEvent(sim, &ev);
+    }
+}
+
+bool serverSimGetTankState(ServerSim *sim, BYTE playerNum, WORLD *wx, WORLD *wy) {
+    if (playerNum >= MAX_TANKS || sim->sim.tanks[playerNum] == NULL) {
+        return FALSE;
+    }
+    tankGetWorld(&sim->sim.tanks[playerNum], wx, wy);
+    return TRUE;
+}
+
+static int serverSimGetShells(ServerSim *sim, ShellSnapshot *out, int maxOut,
+                              const ViewportRect *viewports, int numViewports) {
+    shells q;
+    int count = 0;
+
+    q = sim->sim.shs;
+    while (q != NULL && count < maxOut) {
+        if (!inAnyViewport(viewports, numViewports, q->x >> 8, q->y >> 8)) {
+            q = q->next;
+            continue;
+        }
+        out[count].worldX = q->x;
+        out[count].worldY = q->y;
+        out[count].angle = (uint8_t)q->angle;
+        out[count].owner = q->owner;
+        out[count].length = q->length;
+        count++;
+        q = q->next;
+    }
+    return count;
+}
+
+static int serverSimGetExplosions(ServerSim *sim, ExplosionSnapshot *out, int maxOut,
+                                  const ViewportRect *viewports, int numViewports) {
+    explosions q;
+    int count = 0;
+
+    q = sim->sim.expl;
+    while (q != NULL && count < maxOut) {
+        if (!inAnyViewport(viewports, numViewports, q->mx, q->my)) {
+            q = q->next;
+            continue;
+        }
+        out[count].mx = q->mx;
+        out[count].my = q->my;
+        out[count].px = q->px;
+        out[count].py = q->py;
+        out[count].length = q->length;
+        count++;
+        q = q->next;
+    }
+    return count;
+}
+
+static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut) {
+    int count = 0;
+    BYTE nb;
+    BYTE b;
+    if (sim->sim.bs == NULL) return 0;
+    nb = basesGetNumBases(&sim->sim.bs);
+    for (b = 0; b < nb && count < maxOut; b++) {
+        out[count].owner = (*sim->sim.bs).item[b].owner;
+        out[count].armour = (*sim->sim.bs).item[b].armour;
+        out[count].shells = (*sim->sim.bs).item[b].shells;
+        out[count].mines = (*sim->sim.bs).item[b].mines;
+        count++;
+    }
+    return count;
+}
+
+static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
+    int count = 0;
+    BYTE np;
+    BYTE p;
+    if (sim->sim.pb == NULL) return 0;
+    np = pillsGetNumPills(&sim->sim.pb);
+    for (p = 0; p < np && count < maxOut; p++) {
+        out[count].x = (*sim->sim.pb).item[p].x;
+        out[count].y = (*sim->sim.pb).item[p].y;
+        out[count].owner = (*sim->sim.pb).item[p].owner;
+        out[count].armour = (*sim->sim.pb).item[p].armour;
+        out[count].speed = (*sim->sim.pb).item[p].speed;
+        out[count].inTank = (*sim->sim.pb).item[p].inTank ? 1 : 0;
+        count++;
+    }
+    return count;
+}
+
+void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
+    if (sim->eventCount < MAX_SNAPSHOT_EVENTS) {
+        sim->events[sim->eventCount] = *event;
+        sim->eventCount++;
+    }
+}
+
+int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
+    return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
+}
+
+void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
+                            SnapshotHeader *hdr,
+                            TankSnapshot *tanksOut, int maxTanks,
+                            ShellSnapshot *shellsOut, int maxShells,
+                            ExplosionSnapshot *explosionsOut, int maxExplosions,
+                            BaseSnapshot *basesOut, int maxBases,
+                            PillSnapshot *pillsOut, int maxPills,
+                            GameEvent *eventsOut, int maxEvents) {
+    int i;
+    int tankCount = 0;
+    ViewportRect viewports[MAX_VIEWPORTS];
+    int numViewports = 0;
+
+    memset(hdr, 0, sizeof(*hdr));
+    hdr->serverTick = sim->tick;
+    hdr->lastProcessedInput = sim->lastProcessedInput[clientIdx];
+
+    /* Primary viewport: client's tank position */
+    {
+        WORLD clientWX = 0, clientWY = 0;
+        if (serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
+            int centerMX = clientWX >> 8;
+            int centerMY = clientWY >> 8;
+            int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
+            viewports[numViewports].minMX = centerMX - halfView;
+            viewports[numViewports].maxMX = centerMX + halfView;
+            viewports[numViewports].minMY = centerMY - halfView;
+            viewports[numViewports].maxMY = centerMY + halfView;
+            numViewports++;
+        }
+    }
+
+    /* Additional viewports: pillboxes owned by this client (not in tank) */
+    if (sim->sim.pb != NULL) {
+        int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
+        BYTE np = pillsGetNumPills(&sim->sim.pb);
+        BYTE p;
+        for (p = 0; p < np && numViewports < MAX_VIEWPORTS; p++) {
+            if ((*sim->sim.pb).item[p].owner != clientIdx) continue;
+            if ((*sim->sim.pb).item[p].inTank) continue;
+            viewports[numViewports].minMX = (*sim->sim.pb).item[p].x - halfView;
+            viewports[numViewports].maxMX = (*sim->sim.pb).item[p].x + halfView;
+            viewports[numViewports].minMY = (*sim->sim.pb).item[p].y - halfView;
+            viewports[numViewports].maxMY = (*sim->sim.pb).item[p].y + halfView;
+            numViewports++;
+        }
+    }
+
+    /* No viewports (dead/respawning with no placed pills) — send everything */
+    if (numViewports == 0) {
+        viewports[0].minMX = 0;  viewports[0].maxMX = 255;
+        viewports[0].minMY = 0;  viewports[0].maxMY = 255;
+        numViewports = 1;
+    }
+
+    /* Build tank snapshots for all connected players */
+    for (i = 0; i < MAX_TANKS && tankCount < maxTanks; i++) {
+        TankSnapshot *ts;
+        WORLD wx, wy;
+
+        if (!sim->playerConnected[i]) continue;
+        if (!serverSimGetTankState(sim, (BYTE)i, &wx, &wy)) continue;
+
+        /* Always include the client's own tank; cull others by viewport */
+        if (i != clientIdx) {
+            if (!inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8)) {
+                continue;
+            }
+        }
+
+        ts = &tanksOut[tankCount];
+        ts->playerNum = (uint8_t)i;
+        ts->worldX = wx;
+        ts->worldY = wy;
+        ts->angle = (uint16_t)(tankGetAngle(&sim->sim.tanks[i]) * 256.0f);
+        ts->speed = (uint8_t)(tankGetActualSpeed(&sim->sim.tanks[i]) * 4.0f);
+        {
+            BYTE onBoat = tankIsOnBoat(&sim->sim.tanks[i]) ? 1 : 0;
+            BYTE isDead = (tankGetDeathWait(&sim->sim.tanks[i]) > 0) ? 1 : 0;
+            ts->tankStatus = utilPutNibble(isDead, onBoat);
+        }
+        ts->lgmFrame = lgmIsOut(&sim->sim.lgmen[i]) ? (lgmGetFrame(&sim->sim.lgmen[i]) + 1) : 0;
+        ts->lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
+        ts->lgmMY = lgmGetMY(&sim->sim.lgmen[i]);
+        ts->lgmPX = lgmGetPX(&sim->sim.lgmen[i]);
+        ts->lgmPY = lgmGetPY(&sim->sim.lgmen[i]);
+        ts->firstLeft = tankGetFirstLeft(&sim->sim.tanks[i]);
+        ts->firstRight = tankGetFirstRight(&sim->sim.tanks[i]);
+        ts->pingMs = sim->playerPing[i];
+        ts->accountFlags = (playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x01 : 0)
+                         | (playersGetSteamParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x02 : 0);
+
+        /* Resources: only send to the owning player */
+        if (i == clientIdx) {
+            ts->armour = tankGetArmour(&sim->sim.tanks[i]);
+            ts->shells = tankGetShells(&sim->sim.tanks[i]);
+            ts->mines = tankGetMines(&sim->sim.tanks[i]);
+            ts->trees = tankGetTrees(&sim->sim.tanks[i]);
+            ts->gunsightLen = tankGetGunsightLength(&sim->sim.tanks[i]);
+            ts->deathWait = (uint8_t)tankGetDeathWait(&sim->sim.tanks[i]);
+            ts->reload = tankGetReloadTime(&sim->sim.tanks[i]);
+        } else {
+            ts->armour = 0;
+            ts->shells = 0;
+            ts->mines = 0;
+            ts->trees = 0;
+            ts->gunsightLen = 0;
+            ts->deathWait = 0;
+            ts->reload = 0;
+        }
+        tankCount++;
+    }
+    hdr->tankCount = (uint8_t)tankCount;
+
+    /* Shell snapshots */
+    hdr->shellCount = (uint8_t)serverSimGetShells(sim, shellsOut, maxShells,
+                                                   viewports, numViewports);
+
+    /* Explosion snapshots */
+    hdr->explosionCount = (uint8_t)serverSimGetExplosions(sim, explosionsOut, maxExplosions,
+                                                           viewports, numViewports);
+
+    /* Periodic full base/pill/map sync to correct any client drift */
+    if (sim->lastFullSyncTick == 0 || sim->tick - sim->lastFullSyncTick >= FULL_SYNC_INTERVAL) {
+        hdr->baseCount = (uint8_t)serverSimGetBases(sim, basesOut, maxBases);
+        hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
+        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp);
+        sim->lastFullSyncTick = sim->tick;
+    } else {
+        hdr->baseCount = 0;
+        hdr->pillCount = 0;
+        hdr->mapChecksum = 0;
+    }
+
+    /* Game events — filter EVENT_SOUND by distance and deduplicate per type.
+     * Non-sound events pass through unchanged. */
+    {
+        int outCount = 0;
+        WORLD cwx = 0, cwy = 0;
+        BYTE clientMX = 0, clientMY = 0;
+        bool hasClientPos = serverSimGetTankState(sim, clientIdx, &cwx, &cwy);
+        if (hasClientPos) {
+            clientMX = (BYTE)(cwx >> 8);
+            clientMY = (BYTE)(cwy >> 8);
+        }
+
+        /* First pass: collect best (closest) sound event per sound type.
+         * Track by soundId index — sndEffects has ~24 values. */
+        #define MAX_SOUND_TYPES 32
+        int bestSoundIdx[MAX_SOUND_TYPES];   /* index into sim->events */
+        int bestSoundDist[MAX_SOUND_TYPES];  /* manhattan distance to client */
+        int s;
+        for (s = 0; s < MAX_SOUND_TYPES; s++) {
+            bestSoundIdx[s] = -1;
+            bestSoundDist[s] = 255;
+        }
+
+        for (i = 0; i < sim->eventCount; i++) {
+            uint8_t evType = sim->events[i].type;
+            if (evType == EVENT_SOUND || evType == EVENT_SOUND_TANK_HIT || evType == EVENT_SOUND_SHOOT) {
+                uint8_t soundId = sim->events[i].data[0];
+                uint8_t mx = sim->events[i].data[1];
+                uint8_t my = sim->events[i].data[2];
+
+                if (!hasClientPos) continue;
+
+                /* Skip own shoot sound — client plays shootSelf via prediction */
+                if (evType == EVENT_SOUND_SHOOT && sim->events[i].data[3] == clientIdx) {
+                    continue;
+                }
+
+                /* Calculate manhattan distance to client */
+                int dx = (clientMX > mx) ? (clientMX - mx) : (mx - clientMX);
+                int dy = (clientMY > my) ? (clientMY - my) : (my - clientMY);
+
+                /* Always send tank hits to the hit player (plays hitTankSelf at full volume) */
+                if (evType == EVENT_SOUND_TANK_HIT && sim->events[i].data[3] == clientIdx) {
+                    /* Skip distance cull */
+                } else if (dx >= SDIST_NONE || dy >= SDIST_NONE) {
+                    continue;
+                }
+
+                /* Keep closest instance of each sound type */
+                int dist = dx + dy;
+                if (soundId < MAX_SOUND_TYPES && dist < bestSoundDist[soundId]) {
+                    bestSoundIdx[soundId] = i;
+                    bestSoundDist[soundId] = dist;
+                }
+            }
+        }
+
+        /* Copy non-sound events, then deduplicated sound events */
+        for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
+            uint8_t evType = sim->events[i].type;
+            if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                eventsOut[outCount++] = sim->events[i];
+            }
+        }
+        for (s = 0; s < MAX_SOUND_TYPES && outCount < maxEvents; s++) {
+            if (bestSoundIdx[s] >= 0) {
+                eventsOut[outCount++] = sim->events[bestSoundIdx[s]];
+            }
+        }
+        #undef MAX_SOUND_TYPES
+
+        hdr->reliableEventCount = (uint8_t)outCount;
+        hdr->reliableBaseSeq = 0; /* Local transport doesn't use sequence tracking */
+    }
+}
+
+void serverSimInformation(ServerSim *sim, bool locked) {
+    BYTE count;
+    BYTE numPlayers;
+    BYTE maxPlayers;
+    char name[256];
+    time_t startTime = (time_t)sim->timeCreated;
+
+    numPlayers = serverSimGetNumPlayers(sim);
+    maxPlayers = MAX_TANKS;
+
+    fprintf(stdout, "\n");
+    fprintf(stdout, "WinBolo Server (new sim)\n");
+    fprintf(stdout, "Game start time: %sMap Name: %s - Locked: %s\n",
+            asctime(gmtime(&startTime)),
+            sim->mapName,
+            locked ? "Yes" : "No");
+    fprintf(stdout, "Players: (%d/%d) Neutral Pillboxes: (%d/%d), Neutral Bases: (%d/%d)\n\n",
+            numPlayers, maxPlayers,
+            pillsGetNumNeutral(&sim->sim.pb), pillsGetNumPills(&sim->sim.pb),
+            basesGetNumNeutral(&sim->sim.bs), basesGetNumBases(&sim->sim.bs));
+
+    if (numPlayers > 0) {
+        fprintf(stdout, "Players:\n");
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (!sim->playerConnected[count]) continue;
+            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            fprintf(stdout, "%s - (P:%d B:%d)\n",
+                    name,
+                    pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+        }
+    }
+    fprintf(stdout, "\n");
+}
+
+bool serverSimSaveMap(ServerSim *sim, char *fileName) {
+    return mapWrite(fileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss);
+}
+
+bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
+    bool allOwned;
+    BYTE count;
+    BYTE max;
+    BYTE first = NEUTRAL;
+    BYTE current;
+    char name[256];
+
+    allOwned = TRUE;
+    max = basesGetNumBases(&sim->sim.bs);
+
+    for (count = 1; count <= max && allOwned; count++) {
+        BYTE shellsAmt, minesAmt, armourAmt;
+        current = basesGetBaseOwner(&sim->sim.bs, count);
+        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
+        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            allOwned = FALSE;
+        } else if (count == 1) {
+            first = current;
+        } else {
+            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        }
+    }
+
+    if (allOwned && max > 0 && printWinners) {
+        fprintf(stdout, "Game Won!\nWinners:\n");
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (!sim->playerConnected[count]) continue;
+            if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
+                playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                fprintf(stdout, "  %s\n", name);
+            }
+        }
+    }
+
+    return allOwned && max > 0;
+}
+
+bool serverSimCheckAutoClose(ServerSim *sim) {
+    if (!sim->hadPlayersEver) {
+        if (serverSimGetNumPlayers(sim) > 0) {
+            sim->hadPlayersEver = TRUE;
+        }
+    } else {
+        if (serverSimGetNumPlayers(sim) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+BYTE serverSimGetNumPlayers(ServerSim *sim) {
+    BYTE count;
+    BYTE num = 0;
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (sim->playerConnected[count]) {
+            num++;
+        }
+    }
+    return num;
+}
+
+BYTE serverSimGetNumNeutralBases(ServerSim *sim) {
+    return basesGetNumNeutral(&sim->sim.bs);
+}
+
+BYTE serverSimGetNumNeutralPills(ServerSim *sim) {
+    return pillsGetNumNeutral(&sim->sim.pb);
+}
+
+bool serverSimIsRunning(void) {
+    ServerSim *sim = serverSimGetActive();
+    return sim != NULL && sim->state == serverStateRunning;
+}
+
+void serverSimClearActive(ServerSim *sim) {
+    if (activeSim == sim) {
+        activeSim = NULL;
+    }
+}
+
+void serverSimConsoleMessage(const char *msg) {
+    ServerSim *sim = serverSimGetActive();
+    if (sim != NULL && sim->sim.callbacks.consoleMessage != NULL) {
+        sim->sim.callbacks.consoleMessage(sim->sim.callbacks.ctx, (char *)msg);
+    } else {
+        /* Fallback: print to stdout if no active sim */
+        fprintf(stdout, "%s\n", msg);
+    }
+}
+
+void serverSimEnterGameOver(ServerSim *sim) {
+    if (!sim->lobbyEnabled) {
+        /* No lobby — game over means server should shut down */
+        sim->state = serverStateGameOver;
+        sim->countdownTicks = 0;
+        serverSimConsoleMessage("Game over!");
+    } else {
+        /* Lobby enabled — hold in game-over state then return to lobby */
+        sim->state = serverStateGameOver;
+        sim->countdownTicks = GAMEOVER_HOLD_TICKS;
+        serverSimConsoleMessage("Game over! Returning to lobby...");
+        /* PACKET_GAME_OVER broadcast is sent by transport layer
+         * via transportUdpServerBroadcastGameOver() called from
+         * the transport recv/tick path when state changes. */
+    }
+}
+
+void serverSimReturnToLobby(ServerSim *sim) {
+    BYTE i;
+    if (!sim->lobbyEnabled) {
+        return;
+    }
+    sim->state = serverStateLobby;
+
+    /* Destroy all tanks and LGMs */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        if (sim->sim.lgmen[i] != NULL) {
+            lgmDestroy(&sim->sim.lgmen[i]);
+            sim->sim.lgmen[i] = NULL;
+        }
+    }
+
+    /* Reset lobby player ready state, keep teams and connections.
+     * Bots are always ready — re-mark them after the blanket reset. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->lobbyPlayers[i].ready = FALSE;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->lobbyPlayers[i].isBot) {
+            sim->lobbyPlayers[i].ready = TRUE;
+        }
+    }
+    serverSimConsoleMessage("Returned to lobby.");
+    /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
+}
+
+void serverSimLobbyCheckAllReady(ServerSim *sim) {
+    BYTE numConnected = 0;
+    BYTE i;
+
+    if (sim->state != serverStateLobby) return;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        numConnected++;
+        if (!sim->lobbyPlayers[i].ready) return; /* Not all ready */
+    }
+    if (numConnected == 0) return;
+
+    /* All ready — start countdown */
+    sim->state = serverStateCountdown;
+    sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
+    serverSimConsoleMessage("All players ready! Starting countdown...");
+}
+
+void serverSimResetGameWorld(ServerSim *sim) {
+    BYTE i;
+    bool hiddenMines = sim->sim.hiddenMines;
+
+    /* 1. Destroy all tanks and LGMs */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        if (sim->sim.lgmen[i] != NULL) {
+            lgmDestroy(&sim->sim.lgmen[i]);
+            sim->sim.lgmen[i] = NULL;
+        }
+    }
+
+    /* 2. Destroy and recreate all world systems */
+    shellsDestroy(&sim->sim.shs);
+    sim->sim.shs = shellsCreate();
+
+    explosionsDestroy(&sim->sim.expl);
+    explosionsCreate(&sim->sim.expl);
+
+    minesDestroy(&sim->sim.mns);
+    minesCreate(&sim->sim.mns, hiddenMines);
+
+    minesExpDestroy(&sim->sim.minesExplosions);
+    minesExpCreate(&sim->sim.minesExplosions);
+
+    rubbleDestroy(&sim->sim.rbl);
+    rubbleCreate(&sim->sim.rbl);
+
+    buildingDestroy(&sim->sim.blds);
+    buildingCreate(&sim->sim.blds);
+
+    grassDestroy(&sim->sim.grs);
+    grassCreate(&sim->sim.grs);
+
+    swampDestroy(&sim->sim.swp);
+    swampCreate(&sim->sim.swp);
+
+    floodDestroy(&sim->sim.ff);
+    floodCreate(&sim->sim.ff);
+
+    tkExplosionDestroy(&sim->sim.tankExplosions);
+    tkExplosionCreate(&sim->sim.tankExplosions);
+
+    /* 3. Reload map/bases/pills/starts from cached data */
+    if (sim->cachedMapData != NULL) {
+        mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss,
+                             sim->cachedMapData, sim->cachedMapDataLen);
+    }
+
+    /* 4. Clear mines from under bases */
+    basesClearMines(&sim->sim);
+
+    /* 5. Clear events */
+    sim->eventCount = 0;
+
+    /* 6. Reset tick */
+    sim->tick = 0;
+
+    /* 7. Flush all input queues */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->inputQueueHead[i] = 0;
+        sim->inputQueueTail[i] = 0;
+        sim->lastProcessedInput[i] = 0;
+    }
+
+    /* 8. Reset full sync tracking */
+    sim->lastFullSyncTick = 0;
+
+    /* 9. Reset change detection */
+    sim->prevPillCount = 0;
+    sim->prevBaseCount = 0;
+
+    /* 10. Reset player connection state and players struct */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->playerConnected[i] = FALSE;
+    }
+    sim->hadPlayersEver = FALSE;
+    playersDestroy(&sim->sim.plyrs);
+    playersCreate(&sim->sim.plyrs, TRUE);
+}
+
+void serverSimStartGame(ServerSim *sim) {
+    BYTE i, j;
+
+    activeSim = sim;
+
+    /* Reset the game world (map, world systems, queues, tick) */
+    serverSimResetGameWorld(sim);
+
+    sim->gameLength = sim->originalGameLength;
+
+    /* Clear all alliances from previous round */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, i, TRUE);
+    }
+
+    /* Apply team alliances: players with same non-zero teamNumber become allies */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == 0) continue;
+        for (j = i + 1; j < MAX_TANKS; j++) {
+            if (!sim->playerConnected[j]) continue;
+            if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
+                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, i, j, TRUE);
+            }
+        }
+    }
+
+    /* Create tanks for all connected players */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        /* Clean up any existing tank/lgm (shouldn't exist, but be safe) */
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        if (sim->sim.lgmen[i] != NULL) {
+            lgmDestroy(&sim->sim.lgmen[i]);
+            sim->sim.lgmen[i] = NULL;
+        }
+        tankCreate(&sim->sim, &sim->sim.tanks[i]);
+        sim->sim.lgmen[i] = lgmCreate(i);
+        basesUpdateTimer(i);
+    }
+
+    sim->state = serverStateRunning;
+    serverSimConsoleMessage("Game started!");
+}
+
+bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
+    BYTE tempBuf[65536];
+    int len;
+    BYTE i;
+
+    if (sim->state != serverStateLobby) {
+        return FALSE;
+    }
+
+    /* Load the new map */
+    if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Update cached map data */
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData != NULL) {
+        free(sim->cachedMapData);
+    }
+    sim->cachedMapData = malloc(len);
+    if (sim->cachedMapData != NULL) {
+        memcpy(sim->cachedMapData, tempBuf, len);
+        sim->cachedMapDataLen = len;
+    }
+
+    /* Update map name (basename without path) */
+    {
+        const char *base = mapFileName;
+        const char *p;
+        for (p = mapFileName; *p; p++) {
+            if (*p == '/' || *p == '\\') {
+                base = p + 1;
+            }
+        }
+        strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
+    }
+
+    /* Reset all lobby players' ready state */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->lobbyPlayers[i].ready = FALSE;
+    }
+
+    return TRUE;
+}

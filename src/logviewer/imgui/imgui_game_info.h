@@ -1,0 +1,43 @@
+/*
+ * imgui_game_info.h - ImGui game information window for Log Viewer
+ *
+ * Copyright (c) 2024
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
+
+#ifndef IMGUI_GAME_INFO_H
+#define IMGUI_GAME_INFO_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Render the game info window
+ * Should be called each frame when window is visible */
+void imgui_game_info_window(void);
+
+/* Initialize game info state */
+void imgui_game_info_init(void);
+
+/* Clear game info display (called when log is closed) */
+void imgui_game_info_clear(void);
+
+/* Set game info from backend
+ * This is called from frontEndSetGameInformation
+ * Using C types directly to avoid C++/C type conflicts */
+void imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char versionMinor, unsigned char versionRevision,
+                         char *mapName, unsigned char gameType, int hiddenMines, unsigned char aiType,
+                         int32_t startDelay, int32_t timeLimit, unsigned char *wbnKey, int32_t startTime);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* IMGUI_GAME_INFO_H */

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WinBolo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        h1 {
+            margin: 12px 0 4px;
+            font-size: 1.3em;
+            color: #00cc66;
+        }
+        #status {
+            margin: 4px 0 8px;
+            font-size: 0.85em;
+            color: #888;
+            min-height: 1.2em;
+        }
+        #netinfo {
+            font-size: 0.78em;
+            color: #5599bb;
+            margin-bottom: 6px;
+            min-height: 1em;
+        }
+        .emscripten {
+            padding-right: 0;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+        }
+        canvas.emscripten {
+            border: 1px solid #333;
+            background: #000;
+            cursor: default;
+            /* No fixed width/height — SDL manages the canvas size */
+        }
+        #output {
+            max-width: 800px;
+            width: 100%;
+            max-height: 100px;
+            overflow-y: auto;
+            font-family: "Courier New", monospace;
+            font-size: 0.75em;
+            color: #666;
+            padding: 4px 8px;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WinBolo</h1>
+    <div id="status">Loading...</div>
+    <div id="netinfo"></div>
+
+    <canvas class="emscripten" id="canvas"
+            oncontextmenu="event.preventDefault()"
+            tabindex="0"></canvas>
+
+    <div id="output"></div>
+
+    <script>
+        var Module = {
+            canvas: (function() { return document.getElementById('canvas'); })(),
+            print: (function() {
+                var outputElement = document.getElementById('output');
+                return function(text) {
+                    if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                    console.log(text);
+                    if (outputElement) {
+                        outputElement.textContent += text + '\n';
+                        outputElement.scrollTop = outputElement.scrollHeight;
+                    }
+                };
+            })(),
+            printErr: function(text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.error(text);
+            },
+            setStatus: function(text) {
+                var el = document.getElementById('status');
+                if (el) el.textContent = text;
+            },
+            monitorRunDependencies: function(left) {
+                if (left) {
+                    Module.setStatus('Loading... (' + left + ' files remaining)');
+                } else {
+                    Module.setStatus('Ready');
+                }
+            },
+            onRuntimeInitialized: function() {
+                Module.setStatus('Running');
+                var c = document.getElementById('canvas');
+                console.log('[WASM] Canvas after init:', c.width, 'x', c.height);
+            }
+        };
+
+        Module.setStatus('Downloading...');
+
+        window.onerror = function(msg, url, line, col, error) {
+            console.error('window.onerror:', msg, url, line, col, error);
+            Module.setStatus('Error: ' + msg);
+        };
+
+        /* Show network mode info based on URL params */
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var netType = params.get('netType') || 'single';
+            var el = document.getElementById('netinfo');
+            if (!el) return;
+            if (netType === 'udp' || netType === 'netUdp') {
+                var proxy = params.get('proxyURL') ||
+                    'ws://192.168.42.200:8085/proxy?server=192.168.42.14:27500';
+                el.textContent = '\u25cf Network: UDP via proxy \u2014 ' + proxy;
+            } else {
+                el.textContent = '\u25cb Network: single-player';
+            }
+        })();
+
+        /* Prevent the browser from intercepting Ctrl+key shortcuts so they
+           reach the WASM SDL event loop instead. */
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && !e.altKey && !e.metaKey) {
+                var k = e.key.toLowerCase();
+                /* Keys used by sdl3imgui.cpp shortcuts */
+                if ('mksga123pbhr'.indexOf(k) !== -1) {
+                    e.preventDefault();
+                }
+            }
+        }, true);
+
+        /* Auto-focus the canvas so keyboard events work immediately. */
+        window.addEventListener('load', function() {
+            document.getElementById('canvas').focus();
+        });
+    </script>
+
+    {{{ SCRIPT }}}
+</body>
+</html>

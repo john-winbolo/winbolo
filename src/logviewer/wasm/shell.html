@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WinBolo Log Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        h1 {
+            margin: 12px 0 4px;
+            font-size: 1.3em;
+            color: #e0e0ff;
+        }
+        #status {
+            margin: 4px 0 8px;
+            font-size: 0.85em;
+            color: #888;
+            min-height: 1.2em;
+        }
+        .emscripten {
+            padding-right: 0;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+        }
+        canvas.emscripten {
+            border: 1px solid #333;
+            background: #000;
+            cursor: default;
+            width: 800px;
+            height: 633px;
+        }
+        .drop-zone {
+            border: 2px dashed #555;
+            border-radius: 8px;
+            padding: 16px 24px;
+            margin: 8px 0;
+            text-align: center;
+            color: #888;
+            font-size: 0.9em;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .drop-zone.active {
+            border-color: #6c6cff;
+            color: #aaa;
+        }
+        .drop-zone p { margin: 4px 0; }
+    </style>
+</head>
+<body>
+    <h1>WinBolo Log Viewer</h1>
+    <div id="status">Loading...</div>
+
+    <div class="drop-zone" id="drop-zone">
+        <p>Drag and drop a <strong>.wbv</strong> file here</p>
+        <p>or use File &rarr; Open in the menu</p>
+    </div>
+
+    <canvas class="emscripten" id="canvas"
+            oncontextmenu="event.preventDefault()"
+            tabindex="-1"
+            width="800" height="608"></canvas>
+
+    <script>
+        var Module = {
+            canvas: (function() { return document.getElementById('canvas'); })(),
+            setStatus: function(text) {
+                var el = document.getElementById('status');
+                if (el) el.textContent = text;
+            },
+            monitorRunDependencies: function(left) {
+                if (left) {
+                    Module.setStatus('Loading... (' + left + ' files remaining)');
+                } else {
+                    Module.setStatus('Ready');
+                }
+            },
+            onRuntimeInitialized: function() {
+                Module.setStatus('Ready');
+                /* Debug: check canvas state */
+                var c = document.getElementById('canvas');
+                console.log('[WASM] Canvas after init:', c.width, 'x', c.height, 'style:', c.style.cssText);
+
+                /* Check URL parameters for a log file to load */
+                var params = new URLSearchParams(window.location.search);
+                var logUrl = params.get('log');
+                if (logUrl) {
+                    loadWbvFromUrl(logUrl);
+                }
+            }
+        };
+
+        Module.setStatus('Downloading...');
+
+        window.onerror = function(msg, url, line, col, error) {
+            console.error('window.onerror:', msg, url, line, col, error);
+            Module.setStatus('Error: ' + msg);
+        };
+
+        /* Helper: write data to Emscripten FS and open it */
+        function openWbvData(data, displayName) {
+            var filename = '/tmp/' + displayName;
+            try { Module.FS.unlink(filename); } catch(err) {}
+            Module.FS.writeFile(filename, data);
+
+            var fnamePtr = Module.stringToNewUTF8(filename);
+            Module._wasm_open_log_file(fnamePtr);
+            Module._free(fnamePtr);
+            Module.setStatus('Loaded: ' + displayName);
+        }
+
+        /* Load a .wbv file from a URL */
+        function loadWbvFromUrl(url) {
+            Module.setStatus('Downloading log file...');
+            fetch(url)
+                .then(function(response) {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.arrayBuffer();
+                })
+                .then(function(buffer) {
+                    var data = new Uint8Array(buffer);
+                    /* Extract a filename from the URL or use a default */
+                    var name = url.split('/').pop().split('?')[0];
+                    if (!name || !name.endsWith('.wbv')) name = 'download.wbv';
+                    openWbvData(data, name);
+                })
+                .catch(function(err) {
+                    Module.setStatus('Error loading URL: ' + err.message);
+                    console.error('Failed to load log from URL:', err);
+                });
+        }
+
+        /* Drag-and-drop support */
+        var dropZone = document.getElementById('drop-zone');
+
+        ['dragenter', 'dragover'].forEach(function(evt) {
+            dropZone.addEventListener(evt, function(e) {
+                e.preventDefault();
+                dropZone.classList.add('active');
+            });
+        });
+        ['dragleave', 'drop'].forEach(function(evt) {
+            dropZone.addEventListener(evt, function(e) {
+                e.preventDefault();
+                dropZone.classList.remove('active');
+            });
+        });
+
+        dropZone.addEventListener('drop', function(e) {
+            var file = e.dataTransfer.files[0];
+            if (!file) return;
+            loadWbvFile(file);
+        });
+
+        function loadWbvFile(file) {
+            Module.setStatus('Loading ' + file.name + '...');
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                var data = new Uint8Array(ev.target.result);
+                openWbvData(data, file.name);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+
+    {{{ SCRIPT }}}
+</body>
+</html>
