@@ -235,8 +235,8 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->tanky);          lua_setfield(L, -2, "tanky");
   lua_pushinteger(L, info->direction);      lua_setfield(L, -2, "direction");
   lua_pushinteger(L, info->speed);          lua_setfield(L, -2, "speed");
-  lua_pushboolean(L, info->inboat);         lua_setfield(L, -2, "inboat");
-  lua_pushboolean(L, info->hidden);         lua_setfield(L, -2, "hidden");
+  lua_pushinteger(L, info->inboat);          lua_setfield(L, -2, "inboat");
+  lua_pushinteger(L, info->hidden);          lua_setfield(L, -2, "hidden");
   lua_pushinteger(L, info->shells);         lua_setfield(L, -2, "shells");
   lua_pushinteger(L, info->mines);          lua_setfield(L, -2, "mines");
   lua_pushinteger(L, info->armour);         lua_setfield(L, -2, "armour");

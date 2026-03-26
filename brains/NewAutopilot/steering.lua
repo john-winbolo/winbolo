@@ -20,7 +20,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   local pf  = state.pf
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
-  local in_boat = info.inboat and 1 or 0
+  local in_boat = (info.inboat ~= 0) and 1 or 0
   local shells  = info.shells or 0
   local trees   = info.trees or 0
   local mines   = info.mines or 0
@@ -101,7 +101,7 @@ local function path_lookahead(state, info, nx, ny)
 
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
-  local in_boat = info.inboat
+  local in_boat = (info.inboat ~= 0)
   local on_foot = not in_boat
 
   -- When in a boat, disable lookahead entirely — follow the exact path.
@@ -557,7 +557,7 @@ function M.steer(state, world, info, goal)
 
   -- BPC rush: pill is dead, drive straight to it
   -- In a boat: skip to general navigation for wall-clearing + boat_exit
-  elseif goal.kind == "bpc_pill" and goal.substate == "rush" and not info.inboat then
+  elseif goal.kind == "bpc_pill" and goal.substate == "rush" and info.inboat == 0 then
     -- Navigate to pill tile via A*
     local nav_mx, nav_my = goal.mx, goal.my
     local nav_wx, nav_wy = goal.wx, goal.wy
@@ -680,7 +680,7 @@ function M.steer(state, world, info, goal)
     local los_ok = wall_hp == 0
 
     if wdist_pill <= C.ATTACK_PILL_RANGE * 256 and los_ok then
-      local can_engage = not info.inboat
+      local can_engage = info.inboat == 0
                          or water_corridor_to(tmx, tmy, goal.mx, goal.my)
       -- Allow engagement in engage substates only
       local engage_substates = { engage = true, ws_engage = true, shield_engage = true }
@@ -836,7 +836,7 @@ function M.steer(state, world, info, goal)
     -- braking at the current destination.  Override move_dir and eff_dist
     -- so the tank drives through the capture point at speed.
     local lookahead_active = false
-    if state.next_goal and eff_dist < brake_dist and not info.inboat then
+    if state.next_goal and eff_dist < brake_dist and info.inboat == 0 then
       local ng = state.next_goal
       move_dir   = U.aim_at(info.tankx, info.tanky, ng.wx, ng.wy)
       eff_dist   = U.wdist(info.tankx, info.tanky, ng.wx, ng.wy)
@@ -849,13 +849,13 @@ function M.steer(state, world, info, goal)
     -- Emergency stop: deep sea directly ahead while on land
     local ahead_mx = (info.tankx + U.bsin(info.direction) * 2) >> 8
     local ahead_my = (info.tanky - U.bcos(info.direction) * 2) >> 8
-    local cliff    = U.ttype(ahead_mx, ahead_my) == C.T_DEEPSEA and not info.inboat
+    local cliff    = U.ttype(ahead_mx, ahead_my) == C.T_DEEPSEA and info.inboat == 0
 
     -- Boat-to-land transition: must maintain high speed to disembark.
     -- Only applies when the tank is actually riding the boat ON water,
     -- not when merely carrying a boat on land.
     local boat_exit = false
-    if info.inboat and move_dir ~= nil then
+    if info.inboat ~= 0 and move_dir ~= nil then
       local cur_tt = U.ttype(tmx, tmy)
       local on_water = WATER_TT[cur_tt]
       if on_water then
@@ -976,7 +976,7 @@ function M.steer(state, world, info, goal)
     -- Suppress on a boat: drive-by shots may destroy bridges we're sailing
     -- on or knock the tank into open water.  Water-edge walls are handled
     -- by the wall-clearing mode above which stops and aims deliberately.
-    if not info.inboat and info.shells > C.SHELL_RESERVE and math.abs(correction) < 16 then
+    if info.inboat == 0 and info.shells > C.SHELL_RESERVE and math.abs(correction) < 16 then
       local pf = state.pf
       if pf.next_mx >= 0 then
         local next_tt = U.ttype(pf.next_mx, pf.next_my)
@@ -1026,9 +1026,9 @@ function M.steer(state, world, info, goal)
   -- The tank points at the pill and fires, but also creeps toward the
   -- standoff position to compensate for pill knockback.  This keeps the
   -- tank at optimal range rather than being slowly pushed out of position.
-  local boat_can_hit = info.inboat
+  local boat_can_hit = (info.inboat ~= 0)
                        and water_corridor_to(tmx, tmy, goal.mx, goal.my)
-  if attack_in_range and (not info.inboat or boat_can_hit) then
+  if attack_in_range and (info.inboat == 0 or boat_can_hit) then
     local aim_dir = U.aim_at(info.tankx, info.tanky, goal.wx, goal.wy)
     local corr    = U.adiff(info.direction, aim_dir)
 
@@ -1076,7 +1076,7 @@ function M.steer(state, world, info, goal)
   -- Bases don't shoot back, so we just need to get within shell range and fire.
   elseif goal.kind == "attack_base" and info.shells > C.SHELL_RESERVE then
     local wdist_base = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
-    if wdist_base <= C.ATTACK_PILL_RANGE * 256 and not info.inboat then
+    if wdist_base <= C.ATTACK_PILL_RANGE * 256 and info.inboat == 0 then
       local aim_dir = U.aim_at(info.tankx, info.tanky, goal.wx, goal.wy)
       local corr    = U.adiff(info.direction, aim_dir)
 
