@@ -26,7 +26,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   local pf  = state.pf
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
-  local in_boat = (info.inboat ~= 0) and 1 or 0
+  local in_boat = info.inboat and 1 or 0
   local shells  = info.shells or 0
   local trees   = info.trees or 0
   local mines   = info.mines or 0
@@ -97,7 +97,7 @@ function M.steer(state, world, info, goal)
     -- In a boat: fall through to M.steer() which has wall-clearing and
     -- boat_exit logic.  Without this, the boat gets stuck spinning when
     -- the water route is blocked by walls (HALFB) and can't disembark.
-    if info.inboat ~= 0 then return nil end
+    if info.inboat then return nil end
 
     local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
     if nx then
@@ -182,7 +182,7 @@ function M.steer(state, world, info, goal)
   -- ── rush: pill dead, drive to pick it up ──────────────────────────
   elseif goal.substate == "rush" then
     -- In a boat: fall through to M.steer() for wall-clearing + boat_exit
-    if info.inboat ~= 0 then return nil end
+    if info.inboat then return nil end
 
     local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
     if nx then
@@ -244,7 +244,7 @@ function M.update(goal, state, world, info)
   if goal.substate == "approach" then
     local pdist_w = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
     local clear   = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
-    if pdist_w <= 8 * 256 and clear and info.inboat == 0 then
+    if pdist_w <= 8 * 256 and clear and not info.inboat then
       goal.substate     = "shoot"
       goal.shoot_armour = info.armour
       print(string.format("[BPC] shoot pill@(%d,%d) dist=%.1f arm=%d",

@@ -38,7 +38,7 @@ local function pick_attack_technique(world, info, state)
   end
   -- No friendly pills: check for wall-shield (need trees and LGM)
   if C.WALL_SHIELD_ENABLED and (info.trees or 0) >= C.WALL_SHIELD_MIN_TREES
-     and info.man_status == C.LGM_INTANK and info.inboat == 0 then
+     and info.man_status == C.LGM_INTANK and not info.inboat then
     return "wall_shield"
   end
   -- Fallback: hardline (bpc)
@@ -670,7 +670,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   if not C.TANK_COMBAT_ENABLED then return nil end
   if info.shells < C.TANK_COMBAT_MIN_SHELLS then return nil end
   if info.armour < C.TANK_COMBAT_MIN_ARMOUR then return nil end
-  if info.inboat ~= 0 then return nil end  -- can't fight from a boat effectively
+  if info.inboat then return nil end  -- can't fight from a boat effectively
 
   local perc = state.perc
   if not perc or not perc.enemy_tanks or #perc.enemy_tanks == 0 then return nil end
@@ -726,7 +726,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
   if (info.carried_pills or 0) < 1 then return nil end
   if info.man_status ~= C.LGM_INTANK then return nil end
-  if info.inboat ~= 0 then return nil end
+  if info.inboat then return nil end
 
   -- Don't interrupt active combat goals
   local gk = state.goal and state.goal.kind or "none"
@@ -1173,7 +1173,7 @@ function M.step_eval_queue(state, world, info)
 
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
-  local boat_flag = (info.inboat ~= 0) and 1 or 0
+  local boat_flag = info.inboat and 1 or 0
   local shells = info.shells or 32
   local trees  = info.trees or 0
   local mines  = info.mines or 0
@@ -2085,7 +2085,7 @@ function M.pick_goal(state, world, info)
             local ck = U.mkey(cx, cy)
             if not state.visited[ck] then
               local tt = U.ttype(cx, cy)
-              local cost_table = (info.inboat ~= 0) and C.TERRAIN_COST_BOAT
+              local cost_table = info.inboat and C.TERRAIN_COST_BOAT
                                               or C.TERRAIN_COST_LAND
               local tc = cost_table[tt] or 9999
               if tc < 100 then

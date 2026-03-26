@@ -53,7 +53,7 @@ local function approach_tick(ctx)
     local pb_mx = goal.prebuild_mx or goal.standoff_mx
     local pb_my = goal.prebuild_my or goal.standoff_my
     local pbdist = U.mdist(tmx, tmy, pb_mx, pb_my)
-    if pbdist <= C.ATTACK_ENGAGE_RADIUS and info.inboat == 0 then
+    if pbdist <= C.ATTACK_ENGAGE_RADIUS and not info.inboat then
       goal.substate      = "ws_prebuild"
       goal.ws_build_tick = now
       goal.lgm_return_tick = nil
@@ -73,7 +73,7 @@ local function approach_tick(ctx)
     local in_range  = pdist_w <= C.ATTACK_PILL_RANGE * 256
     local clear_los = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
     if sdist <= C.ATTACK_ENGAGE_RADIUS and in_range and clear_los
-       and info.inboat == 0 then
+       and not info.inboat then
       goal.substate    = "engage"
       goal.engage_tick = now
       print(string.format(TAG .. " ATTACK: engage pill@(%d,%d) from (%d,%d)",

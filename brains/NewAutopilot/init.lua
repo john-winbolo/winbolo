@@ -465,12 +465,12 @@ function Brain.think(info)
   local t_goal0 = clock_us()   -- initialized here; updated below if goal section runs
   local t_goal1 = nil
   local tank_tt  = U.ttype(cur_mx, cur_my)
-  local in_water = info.inboat == 0
+  local in_water = not info.inboat
                    and (tank_tt == C.T_RIVER or tank_tt == C.T_DEEPSEA)
 
   -- Detect boat loss: invalidate pathfinder and pool cache so escape_water
   -- and goal replan use on-foot costs instead of stale in-boat estimates.
-  local lost_boat = (state.was_in_boat ~= 0) and (info.inboat == 0)
+  local lost_boat = state.was_in_boat and not info.inboat
   state.was_in_boat = info.inboat
   if lost_boat then
     state.pool_cache = nil
@@ -531,7 +531,7 @@ function Brain.think(info)
     -- LGM barely leaves the tank's tile so exposure is short; use LGM_DANGER_MED.
     -- Skip when in a boat: the tank doesn't need roads on water, and dispatching
     -- the LGM triggers pacing that slows the tank below disembark speed.
-    local slow_tt = info.inboat == 0 and C.ROAD_BUILD_TERRAIN[tank_tt] or nil
+    local slow_tt = not info.inboat and C.ROAD_BUILD_TERRAIN[tank_tt] or nil
     if slow_tt and info.man_status == C.LGM_INTANK
        and info.trees >= slow_tt + C.TREE_RESERVE then
       state.slow_build = { x = cur_mx, y = cur_my }
@@ -544,7 +544,7 @@ function Brain.think(info)
     if C.ANTITANK_DROP_ENABLED
        and (info.carried_pills or 0) >= 1
        and info.man_status == C.LGM_INTANK
-       and info.inboat == 0
+       and not info.inboat
        and (not state.antitank_drop_cooldown or now >= state.antitank_drop_cooldown)
        and state.goal.kind ~= "pill_place"
        and state.goal.kind ~= "attack_pill"
@@ -908,7 +908,7 @@ function Brain.think(info)
   if state.goal.kind ~= "attack_tank"
      and (keys & KEY_SHOOT) == 0 and (taps & KEY_SHOOT) == 0
      and info.shells > C.SHELL_RESERVE
-     and info.inboat == 0 then
+     and not info.inboat then
     local perc = state.perc
     if perc and perc.enemy_tanks then
       for _, et in ipairs(perc.enemy_tanks) do

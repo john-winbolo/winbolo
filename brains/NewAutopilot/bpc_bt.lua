@@ -64,7 +64,7 @@ local function approach_tick(ctx)
   local in_range  = pdist_w <= (C.BPC_RANGE + 1) * 256
   local clear_los = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
   local close_enough = sdist <= 2 or (in_range and clear_los)
-  if close_enough and clear_los and info.inboat == 0 then
+  if close_enough and clear_los and not info.inboat then
     goal.substate      = "stand_shoot"
     goal.engage_tick   = state.tick
     goal.engage_armour = info.armour

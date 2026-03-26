@@ -168,7 +168,7 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   local tmx    = info.tankx >> 8
   local tmy    = info.tanky >> 8
   local ammo   = (info.shells or 0) + (info.mines or 0)
-  local approach = cpf.estimate_cost(tmx, tmy, cx, cy, (info.inboat ~= 0) and 1 or 0)
+  local approach = cpf.estimate_cost(tmx, tmy, cx, cy, info.inboat and 1 or 0)
 
   -- Approach exposure: penalise routes that cross slow terrain within the
   -- target pill's firing range.  On swamp/rubble/crater the tank moves at
@@ -330,7 +330,7 @@ local function pick_wall_shield(world, info, pill, state)
   if not C.WALL_SHIELD_ENABLED then return nil end
   if (info.trees or 0) < C.WALL_SHIELD_MIN_TREES then return nil end
   -- Don't attempt in a boat
-  if info.inboat ~= 0 then return nil end
+  if info.inboat then return nil end
 
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
@@ -581,7 +581,7 @@ function M.update_attack_substate(goal, state, world, info)
       local pb_mx = goal.prebuild_mx or goal.standoff_mx
       local pb_my = goal.prebuild_my or goal.standoff_my
       local pbdist = U.mdist(tmx, tmy, pb_mx, pb_my)
-      if pbdist <= C.ATTACK_ENGAGE_RADIUS and info.inboat == 0 then
+      if pbdist <= C.ATTACK_ENGAGE_RADIUS and not info.inboat then
         goal.substate      = "ws_prebuild"
         goal.ws_build_tick = now
         goal.lgm_return_tick = nil
@@ -600,7 +600,7 @@ function M.update_attack_substate(goal, state, world, info)
       local in_range  = pdist_w <= C.ATTACK_PILL_RANGE * 256
       local clear_los = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
       if sdist <= C.ATTACK_ENGAGE_RADIUS and in_range and clear_los
-         and info.inboat == 0 then
+         and not info.inboat then
         goal.substate    = "engage"
         goal.engage_tick = now
         print(string.format(TAG .. " ATTACK: engage pill@(%d,%d) from (%d,%d)",
@@ -1029,7 +1029,7 @@ function M.pick_source_pill(world, info, state)
   local ammo = (info.shells or 0) + (info.mines or 0)
   for id, p in pairs(world.pills) do
     if p.owner == "friendly" and p.health == 0 then
-      local c = cpf.estimate_cost(tmx, tmy, p.mx, p.my, (info.inboat ~= 0) and 1 or 0)
+      local c = cpf.estimate_cost(tmx, tmy, p.mx, p.my, info.inboat and 1 or 0)
       if c < best_cost then
         best_cost = c
         best_pill = p
@@ -1169,7 +1169,7 @@ function M.update_pill_place_substate(goal, state, world, info)
     local nav_my = goal.deploy_my or goal.place_my
     local pdist = U.mdist(tmx, tmy, nav_mx, nav_my)
     if pdist <= C.ATTACK_ENGAGE_RADIUS and info.man_status == C.LGM_INTANK
-       and (info.carried_pills or 0) > 0 and info.inboat == 0 then
+       and (info.carried_pills or 0) > 0 and not info.inboat then
       goal.substate = "dispatch"
       goal.dispatch_tick = now
       print(string.format(TAG .. " [PP] navigate: arrived at deploy@(%d,%d), dispatching LGM to place@(%d,%d)",

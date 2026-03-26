@@ -100,7 +100,7 @@ function M.set_mode(state, world, info, goal)
     local tmy = info.tanky >> 8
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
     if pdist <= 1 and (info.carried_pills or 0) > 0
-       and info.man_status == C.LGM_INTANK and info.inboat == 0 then
+       and info.man_status == C.LGM_INTANK and not info.inboat then
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }
     end
@@ -234,7 +234,7 @@ end
 -- -------------------------------------------------------------------------
 local function road_ahead(state, info, now, world)
   if state.pf.next_mx < 0 then return nil end
-  if info.inboat ~= 0 then return nil end  -- boat doesn't need roads; LGM dispatch triggers pacing slowdown
+  if info.inboat then return nil end  -- boat doesn't need roads; LGM dispatch triggers pacing slowdown
   local cur_mx = info.tankx >> 8
   local cur_my = info.tanky >> 8
   local nmx, nmy = state.pf.next_mx, state.pf.next_my
@@ -264,7 +264,7 @@ function M.decide(state, world, info, now)
 
   -- Never dispatch the LGM while in a boat.  The pacing slowdown drops
   -- the tank below disembark speed, stranding it on water.
-  if info.inboat ~= 0 then return nil end
+  if info.inboat then return nil end
 
   -- Priority 1: emergency road under self when drowning in river
   if state.water_build then
@@ -314,7 +314,7 @@ function M.decide(state, world, info, now)
      and b.mode ~= "suppressed"
      and (info.carried_pills or 0) >= C.TRAIL_DROP_MIN_PILLS
      and info.speed >= C.TRAIL_DROP_MIN_SPEED
-     and info.inboat == 0
+     and not info.inboat
      and (not state.trail_drop_cooldown or now >= state.trail_drop_cooldown) then
     local gk = state.goal and state.goal.kind or "none"
     if gk ~= "attack_pill" and gk ~= "pill_place" and gk ~= "bpc_pill"
@@ -425,7 +425,7 @@ function M.decide(state, world, info, now)
   -- the LGM must be able to farm and catch up before the tank moves far.
   if (b.mode == "gather" or b.mode == "opportunistic")
      and info.trees < C.TREE_OPPORTUNISTIC_MAX
-     and info.inboat == 0 then
+     and not info.inboat then
     -- Quick reject: any threat at tank tile means lgm_path_safe(LOW) will fail
     if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
       return road_ahead(state, info, now, world)

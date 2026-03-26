@@ -152,7 +152,7 @@ local function navigate_tick(ctx)
   local nav_my = goal.deploy_my or goal.place_my
   local pdist = U.mdist(tmx, tmy, nav_mx, nav_my)
   if pdist <= C.ATTACK_ENGAGE_RADIUS and info.man_status == C.LGM_INTANK
-     and (info.carried_pills or 0) > 0 and info.inboat == 0 then
+     and (info.carried_pills or 0) > 0 and not info.inboat then
     goal.substate = "dispatch"
     goal.dispatch_tick = now
     print(string.format(TAG .. " [PP] navigate: arrived at deploy@(%d,%d), dispatching LGM to place@(%d,%d)",

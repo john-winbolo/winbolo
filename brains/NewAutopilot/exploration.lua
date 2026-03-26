@@ -21,7 +21,7 @@ function M.update(state, info)
         local nk = U.mkey(nx, ny)
         if not state.visited[nk] and not state.frontier_set[nk] then
           local tt = U.ttype(nx, ny)
-          local cost_table = (info.inboat ~= 0) and C.TERRAIN_COST_BOAT or C.TERRAIN_COST_LAND
+          local cost_table = info.inboat and C.TERRAIN_COST_BOAT or C.TERRAIN_COST_LAND
           local tc = cost_table[tt] or 9999
           if tc < 100 then
             state.frontier_set[nk] = true
