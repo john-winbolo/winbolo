@@ -68,7 +68,14 @@ static int numBots = 0;
 
 /* Updates the bot's brain map for the visible area around the tank.
  * Matches server_brains.c behavior (option b from plan). */
-static void botUpdateBrainMap(BotContext *bot) {
+/* Updates the bot's brain map (fog-of-war) from the server's authoritative
+ * map.  The bot's ClientSim map does not receive terrain change events
+ * (boat placements, building destruction, etc.), so we must read from
+ * the ServerSim's map to keep the brainMap current.
+ *
+ * For aiFull bots: refresh the entire 256x256 map every tick (~0.1ms).
+ * For other AI modes: refresh only the visible rect around the tank. */
+static void botUpdateBrainMap(BotContext *bot, ServerSim *sim) {
     BYTE tx, ty;
     BYTE left, right, top, bottom;
     int x, y;
@@ -80,22 +87,23 @@ static void botUpdateBrainMap(BotContext *bot) {
     tx = tankGetMX(&bot->cs.sim.tanks[0]);
     ty = tankGetMY(&bot->cs.sim.tanks[0]);
 
+    if (bot->ai == aiFull) {
+        /* aiFull: refresh full map every tick from server */
+        screenBrainMapFillFromMap(&bot->cs, &sim->sim.mp, &sim->sim.mns);
+        return;
+    }
+
     left   = (tx > BOT_VIEW_HALF) ? tx - BOT_VIEW_HALF : 0;
     top    = (ty > BOT_VIEW_HALF) ? ty - BOT_VIEW_HALF : 0;
     right  = (tx + BOT_VIEW_HALF < 255) ? tx + BOT_VIEW_HALF : 255;
     bottom = (ty + BOT_VIEW_HALF < 255) ? ty + BOT_VIEW_HALF : 255;
 
-    if (bot->ai == aiFull) {
-        /* aiFull: full map filled on first tick only (handled in tick) */
-        return;
-    }
-
-    /* Update only the visible rect */
+    /* Update only the visible rect from server map */
     for (y = top; ; y++) {
         for (x = left; ; x++) {
             screenBrainMapSetPos(bot->cs.brainMap, (BYTE)x, (BYTE)y,
-                                 mapGetPos(&bot->cs.sim.mp, (BYTE)x, (BYTE)y),
-                                 minesExistPos(&bot->cs.sim.mns, &bot->cs.sim.mp, (BYTE)x, (BYTE)y));
+                                 mapGetPos(&sim->sim.mp, (BYTE)x, (BYTE)y),
+                                 minesExistPos(&sim->sim.mns, &sim->sim.mp, (BYTE)x, (BYTE)y));
             if ((BYTE)x == right) break;
         }
         if ((BYTE)y == bottom) break;
@@ -250,12 +258,15 @@ void botManagerTick(ServerSim *sim, aiType ai) {
                                   events, hdr.reliableEventCount,
                                   bot->playerNum);
 
-        /* Update brain map (fog-of-war) */
+        /* Update brain map (fog-of-war) from server's authoritative map.
+         * The bot's ClientSim map doesn't receive terrain change events
+         * (boat placements, building destruction, etc.) so we must read
+         * from the ServerSim. */
         if (bot->ai == aiFull && bot->brain.isFirst) {
             /* Full map on first tick */
-            screenBrainMapFillFromMap(&bot->cs, &bot->cs.sim.mp, &bot->cs.sim.mns);
+            screenBrainMapFillFromMap(&bot->cs, &sim->sim.mp, &sim->sim.mns);
         }
-        botUpdateBrainMap(bot);
+        botUpdateBrainMap(bot, sim);
 
         /* Skip brain while tank is dead (waiting to respawn) */
         if (bot->cs.sim.tanks[0] != NULL &&
