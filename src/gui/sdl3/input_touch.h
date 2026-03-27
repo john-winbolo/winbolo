@@ -91,6 +91,14 @@ int inputTouchGetGunsightChange(void);
 /* Legacy API kept for build select (handled by ImGui) */
 int inputTouchGetBuildSelect(void);
 
+/*********************************************************
+*NAME:          inputTouchConsumeTapInRect
+*PURPOSE:
+*  Returns true if a tap occurred in the given rectangle
+*  since last call. Consuming — only one rect can claim it.
+*********************************************************/
+bool inputTouchConsumeTapInRect(float x, float y, float w, float h);
+
 void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
 

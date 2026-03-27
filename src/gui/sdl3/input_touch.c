@@ -89,6 +89,11 @@ static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
 
+/* General tap position for UI elements (e.g. build bar) */
+static bool         s_generalTapReady = false;
+static float        s_generalTapX = 0.0f;
+static float        s_generalTapY = 0.0f;
+
 /* --- Setup / Cleanup --- */
 
 void inputTouchSetup(void) {
@@ -203,9 +208,13 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
         Uint64 elapsed = SDL_GetTicks() - s_tapTrackers[i].downTime;
 
         if (dist < TAP_DISTANCE_THRESHOLD && elapsed < TAP_TIME_THRESHOLD_MS) {
-          /* Check if tap is inside viewport bounds */
           float tx = s_tapTrackers[i].downX;
           float ty = s_tapTrackers[i].downY;
+          /* Store as general tap for UI elements (e.g. build bar) */
+          s_generalTapReady = true;
+          s_generalTapX = tx;
+          s_generalTapY = ty;
+          /* Check if tap is inside viewport bounds */
           if (tx >= (float)s_vpX && tx < (float)(s_vpX + s_vpW) &&
               ty >= (float)s_vpY && ty < (float)(s_vpY + s_vpH) &&
               s_vpZoom > 0) {
@@ -377,6 +386,16 @@ int inputTouchGetGunsightChange(void) {
   int val = s_gunsightChange;
   s_gunsightChange = 0;
   return val;
+}
+
+bool inputTouchConsumeTapInRect(float x, float y, float w, float h) {
+  if (!s_generalTapReady) return false;
+  if (s_generalTapX >= x && s_generalTapX < x + w &&
+      s_generalTapY >= y && s_generalTapY < y + h) {
+    s_generalTapReady = false;
+    return true;
+  }
+  return false;
 }
 
 /* Legacy wrappers */
