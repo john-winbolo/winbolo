@@ -193,6 +193,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
     set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(cjson)
+    # cJSON enables -Werror which breaks on MinGW (isnan/isinf float-conversion warnings)
+    if(TARGET cjson AND MINGW)
+        target_compile_options(cjson PRIVATE -Wno-error)
+    endif()
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE2}" CACHE BOOL "" FORCE)
 
     # minizip library from zlib's contrib/minizip
