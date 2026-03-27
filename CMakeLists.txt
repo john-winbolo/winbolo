@@ -3,6 +3,14 @@ cmake_minimum_required(VERSION 3.15)
 # Allow vendored dependencies with older cmake_minimum_required calls
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
 
+# CMP0168 (CMake 3.30+): Use direct population for FetchContent instead of a
+# sub-build.  The sub-build approach fails with the Xcode generator when
+# cross-compiling for iOS because the populate target inherits iOS toolchain
+# settings and cannot run the download scripts.
+if(POLICY CMP0168)
+    cmake_policy(SET CMP0168 NEW)
+endif()
+
 # Use vcpkg if installed at C:/vcpkg and no toolchain file was specified
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
     set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
@@ -24,6 +32,15 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 endif()
 
+# On Linux, libm is a separate library that must be linked explicitly.
+# On macOS/iOS it is part of libSystem (always linked), so adding -lm is
+# redundant and causes duplicate-library linker warnings.
+if(UNIX AND NOT APPLE)
+    set(MATH_LIB m)
+else()
+    set(MATH_LIB)
+endif()
+
 # ---------------------------------------------------------------------------
 # Dependencies (FetchContent)
 # ---------------------------------------------------------------------------
@@ -33,50 +50,80 @@ FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG        release-3.4.2
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
     GIT_TAG        release-3.2.0
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        docking
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     lua
     GIT_REPOSITORY https://github.com/walterschell/Lua.git
     GIT_TAG        v5.4.7
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     zlib
     GIT_REPOSITORY https://github.com/madler/zlib.git
     GIT_TAG        v1.3.1
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     libmaxminddb
     GIT_REPOSITORY https://github.com/maxmind/libmaxminddb.git
     GIT_TAG        1.12.2
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     cjson
     GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
     GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
-FetchContent_Declare(
-    curl
-    GIT_REPOSITORY https://github.com/curl/curl.git
-    GIT_TAG        curl-8_12_1
-    SYSTEM
-)
+# curl is only built from source on Windows (uses Schannel for SSL).
+# On Linux/macOS, the system libcurl is used via find_package().
+if(WIN32)
+    FetchContent_Declare(
+        curl
+        GIT_REPOSITORY https://github.com/curl/curl.git
+        GIT_TAG        curl-8_12_1
+        GIT_SHALLOW    TRUE
+        SYSTEM
+    )
+endif()
+
+# iOS: only build static SDL libraries (shared libs require code signing
+# and are not useful in an app bundle)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_LIBC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+
+    # CMake's try_compile/check_symbol_exists probes each launch a full
+    # xcodebuild invocation on the Xcode generator, making configure
+    # extremely slow.  Temporarily switch probes to STATIC_LIBRARY mode
+    # which uses a simple compile check instead, then restore after all
+    # dependency fetches are done.
+    set(_saved_try_compile_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+endif()
 
 # Fetch SDL first (needed by everything)
 FetchContent_MakeAvailable(sdl3)
@@ -95,9 +142,22 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # iOS: vendored freetype, no harfbuzz (avoids CoreText linking issues)
+    # Static only — shared libs require code signing in Xcode
+    # Point SDL3_ttf's find_package(SDL3) at the in-tree build so it can
+    # locate the static-only SDL3 we just built.
+    set(SDL3_DIR "${sdl3_BINARY_DIR}" CACHE PATH "" FORCE)
     set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
     set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
+    set(SDLTTF_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDLTTF_STATIC ON CACHE BOOL "" FORCE)
+    # SDL3_ttf reads BUILD_SHARED_LIBS (not SDLTTF_SHARED) to decide whether
+    # to look for SDL3::SDL3-shared.  Force it OFF so it uses the static SDL3.
+    set(_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(sdl3_ttf imgui)
+    set(BUILD_SHARED_LIBS "${_saved_build_shared_libs}" CACHE BOOL "" FORCE)
+    # Restore try_compile mode now that all probing dependencies are fetched
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
@@ -449,26 +509,47 @@ target_compile_definitions(WinBoloIOS PRIVATE HAVE_SCREEN_C=1 __IPHONEOS__=1)
 
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
+# Hide dependency targets from the Xcode project — only WinBoloIOS should
+# appear as a buildable scheme.
+foreach(_t
+    SDL3-static SDL3_Headers SDL3_test
+    SDL3_ttf-static
+    freetype
+    lua_static lua_internal
+    imgui_backends
+    nanosvg stb_image
+)
+    if(TARGET ${_t})
+        set_target_properties(${_t} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+endforeach()
+
 else() # NOT iOS — Desktop targets (Windows, Linux, macOS)
 
-# libcurl for WinBolo.net HTTP/HTTPS (built from source via FetchContent)
-set(BUILD_SHARED_LIBS_SAVE_CURL "${BUILD_SHARED_LIBS}")
-set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
-set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
-set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
-set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
-set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
-set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
-set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(curl)
-set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
-# Provide the CURL::libcurl alias that the rest of the build expects
-if(NOT TARGET CURL::libcurl)
-    add_library(CURL::libcurl ALIAS libcurl_shared)
+# libcurl for WinBolo.net HTTP/HTTPS
+if(WIN32)
+    # Windows: build curl from source using Schannel (no OpenSSL needed)
+    set(BUILD_SHARED_LIBS_SAVE_CURL "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
+    set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
+    set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+    set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+    set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(curl)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
+    # Provide the CURL::libcurl alias that the rest of the build expects
+    if(NOT TARGET CURL::libcurl)
+        add_library(CURL::libcurl ALIAS libcurl_shared)
+    endif()
+else()
+    # Linux/macOS: use system-installed libcurl
+    find_package(CURL REQUIRED)
 endif()
 
 # ONNX Runtime — optional dependency for ML brain inference
@@ -632,7 +713,7 @@ else()
         src/gui/skins.c
         src/server/posix_stubs.c
     )
-    target_link_libraries(WinBolo PRIVATE m pthread)
+    target_link_libraries(WinBolo PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBolo PRIVATE -fcommon)
 endif()
 
@@ -738,13 +819,6 @@ if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
         COMMENT "Copying runtime DLLs to WinBolo output directory"
     )
 endif()
-# On Linux/macOS, also copy libcurl shared library
-if(NOT WIN32)
-    add_custom_command(TARGET WinBolo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:WinBolo>"
-        COMMENT "Copying libcurl to WinBolo output directory"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # WinBoloDS Server (cross-platform: Windows, Linux, macOS)
@@ -800,7 +874,7 @@ else()
         src/server/posix_stubs.c
         src/gui/sdl3/lang.c
     )
-    target_link_libraries(WinBoloDS PRIVATE m pthread)
+    target_link_libraries(WinBoloDS PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
 endif()
 
@@ -839,12 +913,6 @@ if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:WinBoloDS> "$<TARGET_FILE_DIR:WinBoloDS>"
         COMMAND_EXPAND_LISTS
         COMMENT "Copying runtime DLLs to WinBoloDS output directory"
-    )
-endif()
-if(NOT WIN32)
-    add_custom_command(TARGET WinBoloDS POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:WinBoloDS>"
-        COMMENT "Copying libcurl to WinBoloDS output directory"
     )
 endif()
 
@@ -928,8 +996,8 @@ target_link_libraries(LogViewer PRIVATE
 if(WIN32)
     target_link_libraries(LogViewer PRIVATE ws2_32)
 endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(LogViewer PRIVATE m)
+if(MATH_LIB)
+    target_link_libraries(LogViewer PRIVATE ${MATH_LIB})
 endif()
 
 # Copy shared libraries next to LogViewer (all platforms)
@@ -1064,7 +1132,7 @@ else()
     target_sources(WinBoloHeadless PRIVATE
         src/server/posix_stubs.c
     )
-    target_link_libraries(WinBoloHeadless PRIVATE m pthread)
+    target_link_libraries(WinBoloHeadless PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 endif()
 
@@ -1096,12 +1164,6 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
-if(NOT WIN32)
-    add_custom_command(TARGET WinBoloHeadless POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
-        COMMENT "Copying libcurl to WinBoloHeadless output directory"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # WinBoloGym shared library (C API for ML training)
@@ -1169,7 +1231,7 @@ else()
     target_sources(winbolo_gym PRIVATE
         src/server/posix_stubs.c
     )
-    target_link_libraries(winbolo_gym PRIVATE m pthread)
+    target_link_libraries(winbolo_gym PRIVATE ${MATH_LIB} pthread)
     target_compile_options(winbolo_gym PRIVATE -fcommon)
 endif()
 
@@ -1191,12 +1253,6 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
 )
-if(NOT WIN32)
-    add_custom_command(TARGET winbolo_gym POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:winbolo_gym>"
-        COMMENT "Copying libcurl to winbolo_gym output directory"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
@@ -1257,7 +1313,7 @@ else()
     target_sources(BrainTest PRIVATE
         src/server/posix_stubs.c
     )
-    target_link_libraries(BrainTest PRIVATE m pthread)
+    target_link_libraries(BrainTest PRIVATE ${MATH_LIB} pthread)
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 

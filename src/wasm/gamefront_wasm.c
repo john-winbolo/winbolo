@@ -659,6 +659,12 @@ void gameFrontGetWinbolonetSettings(char *pw, bool *useWbn, bool *savePass) {
   strcpy(pw, gameFrontWbnPass);
 }
 
+bool gameFrontLoadDeferredMap(ClientSim *cs)   { (void)cs; return FALSE; }
+void gameFrontGetBotOptions(int *count, char *brainPath, size_t brainPathSize) {
+  *count = 0; brainPath[0] = '\0'; (void)brainPathSize;
+}
+void gameFrontSetBotSetup(const GameFrontBotSetup *setup) { (void)setup; }
+void gameFrontGetBotSetup(GameFrontBotSetup *setup) { memset(setup, 0, sizeof(*setup)); }
 void gameFrontSetRegistryKeys(void)           { }
 void gameFrontSetAddressFromWebLink(char *a)  { (void)a; }
 void gameFrontReloadSkins(void)               { }

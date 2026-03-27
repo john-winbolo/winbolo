@@ -131,6 +131,18 @@ void inputActivate(void);
 bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu);
 
 /*********************************************************
+*NAME:          inputIsMineKeyPressed
+*AUTHOR:        John Morrison
+*PURPOSE:
+*  Returns whether the mine key is pressed
+*
+*ARGUMENTS:
+*  setKeys - Structure that holds the key settings
+*   isMenu - TRUE if we are in a menu
+*********************************************************/
+bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu);
+
+/*********************************************************
 *NAME:          inputScroll
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/5/00
