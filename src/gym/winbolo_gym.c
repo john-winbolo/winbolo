@@ -796,8 +796,8 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
         }
 
         /* Gun range adjustment */
-        if (action->gun_range_adjust > 0)  pkt.gunsightAdj = 1;
-        if (action->gun_range_adjust < 0)  pkt.gunsightAdj = (uint8_t)-1;
+        if (action->gun_range_adjust > 0)  pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+        if (action->gun_range_adjust < 0)  pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
     }
 
     /* Game tick */

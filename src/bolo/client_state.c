@@ -95,10 +95,13 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
     tb = translateButtons(pkt->buttons);
 
     /* Apply gunsight adjustment to predicted tank for local display */
-    if (pkt->gunsightAdj == 1) {
-        tankGunsightIncrease(csim, sim, predictedTank);
-    } else if (pkt->gunsightAdj == 2) {
-        tankGunsightDecrease(csim, sim, predictedTank);
+    {
+        uint8_t gsAdj = (pkt->flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+        if (gsAdj == 1) {
+            tankGunsightIncrease(csim, sim, predictedTank);
+        } else if (gsAdj == 2) {
+            tankGunsightDecrease(csim, sim, predictedTank);
+        }
     }
 
     if (isKeysTick) {
@@ -164,10 +167,13 @@ bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcess
         tb = translateButtons(histPkt->buttons);
 
         /* Replay gunsight adjustments */
-        if (histPkt->gunsightAdj == 1) {
-            tankGunsightIncrease(csim, sim, predictedTank);
-        } else if (histPkt->gunsightAdj == 2) {
-            tankGunsightDecrease(csim, sim, predictedTank);
+        {
+            uint8_t gsAdj = (histPkt->flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+            if (gsAdj == 1) {
+                tankGunsightIncrease(csim, sim, predictedTank);
+            } else if (gsAdj == 2) {
+                tankGunsightDecrease(csim, sim, predictedTank);
+            }
         }
 
         if (isKeysTick) {

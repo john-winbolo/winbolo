@@ -461,7 +461,7 @@ static void windowRunGameTick(ClientSim *cs) {
           screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
           if (!brainRunning) {
             uint8_t gsAdj = inputConsumeGunsightAdj();
-            if (gsAdj) pkt.gunsightAdj = gsAdj;
+            if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
           }
           clientMutexWaitFor();
           clientSimKeysTick(cs, &pkt);
@@ -513,7 +513,7 @@ static void windowRunGameTick(ClientSim *cs) {
           screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
           if (!brainRunning) {
             uint8_t gsAdj = inputConsumeGunsightAdj();
-            if (gsAdj) pkt.gunsightAdj = gsAdj;
+            if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
           }
           clientMutexWaitFor();
           clientSimGameTick(cs, &pkt, brainRunning);
