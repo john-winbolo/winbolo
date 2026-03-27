@@ -38,6 +38,8 @@
 #include "../sdl3/dialog_backend.h"
 #include "../mobile/touch_input.h"
 #include "../mobile/players_panel.h"
+#include "../ui_mode.h"
+#include "../sdl3/input_touch.h"
 
 extern ClientSim *humanSim;
 
@@ -330,7 +332,17 @@ int main(int argc, char *argv[]) {
             SDL_Event ev;
             if (paused) {
                 if (SDL_WaitEvent(&ev)) {
-                    touchInputProcessEvent(&ev);
+                    if (uiModeIsTablet()) {
+                        if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION) {
+                            int tw = 0, th = 0;
+                            SDL_Renderer *ren = sdl3DrawGetRenderer();
+                            if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                            if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                            inputTouchProcessEvent(&ev, tw, th);
+                        }
+                    } else {
+                        touchInputProcessEvent(&ev);
+                    }
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
                     } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
@@ -344,7 +356,17 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             while (SDL_PollEvent(&ev)) {
-                touchInputProcessEvent(&ev);
+                if (uiModeIsTablet()) {
+                    if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION) {
+                        int tw = 0, th = 0;
+                        SDL_Renderer *ren = sdl3DrawGetRenderer();
+                        if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                        if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                        inputTouchProcessEvent(&ev, tw, th);
+                    }
+                } else {
+                    touchInputProcessEvent(&ev);
+                }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
                 } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
@@ -383,8 +405,8 @@ int main(int argc, char *argv[]) {
         clientMutexRelease();
         dwSysFrame += (winboloTimer() - tick);
 
-        /* Touch overlay + ImGui + present */
-        {
+        /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */
+        if (!uiModeIsTablet()) {
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) {
                 touchInputRender(ren);
@@ -443,7 +465,11 @@ static void windowRunGameTick(ClientSim *cs) {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (justKeys == TRUE) {
             if (brainRunning == FALSE) {
-                tb = touchInputGetKeys();
+                if (uiModeIsTablet()) {
+                    tb = inputTouchGetMovement();
+                } else {
+                    tb = touchInputGetKeys();
+                }
             }
             InputPacket pkt;
             screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
@@ -460,16 +486,28 @@ static void windowRunGameTick(ClientSim *cs) {
         } else {
             t2++;
             if (brainRunning == FALSE) {
-                tb = touchInputGetKeys();
-                isShoot = touchInputIsFireKeyPressed();
-                isMine = touchInputShouldLayMine();
+                if (uiModeIsTablet()) {
+                    tb = inputTouchGetMovement();
+                    isShoot = inputTouchIsFirePressed();
+                    isMine = inputTouchIsMinePressed();
+                } else {
+                    tb = touchInputGetKeys();
+                    isShoot = touchInputIsFireKeyPressed();
+                    isMine = touchInputShouldLayMine();
+                }
             }
             InputPacket pkt;
             screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
             if (brainRunning == FALSE) {
-                int gsChange = touchInputGetGunsightChange();
-                if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
-                else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                if (uiModeIsTablet()) {
+                    int gsChange = inputTouchGetGunsightChange();
+                    if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                    else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                } else {
+                    int gsChange = touchInputGetGunsightChange();
+                    if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                    else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                }
             }
             clientMutexWaitFor();
             clientSimGameTick(cs, &pkt, brainRunning);

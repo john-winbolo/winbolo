@@ -397,6 +397,9 @@ void sdl3DrawTabletStatusGrids(struct ClientSim *cs);
 *********************************************************/
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
 
+void sdl3DrawGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
+void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *hasBase);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
