@@ -101,15 +101,22 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->viewportH = viewportH;
   cfg->effectiveZoom = effectiveZoom;
 
-  /* Safe area insets — platform defaults */
-#if defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
-  cfg->safeTop = 59.0f;
-  cfg->safeBottom = 34.0f;
-  cfg->safeLeft = 44.0f;
-  cfg->safeRight = 44.0f;
-#else
+  /* Safe area insets — query from SDL */
   cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
-#endif
+  {
+    SDL_Window *win = sdl3DrawGetWindow();
+    if (win) {
+      SDL_Rect safeRect;
+      int winW = 0, winH = 0;
+      SDL_GetWindowSize(win, &winW, &winH);
+      if (SDL_GetWindowSafeArea(win, &safeRect) && winW > 0 && winH > 0) {
+        cfg->safeLeft   = (float)safeRect.x * (float)screenW / (float)winW;
+        cfg->safeTop    = (float)safeRect.y * (float)screenH / (float)winH;
+        cfg->safeRight  = (float)(winW - safeRect.x - safeRect.w) * (float)screenW / (float)winW;
+        cfg->safeBottom = (float)(winH - safeRect.y - safeRect.h) * (float)screenH / (float)winH;
+      }
+    }
+  }
 
   /* Compute gutters */
   cfg->leftGutter = viewportX;

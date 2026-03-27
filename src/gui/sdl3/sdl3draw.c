@@ -153,6 +153,36 @@ static int          gTexMsgBotW, gTexMsgBotH;
 static int          gTexKillsW,  gTexKillsH;
 static int          gTexDeathsW, gTexDeathsH;
 
+/* Query safe area insets in renderer coordinates.
+   Returns left/top/right/bottom insets (pixels). */
+static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
+                                   float *outRight, float *outBottom) {
+  float l = 0, t = 0, r = 0, b = 0;
+  if (gWindow) {
+    SDL_Rect safeRect;
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(gWindow, &winW, &winH);
+    if (SDL_GetWindowSafeArea(gWindow, &safeRect) && winW > 0 && winH > 0) {
+      int renW = 0, renH = 0;
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &renW, &renH, &logMode);
+      if (renW <= 0 || renH <= 0) {
+        SDL_GetCurrentRenderOutputSize(gRenderer, &renW, &renH);
+      }
+      if (renW > 0 && renH > 0) {
+        l = (float)safeRect.x * (float)renW / (float)winW;
+        t = (float)safeRect.y * (float)renH / (float)winH;
+        r = (float)(winW - safeRect.x - safeRect.w) * (float)renW / (float)winW;
+        b = (float)(winH - safeRect.y - safeRect.h) * (float)renH / (float)winH;
+      }
+    }
+  }
+  if (outLeft) *outLeft = l;
+  if (outTop) *outTop = t;
+  if (outRight) *outRight = r;
+  if (outBottom) *outBottom = b;
+}
+
 /* Source-rect lookup tables for tiles now live in mapview.c (mapViewPosX/Y). */
 
 /* Screen dimensions at zoom=1 (matches SCREEN_SIZE_X/Y in winbolo.h) */
@@ -1067,8 +1097,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int leftGutter = tabletOriginX;
     if (leftGutter >= 100) {
       int zf = gZoomFactor; /* currently set to effectiveZoom */
-      float gutterX = 4.0f;
-      float gutterY = 4.0f;
+      float safeL = 0, safeT = 0;
+      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+      float gutterX = safeL + 4.0f;
+      float gutterY = safeT + 4.0f;
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
       float gridGap = 4.0f;
       sdl3DrawSetStatusPanelOrigins(
@@ -1144,11 +1176,15 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     /* Tablet: render status grids in gutter if space allows */
     if (gTabletVpX >= 100) {
       int zf = gZoomFactor;
+      float safeL = 0, safeT = 0;
+      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+      float gutterX = safeL + 4.0f;
+      float gutterY = safeT + 4.0f;
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
       float gridGap = 4.0f;
-      sdl3DrawSetStatusPanelOrigins(4.0f, 4.0f,
-                                    4.0f, 4.0f + gridH + gridGap,
-                                    4.0f, 4.0f + 2*(gridH + gridGap));
+      sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
+                                    gutterX, gutterY + gridH + gridGap,
+                                    gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
     }
@@ -1202,11 +1238,15 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   if (tabletMode) {
     if (gTabletVpX >= 100) {
       int gridZf = gZoomFactor;
+      float safeL = 0, safeT = 0;
+      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+      float gutterX = safeL + 4.0f;
+      float gutterY = safeT + 4.0f;
       float gridH = (float)(gridZf * STATUS_TANKS_HEIGHT);
       float gridGap = 4.0f;
-      sdl3DrawSetStatusPanelOrigins(4.0f, 4.0f,
-                                    4.0f, 4.0f + gridH + gridGap,
-                                    4.0f, 4.0f + 2*(gridH + gridGap));
+      sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
+                                    gutterX, gutterY + gridH + gridGap,
+                                    gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
     }
