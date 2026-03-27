@@ -1,6 +1,19 @@
 *.un~
 *~
+.idea
 build
 
 /*.ps1
 /*.png
+
+# iOS build dir
+build-ios
+
+#Android build directories
+  android/.gradle/
+  android/.idea/
+  android/build/
+  android/app/build/
+  android/app/.cxx/
+  android/local.properties
+  android/app/src/main/assets/
