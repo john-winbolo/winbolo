@@ -24,6 +24,15 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 endif()
 
+# On Linux, libm is a separate library that must be linked explicitly.
+# On macOS/iOS it is part of libSystem (always linked), so adding -lm is
+# redundant and causes duplicate-library linker warnings.
+if(UNIX AND NOT APPLE)
+    set(MATH_LIB m)
+else()
+    set(MATH_LIB)
+endif()
+
 # ---------------------------------------------------------------------------
 # Dependencies (FetchContent)
 # ---------------------------------------------------------------------------
@@ -642,7 +651,7 @@ else()
         src/gui/skins.c
         src/server/posix_stubs.c
     )
-    target_link_libraries(WinBolo PRIVATE m pthread)
+    target_link_libraries(WinBolo PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBolo PRIVATE -fcommon)
 endif()
 
@@ -803,7 +812,7 @@ else()
         src/server/posix_stubs.c
         src/gui/sdl3/lang.c
     )
-    target_link_libraries(WinBoloDS PRIVATE m pthread)
+    target_link_libraries(WinBoloDS PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
 endif()
 
@@ -925,8 +934,8 @@ target_link_libraries(LogViewer PRIVATE
 if(WIN32)
     target_link_libraries(LogViewer PRIVATE ws2_32)
 endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(LogViewer PRIVATE m)
+if(MATH_LIB)
+    target_link_libraries(LogViewer PRIVATE ${MATH_LIB})
 endif()
 
 # Copy shared libraries next to LogViewer (all platforms)
@@ -1061,7 +1070,7 @@ else()
     target_sources(WinBoloHeadless PRIVATE
         src/server/posix_stubs.c
     )
-    target_link_libraries(WinBoloHeadless PRIVATE m pthread)
+    target_link_libraries(WinBoloHeadless PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 endif()
 
@@ -1160,7 +1169,7 @@ else()
     target_sources(winbolo_gym PRIVATE
         src/server/posix_stubs.c
     )
-    target_link_libraries(winbolo_gym PRIVATE m pthread)
+    target_link_libraries(winbolo_gym PRIVATE ${MATH_LIB} pthread)
     target_compile_options(winbolo_gym PRIVATE -fcommon)
 endif()
 
@@ -1242,7 +1251,7 @@ else()
     target_sources(BrainTest PRIVATE
         src/server/posix_stubs.c
     )
-    target_link_libraries(BrainTest PRIVATE m pthread)
+    target_link_libraries(BrainTest PRIVATE ${MATH_LIB} pthread)
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
