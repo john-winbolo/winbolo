@@ -162,6 +162,12 @@ else()
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
 
+# MinGW debug builds: HarfBuzz's single-file amalgamation overflows COFF debug
+# section limits. Use -Wa,-mbig-obj so the assembler emits PE-COFF bigobj format.
+if(MINGW AND TARGET harfbuzz)
+    target_compile_options(harfbuzz PRIVATE -Wa,-mbig-obj)
+endif()
+
 # On Unix (non-iOS), shared libraries have a versioned filename (e.g. libSDL3_ttf.0.2.0.dylib)
 # and a soname symlink (libSDL3_ttf.0.dylib).  Setting VERSION = SOVERSION makes the real
 # filename match the soname so copies just work.
@@ -874,7 +880,9 @@ if(WIN32)
     )
     target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
-    target_link_options(WinBoloDS PRIVATE "/SUBSYSTEM:CONSOLE,10.0")
+    if(MSVC)
+        target_link_options(WinBoloDS PRIVATE "/SUBSYSTEM:CONSOLE,10.0")
+    endif()
 else()
     target_sources(WinBoloDS PRIVATE
         src/server/posix_stubs.c
@@ -970,7 +978,9 @@ set_target_properties(LogViewer PROPERTIES OUTPUT_NAME "Log Viewer")
 
 if(WIN32)
     set_target_properties(LogViewer PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_options(LogViewer PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")
+    if(MSVC)
+        target_link_options(LogViewer PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")
+    endif()
 endif()
 
 if(APPLE)
