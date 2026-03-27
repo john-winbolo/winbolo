@@ -709,6 +709,7 @@ if(WIN32)
     )
     set_target_properties(WinBolo PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBolo PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBolo PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")
     endif()
@@ -872,6 +873,7 @@ if(WIN32)
         src/res/winbolods.rc
     )
     target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm)
+    target_compile_options(WinBoloDS PRIVATE -fcommon)
     target_link_options(WinBoloDS PRIVATE "/SUBSYSTEM:CONSOLE,10.0")
 else()
     target_sources(WinBoloDS PRIVATE
@@ -1132,6 +1134,7 @@ target_include_directories(WinBoloHeadless PRIVATE
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 else()
     target_sources(WinBoloHeadless PRIVATE
         src/server/posix_stubs.c
@@ -1231,6 +1234,7 @@ target_include_directories(winbolo_gym PRIVATE
 
 if(WIN32)
     target_link_libraries(winbolo_gym PRIVATE ws2_32 winmm user32)
+    target_compile_options(winbolo_gym PRIVATE -fcommon)
 else()
     target_sources(winbolo_gym PRIVATE
         src/server/posix_stubs.c
@@ -1313,6 +1317,7 @@ target_include_directories(BrainTest PRIVATE
 
 if(WIN32)
     target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32)
+    target_compile_options(BrainTest PRIVATE -fcommon)
 else()
     target_sources(BrainTest PRIVATE
         src/server/posix_stubs.c
