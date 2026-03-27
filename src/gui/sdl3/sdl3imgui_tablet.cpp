@@ -465,6 +465,13 @@ static void renderBuildSelectBar(ClientSim *cs) {
         setBuildCurrentSelectCS(cs, values[i]);
       }
 
+      /* Touch tap fallback — ImGui buttons may not register finger events on iOS */
+      ImVec2 rMin = ImGui::GetItemRectMin();
+      ImVec2 rMax = ImGui::GetItemRectMax();
+      if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
+        setBuildCurrentSelectCS(cs, values[i]);
+      }
+
       ImGui::PopStyleColor(2);
     }
   }
