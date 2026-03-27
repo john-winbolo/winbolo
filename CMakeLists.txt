@@ -3,6 +3,14 @@ cmake_minimum_required(VERSION 3.15)
 # Allow vendored dependencies with older cmake_minimum_required calls
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
 
+# CMP0168 (CMake 3.30+): Use direct population for FetchContent instead of a
+# sub-build.  The sub-build approach fails with the Xcode generator when
+# cross-compiling for iOS because the populate target inherits iOS toolchain
+# settings and cannot run the download scripts.
+if(POLICY CMP0168)
+    cmake_policy(SET CMP0168 NEW)
+endif()
+
 # Use vcpkg if installed at C:/vcpkg and no toolchain file was specified
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
     set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
@@ -42,42 +50,49 @@ FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG        release-3.4.2
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
     GIT_TAG        release-3.2.0
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        docking
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     lua
     GIT_REPOSITORY https://github.com/walterschell/Lua.git
     GIT_TAG        v5.4.7
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     zlib
     GIT_REPOSITORY https://github.com/madler/zlib.git
     GIT_TAG        v1.3.1
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     libmaxminddb
     GIT_REPOSITORY https://github.com/maxmind/libmaxminddb.git
     GIT_TAG        1.12.2
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_Declare(
     cjson
     GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
     GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE
     SYSTEM
 )
 # curl is only built from source on Windows (uses Schannel for SSL).
@@ -87,8 +102,27 @@ if(WIN32)
         curl
         GIT_REPOSITORY https://github.com/curl/curl.git
         GIT_TAG        curl-8_12_1
+        GIT_SHALLOW    TRUE
         SYSTEM
     )
+endif()
+
+# iOS: only build static SDL libraries (shared libs require code signing
+# and are not useful in an app bundle)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_LIBC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+
+    # CMake's try_compile/check_symbol_exists probes each launch a full
+    # xcodebuild invocation on the Xcode generator, making configure
+    # extremely slow.  Temporarily switch probes to STATIC_LIBRARY mode
+    # which uses a simple compile check instead, then restore after all
+    # dependency fetches are done.
+    set(_saved_try_compile_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 endif()
 
 # Fetch SDL first (needed by everything)
@@ -108,9 +142,22 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # iOS: vendored freetype, no harfbuzz (avoids CoreText linking issues)
+    # Static only — shared libs require code signing in Xcode
+    # Point SDL3_ttf's find_package(SDL3) at the in-tree build so it can
+    # locate the static-only SDL3 we just built.
+    set(SDL3_DIR "${sdl3_BINARY_DIR}" CACHE PATH "" FORCE)
     set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
     set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
+    set(SDLTTF_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDLTTF_STATIC ON CACHE BOOL "" FORCE)
+    # SDL3_ttf reads BUILD_SHARED_LIBS (not SDLTTF_SHARED) to decide whether
+    # to look for SDL3::SDL3-shared.  Force it OFF so it uses the static SDL3.
+    set(_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(sdl3_ttf imgui)
+    set(BUILD_SHARED_LIBS "${_saved_build_shared_libs}" CACHE BOOL "" FORCE)
+    # Restore try_compile mode now that all probing dependencies are fetched
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
@@ -461,6 +508,21 @@ target_compile_options(WinBoloIOS PRIVATE -fcommon)
 target_compile_definitions(WinBoloIOS PRIVATE HAVE_SCREEN_C=1 __IPHONEOS__=1)
 
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
+
+# Hide dependency targets from the Xcode project — only WinBoloIOS should
+# appear as a buildable scheme.
+foreach(_t
+    SDL3-static SDL3_Headers SDL3_test
+    SDL3_ttf-static
+    freetype
+    lua_static lua_internal
+    imgui_backends
+    nanosvg stb_image
+)
+    if(TARGET ${_t})
+        set_target_properties(${_t} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+endforeach()
 
 else() # NOT iOS — Desktop targets (Windows, Linux, macOS)
 
