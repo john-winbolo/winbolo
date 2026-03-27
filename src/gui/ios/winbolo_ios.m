@@ -468,8 +468,8 @@ static void windowRunGameTick(ClientSim *cs) {
             screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
             if (brainRunning == FALSE) {
                 int gsChange = touchInputGetGunsightChange();
-                if (gsChange > 0) pkt.gunsightAdj = 1;
-                else if (gsChange < 0) pkt.gunsightAdj = 2;
+                if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
             }
             clientMutexWaitFor();
             clientSimGameTick(cs, &pkt, brainRunning);

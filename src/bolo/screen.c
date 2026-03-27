@@ -3176,6 +3176,11 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
   pkt->tick = tick;
   pkt->playerNum = playerNum;
 
+  /* Pack autoslowdown state into flags (sent every packet so server stays in sync) */
+  if (tankGetAutoSlowdown(&csPtr->sim.tanks[0])) {
+    pkt->flags |= INPUT_FLAG_AUTOSLOW;
+  }
+
   if (isBrain) {
     /* Translate brain keys to tankButton + shoot, same as screenTranslateBrainButtons
      * but without the side effects (gunsight, mine laying, etc.) that the brain
@@ -3208,11 +3213,11 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
       pkt->actions |= INPUT_ACTION_LAY_MINE;
     }
 
-    /* Gunsight adjustment */
+    /* Gunsight adjustment (bits 2-3 of flags) */
     if (testkey(*tapKeys, KEY_morerange) || testkey(*holdKeys, KEY_morerange)) {
-      pkt->gunsightAdj = 1;  /* increase */
+      pkt->flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);  /* increase */
     } else if (testkey(*tapKeys, KEY_lessrange) || testkey(*holdKeys, KEY_lessrange)) {
-      pkt->gunsightAdj = 2;  /* decrease */
+      pkt->flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);  /* decrease */
     }
 
     /* Build action from brain (1-based: 0=none, 1=BsTrees, ...).
@@ -3437,7 +3442,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 
             /* If the server's angle matched our prediction (quantized), the
              * reconciliation was triggered only by position drift (e.g. from
-             * speed quantization or autoSlowdown mismatch).  Restore the
+             * speed quantization).  Restore the
              * predicted angle + turn ramp-up so the gunsight doesn't flicker
              * from tiny position-induced turn-rate differences during replay. */
             if (!angleMismatch) {
