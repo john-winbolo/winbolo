@@ -2044,6 +2044,20 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+
+    /* In tablet mode, override ImGui's DisplaySize to match the SDL
+       render logical presentation space so ImGui coordinates align
+       with SDL rendering coordinates (game tiles, etc.). */
+    if (uiModeIsTablet()) {
+        int logW = 0, logH = 0;
+        SDL_RendererLogicalPresentation logMode;
+        SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &logMode);
+        if (logW > 0 && logH > 0) {
+            ImGuiIO &io = ImGui::GetIO();
+            io.DisplaySize = ImVec2((float)logW, (float)logH);
+        }
+    }
+
     ImGui::NewFrame();
 
     /* Clear nav focus when user clicked in the game area last frame,

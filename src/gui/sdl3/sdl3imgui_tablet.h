@@ -36,36 +36,41 @@ typedef struct {
 
   /* Whether to show status grids directly (vs drawer) */
   bool showStatusGrids;   /* true if leftGutter >= 100 */
-  bool showStockBars;     /* true if rightGutter >= 60 */
 
   /* Joystick */
   float joyOuterRadius;
   float joyInnerRadius;
-  float joyZoneRight;     /* fraction of screen for joystick zone (0.40) */
+  float joyZoneRight;
 
-  /* Action buttons */
+  /* Action buttons — lower right */
   float fireRadius;
   float fireCenterX, fireCenterY;
   float mineRadius;
   float mineCenterX, mineCenterY;
 
-  /* Build bar */
+  /* View buttons — pill view and tank view */
+  float pillViewCenterX, pillViewCenterY, pillViewRadius;
+  float tankViewCenterX, tankViewCenterY, tankViewRadius;
+
+  /* Gunsight +/- buttons (circles) */
+  float gsIncCenterX, gsIncCenterY, gsIncRadius;
+  float gsDecCenterX, gsDecCenterY, gsDecRadius;
+
+  /* Build bar — vertical right column */
   float buildIconSize;
   float buildSpacing;
-  float buildBarY;
+  float buildBarX, buildBarY;  /* top-left of vertical strip */
 
   /* Status grids position (left gutter) */
   float tanksGridX, tanksGridY;
   float pillsGridX, pillsGridY;
   float basesGridX, basesGridY;
-  float statusGridScale;  /* multiplier on the 90x66 base size */
+  float statusGridScale;
 
-  /* Stock bars position (right gutter) */
-  float stockBarsX, stockBarsY;
-
-  /* View toggle button (pill/tank view) */
-  float viewToggleCenterX, viewToggleCenterY;
-  float viewToggleRadius;
+  /* Resource bars — tank (S/M/A/T) and base (S/M/A) */
+  float tankBarsX, tankBarsY;
+  float baseBarsX, baseBarsY;
+  float barsW, barsH;
 
   /* Top bar buttons */
   float topBtnSize;
@@ -84,14 +89,14 @@ typedef struct {
   float msgOverlayW;
 
   /* Message fade timing */
-  float msgFadeSeconds;     /* seconds before messages start fading (5.0) */
-  float msgFadeDuration;    /* seconds over which fade completes (1.0) */
+  float msgFadeSeconds;
+  float msgFadeDuration;
 
   /* Top button idle opacity */
-  float topBtnOpacity;      /* always-visible opacity for top buttons (0.6) */
+  float topBtnOpacity;
 
   /* Joystick fade-out duration in ms after release */
-  Uint32 joyFadeOutMs;      /* 1000 = 1 second */
+  Uint32 joyFadeOutMs;
 } TabletLayoutConfig;
 
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
@@ -102,7 +107,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
 *NAME:          sdl3ImguiTabletOverlay
 *PURPOSE:
 *  Renders the tablet-mode overlay (joystick, buttons,
-*  build bar, hamburger menu, status drawer).
+*  build bar, status drawer, resource bars).
 *  No-op if not in tablet mode.
 *********************************************************/
 void sdl3ImguiTabletOverlay(struct ClientSim *cs);

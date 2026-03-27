@@ -323,6 +323,10 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
 *  then draws the current build-select indent overlay.
 *********************************************************/
 static void sdl3RenderStatusPanels(void) {
+  /* In tablet mode the ImGui overlay draws its own resource bars,
+     build-select bar, and man-status — skip the desktop versions. */
+  if (uiModeIsTablet()) return;
+
   int zf = gZoomFactor;
 
   /* Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -1554,8 +1558,31 @@ void sdl3DrawCopyTanksStatus(int x, int y) {
   /* Icons drawn directly to framebuffer — no-op. */
 }
 
+/* Cached status bar values for tablet overlay */
+static BYTE gCachedTankShells = 0, gCachedTankMines = 0, gCachedTankArmour = 0, gCachedTankTrees = 0;
+static BYTE gCachedBaseShells = 0, gCachedBaseMines = 0, gCachedBaseArmour = 0;
+static bool gCachedBaseValid = false;
+
+void sdl3DrawGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
+  *shells = gCachedTankShells;
+  *mines = gCachedTankMines;
+  *armour = gCachedTankArmour;
+  *trees = gCachedTankTrees;
+}
+
+void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *hasBase) {
+  *shells = gCachedBaseShells;
+  *mines = gCachedBaseMines;
+  *armour = gCachedBaseArmour;
+  *hasBase = gCachedBaseValid;
+}
+
 void sdl3DrawStatusTankBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   (void)x; (void)y;
+  gCachedTankShells = shells;
+  gCachedTankMines = mines;
+  gCachedTankArmour = armour;
+  gCachedTankTrees = trees;
   if (!gRenderer || !gTankBarsTex) return;
 
   SDL_SetRenderTarget(gRenderer, gTankBarsTex);
@@ -1603,6 +1630,10 @@ void sdl3DrawCopyTankStatusBars(int x, int y) {
 
 void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, bool redraw) {
   (void)x; (void)y; (void)redraw;
+  gCachedBaseShells = shells;
+  gCachedBaseMines = mines;
+  gCachedBaseArmour = armour;
+  gCachedBaseValid = (shells > 0 || mines > 0 || armour > 0);
   if (!gRenderer || !gBaseBarsTex) return;
 
   SDL_SetRenderTarget(gRenderer, gBaseBarsTex);

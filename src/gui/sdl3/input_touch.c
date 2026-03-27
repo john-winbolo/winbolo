@@ -7,16 +7,12 @@
 *Name:          Touch Input
 *Filename:      input_touch.c
 *Purpose:
-*  Processes SDL3 finger events into virtual joystick,
-*  shoot, mine, and build-select inputs for tablet mode.
+*  Processes SDL3 finger events into virtual joystick
+*  and hit-tested action buttons for tablet mode.
 *
-*  Layout (screen regions):
+*  Layout:
 *    Left 40%  — floating joystick
-*    Right side, lower — shoot button zone
-*    Right side, upper — mine button zone
-*
-*  The joystick anchor appears at the finger-down location.
-*  Dragging maps to 8 directions + diagonals.
+*    Right side — registered buttons via hit-testing
 *********************************************************/
 
 #include <math.h>
@@ -25,40 +21,50 @@
 #endif
 #include "input_touch.h"
 
-/* Joystick deadzone in pixels — drags shorter than this are TNONE */
+/* Joystick deadzone in pixels */
 #define JOYSTICK_DEADZONE 20.0f
 
-/* Zone boundaries (fractions of window size) */
-#define JOYSTICK_ZONE_RIGHT 0.40f   /* left 40% */
-#define SHOOT_ZONE_LEFT     0.70f   /* right 30%, bottom half */
-#define SHOOT_ZONE_TOP      0.50f
-#define MINE_ZONE_LEFT      0.70f   /* right 30%, top half */
-#define MINE_ZONE_BOTTOM    0.50f
+/* Zone boundary for joystick (left 40%) */
+#define JOYSTICK_ZONE_RIGHT 0.40f
 
 /* Tap detection thresholds */
-#define TAP_DISTANCE_THRESHOLD 10.0f  /* pixels */
-#define TAP_TIME_THRESHOLD_MS  300    /* milliseconds */
+#define TAP_DISTANCE_THRESHOLD 10.0f
+#define TAP_TIME_THRESHOLD_MS  300
 
 /* Maximum simultaneous fingers to track for tap detection */
 #define MAX_TAP_FINGERS 4
 
-/* Joystick state */
+/* --- Button registration --- */
+
+typedef enum {
+  BTN_SHAPE_CIRCLE,
+  BTN_SHAPE_RECT
+} ButtonShape;
+
+typedef struct {
+  bool registered;
+  ButtonShape shape;
+  /* Circle */
+  float cx, cy, radius;
+  /* Rect */
+  float rx, ry, rw, rh;
+  /* State */
+  SDL_FingerID fingerID;
+  bool held;
+  bool tapped;       /* edge-triggered, consumed on read */
+  bool tapConsumed;  /* prevents re-fire while held */
+} TouchButton;
+
+static TouchButton s_buttons[TOUCH_BTN_COUNT];
+
+/* --- Joystick state --- */
 static SDL_FingerID s_joyFingerID  = 0;
 static bool         s_joyActive    = false;
 static float        s_joyAnchorX   = 0.0f;
 static float        s_joyAnchorY   = 0.0f;
 static float        s_joyThumbX    = 0.0f;
 static float        s_joyThumbY    = 0.0f;
-static Uint64       s_joyReleaseTime = 0; /* SDL_GetTicks() when joystick released */
-
-/* Shoot button state */
-static SDL_FingerID s_shootFingerID = 0;
-static bool         s_shootActive   = false;
-
-/* Mine button state (edge-triggered) */
-static SDL_FingerID s_mineFingerID  = 0;
-static bool         s_mineActive    = false;
-static bool         s_mineFired     = false;  /* consumed flag */
+static Uint64       s_joyReleaseTime = 0;
 
 /* Build select tap (-1 = none) */
 static int          s_buildSelectTap = -1;
@@ -67,7 +73,7 @@ static int          s_buildSelectTap = -1;
 static int          s_vpX = 0, s_vpY = 0, s_vpW = 0, s_vpH = 0;
 static int          s_vpZoom = 1;
 
-/* Tap tracking — records finger-down position and time for all fingers */
+/* Tap tracking for viewport taps */
 typedef struct {
   SDL_FingerID fingerID;
   float        downX, downY;
@@ -76,18 +82,25 @@ typedef struct {
 } TapTracker;
 static TapTracker   s_tapTrackers[MAX_TAP_FINGERS];
 
-/* Viewport tap result (consumed on read) */
+/* Gunsight change: +1 increase, -1 decrease, 0 none */
+static int          s_gunsightChange = 0;
+
 static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
 
+/* --- Setup / Cleanup --- */
+
 void inputTouchSetup(void) {
-  s_joyActive    = false;
-  s_shootActive  = false;
-  s_mineActive   = false;
-  s_mineFired    = false;
+  s_joyActive = false;
   s_buildSelectTap = -1;
   s_viewportTapReady = false;
+  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+    s_buttons[i].registered = false;
+    s_buttons[i].held = false;
+    s_buttons[i].tapped = false;
+    s_buttons[i].tapConsumed = false;
+  }
   for (int i = 0; i < MAX_TAP_FINGERS; i++) {
     s_tapTrackers[i].active = false;
   }
@@ -96,6 +109,47 @@ void inputTouchSetup(void) {
 void inputTouchCleanup(void) {
   inputTouchSetup();
 }
+
+/* --- Button registration --- */
+
+void inputTouchClearButtons(void) {
+  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+    s_buttons[i].registered = false;
+  }
+}
+
+void inputTouchRegisterButton(TouchButtonID id, float centerX, float centerY, float radius) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return;
+  s_buttons[id].registered = true;
+  s_buttons[id].shape = BTN_SHAPE_CIRCLE;
+  s_buttons[id].cx = centerX;
+  s_buttons[id].cy = centerY;
+  s_buttons[id].radius = radius;
+}
+
+void inputTouchRegisterRectButton(TouchButtonID id, float x, float y, float w, float h) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return;
+  s_buttons[id].registered = true;
+  s_buttons[id].shape = BTN_SHAPE_RECT;
+  s_buttons[id].rx = x;
+  s_buttons[id].ry = y;
+  s_buttons[id].rw = w;
+  s_buttons[id].rh = h;
+}
+
+static bool hitTestButton(TouchButton *btn, float px, float py) {
+  if (!btn->registered) return false;
+  if (btn->shape == BTN_SHAPE_CIRCLE) {
+    float dx = px - btn->cx;
+    float dy = py - btn->cy;
+    return (dx * dx + dy * dy) <= (btn->radius * btn->radius);
+  } else {
+    return px >= btn->rx && px < btn->rx + btn->rw &&
+           py >= btn->ry && py < btn->ry + btn->rh;
+  }
+}
+
+/* --- Event processing --- */
 
 void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
   if (windowW <= 0 || windowH <= 0) return;
@@ -171,7 +225,6 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
   }
 
   float normX = fx / (float)windowW;
-  float normY = fy / (float)windowH;
 
   /* --- Joystick zone (left 40%) --- */
   if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT) {
@@ -189,38 +242,55 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
       s_joyThumbY = fy;
     } else if (isUp) {
       s_joyActive = false;
+      s_joyThumbX = s_joyAnchorX;
+      s_joyThumbY = s_joyAnchorY;
       s_joyReleaseTime = SDL_GetTicks();
     }
     return;
   }
 
-  /* --- Shoot zone (right 30%, bottom half) --- */
-  if (isDown && !s_shootActive && normX >= SHOOT_ZONE_LEFT && normY >= SHOOT_ZONE_TOP) {
-    s_shootFingerID = fid;
-    s_shootActive   = true;
-    return;
-  }
-  if (s_shootActive && fid == s_shootFingerID) {
-    if (isUp) {
-      s_shootActive = false;
+  /* --- Button hit-testing --- */
+  if (isDown) {
+    for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+      if (hitTestButton(&s_buttons[i], fx, fy) && !s_buttons[i].held) {
+        s_buttons[i].fingerID = fid;
+        s_buttons[i].held = true;
+        s_buttons[i].tapped = true;
+        s_buttons[i].tapConsumed = false;
+        /* Track gunsight changes for the game tick */
+        if (i == TOUCH_BTN_GS_INCREASE) s_gunsightChange = 1;
+        else if (i == TOUCH_BTN_GS_DECREASE) s_gunsightChange = -1;
+        return;
+      }
     }
-    return;
   }
-
-  /* --- Mine zone (right 30%, top half) --- */
-  if (isDown && !s_mineActive && normX >= MINE_ZONE_LEFT && normY < MINE_ZONE_BOTTOM) {
-    s_mineFingerID = fid;
-    s_mineActive   = true;
-    s_mineFired    = false;
-    return;
-  }
-  if (s_mineActive && fid == s_mineFingerID) {
-    if (isUp) {
-      s_mineActive = false;
+  if (isUp) {
+    for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+      if (s_buttons[i].held && s_buttons[i].fingerID == fid) {
+        s_buttons[i].held = false;
+        return;
+      }
     }
-    return;
   }
 }
+
+/* --- Button queries --- */
+
+bool inputTouchIsButtonHeld(TouchButtonID id) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return false;
+  return s_buttons[id].held;
+}
+
+bool inputTouchIsButtonTapped(TouchButtonID id) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return false;
+  if (s_buttons[id].tapped && !s_buttons[id].tapConsumed) {
+    s_buttons[id].tapConsumed = true;
+    return true;
+  }
+  return false;
+}
+
+/* --- Joystick --- */
 
 tankButton inputTouchGetMovement(void) {
   if (!s_joyActive) return TNONE;
@@ -230,13 +300,8 @@ tankButton inputTouchGetMovement(void) {
   float dist = sqrtf(dx * dx + dy * dy);
   if (dist < JOYSTICK_DEADZONE) return TNONE;
 
-  /* Angle in degrees: 0=right, 90=down, etc. */
   float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
 
-  /* Map to 8 directions.
-   * Up = negative Y in screen coords.
-   * Bolo: TACCEL=forward(up), TDECEL=backward(down),
-   *        TLEFT=left, TRIGHT=right */
   if (angle >= -22.5f && angle < 22.5f)   return TRIGHT;
   if (angle >= 22.5f  && angle < 67.5f)   return TRIGHTDECEL;
   if (angle >= 67.5f  && angle < 112.5f)  return TDECEL;
@@ -247,22 +312,6 @@ tankButton inputTouchGetMovement(void) {
   if (angle >= -67.5f  && angle < -22.5f)  return TRIGHTACCEL;
 
   return TNONE;
-}
-
-bool inputTouchIsFirePressed(void) {
-  return s_shootActive;
-}
-
-bool inputTouchIsMinePressed(void) {
-  if (s_mineActive && !s_mineFired) {
-    s_mineFired = true;
-    return true;
-  }
-  return false;
-}
-
-bool inputTouchIsMineHeld(void) {
-  return s_mineActive;
 }
 
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
@@ -276,11 +325,10 @@ void inputTouchGetJoystickState(float *anchorX, float *anchorY,
   *releaseTime = s_joyReleaseTime;
 }
 
+/* --- Haptic --- */
+
 void inputTouchTriggerHaptic(float strength, Uint32 durationMs) {
 #if defined(__ANDROID__) || (defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
-  /* Use SDL_RumbleGamepad if a gamepad is connected, otherwise fall back
-     to platform vibration.  SDL3 on iOS/Android can rumble via
-     SDL_RumbleGamepad on virtual/connected controllers. */
   int count = 0;
   SDL_JoystickID *joysticks = SDL_GetGamepads(&count);
   if (joysticks && count > 0) {
@@ -293,15 +341,13 @@ void inputTouchTriggerHaptic(float strength, Uint32 durationMs) {
     }
     SDL_free(joysticks);
   }
-#ifdef __ANDROID__
-  /* Android: SDL_Vibrate is not in SDL3, but we can use SDL_AndroidSendMessage
-     or JNI. For now, gamepad rumble is the primary path. */
-#endif
 #else
   (void)strength;
   (void)durationMs;
 #endif
 }
+
+/* --- Legacy API --- */
 
 int inputTouchGetBuildSelect(void) {
   int val = s_buildSelectTap;
@@ -325,4 +371,23 @@ bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY) {
     return true;
   }
   return false;
+}
+
+int inputTouchGetGunsightChange(void) {
+  int val = s_gunsightChange;
+  s_gunsightChange = 0;
+  return val;
+}
+
+/* Legacy wrappers */
+bool inputTouchIsFirePressed(void) {
+  return inputTouchIsButtonHeld(TOUCH_BTN_FIRE);
+}
+
+bool inputTouchIsMinePressed(void) {
+  return inputTouchIsButtonTapped(TOUCH_BTN_MINE);
+}
+
+bool inputTouchIsMineHeld(void) {
+  return inputTouchIsButtonHeld(TOUCH_BTN_MINE);
 }
