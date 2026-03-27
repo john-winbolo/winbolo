@@ -280,9 +280,9 @@ extern "C" int imguiWelcomeShow(void) {
             float btnY = logoBottom + 30.0f * s;
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.02f, 0.08f, 0.35f, 0.55f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.05f, 0.15f, 0.45f, 0.75f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.02f, 0.05f, 0.3f, 0.9f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.1f, 0.1f, ghostBtnAlpha));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             struct { const char *label; int code; } miniModes[] = {
