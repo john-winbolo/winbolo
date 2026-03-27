@@ -47,6 +47,10 @@
 #ifdef _MSC_VER
 #include <crtdbg.h>
 #endif
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
