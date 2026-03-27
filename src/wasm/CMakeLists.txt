@@ -148,6 +148,8 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/udppackets.c
     ${SRC_ROOT}/bolo/util.c
     ${SRC_ROOT}/bolo/braincore.c
+    ${SRC_ROOT}/bolo/brain_pathfinder.c
+    ${SRC_ROOT}/bolo/brain_worldsim.c
     ${SRC_ROOT}/bolo/transport_local.c
     ${SRC_ROOT}/bolo/transport_udp.c
     ${SRC_ROOT}/bolo/client_state.c
@@ -191,13 +193,14 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamesetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_mapchooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_udpsetup.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamefinder.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_setname.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_skins.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_trackersetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c

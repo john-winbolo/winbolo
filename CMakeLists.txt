@@ -71,12 +71,16 @@ FetchContent_Declare(
     GIT_TAG        v1.7.18
     SYSTEM
 )
-FetchContent_Declare(
-    curl
-    GIT_REPOSITORY https://github.com/curl/curl.git
-    GIT_TAG        curl-8_12_1
-    SYSTEM
-)
+# curl is only built from source on Windows (uses Schannel for SSL).
+# On Linux/macOS, the system libcurl is used via find_package().
+if(WIN32)
+    FetchContent_Declare(
+        curl
+        GIT_REPOSITORY https://github.com/curl/curl.git
+        GIT_TAG        curl-8_12_1
+        SYSTEM
+    )
+endif()
 
 # Fetch SDL first (needed by everything)
 FetchContent_MakeAvailable(sdl3)
@@ -451,24 +455,30 @@ set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 else() # NOT iOS — Desktop targets (Windows, Linux, macOS)
 
-# libcurl for WinBolo.net HTTP/HTTPS (built from source via FetchContent)
-set(BUILD_SHARED_LIBS_SAVE_CURL "${BUILD_SHARED_LIBS}")
-set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
-set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
-set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
-set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
-set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
-set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
-set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(curl)
-set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
-# Provide the CURL::libcurl alias that the rest of the build expects
-if(NOT TARGET CURL::libcurl)
-    add_library(CURL::libcurl ALIAS libcurl_shared)
+# libcurl for WinBolo.net HTTP/HTTPS
+if(WIN32)
+    # Windows: build curl from source using Schannel (no OpenSSL needed)
+    set(BUILD_SHARED_LIBS_SAVE_CURL "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
+    set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
+    set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+    set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+    set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(curl)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
+    # Provide the CURL::libcurl alias that the rest of the build expects
+    if(NOT TARGET CURL::libcurl)
+        add_library(CURL::libcurl ALIAS libcurl_shared)
+    endif()
+else()
+    # Linux/macOS: use system-installed libcurl
+    find_package(CURL REQUIRED)
 endif()
 
 # ONNX Runtime — optional dependency for ML brain inference
@@ -738,13 +748,6 @@ if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
         COMMENT "Copying runtime DLLs to WinBolo output directory"
     )
 endif()
-# On Linux/macOS, also copy libcurl shared library
-if(NOT WIN32)
-    add_custom_command(TARGET WinBolo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:WinBolo>"
-        COMMENT "Copying libcurl to WinBolo output directory"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # WinBoloDS Server (cross-platform: Windows, Linux, macOS)
@@ -839,12 +842,6 @@ if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:WinBoloDS> "$<TARGET_FILE_DIR:WinBoloDS>"
         COMMAND_EXPAND_LISTS
         COMMENT "Copying runtime DLLs to WinBoloDS output directory"
-    )
-endif()
-if(NOT WIN32)
-    add_custom_command(TARGET WinBoloDS POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:WinBoloDS>"
-        COMMENT "Copying libcurl to WinBoloDS output directory"
     )
 endif()
 
@@ -1096,12 +1093,6 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
-if(NOT WIN32)
-    add_custom_command(TARGET WinBoloHeadless POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
-        COMMENT "Copying libcurl to WinBoloHeadless output directory"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # WinBoloGym shared library (C API for ML training)
@@ -1191,12 +1182,6 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
 )
-if(NOT WIN32)
-    add_custom_command(TARGET winbolo_gym POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CURL::libcurl>" "$<TARGET_FILE_DIR:winbolo_gym>"
-        COMMENT "Copying libcurl to winbolo_gym output directory"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
