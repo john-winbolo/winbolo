@@ -482,18 +482,6 @@ END
 // Dialog Info
 //
 
-IDD_TEAMCOLOURS DLGINIT
-BEGIN
-    IDC_TEAM10, 0x403, 1, 0
-"\000" 
-    IDC_TEAM12, 0x403, 1, 0
-"\000" 
-    IDC_TEAM14, 0x403, 1, 0
-"\000" 
-    IDC_TEAM16, 0x403, 1, 0
-"\000" 
-    0
-END
 
 #endif    // English (Australia) resources
 /////////////////////////////////////////////////////////////////////////////
