@@ -495,11 +495,18 @@ void serverSimTick(ServerSim *sim) {
             bool inputIsKeys = (currentInputs[count].tick % 2) == 1;
             tankButton tb = translateInputToTankButton(currentInputs[count].buttons);
 
-            /* Apply gunsight adjustment */
-            if (currentInputs[count].gunsightAdj == 1) {
-                tankGunsightIncrease(NULL, &sim->sim, &sim->sim.tanks[count]);
-            } else if (currentInputs[count].gunsightAdj == 2) {
-                tankGunsightDecrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+            /* Apply autoslowdown state from client flags */
+            tankSetAutoSlowdown(&sim->sim.tanks[count],
+                                (currentInputs[count].flags & INPUT_FLAG_AUTOSLOW) != 0);
+
+            /* Apply gunsight adjustment (bits 2-3 of flags) */
+            {
+                uint8_t gsAdj = (currentInputs[count].flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+                if (gsAdj == 1) {
+                    tankGunsightIncrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+                } else if (gsAdj == 2) {
+                    tankGunsightDecrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+                }
             }
 
             sim->lastProcessedInput[count] = currentInputs[count].tick;
@@ -688,9 +695,14 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     if (sanitized.buildAction > 5) {
         sanitized.buildAction = 0;
     }
-    /* gunsightAdj: 0=none, 1=increase, 2=decrease */
-    if (sanitized.gunsightAdj > 2) {
-        sanitized.gunsightAdj = 0;
+    /* flags: bit 0 = autoslow, bits 2-3 = gunsight adj (0=none, 1=increase, 2=decrease) */
+    {
+        uint8_t gsAdj = (sanitized.flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+        if (gsAdj > 2) {
+            sanitized.flags &= ~INPUT_FLAG_GUNSIGHT_MASK;
+        }
+        /* Mask off any undefined bits (keep only autoslow + gunsight) */
+        sanitized.flags &= (INPUT_FLAG_AUTOSLOW | INPUT_FLAG_GUNSIGHT_MASK);
     }
 
     head = sim->inputQueueHead[p];

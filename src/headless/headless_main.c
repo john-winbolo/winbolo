@@ -785,8 +785,8 @@ static int stdinReadInput(InputPacket *pkt) {
   cJSON *gsight = cJSON_GetObjectItem(root, "gsight");
   if (cJSON_IsNumber(gsight)) {
     int val = gsight->valueint;
-    if (val > 0) pkt->gunsightAdj = 1;
-    else if (val < 0) pkt->gunsightAdj = 2;
+    if (val > 0) pkt->flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+    else if (val < 0) pkt->flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
   }
 
   /* Build order */

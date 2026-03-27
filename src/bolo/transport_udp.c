@@ -193,7 +193,7 @@ static int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     buf[7] = pkt->buildAction;
     buf[8] = pkt->buildX;
     buf[9] = pkt->buildY;
-    buf[10] = pkt->gunsightAdj;
+    buf[10] = pkt->flags;
     packU32(buf + 11, pkt->eventAck);
     packU16(buf + 15, pkt->pingMs);
     return 17;
@@ -209,7 +209,7 @@ static void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->buildAction = buf[7];
     pkt->buildX = buf[8];
     pkt->buildY = buf[9];
-    pkt->gunsightAdj = buf[10];
+    pkt->flags = buf[10];
     pkt->eventAck = unpackU32(buf + 11);
     pkt->pingMs = unpackU16(buf + 15);
 }

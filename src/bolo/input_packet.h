@@ -37,6 +37,11 @@
 #define INPUT_ACTION_FIRE      0x01
 #define INPUT_ACTION_LAY_MINE  0x02
 
+/* Flags field bitmask (InputPacket.flags) */
+#define INPUT_FLAG_AUTOSLOW       0x01  /* Bit 0: autoslowdown enabled */
+#define INPUT_FLAG_GUNSIGHT_MASK  0x06  /* Bits 1-2: gunsight adjustment */
+#define INPUT_FLAG_GUNSIGHT_SHIFT 1     /* 0=none, 1=increase, 2=decrease */
+
 typedef struct {
     uint32_t tick;          /* Client tick number (sequence) */
     uint8_t  playerNum;     /* Which player */
@@ -45,7 +50,7 @@ typedef struct {
     uint8_t  buildAction;   /* LGM build type (0 = none) */
     uint8_t  buildX;        /* LGM target X (if buildAction != 0) */
     uint8_t  buildY;        /* LGM target Y (if buildAction != 0) */
-    uint8_t  gunsightAdj;   /* Gunsight +1/-1/0 */
+    uint8_t  flags;         /* Bit 0: autoslow, bits 2-3: gunsight adj */
     uint32_t eventAck;      /* Reliable event ACK: next expected seq (0 = none) */
     uint16_t pingMs;        /* Client's self-measured RTT in ms */
 } InputPacket;
