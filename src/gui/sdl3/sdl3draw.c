@@ -40,6 +40,7 @@
 #include <emscripten/html5.h>
 #endif
 
+#include "stb_image.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "cursor.h"
@@ -665,6 +666,76 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   }
 }
 
+/* -------------------------------------------------------
+ * Loading screen — show smalllogo-transparent.png centered
+ * on black.  Called immediately after window/renderer
+ * creation so the user sees something while fonts, tiles
+ * and audio load.
+ * ------------------------------------------------------- */
+static void sdl3DrawShowLoadingScreen(void) {
+  if (!gRenderer) return;
+
+  /* Load the logo PNG via stb_image */
+  const char *basePath = SDL_GetBasePath();
+  if (!basePath) basePath = "./";
+  char logoPath[1024];
+  SDL_snprintf(logoPath, sizeof(logoPath), "%ssmalllogo-transparent.png", basePath);
+
+  SDL_IOStream *io = SDL_IOFromFile(logoPath, "rb");
+  if (!io) return;
+  Sint64 fileSize = SDL_GetIOSize(io);
+  if (fileSize <= 0) { SDL_CloseIO(io); return; }
+  unsigned char *buf = (unsigned char *)SDL_malloc((size_t)fileSize);
+  if (!buf) { SDL_CloseIO(io); return; }
+  SDL_ReadIO(io, buf, (size_t)fileSize);
+  SDL_CloseIO(io);
+
+  int imgW, imgH, channels;
+  unsigned char *pixels = stbi_load_from_memory(buf, (int)fileSize, &imgW, &imgH, &channels, 4);
+  SDL_free(buf);
+  if (!pixels) return;
+
+  SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pixels, imgW * 4);
+  if (!surf) { stbi_image_free(pixels); return; }
+  SDL_Texture *logoTex = SDL_CreateTextureFromSurface(gRenderer, surf);
+  SDL_DestroySurface(surf);
+  stbi_image_free(pixels);
+  if (!logoTex) return;
+
+  /* Get the coordinate space the renderer is using */
+  int screenW = 0, screenH = 0;
+  {
+    SDL_RendererLogicalPresentation mode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &screenW, &screenH, &mode);
+  }
+  if (screenW <= 0 || screenH <= 0)
+    SDL_GetCurrentRenderOutputSize(gRenderer, &screenW, &screenH);
+
+  /* Center the logo */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderClear(gRenderer);
+
+  if (screenW > 0 && screenH > 0) {
+    /* Scale logo to fit ~40% of the smaller screen dimension */
+    int maxDim = (screenW < screenH) ? screenW : screenH;
+    int drawSize = maxDim * 2 / 5;
+    float scaleW = (float)drawSize / (float)imgW;
+    float scaleH = (float)drawSize / (float)imgH;
+    float scale = (scaleW < scaleH) ? scaleW : scaleH;
+    float dstW = imgW * scale;
+    float dstH = imgH * scale;
+    SDL_FRect dst = {
+      (screenW - dstW) / 2.0f,
+      (screenH - dstH) / 2.0f,
+      dstW, dstH
+    };
+    SDL_RenderTexture(gRenderer, logoTex, NULL, &dst);
+  }
+
+  SDL_RenderPresent(gRenderer);
+  SDL_DestroyTexture(logoTex);
+}
+
 bool sdl3DrawSetup(int zoomFactor) {
   gZoomFactor = zoomFactor;
 
@@ -750,6 +821,9 @@ bool sdl3DrawSetup(int zoomFactor) {
     SDL_Log("sdl3DrawSetup: render output %dx%d, effective zoom %d", ww, wh, gZoomFactor);
   }
 #endif
+
+  /* --- Show loading screen while heavy resources load --- */
+  sdl3DrawShowLoadingScreen();
 
   /* --- Now load fonts at the correct zoom --- */
   bool ttfOk = TTF_Init();
