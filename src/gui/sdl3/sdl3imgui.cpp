@@ -1790,15 +1790,19 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
 
-    /* Tablet mode: scale up ImGui for touch targets */
+    /* Tablet mode: scale up ImGui for touch targets.
+       Scale proportionally to the logical coordinate space height.
+       Reference: zoom 2 → 480px height → 1.0x pixel scale. */
     if (uiModeIsTablet()) {
-        io.FontGlobalScale = 1.8f;
+        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
+        if (ps < 1.0f) ps = 1.0f;
+        io.FontGlobalScale = 1.8f * ps;
         io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
         ImGuiStyle &style = ImGui::GetStyle();
-        style.FramePadding      = ImVec2(12, 8);
-        style.ItemSpacing       = ImVec2(12, 8);
-        style.TouchExtraPadding = ImVec2(8, 8);
-        style.ScrollbarSize     = 24.0f;
+        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
+        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
+        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
+        style.ScrollbarSize     = 24.0f * ps;
     }
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
@@ -1823,6 +1827,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+        SDL_Event rawEv = ev;
+        /* Convert mouse/touch coordinates from window space to the
+           renderer's logical presentation coordinate space so ImGui
+           coordinates match the overridden DisplaySize. */
+        if (s_renderer) {
+            SDL_ConvertEventToRenderCoordinates(s_renderer, &ev);
+        }
         ImGui_ImplSDL3_ProcessEvent(&ev);
 
         /* Route events to pop-out windows — if the event belongs to a
@@ -1879,14 +1890,20 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (consumedByPopOut) continue;
         }
 
-        /* Route finger events to touch input system in tablet mode */
+        /* Route finger events to touch input system in tablet mode.
+           Use the raw (unconverted) event since inputTouchProcessEvent
+           expects normalized tfinger coords multiplied by the target size.
+           Use logical presentation size so coordinates match the game
+           viewport bounds (same approach as winbolo_ios.m). */
         if (uiModeIsTablet() &&
-            (ev.type == SDL_EVENT_FINGER_DOWN ||
-             ev.type == SDL_EVENT_FINGER_UP ||
-             ev.type == SDL_EVENT_FINGER_MOTION)) {
-            int ww, wh;
-            SDL_GetWindowSize(s_window, &ww, &wh);
-            inputTouchProcessEvent(&ev, ww, wh);
+            (rawEv.type == SDL_EVENT_FINGER_DOWN ||
+             rawEv.type == SDL_EVENT_FINGER_UP ||
+             rawEv.type == SDL_EVENT_FINGER_MOTION)) {
+            int tw = 0, th = 0;
+            SDL_RendererLogicalPresentation logMode;
+            SDL_GetRenderLogicalPresentation(s_renderer, &tw, &th, &logMode);
+            if (tw <= 0 || th <= 0) SDL_GetWindowSize(s_window, &tw, &th);
+            inputTouchProcessEvent(&rawEv, tw, th);
         }
 
         /* Window focus — mute sound when backgroundSound is off.
@@ -2047,7 +2064,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     /* In tablet mode, override ImGui's DisplaySize to match the SDL
        render logical presentation space so ImGui coordinates align
-       with SDL rendering coordinates (game tiles, etc.). */
+       with SDL rendering coordinates (game tiles, etc.).
+       Also reset DisplayFramebufferScale to 1.0 — the logical
+       presentation already maps coordinates to the native render
+       output, so the ImGui renderer should not apply extra scaling. */
     if (uiModeIsTablet()) {
         int logW = 0, logH = 0;
         SDL_RendererLogicalPresentation logMode;
@@ -2055,6 +2075,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         if (logW > 0 && logH > 0) {
             ImGuiIO &io = ImGui::GetIO();
             io.DisplaySize = ImVec2((float)logW, (float)logH);
+            io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
         }
     }
 
