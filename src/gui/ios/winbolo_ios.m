@@ -193,6 +193,7 @@ int main(int argc, char *argv[]) {
     }
     SDL_Log("[iOS] gameFrontStart OK");
 
+ios_game_start:
     /* Set up ImGui and touch input */
     {
         SDL_Window *win = sdl3DrawGetWindow();
@@ -440,10 +441,21 @@ int main(int argc, char *argv[]) {
 
     SDL_Log("[iOS] Main loop ended, cleaning up");
 
-    gameFrontEnd(&keys, TRUE, TRUE);
+    screenLeaveGame();
+    sdl3ImguiCleanup();
+    gameFrontEnd(&keys, TRUE, winboloQuit);
+
+    if (!winboloQuit) {
+        SDL_Log("[iOS] Returning to menu (windowNewGame)");
+        /* Restart the pre-game dialogs and re-enter the game loop */
+        if (gameFrontStart("", &keys, TRUE, NULL)) {
+            goto ios_game_start;
+        }
+        SDL_Log("[iOS] gameFrontStart failed after leave game");
+    }
+
     endWinboloTimer();
     clientMutexDestroy();
-    sdl3ImguiCleanup();
     sdl3DrawCleanup();
     soundCleanup();
     SDL_Quit();
@@ -654,7 +666,11 @@ void windowMenuAI_toggle(void) { showAIMessages = !showAIMessages; }
 void windowMenuNetwork_toggle(void) { showNetworkStatusMessages = !showNetworkStatusMessages; }
 void windowMenuNetworkDebug_toggle(void) { showNetworkDebugMessages = !showNetworkDebugMessages; }
 
-void windowNewGame(void) {}
+void windowNewGame(void) {
+  SDL_Log("[iOS] windowNewGame: leaving game");
+  winboloQuit = FALSE;
+  finishedLoop = TRUE;
+}
 void windowQuit(void) {}
 
 void windowShowGameInfo(windowShowRequest req) { (void)req; }
