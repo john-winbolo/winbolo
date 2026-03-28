@@ -235,8 +235,11 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
 
   float normX = fx / (float)windowW;
 
-  /* --- Joystick zone (left 40%) --- */
-  if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT) {
+  /* --- Joystick zone (left 40%, but not over the game viewport) --- */
+  bool insideViewport = (fx >= (float)s_vpX && fx < (float)(s_vpX + s_vpW) &&
+                         fy >= (float)s_vpY && fy < (float)(s_vpY + s_vpH) &&
+                         s_vpW > 0 && s_vpH > 0);
+  if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT && !insideViewport) {
     s_joyFingerID = fid;
     s_joyActive   = true;
     s_joyAnchorX  = fx;
