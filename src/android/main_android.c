@@ -435,7 +435,20 @@ int main(int argc, char *argv[]) {
         continue; /* Skip tick processing and rendering while paused */
       }
       while (SDL_PollEvent(&ev)) {
-        touchInputProcessEvent(&ev);
+        /* Convert coordinates to logical presentation space and forward to
+           ImGui so dialogs receive touch input (matches iOS fix). */
+        {
+          SDL_Renderer *ren = sdl3DrawGetRenderer();
+          if (ren) {
+            SDL_Event rawEv = ev;
+            SDL_ConvertEventToRenderCoordinates(ren, &ev);
+            sdl3ImguiForwardEvent(&ev);
+            /* Use raw event for touch input (expects window-space coords) */
+            touchInputProcessEvent(&rawEv);
+          } else {
+            touchInputProcessEvent(&ev);
+          }
+        }
         if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
           winboloQuit = TRUE;
         } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
