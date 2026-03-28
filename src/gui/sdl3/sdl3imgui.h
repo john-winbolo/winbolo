@@ -62,6 +62,7 @@ void sdl3ImguiResetFrameState(void);
 
 void sdl3ImguiPumpAndRender(struct ClientSim *cs);
 void sdl3ImguiClearNavFocus(void);
+void sdl3ImguiForwardEvent(const void *event);
 
 /*********************************************************
 *NAME:          sdl3ImguiSetExtraRenderCallback
