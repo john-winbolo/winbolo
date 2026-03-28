@@ -1417,20 +1417,18 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowSoundEffects_toggle();
             }
         }
-        {
+        if (!uiModeIsTablet()) {
             bool bg = (bool)backgroundSound;
             if (ImGui::Checkbox("Background Sound", &bg)) {
                 windowBackgroundSoundChange_toggle();
             }
         }
-#ifndef __ANDROID__
-        {
+        if (!uiModeIsTablet()) {
             bool sk = (bool)useSoundKeepalive;
             if (ImGui::Checkbox("Sound Keepalive", &sk)) {
                 windowSoundKeepalive();
             }
         }
-#endif
     }
 
     /* ---- Messages ---- */
