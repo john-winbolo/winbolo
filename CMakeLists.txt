@@ -347,6 +347,7 @@ set(IOS_DATA_FONT
 file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
+file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 
 # Bolo engine sources (matching desktop CLIENT_SOURCES)
 set(IOS_BOLO_SOURCES
@@ -442,6 +443,8 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_BRAIN_SCRIPTS}
     ${IOS_DATA_SOUNDS}
     ${IOS_DATA_SVG}
+    ${IOS_DATA_UI}
+    ${IOS_ASSET_CATALOG}
 )
 
 # Info.plist is used by CMake for bundle metadata, not compiled — mark as header
@@ -468,15 +471,21 @@ set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
 set_source_files_properties(${IOS_DATA_SVG} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/svg"
 )
+set_source_files_properties(${IOS_DATA_UI} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/ui"
+)
 set_source_files_properties(${IOS_DATA_ROOT} PROPERTIES
     MACOSX_PACKAGE_LOCATION ""
 )
 set_source_files_properties(${IOS_DATA_ROOT_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION ""
 )
+set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources"
+)
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES} ${IOS_BIGDIGITS_SOURCES})
@@ -495,7 +504,7 @@ set_target_properties(WinBoloIOS PROPERTIES
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
     XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.winbolo.ios"
     XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
-    RESOURCE "${IOS_ASSET_CATALOG}"
+    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS "YES"
 )
 
 target_include_directories(WinBoloIOS PRIVATE
