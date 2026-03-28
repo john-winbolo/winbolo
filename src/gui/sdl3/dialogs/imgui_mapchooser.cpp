@@ -23,6 +23,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#if defined(__IPHONEOS__)
+#include <dirent.h>
+#endif
 
 #include <SDL3/SDL.h>
 
@@ -242,28 +245,53 @@ static void discoverMaps(MapChooserState *state) {
     state->maps[0].path[0] = '\0'; /* empty = inbuilt */
     state->numMaps = 1;
 
-    const char *dirs[] = { "data/maps" };
-    for (int d = 0; d < 1 && state->numMaps < MAP_CHOOSER_MAX_MAPS; d++) {
-        int count = 0;
-        char **list = SDL_GlobDirectory(dirs[d], "*.map", 0, &count);
-        if (!list) continue;
-        for (int i = 0; i < count && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
-            /* Skip Everard Island duplicate */
-            if (SDL_strcasecmp(list[i], "Everard Island.map") == 0) continue;
+    const char *dir = "data/maps";
 
-            MapChooserEntry *e = &state->maps[state->numMaps];
-            SDL_snprintf(e->path, sizeof(e->path), "%s/%s", dirs[d], list[i]);
+#if defined(__IPHONEOS__)
+    /* SDL_GlobDirectory doesn't work with the iOS app bundle filesystem.
+     * Use opendir/readdir directly instead. */
+    {
+        DIR *d = opendir(dir);
+        if (d) {
+            struct dirent *ent;
+            while ((ent = readdir(d)) != NULL && state->numMaps < MAP_CHOOSER_MAX_MAPS) {
+                size_t len = strlen(ent->d_name);
+                if (len <= 4 || strcasecmp(ent->d_name + len - 4, ".map") != 0) continue;
+                if (SDL_strcasecmp(ent->d_name, "Everard Island.map") == 0) continue;
 
-            /* Strip .map extension for display name */
-            SDL_strlcpy(e->name, list[i], sizeof(e->name));
-            size_t len = SDL_strlen(e->name);
-            if (len > 4 && SDL_strcasecmp(e->name + len - 4, ".map") == 0) {
-                e->name[len - 4] = '\0';
+                MapChooserEntry *e = &state->maps[state->numMaps];
+                SDL_snprintf(e->path, sizeof(e->path), "%s/%s", dir, ent->d_name);
+                SDL_strlcpy(e->name, ent->d_name, sizeof(e->name));
+                size_t nlen = SDL_strlen(e->name);
+                if (nlen > 4 && SDL_strcasecmp(e->name + nlen - 4, ".map") == 0) {
+                    e->name[nlen - 4] = '\0';
+                }
+                state->numMaps++;
             }
-            state->numMaps++;
+            closedir(d);
         }
-        SDL_free(list);
     }
+#else
+    {
+        int count = 0;
+        char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
+        if (list) {
+            for (int i = 0; i < count && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+                if (SDL_strcasecmp(list[i], "Everard Island.map") == 0) continue;
+
+                MapChooserEntry *e = &state->maps[state->numMaps];
+                SDL_snprintf(e->path, sizeof(e->path), "%s/%s", dir, list[i]);
+                SDL_strlcpy(e->name, list[i], sizeof(e->name));
+                size_t len = SDL_strlen(e->name);
+                if (len > 4 && SDL_strcasecmp(e->name + len - 4, ".map") == 0) {
+                    e->name[len - 4] = '\0';
+                }
+                state->numMaps++;
+            }
+            SDL_free(list);
+        }
+    }
+#endif
 
     /* Sort maps alphabetically (skip first entry which is always Everard Island) */
     if (state->numMaps > 2) {
