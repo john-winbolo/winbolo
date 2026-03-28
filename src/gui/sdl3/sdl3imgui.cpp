@@ -234,6 +234,7 @@ static bool s_pendingWbnDialog   = false;
 
 /* Modal dialog state */
 static bool s_showAbout          = false;
+static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
 static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
@@ -868,6 +869,7 @@ static void renderAboutModal(void) {
     }
     if (ImGui::BeginPopupModal("About WinBolo", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted("WinBolo v1.0.1.7");
         ImGui::TextUnformatted("Copyright 1998-2008 John Morrison");
         ImGui::Separator();
@@ -891,6 +893,7 @@ static void renderChangeNameModal(ClientSim *cs) {
     }
     if (ImGui::BeginPopupModal("Change Player Name", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted("Enter the new player name for your tank:");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(300);
@@ -966,6 +969,7 @@ static void renderPasswordModal(void) {
     }
     if (ImGui::BeginPopupModal("Password Required", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted("This game requires a password:");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(270);
@@ -1081,6 +1085,7 @@ static void renderKeySetupModal(ClientSim *cs) {
                                 ImGuiWindowFlags_NoMove)) {
         return;
     }
+    if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
 
     /* While this modal is open ALL keyboard/mouse events are consumed by ImGui
      * (BeginPopupModal sets WantCaptureKeyboard + WantCaptureMouse).
@@ -1836,6 +1841,21 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
         ImGui_ImplSDL3_ProcessEvent(&ev);
 
+        /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
+        if (uiModeIsTablet()) {
+            if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP) {
+                SDL_Log("TAP-DBG: FINGER %s x=%.2f y=%.2f",
+                        ev.type == SDL_EVENT_FINGER_DOWN ? "DOWN" : "UP",
+                        ev.tfinger.x, ev.tfinger.y);
+            }
+            if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                SDL_Log("TAP-DBG: MOUSE %s btn=%d x=%.1f y=%.1f which=%u winID=%u",
+                        ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? "DOWN" : "UP",
+                        ev.button.button, ev.button.x, ev.button.y,
+                        ev.button.which, ev.button.windowID);
+            }
+        }
+
         /* Route events to pop-out windows — if the event belongs to a
            pop-out, forward it there and skip the rest of the main loop
            so it doesn't reach the game input. */
@@ -2055,6 +2075,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
     }
 }
 
+void sdl3ImguiForwardEvent(const void *event) {
+    if (event) {
+        ImGui_ImplSDL3_ProcessEvent((const SDL_Event *)event);
+    }
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
 
@@ -2080,6 +2106,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
     ImGui::NewFrame();
+    s_closeAllPopups = false;
 
     /* Clear nav focus when user clicked in the game area last frame,
        so menu close does not restore focus to an ImGui window. */
@@ -2134,6 +2161,60 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Extra render callback (e.g. Android players panel) */
     if (s_extraRenderFn) {
         s_extraRenderFn(cs);
+    }
+
+    /* Tablet: close all panels/popups when user taps outside dialog windows */
+    if (uiModeIsTablet() && ImGui::IsMouseClicked(0)) {
+        ImGuiContext *g = ImGui::GetCurrentContext();
+        bool anyDialogOpen = s_showSysInfo || s_showNetInfo || s_showGameInfo ||
+                             s_showSendMsg || s_showPlayersPanel || s_showSettings ||
+                             s_brainSettingsOpen || s_allianceVisible ||
+                             g->OpenPopupStack.Size > 0;
+
+        if (anyDialogOpen) {
+            /* Check if tap landed inside any dialog/popup window (not the
+               full-screen background or tablet overlay windows). */
+            static const char *dialogNames[] = {
+                "System Info", "Network Info", "Game Info",
+                "Send Message", "Players", "Settings",
+                "Brain Settings", "Alliance Request",
+                "About WinBolo", "Change Player Name",
+                "Password Required", "Key Setup",
+            };
+            bool overDialog = false;
+            for (int i = 0; i < (int)(sizeof(dialogNames) / sizeof(dialogNames[0])); i++) {
+                ImGuiWindow *w = ImGui::FindWindowByName(dialogNames[i]);
+                if (w && w->Active && w->WasActive) {
+                    if (ImGui::IsMouseHoveringRect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y), false)) {
+                        overDialog = true;
+                        break;
+                    }
+                }
+            }
+            /* Also check popup stack windows (modals) */
+            if (!overDialog) {
+                for (int i = 0; i < g->OpenPopupStack.Size; i++) {
+                    ImGuiWindow *w = g->OpenPopupStack[i].Window;
+                    if (w && w->Active) {
+                        if (ImGui::IsMouseHoveringRect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y), false)) {
+                            overDialog = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!overDialog) {
+                s_showSysInfo        = false;
+                s_showNetInfo        = false;
+                s_showGameInfo       = false;
+                s_showSendMsg        = false;
+                s_showPlayersPanel   = false;
+                s_showSettings       = false;
+                s_brainSettingsOpen  = false;
+                s_allianceVisible    = false;
+                s_closeAllPopups = true;
+            }
+        }
     }
 
     ImGui::EndFrame();

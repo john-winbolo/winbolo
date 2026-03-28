@@ -356,13 +356,21 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             while (SDL_PollEvent(&ev)) {
+                SDL_Event rawEv = ev;
+                /* Convert coordinates to logical presentation space for ImGui */
+                SDL_Renderer *ren = sdl3DrawGetRenderer();
+                if (ren) {
+                    SDL_ConvertEventToRenderCoordinates(ren, &ev);
+                }
+                /* Forward to ImGui so dialogs receive mouse/touch input */
+                sdl3ImguiForwardEvent(&ev);
+
                 if (uiModeIsTablet()) {
-                    if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION) {
+                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
                         int tw = 0, th = 0;
-                        SDL_Renderer *ren = sdl3DrawGetRenderer();
                         if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
                         if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
-                        inputTouchProcessEvent(&ev, tw, th);
+                        inputTouchProcessEvent(&rawEv, tw, th);
                     }
                 } else {
                     touchInputProcessEvent(&ev);
