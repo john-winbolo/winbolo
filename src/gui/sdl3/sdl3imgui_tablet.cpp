@@ -119,10 +119,16 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->topGutter = viewportY;
   cfg->bottomGutter = screenH - viewportY - viewportH;
 
-  /* Breakpoints */
-  cfg->showStatusGrids = (cfg->leftGutter >= 100);
+  /* Pixel scale: all hardcoded pixel values are authored for the reference
+     space (480px height).  Scale them proportionally to the actual logical
+     coordinate space so they stay the same physical size on screen. */
+  float pixelScale = (float)screenH / 480.0f;
+  if (pixelScale < 0.7f) pixelScale = 0.7f;
 
-  float scaleFactor = (screenH < 500) ? 0.7f : 1.0f;
+  /* Breakpoints — scale threshold too */
+  cfg->showStatusGrids = (cfg->leftGutter >= (int)(100 * pixelScale));
+
+  float scaleFactor = pixelScale;
 
   /* Joystick */
   cfg->joyOuterRadius = 60.0f * scaleFactor;
@@ -150,14 +156,14 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   if (pad < 4.0f) pad = 4.0f;
 
   /* Fire button — biggest, bottom-right, sized relative to gutter */
-  cfg->fireRadius = gutterW * 0.18f * scaleFactor;
-  if (cfg->fireRadius < 25.0f) cfg->fireRadius = 25.0f;
+  cfg->fireRadius = gutterW * 0.18f;
+  if (cfg->fireRadius < 25.0f * pixelScale) cfg->fireRadius = 25.0f * pixelScale;
   cfg->fireCenterX = rightEdge - cfg->fireRadius - pad;
   cfg->fireCenterY = bottomEdge - cfg->fireRadius - pad;
 
   /* Mine button — left of fire */
-  cfg->mineRadius = gutterW * 0.13f * scaleFactor;
-  if (cfg->mineRadius < 18.0f) cfg->mineRadius = 18.0f;
+  cfg->mineRadius = gutterW * 0.13f;
+  if (cfg->mineRadius < 18.0f * pixelScale) cfg->mineRadius = 18.0f * pixelScale;
   cfg->mineCenterX = cfg->fireCenterX - cfg->fireRadius - cfg->mineRadius - pad;
   cfg->mineCenterY = cfg->fireCenterY;
   if (cfg->mineCenterX - cfg->mineRadius < gutterLeft + pad) {
@@ -165,8 +171,8 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   }
 
   /* Gunsight +/- — row above fire/mine, as circles */
-  cfg->gsIncRadius = gutterW * 0.10f * scaleFactor;
-  if (cfg->gsIncRadius < 16.0f) cfg->gsIncRadius = 16.0f;
+  cfg->gsIncRadius = gutterW * 0.10f;
+  if (cfg->gsIncRadius < 16.0f * pixelScale) cfg->gsIncRadius = 16.0f * pixelScale;
   cfg->gsDecRadius = cfg->gsIncRadius;
   float gsRowY = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius;
   float gsGap = pad * 2;
@@ -185,9 +191,9 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->tankViewCenterY = viewRowY;
 
   /* --- Top bar buttons — spread across gutter --- */
-  cfg->topBtnSize = gutterW * 0.25f * scaleFactor;
-  if (cfg->topBtnSize < 30.0f) cfg->topBtnSize = 30.0f;
-  if (cfg->topBtnSize > 52.0f) cfg->topBtnSize = 52.0f;
+  cfg->topBtnSize = gutterW * 0.25f;
+  if (cfg->topBtnSize < 30.0f * pixelScale) cfg->topBtnSize = 30.0f * pixelScale;
+  if (cfg->topBtnSize > 52.0f * pixelScale) cfg->topBtnSize = 52.0f * pixelScale;
   cfg->topBtnY = topEdge + pad;
   float topBtnGap = (gutterW - pad * 2 - cfg->topBtnSize * 3) / 2.0f;
   if (topBtnGap < pad) topBtnGap = pad;
@@ -196,11 +202,11 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->cogBtnX = cfg->msgBtnX + cfg->topBtnSize + topBtnGap;
 
   /* --- Build bar — vertical column, right side of gutter --- */
-  cfg->buildIconSize = gutterW * 0.18f * scaleFactor;
-  if (cfg->buildIconSize < 24.0f) cfg->buildIconSize = 24.0f;
-  if (cfg->buildIconSize > 48.0f) cfg->buildIconSize = 48.0f;
+  cfg->buildIconSize = gutterW * 0.18f;
+  if (cfg->buildIconSize < 24.0f * pixelScale) cfg->buildIconSize = 24.0f * pixelScale;
+  if (cfg->buildIconSize > 48.0f * pixelScale) cfg->buildIconSize = 48.0f * pixelScale;
   cfg->buildSpacing = pad;
-  float buildBtnSize = cfg->buildIconSize + 12.0f;
+  float buildBtnSize = cfg->buildIconSize + 12.0f * pixelScale;
   float buildTotalH = buildBtnSize * 5 + cfg->buildSpacing * 4;
   cfg->buildBarX = rightEdge - buildBtnSize - pad;
   /* Vertically center between top buttons and view toggle */
@@ -211,26 +217,26 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
 
   /* --- Resource bars — left of build bar, filling remaining gutter space --- */
   cfg->barsW = cfg->buildBarX - gutterLeft - pad * 2;
-  if (cfg->barsW < 30.0f) cfg->barsW = 30.0f;
-  if (cfg->barsW > 100.0f) cfg->barsW = 100.0f;
+  if (cfg->barsW < 30.0f * pixelScale) cfg->barsW = 30.0f * pixelScale;
+  if (cfg->barsW > 100.0f * pixelScale) cfg->barsW = 100.0f * pixelScale;
   float barsAvailH = buildRegionBot - buildRegionTop;
   cfg->barsH = (barsAvailH - pad) * 0.5f;
-  if (cfg->barsH < 60.0f) cfg->barsH = 60.0f;
-  if (cfg->barsH > 140.0f) cfg->barsH = 140.0f;
+  if (cfg->barsH < 60.0f * pixelScale) cfg->barsH = 60.0f * pixelScale;
+  if (cfg->barsH > 140.0f * pixelScale) cfg->barsH = 140.0f * pixelScale;
   cfg->tankBarsX = gutterLeft + pad;
   cfg->tankBarsY = buildRegionTop;
   cfg->baseBarsX = cfg->tankBarsX;
   cfg->baseBarsY = cfg->tankBarsY + cfg->barsH + pad;
 
   /* --- Status grids (left gutter) --- */
-  cfg->tanksGridX = cfg->safeLeft + 4.0f;
-  cfg->tanksGridY = cfg->safeTop + 4.0f;
-  float availW = (float)cfg->leftGutter - cfg->safeLeft - 8.0f;
-  cfg->statusGridScale = availW / 90.0f;
+  cfg->tanksGridX = cfg->safeLeft + 4.0f * pixelScale;
+  cfg->tanksGridY = cfg->safeTop + 4.0f * pixelScale;
+  float availW = (float)cfg->leftGutter - cfg->safeLeft - 8.0f * pixelScale;
+  cfg->statusGridScale = availW / (90.0f * pixelScale);
   if (cfg->statusGridScale > 2.0f) cfg->statusGridScale = 2.0f;
   if (cfg->statusGridScale < 0.5f) cfg->statusGridScale = 0.5f;
-  float gridH = 66.0f * cfg->statusGridScale;
-  float gridGap = 4.0f * cfg->statusGridScale;
+  float gridH = 66.0f * pixelScale * cfg->statusGridScale;
+  float gridGap = 4.0f * pixelScale * cfg->statusGridScale;
   cfg->pillsGridX = cfg->tanksGridX;
   cfg->pillsGridY = cfg->tanksGridY + gridH + gridGap;
   cfg->basesGridX = cfg->tanksGridX;
@@ -239,7 +245,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Messages overlay — bottom center of viewport --- */
   cfg->msgOverlayW = (float)viewportW;
   cfg->msgOverlayX = (float)viewportX;
-  cfg->msgOverlayY = (float)(viewportY + viewportH) - 76.0f;
+  cfg->msgOverlayY = (float)(viewportY + viewportH) - 76.0f * pixelScale;
 }
 
 /* -------------------------------------------------------

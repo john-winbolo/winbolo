@@ -103,12 +103,25 @@ static inline void dialogApplyScaling(float uiScale) {
     style.ScaleAllSizes(uiScale);
 }
 
-/* Save logical presentation before a dialog (Android needs this). */
+/* Save logical presentation before a dialog (Android needs this).
+ * When HIGH_PIXEL_DENSITY is active, we set a point-space logical
+ * presentation so dialogs (which use SDL_GetWindowSize for coordinates)
+ * render correctly onto the native-resolution backing buffer. */
 static inline void dialogSaveLogicalPresentation(SDL_Renderer *renderer,
                                                   int *outW, int *outH,
                                                   SDL_RendererLogicalPresentation *outMode) {
     SDL_GetRenderLogicalPresentation(renderer, outW, outH, outMode);
-    SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_Window *win = SDL_GetRenderWindow(renderer);
+    if (win && (SDL_GetWindowFlags(win) & SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+        int winW = 0, winH = 0;
+        SDL_GetWindowSize(win, &winW, &winH);
+        if (winW > 0 && winH > 0) {
+            SDL_SetRenderLogicalPresentation(renderer, winW, winH,
+                                             SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        }
+    } else {
+        SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    }
 }
 
 /* Restore logical presentation after a dialog. */
