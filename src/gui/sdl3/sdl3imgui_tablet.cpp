@@ -34,6 +34,8 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../../bolo/global.h"
@@ -75,6 +77,44 @@ static bool s_prevMinePressed = false;
 /* Damage detection */
 static BYTE s_prevArmour = 0;
 static bool s_armourInitialized = false;
+
+/* Top bar icon textures (loaded from SVG on first use) */
+static SDL_Texture *s_iconPlayers  = nullptr;
+static SDL_Texture *s_iconMessages = nullptr;
+static SDL_Texture *s_iconSettings = nullptr;
+static bool s_iconsLoaded = false;
+
+static SDL_Texture *loadSvgIcon(const char *path, int size) {
+  NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+  if (!image) return nullptr;
+  if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+  float scale = (float)size / image->height;
+  if (image->width * scale > (float)size) scale = (float)size / image->width;
+  int w = size, h = size;
+  unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+  if (!pixels) { nsvgDelete(image); return nullptr; }
+  memset(pixels, 0, (size_t)(w * h * 4));
+  float offX = ((float)w - image->width * scale) * 0.5f;
+  float offY = ((float)h - image->height * scale) * 0.5f;
+  NSVGrasterizer *rast = nsvgCreateRasterizer();
+  nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+  nsvgDeleteRasterizer(rast);
+  nsvgDelete(image);
+  SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+  if (!surface) { SDL_free(pixels); return nullptr; }
+  SDL_Texture *tex = SDL_CreateTextureFromSurface(sdl3DrawGetRenderer(), surface);
+  SDL_DestroySurface(surface);
+  SDL_free(pixels);
+  return tex;
+}
+
+static void ensureIconsLoaded(int size) {
+  if (s_iconsLoaded) return;
+  s_iconsLoaded = true;
+  s_iconPlayers  = loadSvgIcon("data/ui/players.svg", size);
+  s_iconMessages = loadSvgIcon("data/ui/messages.svg", size);
+  s_iconSettings = loadSvgIcon("data/ui/settings.svg", size);
+}
 
 /* Tile sheet dimensions */
 #define TILESHEET_W 496.0f
@@ -499,45 +539,76 @@ static void renderTopBarButtons(ClientSim *cs) {
   ImVec2 btnDim(btnSize, btnSize);
   ImVec2 winSize(btnSize + 8, btnSize + 8);
 
-  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+  ensureIconsLoaded((int)(btnSize * 2));
 
-  /* Players button — people icon */
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+
+  /* Messages button */
   ImGui::SetNextWindowPos(ImVec2(s_cfg.playersBtnX, btnY));
   ImGui::SetNextWindowSize(winSize);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##PlayersBtn", nullptr, btnFlags)) {
-    if (ImGui::Button("\xc3\x9f\xc3\x9f", btnDim)) {
-      sdl3ImguiShowPlayersPanel(true);
-    }
-  }
-  ImGui::End();
-  ImGui::PopStyleColor();
-
-  /* Message button — speech bubble */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.msgBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
   if (ImGui::Begin("##MsgBtn", nullptr, btnFlags)) {
-    if (ImGui::Button("\xe2\x9c\x89", btnDim)) {
+    if (s_iconMessages) {
+      if (ImGui::ImageButton("##msgIcon", (ImTextureID)s_iconMessages, btnDim)) {
+        sdl3ImguiShowSendMsg(true);
+      }
+    } else {
+      if (ImGui::Button("Msg", btnDim)) { sdl3ImguiShowSendMsg(true); }
+    }
+    ImVec2 rMin = ImGui::GetItemRectMin();
+    ImVec2 rMax = ImGui::GetItemRectMax();
+    if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
       sdl3ImguiShowSendMsg(true);
     }
   }
   ImGui::End();
   ImGui::PopStyleColor();
 
-  /* Settings cog button */
+  /* Players button */
+  ImGui::SetNextWindowPos(ImVec2(s_cfg.msgBtnX, btnY));
+  ImGui::SetNextWindowSize(winSize);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
+  if (ImGui::Begin("##PlayersBtn", nullptr, btnFlags)) {
+    if (s_iconPlayers) {
+      if (ImGui::ImageButton("##playersIcon", (ImTextureID)s_iconPlayers, btnDim)) {
+        sdl3ImguiShowPlayersPanel(true);
+      }
+    } else {
+      if (ImGui::Button("Ply", btnDim)) { sdl3ImguiShowPlayersPanel(true); }
+    }
+    ImVec2 rMin = ImGui::GetItemRectMin();
+    ImVec2 rMax = ImGui::GetItemRectMax();
+    if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
+      sdl3ImguiShowPlayersPanel(true);
+    }
+  }
+  ImGui::End();
+  ImGui::PopStyleColor();
+
+  /* Settings button */
   ImGui::SetNextWindowPos(ImVec2(s_cfg.cogBtnX, btnY));
   ImGui::SetNextWindowSize(winSize);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
   if (ImGui::Begin("##CogBtn", nullptr, btnFlags)) {
-    if (ImGui::Button("\xe2\x9a\x99", btnDim)) {
+    if (s_iconSettings) {
+      if (ImGui::ImageButton("##settingsIcon", (ImTextureID)s_iconSettings, btnDim)) {
+        sdl3ImguiShowSettings();
+      }
+    } else {
+      if (ImGui::Button("Set", btnDim)) { sdl3ImguiShowSettings(); }
+    }
+    ImVec2 rMin = ImGui::GetItemRectMin();
+    ImVec2 rMax = ImGui::GetItemRectMax();
+    if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
       sdl3ImguiShowSettings();
     }
   }
   ImGui::End();
   ImGui::PopStyleColor();
 
-  ImGui::PopStyleVar(); /* Alpha */
+  ImGui::PopStyleVar(3); /* Alpha, FramePadding, WindowPadding */
 
   /* Status drawer toggle — only when grids not in gutter */
   if (!s_cfg.showStatusGrids) {
