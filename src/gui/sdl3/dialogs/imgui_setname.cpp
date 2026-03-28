@@ -109,6 +109,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         int winW, winH;

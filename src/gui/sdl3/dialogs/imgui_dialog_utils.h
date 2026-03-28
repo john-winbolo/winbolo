@@ -68,6 +68,20 @@ static inline unsigned char *dialogLoadFontData(const char *path, int *outSize) 
     return buf;
 }
 
+/* Override DisplayFramebufferScale after ImGui_ImplSDL3_NewFrame().
+ * When a logical presentation is active, SDL already maps point-space
+ * coordinates to native pixels.  ImGui_ImplSDL3_NewFrame() detects the
+ * Retina scale and sets DisplayFramebufferScale to e.g. 3.0, which
+ * causes the ImGui renderer to double-scale vertices.  Reset to 1.0
+ * so the logical presentation is the only scaling layer. */
+static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
+    SDL_Window *win = SDL_GetRenderWindow(renderer);
+    if (win && (SDL_GetWindowFlags(win) & SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+        ImGuiIO &io = ImGui::GetIO();
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    }
+}
+
 /* Set up a scaled font and touch-friendly ImGui style.
  * Call after ImGui::CreateContext() and before the first NewFrame().
  * On desktop (scale 1.0) this is a no-op — ImGui's default font is used. */

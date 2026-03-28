@@ -188,6 +188,7 @@ extern "C" int imguiUdpSetupShow(void) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         /* Transparent full-screen host window */

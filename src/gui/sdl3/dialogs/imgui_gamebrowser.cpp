@@ -590,6 +590,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         /* Transparent full-screen host window */
