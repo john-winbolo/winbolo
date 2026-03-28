@@ -221,14 +221,17 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->gsIncCenterX = gutterCenterX + cfg->gsIncRadius + gsGap * 0.5f;
   cfg->gsIncCenterY = gsRowY;
 
-  /* Pill view / Tank view — two buttons above gunsight row */
+  /* Pill view / Tank view — vertical stack in gap between viewport edge and mine button */
   cfg->pillViewRadius = cfg->gsIncRadius;
   cfg->tankViewRadius = cfg->gsIncRadius;
-  float viewRowY = gsRowY - cfg->gsIncRadius - pad - cfg->pillViewRadius;
-  cfg->pillViewCenterX = gutterCenterX - cfg->pillViewRadius - gsGap * 0.5f;
-  cfg->pillViewCenterY = viewRowY;
-  cfg->tankViewCenterX = gutterCenterX + cfg->tankViewRadius + gsGap * 0.5f;
-  cfg->tankViewCenterY = viewRowY;
+  float viewGapLeft = gutterLeft;
+  float viewGapRight = cfg->mineCenterX - cfg->mineRadius;
+  float viewBtnX = (viewGapLeft + viewGapRight) * 0.5f;
+  float viewBtnGap = pad;
+  cfg->pillViewCenterX = viewBtnX;
+  cfg->pillViewCenterY = cfg->fireCenterY;  /* bottom — aligned with fire/mine */
+  cfg->tankViewCenterX = viewBtnX;
+  cfg->tankViewCenterY = cfg->pillViewCenterY - cfg->pillViewRadius - viewBtnGap - cfg->tankViewRadius;
 
   /* --- Top bar buttons — spread across gutter --- */
   cfg->topBtnSize = gutterW * 0.25f;
@@ -241,32 +244,34 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->msgBtnX = cfg->playersBtnX + cfg->topBtnSize + topBtnGap;
   cfg->cogBtnX = cfg->msgBtnX + cfg->topBtnSize + topBtnGap;
 
-  /* --- Build bar — vertical column, right side of gutter --- */
+  /* --- Build bar — 2-column grid, right of resource bars --- */
+  cfg->buildSpacing = pad;
+  float buildBarLeft = cfg->playersBtnX + cfg->topBtnSize + pad;
+  float buildAvailW = rightEdge - buildBarLeft - pad;  /* space to right edge */
+  float buildBtnPad = 16.0f;
+  /* Size icons to fit 2 columns + spacing + window padding within available width */
+  float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPad * 2) / 2.0f;
   cfg->buildIconSize = gutterW * 0.18f;
   if (cfg->buildIconSize < 24.0f * pixelScale) cfg->buildIconSize = 24.0f * pixelScale;
   if (cfg->buildIconSize > 48.0f * pixelScale) cfg->buildIconSize = 48.0f * pixelScale;
-  cfg->buildSpacing = pad;
-  float buildBtnSize = cfg->buildIconSize + 12.0f * pixelScale;
-  float buildTotalH = buildBtnSize * 5 + cfg->buildSpacing * 4;
-  cfg->buildBarX = rightEdge - buildBtnSize - pad;
-  /* Vertically center between top buttons and view toggle */
+  if (cfg->buildIconSize > maxIconFromSpace) cfg->buildIconSize = maxIconFromSpace;
+  float buildBtnSize = cfg->buildIconSize + buildBtnPad;
+  float buildGridW = buildBtnSize * 2 + cfg->buildSpacing;
+  float buildGridH = buildBtnSize * 3 + cfg->buildSpacing * 2;
+  cfg->buildBarX = buildBarLeft;
+  /* Align top with tank stock bars */
   float buildRegionTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
-  float buildRegionBot = cfg->pillViewCenterY - cfg->pillViewRadius - pad * 2;
-  cfg->buildBarY = buildRegionTop + (buildRegionBot - buildRegionTop - buildTotalH) * 0.5f;
-  if (cfg->buildBarY < buildRegionTop) cfg->buildBarY = buildRegionTop;
+  cfg->buildBarY = buildRegionTop;
 
-  /* --- Resource bars — left of build bar, filling remaining gutter space --- */
+  /* --- Resource bars — left of build bar, compact like the main game --- */
   cfg->barsW = cfg->buildBarX - gutterLeft - pad * 2;
   if (cfg->barsW < 30.0f * pixelScale) cfg->barsW = 30.0f * pixelScale;
   if (cfg->barsW > 100.0f * pixelScale) cfg->barsW = 100.0f * pixelScale;
-  float barsAvailH = buildRegionBot - buildRegionTop;
-  cfg->barsH = (barsAvailH - pad) * 0.5f;
-  if (cfg->barsH < 60.0f * pixelScale) cfg->barsH = 60.0f * pixelScale;
-  if (cfg->barsH > 140.0f * pixelScale) cfg->barsH = 140.0f * pixelScale;
-  cfg->tankBarsX = gutterLeft + pad;
+  cfg->barsH = 280.0f;  /* tall bars, readable on tablet */
+  cfg->tankBarsX = cfg->playersBtnX;
   cfg->tankBarsY = buildRegionTop;
   cfg->baseBarsX = cfg->tankBarsX;
-  cfg->baseBarsY = cfg->tankBarsY + cfg->barsH + pad;
+  cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
 
   /* --- Status grids (left gutter) --- */
   cfg->tanksGridX = cfg->safeLeft + 4.0f * pixelScale;
@@ -470,15 +475,20 @@ static void renderBuildSelectBar(ClientSim *cs) {
   float btnPad = 8.0f;
   float btnSize = iconSize + btnPad * 2;
   float spacing = s_cfg.buildSpacing;
-  float totalH = btnSize * 5 + spacing * 4;
-  float barWidth = btnSize + 12.0f;
+  int cols = 2;
+  int rows = 3;  /* 5 items in a 2x3 grid (last cell empty) */
+  float gridW = btnSize * cols + spacing * (cols - 1);
+  float gridH = btnSize * rows + spacing * (rows - 1);
   float startX = s_cfg.buildBarX;
   float startY = s_cfg.buildBarY;
 
+  ImVec2 framePad = ImGui::GetStyle().FramePadding;
+  float winW = gridW + 12 + framePad.x * 4;  /* account for ImGui frame padding on each button */
+  float winH = gridH + 12 + framePad.y * 6;  /* frame padding on each row of buttons */
   ImGui::SetNextWindowPos(ImVec2(startX, startY));
-  ImGui::SetNextWindowSize(ImVec2(barWidth, totalH + 12));
+  ImGui::SetNextWindowSize(ImVec2(winW, winH));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, spacing));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, spacing));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
 
   if (ImGui::Begin("##BuildBar", nullptr,
@@ -519,6 +529,9 @@ static void renderBuildSelectBar(ClientSim *cs) {
       }
 
       ImGui::PopStyleColor(2);
+
+      /* Place two items per row */
+      if (i % cols == 0) ImGui::SameLine();
     }
   }
   ImGui::End();
@@ -647,12 +660,15 @@ static void renderResourceBars(ClientSim *cs) {
   {
     float x = s_cfg.tankBarsX;
     float y = s_cfg.tankBarsY;
-    float w = s_cfg.barsW;
+    float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
     float h = s_cfg.barsH;
+    float winPad = 4.0f;
+    float barW = 12.0f;
+    float barGap = (w - winPad * 2 - barW * 4) / 3.0f;
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
 
     if (ImGui::Begin("##TankBars", nullptr, winFlags)) {
@@ -660,17 +676,15 @@ static void renderResourceBars(ClientSim *cs) {
       ImVec2 winPos = ImGui::GetWindowPos();
 
       /* 4 vertical bars: S M A T */
-      float barW = 8.0f;
-      float maxBarH = h - 16.0f;
-      float barTop = winPos.y + 4.0f;
-      float barGap = (w - 8.0f - barW * 4) / 3.0f;
+      float maxBarH = h - winPad * 2;
+      float barTop = winPos.y + winPad;
       ImU32 barColor = IM_COL32(0, 200, 0, 200);
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
       BYTE vals[4] = { shells, mines, armour, trees };
 
       for (int i = 0; i < 4; i++) {
-        float bx = winPos.x + 4.0f + i * (barW + barGap);
+        float bx = winPos.x + winPad + i * (barW + barGap);
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
         float fillH = (vals[i] / 40.0f) * maxBarH;
         if (fillH > maxBarH) fillH = maxBarH;
@@ -687,29 +701,30 @@ static void renderResourceBars(ClientSim *cs) {
   {
     float x = s_cfg.baseBarsX;
     float y = s_cfg.baseBarsY;
-    float w = s_cfg.barsW;
+    float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
     float h = s_cfg.barsH - 16.0f;  /* slightly shorter, only 3 bars */
+    float winPad = 4.0f;
+    float barW = 12.0f;
+    float barGap = (w - winPad * 2 - barW * 3) / 2.0f;
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, hasBase ? 0.5f : 0.25f));
 
     if (ImGui::Begin("##BaseBars", nullptr, winFlags)) {
       ImDrawList *dl = ImGui::GetWindowDrawList();
       ImVec2 winPos = ImGui::GetWindowPos();
 
-      float barW = 8.0f;
-      float maxBarH = h - 16.0f;
-      float barTop = winPos.y + 4.0f;
-      float barGap = (w - 8.0f - barW * 3) / 2.0f;
+      float maxBarH = h - winPad * 2;
+      float barTop = winPos.y + winPad;
       ImU32 barColor = hasBase ? IM_COL32(0, 200, 0, 200) : IM_COL32(60, 60, 60, 120);
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
       BYTE vals[3] = { baseShells, baseMines, baseArmour };
 
       for (int i = 0; i < 3; i++) {
-        float bx = winPos.x + 4.0f + i * (barW + barGap);
+        float bx = winPos.x + winPad + i * (barW + barGap);
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
         float fillH = hasBase ? (vals[i] / 40.0f) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
