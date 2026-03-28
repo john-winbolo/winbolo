@@ -354,6 +354,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         /* Full-screen host window */

@@ -90,6 +90,7 @@ extern "C" void imguiMessageBox(const char *message, const char *title) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         int winW, winH;
