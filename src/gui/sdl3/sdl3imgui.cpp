@@ -687,9 +687,19 @@ static void renderSendMsgContent(ClientSim *cs) {
 static void renderSendMsgPanel(ClientSim *cs) {
     if (!s_showSendMsg || s_popSendMsg.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Send Message", &s_showSendMsg,
-                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSendMsg;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize;
+    if (uiModeIsTablet()) flags |= ImGuiWindowFlags_NoCollapse;
+    if (!ImGui::Begin("Send Message", pOpen, flags)) {
         ImGui::End();
         return;
     }
@@ -704,8 +714,19 @@ static void renderSendMsgPanel(ClientSim *cs) {
 static void renderPlayersPanel(ClientSim *cs) {
     if (!s_showPlayersPanel) return;
 
-    ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Players", &s_showPlayersPanel)) {
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        float h = io.DisplaySize.y * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
+    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
+    if (!ImGui::Begin("Players", pOpen, flags)) {
         ImGui::End();
         return;
     }
@@ -1194,8 +1215,19 @@ static void renderKeySetupModal(ClientSim *cs) {
 static void renderSettingsPanel(ClientSim *cs) {
     if (!s_showSettings) return;
 
-    ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Settings", &s_showSettings)) {
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        float h = io.DisplaySize.y * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
+    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
+    if (!ImGui::Begin("Settings", pOpen, flags)) {
         ImGui::End();
         return;
     }
@@ -2079,6 +2111,10 @@ void sdl3ImguiForwardEvent(const void *event) {
     if (event) {
         ImGui_ImplSDL3_ProcessEvent((const SDL_Event *)event);
     }
+}
+
+bool sdl3ImguiWantCaptureMouse(void) {
+    return ImGui::GetIO().WantCaptureMouse;
 }
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {

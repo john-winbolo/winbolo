@@ -443,8 +443,10 @@ int main(int argc, char *argv[]) {
             SDL_Event rawEv = ev;
             SDL_ConvertEventToRenderCoordinates(ren, &ev);
             sdl3ImguiForwardEvent(&ev);
-            /* Use raw event for touch input (expects window-space coords) */
-            touchInputProcessEvent(&rawEv);
+            /* Don't pass touch to game when ImGui is handling it (dialog open) */
+            if (!sdl3ImguiWantCaptureMouse()) {
+              touchInputProcessEvent(&rawEv);
+            }
           } else {
             touchInputProcessEvent(&ev);
           }

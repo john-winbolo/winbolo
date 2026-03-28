@@ -365,15 +365,18 @@ int main(int argc, char *argv[]) {
                 /* Forward to ImGui so dialogs receive mouse/touch input */
                 sdl3ImguiForwardEvent(&ev);
 
-                if (uiModeIsTablet()) {
-                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
-                        int tw = 0, th = 0;
-                        if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
-                        if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
-                        inputTouchProcessEvent(&rawEv, tw, th);
+                /* Don't pass touch to game when ImGui is handling it (dialog open) */
+                if (!sdl3ImguiWantCaptureMouse()) {
+                    if (uiModeIsTablet()) {
+                        if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
+                            int tw = 0, th = 0;
+                            if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                            if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                            inputTouchProcessEvent(&rawEv, tw, th);
+                        }
+                    } else {
+                        touchInputProcessEvent(&ev);
                     }
-                } else {
-                    touchInputProcessEvent(&ev);
                 }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
