@@ -1234,19 +1234,13 @@ static void renderSettingsPanel(ClientSim *cs) {
 
     /* File actions — tablet/mobile only (desktop has menu bar) */
     if (uiModeIsTablet()) {
-        if (ImGui::Button("New Game", ImVec2(-1, 0))) {
-            windowNewGame();
-            s_showSettings = false;
-        }
         if (ImGui::Button("Save Map", ImVec2(-1, 0))) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
-#ifndef __EMSCRIPTEN__
-        if (ImGui::Button("Exit", ImVec2(-1, 0))) {
-            windowQuit();
+        if (ImGui::Button("Leave Game", ImVec2(-1, 0))) {
+            windowNewGame();
         }
-#endif
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -1275,68 +1269,76 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
-        ImGui::Spacing();
-        if (ImGui::Button("Sign in to WBN...")) {
-            s_pendingWbnDialog = true;
+        if (!uiModeIsTablet()) {
+            ImGui::Spacing();
+            if (ImGui::Button("Sign in to WBN...")) {
+                s_pendingWbnDialog = true;
+            }
         }
 
 #ifndef __ANDROID__
-        ImGui::Spacing();
-        if (ImGui::Button("Set Keys...")) {
-            sdl3ImguiShowKeySetup();
+        if (!uiModeIsTablet()) {
+            ImGui::Spacing();
+            if (ImGui::Button("Set Keys...")) {
+                sdl3ImguiShowKeySetup();
+            }
         }
 #endif
     }
 
     /* ---- Display ---- */
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-        /* Frame Rate */
-        const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
-        int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
-                           FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
-        int curFrIdx = 2; /* default to 30 */
-        for (int i = 0; i < 7; i++) {
-            if (frameRate == frValues[i]) { curFrIdx = i; break; }
-        }
-        ImGui::Text("Frame Rate:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
+        /* Frame Rate — not shown in tablet mode */
+        if (!uiModeIsTablet()) {
+            const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
+            int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
+                               FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
+            int curFrIdx = 2; /* default to 30 */
             for (int i = 0; i < 7; i++) {
-                bool selected = (curFrIdx == i);
-                if (ImGui::Selectable(frLabels[i], selected)) {
-                    windowSetFrameRate(frValues[i], true);
-                }
+                if (frameRate == frValues[i]) { curFrIdx = i; break; }
             }
-            ImGui::EndCombo();
+            ImGui::Text("Frame Rate:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
+                for (int i = 0; i < 7; i++) {
+                    bool selected = (curFrIdx == i);
+                    if (ImGui::Selectable(frLabels[i], selected)) {
+                        windowSetFrameRate(frValues[i], true);
+                    }
+                }
+                ImGui::EndCombo();
+            }
         }
 
 #ifndef __ANDROID__
-        /* Window Size — desktop only */
-        const char *zoomLabels[] = { "Normal", "Double", "Quad" };
-        BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD };
-        int curZoomIdx = 0;
-        for (int i = 0; i < 3; i++) {
-            if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
-        }
-        ImGui::Text("Window Size:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
+        if (!uiModeIsTablet()) {
+            /* Window Size — desktop only */
+            const char *zoomLabels[] = { "Normal", "Double", "Quad" };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD };
+            int curZoomIdx = 0;
             for (int i = 0; i < 3; i++) {
-                bool selected = (curZoomIdx == i);
-                if (ImGui::Selectable(zoomLabels[i], selected)) {
-                    s_pendingZoom = zoomValues[i];
-                }
+                if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
-            ImGui::EndCombo();
-        }
+            ImGui::Text("Window Size:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool selected = (curZoomIdx == i);
+                    if (ImGui::Selectable(zoomLabels[i], selected)) {
+                        s_pendingZoom = zoomValues[i];
+                    }
+                }
+                ImGui::EndCombo();
+            }
 
-        /* Hide Main View — desktop only */
-        {
-            bool hmv = (bool)hideMainView;
-            if (ImGui::Checkbox("Hide Main View", &hmv)) {
-                windowHideMainView_toggle();
+            /* Hide Main View — desktop only */
+            {
+                bool hmv = (bool)hideMainView;
+                if (ImGui::Checkbox("Hide Main View", &hmv)) {
+                    windowHideMainView_toggle();
+                }
             }
         }
 #endif
@@ -1355,10 +1357,10 @@ static void renderSettingsPanel(ClientSim *cs) {
         }
 
 #ifndef __ANDROID__
-        {
-            bool tabletMode = uiModeIsTablet();
+        if (!uiModeIsTablet()) {
+            bool tabletMode = false;
             if (ImGui::Checkbox("Tablet UI Mode", &tabletMode)) {
-                uiModeSet(tabletMode ? UI_MODE_TABLET : UI_MODE_DESKTOP);
+                uiModeSet(UI_MODE_TABLET);
             }
         }
 #endif
