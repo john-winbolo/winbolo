@@ -119,12 +119,26 @@ static bool         s_generalTapReady = false;
 static float        s_generalTapX = 0.0f;
 static float        s_generalTapY = 0.0f;
 
+/* --- Viewport drag-to-scroll state --- */
+static SDL_FingerID s_vpDragFingerID = 0;
+static bool         s_vpDragTracking = false; /* finger is down on viewport */
+static bool         s_vpDragActive   = false; /* moved past tap threshold */
+static float        s_vpDragStartX   = 0.0f;
+static float        s_vpDragStartY   = 0.0f;
+static float        s_vpDragCurX     = 0.0f;
+static float        s_vpDragCurY     = 0.0f;
+static float        s_vpDragPrevX    = 0.0f;
+static float        s_vpDragPrevY    = 0.0f;
+static bool         s_vpDragMoved    = false; /* finger moved this frame */
+
 /* --- Setup / Cleanup --- */
 
 void inputTouchSetup(void) {
   s_joyActive = false;
   s_scrollActive = false;
   s_scrollZoneSet = false;
+  s_vpDragTracking = false;
+  s_vpDragActive = false;
   s_buildSelectTap = -1;
   s_viewportTapReady = false;
   for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
@@ -234,7 +248,9 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
         float dist = sqrtf(ddx * ddx + ddy * ddy);
         Uint64 elapsed = SDL_GetTicks() - s_tapTrackers[i].downTime;
 
-        if (dist < TAP_DISTANCE_THRESHOLD && elapsed < TAP_TIME_THRESHOLD_MS) {
+        /* If this finger was a viewport drag, don't fire a tap */
+        bool wasDrag = (s_vpDragTracking && fid == s_vpDragFingerID && s_vpDragActive);
+        if (!wasDrag && dist < TAP_DISTANCE_THRESHOLD && elapsed < TAP_TIME_THRESHOLD_MS) {
           float tx = s_tapTrackers[i].downX;
           float ty = s_tapTrackers[i].downY;
           /* Store as general tap for UI elements (e.g. build bar) */
@@ -262,10 +278,46 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
 
   float normX = fx / (float)windowW;
 
-  /* --- Joystick zone (left 40%, but not over the game viewport) --- */
+  /* --- Viewport drag-to-scroll --- */
   bool insideViewport = (fx >= (float)s_vpX && fx < (float)(s_vpX + s_vpW) &&
                          fy >= (float)s_vpY && fy < (float)(s_vpY + s_vpH) &&
                          s_vpW > 0 && s_vpH > 0);
+  if (isDown && !s_vpDragTracking && insideViewport) {
+    s_vpDragFingerID = fid;
+    s_vpDragTracking = true;
+    s_vpDragActive   = false;
+    s_vpDragMoved    = false;
+    s_vpDragStartX   = fx;
+    s_vpDragStartY   = fy;
+    s_vpDragCurX     = fx;
+    s_vpDragCurY     = fy;
+    s_vpDragPrevX    = fx;
+    s_vpDragPrevY    = fy;
+    /* Don't return — let tap tracker also see this finger */
+  }
+  if (s_vpDragTracking && fid == s_vpDragFingerID) {
+    if (isMotion) {
+      s_vpDragPrevX = s_vpDragCurX;
+      s_vpDragPrevY = s_vpDragCurY;
+      s_vpDragCurX = fx;
+      s_vpDragCurY = fy;
+      s_vpDragMoved = true;
+      if (!s_vpDragActive) {
+        float ddx = fx - s_vpDragStartX;
+        float ddy = fy - s_vpDragStartY;
+        if (sqrtf(ddx * ddx + ddy * ddy) >= TAP_DISTANCE_THRESHOLD) {
+          s_vpDragActive = true;
+        }
+      }
+    } else if (isUp) {
+      s_vpDragTracking = false;
+      s_vpDragActive   = false;
+      s_vpDragMoved    = false;
+    }
+    if (s_vpDragActive) return; /* Claimed by drag — skip other handlers */
+  }
+
+  /* --- Joystick zone (left 40%, but not over the game viewport) --- */
   if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT && !insideViewport) {
     s_joyFingerID = fid;
     s_joyActive   = true;
@@ -622,6 +674,37 @@ void inputTouchGetScrollJoystickState(float *anchorX, float *anchorY,
   *thumbY  = s_scrollThumbY;
   *active  = s_scrollActive;
   *releaseTime = s_scrollReleaseTime;
+}
+
+/* --- Viewport drag-to-scroll query --- */
+
+bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY) {
+  *scrollX = 0;
+  *scrollY = 0;
+  if (!s_vpDragActive || !s_vpDragMoved) return false;
+
+  /* Consume the motion flag so we stop scrolling when the finger is still */
+  s_vpDragMoved = false;
+
+  float dx = s_vpDragCurX - s_vpDragPrevX;
+  float dy = s_vpDragCurY - s_vpDragPrevY;
+  float dist = sqrtf(dx * dx + dy * dy);
+  if (dist < 1.0f) return false; /* Sub-pixel motion — ignore */
+
+  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  /* Map angle to 8 directions — invert so dragging right scrolls left
+     (natural/content-follows-finger scrolling) */
+  if (angle >= -22.5f && angle < 22.5f)        { *scrollX = -1; }
+  else if (angle >= 22.5f  && angle < 67.5f)   { *scrollX = -1; *scrollY = -1; }
+  else if (angle >= 67.5f  && angle < 112.5f)  { *scrollY = -1; }
+  else if (angle >= 112.5f && angle < 157.5f)  { *scrollX = 1; *scrollY = -1; }
+  else if (angle >= 157.5f || angle < -157.5f)  { *scrollX = 1; }
+  else if (angle >= -157.5f && angle < -112.5f) { *scrollX = 1; *scrollY = 1; }
+  else if (angle >= -112.5f && angle < -67.5f)  { *scrollY = 1; }
+  else if (angle >= -67.5f  && angle < -22.5f)  { *scrollX = -1; *scrollY = 1; }
+
+  return true;
 }
 
 /* Legacy wrappers */
