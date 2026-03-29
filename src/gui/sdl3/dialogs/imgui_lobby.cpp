@@ -297,6 +297,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     bool mapPreviewBuilt = false;
     MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
 
+#if BOLO_MOBILE
+    /* Tab state for mobile tabbed layout */
+    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat */
+    bool chatUnread = false;
+    int lastChatLen = 0;
+#endif
+
     /* Query safe area insets for notch avoidance */
     DialogSafeInsets safeInsets = dialogGetSafeInsets(window);
 
@@ -388,8 +395,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             formatTimeLimit(cs->lobbyTimeLimit, timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
-            ImGui::Text("Server: %s  Game: %s", serverStr, gameTypeStr(cs->lobbyGameType));
-            ImGui::Text("Mines: %s  AI: %s  Time: %s",
+            ImGui::TextWrapped("%s:%u | %s | %s Mines | AI: %s | %s",
+                         inet_ntoa(cs->serverAddress), cs->serverPort,
+                         gameTypeStr(cs->lobbyGameType),
                          cs->lobbyHiddenMines ? "Hidden" : "Visible",
                          aiTypeStr(cs->lobbyAiType), timeStr);
 #else
@@ -409,78 +417,283 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        /* --- Main content: Players (left) + Map Preview (right) --- */
+        /* --- Main content --- */
+#if BOLO_MOBILE
+        /* Tabbed layout for mobile: Players | Map | Chat */
+        {
+            float availW = ImGui::GetContentRegionAvail().x - padR;
+            float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
+
+            /* Detect new chat messages for unread indicator */
+            int chatLen = (int)SDL_strlen(cs->lobbyChatHistory);
+            if (chatLen > lastChatLen && activeTab != 2) {
+                chatUnread = true;
+            }
+            lastChatLen = chatLen;
+
+            if (ImGui::BeginTabBar("##LobbyTabs")) {
+                /* --- Players tab --- */
+                if (ImGui::BeginTabItem("Players")) {
+                    activeTab = 0;
+                    float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_None);
+
+                    if (ImGui::BeginTable("##PlayerTable", 5,
+                                          ImGuiTableFlags_Borders |
+                                          ImGuiTableFlags_RowBg |
+                                          ImGuiTableFlags_SizingStretchProp |
+                                          ImGuiTableFlags_ScrollY)) {
+                        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
+                        ImGui::TableSetupColumn("Team", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                        ImGui::TableSetupColumn("Ready", ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
+                        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 65.0f * s);
+                        ImGui::TableHeadersRow();
+
+                        bool botsAllowed = (cs->lobbyAiType != 0);
+
+                        for (int i = 0; i < MAX_TANKS; i++) {
+                            ImGui::TableNextRow();
+
+                            if (cs->lobbySlots[i].connected) {
+                                bool isMe = (i == myPlayerNum);
+
+                                /* Player Name (with flag) */
+                                ImGui::TableSetColumnIndex(0);
+                                if (cs->lobbySlots[i].countryCode[0] != '\0') {
+                                    SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
+                                    if (flagTex) {
+                                        ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                                        ImGui::SameLine();
+                                    }
+                                }
+                                if (cs->lobbySlots[i].isBot) {
+                                    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
+                                                       "%s [Bot]", cs->lobbySlots[i].playerName);
+                                } else if (isMe) {
+                                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
+                                                       "%s (You)", cs->lobbySlots[i].playerName);
+                                } else {
+                                    ImGui::Text("%s", cs->lobbySlots[i].playerName);
+                                }
+
+                                /* Ping */
+                                ImGui::TableSetColumnIndex(1);
+                                if (cs->lobbySlots[i].pingMs > 0) {
+                                    ImVec4 pingColor;
+                                    if (cs->lobbySlots[i].pingMs < 50)        pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
+                                    else if (cs->lobbySlots[i].pingMs < 150)   pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
+                                    else                                        pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                                    ImGui::TextColored(pingColor, "%dms", (int)cs->lobbySlots[i].pingMs);
+                                } else {
+                                    ImGui::TextDisabled("-");
+                                }
+
+                                /* Team */
+                                ImGui::TableSetColumnIndex(2);
+                                if (isMe && transport) {
+                                    int teamIdx = cs->lobbySlots[i].teamNumber;
+                                    ImGui::SetNextItemWidth(-1);
+                                    char comboId[16];
+                                    SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
+                                    if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
+                                        transportUdpClientSendTeamSet(transport, (uint8_t)teamIdx);
+                                    }
+                                } else {
+                                    if (cs->lobbySlots[i].teamNumber > 0) {
+                                        ImGui::Text("%d", cs->lobbySlots[i].teamNumber);
+                                    } else {
+                                        ImGui::TextDisabled("None");
+                                    }
+                                }
+
+                                /* Ready */
+                                ImGui::TableSetColumnIndex(3);
+                                if (cs->lobbySlots[i].ready) {
+                                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Yes");
+                                } else {
+                                    ImGui::TextDisabled("No");
+                                }
+
+                                /* Action */
+                                ImGui::TableSetColumnIndex(4);
+                                if (cs->lobbySlots[i].isBot && transport) {
+                                    char btnId[16];
+                                    SDL_snprintf(btnId, sizeof(btnId), "Remove##%d", i);
+                                    if (ImGui::SmallButton(btnId)) {
+                                        transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                                    }
+                                }
+                            } else {
+                                /* Empty slot */
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::TextDisabled("---");
+                                ImGui::TableSetColumnIndex(1);
+                                ImGui::TextDisabled("-");
+                                ImGui::TableSetColumnIndex(2);
+                                ImGui::TextDisabled("-");
+                                ImGui::TableSetColumnIndex(3);
+                                ImGui::TextDisabled("-");
+                                ImGui::TableSetColumnIndex(4);
+                                if (botsAllowed && transport) {
+                                    char btnId[16];
+                                    SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
+                                    if (ImGui::SmallButton(btnId)) {
+                                        transportUdpClientSendAddBot(transport);
+                                    }
+                                }
+                            }
+                        }
+                        ImGui::EndTable();
+                    }
+
+                    ImGui::EndChild(); /* ##PlayerPanel */
+                    ImGui::EndTabItem();
+                }
+
+                /* --- Map tab --- */
+                if (ImGui::BeginTabItem("Map")) {
+                    activeTab = 1;
+                    float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+
+                    if (!cs->mapDownloadComplete) {
+                        ImGui::Text("Downloading map...");
+                        ImGui::Spacing();
+                        float progress = (float)netGetDownloadPos() / 255.0f;
+                        ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
+                    } else if (mapPreviewTex) {
+                        int pad = 4;
+                        int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
+                        int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
+                        int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
+                        int by1 = mapBounds.maxY + pad; if (by1 >= MAP_PREVIEW_SIZE) by1 = MAP_PREVIEW_SIZE - 1;
+                        int bw = bx1 - bx0;
+                        int bh = by1 - by0;
+                        if (bw > bh) {
+                            int diff = bw - bh;
+                            by0 -= diff / 2; by1 += (diff + 1) / 2;
+                            if (by0 < 0) { by1 -= by0; by0 = 0; }
+                            if (by1 >= MAP_PREVIEW_SIZE) { by0 -= (by1 - MAP_PREVIEW_SIZE + 1); by1 = MAP_PREVIEW_SIZE - 1; }
+                            if (by0 < 0) by0 = 0;
+                        } else if (bh > bw) {
+                            int diff = bh - bw;
+                            bx0 -= diff / 2; bx1 += (diff + 1) / 2;
+                            if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
+                            if (bx1 >= MAP_PREVIEW_SIZE) { bx0 -= (bx1 - MAP_PREVIEW_SIZE + 1); bx1 = MAP_PREVIEW_SIZE - 1; }
+                            if (bx0 < 0) bx0 = 0;
+                        }
+                        ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
+                        ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
+
+                        float infoH = ImGui::GetTextLineHeightWithSpacing() * 2;
+                        float previewMaxH = tabH - infoH;
+                        float previewMaxW = ImGui::GetContentRegionAvail().x;
+                        float previewSize = previewMaxW < previewMaxH ? previewMaxW : previewMaxH;
+                        if (previewSize < 10.0f) previewSize = 10.0f;
+                        float offsetX = (previewMaxW - previewSize) * 0.5f;
+                        if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+                        ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
+                    } else {
+                        ImGui::Text("Map preview unavailable");
+                    }
+                    ImGui::Spacing();
+                    ImGui::Text("%s - %dP %dB %dS", cs->mapName, cs->lobbyPillCount, cs->lobbyBaseCount, cs->lobbyStartCount);
+
+                    ImGui::EndTabItem();
+                }
+
+                /* --- Chat tab (with unread indicator) --- */
+                {
+                    bool chatTabColorPushed = false;
+                    if (chatUnread) {
+                        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.5f, 0.0f, 0.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                        chatTabColorPushed = true;
+                    }
+                    if (ImGui::BeginTabItem("Chat")) {
+                        activeTab = 2;
+                        chatUnread = false;
+                        if (chatTabColorPushed) {
+                            ImGui::PopStyleColor(2);
+                            chatTabColorPushed = false;
+                        }
+                        float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                        float inputH = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+                        float chatHistH = tabH - inputH;
+                        if (chatHistH < 20.0f) chatHistH = 20.0f;
+
+                        ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                        ImGui::TextUnformatted(cs->lobbyChatHistory);
+                        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                            ImGui::SetScrollHereY(1.0f);
+                        }
+                        ImGui::EndChild();
+
+                        {
+                            float btnW = 60.0f * s;
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+                            bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
+                                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::SameLine();
+                            if ((ImGui::Button("Send", ImVec2(btnW, 0)) || enterPressed) &&
+                                chatInput[0] != '\0' && transport) {
+                                transportUdpClientSendChat(transport, 0xFF, chatInput);
+                                const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
+                                    ? cs->lobbySlots[myPlayerNum].playerName : "Me";
+                                clientSimAppendLobbyChat(cs, myName, chatInput);
+                                chatInput[0] = '\0';
+                            }
+                        }
+
+                        ImGui::EndTabItem();
+                    }
+                    if (chatTabColorPushed) {
+                        ImGui::PopStyleColor(2);
+                    }
+                }
+
+                ImGui::EndTabBar();
+            }
+
+            /* --- Bottom buttons (always visible) --- */
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            {
+                bool myReady = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
+                               ? cs->lobbySlots[myPlayerNum].ready : false;
+                bool canReady = cs->mapDownloadComplete;
+
+                if (!canReady) ImGui::BeginDisabled();
+                const char *readyLabel = myReady ? "Unready" : "Ready";
+                if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
+                    if (transport) {
+                        transportUdpClientSendReady(transport, !myReady);
+                    }
+                }
+                if (!canReady) ImGui::EndDisabled();
+
+                ImGui::SameLine(0, 20);
+                if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
+                    (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+                     !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                    ImGui::OpenPopup("Leave Game?##lobby");
+                }
+            }
+        }
+#else
+        /* --- Desktop: Players (left) + Map Preview (right) --- */
         {
             float availW = ImGui::GetContentRegionAvail().x - padR;
             float availContentH = ImGui::GetContentRegionAvail().y
                            - ImGui::GetTextLineHeightWithSpacing() * 9  /* chat + buttons */
                            - 40.0f * s - padB;
-#if BOLO_MOBILE
-            /* On mobile: stack vertically — map on top, players below */
-            float mapPanelW = availW;
-            float mapPanelH = availContentH * 0.4f;
-            float playerPanelW = availW;
-            float playerPanelH = availContentH - mapPanelH - 8.0f;
-
-            /* Top: Map preview */
-            ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, mapPanelH), ImGuiChildFlags_Borders);
-
-            if (!cs->mapDownloadComplete) {
-                ImGui::Text("Downloading map...");
-                ImGui::Spacing();
-                float progress = (float)netGetDownloadPos() / 255.0f;
-                ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
-                ImGui::Spacing();
-            } else if (mapPreviewTex) {
-                int pad = 4;
-                int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
-                int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
-                int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
-                int by1 = mapBounds.maxY + pad; if (by1 >= MAP_PREVIEW_SIZE) by1 = MAP_PREVIEW_SIZE - 1;
-                int bw = bx1 - bx0;
-                int bh = by1 - by0;
-                if (bw > bh) {
-                    int diff = bw - bh;
-                    by0 -= diff / 2; by1 += (diff + 1) / 2;
-                    if (by0 < 0) { by1 -= by0; by0 = 0; }
-                    if (by1 >= MAP_PREVIEW_SIZE) { by0 -= (by1 - MAP_PREVIEW_SIZE + 1); by1 = MAP_PREVIEW_SIZE - 1; }
-                    if (by0 < 0) by0 = 0;
-                } else if (bh > bw) {
-                    int diff = bh - bw;
-                    bx0 -= diff / 2; bx1 += (diff + 1) / 2;
-                    if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
-                    if (bx1 >= MAP_PREVIEW_SIZE) { bx0 -= (bx1 - MAP_PREVIEW_SIZE + 1); bx1 = MAP_PREVIEW_SIZE - 1; }
-                    if (bx0 < 0) bx0 = 0;
-                }
-                ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
-                ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
-
-                float previewAvailH = ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing() * 2;
-                float previewSize = ImGui::GetContentRegionAvail().x;
-                if (previewAvailH < previewSize) previewSize = previewAvailH;
-                if (previewSize < 10.0f) previewSize = 10.0f;
-                float offsetX = (ImGui::GetContentRegionAvail().x - previewSize) * 0.5f;
-                if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
-                ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
-            } else {
-                ImGui::Text("Map preview unavailable");
-            }
-            ImGui::Text("%s — %dP %dB %dS", cs->mapName, cs->lobbyPillCount, cs->lobbyBaseCount, cs->lobbyStartCount);
-
-            ImGui::EndChild(); /* ##MapPanel */
-
-            ImGui::Spacing();
-
-            /* Bottom: Player table */
-            ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, playerPanelH), ImGuiChildFlags_None);
-#else
             float mapPanelW = (MAP_PREVIEW_SIZE + 20) * s;
             float playerPanelW = availW - mapPanelW - 8.0f;
             float panelH = availContentH;
 
             /* Left: Player table */
             ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, panelH), ImGuiChildFlags_None);
-#endif
 
             if (ImGui::BeginTable("##PlayerTable", 6,
                                   ImGuiTableFlags_Borders |
@@ -596,7 +809,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             ImGui::EndChild(); /* ##PlayerPanel */
 
-#if !BOLO_MOBILE
             ImGui::SameLine(0, 8.0f);
 
             /* Right: Map preview + info */
@@ -661,7 +873,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("Starts: %d", cs->lobbyStartCount);
 
             ImGui::EndChild(); /* ##MapPanel */
-#endif
         }
 
         ImGui::Spacing();
@@ -722,6 +933,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImGui::OpenPopup("Leave Game?##lobby");
             }
         }
+#endif
 
         /* --- Leave confirmation popup --- */
         if (ImGui::BeginPopupModal("Leave Game?##lobby", nullptr,
