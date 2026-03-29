@@ -33,6 +33,7 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../bolo/bot_manager.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "../gui/aresource.h"
 #include "touch_input.h"
@@ -192,6 +193,13 @@ static void windowRunGameTick(ClientSim *cs) {
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
       transport->sendInput(transport->ctx, &pkt);
+      /* Tick bot brains before the sim tick (local game only) */
+      {
+        ServerSim *serverSim = gameFrontGetServerSim();
+        if (serverSim != NULL && botManagerGetNumBots() > 0) {
+          botManagerTick(serverSim, screenGetAiTypeCS(cs));
+        }
+      }
       transport->tick(transport->ctx);
       clientMutexWaitFor();
       androidSyncSnapshot(cs, transport, myPlayerNum);

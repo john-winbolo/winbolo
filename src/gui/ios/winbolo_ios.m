@@ -550,6 +550,13 @@ static void windowRunGameTick(ClientSim *cs) {
             clientSimGameTick(cs, &pkt, brainRunning);
             clientMutexRelease();
             transport->sendInput(transport->ctx, &pkt);
+            /* Tick bot brains before the sim tick (local game only) */
+            {
+                ServerSim *serverSim = gameFrontGetServerSim();
+                if (serverSim != NULL && botManagerGetNumBots() > 0) {
+                    botManagerTick(serverSim, screenGetAiTypeCS(cs));
+                }
+            }
             transport->tick(transport->ctx);
             clientMutexWaitFor();
             iosSyncSnapshot(cs, transport, myPlayerNum);
