@@ -325,7 +325,7 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
   SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
   SDL_SetRenderTarget(gRenderer, tex);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   SDL_SetRenderTarget(gRenderer, NULL);
   return tex;
 }
@@ -713,7 +713,7 @@ static void sdl3DrawShowLoadingScreen(void) {
 
   /* Center the logo */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (screenW > 0 && screenH > 0) {
     /* Scale logo to fit ~40% of the smaller screen dimension */
@@ -860,7 +860,7 @@ bool sdl3DrawSetup(int zoomFactor) {
   }
 
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   SDL_RenderPresent(gRenderer);
 
   /* Set up the SDL cursor (crosshair inside game area, system cursor outside) */
@@ -959,7 +959,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   }
 
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   bool tabletMode = uiModeIsTablet();
 
@@ -1266,7 +1266,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 
   /* Clear and draw background first so that status draws go on top */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (!tabletMode && sdl3LoadBackground()) {
     SDL_FRect dest = {
@@ -1329,7 +1329,7 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
    * exactly as sdl3DrawRedrawAll does, so everything except the playfield
    * area remains visible during map download. */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (!tabletMode && sdl3LoadBackground()) {
     SDL_FRect dest = {
@@ -1439,7 +1439,7 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
     return;
   }
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 }
 
 int drawGetFrameRate(void) {
@@ -1692,9 +1692,8 @@ void sdl3DrawStatusTankBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, 
   SDL_SetRenderTarget(gRenderer, gTankBarsTex);
   SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_NONE);
 
-  /* Black background */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   /* Green bars — heights in 1x pixels, bars grow from bottom */
   SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
@@ -1744,7 +1743,7 @@ void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, 
   SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_NONE);
 
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (shells != 0 || mines != 0 || armour != 0) {
     SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
@@ -1778,7 +1777,7 @@ void sdl3DrawSetManClear(void) {
   SDL_SetRenderTarget(gRenderer, gManStatusTex);
   SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   SDL_SetRenderTarget(gRenderer, NULL);
 }
 
@@ -1839,7 +1838,7 @@ void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
   SDL_SetRenderTarget(gRenderer, gManStatusTex);
   SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (isDead) {
     /* Filled circle in red/orange using scan lines */

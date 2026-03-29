@@ -297,6 +297,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     bool mapPreviewBuilt = false;
     MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
 
+    /* Query safe area insets for notch avoidance */
+    DialogSafeInsets safeInsets = dialogGetSafeInsets(window);
+
     int result = 0;
     bool running = true;
 
@@ -357,9 +360,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
-        /* Full-screen host window */
+        /* Full-screen host window with safe area padding */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
+        float padL = ImGui::GetStyle().WindowPadding.x + safeInsets.left;
+        float padR = safeInsets.right;
+        float padT = ImGui::GetStyle().WindowPadding.y + safeInsets.top;
+        float padB = safeInsets.bottom;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padL, padT));
         ImGui::Begin("##LobbyBg", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
@@ -379,6 +387,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             char timeStr[32];
             formatTimeLimit(cs->lobbyTimeLimit, timeStr, sizeof(timeStr));
 
+#if BOLO_MOBILE
+            ImGui::Text("Server: %s  Game: %s", serverStr, gameTypeStr(cs->lobbyGameType));
+            ImGui::Text("Mines: %s  AI: %s  Time: %s",
+                         cs->lobbyHiddenMines ? "Hidden" : "Visible",
+                         aiTypeStr(cs->lobbyAiType), timeStr);
+#else
             ImGui::Text("Server: %s", serverStr);
             ImGui::SameLine(0, 16);
             ImGui::Text("Game: %s", gameTypeStr(cs->lobbyGameType));
@@ -388,6 +402,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("AI: %s", aiTypeStr(cs->lobbyAiType));
             ImGui::SameLine(0, 16);
             ImGui::Text("Time: %s", timeStr);
+#endif
         }
 
         ImGui::Spacing();
@@ -396,15 +411,76 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         /* --- Main content: Players (left) + Map Preview (right) --- */
         {
-            float mapPanelW = (MAP_PREVIEW_SIZE + 20) * s;
-            float availW = ImGui::GetContentRegionAvail().x;
-            float playerPanelW = availW - mapPanelW - 8.0f;
-            float panelH = ImGui::GetContentRegionAvail().y
+            float availW = ImGui::GetContentRegionAvail().x - padR;
+            float availContentH = ImGui::GetContentRegionAvail().y
                            - ImGui::GetTextLineHeightWithSpacing() * 9  /* chat + buttons */
-                           - 40.0f * s;
+                           - 40.0f * s - padB;
+#if BOLO_MOBILE
+            /* On mobile: stack vertically — map on top, players below */
+            float mapPanelW = availW;
+            float mapPanelH = availContentH * 0.4f;
+            float playerPanelW = availW;
+            float playerPanelH = availContentH - mapPanelH - 8.0f;
+
+            /* Top: Map preview */
+            ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, mapPanelH), ImGuiChildFlags_Borders);
+
+            if (!cs->mapDownloadComplete) {
+                ImGui::Text("Downloading map...");
+                ImGui::Spacing();
+                float progress = (float)netGetDownloadPos() / 255.0f;
+                ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
+                ImGui::Spacing();
+            } else if (mapPreviewTex) {
+                int pad = 4;
+                int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
+                int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
+                int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
+                int by1 = mapBounds.maxY + pad; if (by1 >= MAP_PREVIEW_SIZE) by1 = MAP_PREVIEW_SIZE - 1;
+                int bw = bx1 - bx0;
+                int bh = by1 - by0;
+                if (bw > bh) {
+                    int diff = bw - bh;
+                    by0 -= diff / 2; by1 += (diff + 1) / 2;
+                    if (by0 < 0) { by1 -= by0; by0 = 0; }
+                    if (by1 >= MAP_PREVIEW_SIZE) { by0 -= (by1 - MAP_PREVIEW_SIZE + 1); by1 = MAP_PREVIEW_SIZE - 1; }
+                    if (by0 < 0) by0 = 0;
+                } else if (bh > bw) {
+                    int diff = bh - bw;
+                    bx0 -= diff / 2; bx1 += (diff + 1) / 2;
+                    if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
+                    if (bx1 >= MAP_PREVIEW_SIZE) { bx0 -= (bx1 - MAP_PREVIEW_SIZE + 1); bx1 = MAP_PREVIEW_SIZE - 1; }
+                    if (bx0 < 0) bx0 = 0;
+                }
+                ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
+                ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
+
+                float previewAvailH = ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing() * 2;
+                float previewSize = ImGui::GetContentRegionAvail().x;
+                if (previewAvailH < previewSize) previewSize = previewAvailH;
+                if (previewSize < 10.0f) previewSize = 10.0f;
+                float offsetX = (ImGui::GetContentRegionAvail().x - previewSize) * 0.5f;
+                if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+                ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
+            } else {
+                ImGui::Text("Map preview unavailable");
+            }
+            ImGui::Text("%s — %dP %dB %dS", cs->mapName, cs->lobbyPillCount, cs->lobbyBaseCount, cs->lobbyStartCount);
+
+            ImGui::EndChild(); /* ##MapPanel */
+
+            ImGui::Spacing();
+
+            /* Bottom: Player table */
+            ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, playerPanelH), ImGuiChildFlags_None);
+#else
+            float mapPanelW = (MAP_PREVIEW_SIZE + 20) * s;
+            float playerPanelW = availW - mapPanelW - 8.0f;
+            float panelH = availContentH;
 
             /* Left: Player table */
             ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, panelH), ImGuiChildFlags_None);
+#endif
 
             if (ImGui::BeginTable("##PlayerTable", 6,
                                   ImGuiTableFlags_Borders |
@@ -520,6 +596,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             ImGui::EndChild(); /* ##PlayerPanel */
 
+#if !BOLO_MOBILE
             ImGui::SameLine(0, 8.0f);
 
             /* Right: Map preview + info */
@@ -584,6 +661,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("Starts: %d", cs->lobbyStartCount);
 
             ImGui::EndChild(); /* ##MapPanel */
+#endif
         }
 
         ImGui::Spacing();
@@ -690,6 +768,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
 
         ImGui::End(); /* ##LobbyBg */
+        ImGui::PopStyleVar(); /* WindowPadding */
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);

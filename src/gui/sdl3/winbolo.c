@@ -360,10 +360,12 @@ int main(int argc, char *argv[]) {
     /* If returning to lobby after game-over, skip full teardown
      * and loop back to show the lobby dialog again. */
     if (returnToLobby) {
+      sdl3ImguiCleanup();
       winboloQuit = FALSE;
       continue;
     }
 
+    sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
     doingTutorial = FALSE;
 

@@ -957,6 +957,15 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     }
 
     /* Build tank snapshots for all connected players */
+    if (sim->tick % 50 == 0) {
+        int dbgConn = 0, dbgTank = 0;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i]) dbgConn++;
+            if (sim->sim.tanks[i] != NULL) dbgTank++;
+        }
+        fprintf(stderr, "[SERVER SNAP] buildSnapshot for client=%u: connectedPlayers=%d tanksNonNull=%d state=%d tick=%u\n",
+                clientIdx, dbgConn, dbgTank, sim->state, sim->tick);
+    }
     for (i = 0; i < MAX_TANKS && tankCount < maxTanks; i++) {
         TankSnapshot *ts;
         WORLD wx, wy;
@@ -1397,11 +1406,23 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
 void serverSimStartGame(ServerSim *sim) {
     BYTE i, j;
+    /* Save connected-player state before resetting – resetGameWorld clears
+       playerConnected[], but we need it to create tanks below. */
+    bool savedConnected[MAX_TANKS];
+    for (i = 0; i < MAX_TANKS; i++) {
+        savedConnected[i] = sim->playerConnected[i];
+    }
 
     activeSim = sim;
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
+
+    /* Restore connected-player state so tank creation works */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->playerConnected[i] = savedConnected[i];
+    }
+    sim->hadPlayersEver = TRUE;
 
     sim->gameLength = sim->originalGameLength;
 
@@ -1441,6 +1462,15 @@ void serverSimStartGame(ServerSim *sim) {
     }
 
     sim->state = serverStateRunning;
+    {
+        int dbgConn = 0, dbgTank = 0;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i]) dbgConn++;
+            if (sim->sim.tanks[i] != NULL) dbgTank++;
+        }
+        fprintf(stderr, "[SERVER] serverSimStartGame: connectedPlayers=%d tanksCreated=%d\n",
+                dbgConn, dbgTank);
+    }
     serverSimConsoleMessage("Game started!");
 }
 
