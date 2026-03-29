@@ -707,6 +707,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     doRefresh = true;
                 }
                 if (wasSearching) ImGui::EndDisabled();
+            } else {
+                /* Text fallback when SVG icon is unavailable */
+                float btnW = 70.0f * s;
+                ImGui::SameLine(panelW - btnW - 16.0f * s);
+                bool wasSearching = searching;
+                if (wasSearching) ImGui::BeginDisabled();
+                if (ImGui::SmallButton("Refresh")) {
+                    doRefresh = true;
+                }
+                if (wasSearching) ImGui::EndDisabled();
             }
             if (doRefresh) {
                 autoRefresh = false;

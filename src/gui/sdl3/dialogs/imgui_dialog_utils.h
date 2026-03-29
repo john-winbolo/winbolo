@@ -42,7 +42,7 @@
  * Reference height is 540px (1x scale). */
 static inline float dialogComputeScale(int screenW, int screenH) {
     (void)screenW;
-#ifdef __ANDROID__
+#if BOLO_MOBILE
     float scale = (float)screenH / 540.0f;
     if (scale < 1.0f) scale = 1.0f;
     return scale;
@@ -143,6 +143,31 @@ static inline void dialogRestoreLogicalPresentation(SDL_Renderer *renderer,
                                                      int w, int h,
                                                      SDL_RendererLogicalPresentation mode) {
     SDL_SetRenderLogicalPresentation(renderer, w, h, mode);
+}
+
+/* Query safe area insets for notch/Dynamic Island avoidance.
+ * Returns insets in window-point coordinates (left, top, right, bottom).
+ * On platforms without safe areas, all values are 0. */
+struct DialogSafeInsets {
+    float left, top, right, bottom;
+};
+
+static inline DialogSafeInsets dialogGetSafeInsets(SDL_Window *window) {
+    DialogSafeInsets insets = {0, 0, 0, 0};
+#if BOLO_MOBILE
+    SDL_Rect safeRect;
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(window, &winW, &winH);
+    if (winW > 0 && winH > 0 && SDL_GetWindowSafeArea(window, &safeRect)) {
+        insets.left   = (float)safeRect.x;
+        insets.top    = (float)safeRect.y;
+        insets.right  = (float)(winW - (safeRect.x + safeRect.w));
+        insets.bottom = (float)(winH - (safeRect.y + safeRect.h));
+    }
+#else
+    (void)window;
+#endif
+    return insets;
 }
 
 /* Frame rate cap for mobile platforms (Android/iOS).

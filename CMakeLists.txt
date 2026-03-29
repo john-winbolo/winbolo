@@ -1447,6 +1447,9 @@ add_custom_target(dist
     # SVG/PNG sprite files
     COMMAND ${CMAKE_COMMAND} -E copy_directory    "${CMAKE_SOURCE_DIR}/data/svg"  "${DIST_DIR}/data/svg"
 
+    # UI icons
+    COMMAND ${CMAKE_COMMAND} -E copy_directory    "${CMAKE_SOURCE_DIR}/data/ui"   "${DIST_DIR}/data/ui"
+
     # Welcome screen assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/smalllogo.bmp"        "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/smalllogo-transparent.png" "${DIST_DIR}/"
