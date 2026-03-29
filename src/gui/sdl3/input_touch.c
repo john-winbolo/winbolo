@@ -462,13 +462,69 @@ static tankButton inputTouchGetMovementRelative(float dist) {
 /* Debug tick counter for absolute steering logging */
 static Uint32 s_absDebugTick = 0;
 
+/* Adaptive turn rate tracking — measure how fast the tank actually
+   turns per tick so we can rate-limit appropriately on fast terrain
+   without starving slow terrain of turn commands. */
+static BYTE  s_prevTankAngle = 0;
+static float s_observedTurnRate = 2.0f;  /* bootstrap estimate */
+
+/* Smoothed target angle — low-pass filter on joystick input to
+   remove finger wobble. Stored as float in 0-256 circular space. */
+static float s_smoothTargetAngle = -1.0f;  /* -1 = uninitialized */
+static float smoothAngle(float current, float target) {
+  /* Interpolate in circular space to handle 0/256 wraparound */
+  float diff = target - current;
+  if (diff > 128.0f) diff -= 256.0f;
+  else if (diff < -128.0f) diff += 256.0f;
+
+  float absDiff = diff < 0.0f ? -diff : diff;
+
+  /* Adaptive: large changes (intentional) track fast,
+     small changes (finger jitter) get heavily smoothed.
+     At 80+ units difference: factor=0.3 (snap quickly)
+     At 10 units difference:  factor=0.03 (heavy filtering) */
+  float factor;
+  if (absDiff > 80.0f) {
+    factor = 0.3f;
+  } else if (absDiff > 30.0f) {
+    factor = 0.03f + 0.27f * ((absDiff - 30.0f) / 50.0f);
+  } else {
+    factor = 0.03f;
+  }
+
+  float result = current + factor * diff;
+  if (result < 0.0f) result += 256.0f;
+  else if (result >= 256.0f) result -= 256.0f;
+  return result;
+}
+
 static tankButton inputTouchGetMovementAbsolute(float dist) {
   float dx = s_joyThumbX - s_joyAnchorX;
   float dy = s_joyThumbY - s_joyAnchorY;
   float atan2Deg = atan2f(dy, dx) * 180.0f / 3.14159265f;
 
-  BYTE targetAngle = joyAngleToBolo(atan2Deg);
+  BYTE rawTarget = joyAngleToBolo(atan2Deg);
+
+  /* Smooth the target angle to filter out finger jitter */
+  if (s_smoothTargetAngle < 0.0f) {
+    s_smoothTargetAngle = (float)rawTarget;
+  } else {
+    s_smoothTargetAngle = smoothAngle(s_smoothTargetAngle, (float)rawTarget);
+  }
+  BYTE targetAngle = (BYTE)(s_smoothTargetAngle + 0.5f) % 256;
   BYTE currentAngle = s_tankAngle;
+
+  /* Update observed turn rate (exponential moving average).
+     Measure how much the tank actually turned since last tick. */
+  int angleDelta = (int)currentAngle - (int)s_prevTankAngle;
+  if (angleDelta > 128) angleDelta -= 256;
+  else if (angleDelta < -128) angleDelta += 256;
+  float absTurnedThisTick = (float)(angleDelta < 0 ? -angleDelta : angleDelta);
+  if (absTurnedThisTick > 0.0f) {
+    /* Blend: 70% old + 30% new for smooth adaptation */
+    s_observedTurnRate = 0.7f * s_observedTurnRate + 0.3f * absTurnedThisTick;
+  }
+  s_prevTankAngle = currentAngle;
 
   /* Compute signed difference in 0-255 circular space.
      TRIGHT increases angle (clockwise), TLEFT decreases.
@@ -487,16 +543,39 @@ static tankButton inputTouchGetMovementAbsolute(float dist) {
   if (reach > 1.0f) reach = 1.0f;
   bool wantDrive = (reach > 0.2f);
 
+  /* Adaptive deadzone: widen based on observed turn rate so fast
+     terrain settles cleanly. Minimum 10, scales up with turn speed. */
+  int deadzone = (int)(s_observedTurnRate * 3.0f);
+  if (deadzone < 10) deadzone = 10;
+  if (deadzone > 24) deadzone = 24;
+
+  /* Adaptive rate-limiting: on fast terrain, skip turn ticks when
+     close to target to prevent overshooting. Period increases as
+     absDiff shrinks relative to turn rate. */
+  s_joyFrameCounter++;
+  bool skipTurn = false;
+  if (absDiff < deadzone * 4 && absDiff >= deadzone) {
+    /* How many ticks of turning to reach target? */
+    float ticksToTarget = (float)absDiff / s_observedTurnRate;
+    /* If we'd arrive in < 3 ticks, start skipping to ease in */
+    if (ticksToTarget < 3.0f) {
+      Uint32 period = (Uint32)(4.0f - ticksToTarget);  /* 2..4 */
+      if (period < 2) period = 2;
+      if ((s_joyFrameCounter % period) != 0) {
+        skipTurn = true;
+      }
+    }
+  }
+
   tankButton result;
-  /* No rate-limiting — let the engine's terrain-based turn rate
-     (mapGetTurnRate) and firstLeft/firstRight ramp handle smoothing.
-     We just decide direction; the engine decides how fast. */
-  if (absDiff < 10) {
+  if (absDiff < deadzone) {
     /* Nearly aligned */
     result = wantDrive ? TACCEL : TNONE;
   } else if (absDiff < 64) {
     /* Moderate difference */
-    if (wantDrive) {
+    if (skipTurn) {
+      result = wantDrive ? TACCEL : TNONE;
+    } else if (wantDrive) {
       result = turnRight ? TRIGHTACCEL : TLEFTACCEL;
     } else {
       result = turnRight ? TRIGHT : TLEFT;
@@ -522,15 +601,19 @@ static tankButton inputTouchGetMovementAbsolute(float dist) {
       case TRIGHTDECEL: cmdName = "RIGHT+DECEL"; break;
       default: cmdName = "NONE"; break;
     }
-    SDL_Log("[AbsSteer] tank=%d target=%d diff=%d absDiff=%d cmd=%s atan2=%.1f",
-            (int)currentAngle, (int)targetAngle, diff, absDiff, cmdName, atan2Deg);
+    SDL_Log("[AbsSteer] tank=%d target=%d raw=%d diff=%d absDiff=%d cmd=%s turnRate=%.1f",
+            (int)currentAngle, (int)targetAngle, (int)rawTarget, diff, absDiff, cmdName,
+            s_observedTurnRate);
   }
 
   return result;
 }
 
 tankButton inputTouchGetMovement(void) {
-  if (!s_joyActive) return TNONE;
+  if (!s_joyActive) {
+    s_smoothTargetAngle = -1.0f;  /* reset so next touch starts fresh */
+    return TNONE;
+  }
 
   float dx = s_joyThumbX - s_joyAnchorX;
   float dy = s_joyThumbY - s_joyAnchorY;
