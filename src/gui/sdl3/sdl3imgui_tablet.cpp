@@ -921,7 +921,7 @@ static void renderResourceBars(ClientSim *cs) {
       for (int i = 0; i < 3; i++) {
         float bx = winPos.x + winPad + i * (barW + barGap);
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
-        float fillH = hasBase ? (vals[i] / 40.0f) * maxBarH : 0.0f;
+        float fillH = hasBase ? (vals[i] / 90.0f) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
@@ -1150,6 +1150,12 @@ static void renderMessagesOverlay(void) {
 static void handleTapToBuild(ClientSim *cs) {
   BYTE tileX, tileY;
   if (inputTouchGetViewportTap(&tileX, &tileY)) {
+    /* Discard viewport tap if a dialog/modal is over the game area —
+       the tap was meant for the dialog, not for building.
+       Use IsDialogOpen rather than WantCaptureMouse because the
+       always-visible tablet overlay windows (build bar, resource bars)
+       also set WantCaptureMouse and must not block building. */
+    if (sdl3ImguiIsDialogOpen()) return;
     screenSetCursorPosCS(cs, tileX, tileY);
     screenManMoveCS(cs, getBuildCurrentSelectCS(cs));
   }

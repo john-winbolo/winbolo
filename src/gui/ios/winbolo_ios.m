@@ -366,18 +366,22 @@ ios_game_start:
                 /* Forward to ImGui so dialogs receive mouse/touch input */
                 sdl3ImguiForwardEvent(&ev);
 
-                /* Don't pass touch to game when ImGui is handling it (dialog open) */
-                if (!sdl3ImguiWantCaptureMouse()) {
-                    if (uiModeIsTablet()) {
-                        if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
-                            int tw = 0, th = 0;
-                            if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
-                            if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
-                            inputTouchProcessEvent(&rawEv, tw, th);
-                        }
-                    } else {
-                        touchInputProcessEvent(&ev);
+                /* Always route finger events to the touch input system in
+                   tablet mode — ImGui buttons (build bar, etc.) use
+                   inputTouchConsumeTapInRect for hit-testing, so the
+                   touch system must see every event regardless of
+                   ImGui's WantCaptureMouse state.  Non-tablet mode
+                   still gates on WantCaptureMouse to avoid conflicts
+                   with dialog input. */
+                if (uiModeIsTablet()) {
+                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
+                        int tw = 0, th = 0;
+                        if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                        if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                        inputTouchProcessEvent(&rawEv, tw, th);
                     }
+                } else if (!sdl3ImguiWantCaptureMouse()) {
+                    touchInputProcessEvent(&ev);
                 }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
@@ -503,6 +507,7 @@ static void windowRunGameTick(ClientSim *cs) {
         if (justKeys == TRUE) {
             if (brainRunning == FALSE) {
                 if (uiModeIsTablet()) {
+                    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
                     tb = inputTouchGetMovement();
                 } else {
                     tb = touchInputGetKeys();
@@ -524,6 +529,7 @@ static void windowRunGameTick(ClientSim *cs) {
             t2++;
             if (brainRunning == FALSE) {
                 if (uiModeIsTablet()) {
+                    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
                     tb = inputTouchGetMovement();
                     isShoot = inputTouchIsFirePressed();
                     isMine = inputTouchIsMinePressed();
@@ -746,6 +752,9 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+    if (armour > TANK_FULL_ARMOUR) {
+        armour = 0;
+    }
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
 }
 

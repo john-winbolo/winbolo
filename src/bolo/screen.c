@@ -2739,6 +2739,10 @@ void screenAddBrainObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD 
 }
 
 
+BYTE screenGetTank256DirCS(ClientSim *csPtr) {
+  return tankGet256Dir(&csPtr->sim.tanks[0]);
+}
+
 /*********************************************************
 *NAME:          screenGetTankAutoSlowdown
 *AUTHOR:        John Morrison
@@ -3973,7 +3977,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
 
   /* Update base status bars */
   tankGetWorld(&csPtr->sim.tanks[0], &tankX, &tankY);
-  basesGetStats(&csPtr->sim.bs, basesGetClosest(&csPtr->sim, tankX, tankY), &shellsAmount, &armour, &minesAmount);
+  basesGetStats(&csPtr->sim.bs, basesGetClosest(&csPtr->sim, tankX, tankY), &shellsAmount, &minesAmount, &armour);
   frontEndUpdateBaseStatusBars(shellsAmount, minesAmount, armour);
 
   /* Update network LGM frames */

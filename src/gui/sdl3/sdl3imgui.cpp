@@ -103,6 +103,8 @@ extern "C" bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
 extern "C" void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
 extern "C" bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
 extern "C" void screenSetTankAutoHideGunsightCS(struct ClientSim *csPtr, bool useAutohide);
+extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
+extern "C" bool inputTouchGetAbsoluteSteering(void);
 
 /* -------------------------------------------------------
  * Frame-rate / zoom constants (mirrors winbolo.h values).
@@ -1356,6 +1358,16 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
+        if (uiModeIsTablet()) {
+            bool relSteering = !inputTouchGetAbsoluteSteering();
+            if (ImGui::Checkbox("Relative Steering", &relSteering)) {
+                inputTouchSetAbsoluteSteering(!relSteering);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When off, joystick points the tank directly.\nWhen on, joystick turns left/right relative to tank.");
+            }
+        }
+
 #ifndef __ANDROID__
         if (!uiModeIsTablet()) {
             bool tabletMode = false;
@@ -2115,6 +2127,14 @@ void sdl3ImguiForwardEvent(const void *event) {
 
 bool sdl3ImguiWantCaptureMouse(void) {
     return ImGui::GetIO().WantCaptureMouse;
+}
+
+bool sdl3ImguiIsDialogOpen(void) {
+    ImGuiContext *g = ImGui::GetCurrentContext();
+    return s_showSysInfo || s_showNetInfo || s_showGameInfo ||
+           s_showSendMsg || s_showPlayersPanel || s_showSettings ||
+           s_brainSettingsOpen || s_allianceVisible ||
+           (g && g->OpenPopupStack.Size > 0);
 }
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
