@@ -82,6 +82,27 @@ void inputTouchGetJoystickState(float *anchorX, float *anchorY,
                                 float *thumbX, float *thumbY, bool *active,
                                 Uint64 *releaseTime);
 
+/*********************************************************
+*NAME:          inputTouchSetScrollJoystickZone
+*PURPOSE:
+*  Register the rectangular zone for the scroll joystick.
+*  Finger-down inside this rect activates the scroll stick.
+*********************************************************/
+void inputTouchSetScrollJoystickZone(float x, float y, float w, float h);
+
+/*********************************************************
+*NAME:          inputTouchGetScrollDirection
+*PURPOSE:
+*  Returns the scroll direction from the scroll joystick.
+*  Sets scrollX/scrollY to -1, 0, or +1.
+*  Returns true if the scroll joystick is active.
+*********************************************************/
+bool inputTouchGetScrollDirection(int *scrollX, int *scrollY);
+
+void inputTouchGetScrollJoystickState(float *anchorX, float *anchorY,
+                                      float *thumbX, float *thumbY, bool *active,
+                                      Uint64 *releaseTime);
+
 void inputTouchTriggerHaptic(float strength, Uint32 durationMs);
 
 /* Gunsight change: returns 1 for increase, -1 for decrease, 0 for none.

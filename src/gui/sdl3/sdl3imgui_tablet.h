@@ -97,6 +97,11 @@ typedef struct {
 
   /* Joystick fade-out duration in ms after release */
   Uint32 joyFadeOutMs;
+
+  /* Scroll joystick — right side, between action buttons and build bar */
+  float scrollJoyX, scrollJoyY, scrollJoyW, scrollJoyH;
+  float scrollJoyOuterRadius;
+  float scrollJoyInnerRadius;
 } TabletLayoutConfig;
 
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,

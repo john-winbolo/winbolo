@@ -58,6 +58,7 @@ extern "C" {
   void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
   void screenPillViewCS(struct ClientSim *csPtr, int horz, int vert);
   void screenTankViewCS(struct ClientSim *csPtr);
+  void screenUpdateCS(struct ClientSim *csPtr, updateType value);
 }
 
 static bool s_statusDrawerOpen = false;
@@ -292,6 +293,18 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->msgOverlayW = (float)viewportW;
   cfg->msgOverlayX = (float)viewportX;
   cfg->msgOverlayY = (float)(viewportY + viewportH) - 76.0f * pixelScale;
+
+  /* --- Scroll joystick — in the gap between build/resource area and gunsight buttons --- */
+  float scrollTop = buildRegionTop + buildGridH + pad * 2;
+  float scrollBottom = gsRowY - cfg->gsIncRadius - pad * 2;
+  cfg->scrollJoyX = gutterLeft;
+  cfg->scrollJoyY = scrollTop;
+  cfg->scrollJoyW = gutterW;
+  cfg->scrollJoyH = scrollBottom - scrollTop;
+  cfg->scrollJoyOuterRadius = cfg->scrollJoyH * 0.40f;
+  if (cfg->scrollJoyOuterRadius > gutterW * 0.30f) cfg->scrollJoyOuterRadius = gutterW * 0.30f;
+  if (cfg->scrollJoyOuterRadius < 20.0f * pixelScale) cfg->scrollJoyOuterRadius = 20.0f * pixelScale;
+  cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
 }
 
 /* -------------------------------------------------------
@@ -336,6 +349,100 @@ static void renderJoystickOverlay(void) {
                        scaleAlpha(IM_COL32(200, 200, 200, 160), alpha), 24);
   dl->AddCircle(ImVec2(tx, ty), s_cfg.joyInnerRadius,
                 scaleAlpha(IM_COL32(255, 255, 255, 180), alpha), 24, 2.0f);
+}
+
+/* -------------------------------------------------------
+ * Scroll joystick overlay
+ * ------------------------------------------------------- */
+
+static void renderScrollJoystickOverlay(void) {
+  float ax, ay, tx, ty;
+  bool active;
+  Uint64 releaseTime;
+  inputTouchGetScrollJoystickState(&ax, &ay, &tx, &ty, &active, &releaseTime);
+
+  float alpha = 0.0f;
+  if (active) {
+    alpha = 1.0f;
+  } else if (releaseTime > 0) {
+    Uint64 elapsed = SDL_GetTicks() - releaseTime;
+    if (elapsed < s_cfg.joyFadeOutMs) {
+      alpha = 1.0f - (float)elapsed / (float)s_cfg.joyFadeOutMs;
+    }
+  }
+
+  /* Draw zone hint (always visible at low opacity) */
+  if (s_cfg.scrollJoyH > 10.0f) {
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    float zoneAlpha = 0.15f;
+    float cx = s_cfg.scrollJoyX + s_cfg.scrollJoyW * 0.5f;
+    float cy = s_cfg.scrollJoyY + s_cfg.scrollJoyH * 0.5f;
+
+    /* Draw a crosshair hint to indicate scroll directions */
+    float hintR = s_cfg.scrollJoyOuterRadius * 0.5f;
+    ImU32 hintCol = scaleAlpha(IM_COL32(200, 200, 200, 100), zoneAlpha);
+    dl->AddCircle(ImVec2(cx, cy), hintR, hintCol, 24, 1.5f);
+
+    /* Small arrow triangles */
+    float arrowDist = hintR * 1.4f;
+    float arrowSize = hintR * 0.3f;
+    /* Up arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx, cy - arrowDist - arrowSize),
+      ImVec2(cx - arrowSize * 0.6f, cy - arrowDist + arrowSize * 0.3f),
+      ImVec2(cx + arrowSize * 0.6f, cy - arrowDist + arrowSize * 0.3f),
+      hintCol);
+    /* Down arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx, cy + arrowDist + arrowSize),
+      ImVec2(cx - arrowSize * 0.6f, cy + arrowDist - arrowSize * 0.3f),
+      ImVec2(cx + arrowSize * 0.6f, cy + arrowDist - arrowSize * 0.3f),
+      hintCol);
+    /* Left arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx - arrowDist - arrowSize, cy),
+      ImVec2(cx - arrowDist + arrowSize * 0.3f, cy - arrowSize * 0.6f),
+      ImVec2(cx - arrowDist + arrowSize * 0.3f, cy + arrowSize * 0.6f),
+      hintCol);
+    /* Right arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx + arrowDist + arrowSize, cy),
+      ImVec2(cx + arrowDist - arrowSize * 0.3f, cy - arrowSize * 0.6f),
+      ImVec2(cx + arrowDist - arrowSize * 0.3f, cy + arrowSize * 0.6f),
+      hintCol);
+  }
+
+  if (alpha <= 0.0f) return;
+
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  dl->AddCircleFilled(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
+                       scaleAlpha(IM_COL32(100, 150, 200, 80), alpha), 32);
+  dl->AddCircle(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
+                scaleAlpha(IM_COL32(100, 150, 200, 120), alpha), 32, 2.0f);
+  dl->AddCircleFilled(ImVec2(tx, ty), s_cfg.scrollJoyInnerRadius,
+                       scaleAlpha(IM_COL32(100, 150, 200, 160), alpha), 24);
+  dl->AddCircle(ImVec2(tx, ty), s_cfg.scrollJoyInnerRadius,
+                scaleAlpha(IM_COL32(150, 200, 255, 180), alpha), 24, 2.0f);
+}
+
+/* Scroll joystick rate limiter (matches desktop INPUT_SCROLL_WAIT_TIME = 3) */
+static BYTE s_scrollKeyCount = 0;
+
+static void processScrollJoystick(ClientSim *cs) {
+  int scrollX = 0, scrollY = 0;
+  if (!inputTouchGetScrollDirection(&scrollX, &scrollY)) {
+    s_scrollKeyCount = 0;
+    return;
+  }
+
+  s_scrollKeyCount++;
+  if (s_scrollKeyCount >= 3) {
+    s_scrollKeyCount = 0;
+    if (scrollY < 0) screenUpdateCS(cs, up);
+    if (scrollY > 0) screenUpdateCS(cs, down);
+    if (scrollX < 0) screenUpdateCS(cs, left);
+    if (scrollX > 0) screenUpdateCS(cs, right);
+  }
 }
 
 /* -------------------------------------------------------
@@ -1084,11 +1191,20 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   /* Register button positions for touch hit-testing */
   registerTouchButtons();
 
+  /* Register scroll joystick zone */
+  if (s_cfg.scrollJoyH > 10.0f) {
+    inputTouchSetScrollJoystickZone(s_cfg.scrollJoyX, s_cfg.scrollJoyY,
+                                    s_cfg.scrollJoyW, s_cfg.scrollJoyH);
+  }
+
   /* Update viewport bounds for tap detection */
   inputTouchSetViewportBounds(vpX, vpY, vpW, vpH, vpZoom);
 
   /* Process tap-to-build */
   handleTapToBuild(cs);
+
+  /* Process scroll joystick */
+  processScrollJoystick(cs);
 
   /* Damage detection — trigger haptic on armour decrease */
   {
@@ -1114,6 +1230,7 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   }
 
   renderJoystickOverlay();
+  renderScrollJoystickOverlay();
   renderFireMineButtons();
   renderGunsightButtons();
   renderViewButtons(cs);
