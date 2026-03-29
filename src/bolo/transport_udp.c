@@ -484,20 +484,12 @@ static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
 }
 
 /* Client sendInput: serialize input with redundancy, send to server */
-static uint32_t udpClientSendDbgCount = 0;
-
 static void udpClientSendInput(void *ctx, const InputPacket *input) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
     uint8_t buf[UDP_MAX_PAYLOAD];
     int len;
 
-    udpClientSendDbgCount++;
-
     if (c->joinState != UDP_CLIENT_CONNECTED) {
-        if (udpClientSendDbgCount % 50 == 0) {
-            fprintf(stderr, "[UDP CLIENT] sendInput: not connected (joinState=%d) tick=%u\n",
-                    c->joinState, input->tick);
-        }
         return;
     }
 
@@ -511,10 +503,6 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
     c->inputRingCount++;
 
     len = buildInputPacket(c, buf);
-    if (udpClientSendDbgCount % 50 == 0) {
-        fprintf(stderr, "[UDP CLIENT] sendInput: tick=%u btn=0x%02x act=0x%02x len=%d ringCount=%u\n",
-                input->tick, input->buttons, input->actions, len, c->inputRingCount);
-    }
     udpSendTo(c->sock, buf, len, &c->serverAddr);
 }
 
@@ -1072,27 +1060,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 }
 
 /* Client tick: receive packets from server, handle join flow, ping */
-static uint32_t udpClientTickDbgCount = 0;
-
 static bool udpClientTick(void *ctx) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
     uint8_t buf[UDP_MAX_PAYLOAD];
     struct sockaddr_in fromAddr;
     int len;
-    int recvCount = 0;
 
     c->localTick++;
-    udpClientTickDbgCount++;
 
     /* Receive all pending packets from the wire */
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
-        recvCount++;
         udpClientProcessPacket(c, buf, len);
-    }
-
-    if (udpClientTickDbgCount % 50 == 0) {
-        fprintf(stderr, "[UDP CLIENT] tick #%u: recvCount=%d joinState=%d hasSnap=%d localTick=%u\n",
-                udpClientTickDbgCount, recvCount, c->joinState, c->hasSnapshot, c->localTick);
     }
 
     /* Handle join handshake — send/resend join requests */
@@ -1914,8 +1892,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 }
 
 /* Handle input packet from a connected client */
-static uint32_t serverHandleInputDbg = 0;
-
 static void serverHandleInput(const uint8_t *buf, int len,
                               const struct sockaddr_in *fromAddr,
                               ServerSim *sim) {
@@ -1924,27 +1900,13 @@ static void serverHandleInput(const uint8_t *buf, int len,
     uint8_t inputCount;
     int i;
 
-    serverHandleInputDbg++;
-
     clientIdx = serverFindClient(fromAddr);
-    if (clientIdx < 0) {
-        if (serverHandleInputDbg % 50 == 0) {
-            fprintf(stderr, "[UDP SERVER] handleInput: unknown client %s:%u\n",
-                    inet_ntoa(fromAddr->sin_addr), ntohs(fromAddr->sin_port));
-        }
-        return;
-    }
+    if (clientIdx < 0) return; /* Unknown client */
 
     udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
 
     /* Only process inputs during running state — silently discard otherwise */
-    if (sim->state != serverStateRunning) {
-        if (serverHandleInputDbg % 50 == 0) {
-            fprintf(stderr, "[UDP SERVER] handleInput: discarding input from slot %d, state=%d (not running)\n",
-                    clientIdx, sim->state);
-        }
-        return;
-    }
+    if (sim->state != serverStateRunning) return;
 
     if (len < pos + 1) return;
     inputCount = buf[pos++];

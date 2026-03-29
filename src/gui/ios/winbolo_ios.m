@@ -112,10 +112,6 @@ static void windowRunGameTick(ClientSim *cs);
 /* -------------------------------------------------------
  * Helper: sync snapshot from transport
  * ------------------------------------------------------- */
-static uint32_t iosSnapDbgCount = 0;
-static uint32_t iosSnapRecvCount = 0;
-static uint32_t iosSnapMissCount = 0;
-
 static void iosSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNum) {
     SnapshotHeader snapHdr;
     TankSnapshot snapTanks[MAX_TANKS];
@@ -124,7 +120,6 @@ static void iosSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNu
     BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
     PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
     GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-    iosSnapDbgCount++;
     if (transport->getSnapshot(transport->ctx, myPlayerNum,
                                &snapHdr, snapTanks, MAX_TANKS,
                                snapShells, MAX_SNAPSHOT_SHELLS,
@@ -132,12 +127,6 @@ static void iosSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNu
                                snapBases, MAX_SNAPSHOT_BASES,
                                snapPills, MAX_SNAPSHOT_PILLS,
                                snapEvents, MAX_SNAPSHOT_EVENTS)) {
-        iosSnapRecvCount++;
-        if (iosSnapDbgCount % 50 == 0) {
-            SDL_Log("[iOS SNAP] got snapshot #%u serverTick=%u lastInput=%u tanks=%u shells=%u events=%u",
-                    iosSnapRecvCount, snapHdr.serverTick, snapHdr.lastProcessedInput,
-                    snapHdr.tankCount, snapHdr.shellCount, snapHdr.reliableEventCount);
-        }
         clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
                                 snapShells, snapHdr.shellCount,
                                 snapExplosions, snapHdr.explosionCount,
@@ -145,12 +134,6 @@ static void iosSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNu
                                 snapPills, snapHdr.pillCount,
                                 snapEvents, snapHdr.reliableEventCount,
                                 myPlayerNum);
-    } else {
-        iosSnapMissCount++;
-        if (iosSnapDbgCount % 50 == 0) {
-            SDL_Log("[iOS SNAP] no snapshot (miss #%u of %u calls, recv=%u)",
-                    iosSnapMissCount, iosSnapDbgCount, iosSnapRecvCount);
-        }
     }
 }
 
@@ -338,9 +321,7 @@ ios_game_start:
 
     lastFrameTime = SDL_GetTicks();
 
-    SDL_Log("[iOS] Starting main loop: playerNum=%u netStat=%d running=%d startDelay=%d inLobby=%d tablet=%d",
-            gameFrontGetPlayerNum(), (int)cs->netStat, (int)cs->running,
-            (int)cs->gmeStartDelay, (int)cs->inLobby, uiModeIsTablet());
+    SDL_Log("[iOS] Starting main loop");
 
     /* Main game loop */
 #define IOS_FRAME_CAP_MS 16
@@ -489,7 +470,6 @@ static void windowRunGameTick(ClientSim *cs) {
     static bool justKeys = FALSE;
     static BYTE t2 = 0;
     static uint32_t simTickCounter = 0;
-    static uint32_t dbgTickCount = 0;
     tankButton tb;
     bool isShoot;
     bool isMine = FALSE;
@@ -502,10 +482,7 @@ static void windowRunGameTick(ClientSim *cs) {
     tb = 0;
 
     transport = gameFrontGetTransport();
-    if (transport == NULL) {
-        if (dbgTickCount % 50 == 0) SDL_Log("[iOS TICK] transport is NULL");
-        return;
-    }
+    if (transport == NULL) return;
 
     /* Check if the UDP server has disconnected or timed out.
      * Only check for UDP transports (serverSim == NULL means not local). */
@@ -523,8 +500,6 @@ static void windowRunGameTick(ClientSim *cs) {
 
     {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
-        dbgTickCount++;
-
         if (justKeys == TRUE) {
             if (brainRunning == FALSE) {
                 if (uiModeIsTablet()) {
@@ -535,10 +510,6 @@ static void windowRunGameTick(ClientSim *cs) {
             }
             InputPacket pkt;
             screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
-            if (dbgTickCount % 50 == 0) {
-                SDL_Log("[iOS TICK %u] keysOnly player=%u btn=0x%02x act=0x%02x tick=%u tb=%d",
-                        dbgTickCount, myPlayerNum, pkt.buttons, pkt.actions, pkt.tick, (int)tb);
-            }
             clientMutexWaitFor();
             clientSimKeysTick(cs, &pkt);
             clientMutexRelease();
@@ -574,11 +545,6 @@ static void windowRunGameTick(ClientSim *cs) {
                     if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
                     else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
                 }
-            }
-            if (dbgTickCount % 50 == 0) {
-                SDL_Log("[iOS TICK %u] full player=%u btn=0x%02x act=0x%02x tick=%u tb=%d shoot=%d mine=%d startDelay=%d netStat=%d running=%d",
-                        dbgTickCount, myPlayerNum, pkt.buttons, pkt.actions, pkt.tick, (int)tb, isShoot, isMine,
-                        (int)cs->gmeStartDelay, (int)cs->netStat, (int)cs->running);
             }
             clientMutexWaitFor();
             clientSimGameTick(cs, &pkt, brainRunning);
