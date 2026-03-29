@@ -62,13 +62,27 @@ struct BrainEntry {
 static int discoverBrains(BrainEntry *brains, int maxBrains) {
     int count = 0;
     const char *dirs[] = { "brains", "Brains", "data/Brains" };
-    for (int d = 0; d < 3 && count < maxBrains; d++) {
+    int numDirs = 3;
+
+    /* Also search relative to the executable base path (needed on iOS where
+       CWD may not match the app bundle location) */
+    char baseDirs[3][FILENAME_MAX];
+    const char *basePath = SDL_GetBasePath();
+    if (basePath && basePath[0]) {
+        for (int i = 0; i < numDirs; i++) {
+            SDL_snprintf(baseDirs[i], sizeof(baseDirs[i]), "%s%s", basePath, dirs[i]);
+        }
+    }
+
+    /* Search relative dirs first, then basePath-prefixed dirs */
+    for (int d = 0; d < numDirs + (basePath ? numDirs : 0) && count < maxBrains; d++) {
+        const char *dir = (d < numDirs) ? dirs[d] : baseDirs[d - numDirs];
         int numEntries = 0;
-        char **entries = SDL_GlobDirectory(dirs[d], "*", SDL_GLOB_CASEINSENSITIVE, &numEntries);
+        char **entries = SDL_GlobDirectory(dir, "*", SDL_GLOB_CASEINSENSITIVE, &numEntries);
         if (!entries) continue;
         for (int i = 0; i < numEntries && count < maxBrains; i++) {
             char initPath[FILENAME_MAX];
-            SDL_snprintf(initPath, sizeof(initPath), "%s/%s/init.lua", dirs[d], entries[i]);
+            SDL_snprintf(initPath, sizeof(initPath), "%s/%s/init.lua", dir, entries[i]);
             SDL_IOStream *f = SDL_IOFromFile(initPath, "r");
             if (f) {
                 SDL_CloseIO(f);
@@ -469,7 +483,6 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     ImGui::SetNextItemWidth(60.0f * s);
                     int prevNumBotsS = numBots;
                     if (ImGui::Combo("##numAIS", &numBots, aiCountItems, 16)) {
-                        if (numBots > 0 && numBrains == 0) numBots = 0;
                         if (prevNumBotsS == 0 && numBots > 0 && aiIdx == 0) {
                             aiIdx = 3;
                         }
@@ -632,7 +645,6 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     ImGui::SetNextItemWidth(60.0f * s);
                     int prevNumBots = numBots;
                     if (ImGui::Combo("##numAI", &numBots, aiCountItems, 16)) {
-                        if (numBots > 0 && numBrains == 0) numBots = 0;
                         /* Auto-enable AI if going from 0 to >0 */
                         if (prevNumBots == 0 && numBots > 0 && aiIdx == 0) {
                             aiIdx = 3; /* Allow with full map */
