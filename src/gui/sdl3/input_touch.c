@@ -707,6 +707,18 @@ bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY) {
   return true;
 }
 
+bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY) {
+  *deltaX = 0.0f;
+  *deltaY = 0.0f;
+  if (!s_vpDragActive || !s_vpDragMoved) return false;
+
+  s_vpDragMoved = false;
+
+  *deltaX = s_vpDragCurX - s_vpDragPrevX;
+  *deltaY = s_vpDragCurY - s_vpDragPrevY;
+  return true;
+}
+
 /* Legacy wrappers */
 bool inputTouchIsFirePressed(void) {
   return inputTouchIsButtonHeld(TOUCH_BTN_FIRE);

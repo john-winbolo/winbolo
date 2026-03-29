@@ -124,6 +124,11 @@ static int          gTabletVpX = 0, gTabletVpY = 0;
 static int          gTabletVpW = 0, gTabletVpH = 0;
 static int          gTabletVpZoom = 0;
 
+/* Drag scroll pixel offset — applied on top of engine edgeX/edgeY
+   for smooth sub-tile scrolling from touch dragging. */
+static int          gDragOffsetX = 0;
+static int          gDragOffsetY = 0;
+
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
    Set by sdl3DrawSetStatusPanelOrigins() for tablet mode. */
@@ -1025,6 +1030,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   int savedZoomFactor = gZoomFactor;
   if (tabletMode) {
     gZoomFactor = effectiveZoom;
+    /* Apply drag scroll pixel offset for smooth sub-tile scrolling */
+    edgeX += gDragOffsetX;
+    edgeY += gDragOffsetY;
   }
 
   if (sdl3LoadTiles()) {
@@ -2051,6 +2059,16 @@ void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom) {
   if (w) *w = gTabletVpW;
   if (h) *h = gTabletVpH;
   if (zoom) *zoom = gTabletVpZoom;
+}
+
+void sdl3DrawSetDragOffset(int dx, int dy) {
+  gDragOffsetX = dx;
+  gDragOffsetY = dy;
+}
+
+void sdl3DrawGetDragOffset(int *dx, int *dy) {
+  if (dx) *dx = gDragOffsetX;
+  if (dy) *dy = gDragOffsetY;
 }
 
 void sdl3DrawSetStatusPanelOrigins(float tanksX, float tanksY,

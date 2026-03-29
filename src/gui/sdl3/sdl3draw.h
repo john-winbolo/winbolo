@@ -370,6 +370,15 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
 void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
 
 /*********************************************************
+*NAME:          sdl3DrawSetDragOffset / GetDragOffset
+*PURPOSE:
+*  Set/get the drag-scroll pixel offset for smooth sub-tile
+*  scrolling in tablet mode. Values are in zoomed pixels.
+*********************************************************/
+void sdl3DrawSetDragOffset(int dx, int dy);
+void sdl3DrawGetDragOffset(int *dx, int *dy);
+
+/*********************************************************
 *NAME:          sdl3DrawSetStatusPanelOrigins
 *PURPOSE:
 *  Override the screen positions of the tanks/pills/bases
