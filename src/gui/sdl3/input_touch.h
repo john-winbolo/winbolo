@@ -78,6 +78,25 @@ bool inputTouchIsButtonTapped(TouchButtonID id);
 
 tankButton inputTouchGetMovement(void);
 
+/*********************************************************
+*NAME:          inputTouchSetTankAngle
+*PURPOSE:
+*  Provides the tank's current 0-255 direction to the touch
+*  input system for absolute steering calculations.
+*  Called each frame before inputTouchGetMovement().
+*********************************************************/
+void inputTouchSetTankAngle(BYTE angle);
+
+/*********************************************************
+*NAME:          inputTouchSetAbsoluteSteering / Get
+*PURPOSE:
+*  Controls whether the joystick uses absolute steering
+*  (point-to-face) or relative steering (left/right to turn).
+*  Absolute is the default for tablet mode.
+*********************************************************/
+void inputTouchSetAbsoluteSteering(bool enabled);
+bool inputTouchGetAbsoluteSteering(void);
+
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
                                 float *thumbX, float *thumbY, bool *active,
                                 Uint64 *releaseTime);

@@ -94,6 +94,10 @@ static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
 
+/* Absolute steering state */
+static bool         s_absoluteSteering = true;
+static BYTE         s_tankAngle = 0;
+
 /* --- Scroll joystick state --- */
 static SDL_FingerID s_scrollFingerID  = 0;
 static bool         s_scrollActive    = false;
@@ -354,6 +358,124 @@ bool inputTouchIsButtonTapped(TouchButtonID id) {
 
 /* --- Joystick --- */
 
+/* Convert joystick atan2 angle (degrees, 0=right, 90=down) to bolo
+   angle (0-255, 0=north, 64=east, 128=south, 192=west). */
+static BYTE joyAngleToBolo(float atan2Deg) {
+  /* atan2: -90=up(north), 0=right(east), 90=down(south), ±180=left(west)
+     bolo:  0=north, 64=east, 128=south, 192=west
+     mapping: bolo = (atan2Deg + 90) / 360 * 256 */
+  float bolo = (atan2Deg + 90.0f) / 360.0f * 256.0f;
+  if (bolo < 0.0f) bolo += 256.0f;
+  if (bolo >= 256.0f) bolo -= 256.0f;
+  return (BYTE)bolo;
+}
+
+static tankButton inputTouchGetMovementRelative(float dist) {
+  float dx = s_joyThumbX - s_joyAnchorX;
+  float dy = s_joyThumbY - s_joyAnchorY;
+  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  /* Cardinal directions get 60° zones, diagonals get 30°.
+     This makes driving straight much more forgiving. */
+  tankButton dir;
+  if (angle >= -30.0f && angle < 30.0f)        dir = TRIGHT;
+  else if (angle >= 30.0f  && angle < 60.0f)   dir = TRIGHTDECEL;
+  else if (angle >= 60.0f  && angle < 120.0f)  dir = TDECEL;
+  else if (angle >= 120.0f && angle < 150.0f)  dir = TLEFTDECEL;
+  else if (angle >= 150.0f || angle < -150.0f)  dir = TLEFT;
+  else if (angle >= -150.0f && angle < -120.0f) dir = TLEFTACCEL;
+  else if (angle >= -120.0f && angle < -60.0f)  dir = TACCEL;
+  else if (angle >= -60.0f  && angle < -30.0f)  dir = TRIGHTACCEL;
+  else return TNONE;
+
+  /* Proportional turning: only rate-limit directions that involve
+     turning (left/right and diagonals).  Forward and backward are
+     always reported immediately so driving straight feels responsive. */
+  if (dir != TACCEL && dir != TDECEL) {
+    float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
+    if (reach > 1.0f) reach = 1.0f;
+
+    /* Map to 1-out-of-N: at minimum deflection report ~1 in 8 frames,
+       at full deflection report every frame. */
+    s_joyFrameCounter++;
+    Uint32 period = (Uint32)(1.0f + 7.0f * (1.0f - reach));  /* 1..8 */
+    if ((s_joyFrameCounter % period) != 0) {
+      return TNONE;
+    }
+  }
+
+  return dir;
+}
+
+/* Debug tick counter for absolute steering logging */
+static Uint32 s_absDebugTick = 0;
+
+static tankButton inputTouchGetMovementAbsolute(float dist) {
+  float dx = s_joyThumbX - s_joyAnchorX;
+  float dy = s_joyThumbY - s_joyAnchorY;
+  float atan2Deg = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  BYTE targetAngle = joyAngleToBolo(atan2Deg);
+  BYTE currentAngle = s_tankAngle;
+
+  /* Compute signed difference in 0-255 circular space.
+     TRIGHT increases angle (clockwise), TLEFT decreases.
+     diff > 0 means target is clockwise from current → turn right. */
+  int diff = (int)targetAngle - (int)currentAngle;
+  if (diff > 128) diff -= 256;
+  else if (diff < -128) diff += 256;
+
+  int absDiff = diff < 0 ? -diff : diff;
+  bool turnRight = (diff > 0);
+
+  tankButton result;
+  /* Rate-limit turns proportional to angle difference — turn every tick
+     when far off, but ease off as we approach the target to avoid
+     twitchy oscillation around the desired heading. */
+  s_joyFrameCounter++;
+
+  if (absDiff < 10) {
+    /* Nearly aligned — just drive forward */
+    result = TACCEL;
+  } else if (absDiff < 56) {
+    /* Close-to-moderate difference — turn while accelerating.
+       Smooth ramp: compute period from absDiff so turn frequency
+       increases linearly as the difference grows.
+       At absDiff=10 → period=6 (turn 1-in-6), at 56 → period=1. */
+    Uint32 period = (Uint32)(1.0f + 5.0f * (1.0f - (float)(absDiff - 10) / 46.0f));
+    if (period < 1) period = 1;
+    if (period > 1 && (s_joyFrameCounter % period) != 0) {
+      result = TACCEL;
+    } else {
+      result = turnRight ? TRIGHTACCEL : TLEFTACCEL;
+    }
+  } else {
+    /* Large difference — pure turn, don't drive the wrong way */
+    result = turnRight ? TRIGHT : TLEFT;
+  }
+
+  /* Debug: print every 5 ticks */
+  s_absDebugTick++;
+  if ((s_absDebugTick % 5) == 0) {
+    const char *cmdName;
+    switch (result) {
+      case TACCEL: cmdName = "ACCEL"; break;
+      case TDECEL: cmdName = "DECEL"; break;
+      case TLEFT: cmdName = "LEFT"; break;
+      case TRIGHT: cmdName = "RIGHT"; break;
+      case TLEFTACCEL: cmdName = "LEFT+ACCEL"; break;
+      case TRIGHTACCEL: cmdName = "RIGHT+ACCEL"; break;
+      case TLEFTDECEL: cmdName = "LEFT+DECEL"; break;
+      case TRIGHTDECEL: cmdName = "RIGHT+DECEL"; break;
+      default: cmdName = "NONE"; break;
+    }
+    SDL_Log("[AbsSteer] tank=%d target=%d diff=%d absDiff=%d cmd=%s atan2=%.1f",
+            (int)currentAngle, (int)targetAngle, diff, absDiff, cmdName, atan2Deg);
+  }
+
+  return result;
+}
+
 tankButton inputTouchGetMovement(void) {
   if (!s_joyActive) return TNONE;
 
@@ -362,34 +484,23 @@ tankButton inputTouchGetMovement(void) {
   float dist = sqrtf(dx * dx + dy * dy);
   if (dist < JOYSTICK_DEADZONE) return TNONE;
 
-  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
-
-  tankButton dir;
-  if (angle >= -22.5f && angle < 22.5f)        dir = TRIGHT;
-  else if (angle >= 22.5f  && angle < 67.5f)   dir = TRIGHTDECEL;
-  else if (angle >= 67.5f  && angle < 112.5f)  dir = TDECEL;
-  else if (angle >= 112.5f && angle < 157.5f)  dir = TLEFTDECEL;
-  else if (angle >= 157.5f || angle < -157.5f)  dir = TLEFT;
-  else if (angle >= -157.5f && angle < -112.5f) dir = TLEFTACCEL;
-  else if (angle >= -112.5f && angle < -67.5f)  dir = TACCEL;
-  else if (angle >= -67.5f  && angle < -22.5f)  dir = TRIGHTACCEL;
-  else return TNONE;
-
-  /* Proportional turning: scale how often we report the direction
-     based on how far the joystick is deflected from center.
-     Small deflection = skip most frames, full deflection = every frame. */
-  float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
-  if (reach > 1.0f) reach = 1.0f;
-
-  /* Map to 1-out-of-N: at minimum deflection report ~1 in 5 frames,
-     at full deflection report every frame. */
-  s_joyFrameCounter++;
-  Uint32 period = (Uint32)(1.0f + 4.0f * (1.0f - reach));  /* 1..5 */
-  if ((s_joyFrameCounter % period) != 0) {
-    return TNONE;
+  if (s_absoluteSteering) {
+    return inputTouchGetMovementAbsolute(dist);
+  } else {
+    return inputTouchGetMovementRelative(dist);
   }
+}
 
-  return dir;
+void inputTouchSetTankAngle(BYTE angle) {
+  s_tankAngle = angle;
+}
+
+void inputTouchSetAbsoluteSteering(bool enabled) {
+  s_absoluteSteering = enabled;
+}
+
+bool inputTouchGetAbsoluteSteering(void) {
+  return s_absoluteSteering;
 }
 
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
