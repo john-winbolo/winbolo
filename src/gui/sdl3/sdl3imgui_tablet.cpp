@@ -533,6 +533,23 @@ static void renderBuildSelectBar(ClientSim *cs) {
       /* Place two items per row */
       if (i % cols == 0) ImGui::SameLine();
     }
+
+    /* 6th cell (bottom-right): LGM man-status indicator.
+       The mine button (i=4) already called SameLine(), so the cursor
+       is positioned for the next item on the same row.
+       Offset cursor by FramePadding to center it like the ImageButtons. */
+    ImVec2 manCur = ImGui::GetCursorPos();
+    manCur.x += framePad.x;
+    manCur.y += framePad.y;
+    ImGui::SetCursorPos(manCur);
+    bool manReady = false;
+    SDL_Texture *manTex = sdl3DrawGetManStatusTexture(&manReady);
+    if (manTex && manReady) {
+      SDL_SetTextureBlendMode(manTex, SDL_BLENDMODE_BLEND);
+      ImGui::Image((ImTextureID)manTex, ImVec2(iconSize, iconSize));
+    } else {
+      ImGui::Dummy(ImVec2(iconSize, iconSize));
+    }
   }
   ImGui::End();
   ImGui::PopStyleColor();
