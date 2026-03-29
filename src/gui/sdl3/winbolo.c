@@ -370,7 +370,9 @@ int main(int argc, char *argv[]) {
     doingTutorial = FALSE;
 
     if (winboloQuit == FALSE) {
-      gameFrontStart(cmdLine, &keys, TRUE, &cs);
+      if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
+        winboloQuit = TRUE;
+      }
     }
   }
 
