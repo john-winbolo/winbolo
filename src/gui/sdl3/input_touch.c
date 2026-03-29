@@ -480,29 +480,30 @@ static tankButton inputTouchGetMovementAbsolute(float dist) {
   int absDiff = diff < 0 ? -diff : diff;
   bool turnRight = (diff > 0);
 
-  tankButton result;
-  /* Rate-limit turns proportional to angle difference — turn every tick
-     when far off, but ease off as we approach the target to avoid
-     twitchy oscillation around the desired heading. */
-  s_joyFrameCounter++;
+  /* Joystick deflection controls acceleration:
+     small deflection = aim/rotate only, large = drive.
+     Threshold at 20% of usable range — just past deadzone to aim. */
+  float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
+  if (reach > 1.0f) reach = 1.0f;
+  bool wantDrive = (reach > 0.2f);
 
+  tankButton result;
+  /* No rate-limiting — let the engine's terrain-based turn rate
+     (mapGetTurnRate) and firstLeft/firstRight ramp handle smoothing.
+     We just decide direction; the engine decides how fast. */
   if (absDiff < 10) {
-    /* Nearly aligned — just drive forward */
-    result = TACCEL;
-  } else if (absDiff < 56) {
-    /* Close-to-moderate difference — turn while accelerating.
-       Smooth ramp: compute period from absDiff so turn frequency
-       increases linearly as the difference grows.
-       At absDiff=10 → period=6 (turn 1-in-6), at 56 → period=1. */
-    Uint32 period = (Uint32)(1.0f + 5.0f * (1.0f - (float)(absDiff - 10) / 46.0f));
-    if (period < 1) period = 1;
-    if (period > 1 && (s_joyFrameCounter % period) != 0) {
-      result = TACCEL;
-    } else {
+    /* Nearly aligned */
+    result = wantDrive ? TACCEL : TNONE;
+  } else if (absDiff < 64) {
+    /* Moderate difference */
+    if (wantDrive) {
       result = turnRight ? TRIGHTACCEL : TLEFTACCEL;
+    } else {
+      result = turnRight ? TRIGHT : TLEFT;
     }
   } else {
-    /* Large difference — pure turn, don't drive the wrong way */
+    /* Large difference — pure turn regardless of deflection,
+       don't drive the wrong way */
     result = turnRight ? TRIGHT : TLEFT;
   }
 
