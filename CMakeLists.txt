@@ -704,6 +704,19 @@ endif()
 add_executable(WinBolo ${CLIENT_SOURCES})
 target_compile_definitions(WinBolo PRIVATE HAVE_SCREEN_C=1)
 
+# macOS app bundle with icon
+if(APPLE)
+    set(WINBOLO_ICON "${CMAKE_SOURCE_DIR}/src/gui/sdl3/platform/AppIcon.icns")
+    if(EXISTS "${WINBOLO_ICON}")
+        target_sources(WinBolo PRIVATE "${WINBOLO_ICON}")
+        set_source_files_properties("${WINBOLO_ICON}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources")
+        set_target_properties(WinBolo PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns")
+    endif()
+endif()
+
 # Address Sanitizer — enable to diagnose heap corruption
 if(MSVC AND ENABLE_ASAN)
     target_compile_options(WinBolo PRIVATE /fsanitize=address)
