@@ -564,6 +564,11 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready) {
+  if (ready) *ready = gManStatusReady;
+  return gManStatusTex;
+}
+
 void sdl3DrawDisableLogicalPresentation(void) {
   if (gRenderer) {
     SDL_SetRenderLogicalPresentation(gRenderer, 0, 0,

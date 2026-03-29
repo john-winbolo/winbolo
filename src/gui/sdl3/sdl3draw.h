@@ -65,6 +65,7 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
 
 /* Disable/restore render logical presentation for ImGui dialogs.
  * On Android (non-tablet), the game uses logical presentation which
