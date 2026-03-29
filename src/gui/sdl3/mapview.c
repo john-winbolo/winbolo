@@ -622,7 +622,13 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
 
     {
       int ss = ctx->sheetScale;
-      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
+      /* Inset the source rect by a tiny amount to prevent the GPU from
+         sampling the adjacent atlas row due to float-to-UV precision
+         errors.  BMP-sourced sprites above have green (0,255,0,0) in
+         their transparent pixels which would otherwise bleed through. */
+      float inset = 0.05f;
+      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+                         (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
