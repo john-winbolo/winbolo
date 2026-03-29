@@ -94,6 +94,22 @@ static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
 
+/* --- Scroll joystick state --- */
+static SDL_FingerID s_scrollFingerID  = 0;
+static bool         s_scrollActive    = false;
+static float        s_scrollAnchorX   = 0.0f;
+static float        s_scrollAnchorY   = 0.0f;
+static float        s_scrollThumbX    = 0.0f;
+static float        s_scrollThumbY    = 0.0f;
+static Uint64       s_scrollReleaseTime = 0;
+
+/* Scroll joystick zone (registered rect) */
+static float        s_scrollZoneX = 0.0f;
+static float        s_scrollZoneY = 0.0f;
+static float        s_scrollZoneW = 0.0f;
+static float        s_scrollZoneH = 0.0f;
+static bool         s_scrollZoneSet = false;
+
 /* General tap position for UI elements (e.g. build bar) */
 static bool         s_generalTapReady = false;
 static float        s_generalTapX = 0.0f;
@@ -103,6 +119,8 @@ static float        s_generalTapY = 0.0f;
 
 void inputTouchSetup(void) {
   s_joyActive = false;
+  s_scrollActive = false;
+  s_scrollZoneSet = false;
   s_buildSelectTap = -1;
   s_viewportTapReady = false;
   for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
@@ -266,6 +284,33 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
     return;
   }
 
+  /* --- Scroll joystick zone (right side) --- */
+  if (s_scrollZoneSet) {
+    bool inScrollZone = (fx >= s_scrollZoneX && fx < s_scrollZoneX + s_scrollZoneW &&
+                         fy >= s_scrollZoneY && fy < s_scrollZoneY + s_scrollZoneH);
+    if (isDown && !s_scrollActive && inScrollZone) {
+      s_scrollFingerID = fid;
+      s_scrollActive   = true;
+      s_scrollAnchorX  = fx;
+      s_scrollAnchorY  = fy;
+      s_scrollThumbX   = fx;
+      s_scrollThumbY   = fy;
+      return;
+    }
+    if (s_scrollActive && fid == s_scrollFingerID) {
+      if (isMotion) {
+        s_scrollThumbX = fx;
+        s_scrollThumbY = fy;
+      } else if (isUp) {
+        s_scrollActive = false;
+        s_scrollThumbX = s_scrollAnchorX;
+        s_scrollThumbY = s_scrollAnchorY;
+        s_scrollReleaseTime = SDL_GetTicks();
+      }
+      return;
+    }
+  }
+
   /* --- Button hit-testing --- */
   if (isDown) {
     for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
@@ -420,6 +465,52 @@ bool inputTouchConsumeTapInRect(float x, float y, float w, float h) {
     return true;
   }
   return false;
+}
+
+/* --- Scroll joystick --- */
+
+void inputTouchSetScrollJoystickZone(float x, float y, float w, float h) {
+  s_scrollZoneX = x;
+  s_scrollZoneY = y;
+  s_scrollZoneW = w;
+  s_scrollZoneH = h;
+  s_scrollZoneSet = true;
+}
+
+bool inputTouchGetScrollDirection(int *scrollX, int *scrollY) {
+  *scrollX = 0;
+  *scrollY = 0;
+  if (!s_scrollActive) return false;
+
+  float dx = s_scrollThumbX - s_scrollAnchorX;
+  float dy = s_scrollThumbY - s_scrollAnchorY;
+  float dist = sqrtf(dx * dx + dy * dy);
+  if (dist < JOYSTICK_DEADZONE) return false;
+
+  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  /* Map angle to 8 directions for scroll */
+  if (angle >= -22.5f && angle < 22.5f)        { *scrollX = 1; }
+  else if (angle >= 22.5f  && angle < 67.5f)   { *scrollX = 1; *scrollY = 1; }
+  else if (angle >= 67.5f  && angle < 112.5f)  { *scrollY = 1; }
+  else if (angle >= 112.5f && angle < 157.5f)  { *scrollX = -1; *scrollY = 1; }
+  else if (angle >= 157.5f || angle < -157.5f)  { *scrollX = -1; }
+  else if (angle >= -157.5f && angle < -112.5f) { *scrollX = -1; *scrollY = -1; }
+  else if (angle >= -112.5f && angle < -67.5f)  { *scrollY = -1; }
+  else if (angle >= -67.5f  && angle < -22.5f)  { *scrollX = 1; *scrollY = -1; }
+
+  return true;
+}
+
+void inputTouchGetScrollJoystickState(float *anchorX, float *anchorY,
+                                      float *thumbX, float *thumbY, bool *active,
+                                      Uint64 *releaseTime) {
+  *anchorX = s_scrollAnchorX;
+  *anchorY = s_scrollAnchorY;
+  *thumbX  = s_scrollThumbX;
+  *thumbY  = s_scrollThumbY;
+  *active  = s_scrollActive;
+  *releaseTime = s_scrollReleaseTime;
 }
 
 /* Legacy wrappers */
