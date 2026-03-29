@@ -85,6 +85,11 @@ static TapTracker   s_tapTrackers[MAX_TAP_FINGERS];
 /* Gunsight change: +1 increase, -1 decrease, 0 none */
 static int          s_gunsightChange = 0;
 
+/* Proportional turning: max joystick reach in pixels */
+#define JOYSTICK_MAX_REACH 120.0f
+/* Frame counter for rate-limiting turns at small deflections */
+static Uint32       s_joyFrameCounter = 0;
+
 static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
@@ -314,16 +319,32 @@ tankButton inputTouchGetMovement(void) {
 
   float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
 
-  if (angle >= -22.5f && angle < 22.5f)   return TRIGHT;
-  if (angle >= 22.5f  && angle < 67.5f)   return TRIGHTDECEL;
-  if (angle >= 67.5f  && angle < 112.5f)  return TDECEL;
-  if (angle >= 112.5f && angle < 157.5f)  return TLEFTDECEL;
-  if (angle >= 157.5f || angle < -157.5f) return TLEFT;
-  if (angle >= -157.5f && angle < -112.5f) return TLEFTACCEL;
-  if (angle >= -112.5f && angle < -67.5f)  return TACCEL;
-  if (angle >= -67.5f  && angle < -22.5f)  return TRIGHTACCEL;
+  tankButton dir;
+  if (angle >= -22.5f && angle < 22.5f)        dir = TRIGHT;
+  else if (angle >= 22.5f  && angle < 67.5f)   dir = TRIGHTDECEL;
+  else if (angle >= 67.5f  && angle < 112.5f)  dir = TDECEL;
+  else if (angle >= 112.5f && angle < 157.5f)  dir = TLEFTDECEL;
+  else if (angle >= 157.5f || angle < -157.5f)  dir = TLEFT;
+  else if (angle >= -157.5f && angle < -112.5f) dir = TLEFTACCEL;
+  else if (angle >= -112.5f && angle < -67.5f)  dir = TACCEL;
+  else if (angle >= -67.5f  && angle < -22.5f)  dir = TRIGHTACCEL;
+  else return TNONE;
 
-  return TNONE;
+  /* Proportional turning: scale how often we report the direction
+     based on how far the joystick is deflected from center.
+     Small deflection = skip most frames, full deflection = every frame. */
+  float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
+  if (reach > 1.0f) reach = 1.0f;
+
+  /* Map to 1-out-of-N: at minimum deflection report ~1 in 5 frames,
+     at full deflection report every frame. */
+  s_joyFrameCounter++;
+  Uint32 period = (Uint32)(1.0f + 4.0f * (1.0f - reach));  /* 1..5 */
+  if ((s_joyFrameCounter % period) != 0) {
+    return TNONE;
+  }
+
+  return dir;
 }
 
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
