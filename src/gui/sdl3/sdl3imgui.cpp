@@ -1958,16 +1958,22 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            Use the raw (unconverted) event since inputTouchProcessEvent
            expects normalized tfinger coords multiplied by the target size.
            Use logical presentation size so coordinates match the game
-           viewport bounds (same approach as winbolo_ios.m). */
+           viewport bounds (same approach as winbolo_ios.m).
+           When a dialog/panel is open, only pass finger-up events so that
+           active joystick/button state gets properly released, but don't
+           start new joystick/button interactions behind the overlay. */
         if (uiModeIsTablet() &&
             (rawEv.type == SDL_EVENT_FINGER_DOWN ||
              rawEv.type == SDL_EVENT_FINGER_UP ||
              rawEv.type == SDL_EVENT_FINGER_MOTION)) {
-            int tw = 0, th = 0;
-            SDL_RendererLogicalPresentation logMode;
-            SDL_GetRenderLogicalPresentation(s_renderer, &tw, &th, &logMode);
-            if (tw <= 0 || th <= 0) SDL_GetWindowSize(s_window, &tw, &th);
-            inputTouchProcessEvent(&rawEv, tw, th);
+            bool dialogOpen = sdl3ImguiIsDialogOpen();
+            if (!dialogOpen || rawEv.type == SDL_EVENT_FINGER_UP) {
+                int tw = 0, th = 0;
+                SDL_RendererLogicalPresentation logMode;
+                SDL_GetRenderLogicalPresentation(s_renderer, &tw, &th, &logMode);
+                if (tw <= 0 || th <= 0) SDL_GetWindowSize(s_window, &tw, &th);
+                inputTouchProcessEvent(&rawEv, tw, th);
+            }
         }
 
         /* Window focus — mute sound when backgroundSound is off.

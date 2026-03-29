@@ -739,99 +739,86 @@ static void renderBuildSelectBar(ClientSim *cs) {
  * ------------------------------------------------------- */
 
 static void renderTopBarButtons(ClientSim *cs) {
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
   float btnSize = s_cfg.topBtnSize;
   float btnY = s_cfg.topBtnY;
   float alpha = s_cfg.topBtnOpacity;
-  ImGuiWindowFlags btnFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
-  ImVec2 btnDim(btnSize, btnSize);
-  ImVec2 winSize(btnSize + 8, btnSize + 8);
+  float radius = btnSize * 0.5f;
 
   ensureIconsLoaded((int)(btnSize * 2));
 
-  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  /* Helper: draw one circular button with an icon texture */
+  struct {
+    float cx, cy;
+    SDL_Texture *icon;
+    const char *fallback;
+  } btns[] = {
+    { s_cfg.playersBtnX + radius, btnY + radius, s_iconMessages, "Msg" },
+    { s_cfg.msgBtnX     + radius, btnY + radius, s_iconPlayers,  "Ply" },
+    { s_cfg.cogBtnX     + radius, btnY + radius, s_iconSettings, "Set" },
+  };
 
-  /* Messages button */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.playersBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##MsgBtn", nullptr, btnFlags)) {
-    if (s_iconMessages) {
-      if (ImGui::ImageButton("##msgIcon", (ImTextureID)s_iconMessages, btnDim)) {
-        sdl3ImguiShowSendMsg(true);
-      }
+  for (int i = 0; i < 3; i++) {
+    float cx = btns[i].cx;
+    float cy = btns[i].cy;
+
+    /* Black filled circle + white outline */
+    dl->AddCircleFilled(ImVec2(cx, cy), radius,
+                         scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    dl->AddCircle(ImVec2(cx, cy), radius,
+                  scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), 32, 2.0f);
+
+    /* Icon (white SVG) or fallback text */
+    if (btns[i].icon) {
+      float iconHalf = radius * 0.65f;
+      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      dl->AddImage((ImTextureID)btns[i].icon, pMin, pMax,
+                   ImVec2(0, 0), ImVec2(1, 1), tint);
     } else {
-      if (ImGui::Button("Msg", btnDim)) { sdl3ImguiShowSendMsg(true); }
-    }
-    ImVec2 rMin = ImGui::GetItemRectMin();
-    ImVec2 rMax = ImGui::GetItemRectMax();
-    if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
-      sdl3ImguiShowSendMsg(true);
+      ImVec2 textSize = ImGui::CalcTextSize(btns[i].fallback);
+      dl->AddText(ImVec2(cx - textSize.x * 0.5f, cy - textSize.y * 0.5f),
+                  scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), btns[i].fallback);
     }
   }
-  ImGui::End();
-  ImGui::PopStyleColor();
 
-  /* Players button */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.msgBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##PlayersBtn", nullptr, btnFlags)) {
-    if (s_iconPlayers) {
-      if (ImGui::ImageButton("##playersIcon", (ImTextureID)s_iconPlayers, btnDim)) {
-        sdl3ImguiShowPlayersPanel(true);
-      }
-    } else {
-      if (ImGui::Button("Ply", btnDim)) { sdl3ImguiShowPlayersPanel(true); }
-    }
-    ImVec2 rMin = ImGui::GetItemRectMin();
-    ImVec2 rMax = ImGui::GetItemRectMax();
-    if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
-      sdl3ImguiShowPlayersPanel(true);
-    }
+  /* Tap detection — messages */
+  if (inputTouchConsumeTapInRect(s_cfg.playersBtnX, btnY, btnSize, btnSize)) {
+    sdl3ImguiShowSendMsg(true);
   }
-  ImGui::End();
-  ImGui::PopStyleColor();
-
-  /* Settings button */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.cogBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##CogBtn", nullptr, btnFlags)) {
-    if (s_iconSettings) {
-      if (ImGui::ImageButton("##settingsIcon", (ImTextureID)s_iconSettings, btnDim)) {
-        sdl3ImguiShowSettings();
-      }
-    } else {
-      if (ImGui::Button("Set", btnDim)) { sdl3ImguiShowSettings(); }
-    }
-    ImVec2 rMin = ImGui::GetItemRectMin();
-    ImVec2 rMax = ImGui::GetItemRectMax();
-    if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
+  /* Tap detection — players */
+  if (inputTouchConsumeTapInRect(s_cfg.msgBtnX, btnY, btnSize, btnSize)) {
+    sdl3ImguiShowPlayersPanel(true);
+  }
+  /* Tap detection — settings: extend tap target to right screen edge for
+     easier touch targeting near the device edge */
+  {
+    float tapPad = btnSize * 0.25f;
+    float tapX = s_cfg.cogBtnX - tapPad;
+    float tapY2 = btnY - tapPad;
+    float tapW = (float)s_cfg.screenW - tapX;
+    float tapH = btnSize + tapPad * 2;
+    if (inputTouchConsumeTapInRect(tapX, tapY2, tapW, tapH)) {
       sdl3ImguiShowSettings();
     }
   }
-  ImGui::End();
-  ImGui::PopStyleColor();
-
-  ImGui::PopStyleVar(3); /* Alpha, FramePadding, WindowPadding */
 
   /* Status drawer toggle — only when grids not in gutter */
   if (!s_cfg.showStatusGrids) {
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
-    ImGui::SetNextWindowPos(ImVec2(s_cfg.cogBtnX, btnY + btnSize + 8));
-    ImGui::SetNextWindowSize(winSize);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-    if (ImGui::Begin("##StatusBtn", nullptr, btnFlags)) {
-      if (ImGui::Button("i", btnDim)) {
-        s_statusDrawerOpen = !s_statusDrawerOpen;
-      }
+    float statusCx = s_cfg.cogBtnX + radius;
+    float statusCy = btnY + btnSize + 8 + radius;
+    dl->AddCircleFilled(ImVec2(statusCx, statusCy), radius,
+                         scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    dl->AddCircle(ImVec2(statusCx, statusCy), radius,
+                  scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), 32, 2.0f);
+    const char *label = "i";
+    ImVec2 textSize = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(statusCx - textSize.x * 0.5f, statusCy - textSize.y * 0.5f),
+                scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), label);
+    if (inputTouchConsumeTapInRect(s_cfg.cogBtnX, btnY + btnSize + 8, btnSize, btnSize)) {
+      s_statusDrawerOpen = !s_statusDrawerOpen;
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
   }
 }
 
