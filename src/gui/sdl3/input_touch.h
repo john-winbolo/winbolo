@@ -152,6 +152,15 @@ bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
 *********************************************************/
 bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY);
 
+/*********************************************************
+*NAME:          inputTouchGetViewportDragDelta
+*PURPOSE:
+*  Returns the raw pixel delta from the last finger motion
+*  on the viewport drag. Consuming — clears after read.
+*  Returns true if a drag motion occurred this frame.
+*********************************************************/
+bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY);
+
 /* Legacy API — now wrappers around button system */
 bool inputTouchIsFirePressed(void);
 bool inputTouchIsMinePressed(void);

@@ -445,24 +445,43 @@ static void processScrollJoystick(ClientSim *cs) {
   }
 }
 
-/* Viewport drag-to-scroll */
-static BYTE s_vpDragScrollCount = 0;
+/* Viewport drag-to-scroll with smooth sub-tile pixel offset.
+   Accumulates drag pixels and only commits a full tile scroll
+   to the engine when the offset reaches one tile width. */
+static float s_vpDragAccumX = 0.0f;
+static float s_vpDragAccumY = 0.0f;
 
 static void processViewportDragScroll(ClientSim *cs) {
-  int scrollX = 0, scrollY = 0;
-  if (!inputTouchGetViewportDragScroll(&scrollX, &scrollY)) {
-    s_vpDragScrollCount = 0;
+  float dx = 0.0f, dy = 0.0f;
+  if (!inputTouchGetViewportDragDelta(&dx, &dy)) {
+    /* Drag ended or finger stopped — reset the pixel offset */
+    if (s_vpDragAccumX != 0.0f || s_vpDragAccumY != 0.0f) {
+      s_vpDragAccumX = 0.0f;
+      s_vpDragAccumY = 0.0f;
+      sdl3DrawSetDragOffset(0, 0);
+    }
     return;
   }
 
-  s_vpDragScrollCount++;
-  if (s_vpDragScrollCount >= 3) {
-    s_vpDragScrollCount = 0;
-    if (scrollY < 0) screenUpdateCS(cs, up);
-    if (scrollY > 0) screenUpdateCS(cs, down);
-    if (scrollX < 0) screenUpdateCS(cs, left);
-    if (scrollX > 0) screenUpdateCS(cs, right);
-  }
+  /* Accumulate pixel movement (inverted for natural scrolling:
+     drag right → content moves right → viewport scrolls left) */
+  s_vpDragAccumX -= dx;
+  s_vpDragAccumY -= dy;
+
+  /* Get tile size in screen pixels */
+  int vpX, vpY, vpW, vpH, vpZoom;
+  sdl3DrawGetTabletViewport(&vpX, &vpY, &vpW, &vpH, &vpZoom);
+  int tilePx = TILE_SIZE_X * vpZoom;
+  if (tilePx < 1) tilePx = 1;
+
+  /* Commit full tile scrolls to the engine */
+  while (s_vpDragAccumX >= tilePx)  { screenUpdateCS(cs, right); s_vpDragAccumX -= tilePx; }
+  while (s_vpDragAccumX <= -tilePx) { screenUpdateCS(cs, left);  s_vpDragAccumX += tilePx; }
+  while (s_vpDragAccumY >= tilePx)  { screenUpdateCS(cs, down);  s_vpDragAccumY -= tilePx; }
+  while (s_vpDragAccumY <= -tilePx) { screenUpdateCS(cs, up);    s_vpDragAccumY += tilePx; }
+
+  /* Set the sub-tile pixel offset for smooth rendering */
+  sdl3DrawSetDragOffset((int)s_vpDragAccumX, (int)s_vpDragAccumY);
 }
 
 /* -------------------------------------------------------
