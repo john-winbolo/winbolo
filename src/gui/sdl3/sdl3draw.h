@@ -66,6 +66,7 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
+bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);
 
 /* Disable/restore render logical presentation for ImGui dialogs.
  * On Android (non-tablet), the game uses logical presentation which
