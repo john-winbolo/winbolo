@@ -957,15 +957,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     }
 
     /* Build tank snapshots for all connected players */
-    if (sim->tick % 50 == 0) {
-        int dbgConn = 0, dbgTank = 0;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (sim->playerConnected[i]) dbgConn++;
-            if (sim->sim.tanks[i] != NULL) dbgTank++;
-        }
-        fprintf(stderr, "[SERVER SNAP] buildSnapshot for client=%u: connectedPlayers=%d tanksNonNull=%d state=%d tick=%u\n",
-                clientIdx, dbgConn, dbgTank, sim->state, sim->tick);
-    }
     for (i = 0; i < MAX_TANKS && tankCount < maxTanks; i++) {
         TankSnapshot *ts;
         WORLD wx, wy;
@@ -1462,15 +1453,6 @@ void serverSimStartGame(ServerSim *sim) {
     }
 
     sim->state = serverStateRunning;
-    {
-        int dbgConn = 0, dbgTank = 0;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (sim->playerConnected[i]) dbgConn++;
-            if (sim->sim.tanks[i] != NULL) dbgTank++;
-        }
-        fprintf(stderr, "[SERVER] serverSimStartGame: connectedPlayers=%d tanksCreated=%d\n",
-                dbgConn, dbgTank);
-    }
     serverSimConsoleMessage("Game started!");
 }
 
