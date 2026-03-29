@@ -30,6 +30,7 @@
 #endif
 
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <string.h>
 
 #include "imgui.h"
@@ -361,26 +362,62 @@ static void renderFireMineButtons(void) {
   float mineAlpha = mineActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
 
   /* Fire button */
-  ImU32 fireFill = fireActive ? IM_COL32(255, 80, 80, 200) : IM_COL32(200, 50, 50, 140);
   dl->AddCircleFilled(ImVec2(s_cfg.fireCenterX, s_cfg.fireCenterY), s_cfg.fireRadius,
-                       scaleAlpha(fireFill, fireAlpha), 32);
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), fireAlpha), 32);
   dl->AddCircle(ImVec2(s_cfg.fireCenterX, s_cfg.fireCenterY), s_cfg.fireRadius,
-                scaleAlpha(IM_COL32(255, 100, 100, 200), fireAlpha), 32, 2.0f);
-  const char *fireLabel = "FIRE";
-  ImVec2 fireSize = ImGui::CalcTextSize(fireLabel);
-  dl->AddText(ImVec2(s_cfg.fireCenterX - fireSize.x * 0.5f, s_cfg.fireCenterY - fireSize.y * 0.5f),
-              scaleAlpha(IM_COL32(255, 255, 255, 220), fireAlpha), fireLabel);
+                scaleAlpha(IM_COL32(255, 255, 255, 220), fireAlpha), 32, 2.0f);
+  SDL_Texture *fireTilesTex = sdl3DrawGetTilesTexture();
+  if (fireTilesTex) {
+    float r = s_cfg.fireRadius;
+    float cx = s_cfg.fireCenterX, cy = s_cfg.fireCenterY;
+    ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), fireAlpha);
+
+    /* Tank facing right, shifted left to make room for shells */
+    float tankSize = r * 0.825f;
+    float tankLeft = cx - r * 0.41f;
+    ImVec2 tMin(tankLeft, cy - tankSize * 0.5f);
+    ImVec2 tMax(tankLeft + tankSize, cy + tankSize * 0.5f);
+    ImVec2 tUv0((float)TANK_SELF_4_X / TILESHEET_W, (float)TANK_SELF_4_Y / TILESHEET_H);
+    ImVec2 tUv1((float)(TANK_SELF_4_X + TILE_SIZE_X) / TILESHEET_W,
+                (float)(TANK_SELF_4_Y + TILE_SIZE_Y) / TILESHEET_H);
+    dl->AddImage((ImTextureID)fireTilesTex, tMin, tMax, tUv0, tUv1, tint);
+
+    /* Two shells to the right of the tank */
+    ImVec2 sUv0((float)SHELL_4_X / TILESHEET_W, (float)SHELL_4_Y / TILESHEET_H);
+    ImVec2 sUv1((float)(SHELL_4_X + SHELL_4_WIDTH) / TILESHEET_W,
+                (float)(SHELL_4_Y + SHELL_4_HEIGHT) / TILESHEET_H);
+    float shellW = r * 0.225f;
+    float shellH = shellW * ((float)SHELL_4_HEIGHT / SHELL_4_WIDTH);
+    float shellX = tankLeft + tankSize + r * 0.04f;
+    /* Shell 1 */
+    dl->AddImage((ImTextureID)fireTilesTex,
+                 ImVec2(shellX, cy - shellH * 0.5f - shellH * 0.4f),
+                 ImVec2(shellX + shellW, cy + shellH * 0.5f - shellH * 0.4f),
+                 sUv0, sUv1, tint);
+    /* Shell 2 */
+    dl->AddImage((ImTextureID)fireTilesTex,
+                 ImVec2(shellX + shellW * 0.5f, cy - shellH * 0.5f + shellH * 0.4f),
+                 ImVec2(shellX + shellW * 1.5f, cy + shellH * 0.5f + shellH * 0.4f),
+                 sUv0, sUv1, tint);
+  }
 
   /* Mine button */
-  ImU32 mineFill = mineActive ? IM_COL32(80, 80, 255, 200) : IM_COL32(50, 50, 200, 140);
   dl->AddCircleFilled(ImVec2(s_cfg.mineCenterX, s_cfg.mineCenterY), s_cfg.mineRadius,
-                       scaleAlpha(mineFill, mineAlpha), 32);
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), mineAlpha), 32);
   dl->AddCircle(ImVec2(s_cfg.mineCenterX, s_cfg.mineCenterY), s_cfg.mineRadius,
-                scaleAlpha(IM_COL32(100, 100, 255, 200), mineAlpha), 32, 2.0f);
-  const char *mineLabel = "MINE";
-  ImVec2 mineSize = ImGui::CalcTextSize(mineLabel);
-  dl->AddText(ImVec2(s_cfg.mineCenterX - mineSize.x * 0.5f, s_cfg.mineCenterY - mineSize.y * 0.5f),
-              scaleAlpha(IM_COL32(255, 255, 255, 220), mineAlpha), mineLabel);
+                scaleAlpha(IM_COL32(255, 255, 255, 220), mineAlpha), 32, 2.0f);
+  SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
+  if (tilesTex) {
+    float iconHalf = s_cfg.mineRadius * 0.65f;
+    float cx = s_cfg.mineCenterX + s_cfg.mineRadius * 0.05f, cy = s_cfg.mineCenterY;
+    ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+    ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+    ImVec2 uv0((float)MINE_X / TILESHEET_W, (float)MINE_Y / TILESHEET_H);
+    ImVec2 uv1((float)(MINE_X + TILE_SIZE_X) / TILESHEET_W,
+                (float)(MINE_Y + TILE_SIZE_Y) / TILESHEET_H);
+    ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), mineAlpha);
+    dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+  }
 }
 
 /* -------------------------------------------------------
@@ -396,22 +433,20 @@ static void renderGunsightButtons(void) {
   float incAlpha = incActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
 
   /* Decrease button */
-  ImU32 decFill = decActive ? IM_COL32(150, 150, 50, 200) : IM_COL32(100, 100, 30, 140);
   dl->AddCircleFilled(ImVec2(s_cfg.gsDecCenterX, s_cfg.gsDecCenterY), s_cfg.gsDecRadius,
-                       scaleAlpha(decFill, decAlpha), 32);
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), decAlpha), 32);
   dl->AddCircle(ImVec2(s_cfg.gsDecCenterX, s_cfg.gsDecCenterY), s_cfg.gsDecRadius,
-                scaleAlpha(IM_COL32(180, 180, 60, 200), decAlpha), 32, 2.0f);
+                scaleAlpha(IM_COL32(255, 255, 255, 220), decAlpha), 32, 2.0f);
   const char *decLabel = "-";
   ImVec2 decSize = ImGui::CalcTextSize(decLabel);
   dl->AddText(ImVec2(s_cfg.gsDecCenterX - decSize.x * 0.5f, s_cfg.gsDecCenterY - decSize.y * 0.5f),
               scaleAlpha(IM_COL32(255, 255, 255, 220), decAlpha), decLabel);
 
   /* Increase button */
-  ImU32 incFill = incActive ? IM_COL32(150, 150, 50, 200) : IM_COL32(100, 100, 30, 140);
   dl->AddCircleFilled(ImVec2(s_cfg.gsIncCenterX, s_cfg.gsIncCenterY), s_cfg.gsIncRadius,
-                       scaleAlpha(incFill, incAlpha), 32);
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), incAlpha), 32);
   dl->AddCircle(ImVec2(s_cfg.gsIncCenterX, s_cfg.gsIncCenterY), s_cfg.gsIncRadius,
-                scaleAlpha(IM_COL32(180, 180, 60, 200), incAlpha), 32, 2.0f);
+                scaleAlpha(IM_COL32(255, 255, 255, 220), incAlpha), 32, 2.0f);
   const char *incLabel = "+";
   ImVec2 incSize = ImGui::CalcTextSize(incLabel);
   dl->AddText(ImVec2(s_cfg.gsIncCenterX - incSize.x * 0.5f, s_cfg.gsIncCenterY - incSize.y * 0.5f),
@@ -425,33 +460,48 @@ static void renderGunsightButtons(void) {
 static void renderViewButtons(ClientSim *cs) {
   ImDrawList *dl = ImGui::GetForegroundDrawList();
   bool inPillView = (bool)cs->inPillView;
+  SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
 
   /* Pill view button */
   {
     bool active = inputTouchIsButtonHeld(TOUCH_BTN_PILL_VIEW);
-    float alpha = (active || inPillView) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
-    ImU32 fill = (active || inPillView) ? IM_COL32(180, 180, 50, 200) : IM_COL32(100, 100, 50, 140);
+    bool selected = inPillView;
+    float alpha = (active || selected) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
     float cx = s_cfg.pillViewCenterX, cy = s_cfg.pillViewCenterY, r = s_cfg.pillViewRadius;
-    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(fill, alpha), 32);
-    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(200, 200, 100, 220), alpha), 32, 2.0f);
-    const char *label = "PILL";
-    ImVec2 sz = ImGui::CalcTextSize(label);
-    dl->AddText(ImVec2(cx - sz.x * 0.5f, cy - sz.y * 0.5f),
-                scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), label);
+    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    ImU32 outline = selected ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
+    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+    if (tilesTex) {
+      float iconHalf = r * 0.65f;
+      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+      ImVec2 uv0((float)PILL_GOOD15_X / TILESHEET_W, (float)PILL_GOOD15_Y / TILESHEET_H);
+      ImVec2 uv1((float)(PILL_GOOD15_X + TILE_SIZE_X) / TILESHEET_W,
+                  (float)(PILL_GOOD15_Y + TILE_SIZE_Y) / TILESHEET_H);
+      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+    }
   }
 
   /* Tank view button */
   {
     bool active = inputTouchIsButtonHeld(TOUCH_BTN_TANK_VIEW);
-    float alpha = (active || !inPillView) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
-    ImU32 fill = (active || !inPillView) ? IM_COL32(50, 150, 50, 200) : IM_COL32(30, 100, 30, 140);
+    bool selected = !inPillView;
+    float alpha = (active || selected) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
     float cx = s_cfg.tankViewCenterX, cy = s_cfg.tankViewCenterY, r = s_cfg.tankViewRadius;
-    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(fill, alpha), 32);
-    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(100, 220, 100, 220), alpha), 32, 2.0f);
-    const char *label = "TANK";
-    ImVec2 sz = ImGui::CalcTextSize(label);
-    dl->AddText(ImVec2(cx - sz.x * 0.5f, cy - sz.y * 0.5f),
-                scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), label);
+    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    ImU32 outline = selected ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
+    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+    if (tilesTex) {
+      float iconHalf = r * 0.65f;
+      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+      ImVec2 uv0((float)TANK_SELF_0_X / TILESHEET_W, (float)TANK_SELF_0_Y / TILESHEET_H);
+      ImVec2 uv1((float)(TANK_SELF_0_X + TILE_SIZE_X) / TILESHEET_W,
+                  (float)(TANK_SELF_0_Y + TILE_SIZE_Y) / TILESHEET_H);
+      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+    }
   }
 }
 
@@ -537,18 +587,39 @@ static void renderBuildSelectBar(ClientSim *cs) {
     /* 6th cell (bottom-right): LGM man-status indicator.
        The mine button (i=4) already called SameLine(), so the cursor
        is positioned for the next item on the same row.
-       Offset cursor by FramePadding to center it like the ImageButtons. */
+       Offset cursor by FramePadding to center it like the ImageButtons.
+       Draw natively via ImGui draw list to avoid scaling artifacts. */
     ImVec2 manCur = ImGui::GetCursorPos();
     manCur.x += framePad.x;
     manCur.y += framePad.y;
     ImGui::SetCursorPos(manCur);
-    bool manReady = false;
-    SDL_Texture *manTex = sdl3DrawGetManStatusTexture(&manReady);
-    if (manTex && manReady) {
-      SDL_SetTextureBlendMode(manTex, SDL_BLENDMODE_BLEND);
-      ImGui::Image((ImTextureID)manTex, ImVec2(iconSize, iconSize));
-    } else {
-      ImGui::Dummy(ImVec2(iconSize, iconSize));
+    ImGui::Dummy(ImVec2(iconSize, iconSize));
+    {
+      bool manDead = false;
+      TURNTYPE manAngle = 0;
+      bool manReady = sdl3DrawGetManStatusState(&manDead, &manAngle);
+      if (manReady) {
+        ImVec2 rMin = ImGui::GetItemRectMin();
+        ImDrawList *mdl = ImGui::GetWindowDrawList();
+        float mcx = rMin.x + iconSize * 0.5f;
+        float mcy = rMin.y + iconSize * 0.5f;
+        float mr  = iconSize * 0.45f;
+        float thick = iconSize * 0.06f;
+        if (thick < 1.5f) thick = 1.5f;
+
+        if (manDead) {
+          mdl->AddCircleFilled(ImVec2(mcx, mcy), mr, IM_COL32(200, 80, 0, 255), 32);
+        } else {
+          mdl->AddCircle(ImVec2(mcx, mcy), mr, IM_COL32(255, 255, 255, 255), 32, thick);
+          /* Direction arrow from centre */
+          TURNTYPE a = manAngle + (TURNTYPE)BRADIANS_SOUTH;
+          if (a >= (TURNTYPE)BRADIANS_MAX) a -= (TURNTYPE)BRADIANS_MAX;
+          float rad = (float)(a * (2.0 * 3.14159265 / BRADIANS_MAX));
+          float ax = mcx + (mr - thick) * sinf(rad);
+          float ay = mcy - (mr - thick) * cosf(rad);
+          mdl->AddLine(ImVec2(mcx, mcy), ImVec2(ax, ay), IM_COL32(255, 255, 255, 255), thick);
+        }
+      }
     }
   }
   ImGui::End();

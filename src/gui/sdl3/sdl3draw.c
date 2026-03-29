@@ -115,6 +115,8 @@ static int          gStaticLast   = 0;
    Prevents a one-frame artifact where the LGM arrow points top-left before
    the first real angle is computed. */
 static bool         gManStatusReady = false;
+static bool         gManStatusDead  = false;
+static TURNTYPE     gManStatusAngle = 0;
 
 /* Tablet viewport bounds — set each frame by sdl3DrawMainScreen(),
    read by sdl3DrawGetTabletViewport(). */
@@ -567,6 +569,13 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready) {
   if (ready) *ready = gManStatusReady;
   return gManStatusTex;
+}
+
+bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle) {
+  if (!gManStatusReady) return false;
+  if (isDead) *isDead = gManStatusDead;
+  if (angle)  *angle  = gManStatusAngle;
+  return true;
 }
 
 void sdl3DrawDisableLogicalPresentation(void) {
@@ -1788,6 +1797,8 @@ void sdl3DrawSetManClear(void) {
 
 void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
   (void)x; (void)y;
+  gManStatusDead  = isDead;
+  gManStatusAngle = angle;
   if (!gRenderer || !gManStatusTex) return;
 
   /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
