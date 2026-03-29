@@ -425,7 +425,7 @@ static void renderScrollJoystickOverlay(void) {
                 scaleAlpha(IM_COL32(150, 200, 255, 180), alpha), 24, 2.0f);
 }
 
-/* Scroll joystick rate limiter (matches desktop INPUT_SCROLL_WAIT_TIME = 3) */
+/* Scroll rate limiter (matches desktop INPUT_SCROLL_WAIT_TIME = 3) */
 static BYTE s_scrollKeyCount = 0;
 
 static void processScrollJoystick(ClientSim *cs) {
@@ -438,6 +438,26 @@ static void processScrollJoystick(ClientSim *cs) {
   s_scrollKeyCount++;
   if (s_scrollKeyCount >= 3) {
     s_scrollKeyCount = 0;
+    if (scrollY < 0) screenUpdateCS(cs, up);
+    if (scrollY > 0) screenUpdateCS(cs, down);
+    if (scrollX < 0) screenUpdateCS(cs, left);
+    if (scrollX > 0) screenUpdateCS(cs, right);
+  }
+}
+
+/* Viewport drag-to-scroll */
+static BYTE s_vpDragScrollCount = 0;
+
+static void processViewportDragScroll(ClientSim *cs) {
+  int scrollX = 0, scrollY = 0;
+  if (!inputTouchGetViewportDragScroll(&scrollX, &scrollY)) {
+    s_vpDragScrollCount = 0;
+    return;
+  }
+
+  s_vpDragScrollCount++;
+  if (s_vpDragScrollCount >= 3) {
+    s_vpDragScrollCount = 0;
     if (scrollY < 0) screenUpdateCS(cs, up);
     if (scrollY > 0) screenUpdateCS(cs, down);
     if (scrollX < 0) screenUpdateCS(cs, left);
@@ -1196,8 +1216,9 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   /* Process tap-to-build */
   handleTapToBuild(cs);
 
-  /* Process scroll joystick */
+  /* Process scrolling (joystick + viewport drag) */
   processScrollJoystick(cs);
+  processViewportDragScroll(cs);
 
   /* Damage detection — trigger haptic on armour decrease */
   {

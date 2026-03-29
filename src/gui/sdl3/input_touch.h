@@ -142,6 +142,16 @@ bool inputTouchConsumeTapInRect(float x, float y, float w, float h);
 void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
 
+/*********************************************************
+*NAME:          inputTouchGetViewportDragScroll
+*PURPOSE:
+*  Returns the scroll direction from dragging on the viewport.
+*  Uses natural scrolling (drag right → scroll left).
+*  Sets scrollX/scrollY to -1, 0, or +1.
+*  Returns true if a viewport drag is active.
+*********************************************************/
+bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY);
+
 /* Legacy API — now wrappers around button system */
 bool inputTouchIsFirePressed(void);
 bool inputTouchIsMinePressed(void);
