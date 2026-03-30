@@ -34,8 +34,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include <curl/curl.h>
+#include <sodium.h>
 #include "cJSON.h"
+#include "wbn_signing_key.h"
 
 #ifdef _WIN32
   #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
@@ -188,6 +191,12 @@ bool httpCreate(void) {
 
   altIpAddress[0] = '\0';
 
+  if (sodium_init() < 0) {
+    fprintf(stderr, "WinBolo.net: sodium_init failed\n");
+    httpStarted = false;
+    return false;
+  }
+
   CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
   if (res != CURLE_OK) {
     fprintf(stderr, "WinBolo.net: curl_global_init failed: %s\n",
@@ -213,6 +222,30 @@ void httpDestroy(void) {
 }
 
 /*********************************************************
+*NAME:          wbn_sign_request
+*PURPOSE:
+* Produces a hex-encoded Ed25519 signature over the
+* concatenation of timestamp_str and json_body.
+* sig_hex_out must be at least 129 bytes.
+*********************************************************/
+static void wbn_sign_request(const char *timestamp_str, const char *json_body, char *sig_hex_out) {
+  size_t ts_len   = strlen(timestamp_str);
+  size_t body_len = strlen(json_body);
+  size_t msg_len  = ts_len + body_len;
+
+  unsigned char *message = malloc(msg_len);
+  memcpy(message, timestamp_str, ts_len);
+  memcpy(message + ts_len, json_body, body_len);
+
+  unsigned char sig[crypto_sign_BYTES];
+  crypto_sign_detached(sig, NULL, message, msg_len, WBN_SIGNING_KEY);
+
+  sodium_bin2hex(sig_hex_out, 129, sig, crypto_sign_BYTES);
+
+  free(message);
+}
+
+/*********************************************************
 *NAME:          wbn_api_post
 *PURPOSE:
 * Low-level POST of a JSON string to a WinBolo.net API
@@ -230,8 +263,22 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   char url[FILENAME_MAX];
   snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
 
+  /* Generate timestamp and Ed25519 signature */
+  char timestamp_str[32];
+  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+
+  char sig_hex[129];
+  wbn_sign_request(timestamp_str, json_body, sig_hex);
+
+  char sig_header[256];
+  char ts_header[64];
+  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Content-Type: application/json");
+  headers = curl_slist_append(headers, sig_header);
+  headers = curl_slist_append(headers, ts_header);
 
   DynBuf respBuf;
   dynBufInit(&respBuf);
