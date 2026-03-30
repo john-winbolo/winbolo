@@ -41,6 +41,7 @@ typedef struct {
     SDL_Renderer *renderer;
     SDL_Texture  *tilesTex;
     int           zoomFactor;
+    int           sheetScale;  /* atlas scale: source coords *= sheetScale */
 } MapViewCtx;
 
 /* Tile-number -> atlas-coordinate lookup tables (populated by mapViewInit). */

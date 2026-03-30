@@ -146,6 +146,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   /* Combine with touch joystick input in tablet mode */
   if (tb == TNONE && uiModeIsTablet()) {
+    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
     tb = inputTouchGetMovement();
   }
 

@@ -35,6 +35,31 @@
 #define BOLO_MOBILE 0
 #endif
 
+/* Prevent iOS from shifting the entire SDL view when the soft keyboard appears.
+ * SDL3's iOS view controller monitors the textInputRect set via
+ * SDL_SetTextInputArea() and scrolls the view so the text field stays visible.
+ * We don't want that — instead we leave the view in place and let the keyboard
+ * overlay on top.  Call this after ImGui_ImplSDL3_NewFrame() (which sets the
+ * text input area) to reset it so the view is never shifted.
+ *
+ * Also call SDL_StopTextInput() to dismiss the keyboard when a dialog closes
+ * or the user taps outside a text field. */
+#if defined(__IPHONEOS__)
+static inline void dialogResetTextInputArea(SDL_Window *window) {
+    SDL_Rect r = {0, 0, 1, 0};
+    SDL_SetTextInputArea(window, &r, 0);
+}
+
+static inline void dialogDismissKeyboard(SDL_Window *window) {
+    if (SDL_TextInputActive(window)) {
+        SDL_StopTextInput(window);
+    }
+}
+#else
+static inline void dialogResetTextInputArea(SDL_Window *window) { (void)window; }
+static inline void dialogDismissKeyboard(SDL_Window *window) { (void)window; }
+#endif
+
 /* Compute UI scale factor from window dimensions.
  * On desktop we control the dialog window size, so scale is always 1.0.
  * On Android (and similar full-screen platforms) the dialog renders into
@@ -42,7 +67,7 @@
  * Reference height is 540px (1x scale). */
 static inline float dialogComputeScale(int screenW, int screenH) {
     (void)screenW;
-#ifdef __ANDROID__
+#if BOLO_MOBILE
     float scale = (float)screenH / 540.0f;
     if (scale < 1.0f) scale = 1.0f;
     return scale;
@@ -66,6 +91,20 @@ static inline unsigned char *dialogLoadFontData(const char *path, int *outSize) 
     if ((Sint64)bytesRead != size) { IM_FREE(buf); return nullptr; }
     *outSize = (int)size;
     return buf;
+}
+
+/* Override DisplayFramebufferScale after ImGui_ImplSDL3_NewFrame().
+ * When a logical presentation is active, SDL already maps point-space
+ * coordinates to native pixels.  ImGui_ImplSDL3_NewFrame() detects the
+ * Retina scale and sets DisplayFramebufferScale to e.g. 3.0, which
+ * causes the ImGui renderer to double-scale vertices.  Reset to 1.0
+ * so the logical presentation is the only scaling layer. */
+static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
+    SDL_Window *win = SDL_GetRenderWindow(renderer);
+    if (win && (SDL_GetWindowFlags(win) & SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+        ImGuiIO &io = ImGui::GetIO();
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    }
 }
 
 /* Set up a scaled font and touch-friendly ImGui style.
@@ -103,12 +142,25 @@ static inline void dialogApplyScaling(float uiScale) {
     style.ScaleAllSizes(uiScale);
 }
 
-/* Save logical presentation before a dialog (Android needs this). */
+/* Save logical presentation before a dialog (Android needs this).
+ * When HIGH_PIXEL_DENSITY is active, we set a point-space logical
+ * presentation so dialogs (which use SDL_GetWindowSize for coordinates)
+ * render correctly onto the native-resolution backing buffer. */
 static inline void dialogSaveLogicalPresentation(SDL_Renderer *renderer,
                                                   int *outW, int *outH,
                                                   SDL_RendererLogicalPresentation *outMode) {
     SDL_GetRenderLogicalPresentation(renderer, outW, outH, outMode);
-    SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_Window *win = SDL_GetRenderWindow(renderer);
+    if (win && (SDL_GetWindowFlags(win) & SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+        int winW = 0, winH = 0;
+        SDL_GetWindowSize(win, &winW, &winH);
+        if (winW > 0 && winH > 0) {
+            SDL_SetRenderLogicalPresentation(renderer, winW, winH,
+                                             SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        }
+    } else {
+        SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    }
 }
 
 /* Restore logical presentation after a dialog. */
@@ -116,6 +168,31 @@ static inline void dialogRestoreLogicalPresentation(SDL_Renderer *renderer,
                                                      int w, int h,
                                                      SDL_RendererLogicalPresentation mode) {
     SDL_SetRenderLogicalPresentation(renderer, w, h, mode);
+}
+
+/* Query safe area insets for notch/Dynamic Island avoidance.
+ * Returns insets in window-point coordinates (left, top, right, bottom).
+ * On platforms without safe areas, all values are 0. */
+struct DialogSafeInsets {
+    float left, top, right, bottom;
+};
+
+static inline DialogSafeInsets dialogGetSafeInsets(SDL_Window *window) {
+    DialogSafeInsets insets = {0, 0, 0, 0};
+#if BOLO_MOBILE
+    SDL_Rect safeRect;
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(window, &winW, &winH);
+    if (winW > 0 && winH > 0 && SDL_GetWindowSafeArea(window, &safeRect)) {
+        insets.left   = (float)safeRect.x;
+        insets.top    = (float)safeRect.y;
+        insets.right  = (float)(winW - (safeRect.x + safeRect.w));
+        insets.bottom = (float)(winH - (safeRect.y + safeRect.h));
+    }
+#else
+    (void)window;
+#endif
+    return insets;
 }
 
 /* Frame rate cap for mobile platforms (Android/iOS).

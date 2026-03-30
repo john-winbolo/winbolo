@@ -109,6 +109,8 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogResetTextInputArea(window);
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         int winW, winH;
@@ -201,6 +203,9 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         SDL_RenderPresent(renderer);
         dialogFrameCapEnd(frameCapStart);
     }
+
+    /* Dismiss soft keyboard before tearing down ImGui */
+    dialogDismissKeyboard(window);
 
     /* Tear down ImGui */
     ImGui_ImplSDLRenderer3_Shutdown();

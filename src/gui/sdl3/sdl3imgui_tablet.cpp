@@ -9,12 +9,12 @@
 *Purpose:
 *  Renders the tablet-mode ImGui overlay:
 *  - Floating virtual joystick visualization
-*  - Shoot and mine buttons
-*  - Build select bar
-*  - Hamburger menu for all desktop menu items
-*  - Status grids (tanks/pills/bases) in left gutter
-*  - Stock bars (shells/mines/armour/trees) in right gutter
-*  - Status drawer fallback when gutters are too narrow
+*  - Action buttons (fire, mine, gunsight, view toggle)
+*  - Vertical build select bar (right side)
+*  - Top bar (players, messages, settings icons)
+*  - Resource bars (tank S/M/A/T + closest base S/M/A)
+*  - Status grids fallback drawer
+*  - Messages overlay
 *********************************************************/
 
 #ifdef _MSC_VER
@@ -30,10 +30,13 @@
 #endif
 
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <string.h>
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../../bolo/global.h"
@@ -50,17 +53,12 @@ extern "C" {
 #include "sdl3imgui.h"
 #include "sdl3imgui_tablet.h"
 
-/* Forward declarations — these live in screen.c.
-   Including winbolo.h pulls in Win32 headers that conflict with SDL3,
-   so we declare them explicitly here, matching sdl3imgui.cpp's approach. */
 extern "C" {
-  /* Cursor and build actions — used by tap-to-build */
   void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
   void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
-
-  /* View toggle — pill view / tank view */
   void screenPillViewCS(struct ClientSim *csPtr, int horz, int vert);
   void screenTankViewCS(struct ClientSim *csPtr);
+  void screenUpdateCS(struct ClientSim *csPtr, updateType value);
 }
 
 static bool s_statusDrawerOpen = false;
@@ -71,18 +69,56 @@ static TabletLayoutConfig s_cfg;
 /* Message fade state */
 static char s_lastMsgTop[512] = {0};
 static char s_lastMsgBottom[512] = {0};
-static Uint64 s_msgLastChangeTime = 0;  /* SDL_GetTicks() when message content last changed */
+static Uint64 s_msgLastChangeTime = 0;
 static bool s_msgTimerInitialized = false;
 
-/* Haptic state — track previous fire/mine state to detect edges */
+/* Haptic state */
 static bool s_prevFirePressed = false;
 static bool s_prevMinePressed = false;
 
-/* Damage detection — track armour to detect hits */
+/* Damage detection */
 static BYTE s_prevArmour = 0;
 static bool s_armourInitialized = false;
 
-/* Tile sheet dimensions (must match tile.bmp) */
+/* Top bar icon textures (loaded from SVG on first use) */
+static SDL_Texture *s_iconPlayers  = nullptr;
+static SDL_Texture *s_iconMessages = nullptr;
+static SDL_Texture *s_iconSettings = nullptr;
+static bool s_iconsLoaded = false;
+
+static SDL_Texture *loadSvgIcon(const char *path, int size) {
+  NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+  if (!image) return nullptr;
+  if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+  float scale = (float)size / image->height;
+  if (image->width * scale > (float)size) scale = (float)size / image->width;
+  int w = size, h = size;
+  unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+  if (!pixels) { nsvgDelete(image); return nullptr; }
+  memset(pixels, 0, (size_t)(w * h * 4));
+  float offX = ((float)w - image->width * scale) * 0.5f;
+  float offY = ((float)h - image->height * scale) * 0.5f;
+  NSVGrasterizer *rast = nsvgCreateRasterizer();
+  nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+  nsvgDeleteRasterizer(rast);
+  nsvgDelete(image);
+  SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+  if (!surface) { SDL_free(pixels); return nullptr; }
+  SDL_Texture *tex = SDL_CreateTextureFromSurface(sdl3DrawGetRenderer(), surface);
+  SDL_DestroySurface(surface);
+  SDL_free(pixels);
+  return tex;
+}
+
+static void ensureIconsLoaded(int size) {
+  if (s_iconsLoaded) return;
+  s_iconsLoaded = true;
+  s_iconPlayers  = loadSvgIcon("data/ui/players.svg", size);
+  s_iconMessages = loadSvgIcon("data/ui/messages.svg", size);
+  s_iconSettings = loadSvgIcon("data/ui/settings.svg", size);
+}
+
+/* Tile sheet dimensions */
 #define TILESHEET_W 496.0f
 #define TILESHEET_H 176.0f
 
@@ -101,46 +137,45 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->viewportH = viewportH;
   cfg->effectiveZoom = effectiveZoom;
 
-  /* Safe area insets — platform defaults */
-#if defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
-  cfg->safeTop = 59.0f;
-  cfg->safeBottom = 34.0f;
-  cfg->safeLeft = 44.0f;
-  cfg->safeRight = 44.0f;
-#else
-  cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
-#endif
 
-  /* Compute gutters */
+  /* Safe area insets */
+  cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
+  {
+    SDL_Window *win = sdl3DrawGetWindow();
+    if (win) {
+      SDL_Rect safeRect;
+      int winW = 0, winH = 0;
+      SDL_GetWindowSize(win, &winW, &winH);
+      if (SDL_GetWindowSafeArea(win, &safeRect) && winW > 0 && winH > 0) {
+        cfg->safeLeft   = (float)safeRect.x * (float)screenW / (float)winW;
+        cfg->safeTop    = (float)safeRect.y * (float)screenH / (float)winH;
+        cfg->safeRight  = (float)(winW - safeRect.x - safeRect.w) * (float)screenW / (float)winW;
+        cfg->safeBottom = (float)(winH - safeRect.y - safeRect.h) * (float)screenH / (float)winH;
+      }
+    }
+  }
+
+  /* Gutters */
   cfg->leftGutter = viewportX;
   cfg->rightGutter = screenW - viewportX - viewportW;
   cfg->topGutter = viewportY;
   cfg->bottomGutter = screenH - viewportY - viewportH;
 
-  /* Breakpoints */
-  cfg->showStatusGrids = (cfg->leftGutter >= 100);
-  cfg->showStockBars = (cfg->rightGutter >= 60);
+  /* Pixel scale: all hardcoded pixel values are authored for the reference
+     space (480px height).  Scale them proportionally to the actual logical
+     coordinate space so they stay the same physical size on screen. */
+  float pixelScale = (float)screenH / 480.0f;
+  if (pixelScale < 0.7f) pixelScale = 0.7f;
 
-  /* Scale factor for small screens */
-  float scaleFactor = (screenH < 500) ? 0.7f : 1.0f;
+  /* Breakpoints — scale threshold too */
+  cfg->showStatusGrids = (cfg->leftGutter >= (int)(100 * pixelScale));
+
+  float scaleFactor = pixelScale;
 
   /* Joystick */
   cfg->joyOuterRadius = 60.0f * scaleFactor;
   cfg->joyInnerRadius = 25.0f * scaleFactor;
   cfg->joyZoneRight = 0.40f;
-
-  /* Action buttons */
-  cfg->fireRadius = 35.0f * scaleFactor;
-  cfg->fireCenterX = (float)screenW - cfg->safeRight - cfg->fireRadius - 20.0f;
-  cfg->fireCenterY = (float)screenH - cfg->safeBottom - cfg->fireRadius * 3.5f;
-  cfg->mineRadius = 28.0f * scaleFactor;
-  cfg->mineCenterX = cfg->fireCenterX;
-  cfg->mineCenterY = cfg->fireCenterY - cfg->fireRadius * 1.5f - cfg->mineRadius * 1.5f;
-
-  /* Build bar */
-  cfg->buildIconSize = 40.0f * scaleFactor;
-  cfg->buildSpacing = 16.0f * scaleFactor;
-  cfg->buildBarY = (float)screenH - cfg->safeBottom - 8.0f - (cfg->buildIconSize + 16.0f);
 
   /* Opacity */
   cfg->idleOpacity = 0.4f;
@@ -152,48 +187,128 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->msgFadeSeconds = 5.0f;
   cfg->msgFadeDuration = 1.0f;
 
-  /* Status grids — positioned in left gutter */
-  cfg->tanksGridX = cfg->safeLeft + 4.0f;
-  cfg->tanksGridY = cfg->safeTop + 4.0f;
+  /* --- Right-side layout: everything fits in the right gutter --- */
+  float gutterLeft = (float)(viewportX + viewportW);  /* left edge of right gutter */
+  float rightEdge = (float)screenW - cfg->safeRight;  /* right edge (safe) */
+  float gutterW = rightEdge - gutterLeft;
+  float bottomEdge = (float)screenH - cfg->safeBottom;
+  float topEdge = cfg->safeTop;
+  float gutterCenterX = gutterLeft + gutterW * 0.5f;
+  float pad = gutterW * 0.03f;  /* ~3% of gutter as padding */
+  if (pad < 4.0f) pad = 4.0f;
 
-  /* Scale status grids to fit available gutter width */
-  float availW = (float)cfg->leftGutter - cfg->safeLeft - 8.0f;
-  cfg->statusGridScale = availW / 90.0f;
+  /* Fire button — biggest, bottom-right, sized relative to gutter */
+  cfg->fireRadius = gutterW * 0.18f;
+  if (cfg->fireRadius < 25.0f * pixelScale) cfg->fireRadius = 25.0f * pixelScale;
+  cfg->fireCenterX = rightEdge - cfg->fireRadius - pad;
+  cfg->fireCenterY = bottomEdge - cfg->fireRadius - pad;
+
+  /* Mine button — left of fire */
+  cfg->mineRadius = gutterW * 0.13f;
+  if (cfg->mineRadius < 18.0f * pixelScale) cfg->mineRadius = 18.0f * pixelScale;
+  cfg->mineCenterX = cfg->fireCenterX - cfg->fireRadius - cfg->mineRadius - pad;
+  cfg->mineCenterY = cfg->fireCenterY;
+  if (cfg->mineCenterX - cfg->mineRadius < gutterLeft + pad) {
+    cfg->mineCenterX = gutterLeft + pad + cfg->mineRadius;
+  }
+
+  /* Gunsight +/- — row above fire/mine, as circles */
+  cfg->gsIncRadius = gutterW * 0.10f;
+  if (cfg->gsIncRadius < 16.0f * pixelScale) cfg->gsIncRadius = 16.0f * pixelScale;
+  cfg->gsDecRadius = cfg->gsIncRadius;
+  float gsRowY = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius;
+  float gsGap = pad * 2;
+  cfg->gsDecCenterX = gutterCenterX - cfg->gsDecRadius - gsGap * 0.5f;
+  cfg->gsDecCenterY = gsRowY;
+  cfg->gsIncCenterX = gutterCenterX + cfg->gsIncRadius + gsGap * 0.5f;
+  cfg->gsIncCenterY = gsRowY;
+
+  /* Pill view / Tank view — vertical stack in gap between viewport edge and mine button */
+  cfg->pillViewRadius = cfg->gsIncRadius;
+  cfg->tankViewRadius = cfg->gsIncRadius;
+  float viewGapLeft = gutterLeft;
+  float viewGapRight = cfg->mineCenterX - cfg->mineRadius;
+  float viewBtnX = (viewGapLeft + viewGapRight) * 0.5f;
+  float viewBtnGap = pad;
+  cfg->pillViewCenterX = viewBtnX;
+  cfg->pillViewCenterY = cfg->fireCenterY;  /* bottom — aligned with fire/mine */
+  cfg->tankViewCenterX = viewBtnX;
+  cfg->tankViewCenterY = cfg->pillViewCenterY - cfg->pillViewRadius - viewBtnGap - cfg->tankViewRadius;
+
+  /* --- Top bar buttons — spread across gutter --- */
+  cfg->topBtnSize = gutterW * 0.25f;
+  if (cfg->topBtnSize < 30.0f * pixelScale) cfg->topBtnSize = 30.0f * pixelScale;
+  if (cfg->topBtnSize > 52.0f * pixelScale) cfg->topBtnSize = 52.0f * pixelScale;
+  cfg->topBtnY = topEdge + pad;
+  float topBtnGap = (gutterW - pad * 2 - cfg->topBtnSize * 3) / 2.0f;
+  if (topBtnGap < pad) topBtnGap = pad;
+  cfg->playersBtnX = gutterLeft + pad;
+  cfg->msgBtnX = cfg->playersBtnX + cfg->topBtnSize + topBtnGap;
+  cfg->cogBtnX = cfg->msgBtnX + cfg->topBtnSize + topBtnGap;
+
+  /* --- Build bar — 2-column grid, right of resource bars --- */
+  cfg->buildSpacing = pad;
+  float buildBarLeft = cfg->playersBtnX + cfg->topBtnSize + pad;
+  float buildAvailW = rightEdge - buildBarLeft - pad;  /* space to right edge */
+  float buildBtnPad = 16.0f;
+  /* Size icons to fit 2 columns + spacing + window padding within available width */
+  float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPad * 2) / 2.0f;
+  cfg->buildIconSize = gutterW * 0.18f;
+  if (cfg->buildIconSize < 24.0f * pixelScale) cfg->buildIconSize = 24.0f * pixelScale;
+  if (cfg->buildIconSize > 48.0f * pixelScale) cfg->buildIconSize = 48.0f * pixelScale;
+  if (cfg->buildIconSize > maxIconFromSpace) cfg->buildIconSize = maxIconFromSpace;
+  float buildBtnSize = cfg->buildIconSize + buildBtnPad;
+  float buildGridW = buildBtnSize * 2 + cfg->buildSpacing;
+  float buildGridH = buildBtnSize * 3 + cfg->buildSpacing * 2;
+  cfg->buildBarX = buildBarLeft;
+  /* Align top with tank stock bars */
+  float buildRegionTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
+  cfg->buildBarY = buildRegionTop;
+
+  /* --- Resource bars — left of build bar, compact like the main game --- */
+  cfg->barsW = cfg->buildBarX - gutterLeft - pad * 2;
+  if (cfg->barsW < 30.0f * pixelScale) cfg->barsW = 30.0f * pixelScale;
+  if (cfg->barsW > 100.0f * pixelScale) cfg->barsW = 100.0f * pixelScale;
+  cfg->barsH = 280.0f;  /* tall bars, readable on tablet */
+  cfg->tankBarsX = cfg->playersBtnX;
+  cfg->tankBarsY = buildRegionTop;
+  cfg->baseBarsX = cfg->tankBarsX;
+  cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
+
+  /* --- Status grids (left gutter) --- */
+  cfg->tanksGridX = cfg->safeLeft + 4.0f * pixelScale;
+  cfg->tanksGridY = cfg->safeTop + 4.0f * pixelScale;
+  float availW = (float)cfg->leftGutter - cfg->safeLeft - 8.0f * pixelScale;
+  cfg->statusGridScale = availW / (90.0f * pixelScale);
   if (cfg->statusGridScale > 2.0f) cfg->statusGridScale = 2.0f;
   if (cfg->statusGridScale < 0.5f) cfg->statusGridScale = 0.5f;
-
-  float gridH = 66.0f * cfg->statusGridScale;
-  float gridGap = 4.0f * cfg->statusGridScale;
+  float gridH = 66.0f * pixelScale * cfg->statusGridScale;
+  float gridGap = 4.0f * pixelScale * cfg->statusGridScale;
   cfg->pillsGridX = cfg->tanksGridX;
   cfg->pillsGridY = cfg->tanksGridY + gridH + gridGap;
   cfg->basesGridX = cfg->tanksGridX;
   cfg->basesGridY = cfg->pillsGridY + gridH + gridGap;
 
-  /* Stock bars — positioned in right gutter */
-  cfg->stockBarsX = (float)(viewportX + viewportW) + 8.0f;
-  cfg->stockBarsY = cfg->safeTop + 80.0f;
-
-  /* View toggle button — bottom-right, above the build bar, near FIRE/MINE */
-  cfg->viewToggleRadius = 22.0f * scaleFactor;
-  cfg->viewToggleCenterX = cfg->fireCenterX - cfg->fireRadius - cfg->viewToggleRadius - 16.0f;
-  cfg->viewToggleCenterY = cfg->fireCenterY + cfg->fireRadius;
-
-  /* Messages overlay — above the build bar, same width as viewport */
+  /* --- Messages overlay — bottom center of viewport --- */
   cfg->msgOverlayW = (float)viewportW;
   cfg->msgOverlayX = (float)viewportX;
-  cfg->msgOverlayY = cfg->buildBarY - 68.0f;
+  cfg->msgOverlayY = (float)(viewportY + viewportH) - 76.0f * pixelScale;
 
-  /* Top bar buttons — right-aligned: [Players] [Message] [Cog] */
-  cfg->topBtnSize = 44.0f * scaleFactor;
-  cfg->topBtnY = cfg->safeTop + 4.0f;
-  float btnStep = cfg->topBtnSize + 8.0f;
-  cfg->cogBtnX = (float)screenW - cfg->safeRight - 8.0f - cfg->topBtnSize;
-  cfg->msgBtnX = cfg->cogBtnX - btnStep;
-  cfg->playersBtnX = cfg->msgBtnX - btnStep;
+  /* --- Scroll joystick — in the gap between build/resource area and gunsight buttons --- */
+  float scrollTop = buildRegionTop + buildGridH + pad * 2;
+  float scrollBottom = gsRowY - cfg->gsIncRadius - pad * 2;
+  cfg->scrollJoyX = gutterLeft;
+  cfg->scrollJoyY = scrollTop;
+  cfg->scrollJoyW = gutterW;
+  cfg->scrollJoyH = scrollBottom - scrollTop;
+  cfg->scrollJoyOuterRadius = cfg->scrollJoyH * 0.40f;
+  if (cfg->scrollJoyOuterRadius > gutterW * 0.30f) cfg->scrollJoyOuterRadius = gutterW * 0.30f;
+  if (cfg->scrollJoyOuterRadius < 20.0f * pixelScale) cfg->scrollJoyOuterRadius = 20.0f * pixelScale;
+  cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
 }
 
 /* -------------------------------------------------------
- * Alpha helper — scale the alpha channel of an ImU32 color
+ * Alpha helper
  * ------------------------------------------------------- */
 
 static ImU32 scaleAlpha(ImU32 col, float alpha) {
@@ -204,7 +319,7 @@ static ImU32 scaleAlpha(ImU32 col, float alpha) {
 }
 
 /* -------------------------------------------------------
- * Joystick overlay — appears on touch, fades out 1s after release
+ * Joystick overlay
  * ------------------------------------------------------- */
 
 static void renderJoystickOverlay(void) {
@@ -237,87 +352,339 @@ static void renderJoystickOverlay(void) {
 }
 
 /* -------------------------------------------------------
- * Shoot / Mine buttons
+ * Scroll joystick overlay
  * ------------------------------------------------------- */
 
-static void renderShootMineButtons(void) {
+static void renderScrollJoystickOverlay(void) {
+  float ax, ay, tx, ty;
+  bool active;
+  Uint64 releaseTime;
+  inputTouchGetScrollJoystickState(&ax, &ay, &tx, &ty, &active, &releaseTime);
+
+  float alpha = 0.0f;
+  if (active) {
+    alpha = 1.0f;
+  } else if (releaseTime > 0) {
+    Uint64 elapsed = SDL_GetTicks() - releaseTime;
+    if (elapsed < s_cfg.joyFadeOutMs) {
+      alpha = 1.0f - (float)elapsed / (float)s_cfg.joyFadeOutMs;
+    }
+  }
+
+  /* Draw zone hint (always visible at low opacity) */
+  if (s_cfg.scrollJoyH > 10.0f) {
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    float zoneAlpha = 0.15f;
+    float cx = s_cfg.scrollJoyX + s_cfg.scrollJoyW * 0.5f;
+    float cy = s_cfg.scrollJoyY + s_cfg.scrollJoyH * 0.5f;
+
+    /* Draw a crosshair hint to indicate scroll directions */
+    float hintR = s_cfg.scrollJoyOuterRadius * 0.5f;
+    ImU32 hintCol = scaleAlpha(IM_COL32(200, 200, 200, 100), zoneAlpha);
+    dl->AddCircle(ImVec2(cx, cy), hintR, hintCol, 24, 1.5f);
+
+    /* Small arrow triangles */
+    float arrowDist = hintR * 1.4f;
+    float arrowSize = hintR * 0.3f;
+    /* Up arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx, cy - arrowDist - arrowSize),
+      ImVec2(cx - arrowSize * 0.6f, cy - arrowDist + arrowSize * 0.3f),
+      ImVec2(cx + arrowSize * 0.6f, cy - arrowDist + arrowSize * 0.3f),
+      hintCol);
+    /* Down arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx, cy + arrowDist + arrowSize),
+      ImVec2(cx - arrowSize * 0.6f, cy + arrowDist - arrowSize * 0.3f),
+      ImVec2(cx + arrowSize * 0.6f, cy + arrowDist - arrowSize * 0.3f),
+      hintCol);
+    /* Left arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx - arrowDist - arrowSize, cy),
+      ImVec2(cx - arrowDist + arrowSize * 0.3f, cy - arrowSize * 0.6f),
+      ImVec2(cx - arrowDist + arrowSize * 0.3f, cy + arrowSize * 0.6f),
+      hintCol);
+    /* Right arrow */
+    dl->AddTriangleFilled(
+      ImVec2(cx + arrowDist + arrowSize, cy),
+      ImVec2(cx + arrowDist - arrowSize * 0.3f, cy - arrowSize * 0.6f),
+      ImVec2(cx + arrowDist - arrowSize * 0.3f, cy + arrowSize * 0.6f),
+      hintCol);
+  }
+
+  if (alpha <= 0.0f) return;
+
   ImDrawList *dl = ImGui::GetForegroundDrawList();
-  bool shootActive = inputTouchIsFirePressed();
-  bool mineActive = inputTouchIsMineHeld();
+  dl->AddCircleFilled(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
+                       scaleAlpha(IM_COL32(100, 150, 200, 80), alpha), 32);
+  dl->AddCircle(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
+                scaleAlpha(IM_COL32(100, 150, 200, 120), alpha), 32, 2.0f);
+  dl->AddCircleFilled(ImVec2(tx, ty), s_cfg.scrollJoyInnerRadius,
+                       scaleAlpha(IM_COL32(100, 150, 200, 160), alpha), 24);
+  dl->AddCircle(ImVec2(tx, ty), s_cfg.scrollJoyInnerRadius,
+                scaleAlpha(IM_COL32(150, 200, 255, 180), alpha), 24, 2.0f);
+}
 
-  /* Haptic feedback on button press edges */
-  if (shootActive && !s_prevFirePressed) {
-    inputTouchTriggerHaptic(0.6f, 30);  /* short pulse on FIRE press */
+/* Scroll rate limiter (matches desktop INPUT_SCROLL_WAIT_TIME = 3) */
+static BYTE s_scrollKeyCount = 0;
+
+static void processScrollJoystick(ClientSim *cs) {
+  int scrollX = 0, scrollY = 0;
+  if (!inputTouchGetScrollDirection(&scrollX, &scrollY)) {
+    s_scrollKeyCount = 0;
+    return;
   }
-  s_prevFirePressed = shootActive;
 
-  if (mineActive && !s_prevMinePressed) {
-    inputTouchTriggerHaptic(0.8f, 60);  /* medium pulse on MINE place */
+  s_scrollKeyCount++;
+  if (s_scrollKeyCount >= 3) {
+    s_scrollKeyCount = 0;
+    if (scrollY < 0) screenUpdateCS(cs, up);
+    if (scrollY > 0) screenUpdateCS(cs, down);
+    if (scrollX < 0) screenUpdateCS(cs, left);
+    if (scrollX > 0) screenUpdateCS(cs, right);
   }
-  s_prevMinePressed = mineActive;
+}
 
-  float shootAlpha = shootActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
-  float mineAlpha = mineActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+/* Viewport drag-to-scroll with smooth sub-tile pixel offset.
+   Accumulates drag pixels and only commits a full tile scroll
+   to the engine when the offset reaches one tile width. */
+static float s_vpDragAccumX = 0.0f;
+static float s_vpDragAccumY = 0.0f;
 
-  /* Shoot button */
-  float shootX = s_cfg.fireCenterX;
-  float shootY = s_cfg.fireCenterY;
-  ImU32 shootFill = shootActive ? IM_COL32(255, 80, 80, 200) : IM_COL32(200, 50, 50, 140);
-  dl->AddCircleFilled(ImVec2(shootX, shootY), s_cfg.fireRadius,
-                       scaleAlpha(shootFill, shootAlpha), 32);
-  dl->AddCircle(ImVec2(shootX, shootY), s_cfg.fireRadius,
-                scaleAlpha(IM_COL32(255, 100, 100, 200), shootAlpha), 32, 2.0f);
+static void processViewportDragScroll(ClientSim *cs) {
+  float dx = 0.0f, dy = 0.0f;
+  if (!inputTouchGetViewportDragDelta(&dx, &dy)) {
+    /* Drag ended or finger stopped — reset the pixel offset */
+    if (s_vpDragAccumX != 0.0f || s_vpDragAccumY != 0.0f) {
+      s_vpDragAccumX = 0.0f;
+      s_vpDragAccumY = 0.0f;
+      sdl3DrawSetDragOffset(0, 0);
+    }
+    return;
+  }
 
-  const char *shootLabel = "FIRE";
-  ImVec2 shootSize = ImGui::CalcTextSize(shootLabel);
-  dl->AddText(ImVec2(shootX - shootSize.x * 0.5f, shootY - shootSize.y * 0.5f),
-              scaleAlpha(IM_COL32(255, 255, 255, 220), shootAlpha), shootLabel);
+  /* Accumulate pixel movement (inverted for natural scrolling:
+     drag right → content moves right → viewport scrolls left) */
+  s_vpDragAccumX -= dx;
+  s_vpDragAccumY -= dy;
 
-  /* Mine button */
-  float mineX = s_cfg.mineCenterX;
-  float mineY = s_cfg.mineCenterY;
-  ImU32 mineFill = mineActive ? IM_COL32(80, 80, 255, 200) : IM_COL32(50, 50, 200, 140);
-  dl->AddCircleFilled(ImVec2(mineX, mineY), s_cfg.mineRadius,
-                       scaleAlpha(mineFill, mineAlpha), 32);
-  dl->AddCircle(ImVec2(mineX, mineY), s_cfg.mineRadius,
-                scaleAlpha(IM_COL32(100, 100, 255, 200), mineAlpha), 32, 2.0f);
+  /* Get tile size in screen pixels */
+  int vpX, vpY, vpW, vpH, vpZoom;
+  sdl3DrawGetTabletViewport(&vpX, &vpY, &vpW, &vpH, &vpZoom);
+  int tilePx = TILE_SIZE_X * vpZoom;
+  if (tilePx < 1) tilePx = 1;
 
-  const char *mineLabel = "MINE";
-  ImVec2 mineSize = ImGui::CalcTextSize(mineLabel);
-  dl->AddText(ImVec2(mineX - mineSize.x * 0.5f, mineY - mineSize.y * 0.5f),
-              scaleAlpha(IM_COL32(255, 255, 255, 220), mineAlpha), mineLabel);
+  /* Commit full tile scrolls to the engine */
+  while (s_vpDragAccumX >= tilePx)  { screenUpdateCS(cs, right); s_vpDragAccumX -= tilePx; }
+  while (s_vpDragAccumX <= -tilePx) { screenUpdateCS(cs, left);  s_vpDragAccumX += tilePx; }
+  while (s_vpDragAccumY >= tilePx)  { screenUpdateCS(cs, down);  s_vpDragAccumY -= tilePx; }
+  while (s_vpDragAccumY <= -tilePx) { screenUpdateCS(cs, up);    s_vpDragAccumY += tilePx; }
+
+  /* Set the sub-tile pixel offset for smooth rendering */
+  sdl3DrawSetDragOffset((int)s_vpDragAccumX, (int)s_vpDragAccumY);
 }
 
 /* -------------------------------------------------------
- * Build select bar
+ * Fire / Mine buttons
  * ------------------------------------------------------- */
 
-/* Representative tile positions for each build type (from tiles.h) */
+static void renderFireMineButtons(void) {
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  bool fireActive = inputTouchIsButtonHeld(TOUCH_BTN_FIRE);
+  bool mineActive = inputTouchIsButtonHeld(TOUCH_BTN_MINE);
+
+  /* Haptic feedback on press edges */
+  if (fireActive && !s_prevFirePressed) {
+    inputTouchTriggerHaptic(0.6f, 30);
+  }
+  s_prevFirePressed = fireActive;
+
+  if (mineActive && !s_prevMinePressed) {
+    inputTouchTriggerHaptic(0.8f, 60);
+  }
+  s_prevMinePressed = mineActive;
+
+  float fireAlpha = fireActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+  float mineAlpha = mineActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+
+  /* Fire button */
+  dl->AddCircleFilled(ImVec2(s_cfg.fireCenterX, s_cfg.fireCenterY), s_cfg.fireRadius,
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), fireAlpha), 32);
+  dl->AddCircle(ImVec2(s_cfg.fireCenterX, s_cfg.fireCenterY), s_cfg.fireRadius,
+                scaleAlpha(IM_COL32(255, 255, 255, 220), fireAlpha), 32, 2.0f);
+  SDL_Texture *fireTilesTex = sdl3DrawGetTilesTexture();
+  if (fireTilesTex) {
+    float r = s_cfg.fireRadius;
+    float cx = s_cfg.fireCenterX, cy = s_cfg.fireCenterY;
+    ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), fireAlpha);
+
+    /* Tank facing right, shifted left to make room for shells */
+    float tankSize = r * 0.825f;
+    float tankLeft = cx - r * 0.41f;
+    ImVec2 tMin(tankLeft, cy - tankSize * 0.5f);
+    ImVec2 tMax(tankLeft + tankSize, cy + tankSize * 0.5f);
+    ImVec2 tUv0((float)TANK_SELF_4_X / TILESHEET_W, (float)TANK_SELF_4_Y / TILESHEET_H);
+    ImVec2 tUv1((float)(TANK_SELF_4_X + TILE_SIZE_X) / TILESHEET_W,
+                (float)(TANK_SELF_4_Y + TILE_SIZE_Y) / TILESHEET_H);
+    dl->AddImage((ImTextureID)fireTilesTex, tMin, tMax, tUv0, tUv1, tint);
+
+    /* Two shells to the right of the tank */
+    ImVec2 sUv0((float)SHELL_4_X / TILESHEET_W, (float)SHELL_4_Y / TILESHEET_H);
+    ImVec2 sUv1((float)(SHELL_4_X + SHELL_4_WIDTH) / TILESHEET_W,
+                (float)(SHELL_4_Y + SHELL_4_HEIGHT) / TILESHEET_H);
+    float shellW = r * 0.225f;
+    float shellH = shellW * ((float)SHELL_4_HEIGHT / SHELL_4_WIDTH);
+    float shellX = tankLeft + tankSize + r * 0.04f;
+    /* Shell 1 */
+    dl->AddImage((ImTextureID)fireTilesTex,
+                 ImVec2(shellX, cy - shellH * 0.5f - shellH * 0.4f),
+                 ImVec2(shellX + shellW, cy + shellH * 0.5f - shellH * 0.4f),
+                 sUv0, sUv1, tint);
+    /* Shell 2 */
+    dl->AddImage((ImTextureID)fireTilesTex,
+                 ImVec2(shellX + shellW * 0.5f, cy - shellH * 0.5f + shellH * 0.4f),
+                 ImVec2(shellX + shellW * 1.5f, cy + shellH * 0.5f + shellH * 0.4f),
+                 sUv0, sUv1, tint);
+  }
+
+  /* Mine button */
+  dl->AddCircleFilled(ImVec2(s_cfg.mineCenterX, s_cfg.mineCenterY), s_cfg.mineRadius,
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), mineAlpha), 32);
+  dl->AddCircle(ImVec2(s_cfg.mineCenterX, s_cfg.mineCenterY), s_cfg.mineRadius,
+                scaleAlpha(IM_COL32(255, 255, 255, 220), mineAlpha), 32, 2.0f);
+  SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
+  if (tilesTex) {
+    float iconHalf = s_cfg.mineRadius * 0.65f;
+    float cx = s_cfg.mineCenterX + s_cfg.mineRadius * 0.05f, cy = s_cfg.mineCenterY;
+    ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+    ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+    ImVec2 uv0((float)MINE_X / TILESHEET_W, (float)MINE_Y / TILESHEET_H);
+    ImVec2 uv1((float)(MINE_X + TILE_SIZE_X) / TILESHEET_W,
+                (float)(MINE_Y + TILE_SIZE_Y) / TILESHEET_H);
+    ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), mineAlpha);
+    dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+  }
+}
+
+/* -------------------------------------------------------
+ * Gunsight increase / decrease buttons
+ * ------------------------------------------------------- */
+
+static void renderGunsightButtons(void) {
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  bool decActive = inputTouchIsButtonHeld(TOUCH_BTN_GS_DECREASE);
+  bool incActive = inputTouchIsButtonHeld(TOUCH_BTN_GS_INCREASE);
+
+  float decAlpha = decActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+  float incAlpha = incActive ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+
+  /* Decrease button */
+  dl->AddCircleFilled(ImVec2(s_cfg.gsDecCenterX, s_cfg.gsDecCenterY), s_cfg.gsDecRadius,
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), decAlpha), 32);
+  dl->AddCircle(ImVec2(s_cfg.gsDecCenterX, s_cfg.gsDecCenterY), s_cfg.gsDecRadius,
+                scaleAlpha(IM_COL32(255, 255, 255, 220), decAlpha), 32, 2.0f);
+  const char *decLabel = "-";
+  ImVec2 decSize = ImGui::CalcTextSize(decLabel);
+  dl->AddText(ImVec2(s_cfg.gsDecCenterX - decSize.x * 0.5f, s_cfg.gsDecCenterY - decSize.y * 0.5f),
+              scaleAlpha(IM_COL32(255, 255, 255, 220), decAlpha), decLabel);
+
+  /* Increase button */
+  dl->AddCircleFilled(ImVec2(s_cfg.gsIncCenterX, s_cfg.gsIncCenterY), s_cfg.gsIncRadius,
+                       scaleAlpha(IM_COL32(0, 0, 0, 200), incAlpha), 32);
+  dl->AddCircle(ImVec2(s_cfg.gsIncCenterX, s_cfg.gsIncCenterY), s_cfg.gsIncRadius,
+                scaleAlpha(IM_COL32(255, 255, 255, 220), incAlpha), 32, 2.0f);
+  const char *incLabel = "+";
+  ImVec2 incSize = ImGui::CalcTextSize(incLabel);
+  dl->AddText(ImVec2(s_cfg.gsIncCenterX - incSize.x * 0.5f, s_cfg.gsIncCenterY - incSize.y * 0.5f),
+              scaleAlpha(IM_COL32(255, 255, 255, 220), incAlpha), incLabel);
+}
+
+/* -------------------------------------------------------
+ * View toggle button (pill view / tank view)
+ * ------------------------------------------------------- */
+
+static void renderViewButtons(ClientSim *cs) {
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  bool inPillView = (bool)cs->inPillView;
+  SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
+
+  /* Pill view button */
+  {
+    bool active = inputTouchIsButtonHeld(TOUCH_BTN_PILL_VIEW);
+    bool selected = inPillView;
+    float alpha = (active || selected) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+    float cx = s_cfg.pillViewCenterX, cy = s_cfg.pillViewCenterY, r = s_cfg.pillViewRadius;
+    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    ImU32 outline = selected ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
+    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+    if (tilesTex) {
+      float iconHalf = r * 0.65f;
+      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+      ImVec2 uv0((float)PILL_GOOD15_X / TILESHEET_W, (float)PILL_GOOD15_Y / TILESHEET_H);
+      ImVec2 uv1((float)(PILL_GOOD15_X + TILE_SIZE_X) / TILESHEET_W,
+                  (float)(PILL_GOOD15_Y + TILE_SIZE_Y) / TILESHEET_H);
+      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+    }
+  }
+
+  /* Tank view button */
+  {
+    bool active = inputTouchIsButtonHeld(TOUCH_BTN_TANK_VIEW);
+    bool selected = !inPillView;
+    float alpha = (active || selected) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+    float cx = s_cfg.tankViewCenterX, cy = s_cfg.tankViewCenterY, r = s_cfg.tankViewRadius;
+    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    ImU32 outline = selected ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
+    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+    if (tilesTex) {
+      float iconHalf = r * 0.65f;
+      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+      ImVec2 uv0((float)TANK_SELF_0_X / TILESHEET_W, (float)TANK_SELF_0_Y / TILESHEET_H);
+      ImVec2 uv1((float)(TANK_SELF_0_X + TILE_SIZE_X) / TILESHEET_W,
+                  (float)(TANK_SELF_0_Y + TILE_SIZE_Y) / TILESHEET_H);
+      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+    }
+  }
+}
+
+/* -------------------------------------------------------
+ * Build select bar — vertical right column
+ * ------------------------------------------------------- */
+
 static const struct { int x, y; } buildIconTiles[] = {
-  { FOREST_X,       FOREST_Y       },  /* BsTrees   - forest tile */
-  { ROAD_SOLID_X,   ROAD_SOLID_Y   },  /* BsRoad    - solid road tile */
-  { BUILD_SINGLE_X, BUILD_SINGLE_Y },  /* BsBuilding - single wall tile */
-  { PILL_EVIL15_X,  PILL_EVIL15_Y  },  /* BsPillbox - full-health pillbox */
-  { MINE_X,         MINE_Y         },  /* BsMine    - mine tile */
+  { FOREST_X,       FOREST_Y       },  /* BsTrees */
+  { ROAD_SOLID_X,   ROAD_SOLID_Y   },  /* BsRoad */
+  { BUILD_SINGLE_X, BUILD_SINGLE_Y },  /* BsBuilding */
+  { PILL_EVIL15_X,  PILL_EVIL15_Y  },  /* BsPillbox */
+  { MINE_X,         MINE_Y         },  /* BsMine */
 };
 
 static void renderBuildSelectBar(ClientSim *cs) {
   SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
   if (!tilesTex) return;
 
-  float iconDispSize = s_cfg.buildIconSize;
+  float iconSize = s_cfg.buildIconSize;
   float btnPad = 8.0f;
-  float btnSize = iconDispSize + btnPad * 2;
+  float btnSize = iconSize + btnPad * 2;
   float spacing = s_cfg.buildSpacing;
-  float totalW = btnSize * 5 + spacing * 4;
-  float barHeight = btnSize + 12.0f;
-  float startX = ((float)s_cfg.screenW - totalW) * 0.5f - 8.0f;
+  int cols = 2;
+  int rows = 3;  /* 5 items in a 2x3 grid (last cell empty) */
+  float gridW = btnSize * cols + spacing * (cols - 1);
+  float gridH = btnSize * rows + spacing * (rows - 1);
+  float startX = s_cfg.buildBarX;
   float startY = s_cfg.buildBarY;
 
+  ImVec2 framePad = ImGui::GetStyle().FramePadding;
+  float winW = gridW + 12 + framePad.x * 4;  /* account for ImGui frame padding on each button */
+  float winH = gridH + 12 + framePad.y * 6;  /* frame padding on each row of buttons */
   ImGui::SetNextWindowPos(ImVec2(startX, startY));
-  ImGui::SetNextWindowSize(ImVec2(totalW + 16, barHeight));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, 0));
+  ImGui::SetNextWindowSize(ImVec2(winW, winH));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, spacing));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
 
   if (ImGui::Begin("##BuildBar", nullptr,
@@ -330,10 +697,8 @@ static void renderBuildSelectBar(ClientSim *cs) {
     buildSelect values[] = { BsTrees, BsRoad, BsBuilding, BsPillbox, BsMine };
 
     for (int i = 0; i < 5; i++) {
-      if (i > 0) ImGui::SameLine();
       bool selected = (cur == values[i]);
 
-      /* Compute UV coordinates for this tile (16x16 region in the tile sheet) */
       ImVec2 uv0((float)buildIconTiles[i].x / TILESHEET_W,
                   (float)buildIconTiles[i].y / TILESHEET_H);
       ImVec2 uv1((float)(buildIconTiles[i].x + TILE_SIZE_X) / TILESHEET_W,
@@ -348,11 +713,59 @@ static void renderBuildSelectBar(ClientSim *cs) {
       }
 
       if (ImGui::ImageButton(ids[i], (ImTextureID)tilesTex,
-                              ImVec2(iconDispSize, iconDispSize), uv0, uv1)) {
+                              ImVec2(iconSize, iconSize), uv0, uv1)) {
+        setBuildCurrentSelectCS(cs, values[i]);
+      }
+
+      /* Touch tap fallback — ImGui buttons may not register finger events on iOS */
+      ImVec2 rMin = ImGui::GetItemRectMin();
+      ImVec2 rMax = ImGui::GetItemRectMax();
+      if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
         setBuildCurrentSelectCS(cs, values[i]);
       }
 
       ImGui::PopStyleColor(2);
+
+      /* Place two items per row */
+      if (i % cols == 0) ImGui::SameLine();
+    }
+
+    /* 6th cell (bottom-right): LGM man-status indicator.
+       The mine button (i=4) already called SameLine(), so the cursor
+       is positioned for the next item on the same row.
+       Offset cursor by FramePadding to center it like the ImageButtons.
+       Draw natively via ImGui draw list to avoid scaling artifacts. */
+    ImVec2 manCur = ImGui::GetCursorPos();
+    manCur.x += framePad.x;
+    manCur.y += framePad.y;
+    ImGui::SetCursorPos(manCur);
+    ImGui::Dummy(ImVec2(iconSize, iconSize));
+    {
+      bool manDead = false;
+      TURNTYPE manAngle = 0;
+      bool manReady = sdl3DrawGetManStatusState(&manDead, &manAngle);
+      if (manReady) {
+        ImVec2 rMin = ImGui::GetItemRectMin();
+        ImDrawList *mdl = ImGui::GetWindowDrawList();
+        float mcx = rMin.x + iconSize * 0.5f;
+        float mcy = rMin.y + iconSize * 0.5f;
+        float mr  = iconSize * 0.45f;
+        float thick = iconSize * 0.06f;
+        if (thick < 1.5f) thick = 1.5f;
+
+        if (manDead) {
+          mdl->AddCircleFilled(ImVec2(mcx, mcy), mr, IM_COL32(200, 80, 0, 255), 32);
+        } else {
+          mdl->AddCircle(ImVec2(mcx, mcy), mr, IM_COL32(255, 255, 255, 255), 32, thick);
+          /* Direction arrow from centre */
+          TURNTYPE a = manAngle + (TURNTYPE)BRADIANS_SOUTH;
+          if (a >= (TURNTYPE)BRADIANS_MAX) a -= (TURNTYPE)BRADIANS_MAX;
+          float rad = (float)(a * (2.0 * 3.14159265 / BRADIANS_MAX));
+          float ax = mcx + (mr - thick) * sinf(rad);
+          float ay = mcy - (mr - thick) * cosf(rad);
+          mdl->AddLine(ImVec2(mcx, mcy), ImVec2(ax, ay), IM_COL32(255, 255, 255, 255), thick);
+        }
+      }
     }
   }
   ImGui::End();
@@ -361,67 +774,183 @@ static void renderBuildSelectBar(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
- * Top bar buttons: Players, Message, Settings cog, Hamburger
+ * Top bar buttons: Players (people icon), Message (chat), Settings (cog)
  * ------------------------------------------------------- */
 
 static void renderTopBarButtons(ClientSim *cs) {
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
   float btnSize = s_cfg.topBtnSize;
   float btnY = s_cfg.topBtnY;
   float alpha = s_cfg.topBtnOpacity;
-  ImGuiWindowFlags btnFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
-  ImVec2 btnDim(btnSize, btnSize);
-  ImVec2 winSize(btnSize + 8, btnSize + 8);
+  float radius = btnSize * 0.5f;
 
-  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+  ensureIconsLoaded((int)(btnSize * 2));
 
-  /* Players button */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.playersBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##PlayersBtn", nullptr, btnFlags)) {
-    if (ImGui::Button("Ply", btnDim)) {
-      sdl3ImguiShowPlayersPanel(true);
+  /* Helper: draw one circular button with an icon texture */
+  struct {
+    float cx, cy;
+    SDL_Texture *icon;
+    const char *fallback;
+  } btns[] = {
+    { s_cfg.playersBtnX + radius, btnY + radius, s_iconMessages, "Msg" },
+    { s_cfg.msgBtnX     + radius, btnY + radius, s_iconPlayers,  "Ply" },
+    { s_cfg.cogBtnX     + radius, btnY + radius, s_iconSettings, "Set" },
+  };
+
+  for (int i = 0; i < 3; i++) {
+    float cx = btns[i].cx;
+    float cy = btns[i].cy;
+
+    /* Black filled circle + white outline */
+    dl->AddCircleFilled(ImVec2(cx, cy), radius,
+                         scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    dl->AddCircle(ImVec2(cx, cy), radius,
+                  scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), 32, 2.0f);
+
+    /* Icon (white SVG) or fallback text */
+    if (btns[i].icon) {
+      float iconHalf = radius * 0.65f;
+      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
+      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
+      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      dl->AddImage((ImTextureID)btns[i].icon, pMin, pMax,
+                   ImVec2(0, 0), ImVec2(1, 1), tint);
+    } else {
+      ImVec2 textSize = ImGui::CalcTextSize(btns[i].fallback);
+      dl->AddText(ImVec2(cx - textSize.x * 0.5f, cy - textSize.y * 0.5f),
+                  scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), btns[i].fallback);
     }
   }
-  ImGui::End();
-  ImGui::PopStyleColor();
 
-  /* Message button */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.msgBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##MsgBtn", nullptr, btnFlags)) {
-    if (ImGui::Button("Msg", btnDim)) {
-      sdl3ImguiShowSendMsg(true);
-    }
+  /* Tap detection — messages */
+  if (inputTouchConsumeTapInRect(s_cfg.playersBtnX, btnY, btnSize, btnSize)) {
+    sdl3ImguiShowSendMsg(true);
   }
-  ImGui::End();
-  ImGui::PopStyleColor();
-
-  /* Settings cog button */
-  ImGui::SetNextWindowPos(ImVec2(s_cfg.cogBtnX, btnY));
-  ImGui::SetNextWindowSize(winSize);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-  if (ImGui::Begin("##CogBtn", nullptr, btnFlags)) {
-    if (ImGui::Button("\xe2\x9a\x99", btnDim)) {
+  /* Tap detection — players */
+  if (inputTouchConsumeTapInRect(s_cfg.msgBtnX, btnY, btnSize, btnSize)) {
+    sdl3ImguiShowPlayersPanel(true);
+  }
+  /* Tap detection — settings: extend tap target to right screen edge for
+     easier touch targeting near the device edge */
+  {
+    float tapPad = btnSize * 0.25f;
+    float tapX = s_cfg.cogBtnX - tapPad;
+    float tapY2 = btnY - tapPad;
+    float tapW = (float)s_cfg.screenW - tapX;
+    float tapH = btnSize + tapPad * 2;
+    if (inputTouchConsumeTapInRect(tapX, tapY2, tapW, tapH)) {
       sdl3ImguiShowSettings();
     }
   }
-  ImGui::End();
-  ImGui::PopStyleColor();
 
-  ImGui::PopStyleVar(); /* Alpha */
-
-  /* Status drawer toggle button — only show when grids are NOT in gutter */
+  /* Status drawer toggle — only when grids not in gutter */
   if (!s_cfg.showStatusGrids) {
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
-    ImGui::SetNextWindowPos(ImVec2(s_cfg.cogBtnX, btnY + btnSize + 8));
-    ImGui::SetNextWindowSize(winSize);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.4f));
-    if (ImGui::Begin("##StatusBtn", nullptr, btnFlags)) {
-      if (ImGui::Button("i", btnDim)) {
-        s_statusDrawerOpen = !s_statusDrawerOpen;
+    float statusCx = s_cfg.cogBtnX + radius;
+    float statusCy = btnY + btnSize + 8 + radius;
+    dl->AddCircleFilled(ImVec2(statusCx, statusCy), radius,
+                         scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    dl->AddCircle(ImVec2(statusCx, statusCy), radius,
+                  scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), 32, 2.0f);
+    const char *label = "i";
+    ImVec2 textSize = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(statusCx - textSize.x * 0.5f, statusCy - textSize.y * 0.5f),
+                scaleAlpha(IM_COL32(255, 255, 255, 220), alpha), label);
+    if (inputTouchConsumeTapInRect(s_cfg.cogBtnX, btnY + btnSize + 8, btnSize, btnSize)) {
+      s_statusDrawerOpen = !s_statusDrawerOpen;
+    }
+  }
+}
+
+/* -------------------------------------------------------
+ * Resource bars — Tank (S/M/A/T) and Closest Base (S/M/A)
+ * ------------------------------------------------------- */
+
+static void renderResourceBars(ClientSim *cs) {
+  BYTE shells, mines, armour, trees;
+  sdl3DrawGetCachedTankStats(&shells, &mines, &armour, &trees);
+
+  BYTE baseShells, baseMines, baseArmour;
+  bool hasBase;
+  sdl3DrawGetCachedBaseStats(&baseShells, &baseMines, &baseArmour, &hasBase);
+
+  ImGuiWindowFlags winFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                              ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs;
+
+  /* --- Tank resource bars --- */
+  {
+    float x = s_cfg.tankBarsX;
+    float y = s_cfg.tankBarsY;
+    float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
+    float h = s_cfg.barsH;
+    float winPad = 4.0f;
+    float barW = 12.0f;
+    float barGap = (w - winPad * 2 - barW * 4) / 3.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(x, y));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
+
+    if (ImGui::Begin("##TankBars", nullptr, winFlags)) {
+      ImDrawList *dl = ImGui::GetWindowDrawList();
+      ImVec2 winPos = ImGui::GetWindowPos();
+
+      /* 4 vertical bars: S M A T */
+      float maxBarH = h - winPad * 2;
+      float barTop = winPos.y + winPad;
+      ImU32 barColor = IM_COL32(0, 200, 0, 200);
+      ImU32 bgColor = IM_COL32(40, 40, 40, 180);
+
+      BYTE vals[4] = { shells, mines, armour, trees };
+
+      for (int i = 0; i < 4; i++) {
+        float bx = winPos.x + winPad + i * (barW + barGap);
+        dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
+        float fillH = (vals[i] / 40.0f) * maxBarH;
+        if (fillH > maxBarH) fillH = maxBarH;
+        dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
+                           ImVec2(bx + barW, barTop + maxBarH), barColor);
+      }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+  }
+
+  /* --- Base resource bars --- */
+  {
+    float x = s_cfg.baseBarsX;
+    float y = s_cfg.baseBarsY;
+    float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
+    float h = s_cfg.barsH - 16.0f;  /* slightly shorter, only 3 bars */
+    float winPad = 4.0f;
+    float barW = 12.0f;
+    float barGap = (w - winPad * 2 - barW * 3) / 2.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(x, y));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, hasBase ? 0.5f : 0.25f));
+
+    if (ImGui::Begin("##BaseBars", nullptr, winFlags)) {
+      ImDrawList *dl = ImGui::GetWindowDrawList();
+      ImVec2 winPos = ImGui::GetWindowPos();
+
+      float maxBarH = h - winPad * 2;
+      float barTop = winPos.y + winPad;
+      ImU32 barColor = hasBase ? IM_COL32(0, 200, 0, 200) : IM_COL32(60, 60, 60, 120);
+      ImU32 bgColor = IM_COL32(40, 40, 40, 180);
+
+      BYTE vals[3] = { baseShells, baseMines, baseArmour };
+
+      for (int i = 0; i < 3; i++) {
+        float bx = winPos.x + winPad + i * (barW + barGap);
+        dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
+        float fillH = hasBase ? (vals[i] / 90.0f) * maxBarH : 0.0f;
+        if (fillH > maxBarH) fillH = maxBarH;
+        dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
+                           ImVec2(bx + barW, barTop + maxBarH), barColor);
       }
     }
     ImGui::End();
@@ -524,132 +1053,17 @@ static void renderStatusDrawer(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
- * Render stock bars (shells/mines/armour/trees) in right gutter
- * ------------------------------------------------------- */
-
-static void renderStockBars(ClientSim *cs) {
-  BYTE shells, mines, armour, trees;
-  screenGetTankStatsCS(cs, &shells, &mines, &armour, &trees);
-
-  int kills, deaths;
-  screenGetKillsDeathsCS(cs, &kills, &deaths);
-
-  float x = s_cfg.stockBarsX;
-  float y = s_cfg.stockBarsY;
-  float panelW = 56.0f;
-  float panelH = 220.0f;
-
-  ImGui::SetNextWindowPos(ImVec2(x, y));
-  ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
-
-  if (ImGui::Begin("##StockBars", nullptr,
-                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs)) {
-
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    ImVec2 winPos = ImGui::GetWindowPos();
-
-    /* Kills/Deaths text */
-    char kdText[32];
-    snprintf(kdText, sizeof(kdText), "K:%d D:%d", kills, deaths);
-    dl->AddText(ImVec2(winPos.x + 4, winPos.y + 4), IM_COL32(200, 200, 200, 220), kdText);
-
-    /* Draw 4 vertical bars */
-    float barW = 6.0f;
-    float maxBarH = 160.0f;
-    float barTop = winPos.y + 24.0f;
-    float barGap = (panelW - 8.0f - barW * 4) / 3.0f;
-    ImU32 barColor = IM_COL32(0, 200, 0, 200);
-    ImU32 bgColor = IM_COL32(40, 40, 40, 180);
-
-    BYTE vals[4] = { shells, mines, armour, trees };
-    const char *labels[4] = { "S", "M", "A", "T" };
-
-    for (int i = 0; i < 4; i++) {
-      float bx = winPos.x + 4.0f + i * (barW + barGap);
-      float by = barTop;
-
-      /* Background */
-      dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + barW, by + maxBarH), bgColor);
-
-      /* Filled portion (bottom-up) */
-      float fillH = (vals[i] / 40.0f) * maxBarH;
-      if (fillH > maxBarH) fillH = maxBarH;
-      dl->AddRectFilled(ImVec2(bx, by + maxBarH - fillH),
-                         ImVec2(bx + barW, by + maxBarH), barColor);
-
-      /* Label below */
-      dl->AddText(ImVec2(bx, by + maxBarH + 2.0f), IM_COL32(200, 200, 200, 200), labels[i]);
-    }
-  }
-  ImGui::End();
-  ImGui::PopStyleColor();
-  ImGui::PopStyleVar();
-}
-
-/* -------------------------------------------------------
- * View toggle button (pill view / tank view)
- * ------------------------------------------------------- */
-
-static const ImU32 VIEW_TOGGLE_COLOR        = IM_COL32(100, 100, 50, 140);
-static const ImU32 VIEW_TOGGLE_COLOR_ACTIVE = IM_COL32(180, 180, 50, 200);
-
-static void renderViewToggleButton(ClientSim *cs) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
-
-  float cx = s_cfg.viewToggleCenterX;
-  float cy = s_cfg.viewToggleCenterY;
-  float r  = s_cfg.viewToggleRadius;
-  bool inPillView = (bool)cs->inPillView;
-
-  dl->AddCircleFilled(ImVec2(cx, cy), r,
-                       inPillView ? VIEW_TOGGLE_COLOR_ACTIVE : VIEW_TOGGLE_COLOR, 32);
-  dl->AddCircle(ImVec2(cx, cy), r,
-                IM_COL32(200, 200, 100, 200), 32, 2.0f);
-
-  const char *label = inPillView ? "PILL" : "VIEW";
-  ImVec2 labelSize = ImGui::CalcTextSize(label);
-  dl->AddText(ImVec2(cx - labelSize.x * 0.5f, cy - labelSize.y * 0.5f),
-              IM_COL32(255, 255, 255, 220), label);
-
-  /* Check for tap on the button via ImGui invisible button */
-  ImGui::SetNextWindowPos(ImVec2(cx - r, cy - r));
-  ImGui::SetNextWindowSize(ImVec2(r * 2, r * 2));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  if (ImGui::Begin("##ViewToggle", nullptr,
-                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_NoBackground)) {
-    if (ImGui::InvisibleButton("##ViewToggleBtn", ImVec2(r * 2, r * 2))) {
-      if (inPillView) {
-        screenTankViewCS(cs);
-      } else {
-        screenPillViewCS(cs, 0, 0);
-      }
-    }
-  }
-  ImGui::End();
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor();
-}
-
-/* -------------------------------------------------------
- * Messages overlay (above build bar)
+ * Messages overlay (bottom center of viewport)
  * ------------------------------------------------------- */
 
 static void renderMessagesOverlay(void) {
   const char *top = NULL, *bottom = NULL;
   sdl3DrawGetCachedMessages(&top, &bottom);
 
-  /* Nothing to show if both lines are empty */
   bool hasContent = (top && top[0] != '\0') || (bottom && bottom[0] != '\0');
   if (!hasContent && !s_msgTimerInitialized) return;
 
-  /* Detect message content changes to reset fade timer */
+  /* Detect message changes */
   bool changed = false;
   if (top && strcmp(top, s_lastMsgTop) != 0) {
     strncpy(s_lastMsgTop, top, sizeof(s_lastMsgTop) - 1);
@@ -673,7 +1087,6 @@ static void renderMessagesOverlay(void) {
     s_msgTimerInitialized = true;
   }
 
-  /* Compute fade alpha: full opacity for msgFadeSeconds, then fade over msgFadeDuration */
   float msgAlpha = 1.0f;
   if (s_msgTimerInitialized) {
     float elapsed = (float)(SDL_GetTicks() - s_msgLastChangeTime) / 1000.0f;
@@ -690,7 +1103,6 @@ static void renderMessagesOverlay(void) {
   float y = s_cfg.msgOverlayY;
   float w = s_cfg.msgOverlayW;
 
-  /* Scale font up so text is large and readable on tablet */
   float fontScale = 1.6f;
   float lineH = ImGui::GetTextLineHeight() * fontScale;
   float h = lineH * 2.0f + 12.0f;
@@ -764,9 +1176,29 @@ static void renderMessagesOverlay(void) {
 static void handleTapToBuild(ClientSim *cs) {
   BYTE tileX, tileY;
   if (inputTouchGetViewportTap(&tileX, &tileY)) {
+    /* Discard viewport tap if a dialog/modal is over the game area —
+       the tap was meant for the dialog, not for building.
+       Use IsDialogOpen rather than WantCaptureMouse because the
+       always-visible tablet overlay windows (build bar, resource bars)
+       also set WantCaptureMouse and must not block building. */
+    if (sdl3ImguiIsDialogOpen()) return;
     screenSetCursorPosCS(cs, tileX, tileY);
     screenManMoveCS(cs, getBuildCurrentSelectCS(cs));
   }
+}
+
+/* -------------------------------------------------------
+ * Register buttons for hit-testing
+ * ------------------------------------------------------- */
+
+static void registerTouchButtons(void) {
+  inputTouchClearButtons();
+  inputTouchRegisterButton(TOUCH_BTN_FIRE, s_cfg.fireCenterX, s_cfg.fireCenterY, s_cfg.fireRadius);
+  inputTouchRegisterButton(TOUCH_BTN_MINE, s_cfg.mineCenterX, s_cfg.mineCenterY, s_cfg.mineRadius);
+  inputTouchRegisterButton(TOUCH_BTN_GS_INCREASE, s_cfg.gsIncCenterX, s_cfg.gsIncCenterY, s_cfg.gsIncRadius);
+  inputTouchRegisterButton(TOUCH_BTN_GS_DECREASE, s_cfg.gsDecCenterX, s_cfg.gsDecCenterY, s_cfg.gsDecRadius);
+  inputTouchRegisterButton(TOUCH_BTN_PILL_VIEW, s_cfg.pillViewCenterX, s_cfg.pillViewCenterY, s_cfg.pillViewRadius);
+  inputTouchRegisterButton(TOUCH_BTN_TANK_VIEW, s_cfg.tankViewCenterX, s_cfg.tankViewCenterY, s_cfg.tankViewRadius);
 }
 
 /* -------------------------------------------------------
@@ -776,7 +1208,8 @@ static void handleTapToBuild(ClientSim *cs) {
 void sdl3ImguiTabletOverlay(ClientSim *cs) {
   if (!uiModeIsTablet()) return;
 
-  /* Get viewport bounds from sdl3draw */
+  /* Get viewport bounds from sdl3draw — now in the same coordinate
+     space as ImGui since we override DisplaySize to match. */
   int vpX, vpY, vpW, vpH, vpZoom;
   sdl3DrawGetTabletViewport(&vpX, &vpY, &vpW, &vpH, &vpZoom);
 
@@ -787,40 +1220,60 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   /* Reconfigure layout each frame */
   tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
 
+  /* Register button positions for touch hit-testing */
+  registerTouchButtons();
+
+  /* Register scroll joystick zone */
+  if (s_cfg.scrollJoyH > 10.0f) {
+    inputTouchSetScrollJoystickZone(s_cfg.scrollJoyX, s_cfg.scrollJoyY,
+                                    s_cfg.scrollJoyW, s_cfg.scrollJoyH);
+  }
+
   /* Update viewport bounds for tap detection */
   inputTouchSetViewportBounds(vpX, vpY, vpW, vpH, vpZoom);
 
   /* Process tap-to-build */
   handleTapToBuild(cs);
 
+  /* Process scrolling (joystick + viewport drag) */
+  processScrollJoystick(cs);
+  processViewportDragScroll(cs);
+
   /* Damage detection — trigger haptic on armour decrease */
   {
     BYTE shells, mines, armour, trees;
-    screenGetTankStatsCS(cs, &shells, &mines, &armour, &trees);
+    sdl3DrawGetCachedTankStats(&shells, &mines, &armour, &trees);
     if (s_armourInitialized && armour < s_prevArmour) {
-      inputTouchTriggerHaptic(0.3f, 20);  /* light pulse on taking damage */
+      inputTouchTriggerHaptic(0.3f, 20);
     }
     s_prevArmour = armour;
     s_armourInitialized = true;
   }
 
-  renderJoystickOverlay();
-  renderShootMineButtons();
-  renderBuildSelectBar(cs);
-  renderMessagesOverlay();
-  renderViewToggleButton(cs);
-  renderTopBarButtons(cs);
-
-  /* Status grids are rendered by sdl3DrawMainScreen() using the same SDL
-     rendering as desktop (BLENDMODE_NONE), positioned in the left gutter
-     via sdl3DrawSetStatusPanelOrigins().  Fall back to the ImGui status
-     drawer when the gutter is too narrow. */
-  if (!s_cfg.showStatusGrids) {
-    renderStatusDrawer(cs);
+  /* Handle view button taps */
+  if (inputTouchIsButtonTapped(TOUCH_BTN_PILL_VIEW)) {
+    if (!cs->inPillView) {
+      screenPillViewCS(cs, 0, 0);
+    }
+  }
+  if (inputTouchIsButtonTapped(TOUCH_BTN_TANK_VIEW)) {
+    if (cs->inPillView) {
+      screenTankViewCS(cs);
+    }
   }
 
-  /* Stock bars in right gutter, or included in drawer */
-  if (s_cfg.showStockBars) {
-    renderStockBars(cs);
+  renderJoystickOverlay();
+  renderScrollJoystickOverlay();
+  renderFireMineButtons();
+  renderGunsightButtons();
+  renderViewButtons(cs);
+  renderBuildSelectBar(cs);
+  renderResourceBars(cs);
+  renderTopBarButtons(cs);
+  renderMessagesOverlay();
+
+  /* Status grids in left gutter, or fall back to drawer */
+  if (!s_cfg.showStatusGrids) {
+    renderStatusDrawer(cs);
   }
 }

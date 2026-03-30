@@ -130,21 +130,29 @@ static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
 }
 
 SDL_Surface *tileLoaderBuildSheet(int tileSize) {
-    (void)tileSize; /* reserved for future zoom support */
+    /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
+       and the sheet is the classic 496x176.  When tileSize==32, scale==2
+       and SVGs are rasterized at 2x for crisper rendering. */
+    int scale = tileSize / TILE_SIZE_X;
+    if (scale < 1) scale = 1;
 
-    /* Create the output RGBA32 surface at 496x176. */
-    SDL_Surface *sheet = SDL_CreateSurface(TILE_FILE_X, TILE_FILE_Y,
+    int sheetW = TILE_FILE_X * scale;
+    int sheetH = TILE_FILE_Y * scale;
+
+    /* Create the output RGBA32 surface at scaled size. */
+    SDL_Surface *sheet = SDL_CreateSurface(sheetW, sheetH,
                                            SDL_PIXELFORMAT_RGBA32);
     if (!sheet) {
-        SDL_Log("tileLoaderBuildSheet: SDL_CreateSurface failed: %s",
-                SDL_GetError());
+        SDL_Log("tileLoaderBuildSheet: SDL_CreateSurface(%dx%d) failed: %s",
+                sheetW, sheetH, SDL_GetError());
         return NULL;
     }
 
     /* Clear to fully transparent. */
     SDL_memset(sheet->pixels, 0, (size_t)(sheet->pitch * sheet->h));
 
-    /* Load the BMP fallback surface and apply green color key. */
+    /* Load the BMP fallback surface and apply green color key.
+       If scale > 1 we scale the BMP up so it lands at the right position. */
     SDL_Surface *bmpRaw = SDL_LoadBMP("data/skin.bmp");
     SDL_Surface *bmp = NULL;
     if (bmpRaw) {
@@ -160,46 +168,74 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 
     NSVGrasterizer *rast = nsvgCreateRasterizer();
 
-    /* Temp buffer for the largest possible sprite (indent tiles are 54x54). */
-    unsigned char *tmpBuf = (unsigned char *)SDL_malloc(54 * 54 * 4);
+    /* Temp buffer: largest sprite is indent tiles (54x54) scaled up. */
+    int maxSpriteSize = 54 * scale;
+    unsigned char *tmpBuf = (unsigned char *)SDL_malloc(
+        (size_t)(maxSpriteSize * maxSpriteSize * 4));
 
     char pathBuf[512];
     int svgCount = 0, pngCount = 0, bmpCount = 0;
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const TileMapEntry *e = &gTileMap[i];
-        int w = e->width;
-        int h = e->height;
+        int w = e->width  * scale;
+        int h = e->height * scale;
+        int dstX = e->sheetX * scale;
+        int dstY = e->sheetY * scale;
         bool loaded = false;
 
-        /* Try SVG first. */
+        /* Try SVG first — rasterized at scaled size. */
         SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.svg", e->name);
         if (!loaded && tryLoadSVG(pathBuf, w, h, tmpBuf, rast)) {
-            blitRGBA(sheet, e->sheetX, e->sheetY, w, h, tmpBuf);
+            blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
             loaded = true;
             svgCount++;
         }
 
-        /* Try PNG next. */
+        /* Try PNG next — scaled to target size. */
         if (!loaded) {
             SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.png", e->name);
             if (tryLoadPNG(pathBuf, w, h, tmpBuf)) {
-                blitRGBA(sheet, e->sheetX, e->sheetY, w, h, tmpBuf);
+                blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                 loaded = true;
                 pngCount++;
             }
         }
 
-        /* Fall back to BMP. */
+        /* Fall back to BMP — blit at 1x then scale up if needed. */
         if (!loaded && bmp) {
-            blitFromBMP(sheet, bmp, e->sheetX, e->sheetY,
-                        e->sheetX, e->sheetY, w, h);
+            if (scale == 1) {
+                blitFromBMP(sheet, bmp, dstX, dstY,
+                            e->sheetX, e->sheetY, e->width, e->height);
+            } else {
+                /* Blit BMP into tmpBuf at 1x, then nearest-neighbor scale up. */
+                SDL_Surface *tmpSurf = SDL_CreateSurface(e->width, e->height,
+                                                         SDL_PIXELFORMAT_RGBA32);
+                if (tmpSurf) {
+                    SDL_Rect srcR = { e->sheetX, e->sheetY, e->width, e->height };
+                    SDL_Rect dstR = { 0, 0, e->width, e->height };
+                    SDL_BlitSurface(bmp, &srcR, tmpSurf, &dstR);
+                    /* Nearest-neighbor scale into sheet */
+                    unsigned char *sp = (unsigned char *)tmpSurf->pixels;
+                    unsigned char *dp = (unsigned char *)sheet->pixels;
+                    for (int row = 0; row < h; row++) {
+                        int srcRow = row * e->height / h;
+                        for (int col = 0; col < w; col++) {
+                            int srcCol = col * e->width / w;
+                            const unsigned char *s = sp + (srcRow * tmpSurf->pitch) + srcCol * 4;
+                            unsigned char *d = dp + ((dstY + row) * sheet->pitch) + (dstX + col) * 4;
+                            d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+                        }
+                    }
+                    SDL_DestroySurface(tmpSurf);
+                }
+            }
             bmpCount++;
         }
     }
 
-    SDL_Log("tileLoaderBuildSheet: loaded %d SVG, %d PNG, %d BMP fallback sprites",
-            svgCount, pngCount, bmpCount);
+    SDL_Log("tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites",
+            scale, sheetW, sheetH, svgCount, pngCount, bmpCount);
 
     SDL_free(tmpBuf);
     if (rast) nsvgDeleteRasterizer(rast);

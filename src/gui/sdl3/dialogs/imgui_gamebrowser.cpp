@@ -35,6 +35,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -293,6 +295,34 @@ extern "C" void broadcastServerCallback(INFO_PACKET *info, struct in_addr *addr,
         std::lock_guard<std::mutex> lock(*pMtx);
         pResults->push_back(pr);
     }).detach();
+}
+
+/* ---- Refresh icon (loaded from SVG) ---- */
+static SDL_Texture *s_refreshIcon = nullptr;
+static bool s_refreshIconAttempted = false;
+
+static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+    float scale = (float)size / image->height;
+    if (image->width * scale > (float)size) scale = (float)size / image->width;
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    float offX = ((float)w - image->width * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
 }
 
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
@@ -590,6 +620,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogResetTextInputArea(window);
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         /* Transparent full-screen host window */
@@ -630,11 +662,116 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* ---- Title bar ---- */
         {
+            /* Load refresh icon on first use */
+            if (!s_refreshIcon && !s_refreshIconAttempted) {
+                s_refreshIconAttempted = true;
+                int iconSize = (int)(24.0f * s);
+                if (iconSize < 16) iconSize = 16;
+
+                /* Try several path candidates */
+                const char *candidates[] = {
+                    "data/ui/refresh.svg",
+                    NULL /* filled in below with basePath variant */
+                };
+                char basePathBuf[FILENAME_MAX] = {};
+                const char *base = SDL_GetBasePath();
+                if (base) {
+                    SDL_snprintf(basePathBuf, sizeof(basePathBuf), "%sdata/ui/refresh.svg", base);
+                    candidates[1] = basePathBuf;
+                }
+                for (int i = 0; i < 2 && !s_refreshIcon; i++) {
+                    if (candidates[i]) {
+                        SDL_Log("[GameBrowser] Trying refresh icon: %s", candidates[i]);
+                        s_refreshIcon = loadSvgIcon(renderer, candidates[i], iconSize);
+                    }
+                }
+                SDL_Log("[GameBrowser] Refresh icon loaded: %s", s_refreshIcon ? "yes" : "no");
+            }
+
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
             ImGui::SetWindowFontScale(1.3f);
             ImGui::Text("%s", title);
             ImGui::SetWindowFontScale(1.0f);
             ImGui::PopStyleColor();
+
+            /* Refresh button on the right side of the title bar */
+            bool doRefresh = autoRefresh;
+            if (s_refreshIcon) {
+                float iconH = ImGui::GetTextLineHeight() * 1.3f;
+                ImVec2 iconSz(iconH, iconH);
+                float pad = ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::SameLine(panelW - iconH - pad - 16.0f * s);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconH * 0.15f);
+                bool wasSearching = searching;
+                if (wasSearching) ImGui::BeginDisabled();
+                if (ImGui::ImageButton("##refreshBtn", (ImTextureID)s_refreshIcon, iconSz)) {
+                    doRefresh = true;
+                }
+                if (wasSearching) ImGui::EndDisabled();
+            } else {
+                /* Text fallback when SVG icon is unavailable */
+                float btnW = 70.0f * s;
+                ImGui::SameLine(panelW - btnW - 16.0f * s);
+                bool wasSearching = searching;
+                if (wasSearching) ImGui::BeginDisabled();
+                if (ImGui::SmallButton("Refresh")) {
+                    doRefresh = true;
+                }
+                if (wasSearching) ImGui::EndDisabled();
+            }
+            if (doRefresh) {
+                autoRefresh = false;
+                statusText = "Searching...";
+                loadingGames = true;
+                selectedItem = -1;
+
+                {
+                    std::lock_guard<std::mutex> lock(serversMtx);
+                    servers.clear();
+                }
+
+                bool ut = (useTracker != 0);
+                char tAddr[FILENAME_MAX] = {};
+                unsigned short tPort = 0;
+                if (ut) {
+                    bool dummy;
+                    gameFrontGetTrackerOptions(tAddr, &tPort, &dummy);
+                }
+
+                if (searchThread.joinable()) {
+                    searchThread.join();
+                }
+
+                searchResultCg = currentGamesCreate();
+                searchResultMotd[0] = '\0';
+                searchResultOk = false;
+                searching = true;
+
+                struct SearchParams { char addr[FILENAME_MAX]; unsigned short port; bool tracker; };
+                SearchParams sp = {};
+                strncpy(sp.addr, tAddr, FILENAME_MAX - 1);
+                sp.port = tPort;
+                sp.tracker = ut;
+
+                searchThread = std::thread([sp]() {
+                    bool ret = false;
+                    if (sp.tracker) {
+                        char addr[FILENAME_MAX];
+                        memcpy(addr, sp.addr, FILENAME_MAX);
+                        ret = discoveryFindTrackedGames(&searchResultCg, addr, sp.port, searchResultMotd);
+                    } else {
+                        static BroadcastCbData cbd;
+                        cbd.servers = &servers;
+                        cbd.serversMtx = &serversMtx;
+                        cbd.pingResultsMtx = &pingResultsMtx;
+                        cbd.pingResults = &pingResults;
+                        ret = discoveryFindBroadcastGamesAsync(broadcastServerCallback, &cbd);
+                    }
+                    searchResultOk = ret;
+                    searchDone = true;
+                });
+            }
+
             ImGui::Separator();
             ImGui::Spacing();
         }
@@ -950,65 +1087,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
 
-            /* Refresh */
-            ImGui::SameLine();
-            bool wasSearching = searching;
-            if (wasSearching) ImGui::BeginDisabled();
-            if (ImGui::Button("Refresh", ImVec2(btnW, btnH)) || autoRefresh) {
-                autoRefresh = false;
-                statusText = "Searching...";
-                loadingGames = true;
-                selectedItem = -1;
-
-                {
-                    std::lock_guard<std::mutex> lock(serversMtx);
-                    servers.clear();
-                }
-
-                bool ut = (useTracker != 0);
-                char tAddr[FILENAME_MAX] = {};
-                unsigned short tPort = 0;
-                if (ut) {
-                    bool dummy;
-                    gameFrontGetTrackerOptions(tAddr, &tPort, &dummy);
-                }
-
-                if (searchThread.joinable()) {
-                    searchThread.join();
-                }
-
-                searchResultCg = currentGamesCreate();
-                searchResultMotd[0] = '\0';
-                searchResultOk = false;
-                searching = true;
-
-                struct SearchParams { char addr[FILENAME_MAX]; unsigned short port; bool tracker; };
-                SearchParams sp = {};
-                strncpy(sp.addr, tAddr, FILENAME_MAX - 1);
-                sp.port = tPort;
-                sp.tracker = ut;
-
-                searchThread = std::thread([sp]() {
-                    bool ret = false;
-                    if (sp.tracker) {
-                        char addr[FILENAME_MAX];
-                        memcpy(addr, sp.addr, FILENAME_MAX);
-                        ret = discoveryFindTrackedGames(&searchResultCg, addr, sp.port, searchResultMotd);
-                    } else {
-                        /* LAN: use async callback to add servers incrementally */
-                        static BroadcastCbData cbd;
-                        cbd.servers = &servers;
-                        cbd.serversMtx = &serversMtx;
-                        cbd.pingResultsMtx = &pingResultsMtx;
-                        cbd.pingResults = &pingResults;
-                        ret = discoveryFindBroadcastGamesAsync(broadcastServerCallback, &cbd);
-                    }
-                    searchResultOk = ret;
-                    searchDone = true;
-                });
-            }
-            if (wasSearching) ImGui::EndDisabled();
-
             /* Player Name */
             ImGui::SameLine(0.0f, 20.0f);
             if (ImGui::Button("Player Name", ImVec2(btnW + 30.0f * s, btnH))) {
@@ -1089,7 +1167,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Ping threads are fire-and-forget (detached), nothing to clean up */
 
+    /* Destroy refresh icon texture */
+    if (s_refreshIcon) { SDL_DestroyTexture(s_refreshIcon); s_refreshIcon = nullptr; }
+    s_refreshIconAttempted = false;
+
     /* Tear down ImGui */
+    dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();

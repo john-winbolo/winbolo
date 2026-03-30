@@ -65,6 +65,8 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
+bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);
 
 /* Disable/restore render logical presentation for ImGui dialogs.
  * On Android (non-tablet), the game uses logical presentation which
@@ -368,6 +370,15 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
 void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
 
 /*********************************************************
+*NAME:          sdl3DrawSetDragOffset / GetDragOffset
+*PURPOSE:
+*  Set/get the drag-scroll pixel offset for smooth sub-tile
+*  scrolling in tablet mode. Values are in zoomed pixels.
+*********************************************************/
+void sdl3DrawSetDragOffset(int dx, int dy);
+void sdl3DrawGetDragOffset(int *dx, int *dy);
+
+/*********************************************************
 *NAME:          sdl3DrawSetStatusPanelOrigins
 *PURPOSE:
 *  Override the screen positions of the tanks/pills/bases
@@ -396,6 +407,9 @@ void sdl3DrawTabletStatusGrids(struct ClientSim *cs);
 *  Used by the tablet overlay to render messages via ImGui.
 *********************************************************/
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
+
+void sdl3DrawGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
+void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *hasBase);
 
 #ifdef __cplusplus
 } /* extern "C" */
