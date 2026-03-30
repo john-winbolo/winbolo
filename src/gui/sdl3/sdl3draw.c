@@ -1170,8 +1170,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
       /* Gunsight overlay */
       if (gs->mapX != NO_GUNSIGHT) {
-        SDL_FRect gsSrc = { (float)(GUNSIGHT_X * gSheetScale), (float)(GUNSIGHT_Y * gSheetScale),
-                            (float)(TILE_SIZE_X * gSheetScale), (float)(TILE_SIZE_Y * gSheetScale) };
+        float gsInset = 0.05f;
+        SDL_FRect gsSrc = { (float)(GUNSIGHT_X * gSheetScale) + gsInset, (float)(GUNSIGHT_Y * gSheetScale) + gsInset,
+                            (float)(TILE_SIZE_X * gSheetScale) - 2.0f * gsInset, (float)(TILE_SIZE_Y * gSheetScale) - 2.0f * gsInset };
         int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
         int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
         SDL_FRect gsDest = {
