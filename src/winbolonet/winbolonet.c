@@ -20,798 +20,529 @@
 *Filename:      winbolonet.c
 *Author:        John Morrison
 *Creation Date: 23/09/01
-*Last Modified: 10/01/04
+*Last Modified: 30/03/26
 *Purpose:
-*  Responsable for interacting with WinBolo.net
+*  Responsible for interacting with WinBolo.net via the
+*  JSON REST API (/api/v1/).
 *********************************************************/
 
 #include <time.h>
+#include <stdlib.h>
+#include "cJSON.h"
 #include "winbolonet.h"
 #include "http.h"
 #include "../server/server_sim.h"
 #include "../bolo/netpacks.h"
-#include "../bolo/util.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"
 
 bool winboloNetRunning = FALSE;
 
-#define WINBOLONET_BUFFSIZE (1024*8)
-BYTE *winboloNetBuff = NULL;
-BYTE winboloNetServerKey[WINBOLONET_KEY_LEN];
+char winboloNetServerKey[WINBOLONET_KEY_LEN];
 /* Keys for each player if in use - Always position 0 if we are a client */
-BYTE winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
+char winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
 time_t winboloNetLastSent;
-
-//FIXME: All the string error catching stuff
 
 /*********************************************************
 *NAME:          winbolonetCreateServer
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/09/01
-*LAST MODIFIED: 02/04/02
 *PURPOSE:
-* Initialises the WinBolo.net module. Returns success.
-* Tries to contact server to verify versions.
-*
-*ARGUMENTS:
-* mapName - Name of the map
-* port - Port we are running on
-* gameType - Game Type
-* ai - Is AI allowed
-* mines - Mines allowed
-* password - Has password
-* numBases - Number of bases
-* numPills - Number of pills
-* freeBases - Free bases
-* freePills - Free pills
-* numPlayers -  Number of players in the game
-* startTime - Game start time
+* Initialises the WinBolo.net module for a game server.
+* Registers with WinBolo.net via POST /api/v1/server/register.
+* If successful, stores the server key and starts the
+* background update thread.
 *********************************************************/
-bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers, long startTime) {
-  char buff[FILENAME_MAX]; /* Send buffer */
-  int ans;                 /* Function return */
-  BYTE count;              /* Looping Variable */
+bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  BYTE count;
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  char versionStr[16];
 
   serverSimConsoleMessage("WinBolo.net Startup");
   winboloNetRunning = FALSE;
   winbolonetEventsCreate();
-  winboloNetServerKey[0] = EMPTY_CHAR;
-  count = 0;
-  while (count < MAX_TANKS) {
-    winboloNetPlayerKey[count][0] = EMPTY_CHAR;
-    count++;
+  winboloNetServerKey[0] = '\0';
+  for (count = 0; count < MAX_TANKS; count++) {
+    winboloNetPlayerKey[count][0] = '\0';
   }
-
 
   winboloNetRunning = httpCreate();
-  if (winboloNetRunning == TRUE) {
-    buff[0] = WINBOLO_NET_VERSION_MAJOR;
-    buff[1] = WINBOLO_NET_VERSION_MINOR;
-    buff[2] = WINBOLO_NET_VERSION_REVISION;
-    buff[3] = WINBOLO_NET_MESSAGE_VERSION_REQ;
-    winboloNetBuff = malloc(WINBOLONET_BUFFSIZE);
-    memset(winboloNetBuff, 0, WINBOLONET_BUFFSIZE);
-    ans = httpSendMessage((BYTE *)buff , 4, winboloNetBuff, WINBOLONET_BUFFSIZE);
-    
-    if (ans > 0) {
-      if (winboloNetBuff[0] == 0) {
-        /* Error */
-        winboloNetBuff[ans] = '\0';
-        fprintf(stderr, "Error: %s\n", winboloNetBuff+1);
-        winbolonetDestroy(TRUE);
-      } else if (winboloNetBuff[0] == 1) {
-        sprintf(buff, "\tWinBolo.net Available: Version: %d.%d.%d", winboloNetBuff[1], winboloNetBuff[2], winboloNetBuff[3]);
-        serverSimConsoleMessage(buff);
-        if (ans > 4) {
-          winboloNetBuff[ans] = '\0';
-          sprintf(buff, "\tMOTD: %s", winboloNetBuff+4);
-          serverSimConsoleMessage(buff);
-          /* Get a server key */
-          if (winbolonetRequestServerKey(mapName, port, gameType, ai, mines, password, numBases, numPills, freeBases, freePills, numPlayers, startTime) == FALSE) {
-            /* Error can't get a key */
-            winbolonetDestroy(TRUE);
-          } else {
-            winbolonetThreadCreate();
-            winboloNetLastSent = time(NULL);
-            winboloNetSendVersion();
-          }
-
-        }
-      } else {
-        /* Unexpected error */
-        winboloNetBuff[ans] = '\0';
-        serverSimConsoleMessage("Error: WinBolo.net unavailable\n");
-        winbolonetDestroy(TRUE);
-
-      }
-
-    } else {
-      serverSimConsoleMessage("Error: No response from WinBolo.net - Winbolo.net disabled\n");
-      winbolonetDestroy(TRUE);
-    }
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
   }
+
+  /* Build version string from game version defines */
+  snprintf(versionStr, sizeof(versionStr), "%d.%d", BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
+
+  /* Register server with WinBolo.net */
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "map", mapName);
+  cJSON_AddNumberToObject(body, "port", port);
+  cJSON_AddNumberToObject(body, "game_type", gameType);
+  cJSON_AddNumberToObject(body, "ai", ai);
+  cJSON_AddBoolToObject(body, "mines", mines);
+  cJSON_AddBoolToObject(body, "password", password);
+  cJSON_AddNumberToObject(body, "num_bases", numBases);
+  cJSON_AddNumberToObject(body, "num_pills", numPills);
+  cJSON_AddNumberToObject(body, "free_bases", freeBases);
+  cJSON_AddNumberToObject(body, "free_pills", freePills);
+  cJSON_AddNumberToObject(body, "num_players", numPlayers);
+  cJSON_AddStringToObject(body, "version", versionStr);
+
+  status = wbn_api_call("server/register", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    cJSON *keyObj = cJSON_GetObjectItem(resp, "server_key");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net register error: %s\n", errObj->valuestring);
+      serverSimConsoleMessage("Error: WinBolo.net registration failed");
+      cJSON_Delete(resp);
+      winbolonetDestroy(TRUE);
+      return winboloNetRunning;
+    }
+    if (keyObj && cJSON_IsString(keyObj)) {
+      strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+      winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      serverSimConsoleMessage("\tWinBolo.net: Server registered");
+      winbolonetThreadCreate();
+      winboloNetLastSent = time(NULL);
+    } else {
+      serverSimConsoleMessage("Error: WinBolo.net returned no server key");
+      cJSON_Delete(resp);
+      winbolonetDestroy(TRUE);
+      return winboloNetRunning;
+    }
+  } else {
+    if (resp) {
+      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      if (errObj && cJSON_IsString(errObj)) {
+        fprintf(stderr, "WinBolo.net error: %s\n", errObj->valuestring);
+      }
+    }
+    serverSimConsoleMessage("Error: No response from WinBolo.net - WinBolo.net disabled");
+    cJSON_Delete(resp);
+    winbolonetDestroy(TRUE);
+    return winboloNetRunning;
+  }
+
+  cJSON_Delete(resp);
   return winboloNetRunning;
 }
 
 /*********************************************************
 *NAME:          winbolonetCreateClient
-*AUTHOR:        John Morrison
-*CREATION DATE: 31/03/02
-*LAST MODIFIED: 31/03/02
 *PURPOSE:
 * Initialises the WinBolo.net module for a client.
+* Joins a game session via POST /api/v1/client/join.
 * Returns success.
-*
-*ARGUMENTS:
-* userName  - WinBolo.net account name
-* password  - Password for the account
-* serverKey - Session key for the server
-* errorMsg  - Buffer to hold Error message if required
 *********************************************************/
-bool winbolonetCreateClient(char *userName, char *password, BYTE *serverKey, char *errorMsg) {
-  char buff[FILENAME_MAX]; /* Send buffer */
-  int ret;                 /* Function return */
+bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
 
   if (winboloNetRunning == FALSE) {
     winboloNetRunning = httpCreate();
     winboloNetServerKey[0] = '\0';
   }
-  if (winboloNetRunning == TRUE) {
-    buff[0] = WINBOLO_NET_VERSION_MAJOR;
-    buff[1] = WINBOLO_NET_VERSION_MINOR;
-    buff[2] = WINBOLO_NET_VERSION_REVISION;
-    buff[3] = WINBOLO_NET_MESSAGE_VERSION_REQ;
-    winboloNetBuff = malloc(WINBOLONET_BUFFSIZE);
-    memset(winboloNetBuff, 0, WINBOLONET_BUFFSIZE);
-    ret = httpSendMessage((BYTE *)buff , 4, winboloNetBuff, WINBOLONET_BUFFSIZE);
-    
-    if (ret > 0) {
-      if (winboloNetBuff[0] == 0) {
-        /* Error */
-        winboloNetBuff[ret] = '\0';
-        strcpy(errorMsg, (char *)(winboloNetBuff+1));
-        winbolonetDestroy(FALSE);
+  if (winboloNetRunning != TRUE) {
+    strcpy(errorMsg, "Error: Could not initialise HTTP");
+    return FALSE;
+  }
+
+  /* Join game via WinBolo.net */
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "token", token);
+  cJSON_AddStringToObject(body, "server_key", serverKey);
+
+  status = wbn_api_call("client/join", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+      cJSON_Delete(resp);
+      winbolonetDestroy(FALSE);
+      return winboloNetRunning;
+    }
+    cJSON *keyObj = cJSON_GetObjectItem(resp, "player_key");
+    if (keyObj && cJSON_IsString(keyObj)) {
+      strncpy(winboloNetServerKey, serverKey, WINBOLONET_KEY_LEN - 1);
+      winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      strncpy(winboloNetPlayerKey[0], keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+      winboloNetPlayerKey[0][WINBOLONET_KEY_LEN - 1] = '\0';
+    } else {
+      strcpy(errorMsg, "Error: WinBolo.net returned no player key");
+      cJSON_Delete(resp);
+      winbolonetDestroy(FALSE);
+      return winboloNetRunning;
+    }
+  } else {
+    if (resp) {
+      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      if (errObj && cJSON_IsString(errObj)) {
+        strcpy(errorMsg, errObj->valuestring);
       } else {
-        /* Get a Client key */
-        if (winbolonetRequestClientKey(userName, password, serverKey, errorMsg) == FALSE) {
-          /* Error can't get a key */
-          winbolonetDestroy(FALSE);
-        }
+        strcpy(errorMsg, "Error: No response from WinBolo.net - WinBolo.net disabled");
       }
     } else {
-      strcpy(errorMsg, "Error: No response from WinBolo.net - Winbolo.net disabled");
-      winbolonetDestroy(FALSE);
+      strcpy(errorMsg, "Error: No response from WinBolo.net - WinBolo.net disabled");
     }
+    cJSON_Delete(resp);
+    winbolonetDestroy(FALSE);
+    return winboloNetRunning;
   }
+
+  cJSON_Delete(resp);
   return winboloNetRunning;
 }
 
 /*********************************************************
 *NAME:          winbolonetDestroy
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/9/01
-*LAST MODIFIED: 23/9/01
 *PURPOSE:
 * Destroys the winbolonet module.
-* Cleans up any open libraries
-*
-*ARGUMENTS:
-* 
+* Cleans up any open libraries.
 *********************************************************/
 void winbolonetDestroy(bool isServer) {
   serverSimConsoleMessage("WinBolo.net Shutdown");
   if (winboloNetRunning == TRUE) {
     winbolonetThreadDestroy();
-    /* We need to say goodbye */
-    if (isServer == TRUE && winboloNetServerKey[0] != EMPTY_CHAR) {
-      /* Note only servers have to say goodbye */
+    if (isServer == TRUE && winboloNetServerKey[0] != '\0') {
       winbolonetGoodbye();
     }
     httpDestroy();
-    free(winboloNetBuff);
-    winboloNetBuff = NULL;
   }
   winbolonetEventsDestroy();
-
   winboloNetRunning = FALSE;
 }
 
 /*********************************************************
 *NAME:          winbolonetGoodbye
-*AUTHOR:        John Morrison
-*CREATION DATE: 02/04/02
-*LAST MODIFIED: 02/04/02
 *PURPOSE:
-* Destroys the winbolonet module.
-* Cleans up any open libraries
-*
-*ARGUMENTS:
-* 
+* Sends final update and server quit to WinBolo.net via
+* POST /api/v1/server/quit.
 *********************************************************/
-void winbolonetGoodbye() {
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */
-  int ret;  
+void winbolonetGoodbye(void) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
 
   /* Send off final data */
-  winbolonetServerUpdate(0,0,0, TRUE);
+  winbolonetServerUpdate(0, 0, 0, TRUE);
 
   /* Shutdown */
-  buff[0] = WINBOLO_NET_VERSION_MAJOR;
-  buff[1] = WINBOLO_NET_VERSION_MINOR;
-  buff[2] = WINBOLO_NET_VERSION_REVISION;
-  buff[3] = WINBOLO_NET_MESSAGE_SERVERQUIT_REQ;
-  memcpy(buff+4, winboloNetServerKey, WINBOLONET_KEY_LEN);
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
 
-  ret = httpSendMessage(buff, 4+WINBOLONET_KEY_LEN, winboloNetBuff, WINBOLONET_BUFFSIZE);
-  if (ret > 0) {
-    if (winboloNetBuff[0] == 0) {
-      /* Error */
-      winboloNetBuff[ret] = EMPTY_CHAR;
-//      fprintf(stderr, "Error: %s\n", winboloNetBuff+1);
+  wbn_api_call("server/quit", body, &resp);
+  cJSON_Delete(body);
+  if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net quit error: %s\n", errObj->valuestring);
     }
-  } else {
-    fprintf(stderr, "Error: No response from WinBolo.net\n");
-  } 
+    cJSON_Delete(resp);
+  }
 }
 
 /*********************************************************
 *NAME:          winbolonetServerSendTeams
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/02/03
-*LAST MODIFIED: 21/02/03
 *PURPOSE:
-* Sends the list of teams at the end of the game.
+* Sends the list of teams via POST /api/v1/server/teams.
 *
-*ARGUMENTS:
-* array    - BYTE array containing team memberships
-* length   - Length of the array
-* numTeams - Number of teams in the array
+* Converts the flat BYTE array (with WINBOLO_NET_TEAM_MARKER
+* separators) into the JSON teams object format:
+* {"server_key": "...", "teams": {"0": ["pk1", "pk2"], ...}}
 *********************************************************/
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
-  BYTE *ptr;     /* Our memory pointer */
-  BYTE arrayPos; /* Position in the array */
-  int pos;       /* Pointer inside the buffer */
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  cJSON *teams = NULL;
+  cJSON *currentTeam = NULL;
+  BYTE arrayPos;
+  int teamIndex = 0;
+  char teamId[8];
 
-  ptr = malloc(4 /* Header */ +  (length * (WINBOLONET_KEY_LEN+1)) + WINBOLONET_KEY_LEN);
-  ptr[0] = WINBOLO_NET_VERSION_MAJOR;
-  ptr[1] = WINBOLO_NET_VERSION_MINOR;
-  ptr[2] = WINBOLO_NET_VERSION_REVISION;
-  ptr[3] = WINBOLO_NET_MESSAGE_TEAMS;
-  /* Is next */
-  pos = 4;
-  memcpy(ptr+4, winboloNetServerKey, WINBOLONET_KEY_LEN);
-  pos += WINBOLONET_KEY_LEN;
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
 
-  ptr[pos] = numTeams;
-  pos++;
+  teams = cJSON_CreateObject();
+  snprintf(teamId, sizeof(teamId), "%d", teamIndex);
+  currentTeam = cJSON_CreateArray();
+
   arrayPos = 1;
   while (arrayPos <= length) {
     if (array[arrayPos] == WINBOLO_NET_TEAM_MARKER) {
-      /* New Team */
-      ptr[pos] = WINBOLO_NET_TEAM_MARKER;
-      pos++;
+      /* End current team, start a new one */
+      cJSON_AddItemToObject(teams, teamId, currentTeam);
+      teamIndex++;
+      snprintf(teamId, sizeof(teamId), "%d", teamIndex);
+      currentTeam = cJSON_CreateArray();
     } else {
       /* Team member */
-      if (winboloNetPlayerKey[array[arrayPos]][0] != EMPTY_CHAR) {
-        memcpy((ptr+pos), winboloNetPlayerKey[array[arrayPos]], WINBOLONET_KEY_LEN);
-	pos += WINBOLONET_KEY_LEN;
+      if (winboloNetPlayerKey[array[arrayPos]][0] != '\0') {
+        cJSON_AddItemToArray(currentTeam, cJSON_CreateString(winboloNetPlayerKey[array[arrayPos]]));
       } else {
-        ptr[pos] = 0;
-        pos++;
-      } 
+        cJSON_AddItemToArray(currentTeam, cJSON_CreateNull());
+      }
     }
     arrayPos++;
-  } 
-  
-  /* Send it */
-  httpSendMessage(ptr, pos, winboloNetBuff, WINBOLONET_BUFFSIZE);
-  free(ptr);
+  }
+  /* Add final team */
+  cJSON_AddItemToObject(teams, teamId, currentTeam);
+
+  cJSON_AddItemToObject(body, "teams", teams);
+
+  wbn_api_call("server/teams", body, &resp);
+  cJSON_Delete(body);
+  cJSON_Delete(resp);
 }
 
 /*********************************************************
 *NAME:          winbolonetServerUpdate
-*AUTHOR:        John Morrison
-*CREATION DATE: 04/04/02
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
-* Sends a server winbolo.net update
-*
-*ARGUMENTS:
-* numPlayer    - Number of pleyers in the game
-* numFreePills - Number of free bases in the game
-* numFreePills - Number of free pills in the game
-* sendNow      - If TRUE the data should not be queued
+* Sends a server update via POST /api/v1/server/update
+* with current state and queued events.
 *********************************************************/
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
   static BYTE staticNumPlayers = 0;
   static BYTE staticNumFreeBases = 0;
   static BYTE staticNumFreePills = 0;
-  BYTE *ptr; /* Our memory pointer */
-  int size;  /* Number of items to send */
-  int pos;   /* Pointer inside the buffer */
-  int ret;   /* Function return */
-  BYTE keyA[WINBOLONET_KEY_LEN];
-  BYTE keyB[WINBOLONET_KEY_LEN];
+  int size;
+  cJSON *body = NULL;
+  cJSON *events = NULL;
+  cJSON *eventObj = NULL;
+  cJSON *resp = NULL;
+  char keyA[WINBOLONET_KEY_LEN];
+  char keyB[WINBOLONET_KEY_LEN];
   BYTE val;
 
-  
-  if (winboloNetRunning == TRUE ) {
-    size = winbolonetEventsGetSize();
-    if (size > 0 || staticNumFreePills != numFreePills || numFreeBases != staticNumFreeBases || numPlayers != staticNumPlayers || time(NULL) - winboloNetLastSent > WINBOLO_NET_MAX_NOSEND) {
-      pos = 0;
-      staticNumFreePills = numFreePills;
-      staticNumFreeBases = numFreeBases;
-      staticNumPlayers = numPlayers;
-      ptr = malloc(7 /* Header */ +  (2 * size * (WINBOLONET_KEY_LEN+1)) + WINBOLONET_KEY_LEN);
-      ptr[0] = WINBOLO_NET_VERSION_MAJOR;
-      ptr[1] = WINBOLO_NET_VERSION_MINOR;
-      ptr[2] = WINBOLO_NET_VERSION_REVISION;
-      ptr[3] = WINBOLO_NET_MESSAGE_SERVERUPDATE_REQ;
-      ptr[4] = staticNumPlayers;
-      ptr[5] = staticNumFreeBases;
-      ptr[6] = staticNumFreePills;
-      /* Is next */
-      pos = 7;
-      memcpy(ptr+7, winboloNetServerKey, WINBOLONET_KEY_LEN);
-      pos += WINBOLONET_KEY_LEN;
-      
-      val = winbolonetEventsRemove(keyA, keyB);
-      while (val != WINBOLONET_EVENT_NOITEM) {
-        *(ptr+pos) = val;
-        pos++;
-        /* Key A */
-        if (keyA[0] != EMPTY_CHAR) {
-          memcpy((ptr+pos), keyA, WINBOLONET_KEY_LEN);
-          pos += WINBOLONET_KEY_LEN;
-        } else {
-          *(ptr + pos) = EMPTY_CHAR;
-          pos++;
-        }
-        /* Key B */
-        if (keyB[0] != EMPTY_CHAR) {
-          memcpy((ptr+pos), keyB, WINBOLONET_KEY_LEN);
-          pos += WINBOLONET_KEY_LEN;
-        } else {
-          *(ptr + pos) = EMPTY_CHAR;
-          pos++;
-        }
-        val = winbolonetEventsRemove(keyA, keyB);
-      }
-
-/*    *(ptr + pos) = 0;
-  while (*(ptr + pos) != WINBOLONET_EVENT_NOITEM) {
-        *(ptr + pos) = winbolonetEventsRemove((ptr+pos+1), (ptr+pos+1+WINBOLONET_KEY_LEN));
-        if (*(ptr + pos) != WINBOLONET_EVENT_NOITEM) {
-          if (*(ptr + pos) == WINBOLO_NET_EVENT_ALLY_JOIN || *(ptr + pos) == WINBOLO_NET_EVENT_ALLY_LEAVE) {
-            // Both keys are used
-            pos += WINBOLONET_KEY_LEN;
-          }
-          pos += 1 + WINBOLONET_KEY_LEN;
-        }
-      } */
-      /* Send it off to winbolo.net */
-//      fwrite(winboloNetServerKey, WINBOLONET_KEY_LEN, 1, stderr);
-//      fputc('\n', stderr);
-//      fprintf(stderr, "Sending off %d bytes to winbolo.net: \n", pos);
-
-      if (sendNow == FALSE) {
-        winbolonetThreadAddRequest(ptr, pos);
-      } else {
-        ret = httpSendMessage(ptr, pos, winboloNetBuff, WINBOLONET_BUFFSIZE);
-        if (ret > 0) {
-          if (winboloNetBuff[0] == 0) {
-          /* Error */
-            winboloNetBuff[ret] = '\0';
-//            fprintf(stderr, "Error: %s\n", winboloNetBuff+1);
-          }
-        } else {
-//          fprintf(stderr, "Error: %s\n", winboloNetBuff+1);
-        }
-      }
-
-      free(ptr);
-      winboloNetLastSent = time(NULL);
-    }
+  if (winboloNetRunning != TRUE) {
+    return;
   }
-}
 
-/*********************************************************
-*NAME:          winbolonetRequestServerKey
-*AUTHOR:        John Morrison
-*CREATION DATE: 29/03/02
-*LAST MODIFIED: 02/04/02
-*PURPOSE:
-* Tries to get a server key for this session. Returns
-* success.
-*
-*ARGUMENTS:
-* mapName - Name of the map
-* port - Port we are running on
-* gameType - Game Type
-* ai - Is AI allowed
-* mines - Mines allowed
-* password - Has password
-* numBases - Number of bases
-* numPills - Number of pills
-* freeBases - Free bases
-* freePills - Free pills
-* numPlayers - number of players
-* startTime - Game start time
-*********************************************************/
-bool winbolonetRequestServerKey(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers, long startTime) {
-  bool returnValue;        /* Value to return */
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */
-  int buffPos = 0;
-  int ret;
+  size = winbolonetEventsGetSize();
+  if (size == 0 && staticNumFreePills == numFreePills && numFreeBases == staticNumFreeBases && numPlayers == staticNumPlayers && time(NULL) - winboloNetLastSent <= WINBOLO_NET_MAX_NOSEND) {
+    return;
+  }
 
-  returnValue = FALSE;
-  startTime = htonl(startTime);
-  port = htons(port);
+  staticNumFreePills = numFreePills;
+  staticNumFreeBases = numFreeBases;
+  staticNumPlayers = numPlayers;
 
-  buff[0] = WINBOLO_NET_VERSION_MAJOR;
-  buff[1] = WINBOLO_NET_VERSION_MINOR;
-  buff[2] = WINBOLO_NET_VERSION_REVISION;
-  buff[3] = WINBOLO_NET_MESSAGE_SERVERKEY_REQ;
-  buff[4] = gameType;
-  buff[5] = ai;
-  buff[6] = mines;
-  buff[7] = password;
-  buff[8] = freeBases;
-  buff[9] = freePills;
-  buff[10] = numPlayers;
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddNumberToObject(body, "num_players", staticNumPlayers);
+  cJSON_AddNumberToObject(body, "free_bases", staticNumFreeBases);
+  cJSON_AddNumberToObject(body, "free_pills", staticNumFreePills);
 
-  buff[11] = numBases;
-  buff[12] = numPills;
-
-
-  buffPos = 13;
-  utilCtoPString(mapName, (char *)(buff+13));
-  buffPos = 14 + buff[13];
-
-  memcpy(buff+buffPos, &port, sizeof(port));
-  buffPos += sizeof(port);
-  memcpy(buff+buffPos, &startTime, sizeof(startTime));
-  buffPos += sizeof(startTime);
-
-
-  ret = httpSendMessage(buff, buffPos, winboloNetBuff, WINBOLONET_BUFFSIZE);
-  if (ret > 0) {
-    if (winboloNetBuff[0] == 0) {
-      /* Error */
-      winboloNetBuff[ret] = EMPTY_CHAR;
-//      fprintf(stderr, "Error: %s\n", winboloNetBuff+1);
-    } else if (ret == 33) {
-      memcpy(winboloNetServerKey, winboloNetBuff+1, WINBOLONET_KEY_LEN);
-      returnValue = TRUE;
+  /* Drain event queue into JSON array */
+  events = cJSON_CreateArray();
+  val = winbolonetEventsRemove(keyA, keyB);
+  while (val != WINBOLONET_EVENT_NOITEM) {
+    eventObj = cJSON_CreateObject();
+    cJSON_AddNumberToObject(eventObj, "type", val);
+    if (keyA[0] != '\0') {
+      cJSON_AddStringToObject(eventObj, "player_a", keyA);
     }
+    if (keyB[0] != '\0') {
+      cJSON_AddStringToObject(eventObj, "player_b", keyB);
+    }
+    cJSON_AddItemToArray(events, eventObj);
+    val = winbolonetEventsRemove(keyA, keyB);
+  }
+  cJSON_AddItemToObject(body, "events", events);
+
+  if (sendNow == FALSE) {
+    /* Queue for background thread */
+    char *json_str = cJSON_PrintUnformatted(body);
+    if (json_str) {
+      winbolonetThreadAddRequest("server/update", json_str);
+      free(json_str);
+    }
+    cJSON_Delete(body);
   } else {
-    fprintf(stderr, "Error: No response from WinBolo.net - Winbolo.net disabled\n");
-  }
-
-  return returnValue;
-}
-
-/*********************************************************
-*NAME:          winbolonetRequestClientKey
-*AUTHOR:        John Morrison
-*CREATION DATE: 31/03/02
-*LAST MODIFIED: 31/03/02
-*PURPOSE:
-* Attempts to get a client session key from WinBolo.net
-* Returns success.
-*
-*ARGUMENTS:
-* userName  - WinBolo.net account name
-* password  - Password for the account
-* serverKey - Session key for the server
-* errorMsg  - Buffer to hold Error message if required
-*********************************************************/
-bool winbolonetRequestClientKey(char *userName, char *password, BYTE *serverKey, char *errorMsg) {
-  bool returnValue;        /* Value to return */
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */
-  int buffPos = 0;
-  int ret;
-
-  returnValue = FALSE;
-
-  buff[0] = WINBOLO_NET_VERSION_MAJOR;
-  buff[1] = WINBOLO_NET_VERSION_MINOR;
-  buff[2] = WINBOLO_NET_VERSION_REVISION;
-  buff[3] = WINBOLO_NET_MESSAGE_CLIENTKEY_REQ;
-  memcpy(buff+4, serverKey, WINBOLONET_KEY_LEN);
-  buffPos = 4 + WINBOLONET_KEY_LEN;
-  utilCtoPString(userName, (char *)(buff+buffPos));
-  buffPos = buffPos + buff[buffPos] + 1;
-  utilCtoPString(password, (char *)(buff+buffPos));
-  buffPos = buffPos + buff[buffPos] + 1;
-  ret = httpSendMessage(buff, buffPos, winboloNetBuff, WINBOLONET_BUFFSIZE);
-  if (ret > 0) {
-    if (winboloNetBuff[0] == 0) {
-      /* Error */
-      winboloNetBuff[ret] = EMPTY_CHAR;
-      strcpy(errorMsg, (char *)(winboloNetBuff+1));
-    } else if (ret == 33) {
-      memcpy(winboloNetServerKey, serverKey, WINBOLONET_KEY_LEN);
-      memcpy(winboloNetPlayerKey[0], winboloNetBuff+1, WINBOLONET_KEY_LEN);
-      returnValue = TRUE;
-    } else {
-      strcpy(errorMsg, "Error: No response from WinBolo.net - Winbolo.net disabled");
+    /* Send immediately */
+    wbn_api_call("server/update", body, &resp);
+    cJSON_Delete(body);
+    if (resp) {
+      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      if (errObj && cJSON_IsString(errObj)) {
+        fprintf(stderr, "WinBolo.net update error: %s\n", errObj->valuestring);
+      }
+      cJSON_Delete(resp);
     }
-
-  } else {
-    strcpy(errorMsg, "Error: No response from WinBolo.net - Winbolo.net disabled");
   }
 
-  return returnValue;
+  winboloNetLastSent = time(NULL);
 }
 
 /*********************************************************
 *NAME:          winboloNetGetServerKey
-*AUTHOR:        John Morrison
-*CREATION DATE: 01/04/02
-*LAST MODIFIED: 01/04/02
 *PURPOSE:
-* Copies the server key into keyBuff. Will be NULL if
-* not participating in WinBolo.net
-*
-*ARGUMENTS:
-* keyBuff - Buffer to hold key
+* Copies the server key into keyBuff.
 *********************************************************/
-void winboloNetGetServerKey(BYTE *keyBuff) {
-  memcpy(keyBuff, winboloNetServerKey, WINBOLONET_KEY_LEN);
+void winboloNetGetServerKey(char *keyBuff) {
+  strncpy(keyBuff, winboloNetServerKey, WINBOLONET_KEY_LEN);
 }
 
 /*********************************************************
 *NAME:          winboloNetGetMyClientKey
-*AUTHOR:        John Morrison
-*CREATION DATE: 01/04/02
-*LAST MODIFIED: 01/04/02
 *PURPOSE:
-* Copies this clients key into keyBuff. Will be NULL if
-* not set or not participating in WinBolo.net. Expected
-* to be called by clients
-*
-*ARGUMENTS:
-* keyBuff - Buffer to hold key
+* Copies this client's key into keyBuff.
 *********************************************************/
-void winboloNetGetMyClientKey(BYTE *keyBuff) {
-  memcpy(keyBuff, winboloNetPlayerKey[0], WINBOLONET_KEY_LEN);
+void winboloNetGetMyClientKey(char *keyBuff) {
+  strncpy(keyBuff, winboloNetPlayerKey[0], WINBOLONET_KEY_LEN);
 }
 
 /*********************************************************
 *NAME:          winboloNetIsPlayerParticipant
-*AUTHOR:        John Morrison
-*CREATION DATE: 07/09/02
-*LAST MODIFIED: 07/09/02
 *PURPOSE:
 * Returns if this player number is a winbolo.net
-* particpant or not
-*
-*ARGUMENTS:
-* playerNum - Player number to check
+* participant or not.
 *********************************************************/
 bool winboloNetIsPlayerParticipant(BYTE playerNum) {
-  bool returnValue; /* Value to return */
-
-  returnValue = winboloNetRunning;
-  if (returnValue == TRUE) {
-    if (winboloNetPlayerKey[playerNum][0] != EMPTY_CHAR) {
-      returnValue = TRUE;
-    } else {
-	  returnValue = FALSE;
-	}
+  if (winboloNetRunning == TRUE && winboloNetPlayerKey[playerNum][0] != '\0') {
+    return TRUE;
   }
-  return returnValue;
+  return FALSE;
 }
 
 /*********************************************************
 *NAME:          winboloNetVerifyClientKey
-*AUTHOR:        John Morrison
-*CREATION DATE: 01/04/02
-*LAST MODIFIED: 01/04/02
 *PURPOSE:
-* Verifies a client key by sending it to the server for
-* authentication. Returns if its a valid key for this
-* session
-*
-*ARGUMENTS:
-* keyBuff   - Buffer to hold key
-* userName  - Username of the player
-* playerNum - Player position Number
+* Verifies a client key via POST /api/v1/client/verify.
+* If valid, stores the player key for the given player slot.
 *********************************************************/
-bool winboloNetVerifyClientKey(BYTE *keyBuff, char *userName, BYTE playerNum) {
-  bool returnValue; /* Value to return */
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */
-  int buffPos = 0;
-  int ret;
+bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
+  bool returnValue = FALSE;
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
 
-  returnValue = FALSE;
-  if (winboloNetPlayerKey[playerNum][0] != EMPTY_CHAR || winboloNetRunning == FALSE) {
-    returnValue = FALSE;
-  } else {
-    buff[0] = WINBOLO_NET_VERSION_MAJOR;
-    buff[1] = WINBOLO_NET_VERSION_MINOR;
-    buff[2] = WINBOLO_NET_VERSION_REVISION;
-    buff[3] = WINBOLO_NET_MESSAGE_VERIFYCLIENTKEY_REQ;
-    memcpy(buff+4, winboloNetServerKey, WINBOLONET_KEY_LEN);
-    buffPos = 4 + WINBOLONET_KEY_LEN;
-    utilCtoPString(userName, (char *)(buff+buffPos));
-    buffPos = buffPos + buff[buffPos] + 1;
-    memcpy(buff+buffPos, keyBuff, WINBOLONET_KEY_LEN);
-
-
-    ret = httpSendMessage(buff, buffPos + WINBOLONET_KEY_LEN, winboloNetBuff, WINBOLONET_BUFFSIZE);
-    if (ret > 0) {
-      if (winboloNetBuff[0] == 0) {
-        /* Error */
-        winboloNetBuff[ret] = EMPTY_CHAR;
-//        fprintf(stderr, winboloNetBuff+1);
-      } else if (ret == 2 && winboloNetBuff[1] == 1) {
-        returnValue = TRUE;
-        /* Copy it */
-        memcpy(winboloNetPlayerKey[playerNum], keyBuff, WINBOLONET_KEY_LEN);
-      } else {
-        fprintf(stderr, "Error: No response from WinBolo.net");
-      }
-
-    } else {
-      fprintf(stderr, "Error: No response from WinBolo.net");
-    }
-
+  if (winboloNetPlayerKey[playerNum][0] != '\0' || winboloNetRunning == FALSE) {
+    return FALSE;
   }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", playerKey);
+  cJSON_AddStringToObject(body, "player_name", userName);
+
+  status = wbn_api_call("client/verify", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net verify error: %s\n", errObj->valuestring);
+    } else {
+      cJSON *validObj = cJSON_GetObjectItem(resp, "valid");
+      if (validObj && cJSON_IsTrue(validObj)) {
+        returnValue = TRUE;
+        strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
+        winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+      }
+    }
+  } else {
+    fprintf(stderr, "Error: No response from WinBolo.net\n");
+  }
+
+  cJSON_Delete(resp);
   return returnValue;
 }
 
 /*********************************************************
 *NAME:          winboloNetClientLeaveGame
-*AUTHOR:        John Morrison
-*CREATION DATE: 01/04/02
-*LAST MODIFIED: 01/04/02
 *PURPOSE:
-* Called when a player leaves the game. Tells the server
-* so.
-*
-*ARGUMENTS:
-* playerNum  - Player position Number
-* numPlayers - Number of players now in the game
-* freeBases  - Number of free bases
-* freePills  - Number of free pills
+* Called when a player leaves the game. Sends a leave
+* event, flushes the update, and calls
+* POST /api/v1/client/leave.
 *********************************************************/
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */
-  int ret;
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
 
   winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_LEAVE, TRUE, playerNum, WINBOLO_NET_NO_PLAYER);
-  if (winboloNetPlayerKey[playerNum][0] != EMPTY_CHAR && winboloNetRunning == TRUE) {
-    /* Send an update first to flush buffers */
-    winbolonetServerUpdate(numPlayers, freeBases, freePills, TRUE);
-    /* Send actual quit item */
-    buff[0] = WINBOLO_NET_VERSION_MAJOR;
-    buff[1] = WINBOLO_NET_VERSION_MINOR;
-    buff[2] = WINBOLO_NET_VERSION_REVISION;
-    buff[3] = WINBOLO_NET_MESSAGE_CLIENTLEAVE_REQ;
-    buff[4] = numPlayers;
-    buff[5] = freeBases;
-    buff[6] = freePills;
-    memcpy(buff+7, winboloNetServerKey, WINBOLONET_KEY_LEN);
-    memcpy(buff+7+WINBOLONET_KEY_LEN, winboloNetPlayerKey[playerNum], WINBOLONET_KEY_LEN);
-
-
-    ret = httpSendMessage(buff, 7+WINBOLONET_KEY_LEN + WINBOLONET_KEY_LEN, winboloNetBuff, WINBOLONET_BUFFSIZE);
-    if (ret > 0) {
-      if (winboloNetBuff[0] == 0) {
-        /* Error */
-//        fprintf(stderr, winboloNetBuff+1);
-      } else if (ret == 2 && winboloNetBuff[1] == 1) {
-        /* Copy it */
-//        fprintf(stderr, "Successfully ditched client\n");
-      } else {
-        fprintf(stderr, "Error: No response from WinBolo.net");
-      }
-
-    } else {
-      fprintf(stderr, "Error: No response from WinBolo.net");
-    }
-    winboloNetBuff[ret] = EMPTY_CHAR;
-    winboloNetPlayerKey[playerNum][0] = EMPTY_CHAR;
+  if (winboloNetPlayerKey[playerNum][0] == '\0' || winboloNetRunning != TRUE) {
+    return;
   }
+
+  /* Flush buffered events */
+  winbolonetServerUpdate(numPlayers, freeBases, freePills, TRUE);
+
+  /* Send leave */
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", winboloNetPlayerKey[playerNum]);
+  cJSON_AddNumberToObject(body, "num_players", numPlayers);
+  cJSON_AddNumberToObject(body, "free_bases", freeBases);
+  cJSON_AddNumberToObject(body, "free_pills", freePills);
+
+  wbn_api_call("client/leave", body, &resp);
+  cJSON_Delete(body);
+  if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net leave error: %s\n", errObj->valuestring);
+    }
+    cJSON_Delete(resp);
+  }
+
+  winboloNetPlayerKey[playerNum][0] = '\0';
 }
 
 /*********************************************************
 *NAME:          winbolonetAddEvent
-*AUTHOR:        John Morrison
-*CREATION DATE: 04/04/02
-*LAST MODIFIED: 04/04/02
 *PURPOSE:
-* Adds a WinBolo.net Event for sending to the server
-*
-*ARGUMENTS:
-*  eventType - Type of event this is
-*  isServer  - Are we the server for this and not a client
-*  playerA   - Player A player Number
-*  playerB   - Player B player Number
+* Adds a WinBolo.net Event for sending to the server.
 *********************************************************/
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  BYTE *keyA;
-  BYTE *keyB;
-  BYTE emptyKey[WINBOLONET_KEY_LEN];
- 
- if (winboloNetRunning == TRUE && isServer == TRUE) {  
-    emptyKey[0] = EMPTY_CHAR;
+  const char *keyA;
+  const char *keyB;
+  char emptyKey[WINBOLONET_KEY_LEN];
+
+  if (winboloNetRunning == TRUE && isServer == TRUE) {
+    emptyKey[0] = '\0';
     keyA = winboloNetPlayerKey[playerA];
     if (playerB == WINBOLO_NET_NO_PLAYER) {
       keyB = emptyKey;
     } else {
       keyB = winboloNetPlayerKey[playerB];
     }
-    /* Add it */
     winbolonetEventsAddItem(eventType, keyA, keyB);
   }
 }
 
 /*********************************************************
 *NAME:          winbolonetIsRunning
-*AUTHOR:        John Morrison
-*CREATION DATE: 14/04/02
-*LAST MODIFIED: 14/04/02
 *PURPOSE:
-* Returns if the winbolonet module is running or not
-*
-*ARGUMENTS:
-*
+* Returns if the winbolonet module is running or not.
 *********************************************************/
-bool winbolonetIsRunning() {
+bool winbolonetIsRunning(void) {
   return winboloNetRunning;
 }
 
 /*********************************************************
-*NAME:          winbolonetIsRunning
-*AUTHOR:        John Morrison
-*CREATION DATE: 10/01/04
-*LAST MODIFIED: 10/01/04
+*NAME:          winboloNetSendLock
 *PURPOSE:
-* Sends the game version to winbolo.net
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void winboloNetSendVersion() {
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */  
-
-  if (winboloNetRunning == TRUE) {
-    buff[0] = WINBOLO_NET_VERSION_MAJOR;
-    buff[1] = WINBOLO_NET_VERSION_MINOR;
-    buff[2] = WINBOLO_NET_VERSION_REVISION;
-    buff[3] = WINBOLO_NET_VERSION;
-    memcpy(buff+4, winboloNetServerKey, WINBOLONET_KEY_LEN);
-    buff[4+WINBOLONET_KEY_LEN] = BOLO_VERSION_MINOR;
-    buff[5+WINBOLONET_KEY_LEN] = BOLO_VERSION_REVISION;
-    httpSendMessage(buff, 6+WINBOLONET_KEY_LEN, winboloNetBuff, WINBOLONET_BUFFSIZE);
-  }
-}
-
-/*********************************************************
-*NAME:          winbolonetSendLock
-*AUTHOR:        John Morrison
-*CREATION DATE: 10/01/04
-*LAST MODIFIED: 10/01/04
-*PURPOSE:
-* Sends whether the game is locked or not to winbolo.net
-*
-*ARGUMENTS:
-* isLocked - Is this game locked or not
+* Sends lock/unlock status via POST /api/v1/server/lock.
 *********************************************************/
 void winboloNetSendLock(bool isLocked) {
-  BYTE buff[FILENAME_MAX]; /* Sending buffer */  
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
 
-  if (winboloNetRunning == TRUE) {
-    buff[0] = WINBOLO_NET_VERSION_MAJOR;
-    buff[1] = WINBOLO_NET_VERSION_MINOR;
-    buff[2] = WINBOLO_NET_VERSION_REVISION;
-    buff[3] = WINBOLO_NET_LOCK;
-    memcpy(buff+4, winboloNetServerKey, WINBOLONET_KEY_LEN);
-    buff[4+WINBOLONET_KEY_LEN] = isLocked;
-    httpSendMessage(buff, 5+WINBOLONET_KEY_LEN, winboloNetBuff, WINBOLONET_BUFFSIZE);
+  if (winboloNetRunning != TRUE) {
+    return;
   }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddBoolToObject(body, "locked", isLocked);
+
+  wbn_api_call("server/lock", body, &resp);
+  cJSON_Delete(body);
+  cJSON_Delete(resp);
 }

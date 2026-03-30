@@ -20,10 +20,10 @@
 *Filename:      http.c
 *Author:        John Morrison
 *Creation Date: 16/9/01
-*Last Modified: 10/3/26
+*Last Modified: 30/3/26
 *Purpose:
-*  Responsible for sending/receiving HTTP/HTTPS messages
-*  to WinBolo.net via libcurl (cross-platform, TLS capable).
+*  Responsible for HTTP/HTTPS communication with the
+*  WinBolo.net JSON REST API via libcurl.
 *
 *  INI [WINBOLO.NET] Host= accepts:
 *    wbn.winbolo.net          -> https://wbn.winbolo.net  (default)
@@ -35,6 +35,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <curl/curl.h>
+#include "cJSON.h"
 
 #ifdef _WIN32
   #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
@@ -99,9 +100,9 @@ static void buildBaseUrl(const char *iniValue) {
 /*********************************************************
 *NAME:          writeCallback
 *PURPOSE:
-* libcurl write callback — appends received data into a
-* caller-supplied fixed-size buffer. Always returns the
-* full incoming byte count so libcurl does not abort.
+* libcurl write callback for fixed-size buffers (used by
+* httpSendLogFile). Appends received data, never exceeding
+* the buffer capacity.
 *********************************************************/
 typedef struct {
   BYTE *buf;
@@ -118,21 +119,54 @@ static size_t writeCallback(char *ptr, size_t size, size_t nmemb, void *userdata
     memcpy(ctx->buf + ctx->pos, ptr, toCopy);
     ctx->pos += (int)toCopy;
   }
-  return incoming; /* must return full count — libcurl aborts on mismatch */
+  return incoming;
+}
+
+/*********************************************************
+*NAME:          DynBuf / dynWriteCallback
+*PURPOSE:
+* Dynamic growing buffer and libcurl write callback for
+* JSON API responses.
+*********************************************************/
+typedef struct {
+  char  *data;
+  size_t size;
+  size_t capacity;
+} DynBuf;
+
+static void dynBufInit(DynBuf *buf) {
+  buf->capacity = 1024;
+  buf->size = 0;
+  buf->data = malloc(buf->capacity);
+  if (buf->data) {
+    buf->data[0] = '\0';
+  }
+}
+
+static size_t dynWriteCallback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+  DynBuf *buf = (DynBuf *)userdata;
+  size_t incoming = size * nmemb;
+  size_t needed = buf->size + incoming + 1;
+  if (needed > buf->capacity) {
+    size_t newcap = buf->capacity * 2;
+    if (newcap < needed) newcap = needed;
+    char *tmp = realloc(buf->data, newcap);
+    if (!tmp) return 0;
+    buf->data = tmp;
+    buf->capacity = newcap;
+  }
+  memcpy(buf->data + buf->size, ptr, incoming);
+  buf->size += incoming;
+  buf->data[buf->size] = '\0';
+  return incoming;
 }
 
 /*********************************************************
 *NAME:          httpCreate
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/9/01
-*LAST MODIFIED: 10/3/26
 *PURPOSE:
 * Initialises the http module and libcurl global state.
 * Reads [WINBOLO.NET] Host from the INI file.
 * Returns success.
-*
-*ARGUMENTS:
-*
 *********************************************************/
 bool httpCreate(void) {
   char prefs[FILENAME_MAX];
@@ -168,14 +202,8 @@ bool httpCreate(void) {
 
 /*********************************************************
 *NAME:          httpDestroy
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/9/01
-*LAST MODIFIED: 10/3/26
 *PURPOSE:
 * Destroys the http module and releases libcurl global state.
-*
-*ARGUMENTS:
-*
 *********************************************************/
 void httpDestroy(void) {
   if (httpStarted) {
@@ -185,95 +213,110 @@ void httpDestroy(void) {
 }
 
 /*********************************************************
-*NAME:          httpSendMessage
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/9/01
-*LAST MODIFIED: 10/3/26
+*NAME:          wbn_api_post
 *PURPOSE:
-* Sends a binary message to the WinBolo.net server via
-* HTTP(S) GET and returns the decoded response length,
-* or -1 on error.
-*
-* The binary message is URL-encoded by libcurl and appended
-* as the "data" query parameter:
-*   <baseUrl>/wbn.php?data=<encoded>
-*
-*ARGUMENTS:
-* message - The binary message to send
-* len     - Length of the message in bytes
-* response - Buffer to receive the response body
-* maxSize  - Capacity of the response buffer
+* Low-level POST of a JSON string to a WinBolo.net API
+* endpoint. Builds the full URL as <baseUrl>/api/v1/<endpoint>.
+* Returns the HTTP status code, or -1 on transport error.
 *********************************************************/
-int httpSendMessage(BYTE *message, int len, BYTE *response, int maxSize) {
+int wbn_api_post(const char *endpoint, const char *json_body, char **response_out) {
+  if (response_out) *response_out = NULL;
   if (!httpStarted) return -1;
 
   CURL *curl = curl_easy_init();
   if (!curl) return -1;
 
-  char *encoded = curl_easy_escape(curl, (char *)message, len);
-  if (!encoded) {
+  /* Build URL: <baseUrl>/api/v1/<endpoint> */
+  char url[FILENAME_MAX];
+  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, "Content-Type: application/json");
+
+  DynBuf respBuf;
+  dynBufInit(&respBuf);
+  if (!respBuf.data) {
+    curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return -1;
   }
 
-  /* Build: <baseUrl>/wbn.php?data=<encoded> */
-  size_t urlLen = strlen(wbnBaseUrl) + strlen(encoded) + 32;
-  char *url = malloc(urlLen);
-  if (!url) {
-    curl_free(encoded);
-    curl_easy_cleanup(curl);
-    return -1;
-  }
-  snprintf(url, urlLen, "%s/wbn.php?data=%s", wbnBaseUrl, encoded);
-  curl_free(encoded);
-
-  WriteCtx ctx = { response, 0, maxSize };
-  curl_easy_setopt(curl, CURLOPT_URL,           url);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &ctx);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,       30L);
+  curl_easy_setopt(curl, CURLOPT_URL,            url);
+  curl_easy_setopt(curl, CURLOPT_POST,           1L);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS,     json_body);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (altIpAddress[0] != '\0') {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
   CURLcode res = curl_easy_perform(curl);
-  free(url);
+
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+  curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net httpSendMessage: %s\n", curl_easy_strerror(res));
+    fprintf(stderr, "WinBolo.net wbn_api_post [%s]: %s\n", endpoint, curl_easy_strerror(res));
+    free(respBuf.data);
     return -1;
   }
-  return ctx.pos;
+
+  if (response_out) {
+    *response_out = respBuf.data;
+  } else {
+    free(respBuf.data);
+  }
+  return (int)http_code;
+}
+
+/*********************************************************
+*NAME:          wbn_api_call
+*PURPOSE:
+* High-level JSON API call. Serializes the cJSON body,
+* POSTs it, and parses the JSON response.
+* Returns the HTTP status code, or -1 on error.
+*********************************************************/
+int wbn_api_call(const char *endpoint, cJSON *body, cJSON **response) {
+  if (response) *response = NULL;
+
+  char *json_str = cJSON_PrintUnformatted(body);
+  if (!json_str) return -1;
+
+  char *resp_str = NULL;
+  int status = wbn_api_post(endpoint, json_str, &resp_str);
+  free(json_str);
+
+  if (resp_str && response) {
+    *response = cJSON_Parse(resp_str);
+    if (!*response) {
+      fprintf(stderr, "WinBolo.net: failed to parse JSON response from %s\n", endpoint);
+    }
+  }
+  free(resp_str);
+
+  return status;
 }
 
 /*********************************************************
 *NAME:          httpSendLogFile
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/9/01
-*LAST MODIFIED: 10/3/26
 *PURPOSE:
-* Uploads a log file to the WinBolo.net server via
-* HTTP(S) multipart POST.  Returns TRUE on success.
-*
-*ARGUMENTS:
-* fileName     - Path to the log file to upload
-* key          - WINBOLONET_KEY_LEN-byte session key
-* wantFeedback - (unused, retained for API compatibility)
+* Uploads a log file to WinBolo.net via HTTP(S) multipart
+* POST.  Returns TRUE on success.
 *********************************************************/
-bool httpSendLogFile(char *fileName, BYTE *key, bool wantFeedback) {
+bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   (void)wantFeedback;
 
   if (!httpStarted || fileName == NULL || key == NULL) return false;
 
-  char sKey[WINBOLONET_KEY_LEN + 1];
-  memset(sKey, 0, sizeof(sKey));
-  memcpy(sKey, key, WINBOLONET_KEY_LEN);
-
-  /* Build: <baseUrl>/log.php?key=<sKey> */
+  /* Build: <baseUrl>/log.php?key=<key> */
   char url[FILENAME_MAX + 64];
-  snprintf(url, sizeof(url), "%s/log.php?key=%s", wbnBaseUrl, sKey);
+  snprintf(url, sizeof(url), "%s/log.php?key=%s", wbnBaseUrl, key);
 
   CURL *curl = curl_easy_init();
   if (!curl) return false;
@@ -312,15 +355,9 @@ bool httpSendLogFile(char *fileName, BYTE *key, bool wantFeedback) {
 
 /*********************************************************
 *NAME:          httpSetAltIpAddress
-*AUTHOR:        Minhiriath
-*CREATION DATE: 14/3/2009
-*LAST MODIFIED: 10/3/26
 *PURPOSE:
 * Sets the alternate local interface/IP address that
 * libcurl will bind to when connecting (CURLOPT_INTERFACE).
-*
-*ARGUMENTS:
-* iptoset - Interface name, IP, or hostname to bind to
 *********************************************************/
 void httpSetAltIpAddress(char *iptoset) {
   strncpy(altIpAddress, iptoset, sizeof(altIpAddress) - 1);

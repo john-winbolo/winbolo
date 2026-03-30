@@ -804,7 +804,7 @@ int main(int argc, char **argv) {
   char *useAddr;
   char debugFileName[2048];
   int maxPlayers;
-  BYTE key[32]; /* WBN Key */
+  char key[WINBOLONET_KEY_LEN]; /* WBN Key */
 
   strcpy(debugFileName,"server_test.txt");
 
@@ -930,7 +930,7 @@ int main(int argc, char **argv) {
   }
 
   if (argExist(argc, argv, "nowinbolonet") == FALSE) {
-    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) (pass[0] == 0 ? FALSE : TRUE), basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim), serverSim.timeCreated);
+    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) (pass[0] == 0 ? FALSE : TRUE), basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 
