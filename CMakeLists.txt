@@ -728,6 +728,7 @@ target_include_directories(WinBolo PRIVATE
     src/gui
     src/bolo
     src/server
+    ${cjson_SOURCE_DIR}
 )
 
 if(WIN32)
@@ -893,6 +894,7 @@ target_include_directories(WinBoloDS PRIVATE
     src/gui
     src/bolo
     src/server
+    ${cjson_SOURCE_DIR}
 )
 
 if(WIN32)
