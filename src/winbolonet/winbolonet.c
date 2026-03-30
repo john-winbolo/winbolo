@@ -263,7 +263,7 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   cJSON *currentTeam = NULL;
   BYTE arrayPos;
   int teamIndex = 0;
-  char teamId[8];
+  char teamId[16];
 
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);

@@ -292,7 +292,7 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   if (!curl) return -1;
 
   /* Build URL: <baseUrl>/api/v1/<endpoint> */
-  char url[FILENAME_MAX];
+  char url[FILENAME_MAX + 64];
   snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
 
   /* Generate timestamp and Ed25519 signature */
