@@ -39,10 +39,24 @@
 struct cJSON;
 
 /*********************************************************
+*NAME:          httpSetHostOverride
+*PURPOSE:
+* Sets a command-line override for the WBN host. When set,
+* httpCreate() will use this value instead of reading from
+* the preferences file. Pass a bare hostname (defaults to
+* https://), or include http:// or https:// scheme.
+*
+*ARGUMENTS:
+* host - Host value to use
+*********************************************************/
+void httpSetHostOverride(const char *host);
+
+/*********************************************************
 *NAME:          httpCreate
 *PURPOSE:
-* Initialises the http module.  Reads the server host from
-* the [WINBOLO.NET] Host INI key and initialises libcurl.
+* Initialises the http module.  Uses the command-line host
+* override if set, otherwise reads from the [WINBOLO.NET]
+* Host INI key.  Initialises libcurl.
 * Returns TRUE on success.
 *********************************************************/
 bool httpCreate(void);

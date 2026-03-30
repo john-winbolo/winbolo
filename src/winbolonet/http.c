@@ -67,6 +67,7 @@ static bool httpStarted = false;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */
 static char wbnBaseUrl[FILENAME_MAX];    /* full base URL, e.g. https://wbn.winbolo.net */
 static char altIpAddress[FILENAME_MAX];
+static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host */
 
 /*********************************************************
 *NAME:          buildBaseUrl
@@ -171,27 +172,51 @@ static size_t dynWriteCallback(char *ptr, size_t size, size_t nmemb, void *userd
 }
 
 /*********************************************************
+*NAME:          httpSetHostOverride
+*PURPOSE:
+* Sets a command-line override for the WBN host. When set,
+* httpCreate() will use this value instead of reading from
+* the preferences file.
+*
+*ARGUMENTS:
+* host - Host value (bare hostname defaults to https://,
+*        or include http:// or https:// scheme)
+*********************************************************/
+void httpSetHostOverride(const char *host) {
+  strncpy(wbnHostOverride, host, FILENAME_MAX - 1);
+  wbnHostOverride[FILENAME_MAX - 1] = '\0';
+}
+
+/*********************************************************
 *NAME:          httpCreate
 *PURPOSE:
 * Initialises the http module and libcurl global state.
-* Reads [WINBOLO.NET] Host from the INI file.
+* Uses the command-line override if set, otherwise reads
+* [WINBOLO.NET] Host from the INI file.
 * Returns success.
 *********************************************************/
 bool httpCreate(void) {
   char prefs[FILENAME_MAX];
   char iniValue[FILENAME_MAX];
 
+  if (wbnHostOverride[0] != '\0') {
+    /* Use command-line override */
+    strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
+    iniValue[sizeof(iniValue) - 1] = '\0';
+  } else {
+    /* Read from preferences file */
 #ifdef _WIN32
-  strcpy(prefs, PREFERENCE_FILE);
+    strcpy(prefs, PREFERENCE_FILE);
 #else
-  preferencesGetPreferenceFile(prefs);
+    preferencesGetPreferenceFile(prefs);
 #endif
 
-  iniValue[0] = '\0';
-  GetPrivateProfileString("WINBOLO.NET", "Host", "wbn.winbolo.net",
-                          iniValue, (unsigned int)sizeof(iniValue), prefs);
-  /* Write back so servers without a client config get a default entry */
-  WritePrivateProfileString("WINBOLO.NET", "Host", iniValue, prefs);
+    iniValue[0] = '\0';
+    GetPrivateProfileString("WINBOLO.NET", "Host", "wbn.winbolo.net",
+                            iniValue, (unsigned int)sizeof(iniValue), prefs);
+    /* Write back so servers without a client config get a default entry */
+    WritePrivateProfileString("WINBOLO.NET", "Host", iniValue, prefs);
+  }
 
   buildBaseUrl(iniValue);
 
