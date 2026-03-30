@@ -772,10 +772,21 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
-    /* Player list */
+    /* Collect enabled player indices */
+    int enabledPlayers[MAX_PLAYERS];
+    int enabledCount = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!s_playerEnabled[i]) continue;
+        if (s_playerEnabled[i]) {
+            /* Refresh ping/WBN/Steam */
+            s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
+            s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
+            s_playerSteam[i] = playersGetSteamParticipant(&cs->sim.plyrs, (BYTE)i);
+            enabledPlayers[enabledCount++] = i;
+        }
+    }
 
+    /* Render a single player row */
+    auto renderPlayerRow = [&](int i) {
         /* Alliance indicator */
         if (i != self) {
             if (isAlly[i]) {
@@ -812,11 +823,6 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::PopStyleColor();
             ImGui::SameLine();
         }
-
-        /* Refresh ping/WBN/Steam */
-        s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-        s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
-        s_playerSteam[i] = playersGetSteamParticipant(&cs->sim.plyrs, (BYTE)i);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
         char defLabel[8];
@@ -866,6 +872,23 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
+    };
+
+    /* Player list — 2 columns on tablet, single column on desktop */
+    if (uiModeIsTablet() && enabledCount > 1) {
+        int half = (enabledCount + 1) / 2;
+        if (ImGui::BeginTable("##playerCols", 2, ImGuiTableFlags_None)) {
+            ImGui::TableNextColumn();
+            for (int idx = 0; idx < half; idx++)
+                renderPlayerRow(enabledPlayers[idx]);
+            ImGui::TableNextColumn();
+            for (int idx = half; idx < enabledCount; idx++)
+                renderPlayerRow(enabledPlayers[idx]);
+            ImGui::EndTable();
+        }
+    } else {
+        for (int idx = 0; idx < enabledCount; idx++)
+            renderPlayerRow(enabledPlayers[idx]);
     }
 
     /* Alliance actions */
