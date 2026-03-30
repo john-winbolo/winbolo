@@ -1291,7 +1291,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(FRAME_RATE_30, def, sizeof(def));
   GetPrivateProfileString("MENU", "Frame Rate", def, buff, FILENAME_MAX, prefsFile);
   frameRate = atoi(buff);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  GetPrivateProfileString("MENU", "Show Gunsight", "Yes", buff, FILENAME_MAX, prefsFile);
+#else
   GetPrivateProfileString("MENU", "Show Gunsight", "No", buff, FILENAME_MAX, prefsFile);
+#endif
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX, prefsFile);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
@@ -1309,7 +1313,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showNetworkStatusMessages = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Network Debug Messages", "No", buff, FILENAME_MAX, prefsFile);
   showNetworkDebugMessages = YESNO_TO_TRUEFALSE(buff[0]);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  GetPrivateProfileString("MENU", "Autoscroll Enabled", "Yes", buff, FILENAME_MAX, prefsFile);
+#else
   GetPrivateProfileString("MENU", "Autoscroll Enabled", "No", buff, FILENAME_MAX, prefsFile);
+#endif
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX, prefsFile);
   showPillLabels = YESNO_TO_TRUEFALSE(buff[0]);

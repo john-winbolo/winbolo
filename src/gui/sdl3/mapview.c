@@ -412,15 +412,16 @@ void mapViewInit(void) {
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
+  int ss = ctx->sheetScale;
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
     BYTE pos = screenGetPos(value, x, y);
     SDL_FRect src = {
-      (float)mapViewPosX[pos],
-      (float)mapViewPosY[pos],
-      (float)TILE_SIZE_X,
-      (float)TILE_SIZE_Y
+      (float)(mapViewPosX[pos] * ss),
+      (float)(mapViewPosY[pos] * ss),
+      (float)(TILE_SIZE_X * ss),
+      (float)(TILE_SIZE_Y * ss)
     };
     SDL_FRect dest = {
       (float)(originX + ((int)x - 1) * tileW - edgeX),
@@ -431,8 +432,8 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
     if (screenIsMine(mineView, x, y)) {
-      SDL_FRect mineSrc = { (float)MINE_X, (float)MINE_Y,
-                            (float)TILE_SIZE_X, (float)TILE_SIZE_Y };
+      SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
+                            (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
 
@@ -489,7 +490,8 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    SDL_FRect srcR = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
+    int ss = ctx->sheetScale;
+    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
     SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
@@ -618,9 +620,18 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    SDL_FRect srcR = { (float)srcX, (float)srcY, (float)TILE_SIZE_X, (float)TILE_SIZE_Y };
-    SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    {
+      int ss = ctx->sheetScale;
+      /* Inset the source rect by a tiny amount to prevent the GPU from
+         sampling the adjacent atlas row due to float-to-UV precision
+         errors.  BMP-sourced sprites above have green (0,255,0,0) in
+         their transparent pixels which would otherwise bleed through. */
+      float inset = 0.05f;
+      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+                         (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
+      SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    }
   }
 }
 
@@ -652,9 +663,12 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    SDL_FRect srcR = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
-    SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    {
+      int ss = ctx->sheetScale;
+      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+      SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    }
   }
 }
 
@@ -830,14 +844,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
   mapViewBuildTileBuffer(sim, &tileBuf, (BYTE)camMX, (BYTE)camMY, tilesW, tilesH, selfPlayer);
 
   /* Draw tiles */
+  int ss = ctx->sheetScale;
   for (int x = 0; x < tilesW; x++) {
     for (int y = 0; y < tilesH; y++) {
       BYTE pos = tileBuf.tiles[x][y];
       SDL_FRect src = {
-        (float)mapViewPosX[pos],
-        (float)mapViewPosY[pos],
-        (float)tileSize,
-        (float)tileSize
+        (float)(mapViewPosX[pos] * ss),
+        (float)(mapViewPosY[pos] * ss),
+        (float)(tileSize * ss),
+        (float)(tileSize * ss)
       };
       SDL_FRect dest = {
         (float)(originX + x * scaledTile - edgeX),
@@ -848,8 +863,8 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
       if (tileBuf.mines[x][y]) {
-        SDL_FRect mineSrc = { (float)MINE_X, (float)MINE_Y,
-                              (float)tileSize, (float)tileSize };
+        SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
+                              (float)(tileSize * ss), (float)(tileSize * ss) };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
       }
     }
@@ -955,7 +970,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
       default: continue;
     }
 
-    SDL_FRect srcR = { (float)srcX, (float)srcY, (float)tileSize, (float)tileSize };
+    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
     SDL_FRect dstR = { dx, dy, (float)scaledTile, (float)scaledTile };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
@@ -998,7 +1013,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         /* Cull off-screen */
         if (sx + srcW * zf >= originX && sx <= originX + viewW &&
             sy + srcH * zf >= originY && sy <= originY + viewH) {
-          SDL_FRect sSrc = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
+          SDL_FRect sSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
           SDL_FRect sDst = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
           SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &sSrc, &sDst);
         }
@@ -1032,7 +1047,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
       if (ex + scaledTile >= originX && ex <= originX + viewW &&
           ey + scaledTile >= originY && ey <= originY + viewH) {
-        SDL_FRect eSrc = { (float)srcX, (float)srcY, (float)tileSize, (float)tileSize };
+        SDL_FRect eSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
         SDL_FRect eDst = { ex, ey, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &eSrc, &eDst);
       }
@@ -1066,7 +1081,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
     if (lx + srcW * zf >= originX && lx <= originX + viewW &&
         ly + srcH * zf >= originY && ly <= originY + viewH) {
-      SDL_FRect lSrc = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
+      SDL_FRect lSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
       SDL_FRect lDst = { lx, ly, (float)(srcW * zf), (float)(srcH * zf) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &lSrc, &lDst);
     }
@@ -1083,7 +1098,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
       if (tx + scaledTile >= originX && tx <= originX + viewW &&
           ty + scaledTile >= originY && ty <= originY + viewH) {
-        SDL_FRect tSrc = { (float)EXPLOSION8_X, (float)EXPLOSION8_Y, (float)tileSize, (float)tileSize };
+        SDL_FRect tSrc = { (float)(EXPLOSION8_X * ss), (float)(EXPLOSION8_Y * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
         SDL_FRect tDst = { tx, ty, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &tSrc, &tDst);
       }

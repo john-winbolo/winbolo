@@ -317,14 +317,23 @@ void frontEndGameOver(void) {
 }
 
 void frontEndClearPlayer(playerNumbers value) {
-  playersPanelClearPlayer((unsigned char)value);
+  sdl3ImguiClearPlayer((unsigned char)value);
 }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant) {
-  (void)cs; (void)countryCode; (void)ping; (void)wbnParticipant; (void)steamParticipant;
-  playersPanelSetPlayer((unsigned char)value, str);
+  char cc[3];
+  if (!screenGetGameRunningCS(cs)) {
+    cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
+    sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+    return;
+  }
+  cc[0] = countryCode[0];
+  cc[1] = countryCode[1];
+  cc[2] = '\0';
+  sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+  sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, wbnParticipant, steamParticipant);
 }
 void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
-  playersPanelSetCheckState((unsigned char)value, isChecked);
+  sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
@@ -337,7 +346,7 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 }
 
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
-  (void)playerName; (void)playerNum;
+  sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
 
 bool frontEndTutorial(BYTE pos) {

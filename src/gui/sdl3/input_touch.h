@@ -9,8 +9,7 @@
 *Purpose:
 *  Touch input handling for tablet UI mode.
 *  Processes SDL finger events into a virtual joystick
-*  (left side), shoot button (right lower), mine button
-*  (right upper), and build select buttons.
+*  (left side) and hit-tested action buttons (right side).
 *********************************************************/
 
 #ifndef INPUT_TOUCH_H
@@ -25,103 +24,147 @@
 extern "C" {
 #endif
 
-/*********************************************************
-*NAME:          inputTouchSetup / Cleanup
-*PURPOSE:
-*  Initialise and tear down touch input state.
-*********************************************************/
+/* Button IDs for the hit-testing system */
+typedef enum {
+  TOUCH_BTN_FIRE = 0,
+  TOUCH_BTN_MINE,
+  TOUCH_BTN_GS_INCREASE,
+  TOUCH_BTN_GS_DECREASE,
+  TOUCH_BTN_PILL_VIEW,
+  TOUCH_BTN_TANK_VIEW,
+  TOUCH_BTN_COUNT
+} TouchButtonID;
+
 void inputTouchSetup(void);
 void inputTouchCleanup(void);
 
-/*********************************************************
-*NAME:          inputTouchProcessEvent
-*PURPOSE:
-*  Route an SDL finger event to the touch input system.
-*  windowW/windowH are the current window dimensions
-*  (needed to convert normalised finger coordinates).
-*********************************************************/
 void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH);
 
 /*********************************************************
-*NAME:          inputTouchGetMovement
+*NAME:          inputTouchRegisterButton
 *PURPOSE:
-*  Returns the tankButton corresponding to the current
-*  joystick direction. TNONE if joystick is inactive.
+*  Register a circular button for hit-testing.
+*  Called each frame from the layout config.
 *********************************************************/
+void inputTouchRegisterButton(TouchButtonID id, float centerX, float centerY, float radius);
+
+/*********************************************************
+*NAME:          inputTouchRegisterRectButton
+*PURPOSE:
+*  Register a rectangular button for hit-testing.
+*********************************************************/
+void inputTouchRegisterRectButton(TouchButtonID id, float x, float y, float w, float h);
+
+/*********************************************************
+*NAME:          inputTouchClearButtons
+*PURPOSE:
+*  Clear all registered buttons. Called at start of frame.
+*********************************************************/
+void inputTouchClearButtons(void);
+
+/*********************************************************
+*NAME:          inputTouchIsButtonHeld
+*PURPOSE:
+*  Returns true while a button is held down (continuous).
+*********************************************************/
+bool inputTouchIsButtonHeld(TouchButtonID id);
+
+/*********************************************************
+*NAME:          inputTouchIsButtonTapped
+*PURPOSE:
+*  Returns true once per tap (edge-triggered, consuming).
+*********************************************************/
+bool inputTouchIsButtonTapped(TouchButtonID id);
+
 tankButton inputTouchGetMovement(void);
 
 /*********************************************************
-*NAME:          inputTouchIsFirePressed
+*NAME:          inputTouchSetTankAngle
 *PURPOSE:
-*  Returns true while the shoot button is held.
+*  Provides the tank's current 0-255 direction to the touch
+*  input system for absolute steering calculations.
+*  Called each frame before inputTouchGetMovement().
 *********************************************************/
-bool inputTouchIsFirePressed(void);
+void inputTouchSetTankAngle(BYTE angle);
 
 /*********************************************************
-*NAME:          inputTouchIsMinePressed
+*NAME:          inputTouchSetAbsoluteSteering / Get
 *PURPOSE:
-*  Returns true once per mine-button tap (edge-triggered).
-*  Consuming: returns true once, then false until released
-*  and pressed again.
+*  Controls whether the joystick uses absolute steering
+*  (point-to-face) or relative steering (left/right to turn).
+*  Absolute is the default for tablet mode.
 *********************************************************/
-bool inputTouchIsMinePressed(void);
+void inputTouchSetAbsoluteSteering(bool enabled);
+bool inputTouchGetAbsoluteSteering(void);
 
-/*********************************************************
-*NAME:          inputTouchIsMineHeld
-*PURPOSE:
-*  Returns true while the mine button finger is down.
-*  Non-consuming — for visual feedback only.
-*********************************************************/
-bool inputTouchIsMineHeld(void);
-
-/*********************************************************
-*NAME:          inputTouchGetJoystickState
-*PURPOSE:
-*  Fills in the joystick visualisation state for the
-*  tablet overlay renderer.  All coordinates are in
-*  screen pixels.
-*  releaseTime is the SDL_GetTicks() timestamp of the
-*  last finger-up on the joystick (0 if never released).
-*********************************************************/
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
                                 float *thumbX, float *thumbY, bool *active,
                                 Uint64 *releaseTime);
 
 /*********************************************************
-*NAME:          inputTouchTriggerHaptic
+*NAME:          inputTouchSetScrollJoystickZone
 *PURPOSE:
-*  Triggers a haptic feedback pulse via SDL.
-*  strength: 0.0 (none) to 1.0 (max)
-*  durationMs: pulse duration in milliseconds
+*  Register the rectangular zone for the scroll joystick.
+*  Finger-down inside this rect activates the scroll stick.
 *********************************************************/
-void inputTouchTriggerHaptic(float strength, Uint32 durationMs);
+void inputTouchSetScrollJoystickZone(float x, float y, float w, float h);
 
 /*********************************************************
-*NAME:          inputTouchGetBuildSelect
+*NAME:          inputTouchGetScrollDirection
 *PURPOSE:
-*  Returns >= 0 if a build-select button was tapped
-*  this frame (0=tree, 1=road, 2=wall, 3=pill, 4=mine).
-*  Returns -1 if no build button was tapped.
-*  Consuming: resets after read.
+*  Returns the scroll direction from the scroll joystick.
+*  Sets scrollX/scrollY to -1, 0, or +1.
+*  Returns true if the scroll joystick is active.
 *********************************************************/
+bool inputTouchGetScrollDirection(int *scrollX, int *scrollY);
+
+void inputTouchGetScrollJoystickState(float *anchorX, float *anchorY,
+                                      float *thumbX, float *thumbY, bool *active,
+                                      Uint64 *releaseTime);
+
+void inputTouchTriggerHaptic(float strength, Uint32 durationMs);
+
+/* Gunsight change: returns 1 for increase, -1 for decrease, 0 for none.
+   Consuming — resets after read. */
+int inputTouchGetGunsightChange(void);
+
+/* Legacy API kept for build select (handled by ImGui) */
 int inputTouchGetBuildSelect(void);
 
 /*********************************************************
-*NAME:          inputTouchSetViewportBounds
+*NAME:          inputTouchConsumeTapInRect
 *PURPOSE:
-*  Tells the touch system where the game viewport is so
-*  that taps inside it can be converted to tile coords.
+*  Returns true if a tap occurred in the given rectangle
+*  since last call. Consuming — only one rect can claim it.
 *********************************************************/
+bool inputTouchConsumeTapInRect(float x, float y, float w, float h);
+
 void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
+bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
 
 /*********************************************************
-*NAME:          inputTouchGetViewportTap
+*NAME:          inputTouchGetViewportDragScroll
 *PURPOSE:
-*  Returns true if a tap-to-build occurred this frame.
-*  Fills tileX/tileY with 1-based viewport-relative tile
-*  coordinates (1-15).  Consuming: resets after read.
+*  Returns the scroll direction from dragging on the viewport.
+*  Uses natural scrolling (drag right → scroll left).
+*  Sets scrollX/scrollY to -1, 0, or +1.
+*  Returns true if a viewport drag is active.
 *********************************************************/
-bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
+bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY);
+
+/*********************************************************
+*NAME:          inputTouchGetViewportDragDelta
+*PURPOSE:
+*  Returns the raw pixel delta from the last finger motion
+*  on the viewport drag. Consuming — clears after read.
+*  Returns true if a drag motion occurred this frame.
+*********************************************************/
+bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY);
+
+/* Legacy API — now wrappers around button system */
+bool inputTouchIsFirePressed(void);
+bool inputTouchIsMinePressed(void);
+bool inputTouchIsMineHeld(void);
 
 #ifdef __cplusplus
 }

@@ -40,6 +40,7 @@
 #include <emscripten/html5.h>
 #endif
 
+#include "stb_image.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "cursor.h"
@@ -69,6 +70,7 @@ static SDL_Renderer *gRenderer      = NULL;
 static SDL_Texture  *gBackgroundTex = NULL;
 static SDL_Texture  *gTilesTex      = NULL;
 static int           gZoomFactor    = 1;
+static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
 
 /* Phase 4 render-target textures.
    Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -113,12 +115,19 @@ static int          gStaticLast   = 0;
    Prevents a one-frame artifact where the LGM arrow points top-left before
    the first real angle is computed. */
 static bool         gManStatusReady = false;
+static bool         gManStatusDead  = false;
+static TURNTYPE     gManStatusAngle = 0;
 
 /* Tablet viewport bounds — set each frame by sdl3DrawMainScreen(),
    read by sdl3DrawGetTabletViewport(). */
 static int          gTabletVpX = 0, gTabletVpY = 0;
 static int          gTabletVpW = 0, gTabletVpH = 0;
 static int          gTabletVpZoom = 0;
+
+/* Drag scroll pixel offset — applied on top of engine edgeX/edgeY
+   for smooth sub-tile scrolling from touch dragging. */
+static int          gDragOffsetX = 0;
+static int          gDragOffsetY = 0;
 
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
@@ -152,6 +161,36 @@ static int          gTexMsgTopW, gTexMsgTopH;
 static int          gTexMsgBotW, gTexMsgBotH;
 static int          gTexKillsW,  gTexKillsH;
 static int          gTexDeathsW, gTexDeathsH;
+
+/* Query safe area insets in renderer coordinates.
+   Returns left/top/right/bottom insets (pixels). */
+static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
+                                   float *outRight, float *outBottom) {
+  float l = 0, t = 0, r = 0, b = 0;
+  if (gWindow) {
+    SDL_Rect safeRect;
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(gWindow, &winW, &winH);
+    if (SDL_GetWindowSafeArea(gWindow, &safeRect) && winW > 0 && winH > 0) {
+      int renW = 0, renH = 0;
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &renW, &renH, &logMode);
+      if (renW <= 0 || renH <= 0) {
+        SDL_GetCurrentRenderOutputSize(gRenderer, &renW, &renH);
+      }
+      if (renW > 0 && renH > 0) {
+        l = (float)safeRect.x * (float)renW / (float)winW;
+        t = (float)safeRect.y * (float)renH / (float)winH;
+        r = (float)(winW - safeRect.x - safeRect.w) * (float)renW / (float)winW;
+        b = (float)(winH - safeRect.y - safeRect.h) * (float)renH / (float)winH;
+      }
+    }
+  }
+  if (outLeft) *outLeft = l;
+  if (outTop) *outTop = t;
+  if (outRight) *outRight = r;
+  if (outBottom) *outBottom = b;
+}
 
 /* Source-rect lookup tables for tiles now live in mapview.c (mapViewPosX/Y). */
 
@@ -220,16 +259,29 @@ static bool sdl3LoadTiles(void) {
     return TRUE;
   }
 
-  SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
+  /* Atlas scale = gZoomFactor.  With HIGH_PIXEL_DENSITY on tablet,
+     gZoomFactor is already set to the native-pixel effective zoom
+     (e.g. 5 on iPhone 17 Pro).  SVGs rasterize at gZoomFactor*16
+     per tile for near-1:1 mapping to screen pixels. */
+  int atlasZoom = gZoomFactor;
+  if (atlasZoom < 1) atlasZoom = 1;
+  gSheetScale = atlasZoom;
+
+  SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * atlasZoom);
   if (!sheet) {
     SDL_Log("sdl3LoadTiles: tileLoaderBuildSheet failed");
+    gSheetScale = 1;
     return FALSE;
   }
+
+  SDL_Log("sdl3LoadTiles: atlas scale=%d, sheet=%dx%d",
+          atlasZoom, sheet->w, sheet->h);
 
   gTilesTex = SDL_CreateTextureFromSurface(gRenderer, sheet);
   SDL_DestroySurface(sheet);
   if (gTilesTex == NULL) {
     SDL_Log("sdl3LoadTiles: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
+    gSheetScale = 1;
     return FALSE;
   }
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
@@ -280,7 +332,7 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
   SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
   SDL_SetRenderTarget(gRenderer, tex);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   SDL_SetRenderTarget(gRenderer, NULL);
   return tex;
 }
@@ -293,6 +345,10 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
 *  then draws the current build-select indent overlay.
 *********************************************************/
 static void sdl3RenderStatusPanels(void) {
+  /* In tablet mode the ImGui overlay draws its own resource bars,
+     build-select bar, and man-status — skip the desktop versions. */
+  if (uiModeIsTablet()) return;
+
   int zf = gZoomFactor;
 
   /* Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -349,15 +405,16 @@ static void sdl3RenderStatusPanels(void) {
         break;
     }
     /* Large indent tile */
-    SDL_FRect iSrc = { (float)INDENT_ON_X, (float)INDENT_ON_Y,
-                       (float)BS_ITEM_SIZE_X, (float)BS_ITEM_SIZE_Y };
+    int ss = gSheetScale;
+    SDL_FRect iSrc = { (float)(INDENT_ON_X * ss), (float)(INDENT_ON_Y * ss),
+                       (float)(BS_ITEM_SIZE_X * ss), (float)(BS_ITEM_SIZE_Y * ss) };
     SDL_FRect iDst = { (float)(zf * bx), (float)(zf * by),
                        (float)(zf * BS_ITEM_SIZE_X), (float)(zf * BS_ITEM_SIZE_Y) };
     SDL_RenderTexture(gRenderer, gTilesTex, &iSrc, &iDst);
 
     /* Small dot tile */
-    SDL_FRect dSrc = { (float)INDENT_DOT_ON_X, (float)INDENT_DOT_ON_Y,
-                       (float)BS_DOT_ITEM_SIZE_X, (float)BS_DOT_ITEM_SIZE_Y };
+    SDL_FRect dSrc = { (float)(INDENT_DOT_ON_X * ss), (float)(INDENT_DOT_ON_Y * ss),
+                       (float)(BS_DOT_ITEM_SIZE_X * ss), (float)(BS_DOT_ITEM_SIZE_Y * ss) };
     SDL_FRect dDst = { (float)(zf * dotX), (float)(zf * dotY),
                        (float)(zf * BS_DOT_ITEM_SIZE_X), (float)(zf * BS_DOT_ITEM_SIZE_Y) };
     SDL_RenderTexture(gRenderer, gTilesTex, &dSrc, &dDst);
@@ -514,6 +571,18 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready) {
+  if (ready) *ready = gManStatusReady;
+  return gManStatusTex;
+}
+
+bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle) {
+  if (!gManStatusReady) return false;
+  if (isDead) *isDead = gManStatusDead;
+  if (angle)  *angle  = gManStatusAngle;
+  return true;
+}
+
 void sdl3DrawDisableLogicalPresentation(void) {
   if (gRenderer) {
     SDL_SetRenderLogicalPresentation(gRenderer, 0, 0,
@@ -534,20 +603,23 @@ void sdl3DrawRestoreLogicalPresentation(void) {
 #endif
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
-    /* Re-apply the mobile tablet logical presentation (same logic as setup) */
+    /* Re-apply the mobile tablet logical presentation (same logic as setup).
+       Always set logical presentation so game rendering and ImGui share
+       the same coordinate space (critical with HIGH_PIXEL_DENSITY). */
     int ww, wh;
     SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
     int gameUnit = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y;
     int curZoom = wh / gameUnit;
     if (curZoom < 1) curZoom = 1;
     int used = gameUnit * curZoom;
+    int bestZoom = curZoom;
     if ((wh - used) * 100 / wh > 15) {
-      int nextZoom = curZoom + 1;
-      int logH = gameUnit * nextZoom;
-      int logW = ww * logH / wh;
-      SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
-                                       SDL_LOGICAL_PRESENTATION_LETTERBOX);
+      bestZoom = curZoom + 1;
     }
+    int logH = gameUnit * bestZoom;
+    int logW = ww * logH / wh;
+    SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
   }
 #endif
 }
@@ -613,42 +685,78 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   }
 }
 
+/* -------------------------------------------------------
+ * Loading screen — show smalllogo-transparent.png centered
+ * on black.  Called immediately after window/renderer
+ * creation so the user sees something while fonts, tiles
+ * and audio load.
+ * ------------------------------------------------------- */
+static void sdl3DrawShowLoadingScreen(void) {
+  if (!gRenderer) return;
+
+  /* Load the logo PNG via stb_image */
+  const char *basePath = SDL_GetBasePath();
+  if (!basePath) basePath = "./";
+  char logoPath[1024];
+  SDL_snprintf(logoPath, sizeof(logoPath), "%ssmalllogo-transparent.png", basePath);
+
+  SDL_IOStream *io = SDL_IOFromFile(logoPath, "rb");
+  if (!io) return;
+  Sint64 fileSize = SDL_GetIOSize(io);
+  if (fileSize <= 0) { SDL_CloseIO(io); return; }
+  unsigned char *buf = (unsigned char *)SDL_malloc((size_t)fileSize);
+  if (!buf) { SDL_CloseIO(io); return; }
+  SDL_ReadIO(io, buf, (size_t)fileSize);
+  SDL_CloseIO(io);
+
+  int imgW, imgH, channels;
+  unsigned char *pixels = stbi_load_from_memory(buf, (int)fileSize, &imgW, &imgH, &channels, 4);
+  SDL_free(buf);
+  if (!pixels) return;
+
+  SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pixels, imgW * 4);
+  if (!surf) { stbi_image_free(pixels); return; }
+  SDL_Texture *logoTex = SDL_CreateTextureFromSurface(gRenderer, surf);
+  SDL_DestroySurface(surf);
+  stbi_image_free(pixels);
+  if (!logoTex) return;
+
+  /* Get the coordinate space the renderer is using */
+  int screenW = 0, screenH = 0;
+  {
+    SDL_RendererLogicalPresentation mode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &screenW, &screenH, &mode);
+  }
+  if (screenW <= 0 || screenH <= 0)
+    SDL_GetCurrentRenderOutputSize(gRenderer, &screenW, &screenH);
+
+  /* Center the logo */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+
+  if (screenW > 0 && screenH > 0) {
+    /* Scale logo to fit ~40% of the smaller screen dimension */
+    int maxDim = (screenW < screenH) ? screenW : screenH;
+    int drawSize = maxDim * 2 / 5;
+    float scaleW = (float)drawSize / (float)imgW;
+    float scaleH = (float)drawSize / (float)imgH;
+    float scale = (scaleW < scaleH) ? scaleW : scaleH;
+    float dstW = imgW * scale;
+    float dstH = imgH * scale;
+    SDL_FRect dst = {
+      (screenW - dstW) / 2.0f,
+      (screenH - dstH) / 2.0f,
+      dstW, dstH
+    };
+    SDL_RenderTexture(gRenderer, logoTex, NULL, &dst);
+  }
+
+  SDL_RenderPresent(gRenderer);
+  SDL_DestroyTexture(logoTex);
+}
+
 bool sdl3DrawSetup(int zoomFactor) {
   gZoomFactor = zoomFactor;
-
-  /* Phase 5 — initialise SDL_ttf and open font */
-  bool ttfOk = TTF_Init();
-  if (ttfOk) {
-#if defined(__EMSCRIPTEN__)
-    const char *fontPath = "/data/CourierPrime-Regular.ttf";
-#elif defined(__ANDROID__)
-    /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
-     * asset manager when given a relative path.  Don't prepend BasePath. */
-    const char *fontPath = "data/CourierPrime-Regular.ttf";
-#else
-    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
-    /* Use SDL_GetBasePath() to resolve font path relative to the executable,
-       so it works regardless of CWD */
-    const char *base = SDL_GetBasePath();
-    static char fontBuf[1024];
-    if (base) {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
-    } else {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
-    }
-    const char *fontPath = fontBuf;
-#endif
-    gFontMsg  = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
-    gFontKD   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
-    gFontTiny  = TTF_OpenFont(fontPath,  8 * gZoomFactor); /* pill/base status labels */
-    gFontLabel = TTF_OpenFont(fontPath, 10 * gZoomFactor); /* pill/base main view labels */
-  }
-
-  /* Clear label cache */
-  for (int i = 0; i < SDL3_MAX_PLAYERS; i++) {
-    gLabelTex[i] = NULL;
-    gLabelStr[i][0] = '\0';
-  }
 
 #ifdef __EMSCRIPTEN__
   /* Pre-size the canvas so SDL3's external_size probe sees the right
@@ -661,10 +769,12 @@ bool sdl3DrawSetup(int zoomFactor) {
   }
 #endif
 
+  /* --- Create window and renderer first, so we can compute the
+         effective zoom for font sizing and tile loading. --- */
   if (uiModeIsTablet()) {
     /* Tablet mode: fullscreen window, no fixed-size chrome */
     gWindow = SDL_CreateWindow("WinBolo SDL3", 0, 0,
-                               SDL_WINDOW_FULLSCREEN);
+                               SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
     gWindow = SDL_CreateWindow("WinBolo SDL3",
                                zoomFactor * SDL3_SCREEN_W,
@@ -713,20 +823,63 @@ bool sdl3DrawSetup(int zoomFactor) {
     if (curZoom < 1) curZoom = 1;
     int used = gameUnit * curZoom;
     /* If more than 15% of screen height is wasted, bump to next zoom */
+    int bestZoom = curZoom;
     if ((wh - used) * 100 / wh > 15) {
-      int nextZoom = curZoom + 1;
-      int logH = gameUnit * nextZoom;
-      int logW = ww * logH / wh;
-      SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
-                                       SDL_LOGICAL_PRESENTATION_LETTERBOX);
-      SDL_Log("sdl3DrawSetup: mobile tablet logical presentation %dx%d (zoom %d)",
-              logW, logH, nextZoom);
+      bestZoom = curZoom + 1;
     }
+    /* Always set a logical presentation so game rendering and ImGui
+       share the same coordinate space (critical with HIGH_PIXEL_DENSITY
+       where the render output is in native pixels). */
+    int logH = gameUnit * bestZoom;
+    int logW = ww * logH / wh;
+    SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    SDL_Log("sdl3DrawSetup: mobile tablet logical presentation %dx%d (zoom %d)",
+            logW, logH, bestZoom);
+    gZoomFactor = bestZoom;
+    SDL_Log("sdl3DrawSetup: render output %dx%d, effective zoom %d", ww, wh, gZoomFactor);
   }
 #endif
 
+  /* --- Show loading screen while heavy resources load --- */
+  sdl3DrawShowLoadingScreen();
+
+  /* --- Now load fonts at the correct zoom --- */
+  bool ttfOk = TTF_Init();
+  if (ttfOk) {
+#if defined(__EMSCRIPTEN__)
+    const char *fontPath = "/data/CourierPrime-Regular.ttf";
+#elif defined(__ANDROID__)
+    /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
+     * asset manager when given a relative path.  Don't prepend BasePath. */
+    const char *fontPath = "data/CourierPrime-Regular.ttf";
+#else
+    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
+    /* Use SDL_GetBasePath() to resolve font path relative to the executable,
+       so it works regardless of CWD */
+    const char *base = SDL_GetBasePath();
+    static char fontBuf[1024];
+    if (base) {
+      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
+    } else {
+      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
+    }
+    const char *fontPath = fontBuf;
+#endif
+    gFontMsg  = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
+    gFontKD   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
+    gFontTiny  = TTF_OpenFont(fontPath,  8 * gZoomFactor); /* pill/base status labels */
+    gFontLabel = TTF_OpenFont(fontPath, 10 * gZoomFactor); /* pill/base main view labels */
+  }
+
+  /* Clear label cache */
+  for (int i = 0; i < SDL3_MAX_PLAYERS; i++) {
+    gLabelTex[i] = NULL;
+    gLabelStr[i][0] = '\0';
+  }
+
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   SDL_RenderPresent(gRenderer);
 
   /* Set up the SDL cursor (crosshair inside game area, system cursor outside) */
@@ -781,6 +934,7 @@ void sdl3DrawCleanup(void) {
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
+    gSheetScale = 1;
   }
   if (gBackgroundTex) {
     SDL_DestroyTexture(gBackgroundTex);
@@ -824,7 +978,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   }
 
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   bool tabletMode = uiModeIsTablet();
 
@@ -876,6 +1030,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   int savedZoomFactor = gZoomFactor;
   if (tabletMode) {
     gZoomFactor = effectiveZoom;
+    /* Apply drag scroll pixel offset for smooth sub-tile scrolling */
+    edgeX += gDragOffsetX;
+    edgeY += gDragOffsetY;
   }
 
   if (sdl3LoadTiles()) {
@@ -933,10 +1090,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           for (int sy = 0; sy < staticTilesX; sy++) {
             int staticOffset = rand() % (TILE_FILE_X / TILE_SIZE_X);
             SDL_FRect staticSrc = {
-              (float)(STATIC_X + staticOffset),
-              (float)STATIC_Y,
-              (float)TILE_SIZE_X,
-              (float)TILE_SIZE_Y
+              (float)((STATIC_X + staticOffset) * gSheetScale),
+              (float)(STATIC_Y * gSheetScale),
+              (float)(TILE_SIZE_X * gSheetScale),
+              (float)(TILE_SIZE_Y * gSheetScale)
             };
             SDL_FRect staticDest = {
               (float)(originX + sy * tileW),
@@ -950,7 +1107,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
     } else {
       /* Draw map tiles via mapview */
-      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor };
+      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Draw pillbox/base number labels (needs fonts — stays here) */
@@ -1013,8 +1170,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
       /* Gunsight overlay */
       if (gs->mapX != NO_GUNSIGHT) {
-        SDL_FRect gsSrc = { (float)GUNSIGHT_X, (float)GUNSIGHT_Y,
-                            (float)TILE_SIZE_X, (float)TILE_SIZE_Y };
+        float gsInset = 0.05f;
+        SDL_FRect gsSrc = { (float)(GUNSIGHT_X * gSheetScale) + gsInset, (float)(GUNSIGHT_Y * gSheetScale) + gsInset,
+                            (float)(TILE_SIZE_X * gSheetScale) - 2.0f * gsInset, (float)(TILE_SIZE_Y * gSheetScale) - 2.0f * gsInset };
         int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
         int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
         SDL_FRect gsDest = {
@@ -1027,8 +1185,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
       /* Build-mode cursor overlay */
       if (useCursor) {
-        SDL_FRect curSrc = { (float)MOUSE_SQUARE_X, (float)MOUSE_SQUARE_Y,
-                             (float)TILE_SIZE_X, (float)TILE_SIZE_Y };
+        SDL_FRect curSrc = { (float)(MOUSE_SQUARE_X * gSheetScale), (float)(MOUSE_SQUARE_Y * gSheetScale),
+                             (float)(TILE_SIZE_X * gSheetScale), (float)(TILE_SIZE_Y * gSheetScale) };
         SDL_FRect curDest = {
           (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX),
           (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY),
@@ -1067,8 +1225,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int leftGutter = tabletOriginX;
     if (leftGutter >= 100) {
       int zf = gZoomFactor; /* currently set to effectiveZoom */
-      float gutterX = 4.0f;
-      float gutterY = 4.0f;
+      float safeL = 0, safeT = 0;
+      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+      float gutterX = safeL + 4.0f;
+      float gutterY = safeT + 4.0f;
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
       float gridGap = 4.0f;
       sdl3DrawSetStatusPanelOrigins(
@@ -1129,7 +1289,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 
   /* Clear and draw background first so that status draws go on top */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (!tabletMode && sdl3LoadBackground()) {
     SDL_FRect dest = {
@@ -1144,11 +1304,15 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     /* Tablet: render status grids in gutter if space allows */
     if (gTabletVpX >= 100) {
       int zf = gZoomFactor;
+      float safeL = 0, safeT = 0;
+      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+      float gutterX = safeL + 4.0f;
+      float gutterY = safeT + 4.0f;
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
       float gridGap = 4.0f;
-      sdl3DrawSetStatusPanelOrigins(4.0f, 4.0f,
-                                    4.0f, 4.0f + gridH + gridGap,
-                                    4.0f, 4.0f + 2*(gridH + gridGap));
+      sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
+                                    gutterX, gutterY + gridH + gridGap,
+                                    gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
     }
@@ -1188,7 +1352,7 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
    * exactly as sdl3DrawRedrawAll does, so everything except the playfield
    * area remains visible during map download. */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (!tabletMode && sdl3LoadBackground()) {
     SDL_FRect dest = {
@@ -1202,11 +1366,15 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   if (tabletMode) {
     if (gTabletVpX >= 100) {
       int gridZf = gZoomFactor;
+      float safeL = 0, safeT = 0;
+      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+      float gutterX = safeL + 4.0f;
+      float gutterY = safeT + 4.0f;
       float gridH = (float)(gridZf * STATUS_TANKS_HEIGHT);
       float gridGap = 4.0f;
-      sdl3DrawSetStatusPanelOrigins(4.0f, 4.0f,
-                                    4.0f, 4.0f + gridH + gridGap,
-                                    4.0f, 4.0f + 2*(gridH + gridGap));
+      sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
+                                    gutterX, gutterY + gridH + gridGap,
+                                    gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
     }
@@ -1294,7 +1462,7 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
     return;
   }
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 }
 
 int drawGetFrameRate(void) {
@@ -1335,8 +1503,8 @@ void sdl3DrawSetBasesStatusClear(void) {
   SDL_RenderFillRect(gRenderer, &area);
   /* Centre base icon (full tile sprite, not the small status icon) */
   if (gTilesTex) {
-    SDL_FRect src = { (float)BASE_GOOD_X, (float)BASE_GOOD_Y,
-                      (float)TILE_SIZE_X,  (float)TILE_SIZE_Y };
+    SDL_FRect src = { (float)(BASE_GOOD_X * gSheetScale), (float)(BASE_GOOD_Y * gSheetScale),
+                      (float)(TILE_SIZE_X * gSheetScale),  (float)(TILE_SIZE_Y * gSheetScale) };
     SDL_FRect dst = {
       orgX + (float)(zf * STATUS_BASES_MIDDLE_ICON_X),
       orgY + (float)(zf * STATUS_BASES_MIDDLE_ICON_Y),
@@ -1365,8 +1533,9 @@ void sdl3DrawStatusBase(BYTE baseNum, baseAlliance ba, bool labels) {
   int zf = gZoomFactor;
   float orgX, orgY;
   statusPanelOrigin(0, zf, &orgX, &orgY);
-  SDL_FRect src = { (float)srcX, (float)srcY,
-                    (float)STATUS_ITEM_SIZE_X, (float)STATUS_ITEM_SIZE_Y };
+  int ss = gSheetScale;
+  SDL_FRect src = { (float)(srcX * ss), (float)(srcY * ss),
+                    (float)(STATUS_ITEM_SIZE_X * ss), (float)(STATUS_ITEM_SIZE_Y * ss) };
   SDL_FRect dst = {
     orgX + (float)(zf * itemX),
     orgY + (float)(zf * itemY),
@@ -1400,8 +1569,8 @@ void sdl3DrawSetPillsStatusClear(void) {
   SDL_RenderFillRect(gRenderer, &area);
   /* Centre pill icon (full tile PILL_GOOD15 sprite) */
   if (gTilesTex) {
-    SDL_FRect src = { (float)PILL_GOOD15_X, (float)PILL_GOOD15_Y,
-                      (float)TILE_SIZE_X,   (float)TILE_SIZE_Y };
+    SDL_FRect src = { (float)(PILL_GOOD15_X * gSheetScale), (float)(PILL_GOOD15_Y * gSheetScale),
+                      (float)(TILE_SIZE_X * gSheetScale),   (float)(TILE_SIZE_Y * gSheetScale) };
     SDL_FRect dst = {
       orgX + (float)(zf * STATUS_PILLS_MIDDLE_ICON_X),
       orgY + (float)(zf * STATUS_PILLS_MIDDLE_ICON_Y),
@@ -1433,8 +1602,9 @@ void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels) {
   int zf = gZoomFactor;
   float orgX, orgY;
   statusPanelOrigin(1, zf, &orgX, &orgY);
-  SDL_FRect src = { (float)srcX, (float)srcY,
-                    (float)STATUS_ITEM_SIZE_X, (float)STATUS_ITEM_SIZE_Y };
+  int ss = gSheetScale;
+  SDL_FRect src = { (float)(srcX * ss), (float)(srcY * ss),
+                    (float)(STATUS_ITEM_SIZE_X * ss), (float)(STATUS_ITEM_SIZE_Y * ss) };
   SDL_FRect dst = {
     orgX + (float)(zf * itemX),
     orgY + (float)(zf * itemY),
@@ -1468,8 +1638,8 @@ void sdl3DrawSetTanksStatusClear(void) {
   SDL_RenderFillRect(gRenderer, &area);
   /* Centre tank icon (full tile TANK_SELF_0 sprite) */
   if (gTilesTex) {
-    SDL_FRect src = { (float)TANK_SELF_0_X, (float)TANK_SELF_0_Y,
-                      (float)TILE_SIZE_X,   (float)TILE_SIZE_Y };
+    SDL_FRect src = { (float)(TANK_SELF_0_X * gSheetScale), (float)(TANK_SELF_0_Y * gSheetScale),
+                      (float)(TILE_SIZE_X * gSheetScale),   (float)(TILE_SIZE_Y * gSheetScale) };
     SDL_FRect dst = {
       orgX + (float)(zf * STATUS_TANKS_MIDDLE_ICON_X),
       orgY + (float)(zf * STATUS_TANKS_MIDDLE_ICON_Y),
@@ -1497,8 +1667,9 @@ void sdl3DrawStatusTank(BYTE tankNum, tankAlliance ta) {
   int zf = gZoomFactor;
   float orgX, orgY;
   statusPanelOrigin(2, zf, &orgX, &orgY);
-  SDL_FRect src = { (float)srcX, (float)srcY,
-                    (float)STATUS_ITEM_SIZE_X, (float)STATUS_ITEM_SIZE_Y };
+  int ss = gSheetScale;
+  SDL_FRect src = { (float)(srcX * ss), (float)(srcY * ss),
+                    (float)(STATUS_ITEM_SIZE_X * ss), (float)(STATUS_ITEM_SIZE_Y * ss) };
   SDL_FRect dst = {
     orgX + (float)(zf * itemX),
     orgY + (float)(zf * itemY),
@@ -1514,16 +1685,38 @@ void sdl3DrawCopyTanksStatus(int x, int y) {
   /* Icons drawn directly to framebuffer — no-op. */
 }
 
+/* Cached status bar values for tablet overlay */
+static BYTE gCachedTankShells = 0, gCachedTankMines = 0, gCachedTankArmour = 0, gCachedTankTrees = 0;
+static BYTE gCachedBaseShells = 0, gCachedBaseMines = 0, gCachedBaseArmour = 0;
+static bool gCachedBaseValid = false;
+
+void sdl3DrawGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
+  *shells = gCachedTankShells;
+  *mines = gCachedTankMines;
+  *armour = gCachedTankArmour;
+  *trees = gCachedTankTrees;
+}
+
+void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *hasBase) {
+  *shells = gCachedBaseShells;
+  *mines = gCachedBaseMines;
+  *armour = gCachedBaseArmour;
+  *hasBase = gCachedBaseValid;
+}
+
 void sdl3DrawStatusTankBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   (void)x; (void)y;
+  gCachedTankShells = shells;
+  gCachedTankMines = mines;
+  gCachedTankArmour = armour;
+  gCachedTankTrees = trees;
   if (!gRenderer || !gTankBarsTex) return;
 
   SDL_SetRenderTarget(gRenderer, gTankBarsTex);
   SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_NONE);
 
-  /* Black background */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   /* Green bars — heights in 1x pixels, bars grow from bottom */
   SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
@@ -1563,13 +1756,17 @@ void sdl3DrawCopyTankStatusBars(int x, int y) {
 
 void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, bool redraw) {
   (void)x; (void)y; (void)redraw;
+  gCachedBaseShells = shells;
+  gCachedBaseMines = mines;
+  gCachedBaseArmour = armour;
+  gCachedBaseValid = (shells > 0 || mines > 0 || armour > 0);
   if (!gRenderer || !gBaseBarsTex) return;
 
   SDL_SetRenderTarget(gRenderer, gBaseBarsTex);
   SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_NONE);
 
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (shells != 0 || mines != 0 || armour != 0) {
     SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
@@ -1603,12 +1800,14 @@ void sdl3DrawSetManClear(void) {
   SDL_SetRenderTarget(gRenderer, gManStatusTex);
   SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   SDL_SetRenderTarget(gRenderer, NULL);
 }
 
 void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
   (void)x; (void)y;
+  gManStatusDead  = isDead;
+  gManStatusAngle = angle;
   if (!gRenderer || !gManStatusTex) return;
 
   /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
@@ -1664,7 +1863,7 @@ void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
   SDL_SetRenderTarget(gRenderer, gManStatusTex);
   SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderClear(gRenderer);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
   if (isDead) {
     /* Filled circle in red/orange using scan lines */
@@ -1861,6 +2060,16 @@ void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom) {
   if (w) *w = gTabletVpW;
   if (h) *h = gTabletVpH;
   if (zoom) *zoom = gTabletVpZoom;
+}
+
+void sdl3DrawSetDragOffset(int dx, int dy) {
+  gDragOffsetX = dx;
+  gDragOffsetY = dy;
+}
+
+void sdl3DrawGetDragOffset(int *dx, int *dy) {
+  if (dx) *dx = gDragOffsetX;
+  if (dy) *dy = gDragOffsetY;
 }
 
 void sdl3DrawSetStatusPanelOrigins(float tanksX, float tanksY,

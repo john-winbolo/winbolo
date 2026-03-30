@@ -33,6 +33,7 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../bolo/bot_manager.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "../gui/aresource.h"
 #include "touch_input.h"
@@ -192,6 +193,13 @@ static void windowRunGameTick(ClientSim *cs) {
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
       transport->sendInput(transport->ctx, &pkt);
+      /* Tick bot brains before the sim tick (local game only) */
+      {
+        ServerSim *serverSim = gameFrontGetServerSim();
+        if (serverSim != NULL && botManagerGetNumBots() > 0) {
+          botManagerTick(serverSim, screenGetAiTypeCS(cs));
+        }
+      }
       transport->tick(transport->ctx);
       clientMutexWaitFor();
       androidSyncSnapshot(cs, transport, myPlayerNum);
@@ -285,7 +293,6 @@ int main(int argc, char *argv[]) {
     SDL_Renderer *ren = sdl3DrawGetRenderer();
     if (win && ren) {
       sdl3ImguiSetup(win, ren);
-      sdl3ImguiSetExtraRenderCallback(playersPanelRender);
     }
     if (win) {
       SDL_ShowWindow(win);
@@ -377,8 +384,7 @@ int main(int argc, char *argv[]) {
       SDL_Renderer *ren = sdl3DrawGetRenderer();
       if (win && ren) {
         sdl3ImguiSetup(win, ren);
-        sdl3ImguiSetExtraRenderCallback(playersPanelRender);
-      }
+        }
     }
   }
 
@@ -435,7 +441,22 @@ int main(int argc, char *argv[]) {
         continue; /* Skip tick processing and rendering while paused */
       }
       while (SDL_PollEvent(&ev)) {
-        touchInputProcessEvent(&ev);
+        /* Convert coordinates to logical presentation space and forward to
+           ImGui so dialogs receive touch input (matches iOS fix). */
+        {
+          SDL_Renderer *ren = sdl3DrawGetRenderer();
+          if (ren) {
+            SDL_Event rawEv = ev;
+            SDL_ConvertEventToRenderCoordinates(ren, &ev);
+            sdl3ImguiForwardEvent(&ev);
+            /* Don't pass touch to game when ImGui is handling it (dialog open) */
+            if (!sdl3ImguiWantCaptureMouse()) {
+              touchInputProcessEvent(&rawEv);
+            }
+          } else {
+            touchInputProcessEvent(&ev);
+          }
+        }
         if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
           winboloQuit = TRUE;
         } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {

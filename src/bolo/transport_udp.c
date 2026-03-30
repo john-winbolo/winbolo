@@ -2450,6 +2450,9 @@ void transportUdpServerBroadcastGameStart(ServerSim *sim) {
         if (udpServer.clients[i].connected) {
             udpSendTo(udpServer.sock, buf, sizeof(buf),
                       &udpServer.clients[i].addr);
+            /* Clients reload the map on game start which wipes their player
+               data.  Re-send the player list so names are restored. */
+            udpServer.clients[i].needsPlayerList = true;
         }
     }
 }

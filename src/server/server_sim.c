@@ -1397,11 +1397,23 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
 void serverSimStartGame(ServerSim *sim) {
     BYTE i, j;
+    /* Save connected-player state before resetting – resetGameWorld clears
+       playerConnected[], but we need it to create tanks below. */
+    bool savedConnected[MAX_TANKS];
+    for (i = 0; i < MAX_TANKS; i++) {
+        savedConnected[i] = sim->playerConnected[i];
+    }
 
     activeSim = sim;
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
+
+    /* Restore connected-player state so tank creation works */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->playerConnected[i] = savedConnected[i];
+    }
+    sim->hadPlayersEver = TRUE;
 
     sim->gameLength = sim->originalGameLength;
 

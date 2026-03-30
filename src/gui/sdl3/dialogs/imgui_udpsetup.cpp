@@ -188,6 +188,8 @@ extern "C" int imguiUdpSetupShow(void) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogResetTextInputArea(window);
+        dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
         /* Transparent full-screen host window */
@@ -430,6 +432,7 @@ extern "C" int imguiUdpSetupShow(void) {
     }
 
     /* Tear down ImGui */
+    dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();

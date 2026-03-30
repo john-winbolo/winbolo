@@ -7,16 +7,12 @@
 *Name:          Touch Input
 *Filename:      input_touch.c
 *Purpose:
-*  Processes SDL3 finger events into virtual joystick,
-*  shoot, mine, and build-select inputs for tablet mode.
+*  Processes SDL3 finger events into virtual joystick
+*  and hit-tested action buttons for tablet mode.
 *
-*  Layout (screen regions):
+*  Layout:
 *    Left 40%  — floating joystick
-*    Right side, lower — shoot button zone
-*    Right side, upper — mine button zone
-*
-*  The joystick anchor appears at the finger-down location.
-*  Dragging maps to 8 directions + diagonals.
+*    Right side — registered buttons via hit-testing
 *********************************************************/
 
 #include <math.h>
@@ -25,40 +21,50 @@
 #endif
 #include "input_touch.h"
 
-/* Joystick deadzone in pixels — drags shorter than this are TNONE */
+/* Joystick deadzone in pixels */
 #define JOYSTICK_DEADZONE 20.0f
 
-/* Zone boundaries (fractions of window size) */
-#define JOYSTICK_ZONE_RIGHT 0.40f   /* left 40% */
-#define SHOOT_ZONE_LEFT     0.70f   /* right 30%, bottom half */
-#define SHOOT_ZONE_TOP      0.50f
-#define MINE_ZONE_LEFT      0.70f   /* right 30%, top half */
-#define MINE_ZONE_BOTTOM    0.50f
+/* Zone boundary for joystick (left 40%) */
+#define JOYSTICK_ZONE_RIGHT 0.40f
 
 /* Tap detection thresholds */
-#define TAP_DISTANCE_THRESHOLD 10.0f  /* pixels */
-#define TAP_TIME_THRESHOLD_MS  300    /* milliseconds */
+#define TAP_DISTANCE_THRESHOLD 10.0f
+#define TAP_TIME_THRESHOLD_MS  300
 
 /* Maximum simultaneous fingers to track for tap detection */
 #define MAX_TAP_FINGERS 4
 
-/* Joystick state */
+/* --- Button registration --- */
+
+typedef enum {
+  BTN_SHAPE_CIRCLE,
+  BTN_SHAPE_RECT
+} ButtonShape;
+
+typedef struct {
+  bool registered;
+  ButtonShape shape;
+  /* Circle */
+  float cx, cy, radius;
+  /* Rect */
+  float rx, ry, rw, rh;
+  /* State */
+  SDL_FingerID fingerID;
+  bool held;
+  bool tapped;       /* edge-triggered, consumed on read */
+  bool tapConsumed;  /* prevents re-fire while held */
+} TouchButton;
+
+static TouchButton s_buttons[TOUCH_BTN_COUNT];
+
+/* --- Joystick state --- */
 static SDL_FingerID s_joyFingerID  = 0;
 static bool         s_joyActive    = false;
 static float        s_joyAnchorX   = 0.0f;
 static float        s_joyAnchorY   = 0.0f;
 static float        s_joyThumbX    = 0.0f;
 static float        s_joyThumbY    = 0.0f;
-static Uint64       s_joyReleaseTime = 0; /* SDL_GetTicks() when joystick released */
-
-/* Shoot button state */
-static SDL_FingerID s_shootFingerID = 0;
-static bool         s_shootActive   = false;
-
-/* Mine button state (edge-triggered) */
-static SDL_FingerID s_mineFingerID  = 0;
-static bool         s_mineActive    = false;
-static bool         s_mineFired     = false;  /* consumed flag */
+static Uint64       s_joyReleaseTime = 0;
 
 /* Build select tap (-1 = none) */
 static int          s_buildSelectTap = -1;
@@ -67,7 +73,7 @@ static int          s_buildSelectTap = -1;
 static int          s_vpX = 0, s_vpY = 0, s_vpW = 0, s_vpH = 0;
 static int          s_vpZoom = 1;
 
-/* Tap tracking — records finger-down position and time for all fingers */
+/* Tap tracking for viewport taps */
 typedef struct {
   SDL_FingerID fingerID;
   float        downX, downY;
@@ -76,18 +82,71 @@ typedef struct {
 } TapTracker;
 static TapTracker   s_tapTrackers[MAX_TAP_FINGERS];
 
-/* Viewport tap result (consumed on read) */
+/* Gunsight change: +1 increase, -1 decrease, 0 none */
+static int          s_gunsightChange = 0;
+
+/* Proportional turning: max joystick reach in pixels */
+#define JOYSTICK_MAX_REACH 120.0f
+/* Frame counter for rate-limiting turns at small deflections */
+static Uint32       s_joyFrameCounter = 0;
+
 static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
 
+/* Absolute steering state */
+static bool         s_absoluteSteering = true;
+static BYTE         s_tankAngle = 0;
+
+/* --- Scroll joystick state --- */
+static SDL_FingerID s_scrollFingerID  = 0;
+static bool         s_scrollActive    = false;
+static float        s_scrollAnchorX   = 0.0f;
+static float        s_scrollAnchorY   = 0.0f;
+static float        s_scrollThumbX    = 0.0f;
+static float        s_scrollThumbY    = 0.0f;
+static Uint64       s_scrollReleaseTime = 0;
+
+/* Scroll joystick zone (registered rect) */
+static float        s_scrollZoneX = 0.0f;
+static float        s_scrollZoneY = 0.0f;
+static float        s_scrollZoneW = 0.0f;
+static float        s_scrollZoneH = 0.0f;
+static bool         s_scrollZoneSet = false;
+
+/* General tap position for UI elements (e.g. build bar) */
+static bool         s_generalTapReady = false;
+static float        s_generalTapX = 0.0f;
+static float        s_generalTapY = 0.0f;
+
+/* --- Viewport drag-to-scroll state --- */
+static SDL_FingerID s_vpDragFingerID = 0;
+static bool         s_vpDragTracking = false; /* finger is down on viewport */
+static bool         s_vpDragActive   = false; /* moved past tap threshold */
+static float        s_vpDragStartX   = 0.0f;
+static float        s_vpDragStartY   = 0.0f;
+static float        s_vpDragCurX     = 0.0f;
+static float        s_vpDragCurY     = 0.0f;
+static float        s_vpDragPrevX    = 0.0f;
+static float        s_vpDragPrevY    = 0.0f;
+static bool         s_vpDragMoved    = false; /* finger moved this frame */
+
+/* --- Setup / Cleanup --- */
+
 void inputTouchSetup(void) {
-  s_joyActive    = false;
-  s_shootActive  = false;
-  s_mineActive   = false;
-  s_mineFired    = false;
+  s_joyActive = false;
+  s_scrollActive = false;
+  s_scrollZoneSet = false;
+  s_vpDragTracking = false;
+  s_vpDragActive = false;
   s_buildSelectTap = -1;
   s_viewportTapReady = false;
+  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+    s_buttons[i].registered = false;
+    s_buttons[i].held = false;
+    s_buttons[i].tapped = false;
+    s_buttons[i].tapConsumed = false;
+  }
   for (int i = 0; i < MAX_TAP_FINGERS; i++) {
     s_tapTrackers[i].active = false;
   }
@@ -96,6 +155,47 @@ void inputTouchSetup(void) {
 void inputTouchCleanup(void) {
   inputTouchSetup();
 }
+
+/* --- Button registration --- */
+
+void inputTouchClearButtons(void) {
+  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+    s_buttons[i].registered = false;
+  }
+}
+
+void inputTouchRegisterButton(TouchButtonID id, float centerX, float centerY, float radius) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return;
+  s_buttons[id].registered = true;
+  s_buttons[id].shape = BTN_SHAPE_CIRCLE;
+  s_buttons[id].cx = centerX;
+  s_buttons[id].cy = centerY;
+  s_buttons[id].radius = radius;
+}
+
+void inputTouchRegisterRectButton(TouchButtonID id, float x, float y, float w, float h) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return;
+  s_buttons[id].registered = true;
+  s_buttons[id].shape = BTN_SHAPE_RECT;
+  s_buttons[id].rx = x;
+  s_buttons[id].ry = y;
+  s_buttons[id].rw = w;
+  s_buttons[id].rh = h;
+}
+
+static bool hitTestButton(TouchButton *btn, float px, float py) {
+  if (!btn->registered) return false;
+  if (btn->shape == BTN_SHAPE_CIRCLE) {
+    float dx = px - btn->cx;
+    float dy = py - btn->cy;
+    return (dx * dx + dy * dy) <= (btn->radius * btn->radius);
+  } else {
+    return px >= btn->rx && px < btn->rx + btn->rw &&
+           py >= btn->ry && py < btn->ry + btn->rh;
+  }
+}
+
+/* --- Event processing --- */
 
 void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
   if (windowW <= 0 || windowH <= 0) return;
@@ -148,10 +248,16 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
         float dist = sqrtf(ddx * ddx + ddy * ddy);
         Uint64 elapsed = SDL_GetTicks() - s_tapTrackers[i].downTime;
 
-        if (dist < TAP_DISTANCE_THRESHOLD && elapsed < TAP_TIME_THRESHOLD_MS) {
-          /* Check if tap is inside viewport bounds */
+        /* If this finger was a viewport drag, don't fire a tap */
+        bool wasDrag = (s_vpDragTracking && fid == s_vpDragFingerID && s_vpDragActive);
+        if (!wasDrag && dist < TAP_DISTANCE_THRESHOLD && elapsed < TAP_TIME_THRESHOLD_MS) {
           float tx = s_tapTrackers[i].downX;
           float ty = s_tapTrackers[i].downY;
+          /* Store as general tap for UI elements (e.g. build bar) */
+          s_generalTapReady = true;
+          s_generalTapX = tx;
+          s_generalTapY = ty;
+          /* Check if tap is inside viewport bounds */
           if (tx >= (float)s_vpX && tx < (float)(s_vpX + s_vpW) &&
               ty >= (float)s_vpY && ty < (float)(s_vpY + s_vpH) &&
               s_vpZoom > 0) {
@@ -171,10 +277,48 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
   }
 
   float normX = fx / (float)windowW;
-  float normY = fy / (float)windowH;
 
-  /* --- Joystick zone (left 40%) --- */
-  if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT) {
+  /* --- Viewport drag-to-scroll --- */
+  bool insideViewport = (fx >= (float)s_vpX && fx < (float)(s_vpX + s_vpW) &&
+                         fy >= (float)s_vpY && fy < (float)(s_vpY + s_vpH) &&
+                         s_vpW > 0 && s_vpH > 0);
+  if (isDown && !s_vpDragTracking && insideViewport) {
+    s_vpDragFingerID = fid;
+    s_vpDragTracking = true;
+    s_vpDragActive   = false;
+    s_vpDragMoved    = false;
+    s_vpDragStartX   = fx;
+    s_vpDragStartY   = fy;
+    s_vpDragCurX     = fx;
+    s_vpDragCurY     = fy;
+    s_vpDragPrevX    = fx;
+    s_vpDragPrevY    = fy;
+    /* Don't return — let tap tracker also see this finger */
+  }
+  if (s_vpDragTracking && fid == s_vpDragFingerID) {
+    if (isMotion) {
+      s_vpDragPrevX = s_vpDragCurX;
+      s_vpDragPrevY = s_vpDragCurY;
+      s_vpDragCurX = fx;
+      s_vpDragCurY = fy;
+      s_vpDragMoved = true;
+      if (!s_vpDragActive) {
+        float ddx = fx - s_vpDragStartX;
+        float ddy = fy - s_vpDragStartY;
+        if (sqrtf(ddx * ddx + ddy * ddy) >= TAP_DISTANCE_THRESHOLD) {
+          s_vpDragActive = true;
+        }
+      }
+    } else if (isUp) {
+      s_vpDragTracking = false;
+      s_vpDragActive   = false;
+      s_vpDragMoved    = false;
+    }
+    if (s_vpDragActive) return; /* Claimed by drag — skip other handlers */
+  }
+
+  /* --- Joystick zone (left 40%, but not over the game viewport) --- */
+  if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT && !insideViewport) {
     s_joyFingerID = fid;
     s_joyActive   = true;
     s_joyAnchorX  = fx;
@@ -189,80 +333,310 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
       s_joyThumbY = fy;
     } else if (isUp) {
       s_joyActive = false;
+      s_joyThumbX = s_joyAnchorX;
+      s_joyThumbY = s_joyAnchorY;
       s_joyReleaseTime = SDL_GetTicks();
     }
     return;
   }
 
-  /* --- Shoot zone (right 30%, bottom half) --- */
-  if (isDown && !s_shootActive && normX >= SHOOT_ZONE_LEFT && normY >= SHOOT_ZONE_TOP) {
-    s_shootFingerID = fid;
-    s_shootActive   = true;
-    return;
-  }
-  if (s_shootActive && fid == s_shootFingerID) {
-    if (isUp) {
-      s_shootActive = false;
+  /* --- Scroll joystick zone (right side) --- */
+  if (s_scrollZoneSet) {
+    bool inScrollZone = (fx >= s_scrollZoneX && fx < s_scrollZoneX + s_scrollZoneW &&
+                         fy >= s_scrollZoneY && fy < s_scrollZoneY + s_scrollZoneH);
+    if (isDown && !s_scrollActive && inScrollZone) {
+      s_scrollFingerID = fid;
+      s_scrollActive   = true;
+      s_scrollAnchorX  = fx;
+      s_scrollAnchorY  = fy;
+      s_scrollThumbX   = fx;
+      s_scrollThumbY   = fy;
+      return;
     }
-    return;
+    if (s_scrollActive && fid == s_scrollFingerID) {
+      if (isMotion) {
+        s_scrollThumbX = fx;
+        s_scrollThumbY = fy;
+      } else if (isUp) {
+        s_scrollActive = false;
+        s_scrollThumbX = s_scrollAnchorX;
+        s_scrollThumbY = s_scrollAnchorY;
+        s_scrollReleaseTime = SDL_GetTicks();
+      }
+      return;
+    }
   }
 
-  /* --- Mine zone (right 30%, top half) --- */
-  if (isDown && !s_mineActive && normX >= MINE_ZONE_LEFT && normY < MINE_ZONE_BOTTOM) {
-    s_mineFingerID = fid;
-    s_mineActive   = true;
-    s_mineFired    = false;
-    return;
-  }
-  if (s_mineActive && fid == s_mineFingerID) {
-    if (isUp) {
-      s_mineActive = false;
+  /* --- Button hit-testing --- */
+  if (isDown) {
+    for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+      if (hitTestButton(&s_buttons[i], fx, fy) && !s_buttons[i].held) {
+        s_buttons[i].fingerID = fid;
+        s_buttons[i].held = true;
+        s_buttons[i].tapped = true;
+        s_buttons[i].tapConsumed = false;
+        /* Track gunsight changes for the game tick */
+        if (i == TOUCH_BTN_GS_INCREASE) s_gunsightChange = 1;
+        else if (i == TOUCH_BTN_GS_DECREASE) s_gunsightChange = -1;
+        return;
+      }
     }
-    return;
+  }
+  if (isUp) {
+    for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+      if (s_buttons[i].held && s_buttons[i].fingerID == fid) {
+        s_buttons[i].held = false;
+        return;
+      }
+    }
   }
 }
 
+/* --- Button queries --- */
+
+bool inputTouchIsButtonHeld(TouchButtonID id) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return false;
+  return s_buttons[id].held;
+}
+
+bool inputTouchIsButtonTapped(TouchButtonID id) {
+  if (id < 0 || id >= TOUCH_BTN_COUNT) return false;
+  if (s_buttons[id].tapped && !s_buttons[id].tapConsumed) {
+    s_buttons[id].tapConsumed = true;
+    return true;
+  }
+  return false;
+}
+
+/* --- Joystick --- */
+
+/* Convert joystick atan2 angle (degrees, 0=right, 90=down) to bolo
+   angle (0-255, 0=north, 64=east, 128=south, 192=west). */
+static BYTE joyAngleToBolo(float atan2Deg) {
+  /* atan2: -90=up(north), 0=right(east), 90=down(south), ±180=left(west)
+     bolo:  0=north, 64=east, 128=south, 192=west
+     mapping: bolo = (atan2Deg + 90) / 360 * 256 */
+  float bolo = (atan2Deg + 90.0f) / 360.0f * 256.0f;
+  if (bolo < 0.0f) bolo += 256.0f;
+  if (bolo >= 256.0f) bolo -= 256.0f;
+  return (BYTE)bolo;
+}
+
+static tankButton inputTouchGetMovementRelative(float dist) {
+  float dx = s_joyThumbX - s_joyAnchorX;
+  float dy = s_joyThumbY - s_joyAnchorY;
+  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  /* Cardinal directions get 60° zones, diagonals get 30°.
+     This makes driving straight much more forgiving. */
+  tankButton dir;
+  if (angle >= -30.0f && angle < 30.0f)        dir = TRIGHT;
+  else if (angle >= 30.0f  && angle < 60.0f)   dir = TRIGHTDECEL;
+  else if (angle >= 60.0f  && angle < 120.0f)  dir = TDECEL;
+  else if (angle >= 120.0f && angle < 150.0f)  dir = TLEFTDECEL;
+  else if (angle >= 150.0f || angle < -150.0f)  dir = TLEFT;
+  else if (angle >= -150.0f && angle < -120.0f) dir = TLEFTACCEL;
+  else if (angle >= -120.0f && angle < -60.0f)  dir = TACCEL;
+  else if (angle >= -60.0f  && angle < -30.0f)  dir = TRIGHTACCEL;
+  else return TNONE;
+
+  /* Proportional turning: only rate-limit directions that involve
+     turning (left/right and diagonals).  Forward and backward are
+     always reported immediately so driving straight feels responsive. */
+  if (dir != TACCEL && dir != TDECEL) {
+    float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
+    if (reach > 1.0f) reach = 1.0f;
+
+    /* Map to 1-out-of-N: at minimum deflection report ~1 in 8 frames,
+       at full deflection report every frame. */
+    s_joyFrameCounter++;
+    Uint32 period = (Uint32)(1.0f + 7.0f * (1.0f - reach));  /* 1..8 */
+    if ((s_joyFrameCounter % period) != 0) {
+      return TNONE;
+    }
+  }
+
+  return dir;
+}
+
+/* Debug tick counter for absolute steering logging */
+static Uint32 s_absDebugTick = 0;
+
+/* Adaptive turn rate tracking — measure how fast the tank actually
+   turns per tick so we can rate-limit appropriately on fast terrain
+   without starving slow terrain of turn commands. */
+static BYTE  s_prevTankAngle = 0;
+static float s_observedTurnRate = 2.0f;  /* bootstrap estimate */
+
+/* Smoothed target angle — low-pass filter on joystick input to
+   remove finger wobble. Stored as float in 0-256 circular space. */
+static float s_smoothTargetAngle = -1.0f;  /* -1 = uninitialized */
+static float smoothAngle(float current, float target) {
+  /* Interpolate in circular space to handle 0/256 wraparound */
+  float diff = target - current;
+  if (diff > 128.0f) diff -= 256.0f;
+  else if (diff < -128.0f) diff += 256.0f;
+
+  float absDiff = diff < 0.0f ? -diff : diff;
+
+  /* Adaptive: large changes (intentional) track fast,
+     small changes (finger jitter) get heavily smoothed.
+     At 80+ units difference: factor=0.3 (snap quickly)
+     At 10 units difference:  factor=0.03 (heavy filtering) */
+  float factor;
+  if (absDiff > 80.0f) {
+    factor = 0.3f;
+  } else if (absDiff > 30.0f) {
+    factor = 0.03f + 0.27f * ((absDiff - 30.0f) / 50.0f);
+  } else {
+    factor = 0.03f;
+  }
+
+  float result = current + factor * diff;
+  if (result < 0.0f) result += 256.0f;
+  else if (result >= 256.0f) result -= 256.0f;
+  return result;
+}
+
+static tankButton inputTouchGetMovementAbsolute(float dist) {
+  float dx = s_joyThumbX - s_joyAnchorX;
+  float dy = s_joyThumbY - s_joyAnchorY;
+  float atan2Deg = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  BYTE rawTarget = joyAngleToBolo(atan2Deg);
+
+  /* Smooth the target angle to filter out finger jitter */
+  if (s_smoothTargetAngle < 0.0f) {
+    s_smoothTargetAngle = (float)rawTarget;
+  } else {
+    s_smoothTargetAngle = smoothAngle(s_smoothTargetAngle, (float)rawTarget);
+  }
+  BYTE targetAngle = (BYTE)(s_smoothTargetAngle + 0.5f) % 256;
+  BYTE currentAngle = s_tankAngle;
+
+  /* Update observed turn rate (exponential moving average).
+     Measure how much the tank actually turned since last tick. */
+  int angleDelta = (int)currentAngle - (int)s_prevTankAngle;
+  if (angleDelta > 128) angleDelta -= 256;
+  else if (angleDelta < -128) angleDelta += 256;
+  float absTurnedThisTick = (float)(angleDelta < 0 ? -angleDelta : angleDelta);
+  if (absTurnedThisTick > 0.0f) {
+    /* Blend: 70% old + 30% new for smooth adaptation */
+    s_observedTurnRate = 0.7f * s_observedTurnRate + 0.3f * absTurnedThisTick;
+  }
+  s_prevTankAngle = currentAngle;
+
+  /* Compute signed difference in 0-255 circular space.
+     TRIGHT increases angle (clockwise), TLEFT decreases.
+     diff > 0 means target is clockwise from current → turn right. */
+  int diff = (int)targetAngle - (int)currentAngle;
+  if (diff > 128) diff -= 256;
+  else if (diff < -128) diff += 256;
+
+  int absDiff = diff < 0 ? -diff : diff;
+  bool turnRight = (diff > 0);
+
+  /* Joystick deflection controls acceleration:
+     small deflection = aim/rotate only, large = drive.
+     Threshold at 20% of usable range — just past deadzone to aim. */
+  float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
+  if (reach > 1.0f) reach = 1.0f;
+  bool wantDrive = (reach > 0.2f);
+
+  /* Adaptive deadzone: widen based on observed turn rate so fast
+     terrain settles cleanly. Minimum 10, scales up with turn speed. */
+  int deadzone = (int)(s_observedTurnRate * 3.0f);
+  if (deadzone < 10) deadzone = 10;
+  if (deadzone > 24) deadzone = 24;
+
+  /* Adaptive rate-limiting: on fast terrain, skip turn ticks when
+     close to target to prevent overshooting. Period increases as
+     absDiff shrinks relative to turn rate. */
+  s_joyFrameCounter++;
+  bool skipTurn = false;
+  if (absDiff < deadzone * 4 && absDiff >= deadzone) {
+    /* How many ticks of turning to reach target? */
+    float ticksToTarget = (float)absDiff / s_observedTurnRate;
+    /* If we'd arrive in < 3 ticks, start skipping to ease in */
+    if (ticksToTarget < 3.0f) {
+      Uint32 period = (Uint32)(4.0f - ticksToTarget);  /* 2..4 */
+      if (period < 2) period = 2;
+      if ((s_joyFrameCounter % period) != 0) {
+        skipTurn = true;
+      }
+    }
+  }
+
+  tankButton result;
+  if (absDiff < deadzone) {
+    /* Nearly aligned */
+    result = wantDrive ? TACCEL : TNONE;
+  } else if (absDiff < 64) {
+    /* Moderate difference */
+    if (skipTurn) {
+      result = wantDrive ? TACCEL : TNONE;
+    } else if (wantDrive) {
+      result = turnRight ? TRIGHTACCEL : TLEFTACCEL;
+    } else {
+      result = turnRight ? TRIGHT : TLEFT;
+    }
+  } else {
+    /* Large difference — pure turn regardless of deflection,
+       don't drive the wrong way */
+    result = turnRight ? TRIGHT : TLEFT;
+  }
+
+  /* Debug: print every 5 ticks */
+  s_absDebugTick++;
+  if ((s_absDebugTick % 5) == 0) {
+    const char *cmdName;
+    switch (result) {
+      case TACCEL: cmdName = "ACCEL"; break;
+      case TDECEL: cmdName = "DECEL"; break;
+      case TLEFT: cmdName = "LEFT"; break;
+      case TRIGHT: cmdName = "RIGHT"; break;
+      case TLEFTACCEL: cmdName = "LEFT+ACCEL"; break;
+      case TRIGHTACCEL: cmdName = "RIGHT+ACCEL"; break;
+      case TLEFTDECEL: cmdName = "LEFT+DECEL"; break;
+      case TRIGHTDECEL: cmdName = "RIGHT+DECEL"; break;
+      default: cmdName = "NONE"; break;
+    }
+    SDL_Log("[AbsSteer] tank=%d target=%d raw=%d diff=%d absDiff=%d cmd=%s turnRate=%.1f",
+            (int)currentAngle, (int)targetAngle, (int)rawTarget, diff, absDiff, cmdName,
+            s_observedTurnRate);
+  }
+
+  return result;
+}
+
 tankButton inputTouchGetMovement(void) {
-  if (!s_joyActive) return TNONE;
+  if (!s_joyActive) {
+    s_smoothTargetAngle = -1.0f;  /* reset so next touch starts fresh */
+    return TNONE;
+  }
 
   float dx = s_joyThumbX - s_joyAnchorX;
   float dy = s_joyThumbY - s_joyAnchorY;
   float dist = sqrtf(dx * dx + dy * dy);
   if (dist < JOYSTICK_DEADZONE) return TNONE;
 
-  /* Angle in degrees: 0=right, 90=down, etc. */
-  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
-
-  /* Map to 8 directions.
-   * Up = negative Y in screen coords.
-   * Bolo: TACCEL=forward(up), TDECEL=backward(down),
-   *        TLEFT=left, TRIGHT=right */
-  if (angle >= -22.5f && angle < 22.5f)   return TRIGHT;
-  if (angle >= 22.5f  && angle < 67.5f)   return TRIGHTDECEL;
-  if (angle >= 67.5f  && angle < 112.5f)  return TDECEL;
-  if (angle >= 112.5f && angle < 157.5f)  return TLEFTDECEL;
-  if (angle >= 157.5f || angle < -157.5f) return TLEFT;
-  if (angle >= -157.5f && angle < -112.5f) return TLEFTACCEL;
-  if (angle >= -112.5f && angle < -67.5f)  return TACCEL;
-  if (angle >= -67.5f  && angle < -22.5f)  return TRIGHTACCEL;
-
-  return TNONE;
-}
-
-bool inputTouchIsFirePressed(void) {
-  return s_shootActive;
-}
-
-bool inputTouchIsMinePressed(void) {
-  if (s_mineActive && !s_mineFired) {
-    s_mineFired = true;
-    return true;
+  if (s_absoluteSteering) {
+    return inputTouchGetMovementAbsolute(dist);
+  } else {
+    return inputTouchGetMovementRelative(dist);
   }
-  return false;
 }
 
-bool inputTouchIsMineHeld(void) {
-  return s_mineActive;
+void inputTouchSetTankAngle(BYTE angle) {
+  s_tankAngle = angle;
+}
+
+void inputTouchSetAbsoluteSteering(bool enabled) {
+  s_absoluteSteering = enabled;
+}
+
+bool inputTouchGetAbsoluteSteering(void) {
+  return s_absoluteSteering;
 }
 
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
@@ -276,11 +650,10 @@ void inputTouchGetJoystickState(float *anchorX, float *anchorY,
   *releaseTime = s_joyReleaseTime;
 }
 
+/* --- Haptic --- */
+
 void inputTouchTriggerHaptic(float strength, Uint32 durationMs) {
 #if defined(__ANDROID__) || (defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
-  /* Use SDL_RumbleGamepad if a gamepad is connected, otherwise fall back
-     to platform vibration.  SDL3 on iOS/Android can rumble via
-     SDL_RumbleGamepad on virtual/connected controllers. */
   int count = 0;
   SDL_JoystickID *joysticks = SDL_GetGamepads(&count);
   if (joysticks && count > 0) {
@@ -293,15 +666,13 @@ void inputTouchTriggerHaptic(float strength, Uint32 durationMs) {
     }
     SDL_free(joysticks);
   }
-#ifdef __ANDROID__
-  /* Android: SDL_Vibrate is not in SDL3, but we can use SDL_AndroidSendMessage
-     or JNI. For now, gamepad rumble is the primary path. */
-#endif
 #else
   (void)strength;
   (void)durationMs;
 #endif
 }
+
+/* --- Legacy API --- */
 
 int inputTouchGetBuildSelect(void) {
   int val = s_buildSelectTap;
@@ -325,4 +696,122 @@ bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY) {
     return true;
   }
   return false;
+}
+
+int inputTouchGetGunsightChange(void) {
+  int val = s_gunsightChange;
+  s_gunsightChange = 0;
+  return val;
+}
+
+bool inputTouchConsumeTapInRect(float x, float y, float w, float h) {
+  if (!s_generalTapReady) return false;
+  if (s_generalTapX >= x && s_generalTapX < x + w &&
+      s_generalTapY >= y && s_generalTapY < y + h) {
+    s_generalTapReady = false;
+    return true;
+  }
+  return false;
+}
+
+/* --- Scroll joystick --- */
+
+void inputTouchSetScrollJoystickZone(float x, float y, float w, float h) {
+  s_scrollZoneX = x;
+  s_scrollZoneY = y;
+  s_scrollZoneW = w;
+  s_scrollZoneH = h;
+  s_scrollZoneSet = true;
+}
+
+bool inputTouchGetScrollDirection(int *scrollX, int *scrollY) {
+  *scrollX = 0;
+  *scrollY = 0;
+  if (!s_scrollActive) return false;
+
+  float dx = s_scrollThumbX - s_scrollAnchorX;
+  float dy = s_scrollThumbY - s_scrollAnchorY;
+  float dist = sqrtf(dx * dx + dy * dy);
+  if (dist < JOYSTICK_DEADZONE) return false;
+
+  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  /* Map angle to 8 directions for scroll */
+  if (angle >= -22.5f && angle < 22.5f)        { *scrollX = 1; }
+  else if (angle >= 22.5f  && angle < 67.5f)   { *scrollX = 1; *scrollY = 1; }
+  else if (angle >= 67.5f  && angle < 112.5f)  { *scrollY = 1; }
+  else if (angle >= 112.5f && angle < 157.5f)  { *scrollX = -1; *scrollY = 1; }
+  else if (angle >= 157.5f || angle < -157.5f)  { *scrollX = -1; }
+  else if (angle >= -157.5f && angle < -112.5f) { *scrollX = -1; *scrollY = -1; }
+  else if (angle >= -112.5f && angle < -67.5f)  { *scrollY = -1; }
+  else if (angle >= -67.5f  && angle < -22.5f)  { *scrollX = 1; *scrollY = -1; }
+
+  return true;
+}
+
+void inputTouchGetScrollJoystickState(float *anchorX, float *anchorY,
+                                      float *thumbX, float *thumbY, bool *active,
+                                      Uint64 *releaseTime) {
+  *anchorX = s_scrollAnchorX;
+  *anchorY = s_scrollAnchorY;
+  *thumbX  = s_scrollThumbX;
+  *thumbY  = s_scrollThumbY;
+  *active  = s_scrollActive;
+  *releaseTime = s_scrollReleaseTime;
+}
+
+/* --- Viewport drag-to-scroll query --- */
+
+bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY) {
+  *scrollX = 0;
+  *scrollY = 0;
+  if (!s_vpDragActive || !s_vpDragMoved) return false;
+
+  /* Consume the motion flag so we stop scrolling when the finger is still */
+  s_vpDragMoved = false;
+
+  float dx = s_vpDragCurX - s_vpDragPrevX;
+  float dy = s_vpDragCurY - s_vpDragPrevY;
+  float dist = sqrtf(dx * dx + dy * dy);
+  if (dist < 1.0f) return false; /* Sub-pixel motion — ignore */
+
+  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
+
+  /* Map angle to 8 directions — invert so dragging right scrolls left
+     (natural/content-follows-finger scrolling) */
+  if (angle >= -22.5f && angle < 22.5f)        { *scrollX = -1; }
+  else if (angle >= 22.5f  && angle < 67.5f)   { *scrollX = -1; *scrollY = -1; }
+  else if (angle >= 67.5f  && angle < 112.5f)  { *scrollY = -1; }
+  else if (angle >= 112.5f && angle < 157.5f)  { *scrollX = 1; *scrollY = -1; }
+  else if (angle >= 157.5f || angle < -157.5f)  { *scrollX = 1; }
+  else if (angle >= -157.5f && angle < -112.5f) { *scrollX = 1; *scrollY = 1; }
+  else if (angle >= -112.5f && angle < -67.5f)  { *scrollY = 1; }
+  else if (angle >= -67.5f  && angle < -22.5f)  { *scrollX = -1; *scrollY = 1; }
+
+  return true;
+}
+
+bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY) {
+  *deltaX = 0.0f;
+  *deltaY = 0.0f;
+  if (!s_vpDragActive || !s_vpDragMoved) return false;
+
+  s_vpDragMoved = false;
+
+  *deltaX = s_vpDragCurX - s_vpDragPrevX;
+  *deltaY = s_vpDragCurY - s_vpDragPrevY;
+  return true;
+}
+
+/* Legacy wrappers */
+bool inputTouchIsFirePressed(void) {
+  return inputTouchIsButtonHeld(TOUCH_BTN_FIRE);
+}
+
+bool inputTouchIsMinePressed(void) {
+  return inputTouchIsButtonTapped(TOUCH_BTN_MINE);
+}
+
+bool inputTouchIsMineHeld(void) {
+  return inputTouchIsButtonHeld(TOUCH_BTN_MINE);
 }

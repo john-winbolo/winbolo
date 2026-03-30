@@ -37,15 +37,11 @@
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
 #include "../mobile/touch_input.h"
-#include "../mobile/players_panel.h"
+#include "../ui_mode.h"
+#include "../sdl3/input_touch.h"
 
 extern ClientSim *humanSim;
 
-/* Wrapper: playersPanelRender takes no args but sdl3ImguiExtraRenderFn expects ClientSim* */
-static void playersPanelRenderWrapper(ClientSim *cs) {
-    (void)cs;
-    playersPanelRender();
-}
 
 /* -------------------------------------------------------
  * Globals (matching winbolo.h externs)
@@ -191,13 +187,13 @@ int main(int argc, char *argv[]) {
     }
     SDL_Log("[iOS] gameFrontStart OK");
 
+ios_game_start:
     /* Set up ImGui and touch input */
     {
         SDL_Window *win = sdl3DrawGetWindow();
         SDL_Renderer *ren = sdl3DrawGetRenderer();
         if (win && ren) {
             sdl3ImguiSetup(win, ren);
-            sdl3ImguiSetExtraRenderCallback(playersPanelRenderWrapper);
         }
         if (win) {
             SDL_ShowWindow(win);
@@ -286,8 +282,7 @@ int main(int argc, char *argv[]) {
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (win && ren) {
                 sdl3ImguiSetup(win, ren);
-                sdl3ImguiSetExtraRenderCallback(playersPanelRenderWrapper);
-            }
+                }
         }
     }
 
@@ -330,7 +325,17 @@ int main(int argc, char *argv[]) {
             SDL_Event ev;
             if (paused) {
                 if (SDL_WaitEvent(&ev)) {
-                    touchInputProcessEvent(&ev);
+                    if (uiModeIsTablet()) {
+                        if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION) {
+                            int tw = 0, th = 0;
+                            SDL_Renderer *ren = sdl3DrawGetRenderer();
+                            if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                            if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                            inputTouchProcessEvent(&ev, tw, th);
+                        }
+                    } else {
+                        touchInputProcessEvent(&ev);
+                    }
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
                     } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
@@ -344,7 +349,32 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             while (SDL_PollEvent(&ev)) {
-                touchInputProcessEvent(&ev);
+                SDL_Event rawEv = ev;
+                /* Convert coordinates to logical presentation space for ImGui */
+                SDL_Renderer *ren = sdl3DrawGetRenderer();
+                if (ren) {
+                    SDL_ConvertEventToRenderCoordinates(ren, &ev);
+                }
+                /* Forward to ImGui so dialogs receive mouse/touch input */
+                sdl3ImguiForwardEvent(&ev);
+
+                /* Always route finger events to the touch input system in
+                   tablet mode — ImGui buttons (build bar, etc.) use
+                   inputTouchConsumeTapInRect for hit-testing, so the
+                   touch system must see every event regardless of
+                   ImGui's WantCaptureMouse state.  Non-tablet mode
+                   still gates on WantCaptureMouse to avoid conflicts
+                   with dialog input. */
+                if (uiModeIsTablet()) {
+                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
+                        int tw = 0, th = 0;
+                        if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                        if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                        inputTouchProcessEvent(&rawEv, tw, th);
+                    }
+                } else if (!sdl3ImguiWantCaptureMouse()) {
+                    touchInputProcessEvent(&ev);
+                }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
                 } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
@@ -383,8 +413,8 @@ int main(int argc, char *argv[]) {
         clientMutexRelease();
         dwSysFrame += (winboloTimer() - tick);
 
-        /* Touch overlay + ImGui + present */
-        {
+        /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */
+        if (!uiModeIsTablet()) {
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) {
                 touchInputRender(ren);
@@ -407,10 +437,21 @@ int main(int argc, char *argv[]) {
 
     SDL_Log("[iOS] Main loop ended, cleaning up");
 
-    gameFrontEnd(&keys, TRUE, TRUE);
+    screenLeaveGame();
+    sdl3ImguiCleanup();
+    gameFrontEnd(&keys, TRUE, winboloQuit);
+
+    if (!winboloQuit) {
+        SDL_Log("[iOS] Returning to menu (windowNewGame)");
+        /* Restart the pre-game dialogs and re-enter the game loop */
+        if (gameFrontStart("", &keys, TRUE, NULL)) {
+            goto ios_game_start;
+        }
+        SDL_Log("[iOS] gameFrontStart failed after leave game");
+    }
+
     endWinboloTimer();
     clientMutexDestroy();
-    sdl3ImguiCleanup();
     sdl3DrawCleanup();
     soundCleanup();
     SDL_Quit();
@@ -439,11 +480,30 @@ static void windowRunGameTick(ClientSim *cs) {
     transport = gameFrontGetTransport();
     if (transport == NULL) return;
 
+    /* Check if the UDP server has disconnected or timed out.
+     * Only check for UDP transports (serverSim == NULL means not local). */
+    if (gameFrontGetServerSim() == NULL &&
+        transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
+        screenConnectionLostCS(cs);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
+                                 "You have lost your connection to the server.\n"
+                                 "Returning to menu.",
+                                 sdl3DrawGetWindow());
+        finishedLoop = TRUE;
+        winboloQuit = FALSE;
+        return;
+    }
+
     {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (justKeys == TRUE) {
             if (brainRunning == FALSE) {
-                tb = touchInputGetKeys();
+                if (uiModeIsTablet()) {
+                    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
+                    tb = inputTouchGetMovement();
+                } else {
+                    tb = touchInputGetKeys();
+                }
             }
             InputPacket pkt;
             screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
@@ -460,21 +520,41 @@ static void windowRunGameTick(ClientSim *cs) {
         } else {
             t2++;
             if (brainRunning == FALSE) {
-                tb = touchInputGetKeys();
-                isShoot = touchInputIsFireKeyPressed();
-                isMine = touchInputShouldLayMine();
+                if (uiModeIsTablet()) {
+                    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
+                    tb = inputTouchGetMovement();
+                    isShoot = inputTouchIsFirePressed();
+                    isMine = inputTouchIsMinePressed();
+                } else {
+                    tb = touchInputGetKeys();
+                    isShoot = touchInputIsFireKeyPressed();
+                    isMine = touchInputShouldLayMine();
+                }
             }
             InputPacket pkt;
             screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
             if (brainRunning == FALSE) {
-                int gsChange = touchInputGetGunsightChange();
-                if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
-                else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                if (uiModeIsTablet()) {
+                    int gsChange = inputTouchGetGunsightChange();
+                    if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                    else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                } else {
+                    int gsChange = touchInputGetGunsightChange();
+                    if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                    else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
+                }
             }
             clientMutexWaitFor();
             clientSimGameTick(cs, &pkt, brainRunning);
             clientMutexRelease();
             transport->sendInput(transport->ctx, &pkt);
+            /* Tick bot brains before the sim tick (local game only) */
+            {
+                ServerSim *serverSim = gameFrontGetServerSim();
+                if (serverSim != NULL && botManagerGetNumBots() > 0) {
+                    botManagerTick(serverSim, screenGetAiTypeCS(cs));
+                }
+            }
             transport->tick(transport->ctx);
             clientMutexWaitFor();
             iosSyncSnapshot(cs, transport, myPlayerNum);
@@ -555,7 +635,6 @@ void windowZoomChange(BYTE amount) {
     SDL_Renderer *r = sdl3DrawGetRenderer();
     if (w && r) {
         sdl3ImguiSetup(w, r);
-        sdl3ImguiSetExtraRenderCallback(playersPanelRenderWrapper);
     }
     clientMutexRelease();
     drawBusy = FALSE;
@@ -605,7 +684,11 @@ void windowMenuAI_toggle(void) { showAIMessages = !showAIMessages; }
 void windowMenuNetwork_toggle(void) { showNetworkStatusMessages = !showNetworkStatusMessages; }
 void windowMenuNetworkDebug_toggle(void) { showNetworkDebugMessages = !showNetworkDebugMessages; }
 
-void windowNewGame(void) {}
+void windowNewGame(void) {
+  SDL_Log("[iOS] windowNewGame: leaving game");
+  winboloQuit = FALSE;
+  finishedLoop = TRUE;
+}
 void windowQuit(void) {}
 
 void windowShowGameInfo(windowShowRequest req) { (void)req; }
@@ -660,6 +743,9 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+    if (armour > TANK_FULL_ARMOUR) {
+        armour = 0;
+    }
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
 }
 
@@ -723,16 +809,25 @@ void frontEndGameOver(void) {
 }
 
 void frontEndClearPlayer(playerNumbers value) {
-    playersPanelClearPlayer((unsigned char)value);
+    sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant) {
-    (void)cs; (void)countryCode; (void)ping; (void)wbnParticipant; (void)steamParticipant;
-    playersPanelSetPlayer((unsigned char)value, str);
+    char cc[3];
+    if (!screenGetGameRunningCS(cs)) {
+        cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
+        sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+        return;
+    }
+    cc[0] = countryCode[0];
+    cc[1] = countryCode[1];
+    cc[2] = '\0';
+    sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+    sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, wbnParticipant, steamParticipant);
 }
 
 void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
-    playersPanelSetCheckState((unsigned char)value, isChecked);
+    sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
@@ -746,7 +841,7 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 }
 
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
-    (void)playerName; (void)playerNum;
+    sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
 
 bool frontEndTutorial(BYTE pos) {

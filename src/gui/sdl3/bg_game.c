@@ -398,7 +398,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int zf = zfW < zfH ? zfW : zfH;
     if (zf < 1) zf = 1;
 
-    MapViewCtx ctx = { renderer, bg->tilesTex, zf };
+    MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
     mapViewRenderCentered(&ctx, &bg->sim.sim,
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);

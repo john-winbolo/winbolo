@@ -103,6 +103,8 @@ extern "C" bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
 extern "C" void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
 extern "C" bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
 extern "C" void screenSetTankAutoHideGunsightCS(struct ClientSim *csPtr, bool useAutohide);
+extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
+extern "C" bool inputTouchGetAbsoluteSteering(void);
 
 /* -------------------------------------------------------
  * Frame-rate / zoom constants (mirrors winbolo.h values).
@@ -234,6 +236,7 @@ static bool s_pendingWbnDialog   = false;
 
 /* Modal dialog state */
 static bool s_showAbout          = false;
+static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
 static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
@@ -678,17 +681,41 @@ static void renderSendMsgContent(ClientSim *cs) {
             case kSendSelected: screenSendMessageAllSelectedCS(cs, s_sendMsgBuf); break;
         }
         s_sendMsgCooldownEnd = SDL_GetTicks() + SEND_MSG_WAIT_MS;
+#if BOLO_MOBILE
+        /* On mobile, close the dialog after sending via Enter */
+        if (pressedEnter) {
+            s_showSendMsg = false;
+            dialogDismissKeyboard(s_window);
+        }
+#else
         /* Select all text so the user can overwrite immediately after cooldown */
         ImGui::SetKeyboardFocusHere(-1);
+#endif
     }
 }
 
 static void renderSendMsgPanel(ClientSim *cs) {
     if (!s_showSendMsg || s_popSendMsg.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Send Message", &s_showSendMsg,
-                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Always);
+#if BOLO_MOBILE
+        /* Position near the top so the soft keyboard doesn't cover it */
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 8.0f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+#else
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+#endif
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSendMsg;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize;
+    if (uiModeIsTablet()) flags |= ImGuiWindowFlags_NoCollapse;
+    if (!ImGui::Begin("Send Message", pOpen, flags)) {
         ImGui::End();
         return;
     }
@@ -703,8 +730,19 @@ static void renderSendMsgPanel(ClientSim *cs) {
 static void renderPlayersPanel(ClientSim *cs) {
     if (!s_showPlayersPanel) return;
 
-    ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Players", &s_showPlayersPanel)) {
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        float h = io.DisplaySize.y * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
+    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
+    if (!ImGui::Begin("Players", pOpen, flags)) {
         ImGui::End();
         return;
     }
@@ -734,10 +772,21 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
-    /* Player list */
+    /* Collect enabled player indices */
+    int enabledPlayers[MAX_PLAYERS];
+    int enabledCount = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!s_playerEnabled[i]) continue;
+        if (s_playerEnabled[i]) {
+            /* Refresh ping/WBN/Steam */
+            s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
+            s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
+            s_playerSteam[i] = playersGetSteamParticipant(&cs->sim.plyrs, (BYTE)i);
+            enabledPlayers[enabledCount++] = i;
+        }
+    }
 
+    /* Render a single player row */
+    auto renderPlayerRow = [&](int i) {
         /* Alliance indicator */
         if (i != self) {
             if (isAlly[i]) {
@@ -774,11 +823,6 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::PopStyleColor();
             ImGui::SameLine();
         }
-
-        /* Refresh ping/WBN/Steam */
-        s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-        s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
-        s_playerSteam[i] = playersGetSteamParticipant(&cs->sim.plyrs, (BYTE)i);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
         char defLabel[8];
@@ -828,6 +872,23 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
+    };
+
+    /* Player list — 2 columns on tablet, single column on desktop */
+    if (uiModeIsTablet() && enabledCount > 1) {
+        int half = (enabledCount + 1) / 2;
+        if (ImGui::BeginTable("##playerCols", 2, ImGuiTableFlags_None)) {
+            ImGui::TableNextColumn();
+            for (int idx = 0; idx < half; idx++)
+                renderPlayerRow(enabledPlayers[idx]);
+            ImGui::TableNextColumn();
+            for (int idx = half; idx < enabledCount; idx++)
+                renderPlayerRow(enabledPlayers[idx]);
+            ImGui::EndTable();
+        }
+    } else {
+        for (int idx = 0; idx < enabledCount; idx++)
+            renderPlayerRow(enabledPlayers[idx]);
     }
 
     /* Alliance actions */
@@ -868,6 +929,7 @@ static void renderAboutModal(void) {
     }
     if (ImGui::BeginPopupModal("About WinBolo", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted("WinBolo v1.0.1.7");
         ImGui::TextUnformatted("Copyright 1998-2008 John Morrison");
         ImGui::Separator();
@@ -891,6 +953,7 @@ static void renderChangeNameModal(ClientSim *cs) {
     }
     if (ImGui::BeginPopupModal("Change Player Name", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted("Enter the new player name for your tank:");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(300);
@@ -966,6 +1029,7 @@ static void renderPasswordModal(void) {
     }
     if (ImGui::BeginPopupModal("Password Required", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted("This game requires a password:");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(270);
@@ -1081,6 +1145,7 @@ static void renderKeySetupModal(ClientSim *cs) {
                                 ImGuiWindowFlags_NoMove)) {
         return;
     }
+    if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
 
     /* While this modal is open ALL keyboard/mouse events are consumed by ImGui
      * (BeginPopupModal sets WantCaptureKeyboard + WantCaptureMouse).
@@ -1189,27 +1254,32 @@ static void renderKeySetupModal(ClientSim *cs) {
 static void renderSettingsPanel(ClientSim *cs) {
     if (!s_showSettings) return;
 
-    ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Settings", &s_showSettings)) {
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        float h = io.DisplaySize.y * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
+    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
+    if (!ImGui::Begin("Settings", pOpen, flags)) {
         ImGui::End();
         return;
     }
 
     /* File actions — tablet/mobile only (desktop has menu bar) */
     if (uiModeIsTablet()) {
-        if (ImGui::Button("New Game", ImVec2(-1, 0))) {
-            windowNewGame();
-            s_showSettings = false;
-        }
         if (ImGui::Button("Save Map", ImVec2(-1, 0))) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
-#ifndef __EMSCRIPTEN__
-        if (ImGui::Button("Exit", ImVec2(-1, 0))) {
-            windowQuit();
+        if (ImGui::Button("Leave Game", ImVec2(-1, 0))) {
+            windowNewGame();
         }
-#endif
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -1238,68 +1308,76 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
-        ImGui::Spacing();
-        if (ImGui::Button("Sign in to WBN...")) {
-            s_pendingWbnDialog = true;
+        if (!uiModeIsTablet()) {
+            ImGui::Spacing();
+            if (ImGui::Button("Sign in to WBN...")) {
+                s_pendingWbnDialog = true;
+            }
         }
 
 #ifndef __ANDROID__
-        ImGui::Spacing();
-        if (ImGui::Button("Set Keys...")) {
-            sdl3ImguiShowKeySetup();
+        if (!uiModeIsTablet()) {
+            ImGui::Spacing();
+            if (ImGui::Button("Set Keys...")) {
+                sdl3ImguiShowKeySetup();
+            }
         }
 #endif
     }
 
     /* ---- Display ---- */
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-        /* Frame Rate */
-        const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
-        int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
-                           FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
-        int curFrIdx = 2; /* default to 30 */
-        for (int i = 0; i < 7; i++) {
-            if (frameRate == frValues[i]) { curFrIdx = i; break; }
-        }
-        ImGui::Text("Frame Rate:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
+        /* Frame Rate — not shown in tablet mode */
+        if (!uiModeIsTablet()) {
+            const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
+            int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
+                               FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
+            int curFrIdx = 2; /* default to 30 */
             for (int i = 0; i < 7; i++) {
-                bool selected = (curFrIdx == i);
-                if (ImGui::Selectable(frLabels[i], selected)) {
-                    windowSetFrameRate(frValues[i], true);
-                }
+                if (frameRate == frValues[i]) { curFrIdx = i; break; }
             }
-            ImGui::EndCombo();
+            ImGui::Text("Frame Rate:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
+                for (int i = 0; i < 7; i++) {
+                    bool selected = (curFrIdx == i);
+                    if (ImGui::Selectable(frLabels[i], selected)) {
+                        windowSetFrameRate(frValues[i], true);
+                    }
+                }
+                ImGui::EndCombo();
+            }
         }
 
 #ifndef __ANDROID__
-        /* Window Size — desktop only */
-        const char *zoomLabels[] = { "Normal", "Double", "Quad" };
-        BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD };
-        int curZoomIdx = 0;
-        for (int i = 0; i < 3; i++) {
-            if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
-        }
-        ImGui::Text("Window Size:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
+        if (!uiModeIsTablet()) {
+            /* Window Size — desktop only */
+            const char *zoomLabels[] = { "Normal", "Double", "Quad" };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD };
+            int curZoomIdx = 0;
             for (int i = 0; i < 3; i++) {
-                bool selected = (curZoomIdx == i);
-                if (ImGui::Selectable(zoomLabels[i], selected)) {
-                    s_pendingZoom = zoomValues[i];
-                }
+                if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
-            ImGui::EndCombo();
-        }
+            ImGui::Text("Window Size:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool selected = (curZoomIdx == i);
+                    if (ImGui::Selectable(zoomLabels[i], selected)) {
+                        s_pendingZoom = zoomValues[i];
+                    }
+                }
+                ImGui::EndCombo();
+            }
 
-        /* Hide Main View — desktop only */
-        {
-            bool hmv = (bool)hideMainView;
-            if (ImGui::Checkbox("Hide Main View", &hmv)) {
-                windowHideMainView_toggle();
+            /* Hide Main View — desktop only */
+            {
+                bool hmv = (bool)hideMainView;
+                if (ImGui::Checkbox("Hide Main View", &hmv)) {
+                    windowHideMainView_toggle();
+                }
             }
         }
 #endif
@@ -1317,11 +1395,21 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
+        if (uiModeIsTablet()) {
+            bool relSteering = !inputTouchGetAbsoluteSteering();
+            if (ImGui::Checkbox("Relative Steering", &relSteering)) {
+                inputTouchSetAbsoluteSteering(!relSteering);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When off, joystick points the tank directly.\nWhen on, joystick turns left/right relative to tank.");
+            }
+        }
+
 #ifndef __ANDROID__
-        {
-            bool tabletMode = uiModeIsTablet();
+        if (!uiModeIsTablet()) {
+            bool tabletMode = false;
             if (ImGui::Checkbox("Tablet UI Mode", &tabletMode)) {
-                uiModeSet(tabletMode ? UI_MODE_TABLET : UI_MODE_DESKTOP);
+                uiModeSet(UI_MODE_TABLET);
             }
         }
 #endif
@@ -1378,20 +1466,18 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowSoundEffects_toggle();
             }
         }
-        {
+        if (!uiModeIsTablet()) {
             bool bg = (bool)backgroundSound;
             if (ImGui::Checkbox("Background Sound", &bg)) {
                 windowBackgroundSoundChange_toggle();
             }
         }
-#ifndef __ANDROID__
-        {
+        if (!uiModeIsTablet()) {
             bool sk = (bool)useSoundKeepalive;
             if (ImGui::Checkbox("Sound Keepalive", &sk)) {
                 windowSoundKeepalive();
             }
         }
-#endif
     }
 
     /* ---- Messages ---- */
@@ -1790,15 +1876,19 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
 
-    /* Tablet mode: scale up ImGui for touch targets */
+    /* Tablet mode: scale up ImGui for touch targets.
+       Scale proportionally to the logical coordinate space height.
+       Reference: zoom 2 → 480px height → 1.0x pixel scale. */
     if (uiModeIsTablet()) {
-        io.FontGlobalScale = 1.8f;
+        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
+        if (ps < 1.0f) ps = 1.0f;
+        io.FontGlobalScale = 1.8f * ps;
         io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
         ImGuiStyle &style = ImGui::GetStyle();
-        style.FramePadding      = ImVec2(12, 8);
-        style.ItemSpacing       = ImVec2(12, 8);
-        style.TouchExtraPadding = ImVec2(8, 8);
-        style.ScrollbarSize     = 24.0f;
+        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
+        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
+        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
+        style.ScrollbarSize     = 24.0f * ps;
     }
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
@@ -1823,7 +1913,29 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+        SDL_Event rawEv = ev;
+        /* Convert mouse/touch coordinates from window space to the
+           renderer's logical presentation coordinate space so ImGui
+           coordinates match the overridden DisplaySize. */
+        if (s_renderer) {
+            SDL_ConvertEventToRenderCoordinates(s_renderer, &ev);
+        }
         ImGui_ImplSDL3_ProcessEvent(&ev);
+
+        /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
+        if (uiModeIsTablet()) {
+            if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP) {
+                SDL_Log("TAP-DBG: FINGER %s x=%.2f y=%.2f",
+                        ev.type == SDL_EVENT_FINGER_DOWN ? "DOWN" : "UP",
+                        ev.tfinger.x, ev.tfinger.y);
+            }
+            if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                SDL_Log("TAP-DBG: MOUSE %s btn=%d x=%.1f y=%.1f which=%u winID=%u",
+                        ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? "DOWN" : "UP",
+                        ev.button.button, ev.button.x, ev.button.y,
+                        ev.button.which, ev.button.windowID);
+            }
+        }
 
         /* Route events to pop-out windows — if the event belongs to a
            pop-out, forward it there and skip the rest of the main loop
@@ -1879,14 +1991,26 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (consumedByPopOut) continue;
         }
 
-        /* Route finger events to touch input system in tablet mode */
+        /* Route finger events to touch input system in tablet mode.
+           Use the raw (unconverted) event since inputTouchProcessEvent
+           expects normalized tfinger coords multiplied by the target size.
+           Use logical presentation size so coordinates match the game
+           viewport bounds (same approach as winbolo_ios.m).
+           When a dialog/panel is open, only pass finger-up events so that
+           active joystick/button state gets properly released, but don't
+           start new joystick/button interactions behind the overlay. */
         if (uiModeIsTablet() &&
-            (ev.type == SDL_EVENT_FINGER_DOWN ||
-             ev.type == SDL_EVENT_FINGER_UP ||
-             ev.type == SDL_EVENT_FINGER_MOTION)) {
-            int ww, wh;
-            SDL_GetWindowSize(s_window, &ww, &wh);
-            inputTouchProcessEvent(&ev, ww, wh);
+            (rawEv.type == SDL_EVENT_FINGER_DOWN ||
+             rawEv.type == SDL_EVENT_FINGER_UP ||
+             rawEv.type == SDL_EVENT_FINGER_MOTION)) {
+            bool dialogOpen = sdl3ImguiIsDialogOpen();
+            if (!dialogOpen || rawEv.type == SDL_EVENT_FINGER_UP) {
+                int tw = 0, th = 0;
+                SDL_RendererLogicalPresentation logMode;
+                SDL_GetRenderLogicalPresentation(s_renderer, &tw, &th, &logMode);
+                if (tw <= 0 || th <= 0) SDL_GetWindowSize(s_window, &tw, &th);
+                inputTouchProcessEvent(&rawEv, tw, th);
+            }
         }
 
         /* Window focus — mute sound when backgroundSound is off.
@@ -2038,13 +2162,51 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
     }
 }
 
+void sdl3ImguiForwardEvent(const void *event) {
+    if (event) {
+        ImGui_ImplSDL3_ProcessEvent((const SDL_Event *)event);
+    }
+}
+
+bool sdl3ImguiWantCaptureMouse(void) {
+    return ImGui::GetIO().WantCaptureMouse;
+}
+
+bool sdl3ImguiIsDialogOpen(void) {
+    ImGuiContext *g = ImGui::GetCurrentContext();
+    return s_showSysInfo || s_showNetInfo || s_showGameInfo ||
+           s_showSendMsg || s_showPlayersPanel || s_showSettings ||
+           s_brainSettingsOpen || s_allianceVisible ||
+           (g && g->OpenPopupStack.Size > 0);
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
 
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    dialogResetTextInputArea(s_window);
+
+    /* In tablet mode, override ImGui's DisplaySize to match the SDL
+       render logical presentation space so ImGui coordinates align
+       with SDL rendering coordinates (game tiles, etc.).
+       Also reset DisplayFramebufferScale to 1.0 — the logical
+       presentation already maps coordinates to the native render
+       output, so the ImGui renderer should not apply extra scaling. */
+    if (uiModeIsTablet()) {
+        int logW = 0, logH = 0;
+        SDL_RendererLogicalPresentation logMode;
+        SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &logMode);
+        if (logW > 0 && logH > 0) {
+            ImGuiIO &io = ImGui::GetIO();
+            io.DisplaySize = ImVec2((float)logW, (float)logH);
+            io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+        }
+    }
+
     ImGui::NewFrame();
+    s_closeAllPopups = false;
 
     /* Clear nav focus when user clicked in the game area last frame,
        so menu close does not restore focus to an ImGui window. */
@@ -2099,6 +2261,61 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Extra render callback (e.g. Android players panel) */
     if (s_extraRenderFn) {
         s_extraRenderFn(cs);
+    }
+
+    /* Tablet: close all panels/popups when user taps outside dialog windows */
+    if (uiModeIsTablet() && ImGui::IsMouseClicked(0)) {
+        ImGuiContext *g = ImGui::GetCurrentContext();
+        bool anyDialogOpen = s_showSysInfo || s_showNetInfo || s_showGameInfo ||
+                             s_showSendMsg || s_showPlayersPanel || s_showSettings ||
+                             s_brainSettingsOpen || s_allianceVisible ||
+                             g->OpenPopupStack.Size > 0;
+
+        if (anyDialogOpen) {
+            /* Check if tap landed inside any dialog/popup window (not the
+               full-screen background or tablet overlay windows). */
+            static const char *dialogNames[] = {
+                "System Info", "Network Info", "Game Info",
+                "Send Message", "Players", "Settings",
+                "Brain Settings", "Alliance Request",
+                "About WinBolo", "Change Player Name",
+                "Password Required", "Key Setup",
+            };
+            bool overDialog = false;
+            for (int i = 0; i < (int)(sizeof(dialogNames) / sizeof(dialogNames[0])); i++) {
+                ImGuiWindow *w = ImGui::FindWindowByName(dialogNames[i]);
+                if (w && w->Active && w->WasActive) {
+                    if (ImGui::IsMouseHoveringRect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y), false)) {
+                        overDialog = true;
+                        break;
+                    }
+                }
+            }
+            /* Also check popup stack windows (modals) */
+            if (!overDialog) {
+                for (int i = 0; i < g->OpenPopupStack.Size; i++) {
+                    ImGuiWindow *w = g->OpenPopupStack[i].Window;
+                    if (w && w->Active) {
+                        if (ImGui::IsMouseHoveringRect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y), false)) {
+                            overDialog = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!overDialog) {
+                s_showSysInfo        = false;
+                s_showNetInfo        = false;
+                s_showGameInfo       = false;
+                s_showSendMsg        = false;
+                s_showPlayersPanel   = false;
+                s_showSettings       = false;
+                s_brainSettingsOpen  = false;
+                s_allianceVisible    = false;
+                s_closeAllPopups = true;
+                dialogDismissKeyboard(s_window);
+            }
+        }
     }
 
     ImGui::EndFrame();
@@ -2174,6 +2391,10 @@ void sdl3ImguiShowSendMsg(bool open) {
         /* Reset cooldown so the Send button is always enabled on fresh open */
         s_sendMsgCooldownEnd = 0;
         s_sendMsgFocusInput = true;
+#if BOLO_MOBILE
+        s_showSettings = false;
+        s_showPlayersPanel = false;
+#endif
     }
 }
 void sdl3ImguiShowSettings(void) {
@@ -2181,10 +2402,20 @@ void sdl3ImguiShowSettings(void) {
     if (s_showSettings) {
         s_settingsNameBuf[0] = '\0';
         gameFrontGetPlayerName(s_settingsNameBuf);
+#if BOLO_MOBILE
+        s_showSendMsg = false;
+        s_showPlayersPanel = false;
+#endif
     }
 }
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
+#if BOLO_MOBILE
+    if (open) {
+        s_showSendMsg = false;
+        s_showSettings = false;
+    }
+#endif
 }
 
 bool sdl3ImguiWantsKeyboard(void) {
