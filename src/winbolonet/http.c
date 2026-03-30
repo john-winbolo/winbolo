@@ -36,9 +36,15 @@
 #include <stdlib.h>
 #include <time.h>
 #include <curl/curl.h>
-#include <sodium.h>
+#include "tweetnacl.h"
 #include "cJSON.h"
 #include "wbn_signing_key.h"
+
+/* TweetNaCl requires randombytes() for key generation functions.
+   We only use crypto_sign() (deterministic), but the linker needs the symbol. */
+void randombytes(unsigned char *buf, unsigned long long len) {
+  (void)buf; (void)len;
+}
 
 #ifdef _WIN32
   #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
@@ -191,12 +197,6 @@ bool httpCreate(void) {
 
   altIpAddress[0] = '\0';
 
-  if (sodium_init() < 0) {
-    fprintf(stderr, "WinBolo.net: sodium_init failed\n");
-    httpStarted = false;
-    return false;
-  }
-
   CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
   if (res != CURLE_OK) {
     fprintf(stderr, "WinBolo.net: curl_global_init failed: %s\n",
@@ -237,11 +237,18 @@ static void wbn_sign_request(const char *timestamp_str, const char *json_body, c
   memcpy(message, timestamp_str, ts_len);
   memcpy(message + ts_len, json_body, body_len);
 
-  unsigned char sig[crypto_sign_BYTES];
-  crypto_sign_detached(sig, NULL, message, msg_len, WBN_SIGNING_KEY);
+  /* crypto_sign outputs (signature ∥ message); we only need the first 64 bytes */
+  unsigned long long smlen;
+  unsigned char *sm = malloc(crypto_sign_BYTES + msg_len);
+  crypto_sign(sm, &smlen, message, msg_len, WBN_SIGNING_KEY);
 
-  sodium_bin2hex(sig_hex_out, 129, sig, crypto_sign_BYTES);
+  /* Convert the 64-byte signature to hex */
+  for (int i = 0; i < crypto_sign_BYTES; i++) {
+    sprintf(sig_hex_out + i * 2, "%02x", sm[i]);
+  }
+  sig_hex_out[crypto_sign_BYTES * 2] = '\0';
 
+  free(sm);
   free(message);
 }
 

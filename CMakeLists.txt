@@ -106,17 +106,6 @@ if(WIN32)
         SYSTEM
     )
 endif()
-# libsodium is only built from source on Windows.
-# On Linux/macOS, the system libsodium is used via pkg-config.
-if(WIN32)
-    FetchContent_Declare(
-        libsodium
-        GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
-        GIT_TAG        1.0.20-RELEASE
-        GIT_SHALLOW    TRUE
-        SYSTEM
-    )
-endif()
 
 # iOS: only build static SDL libraries (shared libs require code signing
 # and are not useful in an app bundle)
@@ -388,8 +377,7 @@ set(IOS_SERVER_SOURCES
     src/server/threads.c
 )
 
-# BigDigits (referenced by servernet.c for RSA)
-file(GLOB IOS_BIGDIGITS_SOURCES src/server/BigDigits/*.c)
+
 
 # GUI/support sources (reused from sdl3 — matches desktop CLIENT_SOURCES minus winbolo.c)
 set(IOS_GUI_SOURCES
@@ -442,7 +430,6 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/dialog_backend.c
     ${IOS_BOLO_SOURCES}
     ${IOS_SERVER_SOURCES}
-    ${IOS_BIGDIGITS_SOURCES}
     ${IOS_GUI_SOURCES}
     ${IOS_MOBILE_SOURCES}
     ${IOS_INFO_PLIST}
@@ -499,7 +486,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
-source_group("Server" FILES ${IOS_SERVER_SOURCES} ${IOS_BIGDIGITS_SOURCES})
+source_group("Server" FILES ${IOS_SERVER_SOURCES})
 source_group("GUI" FILES ${IOS_GUI_SOURCES})
 source_group("Mobile" FILES ${IOS_MOBILE_SOURCES})
 source_group("iOS" FILES
@@ -580,27 +567,6 @@ if(WIN32)
 else()
     # Linux/macOS: use system-installed libcurl
     find_package(CURL REQUIRED)
-endif()
-
-# libsodium for Ed25519 request signing (WinBolo.net API)
-if(WIN32)
-    set(BUILD_SHARED_LIBS_SAVE_SODIUM "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(libsodium)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_SODIUM}" CACHE BOOL "" FORCE)
-    # libsodium's CMake build exposes the target "sodium"
-    if(NOT TARGET sodium)
-        message(FATAL_ERROR "libsodium FetchContent did not produce a 'sodium' target")
-    endif()
-    add_library(libsodium_dep INTERFACE)
-    target_link_libraries(libsodium_dep INTERFACE sodium)
-else()
-    # Linux/macOS: use system-installed libsodium via pkg-config
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SODIUM REQUIRED libsodium)
-    add_library(libsodium_dep INTERFACE)
-    target_include_directories(libsodium_dep INTERFACE ${SODIUM_INCLUDE_DIRS})
-    target_link_libraries(libsodium_dep INTERFACE ${SODIUM_LIBRARIES})
 endif()
 
 # ONNX Runtime — optional dependency for ML brain inference
@@ -715,12 +681,9 @@ set(CLIENT_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
 )
 
-# BigDigits
-file(GLOB BIGDIGITS_SOURCES src/server/BigDigits/*.c)
-list(APPEND CLIENT_SOURCES ${BIGDIGITS_SOURCES})
 
 # BSD headers (compiled as .c but really just declarations)
 file(GLOB BSD_SOURCES src/bsd/*.c)
@@ -761,6 +724,7 @@ target_include_directories(WinBolo PRIVATE
     src/bolo
     src/server
     ${cjson_SOURCE_DIR}
+    third_party/tweetnacl
 )
 
 if(WIN32)
@@ -792,8 +756,7 @@ endif()
 
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
-    nanosvg stb_image cjson libsodium_dep
-)
+    nanosvg stb_image cjson)
 
 # ONNX Runtime ML brain support (optional)
 if(HAVE_ONNXRUNTIME)
@@ -911,13 +874,10 @@ set(SERVER_SOURCES
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
 )
 
-# BigDigits for server
-file(GLOB SERVER_BIGDIGITS_SOURCES src/server/BigDigits/*.c)
-list(APPEND SERVER_SOURCES ${SERVER_BIGDIGITS_SOURCES})
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
 
@@ -927,6 +887,7 @@ target_include_directories(WinBoloDS PRIVATE
     src/bolo
     src/server
     ${cjson_SOURCE_DIR}
+    third_party/tweetnacl
 )
 
 if(WIN32)
@@ -1168,12 +1129,9 @@ set(HEADLESS_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
 )
 
-# BigDigits for headless
-file(GLOB HEADLESS_BIGDIGITS_SOURCES src/server/BigDigits/*.c)
-list(APPEND HEADLESS_SOURCES ${HEADLESS_BIGDIGITS_SOURCES})
 
 # BSD headers
 file(GLOB HEADLESS_BSD_SOURCES src/bsd/*.c)
@@ -1196,6 +1154,7 @@ target_include_directories(WinBoloHeadless PRIVATE
     src/server
     src/headless
     ${cjson_SOURCE_DIR}
+    third_party/tweetnacl
 )
 
 if(WIN32)
@@ -1215,8 +1174,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson libsodium_dep
-)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
 
 # ONNX Runtime ML brain support for headless (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1267,13 +1225,10 @@ set(GYM_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
 
-# BigDigits for gym
-file(GLOB GYM_BIGDIGITS_SOURCES src/server/BigDigits/*.c)
-list(APPEND GYM_SOURCES ${GYM_BIGDIGITS_SOURCES})
 
 # BSD headers
 file(GLOB GYM_BSD_SOURCES src/bsd/*.c)
@@ -1296,6 +1251,7 @@ target_include_directories(winbolo_gym PRIVATE
     src/server
     src/headless
     ${cjson_SOURCE_DIR}
+    third_party/tweetnacl
 )
 
 if(WIN32)
@@ -1315,8 +1271,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson libsodium_dep
-)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
 
 set_target_properties(winbolo_gym PROPERTIES
     PUBLIC_HEADER src/gym/winbolo_gym.h
@@ -1355,9 +1310,6 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
 )
 
-# BigDigits
-file(GLOB BRAINTEST_BIGDIGITS_SOURCES src/server/BigDigits/*.c)
-list(APPEND BRAINTEST_SOURCES ${BRAINTEST_BIGDIGITS_SOURCES})
 
 # BSD headers
 file(GLOB BRAINTEST_BSD_SOURCES src/bsd/*.c)
