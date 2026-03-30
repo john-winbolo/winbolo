@@ -167,6 +167,7 @@ extern "C" void imguiSettingsShow(void) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
@@ -439,6 +440,7 @@ extern "C" void imguiSettingsShow(void) {
         }
     }
 
+    dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();

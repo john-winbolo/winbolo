@@ -681,8 +681,16 @@ static void renderSendMsgContent(ClientSim *cs) {
             case kSendSelected: screenSendMessageAllSelectedCS(cs, s_sendMsgBuf); break;
         }
         s_sendMsgCooldownEnd = SDL_GetTicks() + SEND_MSG_WAIT_MS;
+#if BOLO_MOBILE
+        /* On mobile, close the dialog after sending via Enter */
+        if (pressedEnter) {
+            s_showSendMsg = false;
+            dialogDismissKeyboard(s_window);
+        }
+#else
         /* Select all text so the user can overwrite immediately after cooldown */
         ImGui::SetKeyboardFocusHere(-1);
+#endif
     }
 }
 
@@ -693,8 +701,14 @@ static void renderSendMsgPanel(ClientSim *cs) {
         ImGuiIO &io = ImGui::GetIO();
         float w = io.DisplaySize.x * 0.8f;
         ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Always);
+#if BOLO_MOBILE
+        /* Position near the top so the soft keyboard doesn't cover it */
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 8.0f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+#else
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+#endif
     } else {
         ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
     }
@@ -2149,6 +2163,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    dialogResetTextInputArea(s_window);
 
     /* In tablet mode, override ImGui's DisplaySize to match the SDL
        render logical presentation space so ImGui coordinates align
@@ -2275,6 +2290,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_brainSettingsOpen  = false;
                 s_allianceVisible    = false;
                 s_closeAllPopups = true;
+                dialogDismissKeyboard(s_window);
             }
         }
     }

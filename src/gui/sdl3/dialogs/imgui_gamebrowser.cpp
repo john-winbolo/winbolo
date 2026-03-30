@@ -620,6 +620,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
@@ -1171,6 +1172,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     s_refreshIconAttempted = false;
 
     /* Tear down ImGui */
+    dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
