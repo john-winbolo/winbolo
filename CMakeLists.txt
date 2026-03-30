@@ -681,7 +681,7 @@ set(CLIENT_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -724,7 +724,7 @@ target_include_directories(WinBolo PRIVATE
     src/bolo
     src/server
     ${cjson_SOURCE_DIR}
-    third_party/tweetnacl
+    src/third_party/tweetnacl
 )
 
 if(WIN32)
@@ -874,7 +874,7 @@ set(SERVER_SOURCES
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
 )
 
@@ -887,7 +887,7 @@ target_include_directories(WinBoloDS PRIVATE
     src/bolo
     src/server
     ${cjson_SOURCE_DIR}
-    third_party/tweetnacl
+    src/third_party/tweetnacl
 )
 
 if(WIN32)
@@ -914,7 +914,7 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson libsodium_dep)
+target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson)
 
 # ONNX Runtime ML brain support for server bots (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1129,7 +1129,7 @@ set(HEADLESS_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1154,7 +1154,7 @@ target_include_directories(WinBoloHeadless PRIVATE
     src/server
     src/headless
     ${cjson_SOURCE_DIR}
-    third_party/tweetnacl
+    src/third_party/tweetnacl
 )
 
 if(WIN32)
@@ -1225,7 +1225,7 @@ set(GYM_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c third_party/tweetnacl/tweetnacl.c
+    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
 
@@ -1251,7 +1251,7 @@ target_include_directories(winbolo_gym PRIVATE
     src/server
     src/headless
     ${cjson_SOURCE_DIR}
-    third_party/tweetnacl
+    src/third_party/tweetnacl
 )
 
 if(WIN32)

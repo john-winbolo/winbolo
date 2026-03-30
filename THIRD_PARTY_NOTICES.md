@@ -53,7 +53,7 @@ WinBolo uses the following third-party libraries and code.
 ## Vendored Source
 
 ### TweetNaCl
-- Location: third_party/tweetnacl/
+- Location: src/third_party/tweetnacl/
 - License: Public domain
 - https://tweetnacl.cr.yp.to
 - Authors: Daniel J. Bernstein, Tanja Lange, Peter Schwabe
