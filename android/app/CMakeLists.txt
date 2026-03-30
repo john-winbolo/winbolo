@@ -249,12 +249,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/server/server_sim.c
     ${PROJ_ROOT}/src/server/server_stubs.c
     ${PROJ_ROOT}/src/server/posix_stubs.c
-
-    # BigDigits (crypto)
-    ${PROJ_ROOT}/src/server/BigDigits/bigd.c
-    ${PROJ_ROOT}/src/server/BigDigits/bigdRand.c
-    ${PROJ_ROOT}/src/server/BigDigits/bigdigits.c
-    ${PROJ_ROOT}/src/server/BigDigits/bigdigitsRand.c
 )
 
 add_library(main SHARED ${ANDROID_SOURCES})
