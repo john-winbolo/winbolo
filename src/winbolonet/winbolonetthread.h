@@ -86,6 +86,6 @@ void winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 *PURPOSE:
 *  The background thread run method.
 *********************************************************/
-int winbolonetThreadRun(void);
+int winbolonetThreadRun(void *data);
 
 #endif /* __WINBOLONET_THREAD_H */

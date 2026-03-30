@@ -215,7 +215,8 @@ void winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
 *  The background thread run method. Processes queued
 *  JSON API requests via wbn_api_post.
 *********************************************************/
-int winbolonetThreadRun(void) {
+int winbolonetThreadRun(void *data) {
+  (void)data;
   wbnList q;
   wbnList prev;
   char *resp = NULL;
