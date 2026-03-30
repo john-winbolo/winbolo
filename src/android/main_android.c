@@ -293,7 +293,6 @@ int main(int argc, char *argv[]) {
     SDL_Renderer *ren = sdl3DrawGetRenderer();
     if (win && ren) {
       sdl3ImguiSetup(win, ren);
-      sdl3ImguiSetExtraRenderCallback(playersPanelRender);
     }
     if (win) {
       SDL_ShowWindow(win);
@@ -385,8 +384,7 @@ int main(int argc, char *argv[]) {
       SDL_Renderer *ren = sdl3DrawGetRenderer();
       if (win && ren) {
         sdl3ImguiSetup(win, ren);
-        sdl3ImguiSetExtraRenderCallback(playersPanelRender);
-      }
+        }
     }
   }
 

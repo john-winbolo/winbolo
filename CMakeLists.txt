@@ -413,7 +413,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_settings.cpp
 )
 
-# Shared mobile UI (touch input, players panel)
+# Shared mobile UI (touch input, legacy players panel for non-tablet mode)
 set(IOS_MOBILE_SOURCES
     src/gui/mobile/touch_input.c
     src/gui/mobile/players_panel.cpp
