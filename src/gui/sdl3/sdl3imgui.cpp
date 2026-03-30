@@ -2368,6 +2368,10 @@ void sdl3ImguiShowSendMsg(bool open) {
         /* Reset cooldown so the Send button is always enabled on fresh open */
         s_sendMsgCooldownEnd = 0;
         s_sendMsgFocusInput = true;
+#if BOLO_MOBILE
+        s_showSettings = false;
+        s_showPlayersPanel = false;
+#endif
     }
 }
 void sdl3ImguiShowSettings(void) {
@@ -2375,10 +2379,20 @@ void sdl3ImguiShowSettings(void) {
     if (s_showSettings) {
         s_settingsNameBuf[0] = '\0';
         gameFrontGetPlayerName(s_settingsNameBuf);
+#if BOLO_MOBILE
+        s_showSendMsg = false;
+        s_showPlayersPanel = false;
+#endif
     }
 }
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
+#if BOLO_MOBILE
+    if (open) {
+        s_showSendMsg = false;
+        s_showSettings = false;
+    }
+#endif
 }
 
 bool sdl3ImguiWantsKeyboard(void) {
