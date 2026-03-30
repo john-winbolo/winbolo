@@ -106,6 +106,17 @@ if(WIN32)
         SYSTEM
     )
 endif()
+# libsodium is only built from source on Windows.
+# On Linux/macOS, the system libsodium is used via pkg-config.
+if(WIN32)
+    FetchContent_Declare(
+        libsodium
+        GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
+        GIT_TAG        1.0.20-RELEASE
+        GIT_SHALLOW    TRUE
+        SYSTEM
+    )
+endif()
 
 # iOS: only build static SDL libraries (shared libs require code signing
 # and are not useful in an app bundle)
@@ -571,6 +582,27 @@ else()
     find_package(CURL REQUIRED)
 endif()
 
+# libsodium for Ed25519 request signing (WinBolo.net API)
+if(WIN32)
+    set(BUILD_SHARED_LIBS_SAVE_SODIUM "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(libsodium)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_SODIUM}" CACHE BOOL "" FORCE)
+    # libsodium's CMake build exposes the target "sodium"
+    if(NOT TARGET sodium)
+        message(FATAL_ERROR "libsodium FetchContent did not produce a 'sodium' target")
+    endif()
+    add_library(libsodium_dep INTERFACE)
+    target_link_libraries(libsodium_dep INTERFACE sodium)
+else()
+    # Linux/macOS: use system-installed libsodium via pkg-config
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SODIUM REQUIRED libsodium)
+    add_library(libsodium_dep INTERFACE)
+    target_include_directories(libsodium_dep INTERFACE ${SODIUM_INCLUDE_DIRS})
+    target_link_libraries(libsodium_dep INTERFACE ${SODIUM_LIBRARIES})
+endif()
+
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
 # Set -DENABLE_ONNXRUNTIME=OFF to skip entirely.
@@ -760,7 +792,7 @@ endif()
 
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
-    nanosvg stb_image cjson
+    nanosvg stb_image cjson libsodium_dep
 )
 
 # ONNX Runtime ML brain support (optional)
@@ -921,7 +953,7 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson)
+target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson libsodium_dep)
 
 # ONNX Runtime ML brain support for server bots (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1183,7 +1215,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson libsodium_dep
 )
 
 # ONNX Runtime ML brain support for headless (optional)
@@ -1283,7 +1315,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson libsodium_dep
 )
 
 set_target_properties(winbolo_gym PROPERTIES
