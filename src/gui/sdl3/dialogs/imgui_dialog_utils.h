@@ -35,6 +35,31 @@
 #define BOLO_MOBILE 0
 #endif
 
+/* Prevent iOS from shifting the entire SDL view when the soft keyboard appears.
+ * SDL3's iOS view controller monitors the textInputRect set via
+ * SDL_SetTextInputArea() and scrolls the view so the text field stays visible.
+ * We don't want that — instead we leave the view in place and let the keyboard
+ * overlay on top.  Call this after ImGui_ImplSDL3_NewFrame() (which sets the
+ * text input area) to reset it so the view is never shifted.
+ *
+ * Also call SDL_StopTextInput() to dismiss the keyboard when a dialog closes
+ * or the user taps outside a text field. */
+#if defined(__IPHONEOS__)
+static inline void dialogResetTextInputArea(SDL_Window *window) {
+    SDL_Rect r = {0, 0, 1, 0};
+    SDL_SetTextInputArea(window, &r, 0);
+}
+
+static inline void dialogDismissKeyboard(SDL_Window *window) {
+    if (SDL_TextInputActive(window)) {
+        SDL_StopTextInput(window);
+    }
+}
+#else
+static inline void dialogResetTextInputArea(SDL_Window *window) { (void)window; }
+static inline void dialogDismissKeyboard(SDL_Window *window) { (void)window; }
+#endif
+
 /* Compute UI scale factor from window dimensions.
  * On desktop we control the dialog window size, so scale is always 1.0.
  * On Android (and similar full-screen platforms) the dialog renders into
