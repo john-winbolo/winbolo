@@ -1660,10 +1660,22 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
         snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath, entry->d_name);
 
         /* Validate map by attempting to load it */
+        mapCreate(&mp);
+        pillsCreate(&pb);
+        basesCreate(&bs);
+        startsCreate(&ss);
         if (mapRead(fullPath, &mp, &pb, &bs, &ss) == FALSE) {
+            mapDestroy(&mp);
+            pillsDestroy(&pb);
+            basesDestroy(&bs);
+            startsDestroy(&ss);
             fprintf(stderr, "Warning: skipping invalid map '%s'\n", fullPath);
             continue;
         }
+        mapDestroy(&mp);
+        pillsDestroy(&pb);
+        basesDestroy(&bs);
+        startsDestroy(&ss);
 
         /* Grow array if needed */
         if (tempCount >= tempCapacity) {
