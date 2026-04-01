@@ -179,6 +179,9 @@ void transportUdpClientSendAddBot(Transport *t);
 /* Request server remove a bot at the given slot. */
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
 
+/* Re-authenticate WBN token after lobby reset between rounds. */
+void transportUdpClientSendWbnReauth(Transport *t);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
