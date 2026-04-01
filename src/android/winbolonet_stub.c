@@ -7,40 +7,29 @@
 
 #include "../bolo/global.h"
 
-bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers, long startTime) {
+bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
-  (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers; (void)startTime;
+  (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
   return FALSE;
 }
 
-bool winbolonetCreateClient(char *userName, char *password, BYTE *serverKey, char *errorMsg) {
-  (void)userName; (void)password; (void)serverKey; (void)errorMsg;
+bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
+  (void)token; (void)serverKey; (void)errorMsg;
   return FALSE;
 }
 
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 
-bool winbolonetRequestServerKey(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers, long startTime) {
-  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
-  (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers; (void)startTime;
-  return FALSE;
+void winboloNetGetServerKey(char *keyBuff) {
+  if (keyBuff) keyBuff[0] = '\0';
 }
 
-bool winbolonetRequestClientKey(char *userName, char *password, BYTE *serverKey, char *errorMsg) {
-  (void)userName; (void)password; (void)serverKey; (void)errorMsg;
-  return FALSE;
+void winboloNetGetMyClientKey(char *keyBuff) {
+  if (keyBuff) keyBuff[0] = '\0';
 }
 
-void winboloNetGetServerKey(BYTE *keyBuff) {
-  (void)keyBuff;
-}
-
-void winboloNetGetMyClientKey(BYTE *keyBuff) {
-  (void)keyBuff;
-}
-
-bool winboloNetVerifyClientKey(BYTE *keyBuff, char *userName, BYTE playerNum) {
-  (void)keyBuff; (void)userName; (void)playerNum;
+bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
+  (void)playerKey; (void)userName; (void)playerNum;
   return FALSE;
 }
 
@@ -71,8 +60,22 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum) {
   return FALSE;
 }
 
-void winboloNetSendVersion(void) { }
-
 void winboloNetSendLock(bool isLocked) {
   (void)isLocked;
+}
+
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+  (void)token; (void)playerNum; (void)errorMsg;
+  if (hasSteam) *hasSteam = FALSE;
+  return FALSE;
+}
+
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+  (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)errorMsg;
+  return FALSE;
+}
+
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
+  (void)token; (void)playerNameOut; (void)errorMsg;
+  return FALSE;
 }

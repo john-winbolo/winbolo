@@ -20,10 +20,10 @@
 *Filename:      http.h
 *Author:        John Morrison
 *Creation Date: 16/9/01
-*Last Modified: 10/3/26
+*Last Modified: 30/3/26
 *Purpose:
-*  Responsible for sending/receiving HTTP/HTTPS messages
-*  to WinBolo.net via libcurl.
+*  Responsible for HTTP/HTTPS communication with the
+*  WinBolo.net JSON REST API via libcurl.
 *
 *  [WINBOLO.NET] Host= in the INI file accepts:
 *    hostname             (implies https://)
@@ -36,11 +36,27 @@
 
 #include "../bolo/global.h"
 
+struct cJSON;
+
+/*********************************************************
+*NAME:          httpSetHostOverride
+*PURPOSE:
+* Sets a command-line override for the WBN host. When set,
+* httpCreate() will use this value instead of reading from
+* the preferences file. Pass a bare hostname (defaults to
+* https://), or include http:// or https:// scheme.
+*
+*ARGUMENTS:
+* host - Host value to use
+*********************************************************/
+void httpSetHostOverride(const char *host);
+
 /*********************************************************
 *NAME:          httpCreate
 *PURPOSE:
-* Initialises the http module.  Reads the server host from
-* the [WINBOLO.NET] Host INI key and initialises libcurl.
+* Initialises the http module.  Uses the command-line host
+* override if set, otherwise reads from the [WINBOLO.NET]
+* Host INI key.  Initialises libcurl.
 * Returns TRUE on success.
 *********************************************************/
 bool httpCreate(void);
@@ -53,18 +69,36 @@ bool httpCreate(void);
 void httpDestroy(void);
 
 /*********************************************************
-*NAME:          httpSendMessage
+*NAME:          wbn_api_post
 *PURPOSE:
-* Sends a binary message to WinBolo.net via HTTP(S) GET
-* and returns the response body length, or -1 on error.
+* Low-level POST of a JSON string to a WinBolo.net API
+* endpoint. Builds the full URL as <baseUrl>/api/v1/<endpoint>.
+* Returns the HTTP status code, or -1 on transport error.
+* On success, *response_out is a heap-allocated string that
+* the caller must free. On error, *response_out may be NULL.
 *
 *ARGUMENTS:
-* message  - Binary message buffer
-* len      - Length of message
-* response - Buffer to receive the response
-* maxSize  - Capacity of response buffer
+* endpoint     - API path after /api/v1/ (e.g. "server/register")
+* json_body    - JSON request body string
+* response_out - Receives heap-allocated response string (caller frees)
 *********************************************************/
-int httpSendMessage(BYTE *message, int len, BYTE *response, int maxSize);
+int wbn_api_post(const char *endpoint, const char *json_body, char **response_out);
+
+/*********************************************************
+*NAME:          wbn_api_call
+*PURPOSE:
+* High-level JSON API call. Serializes the cJSON body,
+* POSTs it to the endpoint, and parses the response.
+* Returns the HTTP status code, or -1 on transport error.
+* On success, *response is a parsed cJSON object that the
+* caller must free with cJSON_Delete().
+*
+*ARGUMENTS:
+* endpoint - API path after /api/v1/ (e.g. "server/register")
+* body     - cJSON object for the request body
+* response - Receives parsed cJSON response (caller frees)
+*********************************************************/
+int wbn_api_call(const char *endpoint, struct cJSON *body, struct cJSON **response);
 
 /*********************************************************
 *NAME:          httpSendLogFile
@@ -74,10 +108,10 @@ int httpSendMessage(BYTE *message, int len, BYTE *response, int maxSize);
 *
 *ARGUMENTS:
 * fileName     - Path to the log file
-* key          - WINBOLONET_KEY_LEN-byte session key
+* key          - Null-terminated session key string
 * wantFeedback - (unused, retained for API compatibility)
 *********************************************************/
-bool httpSendLogFile(char *fileName, BYTE *key, bool wantFeedback);
+bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
 
 /*********************************************************
 *NAME:          httpSetAltIpAddress

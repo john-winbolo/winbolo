@@ -11,7 +11,3 @@
 int imguiTrackerSetupShow(void) {
   return 0;
 }
-
-/* WinBolo.net settings stub — not applicable on Android */
-void imguiWinbolonetShow(void) {
-}

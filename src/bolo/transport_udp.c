@@ -56,6 +56,7 @@
 #include "../gui/dialogAlliance.h"
 #include "../server/geolookup.h"
 #include "../server/server_sim.h"
+#include "../winbolonet/winbolonet.h"
 #include "sounddist.h"
 #include "bot_manager.h"
 
@@ -129,8 +130,8 @@ static void packHeader(uint8_t *buf, uint8_t packetType, uint32_t sequence) {
 
 #define PACKET_HEADER_SIZE 8
 
-/* Lobby slot wire format size: connected(1) + playerName(32) + teamNumber(1) + ready(1) + isBot(1) + pingMs(2) + countryCode(2) */
-#define LOBBY_SLOT_WIRE_SIZE (1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2)
+/* Lobby slot wire format size: connected(1) + playerName(32) + teamNumber(1) + ready(1) + isBot(1) + pingMs(2) + countryCode(2) + wbn(1) + steam(1) */
+#define LOBBY_SLOT_WIRE_SIZE (1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
 /* Lobby settings tail: mapName(36) + gameType(1) + hiddenMines(1) + aiType(1) + gameLength(4) + pillCount(1) + baseCount(1) + startCount(1) */
 #define LOBBY_SETTINGS_SIZE  (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1)
@@ -407,6 +408,7 @@ typedef struct {
     UdpClientJoinState joinState;
     char playerName[PACKET_MAX_PLAYER_NAME];
     char password[MAP_STR_SIZE];
+    char wbnToken[WBN_TOKEN_WIRE_LEN];
     uint32_t outSequence;
 
     /* Input redundancy ring buffer */
@@ -511,9 +513,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                    const uint8_t *buf, int len) {
     uint8_t pktType = getPacketType(buf, len);
 
-    if (pktType != 0 && pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG) {
-        fprintf(stderr, "[UDP CLIENT] Recv %s (%u) len=%d\n", packetTypeName(pktType), pktType, len);
-    }
 
     /* Reset timeout on any valid server packet — lobby state doesn't send
      * snapshots, so without this the client times out after 20s in lobby. */
@@ -577,8 +576,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
 
             c->joinState = UDP_CLIENT_DOWNLOADING_MAP;
-            fprintf(stderr, "[UDP CLIENT] Join accepted! playerNum=%u mapSize=%u chunks=%u\n",
-                    c->playerNum, c->mapDownloadTotal, c->mapChunksExpected);
 
             /* Send ack to tell server we're ready for map chunks */
             {
@@ -628,8 +625,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (c->mapChunksReceived >= c->mapChunksExpected) {
                 c->joinState = UDP_CLIENT_CONNECTED;
                 c->clientSim->mapDownloadComplete = true;
-                fprintf(stderr, "[UDP CLIENT] Map download complete! %u bytes\n",
-                        c->mapDownloadTotal);
             }
         }
         break;
@@ -645,7 +640,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             strncpy(c->joinRejectReason, "Connection rejected", 63);
             c->joinRejectReason[63] = '\0';
         }
-        fprintf(stderr, "[UDP CLIENT] Join REJECTED: %s\n", c->joinRejectReason);
         c->joinState = UDP_CLIENT_ERROR;
         break;
 
@@ -732,8 +726,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Unpack reliable events with dedup */
         if (reliableEventCount > MAX_SNAPSHOT_EVENTS) reliableEventCount = MAX_SNAPSHOT_EVENTS;
         if (reliableEventCount > 0) {
+            /*
             fprintf(stderr, "[UDP CLIENT] Snapshot has %u wire events, baseSeq=%u, our ack=%u\n",
                     reliableEventCount, reliableBaseSeq, c->reliableEventAck);
+        */
         }
         for (i = 0; i < reliableEventCount; i++) {
             uint32_t evSeq = reliableBaseSeq + (uint32_t)i;
@@ -744,10 +740,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (evSeq >= c->reliableEventAck) {
                 if (newEventCount < MAX_SNAPSHOT_EVENTS) {
                     c->snapshotEvents[newEventCount++] = ev;
-                    if (ev.type == EVENT_MAP_CHANGE) {
-                        fprintf(stderr, "[UDP CLIENT]   New MAP_CHANGE event seq=%u at (%d,%d) terrain=%d\n",
-                                evSeq, ev.data[0], ev.data[1], ev.data[2]);
-                    }
                 }
             }
         }
@@ -764,12 +756,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = true;
         c->lastSnapshotSeq = seq;
         c->lastSnapshotTick = c->localTick;
-        if (c->snapshotHdr.serverTick % 50 == 0) {
-            fprintf(stderr, "[UDP CLIENT]   Snapshot: tick=%u lastInput=%u tanks=%u shells=%u expl=%u bases=%u pills=%u events=%u(new=%d)\n",
-                    c->snapshotHdr.serverTick, c->snapshotHdr.lastProcessedInput,
-                    tankCount, shellCount, explosionCount, baseCount, pillCount,
-                    reliableEventCount, newEventCount);
-        }
         break;
     }
 
@@ -805,7 +791,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     clientSimAppendLobbyChat(c->clientSim, "***", joinMsg);
                 }
             }
-            fprintf(stderr, "[UDP CLIENT] Player %d '%s' joined (cc=%s)\n", pNum, pName, cc);
         }
         break;
 
@@ -843,8 +828,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                      0, 0, 0, 0, 0, FALSE,
                                      numAllies, numAllies > 0 ? allies : NULL, FALSE);
                 }
-                fprintf(stderr, "[UDP CLIENT] Player list: %d '%s' cc=%s allies=%d\n",
-                        pNum, pName, cc, numAllies);
             }
         }
         break;
@@ -868,7 +851,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     clientSimAppendLobbyChat(c->clientSim, "***", leaveMsg);
                 }
             }
-            fprintf(stderr, "[UDP CLIENT] Player %d '%s' left\n", pNum, pName);
         }
         break;
 
@@ -881,7 +863,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memcpy(newName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
             newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
             playersSetPlayerName(c->clientSim, &c->clientSim->sim, &c->clientSim->sim.plyrs, pNum, newName, FALSE);
-            fprintf(stderr, "[UDP CLIENT] Player %d changed name to '%s'\n", pNum, newName);
         }
         break;
 
@@ -937,13 +918,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 playersLeaveAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, fromPlayer, FALSE);
                 break;
             }
-            fprintf(stderr, "[UDP CLIENT] Alliance update: event=%d from=%d to=%d\n",
-                    eventType, fromPlayer, toPlayer);
         }
         break;
 
     case PACKET_SERVER_SHUTDOWN:
-        fprintf(stderr, "[UDP CLIENT] Server is shutting down\n");
         c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         break;
 
@@ -951,7 +929,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Full lobby snapshot:
          *   [header 8] [serverState 1]
          *   16 slots × [connected 1] [playerName 32] [teamNumber 1] [ready 1] [isBot 1]
-         *              [pingMs 2] [countryCode 2]
+         *              [pingMs 2] [countryCode 2] [wbn 1] [steam 1]
          *   Game settings tail:
          *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
          *     [gameLength 4] [pillCount 1] [baseCount 1] [startCount 1] */
@@ -972,6 +950,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->clientSim->lobbySlots[i].countryCode[0] = (char)buf[pos++];
                 c->clientSim->lobbySlots[i].countryCode[1] = (char)buf[pos++];
                 c->clientSim->lobbySlots[i].countryCode[2] = '\0';
+                c->clientSim->lobbySlots[i].wbnParticipant = buf[pos++] ? true : false;
+                c->clientSim->lobbySlots[i].steamParticipant = buf[pos++] ? true : false;
+                if (c->clientSim->lobbySlots[i].wbnParticipant || c->clientSim->lobbySlots[i].steamParticipant) {
+                    SDL_Log("[WBN LOBBY] slot %d wbn=%d steam=%d",
+                            i, c->clientSim->lobbySlots[i].wbnParticipant,
+                            c->clientSim->lobbySlots[i].steamParticipant);
+                }
             }
             /* Game settings tail */
             strncpy(c->clientSim->mapName, (const char *)(buf + pos), MAP_STR_SIZE - 1);
@@ -992,14 +977,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->clientSim->netStat = netLobby;
             }
             c->clientSim->inLobby = true;
-            fprintf(stderr, "[UDP CLIENT] Lobby state received\n");
         }
         break;
 
     case PACKET_LOBBY_UPDATE:
         /* Single-player delta:
          *   [header 8] [playerNum 1] [connected 1] [playerName 32]
-         *   [teamNumber 1] [ready 1] [isBot 1] [pingMs 2] [countryCode 2] */
+         *   [teamNumber 1] [ready 1] [isBot 1] [pingMs 2] [countryCode 2]
+         *   [wbn 1] [steam 1] */
         if (len >= PACKET_HEADER_SIZE + 1 + LOBBY_SLOT_WIRE_SIZE) {
             int pos = PACKET_HEADER_SIZE;
             uint8_t playerNum = buf[pos++];
@@ -1016,6 +1001,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->clientSim->lobbySlots[playerNum].countryCode[0] = (char)buf[pos++];
                 c->clientSim->lobbySlots[playerNum].countryCode[1] = (char)buf[pos++];
                 c->clientSim->lobbySlots[playerNum].countryCode[2] = '\0';
+                c->clientSim->lobbySlots[playerNum].wbnParticipant = buf[pos++] ? true : false;
+                c->clientSim->lobbySlots[playerNum].steamParticipant = buf[pos++] ? true : false;
             }
         }
         break;
@@ -1025,7 +1012,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         if (len >= PACKET_HEADER_SIZE + 1) {
             c->clientSim->countdownSeconds = buf[PACKET_HEADER_SIZE];
             c->clientSim->netStat = netLobbyCountdown;
-            fprintf(stderr, "[UDP CLIENT] Countdown: %d seconds\n", c->clientSim->countdownSeconds);
         }
         break;
 
@@ -1033,7 +1019,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* [header 8] */
         c->clientSim->netStat = netRunning;
         c->clientSim->countdownSeconds = 0;
-        fprintf(stderr, "[UDP CLIENT] Game started\n");
         break;
 
     case PACKET_GAME_OVER:
@@ -1045,13 +1030,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         } else {
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
-        fprintf(stderr, "[UDP CLIENT] Game over\n");
         break;
 
     case PACKET_LOBBY_MAP_CHANGE:
         /* [header 8] */
         c->clientSim->mapDownloadComplete = false;
-        fprintf(stderr, "[UDP CLIENT] Map changed, re-downloading\n");
         break;
 
     default:
@@ -1078,10 +1061,9 @@ static bool udpClientTick(void *ctx) {
         c->ticksSinceJoinSent++;
         if (c->ticksSinceJoinSent >= JOIN_RETRY_INTERVAL) {
             if (c->joinAttempts >= JOIN_MAX_RETRIES) {
-                fprintf(stderr, "[UDP CLIENT] Join failed: max retries exceeded\n");
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3];
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN];
                 int joffset = PACKET_HEADER_SIZE;
                 packHeader(jbuf, PACKET_JOIN_REQUEST, c->outSequence++);
                 memcpy(jbuf + joffset, c->playerName, PACKET_MAX_PLAYER_NAME);
@@ -1091,12 +1073,12 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = BOLO_VERSION_MAJOR;
                 jbuf[joffset++] = BOLO_VERSION_MINOR;
                 jbuf[joffset++] = BOLO_VERSION_REVISION;
+                memcpy(jbuf + joffset, c->wbnToken, WBN_TOKEN_WIRE_LEN);
+                joffset += WBN_TOKEN_WIRE_LEN;
                 /* Join requests bypass delay — they're control plane */
                 udpSendTo(c->sock, jbuf, joffset, &c->serverAddr);
                 c->joinAttempts++;
                 c->ticksSinceJoinSent = 0;
-                fprintf(stderr, "[UDP CLIENT] Sent join request #%u (name='%s', %d bytes)\n",
-                        c->joinAttempts, c->playerName, joffset);
             }
         }
     }
@@ -1117,8 +1099,6 @@ static bool udpClientTick(void *ctx) {
          * the server has likely crashed or network is dead */
         if (c->lastSnapshotTick > 0 &&
             c->localTick - c->lastSnapshotTick >= CLIENT_TIMEOUT_TICKS) {
-            fprintf(stderr, "[UDP CLIENT] Server timeout — no snapshots for %d ticks\n",
-                    CLIENT_TIMEOUT_TICKS);
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
     }
@@ -1184,7 +1164,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
                                    const char *playerName,
-                                   const char *password) {
+                                   const char *password,
+                                   const char *wbnToken) {
     Transport t;
     TransportUdpClientCtx *c;
     struct hostent *he;
@@ -1225,12 +1206,16 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         }
     }
 
-    /* Copy player name and password */
+    /* Copy player name, password, and WBN token */
     memset(c->playerName, 0, PACKET_MAX_PLAYER_NAME);
     strncpy(c->playerName, playerName, PACKET_MAX_PLAYER_NAME - 1);
     memset(c->password, 0, MAP_STR_SIZE);
     if (password != NULL) {
         strncpy(c->password, password, MAP_STR_SIZE - 1);
+    }
+    memset(c->wbnToken, 0, WBN_TOKEN_WIRE_LEN);
+    if (wbnToken != NULL) {
+        strncpy(c->wbnToken, wbnToken, WBN_TOKEN_WIRE_LEN - 1);
     }
 
     c->joinState = UDP_CLIENT_JOINING;
@@ -1238,8 +1223,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* Send immediately on first tick */
     c->outSequence = 1;
 
-    fprintf(stderr, "[UDP CLIENT] Created, connecting to %s:%u\n",
-            serverAddr, serverPort);
     c->lastSnapshotSeq = 0;
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
@@ -1732,6 +1715,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     int pos = PACKET_HEADER_SIZE;
     char name[PACKET_MAX_PLAYER_NAME];
     char pass[MAP_STR_SIZE];
+    char wbnToken[WBN_TOKEN_WIRE_LEN];
     int slot;
 
     fprintf(stderr, "[UDP SERVER] Join request received, len=%d\n", len);
@@ -1760,6 +1744,16 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     memcpy(pass, buf + pos, MAP_STR_SIZE);
     pass[MAP_STR_SIZE - 1] = '\0';
     pos += MAP_STR_SIZE;
+
+    /* Skip version bytes */
+    pos += 3;
+
+    /* Read WBN token if present (backwards compatible — older clients won't send it) */
+    memset(wbnToken, 0, WBN_TOKEN_WIRE_LEN);
+    if (len >= pos + WBN_TOKEN_WIRE_LEN) {
+        memcpy(wbnToken, buf + pos, WBN_TOKEN_WIRE_LEN);
+        wbnToken[WBN_TOKEN_WIRE_LEN - 1] = '\0';
+    }
 
     /* Check password */
     if (udpServer.password[0] != '\0') {
@@ -1845,8 +1839,35 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.eventQueues[slot].ackedSeq = 1;
     memset(udpServer.eventQueues[slot].buffer, 0, sizeof(udpServer.eventQueues[slot].buffer));
 
+    /* Verify WBN token if provided */
+    bool wbnVerified = false;
+    bool wbnHasSteam = false;
+    if (wbnToken[0] != '\0' && winbolonetIsRunning()) {
+        char errorMsg[512];
+        errorMsg[0] = '\0';
+        if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg, &wbnHasSteam)) {
+            fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
+            wbnVerified = true;
+        } else {
+            char rejectMsg[256];
+            snprintf(rejectMsg, sizeof(rejectMsg),
+                     "WinBolo.net verification failed: %s", errorMsg);
+            fprintf(stderr, "[UDP SERVER] %s\n", rejectMsg);
+            udpServer.clients[slot].connected = false;
+            serverSendJoinReject(fromAddr, rejectMsg);
+            return;
+        }
+    }
+
     /* Initialize player in the simulation */
     serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName);
+
+    /* Set WBN/Steam participant flags if token was verified */
+    if (wbnVerified) {
+        playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)slot, TRUE);
+        playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)slot, wbnHasSteam);
+        SDL_Log("[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
+    }
 
     /* Send accept with game settings and map size */
     {
@@ -1861,6 +1882,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* Notify all players about the new player */
     serverBroadcastPlayerEvent(PACKET_PLAYER_JOINED, (uint8_t)slot, name);
+    winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                       (BYTE)slot, WINBOLO_NET_NO_PLAYER);
 
     /* Send lobby state or game start signal BEFORE map chunks so the
      * client enters the lobby immediately and downloads the map in the
@@ -2104,19 +2127,28 @@ static bool serverClientsAllLocked(void) {
     return anyConnected;
 }
 
-static void serverDisconnectClient(int idx, bool graceful) {
+static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     char msg[128];
     if (!udpServer.clients[idx].connected) return;
 
     if (graceful) {
         snprintf(msg, sizeof(msg), "%s is quitting.",
                  udpServer.clients[idx].playerName);
+        winbolonetAddEvent(WINBOLO_NET_EVENT_QUITTING, TRUE,
+                           (BYTE)idx, WINBOLO_NET_NO_PLAYER);
     } else {
         snprintf(msg, sizeof(msg), "%s timed out.",
                  udpServer.clients[idx].playerName);
     }
     fprintf(stderr, "[UDP SERVER] %s\n", msg);
     serverSimConsoleMessage(msg);
+
+    /* Notify WinBolo.net that the player is leaving (must happen before
+     * clearing the slot so the player key is still valid) */
+    winboloNetClientLeaveGame((BYTE)idx,
+                              serverSimGetNumPlayers(sim),
+                              serverSimGetNumNeutralBases(sim),
+                              serverSimGetNumNeutralPills(sim));
 
     serverBroadcastPlayerEvent(PACKET_PLAYER_LEFT,
                                (uint8_t)idx,
@@ -2163,7 +2195,7 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             /* Send kick message to all clients (including the kicked player) */
             serverSendServerMessage(msg);
             serverCleanupMapDownload(i);
-            serverDisconnectClient(i, FALSE);
+            serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);
             /* Broadcast lobby update if in lobby/countdown state */
             if (sim->lobbyEnabled &&
@@ -2329,12 +2361,12 @@ static bool isOldProtocolInfoRequest(const uint8_t *buf, int len) {
  *   [header 8] [serverState 1]
  *   For each of 16 slots:
  *     [connected 1] [playerName 32] [teamNumber 1] [ready 1] [isBot 1]
- *     [pingMs 2 (big-endian)] [countryCode 2]
- *   Total per slot: 40 bytes.
+ *     [pingMs 2 (big-endian)] [countryCode 2] [wbn 1] [steam 1]
+ *   Total per slot: 42 bytes.
  *   Game settings tail:
  *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
  *     [gameLength 4 (big-endian)] [pillCount 1] [baseCount 1] [startCount 1]
- *   Total payload: 1 + 16*40 + 46 = 687 bytes.
+ *   Total payload: 1 + 16*42 + 46 = 719 bytes.
  */
 
 static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
@@ -2358,6 +2390,9 @@ static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
         /* Country code (2 chars, or zeros if unknown) */
         buf[pos++] = (uint8_t)udpServer.clients[i].countryCode[0];
         buf[pos++] = (uint8_t)udpServer.clients[i].countryCode[1];
+        /* WBN/Steam participant flags */
+        buf[pos++] = playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i) ? 1 : 0;
+        buf[pos++] = playersGetSteamParticipant(&sim->sim.plyrs, (BYTE)i) ? 1 : 0;
     }
     /* Game settings tail */
     memset(buf + pos, 0, MAP_STR_SIZE);
@@ -2396,6 +2431,7 @@ static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientI
 /* Lobby update wire format:
  *   [header 8] [playerNum 1] [connected 1] [playerName 32]
  *   [teamNumber 1] [ready 1] [isBot 1] [pingMs 2] [countryCode 2]
+ *   [wbn 1] [steam 1]
  */
 #define LOBBY_UPDATE_PAYLOAD (1 + LOBBY_SLOT_WIRE_SIZE)
 
@@ -2420,6 +2456,8 @@ void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
     buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs & 0xFF);
     buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
     buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
+    buf[pos++] = playersGetWbnParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
+    buf[pos++] = playersGetSteamParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
@@ -2624,6 +2662,11 @@ void transportUdpServerRecv(ServerSim *sim) {
                 int j;
                 bool nameTaken = FALSE;
 
+                /* WBN participants are not allowed to change their name */
+                if (winboloNetIsPlayerParticipant((BYTE)clientIdx)) {
+                    break;
+                }
+
                 memcpy(newName, buf + PACKET_HEADER_SIZE + 1,
                        PACKET_MAX_PLAYER_NAME);
                 newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
@@ -2680,7 +2723,7 @@ void transportUdpServerRecv(ServerSim *sim) {
             int clientIdx = serverFindClient(&fromAddr);
             if (clientIdx >= 0) {
                 serverCleanupMapDownload(clientIdx);
-                serverDisconnectClient(clientIdx, TRUE);
+                serverDisconnectClient(sim, clientIdx, TRUE);
                 serverSimRemovePlayer(sim, (BYTE)clientIdx);
                 /* Broadcast lobby update if in lobby/countdown state */
                 if (sim->lobbyEnabled &&
@@ -2714,11 +2757,15 @@ void transportUdpServerRecv(ServerSim *sim) {
                             "This game is now locked to new players (client lock)");
                         serverSimConsoleMessage(
                             "Game locked by client consensus.");
+                        winboloNetSendLock(TRUE);
                     } else if (!nowLocked && wasLocked) {
                         serverSendServerMessage(
                             "This game is now unlocked to new players (client unlock)");
                         serverSimConsoleMessage(
                             "Game unlocked by client consensus.");
+                        if (!udpServer.gameLocked) {
+                            winboloNetSendLock(FALSE);
+                        }
                     }
                 }
             }
@@ -2759,6 +2806,8 @@ void transportUdpServerRecv(ServerSim *sim) {
                 ServerSim *ssim = serverSimGetActive();
                 playersAcceptAlliance(&ssim->sim, &ssim->sim.plyrs,
                                      (BYTE)clientIdx, newMember, TRUE);
+                winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
+                                   (BYTE)clientIdx, newMember);
                 /* Broadcast ALLIANCE_UPDATE (ACCEPT) to all clients */
                 {
                     uint8_t outBuf[PACKET_HEADER_SIZE + 3];
@@ -2786,6 +2835,8 @@ void transportUdpServerRecv(ServerSim *sim) {
                     ServerSim *ssim = serverSimGetActive();
                     playersLeaveAlliance(&ssim->sim, &ssim->sim.plyrs, (BYTE)clientIdx, TRUE);
                 }
+                winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
+                                   (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
                 /* Broadcast ALLIANCE_UPDATE (LEAVE) to all clients */
                 {
                     uint8_t outBuf[PACKET_HEADER_SIZE + 3];
@@ -3105,7 +3156,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
         if (udpServer.tickCount - udpServer.clients[i].lastReceivedTick
             > CLIENT_TIMEOUT_TICKS) {
             serverCleanupMapDownload(i);
-            serverDisconnectClient(i, FALSE);
+            serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);
             /* Broadcast lobby update if in lobby/countdown state */
             if (sim->lobbyEnabled &&
@@ -3145,6 +3196,7 @@ void transportUdpServerSetLock(ServerSim *sim, bool locked) {
     serverSimConsoleMessage(locked
         ? "This game is now locked to new players (server lock)"
         : "This game is now unlocked to new players (server unlock)");
+    winboloNetSendLock(locked);
     /* Enqueue directly into per-client reliable queues.
      * We can't use serverSimAddEvent() because the sim's event buffer
      * gets cleared at the start of each tick — this runs from the

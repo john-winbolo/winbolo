@@ -45,6 +45,8 @@ typedef struct {
     bool isBot;
     uint16_t pingMs;       /* Player ping in ms */
     char countryCode[3];   /* ISO 3166-1 alpha-2 (e.g. "US") */
+    bool wbnParticipant;   /* Logged into WinBolo.net */
+    bool steamParticipant; /* Logged into Steam */
 } ClientLobbySlot;
 
 /* Callback typedefs for new transport message sending */
@@ -236,7 +238,7 @@ void netGetOurAddressStr(ClientSim *cs, char *dest);
 BYTE netGetDownloadPos(void);
 void netSecond(void);
 int netGetNetTime(void);
-bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnPassword);
+bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnToken);
 void netDestroy(ClientSim *cs);
 void netSendTrackerUpdate(void);
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host);

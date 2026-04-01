@@ -507,34 +507,40 @@ bool gameFrontLoadInBuiltMap(void);
 bool gameFrontLoadTutorial(void);
 
 /*********************************************************
-*NAME:          gameFrontSetWinbolonetSettings
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/06/00
-*LAST MODIFIED: 24/06/00
+*NAME:          gameFrontSetWinbolonetToken
 *PURPOSE:
-* Sets the winbolo.net settings from the setup dialog
+* Stores a WinBolo.net auth token and its expiry.
 *
 *ARGUMENTS:
-* password - Password
-* useWbn   - Should we participate in winbolo.net
-* savePass - Should we save the password
+* token  - 64-char hex auth token
+* expiry - Expiry datetime string (Y-m-d H:i:s)
 *********************************************************/
-void gameFrontSetWinbolonetSettings(char *password, bool useWbn, bool savePass);
+void gameFrontSetWinbolonetToken(const char *token, const char *expiry);
 
 /*********************************************************
-*NAME:          gameFrontGetWinbolonetSettings
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/06/00
-*LAST MODIFIED: 24/06/00
+*NAME:          gameFrontGetWinbolonetToken
 *PURPOSE:
-* Gets the winbolo.net settings for the setup dialog
+* Gets the stored WinBolo.net auth token and expiry.
 *
 *ARGUMENTS:
-* password - Destination Password
-* useWbn - Destination  Should we participate in wbn
-* savePass - Destination for should save password
+* token  - Destination for token string
+* expiry - Destination for expiry string
 *********************************************************/
-void gameFrontGetWinbolonetSettings(char *password, bool *useWbn, bool *savePass);
+void gameFrontGetWinbolonetToken(char *token, char *expiry);
+
+/*********************************************************
+*NAME:          gameFrontClearWinbolonetToken
+*PURPOSE:
+* Clears the stored WinBolo.net token (logout).
+*********************************************************/
+void gameFrontClearWinbolonetToken(void);
+
+/*********************************************************
+*NAME:          gameFrontGetWinbolonetUse
+*PURPOSE:
+* Returns whether WinBolo.net is active (token exists).
+*********************************************************/
+bool gameFrontGetWinbolonetUse(void);
 
 /*********************************************************
 *NAME:          gameFrontSetRegistryKeys
