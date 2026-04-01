@@ -71,8 +71,10 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     return FALSE;
   }
 
-  /* Build version string from game version defines */
-  snprintf(versionStr, sizeof(versionStr), "%d.%d", BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
+  /* Build version string from game version defines.
+     Note: the hex defines (0x01, 0x08) are for the binary protocol;
+     the display version is constructed here as "major.minor.revision". */
+  snprintf(versionStr, sizeof(versionStr), "%d.%d%d", BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
 
   /* Register server with WinBolo.net */
   body = cJSON_CreateObject();
@@ -455,6 +457,69 @@ bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playe
 }
 
 /*********************************************************
+*NAME:          winbolonetServerVerifyToken
+*PURPOSE:
+* Called by the server when a player joins with a WBN
+* token.  POSTs to client/join and stores the resulting
+* player_key at the given slot.  Returns TRUE on success.
+*********************************************************/
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (hasSteam) *hasSteam = FALSE;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "token", token);
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+
+  status = wbn_api_call("client/join", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      cJSON *keyObj = cJSON_GetObjectItem(resp, "player_key");
+      if (keyObj && cJSON_IsString(keyObj)) {
+        strncpy(winboloNetPlayerKey[playerNum], keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+        winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+        ok = TRUE;
+        /* Extract has_steam flag */
+        if (hasSteam) {
+          cJSON *steamObj = cJSON_GetObjectItem(resp, "has_steam");
+          if (steamObj && cJSON_IsBool(steamObj)) {
+            *hasSteam = cJSON_IsTrue(steamObj) ? TRUE : FALSE;
+          }
+        }
+      } else {
+        strcpy(errorMsg, "WinBolo.net returned no player key");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "WinBolo.net verification failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
 *NAME:          winboloNetClientLeaveGame
 *PURPOSE:
 * Called when a player leaves the game. Sends a leave
@@ -545,4 +610,124 @@ void winboloNetSendLock(bool isLocked) {
   wbn_api_call("server/lock", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
+}
+
+/*********************************************************
+*NAME:          winbolonetAuthLogin
+*PURPOSE:
+* Authenticates via POST /api/v1/auth/login and returns
+* the token and expiry on success.
+*********************************************************/
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (httpCreate() != TRUE) {
+    strcpy(errorMsg, "Could not initialise HTTP");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "username", username);
+  cJSON_AddStringToObject(body, "password", password);
+
+  status = wbn_api_call("auth/login", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
+      cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
+      if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
+        strcpy(tokenOut, tokenObj->valuestring);
+        strcpy(expiryOut, expiryObj->valuestring);
+        playerNameOut[0] = '\0';
+        cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+        if (nameObj && cJSON_IsString(nameObj)) {
+          strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
+          playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
+        }
+        ok = TRUE;
+      } else {
+        strcpy(errorMsg, "Invalid response from WinBolo.net");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "Login failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  httpDestroy();
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetAuthValidate
+*PURPOSE:
+* Validates a token via POST /api/v1/auth/validate.
+* Returns TRUE if the token is still valid.
+*********************************************************/
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (httpCreate() != TRUE) {
+    strcpy(errorMsg, "Could not initialise HTTP");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "token", token);
+
+  status = wbn_api_call("auth/validate", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *validObj = cJSON_GetObjectItem(resp, "valid");
+    if (validObj && cJSON_IsTrue(validObj)) {
+      if (playerNameOut) {
+        playerNameOut[0] = '\0';
+        cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+        if (nameObj && cJSON_IsString(nameObj)) {
+          strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
+          playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
+        }
+      }
+      ok = TRUE;
+    } else {
+      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      if (errObj && cJSON_IsString(errObj)) {
+        strcpy(errorMsg, errObj->valuestring);
+      } else {
+        strcpy(errorMsg, "Token is no longer valid");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "Validation failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  httpDestroy();
+  return ok;
 }

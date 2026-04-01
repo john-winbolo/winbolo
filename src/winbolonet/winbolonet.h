@@ -94,6 +94,22 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg);
 
 /*********************************************************
+*NAME:          winbolonetServerVerifyToken
+*PURPOSE:
+* Called by the server to verify a joining player's WBN
+* auth token via POST /api/v1/client/join. Stores the
+* resulting player_key at the given player slot.
+* Returns TRUE on success.
+*
+*ARGUMENTS:
+* token     - WBN auth token from the join request
+* playerNum - Player slot number
+* errorMsg  - Buffer for error message on failure
+* hasSteam  - Output: set to TRUE if player has linked Steam
+*********************************************************/
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam);
+
+/*********************************************************
 *NAME:          winbolonetDestroy
 *PURPOSE:
 * Destroys the winbolonet module.
@@ -233,5 +249,36 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum);
 * isLocked - Is this game locked or not
 *********************************************************/
 void winboloNetSendLock(bool isLocked);
+
+/*********************************************************
+*NAME:          winbolonetAuthLogin
+*PURPOSE:
+* Authenticates with WinBolo.net via POST /api/v1/auth/login.
+* On success, writes the token and expiry into the provided
+* buffers and returns TRUE.
+*
+*ARGUMENTS:
+* username      - WinBolo.net username
+* password      - WinBolo.net password
+* tokenOut      - Buffer for token (must be >= 65 bytes)
+* expiryOut     - Buffer for expiry string (must be >= 64 bytes)
+* playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* errorMsg      - Buffer for error message on failure
+*********************************************************/
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
+
+/*********************************************************
+*NAME:          winbolonetAuthValidate
+*PURPOSE:
+* Validates a stored auth token by calling
+* POST /api/v1/auth/validate.
+* Returns TRUE if the token is valid.
+*
+*ARGUMENTS:
+* token         - The auth token to validate
+* playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN), may be NULL
+* errorMsg      - Buffer for error message on failure
+*********************************************************/
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
 
 #endif /* __WINBOLO_NET_H */

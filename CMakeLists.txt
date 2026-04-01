@@ -767,44 +767,8 @@ endif()
 
 # Copy data assets to output directory after build
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBolo>/data"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBolo>/data/fonts"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/background.bmp" "$<TARGET_FILE_DIR:WinBolo>/data/background.bmp"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data/flags" "$<TARGET_FILE_DIR:WinBolo>/data/flags"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb" "$<TARGET_FILE_DIR:WinBolo>/data/dbip-country-lite.mmdb"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/skin.bmp" "$<TARGET_FILE_DIR:WinBolo>/data/skin.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/CourierPrime-Regular.ttf"
-        "$<TARGET_FILE_DIR:WinBolo>/data/fonts/CourierPrime-Regular.ttf"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/smalllogo.bmp" "$<TARGET_FILE_DIR:WinBolo>/smalllogo.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/smalllogo-transparent.png" "$<TARGET_FILE_DIR:WinBolo>/smalllogo-transparent.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/button_tutorial.bmp" "$<TARGET_FILE_DIR:WinBolo>/button_tutorial.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/button_practice.bmp" "$<TARGET_FILE_DIR:WinBolo>/button_practice.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/button_tcp.bmp" "$<TARGET_FILE_DIR:WinBolo>/button_tcp.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/button_lan.bmp" "$<TARGET_FILE_DIR:WinBolo>/button_lan.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/button_internet.bmp" "$<TARGET_FILE_DIR:WinBolo>/button_internet.bmp"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map" "$<TARGET_FILE_DIR:WinBolo>/Everard Island.map"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map" "$<TARGET_FILE_DIR:WinBolo>/Inbuilt Tutorial.map"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBolo>/data/maps"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data/maps" "$<TARGET_FILE_DIR:WinBolo>/data/maps"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data/svg" "$<TARGET_FILE_DIR:WinBolo>/data/svg"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data/sounds" "$<TARGET_FILE_DIR:WinBolo>/data/sounds"
+        "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:WinBolo>/data"
     COMMENT "Copying WinBolo data files to output directory"
 )
 
@@ -1044,59 +1008,16 @@ add_custom_command(TARGET LogViewer POST_BUILD
 
 if(APPLE)
     add_custom_command(TARGET LogViewer POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/tile.bmp"    "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/tile.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/tanks.bmp"   "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/tanks.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/boats.bmp"   "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/boats.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/items.bmp"   "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/items.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/splash.bmp"  "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/splash.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/logo.bmp"    "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/logo.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/base.bmp"    "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/base.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/pillbox.bmp" "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/pillbox.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/CourierPrime-Regular.ttf"
-            "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/CourierPrime-Regular.ttf"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/data/sounds"
-            "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data/sounds"
+            "${CMAKE_SOURCE_DIR}/data"
+            "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data"
         COMMENT "Copying data files into app bundle Resources"
     )
 else()
     add_custom_command(TARGET LogViewer POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LogViewer>/data"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/tile.bmp"    "$<TARGET_FILE_DIR:LogViewer>/data/tile.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/tanks.bmp"   "$<TARGET_FILE_DIR:LogViewer>/data/tanks.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/boats.bmp"   "$<TARGET_FILE_DIR:LogViewer>/data/boats.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/items.bmp"   "$<TARGET_FILE_DIR:LogViewer>/data/items.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/splash.bmp"  "$<TARGET_FILE_DIR:LogViewer>/data/splash.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/logo.bmp"    "$<TARGET_FILE_DIR:LogViewer>/data/logo.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/base.bmp"    "$<TARGET_FILE_DIR:LogViewer>/data/base.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/pillbox.bmp" "$<TARGET_FILE_DIR:LogViewer>/data/pillbox.bmp"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/CourierPrime-Regular.ttf"
-            "$<TARGET_FILE_DIR:LogViewer>/data/CourierPrime-Regular.ttf"
-        COMMENT "Copying LogViewer data files to output directory"
-    )
-    add_custom_command(TARGET LogViewer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/data/sounds" "$<TARGET_FILE_DIR:LogViewer>/data/sounds"
-        COMMENT "Copying LogViewer sound files to output directory"
+            "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:LogViewer>/data"
+        COMMENT "Copying LogViewer data files to output directory"
     )
 endif()
 
@@ -1359,15 +1280,8 @@ add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
         "$<TARGET_FILE_DIR:BrainTest>/Brains/NewAutopilot"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/data"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/data/svg"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/data/skin.bmp" "$<TARGET_FILE_DIR:BrainTest>/data/skin.bmp"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data/svg" "$<TARGET_FILE_DIR:BrainTest>/data/svg"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/data/maps"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data/maps" "$<TARGET_FILE_DIR:BrainTest>/data/maps"
+        "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
 )
 
@@ -1398,9 +1312,6 @@ add_custom_target(dist
 
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${DIST_DIR}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/data"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/data/fonts"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/data/sounds"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains"
 
     # Binaries
@@ -1416,40 +1327,7 @@ add_custom_target(dist
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_shared_libs.cmake
 
     # Data assets
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/background.bmp" "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory    "${CMAKE_SOURCE_DIR}/data/flags"           "${DIST_DIR}/data/flags"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/skin.bmp"       "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/tile.bmp"       "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/tanks.bmp"      "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/boats.bmp"      "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/items.bmp"      "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/splash.bmp"     "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/logo.bmp"       "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/base.bmp"       "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/pillbox.bmp"    "${DIST_DIR}/data/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/CourierPrime-Regular.ttf" "${DIST_DIR}/data/fonts/"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory    "${CMAKE_SOURCE_DIR}/data/sounds" "${DIST_DIR}/data/sounds"
-
-    # SVG/PNG sprite files
-    COMMAND ${CMAKE_COMMAND} -E copy_directory    "${CMAKE_SOURCE_DIR}/data/svg"  "${DIST_DIR}/data/svg"
-
-    # UI icons
-    COMMAND ${CMAKE_COMMAND} -E copy_directory    "${CMAKE_SOURCE_DIR}/data/ui"   "${DIST_DIR}/data/ui"
-
-    # Welcome screen assets
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/smalllogo.bmp"        "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/smalllogo-transparent.png" "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/button_tutorial.bmp"   "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/button_practice.bmp"   "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/button_tcp.bmp"        "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/button_lan.bmp"        "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/button_internet.bmp"   "${DIST_DIR}/"
-
-    # Maps
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"    "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"  "${DIST_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/data/maps"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/maps" "${DIST_DIR}/data/maps"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
 
     # Brain scripts
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/NewAutopilot" "${DIST_DIR}/Brains/NewAutopilot"
@@ -1461,17 +1339,6 @@ add_custom_target(dist
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/dist"
     BYPRODUCTS "${DIST_ZIP}"
     VERBATIM
-)
-
-# Geo database — copied at build time by a helper script that silently
-# skips the file when it is not present, avoiding the configure-time
-# if(EXISTS) problem where the check is stale after the first cmake run.
-add_custom_command(TARGET dist POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC_FILE=${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb
-        -DDEST_DIR=${DIST_DIR}/data
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake
-    COMMENT "Copying geo database to distribution (if present)"
 )
 
 endif() # iOS vs Desktop

@@ -74,6 +74,19 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
 bool winbolonetIsRunning(void) { return false; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return false; }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+    (void)token; (void)playerNum; (void)errorMsg;
+    if (hasSteam) *hasSteam = false;
+    return false;
+}
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+    (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)errorMsg;
+    return false;
+}
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
+    (void)token; (void)playerNameOut; (void)errorMsg;
+    return false;
+}
 
 /* ---- winbolonet thread stubs ---- */
 

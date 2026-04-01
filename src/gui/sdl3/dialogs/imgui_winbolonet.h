@@ -14,7 +14,8 @@
 
 /*********************************************************
  * Name:          imgui_winbolonet.h
- * Purpose:       ImGui WinBolo.net settings dialog.
+ * Purpose:       ImGui WinBolo.net login popup drawn
+ *                inline within the settings dialog.
  *********************************************************/
 
 #ifndef IMGUI_WINBOLONET_H
@@ -24,8 +25,16 @@
 extern "C" {
 #endif
 
-/* Show the ImGui WinBolo.net settings dialog as a blocking modal loop. */
-void imguiWinbolonetShow(void);
+/* Reset popup state. Call when entering the settings dialog. */
+void imguiWinbolonetReset(void);
+
+/* Start async token validation if a token is stored. Call once on settings open. */
+void imguiWinbolonetStartValidation(void);
+
+/* Draw the WBN section within the settings panel.
+ * Shows signed-in status / sign-in button and handles the login popup.
+ * When inGame is true, sign-in/out is disabled (read-only status). */
+void imguiWinbolonetDrawSection(bool inGame);
 
 #ifdef __cplusplus
 }

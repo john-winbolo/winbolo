@@ -72,6 +72,8 @@ extern "C" {
 }
 
 #include "sdl3imgui_tablet.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" void windowSetQuitting(void);
 
@@ -147,7 +149,8 @@ extern "C" void windowMenuNetwork_toggle(void);
 extern "C" void windowMenuNetworkDebug_toggle(void);
 extern "C" void windowHideMainView_toggle(void);
 extern "C" void windowLabelOwnTank_toggle(void);
-extern "C" void imguiWinbolonetShow(void);
+extern "C" void imguiWinbolonetDrawSection(bool inGame);
+extern "C" void imguiWinbolonetReset(void);
 extern "C" void windowSetMessageLabelLen(labelLen newLen);
 extern "C" void windowSetTankLabelLen(labelLen newLen);
 extern "C" void windowSetFrameRate(int newFrameRate, bool setTimer);
@@ -229,10 +232,51 @@ static uint16_t s_playerPing[MAX_PLAYERS] = {};
 static bool     s_playerWbn[MAX_PLAYERS]  = {};
 static bool     s_playerSteam[MAX_PLAYERS] = {};
 
+/* WBN/Steam icon textures */
+static SDL_Texture *s_iconGlobe = nullptr;
+static SDL_Texture *s_iconSteam = nullptr;
+static bool s_wbnIconsLoaded = false;
+#define WBN_ICON_SIZE 14
+
+static SDL_Texture *loadSvgIconSmall(const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+    float scale = (float)size / image->height;
+    if (image->width * scale > (float)size) scale = (float)size / image->width;
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    float offX = ((float)w - image->width * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
+}
+
+static void ensureWbnIconsLoaded(void) {
+    if (s_wbnIconsLoaded) return;
+    s_wbnIconsLoaded = true;
+    s_iconGlobe = loadSvgIconSmall("data/ui/globe.svg", WBN_ICON_SIZE);
+    s_iconSteam = loadSvgIconSmall("data/ui/steam.svg", WBN_ICON_SIZE);
+    SDL_Log("[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
+            (void *)s_iconGlobe, (void *)s_iconSteam,
+            (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+}
+
 /* Settings panel state */
 static bool s_showSettings       = false;
 static char s_settingsNameBuf[33] = "";  /* PLAYER_NAME_LEN = 33 */
-static bool s_pendingWbnDialog   = false;
+static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
 static bool s_showAbout          = false;
@@ -810,22 +854,24 @@ static void renderPlayersPanel(ClientSim *cs) {
 
         /* WBN participant icon */
         if (s_playerWbn[i]) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.6f, 1.0f, 1.0f));
-            ImGui::TextUnformatted("W");
-            ImGui::PopStyleColor();
-            ImGui::SameLine();
+            ensureWbnIconsLoaded();
+            if (s_iconGlobe) {
+                ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+                ImGui::SameLine();
+            }
         }
 
         /* Steam participant icon */
         if (s_playerSteam[i]) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
-            ImGui::TextUnformatted("S");
-            ImGui::PopStyleColor();
-            ImGui::SameLine();
+            ensureWbnIconsLoaded();
+            if (s_iconSteam) {
+                ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+                ImGui::SameLine();
+            }
         }
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
-        char defLabel[8];
+        char defLabel[16];
         if (!label) {
             snprintf(defLabel, sizeof(defLabel), "%d", i + 1);
             label = defLabel;
@@ -1310,9 +1356,7 @@ static void renderSettingsPanel(ClientSim *cs) {
 
         if (!uiModeIsTablet()) {
             ImGui::Spacing();
-            if (ImGui::Button("Sign in to WBN...")) {
-                s_pendingWbnDialog = true;
-            }
+            imguiWinbolonetDrawSection(true);
         }
 
 #ifndef __ANDROID__
@@ -1677,7 +1721,7 @@ static void renderMenuBar(ClientSim *cs) {
         ImGui::Separator();
         for (int i = 0; i < MAX_PLAYERS; i++) {
             const char *label = s_playerEnabled[i] ? s_playerName[i] : nullptr;
-            char defLabel[8];
+            char defLabel[16];
             if (!label || label[0] == '\0') {
                 snprintf(defLabel, sizeof(defLabel), "%d", i + 1);
                 label = defLabel;
@@ -1716,13 +1760,17 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     snprintf(pingStr, sizeof(pingStr), "---");
                 }
-                /* Measure right-side width: WBN + ping + checkmark (rightmost) */
+                /* Measure right-side width: icons + ping + checkmark (rightmost) */
+                ensureWbnIconsLoaded();
                 ImGuiContext &g = *GImGui;
                 float checkSz = g.FontSize * 0.866f;
-                float wbnWidth = ImGui::CalcTextSize(s_playerWbn[i] ? "W" : "-").x;
+                float iconW = (float)WBN_ICON_SIZE;
                 float pingWidth = ImGui::CalcTextSize(pingStr).x;
                 float spacing = ImGui::GetStyle().ItemSpacing.x;
-                float rightWidth = wbnWidth + spacing + pingWidth + spacing + checkSz;
+                float iconsWidth = 0.0f;
+                if (s_playerWbn[i] && s_iconGlobe)  iconsWidth += iconW + spacing;
+                if (s_playerSteam[i] && s_iconSteam) iconsWidth += iconW + spacing;
+                float rightWidth = iconsWidth + pingWidth + spacing + checkSz;
 
                 /* Selectable player name (no highlight) */
                 char selectLabel[64];
@@ -1731,16 +1779,15 @@ static void renderMenuBar(ClientSim *cs) {
                     screenTogglePlayerCheckStateCS(cs, (BYTE)i);
                 }
 
-                /* Right-aligned WBN tick */
+                /* Right-aligned WBN/Steam icons */
                 ImGui::SameLine(fullWidth - rightWidth);
-                if (s_playerWbn[i]) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.0f, 1.0f));
-                    ImGui::TextUnformatted("W");
-                    ImGui::PopStyleColor();
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                    ImGui::TextUnformatted("-");
-                    ImGui::PopStyleColor();
+                if (s_playerWbn[i] && s_iconGlobe) {
+                    ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(iconW, iconW));
+                    ImGui::SameLine();
+                }
+                if (s_playerSteam[i] && s_iconSteam) {
+                    ImGui::Image((ImTextureID)s_iconSteam, ImVec2(iconW, iconW));
+                    ImGui::SameLine();
                 }
 
                 /* Ping with color coding */
@@ -2363,12 +2410,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         windowZoomChange(zoom);
     }
 
-    /* Deferred WBN dialog — runs its own ImGui context and event loop,
-       so it must be called outside our frame. */
-    if (s_pendingWbnDialog) {
-        s_pendingWbnDialog = false;
-        imguiWinbolonetShow();
-        sdl3ImguiResetFrameState();
+    /* Initialise WBN popup state on first settings open */
+    if (s_showSettings && !s_wbnInitialised) {
+        s_wbnInitialised = true;
+        imguiWinbolonetReset();
+    }
+    if (!s_showSettings) {
+        s_wbnInitialised = false;
     }
 }
 
@@ -2472,6 +2520,16 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping, bool wbn,
     s_playerSteam[playerNum] = steam;
 }
 
+SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
+    ensureWbnIconsLoaded();
+    return s_iconGlobe;
+}
+
+SDL_Texture *sdl3ImguiGetSteamIcon(void) {
+    ensureWbnIconsLoaded();
+    return s_iconSteam;
+}
+
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerChecked[playerNum] = isChecked;
@@ -2488,6 +2546,9 @@ void sdl3ImguiCleanup(void) {
     popOutDestroy(&s_popGameInfo);
     popOutDestroy(&s_popSendMsg);
     flagsDestroy();
+    if (s_iconGlobe) { SDL_DestroyTexture(s_iconGlobe); s_iconGlobe = nullptr; }
+    if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
+    s_wbnIconsLoaded = false;
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;

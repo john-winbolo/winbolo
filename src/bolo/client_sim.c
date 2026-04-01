@@ -590,7 +590,7 @@ void netSendTrackerUpdate(void) {
 /* Alliance dialog window — created/destroyed with network lifecycle */
 static void *dlgAllianceWnd = NULL;
 
-bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnPassword) {
+bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnToken) {
   cs->networkGameType = value;
   cs->netStat = netRunning;
   dlgAllianceWnd = dialogAllianceCreate();

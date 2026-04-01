@@ -35,6 +35,7 @@ extern "C" {
 #include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
 #include "../../../bolo/util.h"
+#include "../../../winbolonet/winbolonet.h"
 #include "imgui_setname.h"
 }
 
@@ -123,18 +124,26 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
 
-        ImGui::Text("Please enter your player name.");
+        bool wbnLocked = gameFrontGetWinbolonetUse();
+
+        if (wbnLocked) {
+            ImGui::Text("Your player name is set by WinBolo.net.");
+        } else {
+            ImGui::Text("Please enter your player name.");
+        }
         ImGui::Spacing();
 
         ImGui::Text("Player Name:");
         ImGui::SameLine(120.0f * s);
         ImGui::SetNextItemWidth((float)winW - 120.0f * s - 16.0f);
-        if (focusInput) {
+        if (wbnLocked) ImGui::BeginDisabled();
+        if (focusInput && !wbnLocked) {
             ImGui::SetKeyboardFocusHere();
             focusInput = false;
         }
         bool enterPressed = ImGui::InputText("##name", playerName, PLAYER_NAME_LEN,
                                               ImGuiInputTextFlags_EnterReturnsTrue);
+        if (wbnLocked) ImGui::EndDisabled();
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -144,6 +153,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         float btnX = ((float)winW - btnW * 2 - 8.0f * s) / 2.0f;
         ImGui::SetCursorPosX(btnX);
 
+        if (wbnLocked) ImGui::BeginDisabled();
         if (ImGui::Button("OK", ImVec2(btnW, 0)) || enterPressed) {
             char newName[PLAYER_NAME_LEN];
             SDL_strlcpy(newName, playerName, PLAYER_NAME_LEN);
@@ -175,6 +185,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 running = false;
             }
         }
+        if (wbnLocked) ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, 8.0f);
         if (ImGui::Button("Cancel", ImVec2(btnW, 0)) ||
