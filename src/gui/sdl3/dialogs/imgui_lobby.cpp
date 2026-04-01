@@ -335,6 +335,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             transport->tick(transport->ctx);
         }
 
+        /* Clear balance proposal when countdown starts */
+        if (cs->countdownSeconds > 0 && cs->balanceProposalActive) {
+            cs->balanceProposalActive = false;
+            memset(cs->balanceProposal, 0, sizeof(cs->balanceProposal));
+        }
+
         /* Check for game start */
         if (cs->netStat == netRunning) {
             result = 1;
@@ -526,6 +532,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                         ImGui::TextDisabled("None");
                                     }
                                 }
+                                if (cs->balanceProposalActive && cs->balanceProposal[i] != 0 &&
+                                    cs->balanceProposal[i] != cs->lobbySlots[i].teamNumber) {
+                                    ImGui::SameLine();
+                                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "-> %d", cs->balanceProposal[i]);
+                                }
 
                                 /* Ready */
                                 ImGui::TableSetColumnIndex(3);
@@ -693,6 +704,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 if (!canReady) ImGui::EndDisabled();
 
+                if (myPlayerNum == 0 && transport && !cs->balanceProposalActive) {
+                    bool hasWbnPlayers = false;
+                    for (int j = 0; j < 16; j++) {
+                        if (cs->lobbySlots[j].connected && cs->lobbySlots[j].wbnParticipant) {
+                            hasWbnPlayers = true;
+                            break;
+                        }
+                    }
+                    if (hasWbnPlayers) {
+                        ImGui::SameLine(0, 20);
+                        if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
+                            uint8_t connected = 0;
+                            for (int j = 0; j < 16; j++) {
+                                if (cs->lobbySlots[j].connected) connected++;
+                            }
+                            uint8_t teamSize = (connected > 1) ? (connected / 2) : 1;
+                            transportUdpClientSendBalanceRequest(transport, teamSize);
+                        }
+                    }
+                } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
+                    ImGui::SameLine(0, 20);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                    if (ImGui::Button("Apply Balance", ImVec2(120 * s, 0))) {
+                        transportUdpClientSendBalanceApply(transport);
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 8);
+                    if (ImGui::Button("Dismiss", ImVec2(80 * s, 0))) {
+                        transportUdpClientSendBalanceDismiss(transport);
+                    }
+                }
+
                 ImGui::SameLine(0, 20);
                 if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
                     (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
@@ -799,6 +842,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             } else {
                                 ImGui::TextDisabled("None");
                             }
+                        }
+                        if (cs->balanceProposalActive && cs->balanceProposal[i] != 0 &&
+                            cs->balanceProposal[i] != cs->lobbySlots[i].teamNumber) {
+                            ImGui::SameLine();
+                            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "-> %d", cs->balanceProposal[i]);
                         }
 
                         /* Ready */
@@ -959,6 +1007,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             if (!canReady) ImGui::EndDisabled();
+
+            if (myPlayerNum == 0 && transport && !cs->balanceProposalActive) {
+                bool hasWbnPlayers = false;
+                for (int j = 0; j < 16; j++) {
+                    if (cs->lobbySlots[j].connected && cs->lobbySlots[j].wbnParticipant) {
+                        hasWbnPlayers = true;
+                        break;
+                    }
+                }
+                if (hasWbnPlayers) {
+                    ImGui::SameLine(0, 20);
+                    if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
+                        uint8_t connected = 0;
+                        for (int j = 0; j < 16; j++) {
+                            if (cs->lobbySlots[j].connected) connected++;
+                        }
+                        uint8_t teamSize = (connected > 1) ? (connected / 2) : 1;
+                        transportUdpClientSendBalanceRequest(transport, teamSize);
+                    }
+                }
+            } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
+                ImGui::SameLine(0, 20);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                if (ImGui::Button("Apply Balance", ImVec2(120 * s, 0))) {
+                    transportUdpClientSendBalanceApply(transport);
+                }
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0, 8);
+                if (ImGui::Button("Dismiss", ImVec2(80 * s, 0))) {
+                    transportUdpClientSendBalanceDismiss(transport);
+                }
+            }
 
             ImGui::SameLine(0, 20);
             if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||

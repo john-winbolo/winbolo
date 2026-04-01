@@ -25,6 +25,7 @@
 #ifndef SERVER_SIM_H
 #define SERVER_SIM_H
 
+#include <SDL3/SDL.h>
 #include "../bolo/game_sim.h"
 #include "../bolo/input_packet.h"
 
@@ -59,6 +60,15 @@ typedef struct {
   bool ready;
   bool isBot;          /* Managed by bot system, not by player packets */
 } LobbyPlayer;
+
+typedef struct BalanceProposal {
+  uint8_t teamForSlot[MAX_TANKS]; /* Proposed team number per slot (0 = unassigned by WBN) */
+  bool pending;                   /* True while proposal is active and hasn't been applied/dismissed */
+  bool requestInFlight;           /* True while the HTTP call is running (prevents duplicate requests) */
+  bool broadcastNeeded;           /* True when thread finishes; cleared after first broadcast */
+  uint8_t teamSize;               /* Requested team size, passed through to WBN API */
+  SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
+} BalanceProposal;
 
 typedef struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -123,6 +133,9 @@ typedef struct ServerSim {
 
     /* WBN registration — cached from CLI args for re-registration between rounds */
     bool         hasPassword;             /* Server has a password set */
+
+    /* WBN team balance proposal */
+    BalanceProposal balanceProposal;
 
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */

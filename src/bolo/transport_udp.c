@@ -57,6 +57,7 @@
 #include "../server/geolookup.h"
 #include "../server/server_sim.h"
 #include "../winbolonet/winbolonet.h"
+#include "../server/threads.h"
 #include "sounddist.h"
 #include "bot_manager.h"
 
@@ -182,6 +183,10 @@ static const char *packetTypeName(uint8_t type) {
     case PACKET_GAME_OVER:          return "GAME_OVER";
     case PACKET_LOBBY_MAP_CHANGE:   return "LOBBY_MAP_CHANGE";
     case PACKET_WBN_REAUTH:        return "WBN_REAUTH";
+    case PACKET_BALANCE_REQUEST:   return "BALANCE_REQUEST";
+    case PACKET_BALANCE_PROPOSAL:  return "BALANCE_PROPOSAL";
+    case PACKET_BALANCE_APPLY:     return "BALANCE_APPLY";
+    case PACKET_BALANCE_DISMISS:   return "BALANCE_DISMISS";
     default:                        return "UNKNOWN";
     }
 }
@@ -980,13 +985,23 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
             c->clientSim->inLobby = true;
 
+            /* A fresh lobby snapshot supersedes any pending balance proposal */
+            c->clientSim->balanceProposalActive = false;
+            memset(c->clientSim->balanceProposal, 0, sizeof(c->clientSim->balanceProposal));
+
             /* WBN re-auth: if our slot lost its WBN flag (server re-registered
              * with WBN between rounds) and we have a token, re-authenticate */
             if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
                 !c->clientSim->lobbySlots[c->playerNum].wbnParticipant) {
                 if (!c->wbnReauthSent) {
                     c->wbnReauthSent = TRUE;
-                    transportUdpClientSendWbnReauth(t);
+                    /* Inline re-auth send (we have ctx, not Transport*) */
+                    {
+                        uint8_t ra[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
+                        packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
+                        memcpy(ra + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
+                        udpSendTo(c->sock, ra, sizeof(ra), &c->serverAddr);
+                    }
                     SDL_Log("[WBN] Sent re-auth for slot %d", c->playerNum);
                 }
             } else {
@@ -1051,6 +1066,22 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_LOBBY_MAP_CHANGE:
         /* [header 8] */
         c->clientSim->mapDownloadComplete = false;
+        break;
+
+    case PACKET_BALANCE_PROPOSAL:
+        /* [header 8] [teamForSlot × 16] */
+        if (len >= PACKET_HEADER_SIZE + 16) {
+            int i;
+            bool anyNonZero = false;
+            memcpy(c->clientSim->balanceProposal, buf + PACKET_HEADER_SIZE, 16);
+            for (i = 0; i < 16; i++) {
+                if (c->clientSim->balanceProposal[i] != 0) {
+                    anyNonZero = true;
+                    break;
+                }
+            }
+            c->clientSim->balanceProposalActive = anyNonZero;
+        }
         break;
 
     default:
@@ -1542,6 +1573,39 @@ void transportUdpClientSendWbnReauth(Transport *t) {
     udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
 }
 
+/* ---- Client balance send functions ---- */
+
+void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_BALANCE_REQUEST, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = teamSize;
+    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+}
+
+void transportUdpClientSendBalanceApply(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_BALANCE_APPLY, c->outSequence++);
+    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+}
+
+void transportUdpClientSendBalanceDismiss(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_BALANCE_DISMISS, c->outSequence++);
+    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+}
+
 /* ================================================================
  * SERVER SIDE
  * ================================================================ */
@@ -1595,6 +1659,42 @@ static int serverFindClient(const struct sockaddr_in *addr) {
         }
     }
     return -1;
+}
+
+/* Data passed to the balance thread — snapshot of values needed for the
+ * HTTP call so the thread doesn't read ServerSim without the mutex. */
+typedef struct {
+    ServerSim *sim;
+    uint8_t    totalPlayers;
+    uint8_t    teamSize;
+} BalanceThreadData;
+
+/* Background thread: calls WBN balance API (blocks on HTTP) then writes
+ * results back under the game mutex so the timer can broadcast them. */
+static int balanceThreadFunc(void *data) {
+    BalanceThreadData *btd = (BalanceThreadData *)data;
+    ServerSim *sim = btd->sim;
+
+    /* This blocks on HTTP — runs outside the game mutex */
+    winbolonetServerRequestBalance(btd->totalPlayers, btd->teamSize, &sim->balanceProposal);
+
+    free(btd);
+
+    /* If the server is shutting down, signal completion and exit without
+     * acquiring the mutex (the main thread may have already torn it down). */
+    if (SDL_GetAtomicInt(&sim->balanceProposal.shutdownFlag)) {
+        sim->balanceProposal.requestInFlight = false;
+        return 0;
+    }
+
+    /* Write results back under the game mutex */
+    threadsWaitForMutex();
+    sim->balanceProposal.requestInFlight = false;
+    if (sim->balanceProposal.pending) {
+        sim->balanceProposal.broadcastNeeded = true;
+    }
+    threadsReleaseMutex();
+    return 0;
 }
 
 /* Find a free player slot. Returns index or -1. */
@@ -1922,6 +2022,13 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         transportUdpServerSendLobbyStateToClient(sim, slot);
         /* Broadcast lobby update to existing clients about the new player */
         transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)slot);
+        /* Dismiss any pending balance proposal — player composition changed */
+        if (sim->balanceProposal.pending) {
+            uint8_t zeros[MAX_TANKS];
+            memset(zeros, 0, sizeof(zeros));
+            memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
+            transportUdpServerBroadcastBalanceProposal(sim, zeros);
+        }
     } else if (sim->state == serverStateRunning) {
         /* No-lobby mode or mid-game join: send game start signal */
         uint8_t startBuf[PACKET_HEADER_SIZE];
@@ -2537,6 +2644,20 @@ void transportUdpServerBroadcastGameOver(ServerSim *sim) {
     }
 }
 
+void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]) {
+    uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
+    int i;
+    (void)sim;
+    packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
+    memcpy(buf + PACKET_HEADER_SIZE, teamForSlot, MAX_TANKS);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clients[i].connected) {
+            udpSendTo(udpServer.sock, buf, sizeof(buf),
+                      &udpServer.clients[i].addr);
+        }
+    }
+}
+
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
     if (playerNum >= MAX_TANKS) return;
     strncpy(udpServer.clients[playerNum].playerName, name,
@@ -2758,6 +2879,13 @@ void transportUdpServerRecv(ServerSim *sim) {
                 if (sim->lobbyEnabled &&
                     (sim->state == serverStateLobby || sim->state == serverStateCountdown)) {
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                    /* Dismiss any pending balance proposal — player composition changed */
+                    if (sim->balanceProposal.pending) {
+                        uint8_t zeros[MAX_TANKS];
+                        memset(zeros, 0, sizeof(zeros));
+                        memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
+                        transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                    }
                 }
             }
             break;
@@ -3030,6 +3158,69 @@ void transportUdpServerRecv(ServerSim *sim) {
             }
             break;
         }
+        case PACKET_BALANCE_REQUEST: {
+            /* Wire: [header 8] [teamSize 1] */
+            int clientIdx = serverFindClient(&fromAddr);
+            if (clientIdx == 0 && sim->lobbyEnabled &&
+                sim->state == serverStateLobby &&
+                len >= PACKET_HEADER_SIZE + 1 &&
+                !sim->balanceProposal.requestInFlight &&
+                !sim->balanceProposal.pending &&
+                winbolonetIsRunning()) {
+                BalanceThreadData *btd = malloc(sizeof(BalanceThreadData));
+                if (btd) {
+                    SDL_Thread *t;
+                    int i;
+                    btd->sim = sim;
+                    btd->teamSize = buf[PACKET_HEADER_SIZE];
+                    btd->totalPlayers = 0;
+                    for (i = 0; i < MAX_TANKS; i++) {
+                        if (sim->playerConnected[i]) btd->totalPlayers++;
+                    }
+                    sim->balanceProposal.requestInFlight = true;
+                    t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
+                    if (t) {
+                        SDL_DetachThread(t);
+                    } else {
+                        sim->balanceProposal.requestInFlight = false;
+                        free(btd);
+                        serverSimConsoleMessage("Failed to start balance thread");
+                    }
+                }
+            }
+            break;
+        }
+        case PACKET_BALANCE_APPLY: {
+            /* Wire: [header 8] (no payload) */
+            int clientIdx = serverFindClient(&fromAddr);
+            if (clientIdx == 0 && sim->lobbyEnabled &&
+                sim->state == serverStateLobby &&
+                sim->balanceProposal.pending) {
+                int i;
+                for (i = 0; i < MAX_TANKS; i++) {
+                    if (sim->balanceProposal.teamForSlot[i] != 0) {
+                        sim->lobbyPlayers[i].teamNumber = sim->balanceProposal.teamForSlot[i];
+                    }
+                }
+                memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
+                transportUdpServerBroadcastLobbyState(sim);
+                serverSimConsoleMessage("Team balance applied");
+            }
+            break;
+        }
+        case PACKET_BALANCE_DISMISS: {
+            /* Wire: [header 8] (no payload) */
+            int clientIdx = serverFindClient(&fromAddr);
+            if (clientIdx == 0 && sim->lobbyEnabled &&
+                sim->state == serverStateLobby &&
+                sim->balanceProposal.pending) {
+                uint8_t zeros[MAX_TANKS];
+                memset(zeros, 0, sizeof(zeros));
+                memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
+                transportUdpServerBroadcastBalanceProposal(sim, zeros);
+            }
+            break;
+        }
         default:
             break;
         }
@@ -3225,6 +3416,13 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             if (sim->lobbyEnabled &&
                 (sim->state == serverStateLobby || sim->state == serverStateCountdown)) {
                 transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)i);
+                /* Dismiss any pending balance proposal — player composition changed */
+                if (sim->balanceProposal.pending) {
+                    uint8_t zeros[MAX_TANKS];
+                    memset(zeros, 0, sizeof(zeros));
+                    memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
+                    transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                }
             }
         }
     }

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <dirent.h>
+#include <SDL3/SDL.h>
 
 #include "../bolo/global.h"
 #include "../bolo/bolo_map.h"
@@ -369,6 +370,12 @@ bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType
 
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
+
+    /* Signal the balance thread to stop and wait for it to finish */
+    SDL_SetAtomicInt(&sim->balanceProposal.shutdownFlag, 1);
+    while (sim->balanceProposal.requestInFlight) {
+        SDL_Delay(10);
+    }
 
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
