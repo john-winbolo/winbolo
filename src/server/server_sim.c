@@ -248,6 +248,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->hadPlayersEver = FALSE;
     sim->quitOnWin = FALSE;
     sim->autoCloseOnEmpty = FALSE;
+    sim->pendingWinMessage[0] = '\0';
+    sim->emptyResetEnabled = TRUE;
+    sim->emptyResetMinutes = 5;
+    sim->emptyResetTicks = -1;
     sim->cachedMapData = NULL;
     sim->cachedMapDataLen = 0;
     sim->sim.hiddenMines = hiddenMines;
@@ -1266,26 +1270,26 @@ void serverSimEnterGameOver(ServerSim *sim) {
 
 void serverSimReturnToLobby(ServerSim *sim) {
     BYTE i;
+    bool savedConnected[MAX_TANKS];
+    LobbyPlayer savedLobby[MAX_TANKS];
+
     if (!sim->lobbyEnabled) {
         return;
     }
-    sim->state = serverStateLobby;
 
-    /* Destroy all tanks and LGMs */
+    /* Save connection and lobby state before reset */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (sim->sim.tanks[i] != NULL) {
-            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
-            sim->sim.tanks[i] = NULL;
-        }
-        if (sim->sim.lgmen[i] != NULL) {
-            lgmDestroy(&sim->sim.lgmen[i]);
-            sim->sim.lgmen[i] = NULL;
-        }
+        savedConnected[i] = sim->playerConnected[i];
+        savedLobby[i] = sim->lobbyPlayers[i];
     }
 
-    /* Reset lobby player ready state, keep teams and connections.
-     * Bots are always ready — re-mark them after the blanket reset. */
+    /* Full world reset — reloads map from cached data */
+    serverSimResetGameWorld(sim);
+
+    /* Restore connection and lobby state */
     for (i = 0; i < MAX_TANKS; i++) {
+        sim->playerConnected[i] = savedConnected[i];
+        sim->lobbyPlayers[i] = savedLobby[i];
         sim->lobbyPlayers[i].ready = FALSE;
     }
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1293,6 +1297,11 @@ void serverSimReturnToLobby(ServerSim *sim) {
             sim->lobbyPlayers[i].ready = TRUE;
         }
     }
+    sim->hadPlayersEver = TRUE;
+    sim->gameLength = sim->originalGameLength;
+    sim->emptyResetTicks = -1;
+
+    sim->state = serverStateLobby;
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
 }
@@ -1508,4 +1517,72 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     }
 
     return TRUE;
+}
+
+bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
+    BYTE count;
+    BYTE max;
+    BYTE first = NEUTRAL;
+    BYTE current;
+    bool allOwned = TRUE;
+    char name[256];
+    size_t pos;
+
+    max = basesGetNumBases(&sim->sim.bs);
+
+    /* Check if all bases are owned by the same alliance */
+    for (count = 1; count <= max && allOwned; count++) {
+        BYTE shellsAmt, minesAmt, armourAmt;
+        current = basesGetBaseOwner(&sim->sim.bs, count);
+        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
+        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            allOwned = FALSE;
+        } else if (count == 1) {
+            first = current;
+        } else {
+            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        }
+    }
+
+    if (!allOwned || max == 0) {
+        snprintf(buf, bufSize, "Game over!");
+        return FALSE;
+    }
+
+    /* Build winner message */
+    pos = 0;
+    pos += snprintf(buf + pos, bufSize - pos, "Game Won! Winners:");
+    for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
+        if (!sim->playerConnected[count]) continue;
+        if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
+            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            pos += snprintf(buf + pos, bufSize - pos, " %s", name);
+        }
+    }
+
+    return TRUE;
+}
+
+bool serverSimCheckEmptyReset(ServerSim *sim) {
+    BYTE numPlayers = serverSimGetNumPlayers(sim);
+
+    if (numPlayers > 0) {
+        /* Players present — reset the timer */
+        sim->emptyResetTicks = -1;
+        return FALSE;
+    }
+
+    /* No players — start or continue countdown */
+    if (sim->emptyResetTicks < 0) {
+        /* Start the countdown: minutes * 60 seconds * 50 ticks/sec */
+        sim->emptyResetTicks = sim->emptyResetMinutes * 60 * 50;
+        serverSimConsoleMessage("No players connected. Empty reset timer started.");
+    }
+
+    sim->emptyResetTicks--;
+    if (sim->emptyResetTicks <= 0) {
+        return TRUE;
+    }
+
+    return FALSE;
 }

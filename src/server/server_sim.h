@@ -77,6 +77,10 @@ typedef struct ServerSim {
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         quitOnWin;          /* Server should check for win condition */
     bool         autoCloseOnEmpty;   /* Server should close when all players leave */
+    char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
+    bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
+    int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
+    int32_t      emptyResetTicks;    /* Countdown ticks remaining (-1 = not counting) */
 
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
@@ -423,5 +427,23 @@ void serverSimResetGameWorld(ServerSim *sim);
  *  map load fails.
  *********************************************************/
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName);
+
+/*********************************************************
+ *NAME:          serverSimBuildWinMessage
+ *PURPOSE:
+ *  Builds a message string listing the winners of the game.
+ *  Returns TRUE if the game was won (message populated),
+ *  FALSE if no winner (e.g. time limit or manual end).
+ *********************************************************/
+bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize);
+
+/*********************************************************
+ *NAME:          serverSimCheckEmptyReset
+ *PURPOSE:
+ *  Checks if the server has been empty long enough to
+ *  trigger a lobby reset. Returns TRUE if reset should
+ *  happen.
+ *********************************************************/
+bool serverSimCheckEmptyReset(ServerSim *sim);
 
 #endif /* SERVER_SIM_H */
