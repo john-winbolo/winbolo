@@ -121,6 +121,9 @@ typedef struct ServerSim {
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
 
+    /* WBN registration — cached from CLI args for re-registration between rounds */
+    bool         hasPassword;             /* Server has a password set */
+
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
     int          mapDirCount;             /* Number of valid maps in the array */

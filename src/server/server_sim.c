@@ -255,6 +255,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->emptyResetEnabled = TRUE;
     sim->emptyResetMinutes = 5;
     sim->emptyResetTicks = -1;
+    sim->hasPassword = FALSE;
     sim->cachedMapData = NULL;
     sim->cachedMapDataLen = 0;
     sim->sim.hiddenMines = hiddenMines;

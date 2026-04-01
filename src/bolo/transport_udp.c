@@ -181,6 +181,7 @@ static const char *packetTypeName(uint8_t type) {
     case PACKET_GAME_START:         return "GAME_START";
     case PACKET_GAME_OVER:          return "GAME_OVER";
     case PACKET_LOBBY_MAP_CHANGE:   return "LOBBY_MAP_CHANGE";
+    case PACKET_WBN_REAUTH:        return "WBN_REAUTH";
     default:                        return "UNKNOWN";
     }
 }
@@ -409,6 +410,7 @@ typedef struct {
     char playerName[PACKET_MAX_PLAYER_NAME];
     char password[MAP_STR_SIZE];
     char wbnToken[WBN_TOKEN_WIRE_LEN];
+    bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
 
     /* Input redundancy ring buffer */
@@ -977,6 +979,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->clientSim->netStat = netLobby;
             }
             c->clientSim->inLobby = true;
+
+            /* WBN re-auth: if our slot lost its WBN flag (server re-registered
+             * with WBN between rounds) and we have a token, re-authenticate */
+            if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
+                !c->clientSim->lobbySlots[c->playerNum].wbnParticipant) {
+                if (!c->wbnReauthSent) {
+                    c->wbnReauthSent = TRUE;
+                    transportUdpClientSendWbnReauth(t);
+                    SDL_Log("[WBN] Sent re-auth for slot %d", c->playerNum);
+                }
+            } else {
+                /* Flag was restored or not needed — reset for next round */
+                c->wbnReauthSent = FALSE;
+            }
         }
         break;
 
@@ -1214,6 +1230,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         strncpy(c->password, password, MAP_STR_SIZE - 1);
     }
     memset(c->wbnToken, 0, WBN_TOKEN_WIRE_LEN);
+    c->wbnReauthSent = FALSE;
     if (wbnToken != NULL) {
         strncpy(c->wbnToken, wbnToken, WBN_TOKEN_WIRE_LEN - 1);
     }
@@ -1510,6 +1527,18 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
 
     packHeader(buf, PACKET_LOBBY_REMOVE_BOT, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = playerNum;
+    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+}
+
+void transportUdpClientSendWbnReauth(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->wbnToken[0] == '\0') return;
+
+    packHeader(buf, PACKET_WBN_REAUTH, c->outSequence++);
+    memcpy(buf + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
     udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
 }
 
@@ -2963,6 +2992,40 @@ void transportUdpServerRecv(ServerSim *sim) {
                 if (targetSlot < MAX_TANKS && botManagerIsBot(targetSlot)) {
                     botManagerRemoveBot(sim, targetSlot);
                     transportUdpServerBroadcastLobbyUpdate(sim, targetSlot);
+                }
+            }
+            break;
+        }
+        case PACKET_WBN_REAUTH: {
+            /* Wire: [header 8] [wbnToken 65] */
+            int clientIdx = serverFindClient(&fromAddr);
+            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN) {
+                char token[WBN_TOKEN_WIRE_LEN];
+                memcpy(token, buf + PACKET_HEADER_SIZE, WBN_TOKEN_WIRE_LEN);
+                token[WBN_TOKEN_WIRE_LEN - 1] = '\0';
+
+                if (winbolonetIsRunning() && token[0] != '\0') {
+                    char errorMsg[512];
+                    bool hasSteam = FALSE;
+                    errorMsg[0] = '\0';
+                    if (winbolonetServerVerifyToken(token, (BYTE)clientIdx, errorMsg, &hasSteam)) {
+                        playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)clientIdx, TRUE);
+                        playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)clientIdx, hasSteam);
+                        fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
+                                clientIdx, hasSteam ? 1 : 0);
+                        /* If game is already running, send the join event now */
+                        if (sim->state == serverStateRunning) {
+                            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                                               (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
+                        }
+                        /* Broadcast updated flags so other clients see WBN badge */
+                        if (sim->state == serverStateLobby || sim->state == serverStateCountdown) {
+                            transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                        }
+                    } else {
+                        fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
+                                clientIdx, errorMsg);
+                    }
                 }
             }
             break;

@@ -454,6 +454,19 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
             if (botManagerGetNumBots() > 0) {
               botManagerOnGameStart(&serverSim);
             }
+            /* Notify WBN that we are now in-game */
+            winbolonetSendLobbyStatus(FALSE);
+            /* Send EVENT_PLAYER_JOIN for each connected WBN player */
+            {
+              BYTE pi;
+              for (pi = 0; pi < MAX_TANKS; pi++) {
+                if (serverSim.playerConnected[pi] &&
+                    winboloNetIsPlayerParticipant(pi)) {
+                  winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                                     pi, WINBOLO_NET_NO_PLAYER);
+                }
+              }
+            }
           } else if (serverSim.state == serverStateCountdown &&
                      serverSim.countdownTicks > 0 &&
                      serverSim.countdownTicks % 50 == 0) {
@@ -471,6 +484,20 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
           /* Pick next map from rotation if mapdir is configured */
           if (serverSim.mapDirFiles != NULL) {
             serverSimMapDirPickRandom(&serverSim);
+          }
+          /* Re-register with WBN for the new round */
+          if (winbolonetIsRunning()) {
+            winbolonetReturnToLobby(
+              serverSim.mapName, serverSim.serverPort,
+              (BYTE)gameTypeGet(&serverSim.sim.game),
+              (BYTE)serverSim.botAiType,
+              (BYTE)serverSim.sim.hiddenMines,
+              serverSim.hasPassword,
+              basesGetNumBases(&serverSim.sim.bs),
+              pillsGetNumPills(&serverSim.sim.pb),
+              serverSimGetNumNeutralBases(&serverSim),
+              serverSimGetNumNeutralPills(&serverSim),
+              serverSimGetNumPlayers(&serverSim));
           }
           /* Returned to lobby — broadcast full lobby state */
           transportUdpServerBroadcastLobbyState(&serverSim);
@@ -516,6 +543,20 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         /* Pick next map from rotation if mapdir is configured */
         if (serverSim.mapDirFiles != NULL) {
           serverSimMapDirPickRandom(&serverSim);
+        }
+        /* Re-register with WBN for the new round */
+        if (winbolonetIsRunning()) {
+          winbolonetReturnToLobby(
+            serverSim.mapName, serverSim.serverPort,
+            (BYTE)gameTypeGet(&serverSim.sim.game),
+            (BYTE)serverSim.botAiType,
+            (BYTE)serverSim.sim.hiddenMines,
+            serverSim.hasPassword,
+            basesGetNumBases(&serverSim.sim.bs),
+            pillsGetNumPills(&serverSim.sim.pb),
+            serverSimGetNumNeutralBases(&serverSim),
+            serverSimGetNumNeutralPills(&serverSim),
+            serverSimGetNumPlayers(&serverSim));
         }
         transportUdpServerBroadcastLobbyState(&serverSim);
       }
@@ -1053,8 +1094,13 @@ int main(int argc, char **argv) {
     }
   }
 
+  serverSim.hasPassword = (pass[0] != '\0');
   if (argExist(argc, argv, "nowinbolonet") == FALSE) {
-    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) (pass[0] == 0 ? FALSE : TRUE), basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
+    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) serverSim.hasPassword, basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
+    /* If no lobby, immediately mark as in-game on WBN */
+    if (!serverSim.lobbyEnabled) {
+      winbolonetSendLobbyStatus(FALSE);
+    }
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 

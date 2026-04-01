@@ -237,6 +237,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_GAME_START        143  /* Signal to transition from lobby to game */
 #define PACKET_GAME_OVER         144  /* Signal game ended, return to lobby */
 #define PACKET_LOBBY_MAP_CHANGE  145  /* Server changed map, clients must re-download */
+#define PACKET_WBN_REAUTH       146  /* Client -> Server: re-authenticate WBN token after lobby reset */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
