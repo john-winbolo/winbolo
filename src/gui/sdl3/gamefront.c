@@ -72,6 +72,7 @@
 #include "../../bolo/everard_map.h"
 #include "../../bolo/platform_net.h"
 #include "../../bolo/transport_udp.h"
+#include "../../winbolonet/winbolonet.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -599,6 +600,32 @@ static bool gameFrontDialogs(void) {
 }
 
 /* -------------------------------------------------------
+ * gameFrontValidateWbnBeforeJoin — If a WBN token is stored,
+ * validate it synchronously and update the player name from
+ * the API response.  If the token is no longer valid, clear
+ * it so the join proceeds without WBN.
+ * ------------------------------------------------------- */
+static void gameFrontValidateWbnBeforeJoin(void) {
+  char token[256], expiry[256];
+  gameFrontGetWinbolonetToken(token, expiry);
+  if (token[0] == '\0') return;
+
+  char playerName[PLAYER_NAME_LEN];
+  char errorMsg[512];
+  playerName[0] = '\0';
+  errorMsg[0] = '\0';
+
+  if (winbolonetAuthValidate(token, playerName, errorMsg)) {
+    if (playerName[0] != '\0') {
+      gameFrontSetPlayerName(playerName);
+    }
+  } else {
+    fprintf(stderr, "[gameFront] WBN token validation failed: %s\n", errorMsg);
+    gameFrontClearWinbolonetToken();
+  }
+}
+
+/* -------------------------------------------------------
  * gameFrontSetDlgState — dialog state machine transitions
  * ------------------------------------------------------- */
 bool gameFrontSetDlgState(openingStates newState) {
@@ -608,6 +635,7 @@ bool gameFrontSetDlgState(openingStates newState) {
   if ((dlgState == openInternet || dlgState == openLan || dlgState == openUdp ||
        dlgState == openLanManual || dlgState == openInternetManual) &&
       newState == openUdpJoin) {
+    gameFrontValidateWbnBeforeJoin();
     humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
@@ -755,6 +783,7 @@ bool gameFrontSetDlgState(openingStates newState) {
   } else if ((dlgState == openUdpSetup || dlgState == openInternetSetup ||
               dlgState == openLanSetup) && newState == openFinished) {
     /* Start network game as host */
+    gameFrontValidateWbnBeforeJoin();
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
       humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
