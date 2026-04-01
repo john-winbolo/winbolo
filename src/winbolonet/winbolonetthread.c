@@ -20,10 +20,10 @@
 *Filename:      winbolonetThread.c
 *Author:        John Morrison
 *Creation Date: 16/02/03
-*Last Modified: 16/02/03
+*Last Modified: 30/03/26
 *Purpose:
-*  WinBolo.net Thread manager - Used to stop updates
-*  causing game problems
+*  WinBolo.net Thread manager - Queues JSON API requests
+*  to avoid blocking the game loop
 *********************************************************/
 
 #ifdef _WIN32
@@ -34,6 +34,7 @@ typedef SDL_Mutex *HANDLE;
 /* DWORD is now uint32_t from platform_types.h — no local typedef needed */
 #endif
 #include <string.h>
+#include <stdlib.h>
 #include "../bolo/global.h"
 #include "http.h"
 #include "winbolonetthread.h"
@@ -52,15 +53,9 @@ bool wbnShouldRun;
 bool wbnFinished;
 
 /*********************************************************
-*NAME:          winbolonetThreadCreate 
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
+*NAME:          winbolonetThreadCreate
 *PURPOSE:
-*  Creates the winbolonet update thread. Returns success
-*
-*ARGUMENTS:
-*
+*  Creates the winbolonet update thread. Returns success.
 *********************************************************/
 bool winbolonetThreadCreate(void) {
   bool returnValue;        /* Value to return */
@@ -73,7 +68,7 @@ bool winbolonetThreadCreate(void) {
   wbnWaiting = NULL;
   wbnShouldRun = TRUE;
   wbnFinished = FALSE;
-  
+
 #ifdef _WIN32
   sprintf(name, "%s%d", "WBNUPDATE", GetTickCount());
   hWbnMutexHandle = CreateMutex(NULL, FALSE, (LPCTSTR ) name);
@@ -110,14 +105,8 @@ bool winbolonetThreadCreate(void) {
 
 /*********************************************************
 *NAME:          winbolonetThreadDestroy
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
 *  Destroys the WBN update thread.
-*
-*ARGUMENTS:
-*
 *********************************************************/
 void winbolonetThreadDestroy(void) {
   wbnList del;   /* Use to delete our queues */
@@ -125,7 +114,7 @@ void winbolonetThreadDestroy(void) {
   DWORD val = 0; /* Thread Exit Value for WIN32 */
 #endif
 
-  if (hWbnMutexHandle != NULL) { /* FIXME: Will be non null if we started it OK. Is there a better way? (threadid?) */
+  if (hWbnMutexHandle != NULL) {
     /* Wait for all events to be sent... */
     while (wbnProcessing != NULL || wbnWaiting != NULL) {
 #ifdef _WIN32
@@ -138,7 +127,6 @@ void winbolonetThreadDestroy(void) {
     /* Wait for current to finish */
     wbnShouldRun = FALSE;
     while (wbnFinished == FALSE) {
-      /* Wait a bit for the last call to finish */
 #ifdef _WIN32
       Sleep(WBN_SHUTDOWN_SLEEP_TIME);
 #else
@@ -153,7 +141,7 @@ void winbolonetThreadDestroy(void) {
     if (val == STILL_ACTIVE) {
       TerminateThread(hWbnThread, 0);
     }
-    
+
     CloseHandle(hWbnThread);
 #else
     SDL_WaitThread(hWbnThread, NULL);
@@ -169,13 +157,15 @@ void winbolonetThreadDestroy(void) {
     while (NonEmpty(wbnProcessing)) {
       del = wbnProcessing;
       wbnProcessing = wbnProcessing->next;
+      free(del->json_body);
       Dispose(del);
     }
     while (NonEmpty(wbnWaiting)) {
       del = wbnWaiting;
       wbnWaiting = wbnWaiting->next;
+      free(del->json_body);
       Dispose(del);
-    } 
+    }
 
 #ifdef _WIN32
     ReleaseMutex(hWbnMutexHandle);
@@ -184,7 +174,7 @@ void winbolonetThreadDestroy(void) {
     SDL_UnlockMutex(hWbnMutexHandle);
     SDL_DestroyMutex(hWbnMutexHandle);
 #endif
-    
+
     hWbnMutexHandle = NULL;
   }
 }
@@ -192,27 +182,22 @@ void winbolonetThreadDestroy(void) {
 
 /*********************************************************
 *NAME:          winbolonetThreadAddRequest
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
-*  Adds a request to the WBN update queue
-*
-*ARGUMENTS:
-*  data - Data to send 
-*  len  - Length of the data 
+*  Adds a JSON API request to the background queue.
+*  The json_body string is copied internally.
 *********************************************************/
-void winbolonetThreadAddRequest(BYTE *data, int len) {
-  wbnList add; /* Used to add to the queue */
+void winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
+  wbnList add;
 
   if (wbnShouldRun == TRUE) {
     New(add);
-    memcpy(add->data, data, len);
-    add->len = len;
+    strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
+    add->endpoint[sizeof(add->endpoint) - 1] = '\0';
+    add->json_body = strdup(json_body);
 #ifdef _WIN32
     WaitForSingleObject(hWbnMutexHandle, INFINITE);
     add->next = wbnWaiting;
-    wbnWaiting = add;    
+    wbnWaiting = add;
     ReleaseMutex(hWbnMutexHandle);
 #else
     SDL_LockMutex(hWbnMutexHandle);
@@ -226,41 +211,40 @@ void winbolonetThreadAddRequest(BYTE *data, int len) {
 
 /*********************************************************
 *NAME:          winbolonetThreadRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
-*  The update thread run method
-*
-*ARGUMENTS:
-*
+*  The background thread run method. Processes queued
+*  JSON API requests via wbn_api_post.
 *********************************************************/
-int winbolonetThreadRun() {
-  char dest[512]; /* Destination address space */
-  wbnList q;      /* Used to iterate through the list */
-  wbnList prev;      /* Used to iterate through the list */
+int winbolonetThreadRun(void *data) {
+  (void)data;
+  wbnList q;
+  wbnList prev;
+  char *resp = NULL;
 
   while (wbnShouldRun == TRUE) {
 
 #ifdef _WIN32
     WaitForSingleObject(hWbnMutexHandle, INFINITE);
     wbnProcessing = wbnWaiting;
-    wbnWaiting = NULL;   
+    wbnWaiting = NULL;
     ReleaseMutex(hWbnMutexHandle);
 #else
     SDL_LockMutex(hWbnMutexHandle);
     wbnProcessing = wbnWaiting;
     wbnWaiting = NULL;
     SDL_UnlockMutex(hWbnMutexHandle);
-#endif    
-    
+#endif
+
     while (NonEmpty(wbnProcessing) && wbnShouldRun == TRUE) {
-      /* Get last entry */
+      /* Get last entry (oldest) */
       if (wbnProcessing->next == NULL) {
         /* Only one entry */
-        httpSendMessage(wbnProcessing->data, wbnProcessing->len, (BYTE *)dest, 512);
+        wbn_api_post(wbnProcessing->endpoint, wbnProcessing->json_body, &resp);
+        free(resp);
+        resp = NULL;
+        free(wbnProcessing->json_body);
         Dispose(wbnProcessing);
-	wbnProcessing = NULL; 
+        wbnProcessing = NULL;
       } else {
         prev = wbnProcessing;
         q = wbnProcessing;
@@ -270,7 +254,10 @@ int winbolonetThreadRun() {
         }
         /* Got last entry */
         prev->next = NULL;
-        httpSendMessage(q->data, q->len, (BYTE *)dest, 512);
+        wbn_api_post(q->endpoint, q->json_body, &resp);
+        free(resp);
+        resp = NULL;
+        free(q->json_body);
         Dispose(q);
       }
     }
@@ -283,4 +270,3 @@ int winbolonetThreadRun() {
   wbnFinished = TRUE;
   return 0;
 }
-

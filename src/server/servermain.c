@@ -504,9 +504,9 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
 
 void printArgs() {
 #ifdef _WIN32
-  fprintf(stderr, "Usage:\nWinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -password <Password>\n\n");
-#else 
-  fprintf(stderr, "Usage:\nLinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -password <Password>\n\n");
+  fprintf(stderr, "Usage:\nWinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -wbnhost <Host> -password <Password>\n\n");
+#else
+  fprintf(stderr, "Usage:\nLinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -wbnhost <Host> -password <Password>\n\n");
 #endif
   fprintf(stderr, "<Filename>    - Path and file name of the map file to open (-inbuilt can be used\n");
   fprintf(stderr, "                instead of -map to enable inbuilt map Everard Island)\n");
@@ -532,6 +532,9 @@ void printArgs() {
   fprintf(stderr, "-addr         - Specify a different address to use if avaliable\n");
   fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
   fprintf(stderr, "                the game\n");
+  fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
+  fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
+  fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
   fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
   fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
   fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
@@ -804,7 +807,7 @@ int main(int argc, char **argv) {
   char *useAddr;
   char debugFileName[2048];
   int maxPlayers;
-  BYTE key[32]; /* WBN Key */
+  char key[WINBOLONET_KEY_LEN]; /* WBN Key */
 
   strcpy(debugFileName,"server_test.txt");
 
@@ -929,8 +932,16 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  /* WinBolo.net host override */
+  {
+    int argNum = findArg(argc, argv, "wbnhost");
+    if (argNum != ARG_NOT_FOUND) {
+      httpSetHostOverride((char *)argv[argNum]);
+    }
+  }
+
   if (argExist(argc, argv, "nowinbolonet") == FALSE) {
-    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) (pass[0] == 0 ? FALSE : TRUE), basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim), serverSim.timeCreated);
+    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) (pass[0] == 0 ? FALSE : TRUE), basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 

@@ -44,10 +44,12 @@ extern "C" {
 #include "../../../bolo/starts.h"
 #include "../../../bolo/platform_net.h"
 #include "../flags.h"
+#include "../sdl3imgui.h"
 #include "imgui_lobby.h"
 }
 
 #define MAX_TANKS 16
+#define WBN_ICON_SIZE 14
 #define CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 #define MAP_PREVIEW_SIZE 256
 
@@ -246,6 +248,8 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
 }
 
 extern "C" int imguiLobbyShow(ClientSim *cs) {
+    SDL_Log("[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d",
+            (void*)cs, cs ? cs->inLobby : -1, cs ? (int)cs->netStat : -1);
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
@@ -453,6 +457,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                         bool botsAllowed = (cs->lobbyAiType != 0);
 
+                        SDL_Log("[LOBBY DBG] rendering player table");
                         for (int i = 0; i < MAX_TANKS; i++) {
                             ImGui::TableNextRow();
 
@@ -465,6 +470,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
                                     if (flagTex) {
                                         ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                                        ImGui::SameLine();
+                                    }
+                                }
+                                if (cs->lobbySlots[i].wbnParticipant) {
+                                    SDL_Texture *globeTex = sdl3ImguiGetGlobeIcon();
+                                    if (globeTex) {
+                                        ImGui::Image((ImTextureID)globeTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+                                        ImGui::SameLine();
+                                    }
+                                }
+                                if (cs->lobbySlots[i].steamParticipant) {
+                                    SDL_Texture *steamTex = sdl3ImguiGetSteamIcon();
+                                    if (steamTex) {
+                                        ImGui::Image((ImTextureID)steamTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
                                         ImGui::SameLine();
                                     }
                                 }
@@ -725,6 +744,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
                             if (flagTex) {
                                 ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                                ImGui::SameLine();
+                            }
+                        }
+                        if (cs->lobbySlots[i].wbnParticipant) {
+                            SDL_Texture *globeTex = sdl3ImguiGetGlobeIcon();
+                            if (globeTex) {
+                                ImGui::Image((ImTextureID)globeTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+                                ImGui::SameLine();
+                            }
+                        }
+                        if (cs->lobbySlots[i].steamParticipant) {
+                            SDL_Texture *steamTex = sdl3ImguiGetSteamIcon();
+                            if (steamTex) {
+                                ImGui::Image((ImTextureID)steamTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
                                 ImGui::SameLine();
                             }
                         }

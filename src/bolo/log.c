@@ -799,8 +799,9 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Write WBN Key */
   if (returnValue == TRUE) {
-    winboloNetGetServerKey(data);
-    ret = zipWriteInFileInZip(logFile, data, WINBOLONET_KEY_LEN);
+    char wbnKey[WINBOLONET_KEY_LEN];
+    winboloNetGetServerKey(wbnKey);
+    ret = zipWriteInFileInZip(logFile, wbnKey, WINBOLONET_KEY_LEN);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }

@@ -37,7 +37,6 @@ typedef struct {
   void (*setNameShow)(struct ClientSim *cs, bool inGame);
   void (*skinsShow)(void);
   int  (*trackerSetupShow)(void);
-  void (*winbolonetShow)(void);
   void (*messageBox)(const char *msg, const char *title);
   int  (*lobbyShow)(struct ClientSim *cs);
   void (*settingsShow)(void);

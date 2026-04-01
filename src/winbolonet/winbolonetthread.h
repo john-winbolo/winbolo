@@ -17,13 +17,13 @@
 
 /*********************************************************
 *Name:          winbolonetThread
-*Filename:      winbolonetThread.c
+*Filename:      winbolonetThread.h
 *Author:        John Morrison
 *Creation Date: 16/02/03
-*Last Modified: 16/02/03
+*Last Modified: 30/03/26
 *Purpose:
-*  WinBolo.net Thread manager - Used to stop updates
-*  causing game problems
+*  WinBolo.net Thread manager - Queues JSON API requests
+*  to avoid blocking the game loop
 *********************************************************/
 
 #ifndef __WINBOLONET_THREAD_H
@@ -39,7 +39,7 @@
 #define WBN_THREAD_SLEEP_TIME 500
 #define WBN_THREAD_SLEEP_TIME_LINUX 1
 
-/* Time to sleep between checks (MS) */
+/* Time to sleep between shutdown checks (MS) */
 #define WBN_SHUTDOWN_SLEEP_TIME 200
 #define WBN_SHUTDOWN_SLEEP_TIME_LINUX 1
 
@@ -49,66 +49,43 @@
 
 typedef struct wbnListObj *wbnList;
 struct wbnListObj {
-  wbnList next;  /* Next item */
-  BYTE data[2048];  /* Data to send */
-  int len;    /* Data length */
+  wbnList next;           /* Next item */
+  char endpoint[128];     /* API endpoint path */
+  char *json_body;        /* Heap-allocated JSON body string */
 };
 
 
-
-
 /*********************************************************
-*NAME:          winbolonetThreadCreate 
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
+*NAME:          winbolonetThreadCreate
 *PURPOSE:
-*  Creates the winbolonet update thread. Returns success
-*
-*ARGUMENTS:
-*
+*  Creates the winbolonet update thread. Returns success.
 *********************************************************/
 bool winbolonetThreadCreate(void);
 
 /*********************************************************
 *NAME:          winbolonetThreadDestroy
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
-*  Destroys the DNS lookup Thread.
-*
-*ARGUMENTS:
-*
+*  Destroys the WBN update thread.
 *********************************************************/
 void winbolonetThreadDestroy(void);
 
 /*********************************************************
 *NAME:          winbolonetThreadAddRequest
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
-*  Adds a request to the DNS lookup queue
+*  Adds a JSON API request to the background queue.
+*  The json_body string is copied internally.
 *
 *ARGUMENTS:
-* data - Data to send 
-* len  - Length of the data 
+* endpoint  - API endpoint path (e.g. "server/update")
+* json_body - JSON request body string (copied, caller may free)
 *********************************************************/
-void winbolonetThreadAddRequest(BYTE *data, int len);
+void winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 
 /*********************************************************
 *NAME:          winbolonetThreadRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/02/03
-*LAST MODIFIED: 16/02/03
 *PURPOSE:
-*  The DNS Lookups thread run method
-*
-*ARGUMENTS:
-*
+*  The background thread run method.
 *********************************************************/
-int winbolonetThreadRun();
+int winbolonetThreadRun(void *data);
 
 #endif /* __WINBOLONET_THREAD_H */
-

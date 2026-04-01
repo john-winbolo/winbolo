@@ -161,9 +161,9 @@ unsigned short gameFrontTrackerPort;
 bool gameFrontTrackerEnabled;
 
 /* Winbolo.net settings */
-char gameFrontWbnPass[FILENAME_MAX];
+char gameFrontWbnToken[FILENAME_MAX];
+char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
-bool gameFrontWbnSavePass;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -616,7 +616,8 @@ bool gameFrontSetDlgState(openingStates newState) {
     /* Create UDP client transport for the new protocol */
     udpTransport = transportUdpClientCreate(humanSim, gameFrontUdpAddress,
                                              gameFrontTargetUdp,
-                                             gameFrontName, password);
+                                             gameFrontName, password,
+                                             gameFrontWbnUse ? gameFrontWbnToken : "");
     if (transportUdpClientGetJoinState(&udpTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
@@ -760,7 +761,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       if (netSetup(humanSim, netUdp, gameFrontMyUdp, "127.0.0.1", gameFrontTargetUdp,
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                    gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                   gameFrontWbnPass) == FALSE) {
+                   gameFrontWbnToken) == FALSE) {
         wantRejoin = FALSE;
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
                                  "Unable to start server", NULL);
@@ -818,7 +819,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                    gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                   gameFrontWbnPass);
+                   gameFrontWbnToken);
           /* Sync tank state from initial snapshot */
           {
             SnapshotHeader snapHdr;
@@ -1055,16 +1056,25 @@ void gameFrontEnableRejoin(void) {
   wantRejoin = TRUE;
 }
 
-void gameFrontSetWinbolonetSettings(char *pw, bool useWbn, bool savePass) {
-  strcpy(gameFrontWbnPass, pw);
-  gameFrontWbnUse = useWbn;
-  gameFrontWbnSavePass = savePass;
+void gameFrontSetWinbolonetToken(const char *token, const char *expiry) {
+  SDL_strlcpy(gameFrontWbnToken, token, FILENAME_MAX);
+  SDL_strlcpy(gameFrontWbnTokenExpiry, expiry, FILENAME_MAX);
+  gameFrontWbnUse = (token[0] != '\0');
 }
 
-void gameFrontGetWinbolonetSettings(char *pw, bool *useWbn, bool *savePass) {
-  *useWbn = gameFrontWbnUse;
-  *savePass = gameFrontWbnSavePass;
-  strcpy(pw, gameFrontWbnPass);
+void gameFrontGetWinbolonetToken(char *token, char *expiry) {
+  strcpy(token, gameFrontWbnToken);
+  strcpy(expiry, gameFrontWbnTokenExpiry);
+}
+
+void gameFrontClearWinbolonetToken(void) {
+  gameFrontWbnToken[0] = '\0';
+  gameFrontWbnTokenExpiry[0] = '\0';
+  gameFrontWbnUse = FALSE;
+}
+
+bool gameFrontGetWinbolonetUse(void) {
+  return gameFrontWbnUse;
 }
 
 void gameFrontSetRegistryKeys(void) {
@@ -1333,11 +1343,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelTank = atoi(buff);
 
   /* Winbolo.net */
-  GetPrivateProfileString("WINBOLO.NET", "Password", "", gameFrontWbnPass, FILENAME_MAX, prefsFile);
-  GetPrivateProfileString("WINBOLO.NET", "Active", "No", buff, FILENAME_MAX, prefsFile);
-  gameFrontWbnUse = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("WINBOLO.NET", "Save Password", "Yes", buff, FILENAME_MAX, prefsFile);
-  gameFrontWbnSavePass = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX, prefsFile);
+  GetPrivateProfileString("WINBOLO.NET", "TokenExpiry", "", gameFrontWbnTokenExpiry, FILENAME_MAX, prefsFile);
+  gameFrontWbnUse = (gameFrontWbnToken[0] != '\0');
 
   return TRUE;
 }
@@ -1472,13 +1480,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Tank Label Size", buff, prefsFile);
 
   /* Winbolo.net */
-  if (gameFrontWbnSavePass == TRUE) {
-    WritePrivateProfileString("WINBOLO.NET", "Password", gameFrontWbnPass, prefsFile);
-  } else {
-    WritePrivateProfileString("WINBOLO.NET", "Password", "", prefsFile);
-  }
-  WritePrivateProfileString("WINBOLO.NET", "Active", TRUEFALSE_TO_STR(gameFrontWbnUse), prefsFile);
-  WritePrivateProfileString("WINBOLO.NET", "Save Password", TRUEFALSE_TO_STR(gameFrontWbnSavePass), prefsFile);
+  WritePrivateProfileString("WINBOLO.NET", "Token", gameFrontWbnToken, prefsFile);
+  WritePrivateProfileString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry, prefsFile);
 }
 
 ServerSim *gameFrontGetServerSim(void) {

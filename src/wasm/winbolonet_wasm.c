@@ -3,8 +3,8 @@
  *
  * Replaces all of winbolonet/*.c (winbolonet.c, http.c,
  * winbolonetevents.c, winbolonetthread.c).  WinBolo.net requires
- * libcurl which is not available in Emscripten, and the service is
- * effectively defunct, so all functions are safe no-ops.
+ * libcurl which is not available in Emscripten, so all functions
+ * are safe no-ops.
  */
 
 #include <string.h>
@@ -14,13 +14,16 @@
 #include "../winbolonet/winbolonetthread.h"
 #include "../winbolonet/http.h"
 
+struct cJSON;
+
 /* -------------------------------------------------------
  * http.h
  * ------------------------------------------------------- */
 bool httpCreate(void)                                              { return FALSE; }
 void httpDestroy(void)                                             { }
-int  httpSendMessage(BYTE *msg, int len, BYTE *resp, int maxSize)  { (void)msg; (void)len; (void)resp; (void)maxSize; return -1; }
-bool httpSendLogFile(char *fn, BYTE *key, bool fb)                 { (void)fn; (void)key; (void)fb; return FALSE; }
+int  wbn_api_post(const char *ep, const char *jb, char **ro)      { (void)ep; (void)jb; if (ro) *ro = NULL; return -1; }
+int  wbn_api_call(const char *ep, struct cJSON *b, struct cJSON **r) { (void)ep; (void)b; if (r) *r = NULL; return -1; }
+bool httpSendLogFile(char *fn, char *key, bool fb)                 { (void)fn; (void)key; (void)fb; return FALSE; }
 void httpSetAltIpAddress(char *ip)                                 { (void)ip; }
 
 /* -------------------------------------------------------
@@ -28,17 +31,17 @@ void httpSetAltIpAddress(char *ip)                                 { (void)ip; }
  * ------------------------------------------------------- */
 void winbolonetEventsCreate(void)                                  { }
 void winbolonetEventsDestroy(void)                                 { }
-void winbolonetEventsAddItem(BYTE t, BYTE *a, BYTE *b)             { (void)t; (void)a; (void)b; }
+void winbolonetEventsAddItem(BYTE t, const char *a, const char *b) { (void)t; (void)a; (void)b; }
 int  winbolonetEventsGetSize(void)                                 { return 0; }
-BYTE winbolonetEventsRemove(BYTE *a, BYTE *b)                      { (void)a; (void)b; return WINBOLONET_EVENT_NOITEM; }
+BYTE winbolonetEventsRemove(char *a, char *b)                      { (void)a; (void)b; return WINBOLONET_EVENT_NOITEM; }
 
 /* -------------------------------------------------------
  * winbolonetthread.h
  * ------------------------------------------------------- */
 bool winbolonetThreadCreate(void)                                  { return FALSE; }
 void winbolonetThreadDestroy(void)                                 { }
-void winbolonetThreadAddRequest(BYTE *data, int len)               { (void)data; (void)len; }
-int  winbolonetThreadRun(void)                                     { return 0; }
+void winbolonetThreadAddRequest(const char *ep, const char *jb)    { (void)ep; (void)jb; }
+int  winbolonetThreadRun(void *data)                                { (void)data; return 0; }
 
 /* -------------------------------------------------------
  * winbolonet.h
@@ -46,16 +49,15 @@ int  winbolonetThreadRun(void)                                     { return 0; }
 bool winbolonetCreateServer(char *mapName, unsigned short port,
     BYTE gameType, BYTE ai, bool mines, bool password,
     BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills,
-    BYTE numPlayers, long startTime) {
+    BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines;
   (void)password; (void)numBases; (void)numPills; (void)freeBases;
-  (void)freePills; (void)numPlayers; (void)startTime;
+  (void)freePills; (void)numPlayers;
   return FALSE;
 }
 
-bool winbolonetCreateClient(char *userName, char *password,
-                             BYTE *serverKey, char *errorMsg) {
-  (void)userName; (void)password; (void)serverKey;
+bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
+  (void)token; (void)serverKey;
   if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
   return FALSE;
 }
@@ -63,26 +65,9 @@ bool winbolonetCreateClient(char *userName, char *password,
 void winbolonetDestroy(bool isServer)                               { (void)isServer; }
 void winbolonetGoodbye(void)                                       { }
 
-bool winbolonetRequestServerKey(char *mapName, unsigned short port,
-    BYTE gameType, BYTE ai, bool mines, bool password,
-    BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills,
-    BYTE numPlayers, long startTime) {
-  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines;
-  (void)password; (void)numBases; (void)numPills; (void)freeBases;
-  (void)freePills; (void)numPlayers; (void)startTime;
-  return FALSE;
-}
-
-bool winbolonetRequestClientKey(char *userName, char *password,
-                                 BYTE *serverKey, char *errorMsg) {
-  (void)userName; (void)password; (void)serverKey;
-  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
-  return FALSE;
-}
-
-void winboloNetGetServerKey(BYTE *keyBuff)                         { if (keyBuff) keyBuff[0] = '\0'; }
-void winboloNetGetMyClientKey(BYTE *keyBuff)                       { if (keyBuff) keyBuff[0] = '\0'; }
-bool winboloNetVerifyClientKey(BYTE *k, char *u, BYTE n)           { (void)k; (void)u; (void)n; return FALSE; }
+void winboloNetGetServerKey(char *keyBuff)                         { if (keyBuff) keyBuff[0] = '\0'; }
+void winboloNetGetMyClientKey(char *keyBuff)                       { if (keyBuff) keyBuff[0] = '\0'; }
+bool winboloNetVerifyClientKey(const char *k, char *u, BYTE n)     { (void)k; (void)u; (void)n; return FALSE; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum)                 { (void)playerNum; return FALSE; }
 bool winbolonetIsRunning(void)                                     { return FALSE; }
 
@@ -105,5 +90,23 @@ void winbolonetAddEvent(BYTE eventType, bool isServer,
   (void)eventType; (void)isServer; (void)playerA; (void)playerB;
 }
 
-void winboloNetSendVersion(void)                                   { }
 void winboloNetSendLock(bool isLocked)                             { (void)isLocked; }
+
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+  (void)token; (void)playerNum;
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  if (hasSteam) *hasSteam = FALSE;
+  return FALSE;
+}
+
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+  (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut;
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  return FALSE;
+}
+
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
+  (void)token; (void)playerNameOut;
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  return FALSE;
+}

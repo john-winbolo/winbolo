@@ -183,7 +183,17 @@ void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
   (void)eventType; (void)isServer; (void)playerA; (void)playerB;
 }
-void winboloNetGetServerKey(BYTE *keyBuff) { (void)keyBuff; }
+void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
+void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
+  (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
+}
+void winboloNetSendLock(bool isLocked) { (void)isLocked; }
+bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+  (void)token; (void)playerNum; (void)errorMsg;
+  if (hasSteam) *hasSteam = FALSE;
+  return FALSE;
+}
 
 /* threads stubs (clientmutex.c references these) */
 void threadsWaitForMutex(void) {}

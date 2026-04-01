@@ -169,9 +169,6 @@ set(SERVER_SOURCES
     ${SRC_ROOT}/server/posix_stubs.c
 )
 
-# BigDigits
-file(GLOB BIGDIGITS_SOURCES ${SRC_ROOT}/server/BigDigits/*.c)
-
 # LZW compression
 file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
 
@@ -227,7 +224,6 @@ set(WASM_SOURCES
 add_executable(winbolo
     ${BOLO_SOURCES}
     ${SERVER_SOURCES}
-    ${BIGDIGITS_SOURCES}
     ${LZW_SOURCES}
     ${WBN_SOURCES}
     ${GUI_SOURCES}

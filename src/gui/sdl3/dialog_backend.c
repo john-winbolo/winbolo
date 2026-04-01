@@ -27,7 +27,6 @@
 #include "dialogs/imgui_setname.h"
 #include "dialogs/imgui_skins.h"
 #include "dialogs/imgui_trackersetup.h"
-#include "dialogs/imgui_winbolonet.h"
 #include "dialogs/imgui_messagebox.h"
 #include "dialogs/imgui_lobby.h"
 #include "dialogs/imgui_settings.h"
@@ -40,7 +39,6 @@ static const DialogBackend imguiBackend = {
   imguiSetNameShow,
   imguiSkinsShow,
   imguiTrackerSetupShow,
-  imguiWinbolonetShow,
   imguiMessageBox,
   imguiLobbyShow,
   imguiSettingsShow,

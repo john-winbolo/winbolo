@@ -14,197 +14,286 @@
 
 /*********************************************************
  * Name:          imgui_winbolonet.cpp
- * Purpose:       ImGui WinBolo.net settings dialog.
- *                ImGui WinBolo.net dialog.
+ * Purpose:       ImGui WinBolo.net login popup rendered
+ *                inline within the settings dialog.
  *********************************************************/
 
 #include <cstring>
+#include <cmath>
 
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
-#include "../../imgui_theme.h"
-#include "imgui_impl_sdl3.h"
-#include "imgui_impl_sdlrenderer3.h"
-#include "imgui_dialog_utils.h"
 
 extern "C" {
-#include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
+#include "../../../winbolonet/winbolonet.h"
 #include "imgui_winbolonet.h"
 }
 
-static const int DIALOG_W = 420;
-static const int DIALOG_H = 300;
+/* ---- async login state ---- */
 
-extern "C" void imguiWinbolonetShow(void) {
-    SDL_Window *window = sdl3DrawGetWindow();
-    SDL_Renderer *renderer = sdl3DrawGetRenderer();
-    if (!window || !renderer) return;
+enum WbnLoginState {
+    WBN_IDLE,
+    WBN_LOGGING_IN,
+    WBN_VALIDATING,
+    WBN_SUCCESS,
+    WBN_ERROR
+};
 
-    /* Save logical presentation (Android sets one for the game view) */
-    int savedLogW = 0, savedLogH = 0;
-    SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
-    dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
+struct WbnLoginWork {
+    /* inputs */
+    char username[256];
+    char password[256];
+    char token[256];
+    /* outputs */
+    char tokenOut[256];
+    char expiryOut[256];
+    char playerNameOut[PLAYER_NAME_LEN];
+    char errorMsg[512];
+    bool isValidate;
+    bool success;
+    SDL_AtomicInt done;
+};
 
-    /* Get screen size and compute UI scale */
-    int screenW, screenH;
-    SDL_GetWindowSize(window, &screenW, &screenH);
-    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
-    float s = dialogComputeScale(screenW, screenH);
+static WbnLoginState wbnState = WBN_IDLE;
+static WbnLoginWork wbnWork;
+static SDL_Thread *wbnThread = nullptr;
+static char wbnErrorBuf[512];
+static bool wbnPopupOpen = false;
+static char wbnUsername[256];
+static char wbnPassword[256];
+static bool wbnFocusUser = false;
 
-#if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo.net Settings");
-    SDL_SetWindowResizable(window, false);
-#endif
-    SDL_ShowWindow(window);
-    SDL_RaiseWindow(window);
+static int wbnLoginThreadFunc(void *data) {
+    WbnLoginWork *w = (WbnLoginWork *)data;
+    if (w->isValidate) {
+        w->success = winbolonetAuthValidate(w->token, w->playerNameOut, w->errorMsg);
+    } else {
+        w->success = winbolonetAuthLogin(w->username, w->password, w->tokenOut, w->expiryOut, w->playerNameOut, w->errorMsg);
+    }
+    SDL_SetAtomicInt(&w->done, 1);
+    return 0;
+}
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO &io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = nullptr;
+static void wbnStartLogin(void) {
+    memset(&wbnWork, 0, sizeof(wbnWork));
+    SDL_SetAtomicInt(&wbnWork.done, 0);
+    SDL_strlcpy(wbnWork.username, wbnUsername, sizeof(wbnWork.username));
+    SDL_strlcpy(wbnWork.password, wbnPassword, sizeof(wbnWork.password));
+    wbnWork.isValidate = false;
+    wbnState = WBN_LOGGING_IN;
+    wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNLogin", &wbnWork);
+}
 
-    ImGui::StyleColorsDark();
-    imguiApplyBoloTheme();
-    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer3_Init(renderer);
-    dialogApplyScaling(s);
+static void wbnStartValidate(const char *token) {
+    memset(&wbnWork, 0, sizeof(wbnWork));
+    SDL_SetAtomicInt(&wbnWork.done, 0);
+    SDL_strlcpy(wbnWork.token, token, sizeof(wbnWork.token));
+    wbnWork.isValidate = true;
+    wbnState = WBN_VALIDATING;
+    wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNValidate", &wbnWork);
+}
 
-    /* Load current settings */
-    char userName[FILENAME_MAX];
-    char password[FILENAME_MAX];
-    bool useWbn = false;
-    bool savePass = false;
+static void wbnCheckThread(void) {
+    if (!wbnThread || !SDL_GetAtomicInt(&wbnWork.done)) return;
 
-    userName[0] = '\0';
-    password[0] = '\0';
-    gameFrontGetPlayerName(userName);
-    gameFrontGetWinbolonetSettings(password, &useWbn, &savePass);
+    SDL_WaitThread(wbnThread, nullptr);
+    wbnThread = nullptr;
 
-    const char *errorMsg = nullptr;
-    bool running = true;
-
-    while (running) {
-        Uint64 frameCapStart = dialogFrameCapBegin();
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            ImGui_ImplSDL3_ProcessEvent(&ev);
-            if (dialogHandleDevicePresetEvent(window, &ev)) continue;
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
-                running = false;
-            }
+    if (wbnWork.success) {
+        if (!wbnWork.isValidate) {
+            gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
         }
-
-        ImGui_ImplSDLRenderer3_NewFrame();
-        ImGui_ImplSDL3_NewFrame();
-        dialogResetTextInputArea(window);
-        dialogOverrideFramebufferScale(renderer);
-        ImGui::NewFrame();
-
-        int winW, winH;
-        SDL_GetWindowSize(window, &winW, &winH);
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
-        ImGui::Begin("##WinboloNet", nullptr,
-                     ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse);
-
-        ImGui::TextWrapped(
-            "Winbolo.net is a free real time game tracking and player "
-            "statistics website. To signup or for more information "
-            "please visit http://www.winbolo.net");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float labelW = 100.0f;
-        float inputW = (float)winW - labelW - 30.0f;
-
-        /* Username (read-only) */
-        ImGui::Text("Username:");
-        ImGui::SameLine(labelW);
-        ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##user", userName, FILENAME_MAX,
-                         ImGuiInputTextFlags_ReadOnly);
-
-        /* Password */
-        ImGui::Text("Password:");
-        ImGui::SameLine(labelW);
-        ImGui::SetNextItemWidth(inputW);
-        if (!useWbn) ImGui::BeginDisabled();
-        ImGui::InputText("##pass", password, FILENAME_MAX,
-                         ImGuiInputTextFlags_Password);
-        if (!useWbn) ImGui::EndDisabled();
-
-        ImGui::Spacing();
-
-        ImGui::Checkbox("Use Winbolo.net", &useWbn);
-        ImGui::Checkbox("Save My Winbolo.net Password", &savePass);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float btnW = 80.0f;
-        float btnX = ((float)winW - btnW * 2 - 8.0f) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-
-        if (ImGui::Button("OK", ImVec2(btnW, 0))) {
-            if (useWbn && strlen(password) == 0) {
-                errorMsg = "Sorry, you must enter a username and password if "
-                           "you wish to participate in winbolo.net";
-                ImGui::OpenPopup("Error##wbn");
-            } else {
-                gameFrontSetWinbolonetSettings(password, useWbn, savePass);
-                running = false;
-            }
+        if (wbnWork.playerNameOut[0] != '\0') {
+            gameFrontSetPlayerName(wbnWork.playerNameOut);
         }
-
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0))) {
-            running = false;
+        wbnState = WBN_SUCCESS;
+    } else {
+        SDL_strlcpy(wbnErrorBuf, wbnWork.errorMsg, sizeof(wbnErrorBuf));
+        if (!wbnWork.isValidate) {
+            wbnState = WBN_ERROR;
+        } else {
+            gameFrontClearWinbolonetToken();
+            wbnState = WBN_IDLE;
         }
+    }
+}
 
-        /* Error popup */
-        if (ImGui::BeginPopupModal("Error##wbn", nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("%s", errorMsg ? errorMsg : "");
-            ImGui::Spacing();
-            if (ImGui::Button("OK##err", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
+/* Spinner helper */
+static void wbnDrawSpinner(const char *label) {
+    float radius = ImGui::GetFontSize() * 0.5f;
+    float t = (float)SDL_GetTicks() / 1000.0f;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 centre(pos.x + radius, pos.y + radius);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
 
-        ImGui::End();
-
-        ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
-        SDL_RenderClear(renderer);
-        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
-        SDL_RenderPresent(renderer);
-        dialogFrameCapEnd(frameCapStart);
+    int segments = 12;
+    for (int i = 0; i < segments; i++) {
+        float a = t * 6.0f + (float)i * (2.0f * 3.14159f / (float)segments);
+        float alpha = (float)(segments - i) / (float)segments;
+        float x = centre.x + cosf(a) * radius;
+        float y = centre.y + sinf(a) * radius;
+        dl->AddCircleFilled(ImVec2(x, y), 2.0f, (col & 0x00FFFFFF) | ((ImU32)(alpha * 255.0f) << 24));
     }
 
-    dialogDismissKeyboard(window);
-    ImGui_ImplSDLRenderer3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
+    ImGui::Dummy(ImVec2(radius * 2.0f, radius * 2.0f));
+    ImGui::SameLine();
+    ImGui::Text("%s", label);
+}
 
-    /* Restore logical presentation */
-    dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
+/* ---- Public API ---- */
 
-#if !BOLO_MOBILE
-    SDL_SetWindowResizable(window, true);
-#endif
+extern "C" void imguiWinbolonetReset(void) {
+    wbnState = WBN_IDLE;
+    wbnPopupOpen = false;
+    wbnUsername[0] = '\0';
+    wbnPassword[0] = '\0';
+    wbnErrorBuf[0] = '\0';
+    wbnFocusUser = false;
+    if (wbnThread) {
+        SDL_WaitThread(wbnThread, nullptr);
+        wbnThread = nullptr;
+    }
+}
 
-    SDL_FlushEvent(SDL_EVENT_QUIT);
+extern "C" void imguiWinbolonetStartValidation(void) {
+    char token[256];
+    char expiry[256];
+    gameFrontGetWinbolonetToken(token, expiry);
+    if (token[0] != '\0') {
+        wbnStartValidate(token);
+    }
+}
+
+extern "C" void imguiWinbolonetDrawSection(bool inGame) {
+    /* Check for async completion */
+    wbnCheckThread();
+
+    char token[256];
+    char expiry[256];
+    gameFrontGetWinbolonetToken(token, expiry);
+    bool loggedIn = (token[0] != '\0');
+
+    if (wbnState == WBN_VALIDATING) {
+        wbnDrawSpinner("Checking WinBolo.net...");
+        return;
+    }
+
+    if (loggedIn) {
+        ImGui::Text("WinBolo.net:");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Signed in");
+        if (expiry[0] != '\0') {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(expires %s)", expiry);
+        }
+        if (inGame) ImGui::BeginDisabled();
+        if (ImGui::Button("Sign out of WBN")) {
+            gameFrontClearWinbolonetToken();
+        }
+        if (inGame) ImGui::EndDisabled();
+    } else {
+        ImGui::Text("WinBolo.net:");
+        ImGui::SameLine();
+        ImGui::TextDisabled("Not signed in");
+        if (inGame) ImGui::BeginDisabled();
+        if (ImGui::Button("Sign in to WBN...")) {
+            wbnPopupOpen = true;
+            wbnFocusUser = true;
+            wbnState = WBN_IDLE;
+            wbnErrorBuf[0] = '\0';
+            wbnUsername[0] = '\0';
+            wbnPassword[0] = '\0';
+            ImGui::OpenPopup("Sign in to WinBolo.net");
+        }
+        if (inGame) ImGui::EndDisabled();
+    }
+
+    /* ---- Login popup ---- */
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Sign in to WinBolo.net", &wbnPopupOpen,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        bool busy = (wbnState == WBN_LOGGING_IN);
+
+        ImGui::TextWrapped(
+            "Sign in with your WinBolo.net username and password. "
+            "A token will be saved so you don't need to enter your "
+            "password again.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (busy) ImGui::BeginDisabled();
+
+        float labelW = 90.0f;
+        ImGui::Text("Username:");
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(-1);
+        if (wbnFocusUser) {
+            ImGui::SetKeyboardFocusHere();
+            wbnFocusUser = false;
+        }
+        ImGui::InputText("##wbnuser", wbnUsername, sizeof(wbnUsername));
+
+        ImGui::Text("Password:");
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(-1);
+        bool enterPressed = ImGui::InputText("##wbnpass", wbnPassword, sizeof(wbnPassword),
+                                              ImGuiInputTextFlags_Password |
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
+
+        if (busy) ImGui::EndDisabled();
+
+        ImGui::Spacing();
+
+        /* Error message */
+        if (wbnState == WBN_ERROR && wbnErrorBuf[0] != '\0') {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::TextWrapped("%s", wbnErrorBuf);
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+        }
+
+        /* Success */
+        if (wbnState == WBN_SUCCESS) {
+            ImGui::CloseCurrentPopup();
+            wbnPopupOpen = false;
+            wbnState = WBN_IDLE;
+        }
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        /* Buttons */
+        if (busy) {
+            wbnDrawSpinner("Signing in...");
+        } else {
+            float btnW = 80.0f;
+            float totalW = btnW * 2 + 8.0f;
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - totalW) * 0.5f);
+
+            if (ImGui::Button("Sign in", ImVec2(btnW, 0)) || enterPressed) {
+                if (strlen(wbnUsername) == 0 || strlen(wbnPassword) == 0) {
+                    SDL_strlcpy(wbnErrorBuf, "Please enter your username and password.", sizeof(wbnErrorBuf));
+                    wbnState = WBN_ERROR;
+                } else {
+                    wbnStartLogin();
+                }
+            }
+            ImGui::SameLine(0.0f, 8.0f);
+            if (ImGui::Button("Cancel", ImVec2(btnW, 0))) {
+                ImGui::CloseCurrentPopup();
+                wbnPopupOpen = false;
+            }
+        }
+
+        ImGui::EndPopup();
+    }
 }
