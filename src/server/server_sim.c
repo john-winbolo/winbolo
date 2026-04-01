@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <dirent.h>
 
 #include "../bolo/global.h"
 #include "../bolo/bolo_map.h"
@@ -1585,4 +1586,112 @@ bool serverSimCheckEmptyReset(ServerSim *sim) {
     }
 
     return FALSE;
+}
+
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+    DIR *dir;
+    struct dirent *entry;
+    char fullPath[2048];
+    char **tempList = NULL;
+    int tempCount = 0;
+    int tempCapacity = 0;
+    map mp;
+    pillboxes pb;
+    bases bs;
+    starts ss;
+
+    dir = opendir(dirPath);
+    if (dir == NULL) {
+        fprintf(stderr, "Error: cannot open map directory '%s'\n", dirPath);
+        return FALSE;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        int len = (int)strlen(entry->d_name);
+        if (len < 5) continue;
+        if (strcmp(entry->d_name + len - 4, ".map") != 0) continue;
+
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath, entry->d_name);
+
+        /* Validate map by attempting to load it */
+        if (mapRead(fullPath, &mp, &pb, &bs, &ss) == FALSE) {
+            fprintf(stderr, "Warning: skipping invalid map '%s'\n", fullPath);
+            continue;
+        }
+
+        /* Grow array if needed */
+        if (tempCount >= tempCapacity) {
+            int newCap = tempCapacity == 0 ? 16 : tempCapacity * 2;
+            char **newList = realloc(tempList, newCap * sizeof(char *));
+            if (newList == NULL) {
+                fprintf(stderr, "Error: out of memory building map list\n");
+                break;
+            }
+            tempList = newList;
+            tempCapacity = newCap;
+        }
+
+        tempList[tempCount] = strdup(fullPath);
+        if (tempList[tempCount] == NULL) {
+            fprintf(stderr, "Error: out of memory duplicating path\n");
+            break;
+        }
+        tempCount++;
+        fprintf(stderr, "Map directory: validated '%s'\n", entry->d_name);
+    }
+
+    closedir(dir);
+
+    if (tempCount == 0) {
+        fprintf(stderr, "Error: no valid .map files found in '%s'\n", dirPath);
+        free(tempList);
+        return FALSE;
+    }
+
+    sim->mapDirFiles = tempList;
+    sim->mapDirCount = tempCount;
+    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n", tempCount, dirPath);
+    return TRUE;
+}
+
+bool serverSimMapDirPickRandom(ServerSim *sim) {
+    int idx;
+    char msg[512];
+
+    if (sim->mapDirFiles == NULL || sim->mapDirCount <= 0) {
+        return FALSE;
+    }
+
+    idx = rand() % sim->mapDirCount;
+
+    if (serverSimChangeMap(sim, sim->mapDirFiles[idx]) == FALSE) {
+        /* Map may have been deleted or corrupted since startup — try others */
+        int tries;
+        for (tries = 0; tries < sim->mapDirCount; tries++) {
+            idx = (idx + 1) % sim->mapDirCount;
+            if (serverSimChangeMap(sim, sim->mapDirFiles[idx]) == TRUE) {
+                break;
+            }
+        }
+        if (tries >= sim->mapDirCount) {
+            fprintf(stderr, "Error: all maps in directory failed to load\n");
+            return FALSE;
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
+    serverSimConsoleMessage(msg);
+    return TRUE;
+}
+
+void serverSimMapDirDestroy(ServerSim *sim) {
+    if (sim->mapDirFiles != NULL) {
+        int i;
+        for (i = 0; i < sim->mapDirCount; i++) {
+            free(sim->mapDirFiles[i]);
+        }
+        free(sim->mapDirFiles);
+        sim->mapDirFiles = NULL;
+        sim->mapDirCount = 0;
+    }
 }

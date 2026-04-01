@@ -120,6 +120,10 @@ typedef struct ServerSim {
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
+
+    /* Map directory rotation — validated map file paths for random selection */
+    char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
+    int          mapDirCount;             /* Number of valid maps in the array */
 } ServerSim;
 
 /*********************************************************
@@ -427,6 +431,33 @@ void serverSimResetGameWorld(ServerSim *sim);
  *  map load fails.
  *********************************************************/
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName);
+
+/*********************************************************
+ *NAME:          serverSimMapDirBuild
+ *PURPOSE:
+ *  Scans a directory for .map files, validates each by
+ *  attempting to load it, and populates the mapDirFiles
+ *  array with paths that loaded successfully.
+ *  Returns TRUE if at least one valid map was found.
+ *********************************************************/
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath);
+
+/*********************************************************
+ *NAME:          serverSimMapDirPickRandom
+ *PURPOSE:
+ *  Selects a random map from the mapDirFiles list and
+ *  calls serverSimChangeMap to load it. Falls back to
+ *  the current cached map if the chosen map fails to load.
+ *  Returns TRUE on success.
+ *********************************************************/
+bool serverSimMapDirPickRandom(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimMapDirDestroy
+ *PURPOSE:
+ *  Frees the mapDirFiles array.
+ *********************************************************/
+void serverSimMapDirDestroy(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimBuildWinMessage
