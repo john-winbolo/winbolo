@@ -388,6 +388,11 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
           /* If game ended during this tick, broadcast game-over */
           if (preTickState == serverStateRunning && serverSim.state == serverStateGameOver) {
             if (serverSim.lobbyEnabled) {
+              /* Capture win message now while game state is intact;
+               * it will be sent after players return to the lobby. */
+              serverSimBuildWinMessage(&serverSim,
+                                       serverSim.pendingWinMessage,
+                                       sizeof(serverSim.pendingWinMessage));
               transportUdpServerBroadcastGameOver(&serverSim);
             }
           }
@@ -412,6 +417,9 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
           /* If game ended during this tick, broadcast game-over */
           if (preTickState == serverStateRunning && serverSim.state == serverStateGameOver) {
             if (serverSim.lobbyEnabled) {
+              serverSimBuildWinMessage(&serverSim,
+                                       serverSim.pendingWinMessage,
+                                       sizeof(serverSim.pendingWinMessage));
               transportUdpServerBroadcastGameOver(&serverSim);
             }
           }
@@ -456,6 +464,11 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
             serverSim.state == serverStateLobby) {
           /* Returned to lobby — broadcast full lobby state */
           transportUdpServerBroadcastLobbyState(&serverSim);
+          /* Send the win message now that players are back in the lobby */
+          if (serverSim.pendingWinMessage[0] != '\0') {
+            transportUdpServerSendServerMessage(serverSim.pendingWinMessage);
+            serverSim.pendingWinMessage[0] = '\0';
+          }
         }
 
         /* Periodic lobby snapshot — twice per second (every 25 ticks)
@@ -475,6 +488,22 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
       if (serverSim.autoCloseOnEmpty && serverSimCheckAutoClose(&serverSim)) {
         serverSim.lobbyEnabled = FALSE;
         serverSimEnterGameOver(&serverSim);
+      }
+
+      /* Empty reset check — when enabled and no players are connected,
+       * count down and reset to lobby with map reload after the timeout.
+       * Skipped if autoCloseOnEmpty is active (it takes priority). */
+      if (serverSim.emptyResetEnabled && !serverSim.autoCloseOnEmpty &&
+          serverSim.lobbyEnabled &&
+          serverSim.state != serverStateGameOver &&
+          serverSimCheckEmptyReset(&serverSim)) {
+        serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
+        serverSimResetGameWorld(&serverSim);
+        serverSim.state = serverStateLobby;
+        serverSim.gameLength = serverSim.originalGameLength;
+        serverSim.hadPlayersEver = FALSE;
+        serverSim.emptyResetTicks = -1;
+        transportUdpServerBroadcastLobbyState(&serverSim);
       }
 
       threadsReleaseMutex();
@@ -546,6 +575,9 @@ void printArgs() {
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
+  fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
+  fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
+  fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
 }
 
 
@@ -916,9 +948,24 @@ int main(int argc, char **argv) {
   serverSim.quitOnWin = argExist(argc, argv, "quitonwin");
   serverSim.autoCloseOnEmpty = argExist(argc, argv, "autoclose");
 
+  /* Empty reset configuration — on by default */
+  if (argExist(argc, argv, "noemptyreset") == TRUE) {
+    serverSim.emptyResetEnabled = FALSE;
+  }
+  {
+    int argNum = findArg(argc, argv, "emptyresetmins");
+    if (argNum != ARG_NOT_FOUND) {
+      int mins = atoi((char *)argv[argNum]);
+      if (mins > 0) {
+        serverSim.emptyResetMinutes = mins;
+      }
+    }
+  }
+
   /* -nolobby: skip lobby, start running immediately (backward-compatible mode) */
   if (argExist(argc, argv, "nolobby") == TRUE) {
     serverSim.lobbyEnabled = FALSE;
+    serverSim.emptyResetEnabled = FALSE;
     serverSim.state = serverStateRunning;
   }
 
