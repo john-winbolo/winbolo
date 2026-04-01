@@ -433,7 +433,8 @@ static bool pickRandomMap(char *out, size_t outLen) {
         while ((ent = readdir(d)) != NULL && count < 256) {
             size_t len = strlen(ent->d_name);
             if (len > 4 && strcasecmp(ent->d_name + len - 4, ".map") == 0 &&
-                strcasecmp(ent->d_name, "Inbuilt Tutorial.map") != 0) {
+                strcasecmp(ent->d_name, "Inbuilt Tutorial.map") != 0 &&
+                strcasecmp(ent->d_name, "Better Best Map Ever.map") != 0) {
                 mapFiles[count] = SDL_strdup(ent->d_name);
                 count++;
             }
@@ -456,10 +457,11 @@ static bool pickRandomMap(char *out, size_t outLen) {
         if (list) SDL_free(list);
         return false;
     }
-    /* Filter out the inbuilt tutorial map */
+    /* Filter out maps unsuitable for the background game */
     int filtered = 0;
     for (int i = 0; i < count; i++) {
-        if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0) {
+        if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0 &&
+            SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0) {
             list[filtered++] = list[i];
         }
     }
