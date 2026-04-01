@@ -462,6 +462,10 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         }
         if (preTickState == serverStateGameOver &&
             serverSim.state == serverStateLobby) {
+          /* Pick next map from rotation if mapdir is configured */
+          if (serverSim.mapDirFiles != NULL) {
+            serverSimMapDirPickRandom(&serverSim);
+          }
           /* Returned to lobby — broadcast full lobby state */
           transportUdpServerBroadcastLobbyState(&serverSim);
           /* Send the win message now that players are back in the lobby */
@@ -503,6 +507,10 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         serverSim.gameLength = serverSim.originalGameLength;
         serverSim.hadPlayersEver = FALSE;
         serverSim.emptyResetTicks = -1;
+        /* Pick next map from rotation if mapdir is configured */
+        if (serverSim.mapDirFiles != NULL) {
+          serverSimMapDirPickRandom(&serverSim);
+        }
         transportUdpServerBroadcastLobbyState(&serverSim);
       }
 
@@ -539,6 +547,9 @@ void printArgs() {
 #endif
   fprintf(stderr, "<Filename>    - Path and file name of the map file to open (-inbuilt can be used\n");
   fprintf(stderr, "                instead of -map to enable inbuilt map Everard Island)\n");
+  fprintf(stderr, "-mapdir <Dir> - Directory of .map files for random rotation between rounds.\n");
+  fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
+  fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
   fprintf(stderr, "<Port>        - Port to run the server on\n");
   fprintf(stderr, "<GameType>    - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
   fprintf(stderr, "\nOptional\n");
@@ -683,6 +694,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
     mapName[2047] = '\0';
   } else if (argExist(numArgs, argv, "inbuilt") == TRUE) {
     strcpy(mapName, "-inbuilt");
+  } else if (argExist(numArgs, argv, "mapdir") == TRUE) {
+    /* -mapdir without -map: will pick random map after directory scan */
+    strcpy(mapName, "-mapdir");
   } else {
     fprintf(stderr, "Missing map file\n");
     returnValue = FALSE;
@@ -927,6 +941,31 @@ int main(int argc, char **argv) {
     }
     strncpy(serverSim.mapName, "Everard Island", MAP_STR_SIZE - 1);
     serverSim.mapName[MAP_STR_SIZE - 1] = '\0';
+  } else if (strcmp(mapName, "-mapdir") == 0) {
+    /* -mapdir without -map: build the map list into a temporary, then pick
+     * a random initial map. serverSimCreate zeroes the struct, so we restore
+     * the list after creation. */
+    char **savedFiles;
+    int savedCount;
+    int mdArg = findArg(argc, argv, "mapdir");
+    srand((unsigned int)time(NULL));
+    if (serverSimMapDirBuild(&serverSim, (char *)argv[mdArg]) == FALSE) {
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+    savedFiles = serverSim.mapDirFiles;
+    savedCount = serverSim.mapDirCount;
+    if (serverSimCreate(&serverSim, savedFiles[rand() % savedCount], game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+      fprintf(stderr, "Error starting server simulation\n");
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+    serverSim.mapDirFiles = savedFiles;
+    serverSim.mapDirCount = savedCount;
   } else {
     if (serverSimCreate(&serverSim, mapName, game, hiddenMines, srtDelay, gmeLen) == FALSE) {
       fprintf(stderr, "Error starting server simulation\n");
@@ -967,6 +1006,27 @@ int main(int argc, char **argv) {
     serverSim.lobbyEnabled = FALSE;
     serverSim.emptyResetEnabled = FALSE;
     serverSim.state = serverStateRunning;
+  }
+
+  /* -mapdir: build validated map list for rotation between rounds.
+   * Skip if already built (the -mapdir without -map case builds it earlier). */
+  {
+    int argNum = findArg(argc, argv, "mapdir");
+    if (argNum != ARG_NOT_FOUND && serverSim.mapDirFiles == NULL) {
+      if (!serverSim.lobbyEnabled) {
+        fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
+      }
+      if (serverSimMapDirBuild(&serverSim, (char *)argv[argNum]) == FALSE) {
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
+      }
+    }
   }
 
   /* Create UDP transport */
@@ -1100,6 +1160,7 @@ int main(int argc, char **argv) {
   geoLookupDestroy();
   transportUdpServerDestroy();
   botManagerDestroy(&serverSim);
+  serverSimMapDirDestroy(&serverSim);
   serverSimDestroy(&serverSim);
 #ifdef _WIN32
   WSACleanup();
