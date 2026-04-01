@@ -522,8 +522,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
 
     /* Reset timeout on any valid server packet — lobby state doesn't send
-     * snapshots, so without this the client times out after 20s in lobby. */
-    if (pktType != 0 && c->joinState == UDP_CLIENT_CONNECTED) {
+     * snapshots, so without this the client times out after 20s in lobby.
+     * Also reset during map (re-)download so a map change doesn't time out. */
+    if (pktType != 0 && (c->joinState == UDP_CLIENT_CONNECTED ||
+                         c->joinState == UDP_CLIENT_DOWNLOADING_MAP)) {
         c->lastSnapshotTick = c->localTick;
     }
 
@@ -1064,8 +1066,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_LOBBY_MAP_CHANGE:
-        /* [header 8] */
+        /* [header 8] – server loaded a new map; reset to re-download */
         c->clientSim->mapDownloadComplete = false;
+        c->joinState = UDP_CLIENT_JOINING;
         break;
 
     case PACKET_BALANCE_PROPOSAL:
@@ -2642,6 +2645,37 @@ void transportUdpServerBroadcastGameOver(ServerSim *sim) {
                       &udpServer.clients[i].addr);
         }
     }
+}
+
+void transportUdpServerNotifyMapChange(ServerSim *sim) {
+    int i;
+    int mapLen;
+    uint8_t notifyBuf[PACKET_HEADER_SIZE];
+
+    /* 1. Refresh the server's compressed map from the sim */
+    mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+    if (mapLen <= 0) {
+        fprintf(stderr, "[UDP SERVER] Map change: failed to compress new map\n");
+        return;
+    }
+    udpServer.compressedMapSize = (uint32_t)mapLen;
+
+    /* 2. Send PACKET_LOBBY_MAP_CHANGE to all connected clients */
+    packHeader(notifyBuf, PACKET_LOBBY_MAP_CHANGE, 0);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!udpServer.clients[i].connected) continue;
+        udpSendTo(udpServer.sock, notifyBuf, sizeof(notifyBuf),
+                  &udpServer.clients[i].addr);
+
+        /* 3. Re-send join accept so client gets the new map size */
+        serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
+
+        /* 4. Reset map download tracking and start sending new chunks */
+        serverInitMapDownload(i);
+    }
+
+    fprintf(stderr, "[UDP SERVER] Map change broadcast: %u bytes compressed map\n",
+            udpServer.compressedMapSize);
 }
 
 void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]) {

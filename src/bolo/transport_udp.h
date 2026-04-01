@@ -297,6 +297,10 @@ void transportUdpServerBroadcastGameStart(struct ServerSim *sim);
 /* Broadcast game over signal to all connected clients. */
 void transportUdpServerBroadcastGameOver(struct ServerSim *sim);
 
+/* Notify all connected clients that the map has changed, refresh the
+ * server's compressed map data, and trigger re-download for each client. */
+void transportUdpServerNotifyMapChange(struct ServerSim *sim);
+
 /* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
 void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
 

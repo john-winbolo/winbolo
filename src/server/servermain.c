@@ -490,6 +490,7 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
           /* Pick next map from rotation if mapdir is configured */
           if (serverSim.mapDirFiles != NULL) {
             serverSimMapDirPickRandom(&serverSim);
+            transportUdpServerNotifyMapChange(&serverSim);
           }
           /* Re-register with WBN for the new round */
           if (winbolonetIsRunning()) {
@@ -549,6 +550,7 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         /* Pick next map from rotation if mapdir is configured */
         if (serverSim.mapDirFiles != NULL) {
           serverSimMapDirPickRandom(&serverSim);
+          transportUdpServerNotifyMapChange(&serverSim);
         }
         /* Re-register with WBN for the new round */
         if (winbolonetIsRunning()) {
