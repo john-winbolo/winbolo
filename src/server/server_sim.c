@@ -53,6 +53,7 @@
 #include "../bolo/input_packet.h"
 #include "../bolo/messages.h"
 #include "../bolo/sounddist.h"
+#include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
@@ -221,6 +222,7 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed) {
     ev.data[0] = killer;
     ev.data[1] = killed;
     serverSimAddEvent(sim, &ev);
+    winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed);
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -1518,6 +1520,42 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     }
 
     return TRUE;
+}
+
+void serverSimSendWbnWinEvents(ServerSim *sim) {
+    BYTE count;
+    BYTE max;
+    BYTE first = NEUTRAL;
+    BYTE current;
+    bool allOwned = TRUE;
+
+    max = basesGetNumBases(&sim->sim.bs);
+
+    /* Find the winning alliance — same logic as serverSimBuildWinMessage */
+    for (count = 1; count <= max && allOwned; count++) {
+        BYTE shellsAmt, minesAmt, armourAmt;
+        current = basesGetBaseOwner(&sim->sim.bs, count);
+        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
+        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            allOwned = FALSE;
+        } else if (count == 1) {
+            first = current;
+        } else {
+            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        }
+    }
+
+    if (!allOwned || max == 0) {
+        return;
+    }
+
+    /* Send a win event for each player in the winning alliance */
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (!sim->playerConnected[count]) continue;
+        if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
+            winbolonetAddEvent(WINBOLO_NET_EVENT_WIN, TRUE, count, WINBOLO_NET_NO_PLAYER);
+        }
+    }
 }
 
 bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
