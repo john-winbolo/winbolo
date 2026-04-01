@@ -304,6 +304,99 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 }
 
 /*********************************************************
+*NAME:          winbolonetServerRequestBalance
+*PURPOSE:
+* Calls the WBN API to get skill-based team assignments
+* for the current lobby players.
+* Returns TRUE on success, FALSE on failure.
+*********************************************************/
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  cJSON *playerKeys = NULL;
+  cJSON *teams = NULL;
+  cJSON *teamArray = NULL;
+  cJSON *entry = NULL;
+  int status;
+  BYTE count;
+  int teamIdx;
+  char teamId[16];
+
+  memset(outProposal, 0, sizeof(BalanceProposal));
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddNumberToObject(body, "total_players", totalPlayers);
+  cJSON_AddNumberToObject(body, "team_size", teamSize);
+
+  playerKeys = cJSON_CreateArray();
+  for (count = 0; count < MAX_TANKS; count++) {
+    if (winboloNetPlayerKey[count][0] != '\0') {
+      cJSON_AddItemToArray(playerKeys, cJSON_CreateString(winboloNetPlayerKey[count]));
+    }
+  }
+  cJSON_AddItemToObject(body, "player_keys", playerKeys);
+
+  status = wbn_api_call("server/balance", body, &resp);
+  cJSON_Delete(body);
+
+  if (status != 200 || resp == NULL) {
+    serverSimConsoleMessage("WBN: Balance request failed");
+    cJSON_Delete(resp);
+    return FALSE;
+  }
+
+  /* Check for error in response */
+  {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net balance error: %s\n", errObj->valuestring);
+      serverSimConsoleMessage("WBN: Balance error from server");
+      cJSON_Delete(resp);
+      return FALSE;
+    }
+  }
+
+  /* Parse response teams object */
+  teams = cJSON_GetObjectItemCaseSensitive(resp, "teams");
+  if (teams == NULL || !cJSON_IsObject(teams)) {
+    serverSimConsoleMessage("WBN: Balance response missing teams");
+    cJSON_Delete(resp);
+    return FALSE;
+  }
+
+  /* Iterate each team in the teams object */
+  for (teamIdx = 0; ; teamIdx++) {
+    snprintf(teamId, sizeof(teamId), "%d", teamIdx);
+    teamArray = cJSON_GetObjectItemCaseSensitive(teams, teamId);
+    if (teamArray == NULL) {
+      break;
+    }
+
+    cJSON_ArrayForEach(entry, teamArray) {
+      if (cJSON_IsNull(entry)) {
+        continue; /* Unregistered player placeholder */
+      }
+      if (!cJSON_IsString(entry) || entry->valuestring == NULL) {
+        continue;
+      }
+      /* Map player_key back to slot index */
+      for (count = 0; count < MAX_TANKS; count++) {
+        if (winboloNetPlayerKey[count][0] != '\0' &&
+            strcmp(winboloNetPlayerKey[count], entry->valuestring) == 0) {
+          outProposal->teamForSlot[count] = (uint8_t)(teamIdx + 1); /* 1-indexed */
+          break;
+        }
+      }
+    }
+  }
+
+  outProposal->pending = TRUE;
+  cJSON_Delete(resp);
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          winbolonetServerUpdate
 *PURPOSE:
 * Sends a server update via POST /api/v1/server/update

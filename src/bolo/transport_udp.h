@@ -182,6 +182,15 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
 
+/* Request team balance from WBN (host only, enforcement is server-side). */
+void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize);
+
+/* Confirm and apply the current balance proposal. */
+void transportUdpClientSendBalanceApply(Transport *t);
+
+/* Dismiss the current balance proposal. */
+void transportUdpClientSendBalanceDismiss(Transport *t);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
@@ -287,6 +296,9 @@ void transportUdpServerBroadcastGameStart(struct ServerSim *sim);
 
 /* Broadcast game over signal to all connected clients. */
 void transportUdpServerBroadcastGameOver(struct ServerSim *sim);
+
+/* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
+void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
 
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */

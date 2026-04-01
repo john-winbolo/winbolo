@@ -446,6 +446,12 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         ServerState preTickState = serverSim.state;
         serverSimTick(&serverSim);
 
+        /* Check if a balance proposal just completed */
+        if (serverSim.balanceProposal.broadcastNeeded) {
+          transportUdpServerBroadcastBalanceProposal(&serverSim, serverSim.balanceProposal.teamForSlot);
+          serverSim.balanceProposal.broadcastNeeded = false;
+        }
+
         /* Handle state transitions */
         if (preTickState == serverStateCountdown) {
           if (serverSim.state == serverStateRunning) {

@@ -171,6 +171,10 @@ typedef struct ClientSim {
     uint8_t          lobbyPillCount;
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
+
+    /* Team balance proposal from WBN */
+    uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
+    bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
 } ClientSim;
 
 /* Lifecycle API — initializes/destroys the ClientSim struct */

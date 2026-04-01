@@ -239,6 +239,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_MAP_CHANGE  145  /* Server changed map, clients must re-download */
 #define PACKET_WBN_REAUTH       146  /* Client -> Server: re-authenticate WBN token after lobby reset */
 
+/* Team balance packets */
+#define PACKET_BALANCE_REQUEST   147  /* Client(host) -> Server: request WBN balance */
+#define PACKET_BALANCE_PROPOSAL  148  /* Server -> Clients: proposed team assignments */
+#define PACKET_BALANCE_APPLY     149  /* Client(host) -> Server: confirm and apply proposal */
+#define PACKET_BALANCE_DISMISS   150  /* Client(host) -> Server: dismiss proposal */
+
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
 #define ALLIANCE_EVENT_ACCEPT   1

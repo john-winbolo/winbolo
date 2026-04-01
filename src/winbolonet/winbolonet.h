@@ -32,6 +32,9 @@
 #include <string.h>
 #include "../bolo/global.h"
 
+/* Forward declaration — defined in server_sim.h */
+typedef struct BalanceProposal BalanceProposal;
+
 /* Size of key buffers (32-char hex string + null terminator) */
 #define WINBOLONET_KEY_LEN 33
 
@@ -315,5 +318,19 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
+
+/*********************************************************
+*NAME:          winbolonetServerRequestBalance
+*PURPOSE:
+* Calls the WBN API to get skill-based team assignments
+* for the current lobby players.
+* Returns TRUE on success, FALSE on failure.
+*
+*ARGUMENTS:
+* totalPlayers - Total number of player slots in the game
+* teamSize     - Desired team size
+* outProposal  - Output: filled BalanceProposal
+*********************************************************/
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal);
 
 #endif /* __WINBOLO_NET_H */

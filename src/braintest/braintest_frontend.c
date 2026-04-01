@@ -26,6 +26,7 @@
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/frontend.h"
+#include "../server/server_sim.h"
 
 void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   (void)shells; (void)mines; (void)armour; (void)trees;
@@ -192,6 +193,11 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FAL
 bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
   (void)token; (void)playerNum; (void)errorMsg;
   if (hasSteam) *hasSteam = FALSE;
+  return FALSE;
+}
+
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
+  (void)totalPlayers; (void)teamSize; (void)outProposal;
   return FALSE;
 }
 
