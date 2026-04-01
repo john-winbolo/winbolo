@@ -393,6 +393,7 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
               serverSimBuildWinMessage(&serverSim,
                                        serverSim.pendingWinMessage,
                                        sizeof(serverSim.pendingWinMessage));
+              serverSimSendWbnWinEvents(&serverSim);
               transportUdpServerBroadcastGameOver(&serverSim);
             }
           }
@@ -420,6 +421,7 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
               serverSimBuildWinMessage(&serverSim,
                                        serverSim.pendingWinMessage,
                                        sizeof(serverSim.pendingWinMessage));
+              serverSimSendWbnWinEvents(&serverSim);
               transportUdpServerBroadcastGameOver(&serverSim);
             }
           }
@@ -462,6 +464,10 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         }
         if (preTickState == serverStateGameOver &&
             serverSim.state == serverStateLobby) {
+          /* Flush remaining WBN events (win, final kills, etc.) */
+          winbolonetServerUpdate(serverSimGetNumPlayers(&serverSim),
+                                 serverSimGetNumNeutralBases(&serverSim),
+                                 serverSimGetNumNeutralPills(&serverSim), TRUE);
           /* Pick next map from rotation if mapdir is configured */
           if (serverSim.mapDirFiles != NULL) {
             serverSimMapDirPickRandom(&serverSim);

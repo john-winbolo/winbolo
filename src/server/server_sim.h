@@ -460,6 +460,15 @@ bool serverSimMapDirPickRandom(ServerSim *sim);
 void serverSimMapDirDestroy(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimSendWbnWinEvents
+ *PURPOSE:
+ *  Sends WINBOLO_NET_EVENT_WIN for each player in the
+ *  winning alliance. No-op if the game was not won by
+ *  a single alliance.
+ *********************************************************/
+void serverSimSendWbnWinEvents(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimBuildWinMessage
  *PURPOSE:
  *  Builds a message string listing the winners of the game.
