@@ -17,10 +17,12 @@ extern "C" {
 #include "../../bolo/screen.h"
 #include "../../bolo/players.h"
 #include "../../bolo/client_sim.h"
+#include "../sdl3/sdl3imgui.h"
 }
 
 #define MAX_PLAYERS 16
 #define PLAYER_NAME_LEN 33
+#define WBN_ICON_SIZE 14
 
 static bool sOpen = false;
 
@@ -106,7 +108,7 @@ extern "C" void playersPanelRender(void) {
     ImGui::BeginChild("##PlayerList", ImVec2(0, 0), ImGuiChildFlags_None);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         const char *label = sPlayerEnabled[i] ? sPlayerName[i] : nullptr;
-        char defLabel[8];
+        char defLabel[16];
         if (!label || label[0] == '\0') {
             snprintf(defLabel, sizeof(defLabel), "%d", i + 1);
             label = defLabel;
@@ -114,6 +116,24 @@ extern "C" void playersPanelRender(void) {
 
         if (sPlayerEnabled[i]) {
             uint16_t ping = playersGetPing(&humanSim->sim.plyrs, (BYTE)i);
+            bool wbn = playersGetWbnParticipant(&humanSim->sim.plyrs, (BYTE)i);
+            bool steam = playersGetSteamParticipant(&humanSim->sim.plyrs, (BYTE)i);
+
+            /* WBN/Steam icons */
+            if (wbn) {
+                SDL_Texture *globeTex = sdl3ImguiGetGlobeIcon();
+                if (globeTex) {
+                    ImGui::Image((ImTextureID)globeTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+                    ImGui::SameLine();
+                }
+            }
+            if (steam) {
+                SDL_Texture *steamTex = sdl3ImguiGetSteamIcon();
+                if (steamTex) {
+                    ImGui::Image((ImTextureID)steamTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+                    ImGui::SameLine();
+                }
+            }
 
             char checkId[48];
             snprintf(checkId, sizeof(checkId), "%s##p%d", label, i);

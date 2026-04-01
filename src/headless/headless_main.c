@@ -1262,7 +1262,7 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword);
+  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "");
   if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_ERROR) {
     const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");

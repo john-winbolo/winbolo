@@ -291,6 +291,8 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   CURL *curl = curl_easy_init();
   if (!curl) return -1;
 
+  strcpy(wbnBaseUrl, "http://192.168.42.200:8081");
+
   /* Build URL: <baseUrl>/api/v1/<endpoint> */
   char url[FILENAME_MAX + 64];
   snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
@@ -332,6 +334,9 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_post: POST %s\n", url);
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_post: body=%s\n", json_body);
+
   CURLcode res = curl_easy_perform(curl);
 
   long http_code = 0;
@@ -341,10 +346,13 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   curl_easy_cleanup(curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net wbn_api_post [%s]: %s\n", endpoint, curl_easy_strerror(res));
+    fprintf(stderr, "WinBolo.net DEBUG wbn_api_post [%s]: curl error: %s\n", endpoint, curl_easy_strerror(res));
     free(respBuf.data);
     return -1;
   }
+
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_post [%s]: HTTP %ld, response=%s\n",
+          endpoint, http_code, respBuf.data ? respBuf.data : "(null)");
 
   if (response_out) {
     *response_out = respBuf.data;

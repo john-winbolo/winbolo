@@ -992,6 +992,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->pingMs = sim->playerPing[i];
         ts->accountFlags = (playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x01 : 0)
                          | (playersGetSteamParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x02 : 0);
+        { static bool _snaplg[16] = {0};
+          if (!_snaplg[i] && ts->accountFlags != 0) {
+            _snaplg[i] = 1;
+            SDL_Log("[WBN SNAP] player %d accountFlags=0x%02x", i, ts->accountFlags);
+          }
+        }
 
         /* Resources: only send to the owning player */
         if (i == clientIdx) {

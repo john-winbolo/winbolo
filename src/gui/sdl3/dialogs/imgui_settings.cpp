@@ -142,7 +142,10 @@ extern "C" void imguiSettingsShow(void) {
     bool hasBg = (bg != nullptr);
     Uint64 lastTickTime = SDL_GetTicks();
 
-    bool pendingWbn = false;
+    /* Initialise WBN popup state and kick off token validation */
+    imguiWinbolonetReset();
+    imguiWinbolonetStartValidation();
+
     bool running = true;
 
     while (running) {
@@ -215,9 +218,15 @@ extern "C" void imguiSettingsShow(void) {
 
         /* ---- Player ---- */
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool wbnActive = gameFrontGetWinbolonetUse();
+            if (wbnActive) {
+                /* Refresh local buffer from gameFront in case WBN login just set it */
+                gameFrontGetPlayerName(playerName);
+            }
             ImGui::Text("Player Name:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(200);
+            if (wbnActive) ImGui::BeginDisabled();
             if (ImGui::InputText("##playerName", playerName, 33,
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
                 playerName[32] = '\0';
@@ -232,11 +241,10 @@ extern "C" void imguiSettingsShow(void) {
                     gameFrontSetPlayerName(playerName);
                 }
             }
+            if (wbnActive) ImGui::EndDisabled();
 
             ImGui::Spacing();
-            if (ImGui::Button("Sign in to WBN...")) {
-                pendingWbn = true;
-            }
+            imguiWinbolonetDrawSection(false);
         }
 
         /* ---- Display ---- */
@@ -407,37 +415,6 @@ extern "C" void imguiSettingsShow(void) {
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
         dialogFrameCapEnd(frameCapStart);
-
-        /* Deferred WBN dialog -- must run outside our frame */
-        if (pendingWbn) {
-            pendingWbn = false;
-            ImGui_ImplSDLRenderer3_Shutdown();
-            ImGui_ImplSDL3_Shutdown();
-            ImGui::DestroyContext();
-
-            imguiWinbolonetShow();
-
-            /* Re-create our context */
-            IMGUI_CHECKVERSION();
-            ImGui::CreateContext();
-            ImGuiIO &rio = ImGui::GetIO();
-            rio.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-            rio.IniFilename = nullptr;
-            ImGui::StyleColorsDark();
-            imguiApplyBoloTheme();
-            ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
-            ImGui_ImplSDLRenderer3_Init(renderer);
-            dialogApplyScaling(s);
-
-#if !BOLO_MOBILE
-            dialogSetWindowSize(window, 1024, 768);
-            dialogSetWindowTitle(window, "WinBolo - Settings");
-            SDL_SetWindowResizable(window, true);
-#endif
-
-            /* Refresh player name in case WBN changed it */
-            gameFrontGetPlayerName(playerName);
-        }
     }
 
     dialogDismissKeyboard(window);

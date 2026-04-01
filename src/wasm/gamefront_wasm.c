@@ -121,9 +121,9 @@ unsigned short gameFrontTrackerPort;
 bool gameFrontTrackerEnabled;
 
 /* Winbolo.net settings */
-char gameFrontWbnPass[FILENAME_MAX];
+char gameFrontWbnToken[FILENAME_MAX];
+char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
-bool gameFrontWbnSavePass;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -251,9 +251,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   strcpy(gameFrontTrackerAddr, TRACKER_ADDRESS);
   gameFrontTrackerPort = TRACKER_PORT;
   gameFrontTrackerEnabled = FALSE;
-  gameFrontWbnPass[0] = '\0';
+  gameFrontWbnToken[0] = '\0';
+  gameFrontWbnTokenExpiry[0] = '\0';
   gameFrontWbnUse = FALSE;
-  gameFrontWbnSavePass = FALSE;
   gameFrontRemeber = FALSE;
 
   /* Default game options */
@@ -352,7 +352,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     printf("[WASM] Connecting via UDP transport...\n");
     wasmTransport = transportUdpClientCreate(humanSim, gameFrontUdpAddress,
                                               gameFrontTargetUdp,
-                                              gameFrontName, password);
+                                              gameFrontName, password,
+                                              gameFrontWbnUse ? gameFrontWbnToken : "");
     if (transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&wasmTransport);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
@@ -647,16 +648,25 @@ void gameFrontSetTrackerOptions(char *address, unsigned short port, bool enabled
 
 void gameFrontEnableRejoin(void)       { wantRejoin = TRUE; }
 
-void gameFrontSetWinbolonetSettings(char *pw, bool useWbn, bool savePass) {
-  strcpy(gameFrontWbnPass, pw);
-  gameFrontWbnUse = useWbn;
-  gameFrontWbnSavePass = savePass;
+void gameFrontSetWinbolonetToken(const char *token, const char *expiry) {
+  SDL_strlcpy(gameFrontWbnToken, token, FILENAME_MAX);
+  SDL_strlcpy(gameFrontWbnTokenExpiry, expiry, FILENAME_MAX);
+  gameFrontWbnUse = (token[0] != '\0');
 }
 
-void gameFrontGetWinbolonetSettings(char *pw, bool *useWbn, bool *savePass) {
-  *useWbn = gameFrontWbnUse;
-  *savePass = gameFrontWbnSavePass;
-  strcpy(pw, gameFrontWbnPass);
+void gameFrontGetWinbolonetToken(char *token, char *expiry) {
+  strcpy(token, gameFrontWbnToken);
+  strcpy(expiry, gameFrontWbnTokenExpiry);
+}
+
+void gameFrontClearWinbolonetToken(void) {
+  gameFrontWbnToken[0] = '\0';
+  gameFrontWbnTokenExpiry[0] = '\0';
+  gameFrontWbnUse = FALSE;
+}
+
+bool gameFrontGetWinbolonetUse(void) {
+  return gameFrontWbnUse;
 }
 
 bool gameFrontLoadDeferredMap(ClientSim *cs)   { (void)cs; return FALSE; }

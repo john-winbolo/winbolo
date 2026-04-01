@@ -159,6 +159,16 @@ void sdl3ImguiClearPlayer(unsigned char playerNum);
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked);
 void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping, bool wbn, bool steam);
 
+/*********************************************************
+*NAME:          sdl3ImguiGetGlobeIcon / GetSteamIcon
+*PURPOSE:
+*  Returns the SDL_Texture for the WBN globe or Steam icon.
+*  Loads the SVGs lazily on first call.  Returns NULL if
+*  the SVG could not be loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiGetGlobeIcon(void);
+SDL_Texture *sdl3ImguiGetSteamIcon(void);
+
 #ifdef __cplusplus
 }
 #endif
