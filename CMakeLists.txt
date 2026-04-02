@@ -563,6 +563,7 @@ if(WIN32)
     set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
     set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
     set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(curl)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
     # Provide the CURL::libcurl alias that the rest of the build expects
@@ -1289,6 +1290,16 @@ add_custom_command(TARGET BrainTest POST_BUILD
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
 )
+
+# MinGW: statically link the GCC/C++ runtime so the executables don't need
+# libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
+if(MINGW)
+    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless BrainTest)
+        if(TARGET ${_tgt})
+            target_link_options(${_tgt} PRIVATE -static)
+        endif()
+    endforeach()
+endif()
 
 set_flat_output(LogViewer        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBolo          "${CMAKE_BINARY_DIR}")
