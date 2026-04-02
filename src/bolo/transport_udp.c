@@ -1052,6 +1052,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* [header 8] */
         c->clientSim->netStat = netRunning;
         c->clientSim->countdownSeconds = 0;
+        /* Reset input ring so stale inputs from the previous game
+         * are not sent as redundant packets in the new game. */
+        c->inputRingCount = 0;
+        /* Reset reliable event ack so it matches the server's reset queue.
+         * Stale events from the previous game must not be applied to
+         * the freshly-loaded map. */
+        c->reliableEventAck = 1;
+        /* Discard any snapshot buffered during the lobby/gameOver
+         * transition.  A late STATE_SNAPSHOT from the previous game
+         * can sit in hasSnapshot because the lobby tick path calls
+         * transport->tick() but never getSnapshot().  If this stale
+         * snapshot carries EVENT_MAP_CHANGE events from the old game,
+         * they would overwrite the freshly-loaded new map. */
+        c->hasSnapshot = false;
         break;
 
     case PACKET_GAME_OVER:
@@ -1060,6 +1074,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->netStat = netLobby;
             c->clientSim->countdownSeconds = 0;
             c->clientSim->lobbyChatHistory[0] = '\0';
+            /* Reset timeout tracking — the server won't send snapshots
+             * during gameOver countdown, and the client's catch-up loop
+             * advances localTick rapidly which can trigger a spurious
+             * timeout before the game loop exits to the lobby. */
+            c->lastSnapshotTick = c->localTick;
         } else {
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
@@ -1069,6 +1088,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* [header 8] – server loaded a new map; reset to re-download */
         c->clientSim->mapDownloadComplete = false;
         c->joinState = UDP_CLIENT_JOINING;
+        c->joinAttempts = 0;
+        c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
         break;
 
     case PACKET_BALANCE_PROPOSAL:
@@ -1146,8 +1167,13 @@ static bool udpClientTick(void *ctx) {
         }
 
         /* Timeout: if no snapshot received for CLIENT_TIMEOUT_TICKS,
-         * the server has likely crashed or network is dead */
+         * the server has likely crashed or network is dead.
+         * Skip when in lobby — the server doesn't send snapshots during
+         * gameOver countdown or lobby state, and the catch-up loop can
+         * advance localTick far beyond lastSnapshotTick. */
         if (c->lastSnapshotTick > 0 &&
+            c->clientSim->netStat != netLobby &&
+            c->clientSim->netStat != netLobbyCountdown &&
             c->localTick - c->lastSnapshotTick >= CLIENT_TIMEOUT_TICKS) {
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
@@ -2068,7 +2094,9 @@ static void serverHandleInput(const uint8_t *buf, int len,
     udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
 
     /* Only process inputs during running state — silently discard otherwise */
-    if (sim->state != serverStateRunning) return;
+    if (sim->state != serverStateRunning) {
+        return;
+    }
 
     if (len < pos + 1) return;
     inputCount = buf[pos++];
@@ -2630,7 +2658,14 @@ void transportUdpServerBroadcastGameStart(ServerSim *sim) {
             /* Clients reload the map on game start which wipes their player
                data.  Re-send the player list so names are restored. */
             udpServer.clients[i].needsPlayerList = true;
+            /* Ensure map download is considered complete so snapshots
+             * are sent during the game even if a final chunk ack was lost. */
+            udpServer.mapDownload[i].downloadComplete = TRUE;
         }
+        /* Reset reliable event queue — stale events from the previous game
+         * must not be resent after clients load the fresh map. */
+        udpServer.eventQueues[i].nextSeq = 1;
+        udpServer.eventQueues[i].ackedSeq = 1;
     }
 }
 
@@ -2697,6 +2732,13 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
     strncpy(udpServer.clients[playerNum].playerName, name,
             PACKET_MAX_PLAYER_NAME - 1);
     udpServer.clients[playerNum].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+}
+
+const char *transportUdpServerGetPlayerName(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+        return NULL;
+    }
+    return udpServer.clients[playerNum].playerName;
 }
 
 /* Send an INFO_RESPONSE packet to the tracker so the game is listed. */
@@ -2783,7 +2825,6 @@ void transportUdpServerRecv(ServerSim *sim) {
                     packetTypeName(pktType), pktType, len,
                     inet_ntoa(fromAddr.sin_addr), ntohs(fromAddr.sin_port));
         }
-
         switch (pktType) {
         case PACKET_JOIN_REQUEST:
             serverHandleJoinRequest(buf, len, &fromAddr, sim);

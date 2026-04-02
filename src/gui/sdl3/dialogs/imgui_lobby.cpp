@@ -299,6 +299,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     /* Map preview texture state */
     SDL_Texture *mapPreviewTex = NULL;
     bool mapPreviewBuilt = false;
+    bool prevMapDownloadComplete = cs->mapDownloadComplete;
     MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
 
 #if BOLO_MOBILE
@@ -357,6 +358,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 break;
             }
         }
+
+        /* Reset preview when a map change invalidates the download */
+        if (!cs->mapDownloadComplete && prevMapDownloadComplete) {
+            mapPreviewBuilt = false;
+            if (mapPreviewTex) {
+                SDL_DestroyTexture(mapPreviewTex);
+                mapPreviewTex = NULL;
+            }
+        }
+        prevMapDownloadComplete = cs->mapDownloadComplete;
 
         /* Build map preview once download completes */
         if (cs->mapDownloadComplete && !mapPreviewBuilt && transport) {

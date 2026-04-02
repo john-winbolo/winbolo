@@ -326,6 +326,15 @@ void sdl3DrawNetFailed(void);
 void sdl3DrawPillInView(void);
 
 /*********************************************************
+*NAME:          sdl3DrawResetCachedText
+*PURPOSE:
+*  Clears cached message strings, kills/deaths, and
+*  destroys their texture caches.  Call on game start so
+*  stale text from the previous round is not displayed.
+*********************************************************/
+void sdl3DrawResetCachedText(void);
+
+/*********************************************************
 *NAME:          sdl3DrawMessages
 *PURPOSE:
 *  Renders the two-line scrolling message box at the
