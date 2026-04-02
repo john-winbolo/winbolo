@@ -32,6 +32,9 @@
 #include <string.h>
 #include "../bolo/global.h"
 
+/* Forward declaration — defined in server_sim.h */
+typedef struct BalanceProposal BalanceProposal;
+
 /* Size of key buffers (32-char hex string + null terminator) */
 #define WINBOLONET_KEY_LEN 33
 
@@ -251,6 +254,56 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum);
 void winboloNetSendLock(bool isLocked);
 
 /*********************************************************
+*NAME:          winbolonetSendMapChange
+*PURPOSE:
+* Notifies WinBolo.net that the map changed during the
+* lobby (e.g. via skip vote). POSTs to /api/v1/server/map.
+*
+*ARGUMENTS:
+* mapName   - Name of the new map
+* numBases  - Number of bases on the new map
+* numPills  - Number of pills on the new map
+* freeBases - Free bases (all, since lobby)
+* freePills - Free pills (all, since lobby)
+*********************************************************/
+void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills);
+
+/*********************************************************
+*NAME:          winbolonetReturnToLobby
+*PURPOSE:
+* Handles the WBN session cycle when the server returns to
+* the lobby between rounds. Quits the old session, clears
+* player keys and events, and registers a new session with
+* the new map/settings. HTTP layer is preserved.
+* Returns TRUE on success, FALSE on registration failure.
+*
+*ARGUMENTS:
+* mapName    - Name of the new map
+* port       - Port we are running on
+* gameType   - Game Type
+* ai         - Is AI allowed
+* mines      - Mines allowed
+* password   - Has password
+* numBases   - Number of bases
+* numPills   - Number of pills
+* freeBases  - Free bases
+* freePills  - Free pills
+* numPlayers - Number of players in the game
+*********************************************************/
+bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
+
+/*********************************************************
+*NAME:          winbolonetSendLobbyStatus
+*PURPOSE:
+* Notifies WinBolo.net whether this server is currently in
+* the lobby or in-game. POSTs to /api/v1/server/lobby.
+*
+*ARGUMENTS:
+* inLobby - TRUE if server is in lobby state
+*********************************************************/
+void winbolonetSendLobbyStatus(bool inLobby);
+
+/*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
 * Authenticates with WinBolo.net via POST /api/v1/auth/login.
@@ -280,5 +333,19 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
+
+/*********************************************************
+*NAME:          winbolonetServerRequestBalance
+*PURPOSE:
+* Calls the WBN API to get skill-based team assignments
+* for the current lobby players.
+* Returns TRUE on success, FALSE on failure.
+*
+*ARGUMENTS:
+* totalPlayers - Total number of player slots in the game
+* teamSize     - Desired team size
+* outProposal  - Output: filled BalanceProposal
+*********************************************************/
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal);
 
 #endif /* __WINBOLO_NET_H */

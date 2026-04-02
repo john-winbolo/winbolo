@@ -179,6 +179,21 @@ void transportUdpClientSendAddBot(Transport *t);
 /* Request server remove a bot at the given slot. */
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
 
+/* Re-authenticate WBN token after lobby reset between rounds. */
+void transportUdpClientSendWbnReauth(Transport *t);
+
+/* Request team balance from WBN (host only, enforcement is server-side). */
+void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize);
+
+/* Confirm and apply the current balance proposal. */
+void transportUdpClientSendBalanceApply(Transport *t);
+
+/* Dismiss the current balance proposal. */
+void transportUdpClientSendBalanceDismiss(Transport *t);
+
+/* Toggle map skip vote (server identifies player by source address). */
+void transportUdpClientSendMapSkipVote(Transport *t);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
@@ -285,9 +300,22 @@ void transportUdpServerBroadcastGameStart(struct ServerSim *sim);
 /* Broadcast game over signal to all connected clients. */
 void transportUdpServerBroadcastGameOver(struct ServerSim *sim);
 
+/* Notify all connected clients that the map has changed, refresh the
+ * server's compressed map data, and trigger re-download for each client. */
+void transportUdpServerNotifyMapChange(struct ServerSim *sim);
+
+/* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
+void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
+
+/* Broadcast the current map skip vote state (one byte per slot) to all clients. */
+void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim);
+
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);
+
+/* Get a connected client's player name (NULL if slot invalid/disconnected). */
+const char *transportUdpServerGetPlayerName(BYTE playerNum);
 
 /* Send an INFO_RESPONSE packet to the tracker server so the game
  * appears in the server browser. */

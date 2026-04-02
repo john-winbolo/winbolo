@@ -159,6 +159,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Restore try_compile mode now that all probing dependencies are fetched
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
+    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages
+    if(MINGW)
+        set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
+        set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
+    endif()
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
 
@@ -455,7 +460,7 @@ set_source_files_properties(${IOS_DATA_BMP} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data"
 )
 set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "data/fonts"
+    MACOSX_PACKAGE_LOCATION "data"
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
@@ -558,6 +563,7 @@ if(WIN32)
     set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
     set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
     set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(curl)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_CURL}" CACHE BOOL "" FORCE)
     # Provide the CURL::libcurl alias that the rest of the build expects
@@ -1284,6 +1290,16 @@ add_custom_command(TARGET BrainTest POST_BUILD
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
 )
+
+# MinGW: statically link the GCC/C++ runtime so the executables don't need
+# libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
+if(MINGW)
+    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless BrainTest)
+        if(TARGET ${_tgt})
+            target_link_options(${_tgt} PRIVATE -static)
+        endif()
+    endforeach()
+endif()
 
 set_flat_output(LogViewer        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBolo          "${CMAKE_BINARY_DIR}")

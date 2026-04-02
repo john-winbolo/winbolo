@@ -388,6 +388,12 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
           /* If game ended during this tick, broadcast game-over */
           if (preTickState == serverStateRunning && serverSim.state == serverStateGameOver) {
             if (serverSim.lobbyEnabled) {
+              /* Capture win message now while game state is intact;
+               * it will be sent after players return to the lobby. */
+              serverSimBuildWinMessage(&serverSim,
+                                       serverSim.pendingWinMessage,
+                                       sizeof(serverSim.pendingWinMessage));
+              serverSimSendWbnWinEvents(&serverSim);
               transportUdpServerBroadcastGameOver(&serverSim);
             }
           }
@@ -412,6 +418,10 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
           /* If game ended during this tick, broadcast game-over */
           if (preTickState == serverStateRunning && serverSim.state == serverStateGameOver) {
             if (serverSim.lobbyEnabled) {
+              serverSimBuildWinMessage(&serverSim,
+                                       serverSim.pendingWinMessage,
+                                       sizeof(serverSim.pendingWinMessage));
+              serverSimSendWbnWinEvents(&serverSim);
               transportUdpServerBroadcastGameOver(&serverSim);
             }
           }
@@ -436,6 +446,12 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         ServerState preTickState = serverSim.state;
         serverSimTick(&serverSim);
 
+        /* Check if a balance proposal just completed */
+        if (serverSim.balanceProposal.broadcastNeeded) {
+          transportUdpServerBroadcastBalanceProposal(&serverSim, serverSim.balanceProposal.teamForSlot);
+          serverSim.balanceProposal.broadcastNeeded = false;
+        }
+
         /* Handle state transitions */
         if (preTickState == serverStateCountdown) {
           if (serverSim.state == serverStateRunning) {
@@ -443,6 +459,19 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
             transportUdpServerBroadcastGameStart(&serverSim);
             if (botManagerGetNumBots() > 0) {
               botManagerOnGameStart(&serverSim);
+            }
+            /* Notify WBN that we are now in-game */
+            winbolonetSendLobbyStatus(FALSE);
+            /* Send EVENT_PLAYER_JOIN for each connected WBN player */
+            {
+              BYTE pi;
+              for (pi = 0; pi < MAX_TANKS; pi++) {
+                if (serverSim.playerConnected[pi] &&
+                    winboloNetIsPlayerParticipant(pi)) {
+                  winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                                     pi, WINBOLO_NET_NO_PLAYER);
+                }
+              }
             }
           } else if (serverSim.state == serverStateCountdown &&
                      serverSim.countdownTicks > 0 &&
@@ -454,8 +483,36 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
         }
         if (preTickState == serverStateGameOver &&
             serverSim.state == serverStateLobby) {
+          /* Flush remaining WBN events (win, final kills, etc.) */
+          winbolonetServerUpdate(serverSimGetNumPlayers(&serverSim),
+                                 serverSimGetNumNeutralBases(&serverSim),
+                                 serverSimGetNumNeutralPills(&serverSim), TRUE);
+          /* Pick next map from rotation if mapdir is configured */
+          if (serverSim.mapDirFiles != NULL) {
+            serverSimMapDirPickRandom(&serverSim);
+            transportUdpServerNotifyMapChange(&serverSim);
+          }
+          /* Re-register with WBN for the new round */
+          if (winbolonetIsRunning()) {
+            winbolonetReturnToLobby(
+              serverSim.mapName, serverSim.serverPort,
+              (BYTE)gameTypeGet(&serverSim.sim.game),
+              (BYTE)serverSim.botAiType,
+              (BYTE)serverSim.sim.hiddenMines,
+              serverSim.hasPassword,
+              basesGetNumBases(&serverSim.sim.bs),
+              pillsGetNumPills(&serverSim.sim.pb),
+              serverSimGetNumNeutralBases(&serverSim),
+              serverSimGetNumNeutralPills(&serverSim),
+              serverSimGetNumPlayers(&serverSim));
+          }
           /* Returned to lobby — broadcast full lobby state */
           transportUdpServerBroadcastLobbyState(&serverSim);
+          /* Send the win message now that players are back in the lobby */
+          if (serverSim.pendingWinMessage[0] != '\0') {
+            transportUdpServerSendServerMessage(serverSim.pendingWinMessage);
+            serverSim.pendingWinMessage[0] = '\0';
+          }
         }
 
         /* Periodic lobby snapshot — twice per second (every 25 ticks)
@@ -475,6 +532,43 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
       if (serverSim.autoCloseOnEmpty && serverSimCheckAutoClose(&serverSim)) {
         serverSim.lobbyEnabled = FALSE;
         serverSimEnterGameOver(&serverSim);
+      }
+
+      /* Empty reset check — when enabled and no players are connected,
+       * count down and reset to lobby with map reload after the timeout.
+       * Skipped if autoCloseOnEmpty is active (it takes priority). */
+      if (serverSim.emptyResetEnabled && !serverSim.autoCloseOnEmpty &&
+          serverSim.lobbyEnabled &&
+          serverSim.state != serverStateGameOver &&
+          serverSim.state != serverStateLobby &&
+          serverSim.state != serverStateCountdown &&
+          serverSimCheckEmptyReset(&serverSim)) {
+        serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
+        serverSimResetGameWorld(&serverSim);
+        serverSim.state = serverStateLobby;
+        serverSim.gameLength = serverSim.originalGameLength;
+        serverSim.hadPlayersEver = FALSE;
+        serverSim.emptyResetTicks = -1;
+        /* Pick next map from rotation if mapdir is configured */
+        if (serverSim.mapDirFiles != NULL) {
+          serverSimMapDirPickRandom(&serverSim);
+          transportUdpServerNotifyMapChange(&serverSim);
+        }
+        /* Re-register with WBN for the new round */
+        if (winbolonetIsRunning()) {
+          winbolonetReturnToLobby(
+            serverSim.mapName, serverSim.serverPort,
+            (BYTE)gameTypeGet(&serverSim.sim.game),
+            (BYTE)serverSim.botAiType,
+            (BYTE)serverSim.sim.hiddenMines,
+            serverSim.hasPassword,
+            basesGetNumBases(&serverSim.sim.bs),
+            pillsGetNumPills(&serverSim.sim.pb),
+            serverSimGetNumNeutralBases(&serverSim),
+            serverSimGetNumNeutralPills(&serverSim),
+            serverSimGetNumPlayers(&serverSim));
+        }
+        transportUdpServerBroadcastLobbyState(&serverSim);
       }
 
       threadsReleaseMutex();
@@ -510,6 +604,9 @@ void printArgs() {
 #endif
   fprintf(stderr, "<Filename>    - Path and file name of the map file to open (-inbuilt can be used\n");
   fprintf(stderr, "                instead of -map to enable inbuilt map Everard Island)\n");
+  fprintf(stderr, "-mapdir <Dir> - Directory of .map files for random rotation between rounds.\n");
+  fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
+  fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
   fprintf(stderr, "<Port>        - Port to run the server on\n");
   fprintf(stderr, "<GameType>    - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
   fprintf(stderr, "\nOptional\n");
@@ -546,6 +643,9 @@ void printArgs() {
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
+  fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
+  fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
+  fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
 }
 
 
@@ -651,6 +751,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
     mapName[2047] = '\0';
   } else if (argExist(numArgs, argv, "inbuilt") == TRUE) {
     strcpy(mapName, "-inbuilt");
+  } else if (argExist(numArgs, argv, "mapdir") == TRUE) {
+    /* -mapdir without -map: will pick random map after directory scan */
+    strcpy(mapName, "-mapdir");
   } else {
     fprintf(stderr, "Missing map file\n");
     returnValue = FALSE;
@@ -895,6 +998,31 @@ int main(int argc, char **argv) {
     }
     strncpy(serverSim.mapName, "Everard Island", MAP_STR_SIZE - 1);
     serverSim.mapName[MAP_STR_SIZE - 1] = '\0';
+  } else if (strcmp(mapName, "-mapdir") == 0) {
+    /* -mapdir without -map: build the map list into a temporary, then pick
+     * a random initial map. serverSimCreate zeroes the struct, so we restore
+     * the list after creation. */
+    char **savedFiles;
+    int savedCount;
+    int mdArg = findArg(argc, argv, "mapdir");
+    srand((unsigned int)time(NULL));
+    if (serverSimMapDirBuild(&serverSim, (char *)argv[mdArg]) == FALSE) {
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+    savedFiles = serverSim.mapDirFiles;
+    savedCount = serverSim.mapDirCount;
+    if (serverSimCreate(&serverSim, savedFiles[rand() % savedCount], game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+      fprintf(stderr, "Error starting server simulation\n");
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+    serverSim.mapDirFiles = savedFiles;
+    serverSim.mapDirCount = savedCount;
   } else {
     if (serverSimCreate(&serverSim, mapName, game, hiddenMines, srtDelay, gmeLen) == FALSE) {
       fprintf(stderr, "Error starting server simulation\n");
@@ -916,10 +1044,46 @@ int main(int argc, char **argv) {
   serverSim.quitOnWin = argExist(argc, argv, "quitonwin");
   serverSim.autoCloseOnEmpty = argExist(argc, argv, "autoclose");
 
+  /* Empty reset configuration — on by default */
+  if (argExist(argc, argv, "noemptyreset") == TRUE) {
+    serverSim.emptyResetEnabled = FALSE;
+  }
+  {
+    int argNum = findArg(argc, argv, "emptyresetmins");
+    if (argNum != ARG_NOT_FOUND) {
+      int mins = atoi((char *)argv[argNum]);
+      if (mins > 0) {
+        serverSim.emptyResetMinutes = mins;
+      }
+    }
+  }
+
   /* -nolobby: skip lobby, start running immediately (backward-compatible mode) */
   if (argExist(argc, argv, "nolobby") == TRUE) {
     serverSim.lobbyEnabled = FALSE;
+    serverSim.emptyResetEnabled = FALSE;
     serverSim.state = serverStateRunning;
+  }
+
+  /* -mapdir: build validated map list for rotation between rounds.
+   * Skip if already built (the -mapdir without -map case builds it earlier). */
+  {
+    int argNum = findArg(argc, argv, "mapdir");
+    if (argNum != ARG_NOT_FOUND && serverSim.mapDirFiles == NULL) {
+      if (!serverSim.lobbyEnabled) {
+        fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
+      }
+      if (serverSimMapDirBuild(&serverSim, (char *)argv[argNum]) == FALSE) {
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
+      }
+    }
   }
 
   /* Create UDP transport */
@@ -940,8 +1104,13 @@ int main(int argc, char **argv) {
     }
   }
 
+  serverSim.hasPassword = (pass[0] != '\0');
   if (argExist(argc, argv, "nowinbolonet") == FALSE) {
-    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) (pass[0] == 0 ? FALSE : TRUE), basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
+    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) serverSim.hasPassword, basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
+    /* If no lobby, immediately mark as in-game on WBN */
+    if (!serverSim.lobbyEnabled) {
+      winbolonetSendLobbyStatus(FALSE);
+    }
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 
@@ -1053,6 +1222,7 @@ int main(int argc, char **argv) {
   geoLookupDestroy();
   transportUdpServerDestroy();
   botManagerDestroy(&serverSim);
+  serverSimMapDirDestroy(&serverSim);
   serverSimDestroy(&serverSim);
 #ifdef _WIN32
   WSACleanup();
