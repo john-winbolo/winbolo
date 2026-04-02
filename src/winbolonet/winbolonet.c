@@ -844,6 +844,37 @@ void winbolonetSendLobbyStatus(bool inLobby) {
 }
 
 /*********************************************************
+*NAME:          winbolonetSendMapChange
+*PURPOSE:
+* Notifies WinBolo.net that the map changed during the
+* lobby (e.g. via skip vote). POSTs to /api/v1/server/map.
+* Queued via background thread (fire-and-forget).
+*********************************************************/
+void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
+  cJSON *body = NULL;
+  char *json_str;
+
+  if (winboloNetRunning != TRUE) {
+    return;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "map", mapName);
+  cJSON_AddNumberToObject(body, "num_bases", numBases);
+  cJSON_AddNumberToObject(body, "num_pills", numPills);
+  cJSON_AddNumberToObject(body, "free_bases", freeBases);
+  cJSON_AddNumberToObject(body, "free_pills", freePills);
+
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddRequest("server/map", json_str);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+}
+
+/*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
 * Authenticates via POST /api/v1/auth/login and returns
