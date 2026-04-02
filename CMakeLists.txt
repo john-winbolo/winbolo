@@ -774,19 +774,26 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBolo PRIVATE onnxruntime::onnxruntime)
 endif()
 
-# Copy data assets to output directory after build
+# Copy data assets and brain scripts to the correct location.
+# On macOS bundles, SDL_GetBasePath() returns Contents/Resources/, so assets go there.
+# On Windows/Linux, they go next to the executable.
+if(APPLE)
+    set(WINBOLO_DATA_DIR "$<TARGET_FILE_DIR:WinBolo>/../Resources")
+else()
+    set(WINBOLO_DATA_DIR "$<TARGET_FILE_DIR:WinBolo>")
+endif()
+
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:WinBolo>/data"
+        "${CMAKE_SOURCE_DIR}/data" "${WINBOLO_DATA_DIR}/data"
     COMMENT "Copying WinBolo data files to output directory"
 )
 
-# Copy Lua brain scripts to output Brains/ directory
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBolo>/Brains"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:WinBolo>/Brains/NewAutopilot"
+        "${WINBOLO_DATA_DIR}/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to output Brains/ directory"
 )
 

@@ -37,6 +37,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#ifdef _WIN32
+#include <direct.h>
+#define chdir _chdir
+#else
+#include <unistd.h>
+#endif
 
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
@@ -196,6 +202,18 @@ int main(int argc, char *argv[]) {
 #endif
 
   SDL_Init(0);
+
+  /* Set working directory to the executable's location so that relative
+     paths like "data/svg/..." resolve correctly.  On macOS this is
+     essential when launched as an app bundle (cwd defaults to /).
+     iOS already does this in winbolo_ios.m. */
+  {
+    const char *basePath = SDL_GetBasePath();
+    if (basePath) {
+      chdir(basePath);
+    }
+  }
+
   initWinboloTimer();
 
   if (clientMutexCreate() == FALSE) {

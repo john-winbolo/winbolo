@@ -276,12 +276,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
 
-  /* Process the command line argument */
-  if (cmdLine != NULL) {
-    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
-    fileName[FILENAME_MAX - 1] = '\0';
-  } else {
-    fileName[0] = '\0';
+  /* Process the command line argument.
+     If fileName already contains a pending winbolo:// URL (set by
+     gameFrontHandleUrlOpen), keep it so the URL handler below picks it up. */
+  if (strncmp(fileName, "winbolo://", 10) != 0) {
+    if (cmdLine != NULL) {
+      strncpy(fileName, cmdLine, FILENAME_MAX - 1);
+      fileName[FILENAME_MAX - 1] = '\0';
+    } else {
+      fileName[0] = '\0';
+    }
   }
 
   /* Initialise game subsystems */
@@ -1154,6 +1158,24 @@ void gameFrontSetAddressFromWebLink(char *address) {
     if (tok != NULL) {
       gameFrontTargetUdp = atoi(tok);
     }
+  }
+}
+
+void gameFrontHandleUrlOpen(char *url) {
+  if (strncmp(url, "winbolo://", 10) == 0 && strcmp(url, "winbolo:///") != 0) {
+    /* Parse address/port from the url parameter (gameFrontSetAddressFromWebLink
+       uses strtok which modifies the string in place). Then store the original
+       URL in fileName so gameFrontStart() can pick it up on restart. */
+    gameFrontSetAddressFromWebLink(url);
+    strncpy(fileName, "winbolo://", FILENAME_MAX - 1);
+    /* Reconstruct a clean URL from the parsed globals so fileName
+       is not mangled by strtok. */
+    if (gameFrontTargetUdp > 0) {
+      snprintf(fileName, FILENAME_MAX, "winbolo://%s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
+    } else {
+      snprintf(fileName, FILENAME_MAX, "winbolo://%s", gameFrontUdpAddress);
+    }
+    dlgState = openInternetManual;
   }
 }
 

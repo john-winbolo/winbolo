@@ -292,6 +292,12 @@ static BYTE s_alliancePlayerNum  = 0;
 static bool s_showPasswordOpen   = false;
 static char s_passwordBuf[36]    = "";  /* MAP_STR_SIZE = 36 */
 
+/* "Join Game?" confirmation when a winbolo:// URL is received mid-game */
+static bool s_showJoinConfirm       = false;
+static char s_joinConfirmUrl[512]   = "";
+static char s_joinConfirmAddr[256]  = "";
+static int  s_joinConfirmPort       = 0;
+
 /* Key Setup modal state */
 /* Which binding is currently being captured; -1 = none */
 enum KeySetupField {
@@ -983,6 +989,43 @@ static void renderAboutModal(void) {
         ImGui::Spacing();
         if (ImGui::Button("OK", ImVec2(120, 0)))
             ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+/* -------------------------------------------------------
+ * "Join Game?" confirmation modal — shown when a winbolo://
+ * URL is received while already in a game.
+ * ------------------------------------------------------- */
+static void renderJoinConfirmModal(void) {
+    if (s_showJoinConfirm) {
+        ImGui::OpenPopup("Join Game?##urlconfirm");
+        s_showJoinConfirm = false;
+    }
+    if (ImGui::BeginPopupModal("Join Game?##urlconfirm", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::Text("Leave current game and join server?");
+        ImGui::Spacing();
+        if (s_joinConfirmPort > 0) {
+            ImGui::Text("%s:%d", s_joinConfirmAddr, s_joinConfirmPort);
+        } else {
+            ImGui::TextUnformatted(s_joinConfirmAddr);
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (ImGui::Button("Join", ImVec2(80, 0))) {
+            ImGui::CloseCurrentPopup();
+            /* Leave current game and return to menu with the URL queued */
+            gameFrontHandleUrlOpen(s_joinConfirmUrl);
+            windowNewGame();
+        }
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::Button("Cancel", ImVec2(80, 0)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }
@@ -2193,11 +2236,33 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (ev.type == SDL_EVENT_DROP_FILE && ev.drop.data) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
-                char urlCopy[512];
-                strncpy(urlCopy, url, sizeof(urlCopy) - 1);
-                urlCopy[sizeof(urlCopy) - 1] = '\0';
-                gameFrontSetAddressFromWebLink(urlCopy);
                 SDL_Log("[URL] Received winbolo:// link while running: %s", url);
+                if (cs && cs->netStat == netRunning) {
+                    /* In-game: show confirmation popup instead of switching immediately */
+                    strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
+                    s_joinConfirmUrl[sizeof(s_joinConfirmUrl) - 1] = '\0';
+                    /* Parse address and port for display */
+                    const char *hostStart = url + 10; /* skip "winbolo://" */
+                    const char *colon = strchr(hostStart, ':');
+                    if (colon) {
+                        size_t len = (size_t)(colon - hostStart);
+                        if (len >= sizeof(s_joinConfirmAddr)) len = sizeof(s_joinConfirmAddr) - 1;
+                        memcpy(s_joinConfirmAddr, hostStart, len);
+                        s_joinConfirmAddr[len] = '\0';
+                        s_joinConfirmPort = atoi(colon + 1);
+                    } else {
+                        strncpy(s_joinConfirmAddr, hostStart, sizeof(s_joinConfirmAddr) - 1);
+                        s_joinConfirmAddr[sizeof(s_joinConfirmAddr) - 1] = '\0';
+                        s_joinConfirmPort = 0;
+                    }
+                    s_showJoinConfirm = true;
+                } else {
+                    /* Not in-game: handle directly */
+                    char urlCopy[512];
+                    strncpy(urlCopy, url, sizeof(urlCopy) - 1);
+                    urlCopy[sizeof(urlCopy) - 1] = '\0';
+                    gameFrontHandleUrlOpen(urlCopy);
+                }
             }
             continue;
         }
@@ -2318,6 +2383,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderAllianceRequest(cs);
     renderPasswordModal();
     renderKeySetupModal(cs);
+    renderJoinConfirmModal();
 
     /* Extra render callback (e.g. Android players panel) */
     if (s_extraRenderFn) {
