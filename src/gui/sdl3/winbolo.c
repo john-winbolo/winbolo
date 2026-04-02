@@ -223,7 +223,9 @@ int main(int argc, char *argv[]) {
          * gamePlayed=FALSE because no tank exists during lobby. */
         winboloQuit = FALSE;  /* Signal that we want to return to menu */
         gameFrontEnd(&keys, FALSE, FALSE);
-        gameFrontStart(cmdLine, &keys, TRUE, &cs);
+        if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
+          winboloQuit = TRUE;
+        }
         continue;
       }
       /* lobbyResult == 1: game started — load the map that was
@@ -234,7 +236,9 @@ int main(int argc, char *argv[]) {
                                  sdl3DrawGetWindow());
         winboloQuit = FALSE;
         gameFrontEnd(&keys, TRUE, FALSE);
-        gameFrontStart(cmdLine, &keys, TRUE, &cs);
+        if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
+          winboloQuit = TRUE;
+        }
         continue;
       }
       cs->netStat = netRunning;
