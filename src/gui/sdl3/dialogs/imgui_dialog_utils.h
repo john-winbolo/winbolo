@@ -338,7 +338,7 @@ static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Even
 /* Check an SDL event for a winbolo:// URL drop.
  * Returns true if the event was consumed and the caller's dialog
  * should exit (dlgState has been changed). */
-void gameFrontHandleUrlOpen(char *url);  /* from gamefront.h */
+extern "C" void gameFrontHandleUrlOpen(char *url);  /* from gamefront.h */
 static inline bool dialogHandleUrlDropEvent(const SDL_Event *ev) {
     if (ev->type == SDL_EVENT_DROP_FILE && ev->drop.data) {
         const char *url = ev->drop.data;
