@@ -570,6 +570,18 @@ void gameFrontSetRegistryKeys(void);
 void gameFrontSetAddressFromWebLink(char *address);
 
 /*********************************************************
+*NAME:          gameFrontHandleUrlOpen
+*PURPOSE:
+* Handles a winbolo:// URL received while the app is
+* already running (e.g. via SDL_EVENT_DROP_FILE on macOS).
+* Sets the address/port and navigates to the connect dialog.
+*
+*ARGUMENTS:
+* url - Full winbolo:// URL string
+*********************************************************/
+void gameFrontHandleUrlOpen(char *url);
+
+/*********************************************************
 *NAME:          gameFrontReloadSkins
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/09/03

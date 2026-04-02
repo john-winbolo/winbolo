@@ -335,4 +335,22 @@ static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Even
     return false;
 }
 
+/* Check an SDL event for a winbolo:// URL drop.
+ * Returns true if the event was consumed and the caller's dialog
+ * should exit (dlgState has been changed). */
+void gameFrontHandleUrlOpen(char *url);  /* from gamefront.h */
+static inline bool dialogHandleUrlDropEvent(const SDL_Event *ev) {
+    if (ev->type == SDL_EVENT_DROP_FILE && ev->drop.data) {
+        const char *url = ev->drop.data;
+        if (SDL_strncmp(url, "winbolo://", 10) == 0) {
+            char urlCopy[512];
+            SDL_strlcpy(urlCopy, url, sizeof(urlCopy));
+            gameFrontHandleUrlOpen(urlCopy);
+            SDL_Log("[URL] Received winbolo:// link on menu: %s", url);
+            return true;
+        }
+    }
+    return false;
+}
+
 #endif /* IMGUI_DIALOG_UTILS_H */

@@ -276,12 +276,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
 
-  /* Process the command line argument */
-  if (cmdLine != NULL) {
-    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
-    fileName[FILENAME_MAX - 1] = '\0';
-  } else {
-    fileName[0] = '\0';
+  /* Process the command line argument.
+     If fileName already contains a pending winbolo:// URL (set by
+     gameFrontHandleUrlOpen), keep it so the URL handler below picks it up. */
+  if (strncmp(fileName, "winbolo://", 10) != 0) {
+    if (cmdLine != NULL) {
+      strncpy(fileName, cmdLine, FILENAME_MAX - 1);
+      fileName[FILENAME_MAX - 1] = '\0';
+    } else {
+      fileName[0] = '\0';
+    }
   }
 
   /* Initialise game subsystems */
@@ -309,6 +313,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     gameFrontEnd(keys, FALSE, TRUE);
     return FALSE;
   }
+
+  /* Register winbolo:// URL protocol handler (Windows only; other
+     platforms use Info.plist / .desktop file declarations). */
+  gameFrontSetRegistryKeys();
 
   /* Handle winbolo:// URL links */
   dlgState = openStart;
@@ -1110,7 +1118,31 @@ bool gameFrontGetWinbolonetUse(void) {
 }
 
 void gameFrontSetRegistryKeys(void) {
-  /* No-op on non-Win32 */
+#ifdef _WIN32
+  /* Register winbolo:// URL protocol handler in the Windows registry.
+     Creates: HKCU\Software\Classes\winbolo with URL Protocol and
+     a shell\open\command pointing to the current executable. */
+  HKEY hKey;
+  char exePath[MAX_PATH];
+  char command[MAX_PATH + 16];
+
+  GetModuleFileNameA(NULL, exePath, MAX_PATH);
+  snprintf(command, sizeof(command), "\"%s\" \"%%1\"", exePath);
+
+  if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\winbolo", 0, NULL,
+                       0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+    const char *desc = "WinBolo Game Link";
+    RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE *)desc, (DWORD)strlen(desc) + 1);
+    RegSetValueExA(hKey, "URL Protocol", 0, REG_SZ, (const BYTE *)"", 1);
+    RegCloseKey(hKey);
+  }
+  if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\winbolo\\shell\\open\\command", 0, NULL,
+                       0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+    RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE *)command, (DWORD)strlen(command) + 1);
+    RegCloseKey(hKey);
+  }
+#endif
+  /* No-op on macOS/Linux/iOS — registration is handled by Info.plist / .desktop file */
 }
 
 void gameFrontSetAddressFromWebLink(char *address) {
@@ -1126,6 +1158,24 @@ void gameFrontSetAddressFromWebLink(char *address) {
     if (tok != NULL) {
       gameFrontTargetUdp = atoi(tok);
     }
+  }
+}
+
+void gameFrontHandleUrlOpen(char *url) {
+  if (strncmp(url, "winbolo://", 10) == 0 && strcmp(url, "winbolo:///") != 0) {
+    /* Parse address/port from the url parameter (gameFrontSetAddressFromWebLink
+       uses strtok which modifies the string in place). Then store the original
+       URL in fileName so gameFrontStart() can pick it up on restart. */
+    gameFrontSetAddressFromWebLink(url);
+    strncpy(fileName, "winbolo://", FILENAME_MAX - 1);
+    /* Reconstruct a clean URL from the parsed globals so fileName
+       is not mangled by strtok. */
+    if (gameFrontTargetUdp > 0) {
+      snprintf(fileName, FILENAME_MAX, "winbolo://%s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
+    } else {
+      snprintf(fileName, FILENAME_MAX, "winbolo://%s", gameFrontUdpAddress);
+    }
+    dlgState = openInternetManual;
   }
 }
 
