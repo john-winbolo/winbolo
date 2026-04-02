@@ -915,7 +915,7 @@ static void appRender(BrainTestApp *app) {
         BYTE prevSelf = playersGetSelf(&app->sim.sim.plyrs);
         playersSetSelfNum(&app->sim.sim.plyrs, app->followBot);
 
-        MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor };
+        MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
         mapViewRenderCentered(&ctx, &app->sim.sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
