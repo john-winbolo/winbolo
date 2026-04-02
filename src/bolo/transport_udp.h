@@ -308,6 +308,9 @@ void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t t
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);
 
+/* Get a connected client's player name (NULL if slot invalid/disconnected). */
+const char *transportUdpServerGetPlayerName(BYTE playerNum);
+
 /* Send an INFO_RESPONSE packet to the tracker server so the game
  * appears in the server browser. */
 void transportUdpServerSendTrackerUpdate(struct ServerSim *sim,

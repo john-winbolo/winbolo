@@ -48,6 +48,7 @@
 #include "../../server/threads.h"
 #include "../../bolo/bot_manager.h"
 #include "../../bolo/gui_message.h"
+#include "../../bolo/bolo_map.h"
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
 #include "../draw.h"
@@ -149,6 +150,8 @@ static bool finishedLoop = FALSE;
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
 static DWORD oldFrameTick = 0;
+static uint32_t simTickCounter = 0;
+static bool justKeysFlag = FALSE;
 static time_t ticks = 0;
 
 /* Show alliance request flag */
@@ -235,6 +238,8 @@ int main(int argc, char *argv[]) {
         continue;
       }
       cs->netStat = netRunning;
+      simTickCounter = 0;
+      justKeysFlag = FALSE;
     }
 
     isInMenu = FALSE;
@@ -414,9 +419,7 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
   static bool inBrain = FALSE;
-  static bool justKeys = FALSE;
   static BYTE t2 = 0;
-  static uint32_t simTickCounter = 0;
   tankButton tb;
   bool isShoot;
   bool isMine = FALSE;
@@ -453,8 +456,8 @@ static void windowRunGameTick(ClientSim *cs) {
         if (cs->netStat == netLobby || cs->netStat == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
           transport->tick(transport->ctx);
-          justKeys = !justKeys; /* Alternate to maintain tick cadence */
-        } else if (justKeys == TRUE) {
+          justKeysFlag = !justKeysFlag; /* Alternate to maintain tick cadence */
+        } else if (justKeysFlag == TRUE) {
           /* Keys tick */
           if (brainRunning == FALSE) {
             tb = inputGetKeys(cs, &keys, isInMenu);
@@ -499,7 +502,7 @@ static void windowRunGameTick(ClientSim *cs) {
           }
           clientMutexRelease();
           simTickCounter++;
-          justKeys = FALSE;
+          justKeysFlag = FALSE;
         } else {
           /* Game tick */
           t2++;
@@ -560,7 +563,7 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexRelease();
           simTickCounter++;
           ticks++;
-          justKeys = TRUE;
+          justKeysFlag = TRUE;
           used = TRUE;
         }
         oldTick += GAME_TICK_LENGTH;

@@ -54,6 +54,7 @@
 #include "../bolo/input_packet.h"
 #include "../bolo/messages.h"
 #include "../bolo/sounddist.h"
+#include "../bolo/transport_udp.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 
@@ -1441,6 +1442,17 @@ void serverSimStartGame(ServerSim *sim) {
     }
     sim->hadPlayersEver = TRUE;
 
+    /* Re-register player names — resetGameWorld destroyed the Players struct,
+     * so names must be restored from the transport's client name array. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        const char *name = transportUdpServerGetPlayerName(i);
+        if (name != NULL) {
+            playersSetPlayer(NULL, &sim->sim.plyrs, i, (char *)name, "??",
+                             0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        }
+    }
+
     sim->gameLength = sim->originalGameLength;
 
     /* Clear all alliances from previous round */
@@ -1490,6 +1502,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     if (sim->state != serverStateLobby) {
         return FALSE;
     }
+
+    /* Clear the existing map to DEEP_SEA before loading.  mapRead() only
+     * writes tiles within its "runs" — positions outside runs are expected
+     * to already be DEEP_SEA.  Without this reset, old-game terrain leaks
+     * into areas that should be deep sea in the new map. */
+    memset((*sim->sim.mp).mapItem, DEEP_SEA,
+           sizeof((*sim->sim.mp).mapItem));
 
     /* Load the new map */
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {

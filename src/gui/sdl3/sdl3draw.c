@@ -1964,6 +1964,22 @@ void sdl3DrawPillInView(void) {
   sdl3RenderText(gFontMsg, "Pillbox View", white, tx, ty);
 }
 
+void sdl3DrawResetCachedText(void) {
+  gMsgTop[0] = '\0';
+  gMsgBottom[0] = '\0';
+  gCachedKills  = 0;
+  gCachedDeaths = 0;
+  /* Invalidate texture caches so stale text isn't rendered */
+  gTexMsgTopStr[0] = '\0';
+  gTexMsgBotStr[0] = '\0';
+  gTexKillsStr[0]  = '\0';
+  gTexDeathsStr[0] = '\0';
+  if (gTexMsgTop) { SDL_DestroyTexture(gTexMsgTop); gTexMsgTop = NULL; }
+  if (gTexMsgBot) { SDL_DestroyTexture(gTexMsgBot); gTexMsgBot = NULL; }
+  if (gTexKills)  { SDL_DestroyTexture(gTexKills);  gTexKills  = NULL; }
+  if (gTexDeaths) { SDL_DestroyTexture(gTexDeaths); gTexDeaths = NULL; }
+}
+
 void sdl3DrawMessages(int x, int y, char *top, char *bottom) {
   (void)x; (void)y;
   /* Cache only — sdl3RenderCachedText() draws these into the next frame. */

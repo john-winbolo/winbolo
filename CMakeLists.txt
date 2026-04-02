@@ -159,6 +159,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Restore try_compile mode now that all probing dependencies are fetched
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
+    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages
+    if(MINGW)
+        set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
+        set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
+    endif()
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
 
