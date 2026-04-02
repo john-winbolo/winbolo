@@ -25,6 +25,7 @@
 #ifndef SERVER_SIM_H
 #define SERVER_SIM_H
 
+#include <SDL3/SDL.h>
 #include "../bolo/game_sim.h"
 #include "../bolo/input_packet.h"
 
@@ -60,6 +61,15 @@ typedef struct {
   bool isBot;          /* Managed by bot system, not by player packets */
 } LobbyPlayer;
 
+typedef struct BalanceProposal {
+  uint8_t teamForSlot[MAX_TANKS]; /* Proposed team number per slot (0 = unassigned by WBN) */
+  bool pending;                   /* True while proposal is active and hasn't been applied/dismissed */
+  bool requestInFlight;           /* True while the HTTP call is running (prevents duplicate requests) */
+  bool broadcastNeeded;           /* True when thread finishes; cleared after first broadcast */
+  uint8_t teamSize;               /* Requested team size, passed through to WBN API */
+  SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
+} BalanceProposal;
+
 typedef struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -77,6 +87,10 @@ typedef struct ServerSim {
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         quitOnWin;          /* Server should check for win condition */
     bool         autoCloseOnEmpty;   /* Server should close when all players leave */
+    char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
+    bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
+    int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
+    int32_t      emptyResetTicks;    /* Countdown ticks remaining (-1 = not counting) */
 
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
@@ -116,6 +130,18 @@ typedef struct ServerSim {
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
+
+    /* WBN registration — cached from CLI args for re-registration between rounds */
+    bool         hasPassword;             /* Server has a password set */
+
+    /* WBN team balance proposal */
+    BalanceProposal balanceProposal;
+
+    bool mapSkipVotes[MAX_TANKS]; /* per-slot map skip vote */
+
+    /* Map directory rotation — validated map file paths for random selection */
+    char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
+    int          mapDirCount;             /* Number of valid maps in the array */
 } ServerSim;
 
 /*********************************************************
@@ -423,5 +449,75 @@ void serverSimResetGameWorld(ServerSim *sim);
  *  map load fails.
  *********************************************************/
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName);
+
+/*********************************************************
+ *NAME:          serverSimMapDirBuild
+ *PURPOSE:
+ *  Scans a directory for .map files, validates each by
+ *  attempting to load it, and populates the mapDirFiles
+ *  array with paths that loaded successfully.
+ *  Returns TRUE if at least one valid map was found.
+ *********************************************************/
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath);
+
+/*********************************************************
+ *NAME:          serverSimMapDirPickRandom
+ *PURPOSE:
+ *  Selects a random map from the mapDirFiles list and
+ *  calls serverSimChangeMap to load it. Falls back to
+ *  the current cached map if the chosen map fails to load.
+ *  Returns TRUE on success.
+ *********************************************************/
+bool serverSimMapDirPickRandom(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimMapDirDestroy
+ *PURPOSE:
+ *  Frees the mapDirFiles array.
+ *********************************************************/
+void serverSimMapDirDestroy(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimMapSkipVoteToggle
+ *PURPOSE:
+ *  Toggles a player's map skip vote. If the vote count
+ *  reaches majority of connected humans, picks a new
+ *  random map and resets all votes.
+ *********************************************************/
+void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum);
+
+/*********************************************************
+ *NAME:          serverSimMapSkipVotesReset
+ *PURPOSE:
+ *  Clears all map skip votes.
+ *********************************************************/
+void serverSimMapSkipVotesReset(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimSendWbnWinEvents
+ *PURPOSE:
+ *  Sends WINBOLO_NET_EVENT_WIN for each player in the
+ *  winning alliance. No-op if the game was not won by
+ *  a single alliance.
+ *********************************************************/
+void serverSimSendWbnWinEvents(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimBuildWinMessage
+ *PURPOSE:
+ *  Builds a message string listing the winners of the game.
+ *  Returns TRUE if the game was won (message populated),
+ *  FALSE if no winner (e.g. time limit or manual end).
+ *********************************************************/
+bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize);
+
+/*********************************************************
+ *NAME:          serverSimCheckEmptyReset
+ *PURPOSE:
+ *  Checks if the server has been empty long enough to
+ *  trigger a lobby reset. Returns TRUE if reset should
+ *  happen.
+ *********************************************************/
+bool serverSimCheckEmptyReset(ServerSim *sim);
 
 #endif /* SERVER_SIM_H */

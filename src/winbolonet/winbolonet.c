@@ -90,6 +90,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   cJSON_AddNumberToObject(body, "free_pills", freePills);
   cJSON_AddNumberToObject(body, "num_players", numPlayers);
   cJSON_AddStringToObject(body, "version", versionStr);
+  cJSON_AddBoolToObject(body, "in_lobby", TRUE);
 
   status = wbn_api_call("server/register", body, &resp);
   cJSON_Delete(body);
@@ -300,6 +301,99 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   wbn_api_call("server/teams", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
+}
+
+/*********************************************************
+*NAME:          winbolonetServerRequestBalance
+*PURPOSE:
+* Calls the WBN API to get skill-based team assignments
+* for the current lobby players.
+* Returns TRUE on success, FALSE on failure.
+*********************************************************/
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  cJSON *playerKeys = NULL;
+  cJSON *teams = NULL;
+  cJSON *teamArray = NULL;
+  cJSON *entry = NULL;
+  int status;
+  BYTE count;
+  int teamIdx;
+  char teamId[16];
+
+  memset(outProposal, 0, sizeof(BalanceProposal));
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddNumberToObject(body, "total_players", totalPlayers);
+  cJSON_AddNumberToObject(body, "team_size", teamSize);
+
+  playerKeys = cJSON_CreateArray();
+  for (count = 0; count < MAX_TANKS; count++) {
+    if (winboloNetPlayerKey[count][0] != '\0') {
+      cJSON_AddItemToArray(playerKeys, cJSON_CreateString(winboloNetPlayerKey[count]));
+    }
+  }
+  cJSON_AddItemToObject(body, "player_keys", playerKeys);
+
+  status = wbn_api_call("server/balance", body, &resp);
+  cJSON_Delete(body);
+
+  if (status != 200 || resp == NULL) {
+    serverSimConsoleMessage("WBN: Balance request failed");
+    cJSON_Delete(resp);
+    return FALSE;
+  }
+
+  /* Check for error in response */
+  {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net balance error: %s\n", errObj->valuestring);
+      serverSimConsoleMessage("WBN: Balance error from server");
+      cJSON_Delete(resp);
+      return FALSE;
+    }
+  }
+
+  /* Parse response teams object */
+  teams = cJSON_GetObjectItemCaseSensitive(resp, "teams");
+  if (teams == NULL || !cJSON_IsObject(teams)) {
+    serverSimConsoleMessage("WBN: Balance response missing teams");
+    cJSON_Delete(resp);
+    return FALSE;
+  }
+
+  /* Iterate each team in the teams object */
+  for (teamIdx = 0; ; teamIdx++) {
+    snprintf(teamId, sizeof(teamId), "%d", teamIdx);
+    teamArray = cJSON_GetObjectItemCaseSensitive(teams, teamId);
+    if (teamArray == NULL) {
+      break;
+    }
+
+    cJSON_ArrayForEach(entry, teamArray) {
+      if (cJSON_IsNull(entry)) {
+        continue; /* Unregistered player placeholder */
+      }
+      if (!cJSON_IsString(entry) || entry->valuestring == NULL) {
+        continue;
+      }
+      /* Map player_key back to slot index */
+      for (count = 0; count < MAX_TANKS; count++) {
+        if (winboloNetPlayerKey[count][0] != '\0' &&
+            strcmp(winboloNetPlayerKey[count], entry->valuestring) == 0) {
+          outProposal->teamForSlot[count] = (uint8_t)(teamIdx + 1); /* 1-indexed */
+          break;
+        }
+      }
+    }
+  }
+
+  outProposal->pending = TRUE;
+  cJSON_Delete(resp);
+  return TRUE;
 }
 
 /*********************************************************
@@ -610,6 +704,174 @@ void winboloNetSendLock(bool isLocked) {
   wbn_api_call("server/lock", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
+}
+
+/*********************************************************
+*NAME:          winbolonetReturnToLobby
+*PURPOSE:
+* Handles the WBN session cycle when the server returns to
+* the lobby between rounds. Quits the old session, clears
+* player keys and events, and registers a new session with
+* the new map/settings. HTTP layer is preserved.
+*********************************************************/
+bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  BYTE count;
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  char versionStr[16];
+
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
+  }
+
+  serverSimConsoleMessage("WinBolo.net: Returning to lobby...");
+
+  /* 1. Drain background thread queue and stop thread */
+  winbolonetThreadDestroy();
+
+  /* 2. Quit old session */
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  wbn_api_call("server/quit", body, &resp);
+  cJSON_Delete(body);
+  if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net quit error: %s\n", errObj->valuestring);
+    }
+    cJSON_Delete(resp);
+  }
+  resp = NULL;
+
+  /* 3. Clear all player keys */
+  for (count = 0; count < MAX_TANKS; count++) {
+    winboloNetPlayerKey[count][0] = '\0';
+  }
+
+  /* 4. Reset event queue */
+  winbolonetEventsDestroy();
+  winbolonetEventsCreate();
+
+  /* 5. Register new session with in_lobby flag */
+  snprintf(versionStr, sizeof(versionStr), "%d.%d%d", BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "map", mapName);
+  cJSON_AddNumberToObject(body, "port", port);
+  cJSON_AddNumberToObject(body, "game_type", gameType);
+  cJSON_AddNumberToObject(body, "ai", ai);
+  cJSON_AddBoolToObject(body, "mines", mines);
+  cJSON_AddBoolToObject(body, "password", password);
+  cJSON_AddNumberToObject(body, "num_bases", numBases);
+  cJSON_AddNumberToObject(body, "num_pills", numPills);
+  cJSON_AddNumberToObject(body, "free_bases", freeBases);
+  cJSON_AddNumberToObject(body, "free_pills", freePills);
+  cJSON_AddNumberToObject(body, "num_players", numPlayers);
+  cJSON_AddStringToObject(body, "version", versionStr);
+  cJSON_AddBoolToObject(body, "in_lobby", TRUE);
+
+  status = wbn_api_call("server/register", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    cJSON *keyObj = cJSON_GetObjectItem(resp, "server_key");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net register error: %s\n", errObj->valuestring);
+      serverSimConsoleMessage("Error: WinBolo.net re-registration failed");
+      cJSON_Delete(resp);
+      winboloNetRunning = FALSE;
+      return FALSE;
+    }
+    if (keyObj && cJSON_IsString(keyObj)) {
+      strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+      winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      serverSimConsoleMessage("\tWinBolo.net: New session registered");
+    } else {
+      serverSimConsoleMessage("Error: WinBolo.net returned no server key");
+      cJSON_Delete(resp);
+      winboloNetRunning = FALSE;
+      return FALSE;
+    }
+  } else {
+    if (resp) {
+      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      if (errObj && cJSON_IsString(errObj)) {
+        fprintf(stderr, "WinBolo.net error: %s\n", errObj->valuestring);
+      }
+    }
+    serverSimConsoleMessage("Error: WinBolo.net re-registration failed - WBN disabled");
+    cJSON_Delete(resp);
+    winboloNetRunning = FALSE;
+    return FALSE;
+  }
+
+  cJSON_Delete(resp);
+
+  /* 6. Restart background thread */
+  winbolonetThreadCreate();
+  winboloNetLastSent = time(NULL);
+
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          winbolonetSendLobbyStatus
+*PURPOSE:
+* Notifies WinBolo.net whether this server is currently in
+* the lobby or in-game. POSTs to /api/v1/server/lobby.
+* Queued via background thread (fire-and-forget).
+*********************************************************/
+void winbolonetSendLobbyStatus(bool inLobby) {
+  cJSON *body = NULL;
+  char *json_str;
+
+  if (winboloNetRunning != TRUE) {
+    return;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddBoolToObject(body, "in_lobby", inLobby);
+
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddRequest("server/lobby", json_str);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+}
+
+/*********************************************************
+*NAME:          winbolonetSendMapChange
+*PURPOSE:
+* Notifies WinBolo.net that the map changed during the
+* lobby (e.g. via skip vote). POSTs to /api/v1/server/map.
+* Queued via background thread (fire-and-forget).
+*********************************************************/
+void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
+  cJSON *body = NULL;
+  char *json_str;
+
+  if (winboloNetRunning != TRUE) {
+    return;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "map", mapName);
+  cJSON_AddNumberToObject(body, "num_bases", numBases);
+  cJSON_AddNumberToObject(body, "num_pills", numPills);
+  cJSON_AddNumberToObject(body, "free_bases", freeBases);
+  cJSON_AddNumberToObject(body, "free_pills", freePills);
+
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddRequest("server/map", json_str);
+    free(json_str);
+  }
+  cJSON_Delete(body);
 }
 
 /*********************************************************

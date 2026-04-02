@@ -854,7 +854,7 @@ bool sdl3DrawSetup(int zoomFactor) {
      * asset manager when given a relative path.  Don't prepend BasePath. */
     const char *fontPath = "data/CourierPrime-Regular.ttf";
 #else
-    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
+    const char *relPath = "data/CourierPrime-Regular.ttf";
     /* Use SDL_GetBasePath() to resolve font path relative to the executable,
        so it works regardless of CWD */
     const char *base = SDL_GetBasePath();
@@ -1962,6 +1962,22 @@ void sdl3DrawPillInView(void) {
   float tx = (float)(originX + TILE_SIZE_X * gZoomFactor);
   float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor);
   sdl3RenderText(gFontMsg, "Pillbox View", white, tx, ty);
+}
+
+void sdl3DrawResetCachedText(void) {
+  gMsgTop[0] = '\0';
+  gMsgBottom[0] = '\0';
+  gCachedKills  = 0;
+  gCachedDeaths = 0;
+  /* Invalidate texture caches so stale text isn't rendered */
+  gTexMsgTopStr[0] = '\0';
+  gTexMsgBotStr[0] = '\0';
+  gTexKillsStr[0]  = '\0';
+  gTexDeathsStr[0] = '\0';
+  if (gTexMsgTop) { SDL_DestroyTexture(gTexMsgTop); gTexMsgTop = NULL; }
+  if (gTexMsgBot) { SDL_DestroyTexture(gTexMsgBot); gTexMsgBot = NULL; }
+  if (gTexKills)  { SDL_DestroyTexture(gTexKills);  gTexKills  = NULL; }
+  if (gTexDeaths) { SDL_DestroyTexture(gTexDeaths); gTexDeaths = NULL; }
 }
 
 void sdl3DrawMessages(int x, int y, char *top, char *bottom) {

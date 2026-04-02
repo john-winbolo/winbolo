@@ -70,6 +70,7 @@
 #include "../aresource.h"
 
 #include "../../bolo/everard_map.h"
+#include "../../bolo/bolo_map.h"
 #include "../../bolo/platform_net.h"
 #include "../../bolo/transport_udp.h"
 #include "../../winbolonet/winbolonet.h"
@@ -1558,6 +1559,7 @@ bool gameFrontLoadDeferredMap(ClientSim *cs) {
   bool wasInLobby = cs->inLobby;
 
   clientSimDestroy(cs);
+  sdl3DrawResetCachedText();
 
   if (screenLoadCompressedMapCS(cs, (BYTE *)mapData, mapLen,
                                "Network Game", serverGame,
@@ -1570,6 +1572,7 @@ bool gameFrontLoadDeferredMap(ClientSim *cs) {
   screenSetLocalTransportCS(cs, false);
   cs->inLobby = wasInLobby;
   cs->mapDownloadComplete = true;
+
   clientSimSetChatSendFunc(cs, gameFrontChatSendCallback);
   clientSimSetNameChangeSendFunc(cs, gameFrontNameChangeSendCallback);
   clientSimSetAllianceRequestFunc(cs, gameFrontAllianceRequestCallback);

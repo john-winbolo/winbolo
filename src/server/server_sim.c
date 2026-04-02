@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <dirent.h>
+#include <SDL3/SDL.h>
 
 #include "../bolo/global.h"
 #include "../bolo/bolo_map.h"
@@ -52,6 +54,8 @@
 #include "../bolo/input_packet.h"
 #include "../bolo/messages.h"
 #include "../bolo/sounddist.h"
+#include "../bolo/transport_udp.h"
+#include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
@@ -220,6 +224,7 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed) {
     ev.data[0] = killer;
     ev.data[1] = killed;
     serverSimAddEvent(sim, &ev);
+    winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed);
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -248,6 +253,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->hadPlayersEver = FALSE;
     sim->quitOnWin = FALSE;
     sim->autoCloseOnEmpty = FALSE;
+    sim->pendingWinMessage[0] = '\0';
+    sim->emptyResetEnabled = TRUE;
+    sim->emptyResetMinutes = 5;
+    sim->emptyResetTicks = -1;
+    sim->hasPassword = FALSE;
     sim->cachedMapData = NULL;
     sim->cachedMapDataLen = 0;
     sim->sim.hiddenMines = hiddenMines;
@@ -361,6 +371,12 @@ bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType
 
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
+
+    /* Signal the balance thread to stop and wait for it to finish */
+    SDL_SetAtomicInt(&sim->balanceProposal.shutdownFlag, 1);
+    while (sim->balanceProposal.requestInFlight) {
+        SDL_Delay(10);
+    }
 
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
@@ -759,6 +775,12 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) 
         playersSetPlayer(NULL, &sim->sim.plyrs, playerNum, (char *)playerName, "??",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
     }
+
+    /* Broadcast current skip vote state to the new player — existing votes
+     * are preserved since the threshold naturally adjusts with more players. */
+    if (sim->lobbyEnabled && sim->state == serverStateLobby && sim->mapDirCount > 1) {
+        transportUdpServerBroadcastMapSkipState(sim);
+    }
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
@@ -781,6 +803,29 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].teamNumber = 0;
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    sim->mapSkipVotes[playerNum] = false;
+
+    /* Check if disconnect pushes skip votes over threshold */
+    if (sim->lobbyEnabled && sim->state == serverStateLobby && sim->mapDirCount > 1) {
+        int voteCount = 0;
+        int connectedHumans = 0;
+        BYTE k;
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!sim->playerConnected[k] || sim->lobbyPlayers[k].isBot) continue;
+            connectedHumans++;
+            if (sim->mapSkipVotes[k]) voteCount++;
+        }
+        if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
+            SDL_Log("Map skip: disconnect pushed votes over threshold (%d/%d), skipping map", voteCount, connectedHumans);
+            serverSimMapDirPickRandom(sim);
+            serverSimMapSkipVotesReset(sim);
+            transportUdpServerNotifyMapChange(sim);
+            transportUdpServerBroadcastMapSkipState(sim);
+            winbolonetSendMapChange(sim->mapName,
+                basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
+                basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
+        }
+    }
 
     /* If in countdown and someone disconnects, revert to lobby */
     if (sim->lobbyEnabled && sim->state == serverStateCountdown) {
@@ -1266,26 +1311,26 @@ void serverSimEnterGameOver(ServerSim *sim) {
 
 void serverSimReturnToLobby(ServerSim *sim) {
     BYTE i;
+    bool savedConnected[MAX_TANKS];
+    LobbyPlayer savedLobby[MAX_TANKS];
+
     if (!sim->lobbyEnabled) {
         return;
     }
-    sim->state = serverStateLobby;
 
-    /* Destroy all tanks and LGMs */
+    /* Save connection and lobby state before reset */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (sim->sim.tanks[i] != NULL) {
-            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
-            sim->sim.tanks[i] = NULL;
-        }
-        if (sim->sim.lgmen[i] != NULL) {
-            lgmDestroy(&sim->sim.lgmen[i]);
-            sim->sim.lgmen[i] = NULL;
-        }
+        savedConnected[i] = sim->playerConnected[i];
+        savedLobby[i] = sim->lobbyPlayers[i];
     }
 
-    /* Reset lobby player ready state, keep teams and connections.
-     * Bots are always ready — re-mark them after the blanket reset. */
+    /* Full world reset — reloads map from cached data */
+    serverSimResetGameWorld(sim);
+
+    /* Restore connection and lobby state */
     for (i = 0; i < MAX_TANKS; i++) {
+        sim->playerConnected[i] = savedConnected[i];
+        sim->lobbyPlayers[i] = savedLobby[i];
         sim->lobbyPlayers[i].ready = FALSE;
     }
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1293,6 +1338,12 @@ void serverSimReturnToLobby(ServerSim *sim) {
             sim->lobbyPlayers[i].ready = TRUE;
         }
     }
+    sim->hadPlayersEver = TRUE;
+    sim->gameLength = sim->originalGameLength;
+    sim->emptyResetTicks = -1;
+
+    sim->state = serverStateLobby;
+    serverSimMapSkipVotesReset(sim);
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
 }
@@ -1421,6 +1472,17 @@ void serverSimStartGame(ServerSim *sim) {
     }
     sim->hadPlayersEver = TRUE;
 
+    /* Re-register player names — resetGameWorld destroyed the Players struct,
+     * so names must be restored from the transport's client name array. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        const char *name = transportUdpServerGetPlayerName(i);
+        if (name != NULL) {
+            playersSetPlayer(NULL, &sim->sim.plyrs, i, (char *)name, "??",
+                             0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        }
+    }
+
     sim->gameLength = sim->originalGameLength;
 
     /* Clear all alliances from previous round */
@@ -1471,6 +1533,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         return FALSE;
     }
 
+    /* Clear the existing map to DEEP_SEA before loading.  mapRead() only
+     * writes tiles within its "runs" — positions outside runs are expected
+     * to already be DEEP_SEA.  Without this reset, old-game terrain leaks
+     * into areas that should be deep sea in the new map. */
+    memset((*sim->sim.mp).mapItem, DEEP_SEA,
+           sizeof((*sim->sim.mp).mapItem));
+
     /* Load the new map */
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         return FALSE;
@@ -1508,4 +1577,284 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     }
 
     return TRUE;
+}
+
+void serverSimSendWbnWinEvents(ServerSim *sim) {
+    BYTE count;
+    BYTE max;
+    BYTE first = NEUTRAL;
+    BYTE current;
+    bool allOwned = TRUE;
+
+    max = basesGetNumBases(&sim->sim.bs);
+
+    /* Find the winning alliance — same logic as serverSimBuildWinMessage */
+    for (count = 1; count <= max && allOwned; count++) {
+        BYTE shellsAmt, minesAmt, armourAmt;
+        current = basesGetBaseOwner(&sim->sim.bs, count);
+        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
+        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            allOwned = FALSE;
+        } else if (count == 1) {
+            first = current;
+        } else {
+            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        }
+    }
+
+    if (!allOwned || max == 0) {
+        return;
+    }
+
+    /* Send a win event for each player in the winning alliance */
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (!sim->playerConnected[count]) continue;
+        if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
+            winbolonetAddEvent(WINBOLO_NET_EVENT_WIN, TRUE, count, WINBOLO_NET_NO_PLAYER);
+        }
+    }
+}
+
+bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
+    BYTE count;
+    BYTE max;
+    BYTE first = NEUTRAL;
+    BYTE current;
+    bool allOwned = TRUE;
+    char name[256];
+    size_t pos;
+
+    max = basesGetNumBases(&sim->sim.bs);
+
+    /* Check if all bases are owned by the same alliance */
+    for (count = 1; count <= max && allOwned; count++) {
+        BYTE shellsAmt, minesAmt, armourAmt;
+        current = basesGetBaseOwner(&sim->sim.bs, count);
+        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
+        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            allOwned = FALSE;
+        } else if (count == 1) {
+            first = current;
+        } else {
+            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        }
+    }
+
+    if (!allOwned || max == 0) {
+        snprintf(buf, bufSize, "Game over!");
+        return FALSE;
+    }
+
+    /* Build winner message */
+    pos = 0;
+    pos += snprintf(buf + pos, bufSize - pos, "Game Won! Winners:");
+    for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
+        if (!sim->playerConnected[count]) continue;
+        if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
+            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            pos += snprintf(buf + pos, bufSize - pos, " %s", name);
+        }
+    }
+
+    return TRUE;
+}
+
+bool serverSimCheckEmptyReset(ServerSim *sim) {
+    BYTE numPlayers = serverSimGetNumPlayers(sim);
+
+    if (numPlayers > 0) {
+        /* Players present — reset the timer */
+        sim->emptyResetTicks = -1;
+        return FALSE;
+    }
+
+    /* No players — start or continue countdown */
+    if (sim->emptyResetTicks < 0) {
+        /* Start the countdown: minutes * 60 seconds * 50 ticks/sec */
+        sim->emptyResetTicks = sim->emptyResetMinutes * 60 * 50;
+        serverSimConsoleMessage("No players connected. Empty reset timer started.");
+    }
+
+    sim->emptyResetTicks--;
+    if (sim->emptyResetTicks <= 0) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+    DIR *dir;
+    struct dirent *entry;
+    char fullPath[2048];
+    char **tempList = NULL;
+    int tempCount = 0;
+    int tempCapacity = 0;
+    map mp;
+    pillboxes pb;
+    bases bs;
+    starts ss;
+
+    dir = opendir(dirPath);
+    if (dir == NULL) {
+        fprintf(stderr, "Error: cannot open map directory '%s'\n", dirPath);
+        return FALSE;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        int len = (int)strlen(entry->d_name);
+        if (len < 5) continue;
+        if (strcmp(entry->d_name + len - 4, ".map") != 0) continue;
+
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath, entry->d_name);
+
+        /* Validate map by attempting to load it */
+        mapCreate(&mp);
+        pillsCreate(&pb);
+        basesCreate(&bs);
+        startsCreate(&ss);
+        if (mapRead(fullPath, &mp, &pb, &bs, &ss) == FALSE) {
+            mapDestroy(&mp);
+            pillsDestroy(&pb);
+            basesDestroy(&bs);
+            startsDestroy(&ss);
+            fprintf(stderr, "Warning: skipping invalid map '%s'\n", fullPath);
+            continue;
+        }
+        mapDestroy(&mp);
+        pillsDestroy(&pb);
+        basesDestroy(&bs);
+        startsDestroy(&ss);
+
+        /* Grow array if needed */
+        if (tempCount >= tempCapacity) {
+            int newCap = tempCapacity == 0 ? 16 : tempCapacity * 2;
+            char **newList = realloc(tempList, newCap * sizeof(char *));
+            if (newList == NULL) {
+                fprintf(stderr, "Error: out of memory building map list\n");
+                break;
+            }
+            tempList = newList;
+            tempCapacity = newCap;
+        }
+
+        tempList[tempCount] = strdup(fullPath);
+        if (tempList[tempCount] == NULL) {
+            fprintf(stderr, "Error: out of memory duplicating path\n");
+            break;
+        }
+        tempCount++;
+        fprintf(stderr, "Map directory: validated '%s'\n", entry->d_name);
+    }
+
+    closedir(dir);
+
+    if (tempCount == 0) {
+        fprintf(stderr, "Error: no valid .map files found in '%s'\n", dirPath);
+        free(tempList);
+        return FALSE;
+    }
+
+    sim->mapDirFiles = tempList;
+    sim->mapDirCount = tempCount;
+    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n", tempCount, dirPath);
+    return TRUE;
+}
+
+bool serverSimMapDirPickRandom(ServerSim *sim) {
+    int idx;
+    char msg[512];
+
+    if (sim->mapDirFiles == NULL || sim->mapDirCount <= 0) {
+        return FALSE;
+    }
+
+    idx = rand() % sim->mapDirCount;
+
+    /* Try to avoid picking the same map we're already on */
+    if (sim->mapDirCount > 1) {
+        int attempts;
+        for (attempts = 0; attempts < 10; attempts++) {
+            const char *base = sim->mapDirFiles[idx];
+            const char *p;
+            for (p = sim->mapDirFiles[idx]; *p; p++) {
+                if (*p == '/' || *p == '\\') base = p + 1;
+            }
+            if (strcmp(base, sim->mapName) != 0) break;
+            idx = rand() % sim->mapDirCount;
+        }
+    }
+
+    if (serverSimChangeMap(sim, sim->mapDirFiles[idx]) == FALSE) {
+        /* Map may have been deleted or corrupted since startup — try others */
+        int tries;
+        for (tries = 0; tries < sim->mapDirCount; tries++) {
+            idx = (idx + 1) % sim->mapDirCount;
+            if (serverSimChangeMap(sim, sim->mapDirFiles[idx]) == TRUE) {
+                break;
+            }
+        }
+        if (tries >= sim->mapDirCount) {
+            fprintf(stderr, "Error: all maps in directory failed to load\n");
+            return FALSE;
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
+    serverSimConsoleMessage(msg);
+    return TRUE;
+}
+
+void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
+    int voteCount = 0;
+    int connectedHumans = 0;
+    BYTE i;
+
+    if (sim->state != serverStateLobby || sim->mapDirCount <= 1) {
+        return;
+    }
+    if (playerNum >= MAX_TANKS || !sim->playerConnected[playerNum]) {
+        return;
+    }
+    if (sim->lobbyPlayers[playerNum].isBot) {
+        return;
+    }
+
+    sim->mapSkipVotes[playerNum] = !sim->mapSkipVotes[playerNum];
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
+        connectedHumans++;
+        if (sim->mapSkipVotes[i]) voteCount++;
+    }
+
+    SDL_Log("Map skip: player %d voted %s (%d/%d)", playerNum,
+            sim->mapSkipVotes[playerNum] ? "yes" : "no", voteCount, connectedHumans);
+
+    if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
+        SDL_Log("Map skip: majority reached (%d/%d), skipping map", voteCount, connectedHumans);
+        serverSimMapDirPickRandom(sim);
+        serverSimMapSkipVotesReset(sim);
+        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerBroadcastMapSkipState(sim);
+        winbolonetSendMapChange(sim->mapName,
+            basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
+            basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
+    }
+}
+
+void serverSimMapSkipVotesReset(ServerSim *sim) {
+    memset(sim->mapSkipVotes, 0, sizeof(sim->mapSkipVotes));
+}
+
+void serverSimMapDirDestroy(ServerSim *sim) {
+    if (sim->mapDirFiles != NULL) {
+        int i;
+        for (i = 0; i < sim->mapDirCount; i++) {
+            free(sim->mapDirFiles[i]);
+        }
+        free(sim->mapDirFiles);
+        sim->mapDirFiles = NULL;
+        sim->mapDirCount = 0;
+    }
 }

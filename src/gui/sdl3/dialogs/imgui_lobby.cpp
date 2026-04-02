@@ -299,6 +299,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     /* Map preview texture state */
     SDL_Texture *mapPreviewTex = NULL;
     bool mapPreviewBuilt = false;
+    bool prevMapDownloadComplete = cs->mapDownloadComplete;
     MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
 
 #if BOLO_MOBILE
@@ -335,6 +336,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             transport->tick(transport->ctx);
         }
 
+        /* Clear balance proposal when countdown starts */
+        if (cs->countdownSeconds > 0 && cs->balanceProposalActive) {
+            cs->balanceProposalActive = false;
+            memset(cs->balanceProposal, 0, sizeof(cs->balanceProposal));
+        }
+
         /* Check for game start */
         if (cs->netStat == netRunning) {
             result = 1;
@@ -351,6 +358,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 break;
             }
         }
+
+        /* Reset preview when a map change invalidates the download */
+        if (!cs->mapDownloadComplete && prevMapDownloadComplete) {
+            mapPreviewBuilt = false;
+            if (mapPreviewTex) {
+                SDL_DestroyTexture(mapPreviewTex);
+                mapPreviewTex = NULL;
+            }
+        }
+        prevMapDownloadComplete = cs->mapDownloadComplete;
 
         /* Build map preview once download completes */
         if (cs->mapDownloadComplete && !mapPreviewBuilt && transport) {
@@ -526,6 +543,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                         ImGui::TextDisabled("None");
                                     }
                                 }
+                                if (cs->balanceProposalActive && cs->balanceProposal[i] != 0 &&
+                                    cs->balanceProposal[i] != cs->lobbySlots[i].teamNumber) {
+                                    ImGui::SameLine();
+                                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "-> %d", cs->balanceProposal[i]);
+                                }
 
                                 /* Ready */
                                 ImGui::TableSetColumnIndex(3);
@@ -619,6 +641,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", cs->mapName, cs->lobbyPillCount, cs->lobbyBaseCount, cs->lobbyStartCount);
 
+                    if (cs->mapSkipAvailable && cs->inLobby) {
+                        ImGui::Spacing();
+                        bool countdownActive = cs->countdownSeconds > 0;
+                        if (countdownActive) ImGui::BeginDisabled();
+                        bool voted = cs->mapSkipMyVote;
+                        const char *skipLabel = voted ? "Cancel Skip" : "Skip Map";
+                        if (voted) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
+                        }
+                        if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
+                            cs->mapSkipMyVote = !cs->mapSkipMyVote;
+                            if (transport) {
+                                transportUdpClientSendMapSkipVote(transport);
+                            }
+                        }
+                        if (voted) {
+                            ImGui::PopStyleColor(3);
+                        }
+                        ImGui::SameLine();
+                        int skipCount = 0, humanCount = 0;
+                        for (int j = 0; j < MAX_TANKS; j++) {
+                            if (cs->lobbySlots[j].connected && !cs->lobbySlots[j].isBot) {
+                                humanCount++;
+                                if (cs->mapSkipVotes[j]) skipCount++;
+                            }
+                        }
+                        ImGui::Text("%d/%d votes to skip", skipCount, humanCount);
+                        if (countdownActive) ImGui::EndDisabled();
+                    }
+
                     ImGui::EndTabItem();
                 }
 
@@ -655,8 +709,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                                                   ImGuiInputTextFlags_EnterReturnsTrue);
                             ImGui::SameLine();
-                            if ((ImGui::Button("Send", ImVec2(btnW, 0)) || enterPressed) &&
-                                chatInput[0] != '\0' && transport) {
+                            bool chatEmpty = (chatInput[0] == '\0');
+                            if (chatEmpty) ImGui::BeginDisabled();
+                            bool sendClicked = ImGui::Button("Send", ImVec2(btnW, 0));
+                            if (chatEmpty) ImGui::EndDisabled();
+                            if ((sendClicked || enterPressed) &&
+                                !chatEmpty && transport) {
                                 transportUdpClientSendChat(transport, 0xFF, chatInput);
                                 const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
                                     ? cs->lobbySlots[myPlayerNum].playerName : "Me";
@@ -692,6 +750,39 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     }
                 }
                 if (!canReady) ImGui::EndDisabled();
+
+                if (myPlayerNum == 0 && transport && !cs->balanceProposalActive) {
+                    bool hasWbnPlayers = false;
+                    uint8_t connectedCount = 0;
+                    for (int j = 0; j < 16; j++) {
+                        if (cs->lobbySlots[j].connected) {
+                            connectedCount++;
+                            if (cs->lobbySlots[j].wbnParticipant) {
+                                hasWbnPlayers = true;
+                            }
+                        }
+                    }
+                    if (hasWbnPlayers) {
+                        ImGui::SameLine(0, 20);
+                        if (connectedCount < 2) ImGui::BeginDisabled();
+                        if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
+                            uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
+                            transportUdpClientSendBalanceRequest(transport, teamSize);
+                        }
+                        if (connectedCount < 2) ImGui::EndDisabled();
+                    }
+                } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
+                    ImGui::SameLine(0, 20);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                    if (ImGui::Button("Apply Balance", ImVec2(120 * s, 0))) {
+                        transportUdpClientSendBalanceApply(transport);
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 8);
+                    if (ImGui::Button("Dismiss", ImVec2(80 * s, 0))) {
+                        transportUdpClientSendBalanceDismiss(transport);
+                    }
+                }
 
                 ImGui::SameLine(0, 20);
                 if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
@@ -800,6 +891,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 ImGui::TextDisabled("None");
                             }
                         }
+                        if (cs->balanceProposalActive && cs->balanceProposal[i] != 0 &&
+                            cs->balanceProposal[i] != cs->lobbySlots[i].teamNumber) {
+                            ImGui::SameLine();
+                            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "-> %d", cs->balanceProposal[i]);
+                        }
 
                         /* Ready */
                         ImGui::TableSetColumnIndex(4);
@@ -906,6 +1002,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("Bases: %d", cs->lobbyBaseCount);
             ImGui::Text("Starts: %d", cs->lobbyStartCount);
 
+            if (cs->mapSkipAvailable && cs->inLobby) {
+                ImGui::Spacing();
+                bool countdownActive = cs->countdownSeconds > 0;
+                if (countdownActive) ImGui::BeginDisabled();
+                bool voted = cs->mapSkipMyVote;
+                const char *skipLabel = voted ? "Cancel Skip" : "Skip Map";
+                if (voted) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
+                }
+                if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
+                    cs->mapSkipMyVote = !cs->mapSkipMyVote;
+                    if (transport) {
+                        transportUdpClientSendMapSkipVote(transport);
+                    }
+                }
+                if (voted) {
+                    ImGui::PopStyleColor(3);
+                }
+                ImGui::SameLine();
+                int skipCount = 0, humanCount = 0;
+                for (int j = 0; j < MAX_TANKS; j++) {
+                    if (cs->lobbySlots[j].connected && !cs->lobbySlots[j].isBot) {
+                        humanCount++;
+                        if (cs->mapSkipVotes[j]) skipCount++;
+                    }
+                }
+                ImGui::Text("%d/%d votes to skip", skipCount, humanCount);
+                if (countdownActive) ImGui::EndDisabled();
+            }
+
             ImGui::EndChild(); /* ##MapPanel */
         }
 
@@ -931,8 +1059,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                                   ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
-            if ((ImGui::Button("Send", ImVec2(btnW, 0)) || enterPressed) &&
-                chatInput[0] != '\0' && transport) {
+            bool chatEmpty = (chatInput[0] == '\0');
+            if (chatEmpty) ImGui::BeginDisabled();
+            bool sendClicked = ImGui::Button("Send", ImVec2(btnW, 0));
+            if (chatEmpty) ImGui::EndDisabled();
+            if ((sendClicked || enterPressed) &&
+                !chatEmpty && transport) {
                 transportUdpClientSendChat(transport, 0xFF, chatInput);
                 const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
                     ? cs->lobbySlots[myPlayerNum].playerName : "Me";
@@ -959,6 +1091,39 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             if (!canReady) ImGui::EndDisabled();
+
+            if (myPlayerNum == 0 && transport && !cs->balanceProposalActive) {
+                bool hasWbnPlayers = false;
+                uint8_t connectedCount = 0;
+                for (int j = 0; j < 16; j++) {
+                    if (cs->lobbySlots[j].connected) {
+                        connectedCount++;
+                        if (cs->lobbySlots[j].wbnParticipant) {
+                            hasWbnPlayers = true;
+                        }
+                    }
+                }
+                if (hasWbnPlayers) {
+                    ImGui::SameLine(0, 20);
+                    if (connectedCount < 2) ImGui::BeginDisabled();
+                    if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
+                        uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
+                        transportUdpClientSendBalanceRequest(transport, teamSize);
+                    }
+                    if (connectedCount < 2) ImGui::EndDisabled();
+                }
+            } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
+                ImGui::SameLine(0, 20);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                if (ImGui::Button("Apply Balance", ImVec2(120 * s, 0))) {
+                    transportUdpClientSendBalanceApply(transport);
+                }
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0, 8);
+                if (ImGui::Button("Dismiss", ImVec2(80 * s, 0))) {
+                    transportUdpClientSendBalanceDismiss(transport);
+                }
+            }
 
             ImGui::SameLine(0, 20);
             if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
