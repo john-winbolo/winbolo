@@ -645,8 +645,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::Spacing();
                         bool countdownActive = cs->countdownSeconds > 0;
                         if (countdownActive) ImGui::BeginDisabled();
-                        const char *skipLabel = cs->mapSkipMyVote ? "Cancel Skip" : "Skip Map";
-                        if (cs->mapSkipMyVote) {
+                        bool voted = cs->mapSkipMyVote;
+                        const char *skipLabel = voted ? "Cancel Skip" : "Skip Map";
+                        if (voted) {
                             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
@@ -657,7 +658,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 transportUdpClientSendMapSkipVote(transport);
                             }
                         }
-                        if (cs->mapSkipMyVote) {
+                        if (voted) {
                             ImGui::PopStyleColor(3);
                         }
                         ImGui::SameLine();
@@ -1005,8 +1006,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImGui::Spacing();
                 bool countdownActive = cs->countdownSeconds > 0;
                 if (countdownActive) ImGui::BeginDisabled();
-                const char *skipLabel = cs->mapSkipMyVote ? "Cancel Skip" : "Skip Map";
-                if (cs->mapSkipMyVote) {
+                bool voted = cs->mapSkipMyVote;
+                const char *skipLabel = voted ? "Cancel Skip" : "Skip Map";
+                if (voted) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
@@ -1017,7 +1019,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         transportUdpClientSendMapSkipVote(transport);
                     }
                 }
-                if (cs->mapSkipMyVote) {
+                if (voted) {
                     ImGui::PopStyleColor(3);
                 }
                 ImGui::SameLine();
