@@ -821,6 +821,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
             serverSimMapSkipVotesReset(sim);
             transportUdpServerNotifyMapChange(sim);
             transportUdpServerBroadcastMapSkipState(sim);
+            winbolonetSendMapChange(sim->mapName,
+                basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
+                basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
         }
     }
 
@@ -1834,6 +1837,9 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
         serverSimMapSkipVotesReset(sim);
         transportUdpServerNotifyMapChange(sim);
         transportUdpServerBroadcastMapSkipState(sim);
+        winbolonetSendMapChange(sim->mapName,
+            basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
+            basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
     }
 }
 

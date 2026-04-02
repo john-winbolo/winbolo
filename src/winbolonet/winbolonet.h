@@ -254,6 +254,21 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum);
 void winboloNetSendLock(bool isLocked);
 
 /*********************************************************
+*NAME:          winbolonetSendMapChange
+*PURPOSE:
+* Notifies WinBolo.net that the map changed during the
+* lobby (e.g. via skip vote). POSTs to /api/v1/server/map.
+*
+*ARGUMENTS:
+* mapName   - Name of the new map
+* numBases  - Number of bases on the new map
+* numPills  - Number of pills on the new map
+* freeBases - Free bases (all, since lobby)
+* freePills - Free pills (all, since lobby)
+*********************************************************/
+void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills);
+
+/*********************************************************
 *NAME:          winbolonetReturnToLobby
 *PURPOSE:
 * Handles the WBN session cycle when the server returns to
