@@ -714,7 +714,10 @@ if(APPLE)
             MACOSX_PACKAGE_LOCATION "Resources")
         set_target_properties(WinBolo PROPERTIES
             MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns")
+            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/gui/sdl3/platform/Info.plist.in"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.winbolo.macos"
+            MACOSX_BUNDLE_BUNDLE_NAME "WinBolo")
     endif()
 endif()
 

@@ -245,8 +245,12 @@ int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   DWORD tick;
 
-  (void)argc;
-  (void)argv;
+  /* Check for winbolo:// URL passed via intent (see WinBoloActivity.getArguments) */
+  for (int i = 1; i < argc; i++) {
+    if (cmdLine[0] == '\0') {
+      cmdLine = argv[i];
+    }
+  }
 
   SDL_Init(0);
   initWinboloTimer();

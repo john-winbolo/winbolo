@@ -2188,6 +2188,20 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (isGameInput) continue;
         }
 
+        /* Handle winbolo:// URL opened while app is already running.
+           macOS delivers URL scheme activations as SDL_EVENT_DROP_FILE. */
+        if (ev.type == SDL_EVENT_DROP_FILE && ev.drop.data) {
+            const char *url = ev.drop.data;
+            if (strncmp(url, "winbolo://", 10) == 0) {
+                char urlCopy[512];
+                strncpy(urlCopy, url, sizeof(urlCopy) - 1);
+                urlCopy[sizeof(urlCopy) - 1] = '\0';
+                gameFrontSetAddressFromWebLink(urlCopy);
+                SDL_Log("[URL] Received winbolo:// link while running: %s", url);
+            }
+            continue;
+        }
+
         if (ev.type == SDL_EVENT_QUIT) {
             windowSetQuitting();
         }
