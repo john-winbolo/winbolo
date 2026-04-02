@@ -677,8 +677,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                                                   ImGuiInputTextFlags_EnterReturnsTrue);
                             ImGui::SameLine();
-                            if ((ImGui::Button("Send", ImVec2(btnW, 0)) || enterPressed) &&
-                                chatInput[0] != '\0' && transport) {
+                            bool chatEmpty = (chatInput[0] == '\0');
+                            if (chatEmpty) ImGui::BeginDisabled();
+                            bool sendClicked = ImGui::Button("Send", ImVec2(btnW, 0));
+                            if (chatEmpty) ImGui::EndDisabled();
+                            if ((sendClicked || enterPressed) &&
+                                !chatEmpty && transport) {
                                 transportUdpClientSendChat(transport, 0xFF, chatInput);
                                 const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
                                     ? cs->lobbySlots[myPlayerNum].playerName : "Me";
@@ -717,22 +721,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 if (myPlayerNum == 0 && transport && !cs->balanceProposalActive) {
                     bool hasWbnPlayers = false;
+                    uint8_t connectedCount = 0;
                     for (int j = 0; j < 16; j++) {
-                        if (cs->lobbySlots[j].connected && cs->lobbySlots[j].wbnParticipant) {
-                            hasWbnPlayers = true;
-                            break;
+                        if (cs->lobbySlots[j].connected) {
+                            connectedCount++;
+                            if (cs->lobbySlots[j].wbnParticipant) {
+                                hasWbnPlayers = true;
+                            }
                         }
                     }
                     if (hasWbnPlayers) {
                         ImGui::SameLine(0, 20);
+                        if (connectedCount < 2) ImGui::BeginDisabled();
                         if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
-                            uint8_t connected = 0;
-                            for (int j = 0; j < 16; j++) {
-                                if (cs->lobbySlots[j].connected) connected++;
-                            }
-                            uint8_t teamSize = (connected > 1) ? (connected / 2) : 1;
+                            uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
                             transportUdpClientSendBalanceRequest(transport, teamSize);
                         }
+                        if (connectedCount < 2) ImGui::EndDisabled();
                     }
                 } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
                     ImGui::SameLine(0, 20);
@@ -990,8 +995,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                                   ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
-            if ((ImGui::Button("Send", ImVec2(btnW, 0)) || enterPressed) &&
-                chatInput[0] != '\0' && transport) {
+            bool chatEmpty = (chatInput[0] == '\0');
+            if (chatEmpty) ImGui::BeginDisabled();
+            bool sendClicked = ImGui::Button("Send", ImVec2(btnW, 0));
+            if (chatEmpty) ImGui::EndDisabled();
+            if ((sendClicked || enterPressed) &&
+                !chatEmpty && transport) {
                 transportUdpClientSendChat(transport, 0xFF, chatInput);
                 const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
                     ? cs->lobbySlots[myPlayerNum].playerName : "Me";
@@ -1021,22 +1030,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             if (myPlayerNum == 0 && transport && !cs->balanceProposalActive) {
                 bool hasWbnPlayers = false;
+                uint8_t connectedCount = 0;
                 for (int j = 0; j < 16; j++) {
-                    if (cs->lobbySlots[j].connected && cs->lobbySlots[j].wbnParticipant) {
-                        hasWbnPlayers = true;
-                        break;
+                    if (cs->lobbySlots[j].connected) {
+                        connectedCount++;
+                        if (cs->lobbySlots[j].wbnParticipant) {
+                            hasWbnPlayers = true;
+                        }
                     }
                 }
                 if (hasWbnPlayers) {
                     ImGui::SameLine(0, 20);
+                    if (connectedCount < 2) ImGui::BeginDisabled();
                     if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
-                        uint8_t connected = 0;
-                        for (int j = 0; j < 16; j++) {
-                            if (cs->lobbySlots[j].connected) connected++;
-                        }
-                        uint8_t teamSize = (connected > 1) ? (connected / 2) : 1;
+                        uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
                         transportUdpClientSendBalanceRequest(transport, teamSize);
                     }
+                    if (connectedCount < 2) ImGui::EndDisabled();
                 }
             } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
                 ImGui::SameLine(0, 20);
