@@ -460,7 +460,7 @@ set_source_files_properties(${IOS_DATA_BMP} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data"
 )
 set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "data/fonts"
+    MACOSX_PACKAGE_LOCATION "data"
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"

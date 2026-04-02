@@ -854,7 +854,7 @@ bool sdl3DrawSetup(int zoomFactor) {
      * asset manager when given a relative path.  Don't prepend BasePath. */
     const char *fontPath = "data/CourierPrime-Regular.ttf";
 #else
-    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
+    const char *relPath = "data/CourierPrime-Regular.ttf";
     /* Use SDL_GetBasePath() to resolve font path relative to the executable,
        so it works regardless of CWD */
     const char *base = SDL_GetBasePath();
