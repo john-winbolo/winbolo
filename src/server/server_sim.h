@@ -137,6 +137,8 @@ typedef struct ServerSim {
     /* WBN team balance proposal */
     BalanceProposal balanceProposal;
 
+    bool mapSkipVotes[MAX_TANKS]; /* per-slot map skip vote */
+
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
     int          mapDirCount;             /* Number of valid maps in the array */
@@ -474,6 +476,22 @@ bool serverSimMapDirPickRandom(ServerSim *sim);
  *  Frees the mapDirFiles array.
  *********************************************************/
 void serverSimMapDirDestroy(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimMapSkipVoteToggle
+ *PURPOSE:
+ *  Toggles a player's map skip vote. If the vote count
+ *  reaches majority of connected humans, picks a new
+ *  random map and resets all votes.
+ *********************************************************/
+void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum);
+
+/*********************************************************
+ *NAME:          serverSimMapSkipVotesReset
+ *PURPOSE:
+ *  Clears all map skip votes.
+ *********************************************************/
+void serverSimMapSkipVotesReset(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimSendWbnWinEvents
