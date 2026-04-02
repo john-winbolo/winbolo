@@ -641,6 +641,37 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", cs->mapName, cs->lobbyPillCount, cs->lobbyBaseCount, cs->lobbyStartCount);
 
+                    if (cs->mapSkipAvailable && cs->inLobby) {
+                        ImGui::Spacing();
+                        bool countdownActive = cs->countdownSeconds > 0;
+                        if (countdownActive) ImGui::BeginDisabled();
+                        const char *skipLabel = cs->mapSkipMyVote ? "Cancel Skip" : "Skip Map";
+                        if (cs->mapSkipMyVote) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
+                        }
+                        if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
+                            cs->mapSkipMyVote = !cs->mapSkipMyVote;
+                            if (transport) {
+                                transportUdpClientSendMapSkipVote(transport);
+                            }
+                        }
+                        if (cs->mapSkipMyVote) {
+                            ImGui::PopStyleColor(3);
+                        }
+                        ImGui::SameLine();
+                        int skipCount = 0, humanCount = 0;
+                        for (int j = 0; j < MAX_TANKS; j++) {
+                            if (cs->lobbySlots[j].connected && !cs->lobbySlots[j].isBot) {
+                                humanCount++;
+                                if (cs->mapSkipVotes[j]) skipCount++;
+                            }
+                        }
+                        ImGui::Text("%d/%d votes to skip", skipCount, humanCount);
+                        if (countdownActive) ImGui::EndDisabled();
+                    }
+
                     ImGui::EndTabItem();
                 }
 
@@ -969,6 +1000,37 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("Pillboxes: %d", cs->lobbyPillCount);
             ImGui::Text("Bases: %d", cs->lobbyBaseCount);
             ImGui::Text("Starts: %d", cs->lobbyStartCount);
+
+            if (cs->mapSkipAvailable && cs->inLobby) {
+                ImGui::Spacing();
+                bool countdownActive = cs->countdownSeconds > 0;
+                if (countdownActive) ImGui::BeginDisabled();
+                const char *skipLabel = cs->mapSkipMyVote ? "Cancel Skip" : "Skip Map";
+                if (cs->mapSkipMyVote) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
+                }
+                if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
+                    cs->mapSkipMyVote = !cs->mapSkipMyVote;
+                    if (transport) {
+                        transportUdpClientSendMapSkipVote(transport);
+                    }
+                }
+                if (cs->mapSkipMyVote) {
+                    ImGui::PopStyleColor(3);
+                }
+                ImGui::SameLine();
+                int skipCount = 0, humanCount = 0;
+                for (int j = 0; j < MAX_TANKS; j++) {
+                    if (cs->lobbySlots[j].connected && !cs->lobbySlots[j].isBot) {
+                        humanCount++;
+                        if (cs->mapSkipVotes[j]) skipCount++;
+                    }
+                }
+                ImGui::Text("%d/%d votes to skip", skipCount, humanCount);
+                if (countdownActive) ImGui::EndDisabled();
+            }
 
             ImGui::EndChild(); /* ##MapPanel */
         }

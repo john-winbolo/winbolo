@@ -775,6 +775,12 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) 
         playersSetPlayer(NULL, &sim->sim.plyrs, playerNum, (char *)playerName, "??",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
     }
+
+    /* Broadcast current skip vote state to the new player — existing votes
+     * are preserved since the threshold naturally adjusts with more players. */
+    if (sim->lobbyEnabled && sim->state == serverStateLobby && sim->mapDirCount > 1) {
+        transportUdpServerBroadcastMapSkipState(sim);
+    }
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
@@ -797,6 +803,26 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].teamNumber = 0;
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    sim->mapSkipVotes[playerNum] = false;
+
+    /* Check if disconnect pushes skip votes over threshold */
+    if (sim->lobbyEnabled && sim->state == serverStateLobby && sim->mapDirCount > 1) {
+        int voteCount = 0;
+        int connectedHumans = 0;
+        BYTE k;
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!sim->playerConnected[k] || sim->lobbyPlayers[k].isBot) continue;
+            connectedHumans++;
+            if (sim->mapSkipVotes[k]) voteCount++;
+        }
+        if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
+            SDL_Log("Map skip: disconnect pushed votes over threshold (%d/%d), skipping map", voteCount, connectedHumans);
+            serverSimMapDirPickRandom(sim);
+            serverSimMapSkipVotesReset(sim);
+            transportUdpServerNotifyMapChange(sim);
+            transportUdpServerBroadcastMapSkipState(sim);
+        }
+    }
 
     /* If in countdown and someone disconnects, revert to lobby */
     if (sim->lobbyEnabled && sim->state == serverStateCountdown) {
@@ -1314,6 +1340,7 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->emptyResetTicks = -1;
 
     sim->state = serverStateLobby;
+    serverSimMapSkipVotesReset(sim);
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
 }
@@ -1741,6 +1768,20 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
 
     idx = rand() % sim->mapDirCount;
 
+    /* Try to avoid picking the same map we're already on */
+    if (sim->mapDirCount > 1) {
+        int attempts;
+        for (attempts = 0; attempts < 10; attempts++) {
+            const char *base = sim->mapDirFiles[idx];
+            const char *p;
+            for (p = sim->mapDirFiles[idx]; *p; p++) {
+                if (*p == '/' || *p == '\\') base = p + 1;
+            }
+            if (strcmp(base, sim->mapName) != 0) break;
+            idx = rand() % sim->mapDirCount;
+        }
+    }
+
     if (serverSimChangeMap(sim, sim->mapDirFiles[idx]) == FALSE) {
         /* Map may have been deleted or corrupted since startup — try others */
         int tries;
@@ -1759,6 +1800,45 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
     serverSimConsoleMessage(msg);
     return TRUE;
+}
+
+void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
+    int voteCount = 0;
+    int connectedHumans = 0;
+    BYTE i;
+
+    if (sim->state != serverStateLobby || sim->mapDirCount <= 1) {
+        return;
+    }
+    if (playerNum >= MAX_TANKS || !sim->playerConnected[playerNum]) {
+        return;
+    }
+    if (sim->lobbyPlayers[playerNum].isBot) {
+        return;
+    }
+
+    sim->mapSkipVotes[playerNum] = !sim->mapSkipVotes[playerNum];
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
+        connectedHumans++;
+        if (sim->mapSkipVotes[i]) voteCount++;
+    }
+
+    SDL_Log("Map skip: player %d voted %s (%d/%d)", playerNum,
+            sim->mapSkipVotes[playerNum] ? "yes" : "no", voteCount, connectedHumans);
+
+    if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
+        SDL_Log("Map skip: majority reached (%d/%d), skipping map", voteCount, connectedHumans);
+        serverSimMapDirPickRandom(sim);
+        serverSimMapSkipVotesReset(sim);
+        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerBroadcastMapSkipState(sim);
+    }
+}
+
+void serverSimMapSkipVotesReset(ServerSim *sim) {
+    memset(sim->mapSkipVotes, 0, sizeof(sim->mapSkipVotes));
 }
 
 void serverSimMapDirDestroy(ServerSim *sim) {

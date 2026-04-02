@@ -244,6 +244,8 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_BALANCE_PROPOSAL  148  /* Server -> Clients: proposed team assignments */
 #define PACKET_BALANCE_APPLY     149  /* Client(host) -> Server: confirm and apply proposal */
 #define PACKET_BALANCE_DISMISS   150  /* Client(host) -> Server: dismiss proposal */
+#define PACKET_MAP_SKIP_VOTE    151  /* Client -> Server: toggle skip vote */
+#define PACKET_MAP_SKIP_STATE   152  /* Server -> Clients: current vote tally */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0

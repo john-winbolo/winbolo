@@ -134,8 +134,8 @@ static void packHeader(uint8_t *buf, uint8_t packetType, uint32_t sequence) {
 /* Lobby slot wire format size: connected(1) + playerName(32) + teamNumber(1) + ready(1) + isBot(1) + pingMs(2) + countryCode(2) + wbn(1) + steam(1) */
 #define LOBBY_SLOT_WIRE_SIZE (1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-/* Lobby settings tail: mapName(36) + gameType(1) + hiddenMines(1) + aiType(1) + gameLength(4) + pillCount(1) + baseCount(1) + startCount(1) */
-#define LOBBY_SETTINGS_SIZE  (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1)
+/* Lobby settings tail: mapName(36) + gameType(1) + hiddenMines(1) + aiType(1) + gameLength(4) + pillCount(1) + baseCount(1) + startCount(1) + mapSkipAvailable(1) */
+#define LOBBY_SETTINGS_SIZE  (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1)
 #define LOBBY_STATE_PAYLOAD  (1 + MAX_TANKS * LOBBY_SLOT_WIRE_SIZE + LOBBY_SETTINGS_SIZE)
 
 static uint8_t getPacketType(const uint8_t *buf, int len) {
@@ -187,6 +187,8 @@ static const char *packetTypeName(uint8_t type) {
     case PACKET_BALANCE_PROPOSAL:  return "BALANCE_PROPOSAL";
     case PACKET_BALANCE_APPLY:     return "BALANCE_APPLY";
     case PACKET_BALANCE_DISMISS:   return "BALANCE_DISMISS";
+    case PACKET_MAP_SKIP_VOTE:     return "MAP_SKIP_VOTE";
+    case PACKET_MAP_SKIP_STATE:    return "MAP_SKIP_STATE";
     default:                        return "UNKNOWN";
     }
 }
@@ -941,7 +943,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          *              [pingMs 2] [countryCode 2] [wbn 1] [steam 1]
          *   Game settings tail:
          *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
-         *     [gameLength 4] [pillCount 1] [baseCount 1] [startCount 1] */
+         *     [gameLength 4] [pillCount 1] [baseCount 1] [startCount 1]
+         *     [mapSkipAvailable 1] */
         if (len >= PACKET_HEADER_SIZE + LOBBY_STATE_PAYLOAD) {
             int pos = PACKET_HEADER_SIZE;
             int i;
@@ -979,6 +982,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->lobbyPillCount = buf[pos++];
             c->clientSim->lobbyBaseCount = buf[pos++];
             c->clientSim->lobbyStartCount = buf[pos++];
+            c->clientSim->mapSkipAvailable = buf[pos++] ? true : false;
             /* Map server state to client netStatus — preserve countdown state */
             if (serverState == 1) { /* serverStateCountdown */
                 c->clientSim->netStat = netLobbyCountdown;
@@ -1090,6 +1094,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->joinState = UDP_CLIENT_JOINING;
         c->joinAttempts = 0;
         c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
+        /* Votes reset server-side on map change */
+        memset(c->clientSim->mapSkipVotes, 0, sizeof(c->clientSim->mapSkipVotes));
+        c->clientSim->mapSkipMyVote = false;
         break;
 
     case PACKET_BALANCE_PROPOSAL:
@@ -1105,6 +1112,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
             }
             c->clientSim->balanceProposalActive = anyNonZero;
+        }
+        break;
+
+    case PACKET_MAP_SKIP_STATE:
+        /* [header 8] [votes: 16 bytes, one per slot, 0 or 1] */
+        if (len >= PACKET_HEADER_SIZE + MAX_TANKS) {
+            int i;
+            for (i = 0; i < MAX_TANKS; i++) {
+                c->clientSim->mapSkipVotes[i] = buf[PACKET_HEADER_SIZE + i] ? true : false;
+            }
+            c->clientSim->mapSkipMyVote = c->clientSim->mapSkipVotes[c->playerNum];
         }
         break;
 
@@ -1632,6 +1650,16 @@ void transportUdpClientSendBalanceDismiss(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_BALANCE_DISMISS, c->outSequence++);
+    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+}
+
+void transportUdpClientSendMapSkipVote(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
     udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
 }
 
@@ -2573,6 +2601,7 @@ static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
     buf[pos++] = pillsGetNumPills(&sim->sim.pb);
     buf[pos++] = basesGetNumBases(&sim->sim.bs);
     buf[pos++] = startsGetNumStarts(&sim->sim.ss);
+    buf[pos++] = sim->mapDirCount > 1 ? 1 : 0;
 }
 
 void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
@@ -2719,6 +2748,21 @@ void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForS
     (void)sim;
     packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
     memcpy(buf + PACKET_HEADER_SIZE, teamForSlot, MAX_TANKS);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clients[i].connected) {
+            udpSendTo(udpServer.sock, buf, sizeof(buf),
+                      &udpServer.clients[i].addr);
+        }
+    }
+}
+
+void transportUdpServerBroadcastMapSkipState(ServerSim *sim) {
+    uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
+    int i;
+    packHeader(buf, PACKET_MAP_SKIP_STATE, 0);
+    for (i = 0; i < MAX_TANKS; i++) {
+        buf[PACKET_HEADER_SIZE + i] = sim->mapSkipVotes[i] ? 1 : 0;
+    }
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
             udpSendTo(udpServer.sock, buf, sizeof(buf),
@@ -3293,6 +3337,15 @@ void transportUdpServerRecv(ServerSim *sim) {
                 memset(zeros, 0, sizeof(zeros));
                 memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
                 transportUdpServerBroadcastBalanceProposal(sim, zeros);
+            }
+            break;
+        }
+        case PACKET_MAP_SKIP_VOTE: {
+            /* Wire: [header 8] (no payload — server identifies player by source) */
+            int clientIdx = serverFindClient(&fromAddr);
+            if (clientIdx >= 0) {
+                serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
+                transportUdpServerBroadcastMapSkipState(sim);
             }
             break;
         }
