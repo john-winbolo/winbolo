@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=WinBolo
+Comment=WinBolo Tank Game
+Exec=winbolo %u
+Type=Application
+Categories=Game;
+MimeType=x-scheme-handler/winbolo;

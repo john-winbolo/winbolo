@@ -310,6 +310,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
+  /* Register winbolo:// URL protocol handler (Windows only; other
+     platforms use Info.plist / .desktop file declarations). */
+  gameFrontSetRegistryKeys();
+
   /* Handle winbolo:// URL links */
   dlgState = openStart;
   if (strncmp(fileName, "winbolo://", 10) == 0) {
@@ -1110,7 +1114,31 @@ bool gameFrontGetWinbolonetUse(void) {
 }
 
 void gameFrontSetRegistryKeys(void) {
-  /* No-op on non-Win32 */
+#ifdef _WIN32
+  /* Register winbolo:// URL protocol handler in the Windows registry.
+     Creates: HKCU\Software\Classes\winbolo with URL Protocol and
+     a shell\open\command pointing to the current executable. */
+  HKEY hKey;
+  char exePath[MAX_PATH];
+  char command[MAX_PATH + 16];
+
+  GetModuleFileNameA(NULL, exePath, MAX_PATH);
+  snprintf(command, sizeof(command), "\"%s\" \"%%1\"", exePath);
+
+  if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\winbolo", 0, NULL,
+                       0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+    const char *desc = "WinBolo Game Link";
+    RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE *)desc, (DWORD)strlen(desc) + 1);
+    RegSetValueExA(hKey, "URL Protocol", 0, REG_SZ, (const BYTE *)"", 1);
+    RegCloseKey(hKey);
+  }
+  if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\winbolo\\shell\\open\\command", 0, NULL,
+                       0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+    RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE *)command, (DWORD)strlen(command) + 1);
+    RegCloseKey(hKey);
+  }
+#endif
+  /* No-op on macOS/Linux/iOS — registration is handled by Info.plist / .desktop file */
 }
 
 void gameFrontSetAddressFromWebLink(char *address) {
