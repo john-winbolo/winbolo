@@ -540,6 +540,8 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
       if (serverSim.emptyResetEnabled && !serverSim.autoCloseOnEmpty &&
           serverSim.lobbyEnabled &&
           serverSim.state != serverStateGameOver &&
+          serverSim.state != serverStateLobby &&
+          serverSim.state != serverStateCountdown &&
           serverSimCheckEmptyReset(&serverSim)) {
         serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
         serverSimResetGameWorld(&serverSim);
