@@ -18,6 +18,19 @@ endif()
 
 project(winbolo C)
 
+set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+
+# Derive network protocol version bytes from WINBOLO_VERSION.
+# Each digit of the version string (skipping dots) becomes one byte.
+# E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
+string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
+string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
+string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
+string(SUBSTRING "${_VER_DIGITS}" 2 1 _VER_D2)
+math(EXPR BOLO_VERSION_MAJOR "${_VER_D0}")
+math(EXPR BOLO_VERSION_MINOR "${_VER_D1}")
+math(EXPR BOLO_VERSION_REVISION "${_VER_D2}")
+
 set(CMAKE_C_STANDARD 99)
 
 # On Linux, embed $ORIGIN in RPATH so installed/dist binaries find .so files in
@@ -527,7 +540,22 @@ target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_bac
 )
 
 target_compile_options(WinBoloIOS PRIVATE -fcommon)
-target_compile_definitions(WinBoloIOS PRIVATE HAVE_SCREEN_C=1 __IPHONEOS__=1)
+target_compile_definitions(WinBoloIOS PRIVATE
+    HAVE_SCREEN_C=1
+    __IPHONEOS__=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+
+if(HAVE_SENTRY_IOS)
+    target_compile_definitions(WinBoloIOS PRIVATE HAVE_SENTRY=1)
+    if(SENTRY_DSN)
+        target_compile_definitions(WinBoloIOS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
+    endif()
+    target_link_libraries(WinBoloIOS PRIVATE "${SENTRY_COCOA_XCFW}")
+endif()
 
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
@@ -654,6 +682,53 @@ else()
     message(STATUS "ONNX Runtime not found — ML brain support disabled")
 endif()
 
+# Sentry crash reporting — optional.
+# Set -DENABLE_SENTRY=OFF to skip entirely.
+# Pass -DSENTRY_DSN="https://key@o0.ingest.sentry.io/0" to enable reporting.
+option(ENABLE_SENTRY "Enable Sentry crash reporting" ON)
+set(SENTRY_DSN "" CACHE STRING "Sentry DSN for crash reporting")
+set(HAVE_SENTRY FALSE)
+set(HAVE_SENTRY_IOS FALSE)
+
+if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
+    FetchContent_Declare(
+        sentry
+        GIT_REPOSITORY https://github.com/getsentry/sentry-native.git
+        GIT_TAG        0.7.17
+        GIT_SHALLOW    TRUE
+        SYSTEM
+    )
+    set(SENTRY_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    # Crashpad has poor MinGW/GCC 15 support; use inproc backend on MinGW.
+    if(MINGW)
+        set(SENTRY_BACKEND "inproc" CACHE STRING "" FORCE)
+    else()
+        set(SENTRY_BACKEND "crashpad" CACHE STRING "" FORCE)
+    endif()
+    FetchContent_MakeAvailable(sentry)
+
+    set(HAVE_SENTRY TRUE)
+endif()
+
+# Sentry crash reporting — iOS (sentry-cocoa static xcframework).
+# Requires CMake 3.28+ for xcframework support with the Xcode generator.
+if(ENABLE_SENTRY AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    FetchContent_Declare(
+        sentry_cocoa
+        URL https://github.com/getsentry/sentry-cocoa/releases/download/9.8.0/Sentry.xcframework.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(sentry_cocoa)
+    set(SENTRY_COCOA_XCFW "${sentry_cocoa_SOURCE_DIR}/Sentry.xcframework")
+    set(HAVE_SENTRY_IOS TRUE)
+endif()
+
+if(HAVE_SENTRY)
+    message(STATUS "Sentry crash reporting enabled")
+else()
+    message(STATUS "Sentry crash reporting disabled")
+endif()
+
 # ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
@@ -703,7 +778,13 @@ if(NOT WIN32)
 endif()
 
 add_executable(WinBolo ${CLIENT_SOURCES})
-target_compile_definitions(WinBolo PRIVATE HAVE_SCREEN_C=1)
+target_compile_definitions(WinBolo PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
 
 # macOS app bundle with icon
 if(APPLE)
@@ -774,6 +855,16 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBolo PRIVATE onnxruntime::onnxruntime)
 endif()
 
+# Sentry crash reporting (optional)
+if(HAVE_SENTRY)
+    target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
+    target_compile_definitions(WinBolo PRIVATE HAVE_SENTRY=1)
+    if(SENTRY_DSN)
+        target_compile_definitions(WinBolo PRIVATE SENTRY_DSN="${SENTRY_DSN}")
+    endif()
+    target_link_libraries(WinBolo PRIVATE sentry::sentry)
+endif()
+
 # Copy data assets and brain scripts to the correct location.
 # On macOS bundles, SDL_GetBasePath() returns Contents/Resources/, so assets go there.
 # On Windows/Linux, they go next to the executable.
@@ -820,6 +911,14 @@ if(HAVE_ONNXRUNTIME)
         endforeach()
     endif()
 endif()
+# Copy crashpad_handler next to WinBolo executable
+if(HAVE_SENTRY AND TARGET crashpad_handler)
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:crashpad_handler>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Copying crashpad_handler to WinBolo output directory"
+    )
+endif()
 # On Windows, also copy vcpkg / imported DLLs (curl, zlib, etc.)
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     add_custom_command(TARGET WinBolo POST_BUILD
@@ -860,6 +959,12 @@ set(SERVER_SOURCES
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
+target_compile_definitions(WinBoloDS PRIVATE
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
 
 target_include_directories(WinBoloDS PRIVATE
     src/gui/sdl3
@@ -903,6 +1008,16 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBoloDS PRIVATE onnxruntime::onnxruntime)
 endif()
 
+# Sentry crash reporting (optional)
+if(HAVE_SENTRY)
+    target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
+    target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
+    if(SENTRY_DSN)
+        target_compile_definitions(WinBoloDS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
+    endif()
+    target_link_libraries(WinBoloDS PRIVATE sentry::sentry)
+endif()
+
 # Copy geo database to server output directory
 if(EXISTS "${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb")
     add_custom_command(TARGET WinBoloDS POST_BUILD
@@ -927,6 +1042,14 @@ if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     )
 endif()
 
+# Copy crashpad_handler next to WinBoloDS executable
+if(HAVE_SENTRY AND TARGET crashpad_handler)
+    add_custom_command(TARGET WinBoloDS POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:crashpad_handler>" "$<TARGET_FILE_DIR:WinBoloDS>"
+        COMMENT "Copying crashpad_handler to WinBoloDS output directory"
+    )
+endif()
 # Copy Lua brain scripts to output Brains/ directory (server)
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
@@ -965,6 +1088,12 @@ add_executable(LogViewer
     ${LOGVIEWER_SOURCES}
     ${LOGVIEWER_IMGUI_SOURCES}
     ${LOGVIEWER_PLATFORM_SOURCES}
+)
+target_compile_definitions(LogViewer PRIVATE
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
 
 if(WIN32)
@@ -1082,7 +1211,13 @@ if(NOT WIN32)
 endif()
 
 add_executable(WinBoloHeadless ${HEADLESS_SOURCES})
-target_compile_definitions(WinBoloHeadless PRIVATE HAVE_SCREEN_C=1)
+target_compile_definitions(WinBoloHeadless PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
 
 target_include_directories(WinBoloHeadless PRIVATE
     src/gui/sdl3
@@ -1120,6 +1255,16 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBoloHeadless PRIVATE onnxruntime::onnxruntime)
 endif()
 
+# Sentry crash reporting (optional)
+if(HAVE_SENTRY)
+    target_sources(WinBoloHeadless PRIVATE src/common/sentry_integration.c)
+    target_compile_definitions(WinBoloHeadless PRIVATE HAVE_SENTRY=1)
+    if(SENTRY_DSN)
+        target_compile_definitions(WinBoloHeadless PRIVATE SENTRY_DSN="${SENTRY_DSN}")
+    endif()
+    target_link_libraries(WinBoloHeadless PRIVATE sentry::sentry)
+endif()
+
 # Copy shared libraries and brain scripts next to headless executable
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
@@ -1132,6 +1277,14 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
+# Copy crashpad_handler next to WinBoloHeadless executable
+if(HAVE_SENTRY AND TARGET crashpad_handler)
+    add_custom_command(TARGET WinBoloHeadless POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:crashpad_handler>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
+        COMMENT "Copying crashpad_handler to WinBoloHeadless output directory"
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # WinBoloGym shared library (C API for ML training)
@@ -1179,7 +1332,14 @@ if(NOT WIN32)
 endif()
 
 add_library(winbolo_gym SHARED ${GYM_SOURCES})
-target_compile_definitions(winbolo_gym PRIVATE HAVE_SCREEN_C=1 WINBOLO_GYM_EXPORTS=1)
+target_compile_definitions(winbolo_gym PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_GYM_EXPORTS=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
 
 target_include_directories(winbolo_gym PRIVATE
     src/gui/sdl3
@@ -1260,7 +1420,13 @@ if(NOT WIN32)
 endif()
 
 add_executable(BrainTest ${BRAINTEST_SOURCES})
-target_compile_definitions(BrainTest PRIVATE HAVE_SCREEN_C=1)
+target_compile_definitions(BrainTest PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
 
 target_include_directories(BrainTest PRIVATE
     src/gui/sdl3

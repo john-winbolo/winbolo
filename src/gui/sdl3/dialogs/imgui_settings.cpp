@@ -94,6 +94,11 @@ extern "C" {
   void windowLabelOwnTank_toggle(void);
   void windowSetMessageLabelLen(labelLen newLen);
   void windowSetTankLabelLen(labelLen newLen);
+
+#if defined(__IPHONEOS__)
+  bool iosCrashReportingGetEnabled(void);
+  void iosCrashReportingSetEnabled(bool enabled);
+#endif
 }
 
 extern "C" void imguiSettingsShow(void) {
@@ -383,6 +388,19 @@ extern "C" void imguiSettingsShow(void) {
                 }
             }
         }
+
+#if defined(__IPHONEOS__)
+        /* ---- Crash Reporting ---- */
+        if (ImGui::CollapsingHeader("Crash Reporting", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool cr = iosCrashReportingGetEnabled();
+            if (ImGui::Checkbox("Enable Crash Reporting", &cr)) {
+                iosCrashReportingSetEnabled(cr);
+            }
+            ImGui::TextWrapped("Help improve WinBolo by sending crash reports");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Changes take effect on next launch.");
+        }
+#endif
 
         ImGui::Spacing();
         ImGui::Separator();

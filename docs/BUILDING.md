@@ -208,3 +208,137 @@ cmake -B build -S . -DENABLE_ONNXRUNTIME=OFF
 ### GeoIP lookups
 
 If `data/dbip-country-lite.mmdb` is present, the server will use it for IP-to-country lookups via libmaxminddb (built automatically).
+
+### Sentry crash reporting
+
+Enabled by default. Pass a DSN to activate crash reporting:
+
+```bash
+cmake -B build -S . -DSENTRY_DSN="https://key@o0.ingest.sentry.io/0"
+```
+
+To disable entirely:
+
+```bash
+cmake -B build -S . -DENABLE_SENTRY=OFF
+```
+
+Users can also disable crash reporting at runtime with the `-nocrashreporting` flag.
+
+## Release builds and debug symbols
+
+Release builds should include debug information so that Sentry crash reports contain symbolicated stack traces. The key is to build with optimizations **and** debug symbols, then upload those symbols to Sentry.
+
+### Windows (MSVC)
+
+Use the `RelWithDebInfo` configuration to get optimized binaries with `.pdb` files:
+
+```bash
+cmake -B build -S . -DSENTRY_DSN="https://..."
+cmake --build build --config RelWithDebInfo
+```
+
+This produces `.exe` files alongside `.pdb` debug symbol files in `build/RelWithDebInfo/`.
+
+### Linux
+
+Build with `RelWithDebInfo` to embed DWARF debug info in the ELF binaries:
+
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSENTRY_DSN="https://..."
+cmake --build build -j$(nproc)
+```
+
+The resulting binaries in `build/` contain embedded DWARF sections that `sentry-cli` can extract.
+
+### macOS
+
+Build with `RelWithDebInfo` to generate `.dSYM` bundles:
+
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSENTRY_DSN="https://..."
+cmake --build build -j$(sysctl -n hw.ncpu)
+```
+
+The `.dSYM` bundles are generated alongside the binaries in `build/`.
+
+### iOS
+
+Generate an Xcode project and build a Release or RelWithDebInfo archive:
+
+```bash
+cmake -B build-ios -S . -G Xcode \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+```
+
+Build in Xcode with the Archive action or a Release configuration. The `.dSYM` files will be in the Xcode derived-data `Build/Products/` directory.
+
+### Android
+
+No special build type configuration is needed. The Sentry Gradle plugin (`io.sentry.android.gradle`) automatically uploads native debug symbols (`.so` files for each ABI) during `assembleRelease`:
+
+```bash
+cd android
+./gradlew assembleRelease
+```
+
+Ensure `SENTRY_AUTH_TOKEN` is set in the environment or in `~/.sentryclirc` so the plugin can authenticate.
+
+## Uploading debug symbols to Sentry
+
+After building with debug info, upload symbols so Sentry can symbolicate crash reports.
+
+### Prerequisites
+
+1. Install `sentry-cli`: https://docs.sentry.io/cli/installation/
+2. Set `SENTRY_AUTH_TOKEN` in your environment (create one at https://sentry.io/settings/auth-tokens/)
+
+### Using the upload script
+
+A convenience script is provided at `scripts/upload-sentry-symbols.sh`:
+
+```bash
+./scripts/upload-sentry-symbols.sh \
+    --org your-org \
+    --project winbolo \
+    --path build/
+```
+
+This runs `sentry-cli upload-dif --include-sources` on the given path. It works for all desktop platforms — the CLI auto-detects the symbol format:
+
+| Platform | What gets uploaded | Build path |
+|----------|-------------------|------------|
+| Windows (MSVC) | `.pdb` files | `build/RelWithDebInfo/` |
+| macOS | `.dSYM` bundles | `build/` |
+| Linux | ELF binaries with DWARF | `build/` |
+| iOS | `.dSYM` bundles | Xcode derived-data `Build/Products/` path |
+
+### Manual upload
+
+You can also run `sentry-cli` directly:
+
+```bash
+sentry-cli upload-dif \
+    --org your-org \
+    --project winbolo \
+    --include-sources \
+    build/
+```
+
+### Android
+
+Android symbol uploads are automatic. The Sentry Gradle plugin handles native symbol upload during `assembleRelease` — no manual `sentry-cli` invocation is needed.
+
+### iOS
+
+Upload the `.dSYM` files from your Xcode build:
+
+```bash
+./scripts/upload-sentry-symbols.sh \
+    --org your-org \
+    --project winbolo \
+    --path ~/Library/Developer/Xcode/DerivedData/winbolo-*/Build/Products/Release-iphoneos/
+```
+
+Alternatively, add a Run Script build phase in Xcode to automate this on every archive build.
