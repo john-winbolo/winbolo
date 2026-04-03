@@ -71,11 +71,24 @@ echo "  Project: $PROJECT"
 echo "  Path:    $BUILD_PATH"
 echo ""
 
-sentry-cli upload-dif \
+# Find only our own binaries/debug symbols, excluding FetchContent _deps
+# which contains test fixtures (e.g. crashpad's "Wrong CRC.zip") that
+# break sentry-cli's archive scanner.
+find "$BUILD_PATH" -path "*/_deps" -prune -o \( \
+    -name "*.pdb" -o \
+    -name "*.dSYM" -o \
+    -name "WinBolo" -o \
+    -name "WinBolo.exe" -o \
+    -name "WinBoloDS" -o \
+    -name "WinBoloDS.exe" -o \
+    -name "WinBoloHeadless" -o \
+    -name "WinBoloHeadless.exe" -o \
+    -name "LogViewer" -o \
+    -name "LogViewer.exe" \
+    \) -print0 | xargs -0 sentry-cli upload-dif \
     --org "$ORG" \
     --project "$PROJECT" \
-    --include-sources \
-    "$BUILD_PATH"
+    --include-sources
 
 echo ""
 echo "Done. Symbols uploaded successfully."
