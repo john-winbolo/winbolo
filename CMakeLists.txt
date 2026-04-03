@@ -120,14 +120,16 @@ if(WIN32)
     )
 endif()
 
+# Skip SDL test/example targets — we only need the library
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+
 # iOS: only build static SDL libraries (shared libs require code signing
 # and are not useful in an app bundle)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
     set(SDL_STATIC ON CACHE BOOL "" FORCE)
     set(SDL_LIBC ON CACHE BOOL "" FORCE)
-    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 
     # CMake's try_compile/check_symbol_exists probes each launch a full
     # xcodebuild invocation on the Xcode generator, making configure
@@ -141,11 +143,10 @@ endif()
 # Fetch SDL first (needed by everything)
 FetchContent_MakeAvailable(sdl3)
 
-# Lua — disable building the interpreter/compiler on iOS
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
-    set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
-endif()
+# Lua — only build the static library, skip interpreter/compiler/tests
+set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
+set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
+set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(lua)
 # lua_static must be built with -fPIC on Linux so it can link into shared libs (winbolo_gym)
 set_target_properties(lua_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -177,6 +178,7 @@ else()
         set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
         set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
     endif()
+    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
 
