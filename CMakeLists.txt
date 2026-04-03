@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.28)
 
 # Allow vendored dependencies with older cmake_minimum_required calls
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
@@ -65,6 +65,7 @@ FetchContent_Declare(
     GIT_TAG        release-3.4.2
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 FetchContent_Declare(
     sdl3_ttf
@@ -72,6 +73,7 @@ FetchContent_Declare(
     GIT_TAG        release-3.2.0
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 FetchContent_Declare(
     imgui
@@ -79,6 +81,7 @@ FetchContent_Declare(
     GIT_TAG        docking
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 FetchContent_Declare(
     lua
@@ -86,6 +89,7 @@ FetchContent_Declare(
     GIT_TAG        v5.4.7
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 FetchContent_Declare(
     zlib
@@ -93,6 +97,7 @@ FetchContent_Declare(
     GIT_TAG        v1.3.1
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 FetchContent_Declare(
     libmaxminddb
@@ -100,6 +105,7 @@ FetchContent_Declare(
     GIT_TAG        1.12.2
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 FetchContent_Declare(
     cjson
@@ -107,6 +113,7 @@ FetchContent_Declare(
     GIT_TAG        v1.7.18
     GIT_SHALLOW    TRUE
     SYSTEM
+    EXCLUDE_FROM_ALL
 )
 # curl is only built from source on Windows (uses Schannel for SSL).
 # On Linux/macOS, the system libcurl is used via find_package().
@@ -117,6 +124,7 @@ if(WIN32)
         GIT_TAG        curl-8_12_1
         GIT_SHALLOW    TRUE
         SYSTEM
+        EXCLUDE_FROM_ALL
     )
 endif()
 
@@ -699,6 +707,7 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
         GIT_TAG        0.7.17
         GIT_SHALLOW    TRUE
         SYSTEM
+        EXCLUDE_FROM_ALL
     )
     set(SENTRY_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     # Crashpad has poor MinGW/GCC 15 support; use inproc backend on MinGW.
