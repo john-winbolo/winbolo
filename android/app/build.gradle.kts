@@ -4,6 +4,7 @@ import java.util.zip.ZipInputStream
 
 plugins {
     id("com.android.application")
+    id("io.sentry.android.gradle") version "4.14.0"
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +119,11 @@ android {
             assets.srcDirs("src/main/assets")
         }
     }
+}
+
+dependencies {
+    implementation("io.sentry:sentry-android:7.18.0")
+    implementation("io.sentry:sentry-android-ndk:7.18.0")
 }
 
 // ---------------------------------------------------------------------------

@@ -223,8 +223,8 @@ void efree(Generic object);
 
 #define M_W_SHIFT_SIZE 8
 
-/* Version number */
-#define STRVER "1.18"
+/* Version number — WINBOLO_VERSION is defined by CMake */
+#define STRVER WINBOLO_VERSION
 
 /* Used to bitmask with a key code to see if it's pressed or not */
 #define PRESSED 0x80

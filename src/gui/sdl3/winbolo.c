@@ -69,6 +69,7 @@
 
 #include "../aresource.h"
 #include "dialog_backend.h"
+#include "../../common/sentry_integration.h"
 
 /* Forward declarations */
 void sdl3MessageHandler(const char *message, const char *title);
@@ -185,6 +186,8 @@ int main(int argc, char *argv[]) {
       cmdLine = argv[i];
     }
   }
+
+  sentryInit("WinBolo", argc, argv);
 
   dialogBackendInit();
 
@@ -409,6 +412,7 @@ int main(int argc, char *argv[]) {
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
   SDL_Quit();
+  sentryClose();
   return 0;
 }
 

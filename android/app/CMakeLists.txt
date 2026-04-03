@@ -276,7 +276,14 @@ target_link_libraries(main PRIVATE
     android
 )
 
-target_compile_definitions(main PRIVATE HAVE_SCREEN_C=1 HAVE_MAXMINDDB=1)
+target_compile_definitions(main PRIVATE
+    HAVE_SCREEN_C=1
+    HAVE_MAXMINDDB=1
+    WINBOLO_VERSION="1.18"
+    BOLO_VERSION_MAJOR=1
+    BOLO_VERSION_MINOR=1
+    BOLO_VERSION_REVISION=8
+)
 
 target_compile_options(main PRIVATE
     -Wall -Wextra
