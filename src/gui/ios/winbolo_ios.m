@@ -9,6 +9,9 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #import <AVFoundation/AVFoundation.h>
+#ifdef HAVE_SENTRY
+@import Sentry;
+#endif
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -42,6 +45,23 @@
 
 extern ClientSim *humanSim;
 
+/* -------------------------------------------------------
+ * Crash-reporting preference (NSUserDefaults)
+ * ------------------------------------------------------- */
+
+bool iosCrashReportingGetEnabled(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:@"crash_reporting_enabled"] == nil) {
+        return true; /* default to enabled */
+    }
+    return [defaults boolForKey:@"crash_reporting_enabled"];
+}
+
+void iosCrashReportingSetEnabled(bool enabled) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:enabled forKey:@"crash_reporting_enabled"];
+    [defaults synchronize];
+}
 
 /* -------------------------------------------------------
  * Globals (matching winbolo.h externs)
@@ -148,6 +168,18 @@ int main(int argc, char *argv[]) {
     DWORD tick;
     (void)argc;
     (void)argv;
+
+    /* Initialize Sentry crash reporting if the user hasn't opted out */
+#ifdef HAVE_SENTRY
+    if (iosCrashReportingGetEnabled()) {
+        [SentrySDK startWithConfigureOptions:^(SentryOptions *options) {
+#ifdef SENTRY_DSN
+            options.dsn = @SENTRY_DSN;
+#endif
+            options.releaseName = [NSString stringWithFormat:@"winbolo-ios@%s", WINBOLO_VERSION];
+        }];
+    }
+#endif
 
     /* Configure audio session */
     {

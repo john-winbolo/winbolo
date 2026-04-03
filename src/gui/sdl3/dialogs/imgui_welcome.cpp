@@ -505,7 +505,7 @@ extern "C" int imguiWelcomeShow(void) {
 
         /* Version label — bottom-right of screen */
         {
-            const char *ver = "v1.18";
+            const char *ver = "v" WINBOLO_VERSION;
             ImVec2 verSize = ImGui::CalcTextSize(ver);
             ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - 12.0f * s,
                                        (float)winH - verSize.y - 12.0f * s));
