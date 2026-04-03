@@ -77,6 +77,7 @@
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
+#include "../common/sentry_integration.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -1462,6 +1463,9 @@ static int runNetworkMode(void) {
 
 int main(int argc, char *argv[]) {
   int result;
+
+  sentryInit("WinBoloHeadless", argc, argv);
+  atexit(sentryClose);
 
   if (!parseArgs(argc, argv)) {
     return 1;

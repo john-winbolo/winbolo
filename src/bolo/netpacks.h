@@ -34,11 +34,12 @@
 #define MAX_UDPPACKET_SIZE 1024
 #define MAX_TCPPACKET_SIZE 1024
 
-#define BOLO_VERSION_MAJOR       0x01
+/* Version bytes derived from WINBOLO_VERSION via CMake.
+ * Encoding: each digit of the version string (skipping dots) becomes one byte.
+ * E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
+ * BOLO_VERSION_MAJOR/MINOR/REVISION are defined as compile definitions by CMake. */
 #define BOLO_VERSION_MAJORPOS    4
-#define BOLO_VERSION_MINOR       0x01
 #define BOLO_VERSION_MINORPOS    5
-#define BOLO_VERSION_REVISION    0x08
 #define BOLO_VERSION_REVISIONPOS 6
 
 /* Bolo header — first 8 bytes of every legacy packet */

@@ -16,6 +16,7 @@
 
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../winbolonet/http.h"
@@ -43,6 +44,7 @@
 #include "server_sim.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/bot_manager.h"
+#include "../common/sentry_integration.h"
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -887,6 +889,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 #include <time.h>
 
 int main(int argc, char **argv) {
+  sentryInit("WinBoloDS", argc, argv);
+  atexit(sentryClose);
+
 #ifdef _WIN32
   // Show the console w/o activation if we were started hidden by WinBolo.exe
   HWND hConsoleWnd = GetConsoleWindow();
