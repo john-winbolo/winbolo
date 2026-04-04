@@ -105,6 +105,12 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
   return FALSE;
 }
 
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+  (void)steamTicketHex; (void)tokenOut; (void)expiryOut; (void)playerNameOut;
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  return FALSE;
+}
+
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
   (void)token; (void)playerNameOut;
   if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");

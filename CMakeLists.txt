@@ -876,6 +876,24 @@ if(HAVE_SENTRY)
     target_link_libraries(WinBolo PRIVATE sentry::sentry)
 endif()
 
+# Steamworks SDK integration (optional)
+set(STEAMWORKS_SDK_DIR "${CMAKE_SOURCE_DIR}/third_party/steamworks")
+if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
+    add_library(steam_api SHARED IMPORTED)
+    set_target_properties(steam_api PROPERTIES
+        IMPORTED_LOCATION "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+        IMPORTED_IMPLIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.lib"
+        INTERFACE_INCLUDE_DIRECTORIES "${STEAMWORKS_SDK_DIR}/public"
+    )
+    target_sources(WinBolo PRIVATE src/steam/steam_wrapper.cpp)
+    target_compile_definitions(WinBolo PRIVATE HAVE_STEAM=1)
+    target_link_libraries(WinBolo PRIVATE steam_api)
+    message(STATUS "Steamworks SDK found — Steam integration enabled")
+else()
+    target_sources(WinBolo PRIVATE src/steam/steam_wrapper_stub.c)
+    message(STATUS "Steamworks SDK not found — Steam integration disabled (stubs)")
+endif()
+
 # Copy data assets and brain scripts to the correct location.
 # On macOS bundles, SDL_GetBasePath() returns Contents/Resources/, so assets go there.
 # On Windows/Linux, they go next to the executable.
@@ -930,6 +948,23 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMENT "Copying crashpad_handler to WinBolo output directory"
     )
 endif()
+# Copy Steam runtime library and steam_appid.txt next to executable
+if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
+    if(WIN32)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.dll"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying steam_api64.dll to WinBolo output directory"
+        )
+    endif()
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/steam_appid.txt"
+            "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Copying steam_appid.txt to WinBolo output directory"
+    )
+endif()
 # On Windows, also copy vcpkg / imported DLLs (curl, zlib, etc.)
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     add_custom_command(TARGET WinBolo POST_BUILD
@@ -937,6 +972,18 @@ if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
         COMMAND_EXPAND_LISTS
         COMMENT "Copying runtime DLLs to WinBolo output directory"
     )
+endif()
+# MinGW: copy runtime DLLs (libwinpthread, libgcc, libstdc++) next to executables
+if(MINGW)
+    get_filename_component(_MINGW_BIN_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+    foreach(_dll libwinpthread-1.dll libgcc_s_seh-1.dll libstdc++-6.dll)
+        if(EXISTS "${_MINGW_BIN_DIR}/${_dll}")
+            add_custom_command(TARGET WinBolo POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_MINGW_BIN_DIR}/${_dll}" "$<TARGET_FILE_DIR:WinBolo>"
+                COMMENT "Copying ${_dll} to WinBolo output directory"
+            )
+        endif()
+    endforeach()
 endif()
 
 # ---------------------------------------------------------------------------
