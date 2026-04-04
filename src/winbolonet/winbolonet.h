@@ -321,6 +321,23 @@ void winbolonetSendLobbyStatus(bool inLobby);
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
 
 /*********************************************************
+*NAME:          winbolonetAuthSteam
+*PURPOSE:
+* Authenticates with WinBolo.net via POST /api/v1/auth/steam
+* using a hex-encoded Steam auth ticket. On success, writes
+* the token and expiry into the provided buffers and returns
+* TRUE.
+*
+*ARGUMENTS:
+* steamTicketHex  - Hex-encoded Steam auth ticket
+* tokenOut        - Buffer for token (must be >= 65 bytes)
+* expiryOut       - Buffer for expiry string (must be >= 64 bytes)
+* playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* errorMsg        - Buffer for error message on failure
+*********************************************************/
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
+
+/*********************************************************
 *NAME:          winbolonetAuthValidate
 *PURPOSE:
 * Validates a stored auth token by calling

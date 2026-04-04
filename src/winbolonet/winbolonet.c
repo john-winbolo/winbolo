@@ -936,6 +936,67 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 }
 
 /*********************************************************
+*NAME:          winbolonetAuthSteam
+*PURPOSE:
+* Authenticates via POST /api/v1/auth/steam using a
+* hex-encoded Steam auth ticket. Returns token and expiry
+* on success, just like winbolonetAuthLogin.
+*********************************************************/
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (httpCreate() != TRUE) {
+    strcpy(errorMsg, "Could not initialise HTTP");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "ticket", steamTicketHex);
+
+  status = wbn_api_call("auth/steam", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
+      cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
+      if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
+        strcpy(tokenOut, tokenObj->valuestring);
+        strcpy(expiryOut, expiryObj->valuestring);
+        playerNameOut[0] = '\0';
+        cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+        if (nameObj && cJSON_IsString(nameObj)) {
+          strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
+          playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
+        }
+        ok = TRUE;
+      } else {
+        strcpy(errorMsg, "Invalid response from WinBolo.net");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "Steam authentication failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  httpDestroy();
+  return ok;
+}
+
+/*********************************************************
 *NAME:          winbolonetAuthValidate
 *PURPOSE:
 * Validates a token via POST /api/v1/auth/validate.

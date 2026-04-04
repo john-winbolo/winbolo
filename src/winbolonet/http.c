@@ -291,8 +291,6 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   CURL *curl = curl_easy_init();
   if (!curl) return -1;
 
-  strcpy(wbnBaseUrl, "http://192.168.42.200:8081");
-
   /* Build URL: <baseUrl>/api/v1/<endpoint> */
   char url[FILENAME_MAX + 64];
   snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
