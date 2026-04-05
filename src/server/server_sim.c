@@ -216,13 +216,15 @@ static void serverSimCbSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPla
     serverSimAddEvent(sim, &ev);
 }
 
-static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed) {
+static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
     ev.type = EVENT_TANK_KILLED;
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = killer;
     ev.data[1] = killed;
+    ev.data[2] = deathCause;
+    ev.data[3] = carriedPills;
     serverSimAddEvent(sim, &ev);
     winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed);
 }

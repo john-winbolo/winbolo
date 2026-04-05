@@ -20,3 +20,6 @@ build-ios
 
 # Ed25519 signing key — do not commit.
 src/winbolonet/wbn_signing_key.h
+
+# Steamworks SDK — NDA/license restricted, cannot be in public repo.
+third_party/steamworks/

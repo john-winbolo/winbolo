@@ -48,6 +48,7 @@
 #include "../../bolo/client_sim.h"
 #include "../../bolo/frontend.h"
 #include "../../bolo/players.h"
+#include "../../steam/steam_wrapper.h"
 #include "../../bolo/transport.h"
 #include "../../bolo/transport_udp.h"
 #include "../../server/server_sim.h"
@@ -175,6 +176,27 @@ static void windowRunGameTick(ClientSim *cs);
 int winboloCC(void);
 
 /* -------------------------------------------------------
+ * Steam friend "Join Game" callback
+ *
+ * Fired during steam_run_callbacks() when a friend clicks
+ * Join on our rich presence.  Parses the connect string
+ * ("+connect host:port") and hands it to gamefront's URL
+ * handler so the next gameFrontStart() picks it up.
+ * ------------------------------------------------------- */
+static void steamJoinRequested(const char *connect_str) {
+  /* Expected format: "+connect host:port" */
+  const char *prefix = "+connect ";
+  if (strncmp(connect_str, prefix, strlen(prefix)) != 0) return;
+
+  steam_set_achievement("ACH_STEAM_JOIN");
+  steam_store_stats();
+
+  char buf[FILENAME_MAX];
+  snprintf(buf, sizeof(buf), "winbolo://%s", connect_str + strlen(prefix));
+  gameFrontHandleUrlOpen(buf);
+}
+
+/* -------------------------------------------------------
  * main — SDL3 entry point
  * ------------------------------------------------------- */
 int main(int argc, char *argv[]) {
@@ -205,6 +227,10 @@ int main(int argc, char *argv[]) {
 #endif
 
   SDL_Init(0);
+
+  steam_init();
+  steam_request_stats();
+  steam_set_join_callback(steamJoinRequested);
 
   /* Set working directory to the executable's location so that relative
      paths like "data/svg/..." resolve correctly.  On macOS this is
@@ -265,6 +291,8 @@ int main(int argc, char *argv[]) {
       cs->netStat = netRunning;
       simTickCounter = 0;
       justKeysFlag = FALSE;
+      /* Set Steam rich presence now that the game is running */
+      gameFrontUpdateSteamPresence(cs);
     }
 
     isInMenu = FALSE;
@@ -318,6 +346,7 @@ int main(int argc, char *argv[]) {
 
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
+        steam_run_callbacks();
 
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
@@ -411,6 +440,7 @@ int main(int argc, char *argv[]) {
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
+  steam_shutdown();
   SDL_Quit();
   sentryClose();
   return 0;

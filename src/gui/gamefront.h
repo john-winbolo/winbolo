@@ -581,6 +581,10 @@ void gameFrontSetAddressFromWebLink(char *address);
 *********************************************************/
 void gameFrontHandleUrlOpen(char *url);
 
+/* Update Steam rich presence with current map/player info.
+ * Called after joining a game or exiting the lobby. */
+void gameFrontUpdateSteamPresence(struct ClientSim *cs);
+
 /*********************************************************
 *NAME:          gameFrontReloadSkins
 *AUTHOR:        John Morrison

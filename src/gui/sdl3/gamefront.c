@@ -74,6 +74,7 @@
 #include "../../bolo/platform_net.h"
 #include "../../bolo/transport_udp.h"
 #include "../../winbolonet/winbolonet.h"
+#include "../../steam/steam_wrapper.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -230,6 +231,27 @@ static void gameFrontLockToggleCallback(bool allow) {
     }
 }
 
+/* -------------------------------------------------------
+ * Steam rich presence helpers
+ * ------------------------------------------------------- */
+void gameFrontUpdateSteamPresence(ClientSim *cs) {
+  if (cs == NULL) return;
+  char status[256];
+  BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
+  snprintf(status, sizeof(status), "On map '%s' - %d player%s",
+           cs->mapName, numPlayers, numPlayers == 1 ? "" : "s");
+  steam_set_rich_presence("status", status);
+  steam_set_rich_presence("steam_display", "#StatusWithMap");
+
+  /* Set connect string so friends see a "Join Game" button */
+  if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
+    char connect[FILENAME_MAX];
+    snprintf(connect, sizeof(connect), "+connect %s:%u",
+             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
+    steam_set_rich_presence("connect", connect);
+  }
+}
+
 extern bool isTutorial;
 
 /* Used to set the preferences — defined in winbolo.c */
@@ -358,6 +380,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * gameFrontEnd — shutdown game subsystems
  * ------------------------------------------------------- */
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
+  steam_clear_rich_presence();
   clientMutexWaitFor();
   if (gamePlayed == TRUE && humanSim != NULL) {
     useAutoslow = screenGetTankAutoSlowdownCS(humanSim);
@@ -619,7 +642,39 @@ static bool gameFrontDialogs(void) {
 static void gameFrontValidateWbnBeforeJoin(void) {
   char token[256], expiry[256];
   gameFrontGetWinbolonetToken(token, expiry);
-  if (token[0] == '\0') return;
+
+  /* If no WBN token exists, try automatic Steam authentication */
+  if (token[0] == '\0') {
+    uint8_t ticketBuf[1024];
+    uint32_t ticketLen = 0;
+    if (steam_get_auth_ticket(ticketBuf, sizeof(ticketBuf), &ticketLen) && ticketLen > 0) {
+      char ticketHex[2049];
+      uint32_t i;
+      for (i = 0; i < ticketLen; i++) {
+        snprintf(ticketHex + i * 2, 3, "%02x", ticketBuf[i]);
+      }
+      ticketHex[ticketLen * 2] = '\0';
+
+      char tokenOut[256], expiryOut[256];
+      char playerName[PLAYER_NAME_LEN];
+      char errorMsg[512];
+      tokenOut[0] = '\0';
+      expiryOut[0] = '\0';
+      playerName[0] = '\0';
+      errorMsg[0] = '\0';
+
+      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, errorMsg)) {
+        gameFrontSetWinbolonetToken(tokenOut, expiryOut);
+        if (playerName[0] != '\0') {
+          gameFrontSetPlayerName(playerName);
+        }
+        SDL_Log("[Steam] Authenticated with WinBolo.net via Steam");
+      } else {
+        SDL_Log("[Steam] WBN Steam auth failed: %s", errorMsg);
+      }
+    }
+    return;
+  }
 
   char playerName[PLAYER_NAME_LEN];
   char errorMsg[512];
@@ -771,6 +826,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             clientMutexWaitFor();
             screenNetSetupTankGoCS(humanSim);
             clientMutexRelease();
+            gameFrontUpdateSteamPresence(humanSim);
             dlgState = openFinished;
           }
         }
@@ -949,6 +1005,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               }
             }
           }
+          gameFrontUpdateSteamPresence(humanSim);
         } else {
           if (spServerSim != NULL) {
             free(spServerSim);

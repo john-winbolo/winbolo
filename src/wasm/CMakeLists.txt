@@ -216,6 +216,8 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/clientmutex_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/threads_wasm.c
+    ${SRC_ROOT}/steam/steam_wrapper_stub.c
+    ${SRC_ROOT}/common/sentry_integration.c
 )
 
 ###
@@ -237,7 +239,14 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/server
 )
 
-target_compile_definitions(winbolo PRIVATE _GNU_SOURCE USE_64WITH32)
+target_compile_definitions(winbolo PRIVATE
+    _GNU_SOURCE
+    USE_64WITH32
+    WINBOLO_VERSION="1.18"
+    BOLO_VERSION_MAJOR=1
+    BOLO_VERSION_MINOR=1
+    BOLO_VERSION_REVISION=8
+)
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
