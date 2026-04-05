@@ -1427,6 +1427,7 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
         ev.type = EVENT_LGM_LOST;
         memset(ev.data, 0, sizeof(ev.data));
         ev.data[0] = (*lgman)->playerNum;
+        ev.data[1] = owner;
         serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
       }
     }
