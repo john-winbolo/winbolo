@@ -188,6 +188,9 @@ static void steamJoinRequested(const char *connect_str) {
   const char *prefix = "+connect ";
   if (strncmp(connect_str, prefix, strlen(prefix)) != 0) return;
 
+  steam_set_achievement("ACH_STEAM_JOIN");
+  steam_store_stats();
+
   char buf[FILENAME_MAX];
   snprintf(buf, sizeof(buf), "winbolo://%s", connect_str + strlen(prefix));
   gameFrontHandleUrlOpen(buf);
@@ -226,6 +229,7 @@ int main(int argc, char *argv[]) {
   SDL_Init(0);
 
   steam_init();
+  steam_request_stats();
   steam_set_join_callback(steamJoinRequested);
 
   /* Set working directory to the executable's location so that relative

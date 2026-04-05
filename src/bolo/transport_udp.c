@@ -60,6 +60,7 @@
 #include "../server/threads.h"
 #include "sounddist.h"
 #include "bot_manager.h"
+#include "../steam/steam_wrapper.h"
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -991,6 +992,32 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
             c->clientSim->inLobby = true;
 
+            /* Lonely lobby tracking (ACH_LONELY_LOBBY) */
+            {
+                int connectedCount = 0;
+                for (i = 0; i < MAX_TANKS; i++) {
+                    if (c->clientSim->lobbySlots[i].connected) {
+                        connectedCount++;
+                    }
+                }
+                if (connectedCount == 1) {
+                    if (c->clientSim->lobbyAloneStartTick == 0) {
+                        c->clientSim->lobbyAloneStartTick = SDL_GetTicks();
+                        if (c->clientSim->lobbyAloneStartTick == 0) {
+                            c->clientSim->lobbyAloneStartTick = 1; /* avoid 0 sentinel */
+                        }
+                    } else {
+                        uint32_t elapsed = SDL_GetTicks() - c->clientSim->lobbyAloneStartTick;
+                        if (elapsed >= 3600000) { /* 60 minutes */
+                            steam_set_achievement("ACH_LONELY_LOBBY");
+                            steam_store_stats();
+                        }
+                    }
+                } else {
+                    c->clientSim->lobbyAloneStartTick = 0;
+                }
+            }
+
             /* A fresh lobby snapshot supersedes any pending balance proposal */
             c->clientSim->balanceProposalActive = false;
             memset(c->clientSim->balanceProposal, 0, sizeof(c->clientSim->balanceProposal));
@@ -1074,6 +1101,70 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_GAME_OVER:
         /* [header 8] */
+        /* Check win/loss achievements before transitioning state.
+         * Determine winner using same logic as serverSimCheckGameWin:
+         * one alliance owns all bases with armour above capture threshold. */
+        {
+            ClientSim *cs = c->clientSim;
+            BYTE numBases = basesGetNumBases(&cs->sim.bs);
+            BYTE first = NEUTRAL;
+            bool allOwned = true;
+            bool localWon = false;
+            BYTE b;
+
+            for (b = 1; b <= numBases && allOwned; b++) {
+                BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
+                BYTE shellsAmt, minesAmt, armourAmt;
+                basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
+                if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+                    allOwned = false;
+                } else if (b == 1) {
+                    first = owner;
+                } else {
+                    allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
+                }
+            }
+
+            if (allOwned && numBases > 0) {
+                /* Game was won by the alliance owning 'first' */
+                localWon = (c->playerNum == first) ||
+                           playersIsAllie(&cs->sim.plyrs, c->playerNum, first);
+            }
+            /* else: time limit or other end condition — no winner */
+
+            if (allOwned && numBases > 0) {
+                gameType gt = gameTypeGet(&cs->sim.game);
+                BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
+
+                /* Tournament/strict tournament stats */
+                if (gt == gameTournament || gt == gameStrictTournament) {
+                    if (localWon) {
+                        steam_increment_stat("STAT_TOURN_WINS", 1);
+                        if (numPlayers == 2) {
+                            steam_set_achievement("ACH_TOURN_WIN_1V1");
+                        }
+                    } else {
+                        steam_increment_stat("STAT_TOURN_LOSSES", 1);
+                        if (numPlayers == 2) {
+                            steam_set_achievement("ACH_TOURN_LOSE_1V1");
+                        }
+                    }
+                }
+
+                /* Any game type win achievements */
+                if (localWon) {
+                    if (cs->myLgmLossesThisGame == 0) {
+                        steam_set_achievement("ACH_WIN_NO_LGM_LOSS");
+                    }
+                    if (cs->myDeathsThisGame == 0 && numPlayers == 2) {
+                        steam_set_achievement("ACH_1V1_FLAWLESS");
+                    }
+                }
+
+                steam_store_stats();
+            }
+        }
+
         if (c->clientSim->inLobby) {
             c->clientSim->netStat = netLobby;
             c->clientSim->countdownSeconds = 0;

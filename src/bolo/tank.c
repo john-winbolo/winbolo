@@ -46,6 +46,7 @@
 #include "players.h"
 #include "tank.h"
 #include "game_sim.h"
+#include "../steam/steam_wrapper.h"
 
 typedef struct ClientSim ClientSim;
 #include "tankexp.h"
@@ -263,11 +264,13 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     }
   } else if ((*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
       /* Death by drowning */
+      BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
       tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
       sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
       if (!isServer) {
         sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(MESSAGE_TANKSUNK));
       }
+      sim->callbacks.tankKill(sim->callbacks.ctx, drownedPlayer, drownedPlayer, LAST_DEATH_BY_DEEPSEA, tankGetNumCarriedPills(value));
       tankDropPills(sim, value);
       (*value)->armour = TANK_FULL_ARMOUR+1;
       tankRegisterChangeByte(value, CRC_ARMOUR_OFFSET, (*value)->armour);

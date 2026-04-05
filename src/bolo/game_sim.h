@@ -54,7 +54,7 @@ typedef struct GameSimCallbacks {
     void (*soundDist)(void *ctx, sndEffects value, BYTE mx, BYTE my);
     void (*soundDistShoot)(void *ctx, BYTE mx, BYTE my, BYTE owner);
     void (*soundDistTankHit)(void *ctx, BYTE mx, BYTE my, BYTE hitPlayer);
-    void (*tankKill)(void *ctx, BYTE killer, BYTE killed);
+    void (*tankKill)(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills);
     void (*centerTank)(void *ctx);
     void (*consoleMessage)(void *ctx, char *msg);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */

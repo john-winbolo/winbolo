@@ -81,6 +81,28 @@ extern "C" bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size,
   return true;
 }
 
+extern "C" void steam_request_stats(void) {
+  if (!s_initialized) return;
+  SteamUserStats()->RequestCurrentStats();
+}
+
+extern "C" void steam_increment_stat(const char *name, int amount) {
+  if (!s_initialized) return;
+  int32 current = 0;
+  SteamUserStats()->GetStat(name, &current);
+  SteamUserStats()->SetStat(name, current + amount);
+}
+
+extern "C" void steam_set_achievement(const char *id) {
+  if (!s_initialized) return;
+  SteamUserStats()->SetAchievement(id);
+}
+
+extern "C" void steam_store_stats(void) {
+  if (!s_initialized) return;
+  SteamUserStats()->StoreStats();
+}
+
 extern "C" void steam_set_join_callback(SteamJoinCallback cb) {
   s_join_callback = cb;
 }

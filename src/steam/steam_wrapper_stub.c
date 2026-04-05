@@ -18,6 +18,18 @@ bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len) {
   return false;
 }
 
+void steam_request_stats(void) {}
+
+void steam_increment_stat(const char *name, int amount) {
+  (void)name; (void)amount;
+}
+
+void steam_set_achievement(const char *id) {
+  (void)id;
+}
+
+void steam_store_stats(void) {}
+
 void steam_set_join_callback(SteamJoinCallback cb) {
   (void)cb;
 }
