@@ -705,3 +705,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 void gameFrontPutPrefs(keyItems *keys) {
   (void)keys;
 }
+
+void gameFrontHandleUrlOpen(char *url) {
+  (void)url;
+}
+
+void gameFrontUpdateSteamPresence(ClientSim *cs) {
+  (void)cs;
+}
