@@ -74,6 +74,8 @@
 #include "util.h"
 #include "client_sim.h"
 #include "../server/server_sim.h"
+#include <SDL3/SDL.h>
+#include "../steam/steam_wrapper.h"
 /* Forward declaration — implemented in gui/sdl3/cursor.c */
 extern void moveMousePointer(updateType value);
 
@@ -3708,6 +3710,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
   }
 
   /* Process game events (MAP_CHANGE, SOUND — all reliable) */
+  bool steamStatsUpdated = false;
   if (events != NULL) {
     for (i = 0; i < eventCount; i++) {
       switch (events[i].type) {
@@ -3757,6 +3760,26 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           }
           clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
         }
+        /* Steam stat: base captures */
+        if (events[i].data[0] == playerNum) {
+          if (events[i].data[1] == NEUTRAL) {
+            steam_increment_stat("STAT_BASES_CAPTURED_NEUTRAL", 1);
+            steamStatsUpdated = true;
+          } else if (playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+            steam_increment_stat("STAT_BASES_CAPTURED_ENEMY", 1);
+            steamStatsUpdated = true;
+          }
+        }
+        /* Steam achievement: first base capture (networked, non-allied) */
+        if (csPtr->networkGameType != netSingle &&
+            csPtr->hasAnyBaseCaptured == false &&
+            events[i].data[0] == playerNum &&
+            events[i].data[1] != NEUTRAL &&
+            playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+          steam_set_achievement("ACH_FIRST_BASE");
+          steamStatsUpdated = true;
+        }
+        csPtr->hasAnyBaseCaptured = true;
         break;
       case EVENT_PILL_CAPTURED:
         /* data: [newOwner, previousOwner] */
@@ -3775,6 +3798,26 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           }
           clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
         }
+        /* Steam stat: pill captures */
+        if (events[i].data[0] == playerNum) {
+          if (events[i].data[1] == NEUTRAL) {
+            steam_increment_stat("STAT_PILLS_CAPTURED_NEUTRAL", 1);
+            steamStatsUpdated = true;
+          } else if (playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+            steam_increment_stat("STAT_PILLS_CAPTURED_ENEMY", 1);
+            steamStatsUpdated = true;
+          }
+        }
+        /* Steam achievement: first pill capture (networked, non-allied) */
+        if (csPtr->networkGameType != netSingle &&
+            csPtr->hasAnyPillCaptured == false &&
+            events[i].data[0] == playerNum &&
+            events[i].data[1] != NEUTRAL &&
+            playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+          steam_set_achievement("ACH_FIRST_PILL");
+          steamStatsUpdated = true;
+        }
+        csPtr->hasAnyPillCaptured = true;
         break;
       case EVENT_PILL_UPDATE:
         /* data: [pillIndex, x, y, owner, armour, speed, inTank] */
@@ -3826,7 +3869,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         }
         break;
       case EVENT_LGM_LOST:
-        /* data: [playerNum] — builder killed, broadcast newswire */
+        /* data: [victim, killer] — builder killed, broadcast newswire */
         if (isHuman) {
           char lgmMsg[FILENAME_MAX];
           char lgmName[FILENAME_MAX];
@@ -3836,6 +3879,17 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           labelMakeMessage(lgmMsg, lgmName, langGetText(MESSAGE_THIS_COMPUTER));
           strcat(lgmMsg, langGetText(MESSAGE_LGM_DEAD));
           clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), lgmMsg);
+        }
+        /* Steam stats: LGM losses and kills */
+        if (events[i].data[0] == playerNum) {
+          steam_increment_stat("STAT_LGM_LOSSES", 1);
+          steamStatsUpdated = true;
+          csPtr->myLgmLossesThisGame++;
+        }
+        if (events[i].data[1] == playerNum && events[i].data[0] != playerNum) {
+          /* No stats for killing your own LGM */
+          steam_increment_stat("STAT_LGM_KILLS", 1);
+          steamStatsUpdated = true;
         }
         break;
       case EVENT_ASSISTANT_MSG:
@@ -3861,15 +3915,68 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         }
         break;
       case EVENT_TANK_KILLED:
-        /* data: [killer, killed] — increment kills for the local player */
+        /* data: [killer, killed, deathCause] — increment kills for the local player */
         if (events[i].data[0] == playerNum) {
           tankAddKill(&csPtr->sim, &csPtr->sim.tanks[0]);
+          steam_increment_stat("STAT_TANK_KILLS", 1);
+          steamStatsUpdated = true;
+        }
+        if (events[i].data[1] == playerNum) {
+          csPtr->myDeathsThisGame++;
+          /* Steam achievements: drown */
+          if (events[i].data[2] == LAST_DEATH_BY_DEEPSEA) {
+            steam_set_achievement("ACH_DROWN");
+            if (events[i].data[3] > 0) {
+              steam_set_achievement("ACH_DROWN_WITH_PILLS");
+            }
+            steamStatsUpdated = true;
+          }
+          /* Rapid death tracking (ACH_RAPID_DEATH) */
+          {
+            uint32_t now = (uint32_t)SDL_GetTicks();
+            csPtr->deathTimestamps[csPtr->deathTimestampIdx] = now;
+            csPtr->deathTimestampIdx = (csPtr->deathTimestampIdx + 1) % 10;
+            /* Check if 10 deaths within 45 seconds */
+            uint32_t oldest = csPtr->deathTimestamps[csPtr->deathTimestampIdx];
+            if (oldest != 0) {
+              uint32_t newest = csPtr->deathTimestamps[(csPtr->deathTimestampIdx + 9) % 10];
+              if (newest - oldest < 45000) {
+                steam_set_achievement("ACH_RAPID_DEATH");
+                steamStatsUpdated = true;
+              }
+            }
+          }
         }
         break;
       default:
         break;
       }
     }
+  }
+
+  /* Player count tracking (ACH_PLAYERS_6/8/16) */
+  {
+    BYTE numPlayers = playersGetNumPlayers(&csPtr->sim.plyrs);
+    if (numPlayers > csPtr->maxPlayersSeenThisGame) {
+      csPtr->maxPlayersSeenThisGame = numPlayers;
+      if (numPlayers >= 16) {
+        steam_set_achievement("ACH_PLAYERS_16");
+        steam_set_achievement("ACH_PLAYERS_8");
+        steam_set_achievement("ACH_PLAYERS_6");
+        steamStatsUpdated = true;
+      } else if (numPlayers >= 8) {
+        steam_set_achievement("ACH_PLAYERS_8");
+        steam_set_achievement("ACH_PLAYERS_6");
+        steamStatsUpdated = true;
+      } else if (numPlayers >= 6) {
+        steam_set_achievement("ACH_PLAYERS_6");
+        steamStatsUpdated = true;
+      }
+    }
+  }
+
+  if (steamStatsUpdated) {
+    steam_store_stats();
   }
 
   /* Check map checksum on full sync ticks — must be after EVENT_MAP_CHANGE

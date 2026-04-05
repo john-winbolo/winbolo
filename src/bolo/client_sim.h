@@ -178,6 +178,24 @@ typedef struct ClientSim {
     /* Team balance proposal from WBN */
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
+
+    /* Steam achievement: first capture tracking (per-game) */
+    bool     hasAnyBaseCaptured;
+    bool     hasAnyPillCaptured;
+
+    /* Steam achievement: per-game death/loss counters (zeroed by memset in clientSimCreate) */
+    uint16_t myDeathsThisGame;
+    uint16_t myLgmLossesThisGame;
+
+    /* Steam achievement: player count tracking (ACH_PLAYERS_6/8/16) */
+    uint8_t  maxPlayersSeenThisGame;
+
+    /* Steam achievement: lonely lobby tracking (ACH_LONELY_LOBBY) */
+    uint32_t lobbyAloneStartTick;
+
+    /* Steam achievement: rapid death tracking (ACH_RAPID_DEATH) */
+    uint32_t deathTimestamps[10];
+    uint8_t  deathTimestampIdx;
 } ClientSim;
 
 /* Lifecycle API — initializes/destroys the ClientSim struct */

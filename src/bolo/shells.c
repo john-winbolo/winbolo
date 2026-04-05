@@ -476,13 +476,13 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						returnValue = TRUE;
 						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_SMALL_EXPLOSION);
 						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, gameSimGetTankPlayer(sim, &tk[count]));
-						sim->callbacks.tankKill(sim->callbacks.ctx, owner, gameSimGetTankPlayer(sim, &tk[count]));
+						sim->callbacks.tankKill(sim->callbacks.ctx, owner, gameSimGetTankPlayer(sim, &tk[count]), LAST_DEATH_BY_SHELL, 0);
 						break;
 					case TH_KILL_BIG:
 						returnValue = TRUE;
 						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_LARGE_EXPLOSION);
 						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, gameSimGetTankPlayer(sim, &tk[count]));
-						sim->callbacks.tankKill(sim->callbacks.ctx, owner, gameSimGetTankPlayer(sim, &tk[count]));
+						sim->callbacks.tankKill(sim->callbacks.ctx, owner, gameSimGetTankPlayer(sim, &tk[count]), LAST_DEATH_BY_SHELL, 0);
 						break;
 					case TH_MISSED:
 						default:

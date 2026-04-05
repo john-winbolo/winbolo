@@ -90,7 +90,8 @@ static void csCallbackSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPlay
   /* no-op — client receives tank hit sounds via EVENT_SOUND_TANK_HIT from server */
 }
 
-static void csCallbackTankKill(void *ctx, BYTE killer, BYTE killed) {
+static void csCallbackTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
+  (void)deathCause; (void)carriedPills;
   /* no-op — client receives kills via EVENT_TANK_KILLED from server */
 }
 

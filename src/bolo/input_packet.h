@@ -168,7 +168,7 @@ typedef struct {
 #define EVENT_EXPLOSION     3
 #define EVENT_PILL_CAPTURED 4  /* data: [newOwner, prevOwner] */
 #define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner] */
-#define EVENT_TANK_KILLED   6  /* data: [killer, killed] */
+#define EVENT_TANK_KILLED   6  /* data: [killer, killed, deathCause, carriedPills] */
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
 #define EVENT_SOUND         8  /* data: [soundId, mx, my] */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
@@ -176,7 +176,7 @@ typedef struct {
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner, armour, shells, mines] */
 #define EVENT_PLAYER_LEAVE 12  /* data: [playerNum] */
 #define EVENT_ASSISTANT_MSG 13 /* data: [targetPlayer, msgId] — player-specific assistant message */
-#define EVENT_LGM_LOST     14 /* data: [playerNum] — builder killed, broadcast newswire */
+#define EVENT_LGM_LOST     14 /* data: [victim, killer] — builder killed, broadcast newswire */
 #define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, mx, my, hitPlayer] */
 #define EVENT_SOUND_SHOOT    16 /* data: [soundId, mx, my, firingPlayer] */
 
@@ -206,10 +206,10 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_BASE_UPDATE:    return 5;
     case EVENT_PLAYER_LEAVE:   return 1;
     case EVENT_ASSISTANT_MSG:  return 2;
-    case EVENT_LGM_LOST:       return 1;
+    case EVENT_LGM_LOST:       return 2;
     case EVENT_SOUND_TANK_HIT: return 4;
     case EVENT_SOUND_SHOOT:    return 4;
-    case EVENT_TANK_KILLED:    return 2;
+    case EVENT_TANK_KILLED:    return 4;
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

@@ -156,6 +156,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/android/players_panel.cpp
     ${PROJ_ROOT}/src/android/winbolonet_stub.c
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
+    ${PROJ_ROOT}/src/steam/steam_wrapper_stub.c
 
     # Bolo engine (same as CLIENT_SOURCES in main CMakeLists.txt)
     ${PROJ_ROOT}/src/bolo/allience.c
