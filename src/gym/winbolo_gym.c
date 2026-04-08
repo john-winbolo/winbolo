@@ -1369,7 +1369,7 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
     /* ── CATEGORY 11: Phase 1 Shaping ── */
     if (w[RC_EXPLORATION_BONUS] != 0.0f || w[RC_BASE_PROXIMITY] != 0.0f ||
         w[RC_SPEED_BONUS] != 0.0f || w[RC_BOAT_OVERSTAY] != 0.0f ||
-        w[RC_ON_LAND_BONUS] != 0.0f) {
+        w[RC_ON_LAND_BONUS] != 0.0f || w[RC_APPROACH_PILLBOX] != 0.0f) {
 
         /* exploration_bonus: bitfield tracking */
         if (alive && w[RC_EXPLORATION_BONUS] != 0.0f) {
@@ -1413,6 +1413,24 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
 
         /* on_land_bonus: 1.0 every tick the tank is alive and not on boat */
         comp[RC_ON_LAND_BONUS] = (alive && !on_boat) ? 1.0f : 0.0f;
+
+        /* approach_pillbox: delta-based, reward getting closer to nearest non-owned pill */
+        if (alive && w[RC_APPROACH_PILLBOX] != 0.0f) {
+            float min_dist = 9999.0f;
+            for (int pi = 0; pi < obs->num_pillboxes; pi++) {
+                if (obs->pillboxes[pi].owner == WBGYM_OWNER_SELF ||
+                    obs->pillboxes[pi].owner == WBGYM_OWNER_ALLY)
+                    continue;
+                float dx = tank_x - (float)obs->pillboxes[pi].tx;
+                float dy = tank_y - (float)obs->pillboxes[pi].ty;
+                float d = sqrtf(dx*dx + dy*dy);
+                if (d < min_dist) min_dist = d;
+            }
+            if (min_dist < 9999.0f && has_prev && rs->prev_nearest_pill_dist > 0.0f) {
+                comp[RC_APPROACH_PILLBOX] = rs->prev_nearest_pill_dist - min_dist;
+            }
+            rs->prev_nearest_pill_dist = min_dist;
+        }
     }
 
     /* ── Combine weighted reward ── */

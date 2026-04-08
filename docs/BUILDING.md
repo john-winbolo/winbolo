@@ -205,6 +205,17 @@ Enabled by default. ONNX Runtime binaries are downloaded automatically. To disab
 cmake -B build -S . -DENABLE_ONNXRUNTIME=OFF
 ```
 
+### OpenMP (parallel gym stepping)
+
+The `winbolo_gym` library uses OpenMP to step multiple game instances in parallel. GCC includes OpenMP support (`libgomp`) by default — no extra packages needed. If using Clang, install the OpenMP runtime:
+
+```bash
+# Debian/Ubuntu (Clang only)
+sudo apt install libomp-dev
+```
+
+OpenMP is detected automatically by CMake. If not found, the gym library still builds but `winbolo_step_batch()` will run sequentially.
+
 ### GeoIP lookups
 
 If `data/dbip-country-lite.mmdb` is present, the server will use it for IP-to-country lookups via libmaxminddb (built automatically).

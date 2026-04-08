@@ -118,7 +118,7 @@ extern "C" {
 #define WBGYM_OWNER_ALLY     3
 
 /* ── Reward component indices (must match Python RewardConfig field order) ── */
-#define WBGYM_NUM_REWARD_COMPONENTS 53
+#define WBGYM_NUM_REWARD_COMPONENTS 54
 
 /* Category 1: Survival */
 #define RC_DEATH                  0
@@ -184,6 +184,7 @@ extern "C" {
 #define RC_SPEED_BONUS           50
 #define RC_BOAT_OVERSTAY         51
 #define RC_ON_LAND_BONUS         52
+#define RC_APPROACH_PILLBOX      53
 
 /* Rolling window sizes */
 #define WBGYM_SHOT_WINDOW         50
@@ -267,6 +268,9 @@ typedef struct {
 
     /* Boat overstay */
     int boat_ticks;
+
+    /* Approach pillbox shaping */
+    float prev_nearest_pill_dist;
 } RewardState;
 
 /* Entity in the observation entity list */
