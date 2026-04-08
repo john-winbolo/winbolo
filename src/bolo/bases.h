@@ -101,7 +101,8 @@ typedef enum {
 
 
 /* Prototypes */
-void basesUpdateTimer(int playerNumber);
+void basesUpdateTimer(struct GameSim *sim, int playerNumber);
+void basesRemoveTimer(struct GameSim *sim, int playerNumber);
 /*********************************************************
 *NAME:         basesCreate 
 *AUTHOR:        John Morrison

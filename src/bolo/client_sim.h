@@ -35,6 +35,8 @@
 #include "brain.h"  /* For BuildInfo, ObjectInfo, aiType */
 #include "players.h" /* For PlayerBitMap */
 #include "bolo_packets.h" /* For netType, netStatus enums */
+#include "messages.h"     /* For MessageState */
+#include "scroll.h"       /* For ScrollState */
 
 /* Client-side mirror of server lobby slot state */
 typedef struct {
@@ -125,6 +127,20 @@ typedef struct ClientSim {
 
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
+
+    /* Per-instance message state (was messages.c globals) */
+    MessageState messages;
+
+    /* Per-instance scroll state (was scroll.c globals) */
+    ScrollState scroll;
+
+    /* Per-instance label state (was labels.c globals) */
+    bool        labelOwnTank;
+    labelLen    labelMessage;
+    labelLen    labelTankLabel;
+
+    /* Per-instance last player name (was players.c global) */
+    char        myLastPlayerName[PLAYER_NAME_LEN];
 
     /* Client viewport / display state (was screen.c module-level statics) */
     screen      view;

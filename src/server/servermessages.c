@@ -26,44 +26,26 @@
 *********************************************************/
 
 #include <stdio.h>
+#include <string.h>
+#include "server_sim.h"
 #include "../bolo/messages.h"
 
-
-bool isServerQuiet = FALSE;              /* Is the server running in quiet mode */
-char serverMessageLogFile[FILENAME_MAX]; /* FileName to save to */
-bool serverMessageUseLogFile = FALSE; /* Are we using a log file */
-
-void serverMessageSetQuietMode(bool modeOn) {
-  isServerQuiet = modeOn;
+void serverMessageSetQuietMode(ServerSim *sim, bool modeOn) {
+  sim->isServerQuiet = modeOn;
 }
 
-void serverMessagesSetLogFile(char *logFile) {
-  strcpy(serverMessageLogFile, logFile);
-  serverMessageUseLogFile = TRUE;
+void serverMessagesSetLogFile(ServerSim *sim, char *logFile) {
+  strcpy(sim->serverMessageLogFile, logFile);
+  sim->serverMessageUseLogFile = TRUE;
 }
 
-/*********************************************************
-*NAME:          serverMessageAdd
-*AUTHOR:        John Morrison
-*CREATION DATE:  3/1/99
-*LAST MODIFIED:  3/1/99
-*PURPOSE:
-*  Functions call this to display a message. They must
-*  pass the message type so that it can be determined
-*  whether the header should be printed etc.
-*
-*ARGUMENTS:
-*  msgType - The type of the message
-*  top     - The message to print in the top line
-*  bottom  - The message to print in the bottom line
-*********************************************************/
-void serverMessageAdd(messageType msgType, char *top, char *bottom) {
-  FILE *fp; /* File to write to */
-  if (msgType != assistantMessage && isServerQuiet == FALSE) {
-    if (serverMessageUseLogFile == FALSE) {
+void serverMessageAdd(ServerSim *sim, messageType msgType, char *top, char *bottom) {
+  FILE *fp;
+  if (msgType != assistantMessage && sim->isServerQuiet == FALSE) {
+    if (sim->serverMessageUseLogFile == FALSE) {
       fprintf(stdout, "%s\n%s\n", top, bottom);
      } else {
-      fp = fopen(serverMessageLogFile, "a");
+      fp = fopen(sim->serverMessageLogFile, "a");
       if (fp) {
         fprintf(fp, "%s\n%s\n", top, bottom);
         fclose(fp);
@@ -72,13 +54,13 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom) {
   }
 }
 
-void serverMessageConsoleMessage(char *msg) {
-  FILE *fp; /* File to write to */
-  if (isServerQuiet == FALSE) {
-    if (serverMessageUseLogFile == FALSE) {
+void serverMessageConsoleMessage(ServerSim *sim, char *msg) {
+  FILE *fp;
+  if (sim->isServerQuiet == FALSE) {
+    if (sim->serverMessageUseLogFile == FALSE) {
       fprintf(stderr, "%s\n", msg);
     } else {
-      fp = fopen(serverMessageLogFile, "a");
+      fp = fopen(sim->serverMessageLogFile, "a");
       if (fp) {
         fprintf(fp, "%s\n", msg);
         fclose(fp);
@@ -86,4 +68,3 @@ void serverMessageConsoleMessage(char *msg) {
     }
   }
 }
-

@@ -45,142 +45,26 @@
 /* The distance from the edge the tank has to beed to scroll when autoscroll is off */
 #define NO_SCROLL_EDGE 2
 
+/* Per-instance scroll state (moved from module-level globals) */
+typedef struct ScrollState {
+  bool autoScroll;
+  BYTE scrollX, scrollY;
+  BYTE xPositive, yPositive;
+  bool autoScrollOverRide;
+  bool mods;
+  bool stickyX, stickyXDir, stickyY, stickyYDir;
+} ScrollState;
+
 /* Prototypes */
 
-/*********************************************************
-*NAME:          scrollSetScrollType
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Modifies state of autoscrolling
-*
-*ARGUMENTS:
-*  isAuto - Set to on or off?
-*********************************************************/
-void scrollSetScrollType(bool isAuto);
-
-/*********************************************************
-*NAME:          scrollCenterObject
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Centres the screen on the object
-*
-*ARGUMENTS:
-*  xValue - Pointer to hold new X co-ordinate
-*  yValue - Pointer to hold new Y co-ordinate
-*  objectX - Object to centre on X co-ordinate 
-*  objectY - Object to centre on Y co-ordinate 
-*********************************************************/
-void scrollCenterObject(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY);
-
-/*********************************************************
-*NAME:          scrollUpdate
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Called every game tick. Checks to see if the screen 
-*  is required to be moved because the tank has moved
-*  etc.
-*  If the object is not a tank the last 3 parameters
-*  are ignored. It returns if a recalculation is needed
-*
-*ARGUMENTS:
-*  pb        - Pointer to the pillboxes structure
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Object to centre on X co-ordinate 
-*  objectY   - Object to centre on Y co-ordinate 
-*  isTank    - Is the object a tank
-*  gunsightX - The gunsights X position
-*  gunsightY - The gunishgts Y position
-*  speed     - The speed of the tank
-*  armour    - Amount of armour on the tank
-*  angle     - Tank travelling angle
-*  manual    - Is it manual move (ie by keys, not tank)
-*********************************************************/
-bool scrollUpdate(GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead);
-
-/*********************************************************
-*NAME:          scrollCheck
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/11/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-*  Returns whether an item is on screen or not
-*
-*ARGUMENTS:
-*  xValue    - Current X co-ordinate
-*  yValue    - Current Y co-ordinate
-*  objectX   - Objects X co-ordinate 
-*  objectY   - Objects Y co-ordinate 
-*********************************************************/
+void scrollCreate(ScrollState *ss);
+void scrollSetScrollType(ScrollState *ss, bool isAuto);
+void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY);
+bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead);
 bool scrollCheck(BYTE xValue, BYTE yValue, BYTE objectX, BYTE objectY);
-
-/*********************************************************
-*NAME:          scrollManual
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 10/06/01
-*PURPOSE:
-*  Movement scroll keys have been pressed. Returns if a 
-*  movement occurs
-*
-*ARGUMENTS:
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Objects X co-ordinate 
-*  objectY   - Objects Y co-ordinate 
-*  angle     - Items Angle
-*********************************************************/
-bool scrollManual(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle);
-
-/*********************************************************
-*NAME:          scrollNoAutoScroll
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-*  Checks to see if the screen is required to be moved 
-*  because the object is moving off screen. Doesn't 
-*  use autoscrolling features. Returns if a recalculation
-*  of the screen is needed
-*
-*ARGUMENTS:
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Object to centre on X co-ordinate 
-*  objectY   - Object to centre on Y co-ordinate 
-*  angle     - Turntype angle
-*********************************************************/
-bool scrollNoAutoScroll(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle);
-
-/*********************************************************
-*NAME:          scrollAutoScroll
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Checks to see if the screen is required to be moved 
-*  because the object is moving off screen. Uses the
-*  autoscrolling features. Returns if a recalculation
-*  of the screen is needed
-*
-*ARGUMENTS:
-*  pb        - Pointer to the pillboxes structure
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Object to centre on X co-ordinate 
-*  objectY   - Object to centre on Y co-ordinate 
-*  gunsightX - The gunsights X position
-*  gunsightY - The gunishgts Y position
-*  speed     - The speed of the tank
-*  angle     - Angle of the tank
-*********************************************************/
-bool scrollAutoScroll(GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle);
+bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle);
+bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle);
+bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle);
 
 #endif /* SCROLL_H */
 

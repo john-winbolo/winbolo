@@ -79,7 +79,7 @@ static bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
 }
 
 /* Forward declaration for server console message callback */
-extern void serverMessageConsoleMessage(char *msg);
+extern void serverMessageConsoleMessage(ServerSim *sim, char *msg);
 
 /* Forward declarations for snapshot helpers used before their definitions */
 static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
@@ -91,7 +91,7 @@ void serverSimStartGame(ServerSim *sim);
 
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
-static ServerSim *activeSim = NULL;
+static _Thread_local ServerSim *activeSim = NULL;
 
 /* Map change callback: records terrain changes as game events during tick */
 static void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
@@ -235,8 +235,8 @@ static void serverSimCbCenterTank(void *ctx) {
 }
 
 static void serverSimCbConsoleMessage(void *ctx, char *msg) {
-    (void)ctx;
-    serverMessageConsoleMessage(msg);
+    ServerSim *sim = (ServerSim *)ctx;
+    serverMessageConsoleMessage(sim, msg);
 }
 
 static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
@@ -307,7 +307,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     tkExplosionCreate(&sim->sim.tankExplosions);
     minesCreate(&sim->sim.mns, hiddenMines);
     minesExpCreate(&sim->sim.minesExplosions);
-    treeGrowCreate();
+    treeGrowCreate(&sim->sim);
+    /* Init base timers (was in basesCreate, now lives in GameSim) */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            sim->sim.baseTimer[i] = 30000;
+        }
+        sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
+    }
 }
 
 bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
@@ -768,7 +776,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) 
     if (sim->state == serverStateRunning) {
         tankCreate(&sim->sim, &sim->sim.tanks[playerNum]);
         sim->sim.lgmen[playerNum] = lgmCreate(playerNum);
-        basesUpdateTimer(playerNum);
+        basesUpdateTimer(&sim->sim, playerNum);
     }
 
     /* Register player in sim's players struct so message formatting
@@ -1519,7 +1527,7 @@ void serverSimStartGame(ServerSim *sim) {
         }
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
-        basesUpdateTimer(i);
+        basesUpdateTimer(&sim->sim, i);
     }
 
     sim->state = serverStateRunning;

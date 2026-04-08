@@ -1418,7 +1418,7 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
       }
       /* Process message */
       playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, playerName, sim->isServer);
-      labelMakeMessage(messageStr, playerName, langGetText(MESSAGE_THIS_COMPUTER));
+      labelMakeMessage(NULL, messageStr, playerName, langGetText(MESSAGE_THIS_COMPUTER));
       strcat(messageStr, langGetText(MESSAGE_LGM_DEAD));
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
       /* Emit event so all clients see the newswire message */

@@ -567,6 +567,7 @@ if(HAVE_SENTRY_IOS)
     target_link_libraries(WinBoloIOS PRIVATE "${SENTRY_COCOA_XCFW}")
 endif()
 
+target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -612,6 +613,8 @@ else()
     # Linux/macOS: use system-installed libcurl
     find_package(CURL REQUIRED)
 endif()
+
+find_package(OpenMP)
 
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
@@ -866,9 +869,9 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBolo PRIVATE onnxruntime::onnxruntime)
 endif()
 
-# Sentry crash reporting (optional)
+# Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
+target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
 if(HAVE_SENTRY)
-    target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
     target_compile_definitions(WinBolo PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
         target_compile_definitions(WinBolo PRIVATE SENTRY_DSN="${SENTRY_DSN}")
@@ -1017,6 +1020,7 @@ set(SERVER_SOURCES
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
+target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
@@ -1066,9 +1070,9 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBoloDS PRIVATE onnxruntime::onnxruntime)
 endif()
 
-# Sentry crash reporting (optional)
+# Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
+target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
 if(HAVE_SENTRY)
-    target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
         target_compile_definitions(WinBoloDS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
@@ -1269,6 +1273,7 @@ if(NOT WIN32)
 endif()
 
 add_executable(WinBoloHeadless ${HEADLESS_SOURCES})
+target_sources(WinBoloHeadless PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloHeadless PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -1313,9 +1318,9 @@ if(HAVE_ONNXRUNTIME)
     target_link_libraries(WinBoloHeadless PRIVATE onnxruntime::onnxruntime)
 endif()
 
-# Sentry crash reporting (optional)
+# Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
+target_sources(WinBoloHeadless PRIVATE src/common/sentry_integration.c)
 if(HAVE_SENTRY)
-    target_sources(WinBoloHeadless PRIVATE src/common/sentry_integration.c)
     target_compile_definitions(WinBoloHeadless PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
         target_compile_definitions(WinBoloHeadless PRIVATE SENTRY_DSN="${SENTRY_DSN}")
@@ -1390,6 +1395,7 @@ if(NOT WIN32)
 endif()
 
 add_library(winbolo_gym SHARED ${GYM_SOURCES})
+target_sources(winbolo_gym PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(winbolo_gym PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_GYM_EXPORTS=1
@@ -1428,6 +1434,10 @@ endif()
 target_link_libraries(winbolo_gym PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
 
+if(OpenMP_C_FOUND)
+    target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
+endif()
+
 set_target_properties(winbolo_gym PROPERTIES
     PUBLIC_HEADER src/gym/winbolo_gym.h
 )
@@ -1437,6 +1447,15 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
 )
+
+# ---------------------------------------------------------------------------
+# gym_batch_test (Phase 0 determinism baseline)
+# ---------------------------------------------------------------------------
+
+add_executable(gym_batch_test tests/gym_batch_test.c)
+target_link_libraries(gym_batch_test PRIVATE winbolo_gym)
+target_include_directories(gym_batch_test PRIVATE src/gym)
+set_flat_output(gym_batch_test "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
@@ -1478,6 +1497,7 @@ if(NOT WIN32)
 endif()
 
 add_executable(BrainTest ${BRAINTEST_SOURCES})
+target_sources(BrainTest PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(BrainTest PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"

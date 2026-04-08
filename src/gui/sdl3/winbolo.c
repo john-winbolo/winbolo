@@ -229,7 +229,6 @@ int main(int argc, char *argv[]) {
   SDL_Init(0);
 
   steam_init();
-  steam_request_stats();
   steam_set_join_callback(steamJoinRequested);
 
   /* Set working directory to the executable's location so that relative
@@ -706,15 +705,15 @@ void windowReCreate(void) {
  * ------------------------------------------------------- */
 void windowApplyMenuChecks(ClientSim *cs) {
   screenSetGunsightCS(cs, showGunsight);
-  screenSetAutoScroll(autoScrollingEnabled);
-  screenSetLabelOwnTank(labelSelf);
-  screenSetMesageLabelLen(labelMsg);
-  screenSetTankLabelLen(labelTank);
-  screenShowMessages(MSG_NEWSWIRE, showNewswireMessages);
-  screenShowMessages(MSG_ASSISTANT, showAssistantMessages);
-  screenShowMessages(MSG_AI, showAIMessages);
-  screenShowMessages(MSG_NETSTATUS, showNetworkStatusMessages);
-  screenShowMessages(MSG_NETWORK, showNetworkDebugMessages);
+  screenSetAutoScroll(cs, autoScrollingEnabled);
+  screenSetLabelOwnTank(cs, labelSelf);
+  screenSetMesageLabelLen(cs, labelMsg);
+  screenSetTankLabelLen(cs, labelTank);
+  screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  screenShowMessages(cs, MSG_AI, showAIMessages);
+  screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
 
 /* -------------------------------------------------------
@@ -812,9 +811,9 @@ void windowShowGunsight_toggle(ClientSim *cs) {
   screenSetGunsightCS(cs, showGunsight);
 }
 
-void windowAutomaticScrolling_toggle(void) {
+void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
-  screenSetAutoScroll(autoScrollingEnabled);
+  if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
 }
 
 void windowShowPillLabels_toggle(ClientSim *cs) {
@@ -866,48 +865,48 @@ void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
 
-void windowMenuNewswire_toggle(void) {
+void windowMenuNewswire_toggle(ClientSim *cs) {
   showNewswireMessages = !showNewswireMessages;
-  screenShowMessages(MSG_NEWSWIRE, showNewswireMessages);
+  if (cs) screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
 }
 
-void windowMenuAssistant_toggle(void) {
+void windowMenuAssistant_toggle(ClientSim *cs) {
   showAssistantMessages = !showAssistantMessages;
-  screenShowMessages(MSG_ASSISTANT, showAssistantMessages);
+  if (cs) screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
 }
 
-void windowMenuAI_toggle(void) {
+void windowMenuAI_toggle(ClientSim *cs) {
   showAIMessages = !showAIMessages;
-  screenShowMessages(MSG_AI, showAIMessages);
+  if (cs) screenShowMessages(cs, MSG_AI, showAIMessages);
 }
 
-void windowMenuNetwork_toggle(void) {
+void windowMenuNetwork_toggle(ClientSim *cs) {
   showNetworkStatusMessages = !showNetworkStatusMessages;
-  screenShowMessages(MSG_NETSTATUS, showNetworkStatusMessages);
+  if (cs) screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
 }
 
-void windowMenuNetworkDebug_toggle(void) {
+void windowMenuNetworkDebug_toggle(ClientSim *cs) {
   showNetworkDebugMessages = !showNetworkDebugMessages;
-  screenShowMessages(MSG_NETWORK, showNetworkDebugMessages);
+  if (cs) screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
 
 void windowHideMainView_toggle(void) {
   hideMainView = !hideMainView;
 }
 
-void windowLabelOwnTank_toggle(void) {
+void windowLabelOwnTank_toggle(ClientSim *cs) {
   labelSelf = !labelSelf;
-  screenSetLabelOwnTank(labelSelf);
+  if (cs) screenSetLabelOwnTank(cs, labelSelf);
 }
 
-void windowSetMessageLabelLen(labelLen newLen) {
+void windowSetMessageLabelLen(ClientSim *cs, labelLen newLen) {
   labelMsg = newLen;
-  screenSetMesageLabelLen(labelMsg);
+  if (cs) screenSetMesageLabelLen(cs, labelMsg);
 }
 
-void windowSetTankLabelLen(labelLen newLen) {
+void windowSetTankLabelLen(ClientSim *cs, labelLen newLen) {
   labelTank = newLen;
-  screenSetTankLabelLen(labelTank);
+  if (cs) screenSetTankLabelLen(cs, labelTank);
 }
 
 void windowNewGame(void) {
