@@ -634,15 +634,15 @@ void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
     screenSetGunsightCS(cs, showGunsight);
-    screenSetAutoScroll(autoScrollingEnabled);
-    screenSetLabelOwnTank(labelSelf);
-    screenSetMesageLabelLen(labelMsg);
-    screenSetTankLabelLen(labelTank);
-    screenShowMessages(MSG_NEWSWIRE, showNewswireMessages);
-    screenShowMessages(MSG_ASSISTANT, showAssistantMessages);
-    screenShowMessages(MSG_AI, showAIMessages);
-    screenShowMessages(MSG_NETSTATUS, showNetworkStatusMessages);
-    screenShowMessages(MSG_NETWORK, showNetworkDebugMessages);
+    screenSetAutoScroll(cs, autoScrollingEnabled);
+    screenSetLabelOwnTank(cs, labelSelf);
+    screenSetMesageLabelLen(cs, labelMsg);
+    screenSetTankLabelLen(cs, labelTank);
+    screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+    screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+    screenShowMessages(cs, MSG_AI, showAIMessages);
+    screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+    screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
     clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
 
@@ -686,35 +686,35 @@ void windowShowGunsight_toggle(void) {
 void windowSoundEffects_toggle(void) { soundEffects = !soundEffects; }
 void windowBackgroundSoundChange_toggle(void) { backgroundSound = !backgroundSound; }
 void windowSoundKeepalive(void) { useSoundKeepalive = !useSoundKeepalive; }
-void windowAutomaticScrolling_toggle(void) {
+void windowAutomaticScrolling_toggle(ClientSim *cs) {
     autoScrollingEnabled = !autoScrollingEnabled;
-    screenSetAutoScroll(autoScrollingEnabled);
+    if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
 }
 
 void windowShowPillLabels_toggle(void) { showPillLabels = !showPillLabels; }
 void windowShowBaseLabels_toggle(void) { showBaseLabels = !showBaseLabels; }
 void windowHideMainView_toggle(void) { hideMainView = !hideMainView; }
-void windowLabelOwnTank_toggle(void) {
+void windowLabelOwnTank_toggle(ClientSim *cs) {
     labelSelf = !labelSelf;
-    screenSetLabelOwnTank(labelSelf);
+    if (cs) screenSetLabelOwnTank(cs, labelSelf);
 }
 
-void windowSetMessageLabelLen(labelLen newLen) {
+void windowSetMessageLabelLen(ClientSim *cs, labelLen newLen) {
     labelMsg = newLen;
-    screenSetMesageLabelLen(labelMsg);
+    if (cs) screenSetMesageLabelLen(cs, labelMsg);
 }
 
-void windowSetTankLabelLen(labelLen newLen) {
+void windowSetTankLabelLen(ClientSim *cs, labelLen newLen) {
     labelTank = newLen;
-    screenSetTankLabelLen(labelTank);
+    if (cs) screenSetTankLabelLen(cs, labelTank);
 }
 
 void windowMenuAllowNewPlayers_toggle(void) { allowNewPlayers = !allowNewPlayers; }
-void windowMenuNewswire_toggle(void) { showNewswireMessages = !showNewswireMessages; }
-void windowMenuAssistant_toggle(void) { showAssistantMessages = !showAssistantMessages; }
-void windowMenuAI_toggle(void) { showAIMessages = !showAIMessages; }
-void windowMenuNetwork_toggle(void) { showNetworkStatusMessages = !showNetworkStatusMessages; }
-void windowMenuNetworkDebug_toggle(void) { showNetworkDebugMessages = !showNetworkDebugMessages; }
+void windowMenuNewswire_toggle(ClientSim *cs) { showNewswireMessages = !showNewswireMessages; (void)cs; }
+void windowMenuAssistant_toggle(ClientSim *cs) { showAssistantMessages = !showAssistantMessages; (void)cs; }
+void windowMenuAI_toggle(ClientSim *cs) { showAIMessages = !showAIMessages; (void)cs; }
+void windowMenuNetwork_toggle(ClientSim *cs) { showNetworkStatusMessages = !showNetworkStatusMessages; (void)cs; }
+void windowMenuNetworkDebug_toggle(ClientSim *cs) { showNetworkDebugMessages = !showNetworkDebugMessages; (void)cs; }
 
 void windowNewGame(void) {
   SDL_Log("[iOS] windowNewGame: leaving game");

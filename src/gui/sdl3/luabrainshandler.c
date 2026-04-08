@@ -1444,6 +1444,13 @@ void brainsHandlerManual(void) {
 }
 
 bool brainsHandlerStart(char *path, char *name, ClientSim *cs) {
+#if defined(HAVE_ONNXRUNTIME) && !defined(__EMSCRIPTEN__)
+  /* Route .onnx files to ML brain */
+  size_t len = SDL_strlen(path);
+  if (len >= 5 && SDL_strcasecmp(path + len - 5, ".onnx") == 0) {
+    return mlBrainStartSingleton(path, name, cs);
+  }
+#endif
   if (!luaBrainStart(path, name, cs)) {
     return FALSE;
   }

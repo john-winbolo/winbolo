@@ -139,7 +139,7 @@ typedef enum {
 bool screenIsItemInTrees(struct GameSim *sim, WORLD bmx, WORLD bmy);
 void screenGetSubMapSquareOffset(int *xPos, int *yPos);
 void screenAddBrainObject(struct ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed);
-void screenNetStatusMessage(char *messageStr);
+void screenNetStatusMessage(struct ClientSim *csPtr, char *messageStr);
 bool screenExtractPNBData(BYTE *buff, BYTE dataLen, bool isTcp);
 bool screenExtractMNTData(BYTE *buff, BYTE dataLen, bool isTcp);
 bool screenGenerateMapPreview(char *fileName, BYTE *buff);
@@ -259,12 +259,12 @@ typedef struct {
 
 BYTE screenGetPos(screen *value, BYTE xValue, BYTE yValue);
 bool screenIsMine(screenMines *value, BYTE xValue, BYTE yValue);
-void screenGetMessages(char *top, char *bottom);
-void screenShowMessages(BYTE msgType, bool isShown);
-void screenSetAutoScroll(bool isAuto);
-void screenSetLabelOwnTank(bool value);
-void screenSetMesageLabelLen(labelLen value);
-void screenSetTankLabelLen(labelLen value);
+void screenGetMessages(struct ClientSim *csPtr, char *top, char *bottom);
+void screenShowMessages(struct ClientSim *csPtr, BYTE msgType, bool isShown);
+void screenSetAutoScroll(struct ClientSim *csPtr, bool isAuto);
+void screenSetLabelOwnTank(struct ClientSim *csPtr, bool value);
+void screenSetMesageLabelLen(struct ClientSim *csPtr, labelLen value);
+void screenSetTankLabelLen(struct ClientSim *csPtr, labelLen value);
 void screenLeaveGame(void);
 
 /* Forward declaration for ClientSim-parameterized functions */

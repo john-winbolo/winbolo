@@ -142,6 +142,11 @@ typedef struct ServerSim {
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
     int          mapDirCount;             /* Number of valid maps in the array */
+
+    /* Server message configuration (was servermessages.c globals) */
+    bool         isServerQuiet;
+    char         serverMessageLogFile[FILENAME_MAX];
+    bool         serverMessageUseLogFile;
 } ServerSim;
 
 /*********************************************************

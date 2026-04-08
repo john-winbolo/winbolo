@@ -73,7 +73,7 @@ struct GameSim;
 *ARGUMENTS:
 *
 *********************************************************/
-void treeGrowCreate(void);
+void treeGrowCreate(struct GameSim *sim);
 
 /*********************************************************
 *NAME:          treeGrowDestroy
@@ -87,7 +87,7 @@ void treeGrowCreate(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void treeGrowDestroy(void);
+void treeGrowDestroy(struct GameSim *sim);
 
 /*********************************************************
 *NAME:          treeGrowAddItem
@@ -104,7 +104,7 @@ void treeGrowDestroy(void);
 *  y     - Y co-ord
 *  score - The score of the item
 *********************************************************/
-void treeGrowAddItem(BYTE x, BYTE y, int score);
+void treeGrowAddItem(struct GameSim *sim, BYTE x, BYTE y, int score);
 
 /*********************************************************
 *NAME:          treeGrowUpdate
@@ -119,19 +119,6 @@ void treeGrowAddItem(BYTE x, BYTE y, int score);
 *  sim - Pointer to the game simulation
 *********************************************************/
 void treeGrowUpdate(struct GameSim *sim);
-
-/*********************************************************
-*NAME:          treeGrowDeleteItem
-*AUTHOR:        John Morrison
-*CREATION DATE: 22/1/99
-*LAST MODIFIED: 22/1/99
-*PURPOSE:
-*  Deletes the item for the given number
-*
-*ARGUMENTS:
-*  itemNum - The item number to get
-*********************************************************/
-void treeGrowDeleteItem(int itemNum);
 
 /*********************************************************
 *NAME:          treeGrowCalcScore

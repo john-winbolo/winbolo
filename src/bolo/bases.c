@@ -41,15 +41,13 @@
 #include "client_sim.h"
 #include "../server/server_sim.h"
 
-int baseTimer[MAX_TANKS];
-
-void basesUpdateTimer(int playerNumber){
-	baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;
+void basesUpdateTimer(GameSim *sim, int playerNumber){
+	sim->baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;
 }
 
 
-void basesRemoveTimer(int playerNumber){
-	baseTimer[playerNumber]=30000; // the 30000 is a arbitrary large number
+void basesRemoveTimer(GameSim *sim, int playerNumber){
+	sim->baseTimer[playerNumber]=30000; // the 30000 is a arbitrary large number
 }
 /*********************************************************
 *NAME:         basesCreate 
@@ -74,15 +72,6 @@ void basesCreate(bases *value) {
     (*value)->item[count].baseTime = 0;
     (*value)->item[count].justStopped = TRUE;
   }
-  for (count=0;count<MAX_TANKS;count++){
-	  baseTimer[count]=30000;
-  }
-  /* In the server-authoritative architecture, the server sim sets the
-   * timer when a player connects (serverSimAddPlayer).  For single-player
-   * via transport_local the server sim is also used, so no special case
-   * is needed here.  Initialise player 0's timer unconditionally so that
-   * both netSingle and netUdp paths work identically. */
-  baseTimer[0]=BASE_TICKS_BETWEEN_REFUEL;
 }
 
 /*********************************************************
@@ -355,10 +344,10 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 
   while (secondCounter < MAX_TANKS)
   {
-	  if(baseTimer[secondCounter] != 30000)
+	  if(sim->baseTimer[secondCounter] != 30000)
 	  {
-		  baseTimer[secondCounter]--;
-		  if(baseTimer[secondCounter]<=0)
+		  sim->baseTimer[secondCounter]--;
+		  if(sim->baseTimer[secondCounter]<=0)
 		  {
 			if (isServer == TRUE)
 			{
@@ -368,11 +357,10 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 					count++;
 				}
 			}
-			baseTimer[secondCounter]=BASE_TICKS_BETWEEN_REFUEL;
-			//printf("ticks refuel %d \r\n",winboloTimer());
+			sim->baseTimer[secondCounter]=BASE_TICKS_BETWEEN_REFUEL;
 		  }
 	  }
-	
+
 	secondCounter++;
   }
 
@@ -556,7 +544,7 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
     } else if (owner == NEUTRAL) {
       (*value)->item[baseNum].owner = owner;
     } else if ((*value)->item[baseNum].owner != owner) {
-      playersMakeMessageName(&sim->plyrs, owner, messageStr);
+      playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
       if (returnValue != NEUTRAL) {
         (*value)->item[baseNum].armour = 0;
         (*value)->item[baseNum].shells = 0;
@@ -641,7 +629,7 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
-        playersMakeMessageName(&sim->plyrs, owner, messageStr);
+        playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
         if (returnValue != NEUTRAL) {
           (*value)->item[count].armour = 0;
           (*value)->item[count].shells = 0;

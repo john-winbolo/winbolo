@@ -954,8 +954,8 @@ void screenReCalcCS(ClientSim *csPtr) {
 *  top - Top message line to get
 *  top - Top message line to get
 *********************************************************/
-void screenGetMessages(char *top, char *bottom) {
-  messageGetMessage(top,bottom);
+void screenGetMessages(ClientSim *csPtr, char *top, char *bottom) {
+  messageGetMessage(&csPtr->messages, top,bottom);
 }
 
 /*********************************************************
@@ -975,7 +975,7 @@ static void clientCenterTankCS(ClientSim *csPtr) {
   tankGetStats(&csPtr->sim.tanks[0], &high, &low, &health, &dummy);
   if (health <= TANK_FULL_ARMOUR) {
     /* Tank isn't dead */
-    scrollCenterObject(&csPtr->xOffset, &csPtr->yOffset, (tankGetMX(&csPtr->sim.tanks[0])), (tankGetMY(&csPtr->sim.tanks[0])));
+    scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, (tankGetMX(&csPtr->sim.tanks[0])), (tankGetMY(&csPtr->sim.tanks[0])));
     screenReCalcCS(csPtr);
   }
 }
@@ -1036,23 +1036,23 @@ void screenGetKillsDeathsCS(ClientSim *csPtr, int *kills, int *deaths) {
 *  msgType - The message type that is being set
 *  isShown - Is it being turned on or off
 *********************************************************/
-void screenShowMessages(BYTE msgType, bool isShown) {
+void screenShowMessages(ClientSim *csPtr, BYTE msgType, bool isShown) {
   switch (msgType) {
   case MSG_NEWSWIRE:
-    messageSetNewswire(isShown);
+    messageSetNewswire(&csPtr->messages, isShown);
     break;
   case MSG_ASSISTANT:
-    messageSetAssistant(isShown);
+    messageSetAssistant(&csPtr->messages, isShown);
     break;
   case MSG_AI:
-    messageSetAI(isShown);
+    messageSetAI(&csPtr->messages, isShown);
     break;
   case MSG_NETSTATUS:
-    messageSetNetStatus(isShown);
+    messageSetNetStatus(&csPtr->messages, isShown);
     break;
   default:
     /* MSG_Network */
-    messageSetNetwork(isShown);
+    messageSetNetwork(&csPtr->messages, isShown);
     break;
   }
 }
@@ -1092,8 +1092,8 @@ void screenManMoveCS(ClientSim *csPtr, buildSelect buildS) {
 *ARGUMENTS:
 *  isAuto - Is the scrolling option automatic or not?
 *********************************************************/
-void screenSetAutoScroll(bool isAuto) {
-  scrollSetScrollType(isAuto);
+void screenSetAutoScroll(ClientSim *csPtr, bool isAuto) {
+  scrollSetScrollType(&csPtr->scroll, isAuto);
 }
 
 /*********************************************************
@@ -1307,7 +1307,7 @@ int32_t screenGetGameStartDelayCS(ClientSim *csPtr) {
 *********************************************************/
 void screenGetPlayerNameCS(ClientSim *csPtr, char *value) {
   if (csPtr->sim.plyrs == NULL) {
-    playersGetPlayerName(NULL, 0, value, FALSE);
+    strcpy(value, csPtr->myLastPlayerName);
   } else {
     playersGetPlayerName(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), value, FALSE);
   }
@@ -1351,8 +1351,8 @@ bool screenSetPlayerNameCS(ClientSim *csPtr, char *value) {
 *ARGUMENTS:
 *  value - Should the tank be labeled?
 *********************************************************/
-void screenSetLabelOwnTank(bool value) {
-  labelSetLabelOwnTank(value);
+void screenSetLabelOwnTank(ClientSim *csPtr, bool value) {
+  labelSetLabelOwnTank(csPtr, value);
 }
 
 /*********************************************************
@@ -1366,8 +1366,8 @@ void screenSetLabelOwnTank(bool value) {
 *ARGUMENTS:
 *  value - New length of the labels
 *********************************************************/
-void screenSetMesageLabelLen(labelLen value) {
-  labelSetSenderLength(value);
+void screenSetMesageLabelLen(ClientSim *csPtr, labelLen value) {
+  labelSetSenderLength(csPtr, value);
 }
 
 /*********************************************************
@@ -1381,8 +1381,8 @@ void screenSetMesageLabelLen(labelLen value) {
 *ARGUMENTS:
 *  value - New length of the labels
 *********************************************************/
-void screenSetTankLabelLen(labelLen value) {
-  labelSetTankLength(value);
+void screenSetTankLabelLen(ClientSim *csPtr, labelLen value) {
+  labelSetTankLength(csPtr, value);
 }
 
 /*********************************************************
@@ -1420,14 +1420,14 @@ void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
   if (csPtr->inPillView == FALSE) {
     if (pillsCheckView(&csPtr->sim, &csPtr->sim.pb, csPtr->pillViewX, csPtr->pillViewY) == TRUE) {
       csPtr->inPillView = TRUE;
-      scrollCenterObject(&csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+      scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
       screenReCalcCS(csPtr);
     } else {
       result = pillsGetNextView(&csPtr->sim, &csPtr->sim.pb, &csPtr->pillViewX, &csPtr->pillViewY, FALSE);
       if (result == TRUE) {
         /* Center on the object */
         csPtr->inPillView = TRUE;
-        scrollCenterObject(&csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
         screenReCalcCS(csPtr);
       } else {
         csPtr->inPillView = FALSE;
@@ -1440,12 +1440,12 @@ void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
         screenTankViewCS(csPtr);
       } else {
         /* Center on the object */
-        scrollCenterObject(&csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
         screenReCalcCS(csPtr);
       }
     } else {
       if (pillsMoveView(&csPtr->sim, &csPtr->sim.pb, &csPtr->pillViewX, &csPtr->pillViewY, horz, vert) == TRUE) {
-        scrollCenterObject(&csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
         screenReCalcCS(csPtr);
       }
     }
@@ -1468,8 +1468,8 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
-  clientMessageAdd((messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
+  clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   clientSimMessageSendAllPlayers(csPtr, playersGetSelf(&csPtr->sim.plyrs), messageStr);
 }
 
@@ -1496,12 +1496,12 @@ bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
   returnValue = mapWrite(fileName, &csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss);
   if (returnValue == TRUE) {
     if (csPtr->networkGameType == netSingle) {
-      playersMakeMessageName(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), name);
+      playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), name);
       strcat(output, MESSAGE_QUOTES);
       strcat(output, name);
       strcat(output, MESSAGE_QUOTES);
       strcat(output, langGetText(MESSAGE_SAVED_MAP));
-      clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), output);
+      clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), output);
     }
   }
   return returnValue;
@@ -1960,12 +1960,12 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(&csPtr->sim.plyrs, playerNum, topLine);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playerNum, topLine);
 
   if (csPtr->inLobby && playerNum < 16) {
     clientSimAppendLobbyChat(csPtr, csPtr->lobbySlots[playerNum].playerName, messageStr);
   } else {
-    clientMessageAdd((messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+    clientMessageAdd(&csPtr->messages, (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   }
 }
 
@@ -2089,8 +2089,8 @@ void screenSendMessageAllAlliesCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
-  clientMessageAdd((messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
+  clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   playersSendMessageAllAllies(csPtr, &csPtr->sim.plyrs, messageStr);
 }
 
@@ -2124,8 +2124,8 @@ void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
-  clientMessageAdd((messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
+  clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   playersSendMessageAllNearby(csPtr, &csPtr->sim.plyrs, tankGetMX(&csPtr->sim.tanks[0]), tankGetMY(&csPtr->sim.tanks[0]), messageStr);
 }
 
@@ -2279,7 +2279,7 @@ bool screenTankScrollCS(ClientSim *csPtr) {
   if (py >2) {
     y++;
   } */
-  return scrollManual(&csPtr->xOffset, &csPtr->yOffset, x, y, (TURNTYPE) tankGetTravelAngel(&csPtr->sim.tanks[0]));
+  return scrollManual(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, x, y, (TURNTYPE) tankGetTravelAngel(&csPtr->sim.tanks[0]));
 }
 
 /*********************************************************
@@ -2546,11 +2546,11 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   *clientSimGetBrainsNumObjects(csPtr) = 0;
 
   /* Message */
-  if (messageIsNewMessage() == TRUE) {
+  if (messageIsNewMessage(&csPtr->messages) == TRUE) {
     value->message = (MessageInfo*) malloc(sizeof(MessageInfo));
     value->message->receivers = malloc(sizeof(value->message->receivers));
     value->message->message = malloc(512);
-    value->message->sender = messageGetNewMessage((char *) value->message->message, &(value->message->receivers)); /* FIXME: Second parameter? */
+    value->message->sender = messageGetNewMessage(&csPtr->messages, (char *) value->message->message, &(value->message->receivers)); /* FIXME: Second parameter? */
   } else {
     value->message = NULL;
   }
@@ -2622,7 +2622,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
         csPtr->inPillView = TRUE;
         csPtr->pillViewX = p.x;
         csPtr->pillViewY = p.y;
-        scrollCenterObject(&csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
         screenReCalcCS(csPtr);
       }
     }
@@ -2668,7 +2668,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
     utilPtoCString((char *) value->sendmessage, msg);
     if (*(value->messagedest) == 0) {
       /* Its a debug message */
-      clientMessageAdd(AIMessage, langGetText(MESSAGE_AI), msg);
+      clientMessageAdd(&csPtr->messages, AIMessage, langGetText(MESSAGE_AI), msg);
     } else {
       /* Send this message to the appropriate players */
       playersSendAiMessage(csPtr, &csPtr->sim, &csPtr->sim.plyrs, *(value->messagedest), msg);
@@ -2887,8 +2887,8 @@ bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
 *ARGUMENTS:
 *  messageStr - The message text
 *********************************************************/
-void screenNetStatusMessage(char *messageStr) {
-  clientMessageAdd(networkStatus, (char *) "Network Status", messageStr);
+void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) {
+  clientMessageAdd(&csPtr->messages, networkStatus, (char *) "Network Status", messageStr);
 }
 
 /*********************************************************
@@ -3750,7 +3750,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           char prevName[FILENAME_MAX];
           capMsg[0] = '\0';
           prevName[0] = '\0';
-          playersMakeMessageName(&csPtr->sim.plyrs, events[i].data[0], capMsg);
+          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, events[i].data[0], capMsg);
           if (events[i].data[1] != NEUTRAL) {
             strcat(capMsg, langGetText(MESSAGE_STOLE_BASE));
             playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], prevName, FALSE);
@@ -3758,7 +3758,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           } else {
             strcat(capMsg, langGetText(MESSAGE_CAPTURE_BASE));
           }
-          clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
+          clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
         }
         /* Steam stat: base captures */
         if (events[i].data[0] == playerNum) {
@@ -3788,7 +3788,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           char prevName[FILENAME_MAX];
           capMsg[0] = '\0';
           prevName[0] = '\0';
-          playersMakeMessageName(&csPtr->sim.plyrs, events[i].data[0], capMsg);
+          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, events[i].data[0], capMsg);
           if (events[i].data[1] != NEUTRAL) {
             strcat(capMsg, langGetText(MESSAGE_STOLE_PILL));
             playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], prevName, FALSE);
@@ -3796,7 +3796,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           } else {
             strcat(capMsg, langGetText(MESSAGE_CAPTURE_PILL));
           }
-          clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
+          clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
         }
         /* Steam stat: pill captures */
         if (events[i].data[0] == playerNum) {
@@ -3860,10 +3860,10 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         if (isHuman) {
           switch (events[i].data[0]) {
           case SERVER_MSG_GAME_LOCKED:
-            screenNetStatusMessage("This game is now locked to new players (server lock)");
+            screenNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
             break;
           case SERVER_MSG_GAME_UNLOCKED:
-            screenNetStatusMessage("This game is now unlocked to new players (server unlock)");
+            screenNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
             break;
           }
         }
@@ -3876,9 +3876,9 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           lgmMsg[0] = '\0';
           lgmName[0] = '\0';
           playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], lgmName, FALSE);
-          labelMakeMessage(lgmMsg, lgmName, langGetText(MESSAGE_THIS_COMPUTER));
+          labelMakeMessage(csPtr, lgmMsg, lgmName, langGetText(MESSAGE_THIS_COMPUTER));
           strcat(lgmMsg, langGetText(MESSAGE_LGM_DEAD));
-          clientMessageAdd(newsWireMessage, langGetText(MESSAGE_NEWSWIRE), lgmMsg);
+          clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), lgmMsg);
         }
         /* Steam stats: LGM losses and kills */
         if (events[i].data[0] == playerNum) {
@@ -3910,7 +3910,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           case ASSIST_MSG_TANK_SUNK:         assistLangId = MESSAGE_TANKSUNK; break;
           }
           if (assistLangId != 0) {
-            clientMessageAdd(assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(assistLangId));
+            clientMessageAdd(&csPtr->messages, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(assistLangId));
           }
         }
         break;
@@ -4002,7 +4002,6 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 *  Handles scrolling, messages, status bars, pillbox view.
 *********************************************************/
 void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
-  static BYTE messageTime = 0;
   WORLD tankX, tankY;
   BYTE armour, shellsAmount, minesAmount;
   BYTE tmx, tmy, pmx, pmy;
@@ -4012,10 +4011,10 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   }
 
   if (csPtr->gmeStartDelay > 0) {
-    messageTime++;
-    if (messageTime == MESSAGE_SCROLL_TIME) {
-      messageUpdate();
-      messageTime = 0;
+    csPtr->messages.messageTime++;
+    if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
+      messageUpdate(&csPtr->messages);
+      csPtr->messages.messageTime = 0;
     }
     return;
   }
@@ -4027,10 +4026,10 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   }
 
   if (csPtr->netStat != netRunning) {
-    messageTime++;
-    if (messageTime == MESSAGE_SCROLL_TIME) {
-      messageUpdate();
-      messageTime = 0;
+    csPtr->messages.messageTime++;
+    if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
+      messageUpdate(&csPtr->messages);
+      csPtr->messages.messageTime = 0;
     }
     return;
   }
@@ -4041,7 +4040,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
     if (csPtr->inPillView == FALSE) {
       int oldXOffset = csPtr->xOffset;
       int oldYOffset = csPtr->yOffset;
-      if (scrollUpdate(&csPtr->sim, &csPtr->xOffset, &csPtr->yOffset, tankGetScreenMX(&csPtr->sim.tanks[0]), tankGetScreenMY(&csPtr->sim.tanks[0]), TRUE, tmx, tmy, tankGetSpeed(&csPtr->sim.tanks[0]), tankGetArmour(&csPtr->sim.tanks[0]), (TURNTYPE)(tankGetTravelAngel(&csPtr->sim.tanks[0])), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
+      if (scrollUpdate(&csPtr->scroll, &csPtr->sim, &csPtr->xOffset, &csPtr->yOffset, tankGetScreenMX(&csPtr->sim.tanks[0]), tankGetScreenMY(&csPtr->sim.tanks[0]), TRUE, tmx, tmy, tankGetSpeed(&csPtr->sim.tanks[0]), tankGetArmour(&csPtr->sim.tanks[0]), (TURNTYPE)(tankGetTravelAngel(&csPtr->sim.tanks[0])), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
         if (oldXOffset < csPtr->xOffset) { csPtr->cursorPosX--; moveMousePointer(right); }
         else if (oldXOffset > csPtr->xOffset) { csPtr->cursorPosX++; moveMousePointer(left); }
         if (oldYOffset < csPtr->yOffset) { csPtr->cursorPosY--; moveMousePointer(down); }
@@ -4094,10 +4093,10 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   playersGameTickUpdate(&csPtr->sim.plyrs);
 
   /* Messaging */
-  messageTime++;
-  if (messageTime == MESSAGE_SCROLL_TIME) {
-    messageUpdate();
-    messageTime = 0;
+  csPtr->messages.messageTime++;
+  if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
+    messageUpdate(&csPtr->messages);
+    csPtr->messages.messageTime = 0;
   }
 }
 

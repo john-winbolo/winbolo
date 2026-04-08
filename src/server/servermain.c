@@ -58,9 +58,9 @@ DWORD winboloTimer(void);
 void endWinboloTimer(void);
 
 /* From servermessages.c — called directly now instead of through servercore wrappers */
-void serverMessageSetQuietMode(bool modeOn);
-void serverMessagesSetLogFile(char *logFile);
-void serverMessageConsoleMessage(char *msg);
+void serverMessageSetQuietMode(ServerSim *sim, bool modeOn);
+void serverMessagesSetLogFile(ServerSim *sim, char *logFile);
+void serverMessageConsoleMessage(ServerSim *sim, char *msg);
 
 #ifndef _AITYPE_ENUM
 #define _AITYPE_ENUM
@@ -926,7 +926,7 @@ int main(int argc, char **argv) {
     setWriteToDebugFileStream(-1);
   }
 
-  serverMessageSetQuietMode(FALSE);
+  serverMessageSetQuietMode(&serverSim, FALSE);
   isQuiet = FALSE;
   isNoInput = FALSE;
   maxPlayers = 0;
@@ -956,12 +956,12 @@ int main(int argc, char **argv) {
   }
 
   if (argExist(argc, argv, "quiet") == TRUE) {
-    serverMessageSetQuietMode(TRUE);
+    serverMessageSetQuietMode(&serverSim, TRUE);
     isQuiet = TRUE;
   }
   isNoInput = argExist(argc, argv, "noinput");
   if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
-    serverMessagesSetLogFile((char *) argv[findArg(argc, argv, "logfile")]);
+    serverMessagesSetLogFile(&serverSim, (char *) argv[findArg(argc, argv, "logfile")]);
   }
 
   if (argExist(argc, argv, "maxplayers") == TRUE) {
@@ -979,9 +979,9 @@ int main(int argc, char **argv) {
 #endif
   /* IP-to-country geolocation (DB-IP Lite) */
   if (geoLookupCreate("data/dbip-country-lite.mmdb")) {
-    serverMessageConsoleMessage("Geo lookup database loaded.\n");
+    serverMessageConsoleMessage(&serverSim,"Geo lookup database loaded.\n");
   } else {
-    serverMessageConsoleMessage("Geo lookup database not found — country codes will be XX.\n");
+    serverMessageConsoleMessage(&serverSim,"Geo lookup database not found — country codes will be XX.\n");
   }
 
   /* Create server simulation */
@@ -1191,7 +1191,7 @@ int main(int argc, char **argv) {
 #endif
     return 0;
   }
-  serverMessageConsoleMessage("Type \"help\" for help, \"quit\" to exit.");
+  serverMessageConsoleMessage(&serverSim,"Type \"help\" for help, \"quit\" to exit.");
 #ifdef _WIN32
   oldTick = winboloTimer();
   serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
@@ -1218,7 +1218,7 @@ int main(int argc, char **argv) {
   winbolonetDestroy(TRUE);
 
   if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
-    serverMessageConsoleMessage((char *)"Uploading log file to winbolo.net");
+    serverMessageConsoleMessage(&serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
     httpSendLogFile(fileName, key, FALSE);
     httpDestroy();

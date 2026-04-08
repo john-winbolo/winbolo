@@ -46,7 +46,7 @@
 #include "screenbrainmap.h"
 
 /* Map change callback — set by ServerSim during tick */
-static MapChangeCallback mapChangeCb = NULL;
+static _Thread_local MapChangeCallback mapChangeCb = NULL;
 
 void mapSetChangeCallback(MapChangeCallback cb) {
     mapChangeCb = cb;

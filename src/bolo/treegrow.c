@@ -40,12 +40,6 @@
 #include "treegrow.h"
 #include "game_sim.h"
 
-/* The tree growth structure */
-BYTE treeGrowX;
-BYTE treeGrowY;
-int treeGrowTime;
-int treeGrowScore;
-WORD seed;
 
 /*********************************************************
 *NAME:          treeGrowCreate
@@ -58,11 +52,10 @@ WORD seed;
 *ARGUMENTS:
 *
 *********************************************************/
-void treeGrowCreate(void) {
-//  srand((unsigned int) time(NULL));
-  seed = (WORD) rand();
-  treeGrowTime = TREEGROW_INITIAL_TIME;
-  treeGrowScore = TREEGROW_INITIAL_SCORE;
+void treeGrowCreate(GameSim *sim) {
+  sim->treeGrowSeed = (WORD) rand();
+  sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+  sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
 }
 
 /*********************************************************
@@ -77,8 +70,8 @@ void treeGrowCreate(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-void treeGrowDestroy(void) {
-  treeGrowTime = TREEGROW_INITIAL_TIME;
+void treeGrowDestroy(GameSim *sim) {
+  sim->treeGrowTime = TREEGROW_INITIAL_TIME;
 }
 
 /*********************************************************
@@ -96,12 +89,12 @@ void treeGrowDestroy(void) {
 *  y     - Y co-ord
 *  score - The score of the item
 *********************************************************/
-void treeGrowAddItem(BYTE x, BYTE y, int score) {
-  if (score > treeGrowScore && score > TREE_NO_GROW) {
-    treeGrowScore = score;
-    treeGrowX = x;
-    treeGrowY = y;
-    treeGrowTime = TREEGROW_TIME;
+void treeGrowAddItem(GameSim *sim, BYTE x, BYTE y, int score) {
+  if (score > sim->treeGrowScore && score > TREE_NO_GROW) {
+    sim->treeGrowScore = score;
+    sim->treeGrowX = x;
+    sim->treeGrowY = y;
+    sim->treeGrowTime = TREEGROW_TIME;
   }
 }
 
@@ -126,16 +119,16 @@ void treeGrowUpdate(GameSim *sim) {
 	int i;
 	WORD old, rnd;
 
-  rnd = seed;
+  rnd = sim->treeGrowSeed;
   /* Get a random map square to calculate for */
   for (i=0; i<16; i++) { old=rnd; rnd<<=1; if (old & 0x8000) rnd ^= 0x1083L; }
-  seed = rnd;
+  sim->treeGrowSeed = rnd;
   x = (BYTE) (rnd >> 8);
   y = (BYTE) rnd ;
 
 
   if (pillsExistPos(pb, x, y) == FALSE && basesExistPos(bs, x,y) == FALSE && mapIsMine(mp, x, y) == FALSE && mapGetPos(mp, x, y) != DEEP_SEA) {
-    treeGrowAddItem(x, y,treeGrowCalcScore(sim, x, y));
+    treeGrowAddItem(sim, x, y,treeGrowCalcScore(sim, x, y));
   }
 
   /* Update the times and grow trees etc */
@@ -205,28 +198,28 @@ void treeGrowCheckGrowTree(GameSim *sim) {
   BYTE pos;           /* The map terrain at the current position */
   BYTE newPos;        /* The new position to set the terrain to */
 
-  treeGrowTime--;
+  sim->treeGrowTime--;
     /* Check for fill and remove from data structure */
-  if (treeGrowTime <= 0) {
-    treeGrowScore = TREEGROW_INITIAL_SCORE;
-    treeGrowTime = TREEGROW_INITIAL_TIME;
-    pos = mapGetPos(mp, treeGrowX, treeGrowY);
-    if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pillsExistPos(pb, treeGrowX, treeGrowY) == FALSE && basesExistPos(bs, treeGrowX, treeGrowY) == FALSE) {
+  if (sim->treeGrowTime <= 0) {
+    sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
+    sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+    pos = mapGetPos(mp, sim->treeGrowX, sim->treeGrowY);
+    if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE) {
       newPos = FOREST;
       if (pos >= MINE_START && pos <= MINE_END) {
         newPos += MINE_FOREST;
       }
-      mapSetPos(sim, mp, treeGrowX, treeGrowY, newPos, TRUE, FALSE);
+      mapSetPos(sim, mp, sim->treeGrowX, sim->treeGrowY, newPos, TRUE, FALSE);
       /* Remove Items from grass/swamp/rubble data stuctures */
       switch (pos) {
       case GRASS:
-        grassRemovePos(&sim->grs, treeGrowX, treeGrowY);
+        grassRemovePos(&sim->grs, sim->treeGrowX, sim->treeGrowY);
         break;
       case SWAMP:
-        swampRemovePos(&sim->swp, treeGrowX, treeGrowY);
+        swampRemovePos(&sim->swp, sim->treeGrowX, sim->treeGrowY);
         break;
       case RUBBLE:
-        rubbleRemovePos(&sim->rbl, treeGrowX, treeGrowY);
+        rubbleRemovePos(&sim->rbl, sim->treeGrowX, sim->treeGrowY);
         break;
       default:
         /* Do nothing */

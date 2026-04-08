@@ -49,8 +49,6 @@
 #include "util.h"
 
 
-char myLastPlayerName[PLAYER_NAME_LEN];
-
 /*********************************************************
 *NAME:          playersCreate
 *AUTHOR:        John Morrison
@@ -67,9 +65,6 @@ void playersCreate(players *plrs, bool isServer) {
 
   New(*plrs);
   memset(*plrs, 0, sizeof(**plrs));
-  if (isServer == FALSE) {
-    myLastPlayerName[0] = EMPTY_CHAR;
-  }
     
   
   (*plrs)->myPlayerNum = NEUTRAL; /* Not set yet */
@@ -150,7 +145,7 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
   returnValue = FALSE;
   if ((*plrs)->item[playerNum].inUse == FALSE) {
     if (playersNameTaken(plrs, playerName) == FALSE) {
-      strcpy(myLastPlayerName, playerName);
+      if (csParam) strcpy(csParam->myLastPlayerName, playerName);
       returnValue = TRUE;
       strcpy((*plrs)->item[playerNum].playerName, playerName);
       (*plrs)->item[playerNum].inUse = TRUE;
@@ -196,9 +191,9 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
       /* Make Message */
       strcat(messageStr, MESSAGE_QUOTES);
       if (playerNum == (*plrs)->myPlayerNum) {
-        labelMakeMessage(label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER));
+        labelMakeMessage(csParam, label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER));
       } else {
-        labelMakeMessage(label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location);
+        labelMakeMessage(csParam, label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location);
       }
       strcat(messageStr, label);
       strcat(messageStr, MESSAGE_QUOTES);
@@ -213,8 +208,8 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
       if (playerNum != (*plrs)->myPlayerNum) {
         strcat(temp, "@");
         strcat(temp, (*plrs)->item[playerNum].location);
-      } else if (isServer == FALSE) {
-        strcpy(myLastPlayerName, playerName);
+      } else if (isServer == FALSE && csParam) {
+        strcpy(csParam->myLastPlayerName, playerName);
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) playerNum, temp,
@@ -476,9 +471,8 @@ void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest, bool isServ
     } else {
       strcpy(dest, NO_TANK);
     }
-  } else if (isServer == FALSE) {
-    /* We are a client.. */
-    strcpy(dest, myLastPlayerName);
+  } else {
+    strcpy(dest, NO_TANK);
   }
 }
 
@@ -530,17 +524,17 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
 * playerNum  - The player number to set
 * dest       - Destination string
 *********************************************************/
-void playersMakeMessageName(players *plrs, BYTE playerNum, char *dest) {
+void playersMakeMessageName(ClientSim *cs, players *plrs, BYTE playerNum, char *dest) {
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
-  
+
   label[0] = '\0';
   if (playerNum == (*plrs)->myPlayerNum) {
-    labelMakeMessage(label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER));
+    labelMakeMessage(cs, label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER));
     strcpy(dest, label);
   } else if ((*plrs)->item[playerNum].inUse == FALSE) {
     strcpy(dest, NO_TANK);
   } else {
-    labelMakeMessage(label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location);
+    labelMakeMessage(cs, label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location);
     strcpy(dest, label);
   }
 }
@@ -558,15 +552,15 @@ void playersMakeMessageName(players *plrs, BYTE playerNum, char *dest) {
 * playerNum  - The player number to set
 * dest       - Destination string
 *********************************************************/
-void playersMakeScreenName(players *plrs, BYTE playerNum, char *dest) {
+void playersMakeScreenName(ClientSim *cs, players *plrs, BYTE playerNum, char *dest) {
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
-  
+
   label[0] = '\0';
   if ((*plrs)->item[playerNum].inUse == TRUE) {
     if (playerNum == (*plrs)->myPlayerNum) {
-      labelMakeTankLabel(label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER), TRUE);
+      labelMakeTankLabel(cs, label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER), TRUE);
     } else {
-      labelMakeTankLabel(label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location, FALSE);
+      labelMakeTankLabel(cs, label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location, FALSE);
     }
     strcpy(dest, label);
   }
@@ -718,7 +712,7 @@ tankAlliance playersScreenAllience(players *plrs, BYTE playerNum) {
 * top      - top bound
 * bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenTanks(GameSim *sim, players *plrs, screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
   char playerName[FILENAME_MAX]; /* Holds playername/location info */
   WORLD conv;                    /* Used in conversion */
   WORLD conv2;
@@ -792,7 +786,7 @@ void playersMakeScreenTanks(GameSim *sim, players *plrs, screenTanks *value, BYT
           conv >>= TANK_SHIFT_PIXELSIZE;
           py = (BYTE) conv;
           /* Extract player screen name */
-          playersMakeScreenName(plrs, count, playerName);
+          playersMakeScreenName(cs, plrs, count, playerName);
           frame = (*plrs)->item[count].frame;
           if ((*plrs)->item[count].onBoat == TRUE) {
             frame += TANK_BOAT_ADD;
@@ -1105,7 +1099,7 @@ void playersLeaveGame(GameSim *sim, players *plrs, BYTE playerNum, bool isServer
 
     output[0] = '\0';
     name[0] = '\0';
-    playersMakeMessageName(plrs, playerNum, name);
+    playersMakeMessageName(NULL, plrs, playerNum, name);
     (*plrs)->item[playerNum].inUse = FALSE;
     (*plrs)->item[playerNum].needUpdate = FALSE;
     (*plrs)->item[playerNum].isChecked = FALSE;
@@ -1413,7 +1407,7 @@ void playersSendMessageAllSelected(ClientSim *cs, GameSim *sim, players *plrs, c
       if ((*plrs)->myPlayerNum == count) {
         /* Send self */
         topLine[0] = '\0';
-        playersMakeMessageName(plrs, playersGetSelf(plrs), topLine);
+        playersMakeMessageName(cs, plrs, playersGetSelf(plrs), topLine);
         sim->callbacks.messageAdd(sim->callbacks.ctx, (messageType) playersGetSelf(plrs), topLine, messageStr);
       } else {
         clientSimMessageSendPlayer(cs, (*plrs)->myPlayerNum, count, messageStr);
@@ -2158,7 +2152,7 @@ void playersSendAiMessage(ClientSim *cs, GameSim *sim, players *plrs, PlayerBitM
     if ((*plrs)->item[count].inUse == TRUE && test) {
       if (count == (*plrs)->myPlayerNum) {
         topLine[0] = '\0';
-        playersMakeMessageName(plrs, (*plrs)->myPlayerNum, topLine);
+        playersMakeMessageName(cs, plrs, (*plrs)->myPlayerNum, topLine);
         sim->callbacks.messageAdd(sim->callbacks.ctx, (messageType) (*plrs)->myPlayerNum, topLine, messageStr);
       } else {
         clientSimMessageSendPlayer(cs, (*plrs)->myPlayerNum, count, messageStr);
@@ -2300,9 +2294,9 @@ bool playersCheckSameSquare(players *plrs, BYTE playerNum, BYTE xValue, BYTE yVa
 *ARGUMENTS:
 * dest       - Name to be set as player's previous name 
 *********************************************************/
-void playersSetMyLastPlayerName(char *dest)
+void playersSetMyLastPlayerName(ClientSim *cs, char *dest)
 {
-  strcpy(myLastPlayerName, dest);
+  strcpy(cs->myLastPlayerName, dest);
 }
 
 void playersSetPing(players *plrs, BYTE playerNum, uint16_t ping) {

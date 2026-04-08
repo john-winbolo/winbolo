@@ -55,11 +55,6 @@ typedef struct ClientSim ClientSim;
 #include "sounddist.h"
 #include "util.h"
 
-
-
-bool tankShuttingDown = FALSE; // Enourmouse HACK. Please Fix Me FIXME
-BYTE ct[50];
-
 /*********************************************************
 *NAME:          tankCreate
 *AUTHOR:        John Morrison
@@ -83,7 +78,7 @@ void tankCreate(GameSim *sim, tank *value) {
   BYTE y;
   TURNTYPE dir;
 
-  tankShuttingDown = FALSE;
+  sim->tankShuttingDown = FALSE;
 
   New(*value);
   (*value)->x = 0;
@@ -149,11 +144,11 @@ void tankDestroy(GameSim *sim, tank *value) {
   bool isServer = sim->isServer;
   tankCarryPb q;
 
-  tankShuttingDown = TRUE;
+  sim->tankShuttingDown = TRUE;
   if ((*value) != NULL && isServer) {
     tankDropPills(sim, value);
   }
-  tankShuttingDown = FALSE;
+  sim->tankShuttingDown = FALSE;
   while ((*value) != NULL && !IsEmpty((*value)->carryPills)) {
     q = (*value)->carryPills;
     (*value)->carryPills = TankPillsTail(q);

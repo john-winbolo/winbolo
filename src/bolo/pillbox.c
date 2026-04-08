@@ -914,14 +914,14 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
     /* Make the message if required */
     if (returnValue == NEUTRAL && migrate == FALSE && owner != NEUTRAL) {
       /* Neutral pill */
-      playersMakeMessageName(&sim->plyrs, owner, messageStr);
+      playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
       strcat(messageStr, langGetText(MESSAGE_CAPTURE_PILL));
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
     } else if (owner == NEUTRAL) {
       /* Do nothing */
     } else if (playersIsAllie(&sim->plyrs, returnValue, owner) == FALSE && migrate == FALSE) {
       /* Stole pill */
-      playersMakeMessageName(&sim->plyrs, owner, messageStr);
+      playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
       strcat(messageStr, langGetText(MESSAGE_STOLE_PILL));
       playersGetPlayerName(&sim->plyrs, returnValue, oldOwner, sim->isServer);
       strcat(messageStr, oldOwner);
