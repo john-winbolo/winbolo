@@ -350,10 +350,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     fileName[0] = '\0';
   }
 
-  /* Setup the player's previous name */
-  if (gameFrontRemeber) {
-    playersSetMyLastPlayerName(gameFrontName);
-  }
+  /* Player name is set on the ClientSim after clientSimCreate (see below) */
 
   guiMessageSetHandler(sdl3MessageHandler);
   if (gameFrontDialogs() == FALSE) {
@@ -703,6 +700,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       newState == openUdpJoin) {
     gameFrontValidateWbnBeforeJoin();
     humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
     fflush(stderr);
@@ -854,6 +852,7 @@ bool gameFrontSetDlgState(openingStates newState) {
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
       humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+      if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
       if (netSetup(humanSim, netUdp, gameFrontMyUdp, "127.0.0.1", gameFrontTargetUdp,
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                    gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
@@ -911,6 +910,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
           }
+          if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,

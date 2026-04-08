@@ -843,6 +843,9 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
 static void appTick(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
+    /* Propagate frontend state into the sim struct */
+    app->sim.sim.isInMenu = isInMenu;
+
     /* Run brain AI then tick the simulation (two ticks per brain call) */
     botManagerTick(&app->sim, optAI);
     serverSimTick(&app->sim);

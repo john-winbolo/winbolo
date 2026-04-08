@@ -31,8 +31,11 @@
 #include "input_packet.h"
 #include "lgm.h"
 #include "pillbox.h"
+#include "bases.h"
 #include "shells.h"
 #include "players.h"
+#include "tank.h"
+#include "util.h"
 #include "client_sim.h"
 
 /* Helper to determine allegiance from object info flags */
@@ -51,9 +54,11 @@ static uint8_t obsGetOwner(const ObjectInfo *o) {
 }
 
 /* Convert an ObjectInfo into a WinBoloEntity and append to entity list.
+ * cs may be NULL (single-view path); when non-NULL, used for tank armour/flags.
  * Returns true if added, false if skipped (dedup or full). */
 static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_wy,
-                                 BYTE selfPlayer, WinBoloObs *obs, uint16_t *ne) {
+                                 BYTE selfPlayer, struct ClientSim *cs,
+                                 WinBoloObs *obs, uint16_t *ne) {
     if (*ne >= WBGYM_MAX_ENTITIES) return false;
 
     WinBoloEntity *ent = &obs->entities[*ne];
@@ -61,20 +66,41 @@ static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_
     float owy = (float)o->y;
 
     switch (o->object) {
-    case OBJECT_TANK:
+    case OBJECT_TANK: {
         ent->rx = (owx - self_wx) / 256.0f;
         ent->ry = (owy - self_wy) / 256.0f;
         ent->type = WBGYM_ENT_TANK;
         ent->allegiance = obsGetAllegiance(o, selfPlayer);
         ent->direction = (float)o->direction / 256.0f;
         ent->speed = (float)o->speed / 128.0f;
-        ent->strength = 0.0f;
         ent->flags = 0;
         if (!(o->info & OBJECT_HOSTILE) && !(o->info & OBJECT_NEUTRAL))
             ent->flags |= WBGYM_FLAG_IS_SELF;
         ent->id = (uint8_t)o->idnum;
+
+        /* Tank armour and flags from ClientSim (matches gymBuildObs) */
+        if (cs != NULL && o->idnum < MAX_TANKS) {
+            BYTE armour = tankGetArmour(&cs->sim.tanks[o->idnum]);
+            bool tankDead = armour > TANK_FULL_ARMOUR;
+            ent->strength = tankDead ? 0.0f : (float)armour / 40.0f;
+            if (tankIsOnBoat(&cs->sim.tanks[o->idnum])) ent->flags |= WBGYM_FLAG_IN_BOAT;
+            if (tankDead) ent->flags |= WBGYM_FLAG_DEAD;
+            if (tankIsNewTank(&cs->sim.tanks[o->idnum])) ent->flags |= WBGYM_FLAG_DEAD;
+            /* Hidden check for non-self tanks */
+            if (o->idnum != selfPlayer) {
+                WORLD tx_w, ty_w;
+                tankGetWorld(&cs->sim.tanks[o->idnum], &tx_w, &ty_w);
+                if (utilIsTankInTrees(&cs->sim.mp, &cs->sim.pb,
+                                     &cs->sim.bs, tx_w, ty_w))
+                    ent->flags |= WBGYM_FLAG_HIDDEN;
+            }
+        } else {
+            ent->strength = 0.0f;
+        }
+
         (*ne)++;
         return true;
+    }
     case OBJECT_SHOT:
         ent->rx = (owx - self_wx) / 256.0f;
         ent->ry = (owy - self_wy) / 256.0f;
@@ -144,9 +170,18 @@ static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_
     }
 }
 
+/* Helper: determine allegiance of a player relative to self (matches gymGetAllegiance) */
+static int8_t obsGetPlayerAllegiance(BYTE playerNum, BYTE selfPlayer, PlayerBitMap alliesBits) {
+    if (playerNum == selfPlayer) return WBGYM_ALLEG_SELF;
+    if (playerNum == 0xFF) return WBGYM_ALLEG_NEUTRAL;
+    if (alliesBits & (1u << playerNum)) return WBGYM_ALLEG_ALLY;
+    return WBGYM_ALLEG_ENEMY;
+}
+
 /* Build events and sound events from BrainInfo events list */
 static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
     BYTE selfPlayer = (BYTE)bi->player_number;
+    PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
     int tank_tx = bi->tankx >> 8;
     int tank_ty = bi->tanky >> 8;
 
@@ -167,8 +202,7 @@ static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
                     snd->rx = sx;
                     snd->ry = sy;
                     snd->type = WBGYM_SND_HIT_TANK;
-                    if (isSelfHit) snd->allegiance = WBGYM_ALLEG_SELF;
-                    else snd->allegiance = WBGYM_ALLEG_ENEMY;
+                    snd->allegiance = obsGetPlayerAllegiance(e->data[3], selfPlayer, alliesBits);
                 }
             }
             break;
@@ -203,7 +237,7 @@ static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
                 snd->rx = sx;
                 snd->ry = sy;
                 snd->type = WBGYM_SND_SHOOT;
-                snd->allegiance = WBGYM_ALLEG_ENEMY;
+                snd->allegiance = obsGetPlayerAllegiance(e->data[3], selfPlayer, alliesBits);
             }
             break;
         }
@@ -393,6 +427,162 @@ static void obsBuildScalars(const BrainInfo *bi, WinBoloObs *obs) {
     obs->scalar[25] = 0.0f; /* death_wait not available in BrainInfo */
 }
 
+/* Build scalars with ClientSim data for accurate pill/base fracs, LGM, death_wait */
+static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs *obs) {
+    bool dead = bi->armour > TANK_FULL_ARMOUR;
+    int tank_tx = bi->tankx >> 8;
+    int tank_ty = bi->tanky >> 8;
+    BYTE selfPlayer = (*cs->sim.plyrs).myPlayerNum;
+    PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
+
+    /* Scalars 0-11: same as obsBuildScalars */
+    {
+        unsigned armor = dead ? 0 : (unsigned)bi->armour;
+        float dir_rad = (float)bi->direction * (2.0f * 3.14159265f / 256.0f);
+
+        obs->scalar[0]  = (float)armor / 40.0f;
+        obs->scalar[1]  = (float)bi->shells / 40.0f;
+        obs->scalar[2]  = (float)bi->mines / 40.0f;
+        obs->scalar[3]  = (float)bi->trees / 40.0f;
+        obs->scalar[4]  = (float)bi->speed / 128.0f;
+        obs->scalar[5]  = sinf(dir_rad);
+        obs->scalar[6]  = cosf(dir_rad);
+        obs->scalar[7]  = (float)bi->reload / 15.0f;
+        obs->scalar[8]  = bi->inboat ? 1.0f : 0.0f;
+        obs->scalar[9]  = bi->carriedpills > 0 ? 1.0f : 0.0f;
+        obs->scalar[10] = (float)bi->carriedpills / 16.0f;
+        obs->scalar[11] = dead ? 1.0f : 0.0f;
+    }
+
+    /* Scalars 12-16: pill/base fracs from ClientSim (matches gymBuildObs) */
+    {
+        int self_pills = 0, enemy_pills = 0, ally_pills = 0;
+        int self_bases = 0, ally_bases = 0;
+        BYTE np = pillsGetNumPills(&cs->sim.pb);
+        int total_pills = np;
+        for (BYTE pi = 1; pi <= np; pi++) {
+            pillbox p;
+            pillsGetPill(&cs->sim.pb, &p, pi);
+            if (p.owner == 0xFF) continue;
+            if (p.owner == selfPlayer) self_pills++;
+            else if (alliesBits & (1u << p.owner)) ally_pills++;
+            else enemy_pills++;
+        }
+        BYTE nb = basesGetNumBases(&cs->sim.bs);
+        int total_bases = nb;
+        for (BYTE bsi = 1; bsi <= nb; bsi++) {
+            base b;
+            basesGetBase(&cs->sim.bs, &b, bsi);
+            if (b.owner == 0xFF) continue;
+            if (b.owner == selfPlayer) self_bases++;
+            else if (alliesBits & (1u << b.owner)) ally_bases++;
+        }
+        float tp = total_pills > 0 ? (float)total_pills : 1.0f;
+        float tb = total_bases > 0 ? (float)total_bases : 1.0f;
+        obs->scalar[12] = (float)self_pills / tp;
+        obs->scalar[13] = (float)enemy_pills / tp;
+        obs->scalar[14] = (float)ally_pills / tp;
+        obs->scalar[15] = (float)self_bases / tb;
+        obs->scalar[16] = (float)ally_bases / tb;
+    }
+
+    /* Scalars 17-18 */
+    obs->scalar[17] = (float)tank_tx / 256.0f;
+    obs->scalar[18] = (float)tank_ty / 256.0f;
+
+    /* Scalars 19-22 */
+    obs->scalar[19] = (float)bi->gunrange / 14.0f;
+    obs->scalar[20] = bi->hidden ? 1.0f : 0.0f;
+    obs->scalar[21] = bi->newtank ? 1.0f : 0.0f;
+    obs->scalar[22] = bi->tankobstructed ? 1.0f : 0.0f;
+
+    /* Scalar 23: LGM status with parachute distinction (matches gymBuildObs) */
+    {
+        BYTE ms = bi->man_status;
+        if (ms == LGM_BRAIN_INTANK) {
+            obs->scalar[23] = 0.0f;
+        } else if (ms == LGM_BRAIN_DEAD) {
+            lgm *lg = &cs->sim.lgmen[selfPlayer];
+            if ((*lg)->isDead && tankGetArmour(&cs->sim.tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
+                obs->scalar[23] = 0.66f; /* parachuting */
+            } else {
+                obs->scalar[23] = 1.0f; /* actually dead */
+            }
+        } else {
+            obs->scalar[23] = 0.33f; /* outside working */
+        }
+    }
+
+    obs->scalar[24] = (float)bi->manobstructed / 2.0f;
+
+    /* Scalar 25: death_wait from ClientSim (matches gymBuildObs) */
+    obs->scalar[25] = (float)tankGetDeathWait(&cs->sim.tanks[selfPlayer]) / 255.0f;
+}
+
+/* Build pill/base lists and metadata from ClientSim (matches gymBuildObs) */
+static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs *obs) {
+    float self_wx = (float)bi->tankx;
+    float self_wy = (float)bi->tanky;
+    bool dead = bi->armour > TANK_FULL_ARMOUR;
+    BYTE selfPlayer = (*cs->sim.plyrs).myPlayerNum;
+    PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
+
+    /* LGM state */
+    obs->man_rx = ((float)bi->man_x - self_wx) / 256.0f;
+    obs->man_ry = ((float)bi->man_y - self_wy) / 256.0f;
+    obs->man_direction = (float)bi->man_direction / 256.0f;
+
+    /* Full-precision tank position */
+    obs->tank_x = (float)bi->tankx / 256.0f;
+    obs->tank_y = (float)bi->tanky / 256.0f;
+
+    /* Pill list from ClientSim (matches gymBuildObs) */
+    {
+        BYTE np = pillsGetNumPills(&cs->sim.pb);
+        for (BYTE pi = 1; pi <= np && obs->num_pillboxes < WBGYM_MAX_PILLBOXES; pi++) {
+            pillbox p;
+            pillsGetPill(&cs->sim.pb, &p, pi);
+            WinBoloPillObs *po = &obs->pillboxes[obs->num_pillboxes];
+            po->tx = p.x;
+            po->ty = p.y;
+            po->armor = p.armour;
+            po->owner = (p.owner == 0xFF) ? WBGYM_OWNER_NEUTRAL
+                      : (p.owner == selfPlayer) ? WBGYM_OWNER_SELF
+                      : (alliesBits & (1u << p.owner)) ? WBGYM_OWNER_ALLY
+                      : WBGYM_OWNER_ENEMY;
+            obs->num_pillboxes++;
+        }
+    }
+
+    /* Base list from ClientSim (matches gymBuildObs) */
+    {
+        BYTE nb = basesGetNumBases(&cs->sim.bs);
+        for (BYTE bsi = 1; bsi <= nb && obs->num_bases < WBGYM_MAX_BASES; bsi++) {
+            base b;
+            basesGetBase(&cs->sim.bs, &b, bsi);
+            WinBoloBaseObs *bo = &obs->bases[obs->num_bases];
+            bo->tx = b.x;
+            bo->ty = b.y;
+            bo->owner = (b.owner == 0xFF) ? WBGYM_OWNER_NEUTRAL
+                      : (b.owner == selfPlayer) ? WBGYM_OWNER_SELF
+                      : (alliesBits & (1u << b.owner)) ? WBGYM_OWNER_ALLY
+                      : WBGYM_OWNER_ENEMY;
+            /* Expose stocks for friendly bases (matches gymBuildObs) */
+            if (bo->owner == WBGYM_OWNER_SELF || bo->owner == WBGYM_OWNER_ALLY) {
+                BYTE shellsAmt, minesAmt, armourAmt;
+                basesGetStats(&cs->sim.bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
+                bo->shells = shellsAmt;
+                bo->mines = minesAmt;
+                bo->armour = armourAmt;
+            }
+            obs->num_bases++;
+        }
+    }
+
+    obs->dead = dead ? 1 : 0;
+    obs->tick = bi->server_tick;
+}
+
 /* Build LGM state, tank position, pill/base lists from BrainInfo */
 static void obsBuildMeta(const BrainInfo *bi, WinBoloObs *obs) {
     float self_wx = (float)bi->tankx;
@@ -458,10 +648,10 @@ void obsBuildFromBrainInfo(const BrainInfo *bi, WinBoloObs *obs) {
     obsBuildEvents(bi, obs);
     obsBuildTerrain(bi, obs);
 
-    /* Entity list from BrainInfo objects (single view) */
+    /* Entity list from BrainInfo objects (single view, no ClientSim) */
     uint16_t ne = 0;
     for (int i = 0; i < bi->num_objects && ne < WBGYM_MAX_ENTITIES; i++) {
-        obsAddObjectAsEntity(&bi->objects[i], self_wx, self_wy, selfPlayer, obs, &ne);
+        obsAddObjectAsEntity(&bi->objects[i], self_wx, self_wy, selfPlayer, NULL, obs, &ne);
     }
     obs->num_entities = ne;
 
@@ -525,7 +715,7 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
     /* Entity list: start with tank-view objects */
     uint16_t ne = 0;
     for (int i = 0; i < tankBi->num_objects && ne < WBGYM_MAX_ENTITIES; i++) {
-        obsAddObjectAsEntity(&tankBi->objects[i], self_wx, self_wy, selfPlayer, obs, &ne);
+        obsAddObjectAsEntity(&tankBi->objects[i], self_wx, self_wy, selfPlayer, cs, obs, &ne);
     }
 
     /* ---- Multi-view: gather from owned alive pill rects ---- */
@@ -579,7 +769,7 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
             /* Shells don't need dedup — minor duplicates are acceptable,
              * and shells have no stable ID to dedup against anyway. */
 
-            obsAddObjectAsEntity(o, self_wx, self_wy, selfPlayer, obs, &ne);
+            obsAddObjectAsEntity(o, self_wx, self_wy, selfPlayer, cs, obs, &ne);
         }
 
         *numObj = 0;
@@ -587,6 +777,6 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
 
     obs->num_entities = ne;
 
-    obsBuildScalars(tankBi, obs);
-    obsBuildMeta(tankBi, obs);
+    obsBuildScalarsCS(tankBi, cs, obs);
+    obsBuildMetaCS(tankBi, cs, obs);
 }

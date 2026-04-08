@@ -96,9 +96,25 @@ typedef struct GameSim {
     /* Callbacks for behavior that differs between client and server */
     GameSimCallbacks callbacks;
 
+    /* Re-entrancy guard used during tankDestroy() */
+    bool        tankShuttingDown;
+
+    /* Whether the UI is in a menu (engine checks this during tick) */
+    bool        isInMenu;
+
     /* Pointer to the owning ClientSim's brainMap (NULL on server).
      * Used by shared code (bolo_map.c) to update the fog-of-war brain map. */
     BYTE (*brainMap)[MAP_ARRAY_SIZE];
+
+    /* Tree growth (was treegrow.c globals) */
+    BYTE        treeGrowX;
+    BYTE        treeGrowY;
+    int         treeGrowTime;
+    int         treeGrowScore;
+    WORD        treeGrowSeed;
+
+    /* Base refuel timers (was bases.c global) */
+    int         baseTimer[MAX_TANKS];
 } GameSim;
 
 /*********************************************************

@@ -340,7 +340,7 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 * playerNum  - The player number to set
 * dest       - Destination string
 *********************************************************/
-void playersMakeMessageName(players *plrs, BYTE playerNum, char *dest);
+void playersMakeMessageName(struct ClientSim *cs, players *plrs, BYTE playerNum, char *dest);
 
 /*********************************************************
 *NAME:          playersMakeScreenName
@@ -355,7 +355,7 @@ void playersMakeMessageName(players *plrs, BYTE playerNum, char *dest);
 * playerNum  - The player number to set
 * dest       - Destination string
 *********************************************************/
-void playersMakeScreenName(players *plrs, BYTE playerNum, char *dest);
+void playersMakeScreenName(struct ClientSim *cs, players *plrs, BYTE playerNum, char *dest);
 
 /*********************************************************
 *NAME:          playersIsAllie
@@ -431,7 +431,7 @@ tankAlliance playersScreenAllience(players *plrs, BYTE playerNum);
 * top      - top bound
 * bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenTanks(struct GameSim *sim, players *plrs, screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
+void playersMakeScreenTanks(struct ClientSim *cs, struct GameSim *sim, players *plrs, screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 /*********************************************************
 *NAME:          playersMakeScreenLgm
@@ -982,7 +982,7 @@ bool playersCheckSameSquare(players *plrs, BYTE playerNum, BYTE xValue, BYTE yVa
 *ARGUMENTS:
 * dest       - Name to be set as player's previous name 
 *********************************************************/
-void playersSetMyLastPlayerName(char *dest);
+void playersSetMyLastPlayerName(struct ClientSim *cs, char *dest);
 
 void     playersSetPing(players *plrs, BYTE playerNum, uint16_t ping);
 uint16_t playersGetPing(players *plrs, BYTE playerNum);

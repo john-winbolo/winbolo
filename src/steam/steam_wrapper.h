@@ -19,7 +19,6 @@ void     steam_clear_rich_presence(void);
 bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len);
 
 /* Stats & achievements */
-void     steam_request_stats(void);
 void     steam_increment_stat(const char *name, int amount);
 void     steam_set_achievement(const char *id);
 void     steam_store_stats(void);

@@ -38,6 +38,144 @@
 static const OrtApi    *g_ortApi = NULL;
 static OrtEnv          *g_ortEnv = NULL;
 
+/* ── JSONL debug logger ── */
+static FILE *g_logFile = NULL;
+static int   g_logMapDumped = 0;
+
+static void mlLogOpen(void) {
+    if (g_logFile) return;
+    g_logFile = fopen("ml_brain_log.jsonl", "w");
+    if (g_logFile)
+        fprintf(stderr, "[ML] Log opened: ml_brain_log.jsonl\n");
+    else
+        fprintf(stderr, "[ML] Failed to open log file\n");
+}
+
+static void mlLogClose(void) {
+    if (g_logFile) { fclose(g_logFile); g_logFile = NULL; }
+}
+
+/* Dump the full map once (bounding box of non-deep-sea terrain) */
+static void mlLogDumpMap(const BrainInfo *info) {
+    if (!g_logFile || g_logMapDumped || !info->theWorld) return;
+    g_logMapDumped = 1;
+
+    const TERRAIN *world = info->theWorld;
+    int x1 = 255, y1 = 255, x2 = 0, y2 = 0;
+    for (int my = 0; my < 256; my++) {
+        for (int mx = 0; mx < 256; mx++) {
+            TERRAIN t = world[my * 256 + mx] & TERRAIN_MASK;
+            if (t != BDEEPSEA) {
+                if (mx < x1) x1 = mx;
+                if (mx > x2) x2 = mx;
+                if (my < y1) y1 = my;
+                if (my > y2) y2 = my;
+            }
+        }
+    }
+    if (x2 < x1) return;
+    /* 1-tile margin */
+    if (x1 > 0) x1--;
+    if (y1 > 0) y1--;
+    if (x2 < 255) x2++;
+    if (y2 < 255) y2++;
+
+    fprintf(g_logFile, "{\"type\":\"map\",\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d,\"rows\":[",
+            x1, y1, x2, y2);
+    for (int my = y1; my <= y2; my++) {
+        if (my > y1) fprintf(g_logFile, ",");
+        fprintf(g_logFile, "\"");
+        for (int mx = x1; mx <= x2; mx++) {
+            fprintf(g_logFile, "%02x", world[my * 256 + mx]);
+        }
+        fprintf(g_logFile, "\"");
+    }
+    fprintf(g_logFile, "]}\n");
+    fflush(g_logFile);
+}
+
+/* Dump bases and pillboxes from the WinBoloObs (has structured lists) */
+static void mlLogDumpWorld(const WinBoloObs *obs) {
+    if (!g_logFile) return;
+
+    fprintf(g_logFile, "{\"type\":\"world\",\"bases\":[");
+    for (int i = 0; i < obs->num_bases; i++) {
+        if (i > 0) fprintf(g_logFile, ",");
+        fprintf(g_logFile, "{\"id\":%d,\"x\":%d,\"y\":%d,\"owner\":%d,\"shells\":%d,\"mines\":%d,\"armour\":%d}",
+                i, obs->bases[i].tx, obs->bases[i].ty, obs->bases[i].owner,
+                obs->bases[i].shells, obs->bases[i].mines, obs->bases[i].armour);
+    }
+    fprintf(g_logFile, "],\"pills\":[");
+    for (int i = 0; i < obs->num_pillboxes; i++) {
+        if (i > 0) fprintf(g_logFile, ",");
+        fprintf(g_logFile, "{\"id\":%d,\"x\":%d,\"y\":%d,\"owner\":%d,\"armor\":%d}",
+                i, obs->pillboxes[i].tx, obs->pillboxes[i].ty,
+                obs->pillboxes[i].owner, obs->pillboxes[i].armor);
+    }
+    fprintf(g_logFile, "]}\n");
+    fflush(g_logFile);
+}
+
+/* Per-tick log line */
+static void mlLogTick(const BrainInfo *info, const WinBoloObs *obs,
+                      int throttle, int steering, int shoot, int mine,
+                      int gun_range, int build_act, int build_rx_i, int build_ry_i) {
+    if (!g_logFile) return;
+
+    int tank_mx = info->tankx >> 8;
+    int tank_my = info->tanky >> 8;
+
+    fprintf(g_logFile,
+        "{\"type\":\"tick\",\"t\":%u,"
+        "\"tx\":%u,\"ty\":%u,\"mx\":%d,\"my\":%d,"
+        "\"dir\":%d,\"spd\":%d,\"boat\":%d,"
+        "\"arm\":%d,\"sh\":%d,\"mi\":%d,\"tr\":%d,\"cpill\":%d,"
+        "\"accel\":%d,\"steer\":%d,\"shoot\":%d,\"mine\":%d,\"grange\":%d,"
+        "\"bact\":%d,\"brx\":%d,\"bry\":%d,"
+        "\"dead\":%d,\"nent\":%d",
+        obs->tick,
+        info->tankx, info->tanky, tank_mx, tank_my,
+        info->direction, info->speed, info->inboat,
+        info->armour, info->shells, info->mines, info->trees, info->carriedpills,
+        throttle, steering, shoot, mine, gun_range,
+        build_act, build_rx_i - 14, build_ry_i - 14,
+        obs->dead, obs->num_entities);
+
+    /* Entities — only log nearby ones (within 10 tiles) to keep lines reasonable */
+    fprintf(g_logFile, ",\"ents\":[");
+    int first = 1;
+    for (int i = 0; i < obs->num_entities && i < WBGYM_MAX_ENTITIES; i++) {
+        const WinBoloEntity *e = &obs->entities[i];
+        if (e->rx * e->rx + e->ry * e->ry > 100.0f) continue; /* skip far entities */
+        if (!first) fprintf(g_logFile, ",");
+        first = 0;
+        fprintf(g_logFile, "{\"t\":%d,\"a\":%d,\"rx\":%.1f,\"ry\":%.1f,\"str\":%.2f}",
+                e->type, e->allegiance, e->rx, e->ry, e->strength);
+    }
+    fprintf(g_logFile, "]");
+
+    /* Base ownership snapshot (compact) */
+    fprintf(g_logFile, ",\"bases\":[");
+    for (int i = 0; i < obs->num_bases; i++) {
+        if (i > 0) fprintf(g_logFile, ",");
+        fprintf(g_logFile, "%d", obs->bases[i].owner);
+    }
+    fprintf(g_logFile, "]");
+
+    /* Pill ownership snapshot (compact) */
+    fprintf(g_logFile, ",\"pills\":[");
+    for (int i = 0; i < obs->num_pillboxes; i++) {
+        if (i > 0) fprintf(g_logFile, ",");
+        fprintf(g_logFile, "%d", obs->pillboxes[i].owner);
+    }
+    fprintf(g_logFile, "]");
+
+    fprintf(g_logFile, "}\n");
+
+    /* Flush every 50 ticks for performance */
+    if (obs->tick % 50 == 0) fflush(g_logFile);
+}
+
 /* Tensor dimensions */
 #define SPATIAL_H    WBGYM_SPATIAL_SIZE   /* 29 */
 #define SPATIAL_W    WBGYM_SPATIAL_SIZE   /* 29 */
@@ -121,6 +259,9 @@ MLBrainInstance *mlBrainCreate(const char *onnx_path) {
 #endif
 
     ORT_CHECK(g_ortApi->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &inst->memInfo));
+
+    /* Open JSONL logger */
+    mlLogOpen();
 
     return inst;
 
@@ -247,20 +388,28 @@ bool mlBrainTick(MLBrainInstance *inst, struct ClientSim *cs, BrainInfo *info) {
     outputTensor = NULL;
 
     /* Decode actions: MultiDiscrete [3,3,2,2,3,6,29,29] */
-    int throttle   = argmax(&inst->logits[0], 3);
-    int steering   = argmax(&inst->logits[3], 3);
-    int shoot      = argmax(&inst->logits[6], 2);
-    int mine       = argmax(&inst->logits[8], 2);
-    int gun_range  = argmax(&inst->logits[10], 3);
-    int build_act  = argmax(&inst->logits[13], 6);
-    int build_rx_i = argmax(&inst->logits[19], 29);
-    int build_ry_i = argmax(&inst->logits[48], 29);
+    int throttle   = argmax(&inst->logits[0], 3);   /* offset 0:  3 */
+    int steering   = argmax(&inst->logits[3], 3);   /* offset 3:  3 */
+    int shoot      = argmax(&inst->logits[6], 2);   /* offset 6:  2 */
+    int mine       = argmax(&inst->logits[8], 2);   /* offset 8:  2 */
+    int gun_range  = argmax(&inst->logits[10], 3);  /* offset 10: 3 */
+    int build_act  = argmax(&inst->logits[13], 6);  /* offset 13: 6 */
+    int build_rx_i = argmax(&inst->logits[19], 29); /* offset 19: 29 */
+    int build_ry_i = argmax(&inst->logits[48], 29); /* offset 48: 29 */
+
+    /* JSONL logging */
+    if (!g_logMapDumped) {
+        mlLogDumpMap(info);
+        mlLogDumpWorld(&obs);
+    }
+    mlLogTick(info, &obs, throttle, steering, shoot, mine,
+              gun_range, build_act, build_rx_i, build_ry_i);
 
     uint32_t holdkeys = 0;
     uint32_t tapkeys = 0;
 
-    if (throttle == 0) setkey(holdkeys, KEY_faster);
-    if (throttle == 2) setkey(holdkeys, KEY_slower);
+    if (throttle == 2) setkey(holdkeys, KEY_faster);
+    if (throttle == 0) setkey(holdkeys, KEY_slower);
     if (steering == 0) setkey(holdkeys, KEY_turnleft);
     if (steering == 2) setkey(holdkeys, KEY_turnright);
     if (shoot == 1)    setkey(tapkeys, KEY_shoot);
@@ -280,8 +429,10 @@ bool mlBrainTick(MLBrainInstance *inst, struct ClientSim *cs, BrainInfo *info) {
         int build_ry = build_ry_i - 14;
         int abs_x = tank_tx + build_rx;
         int abs_y = tank_ty + build_ry;
-        if (abs_x < 0) abs_x = 0; if (abs_x > 255) abs_x = 255;
-        if (abs_y < 0) abs_y = 0; if (abs_y > 255) abs_y = 255;
+        if (abs_x < 0) abs_x = 0;
+        if (abs_x > 255) abs_x = 255;
+        if (abs_y < 0) abs_y = 0;
+        if (abs_y > 255) abs_y = 255;
         info->build->action = (BUILDMODE)build_act;
         info->build->x = (MAP_X)abs_x;
         info->build->y = (MAP_Y)abs_y;
@@ -299,6 +450,7 @@ cleanup:
 
 void mlBrainDestroy(MLBrainInstance *inst) {
     if (inst == NULL) return;
+    mlLogClose();
     if (inst->session) g_ortApi->ReleaseSession(inst->session);
     if (inst->sessionOpts) g_ortApi->ReleaseSessionOptions(inst->sessionOpts);
     if (inst->memInfo) g_ortApi->ReleaseMemoryInfo(inst->memInfo);
