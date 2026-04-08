@@ -135,24 +135,24 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 
 /* Direct menu command handlers in winbolo.c */
 extern "C" void windowShowGunsight_toggle(struct ClientSim *cs);
-extern "C" void windowAutomaticScrolling_toggle(void);
+extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
 extern "C" void windowShowPillLabels_toggle(struct ClientSim *cs);
 extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
 extern "C" void windowBackgroundSoundChange_toggle(void);
 extern "C" void windowSoundKeepalive(void);
 extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
-extern "C" void windowMenuNewswire_toggle(void);
-extern "C" void windowMenuAssistant_toggle(void);
-extern "C" void windowMenuAI_toggle(void);
-extern "C" void windowMenuNetwork_toggle(void);
-extern "C" void windowMenuNetworkDebug_toggle(void);
+extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
+extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
+extern "C" void windowMenuAI_toggle(struct ClientSim *cs);
+extern "C" void windowMenuNetwork_toggle(struct ClientSim *cs);
+extern "C" void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
 extern "C" void windowHideMainView_toggle(void);
-extern "C" void windowLabelOwnTank_toggle(void);
+extern "C" void windowLabelOwnTank_toggle(struct ClientSim *cs);
 extern "C" void imguiWinbolonetDrawSection(bool inGame);
 extern "C" void imguiWinbolonetReset(void);
-extern "C" void windowSetMessageLabelLen(labelLen newLen);
-extern "C" void windowSetTankLabelLen(labelLen newLen);
+extern "C" void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
+extern "C" void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
 extern "C" void windowSetFrameRate(int newFrameRate, bool setTimer);
 extern "C" void windowZoomChange(BYTE amount);
 extern "C" void windowNewGame(void);
@@ -1472,7 +1472,7 @@ static void renderSettingsPanel(ClientSim *cs) {
         {
             bool as = (bool)autoScrollingEnabled;
             if (ImGui::Checkbox("Automatic Scrolling", &as)) {
-                windowAutomaticScrolling_toggle();
+                windowAutomaticScrolling_toggle(cs);
             }
         }
         {
@@ -1509,25 +1509,25 @@ static void renderSettingsPanel(ClientSim *cs) {
         ImGui::SameLine();
         {
             bool isShort = (labelMsg == lblShort);
-            if (ImGui::RadioButton("Short##msg", isShort)) windowSetMessageLabelLen(lblShort);
+            if (ImGui::RadioButton("Short##msg", isShort)) windowSetMessageLabelLen(cs, lblShort);
             ImGui::SameLine();
-            if (ImGui::RadioButton("Long##msg", !isShort)) windowSetMessageLabelLen(lblLong);
+            if (ImGui::RadioButton("Long##msg", !isShort)) windowSetMessageLabelLen(cs, lblLong);
         }
 
         /* Tank Labels */
         ImGui::Text("Tank Labels:");
         ImGui::SameLine();
         {
-            if (ImGui::RadioButton("None##tank", labelTank == lblNone))  windowSetTankLabelLen(lblNone);
+            if (ImGui::RadioButton("None##tank", labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
             ImGui::SameLine();
-            if (ImGui::RadioButton("Short##tank", labelTank == lblShort)) windowSetTankLabelLen(lblShort);
+            if (ImGui::RadioButton("Short##tank", labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
             ImGui::SameLine();
-            if (ImGui::RadioButton("Long##tank", labelTank == lblLong))  windowSetTankLabelLen(lblLong);
+            if (ImGui::RadioButton("Long##tank", labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
         }
         {
             bool noSelf = !(bool)labelSelf;
             if (ImGui::Checkbox("Don't label own tank", &noSelf)) {
-                windowLabelOwnTank_toggle();
+                windowLabelOwnTank_toggle(cs);
             }
         }
 
@@ -1572,31 +1572,31 @@ static void renderSettingsPanel(ClientSim *cs) {
         {
             bool nw = (bool)showNewswireMessages;
             if (ImGui::Checkbox("Newswire Messages", &nw)) {
-                windowMenuNewswire_toggle();
+                windowMenuNewswire_toggle(cs);
             }
         }
         {
             bool am = (bool)showAssistantMessages;
             if (ImGui::Checkbox("Assistant Messages", &am)) {
-                windowMenuAssistant_toggle();
+                windowMenuAssistant_toggle(cs);
             }
         }
         {
             bool ai = (bool)showAIMessages;
             if (ImGui::Checkbox("AI Brain Messages", &ai)) {
-                windowMenuAI_toggle();
+                windowMenuAI_toggle(cs);
             }
         }
         {
             bool ns = (bool)showNetworkStatusMessages;
             if (ImGui::Checkbox("Network Status Messages", &ns)) {
-                windowMenuNetwork_toggle();
+                windowMenuNetwork_toggle(cs);
             }
         }
         {
             bool nd = (bool)showNetworkDebugMessages;
             if (ImGui::Checkbox("Network Debug Messages", &nd)) {
-                windowMenuNetworkDebug_toggle();
+                windowMenuNetworkDebug_toggle(cs);
             }
         }
     }
@@ -1666,20 +1666,20 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         ImGui::Separator();
-        if (ImGui::MenuItem("Automatic Scrolling", "Ctrl+A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle();
+        if (ImGui::MenuItem("Automatic Scrolling", "Ctrl+A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);
         if (ImGui::MenuItem("Show Gunsight",        "Ctrl+G", (bool)showGunsight))        windowShowGunsight_toggle(cs);
 
         if (ImGui::BeginMenu("Message Sender Names")) {
-            if (ImGui::MenuItem("Short", nullptr, labelMsg == lblShort)) windowSetMessageLabelLen(lblShort);
-            if (ImGui::MenuItem("Long",  nullptr, labelMsg == lblLong))  windowSetMessageLabelLen(lblLong);
+            if (ImGui::MenuItem("Short", nullptr, labelMsg == lblShort)) windowSetMessageLabelLen(cs, lblShort);
+            if (ImGui::MenuItem("Long",  nullptr, labelMsg == lblLong))  windowSetMessageLabelLen(cs, lblLong);
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Tank Labels")) {
-            if (ImGui::MenuItem("None",                 "Ctrl+1", labelTank == lblNone))  windowSetTankLabelLen(lblNone);
-            if (ImGui::MenuItem("Short",                "Ctrl+2", labelTank == lblShort)) windowSetTankLabelLen(lblShort);
-            if (ImGui::MenuItem("Long",                 "Ctrl+3", labelTank == lblLong))  windowSetTankLabelLen(lblLong);
-            if (ImGui::MenuItem("Don't label own tank", nullptr, !(bool)labelSelf))       windowLabelOwnTank_toggle();
+            if (ImGui::MenuItem("None",                 "Ctrl+1", labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
+            if (ImGui::MenuItem("Short",                "Ctrl+2", labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
+            if (ImGui::MenuItem("Long",                 "Ctrl+3", labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
+            if (ImGui::MenuItem("Don't label own tank", nullptr, !(bool)labelSelf))       windowLabelOwnTank_toggle(cs);
             ImGui::EndMenu();
         }
 
@@ -1711,11 +1711,11 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem("Background Sound",        nullptr, (bool)backgroundSound))           windowBackgroundSoundChange_toggle();
         if (ImGui::MenuItem("Sound keepalive",         nullptr, (bool)useSoundKeepalive))         windowSoundKeepalive();
         ImGui::Separator();
-        if (ImGui::MenuItem("Newswire Messages",       nullptr, (bool)showNewswireMessages))      windowMenuNewswire_toggle();
-        if (ImGui::MenuItem("Assistant Messages",      nullptr, (bool)showAssistantMessages))     windowMenuAssistant_toggle();
-        if (ImGui::MenuItem("AI Brain Messages",       nullptr, (bool)showAIMessages))            windowMenuAI_toggle();
-        if (ImGui::MenuItem("Network Status Messages", nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle();
-        if (ImGui::MenuItem("Network Debug Messages",  nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle();
+        if (ImGui::MenuItem("Newswire Messages",       nullptr, (bool)showNewswireMessages))      windowMenuNewswire_toggle(cs);
+        if (ImGui::MenuItem("Assistant Messages",      nullptr, (bool)showAssistantMessages))     windowMenuAssistant_toggle(cs);
+        if (ImGui::MenuItem("AI Brain Messages",       nullptr, (bool)showAIMessages))            windowMenuAI_toggle(cs);
+        if (ImGui::MenuItem("Network Status Messages", nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
+        if (ImGui::MenuItem("Network Debug Messages",  nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
         if (ImGui::MenuItem("Request Alliance",        "Ctrl+R"))                                 screenRequestAllianceCS(cs);
         if (ImGui::MenuItem("Leave Alliance"))                                                     screenLeaveAllianceCS(cs);
@@ -2157,16 +2157,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowShowGunsight_toggle(cs);
                 continue;
             case SDL_SCANCODE_A:
-                windowAutomaticScrolling_toggle();
+                windowAutomaticScrolling_toggle(cs);
                 continue;
             case SDL_SCANCODE_1:
-                windowSetTankLabelLen(lblNone);
+                windowSetTankLabelLen(cs, lblNone);
                 continue;
             case SDL_SCANCODE_2:
-                windowSetTankLabelLen(lblShort);
+                windowSetTankLabelLen(cs, lblShort);
                 continue;
             case SDL_SCANCODE_3:
-                windowSetTankLabelLen(lblLong);
+                windowSetTankLabelLen(cs, lblLong);
                 continue;
             case SDL_SCANCODE_P:
                 windowShowPillLabels_toggle(cs);

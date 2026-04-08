@@ -78,22 +78,22 @@ extern "C" {
   extern bool showNetworkDebugMessages;
 
   void windowSetFrameRate(int newFrameRate, bool setTimer);
-  void windowAutomaticScrolling_toggle(void);
+  void windowAutomaticScrolling_toggle(struct ClientSim *cs);
   void windowShowGunsight_toggle(struct ClientSim *cs);
   void windowShowPillLabels_toggle(struct ClientSim *cs);
   void windowShowBaseLabels_toggle(struct ClientSim *cs);
   void windowSoundEffects_toggle(void);
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
-  void windowMenuNewswire_toggle(void);
-  void windowMenuAssistant_toggle(void);
-  void windowMenuAI_toggle(void);
-  void windowMenuNetwork_toggle(void);
-  void windowMenuNetworkDebug_toggle(void);
+  void windowMenuNewswire_toggle(struct ClientSim *cs);
+  void windowMenuAssistant_toggle(struct ClientSim *cs);
+  void windowMenuAI_toggle(struct ClientSim *cs);
+  void windowMenuNetwork_toggle(struct ClientSim *cs);
+  void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
   void windowHideMainView_toggle(void);
-  void windowLabelOwnTank_toggle(void);
-  void windowSetMessageLabelLen(labelLen newLen);
-  void windowSetTankLabelLen(labelLen newLen);
+  void windowLabelOwnTank_toggle(struct ClientSim *cs);
+  void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
+  void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
 
 #if defined(__IPHONEOS__)
   bool iosCrashReportingGetEnabled(void);
@@ -278,7 +278,7 @@ extern "C" void imguiSettingsShow(void) {
             {
                 bool as = (bool)autoScrollingEnabled;
                 if (ImGui::Checkbox("Automatic Scrolling", &as)) {
-                    windowAutomaticScrolling_toggle();
+                    windowAutomaticScrolling_toggle(NULL);
                 }
             }
             {
@@ -297,24 +297,24 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::SameLine();
             {
                 bool isShort = (labelMsg == lblShort);
-                if (ImGui::RadioButton("Short##msg", isShort)) windowSetMessageLabelLen(lblShort);
+                if (ImGui::RadioButton("Short##msg", isShort)) windowSetMessageLabelLen(NULL, lblShort);
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Long##msg", !isShort)) windowSetMessageLabelLen(lblLong);
+                if (ImGui::RadioButton("Long##msg", !isShort)) windowSetMessageLabelLen(NULL, lblLong);
             }
 
             ImGui::Text("Tank Labels:");
             ImGui::SameLine();
             {
-                if (ImGui::RadioButton("None##tank", labelTank == lblNone))  windowSetTankLabelLen(lblNone);
+                if (ImGui::RadioButton("None##tank", labelTank == lblNone))  windowSetTankLabelLen(NULL, lblNone);
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Short##tank", labelTank == lblShort)) windowSetTankLabelLen(lblShort);
+                if (ImGui::RadioButton("Short##tank", labelTank == lblShort)) windowSetTankLabelLen(NULL, lblShort);
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Long##tank", labelTank == lblLong))  windowSetTankLabelLen(lblLong);
+                if (ImGui::RadioButton("Long##tank", labelTank == lblLong))  windowSetTankLabelLen(NULL, lblLong);
             }
             {
                 bool noSelf = !(bool)labelSelf;
                 if (ImGui::Checkbox("Don't label own tank", &noSelf)) {
-                    windowLabelOwnTank_toggle();
+                    windowLabelOwnTank_toggle(NULL);
                 }
             }
             {
@@ -360,31 +360,31 @@ extern "C" void imguiSettingsShow(void) {
             {
                 bool nw = (bool)showNewswireMessages;
                 if (ImGui::Checkbox("Newswire Messages", &nw)) {
-                    windowMenuNewswire_toggle();
+                    windowMenuNewswire_toggle(NULL);
                 }
             }
             {
                 bool am = (bool)showAssistantMessages;
                 if (ImGui::Checkbox("Assistant Messages", &am)) {
-                    windowMenuAssistant_toggle();
+                    windowMenuAssistant_toggle(NULL);
                 }
             }
             {
                 bool ai = (bool)showAIMessages;
                 if (ImGui::Checkbox("AI Brain Messages", &ai)) {
-                    windowMenuAI_toggle();
+                    windowMenuAI_toggle(NULL);
                 }
             }
             {
                 bool ns = (bool)showNetworkStatusMessages;
                 if (ImGui::Checkbox("Network Status Messages", &ns)) {
-                    windowMenuNetwork_toggle();
+                    windowMenuNetwork_toggle(NULL);
                 }
             }
             {
                 bool nd = (bool)showNetworkDebugMessages;
                 if (ImGui::Checkbox("Network Debug Messages", &nd)) {
-                    windowMenuNetworkDebug_toggle();
+                    windowMenuNetworkDebug_toggle(NULL);
                 }
             }
         }

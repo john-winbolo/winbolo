@@ -27,103 +27,42 @@
 
 #include <string.h>
 #include "global.h"
+#include "client_sim.h"
 #include "labels.h"
 
-bool labelOwnTank = TRUE; /* Should own tank be labeled? */
-labelLen labelMessage = lblShort; /* Should message labels be short? */
-labelLen labelTankLabel = lblShort; /* Should tank labels be short? */
-
-/*********************************************************
-*NAME:          labelSetSenderLength
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-* Sets the message sender length item (short/long)
-*
-*ARGUMENTS:
-*  isLengthShort - TRUE if the length is to be short
-*********************************************************/
-void labelSetSenderLength(labelLen isLengthShort) {
-  labelMessage = isLengthShort;
+void labelSetSenderLength(ClientSim *cs, labelLen isLengthShort) {
+  cs->labelMessage = isLengthShort;
 }
 
-/*********************************************************
-*NAME:          labelSetTankLength
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-* Sets the tank label length (short/long)
-*
-*ARGUMENTS:
-*  isLengthShort - TRUE if the length is to be short
-*********************************************************/
-void labelSetTankLength(labelLen isLengthShort) {
-  labelTankLabel = isLengthShort;
+void labelSetTankLength(ClientSim *cs, labelLen isLengthShort) {
+  cs->labelTankLabel = isLengthShort;
 }
 
-/*********************************************************
-*NAME:          labelSetLabelOwnTank
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-* Sets the tank label length (short/long)
-*
-*ARGUMENTS:
-*  labelOwn - TRUE if you should label your own tank
-*********************************************************/
-void labelSetLabelOwnTank(bool labelOwn) {
-  labelOwnTank = labelOwn;
+void labelSetLabelOwnTank(ClientSim *cs, bool labelOwn) {
+  cs->labelOwnTank = labelOwn;
 }
 
-/*********************************************************
-*NAME:          labelMakeMessage
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-*  Makes a message label from the parameters given
-*
-*ARGUMENTS:
-*  res  - Holds the resultant string
-*  name - The tank name
-*  loc  - The location of the tank
-*********************************************************/
-void labelMakeMessage(char *res, char *name, char *loc) {
+void labelMakeMessage(ClientSim *cs, char *res, char *name, char *loc) {
+  labelLen lm = cs ? cs->labelMessage : lblShort;
   res[0] = '\0';
-  if (labelMessage != lblNone) {
+  if (lm != lblNone) {
     strcat(res, name);
-    if (labelMessage == lblLong) {
+    if (lm == lblLong) {
       strcat(res, LABEL_AT_SYMBOL);
       strcat(res, loc);
     }
   }
 }
 
-/*********************************************************
-*NAME:          labelMakeTankLabel
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-*  Makes a tank label from the parameters given
-*
-*ARGUMENTS:
-*  res   - Holds the resultant string
-*  name  - The tank name
-*  loc   - The location of the tank
-*  isOwn - Is this tank your own
-*********************************************************/
-void labelMakeTankLabel(char *res, char *name, char *loc, bool isOwn) {
+void labelMakeTankLabel(ClientSim *cs, char *res, char *name, char *loc, bool isOwn) {
+  labelLen lt = cs ? cs->labelTankLabel : lblShort;
+  bool ownTank = cs ? cs->labelOwnTank : TRUE;
   res[0] = '\0';
-  if (labelTankLabel != lblNone && (isOwn == FALSE || (isOwn == TRUE && labelOwnTank == TRUE))) {
+  if (lt != lblNone && (isOwn == FALSE || (isOwn == TRUE && ownTank == TRUE))) {
     strcat(res, name);
-    if (labelTankLabel == lblLong) {
+    if (lt == lblLong) {
       strcat(res, LABEL_AT_SYMBOL);
       strcat(res, loc);
     }
   }
 }
-

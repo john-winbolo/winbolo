@@ -890,7 +890,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             message[msgLen] = '\0';
             if (fromPlayer >= MAX_TANKS) {
                 /* Server message */
-                screenNetStatusMessage(message);
+                screenNetStatusMessage(c->clientSim, message);
             } else {
                 screenIncomingMessageCS(c->clientSim, fromPlayer, message);
             }
@@ -918,7 +918,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                         snprintf(str, sizeof(str),
                                  "You have ignored alliance request from %s",
                                  pName);
-                        clientMessageAdd(networkStatus, "Alliance Request", str);
+                        clientMessageAdd(&c->clientSim->messages, networkStatus, "Alliance Request", str);
                     }
                 }
                 break;

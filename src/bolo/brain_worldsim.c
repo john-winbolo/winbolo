@@ -46,7 +46,7 @@ static float wsim_sin_table[256];
 static float wsim_cos_table[256];
 static int wsim_tables_initialized = 0;
 
-static void wsim_init_tables(void) {
+void wsim_init_tables(void) {
   if (wsim_tables_initialized) return;
   for (int i = 0; i < 256; i++) {
     double angle = (double)i * (2.0 * 3.14159265358979323846 / 256.0);

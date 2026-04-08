@@ -132,7 +132,7 @@ void screenAddBrainObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD 
   (void)cs; (void)object; (void)wx; (void)wy; (void)idNum; (void)dir; (void)info; (void)speed;
 }
 #endif
-void screenNetStatusMessage(char *messageStr) { (void)messageStr; }
+void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) { (void)csPtr; (void)messageStr; }
 
 
 /* Screen CS stubs — engine code calls these but the server has no display.
@@ -160,8 +160,9 @@ void screenSyncFromSnapshotCS(ClientSim *cs,
   (void)events; (void)eventCount; (void)playerNum;
 }
 void screenSimDisplayTickCS(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
-void messageCreate(void) {}
-void messageDestroy(void) {}
+void messageCreate(MessageState *ms) { (void)ms; }
+void messageDestroy(MessageState *ms) { (void)ms; }
+void scrollCreate(ScrollState *ss) { (void)ss; }
 
 
 /* Client-side stubs — the server has no ClientSim; these calls are guarded
@@ -170,7 +171,7 @@ void messageDestroy(void) {}
 void screenBuildInputPacketCS(ClientSim *cs, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick) { (void)cs; (void)pkt; (void)tb; (void)isShoot; (void)isMine; (void)isBrain; (void)isGameTick; (void)playerNum; (void)tick; }
 void screenMakeBrainInfoCS(ClientSim *cs, BrainInfo *value, bool first, aiType aiMode) { (void)cs; (void)value; (void)first; (void)aiMode; }
 void screenExtractBrainInfoCS(ClientSim *cs, BrainInfo *value) { (void)cs; (void)value; }
-void clientMessageAdd(messageType msgType, char *top, char *bottom) { (void)msgType; (void)top; (void)bottom; }
+void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) { (void)ms; (void)msgType; (void)top; (void)bottom; }
 void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
 
 /* Stubs for client-only subsystems that client_sim.c references */

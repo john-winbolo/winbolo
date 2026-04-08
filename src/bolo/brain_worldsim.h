@@ -105,6 +105,11 @@ typedef struct {
 } BrainWorldSim;
 
 /*********************************************************
+ * Init (call once before any parallel use)
+ *********************************************************/
+void wsim_init_tables(void);
+
+/*********************************************************
  * Lifecycle
  *********************************************************/
 BrainWorldSim *brainWorldSimCreate(void);

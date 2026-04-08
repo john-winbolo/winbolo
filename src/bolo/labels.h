@@ -31,79 +31,17 @@
 #include "global.h"
 #include "screen.h"
 
+struct ClientSim;
+
 /* The @ Symbol */
 #define LABEL_AT_SYMBOL "@\0"
 
 /* Prototypes */
 
-/*********************************************************
-*NAME:          labelSetSenderLength
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-* Sets the message sender length item (short/long)
-*
-*ARGUMENTS:
-*  isLengthShort - New Length
-*********************************************************/
-void labelSetSenderLength(labelLen isLengthShort);
-
-/*********************************************************
-*NAME:          labelSetTankLength
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-* Sets the tank label length (short/long)
-*
-*ARGUMENTS:
-*  isLengthShort - New Length
-*********************************************************/
-void labelSetTankLength(labelLen isLengthShort);
-
-/*********************************************************
-*NAME:          labelSetLabelOwnTank
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-* Sets the tank label length (short/long)
-*
-*ARGUMENTS:
-*  labelOwn - TRUE if you should label your own tank
-*********************************************************/
-void labelSetLabelOwnTank(bool labelOwn);
-
-/*********************************************************
-*NAME:          labelMakeMessage
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-*  Makes a message label from the parameters given
-*
-*ARGUMENTS:
-*  res  - Holds the resultant string
-*  name - The tank name
-*  loc  - The location of the tank
-*********************************************************/
-void labelMakeMessage(char *res, char *name, char *loc);
-
-/*********************************************************
-*NAME:          labelMakeTankLabel
-*AUTHOR:        John Morrison
-*CREATION DATE:  2/2/99
-*LAST MODIFIED:  2/2/99
-*PURPOSE:
-*  Makes a tank label from the parameters given
-*
-*ARGUMENTS:
-*  res   - Holds the resultant string
-*  name  - The tank name
-*  loc   - The location of the tank
-*  isOwn - Is this tank your own
-*********************************************************/
-void labelMakeTankLabel(char *res, char *name, char *loc, bool isOwn);
+void labelSetSenderLength(struct ClientSim *cs, labelLen isLengthShort);
+void labelSetTankLength(struct ClientSim *cs, labelLen isLengthShort);
+void labelSetLabelOwnTank(struct ClientSim *cs, bool labelOwn);
+void labelMakeMessage(struct ClientSim *cs, char *res, char *name, char *loc);
+void labelMakeTankLabel(struct ClientSim *cs, char *res, char *name, char *loc, bool isOwn);
 
 #endif /* LABELS_H */

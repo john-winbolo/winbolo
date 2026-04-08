@@ -69,7 +69,8 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
 
 /* GameSim callback wrappers for the client side */
 static void csCallbackMessageAdd(void *ctx, messageType msgType, char *top, char *bottom) {
-  clientMessageAdd(msgType, top, bottom);
+  ClientSim *cs = (ClientSim *)ctx;
+  clientMessageAdd(&cs->messages, msgType, top, bottom);
 }
 
 static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
@@ -137,6 +138,9 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;
+  cs->labelOwnTank = TRUE;
+  cs->labelMessage = lblShort;
+  cs->labelTankLabel = lblShort;
 
   minesCreate(&cs->sim.mns, hiddenMines);
   gameTypeSet(&cs->sim.game, game);
@@ -149,14 +153,23 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   explosionsCreate(&cs->sim.expl);
   rubbleCreate(&cs->sim.rbl);
   buildingCreate(&cs->sim.blds);
-  messageCreate();
+  messageCreate(&cs->messages);
+  scrollCreate(&cs->scroll);
   grassCreate(&cs->sim.grs);
   swampCreate(&cs->sim.swp);
   cs->sim.lgmen[0] = lgmCreate(0);
   floodCreate(&cs->sim.ff);
   tkExplosionCreate(&cs->sim.tankExplosions);
   minesExpCreate(&cs->sim.minesExplosions);
-  treeGrowCreate();
+  treeGrowCreate(&cs->sim);
+  /* Init base timers (was in basesCreate, now lives in GameSim) */
+  {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+      cs->sim.baseTimer[i] = 30000;
+    }
+    cs->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
+  }
   pillsCreate(&cs->sim.pb);
   logCreate();
   screenBrainMapCreate(cs);
@@ -210,7 +223,7 @@ void clientSimDestroy(ClientSim *cs) {
   explosionsDestroy(&cs->sim.expl);
   rubbleDestroy(&cs->sim.rbl);
   buildingDestroy(&cs->sim.blds);
-  messageDestroy();
+  messageDestroy(&cs->messages);
   grassDestroy(&cs->sim.grs);
   floodDestroy(&cs->sim.ff);
   lgmDestroy(&cs->sim.lgmen[0]);
@@ -219,7 +232,7 @@ void clientSimDestroy(ClientSim *cs) {
   screenBrainMapDestroy(cs);
   tkExplosionDestroy(&cs->sim.tankExplosions);
   minesExpDestroy(&cs->sim.minesExplosions);
-  treeGrowDestroy();
+  treeGrowDestroy(&cs->sim);
   pillsDestroy(&cs->sim.pb);
   playersDestroy(&cs->sim.plyrs);
   

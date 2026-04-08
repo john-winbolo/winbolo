@@ -1257,6 +1257,7 @@ static int runNetworkMode(void) {
   /* Initialize the game engine with dummy params (will be re-created after map load) */
   humanSim = &humanSimStorage;
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  playersSetMyLastPlayerName(humanSim, optName);
 
   /* Connect to the server via new UDP transport */
   if (!optQuiet) {
@@ -1493,8 +1494,7 @@ int main(int argc, char *argv[]) {
   /* Initialize language strings */
   langSetup();
 
-  /* Set player name */
-  playersSetMyLastPlayerName(optName);
+  /* Player name is set on the ClientSim after clientSimCreate (see runNetworkMode/runFastMode) */
 
   if (optFast) {
     result = runFastMode();

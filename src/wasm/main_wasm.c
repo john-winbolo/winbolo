@@ -406,15 +406,15 @@ void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
   screenSetGunsightCS(cs, showGunsight);
-  screenSetAutoScroll(autoScrollingEnabled);
-  screenSetLabelOwnTank(labelSelf);
-  screenSetMesageLabelLen(labelMsg);
-  screenSetTankLabelLen(labelTank);
-  screenShowMessages(MSG_NEWSWIRE, showNewswireMessages);
-  screenShowMessages(MSG_ASSISTANT, showAssistantMessages);
-  screenShowMessages(MSG_AI, showAIMessages);
-  screenShowMessages(MSG_NETSTATUS, showNetworkStatusMessages);
-  screenShowMessages(MSG_NETWORK, showNetworkDebugMessages);
+  screenSetAutoScroll(cs, autoScrollingEnabled);
+  screenSetLabelOwnTank(cs, labelSelf);
+  screenSetMesageLabelLen(cs, labelMsg);
+  screenSetTankLabelLen(cs, labelTank);
+  screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  screenShowMessages(cs, MSG_AI, showAIMessages);
+  screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
 
@@ -478,9 +478,9 @@ void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
   screenSetGunsightCS(cs, showGunsight);
 }
-void windowAutomaticScrolling_toggle(void) {
+void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
-  screenSetAutoScroll(autoScrollingEnabled);
+  if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
 }
 void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
@@ -521,15 +521,15 @@ void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
-void windowMenuNewswire_toggle(void)    { showNewswireMessages = !showNewswireMessages; screenShowMessages(MSG_NEWSWIRE, showNewswireMessages); }
-void windowMenuAssistant_toggle(void)   { showAssistantMessages = !showAssistantMessages; screenShowMessages(MSG_ASSISTANT, showAssistantMessages); }
-void windowMenuAI_toggle(void)          { showAIMessages = !showAIMessages; screenShowMessages(MSG_AI, showAIMessages); }
-void windowMenuNetwork_toggle(void)     { showNetworkStatusMessages = !showNetworkStatusMessages; screenShowMessages(MSG_NETSTATUS, showNetworkStatusMessages); }
-void windowMenuNetworkDebug_toggle(void){ showNetworkDebugMessages = !showNetworkDebugMessages; screenShowMessages(MSG_NETWORK, showNetworkDebugMessages); }
+void windowMenuNewswire_toggle(ClientSim *cs)    { showNewswireMessages = !showNewswireMessages; if (cs) screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages); }
+void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !showAssistantMessages; if (cs) screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages); }
+void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) screenShowMessages(cs, MSG_AI, showAIMessages); }
+void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
+void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
 void windowHideMainView_toggle(void)    { hideMainView = !hideMainView; }
-void windowLabelOwnTank_toggle(void)    { labelSelf = !labelSelf; screenSetLabelOwnTank(labelSelf); }
-void windowSetMessageLabelLen(labelLen n){ labelMsg = n; screenSetMesageLabelLen(labelMsg); }
-void windowSetTankLabelLen(labelLen n)   { labelTank = n; screenSetTankLabelLen(labelTank); }
+void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) screenSetLabelOwnTank(cs, labelSelf); }
+void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) screenSetMesageLabelLen(cs, labelMsg); }
+void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) screenSetTankLabelLen(cs, labelTank); }
 void windowNewGame(void)                 { winboloQuit = FALSE; }
 void windowQuit(void)                    { winboloQuit = TRUE; }
 

@@ -81,11 +81,6 @@ extern "C" bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size,
   return true;
 }
 
-extern "C" void steam_request_stats(void) {
-  if (!s_initialized) return;
-  SteamUserStats()->RequestCurrentStats();
-}
-
 extern "C" void steam_increment_stat(const char *name, int amount) {
   if (!s_initialized) return;
   int32 current = 0;

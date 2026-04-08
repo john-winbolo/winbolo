@@ -20,10 +20,6 @@
  *  Each WinBoloGym wraps a ServerSim + ClientSim + local
  *  transport in a self-contained, steppable game instance.
  *
- *  Thread safety: multiple instances are supported but
- *  must not be stepped concurrently — the engine uses a
- *  global activeSim pointer during ticks. Use one instance
- *  per thread, or serialise calls with a mutex.
  *********************************************************/
 
 #include <stdlib.h>
@@ -51,6 +47,7 @@
 #include "../bolo/tank.h"
 #include "../bolo/util.h"
 #include "../server/server_sim.h"
+#include "../bolo/brain_worldsim.h"
 
 /* Required by the engine — stub for library mode */
 bool isInMenu = FALSE;
@@ -69,6 +66,14 @@ struct WinBoloGym {
     uint32_t    simTickCounter;
     int         gameTickCount;
     bool        needMapInit;
+
+    RewardState rewardState;
+    bool        rewardsEnabled;  /* true once winbolo_set_reward_weights called */
+
+    /* Pre-allocated buffers for gymMakeBrainInfo (avoids malloc per tick) */
+    PlayerBitMap cachedAllies;
+    GameEvent    cachedEvents[MAX_BRAIN_EVENTS];
+    int          cachedEventCount;
 };
 
 /* ------------------------------------------------------------------ */
@@ -77,6 +82,33 @@ struct WinBoloGym {
 
 static void gymMessageHandler(const char *message, const char *title) {
     (void)message; (void)title;
+}
+
+/* Accumulate server events into pre-allocated cache.
+ * Called after each serverSimTick (before the next tick clears them).
+ * Filters to the same event types that the snapshot sync path delivered
+ * to brainEvents, preserving identical observation behavior. */
+static void gymBufferServerEvents(WinBoloGym *g) {
+    ServerSim *ss = &g->serverSim;
+    for (int i = 0; i < ss->eventCount && g->cachedEventCount < MAX_BRAIN_EVENTS; i++) {
+        switch (ss->events[i].type) {
+        case EVENT_SOUND:
+        case EVENT_SOUND_SHOOT:
+        case EVENT_SOUND_TANK_HIT:
+        case EVENT_PILL_CAPTURED:
+        case EVENT_BASE_CAPTURED:
+        case EVENT_TANK_KILLED:
+        case EVENT_LGM_LOST:
+        case EVENT_PLAYER_LEAVE:
+        case EVENT_PILL_UPDATE:
+        case EVENT_BASE_UPDATE:
+        case EVENT_ASSISTANT_MSG:
+            g->cachedEvents[g->cachedEventCount++] = ss->events[i];
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 static void gymSyncSnapshot(WinBoloGym *g) {
@@ -124,6 +156,18 @@ static void gymSetupGame(WinBoloGym *g) {
     g->simTickCounter = 0;
     g->gameTickCount = 0;
     g->needMapInit = TRUE;
+    g->cachedEventCount = 0;
+
+    /* Reset reward state (preserve weights and rewardsEnabled) */
+    {
+        float saved_weights[WBGYM_NUM_REWARD_COMPONENTS];
+        bool saved_enabled = g->rewardsEnabled;
+        memcpy(saved_weights, g->rewardState.weights, sizeof(saved_weights));
+        memset(&g->rewardState, 0, sizeof(RewardState));
+        memcpy(g->rewardState.weights, saved_weights, sizeof(saved_weights));
+        g->rewardsEnabled = saved_enabled;
+        g->rewardState.last_spike_tick = -100;
+    }
 }
 
 static void gymTeardownGame(WinBoloGym *g) {
@@ -155,18 +199,6 @@ static bool gymCheckGameWin(WinBoloGym *g, bool *agentWon) {
     return true;
 }
 
-static void gymFreeBrainInfo(BrainInfo *bi) {
-    free(bi->allies);
-    if (bi->base != NULL) free(bi->base);
-    free(bi->pillview);
-    free(bi->viewdata);
-    if (bi->events != NULL) free(bi->events);
-    if (bi->message != NULL) {
-        free(bi->message->receivers);
-        free(bi->message->message);
-        free(bi->message);
-    }
-}
 
 /* ------------------------------------------------------------------ */
 /* View rect helpers for multi-view entity gathering                   */
@@ -218,6 +250,68 @@ static uint8_t gymGetOwner(BYTE owner, BYTE selfPlayer, PlayerBitMap alliesBits)
 }
 
 /* ------------------------------------------------------------------ */
+/* gymMakeBrainInfo — lightweight BrainInfo for gym (no malloc)        */
+/* ------------------------------------------------------------------ */
+
+static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
+    GameSim *sim = &g->serverSim.sim;
+
+    memset(bi, 0, sizeof(*bi));
+
+    bi->player_number = 0; /* gym agent is always player 0 */
+    bi->allies = &g->cachedAllies;
+    g->cachedAllies = playersGetAlliesBitMap(&sim->plyrs, 0);
+
+    /* Tank state — read directly from server sim (authoritative) */
+    tankGetWorld(&sim->tanks[0], &bi->tankx, &bi->tanky);
+    bi->direction = tankGet256Dir(&sim->tanks[0]);
+    bi->speed = (BYTE)(tankGetSpeed(&sim->tanks[0]) * 4);
+    bi->inboat = tankIsOnBoat(&sim->tanks[0]);
+    bi->hidden = utilIsTankInTrees(&sim->mp, &sim->pb, &sim->bs, bi->tankx, bi->tanky);
+    tankGetStats(&sim->tanks[0], &bi->shells, &bi->mines, &bi->armour, &bi->trees);
+    bi->gunrange = tankGetGunsightLength(&sim->tanks[0]);
+    bi->reload = tankGetReloadTime(&sim->tanks[0]);
+
+    /* Carried pills */
+    {
+        BYTE numPb = pillsGetNumPills(&sim->pb);
+        BYTE carried = 0;
+        for (BYTE pi = 0; pi < numPb; pi++) {
+            if ((*sim->pb).item[pi].inTank && (*sim->pb).item[pi].owner == 0)
+                carried++;
+        }
+        bi->carriedpills = carried;
+    }
+
+    /* LGM */
+    bi->man_status = lgmGetBrainState(&sim->lgmen[0]);
+    bi->man_direction = lgmGetDir(&sim->lgmen[0], &sim->tanks[0]);
+    bi->man_x = lgmGetWX(&sim->lgmen[0]);
+    bi->man_y = lgmGetWY(&sim->lgmen[0]);
+    bi->manobstructed = lgmGetBrainObstructed(&sim->lgmen[0]);
+
+    /* Server tick and assistant message */
+    bi->server_tick = g->serverSim.tick;
+
+    /* Events — read directly from server event buffer into pre-allocated cache.
+     * Called once per step AFTER both ticks, with events accumulated by
+     * gymBufferServerEvents() between ticks. */
+    bi->events = g->cachedEventCount > 0 ? g->cachedEvents : NULL;
+    bi->num_events = (u_short)g->cachedEventCount;
+
+    /* Check for assistant messages in events */
+    for (int i = 0; i < g->cachedEventCount; i++) {
+        if (g->cachedEvents[i].type == EVENT_ASSISTANT_MSG &&
+            g->cachedEvents[i].data[0] == 0) {
+            bi->assistant_msg = g->cachedEvents[i].data[1];
+        }
+    }
+
+    /* Terrain: not set here — gymBuildObs reads server map directly */
+    bi->theWorld = NULL;
+}
+
+/* ------------------------------------------------------------------ */
 /* gymBuildObs — V3 observation builder                                */
 /* ------------------------------------------------------------------ */
 
@@ -225,7 +319,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     BrainInfo bi;
     memset(obs, 0, sizeof(*obs));
 
-    screenMakeBrainInfoCS(&g->clientSim, &bi, g->needMapInit, aiYes);
+    gymMakeBrainInfo(g, &bi);
     g->needMapInit = FALSE;
 
     BYTE selfPlayer = (BYTE)bi.player_number;
@@ -403,16 +497,22 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         obs->assistant_msg = bi.assistant_msg;
     }
 
-    /* ---- Terrain grid: 2 layers ---- */
-    const TERRAIN *world = bi.theWorld;
+    /* ---- Terrain grid: 2 layers (read directly from server map) ---- */
     for (int row = 0; row < WBGYM_SPATIAL_SIZE; row++) {
         for (int col = 0; col < WBGYM_SPATIAL_SIZE; col++) {
             int mx = tank_tx - 14 + col;
             int my = tank_ty - 14 + row;
-            if (mx >= 0 && mx < 256 && my >= 0 && my < 256 && world != NULL) {
-                BYTE raw = world[my * 256 + mx];
-                obs->terrain[row][col] = (float)(raw & TERRAIN_MASK) / 15.0f;
-                if (raw & TERRAIN_MINE) {
+            if (mx >= 0 && mx < 256 && my >= 0 && my < 256) {
+                BYTE raw = mapGetPos(&g->serverSim.sim.mp, (BYTE)mx, (BYTE)my);
+                BYTE terrain = raw;
+                if (terrain >= MINE_START && terrain <= MINE_END) {
+                    terrain -= MINE_SUBTRACT;
+                } else if (terrain == DEEP_SEA) {
+                    terrain = BDEEPSEA;
+                }
+                obs->terrain[row][col] = (float)(terrain & TERRAIN_MASK) / 15.0f;
+                if (minesExistPos(&g->serverSim.sim.mns, &g->serverSim.sim.mp,
+                                  (BYTE)mx, (BYTE)my)) {
                     obs->mines_map[row][col] = 1.0f;
                 }
             }
@@ -637,8 +737,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         /* New scalars 19-25 */
         obs->scalar[19] = (float)bi.gunrange / 14.0f;
         obs->scalar[20] = bi.hidden ? 1.0f : 0.0f;
-        obs->scalar[21] = bi.newtank ? 1.0f : 0.0f;
-        obs->scalar[22] = bi.tankobstructed ? 1.0f : 0.0f;
+        obs->scalar[21] = tankIsNewTank(&g->serverSim.sim.tanks[selfPlayer]) ? 1.0f : 0.0f;
+        obs->scalar[22] = tankIsObstructed(&g->serverSim.sim.tanks[selfPlayer]) ? 1.0f : 0.0f;
 
         /* man_status: 0=in tank, 0.33=outside working, 0.66=parachuting, 1=dead */
         {
@@ -723,7 +823,628 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         obs->game_won = agentWon ? 1 : 0;
     }
 
-    gymFreeBrainInfo(&bi);
+    /* No gymFreeBrainInfo needed — gymMakeBrainInfo uses pre-allocated buffers */
+}
+
+/* ------------------------------------------------------------------ */
+/* Reward computation                                                  */
+/* ------------------------------------------------------------------ */
+
+static int gymCountEvents(const WinBoloObs *obs, uint8_t event_type) {
+    int count = 0;
+    for (int i = 0; i < obs->num_events; i++) {
+        if (obs->events[i] == event_type) count++;
+    }
+    return count;
+}
+
+static bool gymIsOnOwnBase(float tank_x, float tank_y, const WinBoloObs *obs) {
+    int ttx = (int)tank_x;
+    int tty = (int)tank_y;
+    for (int i = 0; i < obs->num_bases; i++) {
+        if (obs->bases[i].owner == WBGYM_OWNER_SELF &&
+            (int)obs->bases[i].tx == ttx && (int)obs->bases[i].ty == tty)
+            return true;
+    }
+    return false;
+}
+
+static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
+                                  const WinBoloAction *action) {
+    RewardState *rs = &g->rewardState;
+    const float *w = rs->weights;
+    float *comp = obs->reward_components;
+    memset(comp, 0, sizeof(obs->reward_components));
+    obs->reward = 0.0f;
+
+    float tank_x = obs->tank_x;
+    float tank_y = obs->tank_y;
+    bool dead = obs->dead != 0;
+    bool alive = !dead;
+    bool game_won = obs->game_won != 0;
+    bool has_prev = rs->has_prev;
+
+    /* Current scalars shorthand */
+    const float *sc = obs->scalar;
+    const float *psc = rs->prev_scalars;
+    float lgm_status = sc[WBGYM_S_LGM_STATUS];
+
+    /* ── CATEGORY 1: Survival ── */
+    if (w[RC_DEATH] != 0.0f || w[RC_DEATH_WITH_PILLS] != 0.0f ||
+        w[RC_DEATH_WITH_LGM_OUT] != 0.0f || w[RC_SURVIVAL_TICK] != 0.0f) {
+
+        float death_count = (float)gymCountEvents(obs, WBGYM_EVENT_DEATH);
+        bool death_occurred = death_count > 0;
+
+        comp[RC_DEATH] = death_count;
+        comp[RC_DEATH_WITH_PILLS] = death_occurred ? sc[WBGYM_S_PILL_COUNT] * 16.0f : 0.0f;
+
+        bool prev_lgm_outside = (rs->prev_lgm_status > WBGYM_LGM_OUTSIDE_LO) &&
+                                (rs->prev_lgm_status < WBGYM_LGM_OUTSIDE_HI);
+        comp[RC_DEATH_WITH_LGM_OUT] = (death_occurred && prev_lgm_outside) ? 1.0f : 0.0f;
+        comp[RC_SURVIVAL_TICK] = alive ? 1.0f : 0.0f;
+    }
+
+    /* ── CATEGORY 2: Combat ── */
+    if (w[RC_HIT_DEALT] != 0.0f || w[RC_HIT_RECEIVED] != 0.0f ||
+        w[RC_KILL] != 0.0f || w[RC_KILL_CARRIER] != 0.0f ||
+        w[RC_SHOT_FIRED] != 0.0f || w[RC_SHOT_ACCURACY] != 0.0f) {
+
+        float hit_dealt = (float)gymCountEvents(obs, WBGYM_EVENT_HIT_DEALT);
+        float hit_received = (float)gymCountEvents(obs, WBGYM_EVENT_HIT_RECEIVED);
+        float kill_count = (float)gymCountEvents(obs, WBGYM_EVENT_KILL);
+
+        comp[RC_HIT_DEALT] = hit_dealt;
+        comp[RC_HIT_RECEIVED] = hit_received;
+        comp[RC_KILL] = kill_count;
+
+        /* kill_carrier: kill happened AND own pill frac went up */
+        bool pill_frac_up = has_prev &&
+            (sc[WBGYM_S_OWN_PILL_FRAC] > psc[WBGYM_S_OWN_PILL_FRAC] + 0.01f);
+        comp[RC_KILL_CARRIER] = (kill_count > 0 && pill_frac_up) ? 1.0f : 0.0f;
+
+        /* shot_fired: only count if reload was ready on prev tick */
+        float shot_this_tick = 0.0f;
+        if (has_prev && psc[WBGYM_S_RELOAD] < 0.07f && action != NULL) {
+            shot_this_tick = action->shoot ? 1.0f : 0.0f;
+        }
+        comp[RC_SHOT_FIRED] = shot_this_tick;
+
+        /* Update rolling shot/hit windows */
+        int widx = rs->window_idx % WBGYM_SHOT_WINDOW;
+        rs->shot_window[widx] = shot_this_tick;
+        rs->hit_window[widx] = hit_dealt < 1.0f ? hit_dealt : 1.0f;
+        rs->window_idx++;
+
+        float total_shots = 0.0f, total_hits = 0.0f;
+        for (int i = 0; i < WBGYM_SHOT_WINDOW; i++) {
+            total_shots += rs->shot_window[i];
+            total_hits += rs->hit_window[i];
+        }
+        if (total_shots >= 5.0f) {
+            comp[RC_SHOT_ACCURACY] = total_hits / total_shots;
+        }
+    }
+
+    /* ── CATEGORY 3: Pillbox Control ── */
+    if (w[RC_PILL_CAPTURED] != 0.0f || w[RC_PILL_LOST] != 0.0f ||
+        w[RC_PILL_DESTROYED] != 0.0f || w[RC_OWN_PILL_FRAC_DELTA] != 0.0f ||
+        w[RC_PILL_PLACEMENT_QUAL] != 0.0f || w[RC_PILL_HEATED_TACTICAL] != 0.0f) {
+
+        comp[RC_PILL_CAPTURED] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
+        comp[RC_PILL_LOST] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_LOST);
+
+        /* pill_destroyed: prev non-friendly pill was alive, now dead */
+        if (has_prev) {
+            float destroyed = 0.0f;
+            int np = obs->num_pillboxes < rs->prev_pill_count ?
+                     obs->num_pillboxes : rs->prev_pill_count;
+            for (int i = 0; i < np; i++) {
+                float prev_owner = rs->prev_pills[i][2];
+                float prev_armor = rs->prev_pills[i][3];
+                float curr_armor = (float)obs->pillboxes[i].armor;
+                bool prev_not_friendly = (prev_owner != WBGYM_OWNER_SELF) &&
+                                         (prev_owner != WBGYM_OWNER_ALLY);
+                if (prev_not_friendly && prev_armor > 0 && curr_armor == 0) {
+                    destroyed += 1.0f;
+                }
+            }
+            comp[RC_PILL_DESTROYED] = destroyed;
+
+            comp[RC_OWN_PILL_FRAC_DELTA] =
+                sc[WBGYM_S_OWN_PILL_FRAC] - psc[WBGYM_S_OWN_PILL_FRAC];
+        }
+
+        /* pill_placement_quality: newly-owned pill near own base */
+        if (has_prev) {
+            float quality = 0.0f;
+            for (int pi = 0; pi < obs->num_pillboxes && pi < rs->prev_pill_count; pi++) {
+                if (rs->prev_pills[pi][2] != WBGYM_OWNER_SELF &&
+                    obs->pillboxes[pi].owner == WBGYM_OWNER_SELF) {
+                    /* Check distance to any own base */
+                    float px = (float)obs->pillboxes[pi].tx;
+                    float py = (float)obs->pillboxes[pi].ty;
+                    for (int bi = 0; bi < obs->num_bases; bi++) {
+                        if (obs->bases[bi].owner == WBGYM_OWNER_SELF) {
+                            float dx = px - (float)obs->bases[bi].tx;
+                            float dy = py - (float)obs->bases[bi].ty;
+                            if (dx*dx + dy*dy <= 100.0f) {
+                                quality += 1.0f;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            comp[RC_PILL_PLACEMENT_QUAL] = quality;
+        }
+
+        /* pill_heated_tactical: own pill losing armor while enemy nearby */
+        if (has_prev) {
+            float heated = 0.0f;
+            for (int pi = 0; pi < obs->num_pillboxes && pi < rs->prev_pill_count; pi++) {
+                if (rs->prev_pills[pi][2] != WBGYM_OWNER_SELF) continue;
+                if (obs->pillboxes[pi].owner != WBGYM_OWNER_SELF) continue;
+                if (rs->prev_pills[pi][3] <= (float)obs->pillboxes[pi].armor) continue;
+
+                /* Check if any enemy tank entity is near this pill */
+                float px = (float)obs->pillboxes[pi].tx;
+                float py = (float)obs->pillboxes[pi].ty;
+                for (int ei = 0; ei < obs->num_entities; ei++) {
+                    const WinBoloEntity *e = &obs->entities[ei];
+                    if (e->type != WBGYM_ENT_TANK || e->allegiance != WBGYM_ALLEG_ENEMY)
+                        continue;
+                    float ex = tank_x + e->rx;
+                    float ey = tank_y + e->ry;
+                    float dx = px - ex;
+                    float dy = py - ey;
+                    if (dx*dx + dy*dy < 144.0f) {
+                        heated += 1.0f;
+                        break;
+                    }
+                }
+            }
+            comp[RC_PILL_HEATED_TACTICAL] = heated;
+        }
+    }
+
+    /* ── CATEGORY 4: Base Control ── */
+    if (w[RC_BASE_CAPTURED] != 0.0f || w[RC_BASE_LOST] != 0.0f ||
+        w[RC_OWN_BASE_FRAC_DELTA] != 0.0f || w[RC_BASE_RATIO] != 0.0f ||
+        w[RC_ALL_BASES_OWNED] != 0.0f) {
+
+        comp[RC_BASE_CAPTURED] = (float)gymCountEvents(obs, WBGYM_EVENT_BASE_CAPTURED);
+        comp[RC_BASE_LOST] = (float)gymCountEvents(obs, WBGYM_EVENT_BASE_LOST);
+
+        if (has_prev) {
+            comp[RC_OWN_BASE_FRAC_DELTA] =
+                sc[WBGYM_S_OWN_BASE_FRAC] - psc[WBGYM_S_OWN_BASE_FRAC];
+        }
+
+        float own_base_n = 0, enemy_base_n = 0;
+        for (int i = 0; i < obs->num_bases; i++) {
+            if (obs->bases[i].owner == WBGYM_OWNER_SELF) own_base_n++;
+            else if (obs->bases[i].owner == WBGYM_OWNER_ENEMY) enemy_base_n++;
+        }
+        float total_be = own_base_n + enemy_base_n;
+        comp[RC_BASE_RATIO] = alive ? own_base_n / (total_be > 0 ? total_be : 1.0f) : 0.0f;
+        comp[RC_ALL_BASES_OWNED] = game_won ? 1.0f : 0.0f;
+    }
+
+    /* ── CATEGORY 5: Builder / LGM ── */
+    if (w[RC_LGM_LOST] != 0.0f || w[RC_LGM_PARACHUTING_TICK] != 0.0f ||
+        w[RC_ENEMY_LGM_KILLED] != 0.0f || w[RC_SUCCESSFUL_BUILD] != 0.0f ||
+        w[RC_FAILED_BUILD] != 0.0f || w[RC_LGM_SENT_DANGEROUS] != 0.0f) {
+
+        comp[RC_LGM_LOST] = (float)gymCountEvents(obs, WBGYM_EVENT_LGM_LOST);
+
+        bool lgm_para = (lgm_status > WBGYM_LGM_PARA_LO) && (lgm_status < WBGYM_LGM_PARA_HI);
+        comp[RC_LGM_PARACHUTING_TICK] = (alive && lgm_para) ? 1.0f : 0.0f;
+
+        /* enemy_lgm_killed: check for enemy LGM_LOST sound */
+        bool enemy_lgm = false;
+        for (int i = 0; i < obs->num_sounds; i++) {
+            if (obs->sounds[i].type == WBGYM_SND_LGM_LOST &&
+                obs->sounds[i].allegiance == WBGYM_ALLEG_ENEMY) {
+                enemy_lgm = true;
+                break;
+            }
+        }
+        comp[RC_ENEMY_LGM_KILLED] = enemy_lgm ? 1.0f : 0.0f;
+
+        /* successful_build / failed_build */
+        bool prev_lgm_in_tank = rs->prev_lgm_status < WBGYM_LGM_IN_TANK_THRESH;
+        bool prev_lgm_outside = (rs->prev_lgm_status > WBGYM_LGM_OUTSIDE_LO) &&
+                                (rs->prev_lgm_status < WBGYM_LGM_OUTSIDE_HI);
+        bool curr_lgm_in_tank = lgm_status < WBGYM_LGM_IN_TANK_THRESH;
+        bool curr_lgm_outside = (lgm_status > WBGYM_LGM_OUTSIDE_LO) &&
+                                (lgm_status < WBGYM_LGM_OUTSIDE_HI);
+
+        bool lgm_returned = has_prev && prev_lgm_outside && curr_lgm_in_tank;
+        bool lgm_just_sent = has_prev && prev_lgm_in_tank && curr_lgm_outside;
+
+        bool failed_msg = WBGYM_FAILED_BUILD_MSG(obs->assistant_msg);
+        comp[RC_SUCCESSFUL_BUILD] = (lgm_returned && !failed_msg) ? 1.0f : 0.0f;
+        comp[RC_FAILED_BUILD] = (lgm_returned && failed_msg) ? 1.0f : 0.0f;
+
+        /* lgm_sent_dangerous: building near enemy pill or tank */
+        if (action != NULL && action->build_action > 0) {
+            float bx = tank_x + (float)action->build_rx;
+            float by = tank_y + (float)action->build_ry;
+            bool enemy_near = false;
+
+            /* Check enemy pills */
+            for (int i = 0; i < obs->num_pillboxes && !enemy_near; i++) {
+                if (obs->pillboxes[i].owner != WBGYM_OWNER_ENEMY) continue;
+                float dx = bx - (float)obs->pillboxes[i].tx;
+                float dy = by - (float)obs->pillboxes[i].ty;
+                if (dx*dx + dy*dy < 81.0f) enemy_near = true;
+            }
+            /* Check enemy tanks */
+            for (int i = 0; i < obs->num_entities && !enemy_near; i++) {
+                if (obs->entities[i].type != WBGYM_ENT_TANK ||
+                    obs->entities[i].allegiance != WBGYM_ALLEG_ENEMY) continue;
+                float ex = tank_x + obs->entities[i].rx;
+                float ey = tank_y + obs->entities[i].ry;
+                float dx = bx - ex;
+                float dy = by - ey;
+                if (dx*dx + dy*dy < 64.0f) enemy_near = true;
+            }
+            comp[RC_LGM_SENT_DANGEROUS] = enemy_near ? 1.0f : 0.0f;
+        }
+
+        /* Track active build action when LGM just sent */
+        if (lgm_just_sent && action != NULL) {
+            rs->active_build_action = action->build_action;
+        }
+    }
+
+    /* ── CATEGORY 6: Resources ── */
+    if (w[RC_RESUPPLY_EFFICIENCY] != 0.0f || w[RC_RESUPPLY_CAMPING] != 0.0f ||
+        w[RC_TREES_FARMED] != 0.0f || w[RC_AMMO_CONSERVATION] != 0.0f ||
+        w[RC_IDLE_PENALTY] != 0.0f) {
+
+        bool on_own_base = gymIsOnOwnBase(tank_x, tank_y, obs);
+
+        bool armor_up = has_prev && (sc[WBGYM_S_ARMOR] > psc[WBGYM_S_ARMOR] + 0.01f);
+        comp[RC_RESUPPLY_EFFICIENCY] = (armor_up && on_own_base) ? 1.0f : 0.0f;
+
+        bool full_stock = (sc[WBGYM_S_ARMOR] > 0.99f) &&
+                          (sc[WBGYM_S_SHELLS] > 0.99f) &&
+                          (sc[WBGYM_S_MINES] > 0.99f);
+        comp[RC_RESUPPLY_CAMPING] = (alive && on_own_base && full_stock) ? 1.0f : 0.0f;
+
+        if (has_prev) {
+            float trees_delta = sc[WBGYM_S_TREES] - psc[WBGYM_S_TREES];
+            comp[RC_TREES_FARMED] = trees_delta > 0 ? trees_delta : 0.0f;
+        }
+
+        /* ammo_conservation: pill captures * current shell fraction */
+        float pill_cap_count = comp[RC_PILL_CAPTURED]; /* may be 0 if cat3 skipped */
+        if (pill_cap_count == 0.0f && w[RC_PILL_CAPTURED] == 0.0f) {
+            pill_cap_count = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
+        }
+        comp[RC_AMMO_CONSERVATION] = pill_cap_count * sc[WBGYM_S_SHELLS];
+
+        /* idle_penalty */
+        bool idle = alive && (sc[WBGYM_S_SPEED] < 0.05f) && !on_own_base;
+        if (action != NULL) {
+            idle = idle && (action->shoot == 0) && (action->build_action == 0);
+        }
+        comp[RC_IDLE_PENALTY] = idle ? 1.0f : 0.0f;
+    }
+
+    /* ── CATEGORY 7: Mining ── */
+    if (w[RC_MINE_PLACED] != 0.0f || w[RC_MINE_KILL] != 0.0f ||
+        w[RC_MINE_PLACED_DEFENSIVE] != 0.0f || w[RC_MINE_PLACED_ON_ROAD] != 0.0f ||
+        w[RC_OWN_MINE_HIT] != 0.0f) {
+
+        bool laid_mine = (action != NULL && action->lay_mine > 0);
+        comp[RC_MINE_PLACED] = laid_mine ? 1.0f : 0.0f;
+
+        /* Track mine positions */
+        if (laid_mine) {
+            int midx = rs->mine_idx % WBGYM_MINE_BUFFER;
+            rs->mine_positions[midx][0] = tank_x;
+            rs->mine_positions[midx][1] = tank_y;
+            rs->mine_valid[midx] = true;
+            rs->mine_idx++;
+        }
+
+        /* mine_kill: check if any tracked mine is near an explosion sound */
+        bool mine_kill = false;
+        for (int si = 0; si < obs->num_sounds && !mine_kill; si++) {
+            if (obs->sounds[si].type != WBGYM_SND_EXPLOSION) continue;
+            float sx = tank_x + obs->sounds[si].rx;
+            float sy = tank_y + obs->sounds[si].ry;
+            for (int mi = 0; mi < WBGYM_MINE_BUFFER; mi++) {
+                if (!rs->mine_valid[mi]) continue;
+                float dx = rs->mine_positions[mi][0] - sx;
+                float dy = rs->mine_positions[mi][1] - sy;
+                if (dx*dx + dy*dy < 4.0f) {
+                    mine_kill = true;
+                    break;
+                }
+            }
+        }
+        comp[RC_MINE_KILL] = mine_kill ? 1.0f : 0.0f;
+
+        /* mine_placed_defensive: mine just placed near own base */
+        if (laid_mine) {
+            bool near_base = false;
+            int placed_idx = (rs->mine_idx - 1) % WBGYM_MINE_BUFFER;
+            float mx = rs->mine_positions[placed_idx][0];
+            float my = rs->mine_positions[placed_idx][1];
+            for (int bi = 0; bi < obs->num_bases; bi++) {
+                if (obs->bases[bi].owner != WBGYM_OWNER_SELF) continue;
+                float dx = mx - (float)obs->bases[bi].tx;
+                float dy = my - (float)obs->bases[bi].ty;
+                if (dx*dx + dy*dy <= 25.0f) {
+                    near_base = true;
+                    break;
+                }
+            }
+            comp[RC_MINE_PLACED_DEFENSIVE] = near_base ? 1.0f : 0.0f;
+        }
+
+        /* mine_placed_on_road: center terrain tile is road */
+        if (laid_mine) {
+            float center = obs->terrain[14][14];
+            bool is_road = fabsf(center - (float)WBGYM_TERRAIN_ROAD / WBGYM_TERRAIN_NORM) < 0.01f;
+            comp[RC_MINE_PLACED_ON_ROAD] = is_road ? 1.0f : 0.0f;
+        }
+
+        /* own_mine_hit: self near explosion AND received hit */
+        bool has_hit_received = gymCountEvents(obs, WBGYM_EVENT_HIT_RECEIVED) > 0;
+        if (has_hit_received) {
+            bool self_near_exp = false;
+            for (int si = 0; si < obs->num_sounds; si++) {
+                if (obs->sounds[si].type != WBGYM_SND_EXPLOSION) continue;
+                float dx = obs->sounds[si].rx;
+                float dy = obs->sounds[si].ry;
+                if (dx*dx + dy*dy < 4.0f) {
+                    self_near_exp = true;
+                    break;
+                }
+            }
+            comp[RC_OWN_MINE_HIT] = self_near_exp ? 1.0f : 0.0f;
+        }
+    }
+
+    /* ── Precompute ownership counts for categories 8 & 9 ── */
+    int own_pill_count = 0, enemy_pill_count = 0;
+    int own_base_count = 0, enemy_base_count = 0;
+    float own_base_n = 0.0f, enemy_base_n = 0.0f;
+    bool need_territory = (w[RC_OFFENSIVE_PRESSURE] != 0.0f || w[RC_DEFENSIVE_COVERAGE] != 0.0f ||
+                          w[RC_ROAD_BUILT] != 0.0f || w[RC_WALL_BUILT] != 0.0f ||
+                          w[RC_FLANK_BONUS] != 0.0f);
+    bool need_strategic = (w[RC_INITIATIVE_SCORE] != 0.0f || w[RC_SPIKE_QUALITY] != 0.0f ||
+                          w[RC_DONT_CARRY_TOO_MANY] != 0.0f);
+
+    if (need_territory || need_strategic) {
+        for (int i = 0; i < obs->num_pillboxes; i++) {
+            if (obs->pillboxes[i].owner == WBGYM_OWNER_SELF) own_pill_count++;
+            else if (obs->pillboxes[i].owner == WBGYM_OWNER_ENEMY) enemy_pill_count++;
+        }
+        for (int i = 0; i < obs->num_bases; i++) {
+            if (obs->bases[i].owner == WBGYM_OWNER_SELF) { own_base_count++; own_base_n++; }
+            else if (obs->bases[i].owner == WBGYM_OWNER_ENEMY) { enemy_base_count++; enemy_base_n++; }
+        }
+    }
+
+    /* ── CATEGORY 8: Territory ── */
+    if (need_territory) {
+        /* offensive_pressure: own pills near enemy bases */
+        if (alive && enemy_base_n > 0) {
+            float pressure_sum = 0.0f;
+            for (int bi = 0; bi < obs->num_bases; bi++) {
+                if (obs->bases[bi].owner != WBGYM_OWNER_ENEMY) continue;
+                float best_dist = 1e8f;
+                for (int pi = 0; pi < obs->num_pillboxes; pi++) {
+                    if (obs->pillboxes[pi].owner != WBGYM_OWNER_SELF) continue;
+                    float dx = (float)obs->bases[bi].tx - (float)obs->pillboxes[pi].tx;
+                    float dy = (float)obs->bases[bi].ty - (float)obs->pillboxes[pi].ty;
+                    float d2 = dx*dx + dy*dy;
+                    if (d2 < best_dist) best_dist = d2;
+                }
+                pressure_sum += 1.0f / (1.0f + sqrtf(best_dist));
+            }
+            comp[RC_OFFENSIVE_PRESSURE] = pressure_sum / enemy_base_n;
+        }
+
+        /* defensive_coverage: own bases with own pill nearby */
+        if (alive && own_base_n > 0) {
+            float covered = 0.0f;
+            for (int bi = 0; bi < obs->num_bases; bi++) {
+                if (obs->bases[bi].owner != WBGYM_OWNER_SELF) continue;
+                for (int pi = 0; pi < obs->num_pillboxes; pi++) {
+                    if (obs->pillboxes[pi].owner != WBGYM_OWNER_SELF) continue;
+                    float dx = (float)obs->bases[bi].tx - (float)obs->pillboxes[pi].tx;
+                    float dy = (float)obs->bases[bi].ty - (float)obs->pillboxes[pi].ty;
+                    if (dx*dx + dy*dy <= 100.0f) {
+                        covered += 1.0f;
+                        break;
+                    }
+                }
+            }
+            comp[RC_DEFENSIVE_COVERAGE] = covered / own_base_n;
+        }
+
+        /* road_built / wall_built: successful build of road/wall */
+        float successful_build = comp[RC_SUCCESSFUL_BUILD];
+        comp[RC_ROAD_BUILT] = successful_build *
+            (rs->active_build_action == WBGYM_BUILD_ROAD ? 1.0f : 0.0f);
+        comp[RC_WALL_BUILT] = successful_build *
+            (rs->active_build_action == WBGYM_BUILD_WALL ? 1.0f : 0.0f);
+
+        /* flank_bonus: capture happened far from frontline */
+        float pill_cap_count = comp[RC_PILL_CAPTURED];
+        float base_cap_count = comp[RC_BASE_CAPTURED];
+        if (pill_cap_count == 0.0f && w[RC_PILL_CAPTURED] == 0.0f)
+            pill_cap_count = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
+        if (base_cap_count == 0.0f && w[RC_BASE_CAPTURED] == 0.0f)
+            base_cap_count = (float)gymCountEvents(obs, WBGYM_EVENT_BASE_CAPTURED);
+
+        if (pill_cap_count + base_cap_count > 0) {
+            /* Compute centroids */
+            float own_cx = 0, own_cy = 0, enemy_cx = 0, enemy_cy = 0;
+            float own_n = own_pill_count > 0 ? (float)own_pill_count : 1.0f;
+            float enemy_n = enemy_pill_count > 0 ? (float)enemy_pill_count : 1.0f;
+            for (int i = 0; i < obs->num_pillboxes; i++) {
+                if (obs->pillboxes[i].owner == WBGYM_OWNER_SELF) {
+                    own_cx += (float)obs->pillboxes[i].tx;
+                    own_cy += (float)obs->pillboxes[i].ty;
+                } else if (obs->pillboxes[i].owner == WBGYM_OWNER_ENEMY) {
+                    enemy_cx += (float)obs->pillboxes[i].tx;
+                    enemy_cy += (float)obs->pillboxes[i].ty;
+                }
+            }
+            own_cx /= own_n; own_cy /= own_n;
+            enemy_cx /= enemy_n; enemy_cy /= enemy_n;
+            float war_cx = (own_cx + enemy_cx) / 2.0f;
+            float war_cy = (own_cy + enemy_cy) / 2.0f;
+            float dx = tank_x - war_cx;
+            float dy = tank_y - war_cy;
+            float dist_to_war = sqrtf(dx*dx + dy*dy);
+            comp[RC_FLANK_BONUS] = (dist_to_war > 20.0f) ? 1.0f : 0.0f;
+        }
+    }
+
+    /* ── CATEGORY 9: Strategic ── */
+    if (need_strategic) {
+        /* initiative_score */
+        float pill_cap_s = comp[RC_PILL_CAPTURED];
+        float pill_lost_s = comp[RC_PILL_LOST];
+        float base_cap_s = comp[RC_BASE_CAPTURED];
+        float base_lost_s = comp[RC_BASE_LOST];
+        /* Recount if categories were skipped */
+        if (pill_cap_s == 0.0f && w[RC_PILL_CAPTURED] == 0.0f)
+            pill_cap_s = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
+        if (pill_lost_s == 0.0f && w[RC_PILL_LOST] == 0.0f)
+            pill_lost_s = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_LOST);
+        if (base_cap_s == 0.0f && w[RC_BASE_CAPTURED] == 0.0f)
+            base_cap_s = (float)gymCountEvents(obs, WBGYM_EVENT_BASE_CAPTURED);
+        if (base_lost_s == 0.0f && w[RC_BASE_LOST] == 0.0f)
+            base_lost_s = (float)gymCountEvents(obs, WBGYM_EVENT_BASE_LOST);
+
+        float tick_captures = pill_cap_s + base_cap_s;
+        float tick_losses = pill_lost_s + base_lost_s;
+        int iidx = rs->init_idx % WBGYM_INITIATIVE_WINDOW;
+        rs->init_captures[iidx] = tick_captures;
+        rs->init_losses[iidx] = tick_losses;
+        rs->init_idx++;
+
+        float init_sum = 0.0f;
+        for (int i = 0; i < WBGYM_INITIATIVE_WINDOW; i++) {
+            init_sum += rs->init_captures[i] - rs->init_losses[i];
+        }
+        comp[RC_INITIATIVE_SCORE] = alive ? init_sum : 0.0f;
+
+        /* spike_quality: >= 3 own pills within 9 tiles of an enemy base */
+        bool spike_detected = false;
+        for (int bi = 0; bi < obs->num_bases && !spike_detected; bi++) {
+            if (obs->bases[bi].owner != WBGYM_OWNER_ENEMY) continue;
+            int pills_near = 0;
+            for (int pi = 0; pi < obs->num_pillboxes; pi++) {
+                if (obs->pillboxes[pi].owner != WBGYM_OWNER_SELF) continue;
+                float dx = (float)obs->pillboxes[pi].tx - (float)obs->bases[bi].tx;
+                float dy = (float)obs->pillboxes[pi].ty - (float)obs->bases[bi].ty;
+                if (dx*dx + dy*dy <= 81.0f) pills_near++;
+            }
+            if (pills_near >= 3) spike_detected = true;
+        }
+        comp[RC_SPIKE_QUALITY] = spike_detected ? 1.0f : 0.0f;
+        if (spike_detected) rs->last_spike_tick = rs->tick;
+
+        /* dont_carry_too_many */
+        float carried = sc[WBGYM_S_PILL_COUNT] * 16.0f;
+        bool recent_spike = (rs->tick - rs->last_spike_tick) < 50;
+        comp[RC_DONT_CARRY_TOO_MANY] =
+            (alive && carried > 2.0f && !recent_spike) ? 1.0f : 0.0f;
+    }
+
+    /* ── CATEGORY 10: Multi-agent (placeholders — always zero) ── */
+    /* comp[RC_DECOY_ASSIST] = 0; comp[RC_TEAM_COORDINATION] = 0; comp[RC_MESSAGE_USEFUL] = 0; */
+
+    /* ── CATEGORY 11: Phase 1 Shaping ── */
+    if (w[RC_EXPLORATION_BONUS] != 0.0f || w[RC_BASE_PROXIMITY] != 0.0f ||
+        w[RC_SPEED_BONUS] != 0.0f || w[RC_BOAT_OVERSTAY] != 0.0f ||
+        w[RC_ON_LAND_BONUS] != 0.0f) {
+
+        /* exploration_bonus: bitfield tracking */
+        if (alive && w[RC_EXPLORATION_BONUS] != 0.0f) {
+            int tx = (int)tank_x;
+            int ty = (int)tank_y;
+            if (tx >= 0 && tx < 256 && ty >= 0 && ty < 256) {
+                int byte_idx = tx / 8;
+                uint8_t bit = (uint8_t)(1 << (tx % 8));
+                if (!(rs->visited_tiles[ty][byte_idx] & bit)) {
+                    rs->visited_tiles[ty][byte_idx] |= bit;
+                    rs->visited_count++;
+                    float n_visited = (float)rs->visited_count;
+                    float raw = (float)WBGYM_EXPLORATION_FULL / n_visited;
+                    comp[RC_EXPLORATION_BONUS] = raw < 1.0f ? raw : 1.0f;
+                }
+            }
+        }
+
+        /* base_proximity: alive and near any base */
+        if (alive && w[RC_BASE_PROXIMITY] != 0.0f) {
+            bool near_base = false;
+            for (int bi = 0; bi < obs->num_bases; bi++) {
+                float dx = tank_x - (float)obs->bases[bi].tx;
+                float dy = tank_y - (float)obs->bases[bi].ty;
+                if (dx*dx + dy*dy <= 9.0f) {
+                    near_base = true;
+                    break;
+                }
+            }
+            comp[RC_BASE_PROXIMITY] = near_base ? 1.0f : 0.0f;
+        }
+
+        /* speed_bonus */
+        comp[RC_SPEED_BONUS] = alive ? sc[WBGYM_S_SPEED] : 0.0f;
+
+        /* boat_overstay */
+        bool on_boat = sc[WBGYM_S_IN_BOAT] > 0.5f;
+        rs->boat_ticks = on_boat ? rs->boat_ticks + 1 : 0;
+        comp[RC_BOAT_OVERSTAY] =
+            (alive && on_boat && rs->boat_ticks > WBGYM_BOAT_GRACE_TICKS) ? 1.0f : 0.0f;
+
+        /* on_land_bonus: 1.0 every tick the tank is alive and not on boat */
+        comp[RC_ON_LAND_BONUS] = (alive && !on_boat) ? 1.0f : 0.0f;
+    }
+
+    /* ── Combine weighted reward ── */
+    float reward = 0.0f;
+    for (int i = 0; i < WBGYM_NUM_REWARD_COMPONENTS; i++) {
+        if (w[i] != 0.0f && comp[i] != 0.0f) {
+            reward += w[i] * comp[i];
+        }
+    }
+    obs->reward = reward;
+
+    /* ── Update rolling state ── */
+    memcpy(rs->prev_scalars, sc, sizeof(rs->prev_scalars));
+    for (int i = 0; i < obs->num_pillboxes && i < WBGYM_MAX_PILLBOXES; i++) {
+        rs->prev_pills[i][0] = (float)obs->pillboxes[i].tx;
+        rs->prev_pills[i][1] = (float)obs->pillboxes[i].ty;
+        rs->prev_pills[i][2] = (float)obs->pillboxes[i].owner;
+        rs->prev_pills[i][3] = (float)obs->pillboxes[i].armor;
+    }
+    rs->prev_pill_count = obs->num_pillboxes;
+    for (int i = 0; i < obs->num_bases && i < WBGYM_MAX_BASES; i++) {
+        rs->prev_bases[i][0] = (float)obs->bases[i].tx;
+        rs->prev_bases[i][1] = (float)obs->bases[i].ty;
+        rs->prev_bases[i][2] = (float)obs->bases[i].owner;
+        rs->prev_bases[i][3] = (float)obs->bases[i].shells;
+        rs->prev_bases[i][4] = (float)obs->bases[i].mines;
+        rs->prev_bases[i][5] = (float)obs->bases[i].armour;
+    }
+    rs->prev_base_count = obs->num_bases;
+    rs->prev_lgm_status = lgm_status;
+    rs->has_prev = true;
+    rs->tick++;
 }
 
 /* ------------------------------------------------------------------ */
@@ -736,6 +1457,7 @@ WBGYM_API WinBoloGym *winbolo_create(const char *map_path, int game_type) {
 
     g->gameMode = (gameType)game_type;
     guiMessageSetHandler(gymMessageHandler);
+    wsim_init_tables();  /* Ensure trig tables are ready before any stepping */
 
     if (!serverSimCreate(&g->serverSim, (char *)map_path, g->gameMode,
                          false, 0, UNLIMITED_GAME_TIME)) {
@@ -771,8 +1493,7 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
     if (game == NULL || obs_out == NULL) return;
 
     /* Build input packet from action */
-    InputPacket pkt;
-    memset(&pkt, 0, sizeof(pkt));
+    InputPacket pkt = {0};
     pkt.tick = game->simTickCounter;
     pkt.playerNum = 0;
 
@@ -800,29 +1521,30 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
         if (action->gun_range_adjust < 0)  pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
     }
 
-    /* Game tick */
-    clientSimGameTick(&game->clientSim, &pkt, FALSE);
+    /* Game tick — send input to server and tick */
+    game->cachedEventCount = 0;
     game->transport.sendInput(game->transport.ctx, &pkt);
     game->transport.tick(game->transport.ctx);
-    gymSyncSnapshot(game);
-    clientSimDisplayTick(&game->clientSim, FALSE);
+    gymBufferServerEvents(game);
     game->simTickCounter++;
     game->gameTickCount++;
 
     /* Keys tick — replay held buttons */
-    InputPacket keysPkt;
-    memset(&keysPkt, 0, sizeof(keysPkt));
+    InputPacket keysPkt = {0};
     keysPkt.tick = game->simTickCounter;
     keysPkt.playerNum = 0;
     keysPkt.buttons = pkt.buttons;
 
-    clientSimKeysTick(&game->clientSim, &keysPkt);
     game->transport.sendInput(game->transport.ctx, &keysPkt);
     game->transport.tick(game->transport.ctx);
-    gymSyncSnapshot(game);
+    gymBufferServerEvents(game);
     game->simTickCounter++;
 
     gymBuildObs(game, obs_out);
+
+    if (game->rewardsEnabled) {
+        gymComputeRewardsMut(game, obs_out, action);
+    }
 }
 
 WBGYM_API void winbolo_reset(WinBoloGym *game, WinBoloObs *obs_out) {
@@ -847,7 +1569,234 @@ WBGYM_API void winbolo_step_batch(
     WinBoloObs *obs_out,
     int count
 ) {
+    #pragma omp parallel for schedule(static)
     for (int i = 0; i < count; i++) {
         winbolo_step(games[i], &actions[i], &obs_out[i]);
     }
+}
+
+WBGYM_API void winbolo_fill_actions_batch(
+    const int32_t *actions_flat,
+    WinBoloAction *actions_out,
+    int count
+) {
+    static const int accel_map[3] = {-1, 0, 1};
+    static const int turn_map[3] = {-1, 0, 1};
+    static const int gun_range_map[3] = {-1, 0, 1};
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < count; i++) {
+        const int32_t *a = &actions_flat[i * 8];
+        WinBoloAction *out = &actions_out[i];
+        out->accel            = accel_map[a[0]];
+        out->turn             = turn_map[a[1]];
+        out->shoot            = a[2];
+        out->lay_mine         = a[3];
+        out->gun_range_adjust = gun_range_map[a[4]];
+        out->build_action     = a[5];
+        out->build_rx         = a[6] - 14;
+        out->build_ry         = a[7] - 14;
+    }
+}
+
+WBGYM_API void winbolo_obs_to_numpy_batch(
+    const WinBoloObs *obs_array,
+    float *terrain_out,
+    float *scalar_out,
+    float *entities_out,
+    float *entity_mask_out,
+    float *sounds_out,
+    float *sound_mask_out,
+    int count
+) {
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < count; i++) {
+        const WinBoloObs *obs = &obs_array[i];
+
+        /* Terrain: [29, 29, 2] — channel-last interleaved */
+        float *t = &terrain_out[i * WBGYM_SPATIAL_SIZE * WBGYM_SPATIAL_SIZE * 2];
+        for (int r = 0; r < WBGYM_SPATIAL_SIZE; r++) {
+            for (int c = 0; c < WBGYM_SPATIAL_SIZE; c++) {
+                int idx = (r * WBGYM_SPATIAL_SIZE + c) * 2;
+                t[idx + 0] = obs->terrain[r][c];
+                t[idx + 1] = obs->mines_map[r][c];
+            }
+        }
+
+        /* Scalars: direct copy */
+        memcpy(&scalar_out[i * WBGYM_NUM_SCALARS],
+               obs->scalar, WBGYM_NUM_SCALARS * sizeof(float));
+
+        /* Entities: [256, 7] with normalization matching obs_to_tensors() */
+        float *e_out  = &entities_out[i * WBGYM_MAX_ENTITIES * 7];
+        float *em_out = &entity_mask_out[i * WBGYM_MAX_ENTITIES];
+        int n_ent = obs->num_entities < WBGYM_MAX_ENTITIES
+                    ? obs->num_entities : WBGYM_MAX_ENTITIES;
+
+        for (int j = 0; j < n_ent; j++) {
+            const WinBoloEntity *e = &obs->entities[j];
+            float *row = &e_out[j * 7];
+            row[0] = e->rx;
+            row[1] = e->ry;
+            row[2] = (float)e->type / 6.0f;
+            row[3] = (float)e->allegiance / 3.0f;
+            row[4] = e->direction;
+            row[5] = e->speed;
+            row[6] = e->strength;
+            em_out[j] = 1.0f;
+        }
+        /* Zero remaining slots (0.0f == all-zero bits) */
+        if (n_ent < WBGYM_MAX_ENTITIES) {
+            memset(&e_out[n_ent * 7], 0,
+                   (WBGYM_MAX_ENTITIES - n_ent) * 7 * sizeof(float));
+            memset(&em_out[n_ent], 0,
+                   (WBGYM_MAX_ENTITIES - n_ent) * sizeof(float));
+        }
+
+        /* Sounds: [32, 4] with normalization matching obs_to_tensors() */
+        float *s_out  = &sounds_out[i * WBGYM_MAX_SOUNDS * 4];
+        float *sm_out = &sound_mask_out[i * WBGYM_MAX_SOUNDS];
+        int n_snd = obs->num_sounds < WBGYM_MAX_SOUNDS
+                    ? obs->num_sounds : WBGYM_MAX_SOUNDS;
+
+        for (int j = 0; j < n_snd; j++) {
+            const WinBoloSoundEvent *s = &obs->sounds[j];
+            float *row = &s_out[j * 4];
+            row[0] = s->rx / 40.0f;
+            row[1] = s->ry / 40.0f;
+            row[2] = (float)s->type / 6.0f;
+            row[3] = (float)s->allegiance / 3.0f;
+            sm_out[j] = 1.0f;
+        }
+        if (n_snd < WBGYM_MAX_SOUNDS) {
+            memset(&s_out[n_snd * 4], 0,
+                   (WBGYM_MAX_SOUNDS - n_snd) * 4 * sizeof(float));
+            memset(&sm_out[n_snd], 0,
+                   (WBGYM_MAX_SOUNDS - n_snd) * sizeof(float));
+        }
+    }
+}
+
+WBGYM_API void winbolo_obs_to_reward_batch(
+    const WinBoloObs *obs_array,
+    WinBoloRewardBatchOut *out,
+    int count
+) {
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < count; i++) {
+        const WinBoloObs *obs = &obs_array[i];
+
+        /* Scalars: direct copy */
+        memcpy(&out->scalars[i * WBGYM_NUM_SCALARS],
+               obs->scalar, WBGYM_NUM_SCALARS * sizeof(float));
+
+        /* Events */
+        int n_ev = obs->num_events < WBGYM_MAX_EVENTS
+                   ? obs->num_events : WBGYM_MAX_EVENTS;
+        out->event_count[i] = n_ev;
+        memcpy(&out->events[i * WBGYM_MAX_EVENTS], obs->events, n_ev);
+        if (n_ev < WBGYM_MAX_EVENTS)
+            memset(&out->events[i * WBGYM_MAX_EVENTS + n_ev], 0,
+                   WBGYM_MAX_EVENTS - n_ev);
+
+        /* Pillboxes: [16, 4] = (tx, ty, owner, armor) */
+        int n_p = obs->num_pillboxes < WBGYM_MAX_PILLBOXES
+                  ? obs->num_pillboxes : WBGYM_MAX_PILLBOXES;
+        out->pill_count[i] = n_p;
+        float *p_out = &out->pills[i * WBGYM_MAX_PILLBOXES * 4];
+        for (int j = 0; j < n_p; j++) {
+            const WinBoloPillObs *p = &obs->pillboxes[j];
+            float *row = &p_out[j * 4];
+            row[0] = (float)p->tx;
+            row[1] = (float)p->ty;
+            row[2] = (float)p->owner;
+            row[3] = (float)p->armor;
+        }
+        if (n_p < WBGYM_MAX_PILLBOXES)
+            memset(&p_out[n_p * 4], 0,
+                   (WBGYM_MAX_PILLBOXES - n_p) * 4 * sizeof(float));
+
+        /* Bases: [16, 6] = (tx, ty, owner, shells, mines, armour) */
+        int n_b = obs->num_bases < WBGYM_MAX_BASES
+                  ? obs->num_bases : WBGYM_MAX_BASES;
+        out->base_count[i] = n_b;
+        float *b_out = &out->bases[i * WBGYM_MAX_BASES * 6];
+        for (int j = 0; j < n_b; j++) {
+            const WinBoloBaseObs *b = &obs->bases[j];
+            float *row = &b_out[j * 6];
+            row[0] = (float)b->tx;
+            row[1] = (float)b->ty;
+            row[2] = (float)b->owner;
+            row[3] = (float)b->shells;
+            row[4] = (float)b->mines;
+            row[5] = (float)b->armour;
+        }
+        if (n_b < WBGYM_MAX_BASES)
+            memset(&b_out[n_b * 6], 0,
+                   (WBGYM_MAX_BASES - n_b) * 6 * sizeof(float));
+
+        /* Entities: [256, 9] = (rx, ry, type, allegiance, dir, speed, strength, flags, id) — raw, no normalization */
+        int n_e = obs->num_entities < WBGYM_MAX_ENTITIES
+                  ? obs->num_entities : WBGYM_MAX_ENTITIES;
+        out->entity_count[i] = n_e;
+        float *e_out = &out->entities[i * WBGYM_MAX_ENTITIES * 9];
+        for (int j = 0; j < n_e; j++) {
+            const WinBoloEntity *e = &obs->entities[j];
+            float *row = &e_out[j * 9];
+            row[0] = e->rx;
+            row[1] = e->ry;
+            row[2] = (float)e->type;
+            row[3] = (float)e->allegiance;
+            row[4] = e->direction;
+            row[5] = e->speed;
+            row[6] = e->strength;
+            row[7] = (float)e->flags;
+            row[8] = (float)e->id;
+        }
+        if (n_e < WBGYM_MAX_ENTITIES)
+            memset(&e_out[n_e * 9], 0,
+                   (WBGYM_MAX_ENTITIES - n_e) * 9 * sizeof(float));
+
+        /* Sounds: [32, 4] = (rx, ry, type, allegiance) — raw, no normalization */
+        int n_s = obs->num_sounds < WBGYM_MAX_SOUNDS
+                  ? obs->num_sounds : WBGYM_MAX_SOUNDS;
+        out->sound_count[i] = n_s;
+        float *s_out = &out->sounds[i * WBGYM_MAX_SOUNDS * 4];
+        for (int j = 0; j < n_s; j++) {
+            const WinBoloSoundEvent *s = &obs->sounds[j];
+            float *row = &s_out[j * 4];
+            row[0] = s->rx;
+            row[1] = s->ry;
+            row[2] = (float)s->type;
+            row[3] = (float)s->allegiance;
+        }
+        if (n_s < WBGYM_MAX_SOUNDS)
+            memset(&s_out[n_s * 4], 0,
+                   (WBGYM_MAX_SOUNDS - n_s) * 4 * sizeof(float));
+
+        /* Terrain: [29, 29] — just the terrain layer, no mines */
+        memcpy(&out->terrain[i * WBGYM_SPATIAL_SIZE * WBGYM_SPATIAL_SIZE],
+               obs->terrain,
+               WBGYM_SPATIAL_SIZE * WBGYM_SPATIAL_SIZE * sizeof(float));
+
+        /* Scalar metadata */
+        out->dead[i]          = obs->dead;
+        out->game_over[i]     = obs->game_over;
+        out->game_won[i]      = obs->game_won;
+        out->tick[i]          = (int32_t)obs->tick;
+        out->tank_x[i]        = obs->tank_x;
+        out->tank_y[i]        = obs->tank_y;
+        out->assistant_msg[i] = obs->assistant_msg;
+    }
+}
+
+WBGYM_API void winbolo_set_reward_weights(WinBoloGym *game, const float *weights, int count) {
+    if (game == NULL || weights == NULL) return;
+    int n = count < WBGYM_NUM_REWARD_COMPONENTS ? count : WBGYM_NUM_REWARD_COMPONENTS;
+    memcpy(game->rewardState.weights, weights, n * sizeof(float));
+    game->rewardsEnabled = true;
+}
+
+WBGYM_API int winbolo_reward_component_count(void) {
+    return WBGYM_NUM_REWARD_COMPONENTS;
 }

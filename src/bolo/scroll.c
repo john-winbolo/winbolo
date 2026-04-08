@@ -35,133 +35,63 @@
 #include "players.h"
 #include "pillbox.h"
 
-/* Is it auto scrolling or not */
-bool autoScroll = FALSE;
-BYTE scrollX = 0;
-BYTE scrollY = 0;
-BYTE xPositive = TRUE;
-BYTE yPositive = TRUE;
-bool autoScrollOverRide = FALSE;
-bool mods = FALSE;
 
-/* Sticky state: remembers enemy-awareness scroll direction so the
- * gunsight edge-detection does not immediately undo it. */
-static bool stickyX = FALSE;
-static bool stickyXDir = FALSE;
-static bool stickyY = FALSE;
-static bool stickyYDir = FALSE;
+void scrollCreate(ScrollState *ss) {
+  ss->autoScroll = FALSE;
+  ss->scrollX = 0;
+  ss->scrollY = 0;
+  ss->xPositive = TRUE;
+  ss->yPositive = TRUE;
+  ss->autoScrollOverRide = FALSE;
+  ss->mods = FALSE;
+  ss->stickyX = FALSE;
+  ss->stickyXDir = FALSE;
+  ss->stickyY = FALSE;
+  ss->stickyYDir = FALSE;
+}
 
 
-/*********************************************************
-*NAME:          scrollSetScrollType
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Modifies state of autoscrolling
-*
-*ARGUMENTS:
-*  isAuto - Set to on or off?
-*********************************************************/
-void scrollSetScrollType(bool isAuto) {
-  autoScroll = isAuto;
-  autoScrollOverRide = FALSE;
+void scrollSetScrollType(ScrollState *ss, bool isAuto) {
+  ss->autoScroll = isAuto;
+  ss->autoScrollOverRide = FALSE;
   if (isAuto == FALSE) {
-    scrollX = 0;
-    scrollY = 0;
-    mods = FALSE;
-    stickyX = FALSE;
-    stickyY = FALSE;
+    ss->scrollX = 0;
+    ss->scrollY = 0;
+    ss->mods = FALSE;
+    ss->stickyX = FALSE;
+    ss->stickyY = FALSE;
   }
 }
 
-/*********************************************************
-*NAME:          scrollCenterObject
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Centres the screen on the object
-*
-*ARGUMENTS:
-*  xValue - Pointer to hold new X co-ordinate
-*  yValue - Pointer to hold new Y co-ordinate
-*  objectX - Object to centre on X co-ordinate
-*  objectY - Object to centre on Y co-ordinate
-*********************************************************/
-void scrollCenterObject(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY) {
+void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY) {
   *xValue = objectX - SCROLL_CENTER;
   *yValue = objectY - SCROLL_CENTER;
-  autoScrollOverRide = FALSE;
-  stickyX = FALSE;
-  stickyY = FALSE;
+  ss->autoScrollOverRide = FALSE;
+  ss->stickyX = FALSE;
+  ss->stickyY = FALSE;
 }
 
-/*********************************************************
-*NAME:          scrollUpdate
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-*  Called every game tick. Checks to see if the screen
-*  is required to be moved because the tank has moved
-*  etc.
-*  If the object is not a tank the last 3 parameters
-*  are ignored. It returns if a recalculation is needed
-*
-*ARGUMENTS:
-*  sim       - Pointer to the game simulation
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Object to centre on X co-ordinate
-*  objectY   - Object to centre on Y co-ordinate
-*  isTank    - Is the object a tank
-*  gunsightX - The gunsights X position
-*  gunsightY - The gunishgts Y position
-*  speed     - The speed of the tank
-*  armour    - Amount of armour on the tank
-*  angle     - Tank travelling angle
-*  manual    - Is it manual move (ie by keys, not tank)
-*********************************************************/
-bool scrollUpdate(GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead) {
-  bool returnValue; /* Value to return */
+bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead) {
+  bool returnValue;
 
   returnValue = TRUE;
   if (tankIsDead == TRUE) {
     returnValue = FALSE;
   } else if (manual == TRUE) {
-    returnValue = scrollManual(xValue, yValue, objectX, objectY, angle);
-  } else if (autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR && autoScrollOverRide == FALSE) {
-    /* Calculate using the autoscroll function */
-    returnValue = scrollAutoScroll(sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle);
+    returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+  } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR && ss->autoScrollOverRide == FALSE) {
+    returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle);
   } else {
-   /* calculate not using auto scroll functions */
-    returnValue = scrollNoAutoScroll(xValue, yValue, objectX, objectY, angle);
+    returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
   }
 
   return returnValue;
-
 }
 
-/*********************************************************
-*NAME:          scrollCheck
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/11/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-*  Returns whether an item is on screen or not
-*
-*ARGUMENTS:
-*  xValue    - Current X co-ordinate
-*  yValue    - Current Y co-ordinate
-*  objectX   - Objects X co-ordinate
-*  objectY   - Objects Y co-ordinate
-*********************************************************/
 bool scrollCheck(BYTE xValue, BYTE yValue, BYTE objectX, BYTE objectY) {
-  bool returnValue; /* Used internally */
+  bool returnValue;
 
   returnValue = TRUE;
-  /* Check to see if moving towards screen edge */
   if ((objectX - xValue) > MAIN_SCREEN_SIZE_X) {
     xValue++;
     returnValue = FALSE;
@@ -181,24 +111,8 @@ bool scrollCheck(BYTE xValue, BYTE yValue, BYTE objectX, BYTE objectY) {
 }
 
 
-/*********************************************************
-*NAME:          scrollManual
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 10/06/01
-*PURPOSE:
-*  Movement scroll keys have been pressed. Returns if a
-*  movement occurs
-*
-*ARGUMENTS:
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Objects X co-ordinate
-*  objectY   - Objects Y co-ordinate
-*  angle     - Items Angle
-*********************************************************/
-bool scrollManual(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle) {
-  bool returnValue; /* Used internally */
+bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle) {
+  bool returnValue;
   bool leftPos;
   bool rightPos;
   bool upPos;
@@ -209,7 +123,7 @@ bool scrollManual(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTY
   upPos = FALSE;
   downPos = FALSE;
   returnValue = FALSE;
-  autoScrollOverRide = TRUE;
+  ss->autoScrollOverRide = TRUE;
 
   if (angle >= BRADIANS_SSWEST && angle <= BRADIANS_NNWEST) {
     rightPos = TRUE;
@@ -225,7 +139,6 @@ bool scrollManual(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTY
   }
 
 
-  /* Check to see if moving towards screen edge */
   if ((objectX - (*xValue)) > MAIN_SCREEN_SIZE_X && leftPos == TRUE) {
     (*xValue)++;
     returnValue = TRUE;
@@ -242,33 +155,15 @@ bool scrollManual(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTY
    (*yValue)--;
    returnValue = TRUE;
   }
-  if (mods == TRUE && returnValue == TRUE) {
-    mods = FALSE;
+  if (ss->mods == TRUE && returnValue == TRUE) {
+    ss->mods = FALSE;
   }
 
   return returnValue;
 }
 
-/*********************************************************
-*NAME:          scrollNoAutoScroll
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-*  Checks to see if the screen is required to be moved
-*  because the object is moving off screen. Doesn't
-*  use autoscrolling features. Returns if a recalculation
-*  of the screen is needed
-*
-*ARGUMENTS:
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Object to centre on X co-ordinate
-*  objectY   - Object to centre on Y co-ordinate
-*  angle     - Turntype angle
-*********************************************************/
-bool scrollNoAutoScroll(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle) {
-  bool returnValue; /* Value to return */
+bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle) {
+  bool returnValue;
   bool leftPos;
   bool rightPos;
   bool upPos;
@@ -293,7 +188,6 @@ bool scrollNoAutoScroll(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, 
     upPos = TRUE;
   }
 
-  /* Check to see if moving towards screen edge */
   if ((objectX - (*xValue)) >= (MAIN_SCREEN_SIZE_X-NO_SCROLL_EDGE) && leftPos == TRUE) {
     (*xValue)++;
     returnValue = TRUE;
@@ -310,11 +204,11 @@ bool scrollNoAutoScroll(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, 
    (*yValue)--;
    returnValue = TRUE;
   }
-  if (mods == TRUE && returnValue == TRUE) {
-    mods = FALSE;
+  if (ss->mods == TRUE && returnValue == TRUE) {
+    ss->mods = FALSE;
   }
   if (returnValue == TRUE) {
-    autoScrollOverRide = FALSE;
+    ss->autoScrollOverRide = FALSE;
   }
 
   return returnValue;
@@ -325,49 +219,8 @@ bool scrollNoAutoScroll(BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, 
 *PURPOSE:
 *  Biases the viewport toward nearby hostile pillboxes and
 *  enemy tanks so the player can see threats.
-*
-*  Called after gunsight edge-detection in scrollAutoScroll.
-*  Only acts on scroll axes the gunsight did NOT already
-*  claim, so it supplements the gunsight rather than
-*  fighting it.
-*
-*  How it works:
-*  1. Scans for hostile pillboxes (evil/neutral with armour)
-*     and enemy tanks within a search region around the
-*     current viewport (viewport + 4 tile margin).
-*  2. Each enemy gets a directional weight based on the
-*     dot product of the tank's movement direction and the
-*     direction to the enemy:
-*       - Heading toward:  high weight (up to 2.0)
-*       - Perpendicular:   medium (1.0)
-*       - Heading away:    near zero, unless within 4 tiles
-*     Enemy tanks are weighted 2x vs pillboxes.
-*  3. Computes a weighted enemy centroid, then picks an
-*     ideal viewport that centers the midpoint of the tank
-*     and that centroid. The ideal is clamped so the tank
-*     stays at least 2 tiles from the viewport edge.
-*  4. On each free axis, initiates a scroll burst toward
-*     the ideal, but:
-*       - The burst is capped to the actual distance needed
-*         (prevents overshoot oscillation).
-*       - The burst is blocked if it would oppose the tank's
-*         movement direction on that axis (prevents fighting
-*         the gunsight, which will want that axis soon).
-*
-*  A separate hard clamp in scrollAutoScroll guarantees the
-*  tank never leaves the screen regardless of what this
-*  function does.
-*
-*ARGUMENTS:
-*  sim       - Pointer to the game simulation
-*  viewX     - Current viewport X
-*  viewY     - Current viewport Y
-*  tankX     - Player tank map X
-*  tankY     - Player tank map Y
-*  speed     - Tank speed
-*  angle     - Tank travel angle in bradians
 *********************************************************/
-static void scrollEnemyAwareness(GameSim *sim, BYTE viewX, BYTE viewY, BYTE tankX, BYTE tankY, BYTE speed, TURNTYPE angle) {
+static void scrollEnemyAwareness(ScrollState *ss, GameSim *sim, BYTE viewX, BYTE viewY, BYTE tankX, BYTE tankY, BYTE speed, TURNTYPE angle) {
   BYTE myPlayer;
   float enemySumX = 0.0f;
   float enemySumY = 0.0f;
@@ -475,19 +328,17 @@ static void scrollEnemyAwareness(GameSim *sim, BYTE viewX, BYTE viewY, BYTE tank
   }
 
   if (totalWeight < 0.1f) {
-    stickyX = FALSE;
-    stickyY = FALSE;
+    ss->stickyX = FALSE;
+    ss->stickyY = FALSE;
     return;
   }
 
   centroidX = enemySumX / totalWeight;
   centroidY = enemySumY / totalWeight;
 
-  /* Ideal viewport: center the midpoint of tank and enemy centroid */
   idealX = (int)(((float)tankX + centroidX) / 2.0f) - MAIN_SCREEN_SIZE_X / 2;
   idealY = (int)(((float)tankY + centroidY) / 2.0f) - MAIN_SCREEN_SIZE_Y / 2;
 
-  /* Clamp so tank stays at least 2 tiles from viewport edge */
   if (idealX > (int)tankX - 2) idealX = (int)tankX - 2;
   if (idealX < (int)tankX - MAIN_SCREEN_SIZE_X + 2) idealX = (int)tankX - MAIN_SCREEN_SIZE_X + 2;
   if (idealY > (int)tankY - 2) idealY = (int)tankY - 2;
@@ -497,22 +348,16 @@ static void scrollEnemyAwareness(GameSim *sim, BYTE viewX, BYTE viewY, BYTE tank
   if (idealX > 255 - MAIN_SCREEN_SIZE_X) idealX = 255 - MAIN_SCREEN_SIZE_X;
   if (idealY > 255 - MAIN_SCREEN_SIZE_Y) idealY = 255 - MAIN_SCREEN_SIZE_Y;
 
-  /* Update sticky state so gunsight doesn't undo enemy-driven offsets */
   if (idealX != (int)viewX) {
-    stickyX = TRUE;
-    stickyXDir = (idealX > (int)viewX) ? TRUE : FALSE;
+    ss->stickyX = TRUE;
+    ss->stickyXDir = (idealX > (int)viewX) ? TRUE : FALSE;
   }
   if (idealY != (int)viewY) {
-    stickyY = TRUE;
-    stickyYDir = (idealY > (int)viewY) ? TRUE : FALSE;
+    ss->stickyY = TRUE;
+    ss->stickyYDir = (idealY > (int)viewY) ? TRUE : FALSE;
   }
 
-  /* Only trigger scroll on axes the gunsight didn't already claim,
-   * and NEVER oppose the tank's movement direction. If the tank is
-   * moving along an axis, the gunsight will eventually want to scroll
-   * that way — scrolling opposite causes oscillation.
-   * Cap burst size to the actual distance needed to prevent overshoot. */
-  if (scrollX == 0 && idealX != (int)viewX) {
+  if (ss->scrollX == 0 && idealX != (int)viewX) {
     wantPositive = (idealX > (int)viewX) ? TRUE : FALSE;
     blocked = FALSE;
     distNeeded = abs(idealX - (int)viewX);
@@ -524,12 +369,12 @@ static void scrollEnemyAwareness(GameSim *sim, BYTE viewX, BYTE viewY, BYTE tank
       burst = (BYTE)(speed / SCROLL_DIVIDE);
       if (burst == 0) burst = 1;
       if (burst > distNeeded) burst = (BYTE)distNeeded;
-      scrollX = burst;
-      xPositive = wantPositive;
-      mods = TRUE;
+      ss->scrollX = burst;
+      ss->xPositive = wantPositive;
+      ss->mods = TRUE;
     }
   }
-  if (scrollY == 0 && idealY != (int)viewY) {
+  if (ss->scrollY == 0 && idealY != (int)viewY) {
     wantPositive = (idealY > (int)viewY) ? TRUE : FALSE;
     blocked = FALSE;
     distNeeded = abs(idealY - (int)viewY);
@@ -541,133 +386,102 @@ static void scrollEnemyAwareness(GameSim *sim, BYTE viewX, BYTE viewY, BYTE tank
       burst = (BYTE)(speed / SCROLL_DIVIDE);
       if (burst == 0) burst = 1;
       if (burst > distNeeded) burst = (BYTE)distNeeded;
-      scrollY = burst;
-      yPositive = wantPositive;
-      mods = TRUE;
+      ss->scrollY = burst;
+      ss->yPositive = wantPositive;
+      ss->mods = TRUE;
     }
   }
 }
 
 
-/*********************************************************
-*NAME:          scrollAutoScroll
-*AUTHOR:        John Morrison
-*CREATION DATE: 16/1/99
-*LAST MODIFIED: 16/1/99
-*PURPOSE:
-*  Checks to see if the screen is required to be moved
-*  because the object is moving off screen. Uses the
-*  autoscrolling features. After gunsight edge-detection,
-*  enemy awareness can trigger scrolling on axes the
-*  gunsight didn't claim. Returns if a recalculation
-*  of the screen is needed
-*
-*ARGUMENTS:
-*  sim       - Pointer to the game simulation
-*  xValue    - Pointer to hold new X co-ordinate
-*  yValue    - Pointer to hold new Y co-ordinate
-*  objectX   - Object to centre on X co-ordinate
-*  objectY   - Object to centre on Y co-ordinate
-*  gunsightX - The gunsights X position
-*  gunsightY - The gunishgts Y position
-*  speed     - The speed of the tank
-*  angle     - Angle of the tank
-*********************************************************/
-bool scrollAutoScroll(GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle) {
-  bool returnValue;        /* Value to return */
+bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle) {
+  bool returnValue;
 
   returnValue = FALSE;
 
-  if (scrollX == 0 && scrollY == 0) {
-    /* Check to see if moving towards screen edge.
-     * Suppress gunsight scrolling that opposes an active enemy-awareness
-     * sticky offset — the hard safety clamp below guarantees the tank
-     * stays on screen regardless. */
+  if (ss->scrollX == 0 && ss->scrollY == 0) {
     if (((gunsightX-1) - (*xValue)) >= (MAIN_SCREEN_SIZE_X)) {
-      if (!(stickyX == TRUE && stickyXDir == FALSE)) {
-        scrollX = (BYTE) (speed / SCROLL_DIVIDE);
-        if (scrollX == 0) {
-          scrollX = 1;
+      if (!(ss->stickyX == TRUE && ss->stickyXDir == FALSE)) {
+        ss->scrollX = (BYTE) (speed / SCROLL_DIVIDE);
+        if (ss->scrollX == 0) {
+          ss->scrollX = 1;
         }
-        xPositive = TRUE;
-        mods = TRUE;
+        ss->xPositive = TRUE;
+        ss->mods = TRUE;
       }
     }
     if ((gunsightX) < (*xValue)) {
-      if (!(stickyX == TRUE && stickyXDir == TRUE)) {
-        scrollX = (BYTE) (speed / SCROLL_DIVIDE);
-        if (scrollX == 0) {
-          scrollX = 1;
+      if (!(ss->stickyX == TRUE && ss->stickyXDir == TRUE)) {
+        ss->scrollX = (BYTE) (speed / SCROLL_DIVIDE);
+        if (ss->scrollX == 0) {
+          ss->scrollX = 1;
         }
-        xPositive = FALSE;
-        mods = TRUE;
+        ss->xPositive = FALSE;
+        ss->mods = TRUE;
       }
     }
     if (((gunsightY-1)- (*yValue)) >= (MAIN_SCREEN_SIZE_Y)) {
-      if (!(stickyY == TRUE && stickyYDir == FALSE)) {
-        scrollY = (BYTE) (speed / SCROLL_DIVIDE);
-        if (scrollY == 0) {
-          scrollY = 1;
+      if (!(ss->stickyY == TRUE && ss->stickyYDir == FALSE)) {
+        ss->scrollY = (BYTE) (speed / SCROLL_DIVIDE);
+        if (ss->scrollY == 0) {
+          ss->scrollY = 1;
         }
-        yPositive = TRUE;
-        mods = TRUE;
+        ss->yPositive = TRUE;
+        ss->mods = TRUE;
       }
     }
     if (gunsightY < (*yValue)) {
-      if (!(stickyY == TRUE && stickyYDir == TRUE)) {
-        scrollY = (BYTE) (speed / SCROLL_DIVIDE);
-        if (scrollY == 0) {
-          scrollY = 1;
+      if (!(ss->stickyY == TRUE && ss->stickyYDir == TRUE)) {
+        ss->scrollY = (BYTE) (speed / SCROLL_DIVIDE);
+        if (ss->scrollY == 0) {
+          ss->scrollY = 1;
         }
-        yPositive = FALSE;
-        mods = TRUE;
+        ss->yPositive = FALSE;
+        ss->mods = TRUE;
       }
     }
 
-    /* Enemy awareness: fill in any axis the gunsight didn't trigger */
-    scrollEnemyAwareness(sim, *xValue, *yValue, objectX, objectY, speed, angle);
+    scrollEnemyAwareness(ss, sim, *xValue, *yValue, objectX, objectY, speed, angle);
   }
 
 
-  if (scrollX > 0) {
+  if (ss->scrollX > 0) {
     returnValue = TRUE;
-    scrollX--;
-    if (xPositive == TRUE) {
+    ss->scrollX--;
+    if (ss->xPositive == TRUE) {
       (*xValue)++;
     } else {
       (*xValue)--;
     }
   }
-  if (scrollY > 0) {
-    scrollY--;
+  if (ss->scrollY > 0) {
+    ss->scrollY--;
     returnValue = TRUE;
-    if (yPositive == TRUE) {
+    if (ss->yPositive == TRUE) {
       (*yValue)++;
     } else {
       (*yValue)--;
     }
   }
 
-  /* Hard safety: tank must always be on screen. If a scroll step pushed
-   * the tank off the viewport, clamp the viewport back and cancel the
-   * remaining burst on that axis to prevent further drift. */
+  /* Hard safety: tank must always be on screen */
   if (objectX <= (*xValue)) {
     *xValue = objectX - 1;
-    if (xPositive == FALSE) scrollX = 0;
+    if (ss->xPositive == FALSE) ss->scrollX = 0;
   } else if ((int)objectX >= (int)(*xValue) + MAIN_SCREEN_SIZE_X) {
     *xValue = objectX - MAIN_SCREEN_SIZE_X + 1;
-    if (xPositive == TRUE) scrollX = 0;
+    if (ss->xPositive == TRUE) ss->scrollX = 0;
   }
   if (objectY <= (*yValue)) {
     *yValue = objectY - 1;
-    if (yPositive == FALSE) scrollY = 0;
+    if (ss->yPositive == FALSE) ss->scrollY = 0;
   } else if ((int)objectY >= (int)(*yValue) + MAIN_SCREEN_SIZE_Y) {
     *yValue = objectY - MAIN_SCREEN_SIZE_Y + 1;
-    if (yPositive == TRUE) scrollY = 0;
+    if (ss->yPositive == TRUE) ss->scrollY = 0;
   }
 
-  if (scrollX == 0 && scrollY == 0) {
-    mods = FALSE;
+  if (ss->scrollX == 0 && ss->scrollY == 0) {
+    ss->mods = FALSE;
   }
 
   return returnValue;
