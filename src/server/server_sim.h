@@ -119,6 +119,12 @@ typedef struct ServerSim {
     GameEvent    events[MAX_SNAPSHOT_EVENTS];
     uint8_t      eventCount;
 
+    /* Separate map-change event buffer — never competes with sound/game
+     * events for slots, so map changes are never silently dropped. */
+#define MAX_MAP_EVENTS 256
+    GameEvent    mapEvents[MAX_MAP_EVENTS];
+    uint16_t     mapEventCount;
+
     /* Previous pill/base state for change detection */
     PillSnapshot prevPills[MAX_SNAPSHOT_PILLS];
     BaseSnapshot prevBases[MAX_SNAPSHOT_BASES];

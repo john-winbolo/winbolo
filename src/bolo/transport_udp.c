@@ -3456,10 +3456,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
     if (!udpServer.running) return;
-    if (sim->eventCount == 0) return;
+    if (sim->eventCount == 0 && sim->mapEventCount == 0) return;
 
-    fprintf(stderr, "[UDP SERVER] Enqueuing %d events from tick=%u\n",
-            sim->eventCount, sim->tick);
+    fprintf(stderr, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u\n",
+            sim->eventCount, sim->mapEventCount, sim->tick);
 
     for (c = 0; c < MAX_TANKS; c++) {
         ClientEventQueue *cq;
@@ -3518,7 +3518,14 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Pass 2: enqueue non-sound events, then deduplicated sounds */
+        /* Pass 2: enqueue map events first (from dedicated buffer),
+         * then non-sound events, then deduplicated sounds */
+        for (i = 0; i < (int)sim->mapEventCount; i++) {
+            uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
+            cq->buffer[idx].event = sim->mapEvents[i];
+            cq->buffer[idx].seq = cq->nextSeq;
+            cq->nextSeq++;
+        }
         for (i = 0; i < (int)sim->eventCount; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {

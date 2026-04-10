@@ -94,16 +94,17 @@ void serverSimStartGame(ServerSim *sim);
  * access sim state directly instead of using legacy globals. */
 static _Thread_local ServerSim *activeSim = NULL;
 
-/* Map change callback: records terrain changes as game events during tick */
+/* Map change callback: records terrain changes into the dedicated map event
+ * buffer so they never compete with sound/game events for slots. */
 static void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
-    if (activeSim != NULL) {
-        GameEvent ev;
-        ev.type = EVENT_MAP_CHANGE;
-        memset(ev.data, 0, sizeof(ev.data));
-        ev.data[0] = x;
-        ev.data[1] = y;
-        ev.data[2] = terrain;
-        serverSimAddEvent(activeSim, &ev);
+    if (activeSim != NULL && activeSim->mapEventCount < MAX_MAP_EVENTS) {
+        GameEvent *ev = &activeSim->mapEvents[activeSim->mapEventCount];
+        ev->type = EVENT_MAP_CHANGE;
+        memset(ev->data, 0, sizeof(ev->data));
+        ev->data[0] = x;
+        ev->data[1] = y;
+        ev->data[2] = terrain;
+        activeSim->mapEventCount++;
     }
 }
 
@@ -190,6 +191,7 @@ static void serverSimCbSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) 
     ev.data[0] = (uint8_t)value;
     ev.data[1] = mx;
     ev.data[2] = my;
+    ev.data[3] = sim->currentTickPlayer;
     serverSimAddEvent(sim, &ev);
 }
 
@@ -581,8 +583,9 @@ void serverSimTick(ServerSim *sim) {
         break; /* Fall through to existing simulation code */
     }
 
-    /* Clear event buffer for this tick */
+    /* Clear event buffers for this tick */
     sim->eventCount = 0;
+    sim->mapEventCount = 0;
 
     /* Set active sim so servercore.c routing functions access sim state directly */
     activeSim = sim;
@@ -1279,7 +1282,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
 
-        /* Copy non-sound events, then deduplicated sound events */
+        /* Copy map events first (from dedicated buffer), then non-sound
+         * events, then deduplicated sound events */
+        for (i = 0; i < sim->mapEventCount && outCount < maxEvents; i++) {
+            eventsOut[outCount++] = sim->mapEvents[i];
+        }
         for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {

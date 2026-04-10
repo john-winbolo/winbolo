@@ -3722,9 +3722,16 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         }
         break;
       case EVENT_SOUND:
-        /* data: [soundId, mx, my] — play with distance attenuation */
+        /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
+         * Skip own bubbles/sink sounds — client prediction already plays them
+         * via frontEndPlaySound in tankInWater/tankUpdate. */
         if (isHuman) {
-          clientSoundDist(&csPtr->sim, (sndEffects)events[i].data[0], events[i].data[1], events[i].data[2]);
+          sndEffects snd = (sndEffects)events[i].data[0];
+          if ((snd == bubbles || snd == tankSinkNear) &&
+              events[i].data[3] == playersGetSelf(&csPtr->sim.plyrs)) {
+            break;
+          }
+          clientSoundDist(&csPtr->sim, snd, events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_SHOOT:
