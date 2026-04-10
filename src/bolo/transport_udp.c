@@ -946,8 +946,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
             message[msgLen] = '\0';
             if (fromPlayer >= MAX_TANKS) {
-                /* Server message */
-                screenNetStatusMessage(c->clientSim, message);
+                /* Server message — show in lobby chat if in lobby,
+                 * otherwise use the in-game message queue */
+                if (c->clientSim->inLobby) {
+                    clientSimAppendLobbyChat(c->clientSim, "Server", message);
+                } else {
+                    screenNetStatusMessage(c->clientSim, message);
+                }
             } else {
                 screenIncomingMessageCS(c->clientSim, fromPlayer, message);
             }
