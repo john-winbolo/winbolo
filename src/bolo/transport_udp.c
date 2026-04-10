@@ -94,6 +94,28 @@ typedef struct {
 /* Max join attempts before giving up */
 #define JOIN_MAX_RETRIES 10
 
+/* ---- Simulated server latency (set to 0 to disable) ----
+ * Delays packet delivery on the server receive path by this many ms.
+ * For localhost testing, set to 100 to simulate ~200ms RTT (100ms each way
+ * since the server delays both receiving client inputs and sending snapshots
+ * back through the same delayed receive path on the client's next poll).
+ * Only compiled into the dedicated server target (WinBoloDS). */
+#define SIM_LATENCY_SERVER_MS  0
+
+#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
+typedef struct {
+    uint8_t  data[2048];
+    int      len;
+    struct sockaddr_in from;
+    uint64_t deliverAt;  /* SDL tick (ms) when this packet should be released */
+} DelayedPacket;
+
+#define DELAY_QUEUE_SIZE 512
+static DelayedPacket serverDelayQueue[DELAY_QUEUE_SIZE];
+static int serverDelayHead = 0;
+static int serverDelayCount = 0;
+#endif
+
 /* ================================================================
  * Serialization helpers — pack/unpack structs to/from wire format
  * All multi-byte values use network byte order (big-endian).
@@ -230,28 +252,28 @@ static int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
     packU16(buf + 1, ts->worldX);
     packU16(buf + 3, ts->worldY);
     packU16(buf + 5, ts->angle);
-    buf[7] = ts->speed;
-    buf[8] = ts->tankStatus;
-    buf[9] = ts->lgmFrame;
-    buf[10] = ts->lgmMX;
-    buf[11] = ts->lgmMY;
-    buf[12] = ts->lgmPX;
-    buf[13] = ts->lgmPY;
-    buf[14] = ts->armour;
-    buf[15] = ts->shells;
-    buf[16] = ts->mines;
-    buf[17] = ts->trees;
-    buf[18] = ts->firstLeft;
-    buf[19] = ts->firstRight;
-    buf[20] = ts->gunsightLen;
-    buf[21] = ts->deathWait;
-    buf[22] = ts->reload;
-    packU16(buf + 23, ts->pingMs);
-    buf[25] = ts->accountFlags;
-    return 26;
+    packU16(buf + 7, ts->speed);
+    buf[9] = ts->tankStatus;
+    buf[10] = ts->lgmFrame;
+    buf[11] = ts->lgmMX;
+    buf[12] = ts->lgmMY;
+    buf[13] = ts->lgmPX;
+    buf[14] = ts->lgmPY;
+    buf[15] = ts->armour;
+    buf[16] = ts->shells;
+    buf[17] = ts->mines;
+    buf[18] = ts->trees;
+    buf[19] = ts->firstLeft;
+    buf[20] = ts->firstRight;
+    buf[21] = ts->gunsightLen;
+    buf[22] = ts->deathWait;
+    buf[23] = ts->reload;
+    packU16(buf + 24, ts->pingMs);
+    buf[26] = ts->accountFlags;
+    return 27;
 }
 
-#define TANK_SNAPSHOT_WIRE_SIZE 26
+#define TANK_SNAPSHOT_WIRE_SIZE 27
 
 /* Serialize one ShellSnapshot into buf. Returns bytes written (7). */
 static int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss) {
@@ -346,24 +368,24 @@ static void unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
     ts->worldX = unpackU16(buf + 1);
     ts->worldY = unpackU16(buf + 3);
     ts->angle = unpackU16(buf + 5);
-    ts->speed = buf[7];
-    ts->tankStatus = buf[8];
-    ts->lgmFrame = buf[9];
-    ts->lgmMX = buf[10];
-    ts->lgmMY = buf[11];
-    ts->lgmPX = buf[12];
-    ts->lgmPY = buf[13];
-    ts->armour = buf[14];
-    ts->shells = buf[15];
-    ts->mines = buf[16];
-    ts->trees = buf[17];
-    ts->firstLeft = buf[18];
-    ts->firstRight = buf[19];
-    ts->gunsightLen = buf[20];
-    ts->deathWait = buf[21];
-    ts->reload = buf[22];
-    ts->pingMs = unpackU16(buf + 23);
-    ts->accountFlags = buf[25];
+    ts->speed = unpackU16(buf + 7);
+    ts->tankStatus = buf[9];
+    ts->lgmFrame = buf[10];
+    ts->lgmMX = buf[11];
+    ts->lgmMY = buf[12];
+    ts->lgmPX = buf[13];
+    ts->lgmPY = buf[14];
+    ts->armour = buf[15];
+    ts->shells = buf[16];
+    ts->mines = buf[17];
+    ts->trees = buf[18];
+    ts->firstLeft = buf[19];
+    ts->firstRight = buf[20];
+    ts->gunsightLen = buf[21];
+    ts->deathWait = buf[22];
+    ts->reload = buf[23];
+    ts->pingMs = unpackU16(buf + 24);
+    ts->accountFlags = buf[26];
 }
 
 /* Create a non-blocking UDP socket */
@@ -391,6 +413,41 @@ static void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }
+
+#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
+/* Receive with simulated latency — buffers packets and releases after delayMs. */
+static int udpRecvFromDelayed(SOCKET sock, uint8_t *buf, int maxLen,
+                               struct sockaddr_in *fromAddr,
+                               int delayMs, DelayedPacket *queue,
+                               int *head, int *count) {
+    /* Drain socket into delay queue */
+    while (*count < DELAY_QUEUE_SIZE) {
+        struct sockaddr_in tmpAddr;
+        socklen_t tmpLen = sizeof(tmpAddr);
+        int n = recvfrom(sock, (char *)queue[(*head + *count) % DELAY_QUEUE_SIZE].data,
+                         sizeof(queue[0].data), 0,
+                         (struct sockaddr *)&tmpAddr, &tmpLen);
+        if (n == SOCKET_ERROR) break;
+        int idx = (*head + *count) % DELAY_QUEUE_SIZE;
+        queue[idx].len = n;
+        queue[idx].from = tmpAddr;
+        queue[idx].deliverAt = SDL_GetTicks() + delayMs;
+        (*count)++;
+    }
+
+    /* Release oldest packet if its delay has elapsed */
+    if (*count > 0 && SDL_GetTicks() >= queue[*head].deliverAt) {
+        int copyLen = queue[*head].len;
+        if (copyLen > maxLen) copyLen = maxLen;
+        memcpy(buf, queue[*head].data, copyLen);
+        *fromAddr = queue[*head].from;
+        *head = (*head + 1) % DELAY_QUEUE_SIZE;
+        (*count)--;
+        return copyLen;
+    }
+    return -1;
+}
+#endif
 
 /* Receive a UDP datagram. Returns bytes received, or -1 if none available. */
 static int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
@@ -2128,7 +2185,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         } else {
             char rejectMsg[256];
             snprintf(rejectMsg, sizeof(rejectMsg),
-                     "WinBolo.net verification failed: %s", errorMsg);
+                     "WinBolo.net verification failed: %.220s", errorMsg);
             fprintf(stderr, "[UDP SERVER] %s\n", rejectMsg);
             udpServer.clients[slot].connected = false;
             serverSendJoinReject(fromAddr, rejectMsg);
@@ -2692,7 +2749,7 @@ static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
     buf[pos++] = pillsGetNumPills(&sim->sim.pb);
     buf[pos++] = basesGetNumBases(&sim->sim.bs);
     buf[pos++] = startsGetNumStarts(&sim->sim.ss);
-    buf[pos++] = sim->mapDirCount > 1 ? 1 : 0;
+    buf[pos++] = (sim->mapDirCount > 1 || sim->randomMapEnabled) ? 1 : 0;
 }
 
 void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
@@ -2947,7 +3004,13 @@ void transportUdpServerRecv(ServerSim *sim) {
 
     udpServer.tickCount++;
 
+#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
+    while ((len = udpRecvFromDelayed(udpServer.sock, buf, sizeof(buf), &fromAddr,
+            SIM_LATENCY_SERVER_MS, serverDelayQueue,
+            &serverDelayHead, &serverDelayCount)) > 0) {
+#else
     while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
+#endif
         /* Check for old-protocol info request before new-protocol handling */
         if (isOldProtocolInfoRequest(buf, len)) {
             serverHandleInfoRequest(&fromAddr, sim);
@@ -3456,10 +3519,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
     if (!udpServer.running) return;
-    if (sim->eventCount == 0) return;
+    if (sim->eventCount == 0 && sim->mapEventCount == 0) return;
 
-    fprintf(stderr, "[UDP SERVER] Enqueuing %d events from tick=%u\n",
-            sim->eventCount, sim->tick);
+    fprintf(stderr, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u\n",
+            sim->eventCount, sim->mapEventCount, sim->tick);
 
     for (c = 0; c < MAX_TANKS; c++) {
         ClientEventQueue *cq;
@@ -3518,7 +3581,14 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Pass 2: enqueue non-sound events, then deduplicated sounds */
+        /* Pass 2: enqueue map events first (from dedicated buffer),
+         * then non-sound events, then deduplicated sounds */
+        for (i = 0; i < (int)sim->mapEventCount; i++) {
+            uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
+            cq->buffer[idx].event = sim->mapEvents[i];
+            cq->buffer[idx].seq = cq->nextSeq;
+            cq->nextSeq++;
+        }
         for (i = 0; i < (int)sim->eventCount; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {

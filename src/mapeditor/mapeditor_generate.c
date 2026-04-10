@@ -13,6 +13,7 @@
 #include "mapeditor_generate.h"
 #include "mapeditor_maze.h"
 #include "../bolo/bolo_map.h"
+#include "../bolo/starts.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -3589,6 +3590,9 @@ void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
             }
             break;
     }
+
+    /* Orient all starts toward nearest land */
+    mapGenPointStartsToLand(mp, ss);
 }
 
 MapGenConfig mapGenDefaultConfig(int genType) {
@@ -3720,4 +3724,54 @@ void mapGenNaturalStyleDefaults(int mapStyle, MapGenConfig *cfg) {
         default:
             break;
     }
+}
+
+/*---------------------------------------------------------
+ * mapGenPointStartsToLand
+ *   For each start, compute the direction toward the nearest
+ *   land mass by finding the center-of-mass of all non-deep-sea
+ *   tiles within a search radius, then store in Bolo map format.
+ *---------------------------------------------------------*/
+void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss) {
+    #define MGPL_RADIUS 30
+    int i;
+
+    for (i = 0; i < ss->numStarts; i++) {
+        int sx = ss->item[i].x;
+        int sy = ss->item[i].y;
+        float totalX = 0, totalY = 0;
+        int count = 0;
+        int dx, dy;
+
+        for (dx = -MGPL_RADIUS; dx <= MGPL_RADIUS; dx++) {
+            int nx = sx + dx;
+            if (nx < 0 || nx > 255) continue;
+            for (dy = -MGPL_RADIUS; dy <= MGPL_RADIUS; dy++) {
+                int ny = sy + dy;
+                if (ny < 0 || ny > 255) continue;
+                if (dx * dx + dy * dy > MGPL_RADIUS * MGPL_RADIUS) continue;
+                if (mp->mapItem[nx][ny] != DEEP_SEA) {
+                    totalX += (float)nx;
+                    totalY += (float)ny;
+                    count++;
+                }
+            }
+        }
+
+        if (count > 0) {
+            float cx = totalX / (float)count;
+            float cy = totalY / (float)count;
+            float fdx = cx - (float)sx;
+            float fdy = cy - (float)sy;
+            if (fdx != 0.0f || fdy != 0.0f) {
+                float angle = atan2f(fdx, -fdy);
+                if (angle < 0.0f) angle += 6.283185307f;
+                int dir = (int)(angle / 6.283185307f * 16.0f + 0.5f) % 16;
+                ss->item[i].dir = startsConvertDir((BYTE)dir);
+                continue;
+            }
+        }
+        ss->item[i].dir = 0;
+    }
+    #undef MGPL_RADIUS
 }

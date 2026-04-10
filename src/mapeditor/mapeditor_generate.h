@@ -181,6 +181,11 @@ void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
                        struct pillsObj *pb, struct startsObj *ss,
                        const MapGenConfig *cfg);
 
+/* Orient all starts toward the nearest land mass (center-of-mass of
+ * non-deep-sea tiles within a search radius). Call after mapEditorGenerate
+ * to fix up start directions. */
+void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
+
 #ifdef __cplusplus
 }
 #endif

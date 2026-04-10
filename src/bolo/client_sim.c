@@ -75,6 +75,7 @@ static void csCallbackMessageAdd(void *ctx, messageType msgType, char *top, char
 
 static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
   ClientSim *cs = (ClientSim *)ctx;
+  if (cs->sim.isPredicting) return;
   clientSoundDist(&cs->sim, value, mx, my);
 }
 

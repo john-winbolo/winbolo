@@ -106,10 +106,15 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
         frontEndPlaySound(hitTankNear);
       }
       break;
+    case bubbles:
+      if (gapX <= SDIST_SOFT && gapY <= SDIST_SOFT) {
+        frontEndPlaySound(bubbles);
+      }
+      break;
     case tankSinkNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
         frontEndPlaySound(tankSinkFar);
-      } else { 
+      } else {
         frontEndPlaySound(tankSinkNear);
       }
       break;
@@ -160,7 +165,6 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
     case hitTankSelf:
     case manDyingFar:
     case mineExplosionFar:
-    case bubbles:
     case tankSinkFar:
     case bigExplosionFar:
     case farmingTreeFar:

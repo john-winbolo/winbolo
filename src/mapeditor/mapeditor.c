@@ -4049,9 +4049,6 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 /* Run the generator */
                 mapEditorGenerate(ed->mp, ed->bs, ed->pb, ed->ss, &ed->genConfig);
 
-                /* Point starts toward nearest land mass */
-                mePointStartsToLand(ed);
-
                 /* Record tile changes with correct new terrain for redo */
                 if (oldTerrain) {
                     for (int x = gx1; x <= gx2; x++) {

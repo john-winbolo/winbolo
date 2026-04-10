@@ -86,7 +86,7 @@ typedef struct {
   uint16_t ping;                    /* Last known ping in ms, 0 = unknown */
   bool wbnParticipant;              /* Logged into WinBolo.net */
   bool steamParticipant;            /* Logged into Steam */
-  uint8_t speed;                    /* Wire speed (actual_speed * 4), updated from TankSnapshot */
+  uint8_t speed;                    /* Brain-API speed (actual_speed * 4), converted from TankSnapshot */
 } player;
 
 /* Array of all the players */
