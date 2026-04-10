@@ -170,7 +170,7 @@ typedef struct {
 #define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner] */
 #define EVENT_TANK_KILLED   6  /* data: [killer, killed, deathCause, carriedPills] */
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
-#define EVENT_SOUND         8  /* data: [soundId, mx, my] */
+#define EVENT_SOUND         8  /* data: [soundId, mx, my, sourcePlayer] */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
 #define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, armour, speed, inTank] */
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner, armour, shells, mines] */
@@ -200,7 +200,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_PILL_CAPTURED:  return 2;
     case EVENT_BASE_CAPTURED:  return 2;
     case EVENT_MAP_CHANGE:     return 3;
-    case EVENT_SOUND:          return 3;
+    case EVENT_SOUND:          return 4;
     case EVENT_SERVER_MSG:     return 1;
     case EVENT_PILL_UPDATE:    return 7;
     case EVENT_BASE_UPDATE:    return 5;
