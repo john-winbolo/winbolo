@@ -2135,16 +2135,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         return;
     }
 
-    /* Compress current map state for the joining player */
-    {
-        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
-        if (mapLen <= 0) {
-            serverSendJoinReject(fromAddr, "Map serialization failed");
-            return;
-        }
-        udpServer.compressedMapSize = (uint32_t)mapLen;
-    }
-
     /* Accept the player */
     udpServer.clients[slot].connected = true;
     udpServer.clients[slot].addr = *fromAddr;
@@ -2201,6 +2191,19 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)slot, TRUE);
         playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)slot, wbnHasSteam);
         SDL_Log("[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
+    }
+
+    /* Compress current map state for the joining player.
+     * Done after serverSimAddPlayer so rejoin ownership is included. */
+    {
+        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        if (mapLen <= 0) {
+            serverSimRemovePlayer(sim, (BYTE)slot);
+            udpServer.clients[slot].connected = false;
+            serverSendJoinReject(fromAddr, "Map serialization failed");
+            return;
+        }
+        udpServer.compressedMapSize = (uint32_t)mapLen;
     }
 
     /* Send accept with game settings and map size */
