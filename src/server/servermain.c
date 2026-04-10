@@ -1090,7 +1090,6 @@ int main(int argc, char **argv) {
       mapGenConfigToSeed(&cfg, seedBuf, sizeof(seedBuf));
       snprintf(msg, sizeof(msg), "Generated random map with seed: %s", seedBuf);
       serverMessageConsoleMessage(&serverSim, msg);
-      fprintf(stderr, "%s\n", msg);
     }
 
     /* Store config for between-round regeneration */
