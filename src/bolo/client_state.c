@@ -104,6 +104,9 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
         }
     }
 
+    /* Prediction only updates position/angle/speed — all side effects
+     * (resources, sounds, map changes, mines, deaths) are server-authoritative. */
+    sim->isPredicting = TRUE;
     if (isKeysTick) {
         BYTE bmx = tankGetMX(predictedTank);
         BYTE bmy = tankGetMY(predictedTank);
@@ -114,6 +117,7 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
          * call and creates predicted shells in a separate array. */
         tankUpdate(sim, predictedTank, tb, FALSE, inBrain);
     }
+    sim->isPredicting = FALSE;
 }
 
 bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcessedInput,
@@ -151,7 +155,8 @@ bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcess
     /* Prediction was wrong — snap to server state and replay */
     tankSnapToServer(*predictedTank, serverTank);
 
-    /* Replay all unacknowledged inputs */
+    /* Replay all unacknowledged inputs (suppress sounds/side effects) */
+    sim->isPredicting = TRUE;
     for (tick = cs->oldestUnacked; tick <= cs->newestInput; tick++) {
         uint8_t idx = tick & (CLIENT_INPUT_HISTORY_SIZE - 1);
         InputPacket *histPkt = &cs->history[idx];
@@ -185,6 +190,7 @@ bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcess
             tankUpdate(sim, predictedTank, tb, FALSE, FALSE);
         }
     }
+    sim->isPredicting = FALSE;
 
     return TRUE;
 }
