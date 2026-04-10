@@ -45,8 +45,8 @@ typedef struct {
 } MapViewCtx;
 
 /* Tile-number -> atlas-coordinate lookup tables (populated by mapViewInit). */
-extern int mapViewPosX[255];
-extern int mapViewPosY[255];
+extern int mapViewPosX[256];
+extern int mapViewPosY[256];
 
 /* Initialize lookup tables. Called once at startup. */
 void mapViewInit(void);

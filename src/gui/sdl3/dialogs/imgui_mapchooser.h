@@ -26,12 +26,16 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include "../../../bolo/global.h"
+#include "../../../mapeditor/mapeditor_generate.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define MAP_CHOOSER_MAX_MAPS 64
+
+/* Special selectedIdx value for "Random Map" */
+#define MAP_CHOOSER_IDX_RANDOM -2
 
 typedef struct {
     char name[128];           /* Display name (without .map extension) */
@@ -44,8 +48,8 @@ typedef struct {
     int             numMaps;
 
     /* Selection state */
-    int             selectedIdx;       /* -1 = none, 0 = Everard Island (inbuilt) */
-    char            selectedPath[FILENAME_MAX]; /* Path of selected map ("" = inbuilt) */
+    int             selectedIdx;       /* -1 = custom file, 0 = Everard Island, MAP_CHOOSER_IDX_RANDOM = random */
+    char            selectedPath[FILENAME_MAX]; /* Path of selected map ("" = inbuilt, "randommap:..." = random) */
     char            selectedName[128]; /* Display name of selected map */
 
     /* Preview texture */
@@ -62,6 +66,12 @@ typedef struct {
     bool            fileDialogPending;
     bool            fileDialogGotResult;
     char            fileDialogResult[FILENAME_MAX];
+
+    /* Random map generation state */
+    bool            randomMapSelected;
+    MapGenConfig    genConfig;
+    bool            genConfigInit;
+    char            genSeedBuf[64];
 
     bool            initialized;
 } MapChooserState;

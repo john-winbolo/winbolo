@@ -218,24 +218,24 @@
 #define CRATER_X (5 * TILE_SIZE_X)
 #define CRATER_Y  TILE_SIZE_Y
 #define CRATER_SINGLE_X (112 + TILE_SIZE_X)
-#define CRATER_SINGLE_Y 144
+#define CRATER_SINGLE_Y 160
 
 #define CRATER_BR_X (112 + (2 * TILE_SIZE_X))
-#define CRATER_BR_Y 144
+#define CRATER_BR_Y 160
 #define CRATER_BL_X (112 + (3 * TILE_SIZE_X))
-#define CRATER_BL_Y 144
+#define CRATER_BL_Y 160
 #define CRATER_AL_X (112 + (4 * TILE_SIZE_X))
-#define CRATER_AL_Y 144
+#define CRATER_AL_Y 160
 #define CRATER_AR_X (112 + (5 * TILE_SIZE_X))
-#define CRATER_AR_Y 144
+#define CRATER_AR_Y 160
 #define CRATER_LEFT_X (112 + (7 * TILE_SIZE_X))
-#define CRATER_LEFT_Y 144
+#define CRATER_LEFT_Y 160
 #define CRATER_RIGHT_X (112 + (6 * TILE_SIZE_X))
-#define CRATER_RIGHT_Y 144
+#define CRATER_RIGHT_Y 160
 #define CRATER_ABOVE_X (112 + (9 * TILE_SIZE_X))
-#define CRATER_ABOVE_Y 144
+#define CRATER_ABOVE_Y 160
 #define CRATER_BELOW_X (112 + (8 * TILE_SIZE_X))
-#define CRATER_BELOW_Y 144
+#define CRATER_BELOW_Y 160
 
 /* Buildings */
 #define BUILD_SINGLE_X (6 * TILE_SIZE_X) /* Single Peice */

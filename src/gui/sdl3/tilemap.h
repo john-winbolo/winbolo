@@ -346,6 +346,9 @@ static const TileMapEntry gTileMap[] = {
     { "forest_below",          FOREST_BELOW_X,    FOREST_BELOW_Y,    16, 16 },
     { "forest_above",          FOREST_ABOVE_X,    FOREST_ABOVE_Y,    16, 16 },
 
+    /* ---- Crater variants (y=160 area) ---- */
+    { "crater_single",         CRATER_SINGLE_X,   CRATER_SINGLE_Y,   16, 16 },
+
     /* ---- Shells (irregular sizes, packed region) ---- */
     { "shell_00",              SHELL_0_X,         SHELL_0_Y,         SHELL_0_WIDTH,  SHELL_0_HEIGHT  },
     { "shell_01",              SHELL_1_X,         SHELL_1_Y,         SHELL_1_WIDTH,  SHELL_1_HEIGHT  },

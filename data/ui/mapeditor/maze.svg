@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<!-- Generator: Adobe Illustrator 18.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- License: CC0. Made by SVG Repo: https://www.svgrepo.com/svg/136117/maze -->
+<svg version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 330 330" style="enable-background:new 0 0 330 330;" xml:space="preserve">
+<g>
+	<path d="M69.166,230c-8.284,0-15,6.716-15,15s6.716,15,15,15h95.836c8.284,0,15-6.716,15-15v-65H230v65c0,8.284,6.716,15,15,15
+		s15-6.716,15-15V71.547c0-8.284-6.716-15-15-15s-15,6.716-15,15V150H30V30h75.082c8.284,0,15-6.716,15-15s-6.716-15-15-15H15
+		C6.716,0,0,6.716,0,15v300c0,8.284,6.716,15,15,15h150c8.284,0,15-6.716,15-15s-6.716-15-15-15H30V180h120.002v50H69.166z"/>
+	<path d="M315,0H165.002c-8.284,0-15,6.716-15,15v65H75c-8.284,0-15,6.716-15,15s6.716,15,15,15h90.002c8.284,0,15-6.716,15-15V30
+		H300v270h-75c-8.284,0-15,6.716-15,15s6.716,15,15,15h90c8.284,0,15-6.716,15-15V15C330,6.716,323.284,0,315,0z"/>
+</g>
+</svg>
