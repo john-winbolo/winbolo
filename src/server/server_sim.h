@@ -28,6 +28,7 @@
 #include <SDL3/SDL.h>
 #include "../bolo/game_sim.h"
 #include "../bolo/input_packet.h"
+#include "../mapeditor/mapeditor_generate.h"
 
 #ifndef _AITYPE_ENUM
 #define _AITYPE_ENUM
@@ -142,6 +143,11 @@ typedef struct ServerSim {
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
     int          mapDirCount;             /* Number of valid maps in the array */
+
+    /* Random map generation (for -randommap mode) */
+    bool         randomMapEnabled;       /* true when using -randommap */
+    MapGenConfig randomMapConfig;        /* last used config */
+    bool         randomMapFixedSeed;     /* true = same map every round */
 
     /* Server message configuration (was servermessages.c globals) */
     bool         isServerQuiet;
@@ -524,5 +530,25 @@ bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize);
  *  happen.
  *********************************************************/
 bool serverSimCheckEmptyReset(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimCreateRandomMap
+ *PURPOSE:
+ *  Creates and initializes a ServerSim using procedural
+ *  map generation instead of loading from disk.
+ *  Returns TRUE on success.
+ *********************************************************/
+bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
+                              gameType game, bool hiddenMines,
+                              int32_t startDelay, int32_t gameLen);
+
+/*********************************************************
+ *NAME:          serverSimRandomMapRegenerate
+ *PURPOSE:
+ *  Generates a new random map for between-round rotation.
+ *  Only works when randomMapEnabled is true and state is
+ *  lobby. Returns TRUE on success.
+ *********************************************************/
+bool serverSimRandomMapRegenerate(ServerSim *sim);
 
 #endif /* SERVER_SIM_H */

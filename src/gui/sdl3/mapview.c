@@ -40,8 +40,8 @@
 #include <string.h>
 
 /* Tile-number -> atlas-coordinate lookup tables */
-int mapViewPosX[255];
-int mapViewPosY[255];
+int mapViewPosX[256];
+int mapViewPosY[256];
 
 /*********************************************************
  * mapViewInit — populate lookup tables (moved from

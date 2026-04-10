@@ -45,6 +45,7 @@ extern "C" {
 #include "../../../bolo/platform_net.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../minimap_render.h"
 #include "imgui_lobby.h"
 }
 
@@ -55,28 +56,6 @@ extern "C" {
 
 static const int DIALOG_W = 900;
 static const int DIALOG_H = 700;
-
-/* Terrain color lookup (RGBA) */
-static void terrainColor(BYTE terrain, uint8_t *r, uint8_t *g, uint8_t *b) {
-    /* Strip mine overlay to get base terrain */
-    if (terrain >= MINE_START && terrain <= MINE_END) {
-        terrain -= MINE_SUBTRACT;
-    }
-    switch (terrain) {
-        case BUILDING:      *r = 128; *g = 128; *b = 128; break;
-        case RIVER:         *r = 0;   *g = 80;  *b = 200; break;
-        case SWAMP:         *r = 0;   *g = 100; *b = 0;   break;
-        case CRATER:        *r = 139; *g = 90;  *b = 43;  break;
-        case ROAD:          *r = 80;  *g = 80;  *b = 80;  break;
-        case FOREST:        *r = 0;   *g = 140; *b = 0;   break;
-        case RUBBLE:        *r = 180; *g = 160; *b = 130; break;
-        case GRASS:         *r = 100; *g = 200; *b = 50;  break;
-        case HALFBUILDING:  *r = 160; *g = 160; *b = 160; break;
-        case BOAT:          *r = 0;   *g = 80;  *b = 200; break;
-        case DEEP_SEA:
-        default:            *r = 0;   *g = 0;   *b = 80;  break;
-    }
-}
 
 /* Bounding box of interesting (non-sea) terrain in the map preview */
 struct MapBounds {
@@ -89,124 +68,15 @@ struct MapBounds {
 static SDL_Texture *buildMapPreview(SDL_Renderer *renderer,
                                      const BYTE *compressedData, int dataLen,
                                      MapBounds *bounds) {
-    map mp;
-    pillboxes pb;
-    bases bs;
-    starts ss;
-
-    mapCreate(&mp);
-    pillsCreate(&pb);
-    basesCreate(&bs);
-    startsCreate(&ss);
-
-    if (!mapLoadCompressedMap(&mp, &pb, &bs, &ss,
-                              (BYTE *)compressedData, dataLen)) {
-        mapDestroy(&mp);
-        pillsDestroy(&pb);
-        basesDestroy(&bs);
-        startsDestroy(&ss);
-        return NULL;
+    MinimapBounds mb;
+    SDL_Texture *tex = minimapFromCompressed(renderer, compressedData, dataLen,
+                                             &mb, NULL, NULL, NULL);
+    if (bounds) {
+        bounds->minX = mb.minX;
+        bounds->minY = mb.minY;
+        bounds->maxX = mb.maxX;
+        bounds->maxY = mb.maxY;
     }
-
-    uint8_t *pixels = (uint8_t *)malloc(MAP_PREVIEW_SIZE * MAP_PREVIEW_SIZE * 4);
-    if (!pixels) {
-        mapDestroy(&mp);
-        pillsDestroy(&pb);
-        basesDestroy(&bs);
-        startsDestroy(&ss);
-        return NULL;
-    }
-
-    /* Render terrain and compute bounding box of non-sea tiles */
-    bounds->minX = MAP_PREVIEW_SIZE;
-    bounds->minY = MAP_PREVIEW_SIZE;
-    bounds->maxX = 0;
-    bounds->maxY = 0;
-    for (int y = 0; y < MAP_PREVIEW_SIZE; y++) {
-        for (int x = 0; x < MAP_PREVIEW_SIZE; x++) {
-            int idx = (y * MAP_PREVIEW_SIZE + x) * 4;
-            BYTE t = mapGetPos(&mp, (BYTE)x, (BYTE)y);
-            terrainColor(t, &pixels[idx], &pixels[idx+1], &pixels[idx+2]);
-            pixels[idx+3] = 255;
-            /* Track non-sea terrain for zoom */
-            BYTE base = t;
-            if (base >= MINE_START && base <= MINE_END) base -= MINE_SUBTRACT;
-            if (base != DEEP_SEA) {
-                if (x < bounds->minX) bounds->minX = x;
-                if (y < bounds->minY) bounds->minY = y;
-                if (x > bounds->maxX) bounds->maxX = x;
-                if (y > bounds->maxY) bounds->maxY = y;
-            }
-        }
-    }
-    /* If no non-sea terrain found, show entire map */
-    if (bounds->minX > bounds->maxX) {
-        bounds->minX = 0; bounds->minY = 0;
-        bounds->maxX = MAP_PREVIEW_SIZE - 1; bounds->maxY = MAP_PREVIEW_SIZE - 1;
-    }
-
-    /* Overlay pillboxes (red) */
-    BYTE numPills = pillsGetNumPills(&pb);
-    for (int i = 0; i < numPills; i++) {
-        int px = pb->item[i].x;
-        int py = pb->item[i].y;
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int nx = px + dx, ny = py + dy;
-                if (nx >= 0 && nx < MAP_PREVIEW_SIZE && ny >= 0 && ny < MAP_PREVIEW_SIZE) {
-                    int idx = (ny * MAP_PREVIEW_SIZE + nx) * 4;
-                    pixels[idx] = 255; pixels[idx+1] = 0; pixels[idx+2] = 0; pixels[idx+3] = 255;
-                }
-            }
-        }
-    }
-
-    /* Overlay bases (white) */
-    BYTE numBases = basesGetNumBases(&bs);
-    for (int i = 0; i < numBases; i++) {
-        int bx = bs->item[i].x;
-        int by = bs->item[i].y;
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int nx = bx + dx, ny = by + dy;
-                if (nx >= 0 && nx < MAP_PREVIEW_SIZE && ny >= 0 && ny < MAP_PREVIEW_SIZE) {
-                    int idx = (ny * MAP_PREVIEW_SIZE + nx) * 4;
-                    pixels[idx] = 255; pixels[idx+1] = 255; pixels[idx+2] = 255; pixels[idx+3] = 255;
-                }
-            }
-        }
-    }
-
-    /* Overlay starts (yellow) */
-    BYTE numStarts = startsGetNumStarts(&ss);
-    for (int i = 0; i < numStarts; i++) {
-        int sx = ss->item[i].x;
-        int sy = ss->item[i].y;
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int nx = sx + dx, ny = sy + dy;
-                if (nx >= 0 && nx < MAP_PREVIEW_SIZE && ny >= 0 && ny < MAP_PREVIEW_SIZE) {
-                    int idx = (ny * MAP_PREVIEW_SIZE + nx) * 4;
-                    pixels[idx] = 255; pixels[idx+1] = 255; pixels[idx+2] = 0; pixels[idx+3] = 255;
-                }
-            }
-        }
-    }
-
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(
-        MAP_PREVIEW_SIZE, MAP_PREVIEW_SIZE, SDL_PIXELFORMAT_RGBA32,
-        pixels, MAP_PREVIEW_SIZE * 4);
-    SDL_Texture *tex = NULL;
-    if (surface) {
-        tex = SDL_CreateTextureFromSurface(renderer, surface);
-        SDL_DestroySurface(surface);
-    }
-
-    free(pixels);
-    mapDestroy(&mp);
-    pillsDestroy(&pb);
-    basesDestroy(&bs);
-    startsDestroy(&ss);
     return tex;
 }
 
