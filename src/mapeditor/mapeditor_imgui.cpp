@@ -803,8 +803,8 @@ static const char *s_ownerNames[] = {
 #define ME_NUM_OWNERS 17
 
 static const char *s_dirLabels[] = {
-    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+    "E", "ENE", "NE", "NNE", "N", "NNW", "NW", "WNW",
+    "W", "WSW", "SW", "SSW", "S", "SSE", "SE", "ESE"
 };
 
 /* Convert owner byte (0-15 or 0xFF) to combo index (0=Neutral, 1-16=Player 0-15) */
