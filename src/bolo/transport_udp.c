@@ -2749,7 +2749,7 @@ static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
     buf[pos++] = pillsGetNumPills(&sim->sim.pb);
     buf[pos++] = basesGetNumBases(&sim->sim.bs);
     buf[pos++] = startsGetNumStarts(&sim->sim.ss);
-    buf[pos++] = sim->mapDirCount > 1 ? 1 : 0;
+    buf[pos++] = (sim->mapDirCount > 1 || sim->randomMapEnabled) ? 1 : 0;
 }
 
 void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
