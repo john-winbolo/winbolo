@@ -257,8 +257,8 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     if (sim->inStartFind == FALSE) {
 	  tankDeath(sim, value);
     }
-  } else if ((*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
-      /* Death by drowning */
+  } else if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
+      /* Death by drowning — server-authoritative */
       BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
       tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
       sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
@@ -1010,6 +1010,12 @@ void tankInWater(GameSim *sim, tank *value) {
   bool isServer = sim->isServer;
   bool modsMade; /* Has any modifications been made */
 
+  /* During client prediction, skip resource changes and sounds —
+   * the server is authoritative for all resource state. */
+  if (sim->isPredicting) {
+    return;
+  }
+
   modsMade = FALSE;
   if ((*value)->shells > 0) {
     (*value)->shells--;
@@ -1023,10 +1029,17 @@ void tankInWater(GameSim *sim, tank *value) {
   }
 
   if (modsMade == TRUE) {
-    /* Update view and play sound */
+    WORLD conv;
+    BYTE bmx, bmy;
+    conv = (*value)->x;
+    conv >>= TANK_SHIFT_MAPSIZE;
+    bmx = (BYTE) conv;
+    conv = (*value)->y;
+    conv >>= TANK_SHIFT_MAPSIZE;
+    bmy = (BYTE) conv;
+    sim->callbacks.soundDist(sim->callbacks.ctx, bubbles, bmx, bmy);
     if (!isServer) {
       frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
-      frontEndPlaySound(bubbles);
     }
   }
 }
@@ -1291,8 +1304,8 @@ void tankMoveOnBoat(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
     ang = utilGet16Dir((*value)->angle);
     utilCalcDistance(&xAmount, &yAmount, (TURNTYPE) ang, (int) (*value)->speed);
 
-    /* Tank-to-tank collision: project velocity to slide along other tanks */
-    {
+    /* Tank-to-tank collision — skip during prediction (other tank positions are stale) */
+    if (!sim->isPredicting) {
       int pushX, pushY;
       if (playersCalcTankCollision(sim, gameSimGetTankPlayer(sim, value), (*value)->x, (*value)->y, &xAmount, &yAmount, &pushX, &pushY)) {
         (*value)->obstructed = TRUE;
@@ -1364,47 +1377,50 @@ void tankMoveOnBoat(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
     if (isServer) {
       tankCheckPillCapture(sim, value);
     }
-    /* Check for leaving boat */
-    if ((mapIsLand(mp, pb, bs, newbmx, newbmy)) == TRUE) {
-      boatExitSquare = mapGetPos(mp,newbmx,newbmy);
-      if (boatExitSquare == BOAT) {
-        mapSetPos(sim, mp,newbmx,newbmy,RIVER, TRUE, FALSE);
-        explosionsAddItem(&sim->expl, newbmx, newbmy, 0, 0, EXPLOSION_START);
 
-        sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, newbmx, newbmy);
-        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
-      } else if (boatExitSquare != BUILDING && boatExitSquare != HALFBUILDING) {
-        if (mapGetPos(mp,bmx,bmy) == RIVER) {
-          mapSetPos(sim, mp,bmx,bmy,BOAT, TRUE, FALSE);
+    /* Side effects: boat exit, map changes, mine hits — server-authoritative */
+    if (!sim->isPredicting) {
+      /* Check for leaving boat */
+      if ((mapIsLand(mp, pb, bs, newbmx, newbmy)) == TRUE) {
+        boatExitSquare = mapGetPos(mp,newbmx,newbmy);
+        if (boatExitSquare == BOAT) {
+          mapSetPos(sim, mp,newbmx,newbmy,RIVER, TRUE, FALSE);
+          explosionsAddItem(&sim->expl, newbmx, newbmy, 0, 0, EXPLOSION_START);
+
+          sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, newbmx, newbmy);
+          if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+        } else if (boatExitSquare != BUILDING && boatExitSquare != HALFBUILDING) {
+          if (mapGetPos(mp,bmx,bmy) == RIVER) {
+            mapSetPos(sim, mp,bmx,bmy,BOAT, TRUE, FALSE);
+          }
+          (*value)->onBoat = FALSE;
+          tankRegisterChangeByte(value, CRC_ONBOAT_OFFSET, FALSE);
+          if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
         }
+        /* OK We have successfully left the boat */
+        if ((*value)->onBoat == FALSE) {
+          /* Check for Mine hit */
+          if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
+            minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
+          }
+        }
+      }
+
+      /* Check for hit mine on outer map edges */
+      if (mapIsMine(mp, bmx, bmy) == TRUE) {
+        sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
+        explosionsAddItem(&sim->expl, bmx, bmy, 0, 0, EXPLOSION_START);
         (*value)->onBoat = FALSE;
         tankRegisterChangeByte(value, CRC_ONBOAT_OFFSET, FALSE);
-        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+        (*value)->speed = 0;
+        tankRegisterChangeFloat(value, CRC_SPEED_OFFSET, 0);
       }
-      /* OK We have successfully left the boat */
-      if ((*value)->onBoat == FALSE) {
-        /* Check for Mine hit */
-        if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
-          minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
-        }
-      }
-    }
-
-    /* Check for hit mine on outer map edges */
-    if (mapIsMine(mp, bmx, bmy) == TRUE) {
-      sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
-      explosionsAddItem(&sim->expl, bmx, bmy, 0, 0, EXPLOSION_START);
-      (*value)->onBoat = FALSE;
-      tankRegisterChangeByte(value, CRC_ONBOAT_OFFSET, FALSE);
-      (*value)->speed = 0;
-      tankRegisterChangeFloat(value, CRC_SPEED_OFFSET, 0);
     }
 
    /* Check for pb capture */
   }
 
   tankNearMines(sim, bmx, bmy);
-
 }
 
 /*********************************************************
@@ -1470,8 +1486,8 @@ void tankMoveOnLand(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
     
 	utilCalcDistance(&xAmount, &yAmount, (TURNTYPE) ang, (int) (*value)->speed);
 
-    /* Tank-to-tank collision: project velocity to slide along other tanks */
-    {
+    /* Tank-to-tank collision — skip during prediction (other tank positions are stale) */
+    if (!sim->isPredicting) {
       int pushX, pushY;
       if (playersCalcTankCollision(sim, gameSimGetTankPlayer(sim, value), (*value)->x, (*value)->y, &xAmount, &yAmount, &pushX, &pushY)) {
         (*value)->obstructed = TRUE;
@@ -1559,18 +1575,21 @@ void tankMoveOnLand(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
     }
 
 
-    /* Check for entering Boat */
-    if ((mapGetPos(mp,newbmx, newbmy)) == BOAT) {
-      mapSetPos(sim, mp,newbmx,newbmy,RIVER, TRUE, FALSE);
-      (*value)->onBoat = TRUE;
-      tankRegisterChangeByte(value, CRC_ONBOAT_OFFSET, TRUE);
-      if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
-    }
+    /* Side effects: boat entry, mine hits — server-authoritative */
+    if (!sim->isPredicting) {
+      /* Check for entering Boat */
+      if ((mapGetPos(mp,newbmx, newbmy)) == BOAT) {
+        mapSetPos(sim, mp,newbmx,newbmy,RIVER, TRUE, FALSE);
+        (*value)->onBoat = TRUE;
+        tankRegisterChangeByte(value, CRC_ONBOAT_OFFSET, TRUE);
+        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      }
 
-    /* Check for hit mine */
-    if (newbmx != bmx || newbmy != bmy) { /* && isServer == FALSE */
-      if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
-        minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
+      /* Check for hit mine */
+      if (newbmx != bmx || newbmy != bmy) { /* && isServer == FALSE */
+        if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
+          minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
+        }
       }
     }
   }
@@ -1614,43 +1633,42 @@ void tankMoveOnLand(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
   }
 
 
-  /* Check for tank in water */
-  if (((mapGetPos(mp, bmx, bmy)) == RIVER) && (*value)->speed <= MAP_SPEED_TRIVER && (*value)->onBoat == FALSE) {
-    if (basesExistPos(bs, bmx, bmy) == FALSE) {
-      (*value)->waterCount++;
-      tankRegisterChangeByte(value, CRC_WATERCOUNT_OFFSET, (*value)->waterCount);
-      if ((*value)->waterCount == TANK_WATER_TIME) {
-        (*value)->waterCount = 0;
-        tankRegisterChangeByte(value, CRC_WATERCOUNT_OFFSET, 0);
-        tankInWater(sim, value);
+  /* Side effects: water drain, base/pill capture, mine reveal — server-authoritative */
+  if (!sim->isPredicting) {
+    /* Check for tank in water */
+    if (((mapGetPos(mp, bmx, bmy)) == RIVER) && (*value)->speed <= MAP_SPEED_TRIVER && (*value)->onBoat == FALSE) {
+      if (basesExistPos(bs, bmx, bmy) == FALSE) {
+        (*value)->waterCount++;
+        tankRegisterChangeByte(value, CRC_WATERCOUNT_OFFSET, (*value)->waterCount);
+        if ((*value)->waterCount == TANK_WATER_TIME) {
+          (*value)->waterCount = 0;
+          tankRegisterChangeByte(value, CRC_WATERCOUNT_OFFSET, 0);
+          tankInWater(sim, value);
+        }
       }
     }
-  }
-  /* Check for capture base */
-  if (isServer == TRUE) {
-    if (baseIsCapturable(bs, bmx, bmy) == TRUE) {
-	  /* This checks to see if another player is detected in this same square, if they are, this base is not capturable. 
-	     having this check prevents the game from swapping bases back and forth between players and crashing the server.
-	  */
-	  if(playersCheckSameSquare(&sim->plyrs, gameSimGetTankPlayer(sim, value), bmx, bmy) == FALSE){
-		  if (basesAmOwner(sim, gameSimGetTankPlayer(sim, value), bmx, bmy) == FALSE) {
-			basesSetOwner(sim, bmx, bmy, gameSimGetTankPlayer(sim, value), FALSE);
-			baseNum = basesGetBaseNum(bs, bmx, bmy);
-			if (!isServer) {
-			  frontEndStatusBase(baseNum, (basesGetStatusNum(sim, baseNum)));
-			}
-			if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
-		  }
-	  }
+    /* Check for capture base */
+    if (isServer == TRUE) {
+      if (baseIsCapturable(bs, bmx, bmy) == TRUE) {
+        if(playersCheckSameSquare(&sim->plyrs, gameSimGetTankPlayer(sim, value), bmx, bmy) == FALSE){
+          if (basesAmOwner(sim, gameSimGetTankPlayer(sim, value), bmx, bmy) == FALSE) {
+            basesSetOwner(sim, bmx, bmy, gameSimGetTankPlayer(sim, value), FALSE);
+            baseNum = basesGetBaseNum(bs, bmx, bmy);
+            if (!isServer) {
+              frontEndStatusBase(baseNum, (basesGetStatusNum(sim, baseNum)));
+            }
+            if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+          }
+        }
+      }
+    }
+
+    /* Check for pb capture */
+    if (isServer == TRUE) {
+      tankCheckPillCapture(sim, value);
     }
   }
-
-
-  /* Check for pb capture */
-  if (isServer == TRUE) {
-    tankCheckPillCapture(sim, value);
-  }
-  /* Check for near mines */
+  /* Mine reveal is display-only — must run during prediction so placed mines are visible */
   tankNearMines(sim, bmx, bmy);
 }
 

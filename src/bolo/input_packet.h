@@ -80,7 +80,7 @@ typedef struct {
     uint16_t worldX;
     uint16_t worldY;
     uint16_t angle;        /* TURNTYPE scaled: actual_angle * 256 */
-    uint8_t  speed;        /* SPEEDTYPE scaled: actual_speed * 4 */
+    uint16_t speed;        /* SPEEDTYPE scaled: actual_speed * 256 */
     uint8_t  tankStatus;   /* Low nibble: onBoat (0/1), high nibble: isDead (0/1) */
     uint8_t  lgmFrame;
     uint8_t  lgmMX;
