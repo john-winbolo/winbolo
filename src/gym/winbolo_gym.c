@@ -1435,9 +1435,9 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
 
         /* facing_pillbox: reward for aiming toward nearest non-owned pill */
         if (alive && w[RC_FACING_PILLBOX] != 0.0f) {
-            float dir_rad = obs->direction * (2.0f * 3.14159265f);
-            float fx = sinf(dir_rad);
-            float fy = -cosf(dir_rad);
+            /* scalar[5] = sin(dir), scalar[6] = cos(dir), where dir 0=north clockwise */
+            float fx = obs->scalar[5];   /* east component */
+            float fy = -obs->scalar[6];  /* south component (cos=1 at north = -y in tile coords) */
             float best_dot = -2.0f;
             for (int pi = 0; pi < obs->num_pillboxes; pi++) {
                 if (obs->pillboxes[pi].owner == WBGYM_OWNER_SELF ||
