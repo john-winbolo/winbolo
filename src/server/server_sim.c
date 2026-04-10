@@ -1160,7 +1160,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->worldX = wx;
         ts->worldY = wy;
         ts->angle = (uint16_t)(tankGetAngle(&sim->sim.tanks[i]) * 256.0f);
-        ts->speed = (uint8_t)(tankGetActualSpeed(&sim->sim.tanks[i]) * 4.0f);
+        ts->speed = (uint16_t)(tankGetActualSpeed(&sim->sim.tanks[i]) * 256.0f);
         {
             BYTE onBoat = tankIsOnBoat(&sim->sim.tanks[i]) ? 1 : 0;
             BYTE isDead = (tankGetDeathWait(&sim->sim.tanks[i]) > 0) ? 1 : 0;

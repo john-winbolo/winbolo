@@ -92,6 +92,7 @@ typedef struct GameSim {
     bool        isServer;
     bool        isLocalTransport; /* true for local/single-player, false for UDP */
     bool        inStartFind; /* Whether tank is searching for start position */
+    bool        isPredicting; /* true during client-side prediction — suppresses all side effects */
 
     /* Callbacks for behavior that differs between client and server */
     GameSimCallbacks callbacks;

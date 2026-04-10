@@ -3331,7 +3331,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       if (csPtr->clientState.initialized && !csPtr->clientState.hasPredictedTank && csPtr->sim.tanks[0] != NULL) {
         /* First snapshot — initialize predicted tank from server state */
         TURNTYPE decodedAngle = (TURNTYPE)tanks[i].angle / 256.0f;
-        SPEEDTYPE decodedSpeed = (SPEEDTYPE)tanks[i].speed * 0.25f;
+        SPEEDTYPE decodedSpeed = (SPEEDTYPE)tanks[i].speed / 256.0f;
         tankSetWorld(&csPtr->sim, &csPtr->sim.tanks[0], tanks[i].worldX, tanks[i].worldY,
                      decodedAngle, FALSE);
         {
@@ -3366,7 +3366,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         servX = tanks[i].worldX;
         servY = tanks[i].worldY;
         servAngle = (TURNTYPE)tanks[i].angle / 256.0f;
-        decodedSpeed = (SPEEDTYPE)tanks[i].speed * 0.25f;
+        decodedSpeed = (SPEEDTYPE)tanks[i].speed / 256.0f;
 
         /* Update oldest unacked based on server acknowledgment */
         csPtr->clientState.oldestUnacked = hdr->lastProcessedInput + 1;
@@ -3400,7 +3400,8 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
             tankSetFirstRight(&csPtr->sim.tanks[0], tanks[i].firstRight);
             tankSetReload(&csPtr->sim.tanks[0], tanks[i].reload);
 
-            /* Replay unacknowledged inputs */
+            /* Replay unacknowledged inputs (suppress sounds/side effects) */
+            csPtr->sim.isPredicting = TRUE;
             {
               uint32_t tick;
               for (tick = csPtr->clientState.oldestUnacked; tick <= csPtr->clientState.newestInput; tick++) {
@@ -3448,6 +3449,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
                 }
               }
             }
+            csPtr->sim.isPredicting = FALSE;
 
             /* If the server's angle matched our prediction (quantized), the
              * reconciliation was triggered only by position drift (e.g. from
@@ -3526,7 +3528,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       snap.worldX = tanks[i].worldX;
       snap.worldY = tanks[i].worldY;
       snap.angle = (TURNTYPE)tanks[i].angle / 256.0f;
-      snap.speed = (SPEEDTYPE)tanks[i].speed * 0.25f;
+      snap.speed = (SPEEDTYPE)tanks[i].speed / 256.0f;
       {
         BYTE isDead, onBoat;
         utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
@@ -3550,9 +3552,9 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
                          0, 0, 0, 0, 0, FALSE, 0, NULL, csPtr->isBot);
       }
 
-      /* Store wire speed on player struct for brain access */
+      /* Store speed on player struct for brain access (brain API uses * 4 scale) */
       if (csPtr->sim.plyrs != NULL) {
-        (*csPtr->sim.plyrs).item[pn].speed = tanks[i].speed;
+        (*csPtr->sim.plyrs).item[pn].speed = (uint8_t)(tanks[i].speed >> 6);
       }
 
       /* Update players struct for rendering */
@@ -3723,15 +3725,10 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         break;
       case EVENT_SOUND:
         /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
-         * Skip own bubbles/sink sounds — client prediction already plays them
-         * via frontEndPlaySound in tankInWater/tankUpdate. */
+         * All sounds are now server-authoritative (isPredicting suppresses
+         * prediction-side sounds), so no filtering needed. */
         if (isHuman) {
-          sndEffects snd = (sndEffects)events[i].data[0];
-          if ((snd == bubbles || snd == tankSinkNear) &&
-              events[i].data[3] == playersGetSelf(&csPtr->sim.plyrs)) {
-            break;
-          }
-          clientSoundDist(&csPtr->sim, snd, events[i].data[1], events[i].data[2]);
+          clientSoundDist(&csPtr->sim, (sndEffects)events[i].data[0], events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_SHOOT:
