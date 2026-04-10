@@ -2185,7 +2185,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         } else {
             char rejectMsg[256];
             snprintf(rejectMsg, sizeof(rejectMsg),
-                     "WinBolo.net verification failed: %s", errorMsg);
+                     "WinBolo.net verification failed: %.220s", errorMsg);
             fprintf(stderr, "[UDP SERVER] %s\n", rejectMsg);
             udpServer.clients[slot].connected = false;
             serverSendJoinReject(fromAddr, rejectMsg);
