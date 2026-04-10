@@ -55,6 +55,7 @@
 #include "../bolo/messages.h"
 #include "../bolo/sounddist.h"
 #include "../bolo/transport_udp.h"
+#include "../bolo/playersrejoin.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 #include "../mapeditor/mapeditor_generate.h"
@@ -311,6 +312,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     minesCreate(&sim->sim.mns, hiddenMines);
     minesExpCreate(&sim->sim.minesExplosions);
     treeGrowCreate(&sim->sim);
+    playersRejoinCreate();
     /* Init base timers (was in basesCreate, now lives in GameSim) */
     {
         int i;
@@ -536,6 +538,7 @@ void serverSimDestroy(ServerSim *sim) {
     rubbleDestroy(&sim->sim.rbl);
     swampDestroy(&sim->sim.swp);
     grassDestroy(&sim->sim.grs);
+    playersRejoinDestroy();
 
     sim->state = serverStateGameOver;
 
@@ -586,6 +589,8 @@ void serverSimTick(ServerSim *sim) {
     /* Clear event buffers for this tick */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+
+    playersRejoinUpdate();
 
     /* Set active sim so servercore.c routing functions access sim state directly */
     activeSim = sim;
@@ -911,6 +916,11 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) 
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
     }
 
+    /* Attempt to restore ownership of pills/bases from a previous session */
+    if (sim->state == serverStateRunning && playerName != NULL) {
+        playersRejoinRequest(&sim->sim, (char *)playerName, playerNum, &sim->sim.pb);
+    }
+
     /* Broadcast current skip vote state to the new player — existing votes
      * are preserved since the threshold naturally adjusts with more players. */
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
@@ -933,6 +943,71 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
+
+    /* Record ownership for rejoin before migration changes it */
+    {
+        char pName[PLAYER_NAME_LEN];
+        PlayerBitMap pillBits = 0, baseBits = 0;
+        BYTE numPills = pillsGetNumPills(&sim->sim.pb);
+        BYTE numBases = basesGetNumBases(&sim->sim.bs);
+        BYTE i;
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, pName, TRUE);
+        for (i = 1; i <= numPills; i++) {
+            if (pillsGetPillOwner(&sim->sim.pb, i) == playerNum) {
+                pillBits |= (1u << (i - 1));
+            }
+        }
+        for (i = 1; i <= numBases; i++) {
+            if (basesGetBaseOwner(&sim->sim.bs, i) == playerNum) {
+                baseBits |= (1u << (i - 1));
+            }
+        }
+        if (pName[0] != '\0' && (pillBits != 0 || baseBits != 0)) {
+            playersRejoinAddPlayer(pName, pillBits, baseBits);
+        }
+    }
+
+    /* Migrate or neutralize pillboxes owned by the leaving player */
+    {
+        BYTE numPills = pillsGetNumPills(&sim->sim.pb);
+        BYTE i;
+        for (i = 1; i <= numPills; i++) {
+            if (pillsGetPillOwner(&sim->sim.pb, i) == playerNum) {
+                /* Look for a connected allied player to inherit */
+                BYTE newOwner = NEUTRAL;
+                BYTE k;
+                for (k = 0; k < MAX_TANKS; k++) {
+                    if (k != playerNum && sim->playerConnected[k] && playersIsAllie(&sim->sim.plyrs, playerNum, k)) {
+                        newOwner = k;
+                        break;
+                    }
+                }
+                pillsSetPillOwner(&sim->sim, &sim->sim.pb, i, newOwner, TRUE);
+            }
+        }
+    }
+
+    /* Migrate or neutralize bases owned by the leaving player */
+    {
+        BYTE numBases = basesGetNumBases(&sim->sim.bs);
+        BYTE i;
+        for (i = 1; i <= numBases; i++) {
+            if (basesGetBaseOwner(&sim->sim.bs, i) == playerNum) {
+                BYTE newOwner = NEUTRAL;
+                BYTE k;
+                for (k = 0; k < MAX_TANKS; k++) {
+                    if (k != playerNum && sim->playerConnected[k] && playersIsAllie(&sim->sim.plyrs, playerNum, k)) {
+                        newOwner = k;
+                        break;
+                    }
+                }
+                basesSetBaseOwner(&sim->sim, i, newOwner, TRUE);
+            }
+        }
+    }
+
+    /* Force immediate full sync so clients see ownership changes right away */
+    sim->lastFullSyncTick = 0;
 
     /* Clear lobby state */
     sim->lobbyPlayers[playerNum].teamNumber = 0;
