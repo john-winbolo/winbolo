@@ -57,6 +57,7 @@
 #include "../bolo/transport_udp.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
+#include "../mapeditor/mapeditor_generate.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
@@ -376,6 +377,127 @@ bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
+    return TRUE;
+}
+
+bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
+                              gameType game, bool hiddenMines,
+                              int32_t startDelay, int32_t gameLen) {
+    BYTE tempBuf[65536];
+    int len;
+    char seedStr[64];
+    int x, y;
+
+    serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
+
+    /* Clear map to DEEP_SEA */
+    memset((*sim->sim.mp).mapItem, DEEP_SEA, sizeof((*sim->sim.mp).mapItem));
+
+    /* Fill mine border (same as mapRead does) */
+    for (x = 0; x < 256; x++) {
+        for (y = 0; y < 256; y++) {
+            if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+            }
+        }
+    }
+
+    /* Clear objects */
+    sim->sim.pb->numPills = 0;
+    sim->sim.bs->numBases = 0;
+    sim->sim.ss->numStarts = 0;
+
+    /* Generate the map */
+    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
+
+    basesClearMines(&sim->sim);
+
+    /* Set map name to "rand_<seed>" */
+    mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
+    snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
+
+    /* Cache compressed map data for client distribution */
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    sim->cachedMapData = malloc(len);
+    if (sim->cachedMapData == NULL) {
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
+    return TRUE;
+}
+
+bool serverSimRandomMapRegenerate(ServerSim *sim) {
+    BYTE tempBuf[65536];
+    int len;
+    char seedStr[64];
+    char msg[128];
+    int x, y;
+    MapGenConfig cfg;
+
+    if (!sim->randomMapEnabled) return FALSE;
+    if (sim->state != serverStateLobby) return FALSE;
+
+    cfg = sim->randomMapConfig;
+
+    if (!sim->randomMapFixedSeed) {
+        /* Generate a new random seed */
+        cfg.seed = (uint32_t)time(NULL) ^ ((uint32_t)clock() << 16);
+        if (cfg.seed == 0) cfg.seed = 1;
+    }
+    /* else: keep the same seed for reproducible maps */
+
+    /* Clear map */
+    memset((*sim->sim.mp).mapItem, DEEP_SEA, sizeof((*sim->sim.mp).mapItem));
+
+    /* Fill mine border */
+    for (x = 0; x < 256; x++) {
+        for (y = 0; y < 256; y++) {
+            if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+            }
+        }
+    }
+
+    /* Clear and regenerate objects */
+    sim->sim.pb->numPills = 0;
+    sim->sim.bs->numBases = 0;
+    sim->sim.ss->numStarts = 0;
+    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
+    basesClearMines(&sim->sim);
+
+    /* Update cached map */
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = malloc(len);
+    if (sim->cachedMapData == NULL) {
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    /* Update map name */
+    mapGenConfigToSeed(&cfg, seedStr, sizeof(seedStr));
+    snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
+
+    /* Store updated config */
+    sim->randomMapConfig = cfg;
+
+    snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
+    serverSimConsoleMessage(msg);
+
+    /* Reset lobby ready state */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            sim->lobbyPlayers[i].ready = FALSE;
+        }
+    }
+
     return TRUE;
 }
 
@@ -788,7 +910,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) 
 
     /* Broadcast current skip vote state to the new player — existing votes
      * are preserved since the threshold naturally adjusts with more players. */
-    if (sim->lobbyEnabled && sim->state == serverStateLobby && sim->mapDirCount > 1) {
+    if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         transportUdpServerBroadcastMapSkipState(sim);
     }
 }
@@ -816,7 +938,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->mapSkipVotes[playerNum] = false;
 
     /* Check if disconnect pushes skip votes over threshold */
-    if (sim->lobbyEnabled && sim->state == serverStateLobby && sim->mapDirCount > 1) {
+    if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         int voteCount = 0;
         int connectedHumans = 0;
         BYTE k;
@@ -827,7 +949,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         }
         if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
             SDL_Log("Map skip: disconnect pushed votes over threshold (%d/%d), skipping map", voteCount, connectedHumans);
-            serverSimMapDirPickRandom(sim);
+            if (sim->randomMapEnabled) {
+                serverSimRandomMapRegenerate(sim);
+            } else {
+                serverSimMapDirPickRandom(sim);
+            }
             serverSimMapSkipVotesReset(sim);
             transportUdpServerNotifyMapChange(sim);
             transportUdpServerBroadcastMapSkipState(sim);
@@ -1354,6 +1480,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
 
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
+
+    /* Regenerate random map between rounds */
+    if (sim->randomMapEnabled) {
+        serverSimRandomMapRegenerate(sim);
+        transportUdpServerNotifyMapChange(sim);
+    }
+
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
 }
@@ -1820,7 +1953,7 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
     int connectedHumans = 0;
     BYTE i;
 
-    if (sim->state != serverStateLobby || sim->mapDirCount <= 1) {
+    if (sim->state != serverStateLobby || (sim->mapDirCount <= 1 && !sim->randomMapEnabled)) {
         return;
     }
     if (playerNum >= MAX_TANKS || !sim->playerConnected[playerNum]) {
@@ -1843,7 +1976,11 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
 
     if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
         SDL_Log("Map skip: majority reached (%d/%d), skipping map", voteCount, connectedHumans);
-        serverSimMapDirPickRandom(sim);
+        if (sim->randomMapEnabled) {
+            serverSimRandomMapRegenerate(sim);
+        } else {
+            serverSimMapDirPickRandom(sim);
+        }
         serverSimMapSkipVotesReset(sim);
         transportUdpServerNotifyMapChange(sim);
         transportUdpServerBroadcastMapSkipState(sim);

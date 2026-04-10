@@ -75,6 +75,8 @@
 #include "../../bolo/transport_udp.h"
 #include "../../winbolonet/winbolonet.h"
 #include "../../steam/steam_wrapper.h"
+#include "../../mapeditor/mapeditor.h"
+#include "../../mapeditor/mapeditor_generate.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -611,6 +613,12 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     }
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    case openMapEditor:
+      mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      dlgState = openWelcome;
+      break;
+#endif
     case openFinished:
       done = TRUE;
       break;
@@ -882,7 +890,17 @@ bool gameFrontSetDlgState(openingStates newState) {
         bool simOk = FALSE;
         spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
         if (spServerSim != NULL) {
-          if (strcmp(fileName, "") != 0) {
+          if (strncmp(fileName, "randommap:", 10) == 0) {
+            /* Random map — parse seed from "randommap:<seed>" */
+            MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+            const char *seedStr = fileName + 10;
+            if (!mapGenSeedToConfig(seedStr, &cfg)) {
+                SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+            }
+            cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+            cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+            simOk = serverSimCreateRandomMap(spServerSim, &cfg, gametype, hiddenMines, startDelay, timeLen);
+          } else if (strcmp(fileName, "") != 0) {
             simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
           } else {
             BYTE emap[6000] = E_MAP;

@@ -40,6 +40,7 @@ enum {
     RESULT_INTERNET     = 14,  /* openInternet */
     RESULT_LAN          = 10,  /* openLan */
     RESULT_SETTINGS     = 19,  /* openSettings */
+    RESULT_MAPEDITOR    = 20,  /* openMapEditor */
     RESULT_QUIT         = -1
 };
 
@@ -132,10 +133,11 @@ extern "C" int imguiWelcomeShow(void) {
 
     /* Load images */
     SDL_Texture *logoTex     = loadPng(renderer, "smalllogo-transparent.png");
-    SDL_Texture *btnIcons[4] = {
+    SDL_Texture *btnIcons[5] = {
         loadBmp(renderer, "button_practice.bmp"),
         loadBmp(renderer, "button_internet.bmp"),
         loadBmp(renderer, "button_lan.bmp"),
+        nullptr,  /* no icon for map editor yet */
         nullptr,  /* no icon for settings yet */
     };
 
@@ -291,6 +293,9 @@ extern "C" int imguiWelcomeShow(void) {
                 { "Single Player##mini", RESULT_SINGLEPLAYER },
                 { "Internet##mini",      RESULT_INTERNET },
                 { "Local##mini",         RESULT_LAN },
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                { "Map Editor##mini",    RESULT_MAPEDITOR },
+#endif
                 { "Settings##mini",      RESULT_SETTINGS },
 #if !BOLO_MOBILE
                 { "Quit##mini",          RESULT_QUIT },
@@ -399,10 +404,14 @@ extern "C" int imguiWelcomeShow(void) {
                 { "Single Player", RESULT_SINGLEPLAYER },
                 { "Internet",      RESULT_INTERNET },
                 { "Local",         RESULT_LAN },
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                { "Map Editor",    RESULT_MAPEDITOR },
+#endif
                 { "Settings",      RESULT_SETTINGS },
             };
+            int modeCount = sizeof(modes) / sizeof(modes[0]);
 
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < modeCount; i++) {
                 float rowY = ImGui::GetCursorPosY();
 
                 ImGui::SetCursorPosX(rowStartX);
