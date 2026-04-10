@@ -1369,7 +1369,8 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
     /* ── CATEGORY 11: Phase 1 Shaping ── */
     if (w[RC_EXPLORATION_BONUS] != 0.0f || w[RC_BASE_PROXIMITY] != 0.0f ||
         w[RC_SPEED_BONUS] != 0.0f || w[RC_BOAT_OVERSTAY] != 0.0f ||
-        w[RC_ON_LAND_BONUS] != 0.0f || w[RC_APPROACH_PILLBOX] != 0.0f) {
+        w[RC_ON_LAND_BONUS] != 0.0f || w[RC_APPROACH_PILLBOX] != 0.0f ||
+        w[RC_FACING_PILLBOX] != 0.0f) {
 
         /* exploration_bonus: bitfield tracking */
         if (alive && w[RC_EXPLORATION_BONUS] != 0.0f) {
@@ -1430,6 +1431,28 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
                 comp[RC_APPROACH_PILLBOX] = rs->prev_nearest_pill_dist - min_dist;
             }
             rs->prev_nearest_pill_dist = min_dist;
+        }
+
+        /* facing_pillbox: reward for aiming toward nearest non-owned pill */
+        if (alive && w[RC_FACING_PILLBOX] != 0.0f) {
+            float dir_rad = obs->direction * (2.0f * 3.14159265f);
+            float fx = sinf(dir_rad);
+            float fy = -cosf(dir_rad);
+            float best_dot = -2.0f;
+            for (int pi = 0; pi < obs->num_pillboxes; pi++) {
+                if (obs->pillboxes[pi].owner == WBGYM_OWNER_SELF ||
+                    obs->pillboxes[pi].owner == WBGYM_OWNER_ALLY)
+                    continue;
+                float dx = (float)obs->pillboxes[pi].tx - tank_x;
+                float dy = (float)obs->pillboxes[pi].ty - tank_y;
+                float dist = sqrtf(dx*dx + dy*dy);
+                if (dist < 0.5f) continue;
+                float dot = (fx*dx + fy*dy) / dist;
+                if (dot > best_dot) best_dot = dot;
+            }
+            if (best_dot > -2.0f) {
+                comp[RC_FACING_PILLBOX] = fmaxf(0.0f, best_dot);
+            }
         }
     }
 

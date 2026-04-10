@@ -118,7 +118,7 @@ extern "C" {
 #define WBGYM_OWNER_ALLY     3
 
 /* ── Reward component indices (must match Python RewardConfig field order) ── */
-#define WBGYM_NUM_REWARD_COMPONENTS 54
+#define WBGYM_NUM_REWARD_COMPONENTS 55
 
 /* Category 1: Survival */
 #define RC_DEATH                  0
@@ -185,6 +185,7 @@ extern "C" {
 #define RC_BOAT_OVERSTAY         51
 #define RC_ON_LAND_BONUS         52
 #define RC_APPROACH_PILLBOX      53
+#define RC_FACING_PILLBOX        54
 
 /* Rolling window sizes */
 #define WBGYM_SHOT_WINDOW         50
