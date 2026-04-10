@@ -42,6 +42,7 @@
 #include "threads.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
+#include "../mapeditor/mapeditor_generate.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/bot_manager.h"
 #include "../common/sentry_integration.h"
@@ -648,6 +649,12 @@ void printArgs() {
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
+  fprintf(stderr, "-randommap        - Generate a random procedural map instead of loading a file.\n");
+  fprintf(stderr, "                    -randommap alone generates a fully random map each round.\n");
+  fprintf(stderr, "                    -randommap tournament|natural|maze|fractal — specific generator type.\n");
+  fprintf(stderr, "                    -randommap <seed> — reproduce a specific map from its seed.\n");
+  fprintf(stderr, "                    -randommap tournament <seed> — type with specific seed.\n");
+  fprintf(stderr, "                    Map name shown as 'rand_<seed>' in server info.\n");
 }
 
 
@@ -753,6 +760,32 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
     mapName[2047] = '\0';
   } else if (argExist(numArgs, argv, "inbuilt") == TRUE) {
     strcpy(mapName, "-inbuilt");
+  } else if (argExist(numArgs, argv, "randommap") == TRUE) {
+    /* Build the randommap marker string.
+     * Format: "-randommap" or "-randommap <type>" or "-randommap <type> <seed>"
+     * or "-randommap <seed>". Store the full info for main() to parse. */
+    argNum = findArg(numArgs, argv, "randommap");
+    if (argNum != ARG_NOT_FOUND && argv[argNum][0] != '-') {
+      /* There's a next arg that isn't another flag */
+      char *arg1 = (char *)argv[argNum];
+      /* Check if it's a type name or a seed */
+      char lower[64];
+      strncpy(lower, arg1, sizeof(lower) - 1);
+      lower[sizeof(lower) - 1] = '\0';
+      strlower(lower);
+      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 || strcmp(lower, "maze") == 0) {
+        /* Type specified — check for seed after it */
+        snprintf(mapName, 2048, "-randommap %s", lower);
+        if (argNum + 1 < numArgs && argv[argNum + 1][0] != '-') {
+          snprintf(mapName, 2048, "-randommap %s %s", lower, (char *)argv[argNum + 1]);
+        }
+      } else {
+        /* Assume it's a seed string */
+        snprintf(mapName, 2048, "-randommap seed %s", arg1);
+      }
+    } else {
+      strcpy(mapName, "-randommap");
+    }
   } else if (argExist(numArgs, argv, "mapdir") == TRUE) {
     /* -mapdir without -map: will pick random map after directory scan */
     strcpy(mapName, "-mapdir");
@@ -985,7 +1018,87 @@ int main(int argc, char **argv) {
   }
 
   /* Create server simulation */
-  if (strcmp(mapName, "-inbuilt") == 0) {
+  if (strncmp(mapName, "-randommap", 10) == 0) {
+    MapGenConfig cfg;
+    bool hasFixedSeed = false;
+
+    /* Parse the marker string */
+    char typeStr[32] = "";
+    char seedStr[64] = "";
+    /* mapName is "-randommap" or "-randommap <type>" or "-randommap <type> <seed>"
+       or "-randommap seed <seed>" */
+    if (strlen(mapName) > 11) {
+      sscanf(mapName + 11, "%31s %63s", typeStr, seedStr);
+    }
+
+    if (strcmp(typeStr, "seed") == 0) {
+      /* "-randommap seed <seed>" — seed is in seedStr */
+      cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+      if (mapGenSeedToConfig(seedStr, &cfg)) {
+        hasFixedSeed = true;
+      }
+    } else if (typeStr[0] != '\0') {
+      /* Type specified */
+      int genType = MAPGEN_TOURNAMENT;
+      if (strcmp(typeStr, "natural") == 0) genType = MAPGEN_NATURAL;
+      else if (strcmp(typeStr, "maze") == 0) genType = MAPGEN_MAZE;
+      else if (strcmp(typeStr, "fractal") == 0) genType = MAPGEN_FRACTAL;
+      cfg = mapGenDefaultConfig(genType);
+
+      if (seedStr[0] != '\0') {
+        /* Type + seed */
+        if (mapGenSeedToConfig(seedStr, &cfg)) {
+          hasFixedSeed = true;
+        }
+      }
+    } else {
+      /* Plain "-randommap" — fully random */
+      int types[] = { MAPGEN_TOURNAMENT, MAPGEN_NATURAL, MAPGEN_MAZE, MAPGEN_FRACTAL };
+      srand((unsigned int)time(NULL));
+      cfg = mapGenDefaultConfig(types[rand() % 4]);
+    }
+
+    /* Force tournament maps to max objects */
+    if (cfg.genType == MAPGEN_TOURNAMENT) {
+      cfg.bases = 16;
+      cfg.pills = 16;
+      cfg.starts = 16;
+    }
+
+    /* Generate a random seed if none was provided */
+    if (!hasFixedSeed) {
+      cfg.seed = (uint32_t)time(NULL) ^ ((uint32_t)clock() << 16);
+      if (cfg.seed == 0) cfg.seed = 1;
+    }
+
+    /* Set region to full playable area */
+    cfg.x1 = 21; cfg.y1 = 21;
+    cfg.x2 = 235; cfg.y2 = 235;
+
+    if (serverSimCreateRandomMap(&serverSim, &cfg, game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+      fprintf(stderr, "Error generating random map\n");
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+
+    /* Log the seed so admins can reproduce this map */
+    {
+      char seedBuf[64];
+      char msg[128];
+      mapGenConfigToSeed(&cfg, seedBuf, sizeof(seedBuf));
+      snprintf(msg, sizeof(msg), "Generated random map with seed: %s", seedBuf);
+      serverMessageConsoleMessage(&serverSim, msg);
+      fprintf(stderr, "%s\n", msg);
+    }
+
+    /* Store config for between-round regeneration */
+    serverSim.randomMapEnabled = true;
+    serverSim.randomMapConfig = cfg;
+    serverSim.randomMapFixedSeed = hasFixedSeed;
+
+  } else if (strcmp(mapName, "-inbuilt") == 0) {
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4305)

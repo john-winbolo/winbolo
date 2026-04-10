@@ -403,6 +403,7 @@ set(IOS_SERVER_SOURCES
     src/server/server_sim.c src/server/servermessages.c
     src/server/server_stubs.c
     src/server/threads.c
+    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
 
 
@@ -420,6 +421,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/currentgames.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
+    src/gui/sdl3/minimap_render.c
     src/gui/sdl3/flags.c
     src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/input.c
@@ -540,6 +542,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/bolo
     src/server
+    src/mapeditor
 )
 
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
@@ -765,8 +768,11 @@ set(CLIENT_SOURCES
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp
+    src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/bolo/transport_local.c src/bolo/transport_udp.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/client_sim.c
     src/bolo/discovery.c
@@ -827,6 +833,7 @@ target_include_directories(WinBolo PRIVATE
     src/gui
     src/bolo
     src/server
+    src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
 )
@@ -1016,6 +1023,7 @@ set(SERVER_SOURCES
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
+    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
 
 
@@ -1033,6 +1041,7 @@ target_include_directories(WinBoloDS PRIVATE
     src/gui
     src/bolo
     src/server
+    src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
 )
@@ -1256,6 +1265,7 @@ set(HEADLESS_SOURCES
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
+    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
@@ -1288,6 +1298,7 @@ target_include_directories(WinBoloHeadless PRIVATE
     src/bolo
     src/server
     src/headless
+    src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
 )
@@ -1377,6 +1388,7 @@ set(GYM_SOURCES
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c src/server/server_stubs.c
+    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
@@ -1411,6 +1423,7 @@ target_include_directories(winbolo_gym PRIVATE
     src/bolo
     src/server
     src/headless
+    src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
 )
@@ -1481,6 +1494,7 @@ set(BRAINTEST_SOURCES
     src/bolo/bot_manager.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
 )
 
@@ -1512,6 +1526,7 @@ target_include_directories(BrainTest PRIVATE
     src/bolo
     src/server
     src/braintest
+    src/mapeditor
 )
 
 if(WIN32)
@@ -1545,10 +1560,96 @@ add_custom_command(TARGET BrainTest POST_BUILD
     COMMENT "Copying BrainTest data files to output directory"
 )
 
+# ---------------------------------------------------------------------------
+# MapEditor (standalone map editor)
+# ---------------------------------------------------------------------------
+
+set(MAPEDITOR_SOURCES
+    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
+    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
+    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
+    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
+    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/gui_message.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
+    src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
+    src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
+    src/gui/sdl3/minimap_render.c
+    src/gui/sdl3/lang.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c
+    src/bolo/transport_local.c src/bolo/transport_udp.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/client_sim.c
+    src/bolo/bot_manager.c
+    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
+    src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/third_party/stb/stb_image_write_impl.c
+    src/mapeditor/mapeditor_main.c
+    src/braintest/braintest_frontend.c
+)
+
+file(GLOB MAPEDITOR_BSD_SOURCES src/bsd/*.c)
+list(APPEND MAPEDITOR_SOURCES ${MAPEDITOR_BSD_SOURCES})
+
+file(GLOB MAPEDITOR_COMMON_SOURCES src/common/*.c)
+list(APPEND MAPEDITOR_SOURCES ${MAPEDITOR_COMMON_SOURCES})
+if(NOT WIN32)
+    list(FILTER MAPEDITOR_SOURCES EXCLUDE REGEX ".*common/util\\.c$")
+endif()
+
+add_executable(MapEditor ${MAPEDITOR_SOURCES})
+target_sources(MapEditor PRIVATE src/steam/steam_wrapper_stub.c)
+target_compile_definitions(MapEditor PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+
+target_include_directories(MapEditor PRIVATE
+    src/gui/sdl3
+    src/gui
+    src/bolo
+    src/server
+    src/mapeditor
+)
+
+if(WIN32)
+    target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
+    target_compile_options(MapEditor PRIVATE -fcommon)
+else()
+    target_sources(MapEditor PRIVATE
+        src/server/posix_stubs.c
+    )
+    target_link_libraries(MapEditor PRIVATE ${MATH_LIB} pthread)
+    target_compile_options(MapEditor PRIVATE -fcommon)
+endif()
+
+target_link_libraries(MapEditor PRIVATE
+    SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
+    nanosvg stb_image
+)
+
+# Copy shared libraries and assets next to MapEditor executable
+add_custom_command(TARGET MapEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:MapEditor>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:MapEditor>"
+    COMMENT "Copying SDL3 and SDL3_ttf shared libraries to MapEditor output directory"
+)
+add_custom_command(TARGET MapEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:MapEditor>/data"
+    COMMENT "Copying MapEditor data files to output directory"
+)
+
 # MinGW: statically link the GCC/C++ runtime so the executables don't need
 # libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
 if(MINGW)
-    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless BrainTest)
+    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless BrainTest MapEditor)
         if(TARGET ${_tgt})
             target_link_options(${_tgt} PRIVATE -static)
         endif()
@@ -1560,6 +1661,7 @@ set_flat_output(WinBolo          "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBoloDS        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBoloHeadless  "${CMAKE_BINARY_DIR}")
 set_flat_output(BrainTest        "${CMAKE_BINARY_DIR}")
+set_flat_output(MapEditor        "${CMAKE_BINARY_DIR}")
 set_flat_output(winbolo_gym      "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
