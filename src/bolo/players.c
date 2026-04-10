@@ -315,14 +315,22 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE playerNum, char *p
       count++;
     }
   }
-  /* Processing our client, we want to store it's IP so that it can be snagged for the network info */
-  else if (iMyPlayerNum == iPlayerNum)
-  {
+  else if (iMyPlayerNum == iPlayerNum) {
+    /* Processing our client, store location for the network info */
     strcpy((*plrs)->item[playerNum].location, location);
-    /* Also store country code for the local player */
     (*plrs)->item[playerNum].countryCode[0] = location[0];
     (*plrs)->item[playerNum].countryCode[1] = location[1];
     (*plrs)->item[playerNum].countryCode[2] = '\0';
+  } else {
+    /* Already registered (e.g. auto-registered from snapshot with a
+       placeholder name) — update name and location from authoritative
+       source such as PACKET_PLAYER_LIST. */
+    strcpy((*plrs)->item[playerNum].playerName, playerName);
+    strcpy((*plrs)->item[playerNum].location, location);
+    (*plrs)->item[playerNum].countryCode[0] = location[0];
+    (*plrs)->item[playerNum].countryCode[1] = location[1];
+    (*plrs)->item[playerNum].countryCode[2] = '\0';
+    utilCtoPString(playerName, (char *) ((*plrs)->playerBrainNames[playerNum]));
   }
 
   /* Update front end if we are in a running game (ie not in the joining phase) */
