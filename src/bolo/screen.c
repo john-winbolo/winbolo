@@ -3919,8 +3919,8 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         }
         break;
       case EVENT_TANK_KILLED:
-        /* data: [killer, killed, deathCause] — increment kills for the local player */
-        if (events[i].data[0] == playerNum) {
+        /* data: [killer, killed, deathCause, carriedPills] */
+        if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
           tankAddKill(&csPtr->sim, &csPtr->sim.tanks[0]);
           steam_increment_stat("STAT_TANK_KILLS", 1);
           steamStatsUpdated = true;
