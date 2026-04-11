@@ -52,6 +52,7 @@ typedef struct {
     uint8_t  buildY;        /* LGM target Y (if buildAction != 0) */
     uint8_t  flags;         /* Bit 0: autoslow, bits 2-3: gunsight adj */
     uint32_t eventAck;      /* Reliable event ACK: next expected seq (0 = none) */
+    uint32_t mapEventAck;   /* Map event ACK: next expected map event seq (0 = none) */
     uint16_t pingMs;        /* Client's self-measured RTT in ms */
 } InputPacket;
 
@@ -69,8 +70,10 @@ typedef struct {
     uint8_t  explosionCount;      /* Number of ExplosionSnapshot entries following */
     uint8_t  baseCount;           /* Number of BaseSnapshot entries following */
     uint8_t  pillCount;           /* Number of PillSnapshot entries following */
-    uint8_t  reliableEventCount;  /* Number of reliable GameEvent entries following */
+    uint8_t  reliableEventCount;  /* Number of reliable GameEvent entries following (game + map merged) */
     uint32_t reliableBaseSeq;     /* Sequence number of first reliable event in this snapshot */
+    /* mapEventCount + mapEventBaseSeq are on the wire only, not stored here —
+     * map events are merged into the same snapshotEvents array on the client. */
     uint16_t mapChecksum;         /* CRC-16 of map terrain (non-zero on full sync ticks) */
 } SnapshotHeader;
 
