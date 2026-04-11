@@ -124,6 +124,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   
   srand((unsigned int) time(NULL));
   memset(cs, 0, sizeof(*cs));
+  cs->myPlayerNum = 0;
 
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
@@ -158,7 +159,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   scrollCreate(&cs->scroll);
   grassCreate(&cs->sim.grs);
   swampCreate(&cs->sim.swp);
-  cs->sim.lgmen[0] = lgmCreate(0);
+  MY_LGM(cs) = lgmCreate(cs->myPlayerNum);
   floodCreate(&cs->sim.ff);
   tkExplosionCreate(&cs->sim.tankExplosions);
   minesExpCreate(&cs->sim.minesExplosions);
@@ -169,7 +170,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
     for (i = 0; i < MAX_TANKS; i++) {
       cs->sim.baseTimer[i] = 30000;
     }
-    cs->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
+    cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
   }
   pillsCreate(&cs->sim.pb);
   logCreate();
@@ -201,6 +202,18 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   return true;
 }
 
+void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
+    cs->myPlayerNum = playerNum;
+    if (playerNum != 0) {
+        cs->sim.tanks[playerNum] = cs->sim.tanks[0];
+        cs->sim.tanks[0] = NULL;
+        cs->sim.lgmen[playerNum] = cs->sim.lgmen[0];
+        cs->sim.lgmen[0] = NULL;
+        lgmSetPlayerNum(&cs->sim.lgmen[playerNum], playerNum);
+        cs->sim.baseTimer[playerNum] = BASE_TICKS_BETWEEN_REFUEL;
+    }
+}
+
 /*********************************************************
  *NAME:          clientSimDestroy
  *PURPOSE:
@@ -214,8 +227,8 @@ void clientSimDestroy(ClientSim *cs) {
   logDestroy();
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
-  tankDestroy(&cs->sim, &cs->sim.tanks[0]);
-  cs->sim.tanks[0] = NULL;
+  tankDestroy(&cs->sim, &MY_TANK(cs));
+  MY_TANK(cs) = NULL;
   mapDestroy(&cs->sim.mp);
   startsDestroy(&cs->sim.ss);
   basesDestroy(&cs->sim.bs);
@@ -227,7 +240,7 @@ void clientSimDestroy(ClientSim *cs) {
   messageDestroy(&cs->messages);
   grassDestroy(&cs->sim.grs);
   floodDestroy(&cs->sim.ff);
-  lgmDestroy(&cs->sim.lgmen[0]);
+  lgmDestroy(&MY_LGM(cs));
   swampDestroy(&cs->sim.swp);
   cs->sim.swp = NULL;
   screenBrainMapDestroy(cs);
@@ -246,9 +259,9 @@ void clientSimDestroy(ClientSim *cs) {
   cs->sim.bs = NULL;
   cs->sim.pb = NULL;
   cs->sim.ss = NULL;
-  cs->sim.tanks[0] = NULL;
+  MY_TANK(cs) = NULL;
   cs->sim.shs = NULL;
-  cs->sim.lgmen[0] = NULL;
+  MY_LGM(cs) = NULL;
   cs->sim.plyrs = NULL;
 
   /* Clear lobby chat buffer */
@@ -278,7 +291,7 @@ void clientSimKeysTick(ClientSim *cs, const InputPacket *pkt) {
     return;
   }
   clientStateRecordInput(&cs->clientState, pkt);
-  clientStatePredictTick(cs, &cs->clientState, pkt, &cs->sim.tanks[0], &cs->sim, TRUE, FALSE);
+  clientStatePredictTick(cs, &cs->clientState, pkt, &MY_TANK(cs), &cs->sim, TRUE, FALSE);
 }
 
 /*********************************************************
@@ -306,8 +319,8 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
    * tank's position before clientStatePredictTick moves it.
    * Check reload <= 1 because tankUpdate decrements reload before the
    * fire check — a reload of 1 becomes 0 and allows firing. */
-  if ((pkt->actions & INPUT_ACTION_FIRE) && cs->sim.tanks[0] != NULL) {
-    tank *tk = &cs->sim.tanks[0];
+  if ((pkt->actions & INPUT_ACTION_FIRE) && MY_TANK(cs) != NULL) {
+    tank *tk = &MY_TANK(cs);
     if (tankGetReloadTime(tk) <= 1 &&
         tankGetShells(tk) > 0 &&
         tankGetArmour(tk) <= TANK_FULL_ARMOUR) {
@@ -318,17 +331,17 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
   }
 
   clientStateRecordInput(&cs->clientState, pkt);
-  clientStatePredictTick(cs, &cs->clientState, pkt, &cs->sim.tanks[0], &cs->sim, FALSE, isBrain);
+  clientStatePredictTick(cs, &cs->clientState, pkt, &MY_TANK(cs), &cs->sim, FALSE, isBrain);
 
   /* Create predicted shell using pre-movement position to match server */
   if (canFire) {
     if (!isBrain) {
       frontEndPlaySound(shootSelf);
     }
-    clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &cs->sim.tanks[0], pkt->tick);
+    clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &MY_TANK(cs), pkt->tick);
     /* Update predicted tank state to match what the server will do */
-    tankSetReload(&cs->sim.tanks[0], TANK_RELOAD_TIME);
-    tankSetShells(&cs->sim.tanks[0], tankGetShells(&cs->sim.tanks[0]) - 1);
+    tankSetReload(&MY_TANK(cs), TANK_RELOAD_TIME);
+    tankSetShells(&MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
   }
 
   /* Advance existing predicted shells */

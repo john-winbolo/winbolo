@@ -216,7 +216,7 @@ static const char *packetTypeName(uint8_t type) {
     }
 }
 
-/* Serialize one InputPacket into buf. Returns bytes written (15). */
+/* Serialize one InputPacket into buf. Returns bytes written (21). */
 static int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     packU32(buf, pkt->tick);
     buf[4] = pkt->playerNum;
@@ -227,11 +227,12 @@ static int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     buf[9] = pkt->buildY;
     buf[10] = pkt->flags;
     packU32(buf + 11, pkt->eventAck);
-    packU16(buf + 15, pkt->pingMs);
-    return 17;
+    packU32(buf + 15, pkt->mapEventAck);
+    packU16(buf + 19, pkt->pingMs);
+    return 21;
 }
 
-#define INPUT_PACKET_WIRE_SIZE 17
+#define INPUT_PACKET_WIRE_SIZE 21
 
 static void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->tick = unpackU32(buf);
@@ -243,7 +244,8 @@ static void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->buildY = buf[9];
     pkt->flags = buf[10];
     pkt->eventAck = unpackU32(buf + 11);
-    pkt->pingMs = unpackU16(buf + 15);
+    pkt->mapEventAck = unpackU32(buf + 15);
+    pkt->pingMs = unpackU16(buf + 19);
 }
 
 /* Serialize one TankSnapshot into buf. Returns bytes written (20). */
@@ -495,7 +497,8 @@ typedef struct {
     uint32_t lastSnapshotTick; /* Local tick when last snapshot arrived (for timeout) */
 
     /* Reliable event dedup */
-    uint32_t reliableEventAck;  /* Next expected reliable event seq (init to 1) */
+    uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
+    uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -562,10 +565,11 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
         return;
     }
 
-    /* Store in ring buffer for redundancy — stamp with current reliable ACK and ping */
+    /* Store in ring buffer for redundancy — stamp with current reliable ACKs and ping */
     {
         InputPacket stamped = *input;
         stamped.eventAck = c->reliableEventAck;
+        stamped.mapEventAck = c->mapEventAck;
         stamped.pingMs = c->pingMs;
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
     }
@@ -602,6 +606,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint32_t mapSize;
 
             c->playerNum = buf[pos++];
+            clientSimSetPlayerNum(c->clientSim, c->playerNum);
             pos += 4; /* skip serverTick */
             c->serverGameType = (gameType)buf[pos++];
             c->serverHiddenMines = buf[pos++] ? TRUE : FALSE;
@@ -719,17 +724,23 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         uint8_t tankCount, shellCount, explosionCount;
         uint8_t baseCount, pillCount, reliableEventCount;
         uint32_t reliableBaseSeq;
+        uint8_t mapEventCount;
+        uint32_t mapEventBaseSeq;
         int newEventCount = 0;
+        int actuallyUnpacked = 0;
+        int actuallyUnpackedMap = 0;
 
         /* Ignore stale snapshots */
         if (c->hasSnapshot && seq <= c->lastSnapshotSeq) {
             break;
         }
 
-        /* New header: serverTick(4) + lastProcessedInput(4) + tankCount(1)
+        /* Header: serverTick(4) + lastProcessedInput(4) + tankCount(1)
          * + shellCount(1) + explosionCount(1) + baseCount(1) + pillCount(1)
-         * + reliableEventCount(1) + reliableBaseSeq(4) + mapChecksum(2) = 20 bytes */
-        if (len < pos + 20) break;
+         * + reliableEventCount(1) + reliableBaseSeq(4)
+         * + mapEventCount(1) + mapEventBaseSeq(4)
+         * + mapChecksum(2) = 25 bytes */
+        if (len < pos + 25) break;
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -742,6 +753,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         pillCount = buf[pos++];
         reliableEventCount = buf[pos++];
         reliableBaseSeq = unpackU32(buf + pos);
+        pos += 4;
+        mapEventCount = buf[pos++];
+        mapEventBaseSeq = unpackU32(buf + pos);
         pos += 4;
         c->snapshotHdr.mapChecksum = unpackU16(buf + pos);
         pos += 2;
@@ -792,33 +806,57 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             pos += PILL_SNAPSHOT_WIRE_SIZE;
         }
 
-        /* Unpack reliable events with dedup */
-        if (reliableEventCount > MAX_SNAPSHOT_EVENTS) reliableEventCount = MAX_SNAPSHOT_EVENTS;
-        if (reliableEventCount > 0) {
-            /*
-            fprintf(stderr, "[UDP CLIENT] Snapshot has %u wire events, baseSeq=%u, our ack=%u\n",
-                    reliableEventCount, reliableBaseSeq, c->reliableEventAck);
-        */
-        }
+        /* Unpack reliable game events with dedup.
+         * Only advance ACK based on events we actually consumed — stop
+         * on truncated packet OR when the local buffer is full. */
         for (i = 0; i < reliableEventCount; i++) {
             uint32_t evSeq = reliableBaseSeq + (uint32_t)i;
             GameEvent ev;
-            if (pos + 1 > len) break;  /* Need at least the type byte */
+            if (pos + 1 > len) break;  /* Truncated packet — stop */
             pos += unpackGameEvent(buf + pos, &ev);
+            actuallyUnpacked++;
             /* Only apply events we haven't seen yet */
             if (evSeq >= c->reliableEventAck) {
                 if (newEventCount < MAX_SNAPSHOT_EVENTS) {
                     c->snapshotEvents[newEventCount++] = ev;
+                } else {
+                    break;  /* Buffer full — stop so we don't ACK unconsumed events */
                 }
             }
         }
-        /* Advance our ACK to cover all events we just received */
-        if (reliableEventCount > 0) {
-            uint32_t lastSeq = reliableBaseSeq + reliableEventCount;
+        /* Only ACK events we actually unpacked from the wire */
+        if (actuallyUnpacked > 0) {
+            uint32_t lastSeq = reliableBaseSeq + (uint32_t)actuallyUnpacked;
             if (lastSeq > c->reliableEventAck) {
                 c->reliableEventAck = lastSeq;
             }
         }
+
+        /* Unpack reliable map events with dedup (separate stream).
+         * Map events are merged into snapshotEvents after game events
+         * so callers don't need to change. */
+        for (i = 0; i < mapEventCount; i++) {
+            uint32_t evSeq = mapEventBaseSeq + (uint32_t)i;
+            GameEvent ev;
+            if (pos + 1 > len) break;  /* Truncated packet — stop */
+            pos += unpackGameEvent(buf + pos, &ev);
+            actuallyUnpackedMap++;
+            if (evSeq >= c->mapEventAck) {
+                if (newEventCount < MAX_SNAPSHOT_EVENTS) {
+                    c->snapshotEvents[newEventCount++] = ev;
+                } else {
+                    break;  /* Buffer full — stop so we don't ACK unconsumed events */
+                }
+            }
+        }
+        /* Only ACK map events we actually unpacked from the wire */
+        if (actuallyUnpackedMap > 0) {
+            uint32_t lastSeq = mapEventBaseSeq + (uint32_t)actuallyUnpackedMap;
+            if (lastSeq > c->mapEventAck) {
+                c->mapEventAck = lastSeq;
+            }
+        }
+
         c->snapshotHdr.reliableEventCount = (uint8_t)newEventCount;
         c->snapshotHdr.reliableBaseSeq = reliableBaseSeq;
 
@@ -1148,10 +1186,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Reset input ring so stale inputs from the previous game
          * are not sent as redundant packets in the new game. */
         c->inputRingCount = 0;
-        /* Reset reliable event ack so it matches the server's reset queue.
+        /* Reset reliable event acks so they match the server's reset queues.
          * Stale events from the previous game must not be applied to
          * the freshly-loaded map. */
         c->reliableEventAck = 1;
+        c->mapEventAck = 1;
         /* Discard any snapshot buffered during the lobby/gameOver
          * transition.  A late STATE_SNAPSHOT from the previous game
          * can sit in hasSnapshot because the lobby tick path calls
@@ -1474,6 +1513,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->lastSnapshotSeq = 0;
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
+    c->mapEventAck = 1;       /* First valid map event seq is 1 */
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
@@ -1847,8 +1887,11 @@ static struct {
     /* Per-client map download state */
     ClientMapDownload mapDownload[MAX_TANKS];
 
-    /* Per-client reliable event queues */
+    /* Per-client reliable event queues (game events: sounds, kills, etc.) */
     ClientEventQueue eventQueues[MAX_TANKS];
+
+    /* Per-client reliable map event queues (EVENT_MAP_CHANGE only) */
+    ClientEventQueue mapEventQueues[MAX_TANKS];
 
     /* Game lock — prevents new players from joining */
     bool gameLocked;           /* Server admin lock */
@@ -2163,10 +2206,13 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         udpServer.clients[slot].countryCode[2] = '\0';
     }
 
-    /* Initialize reliable event queue for this client */
+    /* Initialize reliable event queues for this client */
     udpServer.eventQueues[slot].nextSeq = 1;
     udpServer.eventQueues[slot].ackedSeq = 1;
     memset(udpServer.eventQueues[slot].buffer, 0, sizeof(udpServer.eventQueues[slot].buffer));
+    udpServer.mapEventQueues[slot].nextSeq = 1;
+    udpServer.mapEventQueues[slot].ackedSeq = 1;
+    memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
 
     /* Verify WBN token if provided */
     bool wbnVerified = false;
@@ -2297,9 +2343,12 @@ static void serverHandleInput(const uint8_t *buf, int len,
         /* Override playerNum to prevent spoofing */
         pkt.playerNum = (uint8_t)clientIdx;
 
-        /* Advance reliable event ACK from this client */
+        /* Advance reliable event ACKs from this client */
         if (pkt.eventAck > udpServer.eventQueues[clientIdx].ackedSeq) {
             udpServer.eventQueues[clientIdx].ackedSeq = pkt.eventAck;
+        }
+        if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
+            udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
         }
 
         /* Only apply if this is a newer input than what we last processed */
@@ -2347,6 +2396,8 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     int countsPos;
     int reliableEventCount = 0;
     uint32_t reliableBaseSeq = 0;
+    int mapEventCount = 0;
+    uint32_t mapEventBaseSeq = 0;
     SnapshotHeader hdr;
     TankSnapshot tankSnaps[MAX_TANKS];
     ShellSnapshot shellSnaps[MAX_SNAPSHOT_SHELLS];
@@ -2355,6 +2406,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     PillSnapshot pillSnaps[MAX_SNAPSHOT_PILLS];
     GameEvent eventSnaps[MAX_SNAPSHOT_EVENTS];
     ClientEventQueue *evQ = &udpServer.eventQueues[clientIdx];
+    ClientEventQueue *mapQ = &udpServer.mapEventQueues[clientIdx];
     UdpServerClient *client = &udpServer.clients[clientIdx];
 
     /* Build snapshot from sim state (same code as local transport) */
@@ -2373,13 +2425,15 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     /* Snapshot header — we'll fill in counts after packing data.
      * Format: serverTick(4) + lastProcessedInput(4) + tankCount(1)
      * + shellCount(1) + explosionCount(1) + baseCount(1) + pillCount(1)
-     * + reliableEventCount(1) + reliableBaseSeq(4) + mapChecksum(2) = 20 bytes */
+     * + reliableEventCount(1) + reliableBaseSeq(4)
+     * + mapEventCount(1) + mapEventBaseSeq(4)
+     * + mapChecksum(2) = 25 bytes */
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 12; /* 6 count bytes + 4 byte reliableBaseSeq + 2 byte mapChecksum */
+    pos += 17; /* 7 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum */
 
     /* Pack tank snapshots */
     for (i = 0; i < hdr.tankCount; i++) {
@@ -2426,7 +2480,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         pos += packPillSnapshot(buf + pos, &pillSnaps[i]);
     }
 
-    /* Pack reliable events from per-client queue (all unacked events).
+    /* Pack reliable game events from per-client queue (all unacked events).
      * These are transport-specific — serverSimBuildSnapshot() produces
      * per-tick events, but the reliable queue handles retransmission. */
     reliableBaseSeq = evQ->ackedSeq;
@@ -2438,6 +2492,21 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
             if (evQ->buffer[idx].seq != seq) break; /* Buffer wrapped — stop */
             pos += packGameEvent(buf + pos, &evQ->buffer[idx].event);
             reliableEventCount++;
+            if (reliableEventCount >= 255) break; /* Cap to uint8_t max */
+        }
+    }
+
+    /* Pack reliable map events from dedicated per-client queue */
+    mapEventBaseSeq = mapQ->ackedSeq;
+    {
+        uint32_t seq;
+        for (seq = mapQ->ackedSeq; seq < mapQ->nextSeq; seq++) {
+            uint32_t idx = seq % RELIABLE_EVENT_BUFFER_SIZE;
+            if (pos + GAME_EVENT_MAX_WIRE_SIZE > (int)sizeof(buf)) break;
+            if (mapQ->buffer[idx].seq != seq) break; /* Buffer wrapped — stop */
+            pos += packGameEvent(buf + pos, &mapQ->buffer[idx].event);
+            mapEventCount++;
+            if (mapEventCount >= 255) break; /* Cap to uint8_t max */
         }
     }
 
@@ -2449,15 +2518,18 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     buf[countsPos + 4] = hdr.pillCount;
     buf[countsPos + 5] = (uint8_t)reliableEventCount;
     packU32(buf + countsPos + 6, reliableBaseSeq);
-    packU16(buf + countsPos + 10, hdr.mapChecksum);
+    buf[countsPos + 10] = (uint8_t)mapEventCount;
+    packU32(buf + countsPos + 11, mapEventBaseSeq);
+    packU16(buf + countsPos + 15, hdr.mapChecksum);
 
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
     if (sim->tick % 50 == 0) {
-        fprintf(stderr, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u expl=%u bases=%u pills=%u events=%u(ack=%u next=%u) len=%d\n",
+        fprintf(stderr, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u expl=%u bases=%u pills=%u events=%u(ack=%u next=%u) mapEvts=%u(ack=%u next=%u) len=%d\n",
                 clientIdx, sim->tick, (unsigned)hdr.tankCount, (unsigned)hdr.shellCount,
                 (unsigned)hdr.explosionCount, (unsigned)hdr.baseCount,
                 (unsigned)hdr.pillCount, reliableEventCount,
-                evQ->ackedSeq, evQ->nextSeq, pos);
+                evQ->ackedSeq, evQ->nextSeq,
+                mapEventCount, mapQ->ackedSeq, mapQ->nextSeq, pos);
     }
 }
 
@@ -2847,10 +2919,12 @@ void transportUdpServerBroadcastGameStart(ServerSim *sim) {
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
         }
-        /* Reset reliable event queue — stale events from the previous game
+        /* Reset reliable event queues — stale events from the previous game
          * must not be resent after clients load the fresh map. */
         udpServer.eventQueues[i].nextSeq = 1;
         udpServer.eventQueues[i].ackedSeq = 1;
+        udpServer.mapEventQueues[i].nextSeq = 1;
+        udpServer.mapEventQueues[i].ackedSeq = 1;
     }
 }
 
@@ -3589,13 +3663,17 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Pass 2: enqueue map events first (from dedicated buffer),
-         * then non-sound events, then deduplicated sounds */
-        for (i = 0; i < (int)sim->mapEventCount; i++) {
-            uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
-            cq->buffer[idx].event = sim->mapEvents[i];
-            cq->buffer[idx].seq = cq->nextSeq;
-            cq->nextSeq++;
+        /* Pass 2: enqueue map events into dedicated map queue,
+         * then non-sound game events into game queue,
+         * then deduplicated sounds into game queue */
+        {
+            ClientEventQueue *mq = &udpServer.mapEventQueues[c];
+            for (i = 0; i < (int)sim->mapEventCount; i++) {
+                uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
+                mq->buffer[idx].event = sim->mapEvents[i];
+                mq->buffer[idx].seq = mq->nextSeq;
+                mq->nextSeq++;
+            }
         }
         for (i = 0; i < (int)sim->eventCount; i++) {
             uint8_t evType = sim->events[i].type;

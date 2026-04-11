@@ -217,15 +217,15 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
 
   b = TRUE;
 
-  if (csPtr->sim.tanks[0] == NULL) {
+  if (MY_TANK(csPtr) == NULL) {
     b = FALSE;
     return;
   }
 
-  x = tankGetScreenMX(&csPtr->sim.tanks[0]);
-  y = tankGetScreenMY(&csPtr->sim.tanks[0]);
-  px = tankGetScreenPX(&csPtr->sim.tanks[0]);
-  py = tankGetScreenPY(&csPtr->sim.tanks[0]);
+  x = tankGetScreenMX(&MY_TANK(csPtr));
+  y = tankGetScreenMY(&MY_TANK(csPtr));
+  px = tankGetScreenPX(&MY_TANK(csPtr));
+  py = tankGetScreenPY(&MY_TANK(csPtr));
 
   if (px >3 || (x - csPtr->xOffset) == 0) {
     x++;
@@ -303,10 +303,10 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
 
 
   if (value == redraw) {
-    screenTanksPrepare(csPtr, &scnTnk, &csPtr->sim.tanks[0], csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y));
+    screenTanksPrepare(csPtr, &scnTnk, &MY_TANK(csPtr), csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y));
     screenLgmPrepare(csPtr, &lgms, csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1 ), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y-1));
-    if (tankIsGunsightShow(&csPtr->sim.tanks[0]) == TRUE) {
-      tankGetGunsight(&csPtr->sim.tanks[0], &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
+    if (tankIsGunsightShow(&MY_TANK(csPtr)) == TRUE) {
+      tankGetGunsight(&MY_TANK(csPtr), &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
       gs.mapX = gsX;
 
       if (gs.mapX >= csPtr->xOffset && gs.mapX < (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1) && gs.mapY >= csPtr->yOffset && gs.mapY < (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y -1 )) {
@@ -373,7 +373,7 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
     }
     explosionsCalcScreenBullets(&csPtr->sim.expl, &sBullets, csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y-1));
     tkExplosionCalcScreenBullets(&csPtr->sim.tankExplosions, &sBullets, csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y-1));
-    frontEndDrawMainScreen(csPtr, &csPtr->view, &csPtr->mineView, &scnTnk, &gs, &sBullets, &lgms, csPtr->gmeStartDelay, csPtr->inPillView, &csPtr->sim.tanks[0], 0, 0);
+    frontEndDrawMainScreen(csPtr, &csPtr->view, &csPtr->mineView, &scnTnk, &gs, &sBullets, &lgms, csPtr->gmeStartDelay, csPtr->inPillView, &MY_TANK(csPtr), 0, 0);
   }
   screenBulletsDestroy(&sBullets);
   screenLgmDestroy(&lgms);
@@ -753,10 +753,10 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
     setkey(*holdKeys, KEY_turnright);
   }
   if (testkey(*tapKeys, KEY_morerange)) {
-    tankGunsightIncrease(csPtr, &csPtr->sim, &csPtr->sim.tanks[0]);
+    tankGunsightIncrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
   }
   if (testkey(*tapKeys, KEY_lessrange)) {
-    tankGunsightDecrease(csPtr, &csPtr->sim, &csPtr->sim.tanks[0]);
+    tankGunsightDecrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
   }
   if (testkey(*tapKeys, KEY_shoot)) {
     if (isGameTick == TRUE) {
@@ -766,7 +766,7 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
     }
   }
   if (testkey(*tapKeys, KEY_dropmine)) {
-    tankLayMine(&csPtr->sim, &csPtr->sim.tanks[0]);
+    tankLayMine(&csPtr->sim, &MY_TANK(csPtr));
   }
   if (testkey(*tapKeys, KEY_TankView)) {
     csPtr->inPillView = FALSE;
@@ -804,16 +804,16 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
 
   /* Handle remaining keys */
   if (testkey(*holdKeys, KEY_morerange)) {
-    tankGunsightIncrease(csPtr, &csPtr->sim, &csPtr->sim.tanks[0]);
+    tankGunsightIncrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
   }
   if (testkey(*holdKeys, KEY_lessrange)) {
-    tankGunsightDecrease(csPtr, &csPtr->sim, &csPtr->sim.tanks[0]);
+    tankGunsightDecrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
   }
   if (testkey(*holdKeys, KEY_shoot) && isGameTick == TRUE) {
     *isShoot = TRUE;
   }
   if (testkey(*holdKeys, KEY_dropmine)) {
-    tankLayMine(&csPtr->sim, &csPtr->sim.tanks[0]);
+    tankLayMine(&csPtr->sim, &MY_TANK(csPtr));
   }
   if (testkey(*holdKeys, KEY_TankView)) {
     csPtr->inPillView = FALSE;
@@ -883,7 +883,7 @@ pillAlliance screenPillAllianceCS(ClientSim *csPtr, BYTE pillNum) {
 *  treesAmount  - Pointer to hold amount of trees
 *********************************************************/
 void screenGetTankStatsCS(ClientSim *csPtr, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
-  tankGetStats(&csPtr->sim.tanks[0], shellsAmount, minesAmount, armourAmount, treesAmount);
+  tankGetStats(&MY_TANK(csPtr), shellsAmount, minesAmount, armourAmount, treesAmount);
   if (*armourAmount > TANK_FULL_ARMOUR) {
     *armourAmount = 0;
   }
@@ -903,9 +903,9 @@ void screenGetTankStatsCS(ClientSim *csPtr, BYTE *shellsAmount, BYTE *minesAmoun
 *********************************************************/
 void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
   if (increase == TRUE) {
-    tankGunsightIncrease(csPtr, &csPtr->sim, &csPtr->sim.tanks[0]);
+    tankGunsightIncrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
   } else {
-    tankGunsightDecrease(csPtr, &csPtr->sim, &csPtr->sim.tanks[0]);
+    tankGunsightDecrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
   }
 }
 
@@ -922,7 +922,7 @@ void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
 *  shown - TRUE = Gunsight on.
 *********************************************************/
 void screenSetGunsightCS(ClientSim *csPtr, bool shown) {
-  tankSetGunsight(&csPtr->sim.tanks[0], shown);
+  tankSetGunsight(&MY_TANK(csPtr), shown);
 }
 
 
@@ -972,10 +972,10 @@ void screenGetMessages(ClientSim *csPtr, char *top, char *bottom) {
 static void clientCenterTankCS(ClientSim *csPtr) {
   BYTE high, low, health, dummy;
 
-  tankGetStats(&csPtr->sim.tanks[0], &high, &low, &health, &dummy);
+  tankGetStats(&MY_TANK(csPtr), &high, &low, &health, &dummy);
   if (health <= TANK_FULL_ARMOUR) {
     /* Tank isn't dead */
-    scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, (tankGetMX(&csPtr->sim.tanks[0])), (tankGetMY(&csPtr->sim.tanks[0])));
+    scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, (tankGetMX(&MY_TANK(csPtr))), (tankGetMY(&MY_TANK(csPtr))));
     screenReCalcCS(csPtr);
   }
 }
@@ -995,13 +995,13 @@ static void clientCenterTankCS(ClientSim *csPtr) {
 *  playerName - The player name controling the tank
 *********************************************************/
 void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
-  if (csPtr->sim.tanks[0] != NULL) {
-    tankDestroy(&csPtr->sim, &csPtr->sim.tanks[0]);
-    csPtr->sim.tanks[0] = NULL;
+  if (MY_TANK(csPtr) != NULL) {
+    tankDestroy(&csPtr->sim, &MY_TANK(csPtr));
+    MY_TANK(csPtr) = NULL;
   }
-  tankCreate(&csPtr->sim, &csPtr->sim.tanks[0]);
+  tankCreate(&csPtr->sim, &MY_TANK(csPtr));
   { BYTE sh, mi, ar, tr;
-    tankGetStats(&csPtr->sim.tanks[0], &sh, &mi, &ar, &tr);
+    tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
     frontEndUpdateTankStatusBars(sh, mi, ar, tr);
   }
   playersSetSelf(csPtr, &csPtr->sim, &csPtr->sim.plyrs, (playerNumbers) playerNum, playerName, FALSE);
@@ -1021,7 +1021,7 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
 *  deaths - The number of times the tank has died
 *********************************************************/
 void screenGetKillsDeathsCS(ClientSim *csPtr, int *kills, int *deaths) {
-  tankGetKillsDeaths(&csPtr->sim.tanks[0], kills, deaths);
+  tankGetKillsDeaths(&MY_TANK(csPtr), kills, deaths);
 }
 
 /*********************************************************
@@ -1070,7 +1070,7 @@ void screenShowMessages(ClientSim *csPtr, BYTE msgType, bool isShown) {
 *  buildS - The building type selected
 *********************************************************/
 void screenManMoveCS(ClientSim *csPtr, buildSelect buildS) {
-  if (tankGetArmour(&csPtr->sim.tanks[0]) <= TANK_FULL_ARMOUR && csPtr->netStat != netFailed) {
+  if (tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR && csPtr->netStat != netFailed) {
     /* Route build request through InputPacket so the server sim
      * processes it authoritatively (matches brain build path). */
     csPtr->pendingBuildAction = (BYTE) buildS + 1;  /* 1-based in InputPacket (0=none) */
@@ -1139,7 +1139,7 @@ void screenLgmDropPillCS(ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pi
 *
 *********************************************************/
 void screenTankLayMineCS(ClientSim *csPtr) {
-  tankLayMine(&csPtr->sim, &csPtr->sim.tanks[0]);
+  tankLayMine(&csPtr->sim, &MY_TANK(csPtr));
 }
 
 /*********************************************************
@@ -1155,7 +1155,7 @@ void screenTankLayMineCS(ClientSim *csPtr) {
 *  my - Y Map Co-ordinate
 *********************************************************/
 void screenCheckTankMineDamageCS(ClientSim *csPtr, BYTE mx, BYTE my) {
-  tankMineDamage(&csPtr->sim, &csPtr->sim.tanks[0], mx, my);
+  tankMineDamage(&csPtr->sim, &MY_TANK(csPtr), mx, my);
 }
 
 /*********************************************************
@@ -1537,13 +1537,13 @@ tankAlliance screenTankAllianceCS(ClientSim *csPtr, BYTE playerNum) {
 *  bmx - X position
 *  bmy - Y position
 *********************************************************/
-bool screenIsItemInTrees(GameSim *sim, WORLD bmx, WORLD bmy) {
+bool screenIsItemInTrees(GameSim *sim, tank_t *viewerTank, WORLD bmx, WORLD bmy) {
   bool returnValue; /* Value to return */
   int xDiff;        /* X and Y differences in location */
   int yDiff;
 
-  xDiff = tankGetScreenMX(&sim->tanks[0]) - bmx;
-  yDiff = tankGetScreenMY(&sim->tanks[0]) - bmy;
+  xDiff = tankGetScreenMX(&viewerTank) - bmx;
+  yDiff = tankGetScreenMY(&viewerTank) - bmy;
   if (xDiff >= MIN_SIGHT_DISTANCE_LEFT && xDiff <= MIN_SIGHT_DISTANCE_RIGHT && yDiff >= MIN_SIGHT_DISTANCE_LEFT && yDiff <= MIN_SIGHT_DISTANCE_RIGHT) {
     returnValue = FALSE;
   } else {
@@ -1677,8 +1677,8 @@ void screenSetGameTypeCS(ClientSim *csPtr, gameType gt) {
 *********************************************************/
 void screenNetSetupTankCS(ClientSim *csPtr, bool isInStart) {
   csPtr->sim.inStartFind = isInStart;
-  tankCreate(&csPtr->sim, &csPtr->sim.tanks[0]);
-  tankSetWorld(&csPtr->sim, &csPtr->sim.tanks[0], 0, 0, (TURNTYPE) 0, FALSE);
+  tankCreate(&csPtr->sim, &MY_TANK(csPtr));
+  tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), 0, 0, (TURNTYPE) 0, FALSE);
 }
 
 /*********************************************************
@@ -1703,14 +1703,14 @@ void screenNetSetupTankGoCS(ClientSim *csPtr) {
   BYTE count2;
 
   csPtr->sim.inStartFind = TRUE;
-  startsGetStart(&csPtr->sim, &csPtr->sim.ss, &x, &y, &dir, gameSimGetTankPlayer(&csPtr->sim, &csPtr->sim.tanks[0]));
+  startsGetStart(&csPtr->sim, &csPtr->sim.ss, &x, &y, &dir, gameSimGetTankPlayer(&csPtr->sim, &MY_TANK(csPtr)));
   wx = x;
   wx <<= TANK_SHIFT_MAPSIZE;
   wx += MAP_SQUARE_MIDDLE;
   wy = y;
   wy <<= TANK_SHIFT_MAPSIZE;
   wy += MAP_SQUARE_MIDDLE;
-  tankSetWorld(&csPtr->sim, &csPtr->sim.tanks[0], wx, wy, dir, TRUE);
+  tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), wx, wy, dir, TRUE);
   clientCenterTankCS(csPtr);
   csPtr->sim.inStartFind = FALSE;
 
@@ -2026,7 +2026,7 @@ void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  playersCheckNearbyPlayers(&csPtr->sim.plyrs, tankGetMX(&csPtr->sim.tanks[0]), tankGetMY(&csPtr->sim.tanks[0]), FALSE);
+  playersCheckNearbyPlayers(&csPtr->sim.plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
 }
 
 /*********************************************************
@@ -2071,7 +2071,7 @@ int screenNumAlliesCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int screenNumNearbyTanksCS(ClientSim *csPtr) {
-  return playersNumNearbyPlayers(&csPtr->sim.plyrs, tankGetMX(&csPtr->sim.tanks[0]), tankGetMY(&csPtr->sim.tanks[0]));
+  return playersNumNearbyPlayers(&csPtr->sim.plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)));
 }
 
 /*********************************************************
@@ -2126,7 +2126,7 @@ void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
   topLine[0] = '\0';
   playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
   clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllNearby(csPtr, &csPtr->sim.plyrs, tankGetMX(&csPtr->sim.tanks[0]), tankGetMY(&csPtr->sim.tanks[0]), messageStr);
+  playersSendMessageAllNearby(csPtr, &csPtr->sim.plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
 }
 
 /*********************************************************
@@ -2231,7 +2231,7 @@ bool screenTankIsDeadCS(ClientSim *csPtr) {
   BYTE high, low, health, dummy;
 
   returnValue = FALSE;
-  tankGetStats(&csPtr->sim.tanks[0], &high, &low, &health, &dummy);
+  tankGetStats(&MY_TANK(csPtr), &high, &low, &health, &dummy);
   if (health > TANK_FULL_ARMOUR) {
     /* Tank is dead */
     returnValue = TRUE;
@@ -2253,7 +2253,7 @@ bool screenTankIsDeadCS(ClientSim *csPtr) {
 *  angle  - Angle man is travelling on
 *********************************************************/
 void screenGetLgmStatusCS(ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE *angle) {
-  lgmGetStatus(&csPtr->sim.lgmen[0], &csPtr->sim.tanks[0], isOut, isDead, angle);
+  lgmGetStatus(&MY_LGM(csPtr), &MY_TANK(csPtr), isOut, isDead, angle);
 }
 
 /*********************************************************
@@ -2271,15 +2271,15 @@ void screenGetLgmStatusCS(ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE 
 bool screenTankScrollCS(ClientSim *csPtr) {
   BYTE x;  /* Tank X and Y Co-ordinated       */
   BYTE y;
-  x = tankGetScreenMX(&csPtr->sim.tanks[0]);
-  y = tankGetScreenMY(&csPtr->sim.tanks[0]);
+  x = tankGetScreenMX(&MY_TANK(csPtr));
+  y = tankGetScreenMY(&MY_TANK(csPtr));
 /*  if (px >3 || (x - xOffset -1) == 0) {
     x++;
   }
   if (py >2) {
     y++;
   } */
-  return scrollManual(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, x, y, (TURNTYPE) tankGetTravelAngel(&csPtr->sim.tanks[0]));
+  return scrollManual(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(csPtr)));
 }
 
 /*********************************************************
@@ -2361,8 +2361,8 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   BYTE ty;
   BYTE closeBase; /* The closest base to our current position */
 
-  tx = tankGetMX(&csPtr->sim.tanks[0]);
-  ty = tankGetMY(&csPtr->sim.tanks[0]);
+  tx = tankGetMX(&MY_TANK(csPtr));
+  ty = tankGetMY(&MY_TANK(csPtr));
 
   /* Max's */
   value->max_players = MAX_TANKS;//-1; /* FIXME: Huh? */
@@ -2375,13 +2375,13 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   *(value->allies) = playersGetAlliesBitMap(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs));
 
   /* Tank */
-  tankGetWorld(&csPtr->sim.tanks[0], &(value->tankx), &(value->tanky));
-  value->direction = tankGet256Dir(&csPtr->sim.tanks[0]);
-  value->speed = (BYTE) (tankGetSpeed(&csPtr->sim.tanks[0]) * 4);
-  value->inboat = tankIsOnBoat(&csPtr->sim.tanks[0]);
+  tankGetWorld(&MY_TANK(csPtr), &(value->tankx), &(value->tanky));
+  value->direction = tankGet256Dir(&MY_TANK(csPtr));
+  value->speed = (BYTE) (tankGetSpeed(&MY_TANK(csPtr)) * 4);
+  value->inboat = tankIsOnBoat(&MY_TANK(csPtr));
   value->hidden = utilIsTankInTrees(&csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, value->tankx, value->tanky);
 
-  tankGetStats(&csPtr->sim.tanks[0], &(value->shells), &(value->mines), &(value->armour), &(value->trees));
+  tankGetStats(&MY_TANK(csPtr), &(value->shells), &(value->mines), &(value->armour), &(value->trees));
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
@@ -2398,8 +2398,8 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   }
   value->carriedbases = 0;
 
-  value->gunrange = tankGetGunsightLength(&csPtr->sim.tanks[0]);
-  value->reload = tankGetReloadTime(&csPtr->sim.tanks[0]);
+  value->gunrange = tankGetGunsightLength(&MY_TANK(csPtr));
+  value->reload = tankGetReloadTime(&MY_TANK(csPtr));
   if (first == TRUE) {
     /* Reset stuff */
     *clientSimGetBrainHoldKeys(csPtr) = 0;
@@ -2410,9 +2410,9 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
     /* Set tank */
     value->newtank = TRUE;
   } else {
-    value->newtank = tankIsNewTank(&csPtr->sim.tanks[0]);
+    value->newtank = tankIsNewTank(&MY_TANK(csPtr));
   }
-  value->tankobstructed = tankIsObstructed(&csPtr->sim.tanks[0]);
+  value->tankobstructed = tankIsObstructed(&MY_TANK(csPtr));
 
   /* Server tick and assistant message */
   value->server_tick = csPtr->lastServerTick;
@@ -2489,11 +2489,11 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   }
 
   /* Lgm */
-  value->man_status = lgmGetBrainState(&csPtr->sim.lgmen[0]);
-  value->man_direction = lgmGetDir(&csPtr->sim.lgmen[0], &csPtr->sim.tanks[0]);
-  value->man_x = lgmGetWX(&csPtr->sim.lgmen[0]);
-  value->man_y = lgmGetWY(&csPtr->sim.lgmen[0]);
-  value->manobstructed = lgmGetBrainObstructed(&csPtr->sim.lgmen[0]);
+  value->man_status = lgmGetBrainState(&MY_LGM(csPtr));
+  value->man_direction = lgmGetDir(&MY_LGM(csPtr), &MY_TANK(csPtr));
+  value->man_x = lgmGetWX(&MY_LGM(csPtr));
+  value->man_y = lgmGetWY(&MY_LGM(csPtr));
+  value->manobstructed = lgmGetBrainObstructed(&MY_LGM(csPtr));
 
   /* Pillview — bots always use tank-centered view (no pill view) */
   value->pillview = malloc(sizeof(WORD));
@@ -2650,7 +2650,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
    * will pick it up and put it in the InputPacket as-is.  The server
    * sim decrements to 0-based before passing to lgmAddRequest. */
   if (value->build->action != 0) {
-    if (tankGetArmour(&csPtr->sim.tanks[0]) > TANK_FULL_ARMOUR) {
+    if (tankGetArmour(&MY_TANK(csPtr)) > TANK_FULL_ARMOUR) {
       /* Tank is dead, cancel build */
       value->build->action = 0;
     }
@@ -2742,7 +2742,7 @@ void screenAddBrainObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD 
 
 
 BYTE screenGetTank256DirCS(ClientSim *csPtr) {
-  return tankGet256Dir(&csPtr->sim.tanks[0]);
+  return tankGet256Dir(&MY_TANK(csPtr));
 }
 
 /*********************************************************
@@ -2757,7 +2757,7 @@ BYTE screenGetTank256DirCS(ClientSim *csPtr) {
 *
 *********************************************************/
 bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) {
-  return tankGetAutoSlowdown(&csPtr->sim.tanks[0]);
+  return tankGetAutoSlowdown(&MY_TANK(csPtr));
 }
 
 
@@ -2773,7 +2773,7 @@ bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) {
 *  useSlowdown - TRUE if auto slowdown is used
 *********************************************************/
 void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) {
-  tankSetAutoSlowdown(&csPtr->sim.tanks[0], useSlowdown);
+  tankSetAutoSlowdown(&MY_TANK(csPtr), useSlowdown);
 }
 
 
@@ -2790,7 +2790,7 @@ void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) {
 *
 *********************************************************/
 bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) {
-  return tankGetAutoHideGunsight(&csPtr->sim.tanks[0]);
+  return tankGetAutoHideGunsight(&MY_TANK(csPtr));
 }
 
 
@@ -2807,7 +2807,7 @@ bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) {
 *  useAutohide - TRUE if auto show/hide is used
 *********************************************************/
 void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) {
-  tankSetAutoHideGunsight(&csPtr->sim.tanks[0], useAutohide);
+  tankSetAutoHideGunsight(&MY_TANK(csPtr), useAutohide);
 }
 
 
@@ -2905,7 +2905,7 @@ void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) {
 *  message - The message text
 *********************************************************/
 void screenTankStopCarryingPillCS(ClientSim *csPtr, BYTE itemNum) {
-  tankStopCarryingPill(&csPtr->sim.tanks[0], itemNum);
+  tankStopCarryingPill(&MY_TANK(csPtr), itemNum);
 }
 
 /*********************************************************
@@ -2996,7 +2996,7 @@ bool screenGenerateMapPreview(char *fileName, BYTE *buff) {
 *  pillNum  - Pillbox being carries
 *********************************************************/
 void screenNetLgmReturnCS(ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE pillNum) {
-  lgmNetBackInTank(&csPtr->sim, &csPtr->sim.lgmen[0], &csPtr->sim.tanks[0], numTrees, numMines, pillNum);
+  lgmNetBackInTank(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), numTrees, numMines, pillNum);
 }
 
 /*********************************************************
@@ -3015,7 +3015,7 @@ void screenNetLgmReturnCS(ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE p
 *  numTrees - The number of trees
 *********************************************************/
 void screenNetManWorkingCS(ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines, BYTE pillNum, BYTE numTrees) {
-  lgmNetManWorking(&csPtr->sim, &csPtr->sim.lgmen[0], &csPtr->sim.tanks[0], mapX, mapY, numTrees, numMines, pillNum);
+  lgmNetManWorking(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), mapX, mapY, numTrees, numMines, pillNum);
 }
 
 /*********************************************************
@@ -3035,12 +3035,12 @@ void screenNetManWorkingCS(ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines
 *********************************************************/
 void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TURNTYPE angle, BYTE numShells, BYTE numMines) {
   BYTE numTrees;
-  tankSetLocationData(&csPtr->sim.tanks[0], (WORLD) ((xValue << TANK_SHIFT_MAPSIZE ) + MAP_SQUARE_MIDDLE), (WORLD) ((yValue << TANK_SHIFT_MAPSIZE ) + MAP_SQUARE_MIDDLE), (TURNTYPE) angle, (SPEEDTYPE) 0, (bool) TRUE);
+  tankSetLocationData(&MY_TANK(csPtr), (WORLD) ((xValue << TANK_SHIFT_MAPSIZE ) + MAP_SQUARE_MIDDLE), (WORLD) ((yValue << TANK_SHIFT_MAPSIZE ) + MAP_SQUARE_MIDDLE), (TURNTYPE) angle, (SPEEDTYPE) 0, (bool) TRUE);
   numTrees = 0;
   if (gameTypeGet(&csPtr->sim.game) == gameOpen) {
     numTrees = TANK_FULL_TREES;
   }
-  tankSetStats(&csPtr->sim.tanks[0], numShells, numMines, TANK_FULL_ARMOUR, numTrees);
+  tankSetStats(&MY_TANK(csPtr), numShells, numMines, TANK_FULL_ARMOUR, numTrees);
   frontEndUpdateTankStatusBars(numShells, numMines, TANK_FULL_ARMOUR, numTrees);
   screenTankViewCS(csPtr);
   csPtr->sim.inStartFind = FALSE;
@@ -3089,7 +3089,7 @@ bool screenGetGameRunningCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenConnectionLostCS(ClientSim *csPtr) {
-  lgmConnectionLost(&csPtr->sim, &csPtr->sim.lgmen[0], &csPtr->sim.tanks[0], &csPtr->sim.ss);
+  lgmConnectionLost(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), &csPtr->sim.ss);
   playersConnectionLost(&csPtr->sim, &csPtr->sim.plyrs);
 }
 
@@ -3183,7 +3183,7 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
   pkt->playerNum = playerNum;
 
   /* Pack autoslowdown state into flags (sent every packet so server stays in sync) */
-  if (tankGetAutoSlowdown(&csPtr->sim.tanks[0])) {
+  if (tankGetAutoSlowdown(&MY_TANK(csPtr))) {
     pkt->flags |= INPUT_FLAG_AUTOSLOW;
   }
 
@@ -3328,32 +3328,32 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 
     if (pn == playerNum) {
       /* Own tank: first sync or reconcile */
-      if (csPtr->clientState.initialized && !csPtr->clientState.hasPredictedTank && csPtr->sim.tanks[0] != NULL) {
+      if (csPtr->clientState.initialized && !csPtr->clientState.hasPredictedTank && MY_TANK(csPtr) != NULL) {
         /* First snapshot — initialize predicted tank from server state */
         TURNTYPE decodedAngle = (TURNTYPE)tanks[i].angle / 256.0f;
         SPEEDTYPE decodedSpeed = (SPEEDTYPE)tanks[i].speed / 256.0f;
-        tankSetWorld(&csPtr->sim, &csPtr->sim.tanks[0], tanks[i].worldX, tanks[i].worldY,
+        tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), tanks[i].worldX, tanks[i].worldY,
                      decodedAngle, FALSE);
         {
           BYTE isDead, onBoat;
           utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
-          tankSetOnBoat(&csPtr->sim.tanks[0], onBoat);
+          tankSetOnBoat(&MY_TANK(csPtr), onBoat);
         }
-        tankSetSpeed(&csPtr->sim.tanks[0], decodedSpeed);
-        tankSetFirstLeft(&csPtr->sim.tanks[0], tanks[i].firstLeft);
-        tankSetFirstRight(&csPtr->sim.tanks[0], tanks[i].firstRight);
-        tankSetArmour(&csPtr->sim.tanks[0], tanks[i].armour);
+        tankSetSpeed(&MY_TANK(csPtr), decodedSpeed);
+        tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
+        tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
+        tankSetArmour(&MY_TANK(csPtr), tanks[i].armour);
         csPtr->lastServerArmour = tanks[i].armour;
-        tankSetShells(&csPtr->sim.tanks[0], tanks[i].shells);
-        tankSetMines(&csPtr->sim.tanks[0], tanks[i].mines);
-        tankSetTrees(&csPtr->sim.tanks[0], tanks[i].trees);
-        tankSetGunsightLength(&csPtr->sim.tanks[0], tanks[i].gunsightLen);
-        tankSetReload(&csPtr->sim.tanks[0], tanks[i].reload);
+        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
+        tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         csPtr->clientState.hasPredictedTank = TRUE;
         if (isHuman) {
           clientCenterTankCS(csPtr);
         }
-      } else if (csPtr->clientState.initialized && csPtr->clientState.hasPredictedTank && csPtr->sim.tanks[0] != NULL) {
+      } else if (csPtr->clientState.initialized && csPtr->clientState.hasPredictedTank && MY_TANK(csPtr) != NULL) {
         /* Build a temporary tank-like state for reconciliation.
          * We use the wire snapshot data to check/correct our prediction. */
         WORLD predX, predY, servX, servY;
@@ -3361,8 +3361,8 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         SPEEDTYPE decodedSpeed;
         int32_t dx, dy;
 
-        tankGetWorld(&csPtr->sim.tanks[0], &predX, &predY);
-        predAngle = tankGetAngle(&csPtr->sim.tanks[0]);
+        tankGetWorld(&MY_TANK(csPtr), &predX, &predY);
+        predAngle = tankGetAngle(&MY_TANK(csPtr));
         servX = tanks[i].worldX;
         servY = tanks[i].worldY;
         servAngle = (TURNTYPE)tanks[i].angle / 256.0f;
@@ -3386,19 +3386,19 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
              * gunsight jitter caused by speed-quantization-induced position
              * drift triggering unnecessary angle changes during replay. */
             TURNTYPE savedAngle = predAngle;
-            BYTE savedFirstLeft = tankGetFirstLeft(&csPtr->sim.tanks[0]);
-            BYTE savedFirstRight = tankGetFirstRight(&csPtr->sim.tanks[0]);
+            BYTE savedFirstLeft = tankGetFirstLeft(&MY_TANK(csPtr));
+            BYTE savedFirstRight = tankGetFirstRight(&MY_TANK(csPtr));
 
-            tankSetWorld(&csPtr->sim, &csPtr->sim.tanks[0], servX, servY, servAngle, FALSE);
+            tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), servX, servY, servAngle, FALSE);
             {
               BYTE isDead, onBoat;
               utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
-              tankSetOnBoat(&csPtr->sim.tanks[0], onBoat);
+              tankSetOnBoat(&MY_TANK(csPtr), onBoat);
             }
-            tankSetSpeed(&csPtr->sim.tanks[0], decodedSpeed);
-            tankSetFirstLeft(&csPtr->sim.tanks[0], tanks[i].firstLeft);
-            tankSetFirstRight(&csPtr->sim.tanks[0], tanks[i].firstRight);
-            tankSetReload(&csPtr->sim.tanks[0], tanks[i].reload);
+            tankSetSpeed(&MY_TANK(csPtr), decodedSpeed);
+            tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
+            tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
+            tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
 
             /* Replay unacknowledged inputs (suppress sounds/side effects) */
             csPtr->sim.isPredicting = TRUE;
@@ -3430,21 +3430,21 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
                 else if (decel) tb = TDECEL;
 
                 if (isKeysTick) {
-                  BYTE bmx = tankGetMX(&csPtr->sim.tanks[0]);
-                  BYTE bmy = tankGetMY(&csPtr->sim.tanks[0]);
-                  tankTurn(&csPtr->sim, &csPtr->sim.tanks[0], bmx, bmy, tb);
+                  BYTE bmx = tankGetMX(&MY_TANK(csPtr));
+                  BYTE bmy = tankGetMY(&MY_TANK(csPtr));
+                  tankTurn(&csPtr->sim, &MY_TANK(csPtr), bmx, bmy, tb);
                 } else {
-                  tankUpdate(&csPtr->sim, &csPtr->sim.tanks[0], tb, FALSE, FALSE);
+                  tankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, FALSE);
                   /* Simulate fire's effect on reload during replay.
                    * tankUpdate was called with shoot=FALSE to avoid creating
                    * shells, but we must still apply the reload reset so the
                    * client doesn't think it can fire again. */
                   if ((histPkt->actions & INPUT_ACTION_FIRE) &&
-                      tankGetReloadTime(&csPtr->sim.tanks[0]) == 0 &&
-                      tankGetShells(&csPtr->sim.tanks[0]) > 0 &&
-                      tankGetArmour(&csPtr->sim.tanks[0]) <= TANK_FULL_ARMOUR) {
-                    tankSetReload(&csPtr->sim.tanks[0], TANK_RELOAD_TIME);
-                    tankSetShells(&csPtr->sim.tanks[0], tankGetShells(&csPtr->sim.tanks[0]) - 1);
+                      tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
+                      tankGetShells(&MY_TANK(csPtr)) > 0 &&
+                      tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR) {
+                    tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
+                    tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
               }
@@ -3458,10 +3458,10 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
              * from tiny position-induced turn-rate differences during replay. */
             if (!angleMismatch) {
               WORLD finalX, finalY;
-              tankGetWorld(&csPtr->sim.tanks[0], &finalX, &finalY);
-              tankSetWorld(&csPtr->sim, &csPtr->sim.tanks[0], finalX, finalY, savedAngle, FALSE);
-              tankSetFirstLeft(&csPtr->sim.tanks[0], savedFirstLeft);
-              tankSetFirstRight(&csPtr->sim.tanks[0], savedFirstRight);
+              tankGetWorld(&MY_TANK(csPtr), &finalX, &finalY);
+              tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), finalX, finalY, savedAngle, FALSE);
+              tankSetFirstLeft(&MY_TANK(csPtr), savedFirstLeft);
+              tankSetFirstRight(&MY_TANK(csPtr), savedFirstRight);
             }
           }
         }
@@ -3469,11 +3469,11 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         /* Detect death/respawn transitions using server armour values
          * (not predicted state, which may already reflect the death) */
         {
-          tankSetArmour(&csPtr->sim.tanks[0], tanks[i].armour);
+          tankSetArmour(&MY_TANK(csPtr), tanks[i].armour);
           if (csPtr->lastServerArmour <= TANK_FULL_ARMOUR && tanks[i].armour > TANK_FULL_ARMOUR) {
             /* alive→dead: set death type for static screen rendering */
-            tankSetLastTankDeath(&csPtr->sim.tanks[0], LAST_DEATH_BY_SHELL);
-            tankAddDeath(&csPtr->sim, &csPtr->sim.tanks[0]);
+            tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
+            tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
           }
           if (csPtr->lastServerArmour > TANK_FULL_ARMOUR && tanks[i].armour <= TANK_FULL_ARMOUR) {
             /* dead→alive: recenter view on respawn */
@@ -3488,12 +3488,12 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         /* Sync resources from server — but not reload/shells, which are
          * already set correctly by the reconciliation replay (it accounts
          * for unprocessed fire inputs that the server hasn't seen yet). */
-        tankSetShells(&csPtr->sim.tanks[0], tanks[i].shells);
-        tankSetMines(&csPtr->sim.tanks[0], tanks[i].mines);
-        tankSetTrees(&csPtr->sim.tanks[0], tanks[i].trees);
-        tankSetGunsightLength(&csPtr->sim.tanks[0], tanks[i].gunsightLen);
-        tankSetDeathWait(&csPtr->sim.tanks[0], tanks[i].deathWait);
-        tankSetReload(&csPtr->sim.tanks[0], tanks[i].reload);
+        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
+        tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
+        tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
 
         /* Correct shells/reload for any unprocessed fire inputs.
          * The server snapshot reflects state before our fire was processed,
@@ -3506,15 +3506,15 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
             if (histPkt->tick != tick) continue;
             if ((tick % 2) == 1) continue; /* keys tick — no fire */
             /* Decrement reload like tankUpdate would */
-            if (tankGetReloadTime(&csPtr->sim.tanks[0]) > 0) {
-              tankSetReload(&csPtr->sim.tanks[0], tankGetReloadTime(&csPtr->sim.tanks[0]) - 1);
+            if (tankGetReloadTime(&MY_TANK(csPtr)) > 0) {
+              tankSetReload(&MY_TANK(csPtr), tankGetReloadTime(&MY_TANK(csPtr)) - 1);
             }
             if ((histPkt->actions & INPUT_ACTION_FIRE) &&
-                tankGetReloadTime(&csPtr->sim.tanks[0]) == 0 &&
-                tankGetShells(&csPtr->sim.tanks[0]) > 0 &&
-                tankGetArmour(&csPtr->sim.tanks[0]) <= TANK_FULL_ARMOUR) {
-              tankSetReload(&csPtr->sim.tanks[0], TANK_RELOAD_TIME);
-              tankSetShells(&csPtr->sim.tanks[0], tankGetShells(&csPtr->sim.tanks[0]) - 1);
+                tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
+                tankGetShells(&MY_TANK(csPtr)) > 0 &&
+                tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR) {
+              tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
+              tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
         }
@@ -3633,21 +3633,21 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 
   /* Update own LGM from snapshot data */
   for (i = 0; i < tankCount; i++) {
-    if (tanks[i].playerNum == playerNum && csPtr->sim.lgmen[0] != NULL) {
+    if (tanks[i].playerNum == playerNum && MY_LGM(csPtr) != NULL) {
       if (tanks[i].lgmFrame > 0) {
         /* LGM is out on server — lgmFrame is encoded as frame+1 (1-3),
          * so 0 means idle and >0 reliably means out */
         BYTE actualFrame = tanks[i].lgmFrame - 1;
         WORLD lgmWX = (WORLD)((tanks[i].lgmMX << 8) + (tanks[i].lgmPX << 4));
         WORLD lgmWY = (WORLD)((tanks[i].lgmMY << 8) + (tanks[i].lgmPY << 4));
-        csPtr->sim.lgmen[0]->inTank = FALSE;
-        csPtr->sim.lgmen[0]->isDead = (actualFrame == LGM_HELICOPTER_FRAME) ? TRUE : FALSE;
-        csPtr->sim.lgmen[0]->frame = actualFrame;
-        lgmPutWorld(&csPtr->sim.lgmen[0], lgmWX, lgmWY, actualFrame);
+        MY_LGM(csPtr)->inTank = FALSE;
+        MY_LGM(csPtr)->isDead = (actualFrame == LGM_HELICOPTER_FRAME) ? TRUE : FALSE;
+        MY_LGM(csPtr)->frame = actualFrame;
+        lgmPutWorld(&MY_LGM(csPtr), lgmWX, lgmWY, actualFrame);
       } else {
         /* LGM is idle/in tank on server — sync client state */
-        csPtr->sim.lgmen[0]->inTank = TRUE;
-        csPtr->sim.lgmen[0]->state = LGM_STATE_IDLE;
+        MY_LGM(csPtr)->inTank = TRUE;
+        MY_LGM(csPtr)->state = LGM_STATE_IDLE;
       }
       break;
     }
@@ -3921,7 +3921,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_TANK_KILLED:
         /* data: [killer, killed, deathCause, carriedPills] */
         if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
-          tankAddKill(&csPtr->sim, &csPtr->sim.tanks[0]);
+          tankAddKill(&csPtr->sim, &MY_TANK(csPtr));
           steam_increment_stat("STAT_TANK_KILLS", 1);
           steamStatsUpdated = true;
         }
@@ -4039,12 +4039,12 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   }
 
   /* Update scrolling based on tank position */
-  if (tankGetSpeed(&csPtr->sim.tanks[0]) > 0) {
-    tankGetGunsight(&csPtr->sim.tanks[0], &tmx, &tmy, &pmx, &pmy);
+  if (tankGetSpeed(&MY_TANK(csPtr)) > 0) {
+    tankGetGunsight(&MY_TANK(csPtr), &tmx, &tmy, &pmx, &pmy);
     if (csPtr->inPillView == FALSE) {
       int oldXOffset = csPtr->xOffset;
       int oldYOffset = csPtr->yOffset;
-      if (scrollUpdate(&csPtr->scroll, &csPtr->sim, &csPtr->xOffset, &csPtr->yOffset, tankGetScreenMX(&csPtr->sim.tanks[0]), tankGetScreenMY(&csPtr->sim.tanks[0]), TRUE, tmx, tmy, tankGetSpeed(&csPtr->sim.tanks[0]), tankGetArmour(&csPtr->sim.tanks[0]), (TURNTYPE)(tankGetTravelAngel(&csPtr->sim.tanks[0])), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
+      if (scrollUpdate(&csPtr->scroll, &csPtr->sim, &csPtr->xOffset, &csPtr->yOffset, tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
         if (oldXOffset < csPtr->xOffset) { csPtr->cursorPosX--; moveMousePointer(right); }
         else if (oldXOffset > csPtr->xOffset) { csPtr->cursorPosX++; moveMousePointer(left); }
         if (oldYOffset < csPtr->yOffset) { csPtr->cursorPosY--; moveMousePointer(down); }
@@ -4064,13 +4064,13 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   /* Update tank status bars — the server runs tankDeath/tankUpdate with
    * isServer=TRUE so frontEndUpdateTankStatusBars is not called from game
    * logic.  The client must push synced state to the display each tick. */
-  frontEndUpdateTankStatusBars(tankGetShells(&csPtr->sim.tanks[0]), tankGetMines(&csPtr->sim.tanks[0]),
-                               tankGetArmour(&csPtr->sim.tanks[0]), tankGetTrees(&csPtr->sim.tanks[0]));
+  frontEndUpdateTankStatusBars(tankGetShells(&MY_TANK(csPtr)), tankGetMines(&MY_TANK(csPtr)),
+                               tankGetArmour(&MY_TANK(csPtr)), tankGetTrees(&MY_TANK(csPtr)));
 
   /* Update kills/deaths display — same reason as above */
   {
     int kills, deaths;
-    tankGetKillsDeaths(&csPtr->sim.tanks[0], &kills, &deaths);
+    tankGetKillsDeaths(&MY_TANK(csPtr), &kills, &deaths);
     frontEndKillsDeaths(kills, deaths);
   }
 
@@ -4080,7 +4080,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   {
     bool lgmIsOut, lgmIsDead;
     TURNTYPE lgmAngle = 0;
-    lgmGetStatus(&csPtr->sim.lgmen[0], &csPtr->sim.tanks[0], &lgmIsOut, &lgmIsDead, &lgmAngle);
+    lgmGetStatus(&MY_LGM(csPtr), &MY_TANK(csPtr), &lgmIsOut, &lgmIsDead, &lgmAngle);
     if (!lgmIsOut) {
       frontEndManClear();
     } else {
@@ -4089,7 +4089,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   }
 
   /* Update base status bars */
-  tankGetWorld(&csPtr->sim.tanks[0], &tankX, &tankY);
+  tankGetWorld(&MY_TANK(csPtr), &tankX, &tankY);
   basesGetStats(&csPtr->sim.bs, basesGetClosest(&csPtr->sim, tankX, tankY), &shellsAmount, &minesAmount, &armour);
   frontEndUpdateBaseStatusBars(shellsAmount, minesAmount, armour);
 

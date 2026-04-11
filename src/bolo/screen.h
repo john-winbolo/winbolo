@@ -136,7 +136,7 @@ typedef enum {
 
 /* Prototypes */
 
-bool screenIsItemInTrees(struct GameSim *sim, WORLD bmx, WORLD bmy);
+bool screenIsItemInTrees(struct GameSim *sim, tank_t *viewerTank, WORLD bmx, WORLD bmy);
 void screenGetSubMapSquareOffset(int *xPos, int *yPos);
 void screenAddBrainObject(struct ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed);
 void screenNetStatusMessage(struct ClientSim *csPtr, char *messageStr);
