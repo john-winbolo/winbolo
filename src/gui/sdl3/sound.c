@@ -413,6 +413,16 @@ void soundCleanup(void) {
         }
     }
 
+    /* Unbind streams from audio devices before destroying them.
+       Both streams may share the same physical device, and destroying
+       one stream can close the device and corrupt state for the other. */
+    if (keepaliveStream) {
+        SDL_UnbindAudioStream(keepaliveStream);
+    }
+    if (audioStream) {
+        SDL_UnbindAudioStream(audioStream);
+    }
+
     /* Cleanup keepalive */
     if (keepaliveStream) {
         SDL_DestroyAudioStream(keepaliveStream);
