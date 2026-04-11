@@ -530,6 +530,14 @@ typedef struct {
     /* Owning ClientSim — used for player state updates in callbacks */
     ClientSim *clientSim;
 
+    /* Network stats (client-side only) */
+    uint32_t packetsRecvThisSec;  /* Packets received in current 1-second window */
+    uint32_t packetsSentThisSec;  /* Packets sent in current 1-second window */
+    uint32_t ppsWindowStart;      /* localTick when current PPS window started */
+    uint32_t ppsRecv;             /* Last completed PPS (recv) */
+    uint32_t ppsSent;             /* Last completed PPS (sent) */
+    uint32_t netErrors;           /* Cumulative: stale snapshots, truncated packets */
+
 } TransportUdpClientCtx;
 
 /* Build an input packet into buf, returns length */
@@ -577,6 +585,7 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
 
     len = buildInputPacket(c, buf);
     udpSendTo(c->sock, buf, len, &c->serverAddr);
+    c->packetsSentThisSec++;
 }
 
 /* Process a single incoming packet (used by both direct and delayed paths) */
@@ -584,6 +593,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                    const uint8_t *buf, int len) {
     uint8_t pktType = getPacketType(buf, len);
 
+    c->packetsRecvThisSec++;
 
     /* Reset timeout on any valid server packet — lobby state doesn't send
      * snapshots, so without this the client times out after 20s in lobby.
@@ -732,6 +742,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
         /* Ignore stale snapshots */
         if (c->hasSnapshot && seq <= c->lastSnapshotSeq) {
+            c->netErrors++;
             break;
         }
 
@@ -740,7 +751,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * + reliableEventCount(1) + reliableBaseSeq(4)
          * + mapEventCount(1) + mapEventBaseSeq(4)
          * + mapChecksum(2) = 25 bytes */
-        if (len < pos + 25) break;
+        if (len < pos + 25) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -1332,6 +1343,15 @@ static bool udpClientTick(void *ctx) {
 
     c->localTick++;
 
+    /* Roll over PPS counters every second (50 ticks) */
+    if (c->localTick - c->ppsWindowStart >= 50) {
+        c->ppsRecv = c->packetsRecvThisSec;
+        c->ppsSent = c->packetsSentThisSec;
+        c->packetsRecvThisSec = 0;
+        c->packetsSentThisSec = 0;
+        c->ppsWindowStart = c->localTick;
+    }
+
     /* Receive all pending packets from the wire */
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
         udpClientProcessPacket(c, buf, len);
@@ -1373,6 +1393,7 @@ static bool udpClientTick(void *ctx) {
             packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
             packU32(pbuf + PACKET_HEADER_SIZE + 4, (uint32_t)c->pingMs);
             udpSendTo(c->sock, pbuf, sizeof(pbuf), &c->serverAddr);
+            c->packetsSentThisSec++;
             c->lastPingSentTick = c->localTick;
         }
 
@@ -1626,6 +1647,20 @@ uint16_t transportUdpClientGetPing(Transport *t) {
     if (t == NULL || t->ctx == NULL) return 0;
     c = (TransportUdpClientCtx *)t->ctx;
     return c->pingMs;
+}
+
+void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent, int *numErrors) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) {
+        *ppsRecv = 0;
+        *ppsSent = 0;
+        *numErrors = 0;
+        return;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    *ppsRecv = (int)c->ppsRecv;
+    *ppsSent = (int)c->ppsSent;
+    *numErrors = (int)c->netErrors;
 }
 
 const char *transportUdpClientGetJoinRejectReason(Transport *t) {
