@@ -413,14 +413,10 @@ void soundCleanup(void) {
         }
     }
 
-    /* Unbind streams from audio devices before destroying them.
-       Both streams may share the same physical device, and destroying
-       one stream can close the device and corrupt state for the other. */
-    if (keepaliveStream) {
-        SDL_UnbindAudioStream(keepaliveStream);
-    }
+    /* Destroy audio stream first - this also closes the associated device */
     if (audioStream) {
-        SDL_UnbindAudioStream(audioStream);
+        SDL_DestroyAudioStream(audioStream);
+        audioStream = NULL;
     }
 
     /* Cleanup keepalive */
@@ -433,19 +429,11 @@ void soundCleanup(void) {
         keepaliveData = NULL;
     }
 
-    /* Close audio stream */
-    if (audioStream) {
-        SDL_DestroyAudioStream(audioStream);
-        audioStream = NULL;
-    }
-
     /* Destroy mutex */
     if (slotsMutex) {
         SDL_DestroyMutex(slotsMutex);
         slotsMutex = NULL;
     }
-
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
 
     isPlayable = FALSE;
 }
