@@ -62,6 +62,7 @@ extern "C" {
 extern "C" {
 #include "../../bolo/players.h"
 #include "../../bolo/transport.h"
+#include "../../bolo/transport_udp.h"
 }
 
 /* Include input.h for keyItems — SDL3 already included, safe here */
@@ -508,12 +509,16 @@ static void renderNetInfoContent(ClientSim *cs) {
     }
 
     netGetStats(cs, str, &ping, &ppsec, &numErrors);
-    /* Prefer ping from new UDP transport when active */
+    /* Prefer stats from new UDP transport when active */
     {
         Transport *tp = gameFrontGetTransport();
         if (tp) {
             uint16_t udpPing = transportUdpClientGetPing(tp);
             if (udpPing > 0) ping = (int)udpPing;
+            int ppsR = 0, ppsS = 0, udpErrors = 0;
+            transportUdpClientGetNetStats(tp, &ppsR, &ppsS, &udpErrors);
+            ppsec = ppsR + ppsS;
+            numErrors = udpErrors;
         }
     }
     ImGui::Separator();
