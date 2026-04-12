@@ -88,6 +88,12 @@ typedef struct {
     uint32_t ackedSeq;   /* client confirmed up to here (exclusive) */
 } ClientEventQueue;
 
+/* Check if a reliable event queue has space. Returns false if the ring
+ * buffer would wrap and overwrite unacked entries. */
+static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
+    return (q->nextSeq - q->ackedSeq) < RELIABLE_EVENT_BUFFER_SIZE;
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
@@ -1897,7 +1903,7 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
 
 /* Per-client map download tracking */
 typedef struct {
-    BYTE    *compressedMap;     /* Server's compressed map data (shared, do not free) */
+    BYTE    *compressedMap;     /* Per-client copy of compressed map (owned, must free) */
     uint32_t mapSize;          /* Total compressed map size */
     uint16_t totalChunks;      /* Total number of chunks */
     bool    *chunkAcked;       /* Which chunks the client has acked */
@@ -2084,7 +2090,7 @@ static void serverSendMapChunks(int slot) {
         packU16(chunkBuf + PACKET_HEADER_SIZE, i);
         packU16(chunkBuf + PACKET_HEADER_SIZE + 2, chunkSize);
         memcpy(chunkBuf + PACKET_HEADER_SIZE + 4,
-               udpServer.compressedMap + offset, chunkSize);
+               dl->compressedMap + offset, chunkSize);
         pktLen = PACKET_HEADER_SIZE + 4 + chunkSize;
 
         udpSendTo(udpServer.sock, chunkBuf, pktLen, &client->addr);
@@ -2097,7 +2103,11 @@ static void serverSendMapChunks(int slot) {
 static void serverInitMapDownload(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
 
-    dl->compressedMap = udpServer.compressedMap;
+    if (dl->compressedMap != NULL) {
+        free(dl->compressedMap);
+    }
+    dl->compressedMap = (BYTE *)malloc(udpServer.compressedMapSize);
+    memcpy(dl->compressedMap, udpServer.compressedMap, udpServer.compressedMapSize);
     dl->mapSize = udpServer.compressedMapSize;
     dl->totalChunks = (uint16_t)((dl->mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
     dl->chunksAcked = 0;
@@ -2113,6 +2123,10 @@ static void serverInitMapDownload(int slot) {
 /* Clean up map download tracking for a client */
 static void serverCleanupMapDownload(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
+    if (dl->compressedMap != NULL) {
+        free(dl->compressedMap);
+        dl->compressedMap = NULL;
+    }
     if (dl->chunkAcked != NULL) {
         free(dl->chunkAcked);
         dl->chunkAcked = NULL;
@@ -3659,6 +3673,11 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         {
             ClientEventQueue *mq = &udpServer.mapEventQueues[c];
             for (i = 0; i < (int)sim->mapEventCount; i++) {
+                if (!eventQueueHasSpace(mq)) {
+                    fprintf(stderr, "[UDP SERVER] Map event queue full for client %d, dropping %d events\n",
+                            c, (int)sim->mapEventCount - i);
+                    break;
+                }
                 uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
                 mq->buffer[idx].event = sim->mapEvents[i];
                 mq->buffer[idx].seq = mq->nextSeq;
@@ -3723,6 +3742,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         for (i = 0; i < (int)sim->eventCount; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                if (!eventQueueHasSpace(cq)) {
+                    fprintf(stderr, "[UDP SERVER] Game event queue full for client %d\n", c);
+                    break;
+                }
                 uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
                 cq->buffer[idx].event = sim->events[i];
                 cq->buffer[idx].seq = cq->nextSeq;
@@ -3731,6 +3754,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         }
         for (s = 0; s < MAX_SOUND_TYPES; s++) {
             if (bestSoundIdx[s] >= 0) {
+                if (!eventQueueHasSpace(cq)) break;
                 uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
                 cq->buffer[idx].event = sim->events[bestSoundIdx[s]];
                 cq->buffer[idx].seq = cq->nextSeq;
@@ -3894,6 +3918,7 @@ void transportUdpServerSetLock(ServerSim *sim, bool locked) {
             if (!udpServer.clients[c].connected) continue;
             if (!udpServer.mapDownload[c].downloadComplete) continue;
             q = &udpServer.eventQueues[c];
+            if (!eventQueueHasSpace(q)) continue;
             idx = q->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
             q->buffer[idx].event = ev;
             q->buffer[idx].seq = q->nextSeq;
