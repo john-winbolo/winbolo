@@ -872,7 +872,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     sim->playerPing[p] = sanitized.pingMs;
 }
 
-void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) {
+void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
@@ -917,7 +917,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName) 
     }
 
     /* Attempt to restore ownership of pills/bases from a previous session */
-    if (sim->state == serverStateRunning && playerName != NULL) {
+    if (wantRejoin && sim->state == serverStateRunning && playerName != NULL) {
         playersRejoinRequest(&sim->sim, (char *)playerName, playerNum, &sim->sim.pb);
     }
 

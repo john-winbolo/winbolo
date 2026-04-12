@@ -129,7 +129,7 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
     if (rejoin.item[count].inUse == FALSE) {
       done = TRUE;
       best = count;
-    } else if (rejoin.item[count].timeOut < timeBest) {
+    } else if (rejoin.item[count].timeOut > timeBest) {
       best = count;
       timeBest = rejoin.item[count].timeOut;
     }
@@ -168,7 +168,7 @@ void playersRejoinRequest(GameSim *sim, char *playerName, BYTE playerNum, pillbo
  
   count = 0;
   while (count < MAX_TANKS) {
-    if (strcmp(rejoin.item[count].playerName, playerName) == 0) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
       /* Found them */
       num = count;
       break;

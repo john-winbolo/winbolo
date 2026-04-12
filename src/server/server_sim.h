@@ -236,8 +236,9 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input);
  *  sim        - Pointer to the ServerSim
  *  playerNum  - Player slot (0..MAX_TANKS-1)
  *  playerName - Player name (may be NULL for unnamed)
+ *  wantRejoin - If true, restore ownership of pills/bases from previous session
  *********************************************************/
-void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName);
+void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin);
 
 /*********************************************************
  *NAME:          serverSimRemovePlayer

@@ -697,6 +697,13 @@ bool screenLoadCompressedMapCS(ClientSim *csPtr, BYTE *buff, int buffLen, char *
   bool doneFree = FALSE;
 
   screenSetupCS(csPtr, game, hiddenMines, srtDelay, gmeLen);
+  /* clientSimCreate (inside screenSetupCS) resets myPlayerNum to 0.
+   * Restore the correct player number before creating the tank so it
+   * ends up in the right sim.tanks[] slot. This also moves the LGM
+   * and sets the base refuel timer for the correct index. */
+  if (playerNum != 0) {
+    clientSimSetPlayerNum(csPtr, playerNum);
+  }
   returnValue = mapLoadCompressedMap(&csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss, buff, buffLen);
 
   if (returnValue == TRUE) {

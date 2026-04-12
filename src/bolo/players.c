@@ -736,7 +736,11 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   BYTE py;
 
 /* FIXME: This function could use some optimisation I think */
-  tankGetWorld(&sim->tanks[0], &ourTankX, &ourTankY);
+  {
+    BYTE self = playersGetSelf(plrs);
+    if (self >= MAX_TANKS || sim->tanks[self] == NULL) return;
+    tankGetWorld(&sim->tanks[self], &ourTankX, &ourTankY);
+  }
 
   for (count=0;count<MAX_TANKS;count++) {
     if ((*plrs)->item[count].inUse == TRUE && count != (*plrs)->myPlayerNum) {

@@ -717,7 +717,8 @@ bool gameFrontSetDlgState(openingStates newState) {
     udpTransport = transportUdpClientCreate(humanSim, gameFrontUdpAddress,
                                              gameFrontTargetUdp,
                                              gameFrontName, password,
-                                             gameFrontWbnUse ? gameFrontWbnToken : "");
+                                             gameFrontWbnUse ? gameFrontWbnToken : "",
+                                             wantRejoin);
     if (transportUdpClientGetJoinState(&udpTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
@@ -911,7 +912,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Single-player: no lobby, run immediately */
           spServerSim->lobbyEnabled = false;
           spServerSim->state = serverStateRunning;
-          serverSimAddPlayer(spServerSim, 0, gameFrontName);
+          serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
           (*spServerSim->sim.plyrs).myPlayerNum = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
           spServerSimActive = TRUE;
