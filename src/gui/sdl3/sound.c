@@ -331,6 +331,8 @@ bool soundSetup(void) {
         return FALSE;
     }
 
+    SDL_SetAudioStreamGain(audioStream, 0.25f);
+
     /* Load all sound effects from data/sounds/ relative to the executable */
     {
         const char *basePath = SDL_GetBasePath();
