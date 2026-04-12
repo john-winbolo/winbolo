@@ -3648,6 +3648,26 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         bool hasPos;
 
         if (!udpServer.clients[c].connected) continue;
+
+        /* Always enqueue map events, even during map download. The map
+         * snapshot was taken when the client joined, so any map changes
+         * that happen during the download window must be queued here.
+         * They'll be sent once downloadComplete becomes true (the send
+         * path in transportUdpServerSend checks downloadComplete
+         * separately). Without this, mid-game joiners permanently
+         * desync because map events during download are lost. */
+        {
+            ClientEventQueue *mq = &udpServer.mapEventQueues[c];
+            for (i = 0; i < (int)sim->mapEventCount; i++) {
+                uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
+                mq->buffer[idx].event = sim->mapEvents[i];
+                mq->buffer[idx].seq = mq->nextSeq;
+                mq->nextSeq++;
+            }
+        }
+
+        /* Game events (sounds, kills, etc.) only matter once the client
+         * is in-game with a loaded map — skip if still downloading. */
         if (!udpServer.mapDownload[c].downloadComplete) continue;
         cq = &udpServer.eventQueues[c];
 
@@ -3698,18 +3718,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Pass 2: enqueue map events into dedicated map queue,
-         * then non-sound game events into game queue,
+        /* Pass 2: enqueue non-sound game events into game queue,
          * then deduplicated sounds into game queue */
-        {
-            ClientEventQueue *mq = &udpServer.mapEventQueues[c];
-            for (i = 0; i < (int)sim->mapEventCount; i++) {
-                uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
-                mq->buffer[idx].event = sim->mapEvents[i];
-                mq->buffer[idx].seq = mq->nextSeq;
-                mq->nextSeq++;
-            }
-        }
         for (i = 0; i < (int)sim->eventCount; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
