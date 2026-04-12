@@ -30,6 +30,7 @@
 #include "screen.h"
 #include "tank.h"
 #include "game_sim.h"
+#include "players.h"
 #include "frontend.h"
 #include "sounddist.h"
 #include "log.h"
@@ -60,8 +61,12 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
   if (mineExplosionNear == value) {
     gapY = 0;
   }
-  tankX = tankGetScreenMX(&sim->tanks[0]);
-  tankY = tankGetScreenMY(&sim->tanks[0]);
+  {
+    BYTE self = playersGetSelf(&sim->plyrs);
+    if (self >= MAX_TANKS || sim->tanks[self] == NULL) return;
+    tankX = tankGetScreenMX(&sim->tanks[self]);
+    tankY = tankGetScreenMY(&sim->tanks[self]);
+  }
   /* Get gap */
   if ((tankX - mx) < 0) {
     gapX = mx - tankX;
