@@ -449,7 +449,7 @@ void playersMakeScreenTanks(struct ClientSim *cs, struct GameSim *sim, players *
 * top      - top bound
 * bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenLgm(struct GameSim *sim, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
+void playersMakeScreenLgm(struct ClientSim *cs, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 /*********************************************************
 *NAME:          playersGetNumPlayers

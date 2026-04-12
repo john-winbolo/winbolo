@@ -122,7 +122,7 @@ void frontEndRedrawAll(ClientSim *cs) { (void)cs; }
 bool frontEndTutorial(BYTE pos) { (void)pos; return FALSE; }
 
 /* Screen stubs — only functions still called from bolo/ engine code in the server build */
-bool screenIsItemInTrees(GameSim *sim, WORLD bmx, WORLD bmy) { (void)sim; (void)bmx; (void)bmy; return TRUE; }
+bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) { (void)sim; (void)viewerTank; (void)bmx; (void)bmy; return TRUE; }
 void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName) { (void)value; (void)mx; (void)my; (void)px; (void)py; (void)frame; (void)playerNum; (void)playerName; }
 /* screenAddBrainObject is defined here only for targets that lack screen.c
  * (i.e. WinBoloDS).  bot_manager routes objects to each bot's own ClientSim

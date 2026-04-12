@@ -1343,8 +1343,8 @@ static bool udpClientTick(void *ctx) {
 
     c->localTick++;
 
-    /* Roll over PPS counters every second (50 ticks) */
-    if (c->localTick - c->ppsWindowStart >= 50) {
+    /* Roll over PPS counters every second (100 ticks at 10ms/tick) */
+    if (c->localTick - c->ppsWindowStart >= 100) {
         c->ppsRecv = c->packetsRecvThisSec;
         c->ppsSent = c->packetsSentThisSec;
         c->packetsRecvThisSec = 0;

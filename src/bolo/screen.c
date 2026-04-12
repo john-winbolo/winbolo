@@ -1537,7 +1537,7 @@ tankAlliance screenTankAllianceCS(ClientSim *csPtr, BYTE playerNum) {
 *  bmx - X position
 *  bmy - Y position
 *********************************************************/
-bool screenIsItemInTrees(GameSim *sim, tank_t *viewerTank, WORLD bmx, WORLD bmy) {
+bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) {
   bool returnValue; /* Value to return */
   int xDiff;        /* X and Y differences in location */
   int yDiff;
