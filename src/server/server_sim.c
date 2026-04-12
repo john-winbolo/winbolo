@@ -415,6 +415,25 @@ bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
     /* Generate the map */
     mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
 
+    /* Run generated objects through the same init path as file-loaded maps
+     * (pillsSetPill / basesSetBase / startsSetStart) so game-logic fields
+     * like coolDown, justStopped, etc. are set correctly. */
+    {
+        BYTE i;
+        for (i = 0; i < sim->sim.pb->numPills; i++) {
+            pillbox tmp = sim->sim.pb->item[i];
+            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.bs->numBases; i++) {
+            base tmp = sim->sim.bs->item[i];
+            basesSetBase(&sim->sim.bs, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.ss->numStarts; i++) {
+            start tmp = sim->sim.ss->item[i];
+            startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
+        }
+    }
+
     basesClearMines(&sim->sim);
 
     /* Set map name to "rand_<seed>" */
@@ -472,6 +491,24 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     sim->sim.bs->numBases = 0;
     sim->sim.ss->numStarts = 0;
     mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
+
+    /* Run generated objects through the same init path as file-loaded maps */
+    {
+        BYTE i;
+        for (i = 0; i < sim->sim.pb->numPills; i++) {
+            pillbox tmp = sim->sim.pb->item[i];
+            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.bs->numBases; i++) {
+            base tmp = sim->sim.bs->item[i];
+            basesSetBase(&sim->sim.bs, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.ss->numStarts; i++) {
+            start tmp = sim->sim.ss->item[i];
+            startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
+        }
+    }
+
     basesClearMines(&sim->sim);
 
     /* Update cached map */
