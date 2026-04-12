@@ -80,12 +80,12 @@ static void botUpdateBrainMap(BotContext *bot, ServerSim *sim) {
     BYTE left, right, top, bottom;
     int x, y;
 
-    if (bot->cs.sim.tanks[0] == NULL) {
+    if (MY_TANK(&bot->cs) == NULL) {
         return;
     }
 
-    tx = tankGetMX(&bot->cs.sim.tanks[0]);
-    ty = tankGetMY(&bot->cs.sim.tanks[0]);
+    tx = tankGetMX(&MY_TANK(&bot->cs));
+    ty = tankGetMY(&MY_TANK(&bot->cs));
 
     if (bot->ai == aiFull) {
         /* aiFull: refresh full map every tick from server */
@@ -174,13 +174,14 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     /* Create the bot's ClientSim */
     clientSimCreate(&bot->cs, game, hiddenMines, 0, -1);
     bot->cs.isBot = true;
+    clientSimSetPlayerNum(&bot->cs, playerNum);
 
     /* Create a tank at slot 0 for this ClientSim */
-    if (bot->cs.sim.tanks[0] != NULL) {
-        tankDestroy(&bot->cs.sim, &bot->cs.sim.tanks[0]);
-        bot->cs.sim.tanks[0] = NULL;
+    if (MY_TANK(&bot->cs) != NULL) {
+        tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
+        MY_TANK(&bot->cs) = NULL;
     }
-    tankCreate(&bot->cs.sim, &bot->cs.sim.tanks[0]);
+    tankCreate(&bot->cs.sim, &MY_TANK(&bot->cs));
 
     /* Set this bot's identity */
     playersSetSelf(NULL, &bot->cs.sim, &bot->cs.sim.plyrs, playerNum,
@@ -269,8 +270,8 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         botUpdateBrainMap(bot, sim);
 
         /* Skip brain while tank is dead (waiting to respawn) */
-        if (bot->cs.sim.tanks[0] != NULL &&
-            tankGetDeathWait(&bot->cs.sim.tanks[0]) > 0) {
+        if (MY_TANK(&bot->cs) != NULL &&
+            tankGetDeathWait(&MY_TANK(&bot->cs)) > 0) {
             continue;
         }
 
@@ -301,8 +302,8 @@ void botManagerTick(ServerSim *sim, aiType ai) {
          * seen it.  The snapshot sync doesn't carry newTank, so without
          * this the flag stays TRUE forever and the brain sees perpetual
          * respawns. */
-        if (bot->cs.sim.tanks[0] != NULL) {
-            bot->cs.sim.tanks[0]->newTank = FALSE;
+        if (MY_TANK(&bot->cs) != NULL) {
+            MY_TANK(&bot->cs)->newTank = FALSE;
         }
 
         /* Build and send 2 input packets (keys tick + game tick).
@@ -339,11 +340,11 @@ void botManagerOnGameStart(ServerSim *sim) {
         }
 
         /* Destroy and recreate the bot's tank */
-        if (bot->cs.sim.tanks[0] != NULL) {
-            tankDestroy(&bot->cs.sim, &bot->cs.sim.tanks[0]);
-            bot->cs.sim.tanks[0] = NULL;
+        if (MY_TANK(&bot->cs) != NULL) {
+            tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
+            MY_TANK(&bot->cs) = NULL;
         }
-        tankCreate(&bot->cs.sim, &bot->cs.sim.tanks[0]);
+        tankCreate(&bot->cs.sim, &MY_TANK(&bot->cs));
 
         /* Reset brain so full-map fill triggers again for aiFull bots */
         bot->brain.isFirst = true;
