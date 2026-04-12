@@ -827,7 +827,7 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
 * top      - top bound
 * bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenLgm(GameSim *sim, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
   WORLD wx;
   WORLD wy;
   WORLD conv;                    /* Used in conversion */
@@ -843,7 +843,7 @@ void playersMakeScreenLgm(GameSim *sim, players *plrs, screenLgm *value, BYTE le
         wx += (*plrs)->item[count].lgmPixelX << TANK_SHIFT_RIGHT2;
         wy = (*plrs)->item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += (*plrs)->item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
-        tankGetWorld(&sim->tanks[0], &ourTankX, &ourTankY);
+        tankGetWorld(&MY_TANK(cs), &ourTankX, &ourTankY);
         if (wx > ourTankX) {
           conv = wx - ourTankX;
         } else {
@@ -855,7 +855,7 @@ void playersMakeScreenLgm(GameSim *sim, players *plrs, screenLgm *value, BYTE le
           conv2 = ourTankY - wy;
         }
 
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame);
         }
       }
