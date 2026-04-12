@@ -116,7 +116,8 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
-                                   const char *wbnToken);
+                                   const char *wbnToken,
+                                   bool wantRejoin);
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);
@@ -230,6 +231,7 @@ typedef struct {
     char countryCode[3];         /* ISO 3166-1 alpha-2 from GeoIP lookup */
     bool needsPlayerList;        /* Send existing player names after map download */
     uint16_t inputsThisTick;     /* Inputs applied this tick cycle (for rate limiting) */
+    bool wantRejoin;             /* Client requested rejoin (restore pills/bases) */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.

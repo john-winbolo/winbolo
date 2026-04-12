@@ -544,6 +544,7 @@ typedef struct {
     uint32_t ppsSent;             /* Last completed PPS (sent) */
     uint32_t netErrors;           /* Cumulative: stale snapshots, truncated packets */
 
+    bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
 } TransportUdpClientCtx;
 
 /* Build an input packet into buf, returns length */
@@ -1370,7 +1371,7 @@ static bool udpClientTick(void *ctx) {
             if (c->joinAttempts >= JOIN_MAX_RETRIES) {
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN];
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN + 1];
                 int joffset = PACKET_HEADER_SIZE;
                 packHeader(jbuf, PACKET_JOIN_REQUEST, c->outSequence++);
                 memcpy(jbuf + joffset, c->playerName, PACKET_MAX_PLAYER_NAME);
@@ -1382,6 +1383,8 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = BOLO_VERSION_REVISION;
                 memcpy(jbuf + joffset, c->wbnToken, WBN_TOKEN_WIRE_LEN);
                 joffset += WBN_TOKEN_WIRE_LEN;
+                /* Flags byte: bit 0 = wantRejoin */
+                jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
                 /* Join requests bypass delay — they're control plane */
                 udpSendTo(c->sock, jbuf, joffset, &c->serverAddr);
                 c->joinAttempts++;
@@ -1478,7 +1481,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
-                                   const char *wbnToken) {
+                                   const char *wbnToken,
+                                   bool wantRejoin) {
     Transport t;
     TransportUdpClientCtx *c;
     struct hostent *he;
@@ -1531,6 +1535,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     if (wbnToken != NULL) {
         strncpy(c->wbnToken, wbnToken, WBN_TOKEN_WIRE_LEN - 1);
     }
+
+    c->wantRejoin = wantRejoin;
 
     c->joinState = UDP_CLIENT_JOINING;
     c->joinAttempts = 0;
@@ -2184,6 +2190,14 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (len >= pos + WBN_TOKEN_WIRE_LEN) {
         memcpy(wbnToken, buf + pos, WBN_TOKEN_WIRE_LEN);
         wbnToken[WBN_TOKEN_WIRE_LEN - 1] = '\0';
+        pos += WBN_TOKEN_WIRE_LEN;
+    }
+
+    /* Read flags byte if present (backwards compatible — older clients default to 0) */
+    bool wantRejoin = false;
+    if (len > pos) {
+        wantRejoin = (buf[pos] & 0x01) != 0;
+        pos++;
     }
 
     /* Check password */
@@ -2243,6 +2257,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.clients[slot].outSequence = 1;
     udpServer.clients[slot].lastPingTime = udpServer.tickCount;
     udpServer.clients[slot].pingMs = 0;
+    udpServer.clients[slot].wantRejoin = wantRejoin;
 
     /* GeoIP country lookup from client IP */
     {
@@ -2284,7 +2299,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     }
 
     /* Initialize player in the simulation */
-    serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName);
+    serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName,
+                       udpServer.clients[slot].wantRejoin);
 
     /* Set WBN/Steam participant flags if token was verified */
     if (wbnVerified) {
