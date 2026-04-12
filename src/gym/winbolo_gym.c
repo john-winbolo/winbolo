@@ -929,14 +929,16 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
     /* ── CATEGORY 3: Pillbox Control ── */
     if (w[RC_PILL_CAPTURED] != 0.0f || w[RC_PILL_LOST] != 0.0f ||
         w[RC_PILL_DESTROYED] != 0.0f || w[RC_OWN_PILL_FRAC_DELTA] != 0.0f ||
-        w[RC_PILL_PLACEMENT_QUAL] != 0.0f || w[RC_PILL_HEATED_TACTICAL] != 0.0f) {
+        w[RC_PILL_PLACEMENT_QUAL] != 0.0f || w[RC_PILL_HEATED_TACTICAL] != 0.0f ||
+        w[RC_PILL_HIT] != 0.0f) {
 
         comp[RC_PILL_CAPTURED] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
         comp[RC_PILL_LOST] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_LOST);
 
-        /* pill_destroyed: prev non-friendly pill was alive, now dead */
+        /* pill_destroyed + pill_hit: track armor damage to non-friendly pills */
         if (has_prev) {
             float destroyed = 0.0f;
+            float hits = 0.0f;
             int np = obs->num_pillboxes < rs->prev_pill_count ?
                      obs->num_pillboxes : rs->prev_pill_count;
             for (int i = 0; i < np; i++) {
@@ -945,11 +947,13 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
                 float curr_armor = (float)obs->pillboxes[i].armor;
                 bool prev_not_friendly = (prev_owner != WBGYM_OWNER_SELF) &&
                                          (prev_owner != WBGYM_OWNER_ALLY);
-                if (prev_not_friendly && prev_armor > 0 && curr_armor == 0) {
-                    destroyed += 1.0f;
+                if (prev_not_friendly && prev_armor > curr_armor) {
+                    hits += (prev_armor - curr_armor);
+                    if (curr_armor == 0) destroyed += 1.0f;
                 }
             }
             comp[RC_PILL_DESTROYED] = destroyed;
+            comp[RC_PILL_HIT] = hits;
 
             comp[RC_OWN_PILL_FRAC_DELTA] =
                 sc[WBGYM_S_OWN_PILL_FRAC] - psc[WBGYM_S_OWN_PILL_FRAC];
