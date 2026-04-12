@@ -33,6 +33,10 @@
 
 #include <SDL3/SDL.h>
 
+/* Game view dimensions (logical pixels before zoom). */
+#define SDL3_SCREEN_W 515
+#define SDL3_SCREEN_H 325
+
 #ifdef __cplusplus
 extern "C" {
 #endif

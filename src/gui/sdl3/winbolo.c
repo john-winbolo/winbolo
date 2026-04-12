@@ -325,6 +325,8 @@ int main(int argc, char *argv[]) {
       SDL_FlushEvent(SDL_EVENT_QUIT);
 
       if (sdlWin) {
+        SDL_SetWindowResizable(sdlWin, false);
+        SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H);
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
       }
@@ -402,6 +404,7 @@ int main(int argc, char *argv[]) {
       }
 
       if (sdlWin) {
+        SDL_SetWindowResizable(sdlWin, true);
         SDL_HideWindow(sdlWin);
       }
       screenLeaveGame();
