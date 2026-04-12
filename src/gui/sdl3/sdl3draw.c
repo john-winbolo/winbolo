@@ -194,9 +194,7 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
 
 /* Source-rect lookup tables for tiles now live in mapview.c (mapViewPosX/Y). */
 
-/* Screen dimensions at zoom=1 (matches SCREEN_SIZE_X/Y in winbolo.h) */
-#define SDL3_SCREEN_W 515
-#define SDL3_SCREEN_H 325
+/* SDL3_SCREEN_W / SDL3_SCREEN_H are defined in sdl3draw.h */
 
 
 /*********************************************************
