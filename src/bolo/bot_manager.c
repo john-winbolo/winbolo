@@ -162,7 +162,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->ai = ai;
 
     /* Register the player in the server (creates tank + lgm) */
-    serverSimAddPlayer(sim, playerNum, brainName);
+    serverSimAddPlayer(sim, playerNum, brainName, false);
 
     /* Mark as bot in lobby state (must come after serverSimAddPlayer which resets defaults) */
     sim->lobbyPlayers[playerNum].isBot = true;

@@ -353,7 +353,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     wasmTransport = transportUdpClientCreate(humanSim, gameFrontUdpAddress,
                                               gameFrontTargetUdp,
                                               gameFrontName, password,
-                                              gameFrontWbnUse ? gameFrontWbnToken : "");
+                                              gameFrontWbnUse ? gameFrontWbnToken : "",
+                                              wantRejoin);
     if (transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&wasmTransport);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
@@ -475,7 +476,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* WASM single-player: no lobby, run immediately */
     wasmServerSim->lobbyEnabled = false;
     wasmServerSim->state = serverStateRunning;
-    serverSimAddPlayer(wasmServerSim, 0, gameFrontName);
+    serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
     (*wasmServerSim->sim.plyrs).myPlayerNum = 0;
     wasmTransport = transportLocalCreate(wasmServerSim, 0);
     wasmTransportActive = TRUE;

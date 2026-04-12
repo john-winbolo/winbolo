@@ -1010,7 +1010,7 @@ static bool fastModeSetupGame(void) {
   serverSimResetGameWorld(fastServerSim);
   fastServerSim->lobbyEnabled = false;
   fastServerSim->state = serverStateRunning;
-  serverSimAddPlayer(fastServerSim, 0, optName);
+  serverSimAddPlayer(fastServerSim, 0, optName, false);
   (*fastServerSim->sim.plyrs).myPlayerNum = 0;
 
   /* Recreate local transport */
@@ -1091,7 +1091,7 @@ static int runFastMode(void) {
   /* Initial game setup */
   fastServerSim->lobbyEnabled = false;
   fastServerSim->state = serverStateRunning;
-  serverSimAddPlayer(fastServerSim, 0, optName);
+  serverSimAddPlayer(fastServerSim, 0, optName, false);
   (*fastServerSim->sim.plyrs).myPlayerNum = 0;
   headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
@@ -1264,7 +1264,7 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "");
+  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "", false);
   if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_ERROR) {
     const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");
