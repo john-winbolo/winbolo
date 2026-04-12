@@ -77,6 +77,7 @@ typedef struct {
 
 typedef struct ClientSim {
     GameSim     sim;    /* MUST be first member */
+    BYTE        myPlayerNum; /* Server-assigned player number; tanks[myPlayerNum] is our tank */
 
     /* Client-side prediction state */
     ClientState clientState;
@@ -214,9 +215,14 @@ typedef struct ClientSim {
     uint8_t  deathTimestampIdx;
 } ClientSim;
 
+/* Access the local player's tank and LGM by server player number */
+#define MY_TANK(cs) ((cs)->sim.tanks[(cs)->myPlayerNum])
+#define MY_LGM(cs)  ((cs)->sim.lgmen[(cs)->myPlayerNum])
+
 /* Lifecycle API — initializes/destroys the ClientSim struct */
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
 void clientSimDestroy(ClientSim *cs);
+void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum);
 void clientSimKeysTick(ClientSim *cs, const InputPacket *pkt);
 void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain);
 void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,

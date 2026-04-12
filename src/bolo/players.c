@@ -772,7 +772,7 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         } else {
           conv2 = ourTankY - ty;
         }
-        if ((screenIsItemInTrees(sim, tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
+        if ((screenIsItemInTrees(sim, MY_TANK(cs), tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
           /* Extract fixed pixel co-ordinates */
           conv = (*plrs)->item[count].mapX;
           conv <<= TANK_SHIFT_MAPSIZE;
@@ -827,7 +827,7 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
 * top      - top bound
 * bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenLgm(GameSim *sim, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
   WORLD wx;
   WORLD wy;
   WORLD conv;                    /* Used in conversion */
@@ -843,7 +843,7 @@ void playersMakeScreenLgm(GameSim *sim, players *plrs, screenLgm *value, BYTE le
         wx += (*plrs)->item[count].lgmPixelX << TANK_SHIFT_RIGHT2;
         wy = (*plrs)->item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += (*plrs)->item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
-        tankGetWorld(&sim->tanks[0], &ourTankX, &ourTankY);
+        tankGetWorld(&MY_TANK(cs), &ourTankX, &ourTankY);
         if (wx > ourTankX) {
           conv = wx - ourTankX;
         } else {
@@ -855,7 +855,7 @@ void playersMakeScreenLgm(GameSim *sim, players *plrs, screenLgm *value, BYTE le
           conv2 = ourTankY - wy;
         }
 
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(sim, wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame);
         }
       }
@@ -897,77 +897,6 @@ BYTE playersGetNumPlayers(players *plrs) {
   return returnValue;
 }
 
-/*********************************************************
-*NAME:          playersIsTankCloser
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/2/99
-*LAST MODIFIED: 19/2/99
-*PURPOSE:
-* Returns whether a tank not allied to the pillbox 
-* is closer then this players tank.
-*
-*ARGUMENTS:
-* plrs - Pointer to the players object 
-* x          - X co-ordinate of the pillbox
-* y          - Y co-ordinate of the pillbox
-* pillOwner  - Who owns the pill
-* tankAmount - My tanks distance from pill
-*********************************************************/
-bool playersIsTankCloser(GameSim *sim, players *plrs, WORLD x, WORLD y, BYTE pillOwner, double tankAmount) {
-  bool returnValue; /* Value to return */
-  WORLD tankX;      /* Tank X and Y co-ordinates */
-  WORLD tankY;
-  WORLD conv;       /* Used in conversions */
-  WORLD diffX;      /* Used in calculating in trees */
-  WORLD diffY;
-  double test;      /* The amount we are testing */
-  bool inRange;     /* Is the tank we are testing even in range */
-  BYTE count;       /* Looping variable */
-
-  returnValue = FALSE;
-  test = 0;
-  count = 0;
-
-  while (count < MAX_TANKS && returnValue == FALSE) {
-    /* Check to see player slot is being used */
-    if ((*plrs)->item[count].inUse == TRUE && count != (*plrs)->myPlayerNum) {
-      /* Check for non-allined tank */
-      if (allienceExist(&((*plrs)->item[count].allie), pillOwner) == FALSE && count != pillOwner && ((*plrs)->item[count].mapX != 0 && (*plrs)->item[count].mapY != 0)) {
-        /* Make tankX and tankY */
-        tankX = (*plrs)->item[count].mapX;
-        tankX <<= BRADIAN_ADD8;
-        conv = (*plrs)->item[count].pixelX;
-        conv <<= TANK_SHIFT_RIGHT2;
-        tankX += conv;
-        tankY = (*plrs)->item[count].mapY;
-        tankY <<= BRADIAN_ADD8;
-        conv = (*plrs)->item[count].pixelY;
-        conv <<= TANK_SHIFT_RIGHT2;
-        tankY += conv;
-        if (tankX > x) {
-          diffX = tankX - x;
-        } else {
-          diffX = x -tankX;
-        }
-        if (tankY > y) {
-          diffY = tankY - y;
-        } else {
-          diffY = y - tankY;
-        }
-        /* Not in trees check */
-        if (screenIsItemInTrees(sim, tankX, tankY) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST)) {
-          /* Distance check */
-          inRange = utilIsItemInRange(x, y, tankX, tankY, PILLBOX_RANGE, &test);
-          if (inRange == TRUE && test < tankAmount) {
-            returnValue = TRUE;
-          }
-        }
-      }
-    }
-    count++;
-  }
-  return returnValue;
-}
 
 /*********************************************************
 *NAME:          playersIsTankHit
@@ -1976,7 +1905,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
       }
       
       
-      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (screenIsItemInTrees(&cs->sim, wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
+      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
         /* In the rectangle */
         /* wx and wy already set */
         /* Info */
@@ -2041,7 +1970,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
         wx += (*plrs)->item[count].lgmPixelX << TANK_SHIFT_RIGHT2;
         wy = (*plrs)->item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += (*plrs)->item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
-        tankGetWorld(&cs->sim.tanks[0], &ourTankX, &ourTankY);
+        tankGetWorld(&MY_TANK(cs), &ourTankX, &ourTankY);
         if (wx > ourTankX) {
           conv = wx - ourTankX;
         } else {
@@ -2053,7 +1982,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv2 = ourTankY - wy;
         }
         
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (screenIsItemInTrees(&cs->sim, wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
           /* In the rectangle */
           /* Object Type */
           if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME) {

@@ -62,6 +62,7 @@ extern "C" {
 extern "C" {
 #include "../../bolo/players.h"
 #include "../../bolo/transport.h"
+#include "../../bolo/transport_udp.h"
 }
 
 /* Include input.h for keyItems — SDL3 already included, safe here */
@@ -483,9 +484,35 @@ static void renderSysInfoPanel(void) {
 /* -------------------------------------------------------
  * Network Info panel
  * ------------------------------------------------------- */
+
+/* Ping graph state — only populated while the dialog is open */
+#define PING_GRAPH_SIZE 120  /* ~2 minutes at ~1 sample/sec */
+static float s_pingHistory[PING_GRAPH_SIZE];
+static int   s_pingHistoryOffset = 0;  /* Next write position (circular) */
+static int   s_pingHistoryCount  = 0;  /* Total samples written */
+static uint32_t s_pingLastSampleTick = 0;
+
+static void pingGraphReset(void) {
+    memset(s_pingHistory, 0, sizeof(s_pingHistory));
+    s_pingHistoryOffset = 0;
+    s_pingHistoryCount  = 0;
+    s_pingLastSampleTick = 0;
+}
+
+static void pingGraphSample(int pingMs) {
+    uint32_t now = SDL_GetTicks();
+    /* Sample roughly once per second */
+    if (now - s_pingLastSampleTick < 1000 && s_pingHistoryCount > 0) return;
+    s_pingLastSampleTick = now;
+    s_pingHistory[s_pingHistoryOffset] = (float)pingMs;
+    s_pingHistoryOffset = (s_pingHistoryOffset + 1) % PING_GRAPH_SIZE;
+    if (s_pingHistoryCount < PING_GRAPH_SIZE) s_pingHistoryCount++;
+}
+
 static void renderNetInfoContent(ClientSim *cs) {
     char str[256];
     int  ping = 0, ppsec = 0, numErrors = 0;
+    int  ppsIn = 0, ppsOut = 0;
 
     netGetServerAddressStr(cs, str);
     ImGui::Text("Server:      %s", str);
@@ -508,25 +535,50 @@ static void renderNetInfoContent(ClientSim *cs) {
     }
 
     netGetStats(cs, str, &ping, &ppsec, &numErrors);
-    /* Prefer ping from new UDP transport when active */
+    /* Prefer stats from new UDP transport when active */
     {
         Transport *tp = gameFrontGetTransport();
         if (tp) {
             uint16_t udpPing = transportUdpClientGetPing(tp);
             if (udpPing > 0) ping = (int)udpPing;
+            int udpErrors = 0;
+            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &udpErrors);
+            numErrors = udpErrors;
         }
     }
     ImGui::Separator();
     ImGui::Text("Status:      %s", str);
     ImGui::Text("Server ping: %d ms", ping);
-    ImGui::Text("Packets/sec: %d", ppsec);
+    ImGui::Text("Packets/sec: %d in / %d out", ppsIn, ppsOut);
     ImGui::Text("Net errors:  %d", numErrors);
+
+    /* Ping graph */
+    pingGraphSample(ping);
+    if (s_pingHistoryCount > 1) {
+        float minPing = s_pingHistory[0], maxPing = s_pingHistory[0], sumPing = 0;
+        for (int i = 0; i < s_pingHistoryCount; i++) {
+            float v = s_pingHistory[i];
+            if (v < minPing) minPing = v;
+            if (v > maxPing) maxPing = v;
+            sumPing += v;
+        }
+        float avgPing = sumPing / (float)s_pingHistoryCount;
+        if (maxPing < 10) maxPing = 10;
+
+        ImGui::Separator();
+        ImGui::Text("Ping: min %d / avg %d / max %d ms",
+                    (int)minPing, (int)avgPing, (int)maxPing);
+        ImGui::PlotLines("##ping", s_pingHistory, s_pingHistoryCount,
+                         s_pingHistoryOffset, nullptr,
+                         0.0f, maxPing * 1.2f,
+                         ImVec2(ImGui::GetContentRegionAvail().x, 60));
+    }
 }
 
 static void renderNetInfoPanel(ClientSim *cs) {
     if (!s_showNetInfo || s_popNetInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(360, 185), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360, 270), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Network Info", &s_showNetInfo)) {
         ImGui::End();
         return;
@@ -1631,12 +1683,12 @@ static void renderMenuBar(ClientSim *cs) {
         if (!uiModeIsTablet()) {
             if (ImGui::MenuItem("Game Info",    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, "Game Info", 320, 200);
             if (ImGui::MenuItem("System Info",  nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo, "System Info", 300, 210);
-            if (ImGui::MenuItem("Network Info", nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo, "Network Info", 360, 185);
+            if (ImGui::MenuItem("Network Info", nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo, "Network Info", 360, 270);
         } else {
 #endif
             if (ImGui::MenuItem("Game Info",    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
             if (ImGui::MenuItem("System Info",  nullptr, s_showSysInfo))   s_showSysInfo   = !s_showSysInfo;
-            if (ImGui::MenuItem("Network Info", nullptr, s_showNetInfo))   s_showNetInfo   = !s_showNetInfo;
+            if (ImGui::MenuItem("Network Info", nullptr, s_showNetInfo))   { if (!s_showNetInfo) pingGraphReset(); s_showNetInfo = !s_showNetInfo; }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
@@ -2508,6 +2560,7 @@ void sdl3ImguiShowSysInfo(bool open) {
     s_showSysInfo = open;
 }
 void sdl3ImguiShowNetInfo(bool open) {
+    if (open && !s_showNetInfo) pingGraphReset();
     s_showNetInfo = open;
 }
 void sdl3ImguiShowGameInfo(bool open) {

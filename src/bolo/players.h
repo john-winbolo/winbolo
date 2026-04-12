@@ -449,7 +449,7 @@ void playersMakeScreenTanks(struct ClientSim *cs, struct GameSim *sim, players *
 * top      - top bound
 * bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenLgm(struct GameSim *sim, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
+void playersMakeScreenLgm(struct ClientSim *cs, players *plrs, screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 /*********************************************************
 *NAME:          playersGetNumPlayers
@@ -464,23 +464,6 @@ void playersMakeScreenLgm(struct GameSim *sim, players *plrs, screenLgm *value, 
 *********************************************************/
 BYTE playersGetNumPlayers(players *plrs);
 
-/*********************************************************
-*NAME:          playersIsTankCloser
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/2/99
-*LAST MODIFIED: 19/2/99
-*PURPOSE:
-* Returns whether a tank not allied to the pillbox 
-* is closer then this players tank.
-*
-*ARGUMENTS:
-* plrs - Pointer to the players object 
-* x          - X co-ordinate of the pillbox
-* y          - Y co-ordinate of the pillbox
-* pillOwner  - Who owns the pill
-* tankAmount - My tanks distance from pill
-*********************************************************/
-bool playersIsTankCloser(struct GameSim *sim, players *plrs, WORLD x, WORLD y, BYTE pillOwner, double tankAmount);
 
 /*********************************************************
 *NAME:          playersIsTankHit
