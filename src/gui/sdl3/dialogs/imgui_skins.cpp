@@ -165,7 +165,7 @@ extern "C" void imguiSkinsShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Skin Selection");
+    dialogSetWindowTitle(window, "WinBolo - Skin Selection");
     SDL_SetWindowResizable(window, false);
 #endif
     SDL_ShowWindow(window);
