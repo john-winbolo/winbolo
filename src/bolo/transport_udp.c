@@ -514,6 +514,7 @@ typedef struct {
     uint32_t lastPingSentTick;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
     uint16_t pingMs;
+    uint32_t serverPongTime;  /* Server timestamp from last PONG, echoed back in next PING */
     uint32_t localTick;  /* Local tick counter for timing */
 
     /* Map download state */
@@ -892,6 +893,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->pingMs = (uint16_t)(now - clientTime);
                 playersSetPing(&c->clientSim->sim.plyrs, c->playerNum, c->pingMs);
             }
+            c->serverPongTime = unpackU32(buf + PACKET_HEADER_SIZE + 4);
         }
         break;
 
@@ -1400,7 +1402,7 @@ static bool udpClientTick(void *ctx) {
             uint8_t pbuf[PACKET_HEADER_SIZE + 8];
             packHeader(pbuf, PACKET_PING, c->outSequence++);
             packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
-            packU32(pbuf + PACKET_HEADER_SIZE + 4, (uint32_t)c->pingMs);
+            packU32(pbuf + PACKET_HEADER_SIZE + 4, c->serverPongTime);
             udpSendTo(c->sock, pbuf, sizeof(pbuf), &c->serverAddr);
             c->packetsSentThisSec++;
             c->lastPingSentTick = c->localTick;
@@ -2435,19 +2437,23 @@ static void serverHandlePing(const uint8_t *buf, int len,
 
     clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
 
-    /* Client embeds its last measured pingMs in the second uint32 */
+    /* Server-measured RTT: the second uint32 from the client is the server
+     * timestamp we sent in the previous PONG, echoed back.  RTT = now - that. */
     {
+        uint32_t now = SDL_GetTicks();
         int clientIdx = serverFindClient(fromAddr);
         if (clientIdx >= 0) {
-            udpServer.clients[clientIdx].pingMs =
-                (uint16_t)unpackU32(buf + PACKET_HEADER_SIZE + 4);
+            uint32_t echoedServerTime = unpackU32(buf + PACKET_HEADER_SIZE + 4);
+            if (echoedServerTime > 0) {
+                udpServer.clients[clientIdx].pingMs = (uint16_t)(now - echoedServerTime);
+            }
             udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
+            udpServer.clients[clientIdx].lastPongSentMs = now;
         }
+        packHeader(pongBuf, PACKET_PONG, 0);
+        packU32(pongBuf + PACKET_HEADER_SIZE, clientTime);
+        packU32(pongBuf + PACKET_HEADER_SIZE + 4, now);
     }
-
-    packHeader(pongBuf, PACKET_PONG, 0);
-    packU32(pongBuf + PACKET_HEADER_SIZE, clientTime);
-    packU32(pongBuf + PACKET_HEADER_SIZE + 4, udpServer.tickCount);
     udpSendTo(udpServer.sock, pongBuf, sizeof(pongBuf), fromAddr);
 }
 
@@ -2694,6 +2700,58 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
         }
     }
     serverSimConsoleMessage("Player not found.");
+}
+
+void transportUdpServerEnforcePing(ServerSim *sim) {
+    int i;
+    if (sim->state != serverStateRunning) return;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        UdpServerClient *client = &udpServer.clients[i];
+        uint16_t ping;
+        if (!client->connected) continue;
+
+        ping = client->pingMs;
+        if (ping == 0) continue;  /* No measurement yet */
+        if (ping == client->lastEnforcedPingMs) continue;  /* Same measurement, already checked */
+        client->lastEnforcedPingMs = ping;
+
+        /* Kick threshold */
+        if (ping >= PING_KICK_THRESHOLD_MS) {
+            client->pingKickStrikes++;
+            if (client->pingKickStrikes >= PING_KICK_COUNT) {
+                char msg[128];
+                snprintf(msg, sizeof(msg),
+                         "%s kicked for high ping (%dms).",
+                         client->playerName, ping);
+                fprintf(stderr, "[UDP SERVER] %s\n", msg);
+                serverSimConsoleMessage(msg);
+                serverSendServerMessage(msg);
+                serverCleanupMapDownload(i);
+                serverDisconnectClient(sim, i, FALSE);
+                serverSimRemovePlayer(sim, (BYTE)i);
+                continue;
+            }
+        } else {
+            client->pingKickStrikes = 0;
+        }
+
+        /* Warn threshold */
+        if (ping >= PING_WARN_THRESHOLD_MS) {
+            client->pingWarnStrikes++;
+            if (client->pingWarnStrikes >= PING_WARN_COUNT && !client->pingWarned) {
+                char msg[128];
+                snprintf(msg, sizeof(msg),
+                         "%s has high ping (%dms) and may be kicked.",
+                         client->playerName, ping);
+                serverSendServerMessage(msg);
+                client->pingWarned = true;
+            }
+        } else {
+            client->pingWarnStrikes = 0;
+            client->pingWarned = false;
+        }
+    }
 }
 
 bool transportUdpServerCreate(unsigned short port,

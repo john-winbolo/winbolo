@@ -48,6 +48,7 @@
 #include "messages.h"
 #include "sounddist.h"
 #include "util.h"
+#include "position_history.h"
 
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType, char *top, char *bottom);
@@ -116,6 +117,11 @@ typedef struct GameSim {
 
     /* Base refuel timers (was bases.c global) */
     int         baseTimer[MAX_TANKS];
+
+    /* Lag compensation (server-only, zeroed on client) */
+    uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
+    uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */
+    PosHistory *posHistoryPtr;               /* NULL on client, points to ServerSim.posHistory on server */
 } GameSim;
 
 /*********************************************************

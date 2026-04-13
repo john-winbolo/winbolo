@@ -27,6 +27,7 @@
 
 #include <SDL3/SDL.h>
 #include "../bolo/game_sim.h"
+#include "../bolo/position_history.h"
 #include "../bolo/input_packet.h"
 #include "../mapeditor/mapeditor_generate.h"
 
@@ -109,7 +110,14 @@ typedef struct ServerSim {
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
-    uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (from client reports) */
+    uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
+
+    /* Input jitter buffer — delay processing until buffer reaches target depth */
+#define INPUT_JITTER_BUFFER_TICKS 2  /* inputs to buffer (1 game tick = 20ms) */
+#define LAG_COMP_MAX_TICKS 15       /* 300ms one-way max compensation — reverted until Phase 5 RTT is fixed */
+    uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
+
+    PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
 
     /* Which player is currently being processed in the tick loop.
      * Used by serverSimCbMessageAdd to target assistant messages. */
