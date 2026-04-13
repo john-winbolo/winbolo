@@ -122,6 +122,83 @@ static int serverDelayHead = 0;
 static int serverDelayCount = 0;
 #endif
 
+/* ---- Server dedicated recv thread ----
+ * A background thread continuously polls the server socket and queues
+ * packets into an SPSC ring buffer.  The timer callback drains the
+ * queue each tick, keeping packet processing on the main thread.
+ * Skipped when simulated latency is enabled (udpRecvFromDelayed). */
+
+#define RECV_QUEUE_SIZE 128
+
+typedef struct {
+    uint8_t data[UDP_MAX_PAYLOAD];
+    int     len;
+    struct sockaddr_in fromAddr;
+} RecvQueueEntry;
+
+static RecvQueueEntry recvQueue[RECV_QUEUE_SIZE];
+static SDL_AtomicInt  recvQueueHead;  /* written by recv thread */
+static SDL_AtomicInt  recvQueueTail;  /* written by timer thread */
+static SDL_AtomicInt  recvThreadRunning;
+static SDL_Thread    *recvThread = NULL;
+static SOCKET         recvThreadSock = INVALID_SOCKET; /* copy for thread */
+static uint32_t       recvDropCount = 0; /* packets dropped due to full queue */
+
+static int SDLCALL serverRecvThreadFunc(void *userdata) {
+    (void)userdata;
+    SOCKET sock = recvThreadSock;
+
+    while (SDL_GetAtomicInt(&recvThreadRunning)) {
+        fd_set readfds;
+        struct timeval tv;
+        int selRet;
+
+        if (sock == INVALID_SOCKET) break;
+
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000; /* 1ms timeout */
+
+        selRet = select((int)(sock + 1), &readfds, NULL, NULL, &tv);
+        if (selRet <= 0) continue;
+
+        /* Drain all available packets from the socket */
+        while (SDL_GetAtomicInt(&recvThreadRunning)) {
+            int head = SDL_GetAtomicInt(&recvQueueHead);
+            int tail = SDL_GetAtomicInt(&recvQueueTail);
+            int next = (head + 1) % RECV_QUEUE_SIZE;
+
+            if (next == tail) {
+                /* Queue full — drop packet by reading and discarding */
+                uint8_t discard[UDP_MAX_PAYLOAD];
+                struct sockaddr_in discardAddr;
+                socklen_t addrLen = sizeof(discardAddr);
+                int ret = recvfrom(sock, (char *)discard, sizeof(discard), 0,
+                                   (struct sockaddr *)&discardAddr, &addrLen);
+                if (ret <= 0) break;
+                recvDropCount++;
+                if ((recvDropCount & 255) == 1) {
+                    fprintf(stderr, "[UDP SERVER] Recv queue full, dropped %u packets\n",
+                            recvDropCount);
+                }
+                continue;
+            }
+
+            {
+                RecvQueueEntry *entry = &recvQueue[head];
+                socklen_t addrLen = sizeof(entry->fromAddr);
+                int ret = recvfrom(sock, (char *)entry->data, UDP_MAX_PAYLOAD, 0,
+                                   (struct sockaddr *)&entry->fromAddr, &addrLen);
+                if (ret <= 0) break; /* No more data or error */
+                entry->len = ret;
+                SDL_SetAtomicInt(&recvQueueHead, next);
+            }
+        }
+    }
+    return 0;
+}
+
 /* ================================================================
  * Serialization helpers — pack/unpack structs to/from wire format
  * All multi-byte values use network byte order (big-endian).
@@ -2825,11 +2902,37 @@ bool transportUdpServerCreate(unsigned short port,
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
     }
 
+    /* Start dedicated recv thread (skip under simulated latency) */
+#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
+    recvThread = NULL;
+#else
+    SDL_SetAtomicInt(&recvQueueHead, 0);
+    SDL_SetAtomicInt(&recvQueueTail, 0);
+    recvDropCount = 0;
+    recvThreadSock = udpServer.sock;
+    SDL_SetAtomicInt(&recvThreadRunning, 1);
+    recvThread = SDL_CreateThread(serverRecvThreadFunc, "SrvRecv", NULL);
+    if (recvThread) {
+        fprintf(stderr, "[UDP SERVER] Recv thread started\n");
+    } else {
+        fprintf(stderr, "[UDP SERVER] WARNING: Failed to create recv thread, using polled fallback\n");
+        SDL_SetAtomicInt(&recvThreadRunning, 0);
+    }
+#endif
+
     return true;
 }
 
 void transportUdpServerDestroy(void) {
     int i;
+
+    /* Stop recv thread before touching the socket */
+    if (recvThread) {
+        SDL_SetAtomicInt(&recvThreadRunning, 0);
+        SDL_WaitThread(recvThread, NULL);
+        recvThread = NULL;
+        recvThreadSock = INVALID_SOCKET;
+    }
 
     /* Broadcast shutdown packet to all connected clients before closing */
     if (udpServer.sock != INVALID_SOCKET) {
@@ -3213,55 +3316,38 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
            (const struct sockaddr *)&dest, sizeof(dest));
 }
 
-/* Receive all pending packets from clients */
-void transportUdpServerRecv(ServerSim *sim) {
-    uint8_t buf[UDP_MAX_PAYLOAD];
-    struct sockaddr_in fromAddr;
-    int len;
+/* Process a single received packet — extracted from the recv loop so both
+ * the polled fallback and the recv-thread drain path can share it. */
+static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
+                                struct sockaddr_in *fromAddr) {
     uint8_t pktType;
 
-    int c;
-    if (!udpServer.running) return;
-
-    for (c = 0; c < MAX_TANKS; c++) {
-        udpServer.clients[c].inputsThisTick = 0;
+    /* Check for old-protocol info request before new-protocol handling */
+    if (isOldProtocolInfoRequest(buf, len)) {
+        serverHandleInfoRequest(fromAddr, sim);
+        return;
     }
 
-    udpServer.tickCount++;
-
-#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
-    while ((len = udpRecvFromDelayed(udpServer.sock, buf, sizeof(buf), &fromAddr,
-            SIM_LATENCY_SERVER_MS, serverDelayQueue,
-            &serverDelayHead, &serverDelayCount)) > 0) {
-#else
-    while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
-#endif
-        /* Check for old-protocol info request before new-protocol handling */
-        if (isOldProtocolInfoRequest(buf, len)) {
-            serverHandleInfoRequest(&fromAddr, sim);
-            continue;
-        }
-
-        pktType = getPacketType(buf, len);
-        if (pktType != PACKET_INPUT && pktType != PACKET_MAP_ACK) {
-            fprintf(stderr, "[UDP SERVER] Recv %s (%u) len=%d from %s:%u\n",
-                    packetTypeName(pktType), pktType, len,
-                    inet_ntoa(fromAddr.sin_addr), ntohs(fromAddr.sin_port));
-        }
-        switch (pktType) {
+    pktType = getPacketType(buf, len);
+    if (pktType != PACKET_INPUT && pktType != PACKET_MAP_ACK) {
+        fprintf(stderr, "[UDP SERVER] Recv %s (%u) len=%d from %s:%u\n",
+                packetTypeName(pktType), pktType, len,
+                inet_ntoa(fromAddr->sin_addr), ntohs(fromAddr->sin_port));
+    }
+    switch (pktType) {
         case PACKET_JOIN_REQUEST:
-            serverHandleJoinRequest(buf, len, &fromAddr, sim);
+            serverHandleJoinRequest(buf, len, fromAddr, sim);
             break;
         case PACKET_INPUT:
-            serverHandleInput(buf, len, &fromAddr, sim);
+            serverHandleInput(buf, len, fromAddr, sim);
             break;
         case PACKET_PING:
-            serverHandlePing(buf, len, &fromAddr);
+            serverHandlePing(buf, len, fromAddr);
             break;
         case PACKET_CHAT_MESSAGE: {
             /* Chat message format:
              *   [header 8] [destPlayer 1] [message up to 128] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len > PACKET_HEADER_SIZE + 1) {
                 uint8_t destPlayer = buf[PACKET_HEADER_SIZE];
                 int msgLen = len - PACKET_HEADER_SIZE - 1;
@@ -3303,7 +3389,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         case PACKET_NAME_CHANGE: {
             /* Name change format:
              *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 &&
                 len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) {
                 char newName[PACKET_MAX_PLAYER_NAME];
@@ -3368,7 +3454,7 @@ void transportUdpServerRecv(ServerSim *sim) {
             break;
         }
         case PACKET_QUIT: {
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0) {
                 serverCleanupMapDownload(clientIdx);
                 serverDisconnectClient(sim, clientIdx, TRUE);
@@ -3390,7 +3476,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_LOCK_TOGGLE: {
             /* Wire: [header 8] [allow 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
                 bool allow = buf[PACKET_HEADER_SIZE] != 0;
                 bool wasLocked = serverClientsAllLocked();
@@ -3428,7 +3514,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_ALLIANCE_REQUEST: {
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             fprintf(stderr, "[UDP SERVER] Alliance request: clientIdx=%d len=%d\n",
                     clientIdx, len);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
@@ -3454,7 +3540,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         case PACKET_ALLIANCE_ACCEPT: {
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]
              * fromPlayer = the accepter, toPlayer = who requested */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
                 /* Apply alliance on server-side players struct */
@@ -3483,7 +3569,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_ALLIANCE_LEAVE: {
             /* Wire: [header 8] [playerNum 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
                 /* Apply on server-side players struct */
                 {
@@ -3511,7 +3597,7 @@ void transportUdpServerRecv(ServerSim *sim) {
             break;
         }
         case PACKET_MAP_ACK: {
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint16_t chunkIdx = unpackU16(buf + PACKET_HEADER_SIZE);
                 ClientMapDownload *dl = &udpServer.mapDownload[clientIdx];
@@ -3540,7 +3626,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_LOBBY_TEAM_SET: {
             /* Wire: [header 8] [playerNum 1] [teamNumber 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 2) {
@@ -3554,7 +3640,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_LOBBY_READY: {
             /* Wire: [header 8] [playerNum 1] [ready 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && sim->lobbyEnabled &&
                 len >= PACKET_HEADER_SIZE + 2) {
                 bool ready = buf[PACKET_HEADER_SIZE + 1] != 0;
@@ -3581,7 +3667,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_LOBBY_ADD_BOT: {
             /* Wire: [header 8] — no payload needed, server uses its own brain config */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 sim->botAiType != aiNone &&
@@ -3610,7 +3696,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_LOBBY_REMOVE_BOT: {
             /* Wire: [header 8] [playerNum 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 1) {
@@ -3624,7 +3710,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_WBN_REAUTH: {
             /* Wire: [header 8] [wbnToken 65] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN) {
                 char token[WBN_TOKEN_WIRE_LEN];
                 memcpy(token, buf + PACKET_HEADER_SIZE, WBN_TOKEN_WIRE_LEN);
@@ -3658,7 +3744,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_BALANCE_REQUEST: {
             /* Wire: [header 8] [teamSize 1] */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx == 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 1 &&
@@ -3690,7 +3776,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_BALANCE_APPLY: {
             /* Wire: [header 8] (no payload) */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx == 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 sim->balanceProposal.pending) {
@@ -3708,7 +3794,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_BALANCE_DISMISS: {
             /* Wire: [header 8] (no payload) */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx == 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 sim->balanceProposal.pending) {
@@ -3721,7 +3807,7 @@ void transportUdpServerRecv(ServerSim *sim) {
         }
         case PACKET_MAP_SKIP_VOTE: {
             /* Wire: [header 8] (no payload — server identifies player by source) */
-            int clientIdx = serverFindClient(&fromAddr);
+            int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0) {
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
                 transportUdpServerBroadcastMapSkipState(sim);
@@ -3731,8 +3817,63 @@ void transportUdpServerRecv(ServerSim *sim) {
         default:
             break;
         }
+}
+
+/* Receive all pending packets from clients (polled fallback) */
+void transportUdpServerRecv(ServerSim *sim) {
+    uint8_t buf[UDP_MAX_PAYLOAD];
+    struct sockaddr_in fromAddr;
+    int len;
+    int c;
+
+    if (!udpServer.running) return;
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        udpServer.clients[c].inputsThisTick = 0;
     }
 
+    udpServer.tickCount++;
+
+#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
+    while ((len = udpRecvFromDelayed(udpServer.sock, buf, sizeof(buf), &fromAddr,
+            SIM_LATENCY_SERVER_MS, serverDelayQueue,
+            &serverDelayHead, &serverDelayCount)) > 0) {
+#else
+    while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
+#endif
+        serverProcessPacket(sim, buf, len, &fromAddr);
+    }
+}
+
+/* Drain the recv thread's packet queue (called from timer callback) */
+void transportUdpServerDrainRecvQueue(ServerSim *sim) {
+    int c;
+    int head, tail;
+
+    if (!udpServer.running) return;
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        udpServer.clients[c].inputsThisTick = 0;
+    }
+
+    udpServer.tickCount++;
+
+    tail = SDL_GetAtomicInt(&recvQueueTail);
+    head = SDL_GetAtomicInt(&recvQueueHead);
+
+    while (tail != head) {
+        RecvQueueEntry *entry = &recvQueue[tail];
+        serverProcessPacket(sim, entry->data, entry->len, &entry->fromAddr);
+        tail = (tail + 1) % RECV_QUEUE_SIZE;
+        SDL_SetAtomicInt(&recvQueueTail, tail);
+        /* Re-read head in case more packets arrived during processing */
+        head = SDL_GetAtomicInt(&recvQueueHead);
+    }
+}
+
+/* Returns true if a dedicated recv thread is running */
+bool transportUdpServerHasRecvThread(void) {
+    return recvThread != NULL;
 }
 
 /* Drain sim events into per-client reliable queues.
@@ -3968,7 +4109,11 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
 /* Combined receive + tick + send (for callers that don't need split) */
 void transportUdpServerTick(ServerSim *sim) {
-    transportUdpServerRecv(sim);
+    if (recvThread) {
+        transportUdpServerDrainRecvQueue(sim);
+    } else {
+        transportUdpServerRecv(sim);
+    }
     transportUdpServerDrainEvents(sim);
     transportUdpServerSend(sim);
 }
