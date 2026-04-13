@@ -58,6 +58,8 @@
 #include "../bolo/playersrejoin.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
+#include "../bolo/interpolation.h"
+#include "../bolo/position_history.h"
 #include "../mapeditor/mapeditor_generate.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
@@ -292,6 +294,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->inputQueueTail[count] = 0;
         sim->playerConnected[count] = FALSE;
     }
+
+    sim->sim.posHistoryPtr = sim->posHistory;
+    sim->sim.lagCompTicks = 0;
+    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
     gameTypeSet(&sim->sim.game, game);
     logCreate();
@@ -666,6 +672,25 @@ void serverSimTick(ServerSim *sim) {
      * so each tick number is only processed once. */
     for (count = 0; count < MAX_TANKS; count++) {
         hasInput[count] = FALSE;
+        if (!sim->playerConnected[count]) {
+            continue;
+        }
+
+        /* Calculate queue depth (inputs available) */
+        uint8_t queueDepth = sim->inputQueueHead[count] - sim->inputQueueTail[count];
+
+        /* Jitter buffer gate: wait until we have enough inputs buffered.
+         * Once the buffer has filled initially, keep processing even if
+         * depth drops to 1 (drain rather than stall). Only re-enter
+         * buffering mode if the queue empties completely. */
+        if (!sim->inputBufferFilled[count]) {
+            if (queueDepth < INPUT_JITTER_BUFFER_TICKS) {
+                continue;  /* Still filling — don't process yet */
+            }
+            sim->inputBufferFilled[count] = 1;
+        }
+
+        /* Dequeue one input, skipping duplicates/stale */
         while (sim->inputQueueHead[count] != sim->inputQueueTail[count]) {
             uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
             currentInputs[count] = sim->inputQueue[count][tail];
@@ -674,7 +699,11 @@ void serverSimTick(ServerSim *sim) {
                 hasInput[count] = TRUE;
                 break;
             }
-            /* Duplicate or stale input — discard and try the next one */
+        }
+
+        /* If queue drained completely, re-enter buffering mode */
+        if (sim->inputQueueHead[count] == sim->inputQueueTail[count] && !hasInput[count]) {
+            sim->inputBufferFilled[count] = 0;
         }
     }
 
@@ -712,6 +741,13 @@ void serverSimTick(ServerSim *sim) {
             } else {
                 /* Game tick: full update (turning + accel + movement) */
                 bool shoot = (currentInputs[count].actions & INPUT_ACTION_FIRE) != 0;
+                {
+                    uint16_t pingMs = sim->playerPing[count];
+                    uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
+                    uint8_t compTicks = (uint8_t)(delayMs / 20);
+                    if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
+                    sim->sim.lagCompTicks = compTicks;
+                }
                 tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
                 lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
 
@@ -734,12 +770,26 @@ void serverSimTick(ServerSim *sim) {
         } else if (!isKeysTick) {
             /* No input but it's a world-system game tick — still run
              * tankUpdate with TNONE so physics (deceleration, etc.) apply */
+            sim->sim.lagCompTicks = 0;
             tankUpdate(&sim->sim, &sim->sim.tanks[count], TNONE, FALSE, FALSE);
         }
     }
 
+    /* Reset lagCompTicks after per-player loop so pill-fired shells get 0 */
+    sim->sim.lagCompTicks = 0;
+
     /* World systems: run on even server ticks (game ticks) */
     if (!isKeysTick) {
+        /* Record tank positions for lag compensation history */
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
+                posHistoryRecord(&sim->posHistory[count],
+                                 (*sim->sim.tanks[count]).x,
+                                 (*sim->sim.tanks[count]).y,
+                                 (*sim->sim.tanks[count]).armour <= TANK_FULL_ARMOUR);
+            }
+        }
+
         /* Update pillboxes — pass all tanks so pills can target closest enemy */
         pillsUpdate(&sim->sim, sim->sim.tanks, sim->playerConnected, MAX_TANKS);
 
@@ -794,6 +844,21 @@ void serverSimTick(ServerSim *sim) {
                 numTanks++;
             }
         }
+
+        /* Precompute per-player compensation ticks for pill shell rewind */
+        {
+            BYTE c;
+            for (c = 0; c < MAX_TANKS; c++) {
+                uint16_t pingMs = sim->playerPing[c];
+                uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
+                uint8_t ticks = (uint8_t)(delayMs / 20);
+                if (ticks > LAG_COMP_MAX_TICKS) ticks = LAG_COMP_MAX_TICKS;
+                sim->sim.perPlayerCompTicks[c] = ticks;
+            }
+        }
+
+        /* Enforce high-ping limits */
+        /* transportUdpServerEnforcePing(sim); disabled — Phase 5 RTT measurement needs fixing */
 
         /* Update world systems */
         tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);
@@ -906,7 +971,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     }
     sim->inputQueue[p][head & (SERVER_INPUT_QUEUE_SIZE - 1)] = sanitized;
     sim->inputQueueHead[p] = head + 1;
-    sim->playerPing[p] = sanitized.pingMs;
+    sim->playerPing[p] = input->pingMs;
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
@@ -926,6 +991,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->inputBufferFilled[playerNum] = 0;
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -980,6 +1046,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
+    sim->inputBufferFilled[playerNum] = 0;
 
     /* Record ownership for rejoin before migration changes it */
     {
@@ -1443,10 +1510,11 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            fprintf(stdout, "%s - (P:%d B:%d)\n",
+            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms)\n",
                     name,
                     pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                    sim->playerPing[count]);
         }
     }
     fprintf(stdout, "\n");
@@ -1685,27 +1753,35 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 4. Clear mines from under bases */
     basesClearMines(&sim->sim);
 
-    /* 5. Clear events */
+    /* 5. Reset lag compensation state */
+    for (i = 0; i < MAX_TANKS; i++) {
+        posHistoryInit(&sim->posHistory[i]);
+    }
+    sim->sim.lagCompTicks = 0;
+    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
+
+    /* 6. Clear events */
     sim->eventCount = 0;
 
-    /* 6. Reset tick */
+    /* 7. Reset tick */
     sim->tick = 0;
 
-    /* 7. Flush all input queues */
+    /* 8. Flush all input queues */
     for (i = 0; i < MAX_TANKS; i++) {
         sim->inputQueueHead[i] = 0;
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
+        sim->inputBufferFilled[i] = 0;
     }
 
-    /* 8. Reset full sync tracking */
+    /* 9. Reset full sync tracking */
     sim->lastFullSyncTick = 0;
 
-    /* 9. Reset change detection */
+    /* 10. Reset change detection */
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
 
-    /* 10. Reset player connection state and players struct */
+    /* 11. Reset player connection state and players struct */
     for (i = 0; i < MAX_TANKS; i++) {
         sim->playerConnected[i] = FALSE;
     }

@@ -967,6 +967,102 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	return returnValue;
 }
 
+/*********************************************************
+*NAME:          tankIsTankHitAtPosition
+*PURPOSE:
+*  Like tankIsTankHit but checks collision against the
+*  supplied tankX/tankY instead of the tank's current
+*  position. Used for lag-compensated (rewound) hits.
+*  Damage/knockback still applies at the tank's real pos.
+*********************************************************/
+tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
+                                 WORLD tankX, WORLD tankY,
+                                 WORLD shellX, WORLD shellY,
+                                 TURNTYPE angle, BYTE owner) {
+	map *mp = &sim->mp;
+	pillboxes *pb = &sim->pb;
+	bases *bs = &sim->bs;
+	bool isServer = sim->isServer;
+	tankHit returnValue; /* Value to return */
+	WORLD conv;          /* Used in the conversion */
+	int newX;            /* Amount to add because the tank has been hit */
+	int newY;
+	WORLD newmx;
+	WORLD newmy;
+	BYTE bmx;
+	BYTE bmy;
+	BYTE newbmx;       /* Test locations to check for a collision */
+	BYTE newbmy;
+
+
+	returnValue = TH_MISSED;
+
+	/* If no tank was passed, it missed. */
+	if (*value == NULL) {
+		return TH_MISSED;
+	}
+
+	if (!isServer) {
+		if (owner == gameSimGetTankPlayer(sim, value)) {
+			return TH_MISSED;
+		}
+	}
+
+	returnValue = TH_MISSED;
+
+	if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
+		returnValue = TH_HIT;
+		(*value)->armour -= DAMAGE;
+		tankRegisterChangeByte(value, CRC_ARMOUR_OFFSET, (*value)->armour);
+		if ((*value)->onBoat == TRUE) {
+			(*value)->onBoat = FALSE;
+			tankRegisterChangeByte(value, CRC_ONBOAT_OFFSET, FALSE);
+			(*value)->speed = 0;
+			tankRegisterChangeFloat(value, CRC_SPEED_OFFSET, 0);
+			if (!isServer) {
+				screenReCalcCS((struct ClientSim *)sim);
+			}
+		}
+
+		if ((*value)->armour > TANK_FULL_ARMOUR) {
+			if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
+				returnValue = TH_KILL_BIG;
+			} else {
+				returnValue = TH_KILL_SMALL;
+			}
+
+			tankSetLastTankDeath(value,LAST_DEATH_BY_SHELL);
+			(*value)->deathWait = TANK_DEATH_WAIT;
+			tankRegisterChangeByte(value, CRC_DEATHWAIT_OFFSET, TANK_DEATH_WAIT);
+
+			tankDropPills(sim, value);
+		} else {
+			/* Tank was hit and survived — compute initial knockback velocity */
+			double dbAngle;
+			TURNTYPE slideAngle = angle - BRADIANS_EAST;
+			if (slideAngle < 0) {
+				slideAngle += (TURNTYPE)BRADIANS_MAX;
+			}
+			dbAngle = (DEGREES_MAX / BRADIANS_MAX) * slideAngle;
+			dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+			(*value)->tankSlideVx = (float)(TANK_SLIDE_INITIAL_SPEED * cos(dbAngle));
+			(*value)->tankSlideVy = (float)(TANK_SLIDE_INITIAL_SPEED * sin(dbAngle));
+		}
+		if ((*value)->armour <= TANK_FULL_ARMOUR) {
+			if (!isServer) {
+				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+			}
+		} else {
+			if (!isServer) {
+				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+			}
+		}
+	} else if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
+		/* Do crazy shit here */
+	}
+	return returnValue;
+}
+
 
 /*********************************************************
 *NAME:          tankInWater

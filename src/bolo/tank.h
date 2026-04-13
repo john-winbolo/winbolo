@@ -567,6 +567,28 @@ void tankSetWorld(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE a
 tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner);
 
 /*********************************************************
+*NAME:          tankIsTankHitAtPosition
+*PURPOSE:
+*  Like tankIsTankHit but checks collision against the
+*  supplied tankX/tankY instead of the tank's current
+*  position. Used for lag-compensated (rewound) hits.
+*  Damage/knockback still applies at the tank's real pos.
+*
+*ARGUMENTS:
+*  value  - Pointer to the tank structure
+*  tankX  - Rewound X position to check against
+*  tankY  - Rewound Y position to check against
+*  shellX - X co-ord of shell
+*  shellY - Y co-ord of shell
+*  angle  - The direction the shell came from
+*  owner  - Shells owner
+*********************************************************/
+tankHit tankIsTankHitAtPosition(struct GameSim *sim, tank *value,
+                                 WORLD tankX, WORLD tankY,
+                                 WORLD shellX, WORLD shellY,
+                                 TURNTYPE angle, BYTE owner);
+
+/*********************************************************
 *NAME:          tankNetTankHit
 *AUTHOR:        John Morrison
 *CREATION DATE: 30/12/98

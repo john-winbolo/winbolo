@@ -84,10 +84,12 @@ void interpCreate(InterpContext *ctx, BYTE localPlayer) {
   for (i = 0; i < MAX_TANKS; i++) {
     ctx->players[i].hasData = FALSE;
     ctx->players[i].hasPrev = FALSE;
+    ctx->players[i].hasPending = FALSE;
     ctx->players[i].snapshotTick = 0;
     ctx->players[i].missedTicks = 0;
     memset(&ctx->players[i].prev, 0, sizeof(InterpSnapshot));
     memset(&ctx->players[i].curr, 0, sizeof(InterpSnapshot));
+    memset(&ctx->players[i].pending, 0, sizeof(InterpSnapshot));
   }
   ctx->localPlayer = localPlayer;
 }
@@ -101,15 +103,30 @@ void interpUpdate(InterpContext *ctx, BYTE playerNum,
 
   p = &ctx->players[playerNum];
 
-  if (p->hasData) {
-    /* Shift current → previous */
+  if (!p->hasData) {
+    /* First snapshot ever: put directly into curr so the player
+     * is visible immediately (interpGetPosition needs curr.alive) */
+    p->curr = *snap;
+    p->hasData = TRUE;
+    p->snapshotTick = tick;
+    p->missedTicks = 0;
+    return;
+  }
+
+  if (p->hasPending) {
+    /* Shift: curr → prev, pending → curr, new → pending */
+    p->prev = p->curr;
+    p->hasPrev = TRUE;
+    p->curr = p->pending;
+  } else {
+    /* Second snapshot: curr → prev, new goes to pending */
     p->prev = p->curr;
     p->hasPrev = TRUE;
   }
 
-  p->curr = *snap;
+  p->pending = *snap;
+  p->hasPending = TRUE;
   p->snapshotTick = tick;
-  p->hasData = TRUE;
   p->missedTicks = 0;
 }
 
@@ -193,6 +210,7 @@ bool interpGetLgm(const InterpContext *ctx, BYTE playerNum,
                   BYTE *outMX, BYTE *outMY,
                   BYTE *outPX, BYTE *outPY, BYTE *outFrame) {
   const InterpPlayer *p;
+  const InterpSnapshot *lgmSnap;
 
   if (playerNum >= MAX_TANKS || playerNum == ctx->localPlayer) {
     return FALSE;
@@ -204,11 +222,12 @@ bool interpGetLgm(const InterpContext *ctx, BYTE playerNum,
     return FALSE;
   }
 
-  *outMX = p->curr.lgmMX;
-  *outMY = p->curr.lgmMY;
-  *outPX = p->curr.lgmPX;
-  *outPY = p->curr.lgmPY;
-  *outFrame = p->curr.lgmFrame;
+  lgmSnap = p->hasPending ? &p->pending : &p->curr;
+  *outMX = lgmSnap->lgmMX;
+  *outMY = lgmSnap->lgmMY;
+  *outPX = lgmSnap->lgmPX;
+  *outPY = lgmSnap->lgmPY;
+  *outFrame = lgmSnap->lgmFrame;
   return TRUE;
 }
 
@@ -220,11 +239,16 @@ bool interpHasData(const InterpContext *ctx, BYTE playerNum) {
 }
 
 bool interpIsAlive(const InterpContext *ctx, BYTE playerNum) {
+  const InterpPlayer *p;
   if (playerNum >= MAX_TANKS) {
     return FALSE;
   }
-  if (!ctx->players[playerNum].hasData) {
+  p = &ctx->players[playerNum];
+  if (!p->hasData) {
     return FALSE;
   }
-  return ctx->players[playerNum].curr.alive;
+  if (p->hasPending) {
+    return p->pending.alive;
+  }
+  return p->curr.alive;
 }
