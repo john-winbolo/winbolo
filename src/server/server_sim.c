@@ -222,6 +222,17 @@ static void serverSimCbSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPla
     serverSimAddEvent(sim, &ev);
 }
 
+static void serverSimCbMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_MINE_VISIBLE;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = mx;
+    ev.data[1] = my;
+    ev.data[2] = sourcePlayer;
+    serverSimAddEvent(sim, &ev);
+}
+
 static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
@@ -285,6 +296,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.tankKill = serverSimCbTankKill;
     sim->sim.callbacks.centerTank = serverSimCbCenterTank;
     sim->sim.callbacks.consoleMessage = serverSimCbConsoleMessage;
+    sim->sim.callbacks.mineVisible = serverSimCbMineVisible;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -1469,6 +1481,15 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
+                 * LGM mines go only to the placer and their allies */
+                if (evType == EVENT_MINE_VISIBLE) {
+                    BYTE sp = sim->events[i].data[2];
+                    if (!(sp & 0x80) && clientIdx != (sp & 0x7F) &&
+                        !playersIsAllie(&sim->sim.plyrs, clientIdx, sp)) {
+                        continue;
+                    }
+                }
                 eventsOut[outCount++] = sim->events[i];
             }
         }

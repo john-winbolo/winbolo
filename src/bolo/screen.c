@@ -3959,6 +3959,11 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           }
         }
         break;
+      case EVENT_MINE_VISIBLE:
+        /* data: [mx, my, sourcePlayer] — reveal mine at position */
+        minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
+        screenReCalcCS(csPtr);
+        break;
       default:
         break;
       }

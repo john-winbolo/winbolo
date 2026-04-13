@@ -101,6 +101,10 @@ static void csCallbackConsoleMessage(void *ctx, char *msg) {
   /* no-op on the client */
 }
 
+static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer) {
+  /* no-op — client receives mine visibility via EVENT_MINE_VISIBLE from server */
+}
+
 /* Brain state now lives inside the ClientSim struct (see client_sim.h).
  * The static globals were removed in the Phase 0 refactor. */
 
@@ -137,6 +141,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->sim.callbacks.tankKill = csCallbackTankKill;
   cs->sim.callbacks.centerTank = csCallbackCenterTank;
   cs->sim.callbacks.consoleMessage = csCallbackConsoleMessage;
+  cs->sim.callbacks.mineVisible = csCallbackMineVisible;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;

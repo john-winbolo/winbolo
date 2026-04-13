@@ -1066,6 +1066,9 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
         minesAddItem(&sim->mns, bmx, bmy);
         (*lgman)->numMines = 0;
+        if (sim->isServer && sim->hiddenMines) {
+          sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, (*lgman)->playerNum);
+        }
         sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       }
       if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }

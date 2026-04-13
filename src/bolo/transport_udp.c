@@ -3977,6 +3977,19 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         for (i = 0; i < (int)sim->eventCount; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
+                 * LGM mines go only to the placer and their allies */
+                if (evType == EVENT_MINE_VISIBLE) {
+                    BYTE sourcePlayer = sim->events[i].data[2];
+                    if (sourcePlayer & 0x80) {
+                        /* Tank mine — broadcast to all */
+                    } else {
+                        /* LGM mine — only placer and allies */
+                        if (c != sourcePlayer && !playersIsAllie(&sim->sim.plyrs, (BYTE)c, sourcePlayer)) {
+                            continue;
+                        }
+                    }
+                }
                 if (!eventQueueHasSpace(cq)) {
                     fprintf(stderr, "[UDP SERVER] Game event queue full for client %d\n", c);
                     break;

@@ -2346,6 +2346,10 @@ void tankLayMine(GameSim *sim, tank *value) {
       (*value)->mines--;
       tankRegisterChangeByte(value, CRC_MINES_OFFSET, (*value)->mines);
       mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
+      if (isServer && sim->hiddenMines) {
+        BYTE pn = gameSimGetTankPlayer(sim, value);
+        sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
+      }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       if ((*value)->armour <= TANK_FULL_ARMOUR) {
         if (!isServer) {
