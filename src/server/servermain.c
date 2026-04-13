@@ -374,7 +374,11 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
 
       threadsWaitForMutex();
       /* Receive packets — queues inputs for both ticks */
-      transportUdpServerRecv(&serverSim);
+      if (transportUdpServerHasRecvThread()) {
+        transportUdpServerDrainRecvQueue(&serverSim);
+      } else {
+        transportUdpServerRecv(&serverSim);
+      }
 
       if (serverSim.state == serverStateRunning) {
         /* Run brain AI bots — queues two InputPackets per bot (keys + game) */

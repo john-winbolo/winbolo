@@ -267,6 +267,12 @@ void transportUdpServerTick(struct ServerSim *sim);
 void transportUdpServerRecv(struct ServerSim *sim);
 void transportUdpServerSend(struct ServerSim *sim);
 
+/* Drain the recv thread's packet queue (use when recv thread is active). */
+void transportUdpServerDrainRecvQueue(struct ServerSim *sim);
+
+/* Returns true if a dedicated recv thread is running. */
+bool transportUdpServerHasRecvThread(void);
+
 /* Drain sim events into per-client reliable queues.
  * Call after each serverSimTick() so events aren't lost when
  * multiple ticks run before transportUdpServerSend(). */
