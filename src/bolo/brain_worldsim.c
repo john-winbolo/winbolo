@@ -28,8 +28,9 @@
 #include <math.h>
 
 /* Game constants matching tank.h / global.h */
-#define WSIM_TANK_SLIDE      16   /* WU knockback per tick */
-#define WSIM_SLIDE_TICKS      7   /* ticks of slide */
+#define WSIM_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
+#define WSIM_SLIDE_FRICTION      0.80f /* velocity multiplier per tick */
+#define WSIM_SLIDE_STOP_THRESH   0.5f  /* stop sliding below this speed */
 #define WSIM_SHELL_DAMAGE     5   /* armor per shell hit */
 #define WSIM_PILL_RANGE    2048   /* WU range for pill firing */
 #define WSIM_PILL_FOREST_RANGE 768 /* 3 tiles — pills can't see into forest beyond this */
@@ -122,39 +123,52 @@ static void wsim_anger_pill(WSimPill *pill) {
   pill->cooldown = WSIM_ANGER_COOLDOWN;
 }
 
-/* Apply knockback slide to a tank for one tick */
+/* Apply knockback slide to a tank for one tick (exponential decay) */
 static void wsim_apply_slide(BrainWorldSim *sim, WSimTank *tank) {
-  float sdx, sdy;
+  int dx, dy;
   int new_wx, new_wy;
   int terrain;
   float spd;
 
-  if (tank->slide_timer == 0) return;
+  if (tank->slide_vx == 0.0f && tank->slide_vy == 0.0f) return;
 
-  sdx = wsim_sin_table[tank->slide_angle] * WSIM_TANK_SLIDE;
-  sdy = wsim_cos_table[tank->slide_angle] * WSIM_TANK_SLIDE;
+  dx = (int)roundf(tank->slide_vx);
+  dy = (int)roundf(tank->slide_vy);
 
   /* Check X axis */
-  new_wx = tank->wx + (int)sdx;
+  new_wx = tank->wx + dx;
   if (new_wx < 0) new_wx = 0;
   if (new_wx > 65535) new_wx = 65535;
   terrain = wsim_terrain_at(sim->map, new_wx, tank->wy);
   spd = sim->terrain_speed[terrain];
   if (spd > 0) {
     tank->wx = new_wx;
+  } else {
+    tank->slide_vx = 0.0f;
   }
 
   /* Check Y axis */
-  new_wy = tank->wy + (int)sdy;
+  new_wy = tank->wy + dy;
   if (new_wy < 0) new_wy = 0;
   if (new_wy > 65535) new_wy = 65535;
   terrain = wsim_terrain_at(sim->map, tank->wx, new_wy);
   spd = sim->terrain_speed[terrain];
   if (spd > 0) {
     tank->wy = new_wy;
+  } else {
+    tank->slide_vy = 0.0f;
   }
 
-  tank->slide_timer--;
+  /* Friction decay */
+  tank->slide_vx *= WSIM_SLIDE_FRICTION;
+  tank->slide_vy *= WSIM_SLIDE_FRICTION;
+
+  /* Stop when below threshold */
+  if (fabsf(tank->slide_vx) < WSIM_SLIDE_STOP_THRESH &&
+      fabsf(tank->slide_vy) < WSIM_SLIDE_STOP_THRESH) {
+    tank->slide_vx = 0.0f;
+    tank->slide_vy = 0.0f;
+  }
 }
 
 BrainWorldSim *brainWorldSimCreate(void) {
@@ -264,8 +278,8 @@ void brainWorldSimAddTank(BrainWorldSim *sim, int wx, int wy,
   t->is_ours = (uint8_t)is_ours;
   t->owner = (uint8_t)owner;
   t->armour = (int16_t)armour;
-  t->slide_timer = 0;
-  t->slide_angle = 0;
+  t->slide_vx = 0.0f;
+  t->slide_vy = 0.0f;
 
   if (is_ours) {
     sim->our_tank_idx = sim->num_tanks;
@@ -326,7 +340,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     /* ============================================================= */
     /* 1. MOVE OUR TANK along path waypoints at terrain speed        */
     /* ============================================================= */
-    if (path_idx < sim->num_path && our->slide_timer == 0) {
+    if (path_idx < sim->num_path && (our->slide_vx == 0.0f && our->slide_vy == 0.0f)) {
       int dest_wx = (sim->path[path_idx].mx << 8) + 128;
       int dest_wy = (sim->path[path_idx].my << 8) + 128;
       int terrain = wsim_terrain_at(sim->map, our->wx, our->wy);
@@ -368,7 +382,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       WSimTank *t = &sim->tanks[i];
       if (t->is_ours) continue;
       wsim_apply_slide(sim, t);
-      if (t->slide_timer == 0 && t->speed > 0) {
+      if ((t->slide_vx == 0.0f && t->slide_vy == 0.0f) && t->speed > 0) {
         t->wx += (int)(wsim_sin_table[t->direction] * t->speed);
         t->wy += (int)(wsim_cos_table[t->direction] * t->speed);
         /* Clamp */
@@ -516,15 +530,13 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             WSimTank *t = &sim->tanks[best_target];
             t->armour -= sim->shell_damage;
 
-            /* Knockback */
-            t->slide_timer = WSIM_SLIDE_TICKS;
-            /* Shell angle: from pill toward tank */
+            /* Knockback — compute initial velocity from pill toward tank */
             {
               float adx = (float)(t->wx - pill_wx);
               float ady = (float)(t->wy - pill_wy);
               float ang = atan2f(adx, -ady);  /* bolo coords */
-              if (ang < 0) ang += 2.0f * 3.14159265f;
-              t->slide_angle = (uint8_t)(ang * 256.0f / (2.0f * 3.14159265f));
+              t->slide_vx = WSIM_SLIDE_INITIAL_SPEED * sinf(ang);
+              t->slide_vy = WSIM_SLIDE_INITIAL_SPEED * (-cosf(ang));
             }
 
             if (is_our_tank) {

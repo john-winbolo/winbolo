@@ -53,10 +53,10 @@ struct GameSim;
 /* There are 16 tank frames (or viewing angles the tank can take */
 #define TANK_FRAMES 16
 
-/* how many world coordinates to move per tank slide update */
-#define TANK_SLIDE 16 
-/* the number of times to update the tank slide, this is in world coordinates, the actual number is this +1 becuase it activates tank slide once right away */
-#define TANK_SLIDE_TICKS 7
+/* Knockback slide: exponential decay parameters */
+#define TANK_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
+#define TANK_SLIDE_FRICTION      0.80f  /* velocity multiplier per tick */
+#define TANK_SLIDE_STOP_THRESH   0.5f   /* stop sliding below this speed */
 
 /* How many world coordinates to move per tank bump update */
 #define TANK_BUMP 7

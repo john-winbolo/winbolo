@@ -202,8 +202,8 @@ struct tankObj {
   WORLD x_prev_prev;
   WORLD y_prev_prev;
   tankCarryPb carryPills; /* The Pillboxes being carried */
-  BYTE tankSlideTimer;    /* This will be used to determine how long the tank should slide when hit */
-  TURNTYPE tankSlideAngle; /* This holds the angle at which the tank was hit with a shell */
+  float tankSlideVx;       /* Knockback slide X velocity (WORLD units/tick) */
+  float tankSlideVy;       /* Knockback slide Y velocity (WORLD units/tick) */
   BYTE firstLeft;          /* Turn ramp-up counter for left turns (0-10) */
   BYTE firstRight;         /* Turn ramp-up counter for right turns (0-10) */
   BYTE lastTankDeath;      /* How did the most recent death to the tank occur? */
