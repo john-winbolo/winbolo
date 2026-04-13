@@ -351,7 +351,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #if !BOLO_MOBILE
     /* On desktop, resize window */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, title);
+    {
+      char prefixedTitle[192];
+      SDL_snprintf(prefixedTitle, sizeof(prefixedTitle), "WinBolo - %s", title);
+      dialogSetWindowTitle(window, prefixedTitle);
+    }
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);

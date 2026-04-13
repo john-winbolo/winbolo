@@ -339,7 +339,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Game Lobby");
+    dialogSetWindowTitle(window, "WinBolo - Game Lobby");
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);

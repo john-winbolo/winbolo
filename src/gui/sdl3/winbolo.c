@@ -700,7 +700,11 @@ void windowSetQuitting(void) {
  * ------------------------------------------------------- */
 void windowReCreate(void) {
   /* SDL3 draw is already set up by gameFrontStart.
-   * This is a no-op in the SDL3 build. */
+   * Reset the window title back to the default after dialogs. */
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (win) {
+    SDL_SetWindowTitle(win, WIND_TITLE);
+  }
 }
 
 /* -------------------------------------------------------

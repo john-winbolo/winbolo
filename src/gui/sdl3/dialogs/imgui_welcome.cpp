@@ -110,7 +110,7 @@ extern "C" int imguiWelcomeShow(void) {
     int dlgW = (int)(1024 * (s > 1.0f ? 1.0f : 1.0f)); /* keep 1024x768 on desktop */
     int dlgH = 768;
     dialogSetWindowSize(window, dlgW, dlgH);
-    dialogSetWindowTitle(window, "WinBolo Game Selection");
+    dialogSetWindowTitle(window, "WinBolo - Game Selection");
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);

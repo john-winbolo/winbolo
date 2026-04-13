@@ -56,7 +56,7 @@ extern "C" int imguiTrackerSetupShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Tracker Config");
+    dialogSetWindowTitle(window, "WinBolo - Tracker Config");
     SDL_SetWindowResizable(window, false);
 #endif
     SDL_ShowWindow(window);

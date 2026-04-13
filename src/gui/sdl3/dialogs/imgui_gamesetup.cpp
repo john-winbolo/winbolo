@@ -161,7 +161,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Game Setup");
+    dialogSetWindowTitle(window, "WinBolo - Game Setup");
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);
