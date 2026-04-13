@@ -114,7 +114,7 @@ typedef struct ServerSim {
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
 #define INPUT_JITTER_BUFFER_TICKS 2  /* inputs to buffer (1 game tick = 20ms) */
-#define LAG_COMP_MAX_TICKS 15       /* 300ms one-way max compensation — reverted until Phase 5 RTT is fixed */
+#define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
     uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
 
     PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */

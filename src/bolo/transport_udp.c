@@ -514,7 +514,6 @@ typedef struct {
     uint32_t lastPingSentTick;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
     uint16_t pingMs;
-    uint32_t serverPongTime;  /* Server timestamp from last PONG, echoed back in next PING */
     uint32_t localTick;  /* Local tick counter for timing */
 
     /* Map download state */
@@ -893,7 +892,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->pingMs = (uint16_t)(now - clientTime);
                 playersSetPing(&c->clientSim->sim.plyrs, c->playerNum, c->pingMs);
             }
-            c->serverPongTime = unpackU32(buf + PACKET_HEADER_SIZE + 4);
+            /* Immediately echo the server timestamp back so the server can
+             * measure RTT.  Use clientTime=0 as a marker so the server
+             * knows this is an echo-only PING and won't send another PONG. */
+            {
+                uint32_t srvTime = unpackU32(buf + PACKET_HEADER_SIZE + 4);
+                if (srvTime > 0) {
+                    uint8_t echoBuf[PACKET_HEADER_SIZE + 8];
+                    packHeader(echoBuf, PACKET_PING, c->outSequence++);
+                    packU32(echoBuf + PACKET_HEADER_SIZE, 0);       /* clientTime=0: echo-only */
+                    packU32(echoBuf + PACKET_HEADER_SIZE + 4, srvTime);
+                    udpSendTo(c->sock, echoBuf, sizeof(echoBuf), &c->serverAddr);
+                    c->packetsSentThisSec++;
+                }
+            }
         }
         break;
 
@@ -1402,7 +1414,7 @@ static bool udpClientTick(void *ctx) {
             uint8_t pbuf[PACKET_HEADER_SIZE + 8];
             packHeader(pbuf, PACKET_PING, c->outSequence++);
             packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
-            packU32(pbuf + PACKET_HEADER_SIZE + 4, c->serverPongTime);
+            packU32(pbuf + PACKET_HEADER_SIZE + 4, 0);  /* echo handled in PONG handler */
             udpSendTo(c->sock, pbuf, sizeof(pbuf), &c->serverAddr);
             c->packetsSentThisSec++;
             c->lastPingSentTick = c->localTick;
@@ -2438,7 +2450,8 @@ static void serverHandlePing(const uint8_t *buf, int len,
     clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
 
     /* Server-measured RTT: the second uint32 from the client is the server
-     * timestamp we sent in the previous PONG, echoed back.  RTT = now - that. */
+     * timestamp we sent in the previous PONG, echoed back.  RTT = now - that.
+     * clientTime == 0 means this is an echo-only PING (no PONG reply needed). */
     {
         uint32_t now = SDL_GetTicks();
         int clientIdx = serverFindClient(fromAddr);
@@ -2448,6 +2461,13 @@ static void serverHandlePing(const uint8_t *buf, int len,
                 udpServer.clients[clientIdx].pingMs = (uint16_t)(now - echoedServerTime);
             }
             udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
+        }
+
+        /* Echo-only PING (clientTime == 0): server already computed RTT above,
+         * don't send a PONG back or it creates an infinite ping-pong loop. */
+        if (clientTime == 0) return;
+
+        if (clientIdx >= 0) {
             udpServer.clients[clientIdx].lastPongSentMs = now;
         }
         packHeader(pongBuf, PACKET_PONG, 0);

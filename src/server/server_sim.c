@@ -858,7 +858,7 @@ void serverSimTick(ServerSim *sim) {
         }
 
         /* Enforce high-ping limits */
-        /* transportUdpServerEnforcePing(sim); disabled — Phase 5 RTT measurement needs fixing */
+        transportUdpServerEnforcePing(sim);
 
         /* Update world systems */
         tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);
@@ -971,7 +971,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     }
     sim->inputQueue[p][head & (SERVER_INPUT_QUEUE_SIZE - 1)] = sanitized;
     sim->inputQueueHead[p] = head + 1;
-    sim->playerPing[p] = input->pingMs;
+    sim->playerPing[p] = transportUdpServerGetClientPing(p);
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
