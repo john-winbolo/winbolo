@@ -743,7 +743,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         uint32_t reliableBaseSeq;
         uint8_t mapEventCount;
         uint32_t mapEventBaseSeq;
-        int newEventCount = 0;
+        int newEventCount = (c->hasSnapshot) ? c->snapshotHdr.reliableEventCount : 0;
         int actuallyUnpacked = 0;
         int actuallyUnpackedMap = 0;
 
