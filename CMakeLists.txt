@@ -440,6 +440,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_messagebox.cpp
     src/gui/sdl3/dialogs/imgui_lobby.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
+    src/gui/sdl3/map_preview_popup.cpp
 )
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
@@ -768,6 +769,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp
+    src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c

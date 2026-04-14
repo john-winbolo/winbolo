@@ -44,6 +44,7 @@ extern "C" {
 #include "../../../bolo/bases.h"
 #include "../../../bolo/starts.h"
 #include "../minimap_render.h"
+#include "../map_preview_popup.h"
 #include "../../../mapeditor/mapeditor_generate.h"
 #include "../../../mapeditor/mapeditor_maze.h"
 #include "imgui_mapchooser.h"
@@ -158,9 +159,19 @@ static void discoverMaps(MapChooserState *state) {
 }
 
 static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
+    /* Close the popup if it's showing the old map */
+    mapPreviewPopupClose();
+
     if (state->randomMapSelected) {
         /* Random map preview is managed by generateRandomPreview */
         return;
+    }
+
+    /* Clear stashed compressed data from random maps */
+    if (state->compressedData) {
+        SDL_free(state->compressedData);
+        state->compressedData = NULL;
+        state->compressedLen = 0;
     }
 
     if (state->previewTex) {
@@ -191,6 +202,8 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
 
 /* Generate a random map preview from the current config */
 static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer) {
+    /* Close the popup if it's showing the old random map */
+    mapPreviewPopupClose();
     map mp;
     pillboxes pb;
     bases bs;
@@ -229,6 +242,22 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
     state->previewPills = pb->numPills;
     state->previewBases = bs->numBases;
     state->previewStarts = ss->numStarts;
+
+    /* Stash compressed map data for popup preview */
+    if (state->compressedData) { SDL_free(state->compressedData); state->compressedData = NULL; }
+    {
+        BYTE *buf = (BYTE *)SDL_malloc(256 * 1024);
+        if (buf) {
+            int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, buf);
+            if (len > 0) {
+                state->compressedData = (BYTE *)SDL_realloc(buf, len);
+                if (!state->compressedData) state->compressedData = buf;
+                state->compressedLen = len;
+            } else {
+                SDL_free(buf);
+            }
+        }
+    }
 
     /* Update seed display */
     mapGenConfigToSeed(&state->genConfig, state->genSeedBuf, sizeof(state->genSeedBuf));
@@ -317,6 +346,23 @@ static bool renderPreviewImage(MapChooserState *state) {
     if (offsetX > 0) ImGui::SetCursorPosX(floorf(ImGui::GetCursorPosX() + offsetX));
     SDL_SetTextureScaleMode(state->previewTex, SDL_SCALEMODE_NEAREST);
     ImGui::Image((ImTextureID)state->previewTex, ImVec2(previewSize, previewSize), uv0, uv1);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (ImGui::IsItemClicked()) {
+        if (state->compressedData && state->compressedLen > 0) {
+            /* Random map — use stashed compressed data */
+            mapPreviewPopupOpenCompressed(state->compressedData, state->compressedLen,
+                                          state->previewBoundsMinX, state->previewBoundsMinY,
+                                          state->previewBoundsMaxX, state->previewBoundsMaxY);
+        } else {
+            const char *popupPath = state->selectedPath;
+            if (popupPath[0] == '\0') popupPath = "data/maps/Everard Island.map";
+            mapPreviewPopupOpenFile(popupPath,
+                                    state->previewBoundsMinX, state->previewBoundsMinY,
+                                    state->previewBoundsMaxX, state->previewBoundsMaxY);
+        }
+    }
     return true;
 }
 
@@ -463,6 +509,11 @@ void mapChooserDestroy(MapChooserState *state) {
     if (state->previewTex) {
         SDL_DestroyTexture(state->previewTex);
         state->previewTex = NULL;
+    }
+    if (state->compressedData) {
+        SDL_free(state->compressedData);
+        state->compressedData = NULL;
+        state->compressedLen = 0;
     }
     state->initialized = false;
 }
