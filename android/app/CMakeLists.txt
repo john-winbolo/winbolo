@@ -190,6 +190,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/screenlgm.c
     ${PROJ_ROOT}/src/bolo/screentank.c
     ${PROJ_ROOT}/src/bolo/scroll.c
+    ${PROJ_ROOT}/src/bolo/scroll_item_list.c
     ${PROJ_ROOT}/src/bolo/shells.c
     ${PROJ_ROOT}/src/bolo/sounddist.c
     ${PROJ_ROOT}/src/bolo/starts.c
