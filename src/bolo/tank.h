@@ -147,6 +147,15 @@ based on my testing.
 /* Speed we exit the boat at */
 #define BOAT_EXIT_SPEED 16
 
+/* Grace zone in world units past river tile edge when leaving boat */
+#define BOAT_GRACE_WORLD 32
+/* Speed penalty when hitting shore */
+#define BOAT_EXIT_SPEED_PENALTY 8
+/* Ticks before LeavingBoat gives up and returns to InBoat */
+#define BOAT_LEAVING_TIMEOUT 8
+/* Entry speed above which we exit the boat immediately (skip grace zone) */
+#define BOAT_FAST_EXIT_SPEED 10
+
 /* Minimum distance for seeing tank in trees = 3 map squares or 768 world co-ords */
 #define MIN_TREEHIDE_DIST 768
 
@@ -158,11 +167,41 @@ based on my testing.
 
 /* Typedefs */
 
+/* Bump information bitflags */
+typedef u_long BumpInfo;
+
+enum {
+    BumpInfo_None       = 0,
+    BumpInfo_Boat       = 1,
+    BumpInfo_Shore      = 2,
+    BumpInfo_SolidWall  = 4
+};
+
+/* Tank bounding box insets (pixels from edge of 16x16 sprite) */
+/* Multiply by 0x10 to convert to WORLD units */
+typedef struct {
+    BYTE top;
+    BYTE left;
+    BYTE bottom;
+    BYTE right;
+} TankBoundingBox;
+
+/* Collision constants */
+#define TANK_COLLISION_DISTANCE   256    /* Tank-to-tank overlap distance (1 map square in WORLD units) */
+#define TANK_NUDGE_THRESHOLD      96     /* X vs Y axis nudge priority threshold in WORLD units */
+#define TANK_NUDGE_AMOUNT         16     /* Nudge step size: 1 pixel in WORLD units */
+#define TANK_GRID_MASK            0xFFF0 /* Bitmask: round down to pixel boundary */
+#define TANK_GRID_LOW_MASK        0x000F /* Bitmask: sub-pixel bits (round up via OR) */
+#define TANK_MIN_MOVE_SPEED       6      /* Minimum residual speed before movement occurs */
+#define TANK_MAX_NUDGE_ITERATIONS 5      /* Max building nudge correction passes per tick */
+#define TANK_BUMP_DECAY_SHIFT     2      /* Bump decay rate: >>2 = 25% reduction per tick */
+#define BASE_RESIST_TANKS         3      /* Minimum base armour to block enemy tanks */
+
 typedef enum {
   TH_MISSED,     /* Tank has been missed */
   TH_HIT,        /* Tank has been hit but not killed */
-  TH_KILL_SMALL, /* The tank has been hit, killsed and isn't carrying a lot of stuff so a small explosion */
-  TH_KILL_BIG    /* The tank has been hit, killsed and is carrying a lot of stuff so a big explosion */
+  TH_KILL_SMALL, /* The tank has been hit, killed and isn't carrying a lot of stuff so a small explosion */
+  TH_KILL_BIG    /* The tank has been hit, killed and is carrying a lot of stuff so a big explosion */
 } tankHit;
 
 typedef enum {
@@ -724,46 +763,6 @@ void tankAddShells(struct GameSim *sim, tank *value, BYTE amount);
 void tankAddMines(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
-*NAME:          tankMoveOnBoat
-*AUTHOR:        John Morrison
-*CREATION DATE: 13/1/99
-*LAST MODIFIED: 4/1/00
-*PURPOSE:
-*  The tank is moving on a boat
-*
-*ARGUMENTS:
-*  value   - Pointer to the tank structure
-*  mp      - Pointer to the map structure
-*  pb      - Pointer to the pillbox structure
-*  bs      - Pointer to the bases structure
-*  bmx     - X Map Position
-*  bmy     - Y Map position
-*  tb      - The tank buttons being pressed
-*  inBrain - TRUE if a brain is running (ignore autoslow)
-*********************************************************/
-void tankMoveOnBoat(struct GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb, bool inBrain);
-
-/*********************************************************
-*NAME:          tankMoveOnLand
-*AUTHOR:        John Morrison
-*CREATION DATE: 13/1/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-*  The tank is moving on land
-*
-*ARGUMENTS:
-*  value   - Pointer to the tank structure
-*  mp      - Pointer to the map structure
-*  pb      - Pointer to the pillbox structure
-*  bs      - Pointer to the bases structure
-*  bmx     - X Map Position
-*  bmy     - Y Map position
-*  tb      - The tank buttons being pressed
-*  inBrain - TRUE if a brain is running (ignore autoslow)
-*********************************************************/
-void tankMoveOnLand(struct GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb, bool inBrain);
-
-/*********************************************************
 *NAME:          tankTurn
 *AUTHOR:        John Morrison
 *CREATION DATE: 13/1/99
@@ -998,19 +997,17 @@ void tankMineDamage(struct GameSim *sim, tank *value, BYTE mx, BYTE my);
 
 /*********************************************************
 *NAME:          tankNearMines
-*AUTHOR:        John Morrison
-*CREATION DATE: 29/1/99
-*LAST MODIFIED: 29/1/99
 *PURPOSE:
-* Check to see if the tank is near any hidden mines 
-* tank
+*  Sweep for hidden mines in the current cell and 3
+*  forward cells based on tank facing direction.
 *
 *ARGUMENTS:
-*  mp    - Pointer to the map
+*  sim   - Game simulation
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
+*  dir   - Tank facing direction (0-15)
 *********************************************************/
-void tankNearMines(struct GameSim *sim, BYTE mx, BYTE my);
+void tankNearMines(struct GameSim *sim, BYTE mx, BYTE my, BYTE dir);
 
 /*********************************************************
 *NAME:          tankCheckGroundClear
@@ -1308,10 +1305,6 @@ void tankSetTrees(tank *value, BYTE amount);
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
 void tankPutPill(struct GameSim *sim, tank *value, BYTE pillNum);
-void tankRegisterChangeFloat(tank *value, int offset, float newValue);
-void tankRegisterChangeWorld(tank *value, int offset, WORLD newValue);
-void tankRegisterChangeInt(tank *value, int offset, int newValue);
-void tankRegisterChangeByte(tank *value, int offset, BYTE newValue);
 
 /*********************************************************
 *NAME:          tankSetOnBoat
