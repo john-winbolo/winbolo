@@ -142,6 +142,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->sim.callbacks.centerTank = csCallbackCenterTank;
   cs->sim.callbacks.consoleMessage = csCallbackConsoleMessage;
   cs->sim.callbacks.mineVisible = csCallbackMineVisible;
+  cs->sim.callbacks.explosion = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;
@@ -356,14 +357,12 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
 void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const TankSnapshot *tanks, int tankCount,
                                const ShellSnapshot *shellSnaps, int shellCount,
-                               const ExplosionSnapshot *explSnaps, int explosionCount,
                                const TkExplosionSnapshot *tkExplSnaps, int tkExplosionCount,
                                const BaseSnapshot *baseSnaps, int baseCount,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum) {
   screenSyncFromSnapshotCS(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
-                           explSnaps, explosionCount,
                            tkExplSnaps, tkExplosionCount,
                            baseSnaps, baseCount,
                            pillSnaps, pillCount, events, eventCount, playerNum);

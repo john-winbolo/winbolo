@@ -233,6 +233,18 @@ static void serverSimCbMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlaye
     serverSimAddEvent(sim, &ev);
 }
 
+static void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_EXPLOSION;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = mx;
+    ev.data[1] = my;
+    ev.data[2] = px;
+    ev.data[3] = py;
+    serverSimAddEvent(sim, &ev);
+}
+
 static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
@@ -297,6 +309,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.centerTank = serverSimCbCenterTank;
     sim->sim.callbacks.consoleMessage = serverSimCbConsoleMessage;
     sim->sim.callbacks.mineVisible = serverSimCbMineVisible;
+    sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -1211,32 +1224,6 @@ static int serverSimGetShells(ServerSim *sim, ShellSnapshot *out, int maxOut,
     return count;
 }
 
-static int serverSimGetExplosions(ServerSim *sim, ExplosionSnapshot *out, int maxOut,
-                                  const ViewportRect *viewports, int numViewports) {
-    explosions q;
-    int count = 0;
-
-    q = sim->sim.expl;
-    while (q != NULL && count < maxOut) {
-        if (q->localOnly) {
-            q = q->next;
-            continue;
-        }
-        if (!inAnyViewport(viewports, numViewports, q->mx, q->my)) {
-            q = q->next;
-            continue;
-        }
-        out[count].mx = q->mx;
-        out[count].my = q->my;
-        out[count].px = q->px;
-        out[count].py = q->py;
-        out[count].length = q->length;
-        count++;
-        q = q->next;
-    }
-    return count;
-}
-
 static int serverSimGetTkExplosions(ServerSim *sim, TkExplosionSnapshot *out, int maxOut) {
     tkExplosion q = sim->sim.tankExplosions;
     int count = 0;
@@ -1303,7 +1290,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
                             TankSnapshot *tanksOut, int maxTanks,
                             ShellSnapshot *shellsOut, int maxShells,
-                            ExplosionSnapshot *explosionsOut, int maxExplosions,
                             TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
@@ -1424,10 +1410,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     hdr->shellCount = (uint8_t)serverSimGetShells(sim, shellsOut, maxShells,
                                                    viewports, numViewports);
 
-    /* Explosion snapshots */
-    hdr->explosionCount = (uint8_t)serverSimGetExplosions(sim, explosionsOut, maxExplosions,
-                                                           viewports, numViewports);
-
     /* Tank explosion snapshots (globally important — no viewport filtering) */
     hdr->tkExplosionCount = (uint8_t)serverSimGetTkExplosions(sim, tkExplOut, maxTkExpl);
 
@@ -1514,6 +1496,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                     BYTE sp = sim->events[i].data[2];
                     if (!(sp & 0x80) && clientIdx != (sp & 0x7F) &&
                         !playersIsAllie(&sim->sim.plyrs, clientIdx, sp)) {
+                        continue;
+                    }
+                }
+                /* Viewport-cull explosion events */
+                if (evType == EVENT_EXPLOSION) {
+                    if (!inAnyViewport(viewports, numViewports, sim->events[i].data[0], sim->events[i].data[1])) {
                         continue;
                     }
                 }

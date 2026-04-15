@@ -255,6 +255,7 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
       }
     }
     explosionsAddItem(&sim->expl, mx, my, 0, 0, EXPLOSION_START);
+    if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, mx, my, 0, 0);
     floodAddItem(&sim->ff, mx, my);
     /* Remove Items from grass/swamp/rubble data stuctures */
     switch (pos-MINE_SUBTRACT) {

@@ -254,8 +254,8 @@ static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
             break;
         }
         case EVENT_EXPLOSION: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
+            float sx = (float)e->data[0] - (float)tank_tx;
+            float sy = (float)e->data[1] - (float)tank_ty;
             if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
                 WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
                 snd->rx = sx;
