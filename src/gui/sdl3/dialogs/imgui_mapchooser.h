@@ -73,6 +73,10 @@ typedef struct {
     bool            genConfigInit;
     char            genSeedBuf[64];
 
+    /* Compressed map data for popup preview (random/inbuilt maps without file paths) */
+    BYTE           *compressedData;
+    int             compressedLen;
+
     bool            initialized;
 } MapChooserState;
 

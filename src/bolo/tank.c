@@ -104,8 +104,8 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->autoHideGunsight = FALSE;
   (*value)->justFired = FALSE;
   (*value)->tankHitCount = 0;
-  (*value)->tankSlideVx = 0.0f;
-  (*value)->tankSlideVy = 0.0f;
+  (*value)->tankSlideTimer = 0;
+  (*value)->tankSlideAngle = 0;
   (*value)->firstLeft = 0;
   (*value)->firstRight = 0;
   (*value)->lastTankDeath = 0;
@@ -941,16 +941,43 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			/*      netSendNow = TRUE; */
 			tankDropPills(sim, value);
 		} else { /* if ((*value)->armour <= TANK_FULL_ARMOUR)  */
-			/* Tank was hit and survived — compute initial knockback velocity */
-			double dbAngle;
-			TURNTYPE slideAngle = angle - BRADIANS_EAST;
-			if (slideAngle < 0) {
-				slideAngle += (TURNTYPE)BRADIANS_MAX;
+			/* Tank was hit and survived */
+			(*value)->tankSlideTimer = TANK_SLIDE_TICKS;
+			(*value)->tankSlideAngle = angle;
+
+			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE); //MAP_SQUARE_MIDDLE
+
+			/* Check for Colisions */
+			conv = (*value)->x;
+			conv >>= TANK_SHIFT_MAPSIZE;
+			bmx = (BYTE) conv;
+			conv = (*value)->y;
+			conv >>= TANK_SHIFT_MAPSIZE;
+			bmy = (BYTE) conv;
+
+			newmx = (WORLD) ((*value)->x + newX);
+			newmy = (WORLD) ((*value)->y + newY);
+
+
+			newmx >>= TANK_SHIFT_MAPSIZE;
+			newmy >>= TANK_SHIFT_MAPSIZE;
+			newbmx = (BYTE) newmx;
+			newbmy = (BYTE) newmy;
+
+			if ((mapGetSpeed(sim,mp,pb,bs,bmx,newbmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value))) > 0) {
+				(*value)->y = (WORLD) ((*value)->y + newY);
+				tankRegisterChangeWorld(value, CRC_WORLDY_OFFSET, (*value)->y);
+				bmy = newbmy;
 			}
-			dbAngle = (DEGREES_MAX / BRADIANS_MAX) * slideAngle;
-			dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-			(*value)->tankSlideVx = (float)(TANK_SLIDE_INITIAL_SPEED * cos(dbAngle));
-			(*value)->tankSlideVy = (float)(TANK_SLIDE_INITIAL_SPEED * sin(dbAngle));
+			if ((mapGetSpeed(sim,mp,pb,bs,newbmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value))) > 0) {
+				(*value)->x = (WORLD) ((*value)->x + newX);
+				tankRegisterChangeWorld(value, CRC_WORLDX_OFFSET, (*value)->x);
+				bmx = newbmx;
+			}
+			/* Check for scroll of screen */
+			if (!isServer) {
+				screenTankScrollCS((struct ClientSim *)sim);
+			}
 		}
 		if ((*value)->armour <= TANK_FULL_ARMOUR) {
 			if (!isServer) {
@@ -1216,12 +1243,10 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->reload = 0;
     (*value)->speed = 0;
     (*value)->waterCount = 0;
-    (*value)->tankSlideVx = 0.0f;
-    (*value)->tankSlideVy = 0.0f;
+    (*value)->tankSlideTimer = 0;
   }
   /* Stop the tank from sliding if it was sliding when it died */
-  (*value)->tankSlideVx = 0.0f;
-  (*value)->tankSlideVy = 0.0f;
+  (*value)->tankSlideTimer = 0;
 }
 
 
@@ -1665,13 +1690,13 @@ void tankMoveOnLand(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
     }
   }
 
-	/* Knockback slide with exponential decay */
-	if ((*value)->tankSlideVx != 0.0f || (*value)->tankSlideVy != 0.0f) {
-		xslideAmount = (int)roundf((*value)->tankSlideVx);
-		yslideAmount = (int)roundf((*value)->tankSlideVy);
+	/* Was the tank hit by a shell recently? */
+	if ((*value)->tankSlideTimer > 0) {
+		utilCalcDistance(&xslideAmount, &yslideAmount, (TURNTYPE)(*value)->tankSlideAngle, TANK_SLIDE);
+		(*value)->tankSlideTimer--;
 
-		/* Check for collisions */
-		conv = (*value)->x;
+		/* Check for Colisions */
+		conv = (*value)->x;  
 		conv >>= TANK_SHIFT_MAPSIZE;
 		bmx = (BYTE) conv;
 		conv = (*value)->y;
@@ -1680,6 +1705,7 @@ void tankMoveOnLand(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
 
 		newmx = (WORLD) ((*value)->x + xslideAmount);
 		newmy = (WORLD) ((*value)->y + yslideAmount);
+
 
 		newmx >>= TANK_SHIFT_MAPSIZE;
 		newmy >>= TANK_SHIFT_MAPSIZE;
@@ -1690,28 +1716,12 @@ void tankMoveOnLand(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb
 			(*value)->y = (WORLD) ((*value)->y + yslideAmount);
 			tankRegisterChangeWorld(value, CRC_WORLDY_OFFSET, (*value)->y);
 			bmy = newbmy;
-		} else {
-			(*value)->tankSlideVy = 0.0f;
 		}
 		if ((mapGetSpeed(sim,mp,pb,bs,newbmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value))) > 0) {
 			(*value)->x = (WORLD) ((*value)->x + xslideAmount);
 			tankRegisterChangeWorld(value, CRC_WORLDX_OFFSET, (*value)->x);
 			bmx = newbmx;
-		} else {
-			(*value)->tankSlideVx = 0.0f;
 		}
-
-		/* Apply friction decay */
-		(*value)->tankSlideVx *= TANK_SLIDE_FRICTION;
-		(*value)->tankSlideVy *= TANK_SLIDE_FRICTION;
-
-		/* Stop when below threshold */
-		if (fabsf((*value)->tankSlideVx) < TANK_SLIDE_STOP_THRESH &&
-		    fabsf((*value)->tankSlideVy) < TANK_SLIDE_STOP_THRESH) {
-			(*value)->tankSlideVx = 0.0f;
-			(*value)->tankSlideVy = 0.0f;
-		}
-
 		/* Check for scroll of screen */
 		if (!isServer) {
 			screenTankScrollCS((struct ClientSim *)sim);

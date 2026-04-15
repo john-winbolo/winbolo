@@ -33,7 +33,9 @@
 #include "../sound.h"
 
 #define NUM_SOUNDS 24
-#define MAX_SOUND_SLOTS 8  /* Maximum simultaneous sounds */
+#define MAX_SOUND_SLOTS 16  /* Maximum simultaneous sounds */
+#define RESERVED_SHOOT_SELF_SLOT 0  /* Slot 0 reserved for player shooting */
+#define SHOOT_SELF_INDEX 6  /* Index of shooting_self.wav in sounds[] */
 
 /* Sound data structure for each effect - stores converted data */
 typedef struct {
@@ -455,6 +457,9 @@ void soundCleanup(void) {
 static void playSound(int index) {
     int i;
     int slot_found = -1;
+    int search_start;
+    Uint32 most_progress;
+    int evict_slot;
 
     if (!isPlayable || !audioStream || index < 0 || index >= NUM_SOUNDS)
         return;
@@ -467,17 +472,42 @@ static void playSound(int index) {
         SDL_LockMutex(slotsMutex);
     }
 
-    /* Find an available slot (prefer inactive, otherwise reuse oldest) */
+    /* Deduplicate: skip if this sound was already triggered this tick
+     * (pos == 0 means it was just started and hasn't been mixed yet) */
     for (i = 0; i < MAX_SOUND_SLOTS; i++) {
-        if (!slots[i].active) {
-            slot_found = i;
-            break;
+        if (slots[i].active && slots[i].data == sounds[index].data && slots[i].pos == 0) {
+            if (slotsMutex) {
+                SDL_UnlockMutex(slotsMutex);
+            }
+            return;
         }
     }
 
-    /* If no inactive slot, reuse slot 0 */
-    if (slot_found == -1) {
-        slot_found = 0;
+    /* Shoot-self gets a reserved slot so it never gets evicted */
+    if (index == SHOOT_SELF_INDEX) {
+        slot_found = RESERVED_SHOOT_SELF_SLOT;
+    } else {
+        /* Search non-reserved slots for an inactive one */
+        search_start = RESERVED_SHOOT_SELF_SLOT + 1;
+        for (i = search_start; i < MAX_SOUND_SLOTS; i++) {
+            if (!slots[i].active) {
+                slot_found = i;
+                break;
+            }
+        }
+
+        /* If no inactive slot, evict the one closest to finishing */
+        if (slot_found == -1) {
+            most_progress = 0;
+            evict_slot = search_start;
+            for (i = search_start; i < MAX_SOUND_SLOTS; i++) {
+                if (slots[i].pos > most_progress) {
+                    most_progress = slots[i].pos;
+                    evict_slot = i;
+                }
+            }
+            slot_found = evict_slot;
+        }
     }
 
     /* Start playback in the slot */

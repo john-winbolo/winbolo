@@ -138,6 +138,7 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/screenlgm.c
     ${SRC_ROOT}/bolo/screentank.c
     ${SRC_ROOT}/bolo/scroll.c
+    ${SRC_ROOT}/bolo/scroll_item_list.c
     ${SRC_ROOT}/bolo/shells.c
     ${SRC_ROOT}/bolo/sounddist.c
     ${SRC_ROOT}/bolo/starts.c
@@ -199,6 +200,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
+    ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c

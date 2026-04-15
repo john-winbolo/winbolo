@@ -61,7 +61,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
 #if !BOLO_MOBILE
     /* Resize and show window for the dialog */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Set Player Name");
+    dialogSetWindowTitle(window, "WinBolo - Set Player Name");
     SDL_SetWindowResizable(window, false);
 #endif
     SDL_ShowWindow(window);

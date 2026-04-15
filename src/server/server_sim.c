@@ -885,7 +885,9 @@ void serverSimTick(ServerSim *sim) {
         minesExpUpdate(&sim->sim, lgmPtrs, numTanks, tanksArray, &sim->sim.ss);
         explosionsUpdate(&sim->sim.expl);
         floodUpdate(&sim->sim);
-        treeGrowUpdate(&sim->sim);
+        for (count = 0; count < numTanks; count++) {
+            treeGrowUpdate(&sim->sim);
+        }
     }
 
     /* Clear map change callback */

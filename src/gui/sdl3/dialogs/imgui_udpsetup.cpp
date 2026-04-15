@@ -100,7 +100,7 @@ extern "C" int imguiUdpSetupShow(void) {
 #if !BOLO_MOBILE
     /* Resize and show window for the dialog */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "UDP (Internet) Setup");
+    dialogSetWindowTitle(window, "WinBolo - UDP (Internet) Setup");
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);

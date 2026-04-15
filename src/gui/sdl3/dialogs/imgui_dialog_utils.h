@@ -304,7 +304,7 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
     if (p->mode == UI_MODE_DESKTOP) {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, 1024, 768);
-        SDL_SetWindowTitle(win, "WinBolo SDL3");
+        SDL_SetWindowTitle(win, "WinBolo");
     } else {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, p->w, p->h);

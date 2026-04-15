@@ -41,6 +41,7 @@ extern "C" {
 #include "../../../bolo/global.h"
 #include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
+#include "../map_preview_popup.h"
 #include "imgui_mapchooser.h"
 #include "imgui_gamesetup.h"
 }
@@ -161,7 +162,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Game Setup");
+    dialogSetWindowTitle(window, "WinBolo - Game Setup");
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);
@@ -317,6 +318,9 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
 
+        /* Render popup tiles to offscreen texture before ImGui frame */
+        mapPreviewPopupRenderOffscreen(renderer, winW, winH);
+
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         dialogResetTextInputArea(window);
@@ -420,6 +424,22 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                                           &uv0, &uv1);
                         ImGui::Image((ImTextureID)mapChooser.previewTex,
                                      ImVec2(previewSz, previewSz), uv0, uv1);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        }
+                        if (ImGui::IsItemClicked()) {
+                            if (mapChooser.compressedData && mapChooser.compressedLen > 0) {
+                                mapPreviewPopupOpenCompressed(mapChooser.compressedData, mapChooser.compressedLen,
+                                                              mapChooser.previewBoundsMinX, mapChooser.previewBoundsMinY,
+                                                              mapChooser.previewBoundsMaxX, mapChooser.previewBoundsMaxY);
+                            } else {
+                                const char *popupPath = mapChooser.selectedPath;
+                                if (popupPath[0] == '\0') popupPath = "data/maps/Everard Island.map";
+                                mapPreviewPopupOpenFile(popupPath,
+                                                        mapChooser.previewBoundsMinX, mapChooser.previewBoundsMinY,
+                                                        mapChooser.previewBoundsMaxX, mapChooser.previewBoundsMaxY);
+                            }
+                        }
                     } else {
                         ImGui::Dummy(ImVec2(previewSz, previewSz));
                     }
@@ -567,6 +587,22 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
                     ImGui::Image((ImTextureID)mapChooser.previewTex,
                                  ImVec2(previewSz, previewSz), uv0, uv1);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    }
+                    if (ImGui::IsItemClicked()) {
+                        if (mapChooser.compressedData && mapChooser.compressedLen > 0) {
+                            mapPreviewPopupOpenCompressed(mapChooser.compressedData, mapChooser.compressedLen,
+                                                          mapChooser.previewBoundsMinX, mapChooser.previewBoundsMinY,
+                                                          mapChooser.previewBoundsMaxX, mapChooser.previewBoundsMaxY);
+                        } else {
+                            const char *popupPath = mapChooser.selectedPath;
+                            if (popupPath[0] == '\0') popupPath = "data/maps/Everard Island.map";
+                            mapPreviewPopupOpenFile(popupPath,
+                                                    mapChooser.previewBoundsMinX, mapChooser.previewBoundsMinY,
+                                                    mapChooser.previewBoundsMaxX, mapChooser.previewBoundsMaxY);
+                        }
+                    }
                 } else {
                     ImGui::TextDisabled("No preview");
                 }
@@ -771,6 +807,10 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
         }
 
         ImGui::End(); /* ##GameSetup panel */
+
+        /* --- Map preview popup --- */
+        mapPreviewPopupRenderModal(renderer);
+
         ImGui::End(); /* ##GameSetupBg host */
 
         ImGui::Render();
@@ -786,6 +826,9 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
         SDL_RenderPresent(renderer);
         dialogFrameCapEnd(frameCapStart);
     }
+
+    /* Clean up map preview popup */
+    mapPreviewPopupDestroy();
 
     /* Clean up map chooser */
     mapChooserDestroy(&mapChooser);

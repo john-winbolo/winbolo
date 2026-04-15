@@ -59,6 +59,7 @@
 #include "../../bolo/screenbullet.h"
 #include "../../bolo/screentank.h"
 #include "../../bolo/screenlgm.h"
+#include "macos_pinch.h"
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
 #ifndef NO_SELECT
@@ -108,8 +109,19 @@ static int          gCurrentEdgeY = 0;
 /* Network-failed flag: set by sdl3DrawSetNetFailed() before each frame */
 static bool         gNetFailed    = false;
 
-/* Death static effect state */
+/* Death static effect state — pixel-based Bolo-style PRNG noise */
 static int          gStaticLast   = 0;
+static uint32_t     gStaticSeed   = 1;
+static SDL_Texture *gStaticTex    = NULL;
+static int          gStaticTexW   = 0;
+static int          gStaticTexH   = 0;
+
+static uint32_t getRandomStaticNoiseSeed(void) {
+  gStaticSeed ^= gStaticSeed << 13;
+  gStaticSeed ^= gStaticSeed >> 17;
+  gStaticSeed ^= gStaticSeed << 5;
+  return gStaticSeed;
+}
 
 /* Guard: only blit gManStatusTex after sdl3DrawSetManStatus has drawn into it.
    Prevents a one-frame artifact where the LGM arrow points top-left before
@@ -798,6 +810,9 @@ bool sdl3DrawSetup(int zoomFactor) {
 
   SDL_SetRenderVSync(gRenderer, 1);
 
+  /* macOS trackpad pinch-to-zoom */
+  macOSPinchZoomInit();
+
 #ifdef __ANDROID__
   if (!uiModeIsTablet()) {
     /* On Android with desktop mode: set a logical presentation so SDL3
@@ -942,6 +957,7 @@ void sdl3DrawCleanup(void) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
   }
+  macOSPinchZoomDestroy();
   if (gWindow) {
     SDL_DestroyWindow(gWindow);
     gWindow = NULL;
@@ -1079,30 +1095,46 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                ((tankGetLastTankDeath(tank) == LAST_DEATH_BY_DEEPSEA && tankGetDeathWait(tank) < STATIC_ON_TICKS_DEEPSEA) ||
                 (tankGetLastTankDeath(tank) == LAST_DEATH_BY_SHELL   && tankGetDeathWait(tank) < STATIC_ON_TICKS_SHELL) ||
                 (tankGetLastTankDeath(tank) == LAST_DEATH_BY_MINES   && tankGetDeathWait(tank) < STATIC_ON_TICKS_MINES))) {
-      /* Tank died and is waiting to respawn — draw static noise over the game area */
+      /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
+      /* Recreate static texture if size changed or doesn't exist yet */
+      if (!gStaticTex || gStaticTexW != gameW || gStaticTexH != gameH) {
+        if (gStaticTex) SDL_DestroyTexture(gStaticTex);
+        gStaticTex = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888,
+                                       SDL_TEXTUREACCESS_STREAMING, gameW, gameH);
+        gStaticTexW = gameW;
+        gStaticTexH = gameH;
+        gStaticLast = 0;
+      }
+      /* Add new static points when the death tick changes */
       if (tankGetDeathWait(tank) != gStaticLast) {
         gStaticLast = tankGetDeathWait(tank);
-        int staticTilesX = (tileW > 0) ? (gameW / tileW + 1) : 16;
-        int staticTilesY = (tileH > 0) ? (gameH / tileH + 1) : 16;
-        for (int sx = 0; sx < staticTilesY; sx++) {
-          for (int sy = 0; sy < staticTilesX; sy++) {
-            int staticOffset = rand() % (TILE_FILE_X / TILE_SIZE_X);
-            SDL_FRect staticSrc = {
-              (float)((STATIC_X + staticOffset) * gSheetScale),
-              (float)(STATIC_Y * gSheetScale),
-              (float)(TILE_SIZE_X * gSheetScale),
-              (float)(TILE_SIZE_Y * gSheetScale)
-            };
-            SDL_FRect staticDest = {
-              (float)(originX + sy * tileW),
-              (float)(originY + sx * tileH),
-              (float)tileW,
-              (float)tileH
-            };
-            SDL_RenderTexture(gRenderer, gTilesTex, &staticSrc, &staticDest);
+        uint32_t *pixels;
+        int pitch;
+        if (SDL_LockTexture(gStaticTex, NULL, (void **)&pixels, &pitch)) {
+          int rowLen = pitch / 4;
+          /* First tick: clear to black */
+          if (gStaticLast == 1 || gStaticSeed == 1) {
+            for (int y = 0; y < gameH; y++)
+              for (int x = 0; x < gameW; x++)
+                pixels[y * rowLen + x] = 0xFF000000;
           }
+          int numPoints = gameW * gameH / 3;
+          int col = 0;
+          uint32_t white = 0xFFFFFFFF;
+          uint32_t black = 0xFF000000;
+          for (int i = 0; i < numPoints; i++) {
+            uint32_t rx = getRandomStaticNoiseSeed();
+            uint32_t ry = getRandomStaticNoiseSeed();
+            int px = rx % gameW;
+            int py = ry % gameH;
+            pixels[py * rowLen + px] = (col++ & 1) ? white : black;
+          }
+          SDL_UnlockTexture(gStaticTex);
         }
       }
+      /* Blit the accumulated static texture every frame */
+      SDL_FRect staticDest = { (float)originX, (float)originY, (float)gameW, (float)gameH };
+      SDL_RenderTexture(gRenderer, gStaticTex, NULL, &staticDest);
     } else {
       /* Draw map tiles via mapview */
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };

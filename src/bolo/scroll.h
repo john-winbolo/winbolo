@@ -33,7 +33,11 @@
 #include "screen.h"
 #include "types.h"
 #include "game_sim.h"
+#include "scroll_item_list.h"
 
+/* Define to use priority-based scroll item list system.
+ * Undefine to use the original weighted-centroid scrollEnemyAwareness(). */
+#define USE_SCROLL_ITEM_LIST 1
 
 /* Defines */
 
@@ -53,6 +57,10 @@ typedef struct ScrollState {
   bool autoScrollOverRide;
   bool mods;
   bool stickyX, stickyXDir, stickyY, stickyYDir;
+#ifdef USE_SCROLL_ITEM_LIST
+  ScrollItemList itemList;
+  bool driveScroll;
+#endif
 } ScrollState;
 
 /* Prototypes */

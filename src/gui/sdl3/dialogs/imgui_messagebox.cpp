@@ -54,7 +54,11 @@ extern "C" void imguiMessageBox(const char *message, const char *title) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, title ? title : "WinBolo");
+    {
+      char prefixedTitle[192];
+      SDL_snprintf(prefixedTitle, sizeof(prefixedTitle), "WinBolo - %s", title ? title : "Message");
+      dialogSetWindowTitle(window, prefixedTitle);
+    }
     SDL_SetWindowResizable(window, false);
 #endif
     SDL_ShowWindow(window);
