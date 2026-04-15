@@ -190,6 +190,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/screenlgm.c
     ${PROJ_ROOT}/src/bolo/screentank.c
     ${PROJ_ROOT}/src/bolo/scroll.c
+    ${PROJ_ROOT}/src/bolo/scroll_item_list.c
     ${PROJ_ROOT}/src/bolo/shells.c
     ${PROJ_ROOT}/src/bolo/sounddist.c
     ${PROJ_ROOT}/src/bolo/starts.c
@@ -224,6 +225,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
     ${PROJ_ROOT}/src/gui/sdl3/cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/flags.c

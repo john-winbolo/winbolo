@@ -1,0 +1,70 @@
+/*
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ * Name:          map_preview_popup.h
+ * Purpose:       Reusable zoomable/pannable map preview
+ *                popup for ImGui dialogs.
+ *********************************************************/
+
+#ifndef MAP_PREVIEW_POPUP_H
+#define MAP_PREVIEW_POPUP_H
+
+#include <SDL3/SDL.h>
+#include "../../bolo/global.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Call after an ImGui::Image() thumbnail. If the image was clicked and
+ * compressedData is non-NULL, opens the popup centered on the given bounds.
+ * compressedData is the network-compressed map (bases+pills+starts+LZW). */
+void mapPreviewPopupOnClick(const BYTE *compressedData, int compressedLen,
+                            int boundsMinX, int boundsMinY,
+                            int boundsMaxX, int boundsMaxY);
+
+/* Like mapPreviewPopupOnClick but loads map data from a .map file on disk
+ * instead of from compressed network data. */
+void mapPreviewPopupOnClickFile(const char *mapPath,
+                                int boundsMinX, int boundsMinY,
+                                int boundsMaxX, int boundsMaxY);
+
+/* Explicit open functions — call these when the caller handles click
+ * detection itself (e.g. via ImGui::IsItemClicked()). */
+void mapPreviewPopupOpenCompressed(const BYTE *compressedData, int compressedLen,
+                                   int boundsMinX, int boundsMinY,
+                                   int boundsMaxX, int boundsMaxY);
+void mapPreviewPopupOpenFile(const char *mapPath,
+                             int boundsMinX, int boundsMinY,
+                             int boundsMaxX, int boundsMaxY);
+
+/* Call once per frame BEFORE ImGui NewFrame — renders tiles to offscreen texture. */
+void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH);
+
+/* Call once per frame during ImGui rendering — renders the modal popup. */
+void mapPreviewPopupRenderModal(SDL_Renderer *renderer);
+
+/* Close the popup if open (e.g. when the underlying map changes).
+ * Frees map data but keeps the tile atlas for fast re-open. */
+void mapPreviewPopupClose(void);
+
+/* Call on dialog exit to free all resources. */
+void mapPreviewPopupDestroy(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MAP_PREVIEW_POPUP_H */

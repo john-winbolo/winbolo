@@ -18,6 +18,22 @@ endif()
 
 project(winbolo C)
 
+# Enable Objective-C for macOS pinch-to-zoom support (not iOS)
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    enable_language(OBJC)
+endif()
+
+# On macOS, ensure CMAKE_OSX_SYSROOT is set so that dependencies (e.g.
+# crashpad) can find system .defs files under the SDK path instead of the
+# non-existent /usr/include.
+if(APPLE AND NOT CMAKE_OSX_SYSROOT)
+    execute_process(
+        COMMAND xcrun --show-sdk-path
+        OUTPUT_VARIABLE CMAKE_OSX_SYSROOT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
+
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
 
 # Derive network protocol version bytes from WINBOLO_VERSION.
@@ -388,7 +404,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/transport_local.c src/bolo/transport_udp.c
     src/bolo/treegrow.c src/bolo/udppackets.c src/bolo/util.c
@@ -404,6 +420,7 @@ set(IOS_SERVER_SOURCES
     src/server/server_stubs.c
     src/server/threads.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
+    src/mapeditor/mapgen_imgui.cpp
 )
 
 
@@ -440,6 +457,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_messagebox.cpp
     src/gui/sdl3/dialogs/imgui_lobby.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
+    src/gui/sdl3/map_preview_popup.cpp
 )
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
@@ -619,6 +637,14 @@ endif()
 
 find_package(OpenMP)
 
+# Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
+# the original Bolo forward-prediction formula breaking down at short distances.
+# Enable for authentic behaviour matching the original game.
+option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" ON)
+if(ENABLE_PILLMASSAGE_BUG)
+    add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
+endif()
+
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
 # Set -DENABLE_ONNXRUNTIME=OFF to skip entirely.
@@ -759,7 +785,7 @@ set(CLIENT_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -768,10 +794,11 @@ set(CLIENT_SOURCES
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp
+    src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
-    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/bolo/transport_local.c src/bolo/transport_udp.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
@@ -805,6 +832,12 @@ target_compile_definitions(WinBolo PRIVATE
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
+
+# macOS trackpad pinch-to-zoom support
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(WinBolo PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_link_libraries(WinBolo PRIVATE "-framework AppKit")
+endif()
 
 # macOS app bundle with icon
 if(APPLE)
@@ -1250,7 +1283,7 @@ set(HEADLESS_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1373,7 +1406,7 @@ set(GYM_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1465,10 +1498,6 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
 # gym_batch_test (Phase 0 determinism baseline)
 # ---------------------------------------------------------------------------
 
-add_executable(gym_batch_test tests/gym_batch_test.c)
-target_link_libraries(gym_batch_test PRIVATE winbolo_gym)
-target_include_directories(gym_batch_test PRIVATE src/gym)
-set_flat_output(gym_batch_test "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
@@ -1483,7 +1512,7 @@ set(BRAINTEST_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1573,7 +1602,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1585,7 +1614,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/bot_manager.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
-    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -1633,6 +1662,12 @@ target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image
 )
+
+# macOS trackpad pinch-to-zoom support
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_link_libraries(MapEditor PRIVATE "-framework AppKit")
+endif()
 
 # Copy shared libraries and assets next to MapEditor executable
 add_custom_command(TARGET MapEditor POST_BUILD

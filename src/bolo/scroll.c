@@ -28,12 +28,16 @@
 
 
 #include <math.h>
+#include <stdlib.h>
 #include "global.h"
 #include "screen.h"
 #include "scroll.h"
+#include "scroll_item_list.h"
 #include "tank.h"
 #include "players.h"
 #include "pillbox.h"
+#include "shells.h"
+#include "bases.h"
 
 
 void scrollCreate(ScrollState *ss) {
@@ -48,6 +52,10 @@ void scrollCreate(ScrollState *ss) {
   ss->stickyXDir = FALSE;
   ss->stickyY = FALSE;
   ss->stickyYDir = FALSE;
+#ifdef USE_SCROLL_ITEM_LIST
+  scrollItemListCreate(&ss->itemList);
+  ss->driveScroll = FALSE;
+#endif
 }
 
 
@@ -79,7 +87,7 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
     returnValue = FALSE;
   } else if (manual == TRUE) {
     returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
-  } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR && ss->autoScrollOverRide == FALSE) {
+  } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR) {
     returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle);
   } else {
     returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
@@ -214,6 +222,7 @@ bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   return returnValue;
 }
 
+#ifndef USE_SCROLL_ITEM_LIST
 /*********************************************************
 *NAME:          scrollEnemyAwareness
 *PURPOSE:
@@ -261,8 +270,8 @@ static void scrollEnemyAwareness(ScrollState *ss, GameSim *sim, BYTE viewX, BYTE
   if (searchMaxX > 255) searchMaxX = 255;
   if (searchMaxY > 255) searchMaxY = 255;
 
-  /* Enemy pillboxes */
-  for (count = 0; count < sim->pb->numPills; count++) {
+  /* Enemy pillboxes (1-indexed API) */
+  for (count = 1; count <= sim->pb->numPills; count++) {
     pillsGetPill(&sim->pb, &pill, count);
     pa = pillsGetAllianceNum(sim, &sim->pb, count);
     if (pa != pillEvil && pa != pillNeutral) {
@@ -392,9 +401,207 @@ static void scrollEnemyAwareness(ScrollState *ss, GameSim *sim, BYTE viewX, BYTE
     }
   }
 }
+#endif /* !USE_SCROLL_ITEM_LIST */
 
 
 bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle) {
+#ifdef USE_SCROLL_ITEM_LIST
+  /*
+   * Priority-based viewport scrolling.
+   * Build a scored item list, sort by score, then adjust the viewport
+   * target position for each item in priority order. Validate that
+   * adjusting for a lower-priority item does not push a higher-priority
+   * item off-screen. Scroll at most 1 tile per tick.
+   */
+  int targetX, targetY;
+  int viewRefX, viewRefY;
+  int xmove, ymove;
+  BYTE myPlayer;
+  WORLD tankWX, tankWY;
+  WORLD gunsightWX, gunsightWY;
+  int count;
+  shells current;
+  shells bestShell;
+  bool newDriveScroll;
+
+  myPlayer = playersGetSelf(&sim->plyrs);
+  tankGetWorld(&sim->tanks[myPlayer], &tankWX, &tankWY);
+
+  /* Phase 1: Initialize target viewport position */
+  viewRefX = ((int)*xValue + 1) << 8;
+  viewRefY = ((int)*yValue + 1) << 8;
+  targetX = viewRefX;
+  targetY = viewRefY;
+
+  /* scrollAutoScroll is only called when manual==FALSE, so clear any
+   * leftover manual override. The pseudocode treats scroll_override as
+   * transient — it only persists while cursor keys are held. */
+  ss->autoScrollOverRide = FALSE;
+
+  /* Phase 2: Build priority item list */
+  scrollItemListCreate(&ss->itemList);
+  ss->itemList.tankAngle = angle;
+  ss->itemList.tankSpeed = speed;
+
+  /* Always add own tank (score 0) */
+  scrollItemListAddW(&ss->itemList, tankWX, tankWY, 0, 0, FALSE, tankWX, tankWY);
+
+  /* If moving, add position 4 tiles ahead (score 0) */
+  if (speed > 0) {
+    WORLD aheadWX, aheadWY;
+    calculateProjectedPosition(tankWX, tankWY, speed, angle, 1.6f, &aheadWX, &aheadWY);
+    scrollItemListAddW(&ss->itemList, aheadWX, aheadWY, 0, 0, FALSE, tankWX, tankWY);
+  }
+
+  /* Check for active shell (fireball) */
+  bestShell = NULL;
+  current = sim->shs;
+  while (current != NULL) {
+    if (current->owner == myPlayer && current->shellDead == FALSE) {
+      if (bestShell == NULL || current->length > bestShell->length) {
+        bestShell = current;
+      }
+    }
+    current = current->next;
+  }
+
+  if (bestShell != NULL) {
+    /* Shell active — track it at score 0, skip autoscroll items */
+    scrollItemListAddW(&ss->itemList, bestShell->x, bestShell->y, 0, 0, FALSE, tankWX, tankWY);
+  } else if (ss->autoScrollOverRide == FALSE) {
+    /* No shell — add all autoscroll items */
+    pillbox pill;
+    pillAlliance pa;
+    BYTE tx, ty;
+    WORLD otherWX, otherWY;
+    int tankMX = (int)(tankWX >> 8);
+    int tankMY = (int)(tankWY >> 8);
+
+    /* Look-ahead position 6 tiles ahead (score 4, special) */
+    if (speed > 0) {
+      WORLD lookWX, lookWY;
+      calculateProjectedPosition(tankWX, tankWY, speed, angle, 2.4f, &lookWX, &lookWY);
+      scrollItemListAddW(&ss->itemList, lookWX, lookWY, 4, 0, TRUE, tankWX, tankWY);
+    }
+
+    /* Enemy and friendly tanks */
+    for (count = 0; count < MAX_TANKS; count++) {
+      int baseScore;
+      if (sim->tanks[count] == NULL) continue;
+      if (count == myPlayer) continue;
+      tx = tankGetMX(&sim->tanks[count]);
+      ty = tankGetMY(&sim->tanks[count]);
+      if (tx == 0 && ty == 0) continue;
+      if (abs((int)tx - tankMX) > MAIN_SCREEN_SIZE_X ||
+          abs((int)ty - tankMY) > MAIN_SCREEN_SIZE_Y) continue;
+      if (playersIsAllie(&sim->plyrs, myPlayer, (BYTE)count) == TRUE) {
+        baseScore = 2;
+      } else {
+        baseScore = 1;
+      }
+      /* Use projected position for other tanks */
+      tankGetWorld(&sim->tanks[count], &otherWX, &otherWY);
+      if (tankGetSpeed(&sim->tanks[count]) > 0) {
+        WORLD projOX, projOY;
+        calculateProjectedPosition(otherWX, otherWY, tankGetSpeed(&sim->tanks[count]),
+                                   tankGetAngle(&sim->tanks[count]), 1.0f, &projOX, &projOY);
+        scrollItemListAddW(&ss->itemList, projOX, projOY, baseScore, 1, FALSE, tankWX, tankWY);
+      } else {
+        scrollItemListAddW(&ss->itemList, otherWX, otherWY, baseScore, 1, FALSE, tankWX, tankWY);
+      }
+    }
+
+    /* Enemy and friendly pillboxes (1-indexed API) */
+    for (count = 1; count <= sim->pb->numPills; count++) {
+      int baseScore;
+      pillsGetPill(&sim->pb, &pill, count);
+      if (pill.armour == 0) {
+        continue;
+      }
+      if (abs((int)pill.x - tankMX) > MAIN_SCREEN_SIZE_X ||
+          abs((int)pill.y - tankMY) > MAIN_SCREEN_SIZE_Y) {
+        continue;
+      }
+      pa = pillsGetAllianceNum(sim, &sim->pb, count);
+      if (pa == pillEvil || pa == pillNeutral) {
+        baseScore = 1;
+      } else {
+        baseScore = 2;
+      }
+      scrollItemListAddM(&ss->itemList, pill.x, pill.y, baseScore, 1, FALSE, tankWX, tankWY);
+    }
+
+    /* Bases (1-indexed API) */
+    for (count = 1; count <= sim->bs->numBases; count++) {
+      base b;
+      basesGetBase(&sim->bs, &b, count);
+      if (b.armour <= BASE_DEAD) {
+        continue;
+      }
+      if (abs((int)b.x - tankMX) > MAIN_SCREEN_SIZE_X ||
+          abs((int)b.y - tankMY) > MAIN_SCREEN_SIZE_Y) {
+        continue;
+      }
+      scrollItemListAddM(&ss->itemList, b.x, b.y, 3, 2, FALSE, tankWX, tankWY);
+    }
+
+    /* Crosshairs (score 4, special) */
+    gunsightWX = ((WORLD)gunsightX << 8) | 0x80;
+    gunsightWY = ((WORLD)gunsightY << 8) | 0x80;
+    scrollItemListAddW(&ss->itemList, gunsightWX, gunsightWY, 4, 0, TRUE, tankWX, tankWY);
+
+    /* Drive scroll: if previously active, add predictive positions 2-4 seconds ahead */
+    if (ss->driveScroll == TRUE && speed > 0) {
+      WORLD dsWX, dsWY;
+      calculateProjectedPosition(tankWX, tankWY, speed, angle, 2.0f, &dsWX, &dsWY);
+      scrollItemListAddW(&ss->itemList, dsWX, dsWY, 4, 0, TRUE, tankWX, tankWY);
+      calculateProjectedPosition(tankWX, tankWY, speed, angle, 3.0f, &dsWX, &dsWY);
+      scrollItemListAddW(&ss->itemList, dsWX, dsWY, 4, 0, TRUE, tankWX, tankWY);
+      calculateProjectedPosition(tankWX, tankWY, speed, angle, 4.0f, &dsWX, &dsWY);
+      scrollItemListAddW(&ss->itemList, dsWX, dsWY, 4, 0, TRUE, tankWX, tankWY);
+    }
+  }
+
+  /* Phase 3: Sort by score */
+  scrollItemListSort(&ss->itemList);
+
+  /* Phase 4: Process — adjust target viewport, validate conflicts */
+  newDriveScroll = FALSE;
+  scrollItemListProcess(&ss->itemList, &targetX, &targetY, &newDriveScroll);
+  ss->driveScroll = newDriveScroll;
+
+  /* Phase 5: Execute scroll (at most 1 tile per tick).
+   * Tile-align the target after conflict checking so we get
+   * clean tile-boundary deltas (no sub-tile oscillation). */
+  targetX &= ~0xFF;
+  targetY &= ~0xFF;
+  xmove = targetX - viewRefX;
+  ymove = targetY - viewRefY;
+
+  if (xmove != 0 || ymove != 0) {
+    ss->autoScrollOverRide = FALSE;
+    if (xmove > 0) {
+      (*xValue)++;
+    } else if (xmove < 0) {
+      if (*xValue > 0) (*xValue)--;
+    }
+    if (ymove > 0) {
+      (*yValue)++;
+    } else if (ymove < 0) {
+      if (*yValue > 0) (*yValue)--;
+    }
+
+    /* Clamp viewport to map boundaries */
+    if (*xValue > 255 - MAIN_SCREEN_SIZE_X) *xValue = 255 - MAIN_SCREEN_SIZE_X;
+    if (*yValue > 255 - MAIN_SCREEN_SIZE_Y) *yValue = 255 - MAIN_SCREEN_SIZE_Y;
+
+    return TRUE;
+  }
+
+  return FALSE;
+
+#else
+  /* Original burst-based scrolling with scrollEnemyAwareness */
   bool returnValue;
 
   returnValue = FALSE;
@@ -451,7 +658,7 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
     if (ss->xPositive == TRUE) {
       (*xValue)++;
     } else {
-      (*xValue)--;
+      if (*xValue > 0) (*xValue)--;
     }
   }
   if (ss->scrollY > 0) {
@@ -460,20 +667,32 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
     if (ss->yPositive == TRUE) {
       (*yValue)++;
     } else {
-      (*yValue)--;
+      if (*yValue > 0) (*yValue)--;
     }
   }
 
+  /* Clamp viewport to map boundaries after burst */
+  if (*xValue > 255 - MAIN_SCREEN_SIZE_X) *xValue = 255 - MAIN_SCREEN_SIZE_X;
+  if (*yValue > 255 - MAIN_SCREEN_SIZE_Y) *yValue = 255 - MAIN_SCREEN_SIZE_Y;
+
   /* Hard safety: tank must always be on screen */
   if (objectX <= (*xValue)) {
-    *xValue = objectX - 1;
+    if (objectX > 0) {
+      *xValue = objectX - 1;
+    } else {
+      *xValue = 0;
+    }
     if (ss->xPositive == FALSE) ss->scrollX = 0;
   } else if ((int)objectX >= (int)(*xValue) + MAIN_SCREEN_SIZE_X) {
     *xValue = objectX - MAIN_SCREEN_SIZE_X + 1;
     if (ss->xPositive == TRUE) ss->scrollX = 0;
   }
   if (objectY <= (*yValue)) {
-    *yValue = objectY - 1;
+    if (objectY > 0) {
+      *yValue = objectY - 1;
+    } else {
+      *yValue = 0;
+    }
     if (ss->yPositive == FALSE) ss->scrollY = 0;
   } else if ((int)objectY >= (int)(*yValue) + MAIN_SCREEN_SIZE_Y) {
     *yValue = objectY - MAIN_SCREEN_SIZE_Y + 1;
@@ -485,4 +704,5 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   }
 
   return returnValue;
+#endif
 }

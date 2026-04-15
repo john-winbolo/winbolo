@@ -279,30 +279,10 @@ void bgGameDestroy(BgGame *bg) {
 void bgGameTick(BgGame *bg) {
     if (!bg || !bg->valid || bg->numBots == 0) return;
 
-    /* Run brain AI then tick the simulation (two ticks per brain call).
-     * Each serverSimTick() clears the event buffer before generating new
-     * events, so tick 1's events would be lost when tick 2 clears them.
-     * Save tick 1's events and merge them with tick 2's so botManagerTick
-     * sees all events on the next frame. */
+    /* Run brain AI then tick the simulation.
+     * Bot brains run every other tick (game tick, not keys tick). */
     botManagerTick(&bg->sim, aiFull);
     serverSimTick(&bg->sim);
-    {
-        GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t savedCount = bg->sim.eventCount;
-        if (savedCount > 0) {
-            memcpy(savedEvents, bg->sim.events,
-                   savedCount * sizeof(GameEvent));
-        }
-        serverSimTick(&bg->sim);
-        /* Prepend tick 1's events before tick 2's events */
-        if (savedCount > 0 && savedCount + bg->sim.eventCount <= MAX_SNAPSHOT_EVENTS) {
-            memmove(bg->sim.events + savedCount, bg->sim.events,
-                    bg->sim.eventCount * sizeof(GameEvent));
-            memcpy(bg->sim.events, savedEvents,
-                   savedCount * sizeof(GameEvent));
-            bg->sim.eventCount += savedCount;
-        }
-    }
 
     /* Update camera to follow the tracked player (freeze while dead) */
     if (bg->cameraPlayer < MAX_TANKS &&
@@ -409,7 +389,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     bgGameRenderMapName(bg, renderer, screenW, screenH);
 }
 
-#define BG_TICK_INTERVAL_MS 20  /* 50 Hz */
+#define BG_TICK_INTERVAL_MS 10  /* 100 Hz — matches normal game tick rate */
 
 void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime) {
     if (!bg || !bg->valid) return;

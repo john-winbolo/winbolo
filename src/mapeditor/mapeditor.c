@@ -22,6 +22,7 @@
 #include "mapeditor_stamp.h"
 #include "mapeditor_undo.h"
 #include "mapeditor_export.h"
+#include "macos_pinch.h"
 
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
 #include <SDL3_ttf/SDL_ttf.h>
@@ -2936,6 +2937,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Initialize ImGui */
     mapEditorImguiInit(window, renderer);
 
+    /* macOS trackpad pinch-to-zoom */
+    macOSPinchZoomInit();
+
     /* Track whether the unsaved-changes modal needs to be opened */
     bool openUnsavedModal = false;
 
@@ -3593,6 +3597,26 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         /* Handle completed file dialog */
         if (ed->fileDialogGotResult) {
             meHandleFileDialogResult(ed);
+        }
+
+        /* Trackpad pinch-to-zoom (macOS) */
+        if (!mapEditorImguiWantMouse()) {
+            float pinch = macOSPinchZoomConsume();
+            if (pinch != 0.0f) {
+                /* Accumulate small pinch deltas into stepped zoom changes */
+                static float pinchAccum = 0.0f;
+                pinchAccum += pinch;
+                while (pinchAccum > 0.15f) {
+                    if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
+                    pinchAccum -= 0.15f;
+                }
+                while (pinchAccum < -0.15f) {
+                    if (ed->zoomStepIndex > 0) ed->zoomStepIndex--;
+                    pinchAccum += 0.15f;
+                }
+                ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
+                ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+            }
         }
 
         /* Arrow key scrolling (continuous while held) */
@@ -4350,6 +4374,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     stampLibraryFree(&ed->stampLib);
     imageImportFree(&ed->imageImportCfg);
     validateResultFree(&ed->lastValidation);
+    macOSPinchZoomDestroy();
     mapEditorImguiShutdown();
     undoStackClear(&ed->undoStack);
     if (ed->offscreenTex) SDL_DestroyTexture(ed->offscreenTex);

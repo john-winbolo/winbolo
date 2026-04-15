@@ -46,6 +46,7 @@ extern "C" {
 #include "../flags.h"
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
+#include "../map_preview_popup.h"
 #include "imgui_lobby.h"
 }
 
@@ -61,6 +62,12 @@ static const int DIALOG_H = 700;
 struct MapBounds {
     int minX, minY, maxX, maxY;
 };
+
+/* Compressed map data — stashed when map download completes so the popup
+ * can decompress on demand (transportUdpClientGetMapData() is only called
+ * in the one-shot preview-build block; the pointer may not remain valid). */
+static BYTE        *popupCompressedData = NULL;
+static int          popupCompressedLen  = 0;
 
 /* Build a 256x256 RGBA minimap from compressed map data.
  * Returns an SDL_Texture* or NULL on failure.
@@ -137,7 +144,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "Game Lobby");
+    dialogSetWindowTitle(window, "WinBolo - Game Lobby");
     SDL_SetWindowResizable(window, true);
 #endif
     SDL_ShowWindow(window);
@@ -236,6 +243,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 SDL_DestroyTexture(mapPreviewTex);
                 mapPreviewTex = NULL;
             }
+            if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; popupCompressedLen = 0; }
+            mapPreviewPopupClose();
         }
         prevMapDownloadComplete = cs->mapDownloadComplete;
 
@@ -245,6 +254,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             const BYTE *mapData = transportUdpClientGetMapData(transport, &mapLen);
             if (mapData && mapLen > 0) {
                 mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds);
+                /* Stash for popup decompression */
+                if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; }
+                popupCompressedData = (BYTE *)SDL_malloc(mapLen);
+                if (popupCompressedData) {
+                    SDL_memcpy(popupCompressedData, mapData, mapLen);
+                    popupCompressedLen = mapLen;
+                }
             }
             mapPreviewBuilt = true;
         }
@@ -252,6 +268,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* Query window size */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+
+        /* Render popup tiles to offscreen texture before ImGui frame */
+        mapPreviewPopupRenderOffscreen(renderer, winW, winH);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -505,6 +524,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         float offsetX = (previewMaxW - previewSize) * 0.5f;
                         if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        }
+                        if (popupCompressedData) {
+                            mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
+                                                   mapBounds.minX, mapBounds.minY,
+                                                   mapBounds.maxX, mapBounds.maxY);
+                        }
                     } else {
                         ImGui::Text("Map preview unavailable");
                     }
@@ -858,6 +885,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 float offsetX = (panelWidth - previewSize) * 0.5f;
                 if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                }
+                if (popupCompressedData) {
+                    mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
+                                           mapBounds.minX, mapBounds.minY,
+                                           mapBounds.maxX, mapBounds.maxY);
+                }
             } else {
                 ImGui::Text("Map preview unavailable");
             }
@@ -1004,6 +1039,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
 #endif
 
+        /* --- Map preview popup --- */
+        mapPreviewPopupRenderModal(renderer);
+
         /* --- Leave confirmation popup --- */
         if (ImGui::BeginPopupModal("Leave Game?##lobby", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1063,6 +1101,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     if (mapPreviewTex) {
         SDL_DestroyTexture(mapPreviewTex);
     }
+    if (popupCompressedData) {
+        SDL_free(popupCompressedData);
+        popupCompressedData = NULL;
+        popupCompressedLen = 0;
+    }
+    mapPreviewPopupDestroy();
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);
