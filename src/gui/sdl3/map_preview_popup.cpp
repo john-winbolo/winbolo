@@ -35,6 +35,7 @@ extern "C" {
 #include "../../bolo/tilenum.h"
 #include "../tiles.h"
 #include "map_preview_popup.h"
+#include "macos_pinch.h"
 
 /* From mapview.h — declared directly to avoid pulling in game_sim.h */
 extern int mapViewPosX[256];
@@ -537,13 +538,32 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                 }
             }
 
-            /* Zoom via scroll wheel / pinch */
+            /* Zoom via scroll wheel */
             if (ImGui::IsItemHovered() && io.MouseWheel != 0) {
                 if (io.MouseWheel > 0 && popupZoomIndex < POPUP_ZOOM_STEP_COUNT - 1)
                     popupZoomIndex++;
                 else if (io.MouseWheel < 0 && popupZoomIndex > 0)
                     popupZoomIndex--;
                 popupZoomLevel = zoomSteps[popupZoomIndex];
+            }
+
+            /* Trackpad pinch-to-zoom (macOS) — consume unconditionally
+             * since the modal covers the entire screen. */
+            {
+                float pinch = macOSPinchZoomConsume();
+                if (pinch != 0.0f) {
+                    static float pinchAccum = 0.0f;
+                    pinchAccum += pinch;
+                    while (pinchAccum > 0.15f) {
+                        if (popupZoomIndex < POPUP_ZOOM_STEP_COUNT - 1) popupZoomIndex++;
+                        pinchAccum -= 0.15f;
+                    }
+                    while (pinchAccum < -0.15f) {
+                        if (popupZoomIndex > 0) popupZoomIndex--;
+                        pinchAccum += 0.15f;
+                    }
+                    popupZoomLevel = zoomSteps[popupZoomIndex];
+                }
             }
 
             /* Arrow key panning */
@@ -584,6 +604,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                 dl->AddText(textPos, IM_COL32(255, 255, 255, 220), zoomText);
             }
         } else {
+            macOSPinchZoomConsume(); /* drain so it doesn't jump when data arrives */
             ImGui::Text("Map preview loading...");
         }
         ImGui::EndPopup();

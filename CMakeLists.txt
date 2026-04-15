@@ -18,6 +18,22 @@ endif()
 
 project(winbolo C)
 
+# Enable Objective-C for macOS pinch-to-zoom support
+if(APPLE)
+    enable_language(OBJC)
+endif()
+
+# On macOS, ensure CMAKE_OSX_SYSROOT is set so that dependencies (e.g.
+# crashpad) can find system .defs files under the SDK path instead of the
+# non-existent /usr/include.
+if(APPLE AND NOT CMAKE_OSX_SYSROOT)
+    execute_process(
+        COMMAND xcrun --show-sdk-path
+        OUTPUT_VARIABLE CMAKE_OSX_SYSROOT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
+
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
 
 # Derive network protocol version bytes from WINBOLO_VERSION.
@@ -808,6 +824,12 @@ target_compile_definitions(WinBolo PRIVATE
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
 
+# macOS trackpad pinch-to-zoom support
+if(APPLE)
+    target_sources(WinBolo PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_link_libraries(WinBolo PRIVATE "-framework AppKit")
+endif()
+
 # macOS app bundle with icon
 if(APPLE)
     set(WINBOLO_ICON "${CMAKE_SOURCE_DIR}/src/gui/sdl3/platform/AppIcon.icns")
@@ -1467,10 +1489,6 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
 # gym_batch_test (Phase 0 determinism baseline)
 # ---------------------------------------------------------------------------
 
-add_executable(gym_batch_test tests/gym_batch_test.c)
-target_link_libraries(gym_batch_test PRIVATE winbolo_gym)
-target_include_directories(gym_batch_test PRIVATE src/gym)
-set_flat_output(gym_batch_test "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
@@ -1635,6 +1653,12 @@ target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image
 )
+
+# macOS trackpad pinch-to-zoom support
+if(APPLE)
+    target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_link_libraries(MapEditor PRIVATE "-framework AppKit")
+endif()
 
 # Copy shared libraries and assets next to MapEditor executable
 add_custom_command(TARGET MapEditor POST_BUILD
