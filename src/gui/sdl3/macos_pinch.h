@@ -27,6 +27,9 @@ extern "C" {
 #endif
 
 #ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
 
 /* Start monitoring trackpad magnification (pinch) gestures.
  * Call once after the SDL window is created. */
@@ -34,19 +37,19 @@ void macOSPinchZoomInit(void);
 
 /* Return the accumulated pinch magnification delta since the last call
  * and reset the accumulator to zero.  Positive = zoom in, negative = zoom out.
- * Returns 0.0f on non-Apple platforms. */
+ * Returns 0.0f on non-macOS platforms. */
 float macOSPinchZoomConsume(void);
 
 /* Stop monitoring and clean up. */
 void macOSPinchZoomDestroy(void);
 
-#else /* !__APPLE__ */
+#else
 
 static inline void  macOSPinchZoomInit(void)    {}
 static inline float macOSPinchZoomConsume(void)  { return 0.0f; }
 static inline void  macOSPinchZoomDestroy(void)  {}
 
-#endif /* __APPLE__ */
+#endif
 
 #ifdef __cplusplus
 }
