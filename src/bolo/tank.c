@@ -1588,6 +1588,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         /* Destroy boat tile */
         mapSetPos(sim, mp, newbmx, newbmy, RIVER, TRUE, FALSE);
         explosionsAddItem(&sim->expl, newbmx, newbmy, 0, 0, EXPLOSION_START);
+        if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, newbmx, newbmy, 0, 0);
         sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, newbmx, newbmy);
         if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
       }
@@ -1632,6 +1633,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       if ((*value)->boatState == BoatState_InBoat && mapIsMine(mp, bmx, bmy) == TRUE) {
         sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
         explosionsAddItem(&sim->expl, bmx, bmy, 0, 0, EXPLOSION_START);
+        if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, bmx, bmy, 0, 0);
         (*value)->boatState = BoatState_NotOnBoat;
         (*value)->onBoat = FALSE;
         (*value)->speed = 0;

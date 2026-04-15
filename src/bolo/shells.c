@@ -240,6 +240,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				conv >>= TANK_SHIFT_PIXELSIZE;
 				spy = (BYTE) conv;
 				explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
+				if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, sx, sy, spx, spy);
 				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
@@ -283,6 +284,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			conv >>= TANK_SHIFT_PIXELSIZE;
 			spy = (BYTE) conv;
 			explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
+			if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, sx, sy, spx, spy);
 			minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {

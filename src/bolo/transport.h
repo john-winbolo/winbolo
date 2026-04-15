@@ -49,7 +49,6 @@ typedef struct {
                         SnapshotHeader *hdr,
                         TankSnapshot *tanks, int maxTanks,
                         ShellSnapshot *shells, int maxShells,
-                        ExplosionSnapshot *explosions, int maxExplosions,
                         TkExplosionSnapshot *tkExplosions, int maxTkExplosions,
                         BaseSnapshot *bases, int maxBases,
                         PillSnapshot *pills, int maxPills,

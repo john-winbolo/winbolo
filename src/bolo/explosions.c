@@ -69,21 +69,6 @@ void explosionsDestroy(explosions *expl) {
   }
 }
 
-void explosionsDestroyNonLocal(explosions *expl) {
-  explosions pos = *expl;
-
-  while (pos != NULL) {
-    if (!pos->localOnly) {
-      explosions next;
-      explosionDeleteItem(expl, &pos);
-      next = pos;
-      pos = next;
-    } else {
-      pos = pos->next;
-    }
-  }
-}
-
 /*********************************************************
 *NAME:          explosionsAddItem
 *AUTHOR:        John Morrison
@@ -110,26 +95,6 @@ void explosionsAddItem(explosions *expl, BYTE mx, BYTE my, BYTE px, BYTE py, BYT
   q->px = px;
   q->py = py;
   q->length = startPos;
-  q->localOnly = FALSE;
-  q->next = *expl;
-  q->prev = NULL;
-  if (NonEmpty(*expl)) {
-    (*expl)->prev = q;
-  }
-
-  *expl = q;
-}
-
-void explosionsAddItemLocal(explosions *expl, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE startPos) {
-  explosions q;
-
-  New (q);
-  q->mx = mx;
-  q->my = my;
-  q->px = px;
-  q->py = py;
-  q->length = startPos;
-  q->localOnly = TRUE;
   q->next = *expl;
   q->prev = NULL;
   if (NonEmpty(*expl)) {
@@ -175,38 +140,6 @@ void explosionsUpdate(explosions *expl) {
     }
 
     /* Get the next Item */
-    if (*expl != NULL && needUpdate == TRUE) {
-      position = ExplosionsTail(position);
-    }
-  }
-}
-
-void explosionsUpdateLocal(explosions *expl) {
-  static BYTE update = 0;
-  explosions position;
-  bool needUpdate;
-
-  update++;
-  if (update != EXPLOAD_UPDATE_TIME) {
-    return;
-  } else {
-    update = 0;
-  }
-
-  position = *expl;
-
-  while (NonEmpty(position)) {
-    needUpdate = TRUE;
-    if (!position->localOnly) {
-      position = position->next;
-      continue;
-    }
-    if (position->length > EXPLODE_DEATH) {
-      position->length--;
-    } else {
-      needUpdate = FALSE;
-      explosionDeleteItem(expl, &position);
-    }
     if (*expl != NULL && needUpdate == TRUE) {
       position = ExplosionsTail(position);
     }

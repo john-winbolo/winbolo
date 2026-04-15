@@ -214,7 +214,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       conv <<= TANK_SHIFT_MAPSIZE;
       conv >>= TANK_SHIFT_PIXELSIZE;
       py = (BYTE) conv;
-      explosionsAddItemLocal(&sim->expl, mx, my, px, py,EXPLOSION_START);
+      explosionsAddItem(&sim->expl, mx, my, px, py,EXPLOSION_START);
       /* Check for colisions then update position */
       newX = (WORLD) (position->x + moveX);
       newY = (WORLD) (position->y + moveY);
@@ -307,7 +307,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       conv >>= TANK_SHIFT_MAPSIZE;
       my = (BYTE) conv;
       if (position->explodeType == TK_SMALL_EXPLOSION) {
-        explosionsAddItemLocal(&sim->expl, mx, my, 0, 0 ,EXPLOSION_START);
+        explosionsAddItem(&sim->expl, mx, my, 0, 0 ,EXPLOSION_START);
         currentPos = mapGetPos(mp, mx, my);
         if (currentPos != RIVER && currentPos != DEEP_SEA) {
             mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
@@ -517,7 +517,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   } else {
     moveY = TK_MOVE_LEFT;
   }
-  explosionsAddItemLocal(&sim->expl, (BYTE) (mx+moveX), (BYTE) (my+moveY), 0, 0,EXPLOSION_START);
+  explosionsAddItem(&sim->expl, (BYTE) (mx+moveX), (BYTE) (my+moveY), 0, 0,EXPLOSION_START);
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
@@ -535,7 +535,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
     }
   }
 
-  explosionsAddItemLocal(&sim->expl, (BYTE) (mx+moveX), my, 0, 0,EXPLOSION_START);
+  explosionsAddItem(&sim->expl, (BYTE) (mx+moveX), my, 0, 0,EXPLOSION_START);
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), my);
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
@@ -552,7 +552,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
     }
   }
 
-  explosionsAddItemLocal(&sim->expl, mx, (BYTE) (my+moveY), 0, 0,EXPLOSION_START);
+  explosionsAddItem(&sim->expl, mx, (BYTE) (my+moveY), 0, 0,EXPLOSION_START);
   currentPos = mapGetPos(mp, mx, (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
@@ -570,7 +570,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
     }
   }
 
-  explosionsAddItemLocal(&sim->expl, mx, my, 0, 0,EXPLOSION_START);
+  explosionsAddItem(&sim->expl, mx, my, 0, 0,EXPLOSION_START);
   if (sim->isServer) {
     count = 1;
     while (count <= numLgm) {

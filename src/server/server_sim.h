@@ -323,8 +323,6 @@ ServerSim *serverSimGetActive(void);
  *  maxTanks      - Max entries in tanksOut
  *  shellsOut     - Output: ShellSnapshot array
  *  maxShells     - Max entries in shellsOut
- *  explosionsOut - Output: ExplosionSnapshot array
- *  maxExplosions - Max entries in explosionsOut
  *  tkExplOut     - Output: TkExplosionSnapshot array
  *  maxTkExpl     - Max entries in tkExplOut
  *  basesOut      - Output: BaseSnapshot array
@@ -338,7 +336,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
                             TankSnapshot *tanksOut, int maxTanks,
                             ShellSnapshot *shellsOut, int maxShells,
-                            ExplosionSnapshot *explosionsOut, int maxExplosions,
                             TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,

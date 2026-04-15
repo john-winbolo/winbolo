@@ -130,16 +130,14 @@ BYTE transportUdpClientGetPlayerNum(Transport *t);
 
 /* Returns TRUE if a new snapshot is available.
  * If TRUE, copies the snapshot header, tank data, shell data,
- * explosion data, base/pill state, and game events into the
- * output params. Arrays may be NULL if not needed. */
+ * base/pill state, and game events into the output params.
+ * Arrays may be NULL if not needed. */
 bool transportUdpClientGetSnapshot(Transport *t,
                                    SnapshotHeader *hdr,
                                    TankSnapshot *tanks,
                                    int maxTanks,
                                    ShellSnapshot *shellsOut,
                                    int maxShells,
-                                   ExplosionSnapshot *explosionsOut,
-                                   int maxExplosions,
                                    BaseSnapshot *basesOut,
                                    int maxBases,
                                    PillSnapshot *pillsOut,

@@ -115,7 +115,6 @@ static void gymSyncSnapshot(WinBoloGym *g) {
     SnapshotHeader snapHdr;
     TankSnapshot snapTanks[MAX_TANKS];
     ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-    ExplosionSnapshot snapExplosions[MAX_SNAPSHOT_EXPLOSIONS];
     TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
     BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
     PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
@@ -124,7 +123,6 @@ static void gymSyncSnapshot(WinBoloGym *g) {
     if (g->transport.getSnapshot(g->transport.ctx, 0,
                                   &snapHdr, snapTanks, MAX_TANKS,
                                   snapShells, MAX_SNAPSHOT_SHELLS,
-                                  snapExplosions, MAX_SNAPSHOT_EXPLOSIONS,
                                   snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                   snapBases, MAX_SNAPSHOT_BASES,
                                   snapPills, MAX_SNAPSHOT_PILLS,
@@ -132,7 +130,6 @@ static void gymSyncSnapshot(WinBoloGym *g) {
         clientSimSyncFromSnapshot(&g->clientSim, &snapHdr,
                                   snapTanks, snapHdr.tankCount,
                                   snapShells, snapHdr.shellCount,
-                                  snapExplosions, snapHdr.explosionCount,
                                   snapTkExplosions, snapHdr.tkExplosionCount,
                                   snapBases, snapHdr.baseCount,
                                   snapPills, snapHdr.pillCount,
@@ -434,8 +431,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             break;
         }
         case EVENT_EXPLOSION: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
+            float sx = (float)e->data[0] - (float)tank_tx;
+            float sy = (float)e->data[1] - (float)tank_ty;
             if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
                 WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
                 snd->rx = sx;
