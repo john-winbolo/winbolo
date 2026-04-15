@@ -554,21 +554,19 @@ BYTE mapGetSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue
     if (terrain >= MINE_START && terrain <= MINE_END) {
       terrain = terrain - MINE_SUBTRACT;
     }
+    /* On boat: use boat speed for all terrain (handles LeavingBoat on land) */
+    if (onBoat == TRUE) {
+      returnValue = MAP_SPEED_TBOAT;
+    } else
     switch (terrain) {
     case DEEP_SEA:
       returnValue = MAP_SPEED_TDEEPSEA;
-      if (onBoat == TRUE) {
-        returnValue = MAP_SPEED_TBOAT;
-      }
       break;
     case BUILDING:
       returnValue = MAP_SPEED_TBUILDING;
       break;
     case RIVER:
       returnValue = MAP_SPEED_TRIVER;
-      if (onBoat == TRUE) {
-        returnValue = MAP_SPEED_TBOAT;
-      }
       break;
     case SWAMP:
       returnValue = MAP_SPEED_TSWAMP;

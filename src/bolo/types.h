@@ -22,6 +22,7 @@
 #pragma pack(push, 4)
 
 #include "global.h"
+#include <stddef.h>
 /* Defines */
 #define MAX_BASES 16
 
@@ -138,40 +139,15 @@ typedef struct {
 
 typedef struct tankObj *tank;
 
-#define CRC_WORLDX_OFFSET 0
-#define CRC_WORLDY_OFFSET (CRC_WORLDX_OFFSET + sizeof(WORLD))
-#define CRC_ARMOUR_OFFSET (CRC_WORLDY_OFFSET + sizeof(WORLD))
-#define CRC_SHELLS_OFFSET (CRC_ARMOUR_OFFSET + 1)
-#define CRC_MINES_OFFSET (CRC_SHELLS_OFFSET + 1)
-#define CRC_SPEED_OFFSET (CRC_MINES_OFFSET + 1)
-#define CRC_TREES_OFFSET (CRC_SPEED_OFFSET + sizeof(SPEEDTYPE))
-#define CRC_ANGLE_OFFSET (CRC_TREES_OFFSET + 1)
-#define CRC_RELOAD_OFFSET (CRC_ANGLE_OFFSET + sizeof(TURNTYPE))
-#define CRC_ONBOAT_OFFSET (CRC_RELOAD_OFFSET + 1)
-#define CRC_SHOWSIGHT_OFFSET (CRC_ONBOAT_OFFSET + 1)
-#define CRC_SIGHTLEN_OFFSET (CRC_SHOWSIGHT_OFFSET + 1)
-#define CRC_NUMKILLS_OFFSET (CRC_SIGHTLEN_OFFSET + 1)
-#define CRC_NUMDEATHS_OFFSET (CRC_NUMKILLS_OFFSET + sizeof(int))
-#define CRC_DEATHWAIT_OFFSET (CRC_NUMDEATHS_OFFSET + sizeof(int))
-#define CRC_WATERCOUNT_OFFSET (CRC_DEATHWAIT_OFFSET + 1)
-#define CRC_OBSTRUCTED_OFFSET (CRC_WATERCOUNT_OFFSET + 1)
-#define CRC_NEWTANK_OFFSET (CRC_OBSTRUCTED_OFFSET + 1)
-#define CRC_AUTOSLOWDOWN_OFFSET (CRC_NEWTANK_OFFSET +1 )
-#define CRC_AUTOHIDE_OFFSET (CRC_AUTOSLOWDOWN_OFFSET + 1)
-#define CRC_JUSTFIRED_OFFSET (CRC_AUTOHIDE_OFFSET+1)
-#define CRC_TANK_SIZE (CRC_JUSTFIRED_OFFSET+1)
-/*
-#define CRC_WORLDXPREV_OFFSET (CRC_TANK_SIZE + sizeof(WORLD))
-#define CRC_WORLDYPREV_OFFSET (CRC_WORLDXPREV_SIZE + sizeof(WORLD))
-#define CRC_WORLDXPREVPREV_OFFSET (CRC_WORLDYPREV_SIZE + sizeof(WORLD))
-#define CRC_WORLDYPREVPREV_OFFSET (CRC_WORLDXPREVPREV_SIZE + sizeof(WORLD))
-#define CRC_CARRYPILLS_OFFSET (CRC_WORLDYPREVPREV_SIZE + sizeof(tankCarryPb))
-#define CRC_TANKSLIDETIMER_OFFSET (CRC_CARRYPILLS_SIZE + sizeof(BYTE))
-#define CRC_VECTORBODY_OFFSET (CRC_TANKSLIDETIMER_SIZE + sizeof(vectorBody))
-#define CRC_VECTORBODYCOLLIDE_OFFSET (CRC_VECTORBODY_SIZE + sizeof(vectorBody))
-*/
 
 #pragma pack(push, 1)
+
+/* Boat state tracking */
+typedef enum {
+  BoatState_NotOnBoat = 0,
+  BoatState_InBoat = 1,
+  BoatState_LeavingBoat = 2
+} BoatState;
 
 struct tankObj {
   WORLD x;            /* World Co-ordinates */
@@ -184,6 +160,9 @@ struct tankObj {
   TURNTYPE angle;     /* The angle the tank is pointing on 0-256 */
   BYTE reload;        /* Reload tick 0 is OK to shoot else counts back */
   bool onBoat;        /* Is the tank on a boat? */
+  BoatState boatState;      /* Granular boat state tracking */
+  BYTE lastBoatRiverX;     /* Last river X map position while on boat */
+  BYTE lastBoatRiverY;     /* Last river Y map position while on boat */
   bool showSight;     /* Is the gunsight on or not */
   BYTE sightLen;      /* Length of the gunsight measured in map units */
   int32_t numKills;   /* Number of kills the tank has had — was int, fixed to 32-bit */
@@ -196,7 +175,6 @@ struct tankObj {
   bool autoHideGunsight;  /* Auto show/hide of gunsight enabled/disabled */
   bool justFired;         /* Did the tank just fire */
   BYTE tankHitCount;  /* Number of times a tank has been hit to determine if they are cheating */
-  int32_t crc; /* CRC used to detect memory cheats — was int, fixed to 32-bit */
   WORLD x_prev;       /* World Coordinates at last tick */
   WORLD y_prev;
   WORLD x_prev_prev;
@@ -209,6 +187,10 @@ struct tankObj {
   BYTE lastTankDeath;      /* How did the most recent death to the tank occur? */
   vectorBody vectorBodyTank; /* Holds tank's actual moving direction and component vectors (x and y axis speed) */
   vectorBody vectorBodyCollide; /* Holds physics stuff for what hit the tank */
+  int16_t bumpX;            /* X bump effect from collisions/shells (>>9 applied per tick) */
+  int16_t bumpY;            /* Y bump effect from collisions/shells (>>9 applied per tick) */
+  BYTE residualSpeed;       /* Accumulated sub-tick movement */
+  BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
 };
 
 #pragma pack(pop)
@@ -235,10 +217,7 @@ struct startsObj {
 
 #pragma pack(pop)
 
-/* Phase 0.6 — Static assertions on serialized struct sizes.
- * These catch layout changes due to compiler differences, alignment,
- * or pointer/int size changes on 64-bit platforms.
- *
+/*
  * Sizes derived from the header constants:
  *   SIZEOF_BASES 260  = 16 * sizeof(base) + 4  → sizeof(base) == 16
  *   SIZEOF_PILLS 145  = 16 * sizeof(pillbox) + 1 → sizeof(pillbox) == 9

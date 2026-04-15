@@ -228,7 +228,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       conv >>= TANK_SHIFT_MAPSIZE;
       newmy = (BYTE) conv;
 
-      if ((mapGetSpeed(sim,mp,pb,bs,mx,newmy, TRUE, NEUTRAL)) > 0) {
+      if ((mapGetSpeed(sim,mp,pb,bs,mx,newmy, FALSE, NEUTRAL)) > 0) {
         position->y = (WORLD) (position->y + moveY);
         if (sim->isServer == FALSE && position->creator == playerNum) {
           if (testY > my) {
@@ -241,7 +241,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
         }
         my = newmy;
       }
-      if ((mapGetSpeed(sim,mp,pb,bs,newmx,my, TRUE, NEUTRAL)) > 0) {
+      if ((mapGetSpeed(sim,mp,pb,bs,newmx,my, FALSE, NEUTRAL)) > 0) {
         position->x = (WORLD) (position->x + moveX);
         if (sim->isServer == FALSE && position->creator == playerNum) {
           if (testX > mx) {

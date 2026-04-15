@@ -3728,6 +3728,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         if (csPtr->sim.mp != NULL) {
           mapSetPos(&csPtr->sim, &csPtr->sim.mp, events[i].data[0], events[i].data[1],
                     events[i].data[2], FALSE, TRUE);
+          screenReCalcCS(csPtr);
         }
         break;
       case EVENT_SOUND:
