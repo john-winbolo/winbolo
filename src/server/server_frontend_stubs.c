@@ -150,12 +150,14 @@ void screenSyncFromSnapshotCS(ClientSim *cs,
     const TankSnapshot *tanks, int tankCount,
     const ShellSnapshot *shellSnaps, int shellCount,
     const ExplosionSnapshot *explSnaps, int explosionCount,
+    const TkExplosionSnapshot *tkExplSnaps, int tkExplosionCount,
     const BaseSnapshot *baseSnaps, int baseCount,
     const PillSnapshot *pillSnaps, int pillCount,
     const GameEvent *events, int eventCount,
     BYTE playerNum) {
   (void)cs; (void)hdr; (void)tanks; (void)tankCount;
   (void)shellSnaps; (void)shellCount; (void)explSnaps; (void)explosionCount;
+  (void)tkExplSnaps; (void)tkExplosionCount;
   (void)baseSnaps; (void)baseCount; (void)pillSnaps; (void)pillCount;
   (void)events; (void)eventCount; (void)playerNum;
 }

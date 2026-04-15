@@ -73,8 +73,6 @@ struct tkExplosionObj {
   TURNTYPE angle;    /* Direction of travel */
   BYTE length;       /* Distance to travel  */
   BYTE explodeType;  /* Type of the explosion - Big or small */
-  bool packSent;     /* Has this tkexplosion been included in a network packet yet */
-  bool own;          /* Did we create this explosions or the network? */
   BYTE creator;      /* Creators player number */
 };
 
@@ -126,6 +124,26 @@ void tkExplosionDestroy(tkExplosion *tke);
 void tkExplosionAddItem(struct GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE length, BYTE explodeType);
 
 /*********************************************************
+*NAME:          tkExplosionAddItemFromSnapshot
+*PURPOSE:
+*  Adds a tank explosion from snapshot data (server state).
+*  Unlike tkExplosionAddItem, takes explicit creator and
+*  length values.
+*
+*ARGUMENTS:
+*  sim         - Pointer to the game sim
+*  x           - World X coordinate
+*  y           - World Y coordinate
+*  angle       - Angle of travel (TURNTYPE)
+*  length      - Remaining distance
+*  explodeType - Type of explosion (big or small)
+*  creator     - Player number who died
+*********************************************************/
+void tkExplosionAddItemFromSnapshot(struct GameSim *sim, WORLD x, WORLD y,
+                                    TURNTYPE angle, BYTE length,
+                                    BYTE explodeType, BYTE creator);
+
+/*********************************************************
 *NAME:          tkExplosionUpdate
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/01/99
@@ -157,6 +175,20 @@ void tkExplosionUpdate(struct GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank,
 *  itemNum - The item number to get
 *********************************************************/
 void tkExplosionDeleteItem(tkExplosion *tkem, tkExplosion *value);
+
+/*********************************************************
+*NAME:          tkExplosionGetOwnPosition
+*PURPOSE:
+*  Returns the map position of the fireball belonging to
+*  the given player, if one exists.
+*
+*ARGUMENTS:
+*  tke       - Pointer to the tank explosions object
+*  playerNum - Player number to search for
+*  mx        - Output map X
+*  my        - Output map Y
+*********************************************************/
+bool tkExplosionGetOwnPosition(tkExplosion *tke, BYTE playerNum, BYTE *mx, BYTE *my);
 
 /*********************************************************
 *NAME:          tkExplosionCalcScreenBullets
@@ -212,45 +244,9 @@ void tkExplosionCheckRemove(struct GameSim *sim, BYTE terrain, BYTE mx, BYTE my)
 *  my      - Map Y position
 *  moveX   - Moving X direction (positive/Negative)
 *  moveY   - Moving Y direction (positive/Negative)
-*  own     - Do we own this tkExplosion?
 *  lgms   - Array of lgms
 *  numLgm - Number of lgms in the array
 *********************************************************/
-void tkExplosionBigExplosion(struct GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, bool own, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts);
-
-/*********************************************************
-*NAME:          tkExplosionNetMake
-*AUTHOR:        John Morrison
-*CREATION DATE: 11/3/99
-*LAST MODIFIED: 11/3/99
-*PURPOSE:
-*  When we have the token we inform all the players of
-*  tke we have made since last time we had the token.
-*  Returns the length of the data created
-*  
-*ARGUMENTS:
-*  tke   - Pointer to the tank explosions object
-*  buff  - Pointer to a buffer to hold the shells 
-*          net data
-*********************************************************/
-BYTE tkExplosionNetMake(tkExplosion *tke, BYTE *buff);
-
-/*********************************************************
-*NAME:          tkExplosionNetExtract
-*AUTHOR:        John Morrison
-*CREATION DATE: 11/3/99
-*LAST MODIFIED: 14/9/00
-*PURPOSE:
-* Network tke data have arrived. Add them to our 
-* tke structure here.
-*  
-*ARGUMENTS:
-*  tke       - Pointer to the tank explosions object
-*  buff      - Pointer to a buffer to hold the shells 
-*              net data
-*  dataLen   - Length of the data
-*  playerNum - This players number 
-*********************************************************/
-void tkExplosionNetExtract(struct GameSim *sim, BYTE *buff, BYTE dataLen, BYTE playerNum, bool isServer);
+void tkExplosionBigExplosion(struct GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts);
 
 #endif /* TK_EXPLOSION_H */

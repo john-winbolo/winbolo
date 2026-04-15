@@ -539,6 +539,7 @@ static void windowRunGameTick(ClientSim *cs) {
             TankSnapshot snapTanks[MAX_TANKS];
             ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
             ExplosionSnapshot snapExplosions[MAX_SNAPSHOT_EXPLOSIONS];
+            TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
             BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
             PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
             GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
@@ -546,12 +547,14 @@ static void windowRunGameTick(ClientSim *cs) {
                                        &snapHdr, snapTanks, MAX_TANKS,
                                        snapShells, MAX_SNAPSHOT_SHELLS,
                                        snapExplosions, MAX_SNAPSHOT_EXPLOSIONS,
+                                       snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                        snapBases, MAX_SNAPSHOT_BASES,
                                        snapPills, MAX_SNAPSHOT_PILLS,
                                        snapEvents, MAX_SNAPSHOT_EVENTS)) {
               clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
                                      snapShells, snapHdr.shellCount,
                                      snapExplosions, snapHdr.explosionCount,
+                                     snapTkExplosions, snapHdr.tkExplosionCount,
                                      snapBases, snapHdr.baseCount,
                                      snapPills, snapHdr.pillCount,
                                      snapEvents, snapHdr.reliableEventCount,
@@ -598,6 +601,7 @@ static void windowRunGameTick(ClientSim *cs) {
             TankSnapshot snapTanks[MAX_TANKS];
             ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
             ExplosionSnapshot snapExplosions[MAX_SNAPSHOT_EXPLOSIONS];
+            TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
             BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
             PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
             GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
@@ -605,12 +609,14 @@ static void windowRunGameTick(ClientSim *cs) {
                                        &snapHdr, snapTanks, MAX_TANKS,
                                        snapShells, MAX_SNAPSHOT_SHELLS,
                                        snapExplosions, MAX_SNAPSHOT_EXPLOSIONS,
+                                       snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                        snapBases, MAX_SNAPSHOT_BASES,
                                        snapPills, MAX_SNAPSHOT_PILLS,
                                        snapEvents, MAX_SNAPSHOT_EVENTS)) {
               clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
                                      snapShells, snapHdr.shellCount,
                                      snapExplosions, snapHdr.explosionCount,
+                                     snapTkExplosions, snapHdr.tkExplosionCount,
                                      snapBases, snapHdr.baseCount,
                                      snapPills, snapHdr.pillCount,
                                      snapEvents, snapHdr.reliableEventCount,
