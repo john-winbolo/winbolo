@@ -1218,6 +1218,10 @@ static int serverSimGetExplosions(ServerSim *sim, ExplosionSnapshot *out, int ma
 
     q = sim->sim.expl;
     while (q != NULL && count < maxOut) {
+        if (q->localOnly) {
+            q = q->next;
+            continue;
+        }
         if (!inAnyViewport(viewports, numViewports, q->mx, q->my)) {
             q = q->next;
             continue;
@@ -1227,6 +1231,23 @@ static int serverSimGetExplosions(ServerSim *sim, ExplosionSnapshot *out, int ma
         out[count].px = q->px;
         out[count].py = q->py;
         out[count].length = q->length;
+        count++;
+        q = q->next;
+    }
+    return count;
+}
+
+static int serverSimGetTkExplosions(ServerSim *sim, TkExplosionSnapshot *out, int maxOut) {
+    tkExplosion q = sim->sim.tankExplosions;
+    int count = 0;
+
+    while (q != NULL && count < maxOut) {
+        out[count].worldX = q->x;
+        out[count].worldY = q->y;
+        out[count].angle = (uint8_t)(q->angle);
+        out[count].length = q->length;
+        out[count].explodeType = q->explodeType;
+        out[count].creator = q->creator;
         count++;
         q = q->next;
     }
@@ -1283,6 +1304,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             TankSnapshot *tanksOut, int maxTanks,
                             ShellSnapshot *shellsOut, int maxShells,
                             ExplosionSnapshot *explosionsOut, int maxExplosions,
+                            TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
                             GameEvent *eventsOut, int maxEvents) {
@@ -1405,6 +1427,9 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     /* Explosion snapshots */
     hdr->explosionCount = (uint8_t)serverSimGetExplosions(sim, explosionsOut, maxExplosions,
                                                            viewports, numViewports);
+
+    /* Tank explosion snapshots (globally important — no viewport filtering) */
+    hdr->tkExplosionCount = (uint8_t)serverSimGetTkExplosions(sim, tkExplOut, maxTkExpl);
 
     /* Periodic full base/pill/map sync to correct any client drift */
     if (sim->lastFullSyncTick == 0 || sim->tick - sim->lastFullSyncTick >= FULL_SYNC_INTERVAL) {

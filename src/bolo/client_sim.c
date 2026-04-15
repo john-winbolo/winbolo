@@ -357,12 +357,15 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const TankSnapshot *tanks, int tankCount,
                                const ShellSnapshot *shellSnaps, int shellCount,
                                const ExplosionSnapshot *explSnaps, int explosionCount,
+                               const TkExplosionSnapshot *tkExplSnaps, int tkExplosionCount,
                                const BaseSnapshot *baseSnaps, int baseCount,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum) {
   screenSyncFromSnapshotCS(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
-                           explSnaps, explosionCount, baseSnaps, baseCount,
+                           explSnaps, explosionCount,
+                           tkExplSnaps, tkExplosionCount,
+                           baseSnaps, baseCount,
                            pillSnaps, pillCount, events, eventCount, playerNum);
 }
 

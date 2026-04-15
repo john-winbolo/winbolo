@@ -119,6 +119,9 @@ typedef struct GameSim {
     /* Base refuel timers (was bases.c global) */
     int         baseTimer[MAX_TANKS];
 
+    /* Tank explosion update throttle (per-sim so server/client don't share) */
+    BYTE        tkExpUpdateTime;
+
     /* Lag compensation (server-only, zeroed on client) */
     uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
     uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */

@@ -68,6 +68,7 @@ typedef struct {
     uint8_t  tankCount;           /* Number of TankSnapshot entries following */
     uint8_t  shellCount;          /* Number of ShellSnapshot entries following */
     uint8_t  explosionCount;      /* Number of ExplosionSnapshot entries following */
+    uint8_t  tkExplosionCount;   /* Number of TkExplosionSnapshot entries following */
     uint8_t  baseCount;           /* Number of BaseSnapshot entries following */
     uint8_t  pillCount;           /* Number of PillSnapshot entries following */
     uint8_t  reliableEventCount;  /* Number of reliable GameEvent entries following (game + map merged) */
@@ -125,9 +126,22 @@ typedef struct {
 
 #define EXPLOSION_SNAPSHOT_WIRE_SIZE 5
 
+/* Per-tk-explosion data within a snapshot (wire format) */
+typedef struct {
+    uint16_t worldX;       /* World X position */
+    uint16_t worldY;       /* World Y position */
+    uint8_t  angle;        /* Travel angle (quantized from TURNTYPE) */
+    uint8_t  length;       /* Remaining distance */
+    uint8_t  explodeType;  /* TK_SMALL_EXPLOSION or TK_LARGE_EXPLOSION */
+    uint8_t  creator;      /* Player number who died */
+} TkExplosionSnapshot;
+
+#define TK_EXPLOSION_SNAPSHOT_WIRE_SIZE 8
+
 /* Maximum shells/explosions in a single snapshot */
 #define MAX_SNAPSHOT_SHELLS     64
 #define MAX_SNAPSHOT_EXPLOSIONS 32
+#define MAX_SNAPSHOT_TK_EXPLOSIONS 16
 #define MAX_SNAPSHOT_BASES      16
 #define MAX_SNAPSHOT_PILLS      16
 

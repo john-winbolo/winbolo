@@ -50,6 +50,7 @@ typedef struct {
                         TankSnapshot *tanks, int maxTanks,
                         ShellSnapshot *shells, int maxShells,
                         ExplosionSnapshot *explosions, int maxExplosions,
+                        TkExplosionSnapshot *tkExplosions, int maxTkExplosions,
                         BaseSnapshot *bases, int maxBases,
                         PillSnapshot *pills, int maxPills,
                         GameEvent *events, int maxEvents);

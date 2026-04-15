@@ -396,6 +396,26 @@ static void unpackExplosionSnapshot(const uint8_t *buf, ExplosionSnapshot *es) {
     es->length = buf[4];
 }
 
+/* Serialize one TkExplosionSnapshot into buf. Returns bytes written (8). */
+static int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke) {
+    packU16(buf, tke->worldX);
+    packU16(buf + 2, tke->worldY);
+    buf[4] = tke->angle;
+    buf[5] = tke->length;
+    buf[6] = tke->explodeType;
+    buf[7] = tke->creator;
+    return TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
+}
+
+static void unpackTkExplosionSnapshot(const uint8_t *buf, TkExplosionSnapshot *tke) {
+    tke->worldX = unpackU16(buf);
+    tke->worldY = unpackU16(buf + 2);
+    tke->angle = buf[4];
+    tke->length = buf[5];
+    tke->explodeType = buf[6];
+    tke->creator = buf[7];
+}
+
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 static int packGameEvent(uint8_t *buf, const GameEvent *ev) {
     int dataLen = gameEventDataSize(ev->type);
@@ -573,6 +593,7 @@ typedef struct {
     TankSnapshot snapshotTanks[MAX_TANKS];
     ShellSnapshot snapshotShells[MAX_SNAPSHOT_SHELLS];
     ExplosionSnapshot snapshotExplosions[MAX_SNAPSHOT_EXPLOSIONS];
+    TkExplosionSnapshot snapshotTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
     BaseSnapshot snapshotBases[MAX_SNAPSHOT_BASES];
     PillSnapshot snapshotPills[MAX_SNAPSHOT_PILLS];
     GameEvent snapshotEvents[MAX_SNAPSHOT_EVENTS];
@@ -815,7 +836,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         uint32_t seq = unpackU32(buf + 4);
         int pos = PACKET_HEADER_SIZE;
         int i;
-        uint8_t tankCount, shellCount, explosionCount;
+        uint8_t tankCount, shellCount, explosionCount, tkExplosionCount;
         uint8_t baseCount, pillCount, reliableEventCount;
         uint32_t reliableBaseSeq;
         uint8_t mapEventCount;
@@ -831,11 +852,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
 
         /* Header: serverTick(4) + lastProcessedInput(4) + tankCount(1)
-         * + shellCount(1) + explosionCount(1) + baseCount(1) + pillCount(1)
+         * + shellCount(1) + explosionCount(1) + tkExplosionCount(1)
+         * + baseCount(1) + pillCount(1)
          * + reliableEventCount(1) + reliableBaseSeq(4)
          * + mapEventCount(1) + mapEventBaseSeq(4)
-         * + mapChecksum(2) = 25 bytes */
-        if (len < pos + 25) { c->netErrors++; break; }
+         * + mapChecksum(2) = 26 bytes */
+        if (len < pos + 26) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -844,6 +866,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         tankCount = buf[pos++];
         shellCount = buf[pos++];
         explosionCount = buf[pos++];
+        tkExplosionCount = buf[pos++];
         baseCount = buf[pos++];
         pillCount = buf[pos++];
         reliableEventCount = buf[pos++];
@@ -858,6 +881,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->snapshotHdr.tankCount = tankCount;
         c->snapshotHdr.shellCount = shellCount;
         c->snapshotHdr.explosionCount = explosionCount;
+        c->snapshotHdr.tkExplosionCount = tkExplosionCount;
         c->snapshotHdr.baseCount = baseCount;
         c->snapshotHdr.pillCount = pillCount;
 
@@ -883,6 +907,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         for (i = 0; i < explosionCount; i++) {
             unpackExplosionSnapshot(buf + pos, &c->snapshotExplosions[i]);
             pos += EXPLOSION_SNAPSHOT_WIRE_SIZE;
+        }
+
+        /* Unpack tank explosions */
+        if (tkExplosionCount > MAX_SNAPSHOT_TK_EXPLOSIONS) tkExplosionCount = MAX_SNAPSHOT_TK_EXPLOSIONS;
+        if (len < pos + tkExplosionCount * TK_EXPLOSION_SNAPSHOT_WIRE_SIZE) break;
+        for (i = 0; i < tkExplosionCount; i++) {
+            unpackTkExplosionSnapshot(buf + pos, &c->snapshotTkExplosions[i]);
+            pos += TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
         }
 
         /* Unpack bases */
@@ -1518,6 +1550,7 @@ static bool udpClientGetSnapshotVtable(void *ctx, BYTE clientIdx,
                                        TankSnapshot *tanks, int maxTanks,
                                        ShellSnapshot *shells, int maxShells,
                                        ExplosionSnapshot *explosions, int maxExplosions,
+                                       TkExplosionSnapshot *tkExplosions, int maxTkExplosions,
                                        BaseSnapshot *bases, int maxBases,
                                        PillSnapshot *pills, int maxPills,
                                        GameEvent *events, int maxEvents) {
@@ -1543,6 +1576,12 @@ static bool udpClientGetSnapshotVtable(void *ctx, BYTE clientIdx,
         count = c->snapshotHdr.explosionCount;
         if (count > maxExplosions) count = maxExplosions;
         memcpy(explosions, c->snapshotExplosions, count * sizeof(ExplosionSnapshot));
+    }
+
+    if (tkExplosions != NULL) {
+        count = c->snapshotHdr.tkExplosionCount;
+        if (count > maxTkExplosions) count = maxTkExplosions;
+        memcpy(tkExplosions, c->snapshotTkExplosions, count * sizeof(TkExplosionSnapshot));
     }
 
     if (bases != NULL) {
@@ -2570,6 +2609,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     TankSnapshot tankSnaps[MAX_TANKS];
     ShellSnapshot shellSnaps[MAX_SNAPSHOT_SHELLS];
     ExplosionSnapshot explSnaps[MAX_SNAPSHOT_EXPLOSIONS];
+    TkExplosionSnapshot tkExplSnaps[MAX_SNAPSHOT_TK_EXPLOSIONS];
     BaseSnapshot baseSnaps[MAX_SNAPSHOT_BASES];
     PillSnapshot pillSnaps[MAX_SNAPSHOT_PILLS];
     GameEvent eventSnaps[MAX_SNAPSHOT_EVENTS];
@@ -2582,6 +2622,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
                            tankSnaps, MAX_TANKS,
                            shellSnaps, MAX_SNAPSHOT_SHELLS,
                            explSnaps, MAX_SNAPSHOT_EXPLOSIONS,
+                           tkExplSnaps, MAX_SNAPSHOT_TK_EXPLOSIONS,
                            baseSnaps, MAX_SNAPSHOT_BASES,
                            pillSnaps, MAX_SNAPSHOT_PILLS,
                            eventSnaps, MAX_SNAPSHOT_EVENTS);
@@ -2592,16 +2633,17 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* Snapshot header — we'll fill in counts after packing data.
      * Format: serverTick(4) + lastProcessedInput(4) + tankCount(1)
-     * + shellCount(1) + explosionCount(1) + baseCount(1) + pillCount(1)
+     * + shellCount(1) + explosionCount(1) + tkExplosionCount(1)
+     * + baseCount(1) + pillCount(1)
      * + reliableEventCount(1) + reliableBaseSeq(4)
      * + mapEventCount(1) + mapEventBaseSeq(4)
-     * + mapChecksum(2) = 25 bytes */
+     * + mapChecksum(2) = 26 bytes */
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 17; /* 7 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum */
+    pos += 18; /* 8 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum */
 
     /* Pack tank snapshots */
     for (i = 0; i < hdr.tankCount; i++) {
@@ -2628,6 +2670,15 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
             break;
         }
         pos += packExplosionSnapshot(buf + pos, &explSnaps[i]);
+    }
+
+    /* Pack tank explosion snapshots */
+    for (i = 0; i < hdr.tkExplosionCount; i++) {
+        if (pos + TK_EXPLOSION_SNAPSHOT_WIRE_SIZE > (int)sizeof(buf)) {
+            hdr.tkExplosionCount = (uint8_t)i;
+            break;
+        }
+        pos += packTkExplosionSnapshot(buf + pos, &tkExplSnaps[i]);
     }
 
     /* Pack base snapshots */
@@ -2682,13 +2733,14 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     buf[countsPos]     = hdr.tankCount;
     buf[countsPos + 1] = hdr.shellCount;
     buf[countsPos + 2] = hdr.explosionCount;
-    buf[countsPos + 3] = hdr.baseCount;
-    buf[countsPos + 4] = hdr.pillCount;
-    buf[countsPos + 5] = (uint8_t)reliableEventCount;
-    packU32(buf + countsPos + 6, reliableBaseSeq);
-    buf[countsPos + 10] = (uint8_t)mapEventCount;
-    packU32(buf + countsPos + 11, mapEventBaseSeq);
-    packU16(buf + countsPos + 15, hdr.mapChecksum);
+    buf[countsPos + 3] = hdr.tkExplosionCount;
+    buf[countsPos + 4] = hdr.baseCount;
+    buf[countsPos + 5] = hdr.pillCount;
+    buf[countsPos + 6] = (uint8_t)reliableEventCount;
+    packU32(buf + countsPos + 7, reliableBaseSeq);
+    buf[countsPos + 11] = (uint8_t)mapEventCount;
+    packU32(buf + countsPos + 12, mapEventBaseSeq);
+    packU16(buf + countsPos + 16, hdr.mapChecksum);
 
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
     if (sim->tick % 50 == 0) {

@@ -237,6 +237,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
     for (i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &bots[i];
+        TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
         if (!bot->active) continue;
         if (sim->sim.tanks[i] == NULL) continue;
 
@@ -245,6 +246,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
                                    &hdr, tanks, MAX_TANKS,
                                    shells, MAX_SNAPSHOT_SHELLS,
                                    explosions, MAX_SNAPSHOT_EXPLOSIONS,
+                                   tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                    bases, MAX_SNAPSHOT_BASES,
                                    pills, MAX_SNAPSHOT_PILLS,
                                    events, MAX_SNAPSHOT_EVENTS);
@@ -254,6 +256,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
                                   tanks, hdr.tankCount,
                                   shells, hdr.shellCount,
                                   explosions, hdr.explosionCount,
+                                  tkExplosions, hdr.tkExplosionCount,
                                   bases, hdr.baseCount,
                                   pills, hdr.pillCount,
                                   events, hdr.reliableEventCount,
