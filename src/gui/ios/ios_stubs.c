@@ -147,6 +147,18 @@ int WritePrivateProfileString(const char *section, const char *key,
     return 1;
 }
 
+/* ---- map editor stubs (not available on iOS) ---- */
+
+void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMainMenu) {
+    (void)window; (void)renderer; (void)mapPath; (void)fromMainMenu;
+}
+
+/* ---- winbolonet map change stub ---- */
+
+void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
+    (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
+}
+
 /* ---- skins stubs (requires minizip/zlib) ---- */
 
 bool skinsLoadSkin(char *fileName) { (void)fileName; return false; }

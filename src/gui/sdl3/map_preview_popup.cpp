@@ -500,7 +500,26 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                 mapLoadCompressedMap(&popupMap, &popupPills, &popupBases, &popupStarts,
                                      popupCompressedData, popupCompressedLen);
             } else if (popupFilePath) {
-                mapRead(popupFilePath, &popupMap, &popupPills, &popupBases, &popupStarts);
+                bool loaded = (mapRead(popupFilePath, &popupMap, &popupPills, &popupBases, &popupStarts) == TRUE);
+                if (!loaded) {
+                    /* Fallback: SDL_LoadFile handles iOS/macOS bundle paths */
+                    size_t fileSize = 0;
+                    void *fileData = SDL_LoadFile(popupFilePath, &fileSize);
+                    if (fileData && fileSize > 0) {
+                        char *tmpDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+                        char tmpPath[512];
+                        SDL_snprintf(tmpPath, sizeof(tmpPath), "%s_popup_temp.map", tmpDir ? tmpDir : "");
+                        SDL_free(tmpDir);
+                        FILE *fp = fopen(tmpPath, "wb");
+                        if (fp) {
+                            fwrite(fileData, 1, fileSize, fp);
+                            fclose(fp);
+                            mapRead(tmpPath, &popupMap, &popupPills, &popupBases, &popupStarts);
+                            remove(tmpPath);
+                        }
+                    }
+                    SDL_free(fileData);
+                }
             }
             popupDataLoaded = true;
         }
