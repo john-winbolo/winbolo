@@ -59,6 +59,7 @@
 #include "../../bolo/screenbullet.h"
 #include "../../bolo/screentank.h"
 #include "../../bolo/screenlgm.h"
+#include "macos_pinch.h"
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
 #ifndef NO_SELECT
@@ -798,6 +799,9 @@ bool sdl3DrawSetup(int zoomFactor) {
 
   SDL_SetRenderVSync(gRenderer, 1);
 
+  /* macOS trackpad pinch-to-zoom */
+  macOSPinchZoomInit();
+
 #ifdef __ANDROID__
   if (!uiModeIsTablet()) {
     /* On Android with desktop mode: set a logical presentation so SDL3
@@ -942,6 +946,7 @@ void sdl3DrawCleanup(void) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
   }
+  macOSPinchZoomDestroy();
   if (gWindow) {
     SDL_DestroyWindow(gWindow);
     gWindow = NULL;
