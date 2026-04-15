@@ -53,6 +53,9 @@ struct GameSim;
 /* There are 16 tank frames (or viewing angles the tank can take */
 #define TANK_FRAMES 16
 
+/* how many world coordinates to move per tank slide update */
+#define TANK_SLIDE 16
+
 /* Knockback slide: exponential decay parameters */
 #define TANK_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
 #define TANK_SLIDE_FRICTION      0.80f  /* velocity multiplier per tick */
@@ -91,11 +94,11 @@ Wharf-Rat explains Acceleration
 <wharf-rat> so its really 0.25 worlds every other tick
 
 we can get away with no using every other tick becuase we're not using a max of 64, so, this code below seems to work.
-I made autoslowdown and keyslowdown the same, becuase they should be the same, the rest seems to behave similiarly to macbolo 
+I made autoslowdown and keyslowdown the same, becuase they should be the same, the rest seems to behave similiarly to macbolo
 based on my testing.
 */
 /* The acceleration and deceleration rates of the tank */
-#define TANK_ACCELERATE_RATE 0.25 
+#define TANK_ACCELERATE_RATE 0.25
 #define TANK_TERRAIN_DECEL_RATE 0.25
 /* The slow down button pressed rate */
 #define TANK_SLOWKEY_RATE 0.25
@@ -227,11 +230,11 @@ typedef enum {
 *CREATION DATE: 23/11/98
 *LAST MODIFIED: 2/2/99
 *PURPOSE:
-*  Creates a new tank and sets its armour/mines etc. level 
+*  Creates a new tank and sets its armour/mines etc. level
 *  to the arguments. New tanks always start with full armour
 *
 *ARGUMENTS:
-*  value  - Pointer to the tank structure 
+*  value  - Pointer to the tank structure
 *  sts    - Pointer to player starts structure
 *********************************************************/
 void tankCreate(struct GameSim *sim, tank *value);
@@ -303,14 +306,14 @@ BYTE tankGet256Dir(tank *value);
 *ARGUMENTS:
 *  value      - Pointer to the tank structure
 *  mp         - Pointer to the map structure
-*  bs         - Pointer to the bases structure 
-*  pb         - Pointer to the pillboxes structure 
-*  shs        - Pointer to the shells structure 
+*  bs         - Pointer to the bases structure
+*  pb         - Pointer to the pillboxes structure
+*  shs        - Pointer to the shells structure
 *  sts        - Pointer to the starts structure
-*  tb         - Whether the left/right/forward etc keys 
+*  tb         - Whether the left/right/forward etc keys
 *               is being held down
-*  tankShoot  - Is the fire button down  
-*  inBrain    - TRUE if a brain is running 
+*  tankShoot  - Is the fire button down
+*  inBrain    - TRUE if a brain is running
 *               (Ignore autoslowdown)
 *********************************************************/
 void tankUpdate(struct GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool inBrain);
@@ -321,7 +324,7 @@ void tankUpdate(struct GameSim *sim, tank *value, tankButton tb, bool tankShoot,
 *CREATION DATE: 24/11/98
 *LAST MODIFIED: 24/11/98
 *PURPOSE:
-*  Returns whether the tank is in motion or not 
+*  Returns whether the tank is in motion or not
 *
 *ARGUMENTS:
 *  value      - Pointer to the tank structure
@@ -451,7 +454,7 @@ BYTE tankGetPY(tank *value);
 *CREATION DATE: 22/12/98
 *LAST MODIFIED: 22/12/98
 *PURPOSE:
-*  Returns the tank shells, mines, armour and trees 
+*  Returns the tank shells, mines, armour and trees
 *
 *ARGUMENTS:
 *  value        - Pointer to the tank structure
@@ -468,7 +471,7 @@ void tankGetStats(tank *value, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armo
 *CREATION DATE: 22/12/98
 *LAST MODIFIED: 22/12/98
 *PURPOSE:
-*  Returns the tank shells, mines, armour and trees 
+*  Returns the tank shells, mines, armour and trees
 *
 *ARGUMENTS:
 *  value        - Pointer to the tank structure
@@ -516,7 +519,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *CREATION DATE: 24/12/98
 *LAST MODIFIED: 24/12/98
 *PURPOSE:
-*  Adds a map unit on to the tank gunsight range 
+*  Adds a map unit on to the tank gunsight range
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
@@ -590,7 +593,7 @@ void tankSetWorld(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE a
 *LAST MODIFIED: 29/7/00
 *PURPOSE:
 *  Returns whether the tank has been hit or not, if it
-*  it is killed etc. 
+*  it is killed etc.
 *  Also updates its location if hit but not dead.
 *
 *ARGUMENTS:
@@ -752,7 +755,7 @@ void tankGetKillsDeaths(tank *value, int *kills, int *deaths);
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
-*  amount - Amount to add 
+*  amount - Amount to add
 *********************************************************/
 void tankAddArmour(struct GameSim *sim, tank *value, BYTE amount);
 
@@ -766,7 +769,7 @@ void tankAddArmour(struct GameSim *sim, tank *value, BYTE amount);
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
-*  amount - Amount to add 
+*  amount - Amount to add
 *********************************************************/
 void tankAddShells(struct GameSim *sim, tank *value, BYTE amount);
 
@@ -780,7 +783,7 @@ void tankAddShells(struct GameSim *sim, tank *value, BYTE amount);
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
-*  amount - Amount to add 
+*  amount - Amount to add
 *********************************************************/
 void tankAddMines(struct GameSim *sim, tank *value, BYTE amount);
 
@@ -862,7 +865,7 @@ void tankDropPills(struct GameSim *sim, tank *value);
 *CREATION DATE: 17/1/99
 *LAST MODIFIED: 17/1/99
 *PURPOSE:
-* Returns wether the tank is on a boat or not 
+* Returns wether the tank is on a boat or not
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
@@ -941,7 +944,7 @@ void tankGiveMines(struct GameSim *sim, tank *value, BYTE amount);
 *CREATION DATE: 17/1/99
 *LAST MODIFIED: 01/02/03
 *PURPOSE:
-* Gets the first available carried tree. If none are 
+* Gets the first available carried tree. If none are
 * avaiable it returns FALSE
 *
 *ARGUMENTS:
@@ -1004,7 +1007,7 @@ void tankLayMine(struct GameSim *sim, tank *value);
 *CREATION DATE: 21/1/99
 *LAST MODIFIED: 20/6/00
 *PURPOSE:
-* A mine has exploded. Check to see if it has hurt the 
+* A mine has exploded. Check to see if it has hurt the
 * tank
 *
 *ARGUMENTS:
@@ -1055,7 +1058,7 @@ void tankCheckGroundClear(struct GameSim *sim, tank *value);
 *CREATION DATE: 20/3/99
 *LAST MODIFIED: 20/3/99
 *PURPOSE:
-* We just killed a player. Add it here and update the 
+* We just killed a player. Add it here and update the
 * frontend repectively.
 *
 *ARGUMENTS:
@@ -1071,7 +1074,7 @@ void tankAddDeath(struct GameSim *sim, tank *value);
 *CREATION DATE: 31/8/99
 *LAST MODIFIED: 31/8/99
 *PURPOSE:
-* We just killed a player. Add it here and update the 
+* We just killed a player. Add it here and update the
 * frontend repectively.
 *
 *ARGUMENTS:
@@ -1194,7 +1197,7 @@ void tankSetAutoSlowdown(tank *value, bool useSlowdown);
 *CREATION DATE: 4/1/00
 *LAST MODIFIED: 4/1/00
 *PURPOSE:
-*  Returns whether tank auto show/hide gunsight is enabled 
+*  Returns whether tank auto show/hide gunsight is enabled
 *  or not
 *
 *ARGUMENTS:
@@ -1208,7 +1211,7 @@ bool tankGetAutoHideGunsight(tank *value);
 *CREATION DATE: 4/1/00
 *LAST MODIFIED: 4/1/00
 *PURPOSE:
-*  Sets whether tank auto show/hide gunsight is enabled 
+*  Sets whether tank auto show/hide gunsight is enabled
 *  or not
 *
 *ARGUMENTS:
@@ -1328,6 +1331,7 @@ void tankSetTrees(tank *value, BYTE amount);
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
 void tankPutPill(struct GameSim *sim, tank *value, BYTE pillNum);
 
+
 /*********************************************************
 *NAME:          tankSetOnBoat
 *AUTHOR:        John Morrison
@@ -1446,4 +1450,3 @@ void tankSnapToServer(tank dst, tank src);
 void tankSyncResources(tank dst, tank src);
 
 #endif
-
