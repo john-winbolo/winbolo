@@ -492,14 +492,24 @@ static int   s_pingHistoryOffset = 0;  /* Next write position (circular) */
 static int   s_pingHistoryCount  = 0;  /* Total samples written */
 static uint32_t s_pingLastSampleTick = 0;
 
+/* KB/s graph state */
+static float s_kbInHistory[PING_GRAPH_SIZE];
+static float s_kbOutHistory[PING_GRAPH_SIZE];
+static int   s_kbHistoryOffset = 0;
+static int   s_kbHistoryCount  = 0;
+
 static void pingGraphReset(void) {
     memset(s_pingHistory, 0, sizeof(s_pingHistory));
     s_pingHistoryOffset = 0;
     s_pingHistoryCount  = 0;
     s_pingLastSampleTick = 0;
+    memset(s_kbInHistory, 0, sizeof(s_kbInHistory));
+    memset(s_kbOutHistory, 0, sizeof(s_kbOutHistory));
+    s_kbHistoryOffset = 0;
+    s_kbHistoryCount  = 0;
 }
 
-static void pingGraphSample(int pingMs) {
+static void pingGraphSample(int pingMs, int bpsIn, int bpsOut) {
     uint32_t now = SDL_GetTicks();
     /* Sample roughly once per second */
     if (now - s_pingLastSampleTick < 1000 && s_pingHistoryCount > 0) return;
@@ -507,12 +517,18 @@ static void pingGraphSample(int pingMs) {
     s_pingHistory[s_pingHistoryOffset] = (float)pingMs;
     s_pingHistoryOffset = (s_pingHistoryOffset + 1) % PING_GRAPH_SIZE;
     if (s_pingHistoryCount < PING_GRAPH_SIZE) s_pingHistoryCount++;
+
+    s_kbInHistory[s_kbHistoryOffset] = (float)bpsIn / 1024.0f;
+    s_kbOutHistory[s_kbHistoryOffset] = (float)bpsOut / 1024.0f;
+    s_kbHistoryOffset = (s_kbHistoryOffset + 1) % PING_GRAPH_SIZE;
+    if (s_kbHistoryCount < PING_GRAPH_SIZE) s_kbHistoryCount++;
 }
 
 static void renderNetInfoContent(ClientSim *cs) {
     char str[256];
     int  ping = 0, ppsec = 0, numErrors = 0;
     int  ppsIn = 0, ppsOut = 0;
+    int  bpsIn = 0, bpsOut = 0;
 
     netGetServerAddressStr(cs, str);
     ImGui::Text("Server:      %s", str);
@@ -542,7 +558,7 @@ static void renderNetInfoContent(ClientSim *cs) {
             uint16_t udpPing = transportUdpClientGetPing(tp);
             if (udpPing > 0) ping = (int)udpPing;
             int udpErrors = 0;
-            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &udpErrors);
+            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
             numErrors = udpErrors;
         }
     }
@@ -550,10 +566,11 @@ static void renderNetInfoContent(ClientSim *cs) {
     ImGui::Text("Status:      %s", str);
     ImGui::Text("Server ping: %d ms", ping);
     ImGui::Text("Packets/sec: %d in / %d out", ppsIn, ppsOut);
+    ImGui::Text("KB/sec:      %.1f in / %.1f out", (float)bpsIn / 1024.0f, (float)bpsOut / 1024.0f);
     ImGui::Text("Net errors:  %d", numErrors);
 
     /* Ping graph */
-    pingGraphSample(ping);
+    pingGraphSample(ping, bpsIn, bpsOut);
     if (s_pingHistoryCount > 1) {
         float minPing = s_pingHistory[0], maxPing = s_pingHistory[0], sumPing = 0;
         for (int i = 0; i < s_pingHistoryCount; i++) {
@@ -573,12 +590,34 @@ static void renderNetInfoContent(ClientSim *cs) {
                          0.0f, maxPing * 1.2f,
                          ImVec2(ImGui::GetContentRegionAvail().x, 60));
     }
+
+    /* KB/s graph */
+    if (s_kbHistoryCount > 1) {
+        float maxKb = 0;
+        for (int i = 0; i < s_kbHistoryCount; i++) {
+            if (s_kbInHistory[i] > maxKb) maxKb = s_kbInHistory[i];
+            if (s_kbOutHistory[i] > maxKb) maxKb = s_kbOutHistory[i];
+        }
+        if (maxKb < 1.0f) maxKb = 1.0f;
+
+        ImGui::Separator();
+        ImGui::Text("KB/s In:");
+        ImGui::PlotLines("##kbin", s_kbInHistory, s_kbHistoryCount,
+                         s_kbHistoryOffset, nullptr,
+                         0.0f, maxKb * 1.2f,
+                         ImVec2(ImGui::GetContentRegionAvail().x, 40));
+        ImGui::Text("KB/s Out:");
+        ImGui::PlotLines("##kbout", s_kbOutHistory, s_kbHistoryCount,
+                         s_kbHistoryOffset, nullptr,
+                         0.0f, maxKb * 1.2f,
+                         ImVec2(ImGui::GetContentRegionAvail().x, 40));
+    }
 }
 
 static void renderNetInfoPanel(ClientSim *cs) {
     if (!s_showNetInfo || s_popNetInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(360, 270), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Network Info", &s_showNetInfo)) {
         ImGui::End();
         return;
@@ -1683,7 +1722,7 @@ static void renderMenuBar(ClientSim *cs) {
         if (!uiModeIsTablet()) {
             if (ImGui::MenuItem("Game Info",    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, "Game Info", 320, 200);
             if (ImGui::MenuItem("System Info",  nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo, "System Info", 300, 210);
-            if (ImGui::MenuItem("Network Info", nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo, "Network Info", 360, 270);
+            if (ImGui::MenuItem("Network Info", nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo, "Network Info", 360, 420);
         } else {
 #endif
             if (ImGui::MenuItem("Game Info",    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;

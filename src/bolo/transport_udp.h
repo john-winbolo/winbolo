@@ -149,8 +149,9 @@ bool transportUdpClientGetSnapshot(Transport *t,
 uint16_t transportUdpClientGetPing(Transport *t);
 
 /* Returns client-side network stats: packets/sec received, packets/sec sent,
- * and cumulative error count (stale/truncated packets). */
-void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent, int *numErrors);
+ * bytes/sec received, bytes/sec sent, and cumulative error count. */
+void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
+                                   int *bpsRecv, int *bpsSent, int *numErrors);
 
 /* Send a chat message to the server.
  * destPlayer: 0xFF = all players, else specific player number. */

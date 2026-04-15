@@ -501,6 +501,7 @@ static void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
            (const struct sockaddr *)addr, sizeof(*addr));
 }
 
+
 #if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
 /* Receive with simulated latency — buffers packets and releases after delayMs. */
 static int udpRecvFromDelayed(SOCKET sock, uint8_t *buf, int maxLen,
@@ -618,13 +619,24 @@ typedef struct {
     /* Network stats (client-side only) */
     uint32_t packetsRecvThisSec;  /* Packets received in current 1-second window */
     uint32_t packetsSentThisSec;  /* Packets sent in current 1-second window */
+    uint32_t bytesRecvThisSec;    /* Bytes received in current 1-second window */
+    uint32_t bytesSentThisSec;    /* Bytes sent in current 1-second window */
     uint32_t ppsWindowStart;      /* localTick when current PPS window started */
     uint32_t ppsRecv;             /* Last completed PPS (recv) */
     uint32_t ppsSent;             /* Last completed PPS (sent) */
+    uint32_t bpsRecv;             /* Last completed bytes/sec (recv) */
+    uint32_t bpsSent;             /* Last completed bytes/sec (sent) */
     uint32_t netErrors;           /* Cumulative: stale snapshots, truncated packets */
 
     bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
 } TransportUdpClientCtx;
+
+/* Client send wrapper — tracks packet and byte counters */
+static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
+    udpSendTo(c->sock, buf, len, &c->serverAddr);
+    c->packetsSentThisSec++;
+    c->bytesSentThisSec += len;
+}
 
 /* Build an input packet into buf, returns length */
 static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
@@ -670,8 +682,7 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
     c->inputRingCount++;
 
     len = buildInputPacket(c, buf);
-    udpSendTo(c->sock, buf, len, &c->serverAddr);
-    c->packetsSentThisSec++;
+    udpClientSendTo(c, buf, len);
 }
 
 /* Process a single incoming packet (used by both direct and delayed paths) */
@@ -680,6 +691,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     uint8_t pktType = getPacketType(buf, len);
 
     c->packetsRecvThisSec++;
+    c->bytesRecvThisSec += len;
 
     /* Reset timeout on any valid server packet — lobby state doesn't send
      * snapshots, so without this the client times out after 20s in lobby.
@@ -752,7 +764,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
                 packHeader(ackBuf, PACKET_MAP_ACK, c->outSequence++);
                 packU16(ackBuf + PACKET_HEADER_SIZE, 0xFFFF); /* 0xFFFF = "ready for map" */
-                udpSendTo(c->sock, ackBuf, sizeof(ackBuf), &c->serverAddr);
+                udpClientSendTo(c, ackBuf, sizeof(ackBuf));
             }
         }
         break;
@@ -788,7 +800,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
                 packHeader(ackBuf, PACKET_MAP_ACK, c->outSequence++);
                 packU16(ackBuf + PACKET_HEADER_SIZE, chunkIdx);
-                udpSendTo(c->sock, ackBuf, sizeof(ackBuf), &c->serverAddr);
+                udpClientSendTo(c, ackBuf, sizeof(ackBuf));
             }
 
             /* Check if all chunks received */
@@ -982,8 +994,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     packHeader(echoBuf, PACKET_PING, c->outSequence++);
                     packU32(echoBuf + PACKET_HEADER_SIZE, 0);       /* clientTime=0: echo-only */
                     packU32(echoBuf + PACKET_HEADER_SIZE + 4, srvTime);
-                    udpSendTo(c->sock, echoBuf, sizeof(echoBuf), &c->serverAddr);
-                    c->packetsSentThisSec++;
+                    udpClientSendTo(c, echoBuf, sizeof(echoBuf));
                 }
             }
         }
@@ -1245,7 +1256,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                         uint8_t ra[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
                         packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
                         memcpy(ra + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
-                        udpSendTo(c->sock, ra, sizeof(ra), &c->serverAddr);
+                        udpClientSendTo(c, ra, sizeof(ra));
                     }
                     SDL_Log("[WBN] Sent re-auth for slot %d", c->playerNum);
                 }
@@ -1448,8 +1459,12 @@ static bool udpClientTick(void *ctx) {
     if (c->localTick - c->ppsWindowStart >= 100) {
         c->ppsRecv = c->packetsRecvThisSec;
         c->ppsSent = c->packetsSentThisSec;
+        c->bpsRecv = c->bytesRecvThisSec;
+        c->bpsSent = c->bytesSentThisSec;
         c->packetsRecvThisSec = 0;
         c->packetsSentThisSec = 0;
+        c->bytesRecvThisSec = 0;
+        c->bytesSentThisSec = 0;
         c->ppsWindowStart = c->localTick;
     }
 
@@ -1480,7 +1495,7 @@ static bool udpClientTick(void *ctx) {
                 /* Flags byte: bit 0 = wantRejoin */
                 jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
                 /* Join requests bypass delay — they're control plane */
-                udpSendTo(c->sock, jbuf, joffset, &c->serverAddr);
+                udpClientSendTo(c, jbuf, joffset);
                 c->joinAttempts++;
                 c->ticksSinceJoinSent = 0;
             }
@@ -1495,8 +1510,7 @@ static bool udpClientTick(void *ctx) {
             packHeader(pbuf, PACKET_PING, c->outSequence++);
             packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
             packU32(pbuf + PACKET_HEADER_SIZE + 4, 0);  /* echo handled in PONG handler */
-            udpSendTo(c->sock, pbuf, sizeof(pbuf), &c->serverAddr);
-            c->packetsSentThisSec++;
+            udpClientSendTo(c, pbuf, sizeof(pbuf));
             c->lastPingSentTick = c->localTick;
         }
 
@@ -1661,7 +1675,7 @@ void transportUdpClientDestroy(Transport *t) {
         if (c->joinState == UDP_CLIENT_CONNECTED) {
             uint8_t qbuf[PACKET_HEADER_SIZE];
             packHeader(qbuf, PACKET_QUIT, c->outSequence++);
-            udpSendTo(c->sock, qbuf, PACKET_HEADER_SIZE, &c->serverAddr);
+            udpClientSendTo(c, qbuf, PACKET_HEADER_SIZE);
         }
         closesocket(c->sock);
     }
@@ -1747,17 +1761,22 @@ uint16_t transportUdpClientGetPing(Transport *t) {
     return c->pingMs;
 }
 
-void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent, int *numErrors) {
+void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
+                                   int *bpsRecv, int *bpsSent, int *numErrors) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) {
         *ppsRecv = 0;
         *ppsSent = 0;
+        *bpsRecv = 0;
+        *bpsSent = 0;
         *numErrors = 0;
         return;
     }
     c = (TransportUdpClientCtx *)t->ctx;
     *ppsRecv = (int)c->ppsRecv;
     *ppsSent = (int)c->ppsSent;
+    *bpsRecv = (int)c->bpsRecv;
+    *bpsSent = (int)c->bpsSent;
     *numErrors = (int)c->netErrors;
 }
 
@@ -1812,7 +1831,7 @@ void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
     buf[PACKET_HEADER_SIZE] = destPlayer;
     memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
     len = PACKET_HEADER_SIZE + 1 + msgLen;
-    udpSendTo(c->sock, buf, len, &c->serverAddr);
+    udpClientSendTo(c, buf, len);
 }
 
 /* Send a name change request to the server. */
@@ -1828,7 +1847,7 @@ void transportUdpClientSendNameChange(Transport *t, const char *newName) {
     memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
     strncpy((char *)(buf + PACKET_HEADER_SIZE + 1), newName,
             PACKET_MAX_PLAYER_NAME - 1);
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* Send an alliance request to another player via server.
@@ -1842,7 +1861,7 @@ void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer) {
     packHeader(buf, PACKET_ALLIANCE_REQUEST, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = c->playerNum;
     buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* Send an alliance accept to server.
@@ -1857,7 +1876,7 @@ void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer) {
     packHeader(buf, PACKET_ALLIANCE_ACCEPT, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = c->playerNum;
     buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* Send a leave alliance request to server.
@@ -1870,7 +1889,7 @@ void transportUdpClientSendAllianceLeave(Transport *t) {
 
     packHeader(buf, PACKET_ALLIANCE_LEAVE, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = c->playerNum;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* Send a lock toggle to the server.
@@ -1883,7 +1902,7 @@ void transportUdpClientSendLockToggle(Transport *t, bool allow) {
 
     packHeader(buf, PACKET_LOCK_TOGGLE, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = allow ? 1 : 0;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 
@@ -1898,7 +1917,7 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber) {
     packHeader(buf, PACKET_LOBBY_TEAM_SET, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = c->playerNum;
     buf[PACKET_HEADER_SIZE + 1] = teamNumber;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendReady(Transport *t, bool ready) {
@@ -1910,7 +1929,7 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
     packHeader(buf, PACKET_LOBBY_READY, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = c->playerNum;
     buf[PACKET_HEADER_SIZE + 1] = ready ? 1 : 0;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendAddBot(Transport *t) {
@@ -1920,7 +1939,7 @@ void transportUdpClientSendAddBot(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
@@ -1931,7 +1950,7 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
 
     packHeader(buf, PACKET_LOBBY_REMOVE_BOT, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = playerNum;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendWbnReauth(Transport *t) {
@@ -1943,7 +1962,7 @@ void transportUdpClientSendWbnReauth(Transport *t) {
 
     packHeader(buf, PACKET_WBN_REAUTH, c->outSequence++);
     memcpy(buf + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* ---- Client balance send functions ---- */
@@ -1956,7 +1975,7 @@ void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize) {
 
     packHeader(buf, PACKET_BALANCE_REQUEST, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = teamSize;
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendBalanceApply(Transport *t) {
@@ -1966,7 +1985,7 @@ void transportUdpClientSendBalanceApply(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_BALANCE_APPLY, c->outSequence++);
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendBalanceDismiss(Transport *t) {
@@ -1976,7 +1995,7 @@ void transportUdpClientSendBalanceDismiss(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_BALANCE_DISMISS, c->outSequence++);
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendMapSkipVote(Transport *t) {
@@ -1986,7 +2005,7 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
-    udpSendTo(c->sock, buf, sizeof(buf), &c->serverAddr);
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* ================================================================
