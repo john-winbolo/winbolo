@@ -404,7 +404,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/transport_local.c src/bolo/transport_udp.c
     src/bolo/treegrow.c src/bolo/udppackets.c src/bolo/util.c
@@ -637,6 +637,14 @@ endif()
 
 find_package(OpenMP)
 
+# Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
+# the original Bolo forward-prediction formula breaking down at short distances.
+# Enable for authentic behaviour matching the original game.
+option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" ON)
+if(ENABLE_PILLMASSAGE_BUG)
+    add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
+endif()
+
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
 # Set -DENABLE_ONNXRUNTIME=OFF to skip entirely.
@@ -777,7 +785,7 @@ set(CLIENT_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1275,7 +1283,7 @@ set(HEADLESS_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1398,7 +1406,7 @@ set(GYM_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1504,7 +1512,7 @@ set(BRAINTEST_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -1594,7 +1602,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c
+    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c

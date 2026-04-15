@@ -138,6 +138,7 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/screenlgm.c
     ${SRC_ROOT}/bolo/screentank.c
     ${SRC_ROOT}/bolo/scroll.c
+    ${SRC_ROOT}/bolo/scroll_item_list.c
     ${SRC_ROOT}/bolo/shells.c
     ${SRC_ROOT}/bolo/sounddist.c
     ${SRC_ROOT}/bolo/starts.c
