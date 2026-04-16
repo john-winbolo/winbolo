@@ -29,10 +29,7 @@
 #include "global.h"
 #include "backend.h"
 #include "sounddist.h"
-
-extern BYTE xOffset;
-extern BYTE yOffset;
-extern bool fastForwarding;
+#include "logviewer.h"
 
 void frontEndPlaySound(sndEffects value);
 
@@ -51,12 +48,12 @@ void frontEndPlaySound(sndEffects value);
 *  my    - Map Y co-ordinatate for the sound origin
 *********************************************************/
 void soundDist(sndEffects value, BYTE mx, BYTE my) {
-  BYTE tankX = xOffset; /* Tank X Map Co-ordinate */
-  BYTE tankY = yOffset; /* Tank Y Map Co-ordinate */
+  BYTE tankX = screenGetXOffset(); /* Tank X Map Co-ordinate */
+  BYTE tankY = screenGetYOffset(); /* Tank Y Map Co-ordinate */
   BYTE gapX;  /* Distance from tank to sound */
   BYTE gapY;
 
-  if (fastForwarding == TRUE) {
+  if (screenGetFastForwarding() == TRUE) {
     return;
   }
 

@@ -49,56 +49,18 @@
 #include "snapshot.h"
 #include "blocks.h"
 #include "dns.h"
+#include "logviewer.h"
 
-/* Module Level Variables */
-screen view = NULL;
-screenMines mineView = NULL;
-map mp = NULL;
-bases bs = NULL;
-pillboxes pb = NULL;
-starts ss = NULL;
-shells shs = NULL;
+/* File-scope pointer to the central LogViewerState */
+static LogViewerState *g_lv = NULL;
 
-/* From log file */
-char mapName[64];
-BYTE gt;
-BYTE allowHiddenMines;
-BYTE ai;
-bool usePassword;
-BYTE maxPlayers;
-BYTE wbnKey[32];
-char logFileName[FILENAME_MAX];
+void screenSetState(LogViewerState *lv) { g_lv = lv; }
+LogViewerState *screenGetState(void) { return g_lv; }
 
-snapshot snap = NULL;
-
-/* The offset from the top and left of the map */
-BYTE xOffset;
-BYTE yOffset;
-
-BYTE screenSizeX = MAIN_SCREEN_SIZE_X+15;
-BYTE screenSizeY = MAIN_SCREEN_SIZE_Y+15;
-
-bool isPlaying = FALSE;
-bool logLoaded = FALSE;
-uint32_t timeRunning;
-bool centredTank = FALSE;
-
-bool fastForwarding = FALSE;
-
-/* Game length and start delay */
-int32_t gmeStartDelay;
-int32_t gmeLength;
-int32_t gmeCreateTime;
-
-char serverIP[256];
-unsigned short serverPort;
-BYTE versionMajor;
-BYTE versionMinor;
-BYTE versionRevision;
-BYTE loadedLogVersion;
-
-BYTE selectedItem = 0; 
-BYTE selectedItemType = 0;
+/* Accessor functions for sounddist.c (replaces extern globals) */
+BYTE screenGetXOffset(void) { return g_lv->xOffset; }
+BYTE screenGetYOffset(void) { return g_lv->yOffset; }
+bool screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 
 // Some prototypes to cleanup and document
 
@@ -144,12 +106,12 @@ int a = (scrY*screenGetSizeX())+scrX ;
   if (a > 1989) {
     above = 1;
   }
-  *((*mineView).mineItem+a) = FALSE;
+  *((*g_lv->mineView).mineItem+a) = FALSE;
   /* Set up Items */
-  if ((pillsExistPos(&pb,xValue,yValue)) == TRUE) {
-    returnValue = pillsGetScreenHealth(&pb, xValue, yValue);
-  } else if ((basesExistPos(&bs,xValue,yValue)) == TRUE) {
-     ba = basesGetAlliancePos(&bs, xValue, yValue);
+  if ((pillsExistPos(&g_lv->pb,xValue,yValue)) == TRUE) {
+    returnValue = pillsGetScreenHealth(&g_lv->pb, xValue, yValue);
+  } else if ((basesExistPos(&g_lv->bs,xValue,yValue)) == TRUE) {
+     ba = basesGetAlliancePos(&g_lv->bs, xValue, yValue);
     switch (ba) {
     case baseOwnGood:
       returnValue = BASE_GOOD;
@@ -161,7 +123,7 @@ int a = (scrY*screenGetSizeX())+scrX ;
       returnValue = BASE_NEUTRAL;
       break;
     case baseDead:
-      if (basesAmOwner(&bs, playersGetSelf(), xValue, yValue) == TRUE) {
+      if (basesAmOwner(&g_lv->bs, playersGetSelf(), xValue, yValue) == TRUE) {
         returnValue = BASE_GOOD;
       } else {
         returnValue = BASE_EVIL;
@@ -173,84 +135,84 @@ int a = (scrY*screenGetSizeX())+scrX ;
       returnValue = BASE_EVIL;
     }
   }  else {
-    currentPos = mapGetPos(&mp,xValue,yValue);
-    if (mapIsMine(&mp, xValue, yValue) == TRUE) {
-      *((*mineView).mineItem+a) = TRUE;
+    currentPos = mapGetPos(&g_lv->mp,xValue,yValue);
+    if (mapIsMine(&g_lv->mp, xValue, yValue) == TRUE) {
+      *((*g_lv->mineView).mineItem+a) = TRUE;
       if (currentPos != DEEP_SEA) {
         currentPos = currentPos - MINE_SUBTRACT;
       }
     } else {
-      *((*mineView).mineItem+a) = FALSE;
+      *((*g_lv->mineView).mineItem+a) = FALSE;
     }
 
-    if (basesExistPos(&bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
+    if (basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
       aboveLeft = ROAD;
     } else {
-      aboveLeft = mapGetPos(&mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
+      aboveLeft = mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
       if (aboveLeft >= MINE_START && aboveLeft <= MINE_END) {
         aboveLeft = aboveLeft - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&bs, xValue, (BYTE) (yValue-1)) == TRUE) {
+    if (basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue-1)) == TRUE) {
       above = ROAD;
     } else {
-      above = mapGetPos(&mp,xValue,(BYTE) (yValue-1));
+      above = mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue-1));
       if (above >= MINE_START && above <= MINE_END) {
         above = above - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
+    if (basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
       aboveRight = ROAD;
     } else {
-      aboveRight = mapGetPos(&mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
+      aboveRight = mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
       if (aboveRight >= MINE_START && aboveRight <= MINE_END) {
         aboveRight = aboveRight - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&bs, (BYTE) (xValue-1), yValue) == TRUE) {
+    if (basesExistPos(&g_lv->bs, (BYTE) (xValue-1), yValue) == TRUE) {
       leftPos = ROAD;
     } else {
-      leftPos = mapGetPos(&mp,(BYTE) (xValue-1),yValue);
+      leftPos = mapGetPos(&g_lv->mp,(BYTE) (xValue-1),yValue);
       if (leftPos >= MINE_START && leftPos <= MINE_END) {
         leftPos = leftPos - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&bs, (BYTE) (xValue+1), yValue) == TRUE) {
+    if (basesExistPos(&g_lv->bs, (BYTE) (xValue+1), yValue) == TRUE) {
       rightPos = ROAD;
     } else {
-      rightPos = mapGetPos(&mp,(BYTE) (xValue+1),yValue);
+      rightPos = mapGetPos(&g_lv->mp,(BYTE) (xValue+1),yValue);
       if (rightPos >= MINE_START && rightPos <= MINE_END) {
         rightPos = rightPos - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
+    if (basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
       belowLeft = ROAD;
     } else {
-      belowLeft = mapGetPos(&mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
+      belowLeft = mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
       if (belowLeft >= MINE_START && belowLeft <= MINE_END) {
         belowLeft = belowLeft - MINE_SUBTRACT;
       }
     }
 
 
-    if (basesExistPos(&bs, xValue, (BYTE) (yValue+1)) == TRUE) {
+    if (basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue+1)) == TRUE) {
       below = ROAD;
     } else {
-      below = mapGetPos(&mp,xValue,(BYTE) (yValue+1));
+      below = mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue+1));
       if (below >= MINE_START && below <= MINE_END) {
         below = below - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
+    if (basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
       belowRight = ROAD;
     } else {
-      belowRight = mapGetPos(&mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
+      belowRight = mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
       if (belowRight >= MINE_START && belowRight <= MINE_END) {
         belowRight = belowRight - MINE_SUBTRACT;
       }
@@ -300,25 +262,25 @@ void screenUpdateView(updateType value) {
   int ssx = screenGetSizeX();
   int ssy = screenGetSizeY();
 
-  if (logLoaded == FALSE) {
+  if (g_lv->logLoaded == FALSE) {
     return;
   }
 
-  if (centredTank == FALSE || value == redraw) {
+  if (g_lv->centredTank == FALSE || value == redraw) {
     if (value == left) {
-      xOffset--;
+      g_lv->xOffset--;
     } else if (value == right) {
-      xOffset++;
+      g_lv->xOffset++;
     } else if (value == up) {
-      yOffset--;
+      g_lv->yOffset--;
     } else if (value == down) {
-      yOffset++;
+      g_lv->yOffset++;
     }
   }
 
   for (count=0;count < ssx; count++) {
     for (count2=0;count2 < ssy; count2++) {
-      *((*view).screenItem+(ssx*count2)+count) = screenCalcSquare((BYTE) (count+xOffset),(BYTE) (count2+yOffset), count, count2);
+      *((*g_lv->view).screenItem+(ssx*count2)+count) = screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
     }
   }
 }
@@ -337,37 +299,37 @@ void screenUpdateView(updateType value) {
 *ARGUMENTS:
 *
 *********************************************************/
-void screenSetup() { 
+void screenSetup() {
   int a = 0;
-  gmeStartDelay = 0;
-  gmeLength = UNLIMITED_GAME_TIME;
-  isPlaying = FALSE;
-  logLoaded = FALSE;
-  xOffset = 127;
-  yOffset = 127;
-  mapCreate(&mp);
-  pillsCreate(&pb);
-  startsCreate(&ss);
-  basesCreate(&bs);
-  playersCreate();  
+  g_lv->gmeStartDelay = 0;
+  g_lv->gmeLength = UNLIMITED_GAME_TIME;
+  g_lv->isPlaying = FALSE;
+  g_lv->logLoaded = FALSE;
+  g_lv->xOffset = 127;
+  g_lv->yOffset = 127;
+  mapCreate(&g_lv->mp);
+  pillsCreate(&g_lv->pb);
+  startsCreate(&g_lv->ss);
+  basesCreate(&g_lv->bs);
+  playersCreate();
   playersSetSelf(0);
-  shs = shellsCreate();
-  if (view != NULL) {
-    free((*view).screenItem);
-    Dispose(view);
+  g_lv->shs = shellsCreate();
+  if (g_lv->view != NULL) {
+    free((*g_lv->view).screenItem);
+    Dispose(g_lv->view);
   }
-  New(view);
-  if (view != NULL) {
-    (*view).screenItem = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
+  New(g_lv->view);
+  if (g_lv->view != NULL) {
+    (*g_lv->view).screenItem = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
   }
-  if (mineView != NULL) {
-    free((*mineView).mineItem);
-    free(mineView);
+  if (g_lv->mineView != NULL) {
+    free((*g_lv->mineView).mineItem);
+    free(g_lv->mineView);
   }
   a = (screenGetSizeX()+1) * (screenGetSizeY()+1);
-  New(mineView);
-  if (mineView != NULL) {
-    (*mineView).mineItem = malloc(a * sizeof(bool));
+  New(g_lv->mineView);
+  if (g_lv->mineView != NULL) {
+    (*g_lv->mineView).mineItem = malloc(a * sizeof(bool));
   }
 
   screenUpdateView(redraw);
@@ -386,39 +348,39 @@ void screenSetup() {
 *
 *********************************************************/
 void screenDestroy() {
-  if (mp != NULL) {
-    mapDestroy(&mp);
-    mp = NULL;
+  if (g_lv->mp != NULL) {
+    mapDestroy(&g_lv->mp);
+    g_lv->mp = NULL;
   }
-  if (pb != NULL) {
-    pillsDestroy(&pb);
-    pb = NULL;
+  if (g_lv->pb != NULL) {
+    pillsDestroy(&g_lv->pb);
+    g_lv->pb = NULL;
   }
-  if (ss != NULL) {
-    startsDestroy(&ss);
-    ss = NULL;
+  if (g_lv->ss != NULL) {
+    startsDestroy(&g_lv->ss);
+    g_lv->ss = NULL;
   }
-  if (bs != NULL) {
-    basesDestroy(&bs);
-    bs = NULL;
+  if (g_lv->bs != NULL) {
+    basesDestroy(&g_lv->bs);
+    g_lv->bs = NULL;
   }
   playersDestroy();
-  if (shs != NULL) {
-    shellsDestroy(&shs);
-    shs = NULL;
+  if (g_lv->shs != NULL) {
+    shellsDestroy(&g_lv->shs);
+    g_lv->shs = NULL;
   }
-  if (view != NULL) {
-    free((*view).screenItem);
-    Dispose(view);
-    view = NULL;
+  if (g_lv->view != NULL) {
+    free((*g_lv->view).screenItem);
+    Dispose(g_lv->view);
+    g_lv->view = NULL;
   }
-  if (mineView != NULL) {
-    free((*mineView).mineItem);
-    Dispose(mineView);
-    mineView = NULL;
+  if (g_lv->mineView != NULL) {
+    free((*g_lv->mineView).mineItem);
+    Dispose(g_lv->mineView);
+    g_lv->mineView = NULL;
   }
-  isPlaying = FALSE;
-  logLoaded = FALSE;
+  g_lv->isPlaying = FALSE;
+  g_lv->logLoaded = FALSE;
 }
 
 void frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, int edgeX, int edgeY);
@@ -444,16 +406,16 @@ void screenUpdate(updateType value) {
   screenLgmCreate(&sl);
   sb = screenBulletsCreate();
   screenTanksCreate(&st);
-  
-  if (logLoaded == FALSE) {
+
+  if (g_lv->logLoaded == FALSE) {
     return;
   }
-  
+
   screenUpdateView(value);
-  playersMakeScreenLgm(&sl, xOffset, (BYTE) (xOffset + screenGetSizeX()), yOffset, (BYTE) (yOffset + screenGetSizeY()));
-  shellsCalcScreenBullets(&shs, &sb, xOffset, (BYTE) (xOffset + screenGetSizeX()), yOffset, (BYTE) (yOffset + screenGetSizeY()));
-  playersMakeScreenTanks(&st, xOffset, (BYTE) (xOffset + screenGetSizeX()), yOffset, (BYTE) (yOffset + screenGetSizeY()));
-  frontEndDrawMainScreen(&view, &mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
+  playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) (g_lv->xOffset + screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + screenGetSizeY()));
+  shellsCalcScreenBullets(&g_lv->shs, &sb, g_lv->xOffset, (BYTE) (g_lv->xOffset + screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + screenGetSizeY()));
+  playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) (g_lv->xOffset + screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + screenGetSizeY()));
+  frontEndDrawMainScreen(&g_lv->view, &g_lv->mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
   screenTanksDestroy(&st);
   screenBulletsDestroy(&sb);
   screenLgmDestroy(&sl);
@@ -473,10 +435,10 @@ void screenUpdate(updateType value) {
 *  terrain - Terraint to set to
 *********************************************************/
 void screenSetPos(BYTE xValue, BYTE yValue, BYTE terrain) {
-  mapSetPos(&mp, xValue, yValue, terrain);
-  basesDeleteBase(&bs, xValue, yValue);
-  startsDeleteStart(&ss, xValue, yValue); 
-  pillsDeletePill(&pb, xValue, yValue);
+  mapSetPos(&g_lv->mp, xValue, yValue, terrain);
+  basesDeleteBase(&g_lv->bs, xValue, yValue);
+  startsDeleteStart(&g_lv->ss, xValue, yValue);
+  pillsDeletePill(&g_lv->pb, xValue, yValue);
 }
 
 /*********************************************************
@@ -497,22 +459,13 @@ BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
   if (xValue < screenGetSizeX() && yValue < screenGetSizeY()) {
-      returnValue = *((*view).screenItem+(yValue*screenGetSizeX()+xValue));
+      returnValue = *((*g_lv->view).screenItem+(yValue*screenGetSizeX()+xValue));
   }
   return returnValue;
 }
 
 #include "log.h"
 void windowAddEvent(int eventType, char *msg);
-typedef enum {
-  lr_start,
-  lr_longwait,
-  lr_shortwait
-} lrStates;
-
-
-lrStates state;
-unsigned short waitLen;
 
 
 void screenProcessLog(unsigned short numEvents) {
@@ -537,13 +490,13 @@ void screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
       utilPtoCString(mem, name);
-      if (loadedLogVersion == LOG_VERSION_V0) {
+      if (g_lv->loadedLogVersion == LOG_VERSION_V0) {
         /* Version 0: opt2-opt5 are IP address octets */
         snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
         dnsLookup(mem, str, sizeof(str));
         strncpy(mem, str, sizeof(mem) - 1);
         mem[sizeof(mem) - 1] = '\0';
-      } else if (loadedLogVersion == LOG_VERSION_V1) {
+      } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
         /* Version 1: opt2-opt3 are 2-char country code, opt4-opt5 unused */
         snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
       }
@@ -563,9 +516,9 @@ void screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      mapSetPos(&mp, opt1, opt2, opt3);
+      mapSetPos(&g_lv->mp, opt1, opt2, opt3);
       break;
-    case log_ChangeName:    
+    case log_ChangeName:
       logReadBytes(&opt1, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
@@ -579,7 +532,7 @@ void screenProcessLog(unsigned short numEvents) {
       playersGetPlayerName(opt2, mem);
       strncat(str, " just requested alliance with ", sizeof(str) - strlen(str) - 1);
       strncat(str, mem, sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str);     
+      windowAddEvent(0, str);
       break;
     case log_AllyAccept:
       logReadBytes(&opt1, 1);
@@ -596,7 +549,7 @@ void screenProcessLog(unsigned short numEvents) {
       playersLeaveAlliance(opt1);
       playersGetPlayerName(opt1, str);
       strncat(str, " just left alliance", sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str); 
+      windowAddEvent(0, str);
       break;
     case log_SoundBuild:
     case log_SoundFarm:
@@ -655,7 +608,7 @@ void screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
       utilGetNibbles(opt3, &px, &py);
-      shellsAddItem(&shs, opt1, opt2, px, py, opt4);
+      shellsAddItem(&g_lv->shs, opt1, opt2, px, py, opt4);
       break;
     case log_LgmLocation:
       logReadBytes(&opt1, 1);
@@ -692,41 +645,41 @@ void screenProcessLog(unsigned short numEvents) {
       utilPtoCString(mem, str);
       snprintf(mem, sizeof(mem), "Server Message: %s", str);
       windowAddEvent(0, mem);
-      break;   
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      basesSetOwner(&bs, opt1, opt2, opt3);
+      basesSetOwner(&g_lv->bs, opt1, opt2, opt3);
       break;
     case log_BaseSetStock:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
-      basesSetStock(&bs, opt1, opt2, opt3, opt4);
+      basesSetStock(&g_lv->bs, opt1, opt2, opt3, opt4);
       break;
     case log_PillSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      pillsSetPillOwner(&pb, opt1, opt2, opt3);
+      pillsSetPillOwner(&g_lv->pb, opt1, opt2, opt3);
       break;
     case log_PillSetPlace:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      pillsSetPos(&pb, opt1, opt2, opt3);
+      pillsSetPos(&g_lv->pb, opt1, opt2, opt3);
       break;
     case log_PillSetHealth:
       logReadBytes(&opt1, 1);
       utilGetNibbles(opt1, &opt2, &opt3);
-      pillsSetHealth(&pb, opt2, opt3);
+      pillsSetHealth(&g_lv->pb, opt2, opt3);
       break;
     case log_PillSetInTank:
       logReadBytes(&opt1, 1);
       utilGetNibbles(opt1, &opt2, &opt3);
-      pillsSetInTank(&pb, opt2, opt3);
+      pillsSetInTank(&g_lv->pb, opt2, opt3);
       break;
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
@@ -767,16 +720,15 @@ void screenProcessLog(unsigned short numEvents) {
 
 void screenRequestUpdate() {
   /* Finally lets update our item in the frontend */
-  //void updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x, BYTE y, BYTE armour, BYTE shells, BYTE mines, bool inTank)
-  if (isPlaying == TRUE && fastForwarding == FALSE) {
-    if (selectedItemType == 0) {
+  if (g_lv->isPlaying == TRUE && g_lv->fastForwarding == FALSE) {
+    if (g_lv->selectedItemType == 0) {
       updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
-    } else if (selectedItemType == 1) {
-      updateItem(1, selectedItem, bs->item[selectedItem].owner, bs->item[selectedItem].x, bs->item[selectedItem].y, bs->item[selectedItem].armour, bs->item[selectedItem].shells, bs->item[selectedItem].mines, FALSE);
+    } else if (g_lv->selectedItemType == 1) {
+      updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
     } else {
-      updateItem(2, selectedItem, pb->item[selectedItem].owner, pb->item[selectedItem].x, pb->item[selectedItem].y, pb->item[selectedItem].armour, 0, 0, pb->item[selectedItem].inTank);
+      updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
     }
-  }  
+  }
 }
 
 /* Returns TRUE on log end or snapshot */
@@ -789,23 +741,23 @@ bool screenLogTick() {
   unsigned short len = 0;
 
   bool process = FALSE;
-  timeRunning += 20; /* Add 20 ms */  
-  if (gmeStartDelay > 0) {
-    gmeStartDelay--;
+  g_lv->timeRunning += 20; /* Add 20 ms */
+  if (g_lv->gmeStartDelay > 0) {
+    g_lv->gmeStartDelay--;
   }
-  if (gmeLength > 0 && gmeStartDelay == 0) {
-    gmeLength--;
+  if (g_lv->gmeLength > 0 && g_lv->gmeStartDelay == 0) {
+    g_lv->gmeLength--;
   }
-  shellsDestroy(&shs);
-  shs = shellsCreate();
-  if (isPlaying == TRUE) {
-    switch (state) {
-    case lr_start:
+  shellsDestroy(&g_lv->shs);
+  g_lv->shs = shellsCreate();
+  if (g_lv->isPlaying == TRUE) {
+    switch (g_lv->state) {
+    case lv_lr_start:
       /* Read bytes */
       logReadBytes(&code, 1);
       switch (code) {
       case LOG_QUIT:
-        isPlaying = FALSE;
+        g_lv->isPlaying = FALSE;
         windowAddEvent(0, "End of Log File Reached");
         finished();
         returnValue = TRUE;
@@ -815,10 +767,10 @@ bool screenLogTick() {
         returnValue = TRUE;
         break;
       case LOG_NOEVENTS:
-        logReadBytes((BYTE *) &waitLen, 1);
-        state = lr_shortwait;
-        if (waitLen == 0) {
-          waitLen = 1;
+        logReadBytes((BYTE *) &g_lv->waitLen, 1);
+        g_lv->state = lv_lr_shortwait;
+        if (g_lv->waitLen == 0) {
+          g_lv->waitLen = 1;
         }
         break;
       case LOG_NOEVENTS_LONG:
@@ -826,11 +778,11 @@ bool screenLogTick() {
         logReadBytes(&bottom, 1);
         us = top << 8;
         us += bottom;
-        waitLen = ntohs(us);
+        g_lv->waitLen = ntohs(us);
 
-        state = lr_longwait;
-        if (waitLen == 0) {
-          waitLen = 1;
+        g_lv->state = lv_lr_longwait;
+        if (g_lv->waitLen == 0) {
+          g_lv->waitLen = 1;
         }
         break;
       case LOG_EVENT:
@@ -848,28 +800,28 @@ bool screenLogTick() {
         break;
       }
       break;
-    case lr_longwait:
-    case lr_shortwait:
-      waitLen--;
-      if (waitLen == 0) {
-        state = lr_start;
+    case lv_lr_longwait:
+    case lv_lr_shortwait:
+      g_lv->waitLen--;
+      if (g_lv->waitLen == 0) {
+        g_lv->state = lv_lr_start;
       }
       break;
     }
     if (process == TRUE) {
       playersLgmZero();
       screenProcessLog(len);
-      if (centredTank == TRUE) {
+      if (g_lv->centredTank == TRUE) {
         BYTE x = playersGetCentredX();
         BYTE y = playersGetCentredY();
         BYTE newXOffset;
         BYTE newYOffset;
         if (x != 0 && y != 0 && x != 255 && y != 255) {
-          newXOffset = x - (screenSizeX / 2); 
-          newYOffset = y - (screenSizeY / 2);
-          if (newXOffset != xOffset || yOffset != newYOffset) {
-            xOffset = newXOffset;
-            yOffset = newYOffset;
+          newXOffset = x - (g_lv->screenSizeX / 2);
+          newYOffset = y - (g_lv->screenSizeY / 2);
+          if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
+            g_lv->xOffset = newXOffset;
+            g_lv->yOffset = newYOffset;
             screenUpdate(redraw);
           }
         }
@@ -886,21 +838,21 @@ void screenCentreOnSelectedItem() {
   BYTE newYOffset;
   base b;
   pillbox p;
-  if (isPlaying == TRUE && selectedItemType != 0) {
-    if (selectedItemType == 2) {
-      pillsGetPill(&pb, &p, (BYTE) (selectedItem+1));
+  if (g_lv->isPlaying == TRUE && g_lv->selectedItemType != 0) {
+    if (g_lv->selectedItemType == 2) {
+      pillsGetPill(&g_lv->pb, &p, (BYTE) (g_lv->selectedItem+1));
       x = p.x;
       y = p.y;
     } else {
-      basesGetBase(&bs, &b, (BYTE) (selectedItem+1));
+      basesGetBase(&g_lv->bs, &b, (BYTE) (g_lv->selectedItem+1));
       x = b.x;
       y = b.y;
     }
-    newXOffset = x - (screenSizeX / 2); 
-    newYOffset = y - (screenSizeY / 2);
-    if (newXOffset != xOffset || yOffset != newYOffset) {
-      xOffset = newXOffset;
-      yOffset = newYOffset;
+    newXOffset = x - (g_lv->screenSizeX / 2);
+    newYOffset = y - (g_lv->screenSizeY / 2);
+    if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
+      g_lv->xOffset = newXOffset;
+      g_lv->yOffset = newYOffset;
       screenUpdate(redraw);
     }
   }
@@ -923,14 +875,14 @@ bool processSnapshot() {
 
   // We should add this snapshot timestamp and file location to the store so we can goto later
   playersCopyPTeams(data);
-  snapshotAdd(&snap, logGetCurrentPosition(), timeRunning, blocksGetKey(), data);
+  snapshotAdd(&g_lv->snap, logGetCurrentPosition(), g_lv->timeRunning, blocksGetKey(), data);
 
 
   /* Read in start delay and time limit */
-  logReadBytes((BYTE *) &gmeStartDelay, sizeof(int32_t));
-  gmeStartDelay = ntohl(gmeStartDelay);
-  logReadBytes((BYTE *) &gmeLength , sizeof(int32_t));
-  gmeLength = ntohl(gmeLength);
+  logReadBytes((BYTE *) &g_lv->gmeStartDelay, sizeof(int32_t));
+  g_lv->gmeStartDelay = ntohl(g_lv->gmeStartDelay);
+  logReadBytes((BYTE *) &g_lv->gmeLength , sizeof(int32_t));
+  g_lv->gmeLength = ntohl(g_lv->gmeLength);
 
   /* Read pillboxes, bases and starts */
   if (returnValue == TRUE) {
@@ -940,7 +892,7 @@ bool processSnapshot() {
       returnValue = FALSE;
     } else {
       logReadBytes(data, dataLen);
-      pillsSetPillNetData(&pb, data, dataLen);
+      pillsSetPillNetData(&g_lv->pb, data, dataLen);
     }
   }
 
@@ -951,7 +903,7 @@ bool processSnapshot() {
       returnValue = FALSE;
     } else {
       logReadBytes(data, dataLen);
-      basesSetBaseNetData(&bs, data, dataLen);
+      basesSetBaseNetData(&g_lv->bs, data, dataLen);
     }
   }
   if (returnValue == TRUE) {
@@ -961,17 +913,17 @@ bool processSnapshot() {
       returnValue = FALSE;
     } else {
       logReadBytes(data, dataLen);
-      startsSetStartNetData(&ss, data, dataLen);
+      startsSetStartNetData(&g_lv->ss, data, dataLen);
     }
-  }  
+  }
   if (returnValue == TRUE) {
-    returnValue = mapReadRuns(&mp);
+    returnValue = mapReadRuns(&g_lv->mp);
     if (returnValue == FALSE) {
       returnValue = FALSE;
     }
   }
 
-  
+
   /* Process each player */
   while (count < MAX_TANKS && returnValue == TRUE) {
     logReadBytes(&dataLenRaw, 1);
@@ -1054,9 +1006,9 @@ bool logLoad(char *fileName, int memoryBufferSize) {
   int len;
   BYTE ip[4];
 
-  snapshotDestroy(&snap);
-  snap = snapshotCreate();
-  timeRunning = 0;
+  snapshotDestroy(&g_lv->snap);
+  g_lv->snap = snapshotCreate();
+  g_lv->timeRunning = 0;
 
   returnValue = blocksCreate(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
@@ -1070,7 +1022,7 @@ bool logLoad(char *fileName, int memoryBufferSize) {
     if (len <= 0) {
       returnValue = FALSE;
     } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1) {
-      loadedLogVersion = logVersion;
+      g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
     }
@@ -1079,8 +1031,8 @@ bool logLoad(char *fileName, int memoryBufferSize) {
   /* Read map name */
   if (returnValue == TRUE) {
     logReadBytes(&dataLen, 1);
-    len = logReadBytes((BYTE *)mapName, dataLen);
-    mapName[dataLen] = '\0';
+    len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
+    g_lv->mapName[dataLen] = '\0';
     if (len != dataLen) {
       returnValue = FALSE;
     }
@@ -1088,27 +1040,27 @@ bool logLoad(char *fileName, int memoryBufferSize) {
 
   /* Read game type, mines, ai, password, max players */
   if (returnValue == TRUE) {
-    logReadBytes(&gt, 1);
-    logReadBytes(&allowHiddenMines, 1);
-    logReadBytes(&ai, 1);
-    { BYTE tmp; logReadBytes(&tmp, 1); usePassword = tmp; }
-    logReadBytes(&maxPlayers, 1);
-    logReadBytes(&versionMajor, 1);
-    logReadBytes(&versionMinor, 1);
-    logReadBytes(&versionRevision, 1);
+    logReadBytes(&g_lv->gt, 1);
+    logReadBytes(&g_lv->allowHiddenMines, 1);
+    logReadBytes(&g_lv->ai, 1);
+    { BYTE tmp; logReadBytes(&tmp, 1); g_lv->usePassword = tmp; }
+    logReadBytes(&g_lv->maxPlayers, 1);
+    logReadBytes(&g_lv->versionMajor, 1);
+    logReadBytes(&g_lv->versionMinor, 1);
+    logReadBytes(&g_lv->versionRevision, 1);
     logReadBytes(ip, 4);
-    snprintf(serverIP, sizeof(serverIP), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-    logReadBytes((BYTE *) &serverPort, sizeof(unsigned short));
-    serverPort = ntohs(serverPort);
-    logReadBytes((BYTE *) &gmeCreateTime, sizeof(int32_t));
-    gmeCreateTime = ntohl(gmeCreateTime);
-    len = logReadBytes((BYTE *) &wbnKey, 32);
+    snprintf(g_lv->serverIP, sizeof(g_lv->serverIP), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+    logReadBytes((BYTE *) &g_lv->serverPort, sizeof(unsigned short));
+    g_lv->serverPort = ntohs(g_lv->serverPort);
+    logReadBytes((BYTE *) &g_lv->gmeCreateTime, sizeof(int32_t));
+    g_lv->gmeCreateTime = ntohl(g_lv->gmeCreateTime);
+    len = logReadBytes((BYTE *) &g_lv->wbnKey, 32);
     if (len != 32) {
       returnValue = FALSE;
     }
   }
 
-  blocksSetKey((BYTE) (gmeCreateTime & 0xFF));
+  blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
   if (len != 1 || dataLen != LOG_SNAPSHOT) {
     returnValue = FALSE;
@@ -1116,7 +1068,7 @@ bool logLoad(char *fileName, int memoryBufferSize) {
     returnValue = processSnapshot();
   }
 
-  logLoaded = returnValue;
+  g_lv->logLoaded = returnValue;
   return returnValue;
 }
 
@@ -1124,7 +1076,7 @@ bool logLoad(char *fileName, int memoryBufferSize) {
 *NAME:          screenLoadMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
-*LAST MODIFIED: 11/11/00  
+*LAST MODIFIED: 11/11/00
 *PURPOSE:
 *  Loads a map. Returns if it was sucessful reading the
 *  map or not.
@@ -1133,7 +1085,7 @@ bool logLoad(char *fileName, int memoryBufferSize) {
 *********************************************************/
 bool screenLoadMap(char *fileName, int memoryBufferSize) {
   bool returnValue; /* Value to return */
-  
+
   returnValue = FALSE;
   blocksDestroy();
   screenDestroy();
@@ -1143,22 +1095,22 @@ bool screenLoadMap(char *fileName, int memoryBufferSize) {
     /* Decompress entire log so we know total size for the seek slider */
     logDecompressAll();
     /* Set the game information up */
-    frontEndSetGameInformation(FALSE, versionMajor, 1, versionRevision, mapName, gt, allowHiddenMines, ai, gmeStartDelay, gmeLength, wbnKey, gmeCreateTime);
-    isPlaying = TRUE;
+    frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+    g_lv->isPlaying = TRUE;
     screenUpdateView(redraw);
-    state = lr_start;
+    g_lv->state = lv_lr_start;
   }
   return returnValue;
 }
 
 
 bool screenIsPlaying() {
-  return isPlaying;
+  return g_lv->isPlaying;
 }
 
 bool screenCloseLog() {
-  isPlaying = FALSE;
-  logLoaded = FALSE; 
+  g_lv->isPlaying = FALSE;
+  g_lv->logLoaded = FALSE;
 
   blocksDestroy();
   screenDestroy();
@@ -1166,72 +1118,72 @@ bool screenCloseLog() {
 }
 
 void screenSetOffset(BYTE x, BYTE y) {
-  xOffset = x;
-  yOffset = y;
+  g_lv->xOffset = x;
+  g_lv->yOffset = y;
 }
 BYTE screenGetOffsetX() {
-  return xOffset;
+  return g_lv->xOffset;
 }
 
 BYTE screenGetOffsetY() {
-  return yOffset;
+  return g_lv->yOffset;
 }
 
 BYTE screenGetNumPills() {
-  return pillsGetNumPills(&pb);
+  return pillsGetNumPills(&g_lv->pb);
 }
 
 BYTE screenGetNumBases() {
-  return basesGetNumBases(&bs);
+  return basesGetNumBases(&g_lv->bs);
 }
 
 BYTE screenGetNumStarts() {
-  return startsGetNumStarts(&ss);
+  return startsGetNumStarts(&g_lv->ss);
 }
 
 
 bool screenSetStart(BYTE x, BYTE y) {
   BYTE num;
   start s;
-  num = startsGetNumStarts(&ss);
+  num = startsGetNumStarts(&g_lv->ss);
   if (num >= MAX_STARTS) {
     return FALSE;
   }
-  basesDeleteBase(&bs, x, y);
-  startsDeleteStart(&ss, x, y);
-  pillsDeletePill(&pb, x, y);
+  basesDeleteBase(&g_lv->bs, x, y);
+  startsDeleteStart(&g_lv->ss, x, y);
+  pillsDeletePill(&g_lv->pb, x, y);
 
-  mapSetPos(&mp, x, y, DEEP_SEA);
+  mapSetPos(&g_lv->mp, x, y, DEEP_SEA);
   s.x = x;
   s.y = y;
   s.dir = 0;
-  num = startsGetNumStarts(&ss);
-  startsSetNumStarts(&ss, (BYTE) (num+1));
-  startsSetStart(&ss, &s, (BYTE) (num+1));
+  num = startsGetNumStarts(&g_lv->ss);
+  startsSetNumStarts(&g_lv->ss, (BYTE) (num+1));
+  startsSetStart(&g_lv->ss, &s, (BYTE) (num+1));
   return TRUE;
 }
 
 bool screenSetPill(BYTE x, BYTE y) {
   BYTE num;
   pillbox s;
-  num = pillsGetNumPills(&pb);
+  num = pillsGetNumPills(&g_lv->pb);
   if (num >= MAX_PILLS) {
     return FALSE;
   }
-  basesDeleteBase(&bs, x, y);
-  startsDeleteStart(&ss, x, y);
-  pillsDeletePill(&pb, x, y);
+  basesDeleteBase(&g_lv->bs, x, y);
+  startsDeleteStart(&g_lv->ss, x, y);
+  pillsDeletePill(&g_lv->pb, x, y);
 
-  mapSetPos(&mp, x, y, ROAD);
+  mapSetPos(&g_lv->mp, x, y, ROAD);
   s.x = x;
   s.y = y;
   s.owner = 0xFF;
   s.armour = 15;
   s.speed = 0;
   s.inTank = FALSE;
-  num = pillsGetNumPills(&pb);
-  pillsSetNumPills(&pb, (BYTE) (num+1));
-  pillsSetPill(&pb, &s, (BYTE) (num+1));
+  num = pillsGetNumPills(&g_lv->pb);
+  pillsSetNumPills(&g_lv->pb, (BYTE) (num+1));
+  pillsSetPill(&g_lv->pb, &s, (BYTE) (num+1));
   return TRUE;
 
 }
@@ -1240,15 +1192,15 @@ bool screenSetBase(BYTE x, BYTE y) {
   BYTE num;
   base s;
 
-  num = basesGetNumBases(&bs);
+  num = basesGetNumBases(&g_lv->bs);
   if (num >= MAX_BASES) {
     return FALSE;
   }
-  basesDeleteBase(&bs, x, y);
-  startsDeleteStart(&ss, x, y);
-  pillsDeletePill(&pb, x, y);
+  basesDeleteBase(&g_lv->bs, x, y);
+  startsDeleteStart(&g_lv->ss, x, y);
+  pillsDeletePill(&g_lv->pb, x, y);
 
-  mapSetPos(&mp, x, y, ROAD);
+  mapSetPos(&g_lv->mp, x, y, ROAD);
   s.x = x;
   s.y = y;
   s.owner = 0xFF;
@@ -1256,10 +1208,10 @@ bool screenSetBase(BYTE x, BYTE y) {
   s.mines = 90;
   s.shells = 90;
 
-  
-  num = basesGetNumBases(&bs);
-  basesSetNumBases(&bs, (BYTE) (num+1));
-  basesSetBase(&bs, &s, (BYTE) (num+1));
+
+  num = basesGetNumBases(&g_lv->bs);
+  basesSetNumBases(&g_lv->bs, (BYTE) (num+1));
+  basesSetBase(&g_lv->bs, &s, (BYTE) (num+1));
   return TRUE;
 }
 
@@ -1283,7 +1235,7 @@ bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
 
   if (xValue <= screenGetSizeX() && yValue <= screenGetSizeX()) {
     returnValue = *((*value)->mineItem+(yValue*screenGetSizeX()+xValue));
-  } 
+  }
   return returnValue;
 }
 
@@ -1299,7 +1251,7 @@ bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
 *
 *********************************************************/
 BYTE screenNumPills(void) {
-  return pillsGetNumPills(&pb);
+  return pillsGetNumPills(&g_lv->pb);
 }
 
 /*********************************************************
@@ -1314,35 +1266,35 @@ BYTE screenNumPills(void) {
 *
 *********************************************************/
 BYTE screenNumBases(void) {
-  return basesGetNumBases(&bs);
+  return basesGetNumBases(&g_lv->bs);
 }
 
 
 BYTE screenGetSizeX() {
-  return screenSizeX;
+  return g_lv->screenSizeX;
 }
 
 BYTE screenGetSizeY() {
-  return screenSizeY;
+  return g_lv->screenSizeY;
 }
 
 /* Forward declaration for draw.c function */
 extern void drawResizeRenderTarget(void);
 
 void screenSetSizeX(BYTE x) {
-  screenSizeX = x;
-  if (view != NULL) {
+  g_lv->screenSizeX = x;
+  if (g_lv->view != NULL) {
     BYTE *newItems = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
     if (newItems != NULL) {
-      free((*view).screenItem);
-      (*view).screenItem = newItems;
+      free((*g_lv->view).screenItem);
+      (*g_lv->view).screenItem = newItems;
     }
   }
-  if (mineView != NULL) {
+  if (g_lv->mineView != NULL) {
     bool *newItems = malloc((screenGetSizeX()+1) * (screenGetSizeY()+1) * sizeof(bool));
     if (newItems != NULL) {
-      free((*mineView).mineItem);
-      (*mineView).mineItem = newItems;
+      free((*g_lv->mineView).mineItem);
+      (*g_lv->mineView).mineItem = newItems;
     }
   }
   /* Resize the render target to match the new screen size.
@@ -1351,19 +1303,19 @@ void screenSetSizeX(BYTE x) {
 }
 
 void screenSetSizeY(BYTE y) {
-  screenSizeY = y;
-  if (view != NULL) {
+  g_lv->screenSizeY = y;
+  if (g_lv->view != NULL) {
     BYTE *newItems = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
     if (newItems != NULL) {
-      free((*view).screenItem);
-      (*view).screenItem = newItems;
+      free((*g_lv->view).screenItem);
+      (*g_lv->view).screenItem = newItems;
     }
   }
-  if (mineView != NULL) {
+  if (g_lv->mineView != NULL) {
     bool *newItems = malloc((screenGetSizeX()+1) * (screenGetSizeY()+1) * sizeof(bool));
     if (newItems != NULL) {
-      free((*mineView).mineItem);
-      (*mineView).mineItem = newItems;
+      free((*g_lv->mineView).mineItem);
+      (*g_lv->mineView).mineItem = newItems;
     }
   }
   /* Resize the render target to match the new screen size.
@@ -1373,22 +1325,22 @@ void screenSetSizeY(BYTE y) {
 
 void screenGetOffsets(BYTE *x, BYTE *y) {
   if (x != NULL) {
-    *x = xOffset;
+    *x = g_lv->xOffset;
   }
   if (y != NULL) {
-    *y = yOffset;
+    *y = g_lv->yOffset;
   }
 }
 
 void screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
-  if (logLoaded == FALSE) {
+  if (g_lv->logLoaded == FALSE) {
     return;
   }
-  if (newXOffset == xOffset && newYOffset == yOffset) {
+  if (newXOffset == g_lv->xOffset && newYOffset == g_lv->yOffset) {
     return;
   }
-  xOffset = newXOffset;
-  yOffset = newYOffset;
+  g_lv->xOffset = newXOffset;
+  g_lv->yOffset = newYOffset;
   screenUpdate(redraw);
 }
 
@@ -1400,7 +1352,7 @@ void screenGetTime(char *dest) {
   double mins;
   double secs;
 
-  secs = timeRunning / 1000.00;
+  secs = g_lv->timeRunning / 1000.00;
   mins = secs / 60.0;
   mins = floor(mins);
   secs = secs - (mins * 60.0);
@@ -1418,15 +1370,15 @@ void screenMouseCentreClick(int xPos, int yPos) {
   int xClick;
   int yClick;
 
-  if (logLoaded == FALSE) {
+  if (g_lv->logLoaded == FALSE) {
     return;
   }
   dt = div(xPos, (16)); //screenSizeX
   xClick = (int) (dt.quot);
   dt = div(yPos, (16)); //screenSizeY
   yClick = (int) (dt.quot);
-  xOffset = (xOffset + xClick) - (screenSizeX / 2);
-  yOffset = (yOffset + yClick) - (screenSizeY / 2);
+  g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
+  g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
   screenUpdate(redraw);
 }
 
@@ -1436,38 +1388,38 @@ void screenMouseInformationClick(int xPos, int yPos) {
   int yClick;
   BYTE mapX, mapY;  /* Map coordinates */
 
-  if (logLoaded == FALSE) {
+  if (g_lv->logLoaded == FALSE) {
     return;
   }
-  
+
   dt = div(xPos, (16)); //screenSizeX
   xClick = (int) (dt.quot);
   dt = div(yPos, (16)); //screenSizeY
   yClick = (int) (dt.quot);
-  
+
   /* Calculate map coordinates */
-  mapX = (BYTE) (xOffset + xClick);
-  mapY = (BYTE) (yOffset + yClick);
-  
+  mapX = (BYTE) (g_lv->xOffset + xClick);
+  mapY = (BYTE) (g_lv->yOffset + yClick);
+
   // Item info
-  if (pillsExistPos(&pb, mapX, mapY) == TRUE) {
-    selectedItem = pillsItemNumAt(&pb, mapX, mapY);
-    selectedItemType = 2;
-  } else if (basesExistPos(&bs, mapX, mapY) == TRUE) {
-    selectedItem = basesItemNumAt(&bs, mapX, mapY);
-    selectedItemType = 1;
+  if (pillsExistPos(&g_lv->pb, mapX, mapY) == TRUE) {
+    g_lv->selectedItem = pillsItemNumAt(&g_lv->pb, mapX, mapY);
+    g_lv->selectedItemType = 2;
+  } else if (basesExistPos(&g_lv->bs, mapX, mapY) == TRUE) {
+    g_lv->selectedItem = basesItemNumAt(&g_lv->bs, mapX, mapY);
+    g_lv->selectedItemType = 1;
   }
 
 
-  if (fastForwarding == FALSE) {
-    if (selectedItemType == 0) {
+  if (g_lv->fastForwarding == FALSE) {
+    if (g_lv->selectedItemType == 0) {
       updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
-    } else if (selectedItemType == 1) {
-      updateItem(1, selectedItem, bs->item[selectedItem].owner, bs->item[selectedItem].x, bs->item[selectedItem].y, bs->item[selectedItem].armour, bs->item[selectedItem].shells, bs->item[selectedItem].mines, FALSE);
+    } else if (g_lv->selectedItemType == 1) {
+      updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
     } else {
-      updateItem(2, selectedItem, pb->item[selectedItem].owner, pb->item[selectedItem].x, pb->item[selectedItem].y, pb->item[selectedItem].armour, 0, 0, pb->item[selectedItem].inTank);
+      updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
     }
-  }  
+  }
 
 }
 
@@ -1476,7 +1428,7 @@ void screenMouseClick(int xPos, int yPos) {
   int xClick;
   int yClick;
 
-  if (logLoaded == FALSE) {
+  if (g_lv->logLoaded == FALSE) {
     return;
   }
   dt = div(xPos, (16)); //screenSizeX
@@ -1485,9 +1437,9 @@ void screenMouseClick(int xPos, int yPos) {
   yClick = (int) (dt.quot);
 
   // Who am I viewing?
-  if (playersChooseView(xOffset + xClick, yOffset + yClick) == TRUE) {
-  } else if (pillsChooseView(&pb, xOffset + xClick, yOffset + yClick) == TRUE) {
-  } else if (basesChooseView(&bs, xOffset + xClick, yOffset + yClick) == TRUE) {
+  if (playersChooseView(g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
+  } else if (pillsChooseView(&g_lv->pb, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
+  } else if (basesChooseView(&g_lv->bs, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
   } else {
   }
 }
@@ -1495,44 +1447,44 @@ void screenMouseClick(int xPos, int yPos) {
 void screenFastForward() {
   bool available;
 
-  if (isPlaying == TRUE && fastForwarding == FALSE) {
-    fastForwarding = TRUE;
+  if (g_lv->isPlaying == TRUE && g_lv->fastForwarding == FALSE) {
+    g_lv->fastForwarding = TRUE;
     available = screenLogTick();
-    while (available == FALSE && isPlaying == TRUE) {
+    while (available == FALSE && g_lv->isPlaying == TRUE) {
       available = screenLogTick();
     }
-    fastForwarding = FALSE;
+    g_lv->fastForwarding = FALSE;
   }
 }
 
 void screenTankCentred(int enabled) {
-  centredTank = enabled;
+  g_lv->centredTank = enabled;
 }
 
 void screenRewind() {
-  uint32_t currentTime = timeRunning;
+  uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;
   uint32_t firstTime;
   bool available;
   BYTE key;
   BYTE *pTeams = NULL;
 
-  available = snapshotBackwards(&snap, &wantedPos, &currentTime, &key, &pTeams);
+  available = snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams);
   if (available == TRUE) {
-    if (currentTime > 1000 && (timeRunning - currentTime) < 1000) {
+    if (currentTime > 1000 && (g_lv->timeRunning - currentTime) < 1000) {
       firstTime = currentTime;
       currentTime -= 1000;
-      if (snapshotBackwards(&snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
+      if (snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
         currentTime = firstTime;
       }
     }
-    timeRunning = currentTime;
+    g_lv->timeRunning = currentTime;
     logSetPosition(wantedPos);
     blocksSetKey(key);
     processSnapshot();
     playersSetTeams(pTeams);
     windowRemoveEvents();
-    isPlaying = TRUE;
+    g_lv->isPlaying = TRUE;
     if (wantedPos == 0) {
       startOfLog();
     }
@@ -1542,7 +1494,7 @@ void screenRewind() {
 void screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime) {
   *currentPos = logGetCurrentPosition();
   *totalSize = logGetTotalSize();
-  *currentTime = timeRunning;
+  *currentTime = g_lv->timeRunning;
 }
 
 void screenSeekToPosition(float ratio) {
@@ -1559,31 +1511,31 @@ void screenSeekToPosition(float ratio) {
 
   targetPos = (size_t)(ratio * (float)totalSize);
 
-  if (snapshotFindByPosition(&snap, targetPos, &snapPos, &snapTime, &key, &pTeams)) {
-    timeRunning = snapTime;
+  if (snapshotFindByPosition(&g_lv->snap, targetPos, &snapPos, &snapTime, &key, &pTeams)) {
+    g_lv->timeRunning = snapTime;
     logSetPosition(snapPos);
     blocksSetKey(key);
     processSnapshot();
     playersSetTeams(pTeams);
     windowRemoveEvents();
-    isPlaying = TRUE;
-    state = lr_start;
+    g_lv->isPlaying = TRUE;
+    g_lv->state = lv_lr_start;
 
     /* Fast-forward from snapshot to target position */
-    fastForwarding = TRUE;
-    while (logGetCurrentPosition() < targetPos && isPlaying == TRUE) {
+    g_lv->fastForwarding = TRUE;
+    while (logGetCurrentPosition() < targetPos && g_lv->isPlaying == TRUE) {
       screenLogTick();
     }
-    fastForwarding = FALSE;
+    g_lv->fastForwarding = FALSE;
   }
 }
 
 int32_t screenGetGameTimeLeft() {
-  return gmeLength;
+  return g_lv->gmeLength;
 }
 
 int32_t screenGetGameStartDelay() {
-  return gmeStartDelay;
+  return g_lv->gmeStartDelay;
 }
 
 
@@ -1596,8 +1548,8 @@ void screenGetPlayerName(char *name, BYTE playerNum) {
 }
 
 void screenGetMapName(char *dest) {
-  strncpy(dest, mapName, sizeof(mapName) - 1);
-  dest[sizeof(mapName) - 1] = '\0';
+  strncpy(dest, g_lv->mapName, sizeof(g_lv->mapName) - 1);
+  dest[sizeof(g_lv->mapName) - 1] = '\0';
 }
 
 /*********************************************************
@@ -1606,7 +1558,7 @@ void screenGetMapName(char *dest) {
 *CREATION DATE:  5/2/99
 *LAST MODIFIED: 31/10/99
 *PURPOSE:
-* Saves the map. Returns whether the operation was 
+* Saves the map. Returns whether the operation was
 * sucessful or not.
 *
 *ARGUMENTS:
@@ -1614,17 +1566,17 @@ void screenGetMapName(char *dest) {
 *  saveOwnerships - Do we save ownerships or not
 *********************************************************/
 bool screenSaveMap(char *fileName, bool saveOwnerships) {
-  return mapWrite(fileName, &mp, &pb, &bs, &ss, saveOwnerships);
+  return mapWrite(fileName, &g_lv->mp, &g_lv->pb, &g_lv->bs, &g_lv->ss, saveOwnerships);
 }
 
 
 BYTE screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth) {
   pillbox p;
-  BYTE itemNum = pillsItemNumAt(&pb,(BYTE) (x+xOffset), (BYTE) (y+yOffset));
+  BYTE itemNum = pillsItemNumAt(&g_lv->pb,(BYTE) (x+g_lv->xOffset), (BYTE) (y+g_lv->yOffset));
 
   p.owner = NEUTRAL;
   p.armour = 15;
-  pillsGetPill(&pb, &p, (BYTE) (itemNum+1));
+  pillsGetPill(&g_lv->pb, &p, (BYTE) (itemNum+1));
  *pillHealth = p.armour;
   if (p.owner == NEUTRAL) {
     return NEUTRAL_TEAM;
@@ -1635,14 +1587,13 @@ BYTE screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth) {
 
 BYTE screenGetBaseTeam(BYTE x, BYTE y) {
   base b;
-  BYTE itemNum = basesItemNumAt(&bs, (BYTE) (x+xOffset), (BYTE) (y+yOffset));
+  BYTE itemNum = basesItemNumAt(&g_lv->bs, (BYTE) (x+g_lv->xOffset), (BYTE) (y+g_lv->yOffset));
 
   b.owner = NEUTRAL;
-  basesGetBase(&bs, &b, (BYTE) (itemNum+1));
+  basesGetBase(&g_lv->bs, &b, (BYTE) (itemNum+1));
   if (b.owner == NEUTRAL) {
     return NEUTRAL_TEAM;
   }
 
   return playersGetTeamForOwner(b.owner);
 }
-	

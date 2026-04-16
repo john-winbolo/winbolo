@@ -246,4 +246,23 @@ void drawBlitGameTexture(void);
 *********************************************************/
 void drawResizeRenderTarget(void);
 
+/*********************************************************
+*NAME:          drawSetupWithHandles
+*PURPOSE:
+*  Sets up drawing using externally-provided window/renderer
+*  (embedded mode). Does NOT create SDL window/renderer.
+*  Loads textures, render target, and font.
+*RETURNS:
+*  TRUE on success, FALSE on failure
+*********************************************************/
+BYTE drawSetupWithHandles(struct SDL_Window *window, struct SDL_Renderer *renderer);
+
+/*********************************************************
+*NAME:          drawGetTargetWidth / drawGetTargetHeight
+*PURPOSE:
+*  Returns the current render target dimensions
+*********************************************************/
+int drawGetTargetWidth(void);
+int drawGetTargetHeight(void);
+
 #endif
