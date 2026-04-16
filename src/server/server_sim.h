@@ -113,9 +113,16 @@ typedef struct ServerSim {
     uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
-#define INPUT_JITTER_BUFFER_TICKS 2  /* inputs to buffer (1 game tick = 20ms) */
+#define JITTER_BUFFER_MIN       1   /* Minimum buffer depth (ticks) */
+#define JITTER_BUFFER_MAX       4   /* Maximum buffer depth (ticks) */
+#define JITTER_BUFFER_DEFAULT   2   /* Starting depth before we have data */
+#define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
+#define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
 #define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
     uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
+    uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
+    uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
+    uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
 
     PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
 

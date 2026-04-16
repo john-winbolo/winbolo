@@ -709,8 +709,8 @@ void serverSimTick(ServerSim *sim) {
          * depth drops to 1 (drain rather than stall). Only re-enter
          * buffering mode if the queue empties completely. */
         if (!sim->inputBufferFilled[count]) {
-            if (queueDepth < INPUT_JITTER_BUFFER_TICKS) {
-                continue;  /* Still filling — don't process yet */
+            if (queueDepth < sim->jitterTarget[count]) {
+                continue;  /* Still filling to adaptive target */
             }
             sim->inputBufferFilled[count] = 1;
         }
@@ -723,6 +723,40 @@ void serverSimTick(ServerSim *sim) {
             if (currentInputs[count].tick > sim->lastProcessedInput[count]) {
                 hasInput[count] = TRUE;
                 break;
+            }
+        }
+
+        /* Adaptive jitter buffer — track stalls and adjust target depth */
+        if (sim->inputBufferFilled[count]) {
+            if (!hasInput[count]) {
+                /* Queue ran dry — we're consuming faster than inputs arrive */
+                sim->jitterStallCount[count]++;
+                sim->jitterStableTicks[count] = 0;
+                if (sim->jitterStallCount[count] >= JITTER_GROW_THRESHOLD &&
+                    sim->jitterTarget[count] < JITTER_BUFFER_MAX) {
+                    sim->jitterTarget[count]++;
+                    sim->jitterStallCount[count] = 0;
+                    {
+                        char name[FILENAME_MAX];
+                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                        SDL_Log("Jitter buffer grow: player %d (%s) ping=%ums target=%u",
+                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
+                    }
+                }
+            } else {
+                sim->jitterStallCount[count] = 0;
+                sim->jitterStableTicks[count]++;
+                if (sim->jitterStableTicks[count] >= JITTER_SHRINK_INTERVAL &&
+                    sim->jitterTarget[count] > JITTER_BUFFER_MIN) {
+                    sim->jitterTarget[count]--;
+                    sim->jitterStableTicks[count] = 0;
+                    {
+                        char name[FILENAME_MAX];
+                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                        SDL_Log("Jitter buffer shrink: player %d (%s) ping=%ums target=%u",
+                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
+                    }
+                }
             }
         }
 
@@ -1019,6 +1053,9 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
+    sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
+    sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStableTicks[playerNum] = 0;
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -1074,6 +1111,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lastProcessedInput[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
+    sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
+    sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStableTicks[playerNum] = 0;
 
     /* Record ownership for rejoin before migration changes it */
     {
@@ -1562,11 +1602,12 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms)\n",
+            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Jitter:%d)\n",
                     name,
                     pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
                     basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                    sim->playerPing[count]);
+                    sim->playerPing[count],
+                    sim->jitterTarget[count]);
         }
     }
     fprintf(stdout, "\n");
@@ -1824,6 +1865,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
         sim->inputBufferFilled[i] = 0;
+        sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
+        sim->jitterStallCount[i] = 0;
+        sim->jitterStableTicks[i] = 0;
     }
 
     /* 9. Reset full sync tracking */
@@ -1861,6 +1905,17 @@ void serverSimStartGame(ServerSim *sim) {
         sim->playerConnected[i] = savedConnected[i];
     }
     sim->hadPlayersEver = TRUE;
+
+    /* Seed jitter target from lobby ping — localhost players start at minimum
+     * buffer depth instead of waiting for the adaptive algorithm to shrink.
+     * ping == 0 means no pong received yet, so leave at default. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!savedConnected[i]) continue;
+        uint16_t ping = transportUdpServerGetClientPing(i);
+        if (ping > 0 && ping < 5) {
+            sim->jitterTarget[i] = JITTER_BUFFER_MIN;
+        }
+    }
 
     /* Re-register player names — resetGameWorld destroyed the Players struct,
      * so names must be restored from the transport's client name array. */
