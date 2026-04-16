@@ -131,7 +131,7 @@ static bool tankBuildingCollision(GameSim *sim, tank *value, WORLD x, WORLD y,
     BYTE count;
     for (count = 0; count < (*bs)->numBases; count++) {
       if ((*bs)->item[count].x == mx && (*bs)->item[count].y == my) {
-        if ((*bs)->item[count].armour >= BASE_RESIST_TANKS) {
+        if ((*bs)->item[count].armour >= BASE_BLOCK_TANK_ARMOUR) {
           BYTE owner = (*bs)->item[count].owner;
           BYTE myPlayer = gameSimGetTankPlayer(sim, value);
           if (owner != NEUTRAL && owner != myPlayer &&
