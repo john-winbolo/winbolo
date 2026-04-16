@@ -2247,6 +2247,12 @@ void screenGetLgmStatusCS(ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE 
 bool screenTankScrollCS(ClientSim *csPtr) {
   BYTE x;  /* Tank X and Y Co-ordinated       */
   BYTE y;
+
+  /* Don't scroll the view while in pill view — the view is locked on the pill */
+  if (csPtr->inPillView == TRUE) {
+    return FALSE;
+  }
+
   x = tankGetScreenMX(&MY_TANK(csPtr));
   y = tankGetScreenMY(&MY_TANK(csPtr));
 /*  if (px >3 || (x - xOffset -1) == 0) {
@@ -3455,6 +3461,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
             /* dead→alive: recenter view on respawn */
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
+              csPtr->inPillView = FALSE;
               clientCenterTankCS(csPtr);
             }
           }
