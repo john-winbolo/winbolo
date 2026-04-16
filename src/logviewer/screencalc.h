@@ -37,7 +37,7 @@
 /* Prototypes */
 
 /*********************************************************
-*NAME:          screenCalcRoad
+*NAME:          lv_screenCalcRoad
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -53,10 +53,10 @@
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
+BYTE lv_screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
 
 /*********************************************************
-*NAME:          screenCalcBoat
+*NAME:          lv_screenCalcBoat
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -72,10 +72,10 @@ BYTE screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
+BYTE lv_screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
 
 /*********************************************************
-*NAME:          screenCalcBuilding
+*NAME:          lv_screenCalcBuilding
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -91,10 +91,10 @@ BYTE screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
+BYTE lv_screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
 
 /*********************************************************
-*NAME:          screenCalcRiver
+*NAME:          lv_screenCalcRiver
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -110,10 +110,10 @@ BYTE screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, 
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
+BYTE lv_screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
 
 /*********************************************************
-*NAME:          screenCalcDeepSea
+*NAME:          lv_screenCalcDeepSea
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -129,10 +129,10 @@ BYTE screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYT
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
+BYTE lv_screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
 
 /*********************************************************
-*NAME:          screenCalcForest
+*NAME:          lv_screenCalcForest
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/3/98
 *LAST MODIFIED: 26/3/98
@@ -148,6 +148,6 @@ BYTE screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, B
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcForest(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
+BYTE lv_screenCalcForest(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight);
 
 #endif /* SCREEN_CALC_H */

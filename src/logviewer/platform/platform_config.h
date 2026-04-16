@@ -24,10 +24,10 @@ extern "C" {
 /* Initialize the configuration system
  * app_name - Application name for config file location
  * Returns 1 on success, 0 on failure */
-int platform_config_init(const char* app_name);
+int lv_platform_config_init(const char* app_name);
 
 /* Shutdown the configuration system */
-void platform_config_shutdown(void);
+void lv_platform_config_shutdown(void);
 
 /* Get a string value from configuration
  * section - Section name (e.g., "LOGVIEWER")
@@ -35,49 +35,49 @@ void platform_config_shutdown(void);
  * default_val - Default value if key not found
  * out - Buffer to store result
  * out_size - Size of output buffer */
-void platform_config_get_string(const char* section, const char* key, 
+void lv_platform_config_get_string(const char* section, const char* key, 
                                 const char* default_val, char* out, size_t out_size);
 
 /* Set a string value in configuration
  * section - Section name
  * key - Key name
  * value - Value to set */
-void platform_config_set_string(const char* section, const char* key, const char* value);
+void lv_platform_config_set_string(const char* section, const char* key, const char* value);
 
 /* Get an integer value from configuration
  * section - Section name
  * key - Key name
  * default_val - Default value if key not found
  * Returns the integer value */
-int platform_config_get_int(const char* section, const char* key, int default_val);
+int lv_platform_config_get_int(const char* section, const char* key, int default_val);
 
 /* Set an integer value in configuration
  * section - Section name
  * key - Key name
  * value - Value to set */
-void platform_config_set_int(const char* section, const char* key, int value);
+void lv_platform_config_set_int(const char* section, const char* key, int value);
 
 /* Get a boolean value from configuration
  * section - Section name
  * key - Key name
  * default_val - Default value if key not found
  * Returns 1 for true, 0 for false */
-int platform_config_get_bool(const char* section, const char* key, int default_val);
+int lv_platform_config_get_bool(const char* section, const char* key, int default_val);
 
 /* Set a boolean value in configuration
  * section - Section name
  * key - Key name
  * value - 1 for true, 0 for false */
-void platform_config_set_bool(const char* section, const char* key, int value);
+void lv_platform_config_set_bool(const char* section, const char* key, int value);
 
 /* Save configuration to disk
  * Returns 1 on success, 0 on failure */
-int platform_config_save(void);
+int lv_platform_config_save(void);
 
 /* Get the configuration file path
  * out - Buffer to store path
  * out_size - Size of output buffer */
-void platform_config_get_path(char* out, size_t out_size);
+void lv_platform_config_get_path(char* out, size_t out_size);
 
 #ifdef __cplusplus
 }

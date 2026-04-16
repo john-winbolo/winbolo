@@ -30,11 +30,11 @@
 #include "global.h"
 
 /* Drawing position arrays - indexed by tile type */
-extern int drawPosX[255];
-extern int drawPosY[255];
+extern int lv_drawPosX[255];
+extern int lv_drawPosY[255];
 
 /*********************************************************
- *NAME:          drawSetupArrays
+ *NAME:          lv_drawSetupArrays
  *AUTHOR:        John Morrison
  *CREATION DATE: 28/5/00
  *LAST MODIFIED: 28/5/00
@@ -45,6 +45,6 @@ extern int drawPosY[255];
  *ARGUMENTS:
  *  zoomFactor - The scaling factor
  *********************************************************/
-void drawSetupArrays(BYTE zoomFactor);
+void lv_drawSetupArrays(BYTE zoomFactor);
 
 #endif /* DRAW_SETUP_ARRAYS_H */

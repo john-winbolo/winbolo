@@ -31,11 +31,11 @@
 #include "backend.h"
 #include "players.h"
 
-void messageAdd(char *messageStr);
+void lv_messageAdd(char *messageStr);
 
 
 /*********************************************************
-*NAME:         basesCreate 
+*NAME:         lv_basesCreate 
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -46,13 +46,13 @@ void messageAdd(char *messageStr);
 *ARGUMENTS:
 *  value - Pointer to the bases structure 
 *********************************************************/
-void basesCreate(bases *value) {
+void lv_basesCreate(bases *value) {
   New(*value);
   (*value)->numBases = 0;
 }
 
 /*********************************************************
-*NAME:          basesDestroy
+*NAME:          lv_basesDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -62,12 +62,12 @@ void basesCreate(bases *value) {
 *ARGUMENTS:
 *  value - Pointer to the bases structure
 *********************************************************/
-void basesDestroy(bases *value) {
+void lv_basesDestroy(bases *value) {
   Dispose(*value);
 }
 
 /*********************************************************
-*NAME:          basesSetNumBases
+*NAME:          lv_basesSetNumBases
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -78,7 +78,7 @@ void basesDestroy(bases *value) {
 *  value     - Pointer to the bases structure
 *  numBases - The number of bases  
 *********************************************************/
-void basesSetNumBases(bases *value, BYTE numBases) {
+void lv_basesSetNumBases(bases *value, BYTE numBases) {
   if (numBases <= MAX_BASES) {
     (*value)->numBases = numBases;
   }
@@ -86,7 +86,7 @@ void basesSetNumBases(bases *value, BYTE numBases) {
 
 
 /*********************************************************
-*NAME:          basesGetNumBases 
+*NAME:          lv_basesGetNumBases 
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -96,12 +96,12 @@ void basesSetNumBases(bases *value, BYTE numBases) {
 *ARGUMENTS:
 *  value  - Pointer to the bases structure
 *********************************************************/
-BYTE basesGetNumBases(bases *value) {
+BYTE lv_basesGetNumBases(bases *value) {
   return (*value)->numBases;
 }
 
 /*********************************************************
-*NAME:          basesSetBase
+*NAME:          lv_basesSetBase
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -113,7 +113,7 @@ BYTE basesGetNumBases(bases *value) {
 *  item    - Pointer to a base item 
 *  baseNum - The base number
 *********************************************************/
-void basesSetBase(bases *value, base *item, BYTE baseNum) {
+void lv_basesSetBase(bases *value, base *item, BYTE baseNum) {
   if (baseNum > 0 && baseNum <= (*value)->numBases) {
     baseNum--;
     (((*value)->item[baseNum]).x) = item->x;
@@ -126,7 +126,7 @@ void basesSetBase(bases *value, base *item, BYTE baseNum) {
 }
 
 /*********************************************************
-*NAME:          basesExistPos
+*NAME:          lv_basesExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -138,7 +138,7 @@ void basesSetBase(bases *value, base *item, BYTE baseNum) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-bool basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
+bool lv_basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
   bool returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
 
@@ -155,7 +155,7 @@ bool basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
 }
 
 // Assumes that the base exists otherwise returns 0
-BYTE basesItemNumAt(bases *value, BYTE xValue, BYTE yValue) {
+BYTE lv_basesItemNumAt(bases *value, BYTE xValue, BYTE yValue) {
   BYTE count;       /* Looping Variable */
 
   count = 0;
@@ -171,7 +171,7 @@ BYTE basesItemNumAt(bases *value, BYTE xValue, BYTE yValue) {
 
 
 /*********************************************************
-*NAME:          basesGetBase
+*NAME:          lv_basesGetBase
 *AUTHOR:        John Morrison
 *CREATION DATE:   9/2/98
 *LAST MODIFIED: 11/11/00
@@ -183,7 +183,7 @@ BYTE basesItemNumAt(bases *value, BYTE xValue, BYTE yValue) {
 *  item    - Pointer to a base item 
 *  baseNum - The base number
 *********************************************************/
-void basesGetBase(bases *value, base *item, BYTE baseNum) {
+void lv_basesGetBase(bases *value, base *item, BYTE baseNum) {
   if (baseNum > 0 && baseNum <= (*value)->numBases) {
     baseNum--;
     item->x = ((*value)->item[baseNum]).x;
@@ -195,7 +195,7 @@ void basesGetBase(bases *value, base *item, BYTE baseNum) {
   }
 }
 
-void basesDeleteBase(bases *value, BYTE x, BYTE y) {
+void lv_basesDeleteBase(bases *value, BYTE x, BYTE y) {
   BYTE count = 0;
   BYTE count2;
 
@@ -218,7 +218,7 @@ void basesDeleteBase(bases *value, BYTE x, BYTE y) {
 }
 
 /*********************************************************
-*NAME:          basesAmOwner
+*NAME:          lv_basesAmOwner
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99
 *LAST MODIFIED: 31/10/99
@@ -232,7 +232,7 @@ void basesDeleteBase(bases *value, BYTE x, BYTE y) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-bool basesAmOwner(bases *value, BYTE owner, BYTE xValue, BYTE yValue) {
+bool lv_basesAmOwner(bases *value, BYTE owner, BYTE xValue, BYTE yValue) {
   bool returnValue;         /* Value to return */
   BYTE self;                /* Our player number */
   bool done;                /* Finished looping */
@@ -245,7 +245,7 @@ bool basesAmOwner(bases *value, BYTE owner, BYTE xValue, BYTE yValue) {
   self = owner;
   while (done == FALSE && count < ((*value)->numBases)) {
     if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
-      if ((*value)->item[count].owner == self || (playersIsAllie((*value)->item[count].owner, self) == TRUE)) {
+      if ((*value)->item[count].owner == self || (lv_playersIsAllie((*value)->item[count].owner, self) == TRUE)) {
         returnValue = TRUE;
       }
       done = TRUE;
@@ -257,7 +257,7 @@ bool basesAmOwner(bases *value, BYTE owner, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
-*NAME:          basesGetAlliancePos
+*NAME:          lv_basesGetAlliancePos
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/12/98
 *LAST MODIFIED: 21/12/98
@@ -271,7 +271,7 @@ bool basesAmOwner(bases *value, BYTE owner, BYTE xValue, BYTE yValue) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-baseAlliance basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
+baseAlliance lv_basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
   baseAlliance returnValue; /* Value to return */
   bool done;                /* Finished looping */
   BYTE count;               /* Looping Variable */
@@ -285,9 +285,9 @@ baseAlliance basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
         returnValue = baseNeutral;
-      } else if ((*value)->item[count].owner == playersGetSelf()) {
+      } else if ((*value)->item[count].owner == lv_playersGetSelf()) {
         returnValue = baseOwnGood;
-      } else if (playersIsAllie((*value)->item[count].owner, playersGetSelf()) == TRUE) {
+      } else if (lv_playersIsAllie((*value)->item[count].owner, lv_playersGetSelf()) == TRUE) {
         returnValue = baseAllieGood;
       } else {
         returnValue = baseEvil;
@@ -301,7 +301,7 @@ baseAlliance basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
-*NAME:          basesSetOwner
+*NAME:          lv_basesSetOwner
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99
 *LAST MODIFIED: 2/11/99
@@ -319,7 +319,7 @@ baseAlliance basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
 *  owner   - Who owns it
 *  migrate - TRUE if it has migrated from an alliance
 *********************************************************/
-BYTE basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
+BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   BYTE returnValue;         /* Value to return */
   /* Message stuff */
   char oldOwner[FILENAME_MAX];
@@ -334,33 +334,33 @@ BYTE basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   } else if (owner == NEUTRAL) {
     (*value)->item[baseNum].owner = owner;
   } else if ((*value)->item[baseNum].owner != owner) {
-    playersMakeMessageName(owner, messageStr);
+    lv_playersMakeMessageName(owner, messageStr);
     if (returnValue != NEUTRAL) {
-      playersGetPlayerName(returnValue, oldOwner);
+      lv_playersGetPlayerName(returnValue, oldOwner);
       strncat(messageStr, " just stole base from ", sizeof(messageStr) - strlen(messageStr) - 1);
       strncat(messageStr, oldOwner, sizeof(messageStr) - strlen(messageStr) - 1);
-      messageAdd(messageStr);
+      lv_messageAdd(messageStr);
     } else {
       /* Neutral */
       strncat(messageStr, " just captured a neutral base", sizeof(messageStr) - strlen(messageStr) - 1);
-      messageAdd(messageStr);
+      lv_messageAdd(messageStr);
     }
     (*value)->item[baseNum].owner = owner;
   }
   return returnValue;
 }
 
-void basesSetStock(bases *value, BYTE baseNum, BYTE s, BYTE m, BYTE a) {
+void lv_basesSetStock(bases *value, BYTE baseNum, BYTE s, BYTE m, BYTE a) {
   (*value)->item[baseNum].shells = s;
   (*value)->item[baseNum].mines = m;
   (*value)->item[baseNum].armour = a;
 }
 
-bool basesChooseView(bases *value, int x, int y) {
+bool lv_basesChooseView(bases *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numBases) {
     if ((*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
-      playersSetSelf((*value)->item[count].owner);
+      lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }
     count++;
@@ -369,7 +369,7 @@ bool basesChooseView(bases *value, int x, int y) {
 }
 
 /*********************************************************
-*NAME:          basesSetBaseNetData
+*NAME:          lv_basesSetBaseNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/2/99
 *LAST MODIFIED: 27/2/99
@@ -381,7 +381,7 @@ bool basesChooseView(bases *value, int x, int y) {
 *  buff  - Buffer of data to set base structure to
 *  len   - Length of the data
 *********************************************************/
-void basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
+void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
   BYTE returnValue = 1;
   BYTE count = 0;
   unsigned short us;

@@ -47,8 +47,10 @@ typedef float SPEEDTYPE;
 #define TRUE 1
 #undef FALSE
 #define FALSE 0
+#ifndef __cplusplus
 #ifndef bool
 typedef BYTE bool;
+#endif
 #endif
 typedef BYTE Bool;
 
@@ -80,11 +82,11 @@ typedef void *Generic;
 #define FILENAME_MAX 256
 #endif
 
-Generic emalloc(size_t size);
-void efree(Generic object);
+Generic lv_emalloc(size_t size);
+void lv_efree(Generic object);
 
-#define	New(p)		((p) = emalloc(sizeof(*(p))))
-#define	Dispose(p)	(efree(p))
+#define	New(p)		((p) = lv_emalloc(sizeof(*(p))))
+#define	Dispose(p)	(lv_efree(p))
 
 
 

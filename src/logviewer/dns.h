@@ -31,7 +31,7 @@
 #include "global.h"
 
 /*********************************************************
-*NAME:          dnsCreate
+*NAME:          lv_dnsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -41,10 +41,10 @@
 *ARGUMENTS:
 *
 *********************************************************/
-bool dnsCreate();
+bool lv_dnsCreate();
 
 /*********************************************************
-*NAME:          dnsSetEnabled
+*NAME:          lv_dnsSetEnabled
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -54,10 +54,10 @@ bool dnsCreate();
 *ARGUMENTS:
 * set - Value to set
 *********************************************************/
-bool dnsSetEnabled(bool set);
+bool lv_dnsSetEnabled(bool set);
 
 /*********************************************************
-*NAME:          dnsShutdown
+*NAME:          lv_dnsShutdown
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -67,10 +67,10 @@ bool dnsSetEnabled(bool set);
 *ARGUMENTS:
 * set - Value to set
 *********************************************************/
-void dnsShutdown();
+void lv_dnsShutdown();
 
 /*********************************************************
-*NAME:          dnsLookup
+*NAME:          lv_dnsLookup
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -83,6 +83,6 @@ void dnsShutdown();
 * host      - Host to hold result
 * host_size - Size of the host buffer
 *********************************************************/
-void dnsLookup(char *ip, char *host, size_t host_size);
+void lv_dnsLookup(char *ip, char *host, size_t host_size);
 
 #endif /* __DNS_H */

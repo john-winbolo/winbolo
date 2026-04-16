@@ -19,19 +19,19 @@
 
 #include "global.h"
 
-#define logIsEOF() blocksIsEOF()
-#define logReadBytes(X, Y) blocksReadBytes(X, Y)
+#define logIsEOF() lv_blocksIsEOF()
+#define logReadBytes(X, Y) lv_blocksReadBytes(X, Y)
 
 /* size parameter is ignored (kept for API compatibility) */
-bool blocksCreate(char *fileName, int size);
-void blocksDestroy();
-int blocksReadBytes(BYTE *buff, int len);
-bool blocksIsEOF();
-size_t logGetCurrentPosition();
-void logSetPosition(size_t pos);
-void logDecompressAll();
-size_t logGetTotalSize();
-BYTE blocksGetKey();
-void blocksSetKey(BYTE key);
+bool lv_blocksCreate(char *fileName, int size);
+void lv_blocksDestroy();
+int lv_blocksReadBytes(BYTE *buff, int len);
+bool lv_blocksIsEOF();
+size_t lv_logGetCurrentPosition();
+void lv_logSetPosition(size_t pos);
+void lv_logDecompressAll();
+size_t lv_logGetTotalSize();
+BYTE lv_blocksGetKey();
+void lv_blocksSetKey(BYTE key);
 
 #endif /* __BLOCKS_H */

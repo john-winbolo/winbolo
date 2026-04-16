@@ -95,6 +95,7 @@ file(GLOB LV_SOURCES
 
 # Exclude files we're replacing with WASM versions
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*main\\.c$")
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
 

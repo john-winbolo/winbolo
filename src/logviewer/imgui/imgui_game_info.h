@@ -21,18 +21,18 @@ extern "C" {
 
 /* Render the game info window
  * Should be called each frame when window is visible */
-void imgui_game_info_window(void);
+void lv_imgui_game_info_window(void);
 
 /* Initialize game info state */
-void imgui_game_info_init(void);
+void lv_imgui_game_info_init(void);
 
 /* Clear game info display (called when log is closed) */
-void imgui_game_info_clear(void);
+void lv_imgui_game_info_clear(void);
 
 /* Set game info from backend
- * This is called from frontEndSetGameInformation
+ * This is called from lv_frontEndSetGameInformation
  * Using C types directly to avoid C++/C type conflicts */
-void imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char versionMinor, unsigned char versionRevision,
+void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char versionMinor, unsigned char versionRevision,
                          char *mapName, unsigned char gameType, int hiddenMines, unsigned char aiType,
                          int32_t startDelay, int32_t timeLimit, unsigned char *wbnKey, int32_t startTime);
 

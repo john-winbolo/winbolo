@@ -114,7 +114,8 @@ typedef enum {
   openInternetSetup,
   openFinished,
   openSettings,
-  openMapEditor
+  openMapEditor,
+  openLogViewer
 } openingStates;
 
 /*********************************************************

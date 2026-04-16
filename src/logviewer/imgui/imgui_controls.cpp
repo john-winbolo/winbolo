@@ -22,28 +22,23 @@
 
 /* External functions from main.c - using C types directly */
 extern "C" {
-    void windowPlay(void);
-    void windowPause(void);
-    void windowStop(int corruptLog);
-    void windowRewind(void);
-    void windowFastForward(void);
-    void windowNeedRedraw(void);
-    void screenGetTime(char *buffer);
-    void updateSpeed(unsigned char speed, int updateSlider);
-    void screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime);
-    void screenSeekToPosition(float ratio);
-    void clientMutexWaitFor(void);
-    void clientMutexRelease(void);
-    void drawDirtyScreen(void);
-
-    /* External state variables from main.c */
-    /* Note: bool in global.h is BYTE (unsigned char), not C++ bool */
-    extern unsigned char playIsPlaying;
-    extern unsigned char isLoaded;
-    extern unsigned char doubleSpeed;
-    extern unsigned char speed;
-    extern int timerSleep;
+    #include "logviewer.h"
+    void lv_windowPlay(void);
+    void lv_windowPause(void);
+    void lv_windowStop(int corruptLog);
+    void lv_windowRewind(void);
+    void lv_windowFastForward(void);
+    void lv_windowNeedRedraw(void);
+    void lv_screenGetTime(char *buffer);
+    void lv_updateSpeed(unsigned char speed, int updateSlider);
+    void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime);
+    void lv_screenSeekToPosition(float ratio);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
+    void lv_drawDirtyScreen(void);
 }
+
+static LogViewerState *s_lv = nullptr;
 
 /* Speed labels for display */
 static const char* speed_labels[] = {
@@ -68,73 +63,39 @@ static void format_time(char *buf, size_t buf_size, unsigned int time_ms) {
     snprintf(buf, buf_size, "%02d:%02d", (int)mins, (int)secs);
 }
 
-void imgui_controls_init(void) {
+void lv_imgui_controls_init(struct LogViewerState *lv) {
+    s_lv = lv;
     /* Load speed from preferences */
     char val[256];
-    platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
+    lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     int spd = atoi(val);
     if (spd < 1 || spd > 9) {
         spd = 1;
     }
-    speed = (unsigned char)spd;
-    updateSpeed(speed, 0);
+    lv_updateSpeed((unsigned char)spd, 0);
 }
 
-void imgui_controls_update_speed(void) {
+void lv_imgui_controls_update_speed(void) {
     /* Called when speed changes externally */
 }
 
 static void update_speed_from_slider(int new_speed) {
     if (new_speed < 1) new_speed = 1;
     if (new_speed > 9) new_speed = 9;
-
-    speed = (unsigned char)new_speed;
-
-    /* Update timerSleep based on speed (matching original logic) */
-    switch (speed) {
-        case 2:
-            timerSleep = 18;
-            break;
-        case 3:
-            timerSleep = 16;
-            break;
-        case 4:
-            timerSleep = 14;
-            break;
-        case 5:
-            timerSleep = 12;
-            break;
-        case 6:
-            timerSleep = 10;
-            break;
-        case 7:
-            timerSleep = 8;
-            break;
-        case 8:
-            timerSleep = 6;
-            break;
-        case 9:
-            timerSleep = 1;
-            break;
-        case 1:
-        default:
-            timerSleep = 20;
-            speed = 1;
-            break;
-    }
+    lv_updateSpeed((unsigned char)new_speed, 0);
 }
 
-void imgui_controls_window(void) {
-    if (!g_show_controls_window) {
+void lv_imgui_controls_window(void) {
+    if (!lv_g_show_controls_window) {
         return;
     }
 
     ImGui::SetNextWindowSize(ImVec2(420, 120), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin("Controls", &g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Controls", &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
-        if (imgui_context_get_resize_delta(&dx, &dy)) {
+        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
             ImVec2 pos = ImGui::GetWindowPos();
             ImVec2 size = ImGui::GetWindowSize();
             ImVec2 vp = ImGui::GetMainViewport()->Size;
@@ -150,42 +111,42 @@ void imgui_controls_window(void) {
         }
 
         /* Playback buttons row */
-        if (!isLoaded) ImGui::BeginDisabled();
+        if (!s_lv->isLoaded) ImGui::BeginDisabled();
 
         if (ImGui::Button("<< Rew", ImVec2(60, 0))) {
-            windowRewind();
+            lv_windowRewind();
         }
         ImGui::SameLine();
 
         /* Play/Pause toggle button */
-        if (playIsPlaying) {
+        if (s_lv->playIsPlaying) {
             if (ImGui::Button("Pause", ImVec2(50, 0))) {
-                windowPause();
+                lv_windowPause();
             }
         } else {
             if (ImGui::Button("Play >", ImVec2(50, 0))) {
-                windowPlay();
+                lv_windowPlay();
             }
         }
 
         ImGui::SameLine();
         if (ImGui::Button("Stop", ImVec2(50, 0))) {
-            windowStop(0);
+            lv_windowStop(0);
         }
 
         ImGui::SameLine();
         if (ImGui::Button("Fwd >>", ImVec2(60, 0))) {
-            windowFastForward();
+            lv_windowFastForward();
         }
 
-        if (!isLoaded) ImGui::EndDisabled();
+        if (!s_lv->isLoaded) ImGui::EndDisabled();
 
         /* Speed slider - same line as buttons */
         ImGui::SameLine(0, 15);
         ImGui::Text("Speed:");
         ImGui::SameLine();
 
-        int spd = (int)speed;
+        int spd = (int)s_lv->speed;
         if (spd < 1) spd = 1;
         if (spd > 9) spd = 9;
 
@@ -196,10 +157,10 @@ void imgui_controls_window(void) {
         ImGui::PopItemWidth();
 
         /* Seek slider row */
-        if (isLoaded) {
+        if (s_lv->isLoaded) {
             size_t currentPos = 0, totalSize = 0;
             uint32_t currentTime = 0;
-            screenGetLogProgress(&currentPos, &totalSize, &currentTime);
+            lv_screenGetLogProgress(&currentPos, &totalSize, &currentTime);
 
             /* Calculate current ratio for display */
             float displayRatio = 0.0f;
@@ -235,18 +196,18 @@ void imgui_controls_window(void) {
             /* When user releases the slider, perform the seek */
             if (s_is_seeking && ImGui::IsItemDeactivatedAfterEdit()) {
                 s_is_seeking = false;
-                unsigned char wasPlaying = playIsPlaying;
+                unsigned char wasPlaying = s_lv->playIsPlaying;
                 if (wasPlaying) {
-                    windowPause();
+                    lv_windowPause();
                 }
-                clientMutexWaitFor();
-                drawDirtyScreen();
-                screenSeekToPosition(s_seek_ratio);
-                drawDirtyScreen();
-                clientMutexRelease();
-                windowNeedRedraw();
+                lv_clientMutexWaitFor();
+                lv_drawDirtyScreen();
+                lv_screenSeekToPosition(s_seek_ratio);
+                lv_drawDirtyScreen();
+                lv_clientMutexRelease();
+                lv_windowNeedRedraw();
                 if (wasPlaying) {
-                    windowPlay();
+                    lv_windowPlay();
                 }
             }
 

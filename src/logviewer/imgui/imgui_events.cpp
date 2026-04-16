@@ -20,7 +20,7 @@
 
 /* External function from backend */
 extern "C" {
-    void screenGetTime(char *buffer);
+    void lv_screenGetTime(char *buffer);
 }
 
 /* Event list storage */
@@ -32,7 +32,7 @@ static bool s_scroll_to_bottom = false;
 static int s_selected_index = -1;
 static bool s_select_all = false;
 
-void imgui_events_init(void) {
+void lv_imgui_events_init(void) {
     s_events.clear();
     s_auto_scroll = true;
     s_scroll_to_bottom = false;
@@ -40,12 +40,12 @@ void imgui_events_init(void) {
     s_select_all = false;
 }
 
-void imgui_events_add(int eventType, const char *msg) {
+void lv_imgui_events_add(int eventType, const char *msg) {
     char line[512] = {0};
     
     if (eventType == 0) {
         /* Add timestamp prefix */
-        screenGetTime(line);
+        lv_screenGetTime(line);
         strncat(line, " - ", sizeof(line) - strlen(line) - 1);
     }
     
@@ -58,7 +58,7 @@ void imgui_events_add(int eventType, const char *msg) {
     }
 }
 
-void imgui_events_clear(void) {
+void lv_imgui_events_clear(void) {
     s_events.clear();
     s_selected_index = -1;
     s_select_all = false;
@@ -69,17 +69,17 @@ static void copy_to_clipboard(const char* text) {
     ImGui::SetClipboardText(text);
 }
 
-void imgui_events_window(void) {
-    if (!g_show_events_window) {
+void lv_imgui_events_window(void) {
+    if (!lv_g_show_events_window) {
         return;
     }
     
     ImGui::SetNextWindowSize(ImVec2(320, 200), ImGuiCond_FirstUseEver);
     
-    if (ImGui::Begin("Events", &g_show_events_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Events", &lv_g_show_events_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
-        if (imgui_context_get_resize_delta(&dx, &dy)) {
+        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
             ImVec2 pos = ImGui::GetWindowPos();
             ImVec2 size = ImGui::GetWindowSize();
             ImVec2 vp = ImGui::GetMainViewport()->Size;
@@ -158,7 +158,7 @@ void imgui_events_window(void) {
                 copy_to_clipboard(all_events.c_str());
             }
             if (ImGui::MenuItem("Clear All", NULL, false, !s_events.empty())) {
-                imgui_events_clear();
+                lv_imgui_events_clear();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Auto Scroll", NULL, s_auto_scroll)) {

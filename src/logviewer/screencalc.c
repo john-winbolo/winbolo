@@ -30,7 +30,7 @@
 #include "screencalc.h"
 
 /*********************************************************
-*NAME:          screenCalcRoad
+*NAME:          lv_screenCalcRoad
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -46,7 +46,7 @@
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
+BYTE lv_screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
   BYTE returnValue; /* Value to return */
 
 
@@ -148,7 +148,7 @@ BYTE screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE
 }
 
 /*********************************************************
-*NAME:          screenCalcBoat
+*NAME:          lv_screenCalcBoat
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -164,7 +164,7 @@ BYTE screenCalcRoad(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
+BYTE lv_screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
   BYTE returnValue; /* Value to return */
 
   /* Turn Boats and deep sea into rivers */
@@ -214,7 +214,7 @@ BYTE screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE
 }
 
 /*********************************************************
-*NAME:          screenCalcBuilding
+*NAME:          lv_screenCalcBuilding
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 31/12/98
@@ -230,7 +230,7 @@ BYTE screenCalcBoat(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
+BYTE lv_screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
   BYTE returnValue; /* Value to return */
 
   /* Turn HalfBuilding into building */
@@ -370,7 +370,7 @@ BYTE screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, 
 }
 
 /*********************************************************
-*NAME:          screenCalcRiver
+*NAME:          lv_screenCalcRiver
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -386,7 +386,7 @@ BYTE screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, 
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
+BYTE lv_screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
   BYTE returnValue; /* Value to return */
 
   /* Turn Deep Sea and Boats into River */
@@ -457,7 +457,7 @@ BYTE screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYT
 }
 
 /*********************************************************
-*NAME:          screenCalcDeepSea
+*NAME:          lv_screenCalcDeepSea
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED:  4/11/98
@@ -473,7 +473,7 @@ BYTE screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYT
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
+BYTE lv_screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
   BYTE returnValue; /* Value to return */
 
   /* Turn Boats into River */
@@ -527,7 +527,7 @@ BYTE screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, B
 }
 
 /*********************************************************
-*NAME:          screenCalcForest
+*NAME:          lv_screenCalcForest
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/3/98
 *LAST MODIFIED: 26/3/98
@@ -543,7 +543,7 @@ BYTE screenCalcDeepSea(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, B
 *  belowLeft  - The square below left
 *  belowRight - The square below right
 *********************************************************/
-BYTE screenCalcForest(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
+BYTE lv_screenCalcForest(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
 /* NOTE: belowLeft, belowRight, aboveLeft, aboveRight UNUSED */
   BYTE returnValue; /* Value to return */
 

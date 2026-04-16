@@ -65,7 +65,7 @@ static void decompressUpTo(size_t target) {
 }
 
 /* Size parameter is ignored -- we buffer the whole file. */
-bool blocksCreate(char *fileName, int size) {
+bool lv_blocksCreate(char *fileName, int size) {
   (void)size;
   blockKey    = 0;
   logData     = NULL;
@@ -93,7 +93,7 @@ bool blocksCreate(char *fileName, int size) {
   return TRUE;
 }
 
-void blocksDestroy() {
+void lv_blocksDestroy() {
   if (logFile != NULL) {
     unzCloseCurrentFile(logFile);
     unzClose(logFile);
@@ -107,14 +107,14 @@ void blocksDestroy() {
   logEOF      = FALSE;
 }
 
-bool blocksIsEOF() {
+bool lv_blocksIsEOF() {
   if (logPosition < logSize) return FALSE;
   if (logEOF) return TRUE;
   if (logFile != NULL) return unzeof(logFile);
   return TRUE;
 }
 
-int blocksReadBytes(BYTE *buff, int len) {
+int lv_blocksReadBytes(BYTE *buff, int len) {
   if (logFile == NULL || len <= 0) return -1;
 
   decompressUpTo(logPosition + (size_t)len);
@@ -133,32 +133,32 @@ int blocksReadBytes(BYTE *buff, int len) {
   return (int)toRead;
 }
 
-void logDecompressAll(void) {
+void lv_logDecompressAll(void) {
   if (logFile == NULL) return;
   while (!logEOF && logSize < LOG_MAX_SIZE) {
     decompressUpTo(logSize + LOG_DECOMPRESS_CHUNK);
   }
 }
 
-size_t logGetTotalSize(void) {
+size_t lv_logGetTotalSize(void) {
   return logSize;
 }
 
-void logSetPosition(size_t pos) {
+void lv_logSetPosition(size_t pos) {
   if (pos > logSize) {
     decompressUpTo(pos);
   }
   logPosition = pos <= logSize ? pos : logSize;
 }
 
-size_t logGetCurrentPosition() {
+size_t lv_logGetCurrentPosition() {
   return logPosition;
 }
 
-BYTE blocksGetKey() {
+BYTE lv_blocksGetKey() {
   return blockKey;
 }
 
-void blocksSetKey(BYTE key) {
+void lv_blocksSetKey(BYTE key) {
   blockKey = key;
 }

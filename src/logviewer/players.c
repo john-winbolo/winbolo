@@ -43,12 +43,12 @@ BYTE myPlayerNum = 0; /* Your own player number */
 
 char testP[256];
 
-void playersSetSelf(BYTE pn) {
+void lv_playersSetSelf(BYTE pn) {
   myPlayerNum = pn;
 }
 
 /*********************************************************
-I*NAME:          playersCreate
+I*NAME:          lv_playersCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 26/11/99
@@ -58,14 +58,14 @@ I*NAME:          playersCreate
 *ARGUMENTS:
 *
 *********************************************************/
-void playersCreate() {
+void lv_playersCreate() {
   BYTE count; /* Looping variable */
 
   myPlayerNum = NEUTRAL; /* Not set yet */
   for (count = 0;count<MAX_TANKS;count++) {
     plrs.item[count].inUse = FALSE;
     plrs.item[count].needUpdate = FALSE;
-    plrs.item[count].allie = allienceCreate();
+    plrs.item[count].allie = lv_allienceCreate();
     plrs.item[count].isChecked = FALSE;  
     plrs.item[count].team = NO_TEAM_SET;
   }
@@ -73,7 +73,7 @@ void playersCreate() {
 }
 
 /*********************************************************
-*NAME:          playersDestroy
+*NAME:          lv_playersDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -83,17 +83,17 @@ void playersCreate() {
 *ARGUMENTS:
 *
 *********************************************************/
-void playersDestroy() {
+void lv_playersDestroy() {
   BYTE count; /* Looping variable */
 
   for (count = 0;count<MAX_TANKS;count++) {
     plrs.item[count].inUse = FALSE;
-    allienceDestroy(&(plrs.item[count].allie));
+    lv_allienceDestroy(&(plrs.item[count].allie));
   }
 }
 
 /*********************************************************
-*NAME:          playersGetSelf
+*NAME:          lv_playersGetSelf
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -103,13 +103,13 @@ void playersDestroy() {
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE playersGetSelf() {
+BYTE lv_playersGetSelf() {
   return myPlayerNum;
 }
   
 
 /*********************************************************
-*NAME:          playersSetPlayerName
+*NAME:          lv_playersSetPlayerName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/02/99
 *LAST MODIFIED: 05/05/01
@@ -122,7 +122,7 @@ BYTE playersGetSelf() {
 *  playerNum  - The player number to set
 *  playerName - The player name to set
 *********************************************************/
-bool playersSetPlayerName(BYTE playerNum, char *playerName) {
+bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
   bool returnValue;           /* Value to return */
   char messageStr[FILENAME_MAX + 256]; /* Newswire Message - extra space for format overhead */
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
@@ -132,9 +132,9 @@ bool playersSetPlayerName(BYTE playerNum, char *playerName) {
   returnValue = FALSE;
   plrs.item[playerNum].inUse = TRUE;
   /* Make Message */
-  labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
+  lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
   snprintf(messageStr, sizeof(messageStr), "\"%s\"%s%s\"", label, MESSAGE_CHANGENAME, playerName);
-  windowAddEvent(0, messageStr);
+  lv_windowAddEvent(0, messageStr);
 
   /* Update the name */
   strncpy(plrs.item[playerNum].playerName, playerName, PLAYER_NAME_LEN - 1);
@@ -143,7 +143,7 @@ bool playersSetPlayerName(BYTE playerNum, char *playerName) {
 }
 
 /*********************************************************
-*NAME:          playersSetPlayer
+*NAME:          lv_playersSetPlayer
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 26/11/99
@@ -165,7 +165,7 @@ bool playersSetPlayerName(BYTE playerNum, char *playerName) {
 *  announce   - Do we want to announce this fact?
 *  override   - Override if the game is fastfowarding
 *********************************************************/
-void playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override) {
+void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override) {
   BYTE count; /* Looping variable */
   char str[1024]; /* The player name - extra space for format overhead */
 
@@ -173,8 +173,8 @@ void playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx,
     
     if (override == FALSE || plrs.item[playerNum].inUse == FALSE) {
       /* onlysetup team if not overridding for rewind */
-      plrs.item[playerNum].team = playersGetUnusedTeam(playerNum);
-      allienceDestroy(&(plrs.item[playerNum].allie));
+      plrs.item[playerNum].team = lv_playersGetUnusedTeam(playerNum);
+      lv_allienceDestroy(&(plrs.item[playerNum].allie));
     }
     plrs.item[playerNum].inUse = TRUE;
     strncpy(plrs.item[playerNum].playerName, playerName, PLAYER_NAME_LEN - 1);
@@ -191,10 +191,10 @@ void playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx,
     plrs.item[playerNum].frame = frame;
     plrs.item[playerNum].onBoat = onBoat;
     
-    plrs.item[playerNum].allie = allienceCreate();
+    plrs.item[playerNum].allie = lv_allienceCreate();
     count = 0;
     while (count < numAllies) {
-      allienceAdd(&(plrs.item[playerNum].allie), allies[count]);
+      lv_allienceAdd(&(plrs.item[playerNum].allie), allies[count]);
       count++;
     }
   }
@@ -207,11 +207,11 @@ void playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx,
       snprintf(str, sizeof(str), "%s@%s has joined game",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     }
-    windowAddEvent(0, str);
+    lv_windowAddEvent(0, str);
   }
 
 //  frontEndSetPlayer((playerNumbers) playerNum, str);
-//  frontEndStatusTank((BYTE) (playerNum+1), playersScreenAllience(playerNum));
+//  frontEndStatusTank((BYTE) (playerNum+1), lv_playersScreenAllience(playerNum));
 }
 
 /*********************************************************
@@ -236,7 +236,7 @@ void playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx,
 *  lgmPY      - Lgm Map Y Position
 *  lgmFrame   - Lgm Frame number
 *********************************************************/
-void playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat) {
+void lv_playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat) {
  if (plrs.item[playerNum].inUse == TRUE) {
     plrs.item[playerNum].mapX = mx;
     plrs.item[playerNum].mapY = my;
@@ -248,7 +248,7 @@ void playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE 
 }
 
 
-void playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE lgmPY, BYTE lgmFrame) {
+void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE lgmPY, BYTE lgmFrame) {
   if (plrs.item[playerNum].inUse == TRUE) {
     plrs.item[playerNum].lgmMapX = lgmMX;
     plrs.item[playerNum].lgmMapY = lgmMY;
@@ -258,7 +258,7 @@ void playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE l
   }
 }
 
-void playersLgmZero() {
+void lv_playersLgmZero() {
   BYTE count;
   for (count=0;count<MAX_TANKS;count++) {
     if (plrs.item[count].inUse == TRUE) {
@@ -271,7 +271,7 @@ void playersLgmZero() {
 }
 
 /*********************************************************
-*NAME:          playersGetPlayerName
+*NAME:          lv_playersGetPlayerName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -282,7 +282,7 @@ void playersLgmZero() {
 *  playerNum  - The player number to set
 *  dest       - Destination string
 *********************************************************/
-void playersGetPlayerName(BYTE playerNum, char *dest) {
+void lv_playersGetPlayerName(BYTE playerNum, char *dest) {
   if (plrs.item[playerNum].inUse == TRUE) {
     strncpy(dest, plrs.item[playerNum].playerName, PLAYER_NAME_LEN - 1);
     dest[PLAYER_NAME_LEN - 1] = '\0';
@@ -293,7 +293,7 @@ void playersGetPlayerName(BYTE playerNum, char *dest) {
 }
 
 /*********************************************************
-*NAME:          playersMakeMessageName
+*NAME:          lv_playersMakeMessageName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -304,17 +304,17 @@ void playersGetPlayerName(BYTE playerNum, char *dest) {
 *  playerNum  - The player number to set
 *  dest       - Destination string
 *********************************************************/
-void playersMakeMessageName(BYTE playerNum, char *dest) {
+void lv_playersMakeMessageName(BYTE playerNum, char *dest) {
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
 
   label[0] = '\0';
-  labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
+  lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
   strncpy(dest, label, FILENAME_MAX - 1);
   dest[FILENAME_MAX - 1] = '\0';
 }
 
 /*********************************************************
-*NAME:          playersMakeScreenName
+*NAME:          lv_playersMakeScreenName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -325,12 +325,12 @@ void playersMakeMessageName(BYTE playerNum, char *dest) {
 *  playerNum  - The player number to set
 *  dest       - Destination string
 *********************************************************/
-void playersMakeScreenName(BYTE playerNum, char *dest) {
+void lv_playersMakeScreenName(BYTE playerNum, char *dest) {
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
 
   label[0] = '\0';
   if (plrs.item[playerNum].inUse == TRUE) {
-    labelMakeTankLabel(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location, FALSE);
+    lv_labelMakeTankLabel(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location, FALSE);
     strncpy(dest, label, FILENAME_MAX - 1);
     dest[FILENAME_MAX - 1] = '\0';
   }
@@ -338,7 +338,7 @@ void playersMakeScreenName(BYTE playerNum, char *dest) {
 
 
 /*********************************************************
-*NAME:          playersIsAllie
+*NAME:          lv_playersIsAllie
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -349,7 +349,7 @@ void playersMakeScreenName(BYTE playerNum, char *dest) {
 *  playerA - The player number to check
 *  playerB  - The player number to check
 *********************************************************/
-bool playersIsAllie(BYTE playerA, BYTE playerB) {
+bool lv_playersIsAllie(BYTE playerA, BYTE playerB) {
   bool returnValue; /* Value to return */
   BYTE check;       /* Which item to check - In case one player has left */
   BYTE check2;      /* Whick item to check for - In case one player has left */
@@ -372,14 +372,14 @@ bool playersIsAllie(BYTE playerA, BYTE playerB) {
     }
     
     if (check != NEUTRAL) {
-      returnValue = allienceExist(&(plrs.item[check].allie), check2);
+      returnValue = lv_allienceExist(&(plrs.item[check].allie), check2);
     }
   }
   return returnValue;
 }
 
 /*********************************************************
-*NAME:          playersGetNumAllie
+*NAME:          lv_playersGetNumAllie
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -390,18 +390,18 @@ bool playersIsAllie(BYTE playerA, BYTE playerB) {
 *ARGUMENTS:
 *  playerNum - The player number to check
 *********************************************************/
-BYTE playersGetNumAllie(BYTE playerNum) {
+BYTE lv_playersGetNumAllie(BYTE playerNum) {
   BYTE returnValue; /* Value to return */
 
   returnValue = 0;
   if (plrs.item[playerNum].inUse == TRUE) {
-    returnValue = allienceNumAllies(&(plrs.item[playerNum].allie)) + 1;
+    returnValue = lv_allienceNumAllies(&(plrs.item[playerNum].allie)) + 1;
   }
   return returnValue;
 }
 
 /*********************************************************
-*NAME:          playersScreenAllience
+*NAME:          lv_playersScreenAllience
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -411,7 +411,7 @@ BYTE playersGetNumAllie(BYTE playerNum) {
 *ARGUMENTS:
 *  playerNum - Player number to check
 *********************************************************/
-tankAlliance playersScreenAllience(BYTE playerNum) {
+tankAlliance lv_playersScreenAllience(BYTE playerNum) {
   tankAlliance returnValue; /* Value to return */
 
   returnValue = tankNone;
@@ -420,7 +420,7 @@ tankAlliance playersScreenAllience(BYTE playerNum) {
       returnValue = tankNone;
     } else if (playerNum == myPlayerNum) {
       returnValue = tankSelf;
-    } else if (allienceExist(&(plrs.item[myPlayerNum].allie), playerNum) == TRUE) {
+    } else if (lv_allienceExist(&(plrs.item[myPlayerNum].allie), playerNum) == TRUE) {
       returnValue = tankAllie;
     } else {
       returnValue = tankEvil;
@@ -431,7 +431,7 @@ tankAlliance playersScreenAllience(BYTE playerNum) {
 
 
 /*********************************************************
-*NAME:          playersMakeScreenTanks
+*NAME:          lv_playersMakeScreenTanks
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED:  8/1/00
@@ -445,7 +445,7 @@ tankAlliance playersScreenAllience(BYTE playerNum) {
 *  top      - top bound
 *  bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
   char playerName[FILENAME_MAX]; /* Holds playername/location info */
   WORLD conv;                    /* Used in conversion */
   WORLD conv2;
@@ -477,13 +477,13 @@ void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYT
 
       if (mx >= leftPos && mx <= rightPos && my >= top && my <= bottom) {
         /* Extract player screen name */
-        playersMakeScreenName(count, playerName);
+        lv_playersMakeScreenName(count, playerName);
         frame = plrs.item[count].frame;
         if (plrs.item[count].onBoat == TRUE) {
           frame += TANK_BOAT_ADD;
         }
         if (myPlayerNum != count) {
-          if (allienceExist(&(plrs.item[count].allie), myPlayerNum) == TRUE) {
+          if (lv_allienceExist(&(plrs.item[count].allie), myPlayerNum) == TRUE) {
             frame += TANK_GOOD_ADD;
           } else {
             frame += TANK_EVIL_ADD;
@@ -493,18 +493,18 @@ void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYT
 /*        if (count == 0) {
           sprintf(playerName, "mx=%d, my=%d, px=%d, py=%d", (BYTE) (mx-leftPos), (BYTE) (my-top), px, py);
             if (strcmp(playerName, testP) != 0) {
-              windowAddEvent(0, playerName);
+              lv_windowAddEvent(0, playerName);
               strcpy(testP, playerName);
             }
         } */
         
-        screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName); 
+        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName); 
       } else if (count == 0) {
 /*        sprintf(playerName, "NIF: mx=%d, my=%d, l=%d, r=%d, t=%d, b=%d", mx, my, leftPos, rightPos, top, bottom);
             if (strcmp(playerName, testP) != 0) {
-              windowAddEvent(0, playerName);
+              lv_windowAddEvent(0, playerName);
               strcpy(testP, playerName);
-              finished();
+              lv_finished();
             }
 */
       }
@@ -513,7 +513,7 @@ void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYT
 }
 
 /*********************************************************
-*NAME:          playersMakeScreenLgm
+*NAME:          lv_playersMakeScreenLgm
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/99
 *LAST MODIFIED:  7/3/99
@@ -527,7 +527,7 @@ void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYT
 *  top      - top bound
 *  bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
   WORLD wx;
   WORLD wy;
   BYTE count;                    /* Looping variable */
@@ -540,14 +540,14 @@ void playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE to
         wy = plrs.item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += plrs.item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
         
-        screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame); 
+        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame); 
       }
     }
   }
 }
 
 /*********************************************************
-*NAME:          playersGetNumPlayers
+*NAME:          lv_playersGetNumPlayers
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -557,7 +557,7 @@ void playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE to
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE playersGetNumPlayers() {
+BYTE lv_playersGetNumPlayers() {
   BYTE returnValue; /* Value to return */
   BYTE count;       /* Looping variable */
 
@@ -571,7 +571,7 @@ BYTE playersGetNumPlayers() {
 }
 
 /*********************************************************
-*NAME:          playersLeaveGame
+*NAME:          lv_playersLeaveGame
 *AUTHOR:        John Morrison
 *CREATION DATE: 20/3/99
 *LAST MODIFIED: 2/11/99
@@ -582,18 +582,18 @@ BYTE playersGetNumPlayers() {
 *  playerNum - The number of the player that has left
 *  announce  - Whether to announce this or not
 *********************************************************/
-void playersLeaveGame(BYTE playerNum, bool announce) {
+void lv_playersLeaveGame(BYTE playerNum, bool announce) {
   char name[FILENAME_MAX];   /* The Player Name */
   char output[FILENAME_MAX + 256]; /* The message - extra space for format overhead */
   BYTE count;                /* Looping variable */
 
 
   if (plrs.item[playerNum].inUse == TRUE) {
-    allienceDestroy(&(plrs.item[playerNum].allie));
+    lv_allienceDestroy(&(plrs.item[playerNum].allie));
     count = 0;
     while (count < MAX_TANKS) {
       if (plrs.item[playerNum].inUse == TRUE && count != playerNum) {
-        allienceRemove(&(plrs.item[count].allie), playerNum);
+        lv_allienceRemove(&(plrs.item[count].allie), playerNum);
       }
       count++;
     }
@@ -604,18 +604,18 @@ void playersLeaveGame(BYTE playerNum, bool announce) {
 
     if (announce == TRUE) {
       name[0] = '\0';
-      playersMakeMessageName(playerNum, name);
+      lv_playersMakeMessageName(playerNum, name);
   //    frontEndClearPlayer((playerNumbers) playerNum);
   //    frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
       /* Make a message about it */
       snprintf(output, sizeof(output), "\"%s\"%s", name, MESSAGE_QUIT_GAME);
-      windowAddEvent(0, output);
+      lv_windowAddEvent(0, output);
     }
   }
 }
 
 /*********************************************************
-*NAME:          playersIsInUse
+*NAME:          lv_playersIsInUse
 *AUTHOR:        John Morrison
 *CREATION DATE: 31/8/99
 *LAST MODIFIED: 31/8/99
@@ -625,12 +625,12 @@ void playersLeaveGame(BYTE playerNum, bool announce) {
 *ARGUMENTS:
 *  playerNum - The player num to check
 *********************************************************/
-bool playersIsInUse(BYTE playerNumber) {
+bool lv_playersIsInUse(BYTE playerNumber) {
   return plrs.item[playerNumber].inUse;
 }
 
 /*********************************************************
-*NAME:          playersGetLgmDetails
+*NAME:          lv_playersGetLgmDetails
 *AUTHOR:        John Morrison
 *CREATION DATE: 31/8/99
 *LAST MODIFIED: 31/8/99
@@ -645,7 +645,7 @@ bool playersIsInUse(BYTE playerNumber) {
 *  py        - LGM Pixel Y Position
 *  frame     - LGM Frame
 *********************************************************/
-void playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame){
+void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame){
   if (plrs.item[playerNumber].inUse == TRUE) {
     *mx = plrs.item[playerNumber].lgmMapX;
     *my = plrs.item[playerNumber].lgmMapY;
@@ -663,7 +663,7 @@ void playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE
 
 
 /*********************************************************
-*NAME:          playersLeaveAlliance
+*NAME:          lv_playersLeaveAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED: 1/11/99
@@ -673,39 +673,39 @@ void playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE
 *ARGUMENTS:
 *  playerNum - Player number that is leaving the alliance
 *********************************************************/
-void playersLeaveAlliance(BYTE playerNum) {
+void lv_playersLeaveAlliance(BYTE playerNum) {
   BYTE count; /* Looping variable */
   BYTE total; /* Amount of items to redraw */
 
-  allienceDestroy(&(plrs.item[playerNum].allie));
-  plrs.item[playerNum].allie = allienceCreate();
-  plrs.item[playerNum].team = playersGetUnusedTeam(playerNum);
+  lv_allienceDestroy(&(plrs.item[playerNum].allie));
+  plrs.item[playerNum].allie = lv_allienceCreate();
+  plrs.item[playerNum].team = lv_playersGetUnusedTeam(playerNum);
   count = 0;
   while (count < MAX_TANKS) {
     if (plrs.item[count].inUse == TRUE && count != playerNum) {
-       allienceRemove(&(plrs.item[count].allie), playerNum);
+       lv_allienceRemove(&(plrs.item[count].allie), playerNum);
     }
     count++;
   }
  
   
   /* Update the screen */
-  total = screenNumBases();
+  total = lv_screenNumBases();
   for (count=1;count<=total;count++) {
 //    frontEndStatusBase(count, screenBaseAlliance(count));
   }
-  total = screenNumPills();
+  total = lv_screenNumPills();
   for (count=1;count<=total;count++) {
   //  frontEndStatusPillbox(count, screenPillAlliance(count));
   }
-  total = playersGetNumPlayers();
+  total = lv_playersGetNumPlayers();
   for (count=1;count<=total;count++) {
-//    frontEndStatusTank(count, playersScreenAllience((BYTE) (count-1)));
+//    frontEndStatusTank(count, lv_playersScreenAllience((BYTE) (count-1)));
   }
 }
 
 /*********************************************************
-*NAME:          playersGetAlliesBitMap
+*NAME:          lv_playersGetAlliesBitMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED:   4/7/00
@@ -716,7 +716,7 @@ void playersLeaveAlliance(BYTE playerNum) {
 *ARGUMENTS:
 *  playerNum - Player number to get for
 *********************************************************/
-uint32_t playersGetAlliesBitMap(BYTE playerNum) {
+uint32_t lv_playersGetAlliesBitMap(BYTE playerNum) {
   uint32_t returnValue; /* Value to return */
   BYTE count;                /* Looping variable */
 
@@ -725,7 +725,7 @@ uint32_t playersGetAlliesBitMap(BYTE playerNum) {
 
   while (count<MAX_TANKS) {
     if (plrs.item[count].inUse == TRUE) {
-      if (count == playerNum || allienceExist(&(plrs.item[count].allie), playerNum) == TRUE) {
+      if (count == playerNum || lv_allienceExist(&(plrs.item[count].allie), playerNum) == TRUE) {
         returnValue |= 1 << count;
       }
     }
@@ -736,7 +736,7 @@ uint32_t playersGetAlliesBitMap(BYTE playerNum) {
 }
 
 /*********************************************************
-*NAME:          playersAcceptAlliance
+*NAME:          lv_playersAcceptAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -747,7 +747,7 @@ uint32_t playersGetAlliesBitMap(BYTE playerNum) {
 *  acceptedBy - Who accepted them in
 *  newMember  - Who the new member is
 *********************************************************/
-void playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
+void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
   BYTE count;   /* Looping variable */
   BYTE count2;   /* Looping variable */
   BYTE total;   /* Number of alliances acceptedBy has */
@@ -757,8 +757,8 @@ void playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
   unsigned long test2;
 
 
-  allyA = playersGetAlliesBitMap(acceptedBy);
-  allyB = playersGetAlliesBitMap(newMember);
+  allyA = lv_playersGetAlliesBitMap(acceptedBy);
+  allyB = lv_playersGetAlliesBitMap(newMember);
 
   // plrs.item[acceptedBy].team = plrs.item[newMember].team;
 
@@ -781,7 +781,7 @@ void playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
 					// If B is allied with 'count2' [AND A is allied with 'count']
           if (test2) {
 						// Add an alliance between count and count2.
-            allienceAdd(&(plrs.item[count].allie), count2);
+            lv_allienceAdd(&(plrs.item[count].allie), count2);
 						// So, put all allies of the 'accepter', on the team of the 'requester'.
 						plrs.item[count].team = plrs.item[count2].team;
           }
@@ -799,7 +799,7 @@ void playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
 					// If A is allied with 'count2' [AND B is allied with 'count']
           if (test2) {
 						// Add an alliance between count and count2.
-            allienceAdd(&(plrs.item[count].allie), count2);
+            lv_allienceAdd(&(plrs.item[count].allie), count2);
           }
           count2++;
         }
@@ -811,21 +811,21 @@ void playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
       
  
   /* Update the screen */
-  total = screenNumBases();
+  total = lv_screenNumBases();
   for (count=1;count<=total;count++) {
 //    frontEndStatusBase(count, screenBaseAlliance(count));
   }
-  total = screenNumPills();
+  total = lv_screenNumPills();
   for (count=1;count<=total;count++) {
 //    frontEndStatusPillbox(count, screenPillAlliance(count));
   }
-  total = playersGetNumPlayers();
+  total = lv_playersGetNumPlayers();
   for (count=1;count<=total;count++) {
-//    frontEndStatusTank(count, playersScreenAllience((BYTE) (count-1)));
+//    frontEndStatusTank(count, lv_playersScreenAllience((BYTE) (count-1)));
   }
 }
 
-bool playersChooseView(int x, int y) {
+bool lv_playersChooseView(int x, int y) {
   BYTE count = 0;
   bool done = FALSE;
   while (count < MAX_TANKS && done == FALSE) {
@@ -841,7 +841,7 @@ bool playersChooseView(int x, int y) {
   return FALSE;
 }
 
-BYTE playersGetCentredX() {
+BYTE lv_playersGetCentredX() {
   if (plrs.item[myPlayerNum].inUse == TRUE && plrs.item[myPlayerNum].mapX >= MAP_MINE_EDGE_LEFT) {
       return ((plrs.item[myPlayerNum].mapX << 8) + (plrs.item[myPlayerNum].pixelX << 4)) >> 8;
   }
@@ -849,19 +849,19 @@ BYTE playersGetCentredX() {
 }
 
 
-BYTE playersGetCentredY() {
+BYTE lv_playersGetCentredY() {
   if (plrs.item[myPlayerNum].inUse == TRUE && plrs.item[myPlayerNum].mapY >= MAP_MINE_EDGE_TOP) {
       return ((plrs.item[myPlayerNum].mapY << 8) + (plrs.item[myPlayerNum].pixelY << 4)) >> 8;
   }
   return 0;
 }
 
-BYTE playersGetTeamId(BYTE playerNum) {
+BYTE lv_playersGetTeamId(BYTE playerNum) {
   return plrs.item[playerNum].team;
 }
 
 
-BYTE playersGetUnusedTeam(BYTE playerNum) {
+BYTE lv_playersGetUnusedTeam(BYTE playerNum) {
   BYTE vals[MAX_TANKS];
   BYTE count = 0;
   BYTE returnValue = NO_TEAM_SET;
@@ -884,14 +884,14 @@ BYTE playersGetUnusedTeam(BYTE playerNum) {
   return returnValue;
 }
 
-BYTE playersGetTeamForOwner(BYTE owner) {
+BYTE lv_playersGetTeamForOwner(BYTE owner) {
   if (plrs.item[owner].inUse == TRUE) {
     return plrs.item[owner].team;
   }
   return NEUTRAL_TEAM;
 }
 
-void playersSetTeams(BYTE *pTeams) {
+void lv_playersSetTeams(BYTE *pTeams) {
   BYTE count = 0;
 
   /* Reset the team ID's */
@@ -901,7 +901,7 @@ void playersSetTeams(BYTE *pTeams) {
   }
 }
 
-void playersCopyPTeams(BYTE *dest) {
+void lv_playersCopyPTeams(BYTE *dest) {
   BYTE count = 0;
   while (count < MAX_TANKS) {
     dest[count] = plrs.item[count].team;

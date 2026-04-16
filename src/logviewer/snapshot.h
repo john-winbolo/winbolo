@@ -40,7 +40,7 @@ struct snapshotObj {
 
 
 /*********************************************************
-*NAME:          snapshotCreate
+*NAME:          lv_snapshotCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -50,10 +50,10 @@ struct snapshotObj {
 *ARGUMENTS:
 *
 *********************************************************/
-snapshot snapshotCreate();
+snapshot lv_snapshotCreate();
 
 /*********************************************************
-*NAME:          snapshotDestroy
+*NAME:          lv_snapshotDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -63,7 +63,7 @@ snapshot snapshotCreate();
 *ARGUMENTS:
 * value - Snapshot to destroy
 *********************************************************/
-void snapshotDestroy(snapshot *value);
+void lv_snapshotDestroy(snapshot *value);
 
 
 /*********************************************************
@@ -79,10 +79,10 @@ void snapshotDestroy(snapshot *value);
 * filePos - Unuesd variable
 * time    - Time in game ticks
 *********************************************************/
-bool snapshotExist(snapshot *value, size_t filePos, uint32_t time);
+bool lv_snapshotExist(snapshot *value, size_t filePos, uint32_t time);
 
 /*********************************************************
-*NAME:          snapshotAdd
+*NAME:          lv_snapshotAdd
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -96,7 +96,7 @@ bool snapshotExist(snapshot *value, size_t filePos, uint32_t time);
 * key - Key at this snapshot
 * pteams - Player Teams to copy
 *********************************************************/
-void snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams);
+void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams);
 
 
 /*********************************************************
@@ -115,10 +115,10 @@ void snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE 
 * key - Key at this snapshot to set to
 * pteams - Player Teams to copy to set to
 *********************************************************/
-bool snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
+bool lv_snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
 
 /*********************************************************
-*NAME:          snapshotBackwards
+*NAME:          lv_snapshotBackwards
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -133,10 +133,10 @@ bool snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key
 * key - Key at this snapshot to set to
 * pteams - Player Teams to copy to set to
 *********************************************************/
-bool snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
+bool lv_snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
 
 /*********************************************************
-*NAME:          snapshotCount
+*NAME:          lv_snapshotCount
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -146,10 +146,10 @@ bool snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *k
 *ARGUMENTS:
 *
 *********************************************************/
-int snapshotCount(snapshot *value);
+int lv_snapshotCount(snapshot *value);
 
 /*********************************************************
-*NAME:          snapshotFindByPosition
+*NAME:          lv_snapshotFindByPosition
 *PURPOSE:
 * Finds the latest snapshot at or before the given file
 * position. Returns TRUE if found.
@@ -162,6 +162,6 @@ int snapshotCount(snapshot *value);
 * key     - Returned decryption key
 * pTeams  - Returned pointer to team data
 *********************************************************/
-bool snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
+bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
 
 #endif /* __SNAPSHOT_H */

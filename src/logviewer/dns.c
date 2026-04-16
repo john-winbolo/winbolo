@@ -42,7 +42,7 @@
 bool dnsEnabled = FALSE;
 
 /*********************************************************
-*NAME:          dnsCreate
+*NAME:          lv_dnsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -52,7 +52,7 @@ bool dnsEnabled = FALSE;
 *ARGUMENTS:
 *
 *********************************************************/
-bool dnsCreate() {
+bool lv_dnsCreate() {
 #ifdef _WIN32
   WSADATA wsaData;         /* Winsock create data */
   int ret;                 /* Function returns */
@@ -69,7 +69,7 @@ bool dnsCreate() {
 }
 
 /*********************************************************
-*NAME:          dnsSetEnabled
+*NAME:          lv_dnsSetEnabled
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -79,14 +79,14 @@ bool dnsCreate() {
 *ARGUMENTS:
 * set - Value to set
 *********************************************************/
-bool dnsSetEnabled(bool set) {
+bool lv_dnsSetEnabled(bool set) {
   bool returnValue = TRUE; // Value to set
 
   if (set != dnsEnabled) {
     if (set == FALSE) {
-      dnsShutdown();
+      lv_dnsShutdown();
     } else {
-      returnValue = dnsCreate();
+      returnValue = lv_dnsCreate();
     }
 
   }
@@ -95,7 +95,7 @@ bool dnsSetEnabled(bool set) {
 }
 
 /*********************************************************
-*NAME:          dnsShutdown
+*NAME:          lv_dnsShutdown
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -105,7 +105,7 @@ bool dnsSetEnabled(bool set) {
 *ARGUMENTS:
 * set - Value to set
 *********************************************************/
-void dnsShutdown() {
+void lv_dnsShutdown() {
   if (dnsEnabled == TRUE) {
 #ifdef _WIN32
     WSACleanup();
@@ -115,7 +115,7 @@ void dnsShutdown() {
 }
 
 /*********************************************************
-*NAME:          dnsLookup
+*NAME:          lv_dnsLookup
 *AUTHOR:        John Morrison
 *CREATION DATE: 07/05/01
 *LAST MODIFIED: 07/05/01
@@ -127,7 +127,7 @@ void dnsShutdown() {
 * ip - IP to lookup
 * host - Host to hold result
 *********************************************************/
-void dnsLookup(char *ip, char *host, size_t host_size) {
+void lv_dnsLookup(char *ip, char *host, size_t host_size) {
   struct sockaddr_in  addr;
 
   if (dnsEnabled == FALSE) {

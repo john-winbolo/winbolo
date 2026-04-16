@@ -77,7 +77,7 @@ typedef enum {
 /* Prototypes */
 
 /*********************************************************
-*NAME:          screenTanksCreate
+*NAME:          lv_screenTanksCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/99
 *LAST MODIFIED: 15/2/99
@@ -87,7 +87,7 @@ typedef enum {
 *ARGUMENTS:
 *  value - New item to create
 *********************************************************/
-void screenTanksCreate(screenTanks *value);
+void lv_screenTanksCreate(screenTanks *value);
 
 /*********************************************************
 *NAME:          screenTanksPrepare
@@ -108,7 +108,7 @@ void screenTanksCreate(screenTanks *value);
 void screenTanksPrepare(screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 /*********************************************************
-*NAME:          screenTanksGetNumEntries
+*NAME:          lv_screenTanksGetNumEntries
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/99
 *LAST MODIFIED: 15/2/99
@@ -118,10 +118,10 @@ void screenTanksPrepare(screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE to
 *ARGUMENTS:
 *  value - Pointer to the screenTanks data structure
 *********************************************************/
-BYTE screenTanksGetNumEntries(screenTanks *value);
+BYTE lv_screenTanksGetNumEntries(screenTanks *value);
 
 /*********************************************************
-*NAME:          screenTanksDestroy
+*NAME:          lv_screenTanksDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/99
 *LAST MODIFIED: 15/2/99
@@ -131,10 +131,10 @@ BYTE screenTanksGetNumEntries(screenTanks *value);
 *ARGUMENTS:
 *  value - Pointer to the screenTanks data structure
 *********************************************************/
-void screenTanksDestroy(screenTanks *value);
+void lv_screenTanksDestroy(screenTanks *value);
 
 /*********************************************************
-*NAME:          screenTanksAddItem
+*NAME:          lv_screenTanksAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/98
 *LAST MODIFIED: 18/2/98
@@ -150,10 +150,10 @@ void screenTanksDestroy(screenTanks *value);
 *  frame      - Frame identifer of the tank
 *  playerName - String to hold the player name
 *********************************************************/
-void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName);
+void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName);
 
 /*********************************************************
-*NAME:          screenTanksGetItem
+*NAME:          lv_screenTanksGetItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/98
 *LAST MODIFIED: 15/2/98
@@ -170,7 +170,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 *  frame      - Frame identifer of the bullet
 *  playerName - String to hold the player name
 *********************************************************/
-void screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *team, BYTE *dir, bool *onBoat, char *playerName);
+void lv_screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *team, BYTE *dir, bool *onBoat, char *playerName);
 
 #endif /* SCREENTANKS_H */
 

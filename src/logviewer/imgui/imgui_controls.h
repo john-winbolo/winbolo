@@ -11,19 +11,21 @@
 #ifndef IMGUI_CONTROLS_H
 #define IMGUI_CONTROLS_H
 
+struct LogViewerState;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Render the controls window
  * Should be called each frame when window is visible */
-void imgui_controls_window(void);
+void lv_imgui_controls_window(void);
 
 /* Initialize controls state */
-void imgui_controls_init(void);
+void lv_imgui_controls_init(struct LogViewerState *lv);
 
 /* Update the speed display (called when speed changes) */
-void imgui_controls_update_speed(void);
+void lv_imgui_controls_update_speed(void);
 
 #ifdef __cplusplus
 }

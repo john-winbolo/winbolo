@@ -41,7 +41,7 @@ int logReadBytes(BYTE *buff, int len);
 
 
 /*********************************************************
-*NAME:          mapCreate
+*NAME:          lv_mapCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -52,7 +52,7 @@ int logReadBytes(BYTE *buff, int len);
 *ARGUMENTS:
 *  value - Pointer to the map file
 *********************************************************/
-void mapCreate(map *value) {
+void lv_mapCreate(map *value) {
   int count;  /* Looping variable */
   int count2; /* Looping variable */
   New(*value);
@@ -64,7 +64,7 @@ void mapCreate(map *value) {
 }
 
 /*********************************************************
-*NAME:          mapDestroy
+*NAME:          lv_mapDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -74,12 +74,12 @@ void mapCreate(map *value) {
 *ARGUMENTS:
 *  value - Pointer to the map file
 *********************************************************/
-void mapDestroy(map *value) {
+void lv_mapDestroy(map *value) {
   Dispose(*value);
 }
 
 /*********************************************************
-*NAME:          mapGetPos
+*NAME:          lv_mapGetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -92,13 +92,13 @@ void mapDestroy(map *value) {
 *  xValue - The x co-ordinate
 *  yValue - The y co-ordinate 
 *********************************************************/
-BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue) {
+BYTE lv_mapGetPos(map *value, BYTE xValue, BYTE yValue) {
   return (*value)->mapItem[xValue][yValue];
 }
 
 
 /*********************************************************
-*NAME:          mapSetPos
+*NAME:          lv_mapSetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/11/00
 *LAST MODIFIED: 11/11/00
@@ -112,12 +112,12 @@ BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue) {
 *  yValue  - The y co-ordinate 
 *  terrain - Terrain to set to
 *********************************************************/
-void mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain) {
+void lv_mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain) {
   (*value)->mapItem[xValue][yValue] = terrain;
 }
 
 /*********************************************************
-*NAME:          mapIsMine
+*NAME:          lv_mapIsMine
 *AUTHOR:        John Morrison
 *CREATION DATE: 22/1/99
 *LAST MODIFIED: 13/3/99
@@ -129,7 +129,7 @@ void mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain) {
 *  xValue  - The x co-ordinate
 *  yValue  - The y co-ordinate 
 *********************************************************/
-bool mapIsMine(map *value, BYTE xValue, BYTE yValue) {
+bool lv_mapIsMine(map *value, BYTE xValue, BYTE yValue) {
   bool returnValue; /* Value to return */
   
   returnValue = FALSE;
@@ -143,7 +143,7 @@ bool mapIsMine(map *value, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
-*NAME:          mapProcessRun
+*NAME:          lv_mapProcessRun
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -159,7 +159,7 @@ bool mapIsMine(map *value, BYTE xValue, BYTE yValue) {
 *  startX - The start x co-ordinate
 *  endX   - The end x co-ordinate
 *********************************************************/
-bool mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX) {
+bool lv_mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX) {
   bool returnValue;  /* Value to return */
   bool needRead;     /* State variable - Do we need to read the next byte */
   mapRunState state; /* Current run state */  
@@ -266,7 +266,7 @@ bool mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX) 
 }
 
 /*********************************************************
-*NAME:          mapReadRuns
+*NAME:          lv_mapReadRuns
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -277,7 +277,7 @@ bool mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX) 
 *ARGUMENTS:
 *  value - Pointer to the map data structure
 *********************************************************/
-bool mapReadRuns(map *value) {
+bool lv_mapReadRuns(map *value) {
   bmapRunHeader runHead; /* The header of each run */
   size_t bytesRead;         /* The number of bytes read from the header */
   bool returnValue;      /* Value to return */
@@ -300,7 +300,7 @@ bool mapReadRuns(map *value) {
       done = TRUE;
       returnValue = TRUE;
     } else {
-      ret = mapProcessRun(value,(BYTE) ((runHead.datalen)- SIZEOFBMAP_RUN_HEADER),runHead.y, runHead.startx, runHead.endx);
+      ret = lv_mapProcessRun(value,(BYTE) ((runHead.datalen)- SIZEOFBMAP_RUN_HEADER),runHead.y, runHead.startx, runHead.endx);
       if (ret == FALSE) {
         /* Function return failed */
         done = TRUE;
@@ -315,7 +315,7 @@ bool mapReadRuns(map *value) {
 }
 
 /*********************************************************
-*NAME:          mapWrite
+*NAME:          lv_mapWrite
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -331,7 +331,7 @@ bool mapReadRuns(map *value) {
 *  pb       - Pointer to the pillbox structure
 *  saveOwnerships - Save ownerships or not
 *********************************************************/
-bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, bool saveOwnerships) {
+bool lv_mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, bool saveOwnerships) {
   FILE *fp;           /* File pointer */
   bool returnValue;   /* Value to return */
   int ret;            /* Function return value */
@@ -340,9 +340,9 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, 
   BYTE numStarts;     /* Number of starts on the map */
 
   returnValue = TRUE;
-  numPills = pillsGetNumPills(pb);
-  numBases = basesGetNumBases(bs);
-  numStarts = startsGetNumStarts(ss);
+  numPills = lv_pillsGetNumPills(pb);
+  numBases = lv_basesGetNumBases(bs);
+  numStarts = lv_startsGetNumStarts(ss);
 
   fp = fopen(fileName,"wb");
   if (fp == NULL) {
@@ -390,19 +390,19 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, 
 
   /* Write pill locations */
   if (returnValue == TRUE && fp) {
-    returnValue = mapWritePills(fp, pb, numPills, saveOwnerships);
+    returnValue = lv_mapWritePills(fp, pb, numPills, saveOwnerships);
   }
   /* Write bases locations */
   if (returnValue == TRUE && fp) {
-    returnValue = mapWriteBases(fp, bs, numBases, saveOwnerships);
+    returnValue = lv_mapWriteBases(fp, bs, numBases, saveOwnerships);
   }
   /* Write starts locations */
   if (returnValue == TRUE && fp) {
-    returnValue = mapWriteStarts(fp, ss, numStarts);
+    returnValue = lv_mapWriteStarts(fp, ss, numStarts);
   }
 
   if (returnValue == TRUE && fp) {
-    returnValue = mapWriteRuns(fp,value);
+    returnValue = lv_mapWriteRuns(fp,value);
   }
   if (fp) {
     fclose(fp);
@@ -412,7 +412,7 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, 
 }
 
 /*********************************************************
-*NAME:          mapWritePills
+*NAME:          lv_mapWritePills
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -426,7 +426,7 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, 
 *  total - Total number of pills to write
 *  saveOwnerships - Save ownerships or not
 *********************************************************/
-bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships) {
+bool lv_mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships) {
   bool returnValue; /* Value to return */
   BYTE count;       /* Looping variable */
   pillbox item;     /* Pillbox information */
@@ -435,7 +435,7 @@ bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships) {
   returnValue = TRUE;
   count = 1;
   while (count <= total && returnValue == TRUE) {
-    pillsGetPill(pb, &item, count);
+    lv_pillsGetPill(pb, &item, count);
     /* Write each pill out */
     ret = fputc(item.x, fp);
     if (ret != item.x) {
@@ -479,7 +479,7 @@ bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships) {
 }
 
 /*********************************************************
-*NAME:          mapWriteBases
+*NAME:          lv_mapWriteBases
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -493,7 +493,7 @@ bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships) {
 *  total - Total number of bases to write
 *  saveOwnerships - Save ownerships or not
 *********************************************************/
-bool mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships) {
+bool lv_mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships) {
   bool returnValue; /* Value to return */
   BYTE count;       /* Looping variable */
   base item;        /* The base item being saved */
@@ -502,7 +502,7 @@ bool mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships) {
   returnValue = TRUE;
   count = 1;
   while (count <= total && returnValue == TRUE) {
-    basesGetBase(bs, &item, count);
+    lv_basesGetBase(bs, &item, count);
     /* Write each base out */
     ret = fputc(item.x, fp);
     if (ret != item.x) {
@@ -552,7 +552,7 @@ bool mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships) {
 }
 
 /*********************************************************
-*NAME:          mapWriteStarts
+*NAME:          lv_mapWriteStarts
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -565,7 +565,7 @@ bool mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships) {
 *  ss    - Pointer to the starts structure
 *  total - Total number of starts to write
 *********************************************************/
-bool mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
+bool lv_mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
   bool returnValue; /* Value to return */
   BYTE count;       /* Looping variable */
   start item;       /* Item being saved */
@@ -575,7 +575,7 @@ bool mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
   count = 1;
   
   while (count <= total && returnValue == TRUE) {
-    startsGetStartStruct(ss, &item, count);
+    lv_startsGetStartStruct(ss, &item, count);
     /* Write each start out */
     ret = fputc(item.x, fp);
     if (ret != item.x) {
@@ -601,7 +601,7 @@ bool mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
 
 
 /*********************************************************
-*NAME:          mapWriteRuns
+*NAME:          lv_mapWriteRuns
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -613,7 +613,7 @@ bool mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
 *  fp    - File pointer
 *  value - Pointer to the map structure
 *********************************************************/
-bool mapWriteRuns(FILE *fp, map *value) {
+bool lv_mapWriteRuns(FILE *fp, map *value) {
   bool returnValue;         /* Value to return */
   bmapRun run;
   BYTE xPos;                /* Current position on the map */
@@ -626,7 +626,7 @@ bool mapWriteRuns(FILE *fp, map *value) {
   yPos = 0;
   while (yPos < 0xFF && returnValue == TRUE) {
     /* Process runs */
-    len = mapPrepareRun(value, &run, &xPos, &yPos);
+    len = lv_mapPrepareRun(value, &run, &xPos, &yPos);
     /* Write the run out */
     ret = fwrite(&run, (size_t) len, 1, fp);
     if (ret !=  1) {
@@ -640,7 +640,7 @@ bool mapWriteRuns(FILE *fp, map *value) {
 #define put_nibble(X) (!nibble_flag ? (nibble_flag = TRUE,  *nibble_data = (X)<<4) : (nibble_flag = FALSE, *nibble_data++ |= (X) & 0xF))
 
 /*********************************************************
-*NAME:          mapPrepareRun
+*NAME:          lv_mapPrepareRun
 *AUTHOR:        John Morrison
 *CREATION DATE:  9/2/99
 *LAST MODIFIED: 10/2/99
@@ -654,7 +654,7 @@ bool mapWriteRuns(FILE *fp, map *value) {
 *  xPos  - Pointer to our current X position
 *  yPos  - Pointer to our current Y position
 *********************************************************/
-int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
+int32_t lv_mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 	BYTE terrain;     /* Terrain under current Position */
 	BYTE code;        /* Map code (ie identical/differnt etc) */
   BYTE x;           /* Temp variables to hold xPos and yPos */
@@ -668,7 +668,7 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
   nibble_data = run->data;
 	
 	/* Search for non-DEEPSEA terrain */
-  while (mapGetPos(value, x, y) == DEEP_SEA) {
+  while (lv_mapGetPos(value, x, y) == DEEP_SEA) {
     if (x < 0xFF) {
       x++; 
     } else if (y < MAP_ARRAY_LAST) { 
@@ -680,13 +680,13 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
   }
   run->startx = x;
 	if (y < MAP_ARRAY_LAST) {
-    terrain = mapGetPos(value, x, y);
+    terrain = lv_mapGetPos(value, x, y);
 		while(terrain != DEEP_SEA) {
-			if (terrain == mapGetPos(value, (BYTE) (x+1), y)){
+			if (terrain == lv_mapGetPos(value, (BYTE) (x+1), y)){
         /* Two squares are the same */
 				code = MAP_CODE_IDENTICAL_START;
 				x += MAP_CODE_IDENTICAL_SKIP;			/* skip over the two squares we have found */
-				while (code < MAP_CODE_IDENTICAL_END && mapGetPos(value, x, y) == terrain) {
+				while (code < MAP_CODE_IDENTICAL_END && lv_mapGetPos(value, x, y) == terrain) {
           code++;
           x++;
         }
@@ -695,16 +695,16 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 			}	else {
 				BYTE code = 0;	/* code 0 means 1 individual square */
 				MAP_X ds = x++;	/* record where the difference run starts */
-				while (code < MAP_CODE_DIFFERENT_END  && mapGetPos(value, x, y) != DEEP_SEA && mapGetPos(value, x, y) != mapGetPos(value, (BYTE) (x+1), y)) { 
+				while (code < MAP_CODE_DIFFERENT_END  && lv_mapGetPos(value, x, y) != DEEP_SEA && lv_mapGetPos(value, x, y) != lv_mapGetPos(value, (BYTE) (x+1), y)) { 
           code++; 
           x++;
         }
 				put_nibble(code);
         while (ds<x) {
-          put_nibble(mapGetPos(value, ds++, y)); 
+          put_nibble(lv_mapGetPos(value, ds++, y)); 
         }
       }
-      terrain = mapGetPos(value, x, y);
+      terrain = lv_mapGetPos(value, x, y);
 		}
     if (nibble_flag == TRUE) {
       put_nibble(0);	/* round it up to whole number of bytes */

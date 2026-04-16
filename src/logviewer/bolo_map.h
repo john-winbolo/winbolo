@@ -105,7 +105,7 @@ typedef struct mapObj *map;
 /* Prototypes */
 
 /*********************************************************
-*NAME:          mapCreate
+*NAME:          lv_mapCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -116,10 +116,10 @@ typedef struct mapObj *map;
 *ARGUMENTS:
 *  value - Pointer to the map file
 *********************************************************/
-void mapCreate(map *value);
+void lv_mapCreate(map *value);
 
 /*********************************************************
-*NAME:          mapDestroy
+*NAME:          lv_mapDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -129,10 +129,10 @@ void mapCreate(map *value);
 *ARGUMENTS:
 *  value - Pointer to the map file
 *********************************************************/
-void mapDestroy(map *value);
+void lv_mapDestroy(map *value);
 
 /*********************************************************
-*NAME:          mapGetPos
+*NAME:          lv_mapGetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -145,10 +145,10 @@ void mapDestroy(map *value);
 *  xValue - The x co-ordinate
 *  yValue - The y co-ordinate 
 *********************************************************/
-BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue);
+BYTE lv_mapGetPos(map *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
-*NAME:          mapSetPos
+*NAME:          lv_mapSetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/11/00
 *LAST MODIFIED: 11/11/00
@@ -162,10 +162,10 @@ BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue);
 *  yValue  - The y co-ordinate 
 *  terrain - Terrain to set to
 *********************************************************/
-void mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain);
+void lv_mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain);
 
 /*********************************************************
-*NAME:          mapIsMine
+*NAME:          lv_mapIsMine
 *AUTHOR:        John Morrison
 *CREATION DATE: 22/1/99
 *LAST MODIFIED: 13/3/99
@@ -177,10 +177,10 @@ void mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain);
 *  xValue  - The x co-ordinate
 *  yValue  - The y co-ordinate 
 *********************************************************/
-bool mapIsMine(map *value, BYTE xValue, BYTE yValue);
+bool lv_mapIsMine(map *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
-*NAME:          mapReadRuns
+*NAME:          lv_mapReadRuns
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -191,10 +191,10 @@ bool mapIsMine(map *value, BYTE xValue, BYTE yValue);
 *ARGUMENTS:
 *  value - Pointer to the map data structure
 *********************************************************/
-bool mapReadRuns(map *value);
+bool lv_mapReadRuns(map *value);
 
 /*********************************************************
-*NAME:          mapProcessRun
+*NAME:          lv_mapProcessRun
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
 *LAST MODIFIED: 21/10/98
@@ -210,10 +210,10 @@ bool mapReadRuns(map *value);
 *  startX - The start x co-ordinate
 *  endX   - The end x co-ordinate
 *********************************************************/
-bool mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX);
+bool lv_mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX);
 
 /*********************************************************
-*NAME:          mapWrite
+*NAME:          lv_mapWrite
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -229,10 +229,10 @@ bool mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX);
 *  pb       - Pointer to the pillbox structure
 *  saveOwnerships - Save ownerships or not
 *********************************************************/
-bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, bool saveOwnerships);
+bool lv_mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, bool saveOwnerships);
 
 /*********************************************************
-*NAME:          mapWritePills
+*NAME:          lv_mapWritePills
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -246,10 +246,10 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss, 
 *  total   - Total number of pills to write
 *  saveOwnerships - Save ownerships or not
 *********************************************************/
-bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships);
+bool lv_mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships);
 
 /*********************************************************
-*NAME:          mapWriteStarts
+*NAME:          lv_mapWriteStarts
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -263,10 +263,10 @@ bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total, bool saveOwnerships);
 *  total - Total number of bases to write
 *  saveOwnerships - Save ownerships or not
 *********************************************************/
-bool mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships);
+bool lv_mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships);
 
 /*********************************************************
-*NAME:          mapWriteBases
+*NAME:          lv_mapWriteBases
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -279,10 +279,10 @@ bool mapWriteBases(FILE *fp, bases *bs, BYTE total, bool saveOwnerships);
 *  ss    - Pointer to the starts structure
 *  total - Total number of starts to write
 *********************************************************/
-bool mapWriteStarts(FILE *fp, starts *ss, BYTE total);
+bool lv_mapWriteStarts(FILE *fp, starts *ss, BYTE total);
 
 /*********************************************************
-*NAME:          mapWriteRuns
+*NAME:          lv_mapWriteRuns
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -294,10 +294,10 @@ bool mapWriteStarts(FILE *fp, starts *ss, BYTE total);
 *  fp    - File pointer
 *  value - Pointer to the map structure
 *********************************************************/
-bool mapWriteRuns(FILE *fp, map *value);
+bool lv_mapWriteRuns(FILE *fp, map *value);
 
 /*********************************************************
-*NAME:          mapPrepareRun
+*NAME:          lv_mapPrepareRun
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99
 *LAST MODIFIED: 9/2/99
@@ -311,6 +311,6 @@ bool mapWriteRuns(FILE *fp, map *value);
 *  xPos  - Pointer to our current X position
 *  yPos  - Pointer to our current Y position
 *********************************************************/
-int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos);
+int32_t lv_mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos);
 
 #endif /* MAP_H */

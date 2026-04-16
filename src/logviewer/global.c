@@ -19,11 +19,11 @@
 
 /* Add whatever other memory debugging or memory management code here. */
 
-Generic emalloc(size_t size) {
+Generic lv_emalloc(size_t size) {
 	return malloc(size == 0? 1 : size);
 }
 
-void efree(Generic object) {
+void lv_efree(Generic object) {
 	free(object);
 }
 

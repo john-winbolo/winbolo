@@ -33,7 +33,7 @@
 #include "backend.h"
 
 /*********************************************************
-*NAME:          soundSetup
+*NAME:          lv_soundSetup
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/10/98
 *LAST MODIFIED: 26/10/98
@@ -46,10 +46,10 @@
 *           load resources from BoloSounds.bsd DLL)
 * appWnd  - Main Window Handle (Unused, kept for API compatibility)
 *********************************************************/
-bool soundSetup(void);
+bool lv_soundSetup(void);
 
 /*********************************************************
-*NAME:          soundCleanup
+*NAME:          lv_soundCleanup
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -60,10 +60,10 @@ bool soundSetup(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void soundCleanup(void);
+void lv_soundCleanup(void);
 
 /*********************************************************
-*NAME:          soundPlayEffect
+*NAME:          lv_soundPlayEffect
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/12/98
 *LAST MODIFIED: 28/12/98
@@ -73,10 +73,10 @@ void soundCleanup(void);
 *ARGUMENTS:
 *  value       - The sound file number to play
 *********************************************************/
-void soundPlayEffect(sndEffects value);
+void lv_soundPlayEffect(sndEffects value);
 
 /*********************************************************
-*NAME:          soundKeepalive
+*NAME:          lv_soundKeepalive
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/12/98
 *LAST MODIFIED: 29/12/98
@@ -87,10 +87,10 @@ void soundPlayEffect(sndEffects value);
 *ARGUMENTS:
 *  value - TRUE to turn on FALSE to turn off.
 *********************************************************/
-void soundKeepalive(bool value);
+void lv_soundKeepalive(bool value);
 
 /*********************************************************
-*NAME:          soundIsPlayable
+*NAME:          lv_soundIsPlayable
 *AUTHOR:        John Morrison
 *CREATION DATE: 13/6/00
 *LAST MODIFIED: 13/6/00
@@ -102,6 +102,6 @@ void soundKeepalive(bool value);
 *ARGUMENTS:
 *
 *********************************************************/
-bool soundIsPlayable(void);
+bool lv_soundIsPlayable(void);
 
 #endif /* _SOUND_H  */

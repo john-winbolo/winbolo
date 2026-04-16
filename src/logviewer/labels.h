@@ -37,7 +37,7 @@
 /* Prototypes */
 
 /*********************************************************
-*NAME:          labelSetSenderLength
+*NAME:          lv_labelSetSenderLength
 *AUTHOR:        John Morrison
 *CREATION DATE:  2/2/99
 *LAST MODIFIED:  2/2/99
@@ -47,10 +47,10 @@
 *ARGUMENTS:
 *  isLengthShort - New Length
 *********************************************************/
-void labelSetSenderLength(labelLen isLengthShort);
+void lv_labelSetSenderLength(labelLen isLengthShort);
 
 /*********************************************************
-*NAME:          labelSetTankLength
+*NAME:          lv_labelSetTankLength
 *AUTHOR:        John Morrison
 *CREATION DATE:  2/2/99
 *LAST MODIFIED:  2/2/99
@@ -60,10 +60,10 @@ void labelSetSenderLength(labelLen isLengthShort);
 *ARGUMENTS:
 *  isLengthShort - New Length
 *********************************************************/
-void labelSetTankLength(labelLen isLengthShort);
+void lv_labelSetTankLength(labelLen isLengthShort);
 
 /*********************************************************
-*NAME:          labelSetLabelOwnTank
+*NAME:          lv_labelSetLabelOwnTank
 *AUTHOR:        John Morrison
 *CREATION DATE:  2/2/99
 *LAST MODIFIED:  2/2/99
@@ -73,10 +73,10 @@ void labelSetTankLength(labelLen isLengthShort);
 *ARGUMENTS:
 *  labelOwn - TRUE if you should label your own tank
 *********************************************************/
-void labelSetLabelOwnTank(bool labelOwn);
+void lv_labelSetLabelOwnTank(bool labelOwn);
 
 /*********************************************************
-*NAME:          labelMakeMessage
+*NAME:          lv_labelMakeMessage
 *AUTHOR:        John Morrison
 *CREATION DATE:  2/2/99
 *LAST MODIFIED:  2/2/99
@@ -88,10 +88,10 @@ void labelSetLabelOwnTank(bool labelOwn);
 *  name - The tank name
 *  loc  - The location of the tank
 *********************************************************/
-void labelMakeMessage(char *res, char *name, char *loc);
+void lv_labelMakeMessage(char *res, char *name, char *loc);
 
 /*********************************************************
-*NAME:          labelMakeTankLabel
+*NAME:          lv_labelMakeTankLabel
 *AUTHOR:        John Morrison
 *CREATION DATE:  2/2/99
 *LAST MODIFIED:  2/2/99
@@ -104,6 +104,6 @@ void labelMakeMessage(char *res, char *name, char *loc);
 *  loc   - The location of the tank
 *  isOwn - Is this tank your own
 *********************************************************/
-void labelMakeTankLabel(char *res, char *name, char *loc, bool isOwn);
+void lv_labelMakeTankLabel(char *res, char *name, char *loc, bool isOwn);
 
 #endif /* LABELS_H */

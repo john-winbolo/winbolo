@@ -92,7 +92,7 @@ typedef enum {
 /* Prototypes */
 
 /*********************************************************
-*NAME:          messageCreate
+*NAME:          lv_messageCreate
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -102,10 +102,10 @@ typedef enum {
 *ARGUMENTS:
 *
 *********************************************************/
-void messageCreate(void);
+void lv_messageCreate(void);
 
 /*********************************************************
-*NAME:          messageDestroy
+*NAME:          lv_messageDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -116,7 +116,7 @@ void messageCreate(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void messageDestroy(void);
+void lv_messageDestroy(void);
 
 /*********************************************************
 *NAME:          clientMessageAdd
@@ -153,7 +153,7 @@ void clientMessageAdd(messageType msgType, char *top, char *bottom);
 void serverMessageAdd(messageType msgType, char *top, char *bottom);
 
 /*********************************************************
-*NAME:          messageAdd
+*NAME:          lv_messageAdd
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -167,10 +167,10 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom);
 *  top     - The message to print in the top line
 *  bottom  - The message to print in the bottom line
 *********************************************************/
-void messageAdd(messageType msgType, char *top, char *bottom);
+void lv_messageAdd(messageType msgType, char *top, char *bottom);
 
 /*********************************************************
-*NAME:          messageAddItem
+*NAME:          lv_messageAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -181,10 +181,10 @@ void messageAdd(messageType msgType, char *top, char *bottom);
 *  top    - The message to print in the top line
 *  bottom - The message to print in the bottom line
 *********************************************************/
-void messageAddItem(char *top, char *bottom);
+void lv_messageAddItem(char *top, char *bottom);
 
 /*********************************************************
-*NAME:          messageUpdate
+*NAME:          lv_messageUpdate
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -194,10 +194,10 @@ void messageAddItem(char *top, char *bottom);
 *ARGUMENTS:
 *
 *********************************************************/
-void messageUpdate(void);
+void lv_messageUpdate(void);
 
 /*********************************************************
-*NAME:          messageGetMessage
+*NAME:          lv_messageGetMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/1/98
 *LAST MODIFIED: 1/1/98
@@ -208,10 +208,10 @@ void messageUpdate(void);
 *  top    - The message to print in the top line
 *  bottom - The message to print in the bottom line
 *********************************************************/
-void messageGetMessage(char *top, char *bottom);
+void lv_messageGetMessage(char *top, char *bottom);
 
 /*********************************************************
-*NAME:          messageSetNewswire
+*NAME:          lv_messageSetNewswire
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -221,10 +221,10 @@ void messageGetMessage(char *top, char *bottom);
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetNewswire(bool isShown);
+void lv_messageSetNewswire(bool isShown);
 
 /*********************************************************
-*NAME:          messageSetAssistant
+*NAME:          lv_messageSetAssistant
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -234,10 +234,10 @@ void messageSetNewswire(bool isShown);
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetAssistant(bool isShown);
+void lv_messageSetAssistant(bool isShown);
 
 /*********************************************************
-*NAME:          messageSetAI
+*NAME:          lv_messageSetAI
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -247,10 +247,10 @@ void messageSetAssistant(bool isShown);
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetAI(bool isShown);
+void lv_messageSetAI(bool isShown);
 
 /*********************************************************
-*NAME:          messageSetNetwork
+*NAME:          lv_messageSetNetwork
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -260,10 +260,10 @@ void messageSetAI(bool isShown);
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetNetwork(bool isShown);
+void lv_messageSetNetwork(bool isShown);
 
 /*********************************************************
-*NAME:          messageSetNetStatus
+*NAME:          lv_messageSetNetStatus
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/6/00
 *LAST MODIFIED: 1/6/00
@@ -273,10 +273,10 @@ void messageSetNetwork(bool isShown);
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetNetStatus(bool isShown);
+void lv_messageSetNetStatus(bool isShown);
 
 /*********************************************************
-*NAME:          messageIsNewMessage
+*NAME:          lv_messageIsNewMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED: 26/11/99
@@ -286,10 +286,10 @@ void messageSetNetStatus(bool isShown);
 *ARGUMENTS:
 *
 *********************************************************/
-bool messageIsNewMessage();
+bool lv_messageIsNewMessage();
 
 /*********************************************************
-*NAME:          messageGetNewMessage
+*NAME:          lv_messageGetNewMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED: 26/11/99
@@ -301,6 +301,6 @@ bool messageIsNewMessage();
 *  dest         - Destination for the message
 *  playerBitmap - Bitmap of players that recieved it
 *********************************************************/
-BYTE messageGetNewMessage(char *dest, unsigned long **playerBitmap);
+BYTE lv_messageGetNewMessage(char *dest, unsigned long **playerBitmap);
 
 #endif /* MESSAGE_H */

@@ -17,6 +17,8 @@
 
 #include <stdbool.h>
 
+struct LogViewerState;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -25,31 +27,31 @@ extern "C" {
  * Initialize the dialogs module.
  * Loads saved dialog state from preferences.
  */
-void imgui_dialogs_init(void);
+void lv_imgui_dialogs_init(struct LogViewerState *lv);
 
 /**
  * Render all open dialogs.
  * Call this every frame after ImGui newframe.
  */
-void imgui_dialogs_render(void);
+void lv_imgui_dialogs_render(void);
 
 /**
  * Save dialog state to preferences.
  * Call this on application shutdown.
  */
-void imgui_dialogs_save(void);
+void lv_imgui_dialogs_save(void);
 
 /**
  * Show the Team Colours dialog.
  * Allows user to assign colours to each player team.
  */
-void imgui_show_team_colours_dialog(void);
+void lv_imgui_show_team_colours_dialog(void);
 
 /**
  * Show the About dialog.
  * Displays version and copyright information.
  */
-void imgui_show_about_dialog(void);
+void lv_imgui_show_about_dialog(void);
 
 #ifdef __cplusplus
 }

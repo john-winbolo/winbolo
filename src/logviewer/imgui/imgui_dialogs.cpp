@@ -28,14 +28,14 @@
 #include <SDL3/SDL.h>
 #endif
 
-/* External functions from main.c/backend */
 extern "C" {
-    /* Team colours array - defined in main.c */
-    extern unsigned char tc[17];
+    #include "logviewer.h"
 
     /* Version info - from backend or resource */
-    extern const char* g_version_string;
+    extern const char* lv_g_version_string;
 }
+
+static LogViewerState *s_lv = nullptr;
 
 /* Constants */
 #define MAX_PLAYERS 16
@@ -85,7 +85,8 @@ static void save_team_colours_to_tc(void);
 /**
  * Initialize the dialogs module.
  */
-void imgui_dialogs_init(void) {
+void lv_imgui_dialogs_init(struct LogViewerState *lv) {
+    s_lv = lv;
     char val[256];
 
     /* Load team colours from preferences */
@@ -98,7 +99,7 @@ void imgui_dialogs_init(void) {
         char def_val[16];
         snprintf(def_val, sizeof(def_val), "%d", def_colours[i]);
         
-        platform_config_get_string("LOGVIEWER", key, def_val, val, sizeof(val));
+        lv_platform_config_get_string("LOGVIEWER", key, def_val, val, sizeof(val));
         s_team_colours[i] = atoi(val);
         if (s_team_colours[i] < 0 || s_team_colours[i] >= NUM_COLOURS) {
             s_team_colours[i] = def_colours[i];
@@ -106,7 +107,7 @@ void imgui_dialogs_init(void) {
     }
     
     /* Neutral colour */
-    platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
+    lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
     s_team_colours[16] = atoi(val);
     if (s_team_colours[16] < 0 || s_team_colours[16] >= NUM_COLOURS) {
         s_team_colours[16] = 16;
@@ -118,7 +119,7 @@ void imgui_dialogs_init(void) {
 /**
  * Render all open dialogs.
  */
-void imgui_dialogs_render(void) {
+void lv_imgui_dialogs_render(void) {
     /* Open popups at the start of the frame (outside of menu context) */
     static bool was_team_colours_open = false;
     static bool was_about_open = false;
@@ -146,7 +147,7 @@ void imgui_dialogs_render(void) {
 /**
  * Save dialog state to preferences.
  */
-void imgui_dialogs_save(void) {
+void lv_imgui_dialogs_save(void) {
     char val[64];
 
     /* Save team colours */
@@ -154,21 +155,21 @@ void imgui_dialogs_save(void) {
         char key[64];
         snprintf(key, sizeof(key), "Team Colour %d", i + 1);
         snprintf(val, sizeof(val), "%d", s_team_colours[i]);
-        platform_config_set_string("LOGVIEWER", key, val);
+        lv_platform_config_set_string("LOGVIEWER", key, val);
     }
     
     /* Neutral colour */
     snprintf(val, sizeof(val), "%d", s_team_colours[16]);
-    platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+    lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
     
     /* Save to disk */
-    platform_config_save();
+    lv_platform_config_save();
 }
 
 /**
  * Show the Team Colours dialog.
  */
-void imgui_show_team_colours_dialog(void) {
+void lv_imgui_show_team_colours_dialog(void) {
     /* Load current colours from tc array */
     load_team_colours_from_tc();
     s_show_team_colours = true;
@@ -178,7 +179,7 @@ void imgui_show_team_colours_dialog(void) {
 /**
  * Show the About dialog.
  */
-void imgui_show_about_dialog(void) {
+void lv_imgui_show_about_dialog(void) {
     s_show_about = true;
     /* OpenPopup will be called in render function */
 }
@@ -188,16 +189,16 @@ void imgui_show_about_dialog(void) {
  * ============================================================================ */
 
 static void load_team_colours_from_tc(void) {
-    /* Copy from global tc array */
+    /* Copy from LogViewerState tc array */
     for (int i = 0; i < 17; i++) {
-        s_team_colours[i] = (int)tc[i];
+        s_team_colours[i] = (int)s_lv->tc[i];
     }
 }
 
 static void save_team_colours_to_tc(void) {
-    /* Copy to global tc array */
+    /* Copy to LogViewerState tc array */
     for (int i = 0; i < 17; i++) {
-        tc[i] = (unsigned char)s_team_colours[i];
+        s_lv->tc[i] = (unsigned char)s_team_colours[i];
     }
 }
 
@@ -269,12 +270,12 @@ static void render_team_colours_dialog(void) {
                 char val[16];
                 snprintf(key, sizeof(key), "Team Colour %d", i + 1);
                 snprintf(val, sizeof(val), "%d", s_team_colours[i]);
-                platform_config_set_string("LOGVIEWER", key, val);
+                lv_platform_config_set_string("LOGVIEWER", key, val);
             }
             char val[16];
             snprintf(val, sizeof(val), "%d", s_team_colours[16]);
-            platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
-            platform_config_save();
+            lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+            lv_platform_config_save();
             
             s_show_team_colours = false;
             ImGui::CloseCurrentPopup();

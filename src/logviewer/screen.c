@@ -54,13 +54,13 @@
 /* File-scope pointer to the central LogViewerState */
 static LogViewerState *g_lv = NULL;
 
-void screenSetState(LogViewerState *lv) { g_lv = lv; }
-LogViewerState *screenGetState(void) { return g_lv; }
+void lv_screenSetState(LogViewerState *lv) { g_lv = lv; }
+LogViewerState *lv_screenGetState(void) { return g_lv; }
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
-BYTE screenGetXOffset(void) { return g_lv->xOffset; }
-BYTE screenGetYOffset(void) { return g_lv->yOffset; }
-bool screenGetFastForwarding(void) { return g_lv->fastForwarding; }
+BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
+BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
+bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 
 // Some prototypes to cleanup and document
 
@@ -68,16 +68,16 @@ bool logIsEOF();
 
 int logReadBytes(BYTE *buff, int len);
 
-void updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x, BYTE y, BYTE armour, BYTE shells, BYTE mines, bool inTank);
+void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x, BYTE y, BYTE armour, BYTE shells, BYTE mines, bool inTank);
 
-bool processSnapshot();
-bool logLoad(char *fileName, int memoryBufferSize);
-void frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMinor, BYTE versionRevision, char *mapName, BYTE gameType, bool hiddenMines, BYTE aiType, int32_t startDelay, int32_t timeLimit, BYTE *wbnKey, int32_t startTime);
-void startOfLog();
-void windowRemoveEvents();
+bool lv_processSnapshot();
+bool lv_logLoad(char *fileName, int memoryBufferSize);
+void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMinor, BYTE versionRevision, char *mapName, BYTE gameType, bool hiddenMines, BYTE aiType, int32_t startDelay, int32_t timeLimit, BYTE *wbnKey, int32_t startTime);
+void lv_startOfLog();
+void lv_windowRemoveEvents();
 
 /*********************************************************
-*NAME:          screenCalcSquare
+*NAME:          lv_screenCalcSquare
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED:  1/11/99
@@ -88,7 +88,7 @@ void windowRemoveEvents();
 *  xValue - The x co-ordinate
 *  yValue - The y co-ordinate
 *********************************************************/
-BYTE screenCalcSquare(BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
+BYTE lv_screenCalcSquare(BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
   baseAlliance ba;  /* The allience of a base */
   BYTE returnValue; /* Value to return */
   BYTE currentPos;
@@ -101,17 +101,17 @@ BYTE screenCalcSquare(BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
   BYTE below;
   BYTE belowRight;
 
-int a = (scrY*screenGetSizeX())+scrX ;
+int a = (scrY*lv_screenGetSizeX())+scrX ;
 
   if (a > 1989) {
     above = 1;
   }
   *((*g_lv->mineView).mineItem+a) = FALSE;
   /* Set up Items */
-  if ((pillsExistPos(&g_lv->pb,xValue,yValue)) == TRUE) {
-    returnValue = pillsGetScreenHealth(&g_lv->pb, xValue, yValue);
-  } else if ((basesExistPos(&g_lv->bs,xValue,yValue)) == TRUE) {
-     ba = basesGetAlliancePos(&g_lv->bs, xValue, yValue);
+  if ((lv_pillsExistPos(&g_lv->pb,xValue,yValue)) == TRUE) {
+    returnValue = lv_pillsGetScreenHealth(&g_lv->pb, xValue, yValue);
+  } else if ((lv_basesExistPos(&g_lv->bs,xValue,yValue)) == TRUE) {
+     ba = lv_basesGetAlliancePos(&g_lv->bs, xValue, yValue);
     switch (ba) {
     case baseOwnGood:
       returnValue = BASE_GOOD;
@@ -123,7 +123,7 @@ int a = (scrY*screenGetSizeX())+scrX ;
       returnValue = BASE_NEUTRAL;
       break;
     case baseDead:
-      if (basesAmOwner(&g_lv->bs, playersGetSelf(), xValue, yValue) == TRUE) {
+      if (lv_basesAmOwner(&g_lv->bs, lv_playersGetSelf(), xValue, yValue) == TRUE) {
         returnValue = BASE_GOOD;
       } else {
         returnValue = BASE_EVIL;
@@ -135,8 +135,8 @@ int a = (scrY*screenGetSizeX())+scrX ;
       returnValue = BASE_EVIL;
     }
   }  else {
-    currentPos = mapGetPos(&g_lv->mp,xValue,yValue);
-    if (mapIsMine(&g_lv->mp, xValue, yValue) == TRUE) {
+    currentPos = lv_mapGetPos(&g_lv->mp,xValue,yValue);
+    if (lv_mapIsMine(&g_lv->mp, xValue, yValue) == TRUE) {
       *((*g_lv->mineView).mineItem+a) = TRUE;
       if (currentPos != DEEP_SEA) {
         currentPos = currentPos - MINE_SUBTRACT;
@@ -145,74 +145,74 @@ int a = (scrY*screenGetSizeX())+scrX ;
       *((*g_lv->mineView).mineItem+a) = FALSE;
     }
 
-    if (basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
       aboveLeft = ROAD;
     } else {
-      aboveLeft = mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
+      aboveLeft = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
       if (aboveLeft >= MINE_START && aboveLeft <= MINE_END) {
         aboveLeft = aboveLeft - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue-1)) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue-1)) == TRUE) {
       above = ROAD;
     } else {
-      above = mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue-1));
+      above = lv_mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue-1));
       if (above >= MINE_START && above <= MINE_END) {
         above = above - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
       aboveRight = ROAD;
     } else {
-      aboveRight = mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
+      aboveRight = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
       if (aboveRight >= MINE_START && aboveRight <= MINE_END) {
         aboveRight = aboveRight - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&g_lv->bs, (BYTE) (xValue-1), yValue) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue-1), yValue) == TRUE) {
       leftPos = ROAD;
     } else {
-      leftPos = mapGetPos(&g_lv->mp,(BYTE) (xValue-1),yValue);
+      leftPos = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue-1),yValue);
       if (leftPos >= MINE_START && leftPos <= MINE_END) {
         leftPos = leftPos - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&g_lv->bs, (BYTE) (xValue+1), yValue) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue+1), yValue) == TRUE) {
       rightPos = ROAD;
     } else {
-      rightPos = mapGetPos(&g_lv->mp,(BYTE) (xValue+1),yValue);
+      rightPos = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue+1),yValue);
       if (rightPos >= MINE_START && rightPos <= MINE_END) {
         rightPos = rightPos - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
       belowLeft = ROAD;
     } else {
-      belowLeft = mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
+      belowLeft = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
       if (belowLeft >= MINE_START && belowLeft <= MINE_END) {
         belowLeft = belowLeft - MINE_SUBTRACT;
       }
     }
 
 
-    if (basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue+1)) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue+1)) == TRUE) {
       below = ROAD;
     } else {
-      below = mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue+1));
+      below = lv_mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue+1));
       if (below >= MINE_START && below <= MINE_END) {
         below = below - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
+    if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
       belowRight = ROAD;
     } else {
-      belowRight = mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
+      belowRight = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
       if (belowRight >= MINE_START && belowRight <= MINE_END) {
         belowRight = belowRight - MINE_SUBTRACT;
       }
@@ -220,22 +220,22 @@ int a = (scrY*screenGetSizeX())+scrX ;
 
     switch (currentPos) {
     case ROAD:
-      returnValue = screenCalcRoad(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
+      returnValue = lv_screenCalcRoad(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
       break;
     case BUILDING:
-      returnValue = screenCalcBuilding(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
+      returnValue = lv_screenCalcBuilding(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
       break;
     case FOREST:
-      returnValue = screenCalcForest(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
+      returnValue = lv_screenCalcForest(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
       break;
     case RIVER:
-      returnValue = screenCalcRiver(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
+      returnValue = lv_screenCalcRiver(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
       break;
     case DEEP_SEA:
-      returnValue = screenCalcDeepSea(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
+      returnValue = lv_screenCalcDeepSea(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
       break;
     case BOAT:
-      returnValue = screenCalcBoat(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
+      returnValue = lv_screenCalcBoat(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
       break;
     default:
       returnValue = currentPos;
@@ -246,7 +246,7 @@ int a = (scrY*screenGetSizeX())+scrX ;
 }
 
 /*********************************************************
-*NAME:          screenUpdateView
+*NAME:          lv_screenUpdateView
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 29/10/98
@@ -256,11 +256,11 @@ int a = (scrY*screenGetSizeX())+scrX ;
 *ARGUMENTS:
 * value - The update type (Helps in optimisations)
 *********************************************************/
-void screenUpdateView(updateType value) {
+void lv_screenUpdateView(updateType value) {
   BYTE count;   /* Looping Variables */
   BYTE count2;
-  int ssx = screenGetSizeX();
-  int ssy = screenGetSizeY();
+  int ssx = lv_screenGetSizeX();
+  int ssy = lv_screenGetSizeY();
 
   if (g_lv->logLoaded == FALSE) {
     return;
@@ -280,7 +280,7 @@ void screenUpdateView(updateType value) {
 
   for (count=0;count < ssx; count++) {
     for (count2=0;count2 < ssy; count2++) {
-      *((*g_lv->view).screenItem+(ssx*count2)+count) = screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
+      *((*g_lv->view).screenItem+(ssx*count2)+count) = lv_screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
     }
   }
 }
@@ -288,7 +288,7 @@ void screenUpdateView(updateType value) {
 
 
 /*********************************************************
-*NAME:          screenSetup
+*NAME:          lv_screenSetup
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -299,7 +299,7 @@ void screenUpdateView(updateType value) {
 *ARGUMENTS:
 *
 *********************************************************/
-void screenSetup() {
+void lv_screenSetup() {
   int a = 0;
   g_lv->gmeStartDelay = 0;
   g_lv->gmeLength = UNLIMITED_GAME_TIME;
@@ -307,36 +307,36 @@ void screenSetup() {
   g_lv->logLoaded = FALSE;
   g_lv->xOffset = 127;
   g_lv->yOffset = 127;
-  mapCreate(&g_lv->mp);
-  pillsCreate(&g_lv->pb);
-  startsCreate(&g_lv->ss);
-  basesCreate(&g_lv->bs);
-  playersCreate();
-  playersSetSelf(0);
-  g_lv->shs = shellsCreate();
+  lv_mapCreate(&g_lv->mp);
+  lv_pillsCreate(&g_lv->pb);
+  lv_startsCreate(&g_lv->ss);
+  lv_basesCreate(&g_lv->bs);
+  lv_playersCreate();
+  lv_playersSetSelf(0);
+  g_lv->shs = lv_shellsCreate();
   if (g_lv->view != NULL) {
     free((*g_lv->view).screenItem);
     Dispose(g_lv->view);
   }
   New(g_lv->view);
   if (g_lv->view != NULL) {
-    (*g_lv->view).screenItem = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
+    (*g_lv->view).screenItem = malloc((lv_screenGetSizeX()+2) * (lv_screenGetSizeY()+2));
   }
   if (g_lv->mineView != NULL) {
     free((*g_lv->mineView).mineItem);
     free(g_lv->mineView);
   }
-  a = (screenGetSizeX()+1) * (screenGetSizeY()+1);
+  a = (lv_screenGetSizeX()+1) * (lv_screenGetSizeY()+1);
   New(g_lv->mineView);
   if (g_lv->mineView != NULL) {
     (*g_lv->mineView).mineItem = malloc(a * sizeof(bool));
   }
 
-  screenUpdateView(redraw);
+  lv_screenUpdateView(redraw);
 }
 
 /*********************************************************
-*NAME:          screenDestroy
+*NAME:          lv_screenDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -347,26 +347,26 @@ void screenSetup() {
 *ARGUMENTS:
 *
 *********************************************************/
-void screenDestroy() {
+void lv_screenDestroy() {
   if (g_lv->mp != NULL) {
-    mapDestroy(&g_lv->mp);
+    lv_mapDestroy(&g_lv->mp);
     g_lv->mp = NULL;
   }
   if (g_lv->pb != NULL) {
-    pillsDestroy(&g_lv->pb);
+    lv_pillsDestroy(&g_lv->pb);
     g_lv->pb = NULL;
   }
   if (g_lv->ss != NULL) {
-    startsDestroy(&g_lv->ss);
+    lv_startsDestroy(&g_lv->ss);
     g_lv->ss = NULL;
   }
   if (g_lv->bs != NULL) {
-    basesDestroy(&g_lv->bs);
+    lv_basesDestroy(&g_lv->bs);
     g_lv->bs = NULL;
   }
-  playersDestroy();
+  lv_playersDestroy();
   if (g_lv->shs != NULL) {
-    shellsDestroy(&g_lv->shs);
+    lv_shellsDestroy(&g_lv->shs);
     g_lv->shs = NULL;
   }
   if (g_lv->view != NULL) {
@@ -383,11 +383,11 @@ void screenDestroy() {
   g_lv->logLoaded = FALSE;
 }
 
-void frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, int edgeX, int edgeY);
+void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, int edgeX, int edgeY);
 
 
 /*********************************************************
-*NAME:          screenUpdate
+*NAME:          lv_screenUpdate
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -397,32 +397,32 @@ void frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *t
 *ARGUMENTS:
 *  value - Pointer to the starts structure
 *********************************************************/
-void screenUpdate(updateType value) {
+void lv_screenUpdate(updateType value) {
   screenTanks st;
   screenBullets sb;
   screenLgm sl;
 
 
-  screenLgmCreate(&sl);
-  sb = screenBulletsCreate();
-  screenTanksCreate(&st);
+  lv_screenLgmCreate(&sl);
+  sb = lv_screenBulletsCreate();
+  lv_screenTanksCreate(&st);
 
   if (g_lv->logLoaded == FALSE) {
     return;
   }
 
-  screenUpdateView(value);
-  playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) (g_lv->xOffset + screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + screenGetSizeY()));
-  shellsCalcScreenBullets(&g_lv->shs, &sb, g_lv->xOffset, (BYTE) (g_lv->xOffset + screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + screenGetSizeY()));
-  playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) (g_lv->xOffset + screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + screenGetSizeY()));
-  frontEndDrawMainScreen(&g_lv->view, &g_lv->mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
-  screenTanksDestroy(&st);
-  screenBulletsDestroy(&sb);
-  screenLgmDestroy(&sl);
+  lv_screenUpdateView(value);
+  lv_playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) (g_lv->xOffset + lv_screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + lv_screenGetSizeY()));
+  lv_shellsCalcScreenBullets(&g_lv->shs, &sb, g_lv->xOffset, (BYTE) (g_lv->xOffset + lv_screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + lv_screenGetSizeY()));
+  lv_playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) (g_lv->xOffset + lv_screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + lv_screenGetSizeY()));
+  lv_frontEndDrawMainScreen(&g_lv->view, &g_lv->mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
+  lv_screenTanksDestroy(&st);
+  lv_screenBulletsDestroy(&sb);
+  lv_screenLgmDestroy(&sl);
 }
 
 /*********************************************************
-*NAME:          screenSetPos
+*NAME:          lv_screenSetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -434,15 +434,15 @@ void screenUpdate(updateType value) {
 *  yValue - The Y co-ordinate
 *  terrain - Terraint to set to
 *********************************************************/
-void screenSetPos(BYTE xValue, BYTE yValue, BYTE terrain) {
-  mapSetPos(&g_lv->mp, xValue, yValue, terrain);
-  basesDeleteBase(&g_lv->bs, xValue, yValue);
-  startsDeleteStart(&g_lv->ss, xValue, yValue);
-  pillsDeletePill(&g_lv->pb, xValue, yValue);
+void lv_screenSetPos(BYTE xValue, BYTE yValue, BYTE terrain) {
+  lv_mapSetPos(&g_lv->mp, xValue, yValue, terrain);
+  lv_basesDeleteBase(&g_lv->bs, xValue, yValue);
+  lv_startsDeleteStart(&g_lv->ss, xValue, yValue);
+  lv_pillsDeletePill(&g_lv->pb, xValue, yValue);
 }
 
 /*********************************************************
-*NAME:          screenGetPos
+*NAME:          lv_screenGetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -455,20 +455,20 @@ void screenSetPos(BYTE xValue, BYTE yValue, BYTE terrain) {
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
+BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
-  if (xValue < screenGetSizeX() && yValue < screenGetSizeY()) {
-      returnValue = *((*g_lv->view).screenItem+(yValue*screenGetSizeX()+xValue));
+  if (xValue < lv_screenGetSizeX() && yValue < lv_screenGetSizeY()) {
+      returnValue = *((*g_lv->view).screenItem+(yValue*lv_screenGetSizeX()+xValue));
   }
   return returnValue;
 }
 
 #include "log.h"
-void windowAddEvent(int eventType, char *msg);
+void lv_windowAddEvent(int eventType, char *msg);
 
 
-void screenProcessLog(unsigned short numEvents) {
+void lv_screenProcessLog(unsigned short numEvents) {
   unsigned short count = 0;
   BYTE code;
   BYTE opt1, opt2, opt3, opt4, opt5, px, py, frame, onBoat;
@@ -489,67 +489,67 @@ void screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt5, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
-      utilPtoCString(mem, name);
+      lv_utilPtoCString(mem, name);
       if (g_lv->loadedLogVersion == LOG_VERSION_V0) {
         /* Version 0: opt2-opt5 are IP address octets */
         snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
-        dnsLookup(mem, str, sizeof(str));
+        lv_dnsLookup(mem, str, sizeof(str));
         strncpy(mem, str, sizeof(mem) - 1);
         mem[sizeof(mem) - 1] = '\0';
       } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
         /* Version 1: opt2-opt3 are 2-char country code, opt4-opt5 unused */
         snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
       }
-      playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE);
+      lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE);
       break;
     case log_PlayerQuit:
       logReadBytes(&opt1, 1);
-      playersLeaveGame(opt1, TRUE);
+      lv_playersLeaveGame(opt1, TRUE);
       break;
     case log_LostMan:
       logReadBytes(&opt1, 1);
-      playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str);
       strncat(str, " just lost his builder.", sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str);
+      lv_windowAddEvent(0, str);
       break;
     case log_MapChange:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      mapSetPos(&g_lv->mp, opt1, opt2, opt3);
+      lv_mapSetPos(&g_lv->mp, opt1, opt2, opt3);
       break;
     case log_ChangeName:
       logReadBytes(&opt1, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
-      utilPtoCString(mem, str);
-      playersSetPlayerName(opt1, str);
+      lv_utilPtoCString(mem, str);
+      lv_playersSetPlayerName(opt1, str);
       break;
     case log_AllyRequest:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      playersGetPlayerName(opt1, str);
-      playersGetPlayerName(opt2, mem);
+      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt2, mem);
       strncat(str, " just requested alliance with ", sizeof(str) - strlen(str) - 1);
       strncat(str, mem, sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str);
+      lv_windowAddEvent(0, str);
       break;
     case log_AllyAccept:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      playersAcceptAlliance(opt1, opt2);
-      playersGetPlayerName(opt1, str);
-      playersGetPlayerName(opt2, mem);
+      lv_playersAcceptAlliance(opt1, opt2);
+      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt2, mem);
       strncat(str, " just accepted alliance with ", sizeof(str) - strlen(str) - 1);
       strncat(str, mem, sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str);
+      lv_windowAddEvent(0, str);
       break;
     case log_AllyLeave:
       logReadBytes(&opt1, 1);
-      playersLeaveAlliance(opt1);
-      playersGetPlayerName(opt1, str);
+      lv_playersLeaveAlliance(opt1);
+      lv_playersGetPlayerName(opt1, str);
       strncat(str, " just left alliance", sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str);
+      lv_windowAddEvent(0, str);
       break;
     case log_SoundBuild:
     case log_SoundFarm:
@@ -588,7 +588,7 @@ void screenProcessLog(unsigned short numEvents) {
       } else {
          opt3 = manDyingNear;
       }
-      soundDist(opt3, opt1, opt2);
+      lv_soundDist(opt3, opt1, opt2);
       break;
     case log_PlayerLocation:
       logReadBytes(&opt1, 1);
@@ -596,10 +596,10 @@ void screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
       logReadBytes(&opt5, 1);
-      utilGetNibbles(opt4, &px, &py);
-      utilGetNibbles(opt5, &frame, &onBoat);
+      lv_utilGetNibbles(opt4, &px, &py);
+      lv_utilGetNibbles(opt5, &frame, &onBoat);
       if (opt2 != 0) {
-        playersUpdateTank(opt1, opt2, opt3, px, py, frame, onBoat);
+        lv_playersUpdateTank(opt1, opt2, opt3, px, py, frame, onBoat);
       }
       break;
     case log_Shell:
@@ -607,132 +607,132 @@ void screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
-      utilGetNibbles(opt3, &px, &py);
-      shellsAddItem(&g_lv->shs, opt1, opt2, px, py, opt4);
+      lv_utilGetNibbles(opt3, &px, &py);
+      lv_shellsAddItem(&g_lv->shs, opt1, opt2, px, py, opt4);
       break;
     case log_LgmLocation:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
-      utilGetNibbles(opt1, &onBoat, &frame);
-      utilGetNibbles(opt4, &px, &py);
-      playersUpdateLgm(onBoat, opt2, opt3, px, py, frame);
+      lv_utilGetNibbles(opt1, &onBoat, &frame);
+      lv_utilGetNibbles(opt4, &px, &py);
+      lv_playersUpdateLgm(onBoat, opt2, opt3, px, py, frame);
       break;
     case log_MessageAll:
       logReadBytes(&opt1, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
-      utilPtoCString(mem, str);
-      playersGetPlayerName(opt1, name);
+      lv_utilPtoCString(mem, str);
+      lv_playersGetPlayerName(opt1, name);
       snprintf(mem, sizeof(mem), "Message to all from %s: %s", name, str);
-      windowAddEvent(0, mem);
+      lv_windowAddEvent(0, mem);
       break;
     case log_MessagePlayers:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
-      utilPtoCString(mem, str);
-      playersGetPlayerName(opt1, name);
-      playersGetPlayerName(opt2, name2);
+      lv_utilPtoCString(mem, str);
+      lv_playersGetPlayerName(opt1, name);
+      lv_playersGetPlayerName(opt2, name2);
       snprintf(mem, sizeof(mem), "Message from %s to %s: %s", name, name2, str);
-      windowAddEvent(0, mem);
+      lv_windowAddEvent(0, mem);
       break;
     case log_MessageServer:
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
-      utilPtoCString(mem, str);
+      lv_utilPtoCString(mem, str);
       snprintf(mem, sizeof(mem), "Server Message: %s", str);
-      windowAddEvent(0, mem);
+      lv_windowAddEvent(0, mem);
       break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      basesSetOwner(&g_lv->bs, opt1, opt2, opt3);
+      lv_basesSetOwner(&g_lv->bs, opt1, opt2, opt3);
       break;
     case log_BaseSetStock:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
-      basesSetStock(&g_lv->bs, opt1, opt2, opt3, opt4);
+      lv_basesSetStock(&g_lv->bs, opt1, opt2, opt3, opt4);
       break;
     case log_PillSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      pillsSetPillOwner(&g_lv->pb, opt1, opt2, opt3);
+      lv_pillsSetPillOwner(&g_lv->pb, opt1, opt2, opt3);
       break;
     case log_PillSetPlace:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      pillsSetPos(&g_lv->pb, opt1, opt2, opt3);
+      lv_pillsSetPos(&g_lv->pb, opt1, opt2, opt3);
       break;
     case log_PillSetHealth:
       logReadBytes(&opt1, 1);
-      utilGetNibbles(opt1, &opt2, &opt3);
-      pillsSetHealth(&g_lv->pb, opt2, opt3);
+      lv_utilGetNibbles(opt1, &opt2, &opt3);
+      lv_pillsSetHealth(&g_lv->pb, opt2, opt3);
       break;
     case log_PillSetInTank:
       logReadBytes(&opt1, 1);
-      utilGetNibbles(opt1, &opt2, &opt3);
-      pillsSetInTank(&g_lv->pb, opt2, opt3);
+      lv_utilGetNibbles(opt1, &opt2, &opt3);
+      lv_pillsSetInTank(&g_lv->pb, opt2, opt3);
       break;
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      playersGetPlayerName(opt1, mem);
-      playersGetPlayerName(opt2, str);
+      lv_playersGetPlayerName(opt1, mem);
+      lv_playersGetPlayerName(opt2, str);
       strncat(str, " just killed player ", sizeof(str) - strlen(str) - 1);
       strncat(str, mem, sizeof(str) - strlen(str) - 1);
-      windowAddEvent(0, str);
-      playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
+      lv_windowAddEvent(0, str);
+      lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
       break;
     case log_PlayerRejoin:
       logReadBytes(&opt1, 1);
-      playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str);
       snprintf(mem, sizeof(mem), "%s just rejoined game.", str);
-      windowAddEvent(0, mem);
+      lv_windowAddEvent(0, mem);
       break;
     case log_PlayerLeaving:
       logReadBytes(&opt1, 1);
-      playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str);
       snprintf(mem, sizeof(mem), "%s is leaving game.", str);
-      windowAddEvent(0, mem);
+      lv_windowAddEvent(0, mem);
       break;
     case log_PlayerDied:
       logReadBytes(&opt1, 1);
-      playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
+      lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
       break;
     default:
-      windowStop(TRUE);
+      lv_windowStop(TRUE);
       count = numEvents;
       break;
 
     }
-    blocksSetKey(code);
+    lv_blocksSetKey(code);
     count++;
   }
 }
 
-void screenRequestUpdate() {
+void lv_screenRequestUpdate() {
   /* Finally lets update our item in the frontend */
   if (g_lv->isPlaying == TRUE && g_lv->fastForwarding == FALSE) {
     if (g_lv->selectedItemType == 0) {
-      updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
+      lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
     } else if (g_lv->selectedItemType == 1) {
-      updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
+      lv_updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
     } else {
-      updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
+      lv_updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
     }
   }
 }
 
 /* Returns TRUE on log end or snapshot */
-bool screenLogTick() {
+bool lv_screenLogTick() {
   bool returnValue = FALSE;
   BYTE code;
   BYTE top;
@@ -748,8 +748,8 @@ bool screenLogTick() {
   if (g_lv->gmeLength > 0 && g_lv->gmeStartDelay == 0) {
     g_lv->gmeLength--;
   }
-  shellsDestroy(&g_lv->shs);
-  g_lv->shs = shellsCreate();
+  lv_shellsDestroy(&g_lv->shs);
+  g_lv->shs = lv_shellsCreate();
   if (g_lv->isPlaying == TRUE) {
     switch (g_lv->state) {
     case lv_lr_start:
@@ -758,12 +758,12 @@ bool screenLogTick() {
       switch (code) {
       case LOG_QUIT:
         g_lv->isPlaying = FALSE;
-        windowAddEvent(0, "End of Log File Reached");
-        finished();
+        lv_windowAddEvent(0, "End of Log File Reached");
+        lv_finished();
         returnValue = TRUE;
         break;
       case LOG_SNAPSHOT:
-        processSnapshot();
+        lv_processSnapshot();
         returnValue = TRUE;
         break;
       case LOG_NOEVENTS:
@@ -809,11 +809,11 @@ bool screenLogTick() {
       break;
     }
     if (process == TRUE) {
-      playersLgmZero();
-      screenProcessLog(len);
+      lv_playersLgmZero();
+      lv_screenProcessLog(len);
       if (g_lv->centredTank == TRUE) {
-        BYTE x = playersGetCentredX();
-        BYTE y = playersGetCentredY();
+        BYTE x = lv_playersGetCentredX();
+        BYTE y = lv_playersGetCentredY();
         BYTE newXOffset;
         BYTE newYOffset;
         if (x != 0 && y != 0 && x != 255 && y != 255) {
@@ -822,7 +822,7 @@ bool screenLogTick() {
           if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
             g_lv->xOffset = newXOffset;
             g_lv->yOffset = newYOffset;
-            screenUpdate(redraw);
+            lv_screenUpdate(redraw);
           }
         }
       }
@@ -831,7 +831,7 @@ bool screenLogTick() {
   return returnValue;
 }
 
-void screenCentreOnSelectedItem() {
+void lv_screenCentreOnSelectedItem() {
   BYTE x;
   BYTE y;
   BYTE newXOffset;
@@ -840,11 +840,11 @@ void screenCentreOnSelectedItem() {
   pillbox p;
   if (g_lv->isPlaying == TRUE && g_lv->selectedItemType != 0) {
     if (g_lv->selectedItemType == 2) {
-      pillsGetPill(&g_lv->pb, &p, (BYTE) (g_lv->selectedItem+1));
+      lv_pillsGetPill(&g_lv->pb, &p, (BYTE) (g_lv->selectedItem+1));
       x = p.x;
       y = p.y;
     } else {
-      basesGetBase(&g_lv->bs, &b, (BYTE) (g_lv->selectedItem+1));
+      lv_basesGetBase(&g_lv->bs, &b, (BYTE) (g_lv->selectedItem+1));
       x = b.x;
       y = b.y;
     }
@@ -853,12 +853,12 @@ void screenCentreOnSelectedItem() {
     if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
       g_lv->xOffset = newXOffset;
       g_lv->yOffset = newYOffset;
-      screenUpdate(redraw);
+      lv_screenUpdate(redraw);
     }
   }
 }
 
-bool processSnapshot() {
+bool lv_processSnapshot() {
   bool returnValue = TRUE;
   BYTE data[512];
   BYTE dataLenRaw;
@@ -874,8 +874,8 @@ bool processSnapshot() {
   BYTE pos;
 
   // We should add this snapshot timestamp and file location to the store so we can goto later
-  playersCopyPTeams(data);
-  snapshotAdd(&g_lv->snap, logGetCurrentPosition(), g_lv->timeRunning, blocksGetKey(), data);
+  lv_playersCopyPTeams(data);
+  lv_snapshotAdd(&g_lv->snap, lv_logGetCurrentPosition(), g_lv->timeRunning, lv_blocksGetKey(), data);
 
 
   /* Read in start delay and time limit */
@@ -892,7 +892,7 @@ bool processSnapshot() {
       returnValue = FALSE;
     } else {
       logReadBytes(data, dataLen);
-      pillsSetPillNetData(&g_lv->pb, data, dataLen);
+      lv_pillsSetPillNetData(&g_lv->pb, data, dataLen);
     }
   }
 
@@ -903,7 +903,7 @@ bool processSnapshot() {
       returnValue = FALSE;
     } else {
       logReadBytes(data, dataLen);
-      basesSetBaseNetData(&g_lv->bs, data, dataLen);
+      lv_basesSetBaseNetData(&g_lv->bs, data, dataLen);
     }
   }
   if (returnValue == TRUE) {
@@ -913,11 +913,11 @@ bool processSnapshot() {
       returnValue = FALSE;
     } else {
       logReadBytes(data, dataLen);
-      startsSetStartNetData(&g_lv->ss, data, dataLen);
+      lv_startsSetStartNetData(&g_lv->ss, data, dataLen);
     }
   }
   if (returnValue == TRUE) {
-    returnValue = mapReadRuns(&g_lv->mp);
+    returnValue = lv_mapReadRuns(&g_lv->mp);
     if (returnValue == FALSE) {
       returnValue = FALSE;
     }
@@ -930,7 +930,7 @@ bool processSnapshot() {
     dataLen = dataLenRaw;
     if (dataLen == 2) {
       /* Player is not in use */
-      playersLeaveGame(count, FALSE);
+      lv_playersLeaveGame(count, FALSE);
       // Process the dummy data
       len = logReadBytes(data, 2);
 
@@ -947,12 +947,12 @@ bool processSnapshot() {
         pos = 2;
         mx = data[pos++];
         my = data[pos++];
-        utilGetNibbles(data[pos++], &px, &py);
+        lv_utilGetNibbles(data[pos++], &px, &py);
         frame = data[pos++];
         onBoat = data[pos++];
         lgmmx = data[pos++];
         lgmmy = data[pos++];
-        utilGetNibbles(data[pos++], &lgmpx, &lgmpy);
+        lv_utilGetNibbles(data[pos++], &lgmpx, &lgmpy);
         lgmframe = data[pos++];
         /* pos is now 11 — skip the redundant dataLen byte */
         pos++;
@@ -960,7 +960,7 @@ bool processSnapshot() {
         if (pos > dataLen || *(data+pos-1) >= sizeof(name)) {
           returnValue = FALSE;
         } else {
-          utilPtoCString((char *)(data+pos-1), name);
+          lv_utilPtoCString((char *)(data+pos-1), name);
           pos += *(data+pos-1);
           pos++;
         }
@@ -969,7 +969,7 @@ bool processSnapshot() {
           if (pos > dataLen || *(data+pos-1) >= sizeof(location)) {
             returnValue = FALSE;
           } else {
-            utilPtoCString((char *)(data+pos-1), location);
+            lv_utilPtoCString((char *)(data+pos-1), location);
             pos += *(data+pos-1);
           }
         }
@@ -984,8 +984,8 @@ bool processSnapshot() {
               returnValue = FALSE;
             } else {
               allies = data+pos;
-              playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE);
-              playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
+              lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE);
+              lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
             }
           }
         }
@@ -998,7 +998,7 @@ bool processSnapshot() {
 }
 
 // Memory size in MB
-bool logLoad(char *fileName, int memoryBufferSize) {
+bool lv_logLoad(char *fileName, int memoryBufferSize) {
   char id[LENGTH_ID+1]; /* The map ID Should read "BMAPBOLO" */
   BYTE dataLen;
   BYTE logVersion;    /* Version of the map file */
@@ -1006,11 +1006,11 @@ bool logLoad(char *fileName, int memoryBufferSize) {
   int len;
   BYTE ip[4];
 
-  snapshotDestroy(&g_lv->snap);
-  g_lv->snap = snapshotCreate();
+  lv_snapshotDestroy(&g_lv->snap);
+  g_lv->snap = lv_snapshotCreate();
   g_lv->timeRunning = 0;
 
-  returnValue = blocksCreate(fileName, memoryBufferSize);
+  returnValue = lv_blocksCreate(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
     len = logReadBytes((BYTE *)id, LENGTH_ID);
     if (len != LENGTH_ID || strncmp(id,"WBOLOMOV", LENGTH_ID) != 0) {
@@ -1060,12 +1060,12 @@ bool logLoad(char *fileName, int memoryBufferSize) {
     }
   }
 
-  blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
+  lv_blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
   if (len != 1 || dataLen != LOG_SNAPSHOT) {
     returnValue = FALSE;
   } else {
-    returnValue = processSnapshot();
+    returnValue = lv_processSnapshot();
   }
 
   g_lv->logLoaded = returnValue;
@@ -1073,7 +1073,7 @@ bool logLoad(char *fileName, int memoryBufferSize) {
 }
 
 /*********************************************************
-*NAME:          screenLoadMap
+*NAME:          lv_screenLoadMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 11/11/00
@@ -1083,124 +1083,124 @@ bool logLoad(char *fileName, int memoryBufferSize) {
 *
 *ARGUMENTS:
 *********************************************************/
-bool screenLoadMap(char *fileName, int memoryBufferSize) {
+bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
   bool returnValue; /* Value to return */
 
   returnValue = FALSE;
-  blocksDestroy();
-  screenDestroy();
-  screenSetup();
-  returnValue = logLoad(fileName, memoryBufferSize);
+  lv_blocksDestroy();
+  lv_screenDestroy();
+  lv_screenSetup();
+  returnValue = lv_logLoad(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
     /* Decompress entire log so we know total size for the seek slider */
-    logDecompressAll();
+    lv_logDecompressAll();
     /* Set the game information up */
-    frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
-    screenUpdateView(redraw);
+    lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
   }
   return returnValue;
 }
 
 
-bool screenIsPlaying() {
+bool lv_screenIsPlaying() {
   return g_lv->isPlaying;
 }
 
-bool screenCloseLog() {
+bool lv_screenCloseLog() {
   g_lv->isPlaying = FALSE;
   g_lv->logLoaded = FALSE;
 
-  blocksDestroy();
-  screenDestroy();
+  lv_blocksDestroy();
+  lv_screenDestroy();
   return TRUE;
 }
 
-void screenSetOffset(BYTE x, BYTE y) {
+void lv_screenSetOffset(BYTE x, BYTE y) {
   g_lv->xOffset = x;
   g_lv->yOffset = y;
 }
-BYTE screenGetOffsetX() {
+BYTE lv_screenGetOffsetX() {
   return g_lv->xOffset;
 }
 
-BYTE screenGetOffsetY() {
+BYTE lv_screenGetOffsetY() {
   return g_lv->yOffset;
 }
 
-BYTE screenGetNumPills() {
-  return pillsGetNumPills(&g_lv->pb);
+BYTE lv_screenGetNumPills() {
+  return lv_pillsGetNumPills(&g_lv->pb);
 }
 
-BYTE screenGetNumBases() {
-  return basesGetNumBases(&g_lv->bs);
+BYTE lv_screenGetNumBases() {
+  return lv_basesGetNumBases(&g_lv->bs);
 }
 
-BYTE screenGetNumStarts() {
-  return startsGetNumStarts(&g_lv->ss);
+BYTE lv_screenGetNumStarts() {
+  return lv_startsGetNumStarts(&g_lv->ss);
 }
 
 
-bool screenSetStart(BYTE x, BYTE y) {
+bool lv_screenSetStart(BYTE x, BYTE y) {
   BYTE num;
   start s;
-  num = startsGetNumStarts(&g_lv->ss);
+  num = lv_startsGetNumStarts(&g_lv->ss);
   if (num >= MAX_STARTS) {
     return FALSE;
   }
-  basesDeleteBase(&g_lv->bs, x, y);
-  startsDeleteStart(&g_lv->ss, x, y);
-  pillsDeletePill(&g_lv->pb, x, y);
+  lv_basesDeleteBase(&g_lv->bs, x, y);
+  lv_startsDeleteStart(&g_lv->ss, x, y);
+  lv_pillsDeletePill(&g_lv->pb, x, y);
 
-  mapSetPos(&g_lv->mp, x, y, DEEP_SEA);
+  lv_mapSetPos(&g_lv->mp, x, y, DEEP_SEA);
   s.x = x;
   s.y = y;
   s.dir = 0;
-  num = startsGetNumStarts(&g_lv->ss);
-  startsSetNumStarts(&g_lv->ss, (BYTE) (num+1));
-  startsSetStart(&g_lv->ss, &s, (BYTE) (num+1));
+  num = lv_startsGetNumStarts(&g_lv->ss);
+  lv_startsSetNumStarts(&g_lv->ss, (BYTE) (num+1));
+  lv_startsSetStart(&g_lv->ss, &s, (BYTE) (num+1));
   return TRUE;
 }
 
-bool screenSetPill(BYTE x, BYTE y) {
+bool lv_screenSetPill(BYTE x, BYTE y) {
   BYTE num;
   pillbox s;
-  num = pillsGetNumPills(&g_lv->pb);
+  num = lv_pillsGetNumPills(&g_lv->pb);
   if (num >= MAX_PILLS) {
     return FALSE;
   }
-  basesDeleteBase(&g_lv->bs, x, y);
-  startsDeleteStart(&g_lv->ss, x, y);
-  pillsDeletePill(&g_lv->pb, x, y);
+  lv_basesDeleteBase(&g_lv->bs, x, y);
+  lv_startsDeleteStart(&g_lv->ss, x, y);
+  lv_pillsDeletePill(&g_lv->pb, x, y);
 
-  mapSetPos(&g_lv->mp, x, y, ROAD);
+  lv_mapSetPos(&g_lv->mp, x, y, ROAD);
   s.x = x;
   s.y = y;
   s.owner = 0xFF;
   s.armour = 15;
   s.speed = 0;
   s.inTank = FALSE;
-  num = pillsGetNumPills(&g_lv->pb);
-  pillsSetNumPills(&g_lv->pb, (BYTE) (num+1));
-  pillsSetPill(&g_lv->pb, &s, (BYTE) (num+1));
+  num = lv_pillsGetNumPills(&g_lv->pb);
+  lv_pillsSetNumPills(&g_lv->pb, (BYTE) (num+1));
+  lv_pillsSetPill(&g_lv->pb, &s, (BYTE) (num+1));
   return TRUE;
 
 }
 
-bool screenSetBase(BYTE x, BYTE y) {
+bool lv_screenSetBase(BYTE x, BYTE y) {
   BYTE num;
   base s;
 
-  num = basesGetNumBases(&g_lv->bs);
+  num = lv_basesGetNumBases(&g_lv->bs);
   if (num >= MAX_BASES) {
     return FALSE;
   }
-  basesDeleteBase(&g_lv->bs, x, y);
-  startsDeleteStart(&g_lv->ss, x, y);
-  pillsDeletePill(&g_lv->pb, x, y);
+  lv_basesDeleteBase(&g_lv->bs, x, y);
+  lv_startsDeleteStart(&g_lv->ss, x, y);
+  lv_pillsDeletePill(&g_lv->pb, x, y);
 
-  mapSetPos(&g_lv->mp, x, y, ROAD);
+  lv_mapSetPos(&g_lv->mp, x, y, ROAD);
   s.x = x;
   s.y = y;
   s.owner = 0xFF;
@@ -1209,14 +1209,14 @@ bool screenSetBase(BYTE x, BYTE y) {
   s.shells = 90;
 
 
-  num = basesGetNumBases(&g_lv->bs);
-  basesSetNumBases(&g_lv->bs, (BYTE) (num+1));
-  basesSetBase(&g_lv->bs, &s, (BYTE) (num+1));
+  num = lv_basesGetNumBases(&g_lv->bs);
+  lv_basesSetNumBases(&g_lv->bs, (BYTE) (num+1));
+  lv_basesSetBase(&g_lv->bs, &s, (BYTE) (num+1));
   return TRUE;
 }
 
 /*********************************************************
-*NAME:          screenIsMine
+*NAME:          lv_screenIsMine
 *AUTHOR:        John Morrison
 *CREATION DATE: 6/11/98
 *LAST MODIFIED: 6/11/98
@@ -1230,17 +1230,17 @@ bool screenSetBase(BYTE x, BYTE y) {
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
+bool lv_screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
   bool returnValue = FALSE; /* Value to return */
 
-  if (xValue <= screenGetSizeX() && yValue <= screenGetSizeX()) {
-    returnValue = *((*value)->mineItem+(yValue*screenGetSizeX()+xValue));
+  if (xValue <= lv_screenGetSizeX() && yValue <= lv_screenGetSizeX()) {
+    returnValue = *((*value)->mineItem+(yValue*lv_screenGetSizeX()+xValue));
   }
   return returnValue;
 }
 
 /*********************************************************
-*NAME:          screenNumPills
+*NAME:          lv_screenNumPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/12/98
 *LAST MODIFIED: 21/12/98
@@ -1250,12 +1250,12 @@ bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE screenNumPills(void) {
-  return pillsGetNumPills(&g_lv->pb);
+BYTE lv_screenNumPills(void) {
+  return lv_pillsGetNumPills(&g_lv->pb);
 }
 
 /*********************************************************
-*NAME:          screenNumBases
+*NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/12/98
 *LAST MODIFIED: 21/12/98
@@ -1265,33 +1265,33 @@ BYTE screenNumPills(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE screenNumBases(void) {
-  return basesGetNumBases(&g_lv->bs);
+BYTE lv_screenNumBases(void) {
+  return lv_basesGetNumBases(&g_lv->bs);
 }
 
 
-BYTE screenGetSizeX() {
+BYTE lv_screenGetSizeX() {
   return g_lv->screenSizeX;
 }
 
-BYTE screenGetSizeY() {
+BYTE lv_screenGetSizeY() {
   return g_lv->screenSizeY;
 }
 
 /* Forward declaration for draw.c function */
-extern void drawResizeRenderTarget(void);
+extern void lv_drawResizeRenderTarget(void);
 
-void screenSetSizeX(BYTE x) {
+void lv_screenSetSizeX(BYTE x) {
   g_lv->screenSizeX = x;
   if (g_lv->view != NULL) {
-    BYTE *newItems = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
+    BYTE *newItems = malloc((lv_screenGetSizeX()+2) * (lv_screenGetSizeY()+2));
     if (newItems != NULL) {
       free((*g_lv->view).screenItem);
       (*g_lv->view).screenItem = newItems;
     }
   }
   if (g_lv->mineView != NULL) {
-    bool *newItems = malloc((screenGetSizeX()+1) * (screenGetSizeY()+1) * sizeof(bool));
+    bool *newItems = malloc((lv_screenGetSizeX()+1) * (lv_screenGetSizeY()+1) * sizeof(bool));
     if (newItems != NULL) {
       free((*g_lv->mineView).mineItem);
       (*g_lv->mineView).mineItem = newItems;
@@ -1299,20 +1299,20 @@ void screenSetSizeX(BYTE x) {
   }
   /* Resize the render target to match the new screen size.
    * This is critical for correct mouse coordinate mapping. */
-  drawResizeRenderTarget();
+  lv_drawResizeRenderTarget();
 }
 
-void screenSetSizeY(BYTE y) {
+void lv_screenSetSizeY(BYTE y) {
   g_lv->screenSizeY = y;
   if (g_lv->view != NULL) {
-    BYTE *newItems = malloc((screenGetSizeX()+2) * (screenGetSizeY()+2));
+    BYTE *newItems = malloc((lv_screenGetSizeX()+2) * (lv_screenGetSizeY()+2));
     if (newItems != NULL) {
       free((*g_lv->view).screenItem);
       (*g_lv->view).screenItem = newItems;
     }
   }
   if (g_lv->mineView != NULL) {
-    bool *newItems = malloc((screenGetSizeX()+1) * (screenGetSizeY()+1) * sizeof(bool));
+    bool *newItems = malloc((lv_screenGetSizeX()+1) * (lv_screenGetSizeY()+1) * sizeof(bool));
     if (newItems != NULL) {
       free((*g_lv->mineView).mineItem);
       (*g_lv->mineView).mineItem = newItems;
@@ -1320,10 +1320,10 @@ void screenSetSizeY(BYTE y) {
   }
   /* Resize the render target to match the new screen size.
    * This is critical for correct mouse coordinate mapping. */
-  drawResizeRenderTarget();
+  lv_drawResizeRenderTarget();
 }
 
-void screenGetOffsets(BYTE *x, BYTE *y) {
+void lv_screenGetOffsets(BYTE *x, BYTE *y) {
   if (x != NULL) {
     *x = g_lv->xOffset;
   }
@@ -1332,7 +1332,7 @@ void screenGetOffsets(BYTE *x, BYTE *y) {
   }
 }
 
-void screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
+void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
   if (g_lv->logLoaded == FALSE) {
     return;
   }
@@ -1341,14 +1341,14 @@ void screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
   }
   g_lv->xOffset = newXOffset;
   g_lv->yOffset = newYOffset;
-  screenUpdate(redraw);
+  lv_screenUpdate(redraw);
 }
 
-void messageAdd(char *messageStr) {
-  windowAddEvent(0, messageStr);
+void lv_messageAdd(char *messageStr) {
+  lv_windowAddEvent(0, messageStr);
 }
 
-void screenGetTime(char *dest) {
+void lv_screenGetTime(char *dest) {
   double mins;
   double secs;
 
@@ -1365,7 +1365,7 @@ void screenGetTime(char *dest) {
 }
 
 
-void screenMouseCentreClick(int xPos, int yPos) {
+void lv_screenMouseCentreClick(int xPos, int yPos) {
   div_t dt;        /* Used for integer division */
   int xClick;
   int yClick;
@@ -1379,10 +1379,10 @@ void screenMouseCentreClick(int xPos, int yPos) {
   yClick = (int) (dt.quot);
   g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
   g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
-  screenUpdate(redraw);
+  lv_screenUpdate(redraw);
 }
 
-void screenMouseInformationClick(int xPos, int yPos) {
+void lv_screenMouseInformationClick(int xPos, int yPos) {
   div_t dt;        /* Used for integer division */
   int xClick;
   int yClick;
@@ -1402,28 +1402,28 @@ void screenMouseInformationClick(int xPos, int yPos) {
   mapY = (BYTE) (g_lv->yOffset + yClick);
 
   // Item info
-  if (pillsExistPos(&g_lv->pb, mapX, mapY) == TRUE) {
-    g_lv->selectedItem = pillsItemNumAt(&g_lv->pb, mapX, mapY);
+  if (lv_pillsExistPos(&g_lv->pb, mapX, mapY) == TRUE) {
+    g_lv->selectedItem = lv_pillsItemNumAt(&g_lv->pb, mapX, mapY);
     g_lv->selectedItemType = 2;
-  } else if (basesExistPos(&g_lv->bs, mapX, mapY) == TRUE) {
-    g_lv->selectedItem = basesItemNumAt(&g_lv->bs, mapX, mapY);
+  } else if (lv_basesExistPos(&g_lv->bs, mapX, mapY) == TRUE) {
+    g_lv->selectedItem = lv_basesItemNumAt(&g_lv->bs, mapX, mapY);
     g_lv->selectedItemType = 1;
   }
 
 
   if (g_lv->fastForwarding == FALSE) {
     if (g_lv->selectedItemType == 0) {
-      updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
+      lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
     } else if (g_lv->selectedItemType == 1) {
-      updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
+      lv_updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
     } else {
-      updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
+      lv_updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
     }
   }
 
 }
 
-void screenMouseClick(int xPos, int yPos) {
+void lv_screenMouseClick(int xPos, int yPos) {
   div_t dt;        /* Used for integer division */
   int xClick;
   int yClick;
@@ -1437,31 +1437,31 @@ void screenMouseClick(int xPos, int yPos) {
   yClick = (int) (dt.quot);
 
   // Who am I viewing?
-  if (playersChooseView(g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
-  } else if (pillsChooseView(&g_lv->pb, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
-  } else if (basesChooseView(&g_lv->bs, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
+  if (lv_playersChooseView(g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
+  } else if (lv_pillsChooseView(&g_lv->pb, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
+  } else if (lv_basesChooseView(&g_lv->bs, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
   } else {
   }
 }
 
-void screenFastForward() {
+void lv_screenFastForward() {
   bool available;
 
   if (g_lv->isPlaying == TRUE && g_lv->fastForwarding == FALSE) {
     g_lv->fastForwarding = TRUE;
-    available = screenLogTick();
+    available = lv_screenLogTick();
     while (available == FALSE && g_lv->isPlaying == TRUE) {
-      available = screenLogTick();
+      available = lv_screenLogTick();
     }
     g_lv->fastForwarding = FALSE;
   }
 }
 
-void screenTankCentred(int enabled) {
+void lv_screenTankCentred(int enabled) {
   g_lv->centredTank = enabled;
 }
 
-void screenRewind() {
+void lv_screenRewind() {
   uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;
   uint32_t firstTime;
@@ -1469,36 +1469,36 @@ void screenRewind() {
   BYTE key;
   BYTE *pTeams = NULL;
 
-  available = snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams);
+  available = lv_snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams);
   if (available == TRUE) {
     if (currentTime > 1000 && (g_lv->timeRunning - currentTime) < 1000) {
       firstTime = currentTime;
       currentTime -= 1000;
-      if (snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
+      if (lv_snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
         currentTime = firstTime;
       }
     }
     g_lv->timeRunning = currentTime;
-    logSetPosition(wantedPos);
-    blocksSetKey(key);
-    processSnapshot();
-    playersSetTeams(pTeams);
-    windowRemoveEvents();
+    lv_logSetPosition(wantedPos);
+    lv_blocksSetKey(key);
+    lv_processSnapshot();
+    lv_playersSetTeams(pTeams);
+    lv_windowRemoveEvents();
     g_lv->isPlaying = TRUE;
     if (wantedPos == 0) {
-      startOfLog();
+      lv_startOfLog();
     }
   }
 }
 
-void screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime) {
-  *currentPos = logGetCurrentPosition();
-  *totalSize = logGetTotalSize();
+void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime) {
+  *currentPos = lv_logGetCurrentPosition();
+  *totalSize = lv_logGetTotalSize();
   *currentTime = g_lv->timeRunning;
 }
 
-void screenSeekToPosition(float ratio) {
-  size_t totalSize = logGetTotalSize();
+void lv_screenSeekToPosition(float ratio) {
+  size_t totalSize = lv_logGetTotalSize();
   size_t targetPos;
   size_t snapPos;
   uint32_t snapTime;
@@ -1511,49 +1511,49 @@ void screenSeekToPosition(float ratio) {
 
   targetPos = (size_t)(ratio * (float)totalSize);
 
-  if (snapshotFindByPosition(&g_lv->snap, targetPos, &snapPos, &snapTime, &key, &pTeams)) {
+  if (lv_snapshotFindByPosition(&g_lv->snap, targetPos, &snapPos, &snapTime, &key, &pTeams)) {
     g_lv->timeRunning = snapTime;
-    logSetPosition(snapPos);
-    blocksSetKey(key);
-    processSnapshot();
-    playersSetTeams(pTeams);
-    windowRemoveEvents();
+    lv_logSetPosition(snapPos);
+    lv_blocksSetKey(key);
+    lv_processSnapshot();
+    lv_playersSetTeams(pTeams);
+    lv_windowRemoveEvents();
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
 
     /* Fast-forward from snapshot to target position */
     g_lv->fastForwarding = TRUE;
-    while (logGetCurrentPosition() < targetPos && g_lv->isPlaying == TRUE) {
-      screenLogTick();
+    while (lv_logGetCurrentPosition() < targetPos && g_lv->isPlaying == TRUE) {
+      lv_screenLogTick();
     }
     g_lv->fastForwarding = FALSE;
   }
 }
 
-int32_t screenGetGameTimeLeft() {
+int32_t lv_screenGetGameTimeLeft() {
   return g_lv->gmeLength;
 }
 
-int32_t screenGetGameStartDelay() {
+int32_t lv_screenGetGameStartDelay() {
   return g_lv->gmeStartDelay;
 }
 
 
-BYTE screenGetNumPlayers() {
-  return playersGetNumPlayers();
+BYTE lv_screenGetNumPlayers() {
+  return lv_playersGetNumPlayers();
 }
 
-void screenGetPlayerName(char *name, BYTE playerNum) {
-  playersGetPlayerName(playerNum, name);
+void lv_screenGetPlayerName(char *name, BYTE playerNum) {
+  lv_playersGetPlayerName(playerNum, name);
 }
 
-void screenGetMapName(char *dest) {
+void lv_screenGetMapName(char *dest) {
   strncpy(dest, g_lv->mapName, sizeof(g_lv->mapName) - 1);
   dest[sizeof(g_lv->mapName) - 1] = '\0';
 }
 
 /*********************************************************
-*NAME:          screenSaveMap
+*NAME:          lv_screenSaveMap
 *AUTHOR:        John Morrison
 *CREATION DATE:  5/2/99
 *LAST MODIFIED: 31/10/99
@@ -1565,35 +1565,35 @@ void screenGetMapName(char *dest) {
 *  fileName - path and filename to save
 *  saveOwnerships - Do we save ownerships or not
 *********************************************************/
-bool screenSaveMap(char *fileName, bool saveOwnerships) {
-  return mapWrite(fileName, &g_lv->mp, &g_lv->pb, &g_lv->bs, &g_lv->ss, saveOwnerships);
+bool lv_screenSaveMap(char *fileName, bool saveOwnerships) {
+  return lv_mapWrite(fileName, &g_lv->mp, &g_lv->pb, &g_lv->bs, &g_lv->ss, saveOwnerships);
 }
 
 
-BYTE screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth) {
+BYTE lv_screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth) {
   pillbox p;
-  BYTE itemNum = pillsItemNumAt(&g_lv->pb,(BYTE) (x+g_lv->xOffset), (BYTE) (y+g_lv->yOffset));
+  BYTE itemNum = lv_pillsItemNumAt(&g_lv->pb,(BYTE) (x+g_lv->xOffset), (BYTE) (y+g_lv->yOffset));
 
   p.owner = NEUTRAL;
   p.armour = 15;
-  pillsGetPill(&g_lv->pb, &p, (BYTE) (itemNum+1));
+  lv_pillsGetPill(&g_lv->pb, &p, (BYTE) (itemNum+1));
  *pillHealth = p.armour;
   if (p.owner == NEUTRAL) {
     return NEUTRAL_TEAM;
   }
 
-  return playersGetTeamForOwner(p.owner);
+  return lv_playersGetTeamForOwner(p.owner);
 }
 
-BYTE screenGetBaseTeam(BYTE x, BYTE y) {
+BYTE lv_screenGetBaseTeam(BYTE x, BYTE y) {
   base b;
-  BYTE itemNum = basesItemNumAt(&g_lv->bs, (BYTE) (x+g_lv->xOffset), (BYTE) (y+g_lv->yOffset));
+  BYTE itemNum = lv_basesItemNumAt(&g_lv->bs, (BYTE) (x+g_lv->xOffset), (BYTE) (y+g_lv->yOffset));
 
   b.owner = NEUTRAL;
-  basesGetBase(&g_lv->bs, &b, (BYTE) (itemNum+1));
+  lv_basesGetBase(&g_lv->bs, &b, (BYTE) (itemNum+1));
   if (b.owner == NEUTRAL) {
     return NEUTRAL_TEAM;
   }
 
-  return playersGetTeamForOwner(b.owner);
+  return lv_playersGetTeamForOwner(b.owner);
 }

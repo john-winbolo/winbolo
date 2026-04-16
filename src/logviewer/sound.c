@@ -325,7 +325,7 @@ static void SDLCALL mixAudioCallback(void *userdata, SDL_AudioStream *stream, in
 }
 
 /*********************************************************
-*NAME:          soundSetup
+*NAME:          lv_soundSetup
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/10/98
 *LAST MODIFIED: 2024
@@ -336,18 +336,11 @@ static void SDLCALL mixAudioCallback(void *userdata, SDL_AudioStream *stream, in
 *ARGUMENTS:
 *  (none)
 *********************************************************/
-bool soundSetup(void) {
+bool lv_soundSetup(void) {
     bool returnValue = TRUE;
     int i;
 
     isPlayable = FALSE;
-
-    /* Initialize SDL audio subsystem */
-    if (!SDL_Init(SDL_INIT_AUDIO)) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, DIALOG_BOX_TITLE,
-                                 "Error initializing SDL audio", NULL);
-        return FALSE;
-    }
 
     /* Open audio device with a reasonable default format */
     SDL_zero(deviceSpec);
@@ -360,7 +353,6 @@ bool soundSetup(void) {
     if (!slotsMutex) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, DIALOG_BOX_TITLE,
                                  "Error creating mutex", NULL);
-        SDL_Quit();
         return FALSE;
     }
 
@@ -379,7 +371,6 @@ bool soundSetup(void) {
                                  "Error opening audio device", NULL);
         SDL_DestroyMutex(slotsMutex);
         slotsMutex = NULL;
-        SDL_Quit();
         return FALSE;
     }
 
@@ -435,14 +426,13 @@ bool soundSetup(void) {
             SDL_DestroyMutex(slotsMutex);
             slotsMutex = NULL;
         }
-        SDL_Quit();
     }
 
     return returnValue;
 }
 
 /*********************************************************
-*NAME:          soundCleanup
+*NAME:          lv_soundCleanup
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 28/12/98
@@ -453,7 +443,7 @@ bool soundSetup(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-void soundCleanup(void) {
+void lv_soundCleanup(void) {
     int i;
 
     /* Free all sound data */
@@ -486,9 +476,6 @@ void soundCleanup(void) {
         SDL_DestroyMutex(slotsMutex);
         slotsMutex = NULL;
     }
-
-    /* Quit SDL audio subsystem only (video is used by draw.c) */
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
 
     isPlayable = FALSE;
 }
@@ -545,7 +532,7 @@ static void playSound(int index) {
 }
 
 /*********************************************************
-*NAME:          soundPlayEffect
+*NAME:          lv_soundPlayEffect
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/12/98
 *LAST MODIFIED: 28/12/98
@@ -555,7 +542,7 @@ static void playSound(int index) {
 *ARGUMENTS:
 *  value       - The sound file number to play
 *********************************************************/
-void soundPlayEffect(sndEffects value) {
+void lv_soundPlayEffect(sndEffects value) {
     int index;
 
     switch (value) {
@@ -638,7 +625,7 @@ void soundPlayEffect(sndEffects value) {
 }
 
 /*********************************************************
-*NAME:          soundKeepalive
+*NAME:          lv_soundKeepalive
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/12/98
 *LAST MODIFIED: 29/12/98
@@ -649,7 +636,7 @@ void soundPlayEffect(sndEffects value) {
 *ARGUMENTS:
 *  value - TRUE to turn on FALSE to turn off.
 *********************************************************/
-void soundKeepalive(bool value) {
+void lv_soundKeepalive(bool value) {
     if (!keepaliveStream || !keepaliveData)
         return;
 
@@ -663,7 +650,7 @@ void soundKeepalive(bool value) {
 }
 
 /*********************************************************
-*NAME:          soundIsPlayable
+*NAME:          lv_soundIsPlayable
 *AUTHOR:        John Morrison
 *CREATION DATE: 13/6/00
 *LAST MODIFIED: 13/6/00
@@ -675,6 +662,6 @@ void soundKeepalive(bool value) {
 *ARGUMENTS:
 *
 *********************************************************/
-bool soundIsPlayable(void) {
+bool lv_soundIsPlayable(void) {
     return isPlayable;
 }

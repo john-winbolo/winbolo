@@ -29,12 +29,11 @@
 #include "global.h"
 #include "clientmutex.h"
 
-/* TODO: move to LogViewerState for embedded multi-instance support */
 static SDL_Mutex *hClientMutexHandle = NULL;
 
 
 /*********************************************************
-*NAME:          clientMutexCreate
+*NAME:          lv_clientMutexCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -44,13 +43,13 @@ static SDL_Mutex *hClientMutexHandle = NULL;
 *ARGUMENTS:
 *
 *********************************************************/
-bool clientMutexCreate(void) {
+bool lv_clientMutexCreate(void) {
   hClientMutexHandle = SDL_CreateMutex();
   return (hClientMutexHandle != NULL) ? TRUE : FALSE;
 }
 
 /*********************************************************
-*NAME:          clientMutexDestroy
+*NAME:          lv_clientMutexDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -60,14 +59,14 @@ bool clientMutexCreate(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-void clientMutexDestroy(void) {
+void lv_clientMutexDestroy(void) {
   SDL_DestroyMutex(hClientMutexHandle);
   hClientMutexHandle = NULL;
 }
 
 
 /*********************************************************
-*NAME:          clientMutexWaitFor
+*NAME:          lv_clientMutexWaitFor
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -77,16 +76,16 @@ void clientMutexDestroy(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-void clientMutexWaitFor(void) {
+void lv_clientMutexWaitFor(void) {
   if (hClientMutexHandle == NULL) {
-    SDL_Log("clientMutexWaitFor: mutex is NULL, cannot lock");
+    SDL_Log("lv_clientMutexWaitFor: mutex is NULL, cannot lock");
     return;
   }
   SDL_LockMutex(hClientMutexHandle);
 }
 
 /*********************************************************
-*NAME:          clientMutexRelease
+*NAME:          lv_clientMutexRelease
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -97,9 +96,9 @@ void clientMutexWaitFor(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-void clientMutexRelease(void) {
+void lv_clientMutexRelease(void) {
   if (hClientMutexHandle == NULL) {
-    SDL_Log("clientMutexRelease: mutex is NULL, cannot unlock");
+    SDL_Log("lv_clientMutexRelease: mutex is NULL, cannot unlock");
     return;
   }
   SDL_UnlockMutex(hClientMutexHandle);

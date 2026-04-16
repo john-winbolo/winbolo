@@ -44,7 +44,7 @@
 /* Prototypes */
 
 /*********************************************************
-*NAME:          soundDist
+*NAME:          lv_soundDist
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/1/99
 *LAST MODIFIED: 19/1/99
@@ -57,7 +57,7 @@
 *  mx    - Map X co-ordinatate for the sound origin
 *  my    - Map Y co-ordinatate for the sound origin
 *********************************************************/
-void soundDist(sndEffects value, BYTE mx, BYTE my);
+void lv_soundDist(sndEffects value, BYTE mx, BYTE my);
 
 /*********************************************************
 *NAME:          soundDistLog

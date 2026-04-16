@@ -13,37 +13,39 @@
 
 #include <stdbool.h>
 
+struct LogViewerState;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Window visibility flags - accessible from other modules */
-extern bool g_show_controls_window;
-extern bool g_show_game_info_window;
-extern bool g_show_events_window;
-extern bool g_show_item_info_window;
+extern bool lv_g_show_controls_window;
+extern bool lv_g_show_game_info_window;
+extern bool lv_g_show_events_window;
+extern bool lv_g_show_item_info_window;
 
 /* Render the main menu bar
  * Returns true if any menu item was clicked */
-int imgui_main_menu_bar(void);
+int lv_imgui_main_menu_bar(void);
 
 /* Initialize menu state from preferences */
-void imgui_main_menu_init(void);
+void lv_imgui_main_menu_init(struct LogViewerState *lv);
 
 /* Save menu state to preferences */
-void imgui_main_menu_save(void);
+void lv_imgui_main_menu_save(void);
 
 /* Get the height of the main menu bar in pixels.
  * Returns 0.0f if menu bar hasn't been rendered yet. */
-float imgui_get_menu_bar_height(void);
+float lv_imgui_get_menu_bar_height(void);
 
 /* Cache the menu bar height after rendering.
- * Call this after imgui_main_menu_bar() to ensure accurate height. */
-void imgui_cache_menu_bar_height(void);
+ * Call this after lv_imgui_main_menu_bar() to ensure accurate height. */
+void lv_imgui_cache_menu_bar_height(void);
 
 /* Get the current mode state.
  * Returns true if Information mode, false if Select Team mode. */
-int imgui_get_mode_information(void);
+int lv_imgui_get_mode_information(void);
 
 #ifdef __cplusplus
 }

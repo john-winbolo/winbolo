@@ -33,7 +33,7 @@
 //#include "frontend.h"
 
 /*********************************************************
-*NAME:          screenTanksCreate
+*NAME:          lv_screenTanksCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/99
 *LAST MODIFIED: 15/2/99
@@ -43,7 +43,7 @@
 *ARGUMENTS:
 *  value - New item to create
 *********************************************************/
-void screenTanksCreate(screenTanks *value) {
+void lv_screenTanksCreate(screenTanks *value) {
   BYTE count; /* Looping variable */
   /*  New(*value); */
   (*value).numTanksScreen = 0;
@@ -53,7 +53,7 @@ void screenTanksCreate(screenTanks *value) {
 }
 
 /*********************************************************
-*NAME:          screenTanksGetNumEntries
+*NAME:          lv_screenTanksGetNumEntries
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/99
 *LAST MODIFIED: 15/2/99
@@ -63,12 +63,12 @@ void screenTanksCreate(screenTanks *value) {
 *ARGUMENTS:
 *  value - Pointer to the screenTanks data structure
 *********************************************************/
-BYTE screenTanksGetNumEntries(screenTanks *value) {
+BYTE lv_screenTanksGetNumEntries(screenTanks *value) {
   return ((*value).numTanksScreen);
 }
 
 /*********************************************************
-*NAME:          screenTanksDestroy
+*NAME:          lv_screenTanksDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/99
 *LAST MODIFIED: 15/2/99
@@ -78,12 +78,12 @@ BYTE screenTanksGetNumEntries(screenTanks *value) {
 *ARGUMENTS:
 *  value - Pointer to the screenTanks data structure
 *********************************************************/
-void screenTanksDestroy(screenTanks *value) {
+void lv_screenTanksDestroy(screenTanks *value) {
 /*  Dispose(*value); */
 }
 
 /*********************************************************
-*NAME:          screenTanksAddItem
+*NAME:          lv_screenTanksAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/98
 *LAST MODIFIED: 18/2/98
@@ -99,7 +99,7 @@ void screenTanksDestroy(screenTanks *value) {
 *  frame      - Frame identifer of the tank
 *  playerName - String to hold the player name
 *********************************************************/
-void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName) {
+void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName) {
   (*value).pos[(*value).numTanksScreen].mx = mx;
   (*value).pos[(*value).numTanksScreen].my = my;
   (*value).pos[(*value).numTanksScreen].px = px;
@@ -116,7 +116,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 }
 
 /*********************************************************
-*NAME:          screenTanksGetItem
+*NAME:          lv_screenTanksGetItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/2/98
 *LAST MODIFIED: 15/2/98
@@ -133,7 +133,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 *  frame      - Frame identifer of the tank
 *  playerName - String to hold the player name
 *********************************************************/
-void screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *team, BYTE *dir, bool *onBoat, char *playerName) {
+void lv_screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *team, BYTE *dir, bool *onBoat, char *playerName) {
   itemNum--;
   if (itemNum < (*value).numTanksScreen) {
     if (mx) *mx = (*value).pos[itemNum].mx;

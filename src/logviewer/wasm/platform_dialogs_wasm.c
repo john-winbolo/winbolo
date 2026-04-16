@@ -13,7 +13,7 @@
 
 static int g_initialized = 0;
 
-int platform_dialogs_init(void) {
+int lv_platform_dialogs_init(void) {
     g_initialized = 1;
 
     /* Create a hidden file input element for opening .wbv files */
@@ -52,15 +52,15 @@ int platform_dialogs_init(void) {
     return 1;
 }
 
-void platform_dialogs_shutdown(void) {
+void lv_platform_dialogs_shutdown(void) {
     g_initialized = 0;
 }
 
-void platform_dialogs_set_window(void *window) {
+void lv_platform_dialogs_set_window(void *window) {
     (void)window;
 }
 
-int platform_dialog_open_file(const char *title,
+int lv_platform_dialog_open_file(const char *title,
                               const char *filter_name,
                               const char *filter_ext,
                               const char *default_ext,
@@ -81,7 +81,7 @@ int platform_dialog_open_file(const char *title,
     return PLATFORM_DIALOG_CANCEL;
 }
 
-int platform_dialog_save_file(const char *title,
+int lv_platform_dialog_save_file(const char *title,
                               const char *filter_name,
                               const char *filter_ext,
                               const char *default_ext,
@@ -97,21 +97,21 @@ int platform_dialog_save_file(const char *title,
     return PLATFORM_DIALOG_CANCEL;
 }
 
-int platform_dialog_message(const char *title, const char *message) {
+int lv_platform_dialog_message(const char *title, const char *message) {
     EM_ASM({
         alert(UTF8ToString($0) + ": " + UTF8ToString($1));
     }, title, message);
     return 1;
 }
 
-int platform_dialog_error(const char *title, const char *message) {
+int lv_platform_dialog_error(const char *title, const char *message) {
     EM_ASM({
         alert("Error - " + UTF8ToString($0) + ": " + UTF8ToString($1));
     }, title, message);
     return 1;
 }
 
-int platform_dialog_question(const char *title, const char *message) {
+int lv_platform_dialog_question(const char *title, const char *message) {
     return EM_ASM_INT({
         return confirm(UTF8ToString($0) + ": " + UTF8ToString($1)) ? 1 : 0;
     }, title, message);

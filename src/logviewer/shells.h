@@ -54,7 +54,7 @@ struct shellsObj {
 
 
 /*********************************************************
-*NAME:          shellsCreate
+*NAME:          lv_shellsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/12/98
 *LAST MODIFIED: 25/12/98
@@ -64,10 +64,10 @@ struct shellsObj {
 *ARGUMENTS:
 *
 *********************************************************/
-shells shellsCreate(void);
+shells lv_shellsCreate(void);
 
 /*********************************************************
-*NAME:          shellsDestroy
+*NAME:          lv_shellsDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/12/98
 *LAST MODIFIED: 25/12/98
@@ -77,10 +77,10 @@ shells shellsCreate(void);
 *ARGUMENTS:
 *  value - Pointer to the shells data structure
 *********************************************************/
-void shellsDestroy(shells *value);
+void lv_shellsDestroy(shells *value);
 
 /*********************************************************
-*NAME:          shellsAddItem
+*NAME:          lv_shellsAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/12/98
 *LAST MODIFIED: 6/3/99
@@ -97,10 +97,10 @@ void shellsDestroy(shells *value);
 *  owner  - Who fired the shell
 *  onBoat - Was the shell launched from a boat
 *********************************************************/
-void shellsAddItem(shells *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame);
+void lv_shellsAddItem(shells *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame);
 
 /*********************************************************
-*NAME:          shellsCalcScreenBullets
+*NAME:          lv_shellsCalcScreenBullets
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -116,6 +116,6 @@ void shellsAddItem(shells *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame
 *  top      - Y Map offset end
 *  bottom   - Y Map offset end
 *********************************************************/
-void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
+void lv_shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 #endif /* _SHELLS_H */

@@ -30,7 +30,7 @@
 #include "starts.h"
 
 /*********************************************************
-*NAME:          startsCreate
+*NAME:          lv_startsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -41,14 +41,14 @@
 *ARGUMENTS:
 *  value - Pointer to the starts structure 
 *********************************************************/
-void startsCreate(starts *value) {
+void lv_startsCreate(starts *value) {
   New(*value);
   ((*value)->numStarts) = 0;
 }
 
 
 /*********************************************************
-*NAME:          startsDestroy
+*NAME:          lv_startsDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -58,12 +58,12 @@ void startsCreate(starts *value) {
 *ARGUMENTS:
 *  value - Pointer to the starts structure
 *********************************************************/
-void startsDestroy(starts *value) {
+void lv_startsDestroy(starts *value) {
   Dispose(*value);
 }
 
 /*********************************************************
-*NAME:          startsSetNumStarts
+*NAME:          lv_startsSetNumStarts
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -74,7 +74,7 @@ void startsDestroy(starts *value) {
 *  value     - Pointer to the starts structure
 *  numStarts - The number of starts 
 *********************************************************/
-void startsSetNumStarts(starts *value, BYTE numStarts) {
+void lv_startsSetNumStarts(starts *value, BYTE numStarts) {
   if (numStarts <= MAX_STARTS) {
     (*value)->numStarts = numStarts;
   }
@@ -82,7 +82,7 @@ void startsSetNumStarts(starts *value, BYTE numStarts) {
 
 
 /*********************************************************
-*NAME:          startsGetNumStarts
+*NAME:          lv_startsGetNumStarts
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -92,12 +92,12 @@ void startsSetNumStarts(starts *value, BYTE numStarts) {
 *ARGUMENTS:
 *  value  - Pointer to the starts structure
 *********************************************************/
-BYTE startsGetNumStarts(starts *value) {
+BYTE lv_startsGetNumStarts(starts *value) {
   return (*value)->numStarts;
 }
 
 /*********************************************************
-*NAME:          startsSetStart
+*NAME:          lv_startsSetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -109,7 +109,7 @@ BYTE startsGetNumStarts(starts *value) {
 *  item     - Pointer to a player start 
 *  startNum - The start number
 *********************************************************/
-void startsSetStart(starts *value, start *item, BYTE startNum) {
+void lv_startsSetStart(starts *value, start *item, BYTE startNum) {
   if (startNum > 0 && startNum  <= (*value)->numStarts) {
     startNum--;
     (((*value)->item[startNum]).x) = item->x;
@@ -120,7 +120,7 @@ void startsSetStart(starts *value, start *item, BYTE startNum) {
 
 
 /*********************************************************
-*NAME:          startsGetStartStruct
+*NAME:          lv_startsGetStartStruct
 *AUTHOR:        John Morrison
 *CREATION DATE:   9/2/98
 *LAST MODIFIED: 11/11/00
@@ -132,7 +132,7 @@ void startsSetStart(starts *value, start *item, BYTE startNum) {
 *  item     - Pointer to a player start 
 *  startNum - The start number
 *********************************************************/
-void startsGetStartStruct(starts *value, start *item, BYTE startNum) {
+void lv_startsGetStartStruct(starts *value, start *item, BYTE startNum) {
   if (startNum > 0 && startNum  <= (*value)->numStarts) {
     startNum--;
     item->x = ((*value)->item[startNum]).x;
@@ -142,7 +142,7 @@ void startsGetStartStruct(starts *value, start *item, BYTE startNum) {
 }
 
 
-void startsDeleteStart(starts *value, BYTE x, BYTE y) {
+void lv_startsDeleteStart(starts *value, BYTE x, BYTE y) {
   BYTE count = 0;
   BYTE count2;
   
@@ -161,7 +161,7 @@ void startsDeleteStart(starts *value, BYTE x, BYTE y) {
   }
 }
 
-bool startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
+bool lv_startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
   bool returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
   returnValue = FALSE;
@@ -177,7 +177,7 @@ bool startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
-*NAME:          startsSetStartNetData
+*NAME:          lv_startsSetStartNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99
 *LAST MODIFIED: 24/07/04
@@ -189,7 +189,7 @@ bool startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
 *  buff    - Buffer of data to set starts structure to
 *  dataLen - Length of the data
 *********************************************************/
-void startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen) {
+void lv_startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen) {
   BYTE count = 0;
   BYTE len = 1;
 

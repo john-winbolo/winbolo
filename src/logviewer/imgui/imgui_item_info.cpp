@@ -18,8 +18,8 @@
 
 /* External functions from backend - using C types directly */
 extern "C" {
-    void screenCentreOnSelectedItem(void);
-    void screenGetPlayerName(char *buffer, unsigned char player);
+    void lv_screenCentreOnSelectedItem(void);
+    void lv_screenGetPlayerName(char *buffer, unsigned char player);
 }
 
 /* Item info state */
@@ -37,7 +37,7 @@ static int s_in_tank = 0;
 static char s_owner_text[80] = "";
 static char s_location_text[32] = "";
 
-void imgui_item_info_init(void) {
+void lv_imgui_item_info_init(void) {
     s_item_type = 0;
     s_item_number = 0;
     s_owner = 0;
@@ -51,7 +51,7 @@ void imgui_item_info_init(void) {
     s_location_text[0] = '\0';
 }
 
-void imgui_item_info_update(unsigned char itemType, unsigned char itemNumber, unsigned char owner, 
+void lv_imgui_item_info_update(unsigned char itemType, unsigned char itemNumber, unsigned char owner, 
                             unsigned char x, unsigned char y, unsigned char armour, unsigned char shells, 
                             unsigned char mines, int inTank) {
     /* Update state */
@@ -75,7 +75,7 @@ void imgui_item_info_update(unsigned char itemType, unsigned char itemNumber, un
             snprintf(s_owner_text, sizeof(s_owner_text), "Neutral");
         } else {
             char player_name[64];
-            screenGetPlayerName(player_name, owner);
+            lv_screenGetPlayerName(player_name, owner);
             snprintf(s_owner_text, sizeof(s_owner_text), "%s (%d)", player_name, owner);
         }
         
@@ -84,17 +84,17 @@ void imgui_item_info_update(unsigned char itemType, unsigned char itemNumber, un
     }
 }
 
-void imgui_item_info_window(void) {
-    if (!g_show_item_info_window) {
+void lv_imgui_item_info_window(void) {
+    if (!lv_g_show_item_info_window) {
         return;
     }
     
     ImGui::SetNextWindowSize(ImVec2(200, 150), ImGuiCond_FirstUseEver);
     
-    if (ImGui::Begin("Item Information", &g_show_item_info_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Item Information", &lv_g_show_item_info_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
-        if (imgui_context_get_resize_delta(&dx, &dy)) {
+        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
             ImVec2 pos = ImGui::GetWindowPos();
             ImVec2 size = ImGui::GetWindowSize();
             ImVec2 vp = ImGui::GetMainViewport()->Size;
@@ -145,7 +145,7 @@ void imgui_item_info_window(void) {
                 ImGui::BeginDisabled();
             }
             if (ImGui::Button("Center on Map", ImVec2(-1, 0))) {
-                screenCentreOnSelectedItem();
+                lv_screenCentreOnSelectedItem();
             }
             if (s_in_tank) {
                 ImGui::EndDisabled();
