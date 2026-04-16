@@ -227,6 +227,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
     ${PROJ_ROOT}/src/gui/sdl3/cursor.c
