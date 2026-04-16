@@ -707,6 +707,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
       break;
+    case log_SaveMap:
+      /* No-op — marker event with no visual effect on replay */
+      break;
     default:
       lv_windowStop(TRUE);
       count = numEvents;

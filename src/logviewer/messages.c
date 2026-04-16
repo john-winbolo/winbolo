@@ -36,21 +36,21 @@
 /* Module Variables */
 
 /* Messages */
-char topLine[MESSAGE_WIDTH];
-char bottomLine[MESSAGE_WIDTH];
+static char topLine[MESSAGE_WIDTH];
+static char bottomLine[MESSAGE_WIDTH];
 
-char newMessage[FILENAME_MAX]; /* A new message */
-BYTE newMessageFrom;           /* Where it came from */
+static char newMessage[FILENAME_MAX]; /* A new message */
+static BYTE newMessageFrom;           /* Where it came from */
 
 /* What types to show */
-bool showNewswire = TRUE;
-bool showAssistant = TRUE;
-bool showAI = FALSE;
-bool showNetwork = FALSE;
-bool showNetStat = TRUE;
+static bool showNewswire = TRUE;
+static bool showAssistant = TRUE;
+static bool showAI = FALSE;
+static bool showNetwork = FALSE;
+static bool showNetStat = TRUE;
 
 /* Queue DS for waiting messages */
-message msg;
+static message msg;
 
 /*********************************************************
 *NAME:          lv_messageCreate
