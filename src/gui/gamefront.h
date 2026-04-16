@@ -150,6 +150,18 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, struct C
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting);
 
 /*********************************************************
+*NAME:          gameFrontSaveTankPrefs
+*PURPOSE:
+*  Copies auto-slowdown and auto-hide-gunsight from the
+*  active tank into the frontend globals so they survive
+*  a return-to-lobby cycle (which skips gameFrontEnd).
+*
+*ARGUMENTS:
+*  cs - Active ClientSim (may be NULL)
+*********************************************************/
+void gameFrontSaveTankPrefs(struct ClientSim *cs);
+
+/*********************************************************
 *NAME:          gameFrontSetDlgState
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/1/99
