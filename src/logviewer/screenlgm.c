@@ -33,7 +33,7 @@
 /* Prototypes */
 
 /*********************************************************
-*NAME:          screenLgmCreate
+*NAME:          lv_screenLgmCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/99
 *LAST MODIFIED: 19/2/99
@@ -43,12 +43,12 @@
 *ARGUMENTS:
 *  value - New item to create
 *********************************************************/
-void screenLgmCreate(screenLgm *value) {
+void lv_screenLgmCreate(screenLgm *value) {
   (*value) = NULL;
 }
 
 /*********************************************************
-*NAME:          screenLgmPrepare
+*NAME:          lv_screenLgmPrepare
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/99
 *LAST MODIFIED: 19/2/99
@@ -63,12 +63,12 @@ void screenLgmCreate(screenLgm *value) {
 *  top      - Top bounds of the screen
 *  bottom   - Bottom bounds of the screen
 *********************************************************/
-void screenLgmPrepare(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
-  playersMakeScreenLgm(value, leftPos, rightPos, top, bottom);
+void lv_screenLgmPrepare(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+  lv_playersMakeScreenLgm(value, leftPos, rightPos, top, bottom);
 } 
 
 /*********************************************************
-*NAME:          screenLgmGetNumEntries
+*NAME:          lv_screenLgmGetNumEntries
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/99
 *LAST MODIFIED: 19/2/99
@@ -78,7 +78,7 @@ void screenLgmPrepare(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, B
 *ARGUMENTS:
 *  value - Pointer to the screenLgm data structure
 *********************************************************/
-BYTE screenLgmGetNumEntries(screenLgm *value) {
+BYTE lv_screenLgmGetNumEntries(screenLgm *value) {
   BYTE returnValue; /* Value to return */
   screenLgm q;
 
@@ -92,7 +92,7 @@ BYTE screenLgmGetNumEntries(screenLgm *value) {
 }
 
 /*********************************************************
-*NAME:          screenLgmDestroy
+*NAME:          lv_screenLgmDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/99
 *LAST MODIFIED: 19/2/99
@@ -102,7 +102,7 @@ BYTE screenLgmGetNumEntries(screenLgm *value) {
 *ARGUMENTS:
 *  value - Pointer to the screenLgm data structure
 *********************************************************/
-void screenLgmDestroy(screenLgm *value) {
+void lv_screenLgmDestroy(screenLgm *value) {
   screenLgm q;
 
   while(NonEmpty(*value)) {
@@ -113,7 +113,7 @@ void screenLgmDestroy(screenLgm *value) {
 }
 
 /*********************************************************
-*NAME:          screenLgmAddItem
+*NAME:          lv_screenLgmAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/98
 *LAST MODIFIED: 19/2/98
@@ -128,7 +128,7 @@ void screenLgmDestroy(screenLgm *value) {
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the tank
 *********************************************************/
-void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) {
+void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) {
   screenLgm q;
 
   New(q);
@@ -142,7 +142,7 @@ void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE
 }
 
 /*********************************************************
-*NAME:          screenLgmGetItem
+*NAME:          lv_screenLgmGetItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/98
 *LAST MODIFIED: 19/2/98
@@ -158,7 +158,7 @@ void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the LGM
 *********************************************************/
-void screenLgmGetItem(screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
+void lv_screenLgmGetItem(screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
   BYTE count;  /* Looping variable */
   screenLgm q; 
 

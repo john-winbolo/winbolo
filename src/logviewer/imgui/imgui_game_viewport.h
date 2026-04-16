@@ -13,21 +13,23 @@
 
 #include <stdbool.h>
 
+struct LogViewerState;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Initialize the game viewport module */
-void imgui_game_viewport_init(void);
+void lv_imgui_game_viewport_init(struct LogViewerState *lv);
 
 /* Render the game texture as background.
  * Call this BEFORE ImGui::NewFrame() to ensure game is behind UI. */
-void imgui_game_viewport_render_background(void);
+void lv_imgui_game_viewport_render_background(void);
 
 /* Process mouse and keyboard input for the game.
  * Call this AFTER ImGui events are processed to check if input was not captured by UI.
  * Returns 1 if input was processed, 0 otherwise. */
-int imgui_game_viewport_process_input(void);
+int lv_imgui_game_viewport_process_input(void);
 
 #ifdef __cplusplus
 }

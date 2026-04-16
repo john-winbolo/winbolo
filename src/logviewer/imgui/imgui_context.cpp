@@ -22,7 +22,7 @@ static SDL_Renderer* g_renderer = nullptr;
 static ImVec2 s_prev_display_size = {0, 0};
 static ImVec2 s_resize_delta = {0, 0};
 
-int imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
+int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
     g_window = window;
     g_renderer = renderer;
     
@@ -65,7 +65,7 @@ int imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
     return 1;
 }
 
-void imgui_context_shutdown(void) {
+void lv_imgui_context_shutdown(void) {
     if (g_context) {
         ImGui::SetCurrentContext(g_context);
         ImGui_ImplSDLRenderer3_Shutdown();
@@ -77,7 +77,7 @@ void imgui_context_shutdown(void) {
     g_renderer = nullptr;
 }
 
-void imgui_context_newframe(void) {
+void lv_imgui_context_newframe(void) {
     if (!g_context) return;
 
     ImGui::SetCurrentContext(g_context);
@@ -97,7 +97,7 @@ void imgui_context_newframe(void) {
     s_prev_display_size = current_size;
 }
 
-void imgui_context_render(void) {
+void lv_imgui_context_render(void) {
     if (!g_context) return;
     
     ImGui::SetCurrentContext(g_context);
@@ -105,18 +105,18 @@ void imgui_context_render(void) {
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
 }
 
-int imgui_context_handle_event(SDL_Event* event) {
+int lv_imgui_context_handle_event(SDL_Event* event) {
     if (!g_context) return 0;
     
     ImGui::SetCurrentContext(g_context);
     return ImGui_ImplSDL3_ProcessEvent(event) ? 1 : 0;
 }
 
-ImGuiContext* imgui_context_get(void) {
+ImGuiContext* lv_imgui_context_get(void) {
     return g_context;
 }
 
-int imgui_context_get_resize_delta(float* dx, float* dy) {
+int lv_imgui_context_get_resize_delta(float* dx, float* dy) {
     if (dx) *dx = s_resize_delta.x;
     if (dy) *dy = s_resize_delta.y;
     return (s_resize_delta.x != 0.0f || s_resize_delta.y != 0.0f) ? 1 : 0;

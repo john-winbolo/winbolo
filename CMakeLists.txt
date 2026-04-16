@@ -825,6 +825,46 @@ if(NOT WIN32)
     list(FILTER CLIENT_SOURCES EXCLUDE REGEX ".*common/util\\.c$")
 endif()
 
+# Logviewer library sources (embedded in WinBolo, excludes standalone main.c)
+set(LOGVIEWER_LIB_SOURCES
+    src/logviewer/logviewer.c
+    src/logviewer/screen.c
+    src/logviewer/draw.c
+    src/logviewer/sound.c
+    src/logviewer/players.c
+    src/logviewer/blocks.c
+    src/logviewer/shells.c
+    src/logviewer/snapshot.c
+    src/logviewer/allience.c
+    src/logviewer/pillbox.c
+    src/logviewer/bases.c
+    src/logviewer/bolo_map.c
+    src/logviewer/starts.c
+    src/logviewer/screencalc.c
+    src/logviewer/screentank.c
+    src/logviewer/screenlgm.c
+    src/logviewer/screenbullet.c
+    src/logviewer/sounddist.c
+    src/logviewer/clientmutex.c
+    src/logviewer/dns.c
+    src/logviewer/util.c
+    src/logviewer/global.c
+    src/logviewer/labels.c
+    src/logviewer/messages.c
+    src/logviewer/draw_setup_arrays.c
+    src/logviewer/imgui/imgui_context.cpp
+    src/logviewer/imgui/imgui_main_menu.cpp
+    src/logviewer/imgui/imgui_controls.cpp
+    src/logviewer/imgui/imgui_game_info.cpp
+    src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_item_info.cpp
+    src/logviewer/imgui/imgui_dialogs.cpp
+    src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/platform/platform_config.c
+    src/logviewer/platform/platform_dialogs.c
+)
+list(APPEND CLIENT_SOURCES ${LOGVIEWER_LIB_SOURCES})
+
 add_executable(WinBolo ${CLIENT_SOURCES})
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
@@ -868,6 +908,10 @@ target_include_directories(WinBolo PRIVATE
     src/bolo
     src/server
     src/mapeditor
+    src
+    src/logviewer
+    src/logviewer/imgui
+    src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
 )
@@ -1232,6 +1276,7 @@ endif()
 
 target_include_directories(LogViewer PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/logviewer
     ${CMAKE_SOURCE_DIR}/src/logviewer/imgui
     ${CMAKE_SOURCE_DIR}/src/logviewer/platform
 )

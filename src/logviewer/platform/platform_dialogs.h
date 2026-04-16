@@ -22,15 +22,15 @@
 
 /* Initialize the dialog system
  * Returns 1 on success, 0 on failure */
-int platform_dialogs_init(void);
+int lv_platform_dialogs_init(void);
 
 /* Shutdown the dialog system */
-void platform_dialogs_shutdown(void);
+void lv_platform_dialogs_shutdown(void);
 
 /* Set the SDL_Window to use as parent for dialogs (pass NULL to clear).
  * Call this after creating the window so file dialogs associate correctly.
  * Takes void* to avoid pulling SDL headers into every caller. */
-void platform_dialogs_set_window(void *window);
+void lv_platform_dialogs_set_window(void *window);
 
 /* Show an open file dialog
  * title - Dialog title
@@ -41,7 +41,7 @@ void platform_dialogs_set_window(void *window);
  * out_size - Size of output buffer
  * initial_dir - Initial directory (can be NULL)
  * Returns PLATFORM_DIALOG_OK, PLATFORM_DIALOG_CANCEL, or PLATFORM_DIALOG_ERROR */
-int platform_dialog_open_file(const char* title, 
+int lv_platform_dialog_open_file(const char* title, 
                               const char* filter_name,
                               const char* filter_ext,
                               const char* default_ext,
@@ -59,7 +59,7 @@ int platform_dialog_open_file(const char* title,
  * out_size - Size of output buffer
  * initial_dir - Initial directory (can be NULL)
  * Returns PLATFORM_DIALOG_OK, PLATFORM_DIALOG_CANCEL, or PLATFORM_DIALOG_ERROR */
-int platform_dialog_save_file(const char* title,
+int lv_platform_dialog_save_file(const char* title,
                               const char* filter_name,
                               const char* filter_ext,
                               const char* default_ext,
@@ -72,18 +72,18 @@ int platform_dialog_save_file(const char* title,
  * title - Message box title
  * message - Message to display
  * Returns 1 on success, 0 on failure */
-int platform_dialog_message(const char* title, const char* message);
+int lv_platform_dialog_message(const char* title, const char* message);
 
 /* Show an error message box
  * title - Message box title
  * message - Error message to display
  * Returns 1 on success, 0 on failure */
-int platform_dialog_error(const char* title, const char* message);
+int lv_platform_dialog_error(const char* title, const char* message);
 
 /* Show a yes/no question dialog
  * title - Dialog title
  * message - Question to display
  * Returns 1 for Yes, 0 for No, -1 for error/cancel */
-int platform_dialog_question(const char* title, const char* message);
+int lv_platform_dialog_question(const char* title, const char* message);
 
 #endif /* PLATFORM_DIALOGS_H */

@@ -153,6 +153,12 @@ void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMa
     (void)window; (void)renderer; (void)mapPath; (void)fromMainMenu;
 }
 
+/* ---- log viewer stubs (not available on iOS) ---- */
+
+void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMainMenu) {
+    (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
+}
+
 /* ---- winbolonet map change stub ---- */
 
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {

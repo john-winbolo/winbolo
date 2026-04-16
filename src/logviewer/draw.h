@@ -42,7 +42,7 @@
 
 
 /*********************************************************
-*NAME:          drawSetup
+*NAME:          lv_drawSetup
 *AUTHOR:        John Morrison
 *CREATION DATE: 13/10/98
 *LAST MODIFIED:  29/4/00
@@ -55,10 +55,10 @@
 *           load bitmaps from resources)
 * appWnd  - Main Window Handle (Required for clipper)
 *********************************************************/
-BYTE drawSetup(void);
+BYTE lv_drawSetup(void);
 
 /*********************************************************
-*NAME:          drawCleanup
+*NAME:          lv_drawCleanup
 *AUTHOR:        John Morrison
 *CREATION DATE: 13/12/98
 *LAST MODIFIED: 13/2/98
@@ -69,10 +69,10 @@ BYTE drawSetup(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void drawCleanup(void);
+void lv_drawCleanup(void);
 
 /*********************************************************
-*NAME:          drawMainScreen
+*NAME:          lv_drawMainScreen
 *AUTHOR:        John Morrison
 *CREATION DATE: 31/10/98
 *LAST MODIFIED: 27/05/00
@@ -97,10 +97,10 @@ void drawCleanup(void);
 *  cursorLeft     - Cursor left position
 *  cursorTop      - Cursor Top position
 *********************************************************/
-void drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop);
+void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop);
 
 /*********************************************************
-*NAME:          drawGetFrameRate
+*NAME:          lv_drawGetFrameRate
 *AUTHOR:        John Morrison
 *CREATION DATE: 16/12/98
 *LAST MODIFIED: 16/12/98
@@ -110,10 +110,10 @@ void drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, scre
 *ARGUMENTS:
 *
 *********************************************************/
-int drawGetFrameRate(void);
+int lv_drawGetFrameRate(void);
 
 /*********************************************************
-*NAME:          drawShells
+*NAME:          lv_drawShells
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -123,10 +123,10 @@ int drawGetFrameRate(void);
 *ARGUMENTS:
 *  sBullets - The screen Bullets data structure 
 *********************************************************/
-void drawShells(screenBullets *sBullets);
+void lv_drawShells(screenBullets *sBullets);
 
 /*********************************************************
-*NAME:          drawTanks
+*NAME:          lv_drawTanks
 *AUTHOR:        John Morrison
 *CREATION DATE: 6/1/99
 *LAST MODIFIED: 2/2/99
@@ -136,10 +136,10 @@ void drawShells(screenBullets *sBullets);
 *ARGUMENTS:
 *  tks - The screen Tanks data structure 
 *********************************************************/
-void drawTanks(screenTanks *tks);
+void lv_drawTanks(screenTanks *tks);
 
 /*********************************************************
-*NAME:          drawLGMs
+*NAME:          lv_drawLGMs
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/1/99
 *LAST MODIFIED: 17/1/99
@@ -149,10 +149,10 @@ void drawTanks(screenTanks *tks);
 *ARGUMENTS:
 *  lgms - The screenLgm data structure 
 *********************************************************/
-void drawLGMs(screenLgm *lgms);
+void lv_drawLGMs(screenLgm *lgms);
 
 /*********************************************************
-*NAME:          drawTankLabel
+*NAME:          lv_drawTankLabel
 *AUTHOR:        John Morrison
 *CREATION DATE: 2/2/98
 *LAST MODIFIED: 2/2/98
@@ -166,12 +166,12 @@ void drawLGMs(screenLgm *lgms);
 *  px  - Tank pixel offset
 *  py  - Tank pixel offset
 *********************************************************/
-void drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py);
+void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py);
 
-void drawDirtyScreen(void);
+void lv_drawDirtyScreen(void);
 
 /*********************************************************
-*NAME:          drawSplashForImGui
+*NAME:          lv_drawSplashForImGui
 *PURPOSE:
 *  Draws the splash screen for the ImGui rendering loop.
 *  This function clears the screen and draws the splash,
@@ -179,17 +179,17 @@ void drawDirtyScreen(void);
 *
 *  Called from the main loop BEFORE ImGui renders.
 *********************************************************/
-void drawSplashForImGui(void);
+void lv_drawSplashForImGui(void);
 
 /*********************************************************
-*NAME:          drawCleanupSplash
+*NAME:          lv_drawCleanupSplash
 *PURPOSE:
 *  Cleans up the cached splash texture
 *********************************************************/
-void drawCleanupSplash(void);
+void lv_drawCleanupSplash(void);
 
 /*********************************************************
-*NAME:          drawGetSDLWindow
+*NAME:          lv_drawGetSDLWindow
 *AUTHOR:        ImGui Migration
 *PURPOSE:
 *  Returns the SDL window handle for ImGui integration
@@ -199,10 +199,10 @@ void drawCleanupSplash(void);
 *RETURNS:
 *  SDL_Window* pointer or NULL if not initialized
 *********************************************************/
-struct SDL_Window* drawGetSDLWindow(void);
+struct SDL_Window* lv_drawGetSDLWindow(void);
 
 /*********************************************************
-*NAME:          drawGetSDLRenderer
+*NAME:          lv_drawGetSDLRenderer
 *AUTHOR:        ImGui Migration
 *PURPOSE:
 *  Returns the SDL renderer handle for ImGui integration
@@ -212,10 +212,10 @@ struct SDL_Window* drawGetSDLWindow(void);
 *RETURNS:
 *  SDL_Renderer* pointer or NULL if not initialized
 *********************************************************/
-struct SDL_Renderer* drawGetSDLRenderer(void);
+struct SDL_Renderer* lv_drawGetSDLRenderer(void);
 
 /*********************************************************
-*NAME:          drawGetGameTexture
+*NAME:          lv_drawGetGameTexture
 *AUTHOR:        ImGui Migration
 *PURPOSE:
 *  Returns the game render texture for ImGui viewport display
@@ -225,29 +225,29 @@ struct SDL_Renderer* drawGetSDLRenderer(void);
 *RETURNS:
 *  SDL_Texture* pointer or NULL if not initialized
 *********************************************************/
-struct SDL_Texture* drawGetGameTexture(void);
+struct SDL_Texture* lv_drawGetGameTexture(void);
 
 /*********************************************************
-*NAME:          drawBlitGameTexture
+*NAME:          lv_drawBlitGameTexture
 *PURPOSE:
 *  Blits the game render texture to the screen without
 *  re-rendering the game. Used when the game state hasn't
 *  changed but we need to display the last frame.
 *********************************************************/
-void drawBlitGameTexture(void);
+void lv_drawBlitGameTexture(void);
 
 /*********************************************************
-*NAME:          drawResizeRenderTarget
+*NAME:          lv_drawResizeRenderTarget
 *PURPOSE:
 *  Recreates the render target texture when screen size changes.
 *  This is critical for correct mouse coordinate mapping -
 *  if the texture size doesn't match the screen size, SDL
 *  will scale the texture, causing coordinate drift.
 *********************************************************/
-void drawResizeRenderTarget(void);
+void lv_drawResizeRenderTarget(void);
 
 /*********************************************************
-*NAME:          drawSetupWithHandles
+*NAME:          lv_drawSetupWithHandles
 *PURPOSE:
 *  Sets up drawing using externally-provided window/renderer
 *  (embedded mode). Does NOT create SDL window/renderer.
@@ -255,14 +255,14 @@ void drawResizeRenderTarget(void);
 *RETURNS:
 *  TRUE on success, FALSE on failure
 *********************************************************/
-BYTE drawSetupWithHandles(struct SDL_Window *window, struct SDL_Renderer *renderer);
+BYTE lv_drawSetupWithHandles(struct SDL_Window *window, struct SDL_Renderer *renderer);
 
 /*********************************************************
-*NAME:          drawGetTargetWidth / drawGetTargetHeight
+*NAME:          lv_drawGetTargetWidth / lv_drawGetTargetHeight
 *PURPOSE:
 *  Returns the current render target dimensions
 *********************************************************/
-int drawGetTargetWidth(void);
-int drawGetTargetHeight(void);
+int lv_drawGetTargetWidth(void);
+int lv_drawGetTargetHeight(void);
 
 #endif

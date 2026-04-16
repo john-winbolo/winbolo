@@ -40,7 +40,7 @@ static char* find_value(const char* section, const char* key);
 static void set_value(const char* section, const char* key, const char* value);
 #endif
 
-int platform_config_init(const char* app_name) {
+int lv_platform_config_init(const char* app_name) {
     (void)app_name; /* Unused on Windows, may be used on other platforms */
     
     if (g_initialized) {
@@ -104,12 +104,12 @@ int platform_config_init(const char* app_name) {
     return 1;
 }
 
-void platform_config_shutdown(void) {
+void lv_platform_config_shutdown(void) {
     g_initialized = 0;
     g_config_path[0] = '\0';
 }
 
-void platform_config_get_string(const char* section, const char* key, 
+void lv_platform_config_get_string(const char* section, const char* key, 
                                 const char* default_val, char* out, size_t out_size) {
     if (!g_initialized) {
         strncpy(out, default_val, out_size - 1);
@@ -133,7 +133,7 @@ void platform_config_get_string(const char* section, const char* key,
 #endif
 }
 
-void platform_config_set_string(const char* section, const char* key, const char* value) {
+void lv_platform_config_set_string(const char* section, const char* key, const char* value) {
     if (!g_initialized) return;
     
 #ifdef _WIN32
@@ -143,28 +143,28 @@ void platform_config_set_string(const char* section, const char* key, const char
 #endif
 }
 
-int platform_config_get_int(const char* section, const char* key, int default_val) {
+int lv_platform_config_get_int(const char* section, const char* key, int default_val) {
     char str[64];
     char default_str[32];
     
     snprintf(default_str, sizeof(default_str), "%d", default_val);
-    platform_config_get_string(section, key, default_str, str, sizeof(str));
+    lv_platform_config_get_string(section, key, default_str, str, sizeof(str));
     
     return atoi(str);
 }
 
-void platform_config_set_int(const char* section, const char* key, int value) {
+void lv_platform_config_set_int(const char* section, const char* key, int value) {
     char str[32];
     snprintf(str, sizeof(str), "%d", value);
-    platform_config_set_string(section, key, str);
+    lv_platform_config_set_string(section, key, str);
 }
 
-int platform_config_get_bool(const char* section, const char* key, int default_val) {
+int lv_platform_config_get_bool(const char* section, const char* key, int default_val) {
     char str[64];
     char default_str[8];
     
     snprintf(default_str, sizeof(default_str), "%s", default_val ? "Yes" : "No");
-    platform_config_get_string(section, key, default_str, str, sizeof(str));
+    lv_platform_config_get_string(section, key, default_str, str, sizeof(str));
     
     /* Check for "Yes", "yes", "Y", "y", "1", "True", "true" */
     if (str[0] == 'Y' || str[0] == 'y' || str[0] == '1' || 
@@ -174,11 +174,11 @@ int platform_config_get_bool(const char* section, const char* key, int default_v
     return 0;
 }
 
-void platform_config_set_bool(const char* section, const char* key, int value) {
-    platform_config_set_string(section, key, value ? "Yes" : "No");
+void lv_platform_config_set_bool(const char* section, const char* key, int value) {
+    lv_platform_config_set_string(section, key, value ? "Yes" : "No");
 }
 
-int platform_config_save(void) {
+int lv_platform_config_save(void) {
     /* On Windows, WritePrivateProfileString flushes automatically */
     /* On other platforms, we'd need to write the file here */
 #ifndef _WIN32
@@ -187,7 +187,7 @@ int platform_config_save(void) {
     return 1;
 }
 
-void platform_config_get_path(char* out, size_t out_size) {
+void lv_platform_config_get_path(char* out, size_t out_size) {
     strncpy(out, g_config_path, out_size - 1);
     out[out_size - 1] = '\0';
 }

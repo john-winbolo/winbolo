@@ -236,7 +236,7 @@ typedef enum {
 /* Prototypes */
 
 /*********************************************************
-*NAME:          screenSetup
+*NAME:          lv_screenSetup
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 26/1/99
@@ -251,10 +251,10 @@ typedef enum {
 *  gmeLen      - Length of the game (in 50ths)
 *                (-1 =unlimited)
 *********************************************************/
-void screenSetup();
+void lv_screenSetup();
 
 /*********************************************************
-*NAME:          screenDestroy
+*NAME:          lv_screenDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -265,10 +265,10 @@ void screenSetup();
 *ARGUMENTS:
 *
 *********************************************************/
-void screenDestroy();
+void lv_screenDestroy();
 
 /*********************************************************
-*NAME:          screenUpdate
+*NAME:          lv_screenUpdate
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -278,10 +278,10 @@ void screenDestroy();
 *ARGUMENTS:
 *  value - Pointer to the screen structure
 *********************************************************/
-void screenUpdate(updateType value);
+void lv_screenUpdate(updateType value);
 
 /*********************************************************
-*NAME:          screenGetPos
+*NAME:          lv_screenGetPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -294,10 +294,10 @@ void screenUpdate(updateType value);
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue);
+BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue);
 
 /*********************************************************
-*NAME:          screenIsMine
+*NAME:          lv_screenIsMine
 *AUTHOR:        John Morrison
 *CREATION DATE: 6/11/98
 *LAST MODIFIED: 6/11/98
@@ -311,10 +311,10 @@ BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue);
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue);
+bool lv_screenIsMine(screenMines *value,BYTE xValue, BYTE yValue);
 
 /*********************************************************
-*NAME:          screenLoadMap
+*NAME:          lv_screenLoadMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/10/98
 *LAST MODIFIED: 12/12/99
@@ -334,10 +334,10 @@ bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue);
 *                Usually TRUE if you only want to check
 *                if a map is valid
 *********************************************************/
-bool screenLoadMap(char *fileName, int memoryBufferSize);
+bool lv_screenLoadMap(char *fileName, int memoryBufferSize);
 
 /*********************************************************
-*NAME:          screenNumBases
+*NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/12/98
 *LAST MODIFIED: 21/12/98
@@ -347,10 +347,10 @@ bool screenLoadMap(char *fileName, int memoryBufferSize);
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE screenNumBases(void);
+BYTE lv_screenNumBases(void);
 
 /*********************************************************
-*NAME:          screenNumPills
+*NAME:          lv_screenNumPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/12/98
 *LAST MODIFIED: 21/12/98
@@ -360,10 +360,10 @@ BYTE screenNumBases(void);
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE screenNumPills(void);
+BYTE lv_screenNumPills(void);
 
 /*********************************************************
-*NAME:          screenGetMapName
+*NAME:          lv_screenGetMapName
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/1/99
 *LAST MODIFIED: 26/1/99
@@ -374,10 +374,10 @@ BYTE screenNumPills(void);
 *ARGUMENTS:
 *  value - Place to hold copy of the map name
 *********************************************************/
-void screenGetMapName(char *value);
+void lv_screenGetMapName(char *value);
 
 /*********************************************************
-*NAME:          screenGetNumPlayers
+*NAME:          lv_screenGetNumPlayers
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/1/99
 *LAST MODIFIED: 26/1/99
@@ -387,10 +387,10 @@ void screenGetMapName(char *value);
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE screenGetNumPlayers();
+BYTE lv_screenGetNumPlayers();
 
 /*********************************************************
-*NAME:          screenGetGameType
+*NAME:          lv_screenGetGameType
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/1/99
 *LAST MODIFIED: 26/1/99
@@ -400,10 +400,10 @@ BYTE screenGetNumPlayers();
 *ARGUMENTS:
 *
 *********************************************************/
-gameType screenGetGameType();
+gameType lv_screenGetGameType();
 
 /*********************************************************
-*NAME:          screenGetAllowHiddenMines
+*NAME:          lv_screenGetAllowHiddenMines
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/1/99
 *LAST MODIFIED: 26/1/99
@@ -414,10 +414,10 @@ gameType screenGetGameType();
 *ARGUMENTS:
 *
 *********************************************************/
-bool screenGetAllowHiddenMines();
+bool lv_screenGetAllowHiddenMines();
 
 /*********************************************************
-*NAME:          screenGetGameTimeLeft
+*NAME:          lv_screenGetGameTimeLeft
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/1/99
 *LAST MODIFIED: 27/1/99
@@ -427,10 +427,10 @@ bool screenGetAllowHiddenMines();
 *ARGUMENTS:
 *
 *********************************************************/
-int32_t screenGetGameTimeLeft();
+int32_t lv_screenGetGameTimeLeft();
 
 /*********************************************************
-*NAME:          screenGetGameStartDelay
+*NAME:          lv_screenGetGameStartDelay
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/1/99
 *LAST MODIFIED: 27/1/99
@@ -440,10 +440,10 @@ int32_t screenGetGameTimeLeft();
 *ARGUMENTS:
 *
 *********************************************************/
-int32_t screenGetGameStartDelay();
+int32_t lv_screenGetGameStartDelay();
 
 /*********************************************************
-*NAME:          screenSaveMap
+*NAME:          lv_screenSaveMap
 *AUTHOR:        John Morrison
 *CREATION DATE:  5/2/99
 *LAST MODIFIED: 31/10/99
@@ -455,43 +455,43 @@ int32_t screenGetGameStartDelay();
 *  fileName - path and filename to save
 *  saveOwnerships - Do we save ownerships or not
 *********************************************************/
-bool screenSaveMap(char *fileName, bool saveOwnerships);
+bool lv_screenSaveMap(char *fileName, bool saveOwnerships);
 
 
 
-bool screenIsPlaying();
+bool lv_screenIsPlaying();
 
-bool screenLogTick();
+bool lv_screenLogTick();
 
-BYTE screenGetSizeX();
+BYTE lv_screenGetSizeX();
 
-BYTE screenGetSizeY();
+BYTE lv_screenGetSizeY();
 
-void screenSetSizeX(BYTE x);
-void screenSetSizeY(BYTE y);
+void lv_screenSetSizeX(BYTE x);
+void lv_screenSetSizeY(BYTE y);
 
-void screenGetOffsets(BYTE *x, BYTE *y);
-void screenSetOffset(BYTE x, BYTE y);
-void screenPanToOffsets(BYTE newXOffset, BYTE newYOffset);
+void lv_screenGetOffsets(BYTE *x, BYTE *y);
+void lv_screenSetOffset(BYTE x, BYTE y);
+void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset);
 
-void windowAddEvent(int eventType, char *msg);
-void windowStop(int corruptLog);
-void finished();
+void lv_windowAddEvent(int eventType, char *msg);
+void lv_windowStop(int corruptLog);
+void lv_finished();
 
-bool screenCloseLog();
-void screenFastForward();
-void screenRewind();
-void screenGetTime(char *dest);
-void screenTankCentred(int enabled);
+bool lv_screenCloseLog();
+void lv_screenFastForward();
+void lv_screenRewind();
+void lv_screenGetTime(char *dest);
+void lv_screenTankCentred(int enabled);
 
-void screenMouseCentreClick(int xPos, int yPos);
-void screenMouseClick(int xPos, int yPos);
+void lv_screenMouseCentreClick(int xPos, int yPos);
+void lv_screenMouseClick(int xPos, int yPos);
 
-void screenCentreOnSelectedItem();
-void screenGetPlayerName(char *name, BYTE playerNum);
-void screenGetMapName(char *dest);
+void lv_screenCentreOnSelectedItem();
+void lv_screenGetPlayerName(char *name, BYTE playerNum);
+void lv_screenGetMapName(char *dest);
 
-void screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime);
-void screenSeekToPosition(float ratio);
+void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime);
+void lv_screenSeekToPosition(float ratio);
 
 #endif /* _BACKEND_H */

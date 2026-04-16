@@ -32,7 +32,7 @@
 
 
 /*********************************************************
-*NAME:          clientMutexCreate
+*NAME:          lv_clientMutexCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -42,10 +42,10 @@
 *ARGUMENTS:
 *
 *********************************************************/
-bool clientMutexCreate(void);
+bool lv_clientMutexCreate(void);
 
 /*********************************************************
-*NAME:          clientMutexCreate
+*NAME:          lv_clientMutexCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -55,10 +55,10 @@ bool clientMutexCreate(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void clientMutexDestroy(void);
+void lv_clientMutexDestroy(void);
 
 /*********************************************************
-*NAME:          clientMutexWaitFor
+*NAME:          lv_clientMutexWaitFor
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -68,10 +68,10 @@ void clientMutexDestroy(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void clientMutexWaitFor(void);
+void lv_clientMutexWaitFor(void);
 
 /*********************************************************
-*NAME:          clientMutexRelease
+*NAME:          lv_clientMutexRelease
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/5/00
 *LAST MODIFIED: 27/5/00
@@ -82,6 +82,6 @@ void clientMutexWaitFor(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void clientMutexRelease(void);
+void lv_clientMutexRelease(void);
 
 #endif /* _CLIENT_MUTEX_H */

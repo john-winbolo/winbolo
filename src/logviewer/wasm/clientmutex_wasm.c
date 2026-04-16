@@ -8,15 +8,15 @@
 #include "global.h"
 #include "clientmutex.h"
 
-bool clientMutexCreate(void) {
+bool lv_clientMutexCreate(void) {
     return TRUE;
 }
 
-void clientMutexDestroy(void) {
+void lv_clientMutexDestroy(void) {
 }
 
-void clientMutexWaitFor(void) {
+void lv_clientMutexWaitFor(void) {
 }
 
-void clientMutexRelease(void) {
+void lv_clientMutexRelease(void) {
 }

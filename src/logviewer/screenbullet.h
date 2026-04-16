@@ -55,7 +55,7 @@ struct screenBulletsObj {
 /* Prototypes */
 
 /*********************************************************
-*NAME:          screenBulletsCreate
+*NAME:          lv_screenBulletsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -65,10 +65,10 @@ struct screenBulletsObj {
 *ARGUMENTS:
 *
 *********************************************************/
-screenBullets screenBulletsCreate(void);
+screenBullets lv_screenBulletsCreate(void);
 
 /*********************************************************
-*NAME:          screenBulletsAddItem
+*NAME:          lv_screenBulletsAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -83,10 +83,10 @@ screenBullets screenBulletsCreate(void);
 *  py    - Y pixel offset
 *  frame - Frame identifer of the bullet
 *********************************************************/
-void screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame);
+void lv_screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame);
 
 /*********************************************************
-*NAME:          screenBulletsGetNumEntries
+*NAME:          lv_screenBulletsGetNumEntries
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -96,10 +96,10 @@ void screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE 
 *ARGUMENTS:
 *  value - Pointer to the screenBullets data structure
 *********************************************************/
-int screenBulletsGetNumEntries(screenBullets *value);
+int lv_screenBulletsGetNumEntries(screenBullets *value);
 
 /*********************************************************
-*NAME:          screenBulletsDestroy
+*NAME:          lv_screenBulletsDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -109,10 +109,10 @@ int screenBulletsGetNumEntries(screenBullets *value);
 *ARGUMENTS:
 *  value - Pointer to the screenBullets data structure
 *********************************************************/
-void screenBulletsDestroy(screenBullets *value);
+void lv_screenBulletsDestroy(screenBullets *value);
 
 /*********************************************************
-*NAME:          screenBulletsGetItem
+*NAME:          lv_screenBulletsGetItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/12/98
 *LAST MODIFIED: 26/12/98
@@ -128,7 +128,7 @@ void screenBulletsDestroy(screenBullets *value);
 *  py    - Y pixel offset
 *  frame - Frame identifer of the bullet
 *********************************************************/
-void screenBulletsGetItem(screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame);
+void lv_screenBulletsGetItem(screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame);
 
 #endif /* SCREENBULLETS_H */
 

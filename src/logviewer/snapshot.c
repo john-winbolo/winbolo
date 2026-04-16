@@ -37,7 +37,7 @@ struct snapshotObj {
 
 
 /*********************************************************
-*NAME:          snapshotCreate
+*NAME:          lv_snapshotCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -47,12 +47,12 @@ struct snapshotObj {
 *ARGUMENTS:
 *
 *********************************************************/
-snapshot snapshotCreate() {
+snapshot lv_snapshotCreate() {
   return NULL;
 }
 
 /*********************************************************
-*NAME:          snapshotCount
+*NAME:          lv_snapshotCount
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -62,7 +62,7 @@ snapshot snapshotCreate() {
 *ARGUMENTS:
 *
 *********************************************************/
-int snapshotCount(snapshot *value) {
+int lv_snapshotCount(snapshot *value) {
   int returnValue = 0;
   snapshot q = *value;
 
@@ -75,7 +75,7 @@ int snapshotCount(snapshot *value) {
 }
 
 /*********************************************************
-*NAME:          snapshotDestroy
+*NAME:          lv_snapshotDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -85,7 +85,7 @@ int snapshotCount(snapshot *value) {
 *ARGUMENTS:
 * value - Snapshot to destroy
 *********************************************************/
-void snapshotDestroy(snapshot *value) {
+void lv_snapshotDestroy(snapshot *value) {
   snapshot q;
 
   while ((*value) != NULL) {
@@ -108,7 +108,7 @@ void snapshotDestroy(snapshot *value) {
 * filePos - Unuesd variable
 * time    - Time in game ticks
 *********************************************************/
-bool snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
+bool lv_snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
   bool returnValue = FALSE;
   snapshot q;
 
@@ -124,7 +124,7 @@ bool snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
 }
 
 /*********************************************************
-*NAME:          snapshotAdd
+*NAME:          lv_snapshotAdd
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -138,7 +138,7 @@ bool snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
 * key - Key at this snapshot
 * pteams - Player Teams to copy
 *********************************************************/
-void snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams) {
+void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams) {
   snapshot q;
   snapshot add;
   snapshot prev = NULL;
@@ -146,7 +146,7 @@ void snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE 
   BYTE count = 0;
 
   // Make sure we aren't there
-  if (snapshotExist(value, filePos, time) == TRUE) {
+  if (lv_snapshotExist(value, filePos, time) == TRUE) {
     return;
   }
 
@@ -230,7 +230,7 @@ void snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE 
 * key - Key at this snapshot to set to
 * pteams - Player Teams to copy to set to
 *********************************************************/
-bool snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
+bool lv_snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
   bool returnValue = FALSE;
   snapshot q;
 
@@ -250,7 +250,7 @@ bool snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key
 }
 
 /*********************************************************
-*NAME:          snapshotBackwards
+*NAME:          lv_snapshotBackwards
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -265,7 +265,7 @@ bool snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key
 * key - Key at this snapshot to set to
 * pteams - Player Teams to copy to set to
 *********************************************************/
-bool snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
+bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
   snapshot prev = NULL;
   snapshot q = *value;
 
@@ -284,7 +284,7 @@ bool snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, 
   return FALSE;
 }
 
-bool snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
+bool lv_snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
   bool returnValue = FALSE;
   snapshot prev;
   snapshot q;

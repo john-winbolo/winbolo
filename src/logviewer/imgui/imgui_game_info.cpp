@@ -27,11 +27,11 @@
 
 /* External functions from backend - using C types directly */
 extern "C" {
-    unsigned char screenGetNumPlayers(void);
-    int32_t screenGetGameTimeLeft(void);
-    int32_t screenGetGameStartDelay(void);
-    void screenGetMapName(char *buffer);
-    void screenGetPlayerName(char *buffer, unsigned char player);
+    unsigned char lv_screenGetNumPlayers(void);
+    int32_t lv_screenGetGameTimeLeft(void);
+    int32_t lv_screenGetGameStartDelay(void);
+    void lv_screenGetMapName(char *buffer);
+    void lv_screenGetPlayerName(char *buffer, unsigned char player);
 }
 
 /* Game info state */
@@ -61,12 +61,12 @@ enum {
     aiFull = 3
 };
 
-void imgui_game_info_init(void) {
+void lv_imgui_game_info_init(void) {
     /* Clear all fields initially */
-    imgui_game_info_clear();
+    lv_imgui_game_info_clear();
 }
 
-void imgui_game_info_clear(void) {
+void lv_imgui_game_info_clear(void) {
     s_map_name[0] = '\0';
     s_version[0] = '\0';
     s_game_type[0] = '\0';
@@ -79,12 +79,12 @@ void imgui_game_info_clear(void) {
     s_num_players = 0;
 }
 
-/* Called from frontEndSetGameInformation in main.c */
-void imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char versionMinor, unsigned char versionRevision,
+/* Called from lv_frontEndSetGameInformation in main.c */
+void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char versionMinor, unsigned char versionRevision,
                          char *mapName, unsigned char gameType, int hiddenMines, unsigned char aiType,
                          int32_t startDelay, int32_t timeLimit, unsigned char *wbnKey, int32_t startTime) {
     if (clear) {
-        imgui_game_info_clear();
+        lv_imgui_game_info_clear();
         return;
     }
     
@@ -180,15 +180,15 @@ void imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char ve
 
 /* Update dynamic fields (called periodically) */
 void imgui_game_info_update(void) {
-    s_num_players = screenGetNumPlayers();
+    s_num_players = lv_screenGetNumPlayers();
     
-    int32_t timeLeft = screenGetGameTimeLeft();
+    int32_t timeLeft = lv_screenGetGameTimeLeft();
     if (timeLeft != -1) { /* UNLIMITED_GAME_TIME */
         int32_t minutes = timeLeft / 60 / 50;
         snprintf(s_time_limit, sizeof(s_time_limit), "About %d minutes", (int)(minutes + 1));
     }
 
-    int32_t startDelay = screenGetGameStartDelay();
+    int32_t startDelay = lv_screenGetGameStartDelay();
     if (startDelay > 0) {
         int32_t seconds = startDelay / 50;
         snprintf(s_start_delay, sizeof(s_start_delay), "%d second%s", (int)seconds, seconds > 1 ? "s" : "");
@@ -197,17 +197,17 @@ void imgui_game_info_update(void) {
     }
 }
 
-void imgui_game_info_window(void) {
-    if (!g_show_game_info_window) {
+void lv_imgui_game_info_window(void) {
+    if (!lv_g_show_game_info_window) {
         return;
     }
     
     ImGui::SetNextWindowSize(ImVec2(280, 180), ImGuiCond_FirstUseEver);
     
-    if (ImGui::Begin("Game Information", &g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Game Information", &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
-        if (imgui_context_get_resize_delta(&dx, &dy)) {
+        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
             ImVec2 pos = ImGui::GetWindowPos();
             ImVec2 size = ImGui::GetWindowSize();
             ImVec2 vp = ImGui::GetMainViewport()->Size;

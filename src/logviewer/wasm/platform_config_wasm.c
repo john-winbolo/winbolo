@@ -25,7 +25,7 @@ typedef struct {
 static ConfigEntry g_entries[MAX_ENTRIES];
 static int g_entry_count = 0;
 
-int platform_config_init(const char *app_name) {
+int lv_platform_config_init(const char *app_name) {
     (void)app_name;
     if (g_initialized) return 1;
 
@@ -75,7 +75,7 @@ int platform_config_init(const char *app_name) {
     return 1;
 }
 
-void platform_config_shutdown(void) {
+void lv_platform_config_shutdown(void) {
     g_initialized = 0;
     g_entry_count = 0;
 }
@@ -110,7 +110,7 @@ static void set_value(const char *section, const char *key, const char *value) {
     }
 }
 
-void platform_config_get_string(const char *section, const char *key,
+void lv_platform_config_get_string(const char *section, const char *key,
                                 const char *default_val, char *out, size_t out_size) {
     if (!g_initialized) {
         strncpy(out, default_val, out_size - 1);
@@ -126,28 +126,28 @@ void platform_config_get_string(const char *section, const char *key,
     out[out_size - 1] = '\0';
 }
 
-void platform_config_set_string(const char *section, const char *key, const char *value) {
+void lv_platform_config_set_string(const char *section, const char *key, const char *value) {
     if (!g_initialized) return;
     set_value(section, key, value);
 }
 
-int platform_config_get_int(const char *section, const char *key, int default_val) {
+int lv_platform_config_get_int(const char *section, const char *key, int default_val) {
     char str[64], def[32];
     snprintf(def, sizeof(def), "%d", default_val);
-    platform_config_get_string(section, key, def, str, sizeof(str));
+    lv_platform_config_get_string(section, key, def, str, sizeof(str));
     return atoi(str);
 }
 
-void platform_config_set_int(const char *section, const char *key, int value) {
+void lv_platform_config_set_int(const char *section, const char *key, int value) {
     char str[32];
     snprintf(str, sizeof(str), "%d", value);
-    platform_config_set_string(section, key, str);
+    lv_platform_config_set_string(section, key, str);
 }
 
-int platform_config_get_bool(const char *section, const char *key, int default_val) {
+int lv_platform_config_get_bool(const char *section, const char *key, int default_val) {
     char str[64], def[8];
     snprintf(def, sizeof(def), "%s", default_val ? "Yes" : "No");
-    platform_config_get_string(section, key, def, str, sizeof(str));
+    lv_platform_config_get_string(section, key, def, str, sizeof(str));
     if (str[0] == 'Y' || str[0] == 'y' || str[0] == '1' ||
         str[0] == 'T' || str[0] == 't') {
         return 1;
@@ -155,11 +155,11 @@ int platform_config_get_bool(const char *section, const char *key, int default_v
     return 0;
 }
 
-void platform_config_set_bool(const char *section, const char *key, int value) {
-    platform_config_set_string(section, key, value ? "Yes" : "No");
+void lv_platform_config_set_bool(const char *section, const char *key, int value) {
+    lv_platform_config_set_string(section, key, value ? "Yes" : "No");
 }
 
-int platform_config_save(void) {
+int lv_platform_config_save(void) {
     /* Flush all entries to localStorage */
     for (int i = 0; i < g_entry_count; i++) {
         EM_ASM({
@@ -173,7 +173,7 @@ int platform_config_save(void) {
     return 1;
 }
 
-void platform_config_get_path(char *out, size_t out_size) {
+void lv_platform_config_get_path(char *out, size_t out_size) {
     strncpy(out, "localStorage", out_size - 1);
     out[out_size - 1] = '\0';
 }

@@ -44,7 +44,7 @@ typedef struct startsObj *starts;
 /* Prototypes */
 
 /*********************************************************
-*NAME:          startsCreate
+*NAME:          lv_startsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -55,10 +55,10 @@ typedef struct startsObj *starts;
 *ARGUMENTS:
 *  value - Pointer to the starts structure 
 *********************************************************/
-void startsCreate(starts *value);
+void lv_startsCreate(starts *value);
 
 /*********************************************************
-*NAME:          startsDestroy
+*NAME:          lv_startsDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -68,10 +68,10 @@ void startsCreate(starts *value);
 *ARGUMENTS:
 *  value - Pointer to the starts structure
 *********************************************************/
-void startsDestroy(starts *value);
+void lv_startsDestroy(starts *value);
 
 /*********************************************************
-*NAME:          startsSetNumStarts
+*NAME:          lv_startsSetNumStarts
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -82,7 +82,7 @@ void startsDestroy(starts *value);
 *  value     - Pointer to the starts structure
 *  numStarts - The number of starts 
 *********************************************************/
-void startsSetNumStarts(starts *value, BYTE numStarts);
+void lv_startsSetNumStarts(starts *value, BYTE numStarts);
 
 /*********************************************************
 *NAME:          startsGetNumPills
@@ -95,10 +95,10 @@ void startsSetNumStarts(starts *value, BYTE numStarts);
 *ARGUMENTS:
 *  value  - Pointer to the starts structure
 *********************************************************/
-BYTE startsGetNumStarts(starts *value);
+BYTE lv_startsGetNumStarts(starts *value);
 
 /*********************************************************
-*NAME:          startsSetStart
+*NAME:          lv_startsSetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -110,10 +110,10 @@ BYTE startsGetNumStarts(starts *value);
 *  item     - Pointer to a player start 
 *  startNum - The start number
 *********************************************************/
-void startsSetStart(starts *value, start *item, BYTE startNum);
+void lv_startsSetStart(starts *value, start *item, BYTE startNum);
 
 /*********************************************************
-*NAME:          startsGetStartStruct
+*NAME:          lv_startsGetStartStruct
 *AUTHOR:        John Morrison
 *CREATION DATE:   9/2/98
 *LAST MODIFIED: 11/11/00
@@ -125,15 +125,15 @@ void startsSetStart(starts *value, start *item, BYTE startNum);
 *  item     - Pointer to a player start 
 *  startNum - The start number
 *********************************************************/
-void startsGetStartStruct(starts *value, start *item, BYTE startNum);
+void lv_startsGetStartStruct(starts *value, start *item, BYTE startNum);
 
-void startsDeleteStart(starts *value, BYTE x, BYTE y);
+void lv_startsDeleteStart(starts *value, BYTE x, BYTE y);
 
 
-bool startsExistPos(starts *value, BYTE xValue, BYTE yValue);
+bool lv_startsExistPos(starts *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
-*NAME:          startsSetStartNetData
+*NAME:          lv_startsSetStartNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99
 *LAST MODIFIED: 24/07/04
@@ -145,6 +145,6 @@ bool startsExistPos(starts *value, BYTE xValue, BYTE yValue);
 *  buff    - Buffer of data to set starts structure to
 *  dataLen - Length of the data
 *********************************************************/
-void startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen);
+void lv_startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen);
 
 #endif /* STARTS_H */

@@ -31,10 +31,10 @@
 #include "sounddist.h"
 #include "logviewer.h"
 
-void frontEndPlaySound(sndEffects value);
+void lv_frontEndPlaySound(sndEffects value);
 
 /*********************************************************
-*NAME:          soundDist
+*NAME:          lv_soundDist
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/01/99
 *LAST MODIFIED: 05/05/01
@@ -47,13 +47,13 @@ void frontEndPlaySound(sndEffects value);
 *  mx    - Map X co-ordinatate for the sound origin
 *  my    - Map Y co-ordinatate for the sound origin
 *********************************************************/
-void soundDist(sndEffects value, BYTE mx, BYTE my) {
-  BYTE tankX = screenGetXOffset(); /* Tank X Map Co-ordinate */
-  BYTE tankY = screenGetYOffset(); /* Tank Y Map Co-ordinate */
+void lv_soundDist(sndEffects value, BYTE mx, BYTE my) {
+  BYTE tankX = lv_screenGetXOffset(); /* Tank X Map Co-ordinate */
+  BYTE tankY = lv_screenGetYOffset(); /* Tank Y Map Co-ordinate */
   BYTE gapX;  /* Distance from tank to sound */
   BYTE gapY;
 
-  if (screenGetFastForwarding() == TRUE) {
+  if (lv_screenGetFastForwarding() == TRUE) {
     return;
   }
 
@@ -81,78 +81,78 @@ void soundDist(sndEffects value, BYTE mx, BYTE my) {
 
     case shootNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(shootFar);
+        lv_frontEndPlaySound(shootFar);
       } else { 
-        frontEndPlaySound(shootNear);
+        lv_frontEndPlaySound(shootNear);
       }
       break;
     case shotTreeNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(shotTreeFar);
+        lv_frontEndPlaySound(shotTreeFar);
       } else { 
-        frontEndPlaySound(shotTreeNear);
+        lv_frontEndPlaySound(shotTreeNear);
       }
       break;
     case shotBuildingNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(shotBuildingFar);
+        lv_frontEndPlaySound(shotBuildingFar);
       } else { 
-        frontEndPlaySound(shotBuildingNear);
+        lv_frontEndPlaySound(shotBuildingNear);
       }
       break;
     case hitTankSelf:
     case hitTankNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(hitTankFar);
+        lv_frontEndPlaySound(hitTankFar);
       } else { 
-        frontEndPlaySound(hitTankNear);
+        lv_frontEndPlaySound(hitTankNear);
       }
       break;
     case tankSinkNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(tankSinkFar);
+        lv_frontEndPlaySound(tankSinkFar);
       } else { 
-        frontEndPlaySound(tankSinkNear);
+        lv_frontEndPlaySound(tankSinkNear);
       }
       break;
     case bigExplosionNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(bigExplosionFar);
+        lv_frontEndPlaySound(bigExplosionFar);
       } else { 
-        frontEndPlaySound(bigExplosionNear);
+        lv_frontEndPlaySound(bigExplosionNear);
       }
       break;
     case farmingTreeNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(farmingTreeFar);
+        lv_frontEndPlaySound(farmingTreeFar);
       } else { 
-        frontEndPlaySound(farmingTreeNear);
+        lv_frontEndPlaySound(farmingTreeNear);
       }
       break;
     case manBuildingNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(manBuildingFar);
+        lv_frontEndPlaySound(manBuildingFar);
       } else { 
-        frontEndPlaySound(manBuildingNear);
+        lv_frontEndPlaySound(manBuildingNear);
       }
       break;
     case manDyingNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(manDyingFar);
+        lv_frontEndPlaySound(manDyingFar);
       } else { 
-        frontEndPlaySound(manDyingNear);
+        lv_frontEndPlaySound(manDyingNear);
       }
       break;
     case mineExplosionNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(mineExplosionFar);
+        lv_frontEndPlaySound(mineExplosionFar);
       } else { 
-        frontEndPlaySound(mineExplosionNear);
+        lv_frontEndPlaySound(mineExplosionNear);
       }
       break;
     case manLayingMineNear:
       if (gapX <= SDIST_SOFT || gapY <= SDIST_SOFT) {
-        frontEndPlaySound(manLayingMineNear);
+        lv_frontEndPlaySound(manLayingMineNear);
       }
       break;
     case shotTreeFar:

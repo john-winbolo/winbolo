@@ -29,19 +29,19 @@ static int g_initialized = 0;
 static SDL_Window *g_dialog_window = NULL;
 #endif
 
-int platform_dialogs_init(void) {
+int lv_platform_dialogs_init(void) {
     g_initialized = 1;
     return 1;
 }
 
-void platform_dialogs_shutdown(void) {
+void lv_platform_dialogs_shutdown(void) {
     g_initialized = 0;
 #ifndef _WIN32
     g_dialog_window = NULL;
 #endif
 }
 
-void platform_dialogs_set_window(void *window) {
+void lv_platform_dialogs_set_window(void *window) {
 #ifndef _WIN32
     g_dialog_window = (SDL_Window *)window;
 #else
@@ -62,7 +62,7 @@ static void build_filter_string(char* filter, size_t filter_size,
     snprintf(filter + name_len + 1, filter_size - name_len - 2, "%s", ext);
 }
 
-int platform_dialog_open_file(const char* title, 
+int lv_platform_dialog_open_file(const char* title, 
                               const char* filter_name,
                               const char* filter_ext,
                               const char* default_ext,
@@ -101,7 +101,7 @@ int platform_dialog_open_file(const char* title,
     return PLATFORM_DIALOG_CANCEL;
 }
 
-int platform_dialog_save_file(const char* title,
+int lv_platform_dialog_save_file(const char* title,
                               const char* filter_name,
                               const char* filter_ext,
                               const char* default_ext,
@@ -146,17 +146,17 @@ int platform_dialog_save_file(const char* title,
     return PLATFORM_DIALOG_CANCEL;
 }
 
-int platform_dialog_message(const char* title, const char* message) {
+int lv_platform_dialog_message(const char* title, const char* message) {
     MessageBoxA(NULL, message, title, MB_OK | MB_ICONINFORMATION);
     return 1;
 }
 
-int platform_dialog_error(const char* title, const char* message) {
+int lv_platform_dialog_error(const char* title, const char* message) {
     MessageBoxA(NULL, message, title, MB_OK | MB_ICONERROR);
     return 1;
 }
 
-int platform_dialog_question(const char* title, const char* message) {
+int lv_platform_dialog_question(const char* title, const char* message) {
     int result = MessageBoxA(NULL, message, title, MB_YESNO | MB_ICONQUESTION);
     if (result == IDYES) return 1;
     if (result == IDNO) return 0;
@@ -349,7 +349,7 @@ static int sdl_save_file(const char *filter_name, const char *filter_ext,
     return state.result;
 }
 
-int platform_dialog_open_file(const char* title,
+int lv_platform_dialog_open_file(const char* title,
                               const char* filter_name,
                               const char* filter_ext,
                               const char* default_ext,
@@ -387,7 +387,7 @@ int platform_dialog_open_file(const char* title,
 #endif
 }
 
-int platform_dialog_save_file(const char* title,
+int lv_platform_dialog_save_file(const char* title,
                               const char* filter_name,
                               const char* filter_ext,
                               const char* default_ext,
@@ -433,17 +433,17 @@ int platform_dialog_save_file(const char* title,
 #endif
 }
 
-int platform_dialog_message(const char* title, const char* message) {
+int lv_platform_dialog_message(const char* title, const char* message) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, title, message, NULL);
     return 1;
 }
 
-int platform_dialog_error(const char* title, const char* message) {
+int lv_platform_dialog_error(const char* title, const char* message) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, message, NULL);
     return 1;
 }
 
-int platform_dialog_question(const char* title, const char* message) {
+int lv_platform_dialog_question(const char* title, const char* message) {
     const SDL_MessageBoxButtonData buttons[] = {
         { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes" },
         { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No"  },

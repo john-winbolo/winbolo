@@ -132,12 +132,12 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 
 /* State accessors used by screen.c and other modules */
-void screenSetState(LogViewerState *lv);
-LogViewerState *screenGetState(void);
+void lv_screenSetState(LogViewerState *lv);
+LogViewerState *lv_screenGetState(void);
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
-BYTE screenGetXOffset(void);
-BYTE screenGetYOffset(void);
-bool screenGetFastForwarding(void);
+BYTE lv_screenGetXOffset(void);
+BYTE lv_screenGetYOffset(void);
+bool lv_screenGetFastForwarding(void);
 
 #endif /* _LOGVIEWER_H */

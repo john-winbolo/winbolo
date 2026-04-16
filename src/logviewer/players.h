@@ -85,7 +85,7 @@ typedef struct {
 
 
 /*********************************************************
-*NAME:          playersCreate
+*NAME:          lv_playersCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 26/11/99
@@ -95,10 +95,10 @@ typedef struct {
 *ARGUMENTS:
 *
 *********************************************************/
-void playersCreate();
+void lv_playersCreate();
 
 /*********************************************************
-*NAME:          playersDestroy
+*NAME:          lv_playersDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -108,10 +108,10 @@ void playersCreate();
 *ARGUMENTS:
 *
 *********************************************************/
-void playersDestroy();
+void lv_playersDestroy();
 
 /*********************************************************
-*NAME:          playersGetSelf
+*NAME:          lv_playersGetSelf
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -121,13 +121,13 @@ void playersDestroy();
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE playersGetSelf();
+BYTE lv_playersGetSelf();
 
-void playersSetSelf(BYTE pn);
+void lv_playersSetSelf(BYTE pn);
   
 
 /*********************************************************
-*NAME:          playersSetPlayerName
+*NAME:          lv_playersSetPlayerName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/02/99
 *LAST MODIFIED: 05/05/01
@@ -140,10 +140,10 @@ void playersSetSelf(BYTE pn);
 *  playerNum  - The player number to set
 *  playerName - The player name to set
 *********************************************************/
-bool playersSetPlayerName(BYTE playerNum, char *playerName);
+bool lv_playersSetPlayerName(BYTE playerNum, char *playerName);
 
 /*********************************************************
-*NAME:          playersSetPlayer
+*NAME:          lv_playersSetPlayer
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 26/11/99
@@ -165,15 +165,15 @@ bool playersSetPlayerName(BYTE playerNum, char *playerName);
 *  announce   - Do we want to announce this fact?
 *  override   - Override if the game is fastfowarding
 *********************************************************/
-void playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override);
+void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override);
 
-void playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat);
+void lv_playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat);
 
 
-void playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE lgmPY, BYTE lgmFrame);
+void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE lgmPY, BYTE lgmFrame);
 
 /*********************************************************
-*NAME:          playersGetPlayerName
+*NAME:          lv_playersGetPlayerName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -184,10 +184,10 @@ void playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE l
 *  playerNum  - The player number to set
 *  dest       - Destination string
 *********************************************************/
-void playersGetPlayerName(BYTE playerNum, char *dest);
+void lv_playersGetPlayerName(BYTE playerNum, char *dest);
 
 /*********************************************************
-*NAME:          playersMakeMessageName
+*NAME:          lv_playersMakeMessageName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -198,10 +198,10 @@ void playersGetPlayerName(BYTE playerNum, char *dest);
 *  playerNum  - The player number to set
 *  dest       - Destination string
 *********************************************************/
-void playersMakeMessageName(BYTE playerNum, char *dest);
+void lv_playersMakeMessageName(BYTE playerNum, char *dest);
 
 /*********************************************************
-*NAME:          playersMakeScreenName
+*NAME:          lv_playersMakeScreenName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -212,10 +212,10 @@ void playersMakeMessageName(BYTE playerNum, char *dest);
 *  playerNum  - The player number to set
 *  dest       - Destination string
 *********************************************************/
-void playersMakeScreenName(BYTE playerNum, char *dest);
+void lv_playersMakeScreenName(BYTE playerNum, char *dest);
 
 /*********************************************************
-*NAME:          playersIsAllie
+*NAME:          lv_playersIsAllie
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -226,10 +226,10 @@ void playersMakeScreenName(BYTE playerNum, char *dest);
 *  playerA - The player number to check
 *  playerB  - The player number to check
 *********************************************************/
-bool playersIsAllie(BYTE playerA, BYTE playerB);
+bool lv_playersIsAllie(BYTE playerA, BYTE playerB);
 
 /*********************************************************
-*NAME:          playersGetNumAllie
+*NAME:          lv_playersGetNumAllie
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -240,10 +240,10 @@ bool playersIsAllie(BYTE playerA, BYTE playerB);
 *ARGUMENTS:
 *  playerNum - The player number to check
 *********************************************************/
-BYTE playersGetNumAllie(BYTE playerNum);
+BYTE lv_playersGetNumAllie(BYTE playerNum);
 
 /*********************************************************
-*NAME:          playersScreenAllience
+*NAME:          lv_playersScreenAllience
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -253,10 +253,10 @@ BYTE playersGetNumAllie(BYTE playerNum);
 *ARGUMENTS:
 *  playerNum - Player number to check
 *********************************************************/
-tankAlliance playersScreenAllience(BYTE playerNum);
+tankAlliance lv_playersScreenAllience(BYTE playerNum);
 
 /*********************************************************
-*NAME:          playersMakeScreenTanks
+*NAME:          lv_playersMakeScreenTanks
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED:  8/1/00
@@ -270,10 +270,10 @@ tankAlliance playersScreenAllience(BYTE playerNum);
 *  top      - top bound
 *  bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
+void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 /*********************************************************
-*NAME:          playersMakeScreenLgm
+*NAME:          lv_playersMakeScreenLgm
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/2/99
 *LAST MODIFIED:  7/3/99
@@ -287,10 +287,10 @@ void playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, BYT
 *  top      - top bound
 *  bottom   - Bottom bound
 *********************************************************/
-void playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
+void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 
 /*********************************************************
-*NAME:          playersGetNumPlayers
+*NAME:          lv_playersGetNumPlayers
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -300,10 +300,10 @@ void playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE to
 *ARGUMENTS:
 *
 *********************************************************/
-BYTE playersGetNumPlayers();
+BYTE lv_playersGetNumPlayers();
 
 /*********************************************************
-*NAME:          playersLeaveGame
+*NAME:          lv_playersLeaveGame
 *AUTHOR:        John Morrison
 *CREATION DATE: 20/3/99
 *LAST MODIFIED: 2/11/99
@@ -314,10 +314,10 @@ BYTE playersGetNumPlayers();
 *  playerNum - The number of the player that has left
 *  announce  - Whether to announce this or not
 *********************************************************/
-void playersLeaveGame(BYTE playerNum, bool announce);
+void lv_playersLeaveGame(BYTE playerNum, bool announce);
 
 /*********************************************************
-*NAME:          playersIsInUse
+*NAME:          lv_playersIsInUse
 *AUTHOR:        John Morrison
 *CREATION DATE: 31/8/99
 *LAST MODIFIED: 31/8/99
@@ -327,10 +327,10 @@ void playersLeaveGame(BYTE playerNum, bool announce);
 *ARGUMENTS:
 *  playerNum - The player num to check
 *********************************************************/
-bool playersIsInUse(BYTE playerNumber);
+bool lv_playersIsInUse(BYTE playerNumber);
 
 /*********************************************************
-*NAME:          playersGetLgmDetails
+*NAME:          lv_playersGetLgmDetails
 *AUTHOR:        John Morrison
 *CREATION DATE: 31/8/99
 *LAST MODIFIED: 31/8/99
@@ -345,11 +345,11 @@ bool playersIsInUse(BYTE playerNumber);
 *  py        - LGM Pixel Y Position
 *  frame     - LGM Frame
 *********************************************************/
-void playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame);
+void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame);
 
 
 /*********************************************************
-*NAME:          playersLeaveAlliance
+*NAME:          lv_playersLeaveAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED: 1/11/99
@@ -359,10 +359,10 @@ void playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE
 *ARGUMENTS:
 *  playerNum - Player number that is leaving the alliance
 *********************************************************/
-void playersLeaveAlliance(BYTE playerNum);
+void lv_playersLeaveAlliance(BYTE playerNum);
 
 /*********************************************************
-*NAME:          playersAcceptAlliance
+*NAME:          lv_playersAcceptAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
@@ -373,18 +373,18 @@ void playersLeaveAlliance(BYTE playerNum);
 *  acceptedBy - Who accepted them in
 *  newMember  - Who the new member is
 *********************************************************/
-void playersAcceptAlliance(BYTE acceptedBy, BYTE newMember);
+void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember);
 
-void playersLgmZero();
+void lv_playersLgmZero();
 
-bool playersChooseView(int x, int y);
+bool lv_playersChooseView(int x, int y);
 
-BYTE playersGetCentredX();
-BYTE playersGetCentredY();
-BYTE playersGetTeamId(BYTE playerNum);
-BYTE playersGetUnusedTeam(BYTE playerNum);
-BYTE playersGetTeamForOwner(BYTE owner);
-void playersSetTeams(BYTE *pTeams);
-void playersCopyPTeams(BYTE *dest);
+BYTE lv_playersGetCentredX();
+BYTE lv_playersGetCentredY();
+BYTE lv_playersGetTeamId(BYTE playerNum);
+BYTE lv_playersGetUnusedTeam(BYTE playerNum);
+BYTE lv_playersGetTeamForOwner(BYTE owner);
+void lv_playersSetTeams(BYTE *pTeams);
+void lv_playersCopyPTeams(BYTE *dest);
 
 #endif /* _PLAYERS_H */

@@ -30,7 +30,7 @@
 #include "allience.h"
 
 /*********************************************************
-*NAME:          allienceCreate
+*NAME:          lv_allienceCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -40,12 +40,12 @@
 *ARGUMENTS:
 *
 *********************************************************/
-allience allienceCreate(void) {
+allience lv_allienceCreate(void) {
   return NULL;
 }
 
 /*********************************************************
-*NAME:          allienceDestroy
+*NAME:          lv_allienceDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -55,7 +55,7 @@ allience allienceCreate(void) {
 *ARGUMENTS:
 *  value - The allience structure to destroy
 *********************************************************/
-void allienceDestroy(allience *value) {
+void lv_allienceDestroy(allience *value) {
   allience q;
 
   while (!IsEmpty(*value)) {
@@ -66,7 +66,7 @@ void allienceDestroy(allience *value) {
 }
 
 /*********************************************************
-*NAME:          allienceAdd
+*NAME:          lv_allienceAdd
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -77,10 +77,10 @@ void allienceDestroy(allience *value) {
 *  value     - The allience structure to add to
 *  playerNum - The player number to add
 *********************************************************/
-void allienceAdd(allience *value, BYTE playerNum) {
+void lv_allienceAdd(allience *value, BYTE playerNum) {
   allience q;
 
-  if ((allienceExist(value, playerNum)) == FALSE) {
+  if ((lv_allienceExist(value, playerNum)) == FALSE) {
     /* Doesn't exist yet. Add */
     New(q);
     q->playerNum = playerNum;
@@ -90,7 +90,7 @@ void allienceAdd(allience *value, BYTE playerNum) {
 }
 
 /*********************************************************
-*NAME:          allienceRemove
+*NAME:          lv_allienceRemove
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -101,14 +101,14 @@ void allienceAdd(allience *value, BYTE playerNum) {
 *  value     - The allience structure to remove from 
 *  playerNum - The player number to add
 *********************************************************/
-void allienceRemove(allience *value, BYTE playerNum) {
+void lv_allienceRemove(allience *value, BYTE playerNum) {
   allience q;
   allience prev;
   BYTE test;     /* Number we are testing */
   bool first;    /* Is first item */
 
   first = TRUE;
-  if ((allienceExist(value, playerNum)) == TRUE) {
+  if ((lv_allienceExist(value, playerNum)) == TRUE) {
     q = *value;
     prev = q;
     test = AllienceHead(q);
@@ -128,7 +128,7 @@ void allienceRemove(allience *value, BYTE playerNum) {
 }
 
 /*********************************************************
-*NAME:          allienceExist
+*NAME:          lv_allienceExist
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -139,7 +139,7 @@ void allienceRemove(allience *value, BYTE playerNum) {
 *  value     - The allience structure to remove from 
 *  playerNum - The player number to add
 *********************************************************/
-bool allienceExist(allience *value, BYTE playerNum) {
+bool lv_allienceExist(allience *value, BYTE playerNum) {
   bool returnValue; /* Value to return */
   allience q;
   BYTE test;
@@ -158,7 +158,7 @@ bool allienceExist(allience *value, BYTE playerNum) {
 }
 
 /*********************************************************
-*NAME:          allienceNumAllies
+*NAME:          lv_allienceNumAllies
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -168,7 +168,7 @@ bool allienceExist(allience *value, BYTE playerNum) {
 *ARGUMENTS:
 *  value     - The allience structure to remove from 
 *********************************************************/
-BYTE allienceNumAllies(allience *value) {
+BYTE lv_allienceNumAllies(allience *value) {
   BYTE returnValue; /* Value to return */
   allience q;
 
@@ -183,7 +183,7 @@ BYTE allienceNumAllies(allience *value) {
 }
 
 /*********************************************************
-*NAME:          allienceReturnNum
+*NAME:          lv_allienceReturnNum
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 18/2/99
@@ -194,7 +194,7 @@ BYTE allienceNumAllies(allience *value) {
 *  value - The allience structure to remove from 
 *  num   - Position in the structure to get
 *********************************************************/
-BYTE allienceReturnNum(allience *value, BYTE num) {
+BYTE lv_allienceReturnNum(allience *value, BYTE num) {
   BYTE returnValue; /* Value to return */
   BYTE count;
   allience q;
@@ -202,7 +202,7 @@ BYTE allienceReturnNum(allience *value, BYTE num) {
   count = 0;
   returnValue = NEUTRAL;
 
-  if (allienceNumAllies(value) >= num) {
+  if (lv_allienceNumAllies(value) >= num) {
     q = *value;
     while (NonEmpty(q) && count < num) {
       count++;

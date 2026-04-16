@@ -32,10 +32,10 @@
 #include "backend.h"
 #include "players.h"
 
-void messageAdd(char *messageStr);
+void lv_messageAdd(char *messageStr);
 
 /*********************************************************
-*NAME:          pillsCreate
+*NAME:          lv_pillsCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -46,14 +46,14 @@ void messageAdd(char *messageStr);
 *ARGUMENTS:
 *  value - Pointer to the map file
 *********************************************************/
-void pillsCreate(pillboxes *value) {
+void lv_pillsCreate(pillboxes *value) {
   New(*value);
   ((*value)->numPills) = 0;
 }
 
 
 /*********************************************************
-*NAME:          pillsDestroy
+*NAME:          lv_pillsDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -63,12 +63,12 @@ void pillsCreate(pillboxes *value) {
 *ARGUMENTS:
 *  value - Pointer to the pills structure
 *********************************************************/
-void pillsDestroy(pillboxes *value) {
+void lv_pillsDestroy(pillboxes *value) {
   Dispose(*value);
 }
 
 /*********************************************************
-*NAME:          pillsSetNumPills
+*NAME:          lv_pillsSetNumPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -79,14 +79,14 @@ void pillsDestroy(pillboxes *value) {
 *  value    - Pointer to the pillbox structure
 *  numPills - The number of pills
 *********************************************************/
-void pillsSetNumPills(pillboxes *value, BYTE numPills) {
+void lv_pillsSetNumPills(pillboxes *value, BYTE numPills) {
   if (numPills > 0 && numPills <= MAX_PILLS) {
     (*value)->numPills = numPills;
   }
 }
 
 /*********************************************************
-*NAME:          pillsGetNumPills
+*NAME:          lv_pillsGetNumPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -96,12 +96,12 @@ void pillsSetNumPills(pillboxes *value, BYTE numPills) {
 *ARGUMENTS:
 *  value    - Pointer to the pillbox structure
 *********************************************************/
-BYTE pillsGetNumPills(pillboxes *value) {
+BYTE lv_pillsGetNumPills(pillboxes *value) {
   return (*value)->numPills;
 }
 
 /*********************************************************
-*NAME:          pillsSetPill
+*NAME:          lv_pillsSetPill
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -113,7 +113,7 @@ BYTE pillsGetNumPills(pillboxes *value) {
 *  item    - Pointer to a pillbox
 *  pillNum - The pillbox number
 *********************************************************/
-void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
+void lv_pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
   if (pillNum > 0 && pillNum  <= (*value)->numPills) {
     pillNum--;
     (((*value)->item[pillNum]).x) = item->x;
@@ -126,7 +126,7 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 }
 
 /*********************************************************
-*NAME:          pillsExistPos
+*NAME:          lv_pillsExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
 *LAST MODIFIED: 28/10/98
@@ -138,7 +138,7 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
+bool lv_pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
   bool returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
 
@@ -156,7 +156,7 @@ bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
 
 
 // Assumes that the pillbox exists otherwise returns 0
-BYTE pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
+BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
   BYTE count;       /* Looping Variable */
 
   count = 0;
@@ -172,7 +172,7 @@ BYTE pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
 
 
 /*********************************************************
-*NAME:          pillsGetPill
+*NAME:          lv_pillsGetPill
 *AUTHOR:        John Morrison
 *CREATION DATE:   9/2/99
 *LAST MODIFIED: 11/11/00
@@ -184,7 +184,7 @@ BYTE pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
 *  item    - Pointer to a pillbox
 *  pillNum - The pillbox number
 *********************************************************/
-void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
+void lv_pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
   if (pillNum > 0 && pillNum  <= (*value)->numPills) {
     pillNum--;
     item->x = ((*value)->item[pillNum]).x;
@@ -196,7 +196,7 @@ void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 }
 
 
-void pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
+void lv_pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
   BYTE count = 0;
   BYTE count2;
   
@@ -218,7 +218,7 @@ void pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
 }
 
 /*********************************************************
-*NAME:          pillsGetScreenHealth
+*NAME:          lv_pillsGetScreenHealth
 *AUTHOR:        John Morrison
 *CREATION DATE: 30/10/98
 *LAST MODIFIED: 30/10/98
@@ -230,7 +230,7 @@ void pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-BYTE pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
+BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
   bool done;        /* Finished searching */
   BYTE returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
@@ -244,7 +244,7 @@ BYTE pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
       /* Pillbox has been Hit */
       done = TRUE;
       
-      if (playersIsAllie((*value)->item[count].owner, playersGetSelf() ) == FALSE) {
+      if (lv_playersIsAllie((*value)->item[count].owner, lv_playersGetSelf() ) == FALSE) {
         switch((*value)->item[count].armour) {
         case PILLBOX_15:
           returnValue = PILL_EVIL_15;
@@ -355,21 +355,21 @@ BYTE pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
   return returnValue;
 }
 
-void pillsSetHealth(pillboxes *value, BYTE pillNum, BYTE health) {
+void lv_pillsSetHealth(pillboxes *value, BYTE pillNum, BYTE health) {
   (*value)->item[pillNum].armour = health;
 }
 
-void pillsSetInTank(pillboxes *value, BYTE pillNum, bool inTank) {
+void lv_pillsSetInTank(pillboxes *value, BYTE pillNum, bool inTank) {
   (*value)->item[pillNum].inTank = inTank;
 }
 
-void pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
+void lv_pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
   (*value)->item[pillNum].x = mx;
   (*value)->item[pillNum].y = my;
 }
 
 /*********************************************************
-*NAME:          pillsSetPillOwner
+*NAME:          lv_pillsSetPillOwner
 *AUTHOR:        John Morrison
 *CREATION DATE: 15/1/99
 *LAST MODIFIED: 16/2/99
@@ -385,7 +385,7 @@ void pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
 *  owner   - The new owner
 *  migrate - TRUE if it is migrating.
 *********************************************************/
-BYTE pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migrate) {
+BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migrate) {
   /* Message stuff */
   char oldOwner[FILENAME_MAX];
   char messageStr[FILENAME_MAX];
@@ -400,18 +400,18 @@ BYTE pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migrate)
   /* Make the message if required */
   if (returnValue == NEUTRAL && migrate == FALSE) {
     /* Neutral pill */
-    playersMakeMessageName(owner, messageStr);
+    lv_playersMakeMessageName(owner, messageStr);
     strncat(messageStr, " just captured a neutral pillbox", sizeof(messageStr) - strlen(messageStr) - 1);
-    messageAdd(messageStr);
+    lv_messageAdd(messageStr);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
-  } else if (playersIsAllie(returnValue, owner) == FALSE && migrate == FALSE) {
+  } else if (lv_playersIsAllie(returnValue, owner) == FALSE && migrate == FALSE) {
     /* Stole pill */
-    playersMakeMessageName(owner, messageStr);
+    lv_playersMakeMessageName(owner, messageStr);
     strncat(messageStr, " just stole pillbox from ", sizeof(messageStr) - strlen(messageStr) - 1);
-    playersGetPlayerName(returnValue, oldOwner);
+    lv_playersGetPlayerName(returnValue, oldOwner);
     strncat(messageStr, oldOwner, sizeof(messageStr) - strlen(messageStr) - 1);
-    messageAdd(messageStr);
+    lv_messageAdd(messageStr);
   }
   (*value)->item[pillNum].owner = owner;
 //    frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(value, pillNum)));
@@ -419,11 +419,11 @@ BYTE pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migrate)
 }
 
 
-bool pillsChooseView(pillboxes *value, int x, int y) {
+bool lv_pillsChooseView(pillboxes *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numPills) {
     if ((*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
-      playersSetSelf((*value)->item[count].owner);
+      lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }
     count++;
@@ -432,7 +432,7 @@ bool pillsChooseView(pillboxes *value, int x, int y) {
 }
 
 /*********************************************************
-*NAME:          pillsSetPillNetData
+*NAME:          lv_pillsSetPillNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99
 *LAST MODIFIED: 27/07/04
@@ -444,7 +444,7 @@ bool pillsChooseView(pillboxes *value, int x, int y) {
 *  buff    - Buffer of data to set pills structure to
 *  dataLen - Length of the data
 *********************************************************/
-void pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
+void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
   BYTE count = 0;
   BYTE len = 1;
   

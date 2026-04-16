@@ -33,7 +33,7 @@
 
 
 /*********************************************************
-*NAME:          utilPtoCString
+*NAME:          lv_utilPtoCString
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/2/99
 *LAST MODIFIED: 21/2/99
@@ -44,7 +44,7 @@
 *  src  - Source string
 *  dest - Destination string 
 *********************************************************/
-void utilPtoCString(char *src, char *dest) {
+void lv_utilPtoCString(char *src, char *dest) {
 	int count; /* Looping variable */
   int len;   /* Length of the string */
   len = src[0];
@@ -55,7 +55,7 @@ void utilPtoCString(char *src, char *dest) {
 }
 
 /*********************************************************
-*NAME:          utilPtoCString
+*NAME:          lv_utilPtoCString
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/2/99
 *LAST MODIFIED: 21/2/99
@@ -66,7 +66,7 @@ void utilPtoCString(char *src, char *dest) {
 *  src  - Source string
 *  dest - Destination string 
 *********************************************************/
-void utilCtoPString(char *src, char *dest) {
+void lv_utilCtoPString(char *src, char *dest) {
 	int count; /* Looping variable */
   int len;   /* Length of the string */
   
@@ -78,7 +78,7 @@ void utilCtoPString(char *src, char *dest) {
 }
 
 /*********************************************************
-*NAME:          utilGetNibbles
+*NAME:          lv_utilGetNibbles
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/2/99
 *LAST MODIFIED: 27/2/99
@@ -90,7 +90,7 @@ void utilCtoPString(char *src, char *dest) {
 *  high - Pointer to hold high nibble
 *  low  - Pointer to hold low nibble
 *********************************************************/
-void utilGetNibbles(BYTE value, BYTE *high, BYTE *low) {
+void lv_utilGetNibbles(BYTE value, BYTE *high, BYTE *low) {
   *high = *low = value;
   *high >>= NIBBLE_SHIFT_SIZE;
   *low <<= NIBBLE_SHIFT_SIZE;
@@ -98,7 +98,7 @@ void utilGetNibbles(BYTE value, BYTE *high, BYTE *low) {
 }
 
 /*********************************************************
-*NAME:          utilPutNibble
+*NAME:          lv_utilPutNibble
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/2/99
 *LAST MODIFIED: 27/2/99
@@ -109,7 +109,7 @@ void utilGetNibbles(BYTE value, BYTE *high, BYTE *low) {
 *  high - High nibble
 *  low  - Low nibble
 *********************************************************/
-BYTE utilPutNibble(BYTE high, BYTE low) {
+BYTE lv_utilPutNibble(BYTE high, BYTE low) {
   BYTE returnValue; /* Value to return */
 
   returnValue = high;

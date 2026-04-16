@@ -36,6 +36,7 @@
 #include "positions.h"
 #include "draw.h"
 #include "draw_setup_arrays.h"
+#include "logviewer.h"
 #include "imgui/imgui_main_menu.h"
 
 /* Must be included after global.h to avoid bool type conflict */
@@ -78,23 +79,21 @@ static uint32_t g_dwFrameTotal = 0;
 
 /* Last drawn map positions for dirty rect optimization.
  * Sized for the maximum map size (255 tiles in each direction). */
-int drawLast[256][256];
+int lv_drawLast[256][256];
 
-/* External variables */
-extern BYTE tc[17];
-extern bool useTeamColours;
+/* Access team colours and useTeamColours through LogViewerState */
 
 /* Function prototypes */
-BYTE screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth);
-BYTE screenGetBaseTeam(BYTE x, BYTE y);
+BYTE lv_screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth);
+BYTE lv_screenGetBaseTeam(BYTE x, BYTE y);
 
-BYTE windowGetZoomFactor(void) { return 1; }
+BYTE lv_windowGetZoomFactor(void) { return 1; }
 
-void drawDirtyScreen(void) {
+void lv_drawDirtyScreen(void) {
     int count, count2;
     for (count = 0; count < 256; count++) {
         for (count2 = 0; count2 < 256; count2++) {
-            drawLast[count][count2] = 10000;
+            lv_drawLast[count][count2] = 10000;
         }
     }
 }
@@ -135,7 +134,7 @@ static SDL_Texture *loadTextureFromFile(const char *filename, SDL_Renderer *rend
 }
 
 /*********************************************************
-*NAME:          drawSetupWithHandles
+*NAME:          lv_drawSetupWithHandles
 *PURPOSE:
 *  Sets up drawing using externally-provided window/renderer
 *  (embedded mode). Does NOT create SDL window/renderer.
@@ -143,15 +142,15 @@ static SDL_Texture *loadTextureFromFile(const char *filename, SDL_Renderer *rend
 *RETURNS:
 *  TRUE on success, FALSE on failure
 *********************************************************/
-BYTE drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
-    drawDirtyScreen();
+BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
+    lv_drawDirtyScreen();
 
     sdlWindow = window;
     sdlRenderer = renderer;
     ownsWindow = FALSE;
 
-    targetWidth  = screenGetSizeX() * TILE_SIZE_X;
-    targetHeight = screenGetSizeY() * TILE_SIZE_Y;
+    targetWidth  = lv_screenGetSizeX() * TILE_SIZE_X;
+    targetHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
     textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
                                       SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
     if (!textureTarget) {
@@ -186,15 +185,15 @@ BYTE drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
-    drawSetupArrays(1);
+    lv_drawSetupArrays(1);
     return TRUE;
 }
 
-BYTE drawSetup(void) {
+BYTE lv_drawSetup(void) {
     int width, height;
 
     ownsWindow = TRUE;
-    drawDirtyScreen();
+    lv_drawDirtyScreen();
 
     /* If already initialized, skip recreation entirely.
      * ImGui depends on the SDL window/renderer staying valid. */
@@ -214,8 +213,8 @@ BYTE drawSetup(void) {
     }
     /* Calculate window dimensions from screen tile size + menu bar space */
     #define IMGUI_MENU_BAR_HEIGHT 25
-    width  = screenGetSizeX() * TILE_SIZE_X;
-    height = screenGetSizeY() * TILE_SIZE_Y + IMGUI_MENU_BAR_HEIGHT;
+    width  = lv_screenGetSizeX() * TILE_SIZE_X;
+    height = lv_screenGetSizeY() * TILE_SIZE_Y + IMGUI_MENU_BAR_HEIGHT;
 
     sdlWindow = SDL_CreateWindow("Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
     if (sdlWindow == NULL) {
@@ -244,12 +243,12 @@ BYTE drawSetup(void) {
     }
     SDL_SetRenderVSync(sdlRenderer, 1);
 
-    targetWidth  = screenGetSizeX() * TILE_SIZE_X;
-    targetHeight = screenGetSizeY() * TILE_SIZE_Y;
+    targetWidth  = lv_screenGetSizeX() * TILE_SIZE_X;
+    targetHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
     textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
                                       SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
     if (!textureTarget) {
-        drawCleanup();
+        lv_drawCleanup();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating render target", NULL);
         return FALSE;
     }
@@ -273,7 +272,7 @@ BYTE drawSetup(void) {
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
 
-        drawCleanup();
+        lv_drawCleanup();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error loading sprite bitmaps from data/ directory", NULL);
         return FALSE;
     }
@@ -285,11 +284,11 @@ BYTE drawSetup(void) {
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
-    drawSetupArrays(1);
+    lv_drawSetupArrays(1);
     return TRUE;
 }
 
-void drawCleanup(void) {
+void lv_drawCleanup(void) {
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
@@ -312,16 +311,16 @@ void drawCleanup(void) {
 }
 
 /*********************************************************
-*NAME:          drawResizeRenderTarget
+*NAME:          lv_drawResizeRenderTarget
 *PURPOSE:
 *  Recreates the render target texture when screen size changes.
 *  This is critical for correct mouse coordinate mapping -
 *  if the texture size doesn't match the screen size, SDL
 *  will scale the texture, causing coordinate drift.
 *********************************************************/
-void drawResizeRenderTarget(void) {
-    int newWidth = screenGetSizeX() * TILE_SIZE_X;
-    int newHeight = screenGetSizeY() * TILE_SIZE_Y;
+void lv_drawResizeRenderTarget(void) {
+    int newWidth = lv_screenGetSizeX() * TILE_SIZE_X;
+    int newHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
     
     if (sdlRenderer == NULL) return;
     
@@ -346,11 +345,11 @@ void drawResizeRenderTarget(void) {
     }
     
     /* Mark screen as dirty to force redraw */
-    drawDirtyScreen();
+    lv_drawDirtyScreen();
 }
 
-int drawGetTargetWidth(void) { return targetWidth; }
-int drawGetTargetHeight(void) { return targetHeight; }
+int lv_drawGetTargetWidth(void) { return targetWidth; }
+int lv_drawGetTargetHeight(void) { return targetHeight; }
 
 /* Static splash texture - loaded once and cached */
 static SDL_Texture *textureSplash = NULL;
@@ -358,7 +357,7 @@ static int splashWidth = 800;
 static int splashHeight = 600;
 
 /*********************************************************
-*NAME:          drawSplashForImGui
+*NAME:          lv_drawSplashForImGui
 *PURPOSE:
 *  Draws the splash screen for the ImGui rendering loop.
 *  This function clears the screen and draws the splash,
@@ -366,7 +365,7 @@ static int splashHeight = 600;
 *
 *  Called from the main loop BEFORE ImGui renders.
 *********************************************************/
-void drawSplashForImGui(void) {
+void lv_drawSplashForImGui(void) {
     int x = 0, y = 0;
     SDL_FRect dstRect;
     int windowWidth, windowHeight;
@@ -410,11 +409,11 @@ void drawSplashForImGui(void) {
 }
 
 /*********************************************************
-*NAME:          drawCleanupSplash
+*NAME:          lv_drawCleanupSplash
 *PURPOSE:
 *  Cleans up the cached splash texture
 *********************************************************/
-void drawCleanupSplash(void) {
+void lv_drawCleanupSplash(void) {
     if (textureSplash) {
         SDL_DestroyTexture(textureSplash);
         textureSplash = NULL;
@@ -427,76 +426,77 @@ static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW
     SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
 }
 
-void drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
+void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
     bool done, isPill, isBase, shouldDraw;
     BYTE x, y, pos, zoomFactor, itc, pillHealth;
     int outputX, outputY;
     SDL_FRect dstRect;
-    
+    LogViewerState *lv = lv_screenGetState();
+
     (void)gs; (void)showPillLabels; (void)showBaseLabels; (void)srtDelay;
     (void)isPillView; (void)edgeX; (void)edgeY; (void)useCursor;
     (void)cursorLeft; (void)cursorTop;
-    
-    zoomFactor = windowGetZoomFactor();
+
+    zoomFactor = lv_windowGetZoomFactor();
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
     SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
     SDL_RenderClear(sdlRenderer);
     
     for (x = 0, y = 0, done = FALSE; !done; ) {
-        pos = screenGetPos(value, x, y);
-        shouldDraw = (drawLast[x][y] == 10000) ||
-                     (screenIsMine(mineView, x, y) && drawLast[x][y] != (0 - pos)) ||
-                     (!screenIsMine(mineView, x, y) && drawLast[x][y] != pos);
+        pos = lv_screenGetPos(value, x, y);
+        shouldDraw = (lv_drawLast[x][y] == 10000) ||
+                     (lv_screenIsMine(mineView, x, y) && lv_drawLast[x][y] != (0 - pos)) ||
+                     (!lv_screenIsMine(mineView, x, y) && lv_drawLast[x][y] != pos);
         
         if (shouldDraw) {
-            drawLast[x][y] = pos;
+            lv_drawLast[x][y] = pos;
             isPill = isBase = FALSE;
             
             if ((pos >= PILL_EVIL_0 && pos <= PILL_EVIL_15) || (pos >= PILL_GOOD_0 && pos <= PILL_GOOD_15)) {
                 isPill = TRUE;
-                drawLast[x][y] = 10000;
+                lv_drawLast[x][y] = 10000;
             }
             if (pos == BASE_GOOD || pos == BASE_NEUTRAL || pos == BASE_EVIL) {
                 isBase = TRUE;
-                drawLast[x][y] = 10000;
+                lv_drawLast[x][y] = 10000;
             }
             
-            if (isPill && useTeamColours) {
-                itc = screenGetPillTeam(x, y, &pillHealth);
-                drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, tc[itc] * zoomFactor * TILE_SIZE_Y,
+            if (isPill && lv->useTeamColours) {
+                itc = lv_screenGetPillTeam(x, y, &pillHealth);
+                drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
-            } else if (isBase && useTeamColours) {
-                itc = screenGetBaseTeam(x, y);
-                drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, tc[itc] * zoomFactor * TILE_SIZE_Y,
+            } else if (isBase && lv->useTeamColours) {
+                itc = lv_screenGetBaseTeam(x, y);
+                drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             } else {
-                outputX = drawPosX[pos];
-                outputY = drawPosY[pos];
+                outputX = lv_drawPosX[pos];
+                outputY = lv_drawPosY[pos];
                 drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
                     zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             }
             
-            if (screenIsMine(mineView, x, y)) {
+            if (lv_screenIsMine(mineView, x, y)) {
                 drawRenderTexture(textureTiles, zoomFactor * MINE_X, zoomFactor * MINE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
                     zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
-                drawLast[x][y] = -pos;
+                lv_drawLast[x][y] = -pos;
             }
         }
         
-        if (++x == screenGetSizeX()) { x = 0; y++; if (y == screenGetSizeY()) done = TRUE; }
+        if (++x == lv_screenGetSizeX()) { x = 0; y++; if (y == lv_screenGetSizeY()) done = TRUE; }
     }
     
-    drawShells(sBullets);
-    drawTanks(tks);
-    drawLGMs(lgms);
+    lv_drawShells(sBullets);
+    lv_drawTanks(tks);
+    lv_drawLGMs(lgms);
     
     SDL_SetRenderTarget(sdlRenderer, NULL);
     
     /* Get ImGui menu bar height to offset game rendering below it.
      * This prevents the game from drawing over the menu bar. */
     float menuBarHeight = 0.0f;
-    menuBarHeight = imgui_get_menu_bar_height();
+    menuBarHeight = lv_imgui_get_menu_bar_height();
     
     /* SDL expects client-area coordinates (0,0), not screen coordinates.
      * The rcWindow passed in contains screen coordinates which would offset
@@ -504,32 +504,32 @@ void drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, scre
      * We offset by menuBarHeight to leave space for ImGui's menu bar. */
     dstRect.x = 0.0f;
     dstRect.y = menuBarHeight;  /* Offset below ImGui menu bar */
-    dstRect.w = (float)(zoomFactor * screenGetSizeX() * TILE_SIZE_X);
-    dstRect.h = (float)(zoomFactor * screenGetSizeY() * TILE_SIZE_Y);
+    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X);
+    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y);
     SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
     
     /* NOTE: Don't call SDL_RenderPresent here - ImGui needs to render after the game
      * and present once at the end. Calling present here causes the game to overwrite
-     * the ImGui menu bar each frame. ImGui's imgui_context_render() handles the final present. */
+     * the ImGui menu bar each frame. ImGui's lv_imgui_context_render() handles the final present. */
 }
 
-void drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
-    drawLast[mx][my] = 10000;
-    if (px > itemSize && mx < 255) { drawLast[mx+1][my] = 10000; if (my < 255) drawLast[mx+1][my+1] = 10000; }
-    if (py > itemSize && my < 255) { drawLast[mx][my+1] = 10000; if (mx < 255) drawLast[mx+1][my+1] = 10000; }
+void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
+    lv_drawLast[mx][my] = 10000;
+    if (px > itemSize && mx < 255) { lv_drawLast[mx+1][my] = 10000; if (my < 255) lv_drawLast[mx+1][my+1] = 10000; }
+    if (py > itemSize && my < 255) { lv_drawLast[mx][my+1] = 10000; if (mx < 255) lv_drawLast[mx+1][my+1] = 10000; }
 }
 
-int drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
+int lv_drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
 
-void drawShells(screenBullets *sBullets) {
+void lv_drawShells(screenBullets *sBullets) {
     int total, count, x, y, srcX, srcY, srcW, srcH;
     BYTE px, py, frame, mx, my, zf;
     
-    total = screenBulletsGetNumEntries(sBullets);
-    zf = windowGetZoomFactor();
+    total = lv_screenBulletsGetNumEntries(sBullets);
+    zf = lv_windowGetZoomFactor();
     
     for (count = 1; count <= total; count++) {
-        screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
+        lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
         x = (mx * zf * TILE_SIZE_X) + zf * px;
         y = (my * zf * TILE_SIZE_Y) + zf * py;
         
@@ -560,56 +560,57 @@ void drawShells(screenBullets *sBullets) {
         default: srcX = zf*SHELL_15_X; srcY = zf*SHELL_15_Y; srcW = zf*SHELL_15_WIDTH; srcH = zf*SHELL_15_HEIGHT; break;
         }
         
-        if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) drawMarkRedraw(mx, my, px, py, 0);
-        else drawMarkRedraw(mx, my, px, py, 10);
+        if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) lv_drawMarkRedraw(mx, my, px, py, 0);
+        else lv_drawMarkRedraw(mx, my, px, py, 10);
         drawRenderTexture(textureTiles, srcX, srcY, srcW, srcH, x, y);
     }
 }
 
-void drawTanks(screenTanks *tks) {
+void lv_drawTanks(screenTanks *tks) {
     int x, y, srcX, srcY;
     BYTE count, total, px, py, mx, my, team, zoomFactor, dir;
     bool onBoat;
     char playerName[PLAYER_NAME_LEN];
-    
-    total = screenTanksGetNumEntries(tks);
-    zoomFactor = windowGetZoomFactor();
-    
+    LogViewerState *lv = lv_screenGetState();
+
+    total = lv_screenTanksGetNumEntries(tks);
+    zoomFactor = lv_windowGetZoomFactor();
+
     for (count = 1; count <= total; count++) {
-        screenTanksGetItem(tks, count, &mx, &my, &px, &py, NULL, &team, &dir, &onBoat, playerName);
+        lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, NULL, &team, &dir, &onBoat, playerName);
         px += 2; py += 2;
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
-        
-        if (useTeamColours) {
+
+        if (lv->useTeamColours) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * tc[team];
+            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
             /* Simplified: use direction-based sprite selection for non-team mode */
             srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * tc[team];
+            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         }
-        drawTankLabel(playerName, mx, my, px, py);
-        drawMarkRedraw(mx, my, px, py, 0);
+        lv_drawTankLabel(playerName, mx, my, px, py);
+        lv_drawMarkRedraw(mx, my, px, py, 0);
     }
 }
 
-void drawLGMs(screenLgm *lgms) {
+void lv_drawLGMs(screenLgm *lgms) {
     BYTE total, count, frame, mx, my, px, py, zf;
     int x, y, srcX, srcY, srcW, srcH;
     
-    total = screenLgmGetNumEntries(lgms);
-    zf = windowGetZoomFactor();
+    total = lv_screenLgmGetNumEntries(lgms);
+    zf = lv_windowGetZoomFactor();
     
     for (count = 1; count <= total; count++) {
-        screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
+        lv_screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
         switch (frame) {
-        case LGM0: srcX = zf*LGM0_X; srcY = zf*LGM0_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; drawMarkRedraw(mx,my,px,py,12); break;
-        case LGM1: srcX = zf*LGM1_X; srcY = zf*LGM1_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; drawMarkRedraw(mx,my,px,py,12); break;
-        case LGM2: srcX = zf*LGM2_X; srcY = zf*LGM2_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; drawMarkRedraw(mx,my,px,py,12); break;
-        default: srcX = zf*LGM_HELICOPTER_X; srcY = zf*LGM_HELICOPTER_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; drawMarkRedraw(mx,my,px,py,1); break;
+        case LGM0: srcX = zf*LGM0_X; srcY = zf*LGM0_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
+        case LGM1: srcX = zf*LGM1_X; srcY = zf*LGM1_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
+        case LGM2: srcX = zf*LGM2_X; srcY = zf*LGM2_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
+        default: srcX = zf*LGM_HELICOPTER_X; srcY = zf*LGM_HELICOPTER_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; lv_drawMarkRedraw(mx,my,px,py,1); break;
         }
         x = (zf * mx * TILE_SIZE_X) + (zf * px);
         y = (zf * my * TILE_SIZE_Y) + (zf * py);
@@ -617,7 +618,7 @@ void drawLGMs(screenLgm *lgms) {
     }
 }
 
-void drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py) {
+void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py) {
     SDL_Surface *surface;
     SDL_Texture *texture;
     int len, x, y, width = 5, count1, count2;
@@ -627,7 +628,7 @@ void drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py) {
     
     if (!labelFont || !str || (len = (int)strlen(str)) == 0) return;
     
-    zf = windowGetZoomFactor();
+    zf = lv_windowGetZoomFactor();
     /* SDL3_ttf: TTF_RenderText_Blended renders with transparent background and proper alpha anti-aliasing.
      * This avoids the green fringe issue that occurred with TTF_RenderText_Shaded + color key,
      * since anti-aliased edge pixels were blended with green and didn't match the exact color key. */
@@ -643,8 +644,8 @@ void drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py) {
     dstRect.x = (float)x; dstRect.y = (float)y;
     dstRect.w = (float)surface->w; dstRect.h = (float)surface->h;
     
-    if ((x + surface->w) > zf * screenGetSizeX() * TILE_SIZE_X) dstRect.w = zf * screenGetSizeX() * TILE_SIZE_X - x;
-    if ((y + surface->h) > screenGetSizeY() * (zf * TILE_SIZE_Y)) dstRect.h = zf * (screenGetSizeY() * TILE_SIZE_Y - y);
+    if ((x + surface->w) > zf * lv_screenGetSizeX() * TILE_SIZE_X) dstRect.w = zf * lv_screenGetSizeX() * TILE_SIZE_X - x;
+    if ((y + surface->h) > lv_screenGetSizeY() * (zf * TILE_SIZE_Y)) dstRect.h = zf * (lv_screenGetSizeY() * TILE_SIZE_Y - y);
     
     SDL_RenderTexture(sdlRenderer, texture, NULL, &dstRect);
     SDL_DestroyTexture(texture);
@@ -653,59 +654,59 @@ void drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py) {
     if (len > 6) width = 25;
     for (count1 = 0; count1 < 2; count1++) {
         for (count2 = 0; count2 < width; count2++) {
-            drawMarkRedraw(mx+count2, my+count1, px, py, 10);
+            lv_drawMarkRedraw(mx+count2, my+count1, px, py, 10);
         }
     }
 }
 
 /*********************************************************
-*NAME:          drawBlitGameTexture
+*NAME:          lv_drawBlitGameTexture
 *PURPOSE:
 *  Blits the game render texture to the screen without
 *  re-rendering the game. Used when the game state hasn't
 *  changed but we need to display the last frame.
 *********************************************************/
-void drawBlitGameTexture(void) {
+void lv_drawBlitGameTexture(void) {
     SDL_FRect dstRect;
     float menuBarHeight = 0.0f;
-    BYTE zoomFactor = windowGetZoomFactor();
+    BYTE zoomFactor = lv_windowGetZoomFactor();
     
     if (!textureTarget || !sdlRenderer) return;
     
     /* Get ImGui menu bar height to offset game rendering below it */
-    menuBarHeight = imgui_get_menu_bar_height();
+    menuBarHeight = lv_imgui_get_menu_bar_height();
     
     /* Blit the game texture to the screen */
     dstRect.x = 0.0f;
     dstRect.y = menuBarHeight;
-    dstRect.w = (float)(zoomFactor * screenGetSizeX() * TILE_SIZE_X);
-    dstRect.h = (float)(zoomFactor * screenGetSizeY() * TILE_SIZE_Y);
+    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X);
+    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y);
     SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
 }
 
 /*********************************************************
-*NAME:          drawGetSDLWindow
+*NAME:          lv_drawGetSDLWindow
 *PURPOSE:
 *  Returns the SDL window handle for ImGui integration
 *********************************************************/
-SDL_Window* drawGetSDLWindow(void) {
+SDL_Window* lv_drawGetSDLWindow(void) {
     return sdlWindow;
 }
 
 /*********************************************************
-*NAME:          drawGetSDLRenderer
+*NAME:          lv_drawGetSDLRenderer
 *PURPOSE:
 *  Returns the SDL renderer handle for ImGui integration
 *********************************************************/
-SDL_Renderer* drawGetSDLRenderer(void) {
+SDL_Renderer* lv_drawGetSDLRenderer(void) {
     return sdlRenderer;
 }
 
 /*********************************************************
-*NAME:          drawGetGameTexture
+*NAME:          lv_drawGetGameTexture
 *PURPOSE:
 *  Returns the game render texture for ImGui viewport display
 *********************************************************/
-SDL_Texture* drawGetGameTexture(void) {
+SDL_Texture* lv_drawGetGameTexture(void) {
     return textureTarget;
 }

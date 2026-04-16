@@ -53,7 +53,7 @@ bool showNetStat = TRUE;
 message msg;
 
 /*********************************************************
-*NAME:          messageCreate
+*NAME:          lv_messageCreate
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -63,7 +63,7 @@ message msg;
 *ARGUMENTS:
 *
 *********************************************************/
-void messageCreate(void) {
+void lv_messageCreate(void) {
   BYTE count; /* Looping variable */
   
   msg = NULL;
@@ -81,7 +81,7 @@ void messageCreate(void) {
 }
 
 /*********************************************************
-*NAME:          messageDestroy
+*NAME:          lv_messageDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -92,7 +92,7 @@ void messageCreate(void) {
 *ARGUMENTS:
 *
 *********************************************************/
-void messageDestroy(void) {
+void lv_messageDestroy(void) {
   message q;
 
   while (!IsEmpty(msg)) {
@@ -104,7 +104,7 @@ void messageDestroy(void) {
 
 
 /*********************************************************
-*NAME:          messageAdd
+*NAME:          lv_messageAdd
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  4/7/00
@@ -118,7 +118,7 @@ void messageDestroy(void) {
 *  top     - The message to print in the top line
 *  bottom  - The message to print in the bottom line
 *********************************************************/
-void messageAdder(messageType msgType, char *top, char *bottom) {
+void lv_messageAdder(messageType msgType, char *top, char *bottom) {
   static BYTE lastMessage = globalMessage;
    
   switch (msgType) {
@@ -126,9 +126,9 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
   case newsWireMessage:
     if (showNewswire == TRUE) {
       if (lastMessage != newsWireMessage) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = newsWireMessage;
     }
@@ -136,9 +136,9 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
   case assistantMessage:
     if (showAssistant == TRUE) {
       if (lastMessage != assistantMessage) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = assistantMessage;
     }
@@ -146,9 +146,9 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
   case AIMessage:
     if (showAI == TRUE) {
       if (lastMessage != AIMessage) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = AIMessage;
     }
@@ -156,9 +156,9 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
   case networkMessage:
     if (showNetwork == TRUE) {
       if (lastMessage != networkMessage) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = networkMessage;
     }
@@ -166,161 +166,161 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
     /* Player Messages */
     case player0Message:
       newMessageFrom = BASE_0; /* Using base macro because I am lazy :) */
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player0Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player0Message;
       break;
     case player1Message:
       newMessageFrom = BASE_1;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player1Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player1Message;
       break;
     case player2Message:
       newMessageFrom = BASE_2;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player2Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player2Message;
       break;
     case player3Message:
       newMessageFrom = BASE_3;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player3Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player3Message;
       break;
     case player4Message:
       newMessageFrom = BASE_4;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player4Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player4Message;
       break;
     case player5Message:
       newMessageFrom = BASE_5;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player5Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player5Message;
       break;
     case player6Message:
       newMessageFrom = BASE_6;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player6Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player6Message;
       break;
     case player7Message:
       newMessageFrom = BASE_7;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player7Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player7Message;
       break;
     case player8Message:
       newMessageFrom = BASE_8;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player8Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player8Message;
       break;
     case player9Message:
       newMessageFrom = BASE_9;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player9Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player9Message;
       break;
     case player10Message:
       newMessageFrom = BASE_10;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player10Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player10Message;
       break;
     case player11Message:
       newMessageFrom = BASE_11;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player11Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player11Message;
       break;
     case player12Message:
       newMessageFrom = BASE_12;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player12Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player12Message;
       break;
     case player13Message:
       newMessageFrom = BASE_13;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player13Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player13Message;
       break;
     case player14Message:
       newMessageFrom = BASE_14;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player14Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player14Message;
       break;
     case player15Message:
       newMessageFrom = BASE_15;
-      utilCtoPString(bottom, newMessage);
+      lv_utilCtoPString(bottom, newMessage);
       if (lastMessage != player15Message) {
-        messageAddItem(top,bottom);
+        lv_messageAddItem(top,bottom);
       } else {
-        messageAddItem((char *) MESSAGE_EMPTY,bottom);
+        lv_messageAddItem((char *) MESSAGE_EMPTY,bottom);
       }
       lastMessage = player15Message;
       break;
@@ -328,23 +328,23 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
       if (showNetStat == TRUE) {
         newMessageFrom = networkStatus;
         if (lastMessage != networkStatus) {
-          messageAddItem(top, bottom);
+          lv_messageAddItem(top, bottom);
         } else {
-          messageAddItem((char *) MESSAGE_EMPTY, bottom);
+          lv_messageAddItem((char *) MESSAGE_EMPTY, bottom);
         }
         lastMessage = networkStatus;
       }
       break;
     case globalMessage:
     default:
-      messageAddItem(top,bottom);
+      lv_messageAddItem(top,bottom);
   }
 
 }
 
 
 /*********************************************************
-*NAME:          messageAddItem
+*NAME:          lv_messageAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED:  3/1/99
@@ -355,7 +355,7 @@ void messageAdder(messageType msgType, char *top, char *bottom) {
 *  top    - The message to print in the top line
 *  bottom - The message to print in the bottom line
 *********************************************************/
-void messageAddItem(char *top, char *bottom) {
+void lv_messageAddItem(char *top, char *bottom) {
   message q;     /* temp Pointer */
   message prev;  /* temp pointer */
   message add;   /* Item to add */
@@ -420,7 +420,7 @@ void messageAddItem(char *top, char *bottom) {
 }
 
 /*********************************************************
-*NAME:          messageUpdate
+*NAME:          lv_messageUpdate
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99
 *LAST MODIFIED: 26/11/99
@@ -431,7 +431,7 @@ void messageAddItem(char *top, char *bottom) {
 *
 *********************************************************/
 #if 0
-void messageUpdate(void) {
+void lv_messageUpdate(void) {
   message q;  /* temp Pointer */
   BYTE count; /* Looping variable */
   
@@ -457,13 +457,13 @@ void messageUpdate(void) {
     topLine[MESSAGE_WIDTH-1] = END_OF_STRING;
     bottomLine[MESSAGE_WIDTH-1] = END_OF_STRING;
     /* Update the screen */
-    windowAddEvent(topLine,bottomLine);
+    lv_windowAddEvent(topLine,bottomLine);
   }
 }
 #endif
 
 /*********************************************************
-*NAME:          messageGetMessage
+*NAME:          lv_messageGetMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/1/98
 *LAST MODIFIED: 1/1/98
@@ -474,7 +474,7 @@ void messageUpdate(void) {
 *  top    - The message to print in the top line
 *  bottom - The message to print in the bottom line
 *********************************************************/
-void messageGetMessage(char *top, char *bottom) {
+void lv_messageGetMessage(char *top, char *bottom) {
   strncpy(top, topLine, MESSAGE_WIDTH - 1);
   top[MESSAGE_WIDTH - 1] = '\0';
   strncpy(bottom, bottomLine, MESSAGE_WIDTH - 1);
@@ -482,7 +482,7 @@ void messageGetMessage(char *top, char *bottom) {
 }
 
 /*********************************************************
-*NAME:          messageSetNewswire
+*NAME:          lv_messageSetNewswire
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -492,12 +492,12 @@ void messageGetMessage(char *top, char *bottom) {
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetNewswire(bool isShown) {
+void lv_messageSetNewswire(bool isShown) {
   showNewswire = isShown;
 }
 
 /*********************************************************
-*NAME:          messageSetAssistant
+*NAME:          lv_messageSetAssistant
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -507,12 +507,12 @@ void messageSetNewswire(bool isShown) {
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetAssistant(bool isShown) {
+void lv_messageSetAssistant(bool isShown) {
   showAssistant = isShown;
 }
 
 /*********************************************************
-*NAME:          messageSetAI
+*NAME:          lv_messageSetAI
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -522,12 +522,12 @@ void messageSetAssistant(bool isShown) {
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetAI(bool isShown) {
+void lv_messageSetAI(bool isShown) {
   showAI = isShown;
 }
 
 /*********************************************************
-*NAME:          messageSetNetwork
+*NAME:          lv_messageSetNetwork
 *AUTHOR:        John Morrison
 *CREATION DATE: 8/1/98
 *LAST MODIFIED: 8/1/98
@@ -537,12 +537,12 @@ void messageSetAI(bool isShown) {
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetNetwork(bool isShown) {
+void lv_messageSetNetwork(bool isShown) {
   showNetwork = isShown;
 }
 
 /*********************************************************
-*NAME:          messageSetNetStatus
+*NAME:          lv_messageSetNetStatus
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/6/00
 *LAST MODIFIED: 1/6/00
@@ -552,13 +552,13 @@ void messageSetNetwork(bool isShown) {
 *ARGUMENTS:
 *  isShown - Is this type of message shown
 *********************************************************/
-void messageSetNetStatus(bool isShown) {
+void lv_messageSetNetStatus(bool isShown) {
   showNetStat = isShown;
 }
 
 
 /*********************************************************
-*NAME:          messageIsNewMessage
+*NAME:          lv_messageIsNewMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED: 26/11/99
@@ -568,7 +568,7 @@ void messageSetNetStatus(bool isShown) {
 *ARGUMENTS:
 *
 *********************************************************/
-bool messageIsNewMessage() {
+bool lv_messageIsNewMessage() {
   bool returnValue; /* Value to return */
 
   returnValue = TRUE;
@@ -579,7 +579,7 @@ bool messageIsNewMessage() {
 }
 
 /*********************************************************
-*NAME:          messageGetNewMessage
+*NAME:          lv_messageGetNewMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED: 26/11/99
@@ -591,7 +591,7 @@ bool messageIsNewMessage() {
 *  dest         - Destination for the message
 *  playerBitmap - Bitmap of players that recieved it
 *********************************************************/
-BYTE messageGetNewMessage(char *dest, unsigned long **playerBitmap) {
+BYTE lv_messageGetNewMessage(char *dest, unsigned long **playerBitmap) {
   strncpy(dest, newMessage, FILENAME_MAX - 1);
   dest[FILENAME_MAX - 1] = '\0';
   (void)playerBitmap; /* Presently unused */

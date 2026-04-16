@@ -19,28 +19,28 @@ extern "C" {
 
 /* Initialize ImGui context and SDL3 backends
  * Returns 1 on success, 0 on failure */
-int imgui_context_init(SDL_Window* window, SDL_Renderer* renderer);
+int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer);
 
 /* Shutdown ImGui context and cleanup resources */
-void imgui_context_shutdown(void);
+void lv_imgui_context_shutdown(void);
 
 /* Begin a new ImGui frame - call at start of each frame */
-void imgui_context_newframe(void);
+void lv_imgui_context_newframe(void);
 
 /* Render ImGui draw data - call after all ImGui calls */
-void imgui_context_render(void);
+void lv_imgui_context_render(void);
 
 /* Handle SDL event for ImGui
  * Returns 1 if ImGui consumed the event, 0 otherwise */
-int imgui_context_handle_event(SDL_Event* event);
+int lv_imgui_context_handle_event(SDL_Event* event);
 
 /* Get the ImGui context (for advanced use) */
-struct ImGuiContext* imgui_context_get(void);
+struct ImGuiContext* lv_imgui_context_get(void);
 
 /* Get display size change since last frame.
  * Returns 1 if the display was resized, 0 otherwise.
  * dx/dy are set to the pixel change in width/height. */
-int imgui_context_get_resize_delta(float* dx, float* dy);
+int lv_imgui_context_get_resize_delta(float* dx, float* dy);
 
 #ifdef __cplusplus
 }

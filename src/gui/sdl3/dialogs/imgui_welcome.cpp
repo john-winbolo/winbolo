@@ -41,6 +41,7 @@ enum {
     RESULT_LAN          = 10,  /* openLan */
     RESULT_SETTINGS     = 19,  /* openSettings */
     RESULT_MAPEDITOR    = 20,  /* openMapEditor */
+    RESULT_LOGVIEWER    = 21,  /* openLogViewer */
     RESULT_QUIT         = -1
 };
 
@@ -295,6 +296,7 @@ extern "C" int imguiWelcomeShow(void) {
                 { "Local##mini",         RESULT_LAN },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 { "Map Editor##mini",    RESULT_MAPEDITOR },
+                { "Log Viewer##mini",    RESULT_LOGVIEWER },
 #endif
                 { "Settings##mini",      RESULT_SETTINGS },
 #if !BOLO_MOBILE
@@ -406,6 +408,7 @@ extern "C" int imguiWelcomeShow(void) {
                 { "Local",         RESULT_LAN },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 { "Map Editor",    RESULT_MAPEDITOR },
+                { "Log Viewer",    RESULT_LOGVIEWER },
 #endif
                 { "Settings",      RESULT_SETTINGS },
             };

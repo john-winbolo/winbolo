@@ -19,10 +19,10 @@ extern "C" {
 
 /* Render the item info window
  * Should be called each frame when window is visible */
-void imgui_item_info_window(void);
+void lv_imgui_item_info_window(void);
 
 /* Initialize item info state */
-void imgui_item_info_init(void);
+void lv_imgui_item_info_init(void);
 
 /* Update item info display
  * itemType: 0 = clear, 1 = base, 2 = pillbox
@@ -32,7 +32,7 @@ void imgui_item_info_init(void);
  * armour, shells, mines: item stats
  * inTank: whether item is in a tank
  * Using C types directly to avoid C++/C type conflicts */
-void imgui_item_info_update(unsigned char itemType, unsigned char itemNumber, unsigned char owner, 
+void lv_imgui_item_info_update(unsigned char itemType, unsigned char itemNumber, unsigned char owner, 
                             unsigned char x, unsigned char y, unsigned char armour, unsigned char shells, 
                             unsigned char mines, int inTank);
 

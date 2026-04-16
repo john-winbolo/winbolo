@@ -77,6 +77,10 @@
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "../../mapeditor/mapeditor_generate.h"
+/* Forward declaration only — don't include logviewer.h to avoid type conflicts
+   between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
+void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  const char *logPath, bool fromMainMenu);
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -629,6 +633,10 @@ static bool gameFrontDialogs(void) {
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      dlgState = openWelcome;
+      break;
+    case openLogViewer:
+      logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
       dlgState = openWelcome;
       break;
 #endif
