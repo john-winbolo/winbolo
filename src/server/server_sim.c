@@ -1473,6 +1473,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                     continue;
                 }
 
+                /* Bubbles only go to the player losing ammo in water */
+                if (evType == EVENT_SOUND && soundId == bubbles && sim->events[i].data[3] != clientIdx) {
+                    continue;
+                }
+
                 /* Calculate manhattan distance to client */
                 int dx = (clientMX > mx) ? (clientMX - mx) : (mx - clientMX);
                 int dy = (clientMY > my) ? (clientMY - my) : (my - clientMY);
