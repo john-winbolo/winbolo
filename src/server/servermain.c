@@ -43,6 +43,7 @@
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 #include "../mapeditor/mapeditor_generate.h"
+#include "../bolo/log.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/bot_manager.h"
 #include "../common/sentry_integration.h"
@@ -190,6 +191,8 @@ void saveMap(char *line) {
     transportUdpServerSendServerMessage("Server Admin saved map file.");
     if (serverSimSaveMap(&serverSim, ptr) == FALSE) {
       fprintf(stderr, "Sorry, an error occured saving the map. Is the path correct?\n");
+    } else {
+      logAddEvent(log_SaveMap, 0, 0, 0, 0, 0, NULL);
     }
   }
 }
@@ -273,6 +276,15 @@ void processKeys(bool isQuiet) {
 					threadsReleaseMutex();
 				} else if (strncmp(keyBuff, "say ", 4) == 0) {
 					transportUdpServerSendServerMessage((char *) keyBuff+4);
+					{
+						char pstr[256];
+						int len = (int)strlen(keyBuff + 4);
+						if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
+						if (len > 255) len = 255;
+						pstr[0] = (char)len;
+						memcpy(pstr + 1, keyBuff + 4, len);
+						logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+					}
 				} else if(strncmp(keyBuff, "status", 6) == 0){
 					transportUdpServerPrintStatus(statusFile);
 				} else if (strncmp(keyBuff, "kick ", 5) == 0) {
@@ -349,6 +361,15 @@ void processKeys(bool isQuiet) {
         threadsReleaseMutex();
       } else if (strncmp(keyBuff, "say ", 4) == 0) {
         transportUdpServerSendServerMessage((char *) keyBuff+4);
+        {
+            char pstr[256];
+            int len = (int)strlen(keyBuff + 4);
+            if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
+            if (len > 255) len = 255;
+            pstr[0] = (char)len;
+            memcpy(pstr + 1, keyBuff + 4, len);
+            logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+        }
       } else if(strncmp(keyBuff, "status", 6) == 0){
         transportUdpServerPrintStatus(statusFile);
       } else if (strncmp(keyBuff, "kick ", 5) == 0) {
@@ -1291,9 +1312,43 @@ int main(int argc, char **argv) {
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 
-  /* Log file generation — not yet supported, will be re-implemented against ServerSim */
+  /* Log file recording */
   if (argExist(argc, argv, "log") == TRUE) {
-    fprintf(stderr, "Warning: -log not yet supported, logging disabled\n");
+    int logArg = findArg(argc, argv, "log");
+    char userLogFile[MAX_PATH] = {0};
+    if (logArg != ARG_NOT_FOUND && argv[logArg][0] != '-') {
+      strncpy(userLogFile, (char *)argv[logArg], MAX_PATH - 1);
+    }
+    if (!serverSim.lobbyEnabled) {
+      /* No-lobby: game is already running, start logging immediately */
+      if (userLogFile[0] != '\0') {
+        strncpy(fileName, userLogFile, MAX_PATH - 1);
+      } else {
+        makeLogFileName(fileName, serverSim.mapName);
+      }
+      /* Ensure .wbv extension */
+      {
+        size_t flen = strlen(fileName);
+        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
+          strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
+        }
+      }
+      isLogging = logStart(fileName, &serverSim, &serverSim.sim.mp,
+                           &serverSim.sim.bs, &serverSim.sim.pb,
+                           &serverSim.sim.ss, &serverSim.sim.plyrs,
+                           (BYTE)ai, (BYTE)maxPlayers, serverSim.hasPassword);
+      if (isLogging) {
+        fprintf(stderr, "Logging to %s\n", fileName);
+      } else {
+        fprintf(stderr, "Warning: failed to start logging\n");
+      }
+    } else {
+      /* Lobby mode: defer logStart() to serverSimStartGame() */
+      serverSim.wantLogging = TRUE;
+      if (userLogFile[0] != '\0') {
+        strncpy(serverSim.userLogFileName, userLogFile, sizeof(serverSim.userLogFileName) - 1);
+      }
+    }
   }
 
   /* Initialize and add bot players */

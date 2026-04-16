@@ -174,6 +174,10 @@ typedef struct ServerSim {
     bool         isServerQuiet;
     char         serverMessageLogFile[FILENAME_MAX];
     bool         serverMessageUseLogFile;
+
+    /* Log recording configuration (set from CLI args, used by serverSimStartGame) */
+    bool         wantLogging;
+    char         userLogFileName[512];
 } ServerSim;
 
 /*********************************************************
