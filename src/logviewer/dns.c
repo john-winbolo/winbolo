@@ -39,7 +39,7 @@
 #include "dns.h"
 
 /* Module level variable on DNS setting */
-bool dnsEnabled = FALSE;
+static bool dnsEnabled = FALSE;
 
 /*********************************************************
 *NAME:          lv_dnsCreate

@@ -38,10 +38,10 @@
 #include "bolo_map.h"
 
 
-players plrs;
-BYTE myPlayerNum = 0; /* Your own player number */
+static players plrs;
+static BYTE myPlayerNum = 0; /* Your own player number */
 
-char testP[256];
+static char testP[256];
 
 void lv_playersSetSelf(BYTE pn) {
   myPlayerNum = pn;
