@@ -1011,7 +1011,7 @@ static bool fastModeSetupGame(void) {
   fastServerSim->lobbyEnabled = false;
   fastServerSim->state = serverStateRunning;
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  (*fastServerSim->sim.plyrs).myPlayerNum = 0;
+  fastServerSim->sim.viewPlayer = 0;
 
   /* Recreate local transport */
   headlessTransport = transportLocalCreate(fastServerSim, 0);
@@ -1092,7 +1092,7 @@ static int runFastMode(void) {
   fastServerSim->lobbyEnabled = false;
   fastServerSim->state = serverStateRunning;
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  (*fastServerSim->sim.plyrs).myPlayerNum = 0;
+  fastServerSim->sim.viewPlayer = 0;
   headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;

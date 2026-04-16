@@ -1042,7 +1042,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Register player in sim's players struct so message formatting
      * (e.g. "Player captured a base") uses the correct name. */
     if (playerName != NULL) {
-        playersSetPlayer(NULL, &sim->sim.plyrs, playerNum, (char *)playerName, "??",
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "??",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
     }
 
@@ -1852,7 +1852,7 @@ void serverSimStartGame(ServerSim *sim) {
         if (!sim->playerConnected[i]) continue;
         const char *name = transportUdpServerGetPlayerName(i);
         if (name != NULL) {
-            playersSetPlayer(NULL, &sim->sim.plyrs, i, (char *)name, "??",
+            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "??",
                              0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         }
     }
@@ -1862,7 +1862,7 @@ void serverSimStartGame(ServerSim *sim) {
     /* Clear all alliances from previous round */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, i, TRUE);
+        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
     }
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
@@ -1872,7 +1872,7 @@ void serverSimStartGame(ServerSim *sim) {
         for (j = i + 1; j < MAX_TANKS; j++) {
             if (!sim->playerConnected[j]) continue;
             if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
-                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, i, j, TRUE);
+                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
             }
         }
     }

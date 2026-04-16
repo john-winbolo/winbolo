@@ -913,7 +913,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim->lobbyEnabled = false;
           spServerSim->state = serverStateRunning;
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-          (*spServerSim->sim.plyrs).myPlayerNum = 0;
+          spServerSim->sim.viewPlayer = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */
@@ -997,7 +997,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                 if (botBrain[0] == '\0') botBrain = brainPath;
                 botManagerAddBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
                 /* Register bot name on the client side so the player list shows it */
-                playersSetPlayer(clientSim, &clientSim->sim.plyrs, slot, botName, "AI",
+                playersSetPlayer(clientSim, &clientSim->sim.plyrs, clientSim->myPlayerNum, slot, botName, "AI",
                                  0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
@@ -1018,7 +1018,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                 for (int b = a + 1; b < 16; b++) {
                   if (!spServerSim->playerConnected[b]) continue;
                   if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
-                    playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, (BYTE)a, (BYTE)b, TRUE);
+                    playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
                   }
                 }
               }

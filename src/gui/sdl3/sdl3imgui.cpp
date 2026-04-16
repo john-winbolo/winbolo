@@ -537,7 +537,7 @@ static void renderNetInfoContent(ClientSim *cs) {
     if (cs->networkGameType != netSingle) {
         char addr[256];
         players *plrs = &cs->sim.plyrs;
-        playersGetPlayerLocation(plrs, playersGetSelf(plrs), addr);
+        playersGetPlayerLocation(plrs, cs->myPlayerNum, addr);
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -901,7 +901,7 @@ static void renderPlayersPanel(ClientSim *cs) {
 
     /* Pre-compute alliance state */
     players *plrs = &cs->sim.plyrs;
-    BYTE self = playersGetSelf(plrs);
+    BYTE self = cs->myPlayerNum;
     bool hasAllies  = false;
     bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
@@ -1837,7 +1837,7 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::Selectable("Select Nearby Tanks", false, ImGuiSelectableFlags_DontClosePopups))     screenCheckNearbyPlayersCS(cs);
         /* Pre-compute alliance state for each player */
         players *plrs = &cs->sim.plyrs;
-        BYTE self = playersGetSelf(plrs);
+        BYTE self = cs->myPlayerNum;
         bool hasAllies  = false;
         bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};

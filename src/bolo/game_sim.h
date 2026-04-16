@@ -92,6 +92,7 @@ typedef struct GameSim {
     bool        hiddenMines;
 
     /* Identity — lets shared code know if it's running as server */
+    BYTE        viewPlayer; /* which player's perspective we render from */
     bool        isServer;
     bool        isLocalTransport; /* true for local/single-player, false for UDP */
     bool        inStartFind; /* Whether tank is searching for start position */

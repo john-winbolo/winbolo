@@ -144,7 +144,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->angle = angle;
   q->length = (BYTE) (1 + (SHELL_LIFE * len) - (SHELL_START_ADD));
   q->onBoat = onBoat;
-  q->creator = playersGetSelf(&sim->plyrs);
+  q->creator = sim->viewPlayer;
   q->owner = owner;
   q->packSent = FALSE;
   q->shellDead = FALSE;
@@ -820,7 +820,7 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
   int xAdd;
   int yAdd;
 
-  self = playersGetSelf(&sim->plyrs);
+  self = sim->viewPlayer;
   pos = 0;
   pnt = buff;
   q = NULL;
@@ -961,7 +961,7 @@ void shellsGetBrainShellsInRect(ClientSim *cs, GameSim *sim, shells *value, BYTE
   BYTE my; 
   BYTE playerNum;  /* Our player number       */
 
-  playerNum = playersGetSelf(&sim->plyrs);
+  playerNum = sim->viewPlayer;
   position = *value;
 
 /* typedef struct

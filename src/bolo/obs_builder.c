@@ -432,7 +432,7 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     bool dead = bi->armour > TANK_FULL_ARMOUR;
     int tank_tx = bi->tankx >> 8;
     int tank_ty = bi->tanky >> 8;
-    BYTE selfPlayer = (*cs->sim.plyrs).myPlayerNum;
+    BYTE selfPlayer = cs->myPlayerNum;
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
     /* Scalars 0-11: same as obsBuildScalars */
@@ -524,7 +524,7 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
     float self_wx = (float)bi->tankx;
     float self_wy = (float)bi->tanky;
     bool dead = bi->armour > TANK_FULL_ARMOUR;
-    BYTE selfPlayer = (*cs->sim.plyrs).myPlayerNum;
+    BYTE selfPlayer = cs->myPlayerNum;
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
     /* LGM state */

@@ -477,7 +477,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     wasmServerSim->lobbyEnabled = false;
     wasmServerSim->state = serverStateRunning;
     serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
-    (*wasmServerSim->sim.plyrs).myPlayerNum = 0;
+    wasmServerSim->sim.viewPlayer = 0;
     wasmTransport = transportLocalCreate(wasmServerSim, 0);
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
