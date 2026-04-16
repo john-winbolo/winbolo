@@ -254,8 +254,8 @@ static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
             break;
         }
         case EVENT_EXPLOSION: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
+            float sx = (float)e->data[0] - (float)tank_tx;
+            float sy = (float)e->data[1] - (float)tank_ty;
             if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
                 WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
                 snd->rx = sx;
@@ -432,7 +432,7 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     bool dead = bi->armour > TANK_FULL_ARMOUR;
     int tank_tx = bi->tankx >> 8;
     int tank_ty = bi->tanky >> 8;
-    BYTE selfPlayer = (*cs->sim.plyrs).myPlayerNum;
+    BYTE selfPlayer = cs->myPlayerNum;
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
     /* Scalars 0-11: same as obsBuildScalars */
@@ -524,7 +524,7 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
     float self_wx = (float)bi->tankx;
     float self_wy = (float)bi->tanky;
     bool dead = bi->armour > TANK_FULL_ARMOUR;
-    BYTE selfPlayer = (*cs->sim.plyrs).myPlayerNum;
+    BYTE selfPlayer = cs->myPlayerNum;
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
     /* LGM state */

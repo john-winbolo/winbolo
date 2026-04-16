@@ -461,7 +461,6 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_PILLS));
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_PILLNEW, perform) == FALSE) {
       proceed = FALSE;
-      tankPutCarriedPill(tnk, *pillNum);
       sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
     } else {
       *trees = LGM_COST_PILLNEW;
@@ -1067,6 +1066,9 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
         minesAddItem(&sim->mns, bmx, bmy);
         (*lgman)->numMines = 0;
+        if (sim->isServer && sim->hiddenMines) {
+          sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, (*lgman)->playerNum);
+        }
         sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       }
       if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }

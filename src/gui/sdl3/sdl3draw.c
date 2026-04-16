@@ -1989,8 +1989,9 @@ void sdl3DrawPillInView(void) {
   SDL_Color white = {200, 200, 200, 255};
   int originX = MAIN_OFFSET_X * gZoomFactor;
   int originY = MAIN_OFFSET_Y * gZoomFactor;
-  float tx = (float)(originX + TILE_SIZE_X * gZoomFactor);
-  float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor);
+  int fontH = 13 * gZoomFactor;
+  float tx = (float)(originX + 2 * gZoomFactor);
+  float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor - fontH - 2 * gZoomFactor);
   sdl3RenderText(gFontMsg, "Pillbox View", white, tx, ty);
 }
 

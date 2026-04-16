@@ -364,8 +364,8 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     /* Temporarily set the sim's "self" player to the camera player so
      * basesGetAlliancePos / pillsGetScreenHealth colour bases and pills
      * correctly from this player's perspective (own = good, enemy = evil). */
-    BYTE prevSelf = playersGetSelf(&bg->sim.sim.plyrs);
-    playersSetSelfNum(&bg->sim.sim.plyrs, bg->cameraPlayer);
+    BYTE prevSelf = bg->sim.sim.viewPlayer;
+    bg->sim.sim.viewPlayer = bg->cameraPlayer;
 
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
@@ -383,7 +383,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);
 
-    playersSetSelfNum(&bg->sim.sim.plyrs, prevSelf);
+    bg->sim.sim.viewPlayer = prevSelf;
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);

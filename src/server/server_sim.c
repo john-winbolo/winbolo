@@ -58,6 +58,8 @@
 #include "../bolo/playersrejoin.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
+#include "../bolo/interpolation.h"
+#include "../bolo/position_history.h"
 #include "../mapeditor/mapeditor_generate.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
@@ -220,6 +222,29 @@ static void serverSimCbSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPla
     serverSimAddEvent(sim, &ev);
 }
 
+static void serverSimCbMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_MINE_VISIBLE;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = mx;
+    ev.data[1] = my;
+    ev.data[2] = sourcePlayer;
+    serverSimAddEvent(sim, &ev);
+}
+
+static void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_EXPLOSION;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = mx;
+    ev.data[1] = my;
+    ev.data[2] = px;
+    ev.data[3] = py;
+    serverSimAddEvent(sim, &ev);
+}
+
 static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
@@ -283,6 +308,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.tankKill = serverSimCbTankKill;
     sim->sim.callbacks.centerTank = serverSimCbCenterTank;
     sim->sim.callbacks.consoleMessage = serverSimCbConsoleMessage;
+    sim->sim.callbacks.mineVisible = serverSimCbMineVisible;
+    sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -292,6 +319,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->inputQueueTail[count] = 0;
         sim->playerConnected[count] = FALSE;
     }
+
+    sim->sim.posHistoryPtr = sim->posHistory;
+    sim->sim.lagCompTicks = 0;
+    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
     gameTypeSet(&sim->sim.game, game);
     logCreate();
@@ -666,6 +697,25 @@ void serverSimTick(ServerSim *sim) {
      * so each tick number is only processed once. */
     for (count = 0; count < MAX_TANKS; count++) {
         hasInput[count] = FALSE;
+        if (!sim->playerConnected[count]) {
+            continue;
+        }
+
+        /* Calculate queue depth (inputs available) */
+        uint8_t queueDepth = sim->inputQueueHead[count] - sim->inputQueueTail[count];
+
+        /* Jitter buffer gate: wait until we have enough inputs buffered.
+         * Once the buffer has filled initially, keep processing even if
+         * depth drops to 1 (drain rather than stall). Only re-enter
+         * buffering mode if the queue empties completely. */
+        if (!sim->inputBufferFilled[count]) {
+            if (queueDepth < sim->jitterTarget[count]) {
+                continue;  /* Still filling to adaptive target */
+            }
+            sim->inputBufferFilled[count] = 1;
+        }
+
+        /* Dequeue one input, skipping duplicates/stale */
         while (sim->inputQueueHead[count] != sim->inputQueueTail[count]) {
             uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
             currentInputs[count] = sim->inputQueue[count][tail];
@@ -674,7 +724,45 @@ void serverSimTick(ServerSim *sim) {
                 hasInput[count] = TRUE;
                 break;
             }
-            /* Duplicate or stale input — discard and try the next one */
+        }
+
+        /* Adaptive jitter buffer — track stalls and adjust target depth */
+        if (sim->inputBufferFilled[count]) {
+            if (!hasInput[count]) {
+                /* Queue ran dry — we're consuming faster than inputs arrive */
+                sim->jitterStallCount[count]++;
+                sim->jitterStableTicks[count] = 0;
+                if (sim->jitterStallCount[count] >= JITTER_GROW_THRESHOLD &&
+                    sim->jitterTarget[count] < JITTER_BUFFER_MAX) {
+                    sim->jitterTarget[count]++;
+                    sim->jitterStallCount[count] = 0;
+                    {
+                        char name[FILENAME_MAX];
+                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                        SDL_Log("Jitter buffer grow: player %d (%s) ping=%ums target=%u",
+                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
+                    }
+                }
+            } else {
+                sim->jitterStallCount[count] = 0;
+                sim->jitterStableTicks[count]++;
+                if (sim->jitterStableTicks[count] >= JITTER_SHRINK_INTERVAL &&
+                    sim->jitterTarget[count] > JITTER_BUFFER_MIN) {
+                    sim->jitterTarget[count]--;
+                    sim->jitterStableTicks[count] = 0;
+                    {
+                        char name[FILENAME_MAX];
+                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                        SDL_Log("Jitter buffer shrink: player %d (%s) ping=%ums target=%u",
+                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
+                    }
+                }
+            }
+        }
+
+        /* If queue drained completely, re-enter buffering mode */
+        if (sim->inputQueueHead[count] == sim->inputQueueTail[count] && !hasInput[count]) {
+            sim->inputBufferFilled[count] = 0;
         }
     }
 
@@ -712,6 +800,13 @@ void serverSimTick(ServerSim *sim) {
             } else {
                 /* Game tick: full update (turning + accel + movement) */
                 bool shoot = (currentInputs[count].actions & INPUT_ACTION_FIRE) != 0;
+                {
+                    uint16_t pingMs = sim->playerPing[count];
+                    uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
+                    uint8_t compTicks = (uint8_t)(delayMs / 20);
+                    if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
+                    sim->sim.lagCompTicks = compTicks;
+                }
                 tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
                 lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
 
@@ -734,12 +829,26 @@ void serverSimTick(ServerSim *sim) {
         } else if (!isKeysTick) {
             /* No input but it's a world-system game tick — still run
              * tankUpdate with TNONE so physics (deceleration, etc.) apply */
+            sim->sim.lagCompTicks = 0;
             tankUpdate(&sim->sim, &sim->sim.tanks[count], TNONE, FALSE, FALSE);
         }
     }
 
+    /* Reset lagCompTicks after per-player loop so pill-fired shells get 0 */
+    sim->sim.lagCompTicks = 0;
+
     /* World systems: run on even server ticks (game ticks) */
     if (!isKeysTick) {
+        /* Record tank positions for lag compensation history */
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
+                posHistoryRecord(&sim->posHistory[count],
+                                 (*sim->sim.tanks[count]).x,
+                                 (*sim->sim.tanks[count]).y,
+                                 (*sim->sim.tanks[count]).armour <= TANK_FULL_ARMOUR);
+            }
+        }
+
         /* Update pillboxes — pass all tanks so pills can target closest enemy */
         pillsUpdate(&sim->sim, sim->sim.tanks, sim->playerConnected, MAX_TANKS);
 
@@ -794,6 +903,21 @@ void serverSimTick(ServerSim *sim) {
                 numTanks++;
             }
         }
+
+        /* Precompute per-player compensation ticks for pill shell rewind */
+        {
+            BYTE c;
+            for (c = 0; c < MAX_TANKS; c++) {
+                uint16_t pingMs = sim->playerPing[c];
+                uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
+                uint8_t ticks = (uint8_t)(delayMs / 20);
+                if (ticks > LAG_COMP_MAX_TICKS) ticks = LAG_COMP_MAX_TICKS;
+                sim->sim.perPlayerCompTicks[c] = ticks;
+            }
+        }
+
+        /* Enforce high-ping limits */
+        transportUdpServerEnforcePing(sim);
 
         /* Update world systems */
         tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);
@@ -908,7 +1032,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     }
     sim->inputQueue[p][head & (SERVER_INPUT_QUEUE_SIZE - 1)] = sanitized;
     sim->inputQueueHead[p] = head + 1;
-    sim->playerPing[p] = sanitized.pingMs;
+    sim->playerPing[p] = transportUdpServerGetClientPing(p);
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
@@ -928,6 +1052,10 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->inputBufferFilled[playerNum] = 0;
+    sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
+    sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStableTicks[playerNum] = 0;
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -951,7 +1079,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Register player in sim's players struct so message formatting
      * (e.g. "Player captured a base") uses the correct name. */
     if (playerName != NULL) {
-        playersSetPlayer(NULL, &sim->sim.plyrs, playerNum, (char *)playerName, "??",
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "??",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
     }
 
@@ -982,6 +1110,10 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
+    sim->inputBufferFilled[playerNum] = 0;
+    sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
+    sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStableTicks[playerNum] = 0;
 
     /* Record ownership for rejoin before migration changes it */
     {
@@ -1132,22 +1264,17 @@ static int serverSimGetShells(ServerSim *sim, ShellSnapshot *out, int maxOut,
     return count;
 }
 
-static int serverSimGetExplosions(ServerSim *sim, ExplosionSnapshot *out, int maxOut,
-                                  const ViewportRect *viewports, int numViewports) {
-    explosions q;
+static int serverSimGetTkExplosions(ServerSim *sim, TkExplosionSnapshot *out, int maxOut) {
+    tkExplosion q = sim->sim.tankExplosions;
     int count = 0;
 
-    q = sim->sim.expl;
     while (q != NULL && count < maxOut) {
-        if (!inAnyViewport(viewports, numViewports, q->mx, q->my)) {
-            q = q->next;
-            continue;
-        }
-        out[count].mx = q->mx;
-        out[count].my = q->my;
-        out[count].px = q->px;
-        out[count].py = q->py;
+        out[count].worldX = q->x;
+        out[count].worldY = q->y;
+        out[count].angle = (uint8_t)(q->angle);
         out[count].length = q->length;
+        out[count].explodeType = q->explodeType;
+        out[count].creator = q->creator;
         count++;
         q = q->next;
     }
@@ -1203,7 +1330,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
                             TankSnapshot *tanksOut, int maxTanks,
                             ShellSnapshot *shellsOut, int maxShells,
-                            ExplosionSnapshot *explosionsOut, int maxExplosions,
+                            TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
                             GameEvent *eventsOut, int maxEvents) {
@@ -1262,9 +1389,20 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (!sim->playerConnected[i]) continue;
         if (!serverSimGetTankState(sim, (BYTE)i, &wx, &wy)) continue;
 
-        /* Always include the client's own tank; cull others by viewport */
+        /* Always include the client's own tank; cull others by viewport.
+         * Also check LGM position — a parachuting LGM can be far from its
+         * tank (starts at a random spawn), so we need to send updates when
+         * the LGM is visible even if the tank is not. */
         if (i != clientIdx) {
-            if (!inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8)) {
+            bool inView = inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8);
+            if (!inView && sim->sim.lgmen[i] != NULL && lgmIsOut(&sim->sim.lgmen[i])) {
+                BYTE lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
+                BYTE lgmMY = lgmGetMY(&sim->sim.lgmen[i]);
+                if (lgmMX != 0 || lgmMY != 0) {
+                    inView = inAnyViewport(viewports, numViewports, lgmMX, lgmMY);
+                }
+            }
+            if (!inView) {
                 continue;
             }
         }
@@ -1323,9 +1461,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     hdr->shellCount = (uint8_t)serverSimGetShells(sim, shellsOut, maxShells,
                                                    viewports, numViewports);
 
-    /* Explosion snapshots */
-    hdr->explosionCount = (uint8_t)serverSimGetExplosions(sim, explosionsOut, maxExplosions,
-                                                           viewports, numViewports);
+    /* Tank explosion snapshots (globally important — no viewport filtering) */
+    hdr->tkExplosionCount = (uint8_t)serverSimGetTkExplosions(sim, tkExplOut, maxTkExpl);
 
     /* Periodic full base/pill/map sync to correct any client drift */
     if (sim->lastFullSyncTick == 0 || sim->tick - sim->lastFullSyncTick >= FULL_SYNC_INTERVAL) {
@@ -1376,6 +1513,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                     continue;
                 }
 
+                /* Bubbles only go to the player losing ammo in water */
+                if (evType == EVENT_SOUND && soundId == bubbles && sim->events[i].data[3] != clientIdx) {
+                    continue;
+                }
+
                 /* Calculate manhattan distance to client */
                 int dx = (clientMX > mx) ? (clientMX - mx) : (mx - clientMX);
                 int dy = (clientMY > my) ? (clientMY - my) : (my - clientMY);
@@ -1404,6 +1546,21 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
             uint8_t evType = sim->events[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
+                 * LGM mines go only to the placer and their allies */
+                if (evType == EVENT_MINE_VISIBLE) {
+                    BYTE sp = sim->events[i].data[2];
+                    if (!(sp & 0x80) && clientIdx != (sp & 0x7F) &&
+                        !playersIsAllie(&sim->sim.plyrs, clientIdx, sp)) {
+                        continue;
+                    }
+                }
+                /* Viewport-cull explosion events */
+                if (evType == EVENT_EXPLOSION) {
+                    if (!inAnyViewport(viewports, numViewports, sim->events[i].data[0], sim->events[i].data[1])) {
+                        continue;
+                    }
+                }
                 eventsOut[outCount++] = sim->events[i];
             }
         }
@@ -1445,10 +1602,12 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            fprintf(stdout, "%s - (P:%d B:%d)\n",
+            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Jitter:%d)\n",
                     name,
                     pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                    sim->playerPing[count],
+                    sim->jitterTarget[count]);
         }
     }
     fprintf(stdout, "\n");
@@ -1687,27 +1846,38 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 4. Clear mines from under bases */
     basesClearMines(&sim->sim);
 
-    /* 5. Clear events */
+    /* 5. Reset lag compensation state */
+    for (i = 0; i < MAX_TANKS; i++) {
+        posHistoryInit(&sim->posHistory[i]);
+    }
+    sim->sim.lagCompTicks = 0;
+    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
+
+    /* 6. Clear events */
     sim->eventCount = 0;
 
-    /* 6. Reset tick */
+    /* 7. Reset tick */
     sim->tick = 0;
 
-    /* 7. Flush all input queues */
+    /* 8. Flush all input queues */
     for (i = 0; i < MAX_TANKS; i++) {
         sim->inputQueueHead[i] = 0;
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
+        sim->inputBufferFilled[i] = 0;
+        sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
+        sim->jitterStallCount[i] = 0;
+        sim->jitterStableTicks[i] = 0;
     }
 
-    /* 8. Reset full sync tracking */
+    /* 9. Reset full sync tracking */
     sim->lastFullSyncTick = 0;
 
-    /* 9. Reset change detection */
+    /* 10. Reset change detection */
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
 
-    /* 10. Reset player connection state and players struct */
+    /* 11. Reset player connection state and players struct */
     for (i = 0; i < MAX_TANKS; i++) {
         sim->playerConnected[i] = FALSE;
     }
@@ -1736,13 +1906,24 @@ void serverSimStartGame(ServerSim *sim) {
     }
     sim->hadPlayersEver = TRUE;
 
+    /* Seed jitter target from lobby ping — localhost players start at minimum
+     * buffer depth instead of waiting for the adaptive algorithm to shrink.
+     * ping == 0 means no pong received yet, so leave at default. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!savedConnected[i]) continue;
+        uint16_t ping = transportUdpServerGetClientPing(i);
+        if (ping > 0 && ping < 5) {
+            sim->jitterTarget[i] = JITTER_BUFFER_MIN;
+        }
+    }
+
     /* Re-register player names — resetGameWorld destroyed the Players struct,
      * so names must be restored from the transport's client name array. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         const char *name = transportUdpServerGetPlayerName(i);
         if (name != NULL) {
-            playersSetPlayer(NULL, &sim->sim.plyrs, i, (char *)name, "??",
+            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "??",
                              0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         }
     }
@@ -1752,7 +1933,7 @@ void serverSimStartGame(ServerSim *sim) {
     /* Clear all alliances from previous round */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, i, TRUE);
+        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
     }
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
@@ -1762,7 +1943,7 @@ void serverSimStartGame(ServerSim *sim) {
         for (j = i + 1; j < MAX_TANKS; j++) {
             if (!sim->playerConnected[j]) continue;
             if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
-                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, i, j, TRUE);
+                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
             }
         }
     }

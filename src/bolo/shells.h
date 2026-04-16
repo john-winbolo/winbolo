@@ -83,10 +83,11 @@ struct shellsObj {
   bool onBoat;      /* Was the shell launched from a boat */
   bool packSent;    /* Has this shell been included in a network packet yet */
   BYTE creator;     /* Creator machines player Number */
-  bool shellDead;   /* Used to over come the if shell dies straight away and 
+  bool shellDead;   /* Used to over come the if shell dies straight away and
                        hasn't been sent it never does. So we mark it dead
                        and it doesn't get updated any more but exists till
                        it gets sent (ie packSent == TRUE) */
+  uint8_t compensationTicks;  /* rewind ticks for lag compensation (0 = no compensation) */
 };
 
 
@@ -221,7 +222,7 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  numTanks - Number of tanks in the array
 *  isServer - TRUE if we are a server
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks, uint8_t compensationTicks);
 
 /*********************************************************
 *NAME:          shellsCheckRoad

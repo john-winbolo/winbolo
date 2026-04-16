@@ -48,6 +48,7 @@
 #include "messages.h"
 #include "sounddist.h"
 #include "util.h"
+#include "position_history.h"
 
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType, char *top, char *bottom);
@@ -57,6 +58,8 @@ typedef struct GameSimCallbacks {
     void (*tankKill)(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills);
     void (*centerTank)(void *ctx);
     void (*consoleMessage)(void *ctx, char *msg);
+    void (*mineVisible)(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer);
+    void (*explosion)(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
@@ -89,6 +92,7 @@ typedef struct GameSim {
     bool        hiddenMines;
 
     /* Identity — lets shared code know if it's running as server */
+    BYTE        viewPlayer; /* which player's perspective we render from */
     bool        isServer;
     bool        isLocalTransport; /* true for local/single-player, false for UDP */
     bool        inStartFind; /* Whether tank is searching for start position */
@@ -116,6 +120,14 @@ typedef struct GameSim {
 
     /* Base refuel timers (was bases.c global) */
     int         baseTimer[MAX_TANKS];
+
+    /* Tank explosion update throttle (per-sim so server/client don't share) */
+    BYTE        tkExpUpdateTime;
+
+    /* Lag compensation (server-only, zeroed on client) */
+    uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
+    uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */
+    PosHistory *posHistoryPtr;               /* NULL on client, points to ServerSim.posHistory on server */
 } GameSim;
 
 /*********************************************************

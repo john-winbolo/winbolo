@@ -115,7 +115,7 @@ static void gymSyncSnapshot(WinBoloGym *g) {
     SnapshotHeader snapHdr;
     TankSnapshot snapTanks[MAX_TANKS];
     ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-    ExplosionSnapshot snapExplosions[MAX_SNAPSHOT_EXPLOSIONS];
+    TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
     BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
     PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
     GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
@@ -123,14 +123,14 @@ static void gymSyncSnapshot(WinBoloGym *g) {
     if (g->transport.getSnapshot(g->transport.ctx, 0,
                                   &snapHdr, snapTanks, MAX_TANKS,
                                   snapShells, MAX_SNAPSHOT_SHELLS,
-                                  snapExplosions, MAX_SNAPSHOT_EXPLOSIONS,
+                                  snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                   snapBases, MAX_SNAPSHOT_BASES,
                                   snapPills, MAX_SNAPSHOT_PILLS,
                                   snapEvents, MAX_SNAPSHOT_EVENTS)) {
         clientSimSyncFromSnapshot(&g->clientSim, &snapHdr,
                                   snapTanks, snapHdr.tankCount,
                                   snapShells, snapHdr.shellCount,
-                                  snapExplosions, snapHdr.explosionCount,
+                                  snapTkExplosions, snapHdr.tkExplosionCount,
                                   snapBases, snapHdr.baseCount,
                                   snapPills, snapHdr.pillCount,
                                   snapEvents, snapHdr.reliableEventCount, 0);
@@ -142,7 +142,7 @@ static void gymSetupGame(WinBoloGym *g) {
     g->serverSim.lobbyEnabled = false;
     g->serverSim.state = serverStateRunning;
     serverSimAddPlayer(&g->serverSim, 0, "GymAgent", false);
-    (*g->serverSim.sim.plyrs).myPlayerNum = 0;
+    g->serverSim.sim.viewPlayer = 0;
 
     g->transport = transportLocalCreate(&g->serverSim, 0);
 
@@ -431,8 +431,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             break;
         }
         case EVENT_EXPLOSION: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
+            float sx = (float)e->data[0] - (float)tank_tx;
+            float sy = (float)e->data[1] - (float)tank_ty;
             if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
                 WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
                 snd->rx = sx;
@@ -1580,7 +1580,7 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
     keysPkt.playerNum = 0;
     keysPkt.buttons = pkt.buttons;
 
-    game->transport.sendInput(game->transport.ctx, &keysPkt);
+    game->transport.recordInput(game->transport.ctx, &keysPkt);
     game->transport.tick(game->transport.ctx);
     gymBufferServerEvents(game);
     game->simTickCounter++;

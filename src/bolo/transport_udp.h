@@ -130,16 +130,14 @@ BYTE transportUdpClientGetPlayerNum(Transport *t);
 
 /* Returns TRUE if a new snapshot is available.
  * If TRUE, copies the snapshot header, tank data, shell data,
- * explosion data, base/pill state, and game events into the
- * output params. Arrays may be NULL if not needed. */
+ * base/pill state, and game events into the output params.
+ * Arrays may be NULL if not needed. */
 bool transportUdpClientGetSnapshot(Transport *t,
                                    SnapshotHeader *hdr,
                                    TankSnapshot *tanks,
                                    int maxTanks,
                                    ShellSnapshot *shellsOut,
                                    int maxShells,
-                                   ExplosionSnapshot *explosionsOut,
-                                   int maxExplosions,
                                    BaseSnapshot *basesOut,
                                    int maxBases,
                                    PillSnapshot *pillsOut,
@@ -151,8 +149,9 @@ bool transportUdpClientGetSnapshot(Transport *t,
 uint16_t transportUdpClientGetPing(Transport *t);
 
 /* Returns client-side network stats: packets/sec received, packets/sec sent,
- * and cumulative error count (stale/truncated packets). */
-void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent, int *numErrors);
+ * bytes/sec received, bytes/sec sent, and cumulative error count. */
+void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
+                                   int *bpsRecv, int *bpsSent, int *numErrors);
 
 /* Send a chat message to the server.
  * destPlayer: 0xFF = all players, else specific player number. */
@@ -218,6 +217,12 @@ void transportUdpClientGetGameSettings(Transport *t, gameType *game,
  * UDP Transport — Server Side
  *********************************************************/
 
+/* Ping enforcement thresholds */
+#define PING_WARN_THRESHOLD_MS  400   /* RTT ms — warn after consecutive breaches */
+#define PING_KICK_THRESHOLD_MS  500   /* RTT ms — kick after consecutive breaches */
+#define PING_WARN_COUNT         3     /* consecutive pings at warn threshold before warning */
+#define PING_KICK_COUNT         5     /* consecutive pings at kick threshold before kick */
+
 /* Per-client connection info tracked by the server */
 typedef struct {
     struct sockaddr_in addr;
@@ -228,10 +233,15 @@ typedef struct {
     uint32_t outSequence;        /* Outgoing packet sequence */
     uint32_t lastPingTime;       /* When we last sent a ping */
     uint16_t pingMs;             /* Last measured ping */
+    uint32_t lastPongSentMs;     /* SDL_GetTicks() when last PONG was sent */
     char countryCode[3];         /* ISO 3166-1 alpha-2 from GeoIP lookup */
     bool needsPlayerList;        /* Send existing player names after map download */
     uint16_t inputsThisTick;     /* Inputs applied this tick cycle (for rate limiting) */
     bool wantRejoin;             /* Client requested rejoin (restore pills/bases) */
+    uint8_t pingWarnStrikes;     /* consecutive pings >= warn threshold */
+    uint8_t pingKickStrikes;     /* consecutive pings >= kick threshold */
+    bool    pingWarned;          /* warning already sent this streak */
+    uint16_t lastEnforcedPingMs; /* pingMs value last time enforcement ran */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.
@@ -256,6 +266,12 @@ void transportUdpServerTick(struct ServerSim *sim);
 void transportUdpServerRecv(struct ServerSim *sim);
 void transportUdpServerSend(struct ServerSim *sim);
 
+/* Drain the recv thread's packet queue (use when recv thread is active). */
+void transportUdpServerDrainRecvQueue(struct ServerSim *sim);
+
+/* Returns true if a dedicated recv thread is running. */
+bool transportUdpServerHasRecvThread(void);
+
 /* Drain sim events into per-client reliable queues.
  * Call after each serverSimTick() so events aren't lost when
  * multiple ticks run before transportUdpServerSend(). */
@@ -266,6 +282,9 @@ int transportUdpServerGetClientCount(void);
 
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
+
+/* Check all connected clients and warn/kick for sustained high ping. */
+void transportUdpServerEnforcePing(struct ServerSim *sim);
 
 /* Kick a player by name (case-insensitive match). */
 void transportUdpServerKickPlayer(struct ServerSim *sim, const char *playerName);

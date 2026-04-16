@@ -204,9 +204,12 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/brain_pathfinder.c
     ${PROJ_ROOT}/src/bolo/brain_worldsim.c
     ${PROJ_ROOT}/src/bolo/transport_local.c
-    ${PROJ_ROOT}/src/bolo/transport_udp.c
+    ${PROJ_ROOT}/src/bolo/transport_udp_common.c
+    ${PROJ_ROOT}/src/bolo/transport_udp_client.c
+    ${PROJ_ROOT}/src/bolo/transport_udp_server.c
     ${PROJ_ROOT}/src/bolo/client_state.c
     ${PROJ_ROOT}/src/bolo/interpolation.c
+    ${PROJ_ROOT}/src/bolo/position_history.c
     ${PROJ_ROOT}/src/bolo/client_sim.c
     ${PROJ_ROOT}/src/bolo/bot_manager.c
     ${PROJ_ROOT}/src/bolo/discovery.c

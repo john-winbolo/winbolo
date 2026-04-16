@@ -915,15 +915,15 @@ static void appRender(BrainTestApp *app) {
 
     if (app->simValid) {
         /* Set perspective to followed bot for correct coloring */
-        BYTE prevSelf = playersGetSelf(&app->sim.sim.plyrs);
-        playersSetSelfNum(&app->sim.sim.plyrs, app->followBot);
+        BYTE prevSelf = app->sim.sim.viewPlayer;
+        app->sim.sim.viewPlayer = app->followBot;
 
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
         mapViewRenderCentered(&ctx, &app->sim.sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
 
-        playersSetSelfNum(&app->sim.sim.plyrs, prevSelf);
+        app->sim.sim.viewPlayer = prevSelf;
 
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);

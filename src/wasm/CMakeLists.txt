@@ -152,9 +152,12 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/brain_pathfinder.c
     ${SRC_ROOT}/bolo/brain_worldsim.c
     ${SRC_ROOT}/bolo/transport_local.c
-    ${SRC_ROOT}/bolo/transport_udp.c
+    ${SRC_ROOT}/bolo/transport_udp_common.c
+    ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/bolo/transport_udp_server.c
     ${SRC_ROOT}/bolo/client_state.c
     ${SRC_ROOT}/bolo/interpolation.c
+    ${SRC_ROOT}/bolo/position_history.c
     ${SRC_ROOT}/bolo/client_sim.c
     ${SRC_ROOT}/bolo/bot_manager.c
     ${SRC_ROOT}/bolo/discovery.c

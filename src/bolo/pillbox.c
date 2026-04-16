@@ -242,13 +242,13 @@ pillAlliance pillsGetAllianceNum(GameSim *sim, pillboxes *value, BYTE pillNum) {
     if ((pillNum) <= ((*value)->numPills)) {
       if ((*value)->item[pillNum].armour == 0 && (*value)->item[pillNum].inTank == FALSE) {
         returnValue = pillDead;
-      } else if ((*value)->item[pillNum].owner == playersGetSelf(&sim->plyrs)) {
+      } else if ((*value)->item[pillNum].owner == sim->viewPlayer) {
         if ((*value)->item[pillNum].inTank == TRUE) {
           returnValue = pillTankGood;
         } else {
           returnValue = pillGood;
         }
-      } else if (playersIsAllie(&sim->plyrs, (*value)->item[pillNum].owner, playersGetSelf(&sim->plyrs)) == TRUE) {
+      } else if (playersIsAllie(&sim->plyrs, (*value)->item[pillNum].owner, sim->viewPlayer) == TRUE) {
         if ((*value)->item[pillNum].inTank == TRUE) {
           returnValue = pillTankAllie;
         } else {
@@ -511,7 +511,7 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
       /* Pillbox has been Hit */
       done = TRUE;
       
-      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, playersGetSelf(&sim->plyrs) ) == FALSE) {
+      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer ) == FALSE) {
         switch((*value)->item[count].armour) {
         case PILLBOX_15:
           returnValue = PILL_EVIL_15;
@@ -785,12 +785,12 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     bmy = (BYTE) tankTestAddY;
 
     isLand = mapIsLand(mp, pb,bs, bmx, newbmy);
-    if (mapGetSpeed(sim,mp,pb,bs,bmx,newbmy, onBoat, playersGetSelf(&sim->plyrs)) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= BOAT_EXIT_SPEED))) {
+    if (mapGetSpeed(sim,mp,pb,bs,bmx,newbmy, onBoat, sim->viewPlayer) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= BOAT_EXIT_SPEED))) {
       tankY = (WORLD) (tankY + tankAddY);
     }
 
     isLand = mapIsLand(mp, pb,bs, newbmx, bmy);
-    if (mapGetSpeed(sim,mp,pb,bs,newbmx,bmy, onBoat, playersGetSelf(&sim->plyrs)) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= BOAT_EXIT_SPEED))) {
+    if (mapGetSpeed(sim,mp,pb,bs,newbmx,bmy, onBoat, sim->viewPlayer) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= BOAT_EXIT_SPEED))) {
       tankX = (WORLD) (tankX + tankAddX);
     }
     
@@ -954,14 +954,14 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
     /* Make the message if required */
     if (returnValue == NEUTRAL && migrate == FALSE && owner != NEUTRAL) {
       /* Neutral pill */
-      playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
+      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
       strcat(messageStr, langGetText(MESSAGE_CAPTURE_PILL));
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
     } else if (owner == NEUTRAL) {
       /* Do nothing */
     } else if (playersIsAllie(&sim->plyrs, returnValue, owner) == FALSE && migrate == FALSE) {
       /* Stole pill */
-      playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
+      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
       strcat(messageStr, langGetText(MESSAGE_STOLE_PILL));
       playersGetPlayerName(&sim->plyrs, returnValue, oldOwner, sim->isServer);
       strcat(messageStr, oldOwner);
@@ -1056,7 +1056,7 @@ BYTE pillsNumInRect(GameSim *sim, pillboxes *value, BYTE leftPos, BYTE rightPos,
   returnValue = 0;
   count = 0;
   while (count < ((*value)->numPills)) {
-    if ((*value)->item[count].x >= leftPos && (*value)->item[count].x <= rightPos && (*value)->item[count].y >= top && (*value)->item[count].y <= bottom && (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, playersGetSelf(&sim->plyrs)) == FALSE)) {
+    if ((*value)->item[count].x >= leftPos && (*value)->item[count].x <= rightPos && (*value)->item[count].y >= top && (*value)->item[count].y <= bottom && (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer) == FALSE)) {
       if ((*value)->item[count].armour > 0) {
         returnValue++;
       }
@@ -1166,7 +1166,7 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove
   count = 0;
   oldPill = pillsGetPillNum(value, *mx, *my, FALSE, FALSE);
   oldPill--;
-  myPlayerNum = playersGetSelf(&sim->plyrs);
+  myPlayerNum = sim->viewPlayer;
   while (count < (*value)->numPills) {
     if (count != oldPill && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
       if (((yMove == 0 && (xMove < 0 && (*value)->item[count].x < *mx)) || (xMove > 0 && (*value)->item[count].x > *mx)) || ((xMove == 0 && (yMove < 0 && (*value)->item[count].y < *my)) || (yMove > 0 && (*value)->item[count].y > *my))) {
@@ -1217,7 +1217,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
   returnValue = TRUE;
   done = FALSE;
   okLoop = FALSE;
-  playNumber = playersGetSelf(&sim->plyrs);
+  playNumber = sim->viewPlayer;
 
   /* Find out the previous amount */
   if (prev == TRUE) {
@@ -1288,7 +1288,7 @@ bool pillsCheckView(GameSim *sim, pillboxes *value, BYTE mx, BYTE my) {
 
     returnValue = TRUE;
   pillNum = pillsGetPillNum(value, mx, my, FALSE, FALSE);
-  playNumber = playersGetSelf(&sim->plyrs);
+  playNumber = sim->viewPlayer;
 
   if (pillNum == PILL_NOT_FOUND || pillNum == (PILL_NOT_FOUND-1)) {
     returnValue = FALSE;
@@ -1644,7 +1644,7 @@ void pillsGetBrainPillsInRect(ClientSim *cs, GameSim *sim, pillboxes *value, BYT
   BYTE count;      /* Looping variable */
 
   count = 0;
-  playerNum = playersGetSelf(&sim->plyrs);
+  playerNum = sim->viewPlayer;
 
 /* typedef struct
 	{

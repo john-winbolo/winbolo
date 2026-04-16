@@ -66,7 +66,7 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
                              SnapshotHeader *hdr,
                              TankSnapshot *tanks, int maxTanks,
                              ShellSnapshot *shells, int maxShells,
-                             ExplosionSnapshot *explosions, int maxExplosions,
+                             TkExplosionSnapshot *tkExplosions, int maxTkExplosions,
                              BaseSnapshot *bases, int maxBases,
                              PillSnapshot *pills, int maxPills,
                              GameEvent *events, int maxEvents) {
@@ -74,7 +74,7 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
     serverSimBuildSnapshot(lctx->sim, clientIdx, hdr,
                            tanks, maxTanks,
                            shells, maxShells,
-                           explosions, maxExplosions,
+                           tkExplosions, maxTkExplosions,
                            bases, maxBases,
                            pills, maxPills,
                            events, maxEvents);
@@ -106,6 +106,7 @@ Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
     lctx->playerNum = playerNum;
     lctx->delay_ticks = 0;
     lctx->ticksServer = true;
+    t.recordInput = localSendInput;
     t.sendInput = localSendInput;
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;

@@ -971,20 +971,20 @@ static void headlessSyncSnapshot(void) {
   SnapshotHeader snapHdr;
   TankSnapshot snapTanks[MAX_TANKS];
   ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  ExplosionSnapshot snapExplosions[MAX_SNAPSHOT_EXPLOSIONS];
+  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
   BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
   PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
   GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
   if (headlessTransport.getSnapshot(headlessTransport.ctx, playerNum,
                                      &snapHdr, snapTanks, MAX_TANKS,
                                      snapShells, MAX_SNAPSHOT_SHELLS,
-                                     snapExplosions, MAX_SNAPSHOT_EXPLOSIONS,
+                                     snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                      snapBases, MAX_SNAPSHOT_BASES,
                                      snapPills, MAX_SNAPSHOT_PILLS,
                                      snapEvents, MAX_SNAPSHOT_EVENTS)) {
     clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
                             snapShells, snapHdr.shellCount,
-                            snapExplosions, snapHdr.explosionCount,
+                            snapTkExplosions, snapHdr.tkExplosionCount,
                             snapBases, snapHdr.baseCount,
                             snapPills, snapHdr.pillCount,
                             snapEvents, snapHdr.reliableEventCount,
@@ -1011,7 +1011,7 @@ static bool fastModeSetupGame(void) {
   fastServerSim->lobbyEnabled = false;
   fastServerSim->state = serverStateRunning;
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  (*fastServerSim->sim.plyrs).myPlayerNum = 0;
+  fastServerSim->sim.viewPlayer = 0;
 
   /* Recreate local transport */
   headlessTransport = transportLocalCreate(fastServerSim, 0);
@@ -1092,7 +1092,7 @@ static int runFastMode(void) {
   fastServerSim->lobbyEnabled = false;
   fastServerSim->state = serverStateRunning;
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  (*fastServerSim->sim.plyrs).myPlayerNum = 0;
+  fastServerSim->sim.viewPlayer = 0;
   headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
@@ -1379,7 +1379,7 @@ static int runNetworkMode(void) {
           clientMutexWaitFor();
           clientSimKeysTick(humanSim, &pkt);
           clientMutexRelease();
-          headlessTransport.sendInput(headlessTransport.ctx, &pkt);
+          headlessTransport.recordInput(headlessTransport.ctx, &pkt);
           headlessTransport.tick(headlessTransport.ctx);
           clientMutexWaitFor();
           headlessSyncSnapshot();

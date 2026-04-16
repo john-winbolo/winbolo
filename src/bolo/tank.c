@@ -131,7 +131,7 @@ static bool tankBuildingCollision(GameSim *sim, tank *value, WORLD x, WORLD y,
     BYTE count;
     for (count = 0; count < (*bs)->numBases; count++) {
       if ((*bs)->item[count].x == mx && (*bs)->item[count].y == my) {
-        if ((*bs)->item[count].armour >= BASE_RESIST_TANKS) {
+        if ((*bs)->item[count].armour >= BASE_BLOCK_TANK_ARMOUR) {
           BYTE owner = (*bs)->item[count].owner;
           BYTE myPlayer = gameSimGetTankPlayer(sim, value);
           if (owner != NEUTRAL && owner != myPlayer &&
@@ -282,11 +282,11 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 *CREATION DATE: 23/11/98
 *LAST MODIFIED: 15/12/99
 *PURPOSE:
-*  Creates a new tank and sets its armour/mines etc. level 
+*  Creates a new tank and sets its armour/mines etc. level
 *  to the arguments. New tanks always start with full armour
 *
 *ARGUMENTS:
-*  value  - Pointer to the tank structure 
+*  value  - Pointer to the tank structure
 *  sts    - Pointer to player starts structure
 *********************************************************/
 void tankCreate(GameSim *sim, tank *value) {
@@ -378,7 +378,7 @@ void tankDestroy(GameSim *sim, tank *value) {
     (*value)->carryPills = TankPillsTail(q);
     Dispose(q);
   }
-  
+
   if ((*value) != NULL) {
     Dispose(*value);
   }
@@ -399,14 +399,14 @@ void tankDestroy(GameSim *sim, tank *value) {
 *ARGUMENTS:
 *  value      - Pointer to the tank structure
 *  mp         - Pointer to the map structure
-*  bs         - Pointer to the bases structure 
-*  pb         - Pointer to the pillboxes structure 
-*  shs        - Pointer to the shells structure 
+*  bs         - Pointer to the bases structure
+*  pb         - Pointer to the pillboxes structure
+*  shs        - Pointer to the shells structure
 *  sts        - Pointer to the starts structure
-*  tb         - Whether the left/right/forward etc keys 
+*  tb         - Whether the left/right/forward etc keys
 *               is being held down
-*  tankShoot  - Is the fire button down  
-*  inBrain    - TRUE if a brain is running 
+*  tankShoot  - Is the fire button down
+*  inBrain    - TRUE if a brain is running
 *               (Ignore autoslowdown)
 *********************************************************/
 void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool inBrain) {
@@ -434,7 +434,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     ((*value)->reload)--;
   }
 
-  
+
   /* Shoot if required */
   if (tankShoot == TRUE && (*value)->reload == 0 && (*value)->shells > 0 && (*value)->armour <= TANK_FULL_ARMOUR)  {
     TURNTYPE a;
@@ -498,7 +498,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
 *CREATION DATE: 24/11/98
 *LAST MODIFIED: 24/11/98
 *PURPOSE:
-*  Returns whether the tank is in motion or not 
+*  Returns whether the tank is in motion or not
 *
 *ARGUMENTS:
 *  value      - Pointer to the tank structure
@@ -542,7 +542,6 @@ TURNTYPE tankGetAngle(tank *value) {
 BYTE tankGetDir(tank *value) {
   return utilGetDir((*value)->angle);
 }
-
 
 /*********************************************************
 *NAME:          tankGet256Dir
@@ -634,7 +633,7 @@ BYTE tankGetArmour(tank *value) {
 BYTE tankGetScreenMX(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   conv = (WORLD) (*value)->x - TANK_SUBTRACT;
   conv >>= TANK_SHIFT_MAPSIZE;
   returnValue = (BYTE) conv;
@@ -655,7 +654,7 @@ BYTE tankGetScreenMX(tank *value) {
 BYTE tankGetScreenPX(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   conv = (*value)->x - TANK_SUBTRACT;
   conv <<= TANK_SHIFT_MAPSIZE;
   conv >>= TANK_SHIFT_PIXELSIZE;
@@ -677,7 +676,7 @@ BYTE tankGetScreenPX(tank *value) {
 BYTE tankGetScreenMY(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   conv = (WORLD) (*value)->y - TANK_SUBTRACT;
   conv >>= TANK_SHIFT_MAPSIZE;
   returnValue = (BYTE) conv;
@@ -698,7 +697,7 @@ BYTE tankGetScreenMY(tank *value) {
 BYTE tankGetScreenPY(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   conv = (*value)->y - TANK_SUBTRACT;
   conv <<= TANK_SHIFT_MAPSIZE;
   conv >>= TANK_SHIFT_PIXELSIZE;
@@ -720,7 +719,7 @@ BYTE tankGetScreenPY(tank *value) {
 BYTE tankGetMX(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   returnValue = 0;
   if ((*value)->armour <= TANK_FULL_ARMOUR) {
     conv = (*value)->x;
@@ -744,7 +743,7 @@ BYTE tankGetMX(tank *value) {
 BYTE tankGetPX(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   conv = (*value)->x;
   conv <<= TANK_SHIFT_MAPSIZE;
   conv >>= TANK_SHIFT_PIXELSIZE;
@@ -766,7 +765,7 @@ BYTE tankGetPX(tank *value) {
 BYTE tankGetMY(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   returnValue = 0;
   if ((*value)->armour <= TANK_FULL_ARMOUR) {
     conv = (*value)->y;
@@ -790,7 +789,7 @@ BYTE tankGetMY(tank *value) {
 BYTE tankGetPY(tank *value) {
   WORLD conv;       /* Useful in converting short to unsigned char */
   BYTE returnValue; /* Value to return */
-  
+
   conv = (*value)->y;
   conv <<= TANK_SHIFT_MAPSIZE;
   conv >>= TANK_SHIFT_PIXELSIZE;
@@ -804,7 +803,7 @@ BYTE tankGetPY(tank *value) {
 *CREATION DATE: 22/12/98
 *LAST MODIFIED: 22/12/98
 *PURPOSE:
-*  Returns the tank shells, mines, armour and trees 
+*  Returns the tank shells, mines, armour and trees
 *
 *ARGUMENTS:
 *  value        - Pointer to the tank structure
@@ -828,7 +827,7 @@ void tankGetStats(tank *value, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armo
 *CREATION DATE: 22/12/98
 *LAST MODIFIED: 22/12/98
 *PURPOSE:
-*  Returns the tank shells, mines, armour and trees 
+*  Returns the tank shells, mines, armour and trees
 *
 *ARGUMENTS:
 *  value        - Pointer to the tank structure
@@ -903,7 +902,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
     conv <<= TANK_SHIFT_MAPSIZE;
     conv >>= TANK_SHIFT_PIXELSIZE;
 
-    *xPixel = (BYTE) conv; 
+    *xPixel = (BYTE) conv;
 
     conv = y;
     conv <<= TANK_SHIFT_MAPSIZE;
@@ -923,7 +922,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *CREATION DATE: 24/12/98
 *LAST MODIFIED: 4/1/00
 *PURPOSE:
-*  Adds a map unit on to the tank gunsight range 
+*  Adds a map unit on to the tank gunsight range
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
@@ -946,7 +945,7 @@ void tankGunsightIncrease(ClientSim *csParam, GameSim *sim, tank *value) {
 *CREATION DATE: 24/12/98
 *LAST MODIFIED: 4/1/00
 *PURPOSE:
-*  Adds a map unit on to the tank gunsight range 
+*  Adds a map unit on to the tank gunsight range
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
@@ -977,7 +976,7 @@ void tankGunsightDecrease(ClientSim *csParam, GameSim *sim, tank *value) {
 *  shown  - if TRUE then gunsight shown
 *********************************************************/
 void tankSetGunsight(tank *value, bool shown) {
- if ((*value) != NULL) { 
+ if ((*value) != NULL) {
    (*value)->showSight = shown;
    if (shown == FALSE) {
      (*value)->sightLen = GUNSIGHT_MAX;
@@ -999,7 +998,7 @@ void tankSetGunsight(tank *value, bool shown) {
 *  y      - Pointer to hold Y co-ord
 *********************************************************/
 void tankGetWorld(tank *value, WORLD *x, WORLD *y) {
-  *x = (*value)->x; 
+  *x = (*value)->x;
   *y = (*value)->y;
 }
 
@@ -1048,7 +1047,7 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
 *LAST MODIFIED: 29/7/00
 *PURPOSE:
 *  Returns whether the tank has been hit or not, if it
-*  it is killed etc. 
+*  it is killed etc.
 *  Also updates its location if hit but not dead.
 *
 *ARGUMENTS:
@@ -1202,7 +1201,7 @@ void tankInWater(GameSim *sim, tank *value) {
 *********************************************************/
 BYTE tankGetFrame(tank *value) {
   BYTE returnValue; /* Value to return */
-  
+
   if ((*value)->armour > TANK_FULL_ARMOUR) {
     returnValue = TANK_TRANSPARENT;
   } else {
@@ -1334,7 +1333,7 @@ void tankGetKillsDeaths(tank *value, int *kills, int *deaths) {
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
-*  amount - Amount to add 
+*  amount - Amount to add
 *********************************************************/
 void tankAddArmour(GameSim *sim, tank *value, BYTE amount) {
   bool isServer = sim->isServer;
@@ -1356,7 +1355,7 @@ void tankAddArmour(GameSim *sim, tank *value, BYTE amount) {
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
-*  amount - Amount to add 
+*  amount - Amount to add
 *********************************************************/
 void tankAddShells(GameSim *sim, tank *value, BYTE amount) {
   bool isServer = sim->isServer;
@@ -1378,7 +1377,7 @@ void tankAddShells(GameSim *sim, tank *value, BYTE amount) {
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
-*  amount - Amount to add 
+*  amount - Amount to add
 *********************************************************/
 void tankAddMines(GameSim *sim, tank *value, BYTE amount) {
   bool isServer = sim->isServer;
@@ -1589,6 +1588,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         /* Destroy boat tile */
         mapSetPos(sim, mp, newbmx, newbmy, RIVER, TRUE, FALSE);
         explosionsAddItem(&sim->expl, newbmx, newbmy, 0, 0, EXPLOSION_START);
+        if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, newbmx, newbmy, 0, 0);
         sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, newbmx, newbmy);
         if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
       }
@@ -1633,6 +1633,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       if ((*value)->boatState == BoatState_InBoat && mapIsMine(mp, bmx, bmy) == TRUE) {
         sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
         explosionsAddItem(&sim->expl, bmx, bmy, 0, 0, EXPLOSION_START);
+        if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, bmx, bmy, 0, 0);
         (*value)->boatState = BoatState_NotOnBoat;
         (*value)->onBoat = FALSE;
         (*value)->speed = 0;
@@ -1712,6 +1713,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       }
     }
   }
+  /* Mine reveal is display-only — must run during prediction so placed mines are visible */
+  tankNearMines(sim, bmx, bmy, ang);
 }
 
 /*********************************************************
@@ -1801,7 +1804,7 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
       subAmount -= (float) TANK_SLOWKEY_RATE;
     }
     if (subAmount > (*value)->speed) {
-      ((*value)->speed) = 0;      
+      ((*value)->speed) = 0;
     } else {
       (*value)->speed = subAmount;
       if ((*value)->speed < 0) {
@@ -1989,7 +1992,7 @@ void tankDropPills(GameSim *sim, tank *value) {
 *CREATION DATE: 17/1/99
 *LAST MODIFIED: 17/1/99
 *PURPOSE:
-* Returns wether the tank is on a boat or not 
+* Returns wether the tank is on a boat or not
 *
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
@@ -2142,7 +2145,7 @@ void tankGiveMines(GameSim *sim, tank *value, BYTE amount) {
 *CREATION DATE: 17/01/99
 *LAST MODIFIED: 01/02/03
 *PURPOSE:
-* Gets the first available carried pill. If none are 
+* Gets the first available carried pill. If none are
 * avaiable it returns FALSE
 *
 *ARGUMENTS:
@@ -2293,6 +2296,10 @@ void tankLayMine(GameSim *sim, tank *value) {
     if (terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != RIVER && terrain < MINE_START && (*value)->mines > 0 && (*value)->onBoat == FALSE && pillsExistPos(pb, bmx, bmy) == FALSE && basesExistPos(bs, bmx, bmy) == FALSE && (*value)->armour <= TANK_FULL_ARMOUR) {
       (*value)->mines--;
       mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
+      if (isServer && sim->hiddenMines) {
+        BYTE pn = gameSimGetTankPlayer(sim, value);
+        sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
+      }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       if ((*value)->armour <= TANK_FULL_ARMOUR) {
         if (!isServer) {
@@ -2314,7 +2321,7 @@ void tankLayMine(GameSim *sim, tank *value) {
 *CREATION DATE: 21/1/99
 *LAST MODIFIED: 20/6/00
 *PURPOSE:
-* A mine has exploded. Check to see if it has hurt the 
+* A mine has exploded. Check to see if it has hurt the
 * tank
 *
 *ARGUMENTS:
@@ -2330,8 +2337,8 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
   WORLD mineX; /* Mine X and Y World Co-ords */
   WORLD mineY;
   WORLD diffY; /* Difference beteween tank and mine */
-  WORLD diffX; 
- 
+  WORLD diffX;
+
   mineX =(mx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
   mineY =(my << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
 
@@ -2346,8 +2353,8 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
   } else {
     diffY = mineY - (*value)->y;
   }
-  
-  
+
+
   if (diffX < 384 && diffY < 384 && (*value)->armour <= TANK_FULL_ARMOUR) {
     (*value)->armour -= MINE_DAMAGE;
     if ((*value)->armour > TANK_FULL_ARMOUR) {
@@ -2501,7 +2508,7 @@ void tankCheckGroundClear(GameSim *sim, tank *value) {
       needFix = TRUE;
     }
   }
-  
+
   /* Base check */
   if ((basesExistPos(bs, bmx, bmy)) == TRUE) {
     /* Check to make sure its not allied to us */
@@ -2535,7 +2542,7 @@ void tankCheckGroundClear(GameSim *sim, tank *value) {
 		conv <<= TANK_SHIFT_MAPSIZE;
 		conv >>= TANK_SHIFT_PIXELSIZE;
 		py = (BYTE) conv;
-		
+
 		if (px >= MIDDLE_PIXEL) {
 			(*value)->x += 1;
 		} else {
@@ -2547,7 +2554,7 @@ void tankCheckGroundClear(GameSim *sim, tank *value) {
 			(*value)->y -= 1;
 		}
 		(*value)->speed--;
-		
+
 		if ((*value)->speed < 0) {
 			(*value)->speed = 0;
 		}
@@ -2572,7 +2579,7 @@ void tankCheckGroundClear(GameSim *sim, tank *value) {
 *CREATION DATE: 20/3/99
 *LAST MODIFIED: 20/3/99
 *PURPOSE:
-* We just killed a player. Add it here and update the 
+* We just killed a player. Add it here and update the
 * frontend repectively.
 *
 *ARGUMENTS:
@@ -2593,7 +2600,7 @@ void tankAddDeath(GameSim *sim, tank *value) {
 *CREATION DATE: 20/3/99
 *LAST MODIFIED: 20/3/99
 *PURPOSE:
-* We just killed a player. Add it here and update the 
+* We just killed a player. Add it here and update the
 * frontend repectively.
 *
 *ARGUMENTS:
@@ -2635,7 +2642,7 @@ BYTE tankGetNumCarriedPills(tank *value) {
     returnValue++;
     q = TankPillsTail(q);
   }
- 
+
   return returnValue;
 }
 
@@ -2757,7 +2764,7 @@ void tankSetAutoSlowdown(tank *value, bool useSlowdown) {
 *CREATION DATE: 4/1/00
 *LAST MODIFIED: 4/1/00
 *PURPOSE:
-*  Returns whether tank auto show/hide gunsight is enabled 
+*  Returns whether tank auto show/hide gunsight is enabled
 *  or not
 *
 *ARGUMENTS:
@@ -2773,7 +2780,7 @@ bool tankGetAutoHideGunsight(tank *value) {
 *CREATION DATE: 4/1/00
 *LAST MODIFIED: 4/1/00
 *PURPOSE:
-*  Sets whether tank auto show/hide gunsight is enabled 
+*  Sets whether tank auto show/hide gunsight is enabled
 *  or not
 *
 *ARGUMENTS:
@@ -3124,6 +3131,99 @@ void tankSnapToServer(tank dst, tank src) {
     dst->autoSlowdown = savedAutoSlowdown;
     dst->autoHideGunsight = savedAutoHideGunsight;
     dst->showSight = savedShowSight;
+}
+
+
+/*********************************************************
+*NAME:          tankIsTankHitAtPosition
+*PURPOSE:
+*  Like tankIsTankHit but checks collision against the
+*  supplied tankX/tankY instead of the tank's current
+*  position. Used for lag-compensated (rewound) hits.
+*  Damage/knockback still applies at the tank's real pos.
+*********************************************************/
+tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
+                                 WORLD tankX, WORLD tankY,
+                                 WORLD shellX, WORLD shellY,
+                                 TURNTYPE angle, BYTE owner) {
+	map *mp = &sim->mp;
+	pillboxes *pb = &sim->pb;
+	bases *bs = &sim->bs;
+	bool isServer = sim->isServer;
+	tankHit returnValue; /* Value to return */
+	WORLD conv;          /* Used in the conversion */
+	int newX;            /* Amount to add because the tank has been hit */
+	int newY;
+	WORLD newmx;
+	WORLD newmy;
+	BYTE bmx;
+	BYTE bmy;
+	BYTE newbmx;       /* Test locations to check for a collision */
+	BYTE newbmy;
+
+
+	returnValue = TH_MISSED;
+
+	/* If no tank was passed, it missed. */
+	if (*value == NULL) {
+		return TH_MISSED;
+	}
+
+	if (!isServer) {
+		if (owner == gameSimGetTankPlayer(sim, value)) {
+			return TH_MISSED;
+		}
+	}
+
+	returnValue = TH_MISSED;
+
+	if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
+		returnValue = TH_HIT;
+		(*value)->armour -= DAMAGE;
+		if ((*value)->onBoat == TRUE) {
+			(*value)->onBoat = FALSE;
+			(*value)->speed = 0;
+			if (!isServer) {
+				screenReCalcCS((struct ClientSim *)sim);
+			}
+		}
+
+		if ((*value)->armour > TANK_FULL_ARMOUR) {
+			if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
+				returnValue = TH_KILL_BIG;
+			} else {
+				returnValue = TH_KILL_SMALL;
+			}
+
+			tankSetLastTankDeath(value,LAST_DEATH_BY_SHELL);
+			(*value)->deathWait = TANK_DEATH_WAIT;
+
+			tankDropPills(sim, value);
+		} else {
+			/* Tank was hit and survived — compute initial knockback velocity */
+			double dbAngle;
+			TURNTYPE slideAngle = angle - BRADIANS_EAST;
+			if (slideAngle < 0) {
+				slideAngle += (TURNTYPE)BRADIANS_MAX;
+			}
+			dbAngle = (DEGREES_MAX / BRADIANS_MAX) * slideAngle;
+			dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+			(*value)->tankSlideVx = (float)(TANK_SLIDE_INITIAL_SPEED * cos(dbAngle));
+			(*value)->tankSlideVy = (float)(TANK_SLIDE_INITIAL_SPEED * sin(dbAngle));
+		}
+		if ((*value)->armour <= TANK_FULL_ARMOUR) {
+			if (!isServer) {
+				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+			}
+		} else {
+			if (!isServer) {
+				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+			}
+		}
+	} else if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
+		/* Do crazy shit here */
+	}
+	return returnValue;
 }
 
 void tankSyncResources(tank dst, tank src) {

@@ -42,13 +42,18 @@ typedef struct {
   BYTE lgmFrame;
 } InterpSnapshot;
 
+/* One game tick of display delay for jitter absorption */
+#define INTERP_BUFFER_MS 20
+
 /* Per-player interpolation state */
 typedef struct {
   InterpSnapshot prev;
   InterpSnapshot curr;
+  InterpSnapshot pending;   /* newest arrival, not yet displayed */
   uint32_t snapshotTick;   /* Tick when curr was received */
   bool hasData;            /* At least one snapshot received */
   bool hasPrev;            /* Two snapshots received (can interpolate) */
+  bool hasPending;         /* true when pending holds a newer snapshot than curr */
   uint32_t missedTicks;    /* Consecutive ticks with no update */
 } InterpPlayer;
 
