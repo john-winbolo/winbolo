@@ -1349,9 +1349,20 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (!sim->playerConnected[i]) continue;
         if (!serverSimGetTankState(sim, (BYTE)i, &wx, &wy)) continue;
 
-        /* Always include the client's own tank; cull others by viewport */
+        /* Always include the client's own tank; cull others by viewport.
+         * Also check LGM position — a parachuting LGM can be far from its
+         * tank (starts at a random spawn), so we need to send updates when
+         * the LGM is visible even if the tank is not. */
         if (i != clientIdx) {
-            if (!inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8)) {
+            bool inView = inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8);
+            if (!inView && sim->sim.lgmen[i] != NULL && lgmIsOut(&sim->sim.lgmen[i])) {
+                BYTE lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
+                BYTE lgmMY = lgmGetMY(&sim->sim.lgmen[i]);
+                if (lgmMX != 0 || lgmMY != 0) {
+                    inView = inAnyViewport(viewports, numViewports, lgmMX, lgmMY);
+                }
+            }
+            if (!inView) {
                 continue;
             }
         }
