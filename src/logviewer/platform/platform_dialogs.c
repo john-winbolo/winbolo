@@ -92,7 +92,7 @@ int lv_platform_dialog_open_file(const char* title,
     ofn.nMaxFileTitle = 0;
     ofn.lpstrInitialDir = initial_dir;
     ofn.lpstrTitle = title;
-    ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     ofn.lpstrDefExt = default_ext;
     
     if (GetOpenFileNameA(&ofn)) {
@@ -137,7 +137,7 @@ int lv_platform_dialog_save_file(const char* title,
     ofn.nMaxFileTitle = 0;
     ofn.lpstrInitialDir = initial_dir;
     ofn.lpstrTitle = title;
-    ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+    ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
     ofn.lpstrDefExt = default_ext;
     
     if (GetSaveFileNameA(&ofn)) {
