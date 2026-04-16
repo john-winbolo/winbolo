@@ -29,6 +29,7 @@
 #include "global.h"
 #include "clientmutex.h"
 
+/* TODO: move to LogViewerState for embedded multi-instance support */
 static SDL_Mutex *hClientMutexHandle = NULL;
 
 

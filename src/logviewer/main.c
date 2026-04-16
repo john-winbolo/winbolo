@@ -29,6 +29,7 @@
 #include "dns.h"
 #include "positions.h"
 #include "tiles.h"
+#include "logviewer.h"
 
 /* Must be included after global.h to avoid bool type conflict.
  * SDL_MAIN_HANDLED tells SDL3 we supply our own WinMain on Windows. */
@@ -71,6 +72,18 @@ int  timerSleep;
 SDL_TimerID timerGameID  = 0;
 SDL_TimerID timerFrameID = 0;
 
+/* Central logviewer state – allocated in main(), shared with screen.c */
+static LogViewerState *g_lv = NULL;
+
+/* Accessor functions for ImGui panels to migrate to later */
+bool lvGetPlayIsPlaying(void) { return playIsPlaying; }
+bool lvGetIsLoaded(void) { return isLoaded; }
+bool lvGetDoubleSpeed(void) { return doubleSpeed; }
+BYTE lvGetSpeed(void) { return speed; }
+int  lvGetTimerSleep(void) { return timerSleep; }
+BYTE *lvGetTeamColours(void) { return tc; }
+bool lvGetUseTeamColours(void) { return useTeamColours; }
+void lvSetUseTeamColours(bool val) { useTeamColours = val; }
 
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
@@ -102,6 +115,10 @@ void updateSpeed(BYTE spd, int updateSlider) {
         break;
     }
     speed = spd;
+    if (g_lv != NULL) {
+        g_lv->speed = spd;
+        g_lv->timerSleep = timerSleep;
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -215,6 +232,9 @@ void windowPlay(void) {
         timerFrameID = SDL_AddTimer(50,  windowFrameTimer, NULL);
     }
     playIsPlaying = TRUE;
+    g_lv->playIsPlaying = TRUE;
+    g_lv->timerGameID = timerGameID;
+    g_lv->timerFrameID = timerFrameID;
 }
 
 void windowPause(void) {
@@ -226,6 +246,9 @@ void windowPause(void) {
         timerFrameID = 0;
     }
     playIsPlaying = FALSE;
+    g_lv->playIsPlaying = FALSE;
+    g_lv->timerGameID = 0;
+    g_lv->timerFrameID = 0;
     clientMutexRelease();
 }
 
@@ -241,6 +264,7 @@ void windowStop(int corruptLog) {
     updateItem(0, 0, 0, 0, 0, 0, 0, 0, FALSE);
     screenCloseLog();
     isLoaded = FALSE;
+    g_lv->isLoaded = FALSE;
     imgui_events_clear();
     clientMutexRelease();
     windowNeedRedraw();
@@ -282,6 +306,7 @@ void windowResize(void) {
  * -------------------------------------------------------------------------- */
 void finished(void) {
     playIsPlaying = FALSE;
+    g_lv->playIsPlaying = FALSE;
     /* ImGui controls panel reads playIsPlaying each frame */
 }
 
@@ -316,8 +341,10 @@ void windowOpenFile(char *cmdLine) {
         if (screenLoadMap(fileName, atoi(memoryBuff)) == FALSE) {
             platform_dialog_error(DIALOG_BOX_TITLE, "Could not open log file");
             isLoaded = FALSE;
+            g_lv->isLoaded = FALSE;
         } else {
             isLoaded = TRUE;
+            g_lv->isLoaded = TRUE;
             imgui_events_clear();
             windowNeedRedraw();
         }
@@ -472,6 +499,16 @@ int main(int argc, char *argv[]) {
     char line[256];
     int  sizeX, sizeY;
 
+    /* Allocate central logviewer state */
+    g_lv = (LogViewerState *)calloc(1, sizeof(LogViewerState));
+    if (g_lv == NULL) {
+        return 1;
+    }
+    g_lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
+    g_lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */
+    g_lv->ownsWindow = TRUE;
+    screenSetState(g_lv);
+
     /* Platform abstraction init */
     platform_config_init("WinBolo");
     platform_dialogs_init();
@@ -481,6 +518,7 @@ int main(int argc, char *argv[]) {
 
     if (clientMutexCreate() == FALSE) {
         platform_dialog_error("Log Viewer", "Could not create mutex");
+        free(g_lv);
         platform_config_shutdown();
         platform_dialogs_shutdown();
         return 0;
@@ -531,6 +569,16 @@ int main(int argc, char *argv[]) {
 
     /* Load preferences */
     mainLoadPreferences();
+
+    /* Sync globals into LogViewerState so screen.c can read them */
+    memcpy(g_lv->tc, tc, sizeof(tc));
+    g_lv->speed = speed;
+    g_lv->timerSleep = timerSleep;
+    g_lv->useTeamColours = useTeamColours;
+    g_lv->isSoundsPlaying = isSoundsPlaying;
+    g_lv->playIsPlaying = playIsPlaying;
+    g_lv->isLoaded = isLoaded;
+    g_lv->doubleSpeed = doubleSpeed;
 
     /* Open file from command line if provided */
     if (argc > 1 && argv[1] && strlen(argv[1]) > 0) {
@@ -641,6 +689,8 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     clientMutexDestroy();
     dnsShutdown();
+    free(g_lv);
+    g_lv = NULL;
     platform_config_shutdown();
     platform_dialogs_shutdown();
     return 0;

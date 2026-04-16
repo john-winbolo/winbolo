@@ -56,6 +56,7 @@
 static SDL_Window *sdlWindow = NULL;
 static SDL_Renderer *sdlRenderer = NULL;
 static int sdlInitialized = 0;  /* Track if SDL is already initialized */
+static bool ownsWindow = TRUE;  /* TRUE in standalone, FALSE when embedded */
 
 /* Sprite Textures (loaded once at startup) */
 static SDL_Texture *textureTiles = NULL;
@@ -133,9 +134,66 @@ static SDL_Texture *loadTextureFromFile(const char *filename, SDL_Renderer *rend
     return texture;
 }
 
+/*********************************************************
+*NAME:          drawSetupWithHandles
+*PURPOSE:
+*  Sets up drawing using externally-provided window/renderer
+*  (embedded mode). Does NOT create SDL window/renderer.
+*  Loads textures, render target, and font.
+*RETURNS:
+*  TRUE on success, FALSE on failure
+*********************************************************/
+BYTE drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
+    drawDirtyScreen();
+
+    sdlWindow = window;
+    sdlRenderer = renderer;
+    ownsWindow = FALSE;
+
+    targetWidth  = screenGetSizeX() * TILE_SIZE_X;
+    targetHeight = screenGetSizeY() * TILE_SIZE_Y;
+    textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
+                                      SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
+    if (!textureTarget) {
+        return FALSE;
+    }
+    {
+        const char *basePath = SDL_GetBasePath();
+        if (!basePath) basePath = "./";
+        char bmpPath[1024];
+
+        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
+        textureTiles = loadTextureFromFile(bmpPath, sdlRenderer);
+
+        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
+        textureTanks = loadTextureFromFile(bmpPath, sdlRenderer);
+
+        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
+        textureBoats = loadTextureFromFile(bmpPath, sdlRenderer);
+
+        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
+        textureItems = loadTextureFromFile(bmpPath, sdlRenderer);
+    }
+
+    if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
+        return FALSE;
+    }
+    {
+        const char *fontBase = SDL_GetBasePath();
+        if (!fontBase) fontBase = "./";
+        char fontPath[1024];
+        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/CourierPrime-Regular.ttf", fontBase);
+        labelFont = TTF_OpenFont(fontPath, 10);
+    }
+
+    drawSetupArrays(1);
+    return TRUE;
+}
+
 BYTE drawSetup(void) {
     int width, height;
 
+    ownsWindow = TRUE;
     drawDirtyScreen();
 
     /* If already initialized, skip recreation entirely.
@@ -238,11 +296,18 @@ void drawCleanup(void) {
     if (textureItems) { SDL_DestroyTexture(textureItems); textureItems = NULL; }
     if (textureTarget) { SDL_DestroyTexture(textureTarget); textureTarget = NULL; }
     if (labelFont) { TTF_CloseFont(labelFont); labelFont = NULL; }
-    if (sdlRenderer) { SDL_DestroyRenderer(sdlRenderer); sdlRenderer = NULL; }
-    if (sdlWindow) { SDL_DestroyWindow(sdlWindow); sdlWindow = NULL; }
-    TTF_Quit();
-    /* Quit SDL video subsystem only (audio is used by Sound.c) */
-    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    if (ownsWindow == TRUE) {
+        /* Only destroy renderer/window and quit SDL if we created them */
+        if (sdlRenderer) { SDL_DestroyRenderer(sdlRenderer); sdlRenderer = NULL; }
+        if (sdlWindow) { SDL_DestroyWindow(sdlWindow); sdlWindow = NULL; }
+        TTF_Quit();
+        /* Quit SDL video subsystem only (audio is used by Sound.c) */
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    } else {
+        /* Embedded mode: don't destroy the main app's window/renderer */
+        sdlRenderer = NULL;
+        sdlWindow = NULL;
+    }
     sdlInitialized = 0;  /* Reset initialization flag */
 }
 
@@ -283,6 +348,9 @@ void drawResizeRenderTarget(void) {
     /* Mark screen as dirty to force redraw */
     drawDirtyScreen();
 }
+
+int drawGetTargetWidth(void) { return targetWidth; }
+int drawGetTargetHeight(void) { return targetHeight; }
 
 /* Static splash texture - loaded once and cached */
 static SDL_Texture *textureSplash = NULL;
