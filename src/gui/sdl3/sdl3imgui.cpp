@@ -305,7 +305,7 @@ enum KeySetupField {
     ksNone = -1,
     ksForward, ksBackward, ksTurnLeft, ksTurnRight,
     ksShoot, ksLayMine, ksGunIncrease, ksGunDecrease,
-    ksTankView, ksPillView, ksAllyView, ksLGMView, ksBaseView,
+    ksTankView, ksPillView,
     ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
     ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
 };
@@ -1254,9 +1254,6 @@ static int *keySetupFieldPtr(KeySetupField f, keyItems *ki) {
         case ksGunDecrease:return &ki->kiGunDecrease;
         case ksTankView:   return &ki->kiTankView;
         case ksPillView:   return &ki->kiPillView;
-        case ksAllyView:   return &ki->kiAllyView;
-        case ksLGMView:    return &ki->kiLGMView;
-        case ksBaseView:   return &ki->kiBaseView;
         case ksScrollUp:   return &ki->kiScrollUp;
         case ksScrollDown: return &ki->kiScrollDown;
         case ksScrollLeft: return &ki->kiScrollLeft;
@@ -1376,9 +1373,6 @@ static void renderKeySetupModal(ClientSim *cs) {
     section("Views");
     keySetupRow("Tank View",   ksTankView);
     keySetupRow("Pill View",   ksPillView);
-    keySetupRow("Ally View",   ksAllyView);
-    keySetupRow("LGM View",    ksLGMView);
-    keySetupRow("Base View",   ksBaseView);
     endSection();
 
     section("Scroll");
