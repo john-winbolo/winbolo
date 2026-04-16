@@ -37,6 +37,7 @@ extern "C" {
 #include "../../../bolo/screen.h"
 #include "../bg_game.h"
 #include "imgui_settings.h"
+#include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
 }
 
@@ -152,6 +153,9 @@ extern "C" void imguiSettingsShow(void) {
     imguiWinbolonetStartValidation();
 
     bool running = true;
+#if !BOLO_MOBILE
+    bool showKeySetup = false;
+#endif
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -287,6 +291,10 @@ extern "C" void imguiSettingsShow(void) {
                     /* Pre-game: just toggle the global directly */
                     showGunsight = !showGunsight;
                 }
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Set Keys...", ImVec2(120, 0))) {
+                showKeySetup = true;
             }
 #endif
         }
@@ -433,6 +441,42 @@ extern "C" void imguiSettingsShow(void) {
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
         dialogFrameCapEnd(frameCapStart);
+
+#if !BOLO_MOBILE
+        if (showKeySetup) {
+            showKeySetup = false;
+
+            /* Tear down current ImGui context */
+            ImGui_ImplSDLRenderer3_Shutdown();
+            ImGui_ImplSDL3_Shutdown();
+            ImGui::DestroyContext();
+
+            /* Run the key setup dialog (blocking) */
+            imguiKeySetupShow();
+
+            /* Re-create ImGui context for the settings loop */
+            SDL_GetWindowSize(window, &screenW, &screenH);
+            if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+            s = dialogComputeScale(screenW, screenH);
+
+            IMGUI_CHECKVERSION();
+            ImGui::CreateContext();
+            ImGuiIO &ioNew = ImGui::GetIO();
+            ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+            ioNew.IniFilename = nullptr;
+
+            ImGui::StyleColorsDark();
+            imguiApplyBoloTheme();
+            ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+            ImGui_ImplSDLRenderer3_Init(renderer);
+            dialogApplyScaling(s);
+
+            dialogSetWindowSize(window, 1024, 768);
+            dialogSetWindowTitle(window, "WinBolo - Settings");
+
+            lastTickTime = SDL_GetTicks();
+        }
+#endif
     }
 
     dialogDismissKeyboard(window);
