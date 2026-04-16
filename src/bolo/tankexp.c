@@ -102,15 +102,35 @@ void tkExplosionAddItem(GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE len
   tkExplosion q;
 
   New (q);
-  q->own = TRUE;
   q->x = x;
   q->y = y;
   q->angle = angle;
   q->length = length;
   q->next = *tke;
   q->explodeType = explodeType;
-  q->creator = playersGetSelf(&sim->plyrs);
-  q->packSent = FALSE;
+  q->creator = sim->viewPlayer;
+  q->prev = NULL;
+  if (NonEmpty(*tke)) {
+    (*tke)->prev = q;
+  }
+
+  *tke = q;
+}
+
+void tkExplosionAddItemFromSnapshot(GameSim *sim, WORLD x, WORLD y,
+                                    TURNTYPE angle, BYTE length,
+                                    BYTE explodeType, BYTE creator) {
+  tkExplosion *tke = &sim->tankExplosions;
+  tkExplosion q;
+
+  New (q);
+  q->x = x;
+  q->y = y;
+  q->angle = angle;
+  q->length = length;
+  q->next = *tke;
+  q->explodeType = explodeType;
+  q->creator = creator;
   q->prev = NULL;
   if (NonEmpty(*tke)) {
     (*tke)->prev = q;
@@ -141,7 +161,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
-  static BYTE updateTime=0; /* Time between updates */
+  BYTE *updateTime = &sim->tkExpUpdateTime; /* Per-sim throttle */
   tkExplosion position;     /* Position throught the items */
   bool needUpdate;          /* Whether an update is needed or not */
   int moveX;                /* Amount to move */
@@ -164,15 +184,15 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
 
 
   /* Update only so often - Not every game tick */
-  updateTime++;
-  if (updateTime < TK_UPDATE_TIME) {
+  (*updateTime)++;
+  if (*updateTime < TK_UPDATE_TIME) {
     return;
   }
 
   testX= 0;
   testY = 0;
-  updateTime = 0;
-  playerNum = playersGetSelf(&sim->plyrs);
+  *updateTime = 0;
+  playerNum = sim->viewPlayer;
   position = *tke;
 
   while (NonEmpty(position)) {
@@ -259,10 +279,10 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       if (currentPos == DEEP_SEA) {
         /* Check for deep sea death */
         needUpdate = FALSE;
-        if (position->own == TRUE) {
+        if (position->creator == playerNum) {
 		  if (sim->isServer == FALSE) {
             sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, mx, my);
-		    tankSetLastTankDeath(tank,LAST_DEATH_BY_DEEPSEA); /* Override LAST_DEATH_BY_SHELL */
+		    tankSetLastTankDeath(&sim->tanks[playerNum],LAST_DEATH_BY_DEEPSEA); /* Override LAST_DEATH_BY_SHELL */
             sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(MESSAGE_TANKSUNK));
 		  }
         }
@@ -270,11 +290,11 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       } else if (currentPos == FOREST) {
         /* Check for destroy trees */
         mapSetPos(sim, mp, mx, my, GRASS, FALSE, FALSE);
-        sim->callbacks.soundDist(sim->callbacks.ctx, shotTreeNear, mx, my);
+        if (!sim->isServer) { sim->callbacks.soundDist(sim->callbacks.ctx, shotTreeNear, mx, my); }
       } else if (currentPos == BOAT) {
         /* Check for destroy boat */
         mapSetPos(sim, mp, mx, my, RIVER, FALSE, FALSE);
-        sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mx, my);
+        if (!sim->isServer) { sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mx, my); }
       }
       if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
     } else {
@@ -290,20 +310,20 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
         explosionsAddItem(&sim->expl, mx, my, 0, 0 ,EXPLOSION_START);
         currentPos = mapGetPos(mp, mx, my);
         if (currentPos != RIVER && currentPos != DEEP_SEA) {
-//          if (position->own == TRUE) {
             mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
             floodAddItem(&sim->ff, mx, my);
             if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
-  //        }
         }
-        count = 1;
-        while (count < numLgm) {
-          lgmDeathCheck(sim, lgms[count-1], position->x, position->y, NEUTRAL, &tank[count-1]);
-          count++;
+        if (sim->isServer) {
+          count = 1;
+          while (count < numLgm) {
+            lgmDeathCheck(sim, lgms[count-1], position->x, position->y, NEUTRAL, &tank[count-1]);
+            count++;
+          }
         }
-        sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, mx, my);
+        if (!sim->isServer) { sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, mx, my); }
       } else {
-        tkExplosionBigExplosion(sim, mx, my, moveX, moveY, position->own, lgms, numLgm, tank, sts);
+        tkExplosionBigExplosion(sim, mx, my, moveX, moveY, lgms, numLgm, tank, sts);
       }
       tkExplosionDeleteItem(tke, &position);
     }
@@ -347,6 +367,32 @@ void tkExplosionDeleteItem(tkExplosion *tke, tkExplosion *value) {
   }
   Dispose(del);
 
+}
+
+/*********************************************************
+*NAME:          tkExplosionGetOwnPosition
+*PURPOSE:
+*  Returns the map position of the fireball belonging to
+*  the given player, if one exists.
+*
+*ARGUMENTS:
+*  tke       - Pointer to the tank explosions object
+*  playerNum - Player number to search for
+*  mx        - Output map X
+*  my        - Output map Y
+*********************************************************/
+bool tkExplosionGetOwnPosition(tkExplosion *tke, BYTE playerNum, BYTE *mx, BYTE *my) {
+  tkExplosion q = *tke;
+
+  while (NonEmpty(q)) {
+    if (q->creator == playerNum) {
+      *mx = (BYTE) (q->x >> TANK_SHIFT_MAPSIZE);
+      *my = (BYTE) (q->y >> TANK_SHIFT_MAPSIZE);
+      return TRUE;
+    }
+    q = TkExplosionTail(q);
+  }
+  return FALSE;
 }
 
 /*********************************************************
@@ -452,11 +498,10 @@ void tkExplosionCheckRemove(GameSim *sim, BYTE terrain, BYTE mx, BYTE my) {
 *  my      - Map Y position
 *  moveX   - Moving X direction (positive/Negative)
 *  moveY   - Moving Y direction (positive/Negative)
-*  own     - Do we own this tkExplosion?
 *  lgms   - Array of lgms
 *  numLgm - Number of lgms in the array
 *********************************************************/
-void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, bool own, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts) {
+void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   BYTE currentPos; /* Current position */
@@ -475,229 +520,77 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   explosionsAddItem(&sim->expl, (BYTE) (mx+moveX), (BYTE) (my+moveY), 0, 0,EXPLOSION_START);
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
-  if (pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
+  if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
     pillsGetDamagePos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE, sim->isServer);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
-//    if (own == TRUE) {
-        mapSetPos(sim, mp,(BYTE) (mx+moveX), (BYTE) (my+moveY), CRATER, FALSE, FALSE);
+      mapSetPos(sim, mp,(BYTE) (mx+moveX), (BYTE) (my+moveY), CRATER, FALSE, FALSE);
       floodAddItem(&sim->ff, (BYTE) (mx+moveX), (BYTE) (my+moveY));
-//    }
   }
 
-  count = 1;
-  while (count <= numLgm) {
-    lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((WORLD) (my + moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
-    count++;
+  if (sim->isServer) {
+    count = 1;
+    while (count <= numLgm) {
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((WORLD) (my + moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      count++;
+    }
   }
 
   explosionsAddItem(&sim->expl, (BYTE) (mx+moveX), my, 0, 0,EXPLOSION_START);
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), my);
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
-  if (pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
+  if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
     pillsGetDamagePos(pb, (BYTE) (mx+moveX), my, TK_DAMAGE, sim->isServer);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
-  //  if (own == TRUE) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), my, CRATER, FALSE, FALSE);
-//    }
     floodAddItem(&sim->ff, (BYTE) (mx+moveX), my);
   }
-  count = 1;
-  while (count <= numLgm) {
-    lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((my<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
-    count++;
+  if (sim->isServer) {
+    count = 1;
+    while (count <= numLgm) {
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((my<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      count++;
+    }
   }
 
   explosionsAddItem(&sim->expl, mx, (BYTE) (my+moveY), 0, 0,EXPLOSION_START);
   currentPos = mapGetPos(mp, mx, (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
-  if (pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
+  if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
     pillsGetDamagePos(pb, mx, (BYTE) (my + moveY), TK_DAMAGE, sim->isServer);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
-//    if (own == TRUE) {
       mapSetPos(sim, mp, mx, (BYTE) (my+moveY), CRATER, FALSE, FALSE);
-  //  }
     floodAddItem(&sim->ff, mx, (BYTE) (my+moveY));
   }
 
-  count = 1;
-  while (count <= numLgm) {
-    lgmDeathCheck(sim, lgms[count-1], (WORLD) ((mx<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((my+moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
-    count++;
+  if (sim->isServer) {
+    count = 1;
+    while (count <= numLgm) {
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((mx<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((my+moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      count++;
+    }
   }
 
   explosionsAddItem(&sim->expl, mx, my, 0, 0,EXPLOSION_START);
-  count = 1;
-  while (count <= numLgm) {
-    lgmDeathCheck(sim, lgms[count-1], (WORLD) ((WORLD) (mx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((WORLD) (my << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
-    count++;
+  if (sim->isServer) {
+    count = 1;
+    while (count <= numLgm) {
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((WORLD) (mx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((WORLD) (my << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      count++;
+    }
   }
 
   currentPos = mapGetPos(mp, mx, my);
   tkExplosionCheckRemove(sim, currentPos, mx, my);
-  if (pillsExistPos(pb, mx, my)) {
+  if (sim->isServer && pillsExistPos(pb, mx, my)) {
     pillsGetDamagePos(pb, mx, my, TK_DAMAGE, sim->isServer);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
-//    if (own == TRUE) {
       mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
-  //  }
     floodAddItem(&sim->ff, mx, my);
   }
-  sim->callbacks.soundDist(sim->callbacks.ctx, bigExplosionNear, mx, my);
-  if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
-}
-
-/*********************************************************
-*NAME:          tkExplosionNetMake
-*AUTHOR:        John Morrison
-*CREATION DATE: 11/3/99
-*LAST MODIFIED: 11/3/99
-*PURPOSE:
-*  When we have the token we inform all the players of
-*  tke we have made since last time we had the token.
-*  Returns the length of the data created
-*  
-*ARGUMENTS:
-*  tke   - Pointer to the tank explosions object
-*  buff  - Pointer to a buffer to hold the shells 
-*          net data
-*********************************************************/
-BYTE tkExplosionNetMake(tkExplosion *tke, BYTE *buff) {
-  BYTE returnValue;  /* Value to return */
-  unsigned int ttsz; /* Size of turntype type */
-  unsigned int wsz;  /* Size of world type */
-  BYTE *pnt;         /* Pointer to offset in the buffer */
-  tkExplosion q;     /* Temp pointer to the shells structure */
-
-  ttsz = sizeof(TURNTYPE);
-  wsz = sizeof(WORLD);
-  returnValue = 0;
-  pnt = buff;
-  q = *tke;
-
-  while (NonEmpty(q)) {
-    if (q->packSent == FALSE) {
-      /* Need to add */
-      memcpy(pnt, &(q->x), wsz); /* X */
-      pnt += wsz;
-      returnValue = (BYTE) (returnValue + wsz);
-      memcpy(pnt, &(q->y), wsz); /* Y */
-      pnt += wsz;
-      returnValue = (BYTE) (returnValue + wsz);
-      memcpy(pnt, &(q->angle), ttsz); /* Angle */
-      pnt += ttsz;
-      returnValue = (BYTE) (returnValue + ttsz);
-      *pnt = q->length; /* Length */
-      pnt++;
-      returnValue++;
-      *pnt = q->explodeType; /* Explode Type */
-      pnt++;
-      returnValue++;
-      *pnt = q->creator;
-      pnt++;
-      returnValue++;
-      /* We have now sent it */
-      q->packSent = TRUE;
-    }
-    q = TkExplosionTail(q);
+  if (!sim->isServer) {
+    sim->callbacks.soundDist(sim->callbacks.ctx, bigExplosionNear, mx, my);
+    screenReCalcCS((struct ClientSim *)sim);
   }
-
-  return returnValue;
 }
 
-/*********************************************************
-*NAME:          tkExplosionNetExtract
-*AUTHOR:        John Morrison
-*CREATION DATE: 11/3/99
-*LAST MODIFIED: 14/9/00
-*PURPOSE:
-* Network tke data have arrived. Add them to our 
-* tke structure here.
-*  
-*ARGUMENTS:
-*  tke       - Pointer to the tank explosions object
-*  buff      - Pointer to a buffer to hold the shells 
-*              net data
-*  dataLen   - Length of the data
-*  playerNum - This players number 
-*********************************************************/
-void tkExplosionNetExtract(GameSim *sim, BYTE *buff, BYTE dataLen, BYTE playerNum, bool isServer) {
-  tkExplosion *tke = &sim->tankExplosions;
-  BYTE pos;          /* Position through the data we are */
-  unsigned int ttsz; /* Size of turntype type */
-  unsigned int wsz;  /* Size of world type */
-  BYTE *pnt;         /* Pointer to offset in the buffer */
-  tkExplosion q;     /* Temp pointer to hold additions to the tkExplosion structure */
-  bool isSent;
-  /* An Item */
-  WORLD wx;
-  WORLD wy;
-  TURNTYPE tt;
-  BYTE length;
-  BYTE expType;
-  BYTE creator;
-
-
-  if (isServer == TRUE) {
-    isSent = FALSE;
-  } else {
-    isSent = TRUE;
-  }
-
-  ttsz = sizeof(TURNTYPE);
-  wsz = sizeof(WORLD);
-  pos = 0;
-  pnt = buff;
-  q = NULL;
-  while (pos < dataLen) {
-    /* Get each Data item out */
-    memcpy(&wx, pnt, wsz); /* X */
-    pnt += wsz;
-    pos = (BYTE) (pos + wsz);
-    memcpy(&wy, pnt, wsz); /* Y */
-    pnt += wsz;
-    pos = (BYTE) (pos + wsz);
-    memcpy(&tt, pnt, ttsz); /* Angle */
-    pnt += ttsz;
-    pos += (BYTE) (pos + ttsz);
-    length = *pnt; /* Length */ 
-    pnt++;
-    pos++;
-    expType = *pnt; /* Length */ 
-    pnt++;
-    pos++;
-    creator = *pnt; /* Length */ 
-    pnt++;
-    pos++;
-    if (creator != playerNum) {
-      /* Add it */
-      if (isServer == FALSE) {
-        BYTE lgmMX;
-        BYTE lgmMY;
-        BYTE lgmPX;
-        BYTE lgmPY;
-        BYTE lgmFrame;
-        playersGetLgmDetails(&sim->plyrs, creator, &lgmMX, &lgmMY, &lgmPX, &lgmPY, &lgmFrame);
-        playersUpdate(&sim->plyrs, creator, 0, 0, 0, 0, 0, 0, lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
-      }
-
-
-      New(q);
-      q->packSent = isSent;
-      q->own = isServer;
-      q->x= wx;
-      q->y= wy;
-      q->angle = tt;
-      q->length = length; 
-      q->explodeType = expType;
-      q->creator = creator;
-      /* Add it to the structure */
-      q->next = *tke;
-      q->prev = NULL;
-      if (NonEmpty(*tke)) {
-        (*tke)->prev = q;
-      }
-      *tke = q;
-    }
-  } 
-}
 

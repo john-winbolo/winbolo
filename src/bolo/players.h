@@ -93,7 +93,6 @@ typedef struct {
 struct playersObj {
   player item[MAX_TANKS];
   char playerBrainNames[MAX_TANKS][PLAYER_NAME_LEN];   /* Brain information */
-  BYTE myPlayerNum; /* Your own player number */
 };
 
 /* Prototypes */
@@ -123,32 +122,6 @@ void playersCreate(players *plrs, bool isServer);
 * plrs - Pointer to the players object 
 *********************************************************/
 void playersDestroy(players *plrs);
-
-/*********************************************************
-*NAME:          playersGetSelf
-*AUTHOR:        John Morrison
-*CREATION DATE: 18/2/99
-*LAST MODIFIED: 18/2/99
-*PURPOSE:
-* Returns your own player number
-*
-*ARGUMENTS:
-* plrs - Pointer to the players object 
-*********************************************************/
-BYTE playersGetSelf(players *plrs);
-
-/*********************************************************
-*NAME:          playersSetSelfNum
-*PURPOSE:
-*  Sets myPlayerNum without side effects. Used by the
-*  renderer to temporarily view the game from a specific
-*  player's perspective.
-*
-*ARGUMENTS:
-*  plrs      - Pointer to the players object
-*  playerNum - The player number to set
-*********************************************************/
-void playersSetSelfNum(players *plrs, BYTE playerNum);
 
 /*********************************************************
 *NAME:          playersSetSelf
@@ -181,7 +154,7 @@ bool playersSetSelf(struct ClientSim *cs, struct GameSim *sim, players *plrs, BY
 * playerNum  - The player number to set
 * playerName - The player name to set
 *********************************************************/
-bool playersSetPlayerName(struct ClientSim *cs, struct GameSim *sim, players *plrs, BYTE playerNum, char *playerName, bool isServer);
+bool playersSetPlayerName(struct ClientSim *cs, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, bool isServer);
 
 /*********************************************************
 *NAME:          playersSetPlayersMenu
@@ -194,7 +167,7 @@ bool playersSetPlayerName(struct ClientSim *cs, struct GameSim *sim, players *pl
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 ********************************************************/
-void playersSetPlayersMenu(struct ClientSim *cs, players *plrs, bool isServer);
+void playersSetPlayersMenu(struct ClientSim *cs, players *plrs, BYTE selfPlayer, bool isServer);
 
 /*********************************************************
 *NAME:          playersSetPlayer
@@ -218,7 +191,7 @@ void playersSetPlayersMenu(struct ClientSim *cs, players *plrs, bool isServer);
 * numAllies  - Number of Allies the player has
 * allies     - BYTE buffer containing each allie
 *********************************************************/
-void playersSetPlayer(struct ClientSim *cs, players *plrs, BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool isServer);
+void playersSetPlayer(struct ClientSim *cs, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool isServer);
 
 /*********************************************************
 *NAME:          playerSetLocation
@@ -340,7 +313,7 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 * playerNum  - The player number to set
 * dest       - Destination string
 *********************************************************/
-void playersMakeMessageName(struct ClientSim *cs, players *plrs, BYTE playerNum, char *dest);
+void playersMakeMessageName(struct ClientSim *cs, players *plrs, BYTE selfPlayer, BYTE playerNum, char *dest);
 
 /*********************************************************
 *NAME:          playersMakeScreenName
@@ -355,7 +328,7 @@ void playersMakeMessageName(struct ClientSim *cs, players *plrs, BYTE playerNum,
 * playerNum  - The player number to set
 * dest       - Destination string
 *********************************************************/
-void playersMakeScreenName(struct ClientSim *cs, players *plrs, BYTE playerNum, char *dest);
+void playersMakeScreenName(struct ClientSim *cs, players *plrs, BYTE selfPlayer, BYTE playerNum, char *dest);
 
 /*********************************************************
 *NAME:          playersIsAllie
@@ -413,7 +386,7 @@ bool playersNameTaken(players *plrs, char *checkName);
 * plrs - Pointer to the players object 
 * playerNum - Player number to check
 *********************************************************/
-tankAlliance playersScreenAllience(players *plrs, BYTE playerNum);
+tankAlliance playersScreenAllience(players *plrs, BYTE selfPlayer, BYTE playerNum);
 
 /*********************************************************
 *NAME:          playersMakeScreenTanks
@@ -466,25 +439,6 @@ BYTE playersGetNumPlayers(players *plrs);
 
 
 /*********************************************************
-*NAME:          playersIsTankHit
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/2/99
-*LAST MODIFIED: 31/7/00
-*PURPOSE:
-* Returns the player number if a player was hit otherwise
-* returns NEUTRAL (255)
-*
-*ARGUMENTS:
-* plrs - Pointer to the players object 
-* x     - X co-ordinate of the shell
-* y     - Y co-ordinate of the shell
-* angle - Angle the shell is traveling
-* owner - Owner of the shell (players can not be hit
-*         by there own shells
-*********************************************************/
-BYTE playersIsTankHit(players *plrs, WORLD x, WORLD y, TURNTYPE angle, BYTE owner);
-
-/*********************************************************
 *NAME:          playersMakeNetAlliences
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/2/99
@@ -526,7 +480,7 @@ BYTE playersGetFirstNotUsed(players *plrs);
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersLeaveGame(struct GameSim *sim, players *plrs, BYTE playerNum, bool isServer);
+void playersLeaveGame(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
 *NAME:          playersSetMenuItems
@@ -539,7 +493,7 @@ void playersLeaveGame(struct GameSim *sim, players *plrs, BYTE playerNum, bool i
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersSetMenuItems(struct ClientSim *cs, players *plrs, bool isServer);
+void playersSetMenuItems(struct ClientSim *cs, players *plrs, BYTE selfPlayer, bool isServer);
 
 /*********************************************************
 *NAME:          playersGetNumAllies
@@ -553,7 +507,7 @@ void playersSetMenuItems(struct ClientSim *cs, players *plrs, bool isServer);
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-int playersGetNumAllies(players *plrs);
+int playersGetNumAllies(players *plrs, BYTE selfPlayer);
 
 /*********************************************************
 *NAME:          playersGetNumChecked
@@ -581,7 +535,7 @@ int playersGetNumChecked(players *plrs);
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersCheckAllies(players *plrs, bool isServer);
+void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer);
 
 /*********************************************************
 *NAME:          playersCheckAllNone
@@ -596,7 +550,7 @@ void playersCheckAllies(players *plrs, bool isServer);
 * plrs - Pointer to the players object 
 * isChecked - TRUE if check all
 *********************************************************/
-void playersCheckAllNone(players *plrs, bool isChecked, bool isServer);
+void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool isServer);
 
 /*********************************************************
 *NAME:          playersToggleCheckedState
@@ -610,7 +564,7 @@ void playersCheckAllNone(players *plrs, bool isChecked, bool isServer);
 * plrs - Pointer to the players object 
 * playerNum - The number of the player to check
 *********************************************************/
-void playersToggleCheckedState(players *plrs, BYTE playerNum, bool isServer);
+void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
 *NAME:          playersCheckNearbyPlayers
@@ -625,7 +579,7 @@ void playersToggleCheckedState(players *plrs, BYTE playerNum, bool isServer);
 * xValue - Your tanks X Map position
 * yValue - Your tanks Y Map position
 *********************************************************/
-void playersCheckNearbyPlayers(players *plrs, BYTE xValue, BYTE yValue, bool isServer);
+void playersCheckNearbyPlayers(players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer);
 
 /*********************************************************
 *NAME:          playersNumNearbyPlayers
@@ -654,7 +608,7 @@ int playersNumNearbyPlayers(players *plrs, BYTE xValue, BYTE yValue);
 * plrs - Pointer to the players object 
 * message - Message to send
 *********************************************************/
-void playersSendMessageAllAllies(struct ClientSim *cs, players *plrs, char *messageStr);
+void playersSendMessageAllAllies(struct ClientSim *cs, players *plrs, BYTE selfPlayer, char *messageStr);
 
 /*********************************************************
 *NAME:          playersSendMessageAllSelected
@@ -668,7 +622,7 @@ void playersSendMessageAllAllies(struct ClientSim *cs, players *plrs, char *mess
 * plrs - Pointer to the players object 
 * message - Message to send
 *********************************************************/
-void playersSendMessageAllSelected(struct ClientSim *cs, struct GameSim *sim, players *plrs, char *messageStr);
+void playersSendMessageAllSelected(struct ClientSim *cs, struct GameSim *sim, players *plrs, BYTE selfPlayer, char *messageStr);
 
 /*********************************************************
 *NAME:          playersSendMessageAllNearby
@@ -684,7 +638,7 @@ void playersSendMessageAllSelected(struct ClientSim *cs, struct GameSim *sim, pl
 * yValue - Your tanks Y Map position
 * message - Message to send
 *********************************************************/
-void playersSendMessageAllNearby(struct ClientSim *cs, players *plrs, BYTE xValue, BYTE yValue, char *messageStr);
+void playersSendMessageAllNearby(struct ClientSim *cs, players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, char *messageStr);
 
 /*********************************************************
 *NAME:          playersIsInUse
@@ -772,7 +726,7 @@ bool playersCalcTankCollision(struct GameSim *sim, BYTE playerNum, WORLD xValue,
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersSetAllieMenu(players *plrs, bool isServer);
+void playersSetAllieMenu(players *plrs, BYTE selfPlayer, bool isServer);
 
 /*********************************************************
 *NAME:          playersRequestAlliance
@@ -785,7 +739,7 @@ void playersSetAllieMenu(players *plrs, bool isServer);
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersRequestAlliance(struct ClientSim *cs, players *plrs);
+void playersRequestAlliance(struct ClientSim *cs, players *plrs, BYTE selfPlayer);
 
 /*********************************************************
 *NAME:          playersLeaveAlliance
@@ -799,7 +753,7 @@ void playersRequestAlliance(struct ClientSim *cs, players *plrs);
 * plrs - Pointer to the players object 
 * playerNum - Player number that is leaving the alliance
 *********************************************************/
-void playersLeaveAlliance(struct GameSim *sim, players *plrs, BYTE playerNum, bool isServer);
+void playersLeaveAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
 *NAME:          playersAcceptAlliance
@@ -814,7 +768,7 @@ void playersLeaveAlliance(struct GameSim *sim, players *plrs, BYTE playerNum, bo
 * acceptedBy - Who accepted them in
 * newMember  - Who the new member is
 *********************************************************/
-void playersAcceptAlliance(struct GameSim *sim, players *plrs, BYTE acceptedBy, BYTE newMember, bool isServer);
+void playersAcceptAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE acceptedBy, BYTE newMember, bool isServer);
 
 /*********************************************************
 *NAME:          playersConnectionLost
@@ -829,7 +783,7 @@ void playersAcceptAlliance(struct GameSim *sim, players *plrs, BYTE acceptedBy, 
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersConnectionLost(struct GameSim *sim, players *plrs);
+void playersConnectionLost(struct GameSim *sim, players *plrs, BYTE selfPlayer);
 
 /*********************************************************
 *NAME:          playersGetBrainTanksInRect

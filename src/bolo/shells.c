@@ -45,6 +45,7 @@
 #include "sounddist.h"
 #include "swamp.h"
 #include "tank.h"
+#include "position_history.h"
 #include "tankexp.h"
 #include "util.h"
 #include "game_sim.h"
@@ -143,10 +144,11 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->angle = angle;
   q->length = (BYTE) (1 + (SHELL_LIFE * len) - (SHELL_START_ADD));
   q->onBoat = onBoat;
-  q->creator = playersGetSelf(&sim->plyrs);
+  q->creator = sim->viewPlayer;
   q->owner = owner;
   q->packSent = FALSE;
   q->shellDead = FALSE;
+  q->compensationTicks = sim->lagCompTicks;
   q->next = *value;
   q->prev = NULL;
   if (NonEmpty(*value)) {
@@ -213,7 +215,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			newX = (WORLD) (position->x + xAdd);
 			newY = (WORLD) (position->y + yAdd);
 			/* Check for colision */
-			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks)) == TRUE)
+			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks, position->compensationTicks)) == TRUE)
 			{
 				/* Get X and Y map co-ords. */
 				conv = newX;
@@ -238,6 +240,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				conv >>= TANK_SHIFT_PIXELSIZE;
 				spy = (BYTE) conv;
 				explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
+				if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, sx, sy, spx, spy);
 				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
@@ -281,6 +284,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			conv >>= TANK_SHIFT_PIXELSIZE;
 			spy = (BYTE) conv;
 			explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
+			if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, sx, sy, spx, spy);
 			minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {
@@ -411,7 +415,7 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  numTanks - Number of tanks in the array
 *  isServer - TRUE if we are a server
 *********************************************************/
-bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks) {
+bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks, uint8_t compensationTicks) {
 	map *mp = &sim->mp;
 	pillboxes *pb = &sim->pb;
 	bases *bs = &sim->bs;
@@ -461,31 +465,57 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 	/* Shell did not hit pillbox */
 	if (returnValue == FALSE) {
 		count = 0;
-		while (count < numTanks && returnValue == FALSE)
-		{
-			if (gameSimGetTankPlayer(sim, &tk[count]) != owner)
-			{
-				th = tankIsTankHit(sim, &(tk[count]), *xValue, *yValue, angle, owner);
-				switch (th)
-				{
+		while (count < numTanks && returnValue == FALSE) {
+			if (gameSimGetTankPlayer(sim, &tk[count]) != owner) {
+				BYTE targetPlayer = gameSimGetTankPlayer(sim, &tk[count]);
+				uint8_t rewindTicks;
+				WORLD hitCheckX, hitCheckY;
+				bool useRewound = FALSE;
+
+				if (compensationTicks > 0) {
+					/* Player shell: rewind target by shooter's delay */
+					rewindTicks = compensationTicks;
+				} else if (sim->isServer && owner == NEUTRAL) {
+					/* Pill shell: rewind target by the target's own delay */
+					rewindTicks = sim->perPlayerCompTicks[targetPlayer];
+				} else {
+					rewindTicks = 0;
+				}
+
+				if (rewindTicks > 0 && sim->posHistoryPtr != NULL &&
+				    targetPlayer != NEUTRAL &&
+				    posHistoryGet(&sim->posHistoryPtr[targetPlayer],
+				                  rewindTicks, &hitCheckX, &hitCheckY)) {
+					useRewound = TRUE;
+				}
+
+				if (useRewound) {
+					th = tankIsTankHitAtPosition(sim, &(tk[count]),
+					                              hitCheckX, hitCheckY,
+					                              *xValue, *yValue, angle, owner);
+				} else {
+					th = tankIsTankHit(sim, &(tk[count]), *xValue, *yValue, angle, owner);
+				}
+
+				switch (th) {
 					case TH_HIT:
 						returnValue = TRUE;
-						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, gameSimGetTankPlayer(sim, &tk[count]));
+						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
 						break;
 					case TH_KILL_SMALL:
 						returnValue = TRUE;
 						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_SMALL_EXPLOSION);
-						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, gameSimGetTankPlayer(sim, &tk[count]));
-						sim->callbacks.tankKill(sim->callbacks.ctx, owner, gameSimGetTankPlayer(sim, &tk[count]), LAST_DEATH_BY_SHELL, 0);
+						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
+						sim->callbacks.tankKill(sim->callbacks.ctx, owner, targetPlayer, LAST_DEATH_BY_SHELL, 0);
 						break;
 					case TH_KILL_BIG:
 						returnValue = TRUE;
 						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_LARGE_EXPLOSION);
-						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, gameSimGetTankPlayer(sim, &tk[count]));
-						sim->callbacks.tankKill(sim->callbacks.ctx, owner, gameSimGetTankPlayer(sim, &tk[count]), LAST_DEATH_BY_SHELL, 0);
+						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
+						sim->callbacks.tankKill(sim->callbacks.ctx, owner, targetPlayer, LAST_DEATH_BY_SHELL, 0);
 						break;
 					case TH_MISSED:
-						default:
+					default:
 						break;
 				}
 			}
@@ -790,7 +820,7 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
   int xAdd;
   int yAdd;
 
-  self = playersGetSelf(&sim->plyrs);
+  self = sim->viewPlayer;
   pos = 0;
   pnt = buff;
   q = NULL;
@@ -880,6 +910,7 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
       q->y = wy;
       q->angle = tt;
       q->shellDead = FALSE;
+      q->compensationTicks = 0;
       q->length = length;
       q->owner = owner;
       q->onBoat = onBoat;
@@ -930,7 +961,7 @@ void shellsGetBrainShellsInRect(ClientSim *cs, GameSim *sim, shells *value, BYTE
   BYTE my; 
   BYTE playerNum;  /* Our player number       */
 
-  playerNum = playersGetSelf(&sim->plyrs);
+  playerNum = sim->viewPlayer;
   position = *value;
 
 /* typedef struct

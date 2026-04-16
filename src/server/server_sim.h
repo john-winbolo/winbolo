@@ -27,6 +27,7 @@
 
 #include <SDL3/SDL.h>
 #include "../bolo/game_sim.h"
+#include "../bolo/position_history.h"
 #include "../bolo/input_packet.h"
 #include "../mapeditor/mapeditor_generate.h"
 
@@ -109,7 +110,21 @@ typedef struct ServerSim {
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
-    uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (from client reports) */
+    uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
+
+    /* Input jitter buffer — delay processing until buffer reaches target depth */
+#define JITTER_BUFFER_MIN       1   /* Minimum buffer depth (ticks) */
+#define JITTER_BUFFER_MAX       4   /* Maximum buffer depth (ticks) */
+#define JITTER_BUFFER_DEFAULT   2   /* Starting depth before we have data */
+#define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
+#define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
+#define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
+    uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
+    uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
+    uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
+    uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
+
+    PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
 
     /* Which player is currently being processed in the tick loop.
      * Used by serverSimCbMessageAdd to target assistant messages. */
@@ -315,8 +330,8 @@ ServerSim *serverSimGetActive(void);
  *  maxTanks      - Max entries in tanksOut
  *  shellsOut     - Output: ShellSnapshot array
  *  maxShells     - Max entries in shellsOut
- *  explosionsOut - Output: ExplosionSnapshot array
- *  maxExplosions - Max entries in explosionsOut
+ *  tkExplOut     - Output: TkExplosionSnapshot array
+ *  maxTkExpl     - Max entries in tkExplOut
  *  basesOut      - Output: BaseSnapshot array
  *  maxBases      - Max entries in basesOut
  *  pillsOut      - Output: PillSnapshot array
@@ -328,7 +343,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
                             TankSnapshot *tanksOut, int maxTanks,
                             ShellSnapshot *shellsOut, int maxShells,
-                            ExplosionSnapshot *explosionsOut, int maxExplosions,
+                            TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
                             GameEvent *eventsOut, int maxEvents);

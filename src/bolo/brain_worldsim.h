@@ -56,8 +56,8 @@ typedef struct {
   uint8_t  is_ours;
   uint8_t  owner;
   int16_t  armour;          /* signed for death detection */
-  uint8_t  slide_timer;     /* knockback ticks remaining (0 = none) */
-  uint8_t  slide_angle;     /* direction of knockback push */
+  float    slide_vx;        /* knockback X velocity (WU/tick) */
+  float    slide_vy;        /* knockback Y velocity (WU/tick) */
 } WSimTank;
 
 typedef struct {

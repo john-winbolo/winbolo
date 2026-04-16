@@ -67,7 +67,7 @@ typedef struct {
     uint32_t lastProcessedInput;  /* Last input tick server processed for THIS client */
     uint8_t  tankCount;           /* Number of TankSnapshot entries following */
     uint8_t  shellCount;          /* Number of ShellSnapshot entries following */
-    uint8_t  explosionCount;      /* Number of ExplosionSnapshot entries following */
+    uint8_t  tkExplosionCount;   /* Number of TkExplosionSnapshot entries following */
     uint8_t  baseCount;           /* Number of BaseSnapshot entries following */
     uint8_t  pillCount;           /* Number of PillSnapshot entries following */
     uint8_t  reliableEventCount;  /* Number of reliable GameEvent entries following (game + map merged) */
@@ -114,20 +114,21 @@ typedef struct {
 
 #define SHELL_SNAPSHOT_WIRE_SIZE 7
 
-/* Per-explosion data within a snapshot (wire format) */
+/* Per-tk-explosion data within a snapshot (wire format) */
 typedef struct {
-    uint8_t mx;
-    uint8_t my;
-    uint8_t px;
-    uint8_t py;
-    uint8_t length;        /* Animation frame */
-} ExplosionSnapshot;
+    uint16_t worldX;       /* World X position */
+    uint16_t worldY;       /* World Y position */
+    uint8_t  angle;        /* Travel angle (quantized from TURNTYPE) */
+    uint8_t  length;       /* Remaining distance */
+    uint8_t  explodeType;  /* TK_SMALL_EXPLOSION or TK_LARGE_EXPLOSION */
+    uint8_t  creator;      /* Player number who died */
+} TkExplosionSnapshot;
 
-#define EXPLOSION_SNAPSHOT_WIRE_SIZE 5
+#define TK_EXPLOSION_SNAPSHOT_WIRE_SIZE 8
 
 /* Maximum shells/explosions in a single snapshot */
 #define MAX_SNAPSHOT_SHELLS     64
-#define MAX_SNAPSHOT_EXPLOSIONS 32
+#define MAX_SNAPSHOT_TK_EXPLOSIONS 16
 #define MAX_SNAPSHOT_BASES      16
 #define MAX_SNAPSHOT_PILLS      16
 
@@ -168,7 +169,7 @@ typedef struct {
 /* Event types */
 #define EVENT_SHELL_FIRED   1
 #define EVENT_MINE_PLACED   2
-#define EVENT_EXPLOSION     3
+#define EVENT_EXPLOSION     3  /* data: [mx, my, px, py] */
 #define EVENT_PILL_CAPTURED 4  /* data: [newOwner, prevOwner] */
 #define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner] */
 #define EVENT_TANK_KILLED   6  /* data: [killer, killed, deathCause, carriedPills] */
@@ -182,6 +183,7 @@ typedef struct {
 #define EVENT_LGM_LOST     14 /* data: [victim, killer] — builder killed, broadcast newswire */
 #define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, mx, my, hitPlayer] */
 #define EVENT_SOUND_SHOOT    16 /* data: [soundId, mx, my, firingPlayer] */
+#define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
 
 /* Assistant message IDs for EVENT_ASSISTANT_MSG */
 #define ASSIST_MSG_MAN_DEAD          1
@@ -202,6 +204,7 @@ static inline int gameEventDataSize(uint8_t type) {
     switch (type) {
     case EVENT_PILL_CAPTURED:  return 2;
     case EVENT_BASE_CAPTURED:  return 2;
+    case EVENT_EXPLOSION:      return 4;
     case EVENT_MAP_CHANGE:     return 3;
     case EVENT_SOUND:          return 4;
     case EVENT_SERVER_MSG:     return 1;
@@ -213,6 +216,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_SOUND_TANK_HIT: return 4;
     case EVENT_SOUND_SHOOT:    return 4;
     case EVENT_TANK_KILLED:    return 4;
+    case EVENT_MINE_VISIBLE:   return 3;
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

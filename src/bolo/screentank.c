@@ -93,11 +93,11 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
     (*value).pos[0].px = tankGetScreenPX(tnk);
     (*value).pos[0].py = tankGetScreenPY(tnk);
     (*value).pos[0].frame = tankGetFrame(tnk);
-    (*value).pos[0].playerNum = playersGetSelf(&cs->sim.plyrs);
+    (*value).pos[0].playerNum = cs->myPlayerNum;
     /* Get the tanks names */
     (*value).pos[0].playerName[0] = '\0';
     if (tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
-      playersGetPlayerName(&cs->sim.plyrs, playersGetSelf(&cs->sim.plyrs), playerName, FALSE);
+      playersGetPlayerName(&cs->sim.plyrs, cs->myPlayerNum, playerName, FALSE);
       labelMakeTankLabel(cs, (*value).pos[0].playerName, playerName, langGetText(MESSAGE_THIS_COMPUTER), TRUE);
     }
   }

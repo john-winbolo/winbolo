@@ -277,7 +277,7 @@ void screenSyncFromSnapshotCS(struct ClientSim *cs,
                               const SnapshotHeader *hdr,
                               const TankSnapshot *tanks, int tankCount,
                               const ShellSnapshot *shellSnaps, int shellCount,
-                              const ExplosionSnapshot *explSnaps, int explosionCount,
+                              const TkExplosionSnapshot *tkExplSnaps, int tkExplosionCount,
                               const BaseSnapshot *baseSnaps, int baseCount,
                               const PillSnapshot *pillSnaps, int pillCount,
                               const GameEvent *events, int eventCount,
@@ -335,8 +335,6 @@ void screenGetLgmStatusCS(struct ClientSim *csPtr, bool *isOut, bool *isDead, TU
 void screenExtractMapDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE len, BYTE yPos);
 BYTE screenMakeShellDataCS(struct ClientSim *csPtr, BYTE *buff);
 void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
-BYTE screenMakeTKDataCS(struct ClientSim *csPtr, BYTE *buff);
-void screenExtractTKDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
 void screenSendMessageAllPlayersCS(struct ClientSim *csPtr, char *messageStr);
 bool screenSaveMapCS(struct ClientSim *csPtr, char *fileName);

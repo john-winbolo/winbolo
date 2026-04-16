@@ -101,6 +101,10 @@ static void csCallbackConsoleMessage(void *ctx, char *msg) {
   /* no-op on the client */
 }
 
+static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer) {
+  /* no-op — client receives mine visibility via EVENT_MINE_VISIBLE from server */
+}
+
 /* Brain state now lives inside the ClientSim struct (see client_sim.h).
  * The static globals were removed in the Phase 0 refactor. */
 
@@ -125,6 +129,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   srand((unsigned int) time(NULL));
   memset(cs, 0, sizeof(*cs));
   cs->myPlayerNum = 0;
+  cs->sim.viewPlayer = 0;
 
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
@@ -137,6 +142,8 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->sim.callbacks.tankKill = csCallbackTankKill;
   cs->sim.callbacks.centerTank = csCallbackCenterTank;
   cs->sim.callbacks.consoleMessage = csCallbackConsoleMessage;
+  cs->sim.callbacks.mineVisible = csCallbackMineVisible;
+  cs->sim.callbacks.explosion = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;
@@ -204,6 +211,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
 
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
     cs->myPlayerNum = playerNum;
+    cs->sim.viewPlayer = playerNum;
     if (playerNum != 0) {
         cs->sim.tanks[playerNum] = cs->sim.tanks[0];
         cs->sim.tanks[0] = NULL;
@@ -351,13 +359,14 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
 void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const TankSnapshot *tanks, int tankCount,
                                const ShellSnapshot *shellSnaps, int shellCount,
-                               const ExplosionSnapshot *explSnaps, int explosionCount,
+                               const TkExplosionSnapshot *tkExplSnaps, int tkExplosionCount,
                                const BaseSnapshot *baseSnaps, int baseCount,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum) {
   screenSyncFromSnapshotCS(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
-                           explSnaps, explosionCount, baseSnaps, baseCount,
+                           tkExplSnaps, tkExplosionCount,
+                           baseSnaps, baseCount,
                            pillSnaps, pillCount, events, eventCount, playerNum);
 }
 

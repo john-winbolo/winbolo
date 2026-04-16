@@ -100,7 +100,7 @@ void explosionsAddItem(explosions *expl, BYTE mx, BYTE my, BYTE px, BYTE py, BYT
   if (NonEmpty(*expl)) {
     (*expl)->prev = q;
   }
-  
+
   *expl = q;
 }
 
@@ -138,7 +138,7 @@ void explosionsUpdate(explosions *expl) {
       needUpdate = FALSE;
       explosionDeleteItem(expl, &position);
     }
-    
+
     /* Get the next Item */
     if (*expl != NULL && needUpdate == TRUE) {
       position = ExplosionsTail(position);
