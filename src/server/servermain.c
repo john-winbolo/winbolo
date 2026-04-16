@@ -120,7 +120,20 @@ typedef enum {
 
 alarmType alarmRaised;
 
-#ifndef _WIN32
+#ifdef _WIN32
+/* Signal handler for Windows console */
+BOOL WINAPI consoleCtrlHandler(DWORD ctrlType) {
+  switch (ctrlType) {
+  case CTRL_C_EVENT:
+  case CTRL_BREAK_EVENT:
+  case CTRL_CLOSE_EVENT:
+    alarmRaised = alarmInterrupt;
+    return TRUE;
+  default:
+    return FALSE;
+  }
+}
+#else
 /* Signal handler for linux */
 void
 catch_alarm (int sig)
@@ -137,7 +150,6 @@ catch_alarm (int sig)
     break;
   }
 }
-
 #endif
 
 
@@ -188,6 +200,27 @@ void printHelp() {
 
 
 #ifdef _WIN32
+
+/* Background thread that reads lines from stdin so the main loop never blocks */
+static volatile int stdinLineReady = 0;
+static char stdinLine[256];
+
+static DWORD WINAPI stdinReaderThread(LPVOID param) {
+	(void)param;
+	while (1) {
+		if (fgets(stdinLine, sizeof(stdinLine), stdin) != NULL) {
+			stdinLineReady = 1;
+			/* Wait for main thread to consume the line */
+			while (stdinLineReady) {
+				Sleep(50);
+			}
+		} else {
+			break;
+		}
+	}
+	return 0;
+}
+
 void processKeys(bool isQuiet) {
 	char keyBuff[256] = "\0";
 	char saveBuff[256] = "\0";
@@ -196,45 +229,65 @@ void processKeys(bool isQuiet) {
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
 		while (!(serverSim.state == serverStateGameOver && !serverSim.lobbyEnabled)) {
+			if (alarmRaised == alarmInterrupt) {
+				break;
+			}
 			Sleep(1000);
 		}
 	} else {
+		/* Start background thread to read stdin */
+		HANDLE hThread = CreateThread(NULL, 0, stdinReaderThread, NULL, 0, NULL);
+		if (hThread) {
+			CloseHandle(hThread);
+		}
+
 		while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSim.state == serverStateGameOver && !serverSim.lobbyEnabled)) {
-			if (strncmp(keyBuff, "help", 4) == 0) {
-				printHelp();
-			} else if (strncmp(keyBuff, "unlock", 6) == 0) {
-				threadsWaitForMutex();
-				transportUdpServerSetLock(&serverSim, FALSE);
-				threadsReleaseMutex();
-			} else if (strncmp(keyBuff, "lock", 4) == 0) {
-				threadsWaitForMutex();
-				transportUdpServerSetLock(&serverSim, TRUE);
-				threadsReleaseMutex();
-			} else if (strncmp(keyBuff, "info", 4) == 0) {
-				threadsWaitForMutex();
-				serverSimInformation(&serverSim, transportUdpServerGetLock());
-				threadsReleaseMutex();
-			} else if (strncmp(keyBuff, "savemap", 7) == 0) {
-				threadsWaitForMutex();
-				saveMap(saveBuff);
-				threadsReleaseMutex();
-			} else if (strncmp(keyBuff, "say ", 4) == 0) {
-				transportUdpServerSendServerMessage((char *) keyBuff+4);
-			} else if(strncmp(keyBuff, "status", 6) == 0){
-				transportUdpServerPrintStatus(statusFile);
-			} else if (strncmp(keyBuff, "kick ", 5) == 0) {
-				sprintf(playerKick, "%.*s", 32, keyBuff+5);
-				newbuflen = strlen(playerKick);
-				playerKick[newbuflen - 1] = '\0';
-				threadsWaitForMutex();
-				transportUdpServerKickPlayer(&serverSim, playerKick);
-				threadsReleaseMutex();
-			} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-				fprintf(stderr, "Unknown command - Type \"help\" for help\n");
+			if (alarmRaised == alarmInterrupt) {
+				strcpy(keyBuff, "quit");
+				continue;
 			}
-			fgets(keyBuff, 256, stdin);
-			strcpy(saveBuff, keyBuff);
-			strlower(keyBuff);
+			/* Check if the reader thread has a line ready */
+			if (stdinLineReady) {
+				strcpy(keyBuff, stdinLine);
+				strcpy(saveBuff, stdinLine);
+				strlower(keyBuff);
+				stdinLineReady = 0;
+
+				if (strncmp(keyBuff, "help", 4) == 0) {
+					printHelp();
+				} else if (strncmp(keyBuff, "unlock", 6) == 0) {
+					threadsWaitForMutex();
+					transportUdpServerSetLock(&serverSim, FALSE);
+					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "lock", 4) == 0) {
+					threadsWaitForMutex();
+					transportUdpServerSetLock(&serverSim, TRUE);
+					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "info", 4) == 0) {
+					threadsWaitForMutex();
+					serverSimInformation(&serverSim, transportUdpServerGetLock());
+					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "savemap", 7) == 0) {
+					threadsWaitForMutex();
+					saveMap(saveBuff);
+					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "say ", 4) == 0) {
+					transportUdpServerSendServerMessage((char *) keyBuff+4);
+				} else if(strncmp(keyBuff, "status", 6) == 0){
+					transportUdpServerPrintStatus(statusFile);
+				} else if (strncmp(keyBuff, "kick ", 5) == 0) {
+					sprintf(playerKick, "%.*s", 32, keyBuff+5);
+					newbuflen = strlen(playerKick);
+					playerKick[newbuflen - 1] = '\0';
+					threadsWaitForMutex();
+					transportUdpServerKickPlayer(&serverSim, playerKick);
+					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
+					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
+				}
+			} else {
+				Sleep(100);
+			}
 		}
 
 		closeDebugFile();
@@ -970,7 +1023,10 @@ int main(int argc, char **argv) {
 
   alarmRaised = alarmNone;
   initWinboloTimer();
-#ifndef _WIN32
+#ifdef _WIN32
+  /* Set up console ctrl handler */
+  SetConsoleCtrlHandler(consoleCtrlHandler, TRUE);
+#else
   /* Set up signal handler */
   signal(SIGINT, catch_alarm);
   signal(SIGUSR1, catch_alarm);
