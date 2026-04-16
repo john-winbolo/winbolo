@@ -278,7 +278,7 @@ void startsGetRandStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE 
       testY <<= TANK_SHIFT_MAPSIZE;
       testX += 256;
       testY += 256;
-      if (playersCheckCollision(&sim->plyrs, playersGetSelf(&sim->plyrs), testX, testY, &dummy1, &dummy2) == FALSE) {
+      if (playersCheckCollision(&sim->plyrs, sim->viewPlayer, testX, testY, &dummy1, &dummy2) == FALSE) {
         found = TRUE;
         *x = (*value)->item[(rnd-1)].x;
         *y = (*value)->item[(rnd-1)].y;

@@ -62,7 +62,7 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
     gapY = 0;
   }
   {
-    BYTE self = playersGetSelf(&sim->plyrs);
+    BYTE self = sim->viewPlayer;
     if (self >= MAX_TANKS || sim->tanks[self] == NULL) return;
     tankX = tankGetScreenMX(&sim->tanks[self]);
     tankY = tankGetScreenMY(&sim->tanks[self]);

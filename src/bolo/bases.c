@@ -245,9 +245,9 @@ baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
         returnValue = baseNeutral;
-      } else if ((*value)->item[count].owner == playersGetSelf(&sim->plyrs)) {
+      } else if ((*value)->item[count].owner == sim->viewPlayer) {
         returnValue = baseOwnGood;
-      } else if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, playersGetSelf(&sim->plyrs)) == TRUE) {
+      } else if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer) == TRUE) {
         returnValue = baseAllieGood;
       } else {
         returnValue = baseEvil;
@@ -286,9 +286,9 @@ baseAlliance basesGetStatusNum(GameSim *sim, BYTE baseNum) {
       returnValue = baseDead;
     } else if ((*value)->item[baseNum].owner == NEUTRAL) {
       returnValue = baseNeutral;
-    } else if ((*value)->item[baseNum].owner == playersGetSelf(&sim->plyrs)) {
+    } else if ((*value)->item[baseNum].owner == sim->viewPlayer) {
       returnValue = baseOwnGood;
-    } else if (playersIsAllie(&sim->plyrs, (*value)->item[baseNum].owner, playersGetSelf(&sim->plyrs)) == TRUE) {
+    } else if (playersIsAllie(&sim->plyrs, (*value)->item[baseNum].owner, sim->viewPlayer) == TRUE) {
       returnValue = baseAllieGood;
     } else {
       returnValue = baseEvil;
@@ -544,7 +544,7 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
     } else if (owner == NEUTRAL) {
       (*value)->item[baseNum].owner = owner;
     } else if ((*value)->item[baseNum].owner != owner) {
-      playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
+      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
       if (returnValue != NEUTRAL) {
         (*value)->item[baseNum].armour = 0;
         (*value)->item[baseNum].shells = 0;
@@ -629,7 +629,7 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
-        playersMakeMessageName(NULL, &sim->plyrs, owner, messageStr);
+        playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
         if (returnValue != NEUTRAL) {
           (*value)->item[count].armour = 0;
           (*value)->item[count].shells = 0;
@@ -789,7 +789,7 @@ BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
   oldDistance = BASE_STATUS_RANGE; /* The range of the gunsight is the distance for a base to be shown */
   returnValue = BASE_NOT_FOUND-1;
   count = 0;
-  self = playersGetSelf(&sim->plyrs);
+  self = sim->viewPlayer;
 
   while (count < (*value)->numBases) {
     /* Check for neutral or allied */
@@ -1377,7 +1377,7 @@ void basesGetBrainBaseItem(GameSim *sim, BYTE baseNum, WORLD *wx, WORLD *wy, BYT
     *wy <<= TANK_SHIFT_MAPSIZE;
     if ((*value)->item[baseNum].owner == NEUTRAL) {
       *info = BASES_BRAIN_NEUTRAL;
-    } else if (playersIsAllie(&sim->plyrs, playersGetSelf(&sim->plyrs), (*value)->item[baseNum].owner) == TRUE) {
+    } else if (playersIsAllie(&sim->plyrs, sim->viewPlayer, (*value)->item[baseNum].owner) == TRUE) {
       *info = BASES_BRAIN_FRIENDLY;
     } else {
       *info = BASES_BRAIN_HOSTILE;
@@ -1417,7 +1417,7 @@ void basesGetBrainBaseInRect(ClientSim *cs, GameSim *sim, BYTE leftPos, BYTE rig
 
 
   count = 0;
-  playerNum = playersGetSelf(&sim->plyrs);
+  playerNum = sim->viewPlayer;
 
 /* typedef struct
 	{

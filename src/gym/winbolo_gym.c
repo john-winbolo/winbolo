@@ -142,7 +142,7 @@ static void gymSetupGame(WinBoloGym *g) {
     g->serverSim.lobbyEnabled = false;
     g->serverSim.state = serverStateRunning;
     serverSimAddPlayer(&g->serverSim, 0, "GymAgent", false);
-    (*g->serverSim.sim.plyrs).myPlayerNum = 0;
+    g->serverSim.sim.viewPlayer = 0;
 
     g->transport = transportLocalCreate(&g->serverSim, 0);
 

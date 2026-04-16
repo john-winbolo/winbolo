@@ -129,6 +129,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   srand((unsigned int) time(NULL));
   memset(cs, 0, sizeof(*cs));
   cs->myPlayerNum = 0;
+  cs->sim.viewPlayer = 0;
 
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
@@ -210,6 +211,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
 
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
     cs->myPlayerNum = playerNum;
+    cs->sim.viewPlayer = playerNum;
     if (playerNum != 0) {
         cs->sim.tanks[playerNum] = cs->sim.tanks[0];
         cs->sim.tanks[0] = NULL;

@@ -259,7 +259,7 @@ static void scrollEnemyAwareness(ScrollState *ss, GameSim *sim, BYTE viewX, BYTE
     moveDirY = 0.0f;
   }
 
-  myPlayer = playersGetSelf(&sim->plyrs);
+  myPlayer = sim->viewPlayer;
 
   searchMinX = (int)viewX - searchMargin;
   searchMinY = (int)viewY - searchMargin;
@@ -424,7 +424,7 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   shells bestShell;
   bool newDriveScroll;
 
-  myPlayer = playersGetSelf(&sim->plyrs);
+  myPlayer = sim->viewPlayer;
   tankGetWorld(&sim->tanks[myPlayer], &tankWX, &tankWY);
 
   /* Phase 1: Initialize target viewport position */

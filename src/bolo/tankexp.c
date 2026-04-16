@@ -108,7 +108,7 @@ void tkExplosionAddItem(GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE len
   q->length = length;
   q->next = *tke;
   q->explodeType = explodeType;
-  q->creator = playersGetSelf(&sim->plyrs);
+  q->creator = sim->viewPlayer;
   q->prev = NULL;
   if (NonEmpty(*tke)) {
     (*tke)->prev = q;
@@ -192,7 +192,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
   testX= 0;
   testY = 0;
   *updateTime = 0;
-  playerNum = playersGetSelf(&sim->plyrs);
+  playerNum = sim->viewPlayer;
   position = *tke;
 
   while (NonEmpty(position)) {

@@ -495,7 +495,7 @@ BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, B
       returnValue = BASE_NEUTRAL;
       break;
     case baseDead:
-      if (basesAmOwner(&csPtr->sim, playersGetSelf(&csPtr->sim.plyrs), xValue, yValue) == TRUE) {
+      if (basesAmOwner(&csPtr->sim, csPtr->myPlayerNum, xValue, yValue) == TRUE) {
         returnValue = BASE_GOOD;
       } else {
         returnValue = BASE_EVIL;
@@ -1012,7 +1012,7 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
     frontEndUpdateTankStatusBars(sh, mi, ar, tr);
   }
   playersSetSelf(csPtr, &csPtr->sim, &csPtr->sim.plyrs, (playerNumbers) playerNum, playerName, FALSE);
-  frontEndSetPlayer(csPtr, (playerNumbers) playersGetSelf(&csPtr->sim.plyrs), playerName, "", 0, false, false);
+  frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, false, false);
 }
 
 /*********************************************************
@@ -1316,7 +1316,7 @@ void screenGetPlayerNameCS(ClientSim *csPtr, char *value) {
   if (csPtr->sim.plyrs == NULL) {
     strcpy(value, csPtr->myLastPlayerName);
   } else {
-    playersGetPlayerName(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), value, FALSE);
+    playersGetPlayerName(&csPtr->sim.plyrs, csPtr->myPlayerNum, value, FALSE);
   }
 }
 
@@ -1338,10 +1338,10 @@ bool screenSetPlayerNameCS(ClientSim *csPtr, char *value) {
   bool returnValue;              /* Value to return */
 
   utilStripNameReplace(value);
-  returnValue = playersSetPlayerName(csPtr, &csPtr->sim, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), value, FALSE);
+  returnValue = playersSetPlayerName(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, value, FALSE);
   if (returnValue == TRUE) {
     if (csPtr->networkGameType != netSingle) {
-      clientSimSendChangePlayerName(csPtr, playersGetSelf(&csPtr->sim.plyrs), value);
+      clientSimSendChangePlayerName(csPtr, csPtr->myPlayerNum, value);
     }
   }
   return returnValue;
@@ -1475,9 +1475,9 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
-  clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  clientSimMessageSendAllPlayers(csPtr, playersGetSelf(&csPtr->sim.plyrs), messageStr);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, topLine);
+  clientMessageAdd(&csPtr->messages, (messageType) (csPtr->myPlayerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  clientSimMessageSendAllPlayers(csPtr, csPtr->myPlayerNum, messageStr);
 }
 
 /*********************************************************
@@ -1503,7 +1503,7 @@ bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
   returnValue = mapWrite(fileName, &csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss);
   if (returnValue == TRUE) {
     if (csPtr->networkGameType == netSingle) {
-      playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), name);
+      playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, name);
       strcat(output, MESSAGE_QUOTES);
       strcat(output, name);
       strcat(output, MESSAGE_QUOTES);
@@ -1528,7 +1528,7 @@ bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
 *  fileName - path and filename to save
 *********************************************************/
 tankAlliance screenTankAllianceCS(ClientSim *csPtr, BYTE playerNum) {
-  return playersScreenAllience(&csPtr->sim.plyrs, (BYTE) (playerNum-1));
+  return playersScreenAllience(&csPtr->sim.plyrs, csPtr->myPlayerNum, (BYTE) (playerNum-1));
 }
 
 
@@ -1755,7 +1755,7 @@ void screenSetBaseNetDataCS(ClientSim *csPtr, BYTE *buff, int length) {
     count++;
   }
   /* Set our player name in the menu */
-  max = playersGetSelf(&csPtr->sim.plyrs);
+  max = csPtr->myPlayerNum;
   playersGetPlayerName(&csPtr->sim.plyrs, max, pn, FALSE);
   {
     char cc[3];
@@ -1766,7 +1766,7 @@ void screenSetBaseNetDataCS(ClientSim *csPtr, BYTE *buff, int length) {
                       playersGetSteamParticipant(&csPtr->sim.plyrs, max));
   }
   /* Set The other players in the menu */
-  playersSetMenuItems(csPtr, &csPtr->sim.plyrs, FALSE);
+  playersSetMenuItems(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
 }
 
 
@@ -1936,7 +1936,7 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playerNum, topLine);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, topLine);
 
   if (csPtr->inLobby && playerNum < 16) {
     clientSimAppendLobbyChat(csPtr, csPtr->lobbySlots[playerNum].playerName, messageStr);
@@ -1957,7 +1957,7 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
 *
 *********************************************************/
 void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
-  playersToggleCheckedState(&csPtr->sim.plyrs, playerNum, FALSE);
+  playersToggleCheckedState(&csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, FALSE);
 }
 
 /*********************************************************
@@ -1972,7 +1972,7 @@ void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
 *  isChecked - TRUE if check all
 *********************************************************/
 void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
-  playersCheckAllNone(&csPtr->sim.plyrs, isChecked, FALSE);
+  playersCheckAllNone(&csPtr->sim.plyrs, csPtr->myPlayerNum, isChecked, FALSE);
 }
 
 /*********************************************************
@@ -1987,7 +1987,7 @@ void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
 *
 *********************************************************/
 void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
-  playersCheckAllies(&csPtr->sim.plyrs, FALSE);
+  playersCheckAllies(&csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
 }
 
 /*********************************************************
@@ -2002,7 +2002,7 @@ void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  playersCheckNearbyPlayers(&csPtr->sim.plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
+  playersCheckNearbyPlayers(&csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
 }
 
 /*********************************************************
@@ -2032,7 +2032,7 @@ int screenNumCheckedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int screenNumAlliesCS(ClientSim *csPtr) {
-  return playersGetNumAllies(&csPtr->sim.plyrs);
+  return playersGetNumAllies(&csPtr->sim.plyrs, csPtr->myPlayerNum);
 }
 
 /*********************************************************
@@ -2065,9 +2065,9 @@ void screenSendMessageAllAlliesCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
-  clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllAllies(csPtr, &csPtr->sim.plyrs, messageStr);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, topLine);
+  clientMessageAdd(&csPtr->messages, (messageType) (csPtr->myPlayerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllAllies(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, messageStr);
 }
 
 /*********************************************************
@@ -2082,7 +2082,7 @@ void screenSendMessageAllAlliesCS(ClientSim *csPtr, char *messageStr) {
 *  messageStr - The message to send
 *********************************************************/
 void screenSendMessageAllSelectedCS(ClientSim *csPtr, char *messageStr) {
-  playersSendMessageAllSelected(csPtr, &csPtr->sim, &csPtr->sim.plyrs, messageStr);
+  playersSendMessageAllSelected(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, messageStr);
 }
 
 /*********************************************************
@@ -2100,9 +2100,9 @@ void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs), topLine);
-  clientMessageAdd(&csPtr->messages, (messageType) (playersGetSelf(&csPtr->sim.plyrs) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllNearby(csPtr, &csPtr->sim.plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
+  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, topLine);
+  clientMessageAdd(&csPtr->messages, (messageType) (csPtr->myPlayerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllNearby(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
 }
 
 /*********************************************************
@@ -2117,7 +2117,7 @@ void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
 *
 *********************************************************/
 void screenRequestAllianceCS(ClientSim *csPtr) {
-  playersRequestAlliance(csPtr, &csPtr->sim.plyrs);
+  playersRequestAlliance(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum);
 }
 
 /*********************************************************
@@ -2132,7 +2132,7 @@ void screenRequestAllianceCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenLeaveAllianceCS(ClientSim *csPtr) {
-  clientSimLeaveAlliance(csPtr, playersGetSelf(&csPtr->sim.plyrs));
+  clientSimLeaveAlliance(csPtr, csPtr->myPlayerNum);
 }
 
 /*********************************************************
@@ -2148,8 +2148,8 @@ void screenLeaveAllianceCS(ClientSim *csPtr) {
 *  oldOwner - The old Owner of the stuff
 *********************************************************/
 void screenChangeOwnershipCS(ClientSim *csPtr, BYTE oldOwner) {
-  basesMigrate(&csPtr->sim, oldOwner, playersGetSelf(&csPtr->sim.plyrs));
-  pillsMigrate(&csPtr->sim, oldOwner, playersGetSelf(&csPtr->sim.plyrs));
+  basesMigrate(&csPtr->sim, oldOwner, csPtr->myPlayerNum);
+  pillsMigrate(&csPtr->sim, oldOwner, csPtr->myPlayerNum);
 }
 
 /*********************************************************
@@ -2350,11 +2350,11 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   value->max_players = MAX_TANKS;//-1; /* FIXME: Huh? */
   value->max_refbases = basesGetNumBases(&csPtr->sim.bs);//-1;
   value->max_pillboxes = pillsGetNumPills(&csPtr->sim.pb);//-1;
-  value->player_number = playersGetSelf(&csPtr->sim.plyrs);
+  value->player_number = csPtr->myPlayerNum;
   value->num_players = playersGetNumPlayers(&csPtr->sim.plyrs);
   value->playernames = playersGetBrainsNamesArray(&csPtr->sim.plyrs);
   value->allies = malloc(sizeof(PlayerBitMap));
-  *(value->allies) = playersGetAlliesBitMap(&csPtr->sim.plyrs, playersGetSelf(&csPtr->sim.plyrs));
+  *(value->allies) = playersGetAlliesBitMap(&csPtr->sim.plyrs, csPtr->myPlayerNum);
 
   /* Tank */
   tankGetWorld(&MY_TANK(csPtr), &(value->tankx), &(value->tanky));
@@ -2368,7 +2368,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
   {
-    BYTE selfPlayer = playersGetSelf(&csPtr->sim.plyrs);
+    BYTE selfPlayer = csPtr->myPlayerNum;
     BYTE numPb = pillsGetNumPills(&csPtr->sim.pb);
     BYTE carried = 0;
     for (BYTE pi = 0; pi < numPb; pi++) {
@@ -2597,7 +2597,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
   if (*(value->pillview) != 0x8000) {
     pillNum = (BYTE) (*(value->pillview));
     if (pillNum != (pillsGetPillNum(&csPtr->sim.pb, csPtr->pillViewX, csPtr->pillViewY, FALSE, FALSE)-1)) {
-      if (pillsSetView(&csPtr->sim, &csPtr->sim.pb, pillNum, playersGetSelf(&csPtr->sim.plyrs)) == TRUE) {
+      if (pillsSetView(&csPtr->sim, &csPtr->sim.pb, pillNum, csPtr->myPlayerNum) == TRUE) {
         /* We can set the new view */
         pillbox p;
         pillsGetPill(&csPtr->sim.pb, &p, (BYTE) (pillNum+ 1));
@@ -3040,7 +3040,7 @@ void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TU
 *
 *********************************************************/
 void screenSetPlayersMenuCS(ClientSim *csPtr) {
-  playersSetPlayersMenu(csPtr, &csPtr->sim.plyrs, FALSE);
+  playersSetPlayersMenu(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
 }
 
 /*********************************************************
@@ -3072,7 +3072,7 @@ bool screenGetGameRunningCS(ClientSim *csPtr) {
 *********************************************************/
 void screenConnectionLostCS(ClientSim *csPtr) {
   lgmConnectionLost(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), &csPtr->sim.ss);
-  playersConnectionLost(&csPtr->sim, &csPtr->sim.plyrs);
+  playersConnectionLost(&csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum);
 }
 
 
@@ -3531,7 +3531,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         sprintf(name, "Player %d", pn);
         fprintf(stderr, "[SCREEN] Auto-registering player %d from snapshot (pos=%u,%u)\n",
                 pn, tanks[i].worldX, tanks[i].worldY);
-        playersSetPlayer(csPtr, &csPtr->sim.plyrs, pn, name, "??",
+        playersSetPlayer(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, pn, name, "??",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, csPtr->isBot);
       }
 
@@ -3719,14 +3719,14 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         break;
       case EVENT_SOUND_SHOOT:
         /* data: [soundId, mx, my, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
-        if (isHuman && events[i].data[3] != playersGetSelf(&csPtr->sim.plyrs)) {
+        if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
           clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_TANK_HIT:
         /* data: [soundId, mx, my, hitPlayer] */
         if (isHuman) {
-          if (events[i].data[3] == playersGetSelf(&csPtr->sim.plyrs)) {
+          if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(hitTankSelf);
           } else {
             clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
@@ -3747,7 +3747,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           char prevName[FILENAME_MAX];
           capMsg[0] = '\0';
           prevName[0] = '\0';
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, events[i].data[0], capMsg);
+          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], capMsg);
           if (events[i].data[1] != NEUTRAL) {
             strcat(capMsg, langGetText(MESSAGE_STOLE_BASE));
             playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], prevName, FALSE);
@@ -3785,7 +3785,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           char prevName[FILENAME_MAX];
           capMsg[0] = '\0';
           prevName[0] = '\0';
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, events[i].data[0], capMsg);
+          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], capMsg);
           if (events[i].data[1] != NEUTRAL) {
             strcat(capMsg, langGetText(MESSAGE_STOLE_PILL));
             playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], prevName, FALSE);
@@ -3848,7 +3848,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           BYTE leavePlayer = events[i].data[0];
           if (leavePlayer < MAX_TANKS && csPtr->sim.plyrs != NULL &&
               playersIsInUse(&csPtr->sim.plyrs, leavePlayer) == TRUE) {
-            playersLeaveGame(&csPtr->sim, &csPtr->sim.plyrs, leavePlayer, FALSE);
+            playersLeaveGame(&csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, leavePlayer, FALSE);
           }
         }
         break;

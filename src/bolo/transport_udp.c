@@ -1012,7 +1012,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 cc[1] = (char)buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 1];
             }
             if (pNum != c->playerNum) {
-                playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, pNum, pName, cc,
+                playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, pName, cc,
                                  0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
                 /* Show join message in lobby chat */
                 if (c->clientSim->inLobby) {
@@ -1054,7 +1054,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     plPos += numAllies;
                 }
                 if (pNum != c->playerNum) {
-                    playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, pNum, pName, cc,
+                    playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, pName, cc,
                                      0, 0, 0, 0, 0, FALSE,
                                      numAllies, numAllies > 0 ? allies : NULL, FALSE);
                 }
@@ -1072,7 +1072,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 /* Register player name from packet before leaving,
                  * in case they were only auto-registered with a placeholder */
                 if (playersIsInUse(&c->clientSim->sim.plyrs, pNum) == TRUE) {
-                    playersLeaveGame(&c->clientSim->sim, &c->clientSim->sim.plyrs, pNum, FALSE);
+                    playersLeaveGame(&c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, FALSE);
                 }
                 /* Show leave message in lobby chat */
                 if (c->clientSim->inLobby) {
@@ -1092,7 +1092,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             char newName[PACKET_MAX_PLAYER_NAME];
             memcpy(newName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
             newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-            playersSetPlayerName(c->clientSim, &c->clientSim->sim, &c->clientSim->sim.plyrs, pNum, newName, FALSE);
+            playersSetPlayerName(c->clientSim, &c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, newName, FALSE);
         }
         break;
 
@@ -1146,11 +1146,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
                 break;
             case ALLIANCE_EVENT_ACCEPT:
-                playersAcceptAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, fromPlayer,
+                playersAcceptAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, fromPlayer,
                                      toPlayer, FALSE);
                 break;
             case ALLIANCE_EVENT_LEAVE:
-                playersLeaveAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, fromPlayer, FALSE);
+                playersLeaveAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, fromPlayer, FALSE);
                 break;
             }
         }
@@ -3443,7 +3443,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     /* Update in players struct */
                     {
                         ServerSim *ssim = serverSimGetActive();
-                        playersSetPlayerName(NULL, &ssim->sim, &ssim->sim.plyrs, (BYTE)clientIdx, newName, TRUE);
+                        playersSetPlayerName(NULL, &ssim->sim, &ssim->sim.plyrs, NEUTRAL, (BYTE)clientIdx, newName, TRUE);
                     }
 
                     /* Broadcast to all other clients */
@@ -3560,7 +3560,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
                 /* Apply alliance on server-side players struct */
                 ServerSim *ssim = serverSimGetActive();
-                playersAcceptAlliance(&ssim->sim, &ssim->sim.plyrs,
+                playersAcceptAlliance(&ssim->sim, &ssim->sim.plyrs, NEUTRAL,
                                      (BYTE)clientIdx, newMember, TRUE);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
@@ -3589,7 +3589,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 /* Apply on server-side players struct */
                 {
                     ServerSim *ssim = serverSimGetActive();
-                    playersLeaveAlliance(&ssim->sim, &ssim->sim.plyrs, (BYTE)clientIdx, TRUE);
+                    playersLeaveAlliance(&ssim->sim, &ssim->sim.plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
                 }
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
                                    (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
