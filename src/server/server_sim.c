@@ -57,10 +57,17 @@
 #include "../bolo/transport_udp.h"
 #include "../bolo/playersrejoin.h"
 #include "../winbolonet/winbolonet.h"
+#include "../winbolonet/http.h"
 #include "server_sim.h"
 #include "../bolo/interpolation.h"
 #include "../bolo/position_history.h"
+#include "../bolo/screenbullet.h"
 #include "../mapeditor/mapeditor_generate.h"
+
+#ifndef HAVE_SCREEN_C
+/* Forward declaration — defined in servermain.c (server target only) */
+void makeLogFileName(char *outFileName, const char *mapName);
+#endif
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
@@ -256,6 +263,8 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
     ev.data[3] = carriedPills;
     serverSimAddEvent(sim, &ev);
     winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed);
+    logAddEvent(log_KillPlayer, killed, killer, 0, 0, 0, NULL);
+    logAddEvent(log_PlayerDied, killed, 0, 0, 0, 0, NULL);
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -289,6 +298,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->emptyResetMinutes = 5;
     sim->emptyResetTicks = -1;
     sim->hasPassword = FALSE;
+    sim->wantLogging = FALSE;
+    memset(sim->userLogFileName, 0, sizeof(sim->userLogFileName));
     sim->cachedMapData = NULL;
     sim->cachedMapDataLen = 0;
     sim->sim.hiddenMines = hiddenMines;
@@ -607,6 +618,7 @@ void serverSimDestroy(ServerSim *sim) {
     swampDestroy(&sim->sim.swp);
     grassDestroy(&sim->sim.grs);
     playersRejoinDestroy();
+    logDestroy();
 
     sim->state = serverStateGameOver;
 
@@ -621,6 +633,63 @@ void serverSimDestroy(ServerSim *sim) {
     if (activeSim == sim) {
         activeSim = NULL;
     }
+}
+
+static void serverSimLogTick(ServerSim *sim) {
+    BYTE count;
+
+    if (logIsRecording() == FALSE) return;
+
+    /* Tank + LGM positions */
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
+            BYTE mx = tankGetMX(&sim->sim.tanks[count]);
+            BYTE my = tankGetMY(&sim->sim.tanks[count]);
+            BYTE px = tankGetPX(&sim->sim.tanks[count]);
+            BYTE py = tankGetPY(&sim->sim.tanks[count]);
+            BYTE dir = tankGetDir(&sim->sim.tanks[count]);
+            BYTE onBoat = (BYTE)tankIsOnBoat(&sim->sim.tanks[count]);
+            logAddEvent(log_PlayerLocation, count, mx, my,
+                        utilPutNibble(px, py),
+                        utilPutNibble(dir, onBoat), NULL);
+
+            if (lgmIsOut(&sim->sim.lgmen[count])) {
+                logAddEvent(log_LgmLocation,
+                            utilPutNibble(count, lgmGetFrame(&sim->sim.lgmen[count])),
+                            lgmGetMX(&sim->sim.lgmen[count]),
+                            lgmGetMY(&sim->sim.lgmen[count]),
+                            utilPutNibble(lgmGetPX(&sim->sim.lgmen[count]),
+                                          lgmGetPY(&sim->sim.lgmen[count])),
+                            0, NULL);
+            }
+        }
+    }
+
+    /* Shells / explosions / tank explosions */
+    {
+        screenBullets sb = screenBulletsCreate();
+        int entries, i;
+        BYTE mx, my, px, py, frame;
+
+        shellsCalcScreenBullets(&sim->sim.shs, &sb, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+        explosionsCalcScreenBullets(&sim->sim.expl, &sb, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+        tkExplosionCalcScreenBullets(&sim->sim.tankExplosions, &sb, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+
+        entries = screenBulletsGetNumEntries(&sb);
+        for (i = 1; i <= entries; i++) {
+            screenBulletsGetItem(&sb, i, &mx, &my, &px, &py, &frame);
+            logAddEvent(log_Shell, mx, my, utilPutNibble(px, py), frame, 0, NULL);
+        }
+        screenBulletsDestroy(&sb);
+    }
+
+    /* Periodic snapshot */
+    if ((sim->tick % FULL_SYNC_INTERVAL) == 0) {
+        logWriteSnapshot(sim, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
+                         &sim->sim.ss, &sim->sim.plyrs, TRUE);
+    }
+
+    logWriteTick();
 }
 
 void serverSimTick(ServerSim *sim) {
@@ -995,6 +1064,7 @@ void serverSimTick(ServerSim *sim) {
         return;
     }
 
+    serverSimLogTick(sim);
     sim->tick++;
 }
 
@@ -1081,6 +1151,14 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     if (playerName != NULL) {
         playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "??",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        {
+            char pstr[256];
+            int nameLen = (int)strlen(playerName);
+            if (nameLen > 255) nameLen = 255;
+            pstr[0] = (char)nameLen;
+            memcpy(pstr + 1, playerName, nameLen);
+            logAddEvent(log_PlayerJoined, playerNum, '?', '?', 0, 0, pstr);
+        }
     }
 
     /* Attempt to restore ownership of pills/bases from a previous session */
@@ -1097,6 +1175,8 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return;
+    logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
+    logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
     sim->playerConnected[playerNum] = FALSE;
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
@@ -1709,6 +1789,29 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
+#ifndef HAVE_SCREEN_C
+    /* Stop log recording and upload (server target only) */
+    {
+        extern bool isLogging;
+        extern bool dontSendLog;
+        extern char fileName[];
+        if (isLogging) {
+            logStop();
+            isLogging = FALSE;
+
+            if (!dontSendLog && winbolonetIsRunning()) {
+                char key[WINBOLONET_KEY_LEN];
+                winboloNetGetServerKey(key);
+                if (key[0] != '\0') {
+                    httpCreate();
+                    httpSendLogFile(fileName, key, FALSE);
+                    httpDestroy();
+                }
+            }
+        }
+    }
+#endif
+
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
         sim->state = serverStateGameOver;
@@ -1967,6 +2070,33 @@ void serverSimStartGame(ServerSim *sim) {
 
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
+
+#ifndef HAVE_SCREEN_C
+    /* Start log recording if requested (server target only) */
+    if (sim->wantLogging) {
+        extern char fileName[];
+        extern bool isLogging;
+        if (sim->userLogFileName[0] != '\0') {
+            strncpy(fileName, sim->userLogFileName, 512 - 1);
+        } else {
+            makeLogFileName(fileName, sim->mapName);
+        }
+        /* Ensure .wbv extension */
+        {
+            size_t flen = strlen(fileName);
+            if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
+                strncat(fileName, ".wbv", 512 - flen - 1);
+            }
+        }
+        isLogging = logStart(fileName, sim, &sim->sim.mp,
+                             &sim->sim.bs, &sim->sim.pb,
+                             &sim->sim.ss, &sim->sim.plyrs,
+                             0, MAX_TANKS, sim->hasPassword);
+        if (isLogging) {
+            fprintf(stderr, "Logging to %s\n", fileName);
+        }
+    }
+#endif
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {

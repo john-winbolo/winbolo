@@ -39,6 +39,7 @@
 #include "../server/threads.h"
 #include "sounddist.h"
 #include "bot_manager.h"
+#include "log.h"
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -1558,6 +1559,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                       &udpServer.clients[destPlayer].addr);
                         }
                     }
+                    /* Log chat message */
+                    {
+                        char pstr[256];
+                        int pLen = msgLen;
+                        if (pLen > 255) pLen = 255;
+                        pstr[0] = (char)pLen;
+                        memcpy(pstr + 1, buf + PACKET_HEADER_SIZE + 1, pLen);
+                        if (destPlayer == 0xFF) {
+                            logAddEvent(log_MessageAll, (BYTE)clientIdx, 0, 0, 0, 0, pstr);
+                        } else {
+                            logAddEvent(log_MessagePlayers, (BYTE)clientIdx, destPlayer, 0, 0, 0, pstr);
+                        }
+                    }
                 }
             }
             break;
@@ -1709,6 +1723,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
                               &udpServer.clients[toPlayer].addr);
                     fprintf(stderr, "[UDP SERVER] Alliance update forwarded to player %d\n", toPlayer);
+                    logAddEvent(log_AllyRequest, (BYTE)clientIdx, toPlayer, 0, 0, 0, NULL);
                 }
             }
             break;
@@ -1725,6 +1740,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                      (BYTE)clientIdx, newMember, TRUE);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
+                logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
                 /* Broadcast ALLIANCE_UPDATE (ACCEPT) to all clients */
                 {
                     uint8_t outBuf[PACKET_HEADER_SIZE + 3];
@@ -1754,6 +1770,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
                                    (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
+                logAddEvent(log_AllyLeave, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
                 /* Broadcast ALLIANCE_UPDATE (LEAVE) to all clients */
                 {
                     uint8_t outBuf[PACKET_HEADER_SIZE + 3];
