@@ -106,6 +106,7 @@ Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
     lctx->playerNum = playerNum;
     lctx->delay_ticks = 0;
     lctx->ticksServer = true;
+    t.recordInput = localSendInput;
     t.sendInput = localSendInput;
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;

@@ -145,17 +145,16 @@ static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
     return offset;
 }
 
-/* Client sendInput: serialize input with redundancy, send to server */
-static void udpClientSendInput(void *ctx, const InputPacket *input) {
+/* Record input into redundancy ring without sending a packet.
+ * Used on keys ticks so the input is carried by the next sendInput. */
+static void udpClientRecordInput(void *ctx, const InputPacket *input) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
-    uint8_t buf[UDP_MAX_PAYLOAD];
-    int len;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) {
         return;
     }
 
-    /* Store in ring buffer for redundancy — stamp with current reliable ACKs and ping */
+    /* Store in ring buffer — stamp with current reliable ACKs and ping */
     {
         InputPacket stamped = *input;
         stamped.eventAck = c->reliableEventAck;
@@ -164,6 +163,19 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
     }
     c->inputRingCount++;
+}
+
+/* Client sendInput: record input and send packet with redundancy to server */
+static void udpClientSendInput(void *ctx, const InputPacket *input) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    uint8_t buf[UDP_MAX_PAYLOAD];
+    int len;
+
+    udpClientRecordInput(ctx, input);
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) {
+        return;
+    }
 
     len = buildInputPacket(c, buf);
     udpClientSendTo(c, buf, len);
@@ -1089,6 +1101,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->sock = createUdpSocket();
     if (c->sock == INVALID_SOCKET) {
         c->joinState = UDP_CLIENT_ERROR;
+        t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
@@ -1107,6 +1120,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             memcpy(&c->serverAddr.sin_addr, he->h_addr_list[0], he->h_length);
         } else {
             c->joinState = UDP_CLIENT_ERROR;
+            t.recordInput = udpClientRecordInput;
             t.sendInput = udpClientSendInput;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
@@ -1143,6 +1157,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->lastPingSentTick = 0;
     c->pingMs = 0;
 
+    t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
