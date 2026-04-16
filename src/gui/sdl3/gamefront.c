@@ -376,6 +376,19 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 }
 
 /* -------------------------------------------------------
+ * gameFrontSaveTankPrefs — copy auto-slowdown and
+ * auto-hide-gunsight from the tank into frontend globals
+ * so they survive a return-to-lobby (which skips
+ * gameFrontEnd).
+ * ------------------------------------------------------- */
+void gameFrontSaveTankPrefs(ClientSim *cs) {
+  if (cs != NULL) {
+    useAutoslow = screenGetTankAutoSlowdownCS(cs);
+    useAutohide = screenGetTankAutoHideGunsightCS(cs);
+  }
+}
+
+/* -------------------------------------------------------
  * gameFrontEnd — shutdown game subsystems
  * ------------------------------------------------------- */
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
