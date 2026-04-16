@@ -175,7 +175,7 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
-      transport->sendInput(transport->ctx, &pkt);
+      transport->recordInput(transport->ctx, &pkt);
       transport->tick(transport->ctx);
       clientMutexWaitFor();
       wasmSyncSnapshot(cs, transport, myPlayerNum);

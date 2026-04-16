@@ -34,7 +34,13 @@ struct ServerSim;
 /*********************************************************
  * Transport interface
  *
- * sendInput:     Client sends an InputPacket to the server.
+ * recordInput:   Record an InputPacket for later sending.
+ *                Used on keys ticks to buffer input without
+ *                sending a UDP packet.  The next sendInput
+ *                will include this input via redundancy.
+ *                For local transport this is the same as
+ *                sendInput (immediate enqueue).
+ * sendInput:     Record and send an InputPacket to the server.
  * tick:          Run one server tick (local transport calls
  *                serverSimTick; network transport is a no-op).
  * getSnapshot:   Retrieve the latest snapshot from the server.
@@ -43,6 +49,7 @@ struct ServerSim;
  * ctx:           Opaque pointer to implementation data.
  *********************************************************/
 typedef struct {
+    void (*recordInput)(void *ctx, const InputPacket *input);
     void (*sendInput)(void *ctx, const InputPacket *input);
     bool (*tick)(void *ctx);
     bool (*getSnapshot)(void *ctx, BYTE clientIdx,

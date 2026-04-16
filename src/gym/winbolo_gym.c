@@ -1580,7 +1580,7 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
     keysPkt.playerNum = 0;
     keysPkt.buttons = pkt.buttons;
 
-    game->transport.sendInput(game->transport.ctx, &keysPkt);
+    game->transport.recordInput(game->transport.ctx, &keysPkt);
     game->transport.tick(game->transport.ctx);
     gymBufferServerEvents(game);
     game->simTickCounter++;

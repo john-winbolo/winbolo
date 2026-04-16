@@ -1379,7 +1379,7 @@ static int runNetworkMode(void) {
           clientMutexWaitFor();
           clientSimKeysTick(humanSim, &pkt);
           clientMutexRelease();
-          headlessTransport.sendInput(headlessTransport.ctx, &pkt);
+          headlessTransport.recordInput(headlessTransport.ctx, &pkt);
           headlessTransport.tick(headlessTransport.ctx);
           clientMutexWaitFor();
           headlessSyncSnapshot();
