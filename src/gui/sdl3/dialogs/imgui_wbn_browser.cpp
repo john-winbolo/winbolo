@@ -1119,7 +1119,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                         ImGui::ProgressBar(progress, ImVec2(0, 0), "Downloading...");
                     }
                 } else {
-                    ImGui::TextDisabled("Log file not available");
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Log file is not available for this game.");
                 }
             }
             ImGui::EndChild();
