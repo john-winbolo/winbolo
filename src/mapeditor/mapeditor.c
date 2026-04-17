@@ -250,7 +250,6 @@ typedef struct {
 
     /* --- Phase 11: Map generation --- */
     bool showGenerateDialog;
-    bool wantGenerateSelection;
     bool generateSelectionScope;
     MapGenConfig genConfig;
 
@@ -262,6 +261,14 @@ typedef struct {
     MazeConfig mazeToolConfig;
     int        mazeDragOriginX;
     int        mazeDragOriginY;
+
+    /* --- Generate tool drag preview --- */
+    int        genDragOriginX;
+    int        genDragOriginY;
+    int        genPreviewCount;
+    int        genPreviewX[ME_FILL_LIMIT];
+    int        genPreviewY[ME_FILL_LIMIT];
+    BYTE       genPreviewTerrain[ME_FILL_LIMIT];
 
     /* Panel visibility */
     bool showTerrain;
@@ -1226,6 +1233,129 @@ static void meRenderMazePreview(MapEditorState *ed, int screenW, int screenH) {
     }
 
     SDL_SetTextureAlphaMod(ed->tilesTex, 255);
+}
+
+/* -------------------------------------------------------
+ * Map terrain type to a solid icon tile for preview rendering
+ * ------------------------------------------------------- */
+static BYTE meTerrainToIconTile(BYTE terrain) {
+    switch (terrain) {
+    case BUILDING:     return BUILD_SOLID;
+    case HALFBUILDING: return 8;  /* HALFBUILDING tile */
+    case ROAD:         return ROAD_SOLID;
+    case RIVER:        return RIVER_SOLID;
+    case GRASS:        return 7;  /* GRASS tile */
+    case FOREST:       return 164; /* FOREST_SINGLE */
+    case SWAMP:        return 2;  /* SWAMP tile */
+    case CRATER:       return 3;  /* CRATER tile */
+    case RUBBLE:       return 6;  /* RUBBLE tile */
+    case BOAT:         return 138; /* BOAT tile */
+    case DEEP_SEA:     return DEEP_SEA_SOLID;
+    default:
+        if (terrain >= MINE_START && terrain <= MINE_GRASS) {
+            /* Mined terrain — show base terrain */
+            return meTerrainToIconTile(terrain - MINE_START + SWAMP);
+        }
+        return ROAD_SOLID;
+    }
+}
+
+/* -------------------------------------------------------
+ * Generate preview tiles for the generate tool.
+ * Runs the generator on a temporary map and extracts tiles.
+ * ------------------------------------------------------- */
+static void meBuildGenPreview(MapEditorState *ed, int x0, int y0, int x1, int y1) {
+    /* Clamp to valid map edges */
+    if (x0 <= MAP_MINE_EDGE_LEFT)   x0 = MAP_MINE_EDGE_LEFT + 1;
+    if (y0 <= MAP_MINE_EDGE_TOP)    y0 = MAP_MINE_EDGE_TOP + 1;
+    if (x1 >= MAP_MINE_EDGE_RIGHT)  x1 = MAP_MINE_EDGE_RIGHT - 1;
+    if (y1 >= MAP_MINE_EDGE_BOTTOM) y1 = MAP_MINE_EDGE_BOTTOM - 1;
+
+    if (x0 > x1 || y0 > y1) {
+        ed->genPreviewCount = 0;
+        return;
+    }
+
+    /* Allocate a temp map for generation */
+    map tmpMap = (map)malloc(sizeof(struct mapObj));
+    if (!tmpMap) { ed->genPreviewCount = 0; return; }
+
+    /* Fill with DEEP_SEA and zero network fields */
+    memset(tmpMap, 0, sizeof(struct mapObj));
+    memset(tmpMap->mapItem, DEEP_SEA, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+
+    /* Setup temp objects */
+    struct basesObj tmpBases;  memset(&tmpBases, 0, sizeof(tmpBases));
+    struct pillsObj tmpPills;  memset(&tmpPills, 0, sizeof(tmpPills));
+    struct startsObj tmpStarts; memset(&tmpStarts, 0, sizeof(tmpStarts));
+
+    /* Configure generation bounds */
+    MapGenConfig tmpCfg = ed->genConfig;
+    tmpCfg.x1 = x0; tmpCfg.y1 = y0;
+    tmpCfg.x2 = x1; tmpCfg.y2 = y1;
+    /* Force no objects for preview */
+    tmpCfg.bases = 0; tmpCfg.pills = 0; tmpCfg.starts = 0;
+
+    mapEditorGenerate(tmpMap, &tmpBases, &tmpPills, &tmpStarts, &tmpCfg);
+
+    /* Extract all tiles into preview arrays */
+    int count = 0;
+    for (int x = x0; x <= x1 && count < ME_FILL_LIMIT; x++) {
+        for (int y = y0; y <= y1 && count < ME_FILL_LIMIT; y++) {
+            ed->genPreviewX[count] = x;
+            ed->genPreviewY[count] = y;
+            ed->genPreviewTerrain[count] = tmpMap->mapItem[x][y];
+            count++;
+        }
+    }
+    ed->genPreviewCount = count;
+
+    /* Also update genConfig bounds so the settings panel can show them */
+    ed->genConfig.x1 = x0; ed->genConfig.y1 = y0;
+    ed->genConfig.x2 = x1; ed->genConfig.y2 = y1;
+
+    free(tmpMap);
+}
+
+/* -------------------------------------------------------
+ * Render generate preview tiles (semi-transparent)
+ * ------------------------------------------------------- */
+static void meRenderGenPreview(MapEditorState *ed, int screenW, int screenH) {
+    if (ed->genPreviewCount == 0) return;
+
+    int zf = ed->zoomFactor;
+    int tileSize = TILE_SIZE_X;
+    int scaledTile = tileSize * zf;
+
+    int centerPX = ((int)ed->viewCenterX * tileSize) >> 8;
+    int centerPY = ((int)ed->viewCenterY * tileSize) >> 8;
+    int camPX = centerPX - screenW / (2 * zf);
+    int camPY = centerPY - screenH / (2 * zf);
+
+    /* Full opacity — the preview covers the entire region (including deep sea),
+     * so semi-transparent rendering would make rivers indistinguishable from
+     * the deep sea underneath. */
+
+    for (int i = 0; i < ed->genPreviewCount; i++) {
+        int mx = ed->genPreviewX[i];
+        int my = ed->genPreviewY[i];
+        float dx = (float)(mx * tileSize - camPX) * zf;
+        float dy = (float)(my * tileSize - camPY) * zf;
+
+        if (dx + scaledTile < 0 || dx > screenW ||
+            dy + scaledTile < 0 || dy > screenH) continue;
+
+        BYTE iconTile = meTerrainToIconTile(ed->genPreviewTerrain[i]);
+
+        SDL_FRect src = {
+            (float)mapViewPosX[iconTile],
+            (float)mapViewPosY[iconTile],
+            (float)tileSize,
+            (float)tileSize
+        };
+        SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
+        SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
+    }
 }
 
 /* -------------------------------------------------------
@@ -3215,6 +3345,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                                     ME_FILL_LIMIT, &ed->mazeToolConfig);
                                 break;
                             }
+                            case ME_TOOL_GENERATE: {
+                                /* Compute drag rectangle */
+                                int x0 = ed->genDragOriginX < mx ? ed->genDragOriginX : mx;
+                                int y0 = ed->genDragOriginY < my ? ed->genDragOriginY : my;
+                                int x1 = ed->genDragOriginX > mx ? ed->genDragOriginX : mx;
+                                int y1 = ed->genDragOriginY > my ? ed->genDragOriginY : my;
+                                meBuildGenPreview(ed, x0, y0, x1, y1);
+                                break;
+                            }
                             }
                         }
                         /* Selection: update drag rect */
@@ -3438,35 +3577,21 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                         ed->mazeToolConfig.seed = (uint32_t)((mx * 31337) ^ (my * 7919) ^ 1);
                         break;
                     case ME_TOOL_GENERATE:
-                        if (ed->hasSelection) {
-                            /* Check if click is inside existing selection */
-                            int sxMin = ed->selX1 < ed->selX2 ? ed->selX1 : ed->selX2;
-                            int sxMax = ed->selX1 < ed->selX2 ? ed->selX2 : ed->selX1;
-                            int syMin = ed->selY1 < ed->selY2 ? ed->selY1 : ed->selY2;
-                            int syMax = ed->selY1 < ed->selY2 ? ed->selY2 : ed->selY1;
-                            if (mx >= sxMin && mx <= sxMax && my >= syMin && my <= syMax) {
-                                /* Mode A: use existing selection */
-                                ed->wantGenerateSelection = true;
-                            } else {
-                                /* Outside selection — start a new drag */
-                                ed->isSelecting = true;
-                                ed->hasSelection = false;
-                                ed->hasSelMask = false;
-                                ed->selX1 = mx;
-                                ed->selY1 = my;
-                                ed->selX2 = mx;
-                                ed->selY2 = my;
-                            }
-                        } else {
-                            /* No selection — start a drag to define one */
-                            ed->isSelecting = true;
-                            ed->hasSelection = false;
-                            ed->hasSelMask = false;
-                            ed->selX1 = mx;
-                            ed->selY1 = my;
-                            ed->selX2 = mx;
-                            ed->selY2 = my;
+                        /* Initialize config on first use */
+                        if (ed->genConfig.seed == 0) {
+                            ed->genConfig = mapGenDefaultConfig(MAPGEN_NATURAL);
+                            mapGenNaturalStyleDefaults(MAPGEN_STYLE_INLAND, &ed->genConfig);
                         }
+                        ed->isDrawing = true;
+                        ed->genDragOriginX = mx;
+                        ed->genDragOriginY = my;
+                        ed->drawStartX = mx;
+                        ed->drawStartY = my;
+                        ed->drawCurX = mx;
+                        ed->drawCurY = my;
+                        ed->genPreviewCount = 0;
+                        /* Compute deterministic seed from drag origin */
+                        ed->genConfig.seed = (uint32_t)((mx * 31337) ^ (my * 7919) ^ 1);
                         break;
                     }
                 }
@@ -3544,6 +3669,19 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                             undoEndCommand(&ed->undoStack);
                             ed->mazePreviewCount = 0;
                             ed->isDrawing = false;
+                        } else if (ed->activeTool == ME_TOOL_GENERATE) {
+                            if (ed->genPreviewCount > 0) {
+                                /* Commit generate preview with per-tile terrain */
+                                undoBeginCommand(&ed->undoStack);
+                                for (int i = 0; i < ed->genPreviewCount; i++) {
+                                    meSetTile(ed, ed->genPreviewX[i],
+                                              ed->genPreviewY[i],
+                                              ed->genPreviewTerrain[i]);
+                                }
+                                undoEndCommand(&ed->undoStack);
+                            }
+                            ed->genPreviewCount = 0;
+                            ed->isDrawing = false;
                         } else {
                             meCommitPreview(ed);
                         }
@@ -3558,10 +3696,6 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                             /* Single tile click — still a valid selection */
                             ed->hasSelection = true;
                             ed->hasSelMask = false;
-                        }
-                        /* Mode B: generate tool drag completed — open dialog */
-                        if (ed->activeTool == ME_TOOL_GENERATE && ed->hasSelection) {
-                            ed->wantGenerateSelection = true;
                         }
                     }
                 }
@@ -3685,6 +3819,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         /* Render tool overlays (before ImGui) */
         if (ed->isDrawing) meRenderPreview(ed, renderW, renderH);
         if (ed->mazePreviewCount > 0) meRenderMazePreview(ed, renderW, renderH);
+        if (ed->genPreviewCount > 0) meRenderGenPreview(ed, renderW, renderH);
         meRenderSelection(ed, renderW, renderH);
         meRenderPastePreview(ed, renderW, renderH, hoverMX, hoverMY);
         meRenderBorderIndicator(ed, renderW, renderH, hoverMX, hoverMY);
@@ -3877,66 +4012,6 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             ed->generateSelectionScope = false;
             ed->showGenerateDialog = true;
         }
-        if (ed->wantGenerateSelection) {
-            ed->wantGenerateSelection = false;
-            /* Only reset to defaults on first use; preserve previous settings */
-            if (ed->genConfig.seed == 0) {
-                ed->genConfig = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-            }
-            /* Selection: always set bases/pills/starts to 0 and lock them */
-            ed->genConfig.locks |= MAPGEN_LOCK_BASES | MAPGEN_LOCK_PILLS | MAPGEN_LOCK_STARTS;
-            ed->genConfig.bases = 0;
-            ed->genConfig.pills = 0;
-            ed->genConfig.starts = 0;
-            ed->genConfig.seed = (uint32_t)SDL_GetTicksNS();
-            /* Use selection bounds */
-            int a = ed->selX1, b = ed->selX2;
-            int c = ed->selY1, d = ed->selY2;
-            ed->genConfig.x1 = a < b ? a : b;
-            ed->genConfig.x2 = a < b ? b : a;
-            ed->genConfig.y1 = c < d ? c : d;
-            ed->genConfig.y2 = c < d ? d : c;
-            if (ed->genConfig.x1 <= MAP_MINE_EDGE_LEFT)   ed->genConfig.x1 = MAP_MINE_EDGE_LEFT + 1;
-            if (ed->genConfig.y1 <= MAP_MINE_EDGE_TOP)    ed->genConfig.y1 = MAP_MINE_EDGE_TOP + 1;
-            if (ed->genConfig.x2 >= MAP_MINE_EDGE_RIGHT)  ed->genConfig.x2 = MAP_MINE_EDGE_RIGHT - 1;
-            if (ed->genConfig.y2 >= MAP_MINE_EDGE_BOTTOM) ed->genConfig.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-
-            /* Auto-detect: if edges outside the selection are mostly land,
-             * default to Natural -> Inland generator. */
-            if (!(ed->genConfig.locks & MAPGEN_LOCK_GENTYPE)) {
-                int gx1 = ed->genConfig.x1, gy1 = ed->genConfig.y1;
-                int gx2 = ed->genConfig.x2, gy2 = ed->genConfig.y2;
-                int landCount = 0, totalCount = 0;
-                /* Check one tile outside each edge of the selection */
-                for (int x = gx1; x <= gx2; x++) {
-                    if (gy1 - 1 >= 0) {
-                        totalCount++;
-                        if (ed->mp->mapItem[x][gy1 - 1] != DEEP_SEA) landCount++;
-                    }
-                    if (gy2 + 1 < MAP_ARRAY_SIZE) {
-                        totalCount++;
-                        if (ed->mp->mapItem[x][gy2 + 1] != DEEP_SEA) landCount++;
-                    }
-                }
-                for (int y = gy1; y <= gy2; y++) {
-                    if (gx1 - 1 >= 0) {
-                        totalCount++;
-                        if (ed->mp->mapItem[gx1 - 1][y] != DEEP_SEA) landCount++;
-                    }
-                    if (gx2 + 1 < MAP_ARRAY_SIZE) {
-                        totalCount++;
-                        if (ed->mp->mapItem[gx2 + 1][y] != DEEP_SEA) landCount++;
-                    }
-                }
-                if (totalCount > 0 && landCount * 100 / totalCount >= 50) {
-                    ed->genConfig.genType = MAPGEN_NATURAL;
-                    mapGenNaturalStyleDefaults(MAPGEN_STYLE_INLAND, &ed->genConfig);
-                }
-            }
-
-            ed->generateSelectionScope = true;
-            ed->showGenerateDialog = true;
-        }
         if (menuAction.openRecentIndex >= 0 && menuAction.openRecentIndex < ed->numRecentFiles) {
             const char *recentPath = ed->recentFiles[menuAction.openRecentIndex];
             if (ed->dirty) {
@@ -3968,7 +4043,38 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Maze tool settings panel */
         if (ed->activeTool == ME_TOOL_MAZE) {
-            mapEditorImguiMazeSettings(&ed->mazeToolConfig);
+            int mx0 = ed->mazeDragOriginX < ed->drawCurX ? ed->mazeDragOriginX : ed->drawCurX;
+            int my0 = ed->mazeDragOriginY < ed->drawCurY ? ed->mazeDragOriginY : ed->drawCurY;
+            int mx1 = ed->mazeDragOriginX > ed->drawCurX ? ed->mazeDragOriginX : ed->drawCurX;
+            int my1 = ed->mazeDragOriginY > ed->drawCurY ? ed->mazeDragOriginY : ed->drawCurY;
+            bool mazeChanged = mapEditorImguiMazeSettings(&ed->mazeToolConfig,
+                                       ed->isDrawing, mx0, my0, mx1, my1);
+            /* If settings changed during drag, regenerate preview */
+            if (mazeChanged && ed->isDrawing) {
+                ed->mazePreviewCount = mazeGeneratePreview(
+                    mx0, my0, mx1, my1,
+                    ed->mazePreviewX, ed->mazePreviewY,
+                    ed->mazePreviewTerrain,
+                    ME_FILL_LIMIT, &ed->mazeToolConfig);
+            }
+        }
+
+        /* Generate tool settings panel */
+        if (ed->activeTool == ME_TOOL_GENERATE) {
+            if (ed->genConfig.seed == 0) {
+                ed->genConfig = mapGenDefaultConfig(MAPGEN_NATURAL);
+                mapGenNaturalStyleDefaults(MAPGEN_STYLE_INLAND, &ed->genConfig);
+            }
+            bool genSettingsChanged = mapEditorImguiGenerateSettings(
+                &ed->genConfig, ed->isDrawing,
+                ed->genConfig.x1, ed->genConfig.y1,
+                ed->genConfig.x2, ed->genConfig.y2);
+            /* If settings changed during drag, regenerate preview */
+            if (genSettingsChanged && ed->isDrawing) {
+                meBuildGenPreview(ed,
+                    ed->genConfig.x1, ed->genConfig.y1,
+                    ed->genConfig.x2, ed->genConfig.y2);
+            }
         }
 
         /* Inspector panel */
