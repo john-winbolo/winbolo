@@ -3477,6 +3477,15 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        /* Sync boat state from server — prediction skips the boat state
+         * machine (isPredicting guard in tankUpdate), so the client's
+         * onBoat flag can go stale if no position mismatch triggers
+         * reconciliation. Always apply the server's value. */
+        {
+          BYTE isDead, onBoat;
+          utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
+          tankSetOnBoat(&MY_TANK(csPtr), onBoat);
+        }
 
         /* Correct shells/reload for any unprocessed fire inputs.
          * The server snapshot reflects state before our fire was processed,
