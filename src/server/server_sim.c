@@ -332,6 +332,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 
     sim->sim.posHistoryPtr = sim->posHistory;
+    sim->sim.lgmPosHistoryPtr = sim->lgmPosHistory;
     sim->sim.lagCompTicks = 0;
     memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
@@ -922,6 +923,16 @@ void serverSimTick(ServerSim *sim) {
                                  (*sim->sim.tanks[count]).x,
                                  (*sim->sim.tanks[count]).y,
                                  (*sim->sim.tanks[count]).armour <= TANK_FULL_ARMOUR);
+            }
+        }
+
+        /* Record LGM positions for lag compensation history */
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.lgmen[count] != NULL) {
+                lgm lgman = sim->sim.lgmen[count];
+                bool lgmAlive = !lgman->isDead && !lgman->inTank;
+                posHistoryRecord(&sim->lgmPosHistory[count],
+                                 lgman->x, lgman->y, lgmAlive);
             }
         }
 
@@ -1959,6 +1970,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 5. Reset lag compensation state */
     for (i = 0; i < MAX_TANKS; i++) {
         posHistoryInit(&sim->posHistory[i]);
+        posHistoryInit(&sim->lgmPosHistory[i]);
     }
     sim->sim.lagCompTicks = 0;
     memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));

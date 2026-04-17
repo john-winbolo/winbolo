@@ -128,6 +128,7 @@ typedef struct GameSim {
     uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
     uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */
     PosHistory *posHistoryPtr;               /* NULL on client, points to ServerSim.posHistory on server */
+    PosHistory *lgmPosHistoryPtr;            /* NULL on client, points to ServerSim.lgmPosHistory on server */
 } GameSim;
 
 /*********************************************************
