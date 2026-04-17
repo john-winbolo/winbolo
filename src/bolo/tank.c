@@ -3200,16 +3200,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 			tankDropPills(sim, value);
 		} else {
-			/* Tank was hit and survived — compute initial knockback velocity */
-			double dbAngle;
-			TURNTYPE slideAngle = angle - BRADIANS_EAST;
-			if (slideAngle < 0) {
-				slideAngle += (TURNTYPE)BRADIANS_MAX;
-			}
-			dbAngle = (DEGREES_MAX / BRADIANS_MAX) * slideAngle;
-			dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-			(*value)->tankSlideVx = (float)(TANK_SLIDE_INITIAL_SPEED * cos(dbAngle));
-			(*value)->tankSlideVy = (float)(TANK_SLIDE_INITIAL_SPEED * sin(dbAngle));
+			/* Tank was hit and survived — set bump for gradual knockback */
+			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE);
+			(*value)->bumpX = newX * 512;
+			(*value)->bumpY = newY * 512;
 		}
 		if ((*value)->armour <= TANK_FULL_ARMOUR) {
 			if (!isServer) {
