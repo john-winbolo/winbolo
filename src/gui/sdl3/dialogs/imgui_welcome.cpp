@@ -322,6 +322,10 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::PopStyleColor();
                 }
                 btnY += miniBtnH + miniBtnGap;
+                /* Small visual gap after Local and after Settings */
+                if (miniModes[i].code == RESULT_LAN || miniModes[i].code == RESULT_SETTINGS) {
+                    btnY += miniBtnH * 0.4f;
+                }
             }
 
             ImGui::PopStyleColor(4);
@@ -330,7 +334,7 @@ extern "C" int imguiWelcomeShow(void) {
 
         /* Centered dialog panel — only when visible or animating */
         if (dialogAlpha > 0.01f) {
-            float panelW = 500.0f * s, panelH = 400.0f * s;
+            float panelW = 500.0f * s, panelH = 480.0f * s;
             if (panelW > (float)winW * 0.9f) panelW = (float)winW * 0.9f;
             if (panelH > (float)winH * 0.9f) panelH = (float)winH * 0.9f;
 
@@ -415,6 +419,12 @@ extern "C" int imguiWelcomeShow(void) {
             int modeCount = sizeof(modes) / sizeof(modes[0]);
 
             for (int i = 0; i < modeCount; i++) {
+                /* Small gap before Map Editor and before Settings */
+                if (modes[i].code == RESULT_MAPEDITOR || modes[i].code == RESULT_SETTINGS) {
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                }
+
                 float rowY = ImGui::GetCursorPosY();
 
                 ImGui::SetCursorPosX(rowStartX);

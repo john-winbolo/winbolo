@@ -39,6 +39,7 @@ bool lv_g_show_controls_window = true;
 bool lv_g_show_game_info_window = true;
 bool lv_g_show_events_window = true;
 bool lv_g_show_item_info_window = true;
+bool lv_g_reset_window_positions = false;
 
 /* Options state */
 static bool s_tank_centred = false;
@@ -270,6 +271,11 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem("Item Information", "Ctrl+4", lv_g_show_item_info_window)) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
+                clicked = 1;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reset Window Positions")) {
+                lv_g_reset_window_positions = true;
                 clicked = 1;
             }
             ImGui::EndMenu();

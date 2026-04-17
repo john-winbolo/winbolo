@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <ctime>
 #include <algorithm>
 #include <thread>
@@ -47,6 +48,7 @@ extern "C" {
 #include "../../../winbolonet/http.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
+#include "imgui_winbolonet.h"
 }
 
 static const int DIALOG_W = 1024;
@@ -300,7 +302,7 @@ static void formatTimestamp(int ts, char *buf, size_t bufSize) {
     time_t t = (time_t)ts;
     struct tm *tm = localtime(&t);
     if (tm)
-        strftime(buf, bufSize, "%b %d, %Y", tm);
+        strftime(buf, bufSize, "%b %d, %Y %H:%M", tm);
     else
         SDL_strlcpy(buf, "Unknown", bufSize);
 }
@@ -412,6 +414,9 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
     /* Search filters */
     char searchPlayer[64] = {};
     char searchMap[64] = {};
+
+    /* Display filters */
+    int filterMinPlayers = 1;
 
     /* Async fetch */
     static std::mutex fetchMtx;
@@ -745,7 +750,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     triggerDetailFetch(tabs[currentTab].logs[selectedItem].key);
                 }
             } else {
-                commentError = "Failed to post comment";
+                commentError = commentResultData.message[0] ? commentResultData.message : "Failed to post comment";
                 commentSuccess = nullptr;
             }
         }
@@ -794,7 +799,8 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         ImGui::SetNextWindowBgAlpha(0.90f);
         ImGui::Begin("##WbnBrowser", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoScrollbar);
 
         /* ---- Title ---- */
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
@@ -823,6 +829,15 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 }
             }
             ImGui::EndTabBar();
+        }
+
+        /* ---- Filter bar ---- */
+        {
+            ImGui::Text("Filter:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80 * s);
+            ImGui::InputInt("Min Players##filterPlayers", &filterMinPlayers, 1, 1);
+            if (filterMinPlayers < 0) filterMinPlayers = 0;
         }
 
         /* ---- Search filters (Search tab only) ---- */
@@ -858,10 +873,11 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         float tableH = panelH * 0.40f;
         if (selectedItem < 0) tableH = panelH * 0.70f; /* more room when no detail */
 
-        if (!tab.logs.empty() && ImGui::BeginChild("##LogTable", ImVec2(0, tableH), ImGuiChildFlags_Borders)) {
+        if (!tab.logs.empty()) {
             ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                         ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-            if (ImGui::BeginTable("##LogsTable", 6, tableFlags)) {
+                                         ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
+                                         ImGuiTableFlags_BordersOuter;
+            if (ImGui::BeginTable("##LogsTable", 6, tableFlags, ImVec2(0, tableH))) {
                 ImGui::TableSetupColumn("Map",     0, 3.0f);
                 ImGui::TableSetupColumn("Type",    0, 1.0f);
                 ImGui::TableSetupColumn("Players", 0, 1.0f);
@@ -872,11 +888,17 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
 
                 for (int i = 0; i < (int)tab.logs.size(); i++) {
                     LogEntry &e = tab.logs[i];
+
+                    /* Apply display filters */
+                    if (e.num_players < filterMinPlayers) continue;
+
                     ImGui::TableNextRow();
 
                     bool isSelected = (selectedItem == i);
                     ImGui::TableNextColumn();
-                    if (ImGui::Selectable(e.map, isSelected,
+                    char selectId[128];
+                    SDL_snprintf(selectId, sizeof(selectId), "%s##log%d", e.map, i);
+                    if (ImGui::Selectable(selectId, isSelected,
                                           ImGuiSelectableFlags_SpanAllColumns |
                                           ImGuiSelectableFlags_AllowDoubleClick)) {
                         selectedItem = i;
@@ -919,7 +941,6 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 ImGui::EndTable();
             }
         }
-        if (!tab.logs.empty()) ImGui::EndChild();
 
         /* ---- Detail panel ---- */
         if (selectedItem >= 0 && selectedItem < (int)tab.logs.size()) {
@@ -968,9 +989,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                             ImGui::PopStyleColor();
                             ImGui::SameLine();
                             if (c.rating > 0) {
-                                ImGui::Text("(%d/10)", c.rating);
+                                renderStarRating((float)c.rating);
                                 ImGui::SameLine();
                             }
+
                             ImGui::TextDisabled("- %s", c.time_formatted.c_str());
                             ImGui::TextWrapped("  %s", c.comment.c_str());
                             ImGui::Spacing();
@@ -982,6 +1004,15 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     /* Comment form */
                     ImGui::Separator();
                     ImGui::Text("Add Comment:");
+
+                    /* Check if signed in to WBN */
+                    char wbnToken[256], wbnExpiry[256];
+                    gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
+                    bool wbnLoggedIn = (wbnToken[0] != '\0');
+
+                    if (!wbnLoggedIn) {
+                        imguiWinbolonetDrawSection(false);
+                    } else {
                     ImGui::SetNextItemWidth(60 * s);
                     ImGui::Combo("Rating##cmtRating", &commentRating,
                                  "None\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
@@ -993,7 +1024,6 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     bool canPost = commentText[0] != '\0' && !commenting;
                     if (!canPost) ImGui::BeginDisabled();
                     if (ImGui::Button("Post")) {
-                        /* TODO: check for auth token. For now, post directly. */
                         commenting = true;
                         commentDone = false;
                         commentError = nullptr;
@@ -1004,12 +1034,14 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                         char textCopy[512];
                         SDL_strlcpy(textCopy, commentText, sizeof(textCopy));
                         int ratingCopy = commentRating;
+                        char tokenCopy[256];
+                        SDL_strlcpy(tokenCopy, wbnToken, sizeof(tokenCopy));
 
-                        std::thread([keyCopy, textCopy, ratingCopy]() {
+                        std::thread([keyCopy, textCopy, ratingCopy, tokenCopy]() {
                             CommentResult res = {};
 
                             cJSON *body = cJSON_CreateObject();
-                            /* TODO: add "token" field from auth */
+                            cJSON_AddStringToObject(body, "token", tokenCopy);
                             cJSON_AddStringToObject(body, "comment", textCopy);
                             if (ratingCopy > 0)
                                 cJSON_AddNumberToObject(body, "rating", ratingCopy);
@@ -1021,7 +1053,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                             char *response = nullptr;
                             int status = wbn_api_post(endpoint, json_str, &response);
 
-                            if (status == 200) {
+                            if (status == 200 || status == 201) {
                                 res.success = true;
                                 SDL_strlcpy(res.message, "Comment posted!", sizeof(res.message));
                             } else {
@@ -1065,6 +1097,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                         ImGui::SameLine();
                         ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%s", commentSuccess);
                     }
+                    } /* end wbnLoggedIn else */
                 } else if (detailFetching) {
                     ImGui::Separator();
                     ImGui::TextDisabled("Loading details...");
@@ -1075,10 +1108,16 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 if (e.log_available) {
                     bool isDownloading = downloading;
                     if (isDownloading) ImGui::BeginDisabled();
-                    if (ImGui::Button(isDownloading ? "Downloading..." : "Download & Play")) {
+                    if (ImGui::Button(isDownloading ? "Downloading..." : "View Log")) {
                         triggerDownload(e.key);
                     }
                     if (isDownloading) ImGui::EndDisabled();
+                    if (isDownloading) {
+                        ImGui::SameLine();
+                        float progress = (float)fmod(ImGui::GetTime() * 0.4, 1.0);
+                        ImGui::SetNextItemWidth(150);
+                        ImGui::ProgressBar(progress, ImVec2(0, 0), "Downloading...");
+                    }
                 } else {
                     ImGui::TextDisabled("Log file not available");
                 }
