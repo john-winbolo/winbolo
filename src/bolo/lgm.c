@@ -1283,23 +1283,27 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 
 
 /*********************************************************
-*NAME:          lgmDeathCheck
+*NAME:          lgmDeathCheckAtPosition
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
-*LAST MODIFIED: 02/02/04
+*LAST MODIFIED: 17/04/26
 *PURPOSE:
 *  Called when an item explodes to check to see if the
-*  lgm should be killed because he is on the screen.
+*  lgm should be killed. Tests against supplied world
+*  position (for lag compensation). Death effects use the
+*  LGM's real current position.
 *
 *ARGUMENTS:
-*  mp     - Pointer to the map structure
-*  pb     - Pointer to the pillboxes structure
-*  bs     - Pointer to the bases structure
-*  wx     - X World co ord
-*  wy     - Y World co ord
-*  owner  - Who owned the firing shell (NEUTRAL for mines)
+*  sim       - Pointer to the game sim structure
+*  lgman     - Pointer to the lgm pointer
+*  lgmWorldX - LGM X world position to test against
+*  lgmWorldY - LGM Y world position to test against
+*  wx        - X World co ord of explosion
+*  wy        - Y World co ord of explosion
+*  owner     - Who owned the firing shell (NEUTRAL for mines)
+*  tnk       - Pointer to the tank
 *********************************************************/
-void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tank *tnk) {
+void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, tank *tnk) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
@@ -1307,8 +1311,10 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
   starts *sts = &sim->ss;
   char messageStr[FILENAME_MAX];       /* Message to output */
   char playerName[PLAYER_NAME_LEN]; /* Player name */
-  BYTE lgmX;                        /* LGM X Map co-ordinate */
-  BYTE lgmY;                        /* LGM Y Map co-ordinate */
+  BYTE lgmMapX;                     /* LGM X Map co-ordinate (from real position) */
+  BYTE lgmMapY;                     /* LGM Y Map co-ordinate (from real position) */
+  BYTE checkMapX;                   /* LGM X Map co-ordinate (from check position) */
+  BYTE checkMapY;                   /* LGM Y Map co-ordinate (from check position) */
   bool solid;                       /* Is the map square the lgm on solid or not */
   bool dead;                        /* Are we dead */
   TURNTYPE dummy;                   /* Dummy variable used for paremeter passing */
@@ -1320,22 +1326,28 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
   BYTE pillPlaceX;
   BYTE pillPlaceY;
   BYTE count;
-  
+
 
   if (isServer == TRUE && (*lgman)->isDead == FALSE && (*lgman)->inTank == FALSE) {
     WORLD conv;
     dead = FALSE;
+    /* Map coords from real position — used for pill drop, sound, etc. */
     conv = (*lgman)->x - 1;
     conv >>= 8;
-    lgmX = (BYTE) conv; 
-    lgmY = (BYTE) ((unsigned int) ((*lgman)->y - 2) >> 8);
+    lgmMapX = (BYTE) conv;
+    lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y - 2) >> 8);
+    /* Map coords from check position — used for hit detection */
+    conv = lgmWorldX - 1;
+    conv >>= 8;
+    checkMapX = (BYTE) conv;
+    checkMapY = (BYTE) ((unsigned int) (lgmWorldY - 2) >> 8);
     messageStr[0] = '\0';
     playerName[0] = '\0';
 
     mx = (BYTE) (wx >> 8);
     my = (BYTE) (wy >> 8);
 
-    utilIsItemInRange((*lgman)->x, (*lgman)->y, wx, wy, PILLBOX_RANGE, &distance);
+    utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, PILLBOX_RANGE, &distance);
     pos = mapGetPos(mp, mx, my);
     solid = FALSE;
     if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
@@ -1343,12 +1355,12 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
     }
     if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
       dead = TRUE;
-    } else if (solid == TRUE && lgmX == mx && lgmY == my) {
+    } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
       dead = TRUE;
     }
 
     if (dead == TRUE) {
-      sim->callbacks.soundDist(sim->callbacks.ctx, manDyingNear, lgmX, lgmY);
+      sim->callbacks.soundDist(sim->callbacks.ctx, manDyingNear, lgmMapX, lgmMapY);
       (*lgman)->isDead = TRUE;
       (*lgman)->frame = LGM_HELICOPTER_FRAME;
       (*lgman)->numTrees = 0;
@@ -1359,8 +1371,8 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
         if (isServer == TRUE) {
           finishedPillPlace = FALSE;
           count = 0;
-          pillPlaceX = lgmX;
-          pillPlaceY = lgmY;
+          pillPlaceX = lgmMapX;
+          pillPlaceY = lgmMapY;
           while (finishedPillPlace == FALSE) {
             item.x = pillPlaceX;
             item.y = pillPlaceY+count;
@@ -1400,11 +1412,11 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
         (*lgman)->destY = (*lgman)->y;
       }
 
-      startsGetRandStart(sim, sts, &lgmX, &lgmY, &dummy);
-      (*lgman)->x = lgmX;
+      startsGetRandStart(sim, sts, &lgmMapX, &lgmMapY, &dummy);
+      (*lgman)->x = lgmMapX;
       (*lgman)->x <<= TANK_SHIFT_MAPSIZE;
       (*lgman)->x += MAP_SQUARE_MIDDLE;
-      (*lgman)->y = lgmY;
+      (*lgman)->y = lgmMapY;
       (*lgman)->y <<= TANK_SHIFT_MAPSIZE;
       (*lgman)->y += MAP_SQUARE_MIDDLE;
       if (isServer == FALSE) {
@@ -1434,6 +1446,11 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tan
       }
     }
   }
+}
+
+void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tank *tnk) {
+  if (*lgman == NULL) return;
+  lgmDeathCheckAtPosition(sim, lgman, (*lgman)->x, (*lgman)->y, wx, wy, owner, tnk);
 }
 
 /*********************************************************

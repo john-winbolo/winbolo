@@ -125,6 +125,7 @@ typedef struct ServerSim {
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
 
     PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
+    PosHistory   lgmPosHistory[MAX_TANKS];        /* LGM position history for lag compensation */
 
     /* Which player is currently being processed in the tick loop.
      * Used by serverSimCbMessageAdd to target assistant messages. */

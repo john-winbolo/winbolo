@@ -244,7 +244,38 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
-					lgmDeathCheck(sim, lgms ? lgms[count] : NULL, newX, newY, position->owner, &tk[count]);
+					if (lgms && lgms[count] != NULL) {
+						BYTE lgmOwner = (*lgms[count])->playerNum;
+						uint8_t rewindTicks;
+						WORLD lgmHitX, lgmHitY;
+						bool useRewound = FALSE;
+
+						if (position->compensationTicks > 0) {
+							rewindTicks = position->compensationTicks;
+						} else if (sim->isServer && position->owner == NEUTRAL) {
+							rewindTicks = sim->perPlayerCompTicks[lgmOwner];
+						} else {
+							rewindTicks = 0;
+						}
+
+						if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
+						    lgmOwner != NEUTRAL &&
+						    posHistoryGet(&sim->lgmPosHistoryPtr[lgmOwner],
+						                  rewindTicks, &lgmHitX, &lgmHitY)) {
+							useRewound = TRUE;
+						}
+
+						if (useRewound) {
+							lgmDeathCheckAtPosition(sim, lgms[count],
+							                        lgmHitX, lgmHitY,
+							                        newX, newY,
+							                        position->owner, &tk[count]);
+						} else {
+							lgmDeathCheck(sim, lgms[count],
+							              newX, newY,
+							              position->owner, &tk[count]);
+						}
+					}
 					count++;
 				}
 				if (position->packSent == TRUE) {
@@ -288,7 +319,38 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {
-				lgmDeathCheck(sim, lgms ? lgms[count] : NULL, position->x, position->y, position->owner, &tk[count]);
+				if (lgms && lgms[count] != NULL) {
+					BYTE lgmOwner = (*lgms[count])->playerNum;
+					uint8_t rewindTicks;
+					WORLD lgmHitX, lgmHitY;
+					bool useRewound = FALSE;
+
+					if (position->compensationTicks > 0) {
+						rewindTicks = position->compensationTicks;
+					} else if (sim->isServer && position->owner == NEUTRAL) {
+						rewindTicks = sim->perPlayerCompTicks[lgmOwner];
+					} else {
+						rewindTicks = 0;
+					}
+
+					if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
+					    lgmOwner != NEUTRAL &&
+					    posHistoryGet(&sim->lgmPosHistoryPtr[lgmOwner],
+					                  rewindTicks, &lgmHitX, &lgmHitY)) {
+						useRewound = TRUE;
+					}
+
+					if (useRewound) {
+						lgmDeathCheckAtPosition(sim, lgms[count],
+						                        lgmHitX, lgmHitY,
+						                        position->x, position->y,
+						                        position->owner, &tk[count]);
+					} else {
+						lgmDeathCheck(sim, lgms[count],
+						              position->x, position->y,
+						              position->owner, &tk[count]);
+					}
+				}
 				count++;
 			}
 			if (position->packSent == TRUE) {

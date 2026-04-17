@@ -345,6 +345,29 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tank *tnk);
 
 /*********************************************************
+*NAME:          lgmDeathCheckAtPosition
+*AUTHOR:        John Morrison
+*CREATION DATE: 17/04/26
+*LAST MODIFIED: 17/04/26
+*PURPOSE:
+*  Like lgmDeathCheck but tests the explosion against a
+*  supplied LGM world position (for lag compensation).
+*  Death effects (pill drop, parachute) use the LGM's
+*  real current position.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  lgmWorldX - LGM X world position to test against
+*  lgmWorldY - LGM Y world position to test against
+*  wx     - X World co ord of explosion
+*  wy     - Y World co ord of explosion
+*  owner  - Who owned the firing shell (NEUTRAL for mines)
+*  tnk    - Pointer to the tank
+*********************************************************/
+void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, tank *tnk);
+
+/*********************************************************
 *NAME:          lgmParchutingIn
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
