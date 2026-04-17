@@ -1106,12 +1106,15 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
     /* ── CATEGORY 6: Resources ── */
     if (w[RC_RESUPPLY_EFFICIENCY] != 0.0f || w[RC_RESUPPLY_CAMPING] != 0.0f ||
         w[RC_TREES_FARMED] != 0.0f || w[RC_AMMO_CONSERVATION] != 0.0f ||
-        w[RC_IDLE_PENALTY] != 0.0f) {
+        w[RC_IDLE_PENALTY] != 0.0f || w[RC_RESUPPLY_SHELLS] != 0.0f) {
 
         bool on_own_base = gymIsOnOwnBase(tank_x, tank_y, obs);
 
         bool armor_up = has_prev && (sc[WBGYM_S_ARMOR] > psc[WBGYM_S_ARMOR] + 0.01f);
         comp[RC_RESUPPLY_EFFICIENCY] = (armor_up && on_own_base) ? 1.0f : 0.0f;
+
+        bool shells_up = has_prev && (sc[WBGYM_S_SHELLS] > psc[WBGYM_S_SHELLS] + 0.01f);
+        comp[RC_RESUPPLY_SHELLS] = (shells_up && on_own_base) ? 1.0f : 0.0f;
 
         bool full_stock = (sc[WBGYM_S_ARMOR] > 0.99f) &&
                           (sc[WBGYM_S_SHELLS] > 0.99f) &&
