@@ -60,6 +60,8 @@ typedef struct ScrollState {
 #ifdef USE_SCROLL_ITEM_LIST
   ScrollItemList itemList;
   bool driveScroll;
+  int lastScrollDirX;  /* -1, 0, or 1: direction we scrolled last tick */
+  int lastScrollDirY;
 #endif
 } ScrollState;
 

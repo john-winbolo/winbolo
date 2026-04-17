@@ -55,6 +55,8 @@ void scrollCreate(ScrollState *ss) {
 #ifdef USE_SCROLL_ITEM_LIST
   scrollItemListCreate(&ss->itemList);
   ss->driveScroll = FALSE;
+  ss->lastScrollDirX = 0;
+  ss->lastScrollDirY = 0;
 #endif
 }
 
@@ -578,17 +580,35 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   xmove = targetX - viewRefX;
   ymove = targetY - viewRefY;
 
+  /* Hysteresis: suppress direction reversals unless the delta is large
+   * enough (> 2 tiles) to justify it. This prevents the viewport from
+   * oscillating when two items on opposite sides compete for priority. */
+  if (xmove > 0 && ss->lastScrollDirX < 0 && xmove < (3 << 8)) {
+    xmove = 0;
+  } else if (xmove < 0 && ss->lastScrollDirX > 0 && xmove > -(3 << 8)) {
+    xmove = 0;
+  }
+  if (ymove > 0 && ss->lastScrollDirY < 0 && ymove < (3 << 8)) {
+    ymove = 0;
+  } else if (ymove < 0 && ss->lastScrollDirY > 0 && ymove > -(3 << 8)) {
+    ymove = 0;
+  }
+
   if (xmove != 0 || ymove != 0) {
     ss->autoScrollOverRide = FALSE;
     if (xmove > 0) {
       (*xValue)++;
+      ss->lastScrollDirX = 1;
     } else if (xmove < 0) {
       if (*xValue > 0) (*xValue)--;
+      ss->lastScrollDirX = -1;
     }
     if (ymove > 0) {
       (*yValue)++;
+      ss->lastScrollDirY = 1;
     } else if (ymove < 0) {
       if (*yValue > 0) (*yValue)--;
+      ss->lastScrollDirY = -1;
     }
 
     /* Clamp viewport to map boundaries */
@@ -598,6 +618,8 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
     return TRUE;
   }
 
+  ss->lastScrollDirX = 0;
+  ss->lastScrollDirY = 0;
   return FALSE;
 
 #else
