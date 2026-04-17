@@ -478,6 +478,28 @@ bool mapRead(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss) {
   if (returnValue == TRUE && fp) {
     mapCenter(value, pb, bs, ss);
   }
+
+  /* Ensure terrain under bases is ROAD */
+  if (returnValue == TRUE) {
+    BYTE numBases = basesGetNumBases(bs);
+    BYTE bi;
+    for (bi = 0; bi < numBases; bi++) {
+      (*value)->mapItem[(*bs)->item[bi].x][(*bs)->item[bi].y] = ROAD;
+    }
+  }
+
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  if (returnValue == TRUE) {
+    BYTE numPills = pillsGetNumPills(pb);
+    BYTE pi;
+    for (pi = 0; pi < numPills; pi++) {
+      BYTE t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
+      if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      }
+    }
+  }
+
   if (fp) {
     fclose(fp);
   }
@@ -1941,6 +1963,28 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   if (mapSize != sizeof(**value) - 2 * sizeof(mapNet)) {
     returnValue = FALSE;
   }
+
+  /* Ensure terrain under bases is ROAD */
+  if (returnValue == TRUE) {
+    BYTE numBases = basesGetNumBases(bs);
+    BYTE bi;
+    for (bi = 0; bi < numBases; bi++) {
+      (*value)->mapItem[(*bs)->item[bi].x][(*bs)->item[bi].y] = ROAD;
+    }
+  }
+
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  if (returnValue == TRUE) {
+    BYTE numPills = pillsGetNumPills(pb);
+    BYTE pi;
+    for (pi = 0; pi < numPills; pi++) {
+      BYTE t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
+      if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      }
+    }
+  }
+
   return returnValue;
 }
 
