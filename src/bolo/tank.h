@@ -54,7 +54,7 @@ struct GameSim;
 #define TANK_FRAMES 16
 
 /* how many world coordinates to move per tank slide update */
-#define TANK_SLIDE 16
+#define TANK_SLIDE 32
 
 /* Knockback slide: exponential decay parameters */
 #define TANK_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
