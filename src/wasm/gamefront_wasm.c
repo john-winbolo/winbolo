@@ -413,8 +413,11 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                                          &serverStartDelay, &serverGameLen);
 
       if (mapData != NULL && mapLen > 0) {
+        char savedMapName[MAP_STR_SIZE];
+        strncpy(savedMapName, humanSim->mapName, MAP_STR_SIZE - 1);
+        savedMapName[MAP_STR_SIZE - 1] = '\0';
         clientSimDestroy(humanSim);
-        if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen, "Network Game",
+        if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen, savedMapName,
                                      serverGame, serverHiddenMines,
                                      serverStartDelay, serverGameLen,
                                      gameFrontName, wasmPlayerNum, FALSE) == FALSE) {

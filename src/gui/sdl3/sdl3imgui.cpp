@@ -635,6 +635,12 @@ static void renderGameInfoContent(ClientSim *cs) {
     mapName[0] = '\0';
     screenGetMapNameCS(cs, mapName);
     ImGui::Text("Map:           %s", mapName);
+    if (strncmp(mapName, "rand_", 5) == 0) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy Seed")) {
+            SDL_SetClipboardText(mapName + 5);
+        }
+    }
     ImGui::Text("Players:       %d", (int)screenGetNumPlayersCS(cs));
 
     gameType *gt = &cs->sim.game;

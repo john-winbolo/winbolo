@@ -832,6 +832,9 @@ bool gameFrontSetDlgState(openingStates newState) {
                                              &serverGameLen);
 
           if (mapData != NULL && mapLen > 0) {
+            char savedMapName[MAP_STR_SIZE];
+            strncpy(savedMapName, humanSim->mapName, MAP_STR_SIZE - 1);
+            savedMapName[MAP_STR_SIZE - 1] = '\0';
             gametype = serverGame;
             hiddenMines = serverHiddenMines;
             startDelay = serverStartDelay;
@@ -840,7 +843,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             clientSimDestroy(humanSim);
 
             if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen,
-                                         "Network Game", serverGame,
+                                         savedMapName, serverGame,
                                          serverHiddenMines, serverStartDelay,
                                          serverGameLen, gameFrontName,
                                          (BYTE)udpPlayerNum, FALSE) == FALSE) {
@@ -963,7 +966,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
             if (compLen > 0) {
-              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, "Local Game",
+              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, spServerSim->mapName,
                                        gametype, hiddenMines, startDelay,
                                        timeLen, gameFrontName, 0, FALSE);
             } else {
@@ -1729,15 +1732,18 @@ bool gameFrontLoadDeferredMap(ClientSim *cs) {
   startDelay = serverStartDelay;
   timeLen = serverGameLen;
 
-  /* Preserve lobby flag across destroy/create — clientSimCreate clears it,
-   * but we need it to survive so game-over can return to lobby again. */
+  /* Preserve lobby flag and map name across destroy/create — clientSimCreate
+   * clears them, but we need them to survive the reload. */
   bool wasInLobby = cs->inLobby;
+  char savedMapName[MAP_STR_SIZE];
+  strncpy(savedMapName, cs->mapName, MAP_STR_SIZE - 1);
+  savedMapName[MAP_STR_SIZE - 1] = '\0';
 
   clientSimDestroy(cs);
   sdl3DrawResetCachedText();
 
   if (screenLoadCompressedMapCS(cs, (BYTE *)mapData, mapLen,
-                               "Network Game", serverGame,
+                               savedMapName, serverGame,
                                serverHiddenMines, serverStartDelay,
                                serverGameLen, gameFrontName,
                                (BYTE)udpPlayerNum, FALSE) == FALSE) {
