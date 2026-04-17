@@ -254,8 +254,20 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
                                   bool selectionScope);
 
 /* Render the maze tool settings panel.
- * Shown when the maze tool is active. */
-void mapEditorImguiMazeSettings(MazeConfig *cfg);
+ * Shown when the maze tool is active.
+ * isDragging: true if user is currently dragging.
+ * selX1..selY2: current drag region bounds.
+ * Returns true if settings changed (caller should regenerate preview). */
+bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
+                                int selX1, int selY1, int selX2, int selY2);
+
+/* Render the generate tool settings panel.
+ * Shown when the generate tool is active.
+ * isDragging: true if user is currently dragging to define region.
+ * selX1..selY2: current region bounds (updated during drag).
+ * Returns true if settings changed (caller should regenerate preview). */
+bool mapEditorImguiGenerateSettings(MapGenConfig *cfg, bool isDragging,
+                                    int selX1, int selY1, int selX2, int selY2);
 
 /* Render the Text tool dialog.
  * fontList/fontListReady: font enumeration state (lazily initialized).

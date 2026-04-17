@@ -1748,11 +1748,27 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
     return generated;
 }
 
-void mapEditorImguiMazeSettings(MazeConfig *cfg) {
+bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
+                                int selX1, int selY1, int selX2, int selY2) {
     static const char *mazeAlgoNames[] = { "Labyrinth", "Open" };
     ImGui::SetNextWindowSize(ImVec2(220, 0), ImGuiCond_Once);
     ImGui::Begin("Maze Settings", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+
+    /* Selection info */
+    if (isDragging) {
+        int w = selX2 - selX1 + 1;
+        int h = selY2 - selY1 + 1;
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                           "Region: (%d,%d)-(%d,%d)  %dx%d",
+                           selX1, selY1, selX2, selY2, w, h);
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                           "Drag on map to generate");
+    }
+    ImGui::Separator();
+
+    MazeConfig prev = *cfg;
 
     ImGui::Combo("Algorithm", &cfg->algo, mazeAlgoNames, MAZE_ALGO_COUNT);
 
@@ -1768,6 +1784,33 @@ void mapEditorImguiMazeSettings(MazeConfig *cfg) {
     ImGui::SliderInt("Rooms", &cfg->cityRooms, 0, 5);
 
     ImGui::End();
+
+    return memcmp(&prev, cfg, sizeof(MazeConfig)) != 0;
+}
+
+bool mapEditorImguiGenerateSettings(MapGenConfig *cfg, bool isDragging,
+                                    int selX1, int selY1, int selX2, int selY2) {
+    ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_Once);
+    ImGui::Begin("Generate Settings", nullptr,
+                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+
+    /* Selection info */
+    if (isDragging) {
+        int w = selX2 - selX1 + 1;
+        int h = selY2 - selY1 + 1;
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                           "Region: (%d,%d)-(%d,%d)  %dx%d",
+                           selX1, selY1, selX2, selY2, w, h);
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                           "Drag on map to generate");
+    }
+    ImGui::Separator();
+
+    bool changed = mapGenImguiControls(cfg);
+
+    ImGui::End();
+    return changed;
 }
 
 /* -------------------------------------------------------
