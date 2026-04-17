@@ -1727,7 +1727,7 @@ static void renderMenuBar(ClientSim *cs) {
         }
 #endif
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit"))                        windowQuit();
+        if (ImGui::MenuItem("Exit"))                        windowSetQuitting();
         ImGui::EndMenu();
     }
 
