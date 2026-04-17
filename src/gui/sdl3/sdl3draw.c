@@ -1096,11 +1096,20 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                 (tankGetLastTankDeath(tank) == LAST_DEATH_BY_SHELL   && tankGetDeathWait(tank) < STATIC_ON_TICKS_SHELL) ||
                 (tankGetLastTankDeath(tank) == LAST_DEATH_BY_MINES   && tankGetDeathWait(tank) < STATIC_ON_TICKS_MINES))) {
       /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
+      /* On iOS use half-res texture so static dots appear larger */
+#if defined(__IPHONEOS__)
+      int staticW = gameW / 2;
+      int staticH = gameH / 2;
+#else
+      int staticW = gameW;
+      int staticH = gameH;
+#endif
       /* Recreate static texture if size changed or doesn't exist yet */
       if (!gStaticTex || gStaticTexW != gameW || gStaticTexH != gameH) {
         if (gStaticTex) SDL_DestroyTexture(gStaticTex);
-        gStaticTex = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888,
-                                       SDL_TEXTUREACCESS_STREAMING, gameW, gameH);
+        gStaticTex = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_ARGB8888,
+                                       SDL_TEXTUREACCESS_STREAMING, staticW, staticH);
+        SDL_SetTextureScaleMode(gStaticTex, SDL_SCALEMODE_NEAREST);
         gStaticTexW = gameW;
         gStaticTexH = gameH;
         gStaticLast = 0;
@@ -1114,19 +1123,19 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           int rowLen = pitch / 4;
           /* First tick: clear to black */
           if (gStaticLast == 1 || gStaticSeed == 1) {
-            for (int y = 0; y < gameH; y++)
-              for (int x = 0; x < gameW; x++)
+            for (int y = 0; y < staticH; y++)
+              for (int x = 0; x < staticW; x++)
                 pixels[y * rowLen + x] = 0xFF000000;
           }
-          int numPoints = gameW * gameH / 3;
+          int numPoints = staticW * staticH / 3;
           int col = 0;
           uint32_t white = 0xFFFFFFFF;
           uint32_t black = 0xFF000000;
           for (int i = 0; i < numPoints; i++) {
             uint32_t rx = getRandomStaticNoiseSeed();
             uint32_t ry = getRandomStaticNoiseSeed();
-            int px = rx % gameW;
-            int py = ry % gameH;
+            int px = rx % staticW;
+            int py = ry % staticH;
             pixels[py * rowLen + px] = (col++ & 1) ? white : black;
           }
           SDL_UnlockTexture(gStaticTex);
