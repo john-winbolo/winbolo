@@ -372,7 +372,7 @@ bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hidd
         return FALSE;
     }
 
-    /* Store map name (basename without path) for info packet responses */
+    /* Store map name (basename without path or .map extension) for info packet responses */
     {
         const char *base = mapFileName;
         const char *p;
@@ -383,6 +383,13 @@ bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hidd
         }
         strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
         sim->mapName[MAP_STR_SIZE - 1] = '\0';
+        /* Strip .map extension if present */
+        {
+            size_t len = strlen(sim->mapName);
+            if (len >= 4 && strcmp(sim->mapName + len - 4, ".map") == 0) {
+                sim->mapName[len - 4] = '\0';
+            }
+        }
     }
 
     basesClearMines(&sim->sim);
@@ -2133,7 +2140,7 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         sim->cachedMapDataLen = len;
     }
 
-    /* Update map name (basename without path) */
+    /* Update map name (basename without path or .map extension) */
     {
         const char *base = mapFileName;
         const char *p;
@@ -2144,6 +2151,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         }
         strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
         sim->mapName[MAP_STR_SIZE - 1] = '\0';
+        /* Strip .map extension if present */
+        {
+            size_t len = strlen(sim->mapName);
+            if (len >= 4 && strcmp(sim->mapName + len - 4, ".map") == 0) {
+                sim->mapName[len - 4] = '\0';
+            }
+        }
     }
 
     /* Reset all lobby players' ready state */
