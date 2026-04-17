@@ -439,6 +439,238 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
 }
 
 /*********************************************************
+*NAME:          wbn_api_get
+*PURPOSE:
+* Low-level GET request to a WinBolo.net API endpoint.
+* Builds the full URL as <baseUrl>/api/v1/<path>.
+* Returns the HTTP status code, or -1 on transport error.
+*********************************************************/
+int wbn_api_get(const char *path, char **response_out) {
+  if (response_out) *response_out = NULL;
+  if (!httpStarted) return -1;
+
+  CURL *curl = curl_easy_init();
+  if (!curl) return -1;
+
+  /* Build URL: <baseUrl>/api/v1/<path> */
+  char url[FILENAME_MAX + 256];
+  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+
+  /* Generate timestamp and Ed25519 signature (sign empty body for GET) */
+  char timestamp_str[32];
+  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+
+  char sig_hex[129];
+  wbn_sign_request(timestamp_str, "", sig_hex);
+
+  char sig_header[256];
+  char ts_header[64];
+  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, sig_header);
+  headers = curl_slist_append(headers, ts_header);
+
+  DynBuf respBuf;
+  dynBufInit(&respBuf);
+  if (!respBuf.data) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return -1;
+  }
+
+  curl_easy_setopt(curl, CURLOPT_URL,            url);
+  curl_easy_setopt(curl, CURLOPT_HTTPGET,         1L);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  if (altIpAddress[0] != '\0') {
+    curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
+  }
+
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_get: GET %s\n", url);
+
+  CURLcode res = curl_easy_perform(curl);
+
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK) {
+    fprintf(stderr, "WinBolo.net DEBUG wbn_api_get [%s]: curl error: %s\n", path, curl_easy_strerror(res));
+    free(respBuf.data);
+    return -1;
+  }
+
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_get [%s]: HTTP %ld\n", path, http_code);
+
+  if (response_out) {
+    *response_out = respBuf.data;
+  } else {
+    free(respBuf.data);
+  }
+  return (int)http_code;
+}
+
+/*********************************************************
+*NAME:          fileWriteCallback
+*PURPOSE:
+* libcurl write callback that writes directly to a FILE*.
+*********************************************************/
+static size_t fileWriteCallback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+  FILE *fp = (FILE *)userdata;
+  return fwrite(ptr, size, nmemb, fp);
+}
+
+/*********************************************************
+*NAME:          wbn_api_download
+*PURPOSE:
+* Downloads a file from WBN to disk.
+* Returns the HTTP status code, or -1 on transport error.
+*********************************************************/
+int wbn_api_download(const char *path, const char *dest_path) {
+  if (!httpStarted) return -1;
+
+  FILE *fp = fopen(dest_path, "wb");
+  if (!fp) return -1;
+
+  CURL *curl = curl_easy_init();
+  if (!curl) { fclose(fp); return -1; }
+
+  char url[FILENAME_MAX + 256];
+  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+
+  char timestamp_str[32];
+  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+  char sig_hex[129];
+  wbn_sign_request(timestamp_str, "", sig_hex);
+
+  char sig_header[256];
+  char ts_header[64];
+  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, sig_header);
+  headers = curl_slist_append(headers, ts_header);
+
+  curl_easy_setopt(curl, CURLOPT_URL,            url);
+  curl_easy_setopt(curl, CURLOPT_HTTPGET,         1L);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  fileWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,      fp);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        120L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  if (altIpAddress[0] != '\0') {
+    curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
+  }
+
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_download: GET %s -> %s\n", url, dest_path);
+
+  CURLcode res = curl_easy_perform(curl);
+
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+  fclose(fp);
+
+  if (res != CURLE_OK) {
+    fprintf(stderr, "WinBolo.net DEBUG wbn_api_download: curl error: %s\n", curl_easy_strerror(res));
+    remove(dest_path);
+    return -1;
+  }
+
+  if (http_code != 200) {
+    remove(dest_path);
+  }
+
+  return (int)http_code;
+}
+
+/*********************************************************
+*NAME:          wbn_api_download_to_memory
+*PURPOSE:
+* Downloads a file from WBN into a heap-allocated buffer.
+* Returns the HTTP status code, or -1 on transport error.
+*********************************************************/
+int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
+  if (data_out) *data_out = NULL;
+  if (size_out) *size_out = 0;
+  if (!httpStarted) return -1;
+
+  CURL *curl = curl_easy_init();
+  if (!curl) return -1;
+
+  char url[FILENAME_MAX + 256];
+  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+
+  char timestamp_str[32];
+  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+  char sig_hex[129];
+  wbn_sign_request(timestamp_str, "", sig_hex);
+
+  char sig_header[256];
+  char ts_header[64];
+  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, sig_header);
+  headers = curl_slist_append(headers, ts_header);
+
+  DynBuf respBuf;
+  dynBufInit(&respBuf);
+  if (!respBuf.data) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return -1;
+  }
+
+  curl_easy_setopt(curl, CURLOPT_URL,            url);
+  curl_easy_setopt(curl, CURLOPT_HTTPGET,         1L);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        120L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  if (altIpAddress[0] != '\0') {
+    curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
+  }
+
+  fprintf(stderr, "WinBolo.net DEBUG wbn_api_download_to_memory: GET %s\n", url);
+
+  CURLcode res = curl_easy_perform(curl);
+
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK) {
+    fprintf(stderr, "WinBolo.net DEBUG wbn_api_download_to_memory: curl error: %s\n", curl_easy_strerror(res));
+    free(respBuf.data);
+    return -1;
+  }
+
+  if (http_code == 200 && data_out && size_out) {
+    *data_out = (uint8_t *)respBuf.data;
+    *size_out = respBuf.size;
+  } else {
+    free(respBuf.data);
+  }
+
+  return (int)http_code;
+}
+
+/*********************************************************
 *NAME:          httpSetAltIpAddress
 *PURPOSE:
 * Sets the alternate local interface/IP address that

@@ -11,6 +11,7 @@
 #include "imgui_context.h"
 #include "imgui.h"
 #include "../../gui/imgui_theme.h"
+#include "../../gui/imgui_fonts.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <stdio.h>
@@ -56,11 +57,8 @@ int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
         g_context = nullptr;
         return 0;
     }
-    // Load default font
-    io.Fonts->AddFontDefault();
-
-    // Build font atlas
-    io.Fonts->Build();
+    // Load Bolo UI font (builds the font atlas internally)
+    imguiLoadBoloFont(18.0f);
     
     return 1;
 }

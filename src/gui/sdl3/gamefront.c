@@ -81,6 +81,10 @@
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
+void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                            uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+
+#include "dialogs/imgui_wbn_browser.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -635,10 +639,26 @@ static bool gameFrontDialogs(void) {
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
       dlgState = openWelcome;
       break;
-    case openLogViewer:
-      logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+    case openLogViewer: {
+      WbnBrowserResult wbnResult = imguiWbnBrowserShow();
+      switch (wbnResult.action) {
+      case WBN_BROWSER_PLAY_FILE:
+        logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);
+        break;
+      case WBN_BROWSER_PLAY_MEMORY:
+        logViewerRunFromMemory(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                               wbnResult.memoryData, wbnResult.memorySize, true);
+        break;
+      case WBN_BROWSER_OPEN_LOCAL:
+        logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+        break;
+      case WBN_BROWSER_CLOSE:
+      default:
+        break;
+      }
       dlgState = openWelcome;
       break;
+    }
 #endif
     case openFinished:
       done = TRUE;

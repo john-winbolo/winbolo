@@ -114,6 +114,51 @@ int wbn_api_call(const char *endpoint, struct cJSON *body, struct cJSON **respon
 bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
 
 /*********************************************************
+*NAME:          wbn_api_get
+*PURPOSE:
+* Low-level GET request to a WinBolo.net API endpoint.
+* Builds the full URL as <baseUrl>/api/v1/<path>.
+* path may include query parameters (e.g. "logs/recent?limit=20").
+* Returns the HTTP status code, or -1 on transport error.
+* On success, *response_out is a heap-allocated string that
+* the caller must free. On error, *response_out may be NULL.
+*
+*ARGUMENTS:
+* path         - API path after /api/v1/ (e.g. "logs/recent?limit=20")
+* response_out - Receives heap-allocated response string (caller frees)
+*********************************************************/
+int wbn_api_get(const char *path, char **response_out);
+
+/*********************************************************
+*NAME:          wbn_api_download
+*PURPOSE:
+* Downloads a file from WBN to disk. Builds the full URL
+* as <baseUrl>/api/v1/<path>.
+* Returns the HTTP status code, or -1 on transport error.
+*
+*ARGUMENTS:
+* path      - API path after /api/v1/ (e.g. "logs/<key>/download")
+* dest_path - Local filesystem path to write the file to
+*********************************************************/
+int wbn_api_download(const char *path, const char *dest_path);
+
+/*********************************************************
+*NAME:          wbn_api_download_to_memory
+*PURPOSE:
+* Downloads a file from WBN into a heap-allocated memory
+* buffer. Builds the full URL as <baseUrl>/api/v1/<path>.
+* Returns the HTTP status code, or -1 on transport error.
+* On success, *data_out receives the buffer and *size_out
+* receives its length. Caller must free *data_out.
+*
+*ARGUMENTS:
+* path     - API path after /api/v1/ (e.g. "logs/<key>/download")
+* data_out - Receives heap-allocated buffer (caller frees)
+* size_out - Receives buffer size in bytes
+*********************************************************/
+int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out);
+
+/*********************************************************
 *NAME:          httpSetAltIpAddress
 *PURPOSE:
 * Sets the local interface/IP for libcurl to bind to when

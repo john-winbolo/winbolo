@@ -57,6 +57,10 @@ const char *lv_g_version_string = "1.01";
 /* File-scope pointer to the current viewer session state */
 static LogViewerState *g_lv = NULL;
 
+/* Pending memory-based log load (set by logViewerRunFromMemory) */
+static uint8_t *s_pendingZipData = NULL;
+static size_t   s_pendingZipLen  = 0;
+
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
  * -------------------------------------------------------------------------- */
@@ -551,6 +555,20 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         lv_windowOpenFile((char *)logPath);
     }
 
+    /* Load from pending memory buffer if set (from logViewerRunFromMemory) */
+    if (s_pendingZipData != NULL) {
+        if (lv_screenLoadMapFromMemory(s_pendingZipData, s_pendingZipLen) == FALSE) {
+            /* lv_screenLoadMapFromMemory took ownership even on failure */
+            g_lv->isLoaded = FALSE;
+        } else {
+            g_lv->isLoaded = TRUE;
+            lv_imgui_events_clear();
+            lv_windowNeedRedraw();
+        }
+        s_pendingZipData = NULL;
+        s_pendingZipLen  = 0;
+    }
+
     /* -----------------------------------------------------------------------
      * Main event loop
      * ----------------------------------------------------------------------- */
@@ -664,4 +682,18 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     }
     free(g_lv);
     g_lv = NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * logViewerRunFromMemory -- Load a log from an in-memory zip buffer.
+ *
+ * Identical to logViewerRun but loads from memory instead of file.
+ * Takes ownership of zipData (freed when log viewer closes).
+ * -------------------------------------------------------------------------- */
+void logViewerRunFromMemory(SDL_Window *window, SDL_Renderer *renderer,
+                            uint8_t *zipData, size_t zipLen, bool fromMainMenu) {
+    /* Use static pending vars that logViewerRun checks after init */
+    s_pendingZipData = zipData;
+    s_pendingZipLen  = zipLen;
+    logViewerRun(window, renderer, NULL, fromMainMenu);
 }
