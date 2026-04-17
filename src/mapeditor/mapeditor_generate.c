@@ -689,60 +689,68 @@ static void mapGenTournament(struct mapObj *mp, struct basesObj *bs,
                     /* Regrow if land dropped below 60% of original */
                     int minLand = origLand * 60 / 100;
                     if (connectedCount < minLand) {
-                        /* Collect DEEP_SEA tiles adjacent to the connected mass,
-                         * sorted by descending heightmap value. Grow until target. */
+                        /* Iteratively collect DEEP_SEA tiles adjacent to the connected
+                         * mass, sorted by descending heightmap value. Each pass grows
+                         * the frontier by one ring; repeat until target is met or no
+                         * more adjacent candidates exist. */
                         GenPos *growCands = (GenPos *)malloc(sizeof(GenPos) * (size_t)sectorArea);
                         float *growH = (float *)malloc(sizeof(float) * (size_t)sectorArea);
                         if (growCands && growH) {
-                            int nGrow = 0;
-                            for (int x = sx1; x <= sx2; x++)
-                                for (int y = sy1; y <= sy2; y++) {
-                                    if (mp->mapItem[x][y] != DEEP_SEA) continue;
-                                    bool adjLand = false;
-                                    for (int d = 0; d < 4; d++) {
-                                        int nx = x + ffdx[d], ny = y + ffdy[d];
-                                        if (nx >= sx1 && nx <= sx2 && ny >= sy1 && ny <= sy2 &&
-                                            mp->mapItem[nx][ny] != DEEP_SEA)
-                                            { adjLand = true; break; }
-                                    }
-                                    if (adjLand) {
-                                        growCands[nGrow] = (GenPos){x, y};
-                                        growH[nGrow] = heights[(x - sx1) * sh + (y - sy1)];
-                                        nGrow++;
-                                    }
-                                }
-                            /* Sort by descending height (simple selection for small n) */
-                            for (int i = 0; i < nGrow - 1; i++) {
-                                int best = i;
-                                for (int j = i + 1; j < nGrow; j++)
-                                    if (growH[j] > growH[best]) best = j;
-                                if (best != i) {
-                                    GenPos tp = growCands[i]; growCands[i] = growCands[best]; growCands[best] = tp;
-                                    float tf = growH[i]; growH[i] = growH[best]; growH[best] = tf;
-                                }
-                            }
-                            /* Grow tiles with terrain assignment */
                             int currentLand = connectedCount;
-                            for (int i = 0; i < nGrow && currentLand < origLand; i++) {
-                                int gx = growCands[i].x, gy = growCands[i].y;
-                                float n2 = fbmNoise(noiseSeed2, (float)gx, (float)gy, 16, 2);
-                                BYTE terrain;
-                                if (rough == MAPGEN_ROUGH_LOW) {
-                                    terrain = (n2 > 0.45f) ? FOREST : ROAD;
-                                } else if (rough == MAPGEN_ROUGH_MEDIUM) {
-                                    if (n2 > 0.55f)      terrain = FOREST;
-                                    else if (n2 > 0.25f) terrain = ROAD;
-                                    else if (n2 > 0.05f) terrain = GRASS;
-                                    else                  terrain = BUILDING;
-                                } else {
-                                    if (n2 > 0.60f)      terrain = FOREST;
-                                    else if (n2 > 0.35f) terrain = ROAD;
-                                    else if (n2 > 0.15f) terrain = GRASS;
-                                    else if (n2 > 0.05f) terrain = BUILDING;
-                                    else                  terrain = SWAMP;
+                            while (currentLand < origLand) {
+                                int nGrow = 0;
+                                for (int x = sx1; x <= sx2; x++)
+                                    for (int y = sy1; y <= sy2; y++) {
+                                        if (mp->mapItem[x][y] != DEEP_SEA) continue;
+                                        bool adjLand = false;
+                                        for (int d = 0; d < 4; d++) {
+                                            int nx = x + ffdx[d], ny = y + ffdy[d];
+                                            if (nx >= sx1 && nx <= sx2 && ny >= sy1 && ny <= sy2 &&
+                                                mp->mapItem[nx][ny] != DEEP_SEA)
+                                                { adjLand = true; break; }
+                                        }
+                                        if (adjLand) {
+                                            growCands[nGrow] = (GenPos){x, y};
+                                            growH[nGrow] = heights[(x - sx1) * sh + (y - sy1)];
+                                            nGrow++;
+                                        }
+                                    }
+                                if (nGrow == 0) break;
+                                /* Sort by descending height (simple selection for small n) */
+                                for (int i = 0; i < nGrow - 1; i++) {
+                                    int best = i;
+                                    for (int j = i + 1; j < nGrow; j++)
+                                        if (growH[j] > growH[best]) best = j;
+                                    if (best != i) {
+                                        GenPos tp = growCands[i]; growCands[i] = growCands[best]; growCands[best] = tp;
+                                        float tf = growH[i]; growH[i] = growH[best]; growH[best] = tf;
+                                    }
                                 }
-                                mp->mapItem[gx][gy] = terrain;
-                                currentLand++;
+                                /* Grow tiles with terrain assignment */
+                                int grew = 0;
+                                for (int i = 0; i < nGrow && currentLand < origLand; i++) {
+                                    int gx = growCands[i].x, gy = growCands[i].y;
+                                    float n2 = fbmNoise(noiseSeed2, (float)gx, (float)gy, 16, 2);
+                                    BYTE terrain;
+                                    if (rough == MAPGEN_ROUGH_LOW) {
+                                        terrain = (n2 > 0.45f) ? FOREST : ROAD;
+                                    } else if (rough == MAPGEN_ROUGH_MEDIUM) {
+                                        if (n2 > 0.55f)      terrain = FOREST;
+                                        else if (n2 > 0.25f) terrain = ROAD;
+                                        else if (n2 > 0.05f) terrain = GRASS;
+                                        else                  terrain = BUILDING;
+                                    } else {
+                                        if (n2 > 0.60f)      terrain = FOREST;
+                                        else if (n2 > 0.35f) terrain = ROAD;
+                                        else if (n2 > 0.15f) terrain = GRASS;
+                                        else if (n2 > 0.05f) terrain = BUILDING;
+                                        else                  terrain = SWAMP;
+                                    }
+                                    mp->mapItem[gx][gy] = terrain;
+                                    currentLand++;
+                                    grew++;
+                                }
+                                if (grew == 0) break;
                             }
                         }
                         if (growCands) free(growCands);
