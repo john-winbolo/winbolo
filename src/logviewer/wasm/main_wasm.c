@@ -459,6 +459,7 @@ static void main_loop_iteration(void) {
     lv_imgui_game_info_window();
     lv_imgui_events_window();
     lv_imgui_item_info_window();
+    lv_g_reset_window_positions = false;
     lv_imgui_dialogs_render();
     lv_imgui_context_render();
 
