@@ -1213,10 +1213,17 @@ void gameFrontEnableRejoin(void) {
   wantRejoin = TRUE;
 }
 
+static void gameFrontSaveWbnTokenToPrefs(void) {
+  const char *prefsFile = getPreferenceFilePath();
+  WritePrivateProfileString("WINBOLO.NET", "Token", gameFrontWbnToken, prefsFile);
+  WritePrivateProfileString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry, prefsFile);
+}
+
 void gameFrontSetWinbolonetToken(const char *token, const char *expiry) {
   SDL_strlcpy(gameFrontWbnToken, token, FILENAME_MAX);
   SDL_strlcpy(gameFrontWbnTokenExpiry, expiry, FILENAME_MAX);
   gameFrontWbnUse = (token[0] != '\0');
+  gameFrontSaveWbnTokenToPrefs();
 }
 
 void gameFrontGetWinbolonetToken(char *token, char *expiry) {
@@ -1228,6 +1235,7 @@ void gameFrontClearWinbolonetToken(void) {
   gameFrontWbnToken[0] = '\0';
   gameFrontWbnTokenExpiry[0] = '\0';
   gameFrontWbnUse = FALSE;
+  gameFrontSaveWbnTokenToPrefs();
 }
 
 bool gameFrontGetWinbolonetUse(void) {

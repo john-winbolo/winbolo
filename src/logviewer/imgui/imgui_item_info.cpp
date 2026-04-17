@@ -89,22 +89,34 @@ void lv_imgui_item_info_window(void) {
         return;
     }
     
-    ImGui::SetNextWindowSize(ImVec2(200, 150), ImGuiCond_FirstUseEver);
-    
+    {
+        ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+        ImVec2 vp = ImGui::GetMainViewport()->Size;
+        ImGui::SetNextWindowSize(ImVec2(280, 150), cond);
+        ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10, 30 + 180 + 5), cond);
+    }
+
     if (ImGui::Begin("Item Information", &lv_g_show_item_info_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
         if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
             ImVec2 pos = ImGui::GetWindowPos();
+            float old_vp_x = ImGui::GetMainViewport()->Size.x - dx;
+            float old_vp_y = ImGui::GetMainViewport()->Size.y - dy;
+            ImVec2 size = ImGui::GetWindowSize();
+            if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
+            else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
+        }
+        /* Always clamp to keep fully on screen */
+        {
+            ImVec2 pos = ImGui::GetWindowPos();
             ImVec2 size = ImGui::GetWindowSize();
             ImVec2 vp = ImGui::GetMainViewport()->Size;
             ImVec2 new_pos = pos;
-            if (pos.x + size.x * 0.5f > (vp.x - dx) * 0.5f) new_pos.x = pos.x + dx;
-            if (pos.y + size.y * 0.5f > (vp.y - dy) * 0.5f) new_pos.y = pos.y + dy;
-            if (new_pos.x < 0) new_pos.x = 0;
-            if (new_pos.y < 0) new_pos.y = 0;
             if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
             if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
+            if (new_pos.x < 0) new_pos.x = 0;
+            if (new_pos.y < 0) new_pos.y = 0;
             if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
         }
 

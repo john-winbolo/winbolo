@@ -550,6 +550,31 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     /* Load preferences */
     loadPreferences();
 
+    /* Sync screen tile size to actual window dimensions so the game view
+     * fills the window on first frame (not just after a manual resize). */
+    {
+        int initW, initH;
+        SDL_GetWindowSize(g_lv->window, &initW, &initH);
+        if (initW > 0 && initH > 0) {
+            int menuH = (int)lv_imgui_get_menu_bar_height();
+            int tileW = ((initW + TILE_SIZE_X / 2) / TILE_SIZE_X) * TILE_SIZE_X;
+            int tileH = (((initH - menuH) + TILE_SIZE_Y / 2) / TILE_SIZE_Y) * TILE_SIZE_Y;
+            if (tileW < TILE_SIZE_X) tileW = TILE_SIZE_X;
+            if (tileH < TILE_SIZE_Y) tileH = TILE_SIZE_Y;
+            if (tileW > 255 * TILE_SIZE_X) tileW = 255 * TILE_SIZE_X;
+            if (tileH > 255 * TILE_SIZE_Y) tileH = 255 * TILE_SIZE_Y;
+
+            BYTE newTilesX = (BYTE)(tileW / TILE_SIZE_X);
+            BYTE newTilesY = (BYTE)(tileH / TILE_SIZE_Y);
+            if (newTilesX != lv_screenGetSizeX() || newTilesY != lv_screenGetSizeY()) {
+                lv_screenSetSizeX(newTilesX);
+                lv_screenSetSizeY(newTilesY);
+                lv_drawResizeRenderTarget();
+                lv_drawDirtyScreen();
+            }
+        }
+    }
+
     /* Open file from command line / caller if provided */
     if (logPath != NULL && strlen(logPath) > 0) {
         lv_windowOpenFile((char *)logPath);
@@ -653,6 +678,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         lv_imgui_game_info_window();
         lv_imgui_events_window();
         lv_imgui_item_info_window();
+        lv_g_reset_window_positions = false;
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
