@@ -171,7 +171,7 @@ based on my testing.
 /* Typedefs */
 
 /* Bump information bitflags */
-typedef u_long BumpInfo;
+typedef unsigned long BumpInfo;
 
 enum {
     BumpInfo_None       = 0,
