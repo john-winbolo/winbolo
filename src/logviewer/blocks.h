@@ -24,6 +24,11 @@
 
 /* size parameter is ignored (kept for API compatibility) */
 bool lv_blocksCreate(char *fileName, int size);
+
+/* Create from an in-memory zip buffer. Takes ownership of zipData
+ * (freed in lv_blocksDestroy). */
+bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen);
+
 void lv_blocksDestroy();
 int lv_blocksReadBytes(BYTE *buff, int len);
 bool lv_blocksIsEOF();

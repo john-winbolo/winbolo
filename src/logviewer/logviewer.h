@@ -127,9 +127,14 @@ typedef struct LogViewerState {
 
 } LogViewerState;
 
-/* Future entry point for embedded logviewer (not implemented yet) */
+/* Entry point for embedded logviewer */
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
+
+/* Entry point for loading from an in-memory zip buffer (mobile).
+ * Takes ownership of zipData. */
+void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                            uint8_t *zipData, size_t zipLen, bool fromMainMenu);
 
 /* State accessors used by screen.c and other modules */
 void lv_screenSetState(LogViewerState *lv);

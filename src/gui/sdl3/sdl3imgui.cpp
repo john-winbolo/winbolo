@@ -40,6 +40,7 @@
 /* ImGui */
 #include "imgui.h"
 #include "../imgui_theme.h"
+#include "../imgui_fonts.h"
 #include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -2050,6 +2051,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
+    imguiLoadBoloFont(18.0f);
 
     /* Tablet mode: scale up ImGui for touch targets.
        Scale proportionally to the logical coordinate space height.

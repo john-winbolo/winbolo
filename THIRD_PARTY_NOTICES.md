@@ -72,6 +72,20 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/nothings/stb
 - Author: Sean Barrett
 
+## Fonts
+
+### Inter
+- Location: data/fonts/InterVariable.ttf
+- License: SIL Open Font License 1.1
+- https://github.com/rsms/inter
+- Author: Rasmus Andersson
+
+### Courier Prime
+- Location: data/CourierPrime-Regular.ttf
+- License: SIL Open Font License 1.1
+- https://github.com/quoteunquoteapps/CourierPrime
+- Author: Alan Dague-Greene, Quote-Unquote Apps
+
 ### LZW/RLE Compression
 - Location: src/lzw/
 - Original author: David Bourgin (1994-1995)

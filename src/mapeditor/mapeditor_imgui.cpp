@@ -24,6 +24,7 @@
 
 #include "imgui.h"
 #include "imgui_theme.h"
+#include "imgui_fonts.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 
@@ -75,6 +76,7 @@ void mapEditorImguiInit(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
+    imguiLoadBoloFont(18.0f);
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
 }

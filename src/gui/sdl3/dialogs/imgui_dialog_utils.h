@@ -26,6 +26,7 @@
 
 #include <SDL3/SDL.h>
 #include "imgui.h"
+#include "../../imgui_fonts.h"
 
 /* Unified mobile platform check — use BOLO_MOBILE instead of
  * repeating __ANDROID__ || __IPHONEOS__ everywhere. */
@@ -113,28 +114,7 @@ static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
 static inline void dialogApplyScaling(float uiScale) {
     if (uiScale <= 1.05f) return;
 
-    ImGuiIO &io = ImGui::GetIO();
-
-    /* Load font at scaled size */
-    float fontSize = 20.0f * uiScale;
-    int fontDataSize = 0;
-    unsigned char *fontData = dialogLoadFontData("data/fonts/CourierPrime-Regular.ttf", &fontDataSize);
-    if (!fontData) {
-        fontData = dialogLoadFontData("data/CourierPrime-Regular.ttf", &fontDataSize);
-    }
-    if (!fontData) {
-        fontData = dialogLoadFontData("CourierPrime-Regular.ttf", &fontDataSize);
-    }
-    if (fontData) {
-        io.Fonts->AddFontFromMemoryTTF(fontData, fontDataSize, fontSize);
-    } else {
-        /* Fallback: scale the default font */
-        ImFontConfig config;
-        config.SizePixels = fontSize;
-        config.OversampleH = 2;
-        config.OversampleV = 2;
-        io.Fonts->AddFontDefault(&config);
-    }
+    imguiLoadBoloFont(20.0f * uiScale);
 
     /* Apply touch-friendly padding on high-scale displays (mobile, Steam Deck) */
     ImGuiStyle &style = ImGui::GetStyle();

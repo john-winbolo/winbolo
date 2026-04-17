@@ -1107,6 +1107,103 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
 }
 
 
+/*********************************************************
+*NAME:          lv_logLoadFromMemory
+*PURPOSE:
+*  Loads log data from an in-memory zip buffer.
+*  Same as lv_logLoad but uses lv_blocksCreateFromMemory.
+*  Takes ownership of zipData.
+*********************************************************/
+static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
+  char id[LENGTH_ID+1];
+  BYTE dataLen;
+  BYTE logVersion;
+  bool returnValue = TRUE;
+  int len;
+  BYTE ip[4];
+
+  lv_snapshotDestroy(&g_lv->snap);
+  g_lv->snap = lv_snapshotCreate();
+  g_lv->timeRunning = 0;
+
+  returnValue = lv_blocksCreateFromMemory(zipData, zipLen);
+  if (returnValue == TRUE) {
+    len = logReadBytes((BYTE *)id, LENGTH_ID);
+    if (len != LENGTH_ID || strncmp(id,"WBOLOMOV", LENGTH_ID) != 0) {
+      returnValue = FALSE;
+    }
+  }
+  if (returnValue == TRUE) {
+    len = logReadBytes(&logVersion, 1);
+    if (len <= 0) {
+      returnValue = FALSE;
+    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1) {
+      g_lv->loadedLogVersion = logVersion;
+    } else {
+      returnValue = FALSE;
+    }
+  }
+
+  if (returnValue == TRUE) {
+    logReadBytes(&dataLen, 1);
+    len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
+    g_lv->mapName[dataLen] = '\0';
+    if (len != dataLen) {
+      returnValue = FALSE;
+    }
+  }
+
+  if (returnValue == TRUE) {
+    logReadBytes(&g_lv->gt, 1);
+    logReadBytes(&g_lv->allowHiddenMines, 1);
+    logReadBytes(&g_lv->ai, 1);
+    { BYTE tmp; logReadBytes(&tmp, 1); g_lv->usePassword = tmp; }
+    logReadBytes(&g_lv->maxPlayers, 1);
+    logReadBytes(&g_lv->versionMajor, 1);
+    logReadBytes(&g_lv->versionMinor, 1);
+    logReadBytes(&g_lv->versionRevision, 1);
+    logReadBytes(ip, 4);
+    snprintf(g_lv->serverIP, sizeof(g_lv->serverIP), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+    logReadBytes((BYTE *) &g_lv->serverPort, sizeof(unsigned short));
+    g_lv->serverPort = ntohs(g_lv->serverPort);
+    logReadBytes((BYTE *) &g_lv->gmeCreateTime, sizeof(int32_t));
+    g_lv->gmeCreateTime = ntohl(g_lv->gmeCreateTime);
+    len = logReadBytes((BYTE *) &g_lv->wbnKey, 32);
+    if (len != 32) {
+      returnValue = FALSE;
+    }
+  }
+
+  lv_blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
+  len = logReadBytes(&dataLen, 1);
+  if (len != 1 || dataLen != LOG_SNAPSHOT) {
+    returnValue = FALSE;
+  } else {
+    returnValue = lv_processSnapshot();
+  }
+
+  g_lv->logLoaded = returnValue;
+  return returnValue;
+}
+
+bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
+  bool returnValue;
+
+  returnValue = FALSE;
+  lv_blocksDestroy();
+  lv_screenDestroy();
+  lv_screenSetup();
+  returnValue = lv_logLoadFromMemory(zipData, zipLen);
+  if (returnValue == TRUE) {
+    lv_logDecompressAll();
+    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+    g_lv->isPlaying = TRUE;
+    lv_screenUpdateView(redraw);
+    g_lv->state = lv_lr_start;
+  }
+  return returnValue;
+}
+
 bool lv_screenIsPlaying() {
   return g_lv->isPlaying;
 }

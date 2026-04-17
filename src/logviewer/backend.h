@@ -337,6 +337,19 @@ bool lv_screenIsMine(screenMines *value,BYTE xValue, BYTE yValue);
 bool lv_screenLoadMap(char *fileName, int memoryBufferSize);
 
 /*********************************************************
+*NAME:          lv_screenLoadMapFromMemory
+*PURPOSE:
+*  Loads a log from an in-memory zip buffer. Takes ownership
+*  of zipData (freed when the log is closed).
+*  Returns TRUE on success.
+*
+*ARGUMENTS:
+* zipData - Heap-allocated zip file data (ownership transferred)
+* zipLen  - Size of zipData in bytes
+*********************************************************/
+bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen);
+
+/*********************************************************
 *NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/12/98

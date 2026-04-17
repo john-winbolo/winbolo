@@ -15,9 +15,11 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 #include "global.h"
 #include "blocks.h"
 #include "unzip.h"
+#include "ioapi.h"
 
 /* Initial decompression buffer capacity (256 KB) */
 #define LOG_INITIAL_CAPACITY (256 * 1024)
@@ -27,6 +29,8 @@
 
 /* Maximum decompressed log size (512 MB) */
 #define LOG_MAX_SIZE (512 * 1024 * 1024)
+
+static uint8_t *ownedZipData = NULL;  /* Zip buffer owned by us (from memory load) */
 
 static uint8_t *logData     = NULL;  /* Decompressed log data */
 static size_t   logSize     = 0;     /* Bytes decompressed so far */
@@ -74,8 +78,120 @@ bool lv_blocksCreate(char *fileName, int size) {
   logPosition = 0;
   logEOF      = FALSE;
   logFile     = NULL;
+  free(ownedZipData);
+  ownedZipData = NULL;
 
   logFile = unzOpen(fileName);
+  if (logFile == NULL) return FALSE;
+
+  if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
+    unzClose(logFile);
+    logFile = NULL;
+    return FALSE;
+  }
+
+  if (unzOpenCurrentFile(logFile) != UNZ_OK) {
+    unzClose(logFile);
+    logFile = NULL;
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/* ---- In-memory zip I/O callbacks for minizip ---- */
+
+typedef struct {
+    const uint8_t *data;
+    size_t size;
+    size_t pos;
+} MemReader;
+
+static voidpf ZCALLBACK mem_open(voidpf opaque, const char *filename, int mode) {
+    (void)filename; (void)mode;
+    MemReader *mr = (MemReader *)opaque;
+    mr->pos = 0;
+    return mr; /* return non-NULL to indicate success */
+}
+
+static uLong ZCALLBACK mem_read(voidpf opaque, voidpf stream, void *buf, uLong size) {
+    (void)opaque;
+    MemReader *mr = (MemReader *)stream;
+    size_t avail = mr->size > mr->pos ? mr->size - mr->pos : 0;
+    size_t toRead = (size_t)size < avail ? (size_t)size : avail;
+    if (toRead > 0) {
+        memcpy(buf, mr->data + mr->pos, toRead);
+        mr->pos += toRead;
+    }
+    return (uLong)toRead;
+}
+
+static uLong ZCALLBACK mem_write(voidpf opaque, voidpf stream, const void *buf, uLong size) {
+    (void)opaque; (void)stream; (void)buf; (void)size;
+    return 0; /* read-only */
+}
+
+static long ZCALLBACK mem_tell(voidpf opaque, voidpf stream) {
+    (void)opaque;
+    MemReader *mr = (MemReader *)stream;
+    return (long)mr->pos;
+}
+
+static long ZCALLBACK mem_seek(voidpf opaque, voidpf stream, uLong offset, int origin) {
+    (void)opaque;
+    MemReader *mr = (MemReader *)stream;
+    size_t newPos;
+    switch (origin) {
+    case ZLIB_FILEFUNC_SEEK_SET: newPos = (size_t)offset; break;
+    case ZLIB_FILEFUNC_SEEK_CUR: newPos = mr->pos + (size_t)offset; break;
+    case ZLIB_FILEFUNC_SEEK_END: newPos = mr->size + (size_t)offset; break;
+    default: return -1;
+    }
+    if (newPos > mr->size) return -1;
+    mr->pos = newPos;
+    return 0;
+}
+
+static int ZCALLBACK mem_close(voidpf opaque, voidpf stream) {
+    (void)opaque; (void)stream;
+    return 0;
+}
+
+static int ZCALLBACK mem_error(voidpf opaque, voidpf stream) {
+    (void)opaque; (void)stream;
+    return 0;
+}
+
+static MemReader s_memReader;
+
+bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
+  blockKey    = 0;
+  logData     = NULL;
+  logSize     = 0;
+  logCapacity = 0;
+  logPosition = 0;
+  logEOF      = FALSE;
+  logFile     = NULL;
+
+  /* Take ownership of the buffer */
+  ownedZipData = zipData;
+
+  /* Set up memory I/O for minizip */
+  s_memReader.data = zipData;
+  s_memReader.size = zipLen;
+  s_memReader.pos  = 0;
+
+  zlib_filefunc_def filefuncs;
+  filefuncs.zopen_file  = mem_open;
+  filefuncs.zread_file  = mem_read;
+  filefuncs.zwrite_file = mem_write;
+  filefuncs.ztell_file  = mem_tell;
+  filefuncs.zseek_file  = mem_seek;
+  filefuncs.zclose_file = mem_close;
+  filefuncs.zerror_file = mem_error;
+  filefuncs.opaque      = &s_memReader;
+
+  logFile = unzOpen2(NULL, &filefuncs);
   if (logFile == NULL) return FALSE;
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
@@ -105,6 +221,8 @@ void lv_blocksDestroy() {
   logCapacity = 0;
   logPosition = 0;
   logEOF      = FALSE;
+  free(ownedZipData);
+  ownedZipData = NULL;
 }
 
 bool lv_blocksIsEOF() {
