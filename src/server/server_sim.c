@@ -813,12 +813,6 @@ void serverSimTick(ServerSim *sim) {
                     sim->jitterTarget[count] < JITTER_BUFFER_MAX) {
                     sim->jitterTarget[count]++;
                     sim->jitterStallCount[count] = 0;
-                    {
-                        char name[FILENAME_MAX];
-                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-                        SDL_Log("Jitter buffer grow: player %d (%s) ping=%ums target=%u",
-                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
-                    }
                 }
             } else {
                 sim->jitterStallCount[count] = 0;
@@ -827,12 +821,6 @@ void serverSimTick(ServerSim *sim) {
                     sim->jitterTarget[count] > JITTER_BUFFER_MIN) {
                     sim->jitterTarget[count]--;
                     sim->jitterStableTicks[count] = 0;
-                    {
-                        char name[FILENAME_MAX];
-                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-                        SDL_Log("Jitter buffer shrink: player %d (%s) ping=%ums target=%u",
-                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
-                    }
                 }
             }
         }
