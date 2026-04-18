@@ -382,8 +382,8 @@ void mapEditorImguiStatusBar(int tileX, int tileY, float zoomLevel,
 static float s_terrainWindowBottom = 20.0f;
 
 /* Defined in mapview.c — tile atlas pixel coordinates */
-extern int mapViewPosX[256];
-extern int mapViewPosY[256];
+extern "C" int mapViewPosX[256];
+extern "C" int mapViewPosY[256];
 
 /* The 11 paintable terrain entries. Keep in sync with mapeditor.c meTerrainEntries */
 static const struct {

@@ -45,6 +45,7 @@
 #include "sdl3imgui.h"
 #include "cursor.h"
 #include "mapview.h"
+#include "debug_overlay.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -1242,6 +1243,13 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Debug overlays — hitboxes, gunsight, aim line (F1 toggle) */
+      if (debugOverlayIsEnabled()) {
+        debugOverlayDrawMain(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
+                             originX, originY, tileW, tileH, edgeX, edgeY,
+                             cs->xOffset, cs->yOffset, cs->myPlayerNum, gs);
+      }
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isPillView) {

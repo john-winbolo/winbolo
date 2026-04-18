@@ -26,7 +26,25 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#ifndef _MSC_VER
 #include <dirent.h>
+#else
+/* MSVC: implement opendir/readdir/closedir using Win32 FindFirstFile.
+ * Include WinSock2.h (not windows.h) so winsock.h is not included first. */
+#include <WinSock2.h>
+struct dirent { char d_name[MAX_PATH]; };
+typedef struct { HANDLE h; WIN32_FIND_DATAA fd; struct dirent de; int first; } DIR;
+static DIR *opendir(const char *path) {
+    char pat[MAX_PATH]; snprintf(pat, sizeof(pat), "%s\\*", path);
+    DIR *d = malloc(sizeof(DIR)); if (!d) return NULL;
+    d->h = FindFirstFileA(pat, &d->fd); d->first = 1;
+    if (d->h == INVALID_HANDLE_VALUE) { free(d); return NULL; } return d; }
+static struct dirent *readdir(DIR *d) {
+    if (d->first) { d->first = 0; } else if (!FindNextFileA(d->h, &d->fd)) return NULL;
+    strncpy(d->de.d_name, d->fd.cFileName, MAX_PATH-1); d->de.d_name[MAX_PATH-1]=0;
+    return &d->de; }
+static void closedir(DIR *d) { if (d) { FindClose(d->h); free(d); } }
+#endif
 #include <SDL3/SDL.h>
 
 #include "../bolo/global.h"
@@ -102,6 +120,11 @@ void serverSimStartGame(ServerSim *sim);
 
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
+#ifdef _MSC_VER
+#ifndef _Thread_local
+#define _Thread_local __declspec(thread)
+#endif
+#endif
 static _Thread_local ServerSim *activeSim = NULL;
 
 /* Map change callback: records terrain changes into the dedicated map event

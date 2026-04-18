@@ -247,7 +247,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 					if (lgms && lgms[count] != NULL) {
 						BYTE lgmOwner = (*lgms[count])->playerNum;
 						uint8_t rewindTicks;
-						WORLD lgmHitX, lgmHitY;
+						WORLD lgmHitX = 0, lgmHitY = 0;
 						bool useRewound = FALSE;
 
 						if (position->compensationTicks > 0) {
@@ -322,7 +322,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				if (lgms && lgms[count] != NULL) {
 					BYTE lgmOwner = (*lgms[count])->playerNum;
 					uint8_t rewindTicks;
-					WORLD lgmHitX, lgmHitY;
+					WORLD lgmHitX = 0, lgmHitY = 0;
 					bool useRewound = FALSE;
 
 					if (position->compensationTicks > 0) {
@@ -531,7 +531,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 			if (gameSimGetTankPlayer(sim, &tk[count]) != owner) {
 				BYTE targetPlayer = gameSimGetTankPlayer(sim, &tk[count]);
 				uint8_t rewindTicks;
-				WORLD hitCheckX, hitCheckY;
+				WORLD hitCheckX = 0, hitCheckY = 0;
 				bool useRewound = FALSE;
 
 				if (compensationTicks > 0) {
