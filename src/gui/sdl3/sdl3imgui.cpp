@@ -58,6 +58,7 @@ extern "C" {
 #include "sdl3draw.h"
 #include "luabrainshandler.h"
 #include "flags.h"
+#include "debug_overlay.h"
 
 /* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
@@ -2173,6 +2174,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             }
             if (consumedByPopOut) continue;
         }
+
+        /* Route events to debug zoom window (uses rawEv — zoom window has its own renderer). */
+        if (debugZoomHandleEvent(&rawEv)) continue;
 
         /* Route finger events to touch input system in tablet mode.
            Use the raw (unconverted) event since inputTouchProcessEvent

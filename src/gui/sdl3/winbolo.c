@@ -67,6 +67,7 @@
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
+#include "debug_overlay.h"
 
 #include "../aresource.h"
 #include "dialog_backend.h"
@@ -382,7 +383,12 @@ int main(int argc, char *argv[]) {
         sdl3ImguiPumpAndRender(cs);
         {
           SDL_Renderer *ren = sdl3DrawGetRenderer();
+          /* Capture main window pixels for zoom window BEFORE present
+           * (back buffer is undefined after SDL_RenderPresent). */
+          SDL_Surface *zoomSnap = debugZoomCaptureIfOpen(ren);
           if (ren) SDL_RenderPresent(ren);
+          debugZoomRenderFrame(zoomSnap);
+          if (zoomSnap) SDL_DestroySurface(zoomSnap);
         }
 
         /* Cap to configured frame rate */
@@ -442,6 +448,7 @@ int main(int argc, char *argv[]) {
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
+  debugZoomCleanup();
   sdl3DrawCleanup();
   steam_shutdown();
   SDL_Quit();
@@ -1030,6 +1037,8 @@ void windowKeyPressed(ClientSim *cs, int keyCode) {
   } else if (keyCode == keys.kiPillView) {
     screenPillViewCS(cs, 0, 0);
   }
+  if (keyCode == SDL_SCANCODE_F1) { debugOverlayToggle(); }
+  if (keyCode == SDL_SCANCODE_F2) { debugZoomToggle(); }
 }
 
 void windowButtonAdd(int keyCode) {
