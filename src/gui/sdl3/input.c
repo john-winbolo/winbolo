@@ -34,6 +34,7 @@
 #include "input_touch.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
+#include "debug_overlay.h"
 #include "../ui_mode.h"
 
 static BYTE scrollKeyCount = 0;
@@ -63,7 +64,9 @@ static bool appHasFocus(void) {
   if (sdlWin && (SDL_GetWindowFlags(sdlWin) & SDL_WINDOW_INPUT_FOCUS)) {
     return true;
   }
-  return false;
+  /* Also accept input when the debug zoom window has focus so the tank
+   * can be controlled from there. */
+  return debugZoomHasFocus();
 }
 
 /* Returns non-zero if the key at the given SDL_Scancode is currently held */
