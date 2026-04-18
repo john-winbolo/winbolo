@@ -155,6 +155,10 @@ static bool doingTutorial = FALSE;
 static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 
+/* Slow-motion: 1 = normal, 2 = half speed, … 128 = 1/128 speed (1.28s/tick).
+ * Ctrl+Minus slows down (doubles factor), Ctrl+Plus/= speeds up (halves). */
+static int gSlowFactor = 1;
+
 /* Tick counters */
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
@@ -515,8 +519,8 @@ static void windowRunGameTick(ClientSim *cs) {
 
   ttick = winboloTimer();
   /* Update the game objects if required */
-  if ((ttick - oldTick) > GAME_TICK_LENGTH) {
-    while ((ttick - oldTick) > GAME_TICK_LENGTH) {
+  if ((ttick - oldTick) > (DWORD)(GAME_TICK_LENGTH * gSlowFactor)) {
+    while ((ttick - oldTick) > (DWORD)(GAME_TICK_LENGTH * gSlowFactor)) {
       if (doingTutorial == FALSE) {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (cs->netStat == netLobby || cs->netStat == netLobbyCountdown) {
@@ -632,7 +636,7 @@ static void windowRunGameTick(ClientSim *cs) {
           justKeysFlag = TRUE;
           used = TRUE;
         }
-        oldTick += GAME_TICK_LENGTH;
+        oldTick += GAME_TICK_LENGTH * gSlowFactor;
         if (oldTick > ttick) {
           oldTick = ttick;
         }
@@ -1039,6 +1043,22 @@ void windowKeyPressed(ClientSim *cs, int keyCode) {
   }
   if (keyCode == SDL_SCANCODE_F1) { debugOverlayToggle(); }
   if (keyCode == SDL_SCANCODE_F2) { debugZoomToggle(); }
+  {
+    SDL_Keymod mod = SDL_GetModState();
+    if (mod & SDL_KMOD_CTRL) {
+      if (keyCode == SDL_SCANCODE_MINUS) {
+        /* Ctrl+Minus — slow down: 1→2→4→…→128 */
+        if (gSlowFactor < 128) { gSlowFactor *= 2; oldTick = winboloTimer(); }
+      } else if (keyCode == SDL_SCANCODE_EQUALS) {
+        /* Ctrl+Plus (= key) — speed up: 8→4→2→1 */
+        if (gSlowFactor > 1) { gSlowFactor /= 2; oldTick = winboloTimer(); }
+      }
+    }
+  }
+}
+
+int winboloGetSlowFactor(void) {
+  return gSlowFactor;
 }
 
 void windowButtonAdd(int keyCode) {

@@ -84,6 +84,9 @@ static SDL_Texture *gBaseBarsTex    = NULL;  /* MAX_WIDTH x TOTALHEIGHT */
 
 static buildSelect  gCurrentBuildSelect = BsTrees;
 
+/* Slow-factor getter from winbolo.c */
+extern int winboloGetSlowFactor(void);
+
 /* Frame rate counting (mirrors g_dwFrame* in win32/draw.c) */
 static DWORD g_dwFrameTime  = 0;
 static DWORD g_dwFrameCount = 0;
@@ -1261,6 +1264,18 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     }
 
     SDL_SetRenderClipRect(gRenderer, NULL);
+
+    /* Slow-motion speed indicator — top-left of game area */
+    {
+      int sf = winboloGetSlowFactor();
+      if (sf > 1 && gFontMsg) {
+        char speedBuf[16];
+        SDL_snprintf(speedBuf, sizeof(speedBuf), "1/%dx", sf);
+        SDL_Color yellow = {255, 220, 0, 255};
+        sdl3RenderText(gFontMsg, speedBuf, yellow,
+                       (float)(originX + 4), (float)(originY + 4));
+      }
+    }
   }
 
   /* Refresh status panel textures every frame so bases/pills/tanks
