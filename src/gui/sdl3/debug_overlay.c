@@ -186,8 +186,38 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
         }
     }
 
-    /* 3. Gunsight sprite at 1x + aim line (green, 50% alpha)
-     *    Drawn before shell crosshairs so shells appear on top. */
+    /* 3. Shell hit pixel crosshairs — cyan + at the shell's world coordinate.
+     *    The hit coordinate is exactly (shell->x, shell->y) — one game pixel.
+     *    Two 1-pixel-wide lines crossing there form a +; their intersection IS
+     *    the hit pixel.  Drawn before the aim line so green shows through the
+     *    center where the line passes over a shell. */
+    {
+        shells cur = ss->sim.shs;
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(renderer, 0, 255, 255, 200);
+        while (cur) {
+            if (!cur->shellDead) {
+                /* Shell hit coord — matches mapViewDrawShells formula:
+                 * originX - tileW + bbx*zf - edgeX, at 1x (divide by zf):
+                 * orig1xX - TILE_SIZE_X + bbx - edge1xX  (tileW/zf = 16) */
+                int hx = orig1xX - TILE_SIZE_X
+                       + (((int)cur->x >> 8) - (int)xOffset) * 16
+                       + (((int)cur->x >> 4) & 0xF) - edge1xX;
+                int hy = orig1xY - TILE_SIZE_Y
+                       + (((int)cur->y >> 8) - (int)yOffset) * 16
+                       + (((int)cur->y >> 4) & 0xF) - edge1xY;
+                /* Horizontal arm */
+                SDL_RenderLine(renderer, (float)(hx - 3), (float)hy,
+                                         (float)(hx + 3), (float)hy);
+                /* Vertical arm */
+                SDL_RenderLine(renderer, (float)hx, (float)(hy - 3),
+                                         (float)hx, (float)(hy + 3));
+            }
+            cur = cur->next;
+        }
+    }
+
+    /* 4. Gunsight sprite at 1x + aim line (green, 50% alpha) */
     if (gs && gs->mapX != NO_GUNSIGHT) {
         int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
         int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
@@ -218,25 +248,6 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
         SDL_SetRenderDrawColor(renderer, 60, 240, 60, 128);
         SDL_RenderLine(renderer, (float)tcx, (float)tcy, gsCx, gsCy);
-    }
-
-    /* 4. Shell crosshairs (blue, 50% alpha, 1 game pixel thick, ±4 arm)
-     *    Drawn last so they sit on top of everything including the aim line. */
-    {
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
-        SDL_SetRenderDrawColor(renderer, 80, 180, 255, 128);
-        shells cur = ss->sim.shs;
-        while (cur) {
-            if (!cur->shellDead) {
-                int scx, scy;
-                worldTo1x(cur->x, cur->y, orig1xX, orig1xY, edge1xX, edge1xY, xOffset, yOffset, &scx, &scy);
-                /* 1 game pixel = 1 texture pixel.  SDL_RenderLine draws
-                 * 1-texture-px-wide lines → exactly 1 game pixel when scaled. */
-                SDL_RenderLine(renderer, (float)(scx - 4), (float)scy,  (float)(scx + 4), (float)scy);
-                SDL_RenderLine(renderer, (float)scx,        (float)(scy - 4), (float)scx, (float)(scy + 4));
-            }
-            cur = cur->next;
-        }
     }
 
     /* Composite the 1x overlay onto the main render target.

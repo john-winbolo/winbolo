@@ -1743,9 +1743,9 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   /* Left turn */
   if (tb == TLEFT || tb == TLEFTACCEL || tb == TLEFTDECEL) {
     turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
-    if ((*value)->firstLeft < 10) {
+    if ((*value)->firstLeft < 6) {
       (*value)->firstLeft++;
-      turnAmount /=2;
+      turnAmount /= 8;
     }
     (*value)->angle -= turnAmount;
     if ((*value)->angle < 0) {
@@ -1757,9 +1757,9 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   /* Right Turn */
   if (tb == TRIGHT || tb == TRIGHTACCEL || tb == TRIGHTDECEL) {
     turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
-    if ((*value)->firstRight < 10) {
+    if ((*value)->firstRight < 6) {
       (*value)->firstRight++;
-      turnAmount /=2;
+      turnAmount /= 8;
     }
     (*value)->angle += turnAmount;
     if ((*value)->angle > BRADIANS_MAX) {
