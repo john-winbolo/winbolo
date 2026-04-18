@@ -17,7 +17,6 @@
 #include "../../bolo/shells.h"
 #include "../../server/server_sim.h"
 #include "../gamefront.h"
-#include <math.h>
 
 /* -------------------------------------------------------
  * Internal state
@@ -54,61 +53,35 @@ static DebugZoomState gZoom = {
 };
 
 /* -------------------------------------------------------
- * Coordinate helpers (main window only)
+ * 1x overlay render target
  * ------------------------------------------------------- */
 
-/* Convert world coord (256 units/tile) to screen pixel in the main window.
+/* Overlay elements are drawn at 1x game resolution (1 texture pixel =
+ * 1 game pixel = 16 world units) into gOverlayTex, then blitted to the
+ * screen scaled by zoomFactor with SDL_SCALEMODE_NEAREST.  This guarantees
+ * that a 1-texture-pixel line becomes exactly 1 game pixel (zoomFactor
+ * screen pixels) at any zoom level, with no sub-pixel rounding. */
+static SDL_Texture *gOverlayTex  = NULL;
+static int          gOverlayTexW = 0;
+static int          gOverlayTexH = 0;
+
+/* Convert a world coord (256 units/tile) to a 1x game-pixel position in the
+ * overlay texture.  Applies TANK_SUBTRACT (128) — confirmed to give the
+ * correct sprite/collision-point position for both tanks and shells.
  *
- * Replicates screentank.c tankGetScreenMX/PX (TANK_SUBTRACT = 128) and the
- * mapViewDrawTanks formula so the box lands exactly on the visual sprite:
- *   sprite top-left = originX - tileW + bbx*zoom - edgeX
- *   sprite center   = top-left + tileW/2  (tileW = 16*zoom, half = 8*zoom)
- */
-static void worldToMain(WORLD wx, WORLD wy,
-                        int originX, int originY, int edgeX, int edgeY,
-                        int zoomFactor, BYTE xOffset, BYTE yOffset,
-                        float *cx, float *cy) {
-    int dx  = (int)wx - 128;          /* TANK_SUBTRACT = 128 */
-    int dy  = (int)wy - 128;
-    int mx  = dx >> 8;                /* abs tile of sprite top-left */
-    int px  = (dx >> 4) & 0xF;       /* pixel within tile (0-15) */
-    int my  = dy >> 8;
-    int py  = (dy >> 4) & 0xF;
-    int bbx = (mx - (int)xOffset) * 16 + px;
-    int bby = (my - (int)yOffset) * 16 + py;
-    *cx = (float)(originX - 8 * zoomFactor + bbx * zoomFactor - edgeX);
-    *cy = (float)(originY - 8 * zoomFactor + bby * zoomFactor - edgeY);
-}
-
-/* -------------------------------------------------------
- * Drawing helpers
- * ------------------------------------------------------- */
-
-/* Draw a line with width lineW screen pixels using a filled quad
- * (two triangles via SDL_RenderGeometry). Handles any angle.
- * Color components are 0-255 uint8. */
-static void renderThickLine(SDL_Renderer *renderer,
-                            float x1, float y1, float x2, float y2,
-                            float lineW,
-                            Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
-    float dx = x2 - x1, dy = y2 - y1;
-    float len = sqrtf(dx * dx + dy * dy);
-    if (len < 0.5f) return;
-    float hw = lineW * 0.5f;
-    float nx = -dy / len * hw;
-    float ny =  dx / len * hw;
-    SDL_FColor fc;
-    fc.r = (float)r / 255.0f;
-    fc.g = (float)g / 255.0f;
-    fc.b = (float)b / 255.0f;
-    fc.a = (float)a / 255.0f;
-    SDL_Vertex v[4];
-    v[0].position.x = x1 + nx; v[0].position.y = y1 + ny; v[0].color = fc; v[0].tex_coord.x = 0; v[0].tex_coord.y = 0;
-    v[1].position.x = x2 + nx; v[1].position.y = y2 + ny; v[1].color = fc; v[1].tex_coord.x = 0; v[1].tex_coord.y = 0;
-    v[2].position.x = x2 - nx; v[2].position.y = y2 - ny; v[2].color = fc; v[2].tex_coord.x = 0; v[2].tex_coord.y = 0;
-    v[3].position.x = x1 - nx; v[3].position.y = y1 - ny; v[3].color = fc; v[3].tex_coord.x = 0; v[3].tex_coord.y = 0;
-    int idx[6] = { 0, 1, 2,  0, 2, 3 };
-    SDL_RenderGeometry(renderer, NULL, v, 4, idx, 6);
+ * orig1xX = originX / zoomFactor,  edge1xX = edgeX / zoomFactor  (integers
+ * because originX and edgeX are always multiples of zoomFactor in practice). */
+static void worldTo1x(WORLD wx, WORLD wy,
+                       int orig1xX, int orig1xY,
+                       int edge1xX, int edge1xY,
+                       BYTE xOffset, BYTE yOffset,
+                       int *ox, int *oy) {
+    int dx = (int)wx - 128;   /* TANK_SUBTRACT */
+    int dy = (int)wy - 128;
+    int bbx = ((dx >> 8) - (int)xOffset) * 16 + ((dx >> 4) & 0xF);
+    int bby = ((dy >> 8) - (int)yOffset) * 16 + ((dy >> 4) & 0xF);
+    *ox = orig1xX - 8 + bbx - edge1xX;
+    *oy = orig1xY - 8 + bby - edge1xY;
 }
 
 /* -------------------------------------------------------
@@ -136,40 +109,66 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
     ServerSim *ss = gameFrontGetServerSim();
     if (!ss) return;
 
-    float zf = (float)zoomFactor;
+    /* 1x game-pixel divisors (originX and edgeX are always multiples of
+     * zoomFactor since they are computed from tile/zoom constants). */
+    int orig1xX = originX / zoomFactor;
+    int orig1xY = originY / zoomFactor;
+    int edge1xX = edgeX  / zoomFactor;
+    int edge1xY = edgeY  / zoomFactor;
 
-    /* All overlays at 50% alpha, blended over the game image */
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    /* Get renderer output size and (re)create the 1x overlay texture when
+     * the size or zoom factor has changed. */
+    int screenW = 0, screenH = 0;
+    SDL_GetRenderOutputSize(renderer, &screenW, &screenH);
+    /* Add 2 pixels of headroom so the right/bottom edges are never clipped
+     * when screenW is not exactly divisible by zoomFactor. */
+    int texW = screenW / zoomFactor + 2;
+    int texH = screenH / zoomFactor + 2;
+
+    if (!gOverlayTex || gOverlayTexW != texW || gOverlayTexH != texH) {
+        if (gOverlayTex) SDL_DestroyTexture(gOverlayTex);
+        gOverlayTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                        SDL_TEXTUREACCESS_TARGET, texW, texH);
+        if (!gOverlayTex) return;
+        SDL_SetTextureScaleMode(gOverlayTex, SDL_SCALEMODE_NEAREST);
+        gOverlayTexW = texW;
+        gOverlayTexH = texH;
+    }
+
+    /* Switch to 1x overlay render target.
+     * SDL3 saves/restores per-target viewport & clip rect automatically. */
+    SDL_SetRenderTarget(renderer, gOverlayTex);
+    /* BLENDMODE_NONE stores RGBA values directly (no pre-multiplication).
+     * When the overlay is blitted to screen with BLENDMODE_BLEND the stored
+     * alpha is used for correct 50% transparency. */
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    SDL_RenderClear(renderer);
 
     /* 1. Tank bounding box (yellow, 50% alpha)
      *
-     * Hitbox check: abs(tank.x - shell.x) < 128  (WORLD integers, strict <)
-     * Farthest INCLUDED shell: world offset ±127 = ±7 game pixels = ±7*zf px.
-     * Drawing at ±8*zf (the excluded boundary) would put border pixels outside
-     * the hitbox.  Use ±7*zf so the inside edge of the border is the
-     * outermost included game pixel column. */
+     * Hitbox: abs(tank.x - shell.x) < 128  (strict <)
+     * Farthest INCLUDED world offset: ±127 = ±7 game pixels.
+     * Draw inside-edge box at ±7 so border pixels are the outermost
+     * included game-pixel column. */
     WORLD twx = 0, twy = 0;
     tankGetWorld(&ss->sim.tanks[playerNum], &twx, &twy);
-    float cx, cy;
-    worldToMain(twx, twy, originX, originY, edgeX, edgeY,
-                zoomFactor, xOffset, yOffset, &cx, &cy);
-
+    int tcx, tcy;
+    worldTo1x(twx, twy, orig1xX, orig1xY, edge1xX, edge1xY, xOffset, yOffset, &tcx, &tcy);
     {
-        float half = 7.0f * zf;
         SDL_SetRenderDrawColor(renderer, 255, 220, 0, 128);
-        SDL_FRect r = { cx - half, cy - half, half * 2.0f, half * 2.0f };
+        SDL_FRect r = { (float)(tcx - 7), (float)(tcy - 7), 14.0f, 14.0f };
         SDL_RenderRect(renderer, &r);
-        /* Center dot: one game pixel */
-        SDL_FRect dot = { cx - zf * 0.5f, cy - zf * 0.5f, zf, zf };
+        /* Center dot: 1 game pixel */
+        SDL_FRect dot = { (float)tcx, (float)tcy, 1.0f, 1.0f };
         SDL_RenderFillRect(renderer, &dot);
     }
 
     /* 2. Pillbox tile boxes (red, 50% alpha)
      *
-     * Hitbox check: shell.x >> 8 == pill.x  (tile-index equality)
-     * Tile covers world [pill.x*256, pill.x*256+255] — all four edges
-     * of the current rect fall within the included range, so the box is
-     * already showing the correct inside edge. */
+     * Hitbox: shell.x >> 8 == pill.x  (tile equality)
+     * The tile covers [pill.x*256, pill.x*256+255] — 16 game pixels — so
+     * ±8 game pixels from the tile center gives the correct inside edge. */
     {
         BYTE nPills = pillsGetNumPills(&ss->sim.pb);
         BYTE i;
@@ -179,19 +178,26 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
             if (pb.inTank) continue;
             WORLD pwx = (WORLD)((int)pb.x * 256 + 128);
             WORLD pwy = (WORLD)((int)pb.y * 256 + 128);
-            float pcx, pcy;
-            worldToMain(pwx, pwy, originX, originY, edgeX, edgeY,
-                        zoomFactor, xOffset, yOffset, &pcx, &pcy);
-            float half = 8.0f * zf;
+            int pcx, pcy;
+            worldTo1x(pwx, pwy, orig1xX, orig1xY, edge1xX, edge1xY, xOffset, yOffset, &pcx, &pcy);
             SDL_SetRenderDrawColor(renderer, 255, 60, 60, 128);
-            SDL_FRect pr = { pcx - half, pcy - half, half * 2.0f, half * 2.0f };
+            SDL_FRect pr = { (float)(pcx - 8), (float)(pcy - 8), 16.0f, 16.0f };
             SDL_RenderRect(renderer, &pr);
         }
     }
 
-    /* 3. Gunsight sprite + aim line (green, 1 game pixel wide, 50% alpha)
-     *    Drawn before shell crosshairs so shells render on top. */
+    /* 3. Gunsight sprite at 1x + aim line (green, 50% alpha)
+     *    Drawn before shell crosshairs so shells appear on top. */
     if (gs && gs->mapX != NO_GUNSIGHT) {
+        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
+        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
+        /* 1x position of the gunsight sprite's top-left */
+        int gsX1 = orig1xX + gsGameX - TILE_SIZE_X - edge1xX;
+        int gsY1 = orig1xY + gsGameY - TILE_SIZE_Y - edge1xY;
+
+        /* Blit gunsight sprite at 1x size (TILE_SIZE_X × TILE_SIZE_Y px).
+         * SDL_RenderTexture uses tilesTex's own blend mode (BLENDMODE_BLEND),
+         * which composites correctly over the cleared transparent target. */
         float gsInset = 0.05f;
         SDL_FRect gsSrc = {
             (float)(GUNSIGHT_X * sheetScale) + gsInset,
@@ -199,43 +205,51 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
             (float)(TILE_SIZE_X * sheetScale) - 2.0f * gsInset,
             (float)(TILE_SIZE_Y * sheetScale) - 2.0f * gsInset
         };
-        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-        SDL_FRect gsDst = {
-            (float)(originX + (gsGameX - TILE_SIZE_X) * zoomFactor - edgeX),
-            (float)(originY + (gsGameY - TILE_SIZE_Y) * zoomFactor - edgeY),
-            (float)tileW, (float)tileH
+        SDL_FRect gsDst1x = {
+            (float)gsX1, (float)gsY1,
+            (float)TILE_SIZE_X, (float)TILE_SIZE_Y
         };
-        SDL_RenderTexture(renderer, tilesTex, &gsSrc, &gsDst);
+        SDL_RenderTexture(renderer, tilesTex, &gsSrc, &gsDst1x);
 
-        /* Aim line: 1 game pixel (zoomFactor screen pixels) wide */
-        float gsCx = gsDst.x + (float)tileW * 0.5f;
-        float gsCy = gsDst.y + (float)tileH * 0.5f;
-        renderThickLine(renderer, cx, cy, gsCx, gsCy, zf, 60, 240, 60, 128);
+        /* Aim line: 1 texture pixel = 1 game pixel — SDL_RenderLine is
+         * sufficient (no thick-line helper needed at 1x). */
+        float gsCx = (float)gsX1 + TILE_SIZE_X * 0.5f;
+        float gsCy = (float)gsY1 + TILE_SIZE_Y * 0.5f;
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(renderer, 60, 240, 60, 128);
+        SDL_RenderLine(renderer, (float)tcx, (float)tcy, gsCx, gsCy);
     }
 
-    /* 4. Shell crosshairs (blue, 50% alpha, 1 game pixel thick arms)
+    /* 4. Shell crosshairs (blue, 50% alpha, 1 game pixel thick, ±4 arm)
      *    Drawn last so they sit on top of everything including the aim line. */
     {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(renderer, 80, 180, 255, 128);
         shells cur = ss->sim.shs;
         while (cur) {
             if (!cur->shellDead) {
-                float scx, scy;
-                worldToMain(cur->x, cur->y, originX, originY, edgeX, edgeY,
-                            zoomFactor, xOffset, yOffset, &scx, &scy);
-                /* Crosshair arms: 1 game pixel thick, ±4 game pixels long.
-                 * Arms are axis-aligned so draw as filled rects (grid-exact). */
-                float arm = 4.0f * zf;
-                SDL_SetRenderDrawColor(renderer, 80, 180, 255, 128);
-                SDL_FRect hArm = { scx - arm, scy, arm * 2.0f, zf };
-                SDL_FRect vArm = { scx, scy - arm, zf, arm * 2.0f };
-                SDL_RenderFillRect(renderer, &hArm);
-                SDL_RenderFillRect(renderer, &vArm);
+                int scx, scy;
+                worldTo1x(cur->x, cur->y, orig1xX, orig1xY, edge1xX, edge1xY, xOffset, yOffset, &scx, &scy);
+                /* 1 game pixel = 1 texture pixel.  SDL_RenderLine draws
+                 * 1-texture-px-wide lines → exactly 1 game pixel when scaled. */
+                SDL_RenderLine(renderer, (float)(scx - 4), (float)scy,  (float)(scx + 4), (float)scy);
+                SDL_RenderLine(renderer, (float)scx,        (float)(scy - 4), (float)scx, (float)(scy + 4));
             }
             cur = cur->next;
         }
     }
 
+    /* Composite the 1x overlay onto the main render target.
+     * Switching back to NULL restores the game-area clip rect automatically. */
+    SDL_SetRenderTarget(renderer, NULL);
+    SDL_SetTextureBlendMode(gOverlayTex, SDL_BLENDMODE_BLEND);
+    /* Blit 1x texture scaled up by zoomFactor: texture pixel (i,j) →
+     * screen pixels (i*zoomFactor … (i+1)*zoomFactor - 1).  The game-area
+     * clip rect clips anything that lands outside the visible play field. */
+    SDL_FRect blitDst = { 0.0f, 0.0f,
+                          (float)(texW * zoomFactor),
+                          (float)(texH * zoomFactor) };
+    SDL_RenderTexture(renderer, gOverlayTex, NULL, &blitDst);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
 
@@ -299,6 +313,10 @@ void debugZoomToggle(void) {
 
 void debugZoomCleanup(void) {
     zoomWindowDestroy();
+    /* Also release the main-window overlay texture (uses the main renderer,
+     * so must be freed before sdl3DrawCleanup destroys the renderer). */
+    if (gOverlayTex) { SDL_DestroyTexture(gOverlayTex); gOverlayTex = NULL; }
+    gOverlayTexW = gOverlayTexH = 0;
 }
 
 bool debugZoomHasFocus(void) {
