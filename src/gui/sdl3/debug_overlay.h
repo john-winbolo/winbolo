@@ -54,6 +54,10 @@ bool debugZoomHandleEvent(const SDL_Event *ev);
 /* Destroy zoom window resources. Call before sdl3DrawCleanup(). */
 void debugZoomCleanup(void);
 
+/* Returns true if the zoom window is open and has OS input focus.
+ * Used by input.c so tank controls work when the zoom window is active. */
+bool debugZoomHasFocus(void);
+
 #ifdef __cplusplus
 }
 #endif
