@@ -23,6 +23,7 @@
  *********************************************************/
 
 #include "mapview.h"
+#include "debug_overlay.h"
 #include "../tiles.h"
 #include "../../bolo/tilenum.h"
 #include "../../bolo/bolo_map.h"
@@ -457,6 +458,7 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
 
     int srcX, srcY, srcW, srcH;
+    int tipCol = -1, tipRow = -1;
     switch (frame) {
       case SHELL_EXPLOSION8: srcX=EXPLOSION8_X; srcY=EXPLOSION8_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
       case SHELL_EXPLOSION7: srcX=EXPLOSION7_X; srcY=EXPLOSION7_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
@@ -510,18 +512,45 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       static const int8_t kTipRow[16] = {
         0, 0, 0, 0,   /* N   NNE  NE   ENE  */
         1, 2, 3, 3,   /* E   ESE  SE   SSE  */
-        3, 3, 3, 2,   /* S   SSW  SW   WSW  */
+        3, 3, 2, 2,   /* S   SSW  SW   WSW  */
         1, 0, 0, 0    /* W   WNW  NW   NNW  */
       };
       int dir = frame - SHELL_DIR0;
-      sx -= (float)(kTipCol[dir] * ctx->zoomFactor);
-      sy -= (float)(kTipRow[dir] * ctx->zoomFactor);
+      tipCol = kTipCol[dir];
+      tipRow = kTipRow[dir];
+      sx -= (float)(tipCol * ctx->zoomFactor);
+      sy -= (float)(tipRow * ctx->zoomFactor);
     }
 
     int ss = ctx->sheetScale;
     SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
     SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
+    if (frame == SHELL_DIR15) {
+      static bool s_once=false;
+      if (!s_once) {
+        s_once=true;
+        FILE *f=fopen("shell15_debug.txt","w");
+        if (f) {
+          fprintf(f,"ss=%d zoom=%d\nsrcR=(%.0f,%.0f,%.0f,%.0f)\ndstR=(%.0f,%.0f,%.0f,%.0f)\n",
+                  ss, ctx->zoomFactor,
+                  srcR.x, srcR.y, srcR.w, srcR.h,
+                  dstR.x, dstR.y, dstR.w, dstR.h);
+          fclose(f);
+        }
+      }
+    }
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+
+    /* Debug: yellow = sprite (0,0), orange = tip (F1 overlays only) */
+    if (tipCol >= 0 && debugOverlayIsEnabled()) {
+      int zf = ctx->zoomFactor;
+      SDL_SetRenderDrawColor(ctx->renderer, 255, 255, 0, 255);
+      SDL_FRect yel = { sx, sy, (float)zf, (float)zf };
+      SDL_RenderFillRect(ctx->renderer, &yel);
+      SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
+      SDL_FRect orn = { sx + tipCol*zf, sy + tipRow*zf, (float)zf, (float)zf };
+      SDL_RenderFillRect(ctx->renderer, &orn);
+    }
   }
 }
 

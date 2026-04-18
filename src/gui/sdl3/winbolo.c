@@ -157,7 +157,10 @@ static bool finishedLoop = FALSE;
 
 /* Slow-motion: 1 = normal, 2 = half speed, … 128 = 1/128 speed (1.28s/tick).
  * Ctrl+Minus slows down (doubles factor), Ctrl+Plus/= speeds up (halves). */
-static int gSlowFactor = 1;
+static int  gSlowFactor  = 1;
+static bool gPaused      = false;
+static bool gStepOnce    = false;
+static int  gGameTickCount = 0;
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -518,6 +521,15 @@ static void windowRunGameTick(ClientSim *cs) {
   }
 
   ttick = winboloTimer();
+  if (gPaused) {
+    if (gStepOnce) {
+      /* Force exactly one keys-tick + one game-tick through the while loop */
+      gStepOnce = false;
+      oldTick = ttick - (DWORD)(GAME_TICK_LENGTH * gSlowFactor) * 2 - 1;
+    } else {
+      oldTick = ttick;
+    }
+  }
   /* Update the game objects if required */
   if ((ttick - oldTick) > (DWORD)(GAME_TICK_LENGTH * gSlowFactor)) {
     while ((ttick - oldTick) > (DWORD)(GAME_TICK_LENGTH * gSlowFactor)) {
@@ -632,6 +644,7 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimDisplayTick(cs, brainRunning);
           clientMutexRelease();
           simTickCounter++;
+          gGameTickCount++;
           ticks++;
           justKeysFlag = TRUE;
           used = TRUE;
@@ -1041,8 +1054,10 @@ void windowKeyPressed(ClientSim *cs, int keyCode) {
   } else if (keyCode == keys.kiPillView) {
     screenPillViewCS(cs, 0, 0);
   }
-  if (keyCode == SDL_SCANCODE_F1) { debugOverlayToggle(); }
-  if (keyCode == SDL_SCANCODE_F2) { debugZoomToggle(); }
+  if (keyCode == SDL_SCANCODE_F1)     { debugOverlayToggle(); }
+  if (keyCode == SDL_SCANCODE_F2)     { debugZoomToggle(); }
+  if (keyCode == SDL_SCANCODE_P)      { gPaused = !gPaused; gStepOnce = false; }
+  if (keyCode == SDL_SCANCODE_PERIOD) { gPaused = true; gStepOnce = true; }
   {
     SDL_Keymod mod = SDL_GetModState();
     if (mod & SDL_KMOD_CTRL) {
@@ -1059,6 +1074,14 @@ void windowKeyPressed(ClientSim *cs, int keyCode) {
 
 int winboloGetSlowFactor(void) {
   return gSlowFactor;
+}
+
+bool winboloGetPaused(void) {
+  return gPaused;
+}
+
+int winboloGetGameTickCount(void) {
+  return gGameTickCount;
 }
 
 void windowButtonAdd(int keyCode) {
