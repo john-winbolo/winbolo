@@ -144,8 +144,6 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
                 SDL_SetRenderDrawColor(renderer, 80, 180, 255, 255);
                 SDL_FRect sdot = { scx - 3.0f, scy - 3.0f, 7.0f, 7.0f };
                 SDL_RenderFillRect(renderer, &sdot);
-                SDL_FRect sr = { scx - half, scy - half, half * 2.0f, half * 2.0f };
-                SDL_RenderRect(renderer, &sr);
             }
             cur = cur->next;
         }
