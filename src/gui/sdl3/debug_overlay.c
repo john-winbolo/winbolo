@@ -51,15 +51,27 @@ static DebugZoomState gZoom = {
  * Coordinate helpers (main window only)
  * ------------------------------------------------------- */
 
-/* Convert world coord (256 units/tile) to screen pixel in the main window. */
+/* Convert world coord (256 units/tile) to screen pixel in the main window.
+ *
+ * Replicates screentank.c tankGetScreenMX/PX (TANK_SUBTRACT = 128) and the
+ * mapViewDrawTanks formula so the box lands exactly on the visual sprite:
+ *   sprite top-left = originX - tileW + bbx*zoom - edgeX
+ *   sprite center   = top-left + tileW/2  (tileW = 16*zoom, half = 8*zoom)
+ */
 static void worldToMain(WORLD wx, WORLD wy,
                         int originX, int originY, int edgeX, int edgeY,
                         int zoomFactor, BYTE xOffset, BYTE yOffset,
                         float *cx, float *cy) {
-    int wpx = ((int)wx * 16) >> 8;   /* world-pixel = wx / 16 */
-    int wpy = ((int)wy * 16) >> 8;
-    *cx = (float)(originX + (wpx - xOffset * 16) * zoomFactor - edgeX);
-    *cy = (float)(originY + (wpy - yOffset * 16) * zoomFactor - edgeY);
+    int dx  = (int)wx - 128;          /* TANK_SUBTRACT = 128 */
+    int dy  = (int)wy - 128;
+    int mx  = dx >> 8;                /* abs tile of sprite top-left */
+    int px  = (dx >> 4) & 0xF;       /* pixel within tile (0-15) */
+    int my  = dy >> 8;
+    int py  = (dy >> 4) & 0xF;
+    int bbx = (mx - (int)xOffset) * 16 + px;
+    int bby = (my - (int)yOffset) * 16 + py;
+    *cx = (float)(originX - 8 * zoomFactor + bbx * zoomFactor - edgeX);
+    *cy = (float)(originY - 8 * zoomFactor + bby * zoomFactor - edgeY);
 }
 
 /* -------------------------------------------------------
