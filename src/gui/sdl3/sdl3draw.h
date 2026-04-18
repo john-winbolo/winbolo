@@ -69,6 +69,7 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+SDL_Texture *sdl3DrawGetCrosshairTex(void);
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);
 

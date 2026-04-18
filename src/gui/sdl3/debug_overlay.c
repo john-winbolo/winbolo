@@ -15,6 +15,7 @@
 #include "../../bolo/tank.h"
 #include "../../bolo/pillbox.h"
 #include "../../bolo/shells.h"
+#include "../../bolo/util.h"
 #include "../../server/server_sim.h"
 #include "../gamefront.h"
 
@@ -162,6 +163,17 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
         /* Center dot: 1 game pixel */
         SDL_FRect dot = { (float)tcx, (float)tcy, 1.0f, 1.0f };
         SDL_RenderFillRect(renderer, &dot);
+        /* Tank angle text below center */
+        TURNTYPE tAngle = tankGetAngle(&ss->sim.tanks[playerNum]);
+        char angBuf[16];
+        SDL_snprintf(angBuf, sizeof(angBuf), "a=%.2f", (double)tAngle);
+        SDL_SetRenderDrawColor(renderer, 255, 220, 0, 220);
+        SDL_RenderDebugText(renderer, (float)(tcx + 2), (float)(tcy + 9), angBuf);
+        int dxShell, dyShell;
+        utilCalcDistance(&dxShell, &dyShell, tAngle, SHELL_SPEED);
+        char dxyBuf[20];
+        SDL_snprintf(dxyBuf, sizeof(dxyBuf), "d=%d,%d", dxShell, dyShell);
+        SDL_RenderDebugText(renderer, (float)(tcx + 2), (float)(tcy + 18), dxyBuf);
     }
 
     /* 2. Pillbox tile boxes (red, 50% alpha)
@@ -186,68 +198,143 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
         }
     }
 
-    /* 3. Shell hit pixel crosshairs — cyan + at the shell's world coordinate.
-     *    The hit coordinate is exactly (shell->x, shell->y) — one game pixel.
-     *    Two 1-pixel-wide lines crossing there form a +; their intersection IS
-     *    the hit pixel.  Drawn before the aim line so green shows through the
-     *    center where the line passes over a shell. */
+    /* 3. Shell [TX, TY] world-coordinate labels (yellow text below each shell) */
     {
         shells cur = ss->sim.shs;
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
-        SDL_SetRenderDrawColor(renderer, 0, 255, 255, 200);
         while (cur) {
             if (!cur->shellDead) {
-                /* Shell hit coord — matches mapViewDrawShells formula:
-                 * originX - tileW + bbx*zf - edgeX, at 1x (divide by zf):
-                 * orig1xX - TILE_SIZE_X + bbx - edge1xX  (tileW/zf = 16) */
-                int hx = orig1xX - TILE_SIZE_X
-                       + (((int)cur->x >> 8) - (int)xOffset) * 16
-                       + (((int)cur->x >> 4) & 0xF) - edge1xX;
-                int hy = orig1xY - TILE_SIZE_Y
-                       + (((int)cur->y >> 8) - (int)yOffset) * 16
-                       + (((int)cur->y >> 4) & 0xF) - edge1xY;
-                /* Horizontal arm */
-                SDL_RenderLine(renderer, (float)(hx - 3), (float)hy,
-                                         (float)(hx + 3), (float)hy);
-                /* Vertical arm */
-                SDL_RenderLine(renderer, (float)hx, (float)(hy - 3),
-                                         (float)hx, (float)(hy + 3));
+                int shx = orig1xX - 16
+                        + ((int)(cur->x >> 8) - (int)xOffset) * 16
+                        + ((int)(cur->x >> 4) & 0xF)
+                        - edge1xX;
+                int shy = orig1xY - 16
+                        + ((int)(cur->y >> 8) - (int)yOffset) * 16
+                        + ((int)(cur->y >> 4) & 0xF)
+                        - edge1xY;
+                char buf[24];
+                SDL_snprintf(buf, sizeof(buf), "[%u,%u]", (unsigned)cur->x, (unsigned)cur->y);
+                SDL_SetRenderDrawColor(renderer, 255, 255, 100, 220);
+                SDL_RenderDebugText(renderer, (float)(shx + 2), (float)(shy + 2), buf);
             }
             cur = cur->next;
         }
     }
 
-    /* 4. Gunsight sprite at 1x + aim line (green, 50% alpha) */
+    /* 4. Custom 17×17 crosshair + aim line (green, 50% alpha).
+     *    Center pixel (8,8) of the 17×17 image is the exact aim point.
+     *    Top-left is at the same position as the old 16×16 tile sprite so
+     *    center (8,8) aligns with the gunsight world position. */
     if (gs && gs->mapX != NO_GUNSIGHT) {
         int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
         int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-        /* 1x position of the gunsight sprite's top-left */
         int gsX1 = orig1xX + gsGameX - TILE_SIZE_X - edge1xX;
         int gsY1 = orig1xY + gsGameY - TILE_SIZE_Y - edge1xY;
 
-        /* Blit gunsight sprite at 1x size (TILE_SIZE_X × TILE_SIZE_Y px).
-         * SDL_RenderTexture uses tilesTex's own blend mode (BLENDMODE_BLEND),
-         * which composites correctly over the cleared transparent target. */
-        float gsInset = 0.05f;
-        SDL_FRect gsSrc = {
-            (float)(GUNSIGHT_X * sheetScale) + gsInset,
-            (float)(GUNSIGHT_Y * sheetScale) + gsInset,
-            (float)(TILE_SIZE_X * sheetScale) - 2.0f * gsInset,
-            (float)(TILE_SIZE_Y * sheetScale) - 2.0f * gsInset
-        };
-        SDL_FRect gsDst1x = {
-            (float)gsX1, (float)gsY1,
-            (float)TILE_SIZE_X, (float)TILE_SIZE_Y
-        };
-        SDL_RenderTexture(renderer, tilesTex, &gsSrc, &gsDst1x);
+        SDL_Texture *crosshairTex = sdl3DrawGetCrosshairTex();
+        if (crosshairTex) {
+            SDL_FRect gsDst1x = { (float)gsX1, (float)gsY1, 17.0f, 17.0f };
+            SDL_RenderTexture(renderer, crosshairTex, NULL, &gsDst1x);
+        }
 
-        /* Aim line: 1 texture pixel = 1 game pixel — SDL_RenderLine is
-         * sufficient (no thick-line helper needed at 1x). */
-        float gsCx = (float)gsX1 + TILE_SIZE_X * 0.5f;
-        float gsCy = (float)gsY1 + TILE_SIZE_Y * 0.5f;
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
-        SDL_SetRenderDrawColor(renderer, 60, 240, 60, 128);
-        SDL_RenderLine(renderer, (float)tcx, (float)tcy, gsCx, gsCy);
+        /* Simulated shell trajectory — run the same HP fixed-point engine
+         * as shellsUpdate for each tick and plot a 1x1 dot per tick.
+         * SHELL_START_ADD=5 matches the override in shells.c. */
+        {
+            TURNTYPE angle  = tankGetAngle(&ss->sim.tanks[playerNum]);
+            BYTE     len    = tankGetGunsightLength(&ss->sim.tanks[playerNum]);
+
+            /* Starting position: tank world coords offset by SHELL_START_ADD
+             * steps (same as shellsAddItem). */
+            int xAddInit, yAddInit;
+            utilCalcDistance(&xAddInit, &yAddInit, angle, SHELL_SPEED);
+            WORLD tx = twx + (WORLD)(5 * xAddInit);
+            WORLD ty = twy + (WORLD)(5 * yAddInit);
+
+            /* Match clientSimAdvancePredictedShells exactly:
+             * plain utilCalcDistance per tick, length = 1 + SHELL_LIFE*(sightLen/2) - SHELL_START_ADD */
+            int xStep, yStep;
+            utilCalcDistance(&xStep, &yStep, angle, SHELL_SPEED);
+
+            BYTE ticks = (BYTE)((SHELL_LIFE * (len / 2)) - SHELL_START_ADD);
+
+            /* Debug: write trajectory parameters to file once per toggle */
+            {
+                static bool s_logged = false;
+                static bool s_prevEnabled = false;
+                if (gDbgOverlaysEnabled != s_prevEnabled) {
+                    s_prevEnabled = gDbgOverlaysEnabled;
+                    s_logged = false;
+                }
+                if (!s_logged) {
+                    s_logged = true;
+                    FILE *f = fopen("traj_debug.txt", "w");
+                    if (f) {
+                        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
+                        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
+                        int gsCenterX = orig1xX + gsGameX - TILE_SIZE_X - edge1xX + 8;
+                        int gsCenterY = orig1xY + gsGameY - TILE_SIZE_Y - edge1xY + 8;
+                        fprintf(f, "twx=%u twy=%u  xOffset=%u yOffset=%u\n", twx, twy, xOffset, yOffset);
+                        fprintf(f, "xAddInit=%d yAddInit=%d  startOffset=(%d,%d)\n",
+                                xAddInit, yAddInit, 5*xAddInit, 5*yAddInit);
+                        fprintf(f, "tx_start=%u ty_start=%u\n", tx, ty);
+                        fprintf(f, "xStep=%d yStep=%d  ticks=%u\n", xStep, yStep, (unsigned)ticks);
+                        fprintf(f, "xStep total=%d yStep total=%d\n", xStep*ticks, yStep*ticks);
+                        fprintf(f, "orig1xX=%d orig1xY=%d edge1xX=%d edge1xY=%d\n",
+                                orig1xX, orig1xY, edge1xX, edge1xY);
+                        fprintf(f, "gunsight center 1x: (%d,%d)\n", gsCenterX, gsCenterY);
+                        fclose(f);
+                    }
+                }
+            }
+
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer, 60, 240, 60, 200);
+
+            for (BYTE t = 0; t < ticks; t++) {
+                tx += (WORLD)xStep;
+                ty += (WORLD)yStep;
+
+                /* Use same formula as mapViewDrawShells — no TANK_SUBTRACT */
+                int px = orig1xX - 16
+                       + ((int)(tx >> 8) - (int)xOffset) * 16
+                       + ((int)(tx >> 4) & 0xF)
+                       - edge1xX;
+                int py = orig1xY - 16
+                       + ((int)(ty >> 8) - (int)yOffset) * 16
+                       + ((int)(ty >> 4) & 0xF)
+                       - edge1xY;
+                SDL_FRect dot = { (float)px, (float)py, 1.0f, 1.0f };
+                SDL_RenderFillRect(renderer, &dot);
+            }
+
+            /* Debug: write final dot + gunsight center every frame */
+            {
+                static int s_frameSkip = 0;
+                if (++s_frameSkip >= 30) {   /* log ~once per second */
+                    s_frameSkip = 0;
+                    FILE *f = fopen("traj_debug.txt", "a");
+                    if (f) {
+                        int px_final = orig1xX - 16
+                                     + ((int)(tx >> 8) - (int)xOffset) * 16
+                                     + ((int)(tx >> 4) & 0xF)
+                                     - edge1xX;
+                        int py_final = orig1xY - 16
+                                     + ((int)(ty >> 8) - (int)yOffset) * 16
+                                     + ((int)(ty >> 4) & 0xF)
+                                     - edge1xY;
+                        int gsGameX2 = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
+                        int gsGameY2 = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
+                        int gsCX = orig1xX + gsGameX2 - TILE_SIZE_X - edge1xX + 8;
+                        int gsCY = orig1xY + gsGameY2 - TILE_SIZE_Y - edge1xY + 8;
+                        fprintf(f, "dot=(%d,%d)  gs_center=(%d,%d)  diff=(%d,%d)  gs.pixelY=%d\n",
+                                px_final, py_final, gsCX, gsCY,
+                                px_final - gsCX, py_final - gsCY,
+                                (int)gs->pixelY);
+                        fclose(f);
+                    }
+                }
+            }
+        }
     }
 
     /* Composite the 1x overlay onto the main render target.

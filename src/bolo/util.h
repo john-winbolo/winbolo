@@ -54,6 +54,7 @@
 
 
 /* Includes */
+#include <stdint.h>
 #include "global.h"
 #include "types.h"
 
@@ -73,6 +74,10 @@
 *  speed   - The speed of the tank
 *********************************************************/
 void utilCalcDistance(int *xAmount, int *yAmount, TURNTYPE angle, int speed);
+
+/* High-precision variant: returns step scaled by 256 (24.8 fixed-point) so
+ * callers can accumulate the fractional part and avoid per-tick rounding. */
+void utilCalcDistanceHP(int32_t *xStep, int32_t *yStep, TURNTYPE angle, int speed);
 
 
 /*********************************************************

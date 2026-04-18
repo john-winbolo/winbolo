@@ -142,13 +142,16 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->x = x;
   q->y = y;
   q->angle = angle;
-  q->length = (BYTE) (1 + (SHELL_LIFE * len) - (SHELL_START_ADD));
+  q->length = (BYTE) ((SHELL_LIFE * len) - (SHELL_START_ADD));
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;
   q->packSent = FALSE;
   q->shellDead = FALSE;
   q->compensationTicks = sim->lagCompTicks;
+  utilCalcDistanceHP(&q->xStep, &q->yStep, angle, SHELL_SPEED);
+  q->xAcc = 0;
+  q->yAcc = 0;
   q->next = *value;
   q->prev = NULL;
   if (NonEmpty(*value)) {
@@ -210,8 +213,15 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 		} else if (position->shellDead == TRUE && position->packSent == FALSE) {
 			needUpdate = TRUE;
 		} else if (position->length > SHELL_DEATH) {
-			/* Move the shell */
-			utilCalcDistance(&xAdd, &yAdd, position->angle, SHELL_SPEED);
+			/* Move the shell using high-precision fixed-point accumulator.
+			 * xStep/yStep are SHELL_SPEED*cos/sin*256 (24.8 format).
+			 * xAcc/yAcc carry the fractional remainder between ticks. */
+			position->xAcc += position->xStep;
+			position->yAcc += position->yStep;
+			xAdd = position->xAcc >> 8;
+			yAdd = position->yAcc >> 8;
+			position->xAcc -= xAdd << 8;
+			position->yAcc -= yAdd << 8;
 			newX = (WORLD) (position->x + xAdd);
 			newY = (WORLD) (position->y + yAdd);
 			/* Check for colision */
@@ -977,6 +987,9 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
       q->owner = owner;
       q->onBoat = onBoat;
       q->creator = creator;
+      utilCalcDistanceHP(&q->xStep, &q->yStep, tt, SHELL_SPEED);
+      q->xAcc = 0;
+      q->yAcc = 0;
       /* Add it to the structure */
       q->next = *value;
       q->prev = NULL;

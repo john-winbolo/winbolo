@@ -88,6 +88,13 @@ struct shellsObj {
                        and it doesn't get updated any more but exists till
                        it gets sent (ie packSent == TRUE) */
   uint8_t compensationTicks;  /* rewind ticks for lag compensation (0 = no compensation) */
+  /* High-precision fixed-point step: speed * cos/sin * 256, stored once at
+   * creation so we don't re-round every tick.  xAcc/yAcc accumulate the
+   * fractional world-unit remainder between ticks. */
+  int32_t xStep;    /* 24.8 fixed-point X step per tick (SHELL_SPEED * cos * 256) */
+  int32_t yStep;    /* 24.8 fixed-point Y step per tick (SHELL_SPEED * sin * 256) */
+  int32_t xAcc;     /* fractional accumulator, range [0, 256) */
+  int32_t yAcc;     /* fractional accumulator, range [0, 256) */
 };
 
 
