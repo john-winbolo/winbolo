@@ -81,6 +81,18 @@ static SDL_Texture *gManStatusTex   = NULL;  /* MAN_STATUS_WIDTH*zf x MAN_STATUS
 static SDL_Texture *gTankBarsTex    = NULL;  /* TOTALWIDTH x HEIGHT */
 static SDL_Texture *gBaseBarsTex    = NULL;  /* MAX_WIDTH x TOTALHEIGHT */
 
+/* Render target for game content — allows game to scale while menu stays 1x.
+   The game is rendered to this texture at logical size, then blitted scaled
+   to the window below the menu bar. */
+static SDL_Texture *gGameRenderTarget = NULL;
+static int          gGameRTWidth      = 0;   /* Render target dimensions */
+static int          gGameRTHeight     = 0;
+
+/* Where the scaled game content is blitted in window coordinates.
+   Set each frame after calculating aspect-preserving scale. */
+static SDL_FRect    gGameDestRect = {0, 0, 0, 0};
+static float        gGameScale    = 1.0f;    /* Scale factor from RT to dest */
+
 static buildSelect  gCurrentBuildSelect = BsTrees;
 
 /* Frame rate counting (mirrors g_dwFrame* in win32/draw.c) */
@@ -632,13 +644,75 @@ void sdl3DrawRestoreLogicalPresentation(void) {
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
   }
 #endif
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* Desktop mode: no logical presentation needed.
+     Game is rendered to a texture and blitted scaled to the window.
+     No-op here — the render target approach handles coordinate transformation. */
+  (void)0;
+#endif
+}
+
+/* Transform window coordinates to game logical coordinates.
+   Returns false if the point is outside the game area (in letterbox/pillarbox). */
+static bool windowToGameCoords(float winX, float winY, float *gameX, float *gameY) {
+  if (!gRenderer) return false;
+
+  /* Desktop mode with render target: use gGameDestRect for transformation */
+  if (gGameRenderTarget != NULL && gGameDestRect.w > 0 && gGameDestRect.h > 0) {
+    /* Check if point is inside the scaled game area */
+    if (winX < gGameDestRect.x || winX >= gGameDestRect.x + gGameDestRect.w ||
+        winY < gGameDestRect.y || winY >= gGameDestRect.y + gGameDestRect.h) {
+      return false;
+    }
+    /* Transform: subtract offset, then scale down to logical coords */
+    *gameX = (winX - gGameDestRect.x) / gGameScale;
+    *gameY = (winY - gGameDestRect.y) / gGameScale;
+    return true;
+  }
+
+  /* Fallback: check SDL logical presentation (mobile/tablet modes) */
+  SDL_FRect logRect;
+  if (!SDL_GetRenderLogicalPresentationRect(gRenderer, &logRect)) {
+    /* No logical presentation - coords are 1:1 */
+    *gameX = winX;
+    *gameY = winY;
+    return true;
+  }
+
+  /* Check if point is inside the game area */
+  if (winX < logRect.x || winX >= logRect.x + logRect.w ||
+      winY < logRect.y || winY >= logRect.y + logRect.h) {
+    return false;
+  }
+
+  /* Get logical size */
+  int logW = 0, logH = 0;
+  SDL_RendererLogicalPresentation logMode;
+  SDL_GetRenderLogicalPresentation(gRenderer, &logW, &logH, &logMode);
+  if (logW <= 0 || logH <= 0) {
+    *gameX = winX;
+    *gameY = winY;
+    return true;
+  }
+
+  /* Transform: subtract offset, then scale */
+  float scale = logRect.w / (float)logW;
+  *gameX = (winX - logRect.x) / scale;
+  *gameY = (winY - logRect.y) / scale;
+  return true;
 }
 
 void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
     case SDL_EVENT_MOUSE_MOTION: {
-      cursorMove((int)ev->motion.x, (int)ev->motion.y);
+      /* Transform window coords to game coords */
+      float gameX, gameY;
+      if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
+        screenSetCursorPosCS(cs, 0, 0);
+        break;
+      }
+      cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy)) {
         if (cx > 16 || cy > 16) cx = 100;
@@ -657,8 +731,10 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
           clientMutexRelease();
         } else {
           /* Check if click landed on one of the 5 build-select buttons */
-          int xPos = (int)ev->button.x;
-          int yPos = (int)ev->button.y;
+          float gx, gy;
+          if (!windowToGameCoords(ev->button.x, ev->button.y, &gx, &gy)) break;
+          int xPos = (int)gx;
+          int yPos = (int)gy;
           int zf = gZoomFactor;
           buildSelect newSelect = NO_SELECT;
           if (xPos >= zf * BS_TREE_OFFSET_X && xPos <= zf * (BS_TREE_OFFSET_X + BS_ITEM_SIZE_X) &&
@@ -800,6 +876,14 @@ bool sdl3DrawSetup(int zoomFactor) {
     return FALSE;
   }
 
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* Lock aspect ratio for desktop resizable windows */
+  if (!uiModeIsTablet()) {
+    float aspect = (float)SDL3_SCREEN_W / (float)SDL3_SCREEN_H;
+    SDL_SetWindowAspectRatio(gWindow, aspect, aspect);
+  }
+#endif
+
   gRenderer = SDL_CreateRenderer(gWindow, NULL);
   if (gRenderer == NULL) {
     SDL_Log("sdl3DrawSetup: SDL_CreateRenderer failed: %s", SDL_GetError());
@@ -916,6 +1000,25 @@ bool sdl3DrawSetup(int zoomFactor) {
   gTankBarsTex    = sdl3CreateRenderTarget(STATUS_TANK_BARS_TOTALWIDTH, STATUS_TANK_BARS_HEIGHT);
   gBaseBarsTex    = sdl3CreateRenderTarget(STATUS_BASE_BARS_MAX_WIDTH,  STATUS_BASE_BARS_TOTALHEIGHT);
 
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* Desktop resizable: create a render target for the game content.
+     The game is rendered at its logical size, then blitted scaled to the
+     window below the menu bar. This allows the menu to stay at 1x size
+     while the game scales. */
+  if (!uiModeIsTablet()) {
+    gGameRTWidth  = gZoomFactor * SDL3_SCREEN_W;
+    gGameRTHeight = gZoomFactor * SDL3_SCREEN_H;
+    gGameRenderTarget = SDL_CreateTexture(gRenderer,
+                                          SDL_PIXELFORMAT_RGBA8888,
+                                          SDL_TEXTUREACCESS_TARGET,
+                                          gGameRTWidth, gGameRTHeight);
+    if (gGameRenderTarget) {
+      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_NEAREST);
+      SDL_Log("sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
+    }
+  }
+#endif
+
   return TRUE;
 }
 
@@ -941,9 +1044,10 @@ void sdl3DrawCleanup(void) {
   if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   TTF_Quit();
 
-  if (gManStatusTex)   { SDL_DestroyTexture(gManStatusTex);   gManStatusTex   = NULL; }
-  if (gTankBarsTex)    { SDL_DestroyTexture(gTankBarsTex);    gTankBarsTex    = NULL; }
-  if (gBaseBarsTex)    { SDL_DestroyTexture(gBaseBarsTex);    gBaseBarsTex    = NULL; }
+  if (gManStatusTex)     { SDL_DestroyTexture(gManStatusTex);     gManStatusTex     = NULL; }
+  if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
+  if (gBaseBarsTex)      { SDL_DestroyTexture(gBaseBarsTex);      gBaseBarsTex      = NULL; }
+  if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
@@ -991,10 +1095,16 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     return;
   }
 
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  /* Desktop resizable: render game to off-screen texture, then blit scaled */
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
-
-  bool tabletMode = uiModeIsTablet();
 
   /* Effective zoom: in tablet mode, compute a scale that fits the 15x15
      tile game view to the screen, then centre it. */
@@ -1315,6 +1425,55 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
   /* Restore original zoom factor after tablet-mode override */
   gZoomFactor = savedZoomFactor;
+
+  /* Desktop resizable: blit game texture to window, scaled below menu bar */
+  if (useRenderTarget) {
+    /* Switch back to window */
+    SDL_SetRenderTarget(gRenderer, NULL);
+
+    /* Get window size */
+    int winW, winH;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+
+    /* Menu bar height — ImGui default is ~20 pixels, but we'll query it later.
+       For now, use a reasonable estimate. */
+    float menuBarHeight = 22.0f;
+
+    /* Available area below menu */
+    float availW = (float)winW;
+    float availH = (float)winH - menuBarHeight;
+
+    /* Calculate scale to fit game while preserving aspect ratio */
+    float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
+    float availAspect = availW / availH;
+
+    float destW, destH, destX, destY;
+    if (gameAspect > availAspect) {
+      /* Game is wider — fit to width, letterbox top/bottom */
+      destW = availW;
+      destH = availW / gameAspect;
+      destX = 0;
+      destY = menuBarHeight + (availH - destH) / 2.0f;
+    } else {
+      /* Game is taller — fit to height, pillarbox left/right */
+      destH = availH;
+      destW = availH * gameAspect;
+      destX = (availW - destW) / 2.0f;
+      destY = menuBarHeight;
+    }
+
+    /* Store for coordinate transformation */
+    gGameDestRect.x = destX;
+    gGameDestRect.y = destY;
+    gGameDestRect.w = destW;
+    gGameDestRect.h = destH;
+    gGameScale = destW / (float)gGameRTWidth;
+
+    /* Clear window and blit game texture */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(gRenderer, NULL);
+    SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
+  }
 }
 
 void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
@@ -1323,6 +1482,12 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   if (gRenderer == NULL) return;
 
   bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  /* Desktop resizable: render to off-screen texture */
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
 
   sdl3DrawSelectIndentsOn(value, 0, 0);
 
@@ -1377,6 +1542,44 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 
     sdl3RenderStatusPanels();
     sdl3RenderCachedText();
+  }
+
+  /* Desktop resizable: blit game texture to window, scaled below menu bar */
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, NULL);
+
+    int winW, winH;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+
+    float menuBarHeight = 22.0f;
+    float availW = (float)winW;
+    float availH = (float)winH - menuBarHeight;
+
+    float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
+    float availAspect = availW / availH;
+
+    float destW, destH, destX, destY;
+    if (gameAspect > availAspect) {
+      destW = availW;
+      destH = availW / gameAspect;
+      destX = 0;
+      destY = menuBarHeight + (availH - destH) / 2.0f;
+    } else {
+      destH = availH;
+      destW = availH * gameAspect;
+      destX = (availW - destW) / 2.0f;
+      destY = menuBarHeight;
+    }
+
+    gGameDestRect.x = destX;
+    gGameDestRect.y = destY;
+    gGameDestRect.w = destW;
+    gGameDestRect.h = destH;
+    gGameScale = destW / (float)gGameRTWidth;
+
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(gRenderer, NULL);
+    SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
   }
 }
 
