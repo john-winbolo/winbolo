@@ -65,6 +65,9 @@
 #ifndef NO_SELECT
 #define NO_SELECT -1
 #endif
+#ifndef ZOOM_FACTOR_CUSTOM
+#define ZOOM_FACTOR_CUSTOM 0
+#endif
 
 static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
@@ -1013,7 +1016,7 @@ bool sdl3DrawSetup(int zoomFactor) {
                                           SDL_TEXTUREACCESS_TARGET,
                                           gGameRTWidth, gGameRTHeight);
     if (gGameRenderTarget) {
-      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_NEAREST);
+      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
       SDL_Log("sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
@@ -1084,6 +1087,96 @@ static void sdl3DrawTankLabels(screenTanks *tks) {
   }
 }
 
+/* -------------------------------------------------------
+ * sdl3DrawAdaptRenderTarget — dynamically resize the game
+ * render target when the window size changes in Custom zoom
+ * mode.  Computes the ceiling integer zoom so the render
+ * target is always >= the window size, then downscales the
+ * blit for crisp output at any window size.
+ * ------------------------------------------------------- */
+static void sdl3DrawAdaptRenderTarget(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  extern BYTE zoomFactor;
+  if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;
+  if (!gRenderer || !gWindow) return;
+  if (uiModeIsTablet()) return;
+
+  int winW, winH;
+  SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+
+  /* Ceiling integer zoom: smallest integer where zoom * gameSize >= windowSize */
+  int zoomForW = (winW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
+  int zoomForH = (winH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
+  int needZoom = (zoomForW > zoomForH) ? zoomForW : zoomForH;
+  if (needZoom < 1) needZoom = 1;
+
+  /* Nothing to do if already at the right zoom */
+  if (needZoom == gZoomFactor && gGameRenderTarget != NULL) return;
+
+  SDL_Log("sdl3DrawAdaptRenderTarget: window %dx%d -> zoom %d (was %d)",
+          winW, winH, needZoom, gZoomFactor);
+
+  /* Destroy old resources that are zoom-dependent */
+  if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
+  tileLoaderCleanup();
+  if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
+  if (gManStatusTex) { SDL_DestroyTexture(gManStatusTex); gManStatusTex = NULL; }
+
+  /* Destroy font resources */
+  for (int i = 0; i < SDL3_MAX_PLAYERS; i++) {
+    if (gLabelTex[i]) { SDL_DestroyTexture(gLabelTex[i]); gLabelTex[i] = NULL; }
+    gLabelStr[i][0] = '\0';
+  }
+  if (gTexMsgTop)  { SDL_DestroyTexture(gTexMsgTop);  gTexMsgTop  = NULL; }
+  if (gTexMsgBot)  { SDL_DestroyTexture(gTexMsgBot);  gTexMsgBot  = NULL; }
+  if (gTexKills)   { SDL_DestroyTexture(gTexKills);   gTexKills   = NULL; }
+  if (gTexDeaths)  { SDL_DestroyTexture(gTexDeaths);  gTexDeaths  = NULL; }
+  gTexMsgTopStr[0] = '\0'; gTexMsgBotStr[0] = '\0';
+  gTexKillsStr[0] = '\0'; gTexDeathsStr[0] = '\0';
+  if (gFontMsg)   { TTF_CloseFont(gFontMsg);   gFontMsg   = NULL; }
+  if (gFontKD)    { TTF_CloseFont(gFontKD);    gFontKD    = NULL; }
+  if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
+  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
+
+  /* Update zoom factor */
+  gZoomFactor = needZoom;
+
+  /* Reload fonts at new zoom */
+  {
+    const char *relPath = "data/CourierPrime-Regular.ttf";
+    const char *base = SDL_GetBasePath();
+    static char fontBuf[1024];
+    if (base) {
+      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
+    } else {
+      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
+    }
+    gFontMsg   = TTF_OpenFont(fontBuf, 13 * gZoomFactor);
+    gFontKD    = TTF_OpenFont(fontBuf, 13 * gZoomFactor);
+    gFontTiny  = TTF_OpenFont(fontBuf,  8 * gZoomFactor);
+    gFontLabel = TTF_OpenFont(fontBuf, 10 * gZoomFactor);
+  }
+
+  /* Tiles will be reloaded lazily by sdl3LoadTiles() at new gZoomFactor */
+
+  /* Recreate man-status render target at new zoom */
+  gManStatusTex = sdl3CreateRenderTarget((MAN_STATUS_WIDTH  + 2) * gZoomFactor,
+                                         (MAN_STATUS_HEIGHT + 2) * gZoomFactor);
+
+  /* Recreate game render target at new zoom */
+  gGameRTWidth  = gZoomFactor * SDL3_SCREEN_W;
+  gGameRTHeight = gZoomFactor * SDL3_SCREEN_H;
+  gGameRenderTarget = SDL_CreateTexture(gRenderer,
+                                        SDL_PIXELFORMAT_RGBA8888,
+                                        SDL_TEXTUREACCESS_TARGET,
+                                        gGameRTWidth, gGameRTHeight);
+  if (gGameRenderTarget) {
+    SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
+    SDL_Log("sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
+  }
+#endif
+}
+
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
@@ -1094,6 +1187,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   if (gRenderer == NULL) {
     return;
   }
+
+  sdl3DrawAdaptRenderTarget();
 
   bool tabletMode = uiModeIsTablet();
   bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
@@ -1480,6 +1575,8 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
                        bool showPillsStatus, bool showBasesStatus) {
   (void)rcWindow;
   if (gRenderer == NULL) return;
+
+  sdl3DrawAdaptRenderTarget();
 
   bool tabletMode = uiModeIsTablet();
   bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;

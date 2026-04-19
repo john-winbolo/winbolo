@@ -792,8 +792,19 @@ void windowZoomChange(BYTE amount) {
   clientMutexWaitFor();
   sdl3DrawCleanup();
 
-  /* For custom mode, use 1x internally but we'll resize the window after */
-  BYTE internalZoom = (amount == ZOOM_FACTOR_CUSTOM) ? ZOOM_FACTOR_NORMAL : amount;
+  /* For custom mode, compute ceiling integer zoom from the target window size
+     so the render target is >= the window and the blit downscales (crisp). */
+  BYTE internalZoom;
+  if (amount == ZOOM_FACTOR_CUSTOM) {
+    int targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
+    int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H);
+    int zoomW = (targetW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
+    int zoomH = (targetH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
+    internalZoom = (BYTE)((zoomW > zoomH) ? zoomW : zoomH);
+    if (internalZoom < 1) internalZoom = 1;
+  } else {
+    internalZoom = amount;
+  }
   sdl3DrawSetup(internalZoom);
 
   {
