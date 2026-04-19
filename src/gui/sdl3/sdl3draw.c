@@ -392,13 +392,13 @@ static void sdl3RenderStatusPanels(void) {
     SDL_RenderTexture(gRenderer, gManStatusTex, NULL, &d);
   }
   if (gTankBarsTex) {
-    SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_NONE);
     SDL_FRect d = { (float)(zf * STATUS_TANK_SHELLS), (float)(zf * STATUS_TANK_BARS_TOP),
                     (float)(zf * STATUS_TANK_BARS_TOTALWIDTH), (float)(zf * STATUS_TANK_BARS_HEIGHT) };
     SDL_RenderTexture(gRenderer, gTankBarsTex, NULL, &d);
   }
   if (gBaseBarsTex) {
-    SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_NONE);
     SDL_FRect d = { (float)(zf * STATUS_BASE_BARS_LEFT), (float)(zf * STATUS_BASE_BARS_TOP),
                     (float)(zf * STATUS_BASE_BARS_MAX_WIDTH), (float)(zf * STATUS_BASE_BARS_TOTALHEIGHT) };
     SDL_RenderTexture(gRenderer, gBaseBarsTex, NULL, &d);
@@ -1564,9 +1564,13 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     gGameDestRect.h = destH;
     gGameScale = destW / (float)gGameRTWidth;
 
-    /* Clear window and blit game texture */
+    /* Clear window and blit game texture.
+       Use BLENDMODE_NONE so that any alpha < 255 stored in the render target
+       (e.g. from anti-aliased tile sprites drawn with BLENDMODE_NONE) doesn't
+       cause semi-transparency when composited onto the window. */
     SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
     SDL_RenderFillRect(gRenderer, NULL);
+    SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
   }
 }
@@ -1676,6 +1680,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 
     SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
     SDL_RenderFillRect(gRenderer, NULL);
+    SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
   }
 }
