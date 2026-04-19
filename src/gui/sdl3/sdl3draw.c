@@ -1533,12 +1533,21 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 
-    /* Calculate scale to fit game while preserving aspect ratio */
+    /* Fill available area — aspect ratio is enforced by WM_SIZING on Windows.
+       On other platforms or if aspect differs, use centering as fallback. */
     float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
     float availAspect = availW / availH;
+    float aspectDiff = gameAspect - availAspect;
+    if (aspectDiff < 0) aspectDiff = -aspectDiff;
 
     float destW, destH, destX, destY;
-    if (gameAspect > availAspect) {
+    if (aspectDiff < 0.01f) {
+      /* Aspect ratios match (within tolerance) — fill entire area */
+      destX = 0;
+      destY = menuBarHeight;
+      destW = availW;
+      destH = availH;
+    } else if (gameAspect > availAspect) {
       /* Game is wider — fit to width, letterbox top/bottom */
       destW = availW;
       destH = availW / gameAspect;
@@ -1651,11 +1660,20 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 
+    /* Fill available area — aspect ratio is enforced by WM_SIZING on Windows */
     float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
     float availAspect = availW / availH;
+    float aspectDiff = gameAspect - availAspect;
+    if (aspectDiff < 0) aspectDiff = -aspectDiff;
 
     float destW, destH, destX, destY;
-    if (gameAspect > availAspect) {
+    if (aspectDiff < 0.01f) {
+      /* Aspect ratios match — fill entire area */
+      destX = 0;
+      destY = menuBarHeight;
+      destW = availW;
+      destH = availH;
+    } else if (gameAspect > availAspect) {
       destW = availW;
       destH = availW / gameAspect;
       destX = 0;
