@@ -2060,21 +2060,34 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
     (void)uIdSubclass; (void)dwRefData;
     if (msg == WM_SIZING) {
         RECT *rect = (RECT *)lParam;
-        int w = rect->right - rect->left;
-        int h = rect->bottom - rect->top;
+        int winW = rect->right - rect->left;
+        int winH = rect->bottom - rect->top;
+
+        /* Calculate frame size (title bar + borders) */
+        RECT clientRect = {0, 0, 100, 100};
+        RECT windowRect = clientRect;
+        DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
+        DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+        AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+        int frameW = (windowRect.right - windowRect.left) - 100;
+        int frameH = (windowRect.bottom - windowRect.top) - 100;
+
+        /* Client size from window size */
+        int clientW = winW - frameW;
 
         /* Content aspect ratio 515:325, plus 22px menu bar inside client area */
-        int correctH = (w * SDL3_SCREEN_H / SDL3_SCREEN_W) + 22;
+        int correctClientH = (clientW * SDL3_SCREEN_H / SDL3_SCREEN_W) + 22;
+        int correctWinH = correctClientH + frameH;
 
         /* Adjust based on which edge is being dragged */
         switch (wParam) {
             case WMSZ_TOP:
             case WMSZ_TOPLEFT:
             case WMSZ_TOPRIGHT:
-                rect->top = rect->bottom - correctH;
+                rect->top = rect->bottom - correctWinH;
                 break;
             default:
-                rect->bottom = rect->top + correctH;
+                rect->bottom = rect->top + correctWinH;
                 break;
         }
         return TRUE;
