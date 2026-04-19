@@ -327,8 +327,13 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       OKStart = FALSE;
     }
 
-    if (sdl3DrawSetup(windowGetZoomFactor()) == FALSE) {
-      OKStart = FALSE;
+    {
+      /* For custom mode, use 1x internally */
+      BYTE zf = windowGetZoomFactor();
+      if (zf == ZOOM_FACTOR_CUSTOM) zf = ZOOM_FACTOR_NORMAL;
+      if (sdl3DrawSetup(zf) == FALSE) {
+        OKStart = FALSE;
+      }
     }
 
     if (soundSetup() == FALSE) {

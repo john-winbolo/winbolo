@@ -34,6 +34,15 @@
 typedef unsigned char u_char;
 #endif
 
+/* Cross-platform thread-local storage (C11 _Thread_local vs MSVC __declspec(thread)) */
+#if defined(_MSC_VER)
+    #define THREAD_LOCAL __declspec(thread)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    #define THREAD_LOCAL _Thread_local
+#else
+    #define THREAD_LOCAL __thread  /* GCC/Clang extension for older standards */
+#endif
+
 /* Boolean constants (TRUE/FALSE already defined in platform_types.h via stdbool.h) */
 #undef TRUE
 #define TRUE 1

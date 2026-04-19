@@ -325,8 +325,11 @@ int main(int argc, char *argv[]) {
       SDL_FlushEvent(SDL_EVENT_QUIT);
 
       if (sdlWin) {
-        SDL_SetWindowResizable(sdlWin, false);
-        SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H);
+        /* All modes resizable - resizing auto-switches to Custom */
+        SDL_SetWindowResizable(sdlWin, true);
+        if (zoomFactor != ZOOM_FACTOR_CUSTOM) {
+          SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H);
+        }
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
       }
@@ -765,18 +768,51 @@ BYTE windowGetZoomFactor(void) {
   return zoomFactor;
 }
 
+/* Saved custom window position and size */
+static int s_customWinX = SDL_WINDOWPOS_CENTERED;
+static int s_customWinY = SDL_WINDOWPOS_CENTERED;
+static int s_customWinW = 0;
+static int s_customWinH = 0;
+
 void windowZoomChange(BYTE amount) {
   if (amount == zoomFactor) {
     return;
   }
+
+  /* Save custom window position and size if currently in custom mode */
+  if (zoomFactor == ZOOM_FACTOR_CUSTOM) {
+    SDL_Window *win = sdl3DrawGetWindow();
+    if (win) {
+      SDL_GetWindowPosition(win, &s_customWinX, &s_customWinY);
+      SDL_GetWindowSize(win, &s_customWinW, &s_customWinH);
+    }
+  }
+
   drawBusy = TRUE;
   clientMutexWaitFor();
   sdl3DrawCleanup();
-  sdl3DrawSetup(amount);
+
+  /* For custom mode, use 1x internally but we'll resize the window after */
+  BYTE internalZoom = (amount == ZOOM_FACTOR_CUSTOM) ? ZOOM_FACTOR_NORMAL : amount;
+  sdl3DrawSetup(internalZoom);
+
   {
     SDL_Window   *win = sdl3DrawGetWindow();
     SDL_Renderer *ren = sdl3DrawGetRenderer();
+
     if (win) {
+      /* All modes are resizable - resizing in fixed mode auto-switches to Custom */
+      SDL_SetWindowResizable(win, true);
+
+      if (amount == ZOOM_FACTOR_CUSTOM) {
+        /* Restore saved custom position and size */
+        int targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
+        int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H);
+        SDL_SetWindowSize(win, targetW, targetH);
+        if (s_customWinX != SDL_WINDOWPOS_CENTERED) {
+          SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
+        }
+      }
       SDL_ShowWindow(win);
     }
     if (win && ren) {

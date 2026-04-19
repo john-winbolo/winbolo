@@ -128,6 +128,7 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
 #define ZOOM_FACTOR_QUAD   4
+#define ZOOM_FACTOR_CUSTOM 0
 #endif
 
 /* -------------------------------------------------------
@@ -213,8 +214,12 @@ static bool s_showPlayersPanel = false;
 
 /* Deferred zoom change — windowZoomChange destroys the ImGui context, so we
    must not call it mid-frame.  Store the requested value and apply it after
-   the frame ends. 0 = no pending change. */
-static BYTE s_pendingZoom = 0;
+   the frame ends. 255 = no pending change. */
+static BYTE s_pendingZoom = 255;
+
+/* Saved custom window size — restored when switching back to Custom mode */
+static int s_customWindowW = 0;
+static int s_customWindowH = 0;
 
 /* Optional extra render callback (used by Android for players panel) */
 static sdl3ImguiExtraRenderFn s_extraRenderFn = nullptr;
@@ -1532,17 +1537,17 @@ static void renderSettingsPanel(ClientSim *cs) {
 #ifndef __ANDROID__
         if (!uiModeIsTablet()) {
             /* Window Size — desktop only */
-            const char *zoomLabels[] = { "Normal", "Double", "Quad" };
-            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD };
+            const char *zoomLabels[] = { "Normal", "Double", "Quad", "Custom" };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
             int curZoomIdx = 0;
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
             ImGui::Text("Window Size:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(100);
             if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-                for (int i = 0; i < 3; i++) {
+                for (int i = 0; i < 4; i++) {
                     bool selected = (curZoomIdx == i);
                     if (ImGui::Selectable(zoomLabels[i], selected)) {
                         s_pendingZoom = zoomValues[i];
@@ -1754,6 +1759,8 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem("Normal", nullptr, zoomFactor == ZOOM_FACTOR_NORMAL)) s_pendingZoom = ZOOM_FACTOR_NORMAL;
             if (ImGui::MenuItem("Double", nullptr, zoomFactor == ZOOM_FACTOR_DOUBLE)) s_pendingZoom = ZOOM_FACTOR_DOUBLE;
             if (ImGui::MenuItem("Quad",   nullptr, zoomFactor == ZOOM_FACTOR_QUAD))   s_pendingZoom = ZOOM_FACTOR_QUAD;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Custom (Resizable)", nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
             ImGui::EndMenu();
         }
 
@@ -2369,6 +2376,14 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSetQuitting();
         }
+        /* Window resized by user in a fixed mode -> auto-switch to Custom */
+        if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
+            ev.window.windowID == SDL_GetWindowID(s_window)) {
+            if (zoomFactor != ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255) {
+                /* User manually resized - switch to custom mode */
+                s_pendingZoom = ZOOM_FACTOR_CUSTOM;
+            }
+        }
 
         /* Dispatch tap-style key actions (pill view, tank view) that are
          * not handled by the polling-based inputGetKeys(). */
@@ -2377,7 +2392,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             windowKeyPressed(cs, (int)ev.key.scancode);
         }
 
-        sdl3DrawHandleEvent(cs, &ev);
+        /* Pass RAW event to game handler - it does its own coordinate transform
+           using SDL_GetRenderLogicalPresentationRect for resizable window support */
+        sdl3DrawHandleEvent(cs, &rawEv);
     }
 }
 
@@ -2407,17 +2424,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     ImGui_ImplSDL3_NewFrame();
     dialogResetTextInputArea(s_window);
 
-    /* In tablet mode, override ImGui's DisplaySize to match the SDL
-       render logical presentation space so ImGui coordinates align
-       with SDL rendering coordinates (game tiles, etc.).
-       Also reset DisplayFramebufferScale to 1.0 — the logical
-       presentation already maps coordinates to the native render
-       output, so the ImGui renderer should not apply extra scaling. */
+    /* Override ImGui's DisplaySize for tablet mode only.
+       In tablet mode, SDL logical presentation scales the whole window,
+       so ImGui needs to render in that coordinate space.
+       In desktop mode, ImGui renders at native window coordinates (no override)
+       because the game is blitted to a scaled rect, not the whole window. */
     if (uiModeIsTablet()) {
         int logW = 0, logH = 0;
         SDL_RendererLogicalPresentation logMode;
         SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &logMode);
-        if (logW > 0 && logH > 0) {
+        if (logW > 0 && logH > 0 && logMode != SDL_LOGICAL_PRESENTATION_DISABLED) {
             ImGuiIO &io = ImGui::GetIO();
             io.DisplaySize = ImVec2((float)logW, (float)logH);
             io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
@@ -2577,9 +2593,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Apply deferred zoom change after the frame is fully rendered.
        windowZoomChange destroys and recreates the ImGui context, so it
        must not run while we are mid-frame. */
-    if (s_pendingZoom != 0) {
+    if (s_pendingZoom != 255) {
         BYTE zoom = s_pendingZoom;
-        s_pendingZoom = 0;
+        s_pendingZoom = 255;
         windowZoomChange(zoom);
     }
 
