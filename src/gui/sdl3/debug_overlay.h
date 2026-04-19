@@ -15,6 +15,7 @@
 #include "../../bolo/types.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/tank.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,7 +32,8 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
                           int originX, int originY, int tileW, int tileH,
                           int edgeX, int edgeY,
                           BYTE xOffset, BYTE yOffset,
-                          BYTE playerNum, screenGunsight *gs);
+                          BYTE playerNum, screenGunsight *gs,
+                          tank *playerTank);
 
 /* Toggle zoom window (F2). */
 void debugZoomToggle(void);

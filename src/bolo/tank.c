@@ -878,17 +878,25 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
   WORLD x;
   WORLD y;
   WORLD conv;
-  int xAmount;
-  int yAmount;
-  unsigned int speed;
 
   if ((*value)->armour <= TANK_FULL_ARMOUR) {
-    speed = (*value)->sightLen;
-    speed <<= 7; /* TANK_SHIFT_MAPSIZE */
-    utilCalcDistance(&xAmount, &yAmount, (*value)->angle, (int) speed);
-
-    x = (WORLD) ((*value)->x + xAmount - TANK_SUBTRACT);
-    y = (WORLD) ((*value)->y + yAmount - TANK_SUBTRACT);
+    /* Use the same HP fixed-point accumulator as shellsUpdate so the crosshair
+     * lands on the exact WORLD position the real shell reaches.
+     * Total ticks = SHELL_LIFE * (sightLen/2) covers the SHELL_START_ADD
+     * advance (5 in shells.c) plus the live travel distance.
+     * TANK_SUBTRACT is kept so the rendering formula stays unchanged. */
+    int32_t xStepHP, yStepHP, xAccHP = 0, yAccHP = 0;
+    utilCalcDistanceHP(&xStepHP, &yStepHP, (*value)->angle, SHELL_SPEED);
+    int totalTicks = SHELL_LIFE * (int)((*value)->sightLen / 2);
+    x = (*value)->x;
+    y = (*value)->y;
+    for (int i = 0; i < totalTicks; i++) {
+      xAccHP += xStepHP;  yAccHP += yStepHP;
+      x = (WORLD)(x + (xAccHP >> 8));  xAccHP &= 0xFF;
+      y = (WORLD)(y + (yAccHP >> 8));  yAccHP &= 0xFF;
+    }
+    x = (WORLD)(x - TANK_SUBTRACT);
+    y = (WORLD)(y - TANK_SUBTRACT);
 
     conv = x;
     conv >>= TANK_SHIFT_MAPSIZE;
