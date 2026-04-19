@@ -217,6 +217,11 @@ static bool s_showPlayersPanel = false;
    the frame ends. 255 = no pending change. */
 static BYTE s_pendingZoom = 255;
 
+/* Suppress auto-switch to Custom on the next resize event.  Set before
+   programmatic SDL_SetWindowSize so the resulting event doesn't trigger
+   an unwanted mode change. */
+static bool s_suppressAutoCustom = false;
+
 /* Saved custom window size — restored when switching back to Custom mode */
 static int s_customWindowW = 0;
 static int s_customWindowH = 0;
@@ -2040,6 +2045,48 @@ static void renderMenuBar(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
+ * Windows aspect ratio enforcement via window subclassing
+ * ------------------------------------------------------- */
+#ifdef _WIN32
+#include <commctrl.h>  /* SetWindowSubclass */
+#pragma comment(lib, "comctl32.lib")
+
+#define ASPECT_SUBCLASS_ID 1
+
+/* Subclass procedure to enforce aspect ratio during live resize.
+   WM_SIZING provides the drag rect which we modify in place. */
+static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                            UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    (void)uIdSubclass; (void)dwRefData;
+    if (msg == WM_SIZING) {
+        RECT *rect = (RECT *)lParam;
+        int w = rect->right - rect->left;
+        int h = rect->bottom - rect->top;
+
+        /* Content aspect ratio 515:325, plus 22px menu bar inside client area */
+        int correctH = (w * SDL3_SCREEN_H / SDL3_SCREEN_W) + 22;
+
+        /* Adjust based on which edge is being dragged */
+        switch (wParam) {
+            case WMSZ_TOP:
+            case WMSZ_TOPLEFT:
+            case WMSZ_TOPRIGHT:
+                rect->top = rect->bottom - correctH;
+                break;
+            default:
+                rect->bottom = rect->top + correctH;
+                break;
+        }
+        return TRUE;
+    }
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, aspectSubclassProc, ASPECT_SUBCLASS_ID);
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+#endif
+
+/* -------------------------------------------------------
  * Public API
  * ------------------------------------------------------- */
 
@@ -2053,6 +2100,15 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     s_window   = window;
     s_renderer = renderer;
+
+#ifdef _WIN32
+    /* Subclass the window to enforce aspect ratio during live resize */
+    HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(window),
+                                              SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    if (hwnd) {
+        SetWindowSubclass(hwnd, aspectSubclassProc, ASPECT_SUBCLASS_ID, 0);
+    }
+#endif
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -2376,12 +2432,27 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSetQuitting();
         }
-        /* Window resized by user in a fixed mode -> auto-switch to Custom */
+        /* Window resized — enforce content aspect ratio (515:325) accounting for 22px menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
-            if (zoomFactor != ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255) {
-                /* User manually resized - switch to custom mode */
-                s_pendingZoom = ZOOM_FACTOR_CUSTOM;
+            if (s_suppressAutoCustom) {
+                /* Programmatic resize from windowZoomChange — don't auto-switch or adjust */
+                s_suppressAutoCustom = false;
+            } else {
+                /* Enforce aspect ratio: adjust height to match width */
+                int w = ev.window.data1;
+                int h = ev.window.data2;
+                int contentH = h - 22;
+                int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
+                int correctH = correctContentH + 22;
+                if (h != correctH) {
+                    s_suppressAutoCustom = true;  /* Prevent recursion */
+                    SDL_SetWindowSize(s_window, w, correctH);
+                }
+                /* Auto-switch to Custom if in a fixed mode */
+                if (zoomFactor != ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255) {
+                    s_pendingZoom = ZOOM_FACTOR_CUSTOM;
+                }
             }
         }
 
@@ -2596,6 +2667,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (s_pendingZoom != 255) {
         BYTE zoom = s_pendingZoom;
         s_pendingZoom = 255;
+        /* Suppress auto-switch to Custom for fixed mode changes */
+        if (zoom != ZOOM_FACTOR_CUSTOM) {
+            s_suppressAutoCustom = true;
+        }
         windowZoomChange(zoom);
     }
 
