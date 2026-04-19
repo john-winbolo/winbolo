@@ -867,7 +867,7 @@ bool sdl3DrawSetup(int zoomFactor) {
   } else {
     gWindow = SDL_CreateWindow("WinBolo SDL3",
                                zoomFactor * SDL3_SCREEN_W,
-                               zoomFactor * SDL3_SCREEN_H,
+                               zoomFactor * SDL3_SCREEN_H + 22,  /* +22 for menu bar */
 #if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
                                0);
 #else
@@ -879,13 +879,8 @@ bool sdl3DrawSetup(int zoomFactor) {
     return FALSE;
   }
 
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  /* Lock aspect ratio for desktop resizable windows */
-  if (!uiModeIsTablet()) {
-    float aspect = (float)SDL3_SCREEN_W / (float)SDL3_SCREEN_H;
-    SDL_SetWindowAspectRatio(gWindow, aspect, aspect);
-  }
-#endif
+  /* Aspect ratio is enforced dynamically in sdl3imgui.cpp resize handler
+     to account for the fixed 22px menu bar. */
 
   gRenderer = SDL_CreateRenderer(gWindow, NULL);
   if (gRenderer == NULL) {

@@ -328,7 +328,7 @@ int main(int argc, char *argv[]) {
         /* All modes resizable - resizing auto-switches to Custom */
         SDL_SetWindowResizable(sdlWin, true);
         if (zoomFactor != ZOOM_FACTOR_CUSTOM) {
-          SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H);
+          SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H + 22);
         }
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
@@ -796,8 +796,9 @@ void windowZoomChange(BYTE amount) {
      so the render target is >= the window and the blit downscales (crisp). */
   BYTE internalZoom;
   if (amount == ZOOM_FACTOR_CUSTOM) {
+    /* Default size: 2x game + menu bar height so aspect ratio matches exactly */
     int targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
-    int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H);
+    int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
     int zoomW = (targetW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
     int zoomH = (targetH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
     internalZoom = (BYTE)((zoomW > zoomH) ? zoomW : zoomH);
@@ -816,9 +817,9 @@ void windowZoomChange(BYTE amount) {
       SDL_SetWindowResizable(win, true);
 
       if (amount == ZOOM_FACTOR_CUSTOM) {
-        /* Restore saved custom position and size */
+        /* Restore saved custom position and size (default: 2x + menu bar) */
         int targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
-        int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H);
+        int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
         SDL_SetWindowSize(win, targetW, targetH);
         if (s_customWinX != SDL_WINDOWPOS_CENTERED) {
           SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
