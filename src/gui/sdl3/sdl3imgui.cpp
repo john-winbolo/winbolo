@@ -2074,21 +2074,26 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
 
         /* Client size from window size */
         int clientW = winW - frameW;
+        int clientH = winH - frameH;
 
-        /* Content aspect ratio 515:325, plus 22px menu bar inside client area */
-        int correctClientH = (clientW * SDL3_SCREEN_H / SDL3_SCREEN_W) + 22;
-        int correctWinH = correctClientH + frameH;
-
-        /* Adjust based on which edge is being dragged */
+        /* Content aspect ratio 515:325, plus 22px menu bar inside client area.
+           Always keep top-left fixed, expand right and down only. */
         switch (wParam) {
             case WMSZ_TOP:
-            case WMSZ_TOPLEFT:
-            case WMSZ_TOPRIGHT:
-                rect->top = rect->bottom - correctWinH;
+            case WMSZ_BOTTOM: {
+                /* Vertical edge: keep height, adjust width to the right */
+                int contentH = clientH - 22;
+                int correctClientW = contentH * SDL3_SCREEN_W / SDL3_SCREEN_H;
+                int correctWinW = correctClientW + frameW;
+                rect->right = rect->left + correctWinW;
                 break;
-            default:
+            }
+            default: {
+                /* Horizontal edges and corners: keep width, adjust height downward */
+                int correctWinH = (clientW * SDL3_SCREEN_H / SDL3_SCREEN_W) + 22 + frameH;
                 rect->bottom = rect->top + correctWinH;
                 break;
+            }
         }
         return TRUE;
     }
