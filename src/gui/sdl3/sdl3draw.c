@@ -1292,7 +1292,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       if (debugOverlayIsEnabled()) {
         debugOverlayDrawMain(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
                              originX, originY, tileW, tileH, edgeX, edgeY,
-                             cs->xOffset, cs->yOffset, cs->myPlayerNum, gs);
+                             cs->xOffset, cs->yOffset, cs->myPlayerNum, gs, tank);
       }
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */

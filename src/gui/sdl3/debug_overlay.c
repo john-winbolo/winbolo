@@ -18,6 +18,7 @@
 #include "../../bolo/util.h"
 #include "../../server/server_sim.h"
 #include "../gamefront.h"
+#include <stdio.h>
 
 /* -------------------------------------------------------
  * Internal state
@@ -106,7 +107,8 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
                           int originX, int originY, int tileW, int tileH,
                           int edgeX, int edgeY,
                           BYTE xOffset, BYTE yOffset,
-                          BYTE playerNum, screenGunsight *gs) {
+                          BYTE playerNum, screenGunsight *gs,
+                          tank *playerTank) {
     ServerSim *ss = gameFrontGetServerSim();
     if (!ss) return;
 
@@ -238,61 +240,58 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
 
         /* Simulated shell trajectory — run the same HP fixed-point engine
          * as shellsUpdate for each tick and plot a 1x1 dot per tick.
-         * SHELL_START_ADD=5 matches the override in shells.c. */
+         * Use playerTank (client sim) — same object tankGetGunsight uses. */
         {
-            TURNTYPE angle  = tankGetAngle(&ss->sim.tanks[playerNum]);
-            BYTE     len    = tankGetGunsightLength(&ss->sim.tanks[playerNum]);
+            TURNTYPE angle  = tankGetAngle(playerTank);
+            BYTE     len    = tankGetGunsightLength(playerTank);
 
-            /* Starting position: tank world coords offset by SHELL_START_ADD
-             * steps (same as shellsAddItem). */
-            int xAddInit, yAddInit;
-            utilCalcDistance(&xAddInit, &yAddInit, angle, SHELL_SPEED);
-            WORLD tx = twx + (WORLD)(5 * xAddInit);
-            WORLD ty = twy + (WORLD)(5 * yAddInit);
+            /* Starting position + trajectory: use HP fixed-point accumulation
+             * matching shellsAddItem (5 start steps) + shellsUpdate per tick.
+             * Use playerTank world position so we match tankGetGunsight exactly. */
+            WORLD trajX = 0, trajY = 0;
+            tankGetWorld(playerTank, &trajX, &trajY);
+            /* Apply start offset exactly as shellsAddItem does:
+             * one utilCalcDistance call, multiply by SHELL_START_ADD=5. */
+            int xAdd, yAdd;
+            utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
+            WORLD tx = (WORLD)(trajX + 5 * xAdd);
+            WORLD ty = (WORLD)(trajY + 5 * yAdd);
 
-            /* Match clientSimAdvancePredictedShells exactly:
-             * plain utilCalcDistance per tick, length = 1 + SHELL_LIFE*(sightLen/2) - SHELL_START_ADD */
-            int xStep, yStep;
-            utilCalcDistance(&xStep, &yStep, angle, SHELL_SPEED);
+            /* Remaining ticks via HP accumulation, matching shellsUpdate. */
+            int32_t xStepHP, yStepHP;
+            utilCalcDistanceHP(&xStepHP, &yStepHP, angle, SHELL_SPEED);
+            int32_t xAccHP = 0, yAccHP = 0;
+            /* Parallel float position for comparison */
+            float fx = (float)(int)tx;
+            float fy = (float)(int)ty;
+            float fvx = (float)xStepHP / 256.0f;
+            float fvy = (float)yStepHP / 256.0f;
 
-            BYTE ticks = (BYTE)((SHELL_LIFE * (len / 2)) - SHELL_START_ADD);
+            int ticks = (SHELL_LIFE * (int)(len / 2)) - 5;
 
-            /* Debug: write trajectory parameters to file once per toggle */
-            {
-                static bool s_logged = false;
-                static bool s_prevEnabled = false;
-                if (gDbgOverlaysEnabled != s_prevEnabled) {
-                    s_prevEnabled = gDbgOverlaysEnabled;
-                    s_logged = false;
-                }
-                if (!s_logged) {
-                    s_logged = true;
-                    FILE *f = fopen("traj_debug.txt", "w");
-                    if (f) {
-                        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-                        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-                        int gsCenterX = orig1xX + gsGameX - TILE_SIZE_X - edge1xX + 8;
-                        int gsCenterY = orig1xY + gsGameY - TILE_SIZE_Y - edge1xY + 8;
-                        fprintf(f, "twx=%u twy=%u  xOffset=%u yOffset=%u\n", twx, twy, xOffset, yOffset);
-                        fprintf(f, "xAddInit=%d yAddInit=%d  startOffset=(%d,%d)\n",
-                                xAddInit, yAddInit, 5*xAddInit, 5*yAddInit);
-                        fprintf(f, "tx_start=%u ty_start=%u\n", tx, ty);
-                        fprintf(f, "xStep=%d yStep=%d  ticks=%u\n", xStep, yStep, (unsigned)ticks);
-                        fprintf(f, "xStep total=%d yStep total=%d\n", xStep*ticks, yStep*ticks);
-                        fprintf(f, "orig1xX=%d orig1xY=%d edge1xX=%d edge1xY=%d\n",
-                                orig1xX, orig1xY, edge1xX, edge1xY);
-                        fprintf(f, "gunsight center 1x: (%d,%d)\n", gsCenterX, gsCenterY);
-                        fclose(f);
-                    }
-                }
+            /* Log the green path to green_path.log (overwrite each render) */
+            FILE *glog = fopen("green_path.log", "w");
+            if (glog) {
+                fprintf(glog, "angle=%.8f len=%u ticks=%d startX=%u startY=%u startFX=%.4f startFY=%.4f\n",
+                        (double)angle, (unsigned)len, ticks,
+                        (unsigned)tx, (unsigned)ty, (double)fx, (double)fy);
             }
 
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             SDL_SetRenderDrawColor(renderer, 60, 240, 60, 200);
 
-            for (BYTE t = 0; t < ticks; t++) {
-                tx += (WORLD)xStep;
-                ty += (WORLD)yStep;
+            for (int t = 0; t < ticks; t++) {
+                xAccHP += xStepHP; yAccHP += yStepHP;
+                tx = (WORLD)(tx + (xAccHP >> 8)); xAccHP &= 0xFF;
+                ty = (WORLD)(ty + (yAccHP >> 8)); yAccHP &= 0xFF;
+                fx += fvx;
+                fy += fvy;
+
+                if (glog) {
+                    fprintf(glog, "t=%d tx=%u ty=%u xAcc=%d yAcc=%d fx=%.4f fy=%.4f\n",
+                            t, (unsigned)tx, (unsigned)ty,
+                            (int)xAccHP, (int)yAccHP, (double)fx, (double)fy);
+                }
 
                 /* Use same formula as mapViewDrawShells — no TANK_SUBTRACT */
                 int px = orig1xX - 16
@@ -307,33 +306,8 @@ void debugOverlayDrawMain(SDL_Renderer *renderer, SDL_Texture *tilesTex,
                 SDL_RenderFillRect(renderer, &dot);
             }
 
-            /* Debug: write final dot + gunsight center every frame */
-            {
-                static int s_frameSkip = 0;
-                if (++s_frameSkip >= 30) {   /* log ~once per second */
-                    s_frameSkip = 0;
-                    FILE *f = fopen("traj_debug.txt", "a");
-                    if (f) {
-                        int px_final = orig1xX - 16
-                                     + ((int)(tx >> 8) - (int)xOffset) * 16
-                                     + ((int)(tx >> 4) & 0xF)
-                                     - edge1xX;
-                        int py_final = orig1xY - 16
-                                     + ((int)(ty >> 8) - (int)yOffset) * 16
-                                     + ((int)(ty >> 4) & 0xF)
-                                     - edge1xY;
-                        int gsGameX2 = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-                        int gsGameY2 = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-                        int gsCX = orig1xX + gsGameX2 - TILE_SIZE_X - edge1xX + 8;
-                        int gsCY = orig1xY + gsGameY2 - TILE_SIZE_Y - edge1xY + 8;
-                        fprintf(f, "dot=(%d,%d)  gs_center=(%d,%d)  diff=(%d,%d)  gs.pixelY=%d\n",
-                                px_final, py_final, gsCX, gsCY,
-                                px_final - gsCX, py_final - gsCY,
-                                (int)gs->pixelY);
-                        fclose(f);
-                    }
-                }
-            }
+            if (glog) { fclose(glog); }
+
         }
     }
 
