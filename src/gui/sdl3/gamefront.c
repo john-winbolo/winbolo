@@ -328,9 +328,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
 
     {
-      /* For custom mode, use 1x internally */
+      /* For custom mode, use ceiling integer zoom so render target >= window.
+         sdl3DrawAdaptRenderTarget will adjust dynamically on resize. */
       BYTE zf = windowGetZoomFactor();
-      if (zf == ZOOM_FACTOR_CUSTOM) zf = ZOOM_FACTOR_NORMAL;
+      if (zf == ZOOM_FACTOR_CUSTOM) zf = ZOOM_FACTOR_DOUBLE;
       if (sdl3DrawSetup(zf) == FALSE) {
         OKStart = FALSE;
       }

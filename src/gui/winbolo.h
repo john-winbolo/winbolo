@@ -56,7 +56,7 @@ struct ClientSim;
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
 #define ZOOM_FACTOR_QUAD 4
-#define ZOOM_FACTOR_CUSTOM 0  /* Resizable window, internally renders at 1x */
+#define ZOOM_FACTOR_CUSTOM 0  /* Resizable window, renders at ceiling integer zoom */
 
 /* The size of the main window EXCLUDING Menus and Toolbar */
 #define SCREEN_SIZE_X 515
