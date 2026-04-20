@@ -59,6 +59,9 @@ struct ClientSim;
 #define ZOOM_FACTOR_QUAD 4
 #define ZOOM_FACTOR_CUSTOM 0  /* Resizable window, renders at ceiling integer zoom */
 
+/* Height of the ImGui menu bar rendered inside the client area */
+#define MENU_BAR_HEIGHT 22
+
 /* The size of the main window EXCLUDING Menus and Toolbar */
 #define SCREEN_SIZE_X 515
 #define SCREEN_SIZE_Y 325
@@ -228,6 +231,17 @@ void windowSetCustomSize(int w, int h);
 *  Save the current window position to preferences state.
 *********************************************************/
 void windowSaveCurrentPosition(void);
+
+/*********************************************************
+*NAME:          windowComputeAspectCorrectSize
+*PURPOSE:
+*  Given actual window size (including menu bar), compute the
+*  largest aspect-correct (SCREEN_SIZE_X:SCREEN_SIZE_Y) size
+*  that fits within it. Returns corrected size and centered
+*  position.
+*********************************************************/
+void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
+                                     int *outW, int *outH, int *outX, int *outY);
 
 /*********************************************************
 *NAME:          windowGetDrawTime
