@@ -34,6 +34,11 @@
 typedef unsigned char u_char;
 #endif
 
+/* MSVC uses __declspec(thread) instead of C11 _Thread_local */
+#if defined(_MSC_VER) && !defined(_Thread_local)
+#define _Thread_local __declspec(thread)
+#endif
+
 /* Boolean constants (TRUE/FALSE already defined in platform_types.h via stdbool.h) */
 #undef TRUE
 #define TRUE 1

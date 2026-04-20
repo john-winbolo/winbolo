@@ -26,7 +26,6 @@
 *********************************************************/
 
 #include <memory.h>
-#include <stdio.h>
 
 #include "bolo_map.h"
 #include "building.h"
@@ -59,15 +58,6 @@ shellsNetHit snh;
 
 #undef SHELL_START_ADD
 #define SHELL_START_ADD 5
-
-/* Shell path logging — tracks the most recently fired shell */
-static shells  gLoggedShell          = NULL;
-static FILE   *gShellLog             = NULL;
-static BYTE    gLoggedShellInitLength = 0;
-static float   gShellLogFX           = 0.0f;
-static float   gShellLogFY           = 0.0f;
-static float   gShellLogFVX          = 0.0f;
-static float   gShellLogFVY          = 0.0f;
 
 
 /*********************************************************
@@ -162,23 +152,6 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   utilCalcDistanceHP(&q->xStep, &q->yStep, angle, SHELL_SPEED);
   q->xAcc = 0;
   q->yAcc = 0;
-
-  /* Log this shell — overwrite shell_path.log with fresh start */
-  if (gShellLog) { fclose(gShellLog); gShellLog = NULL; }
-  gLoggedShell          = q;
-  gLoggedShellInitLength = q->length;
-  gShellLogFX  = (float)(int)q->x;
-  gShellLogFY  = (float)(int)q->y;
-  gShellLogFVX = (float)q->xStep / 256.0f;
-  gShellLogFVY = (float)q->yStep / 256.0f;
-  gShellLog = fopen("shell_path.log", "w");
-  if (gShellLog) {
-    fprintf(gShellLog, "angle=%.8f length=%u xStep=%d yStep=%d startX=%u startY=%u startFX=%.4f startFY=%.4f\n",
-            (double)angle, (unsigned)q->length,
-            (int)q->xStep, (int)q->yStep,
-            (unsigned)q->x, (unsigned)q->y,
-            (double)gShellLogFX, (double)gShellLogFY);
-  }
 
   q->next = *value;
   q->prev = NULL;
@@ -326,16 +299,6 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				position->length--;
 				position->x = newX;
 				position->y = newY;
-				/* Log each tick of the tracked shell */
-				if (position == gLoggedShell && gShellLog) {
-					gShellLogFX += gShellLogFVX;
-					gShellLogFY += gShellLogFVY;
-					fprintf(gShellLog, "t=%d x=%u y=%u xAcc=%d yAcc=%d fx=%.4f fy=%.4f\n",
-					        (int)(gLoggedShellInitLength - position->length),
-					        (unsigned)position->x, (unsigned)position->y,
-					        (int)position->xAcc, (int)position->yAcc,
-					        (double)gShellLogFX, (double)gShellLogFY);
-				}
 			}
 		} else { /* Update Position */
 			/* Add to explosion Data structure and remove from shells data structure */
@@ -445,11 +408,6 @@ void shellsDeleteItem(shells *master, shells *value) {
 
   if (del->next != NULL) {
     del->next->prev = del->prev;
-  }
-  /* Close shell log if the tracked shell is being deleted */
-  if (del == gLoggedShell) {
-    if (gShellLog) { fclose(gShellLog); gShellLog = NULL; }
-    gLoggedShell = NULL;
   }
   Dispose(del);
   c= TRUE;

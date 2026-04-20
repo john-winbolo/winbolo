@@ -45,11 +45,7 @@
 #include "log.h"
 #include "screenbrainmap.h"
 
-/* Map change callback — set by ServerSim during tick.
- * _Thread_local is C11; MSVC uses __declspec(thread) in C99 mode. */
-#ifdef _MSC_VER
-  #define _Thread_local __declspec(thread)
-#endif
+/* Map change callback — set by ServerSim during tick */
 static _Thread_local MapChangeCallback mapChangeCb = NULL;
 
 void mapSetChangeCallback(MapChangeCallback cb) {

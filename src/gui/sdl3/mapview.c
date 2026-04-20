@@ -524,20 +524,6 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     int ss = ctx->sheetScale;
     SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
     SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
-    if (frame == SHELL_DIR15) {
-      static bool s_once=false;
-      if (!s_once) {
-        s_once=true;
-        FILE *f=fopen("shell15_debug.txt","w");
-        if (f) {
-          fprintf(f,"ss=%d zoom=%d\nsrcR=(%.0f,%.0f,%.0f,%.0f)\ndstR=(%.0f,%.0f,%.0f,%.0f)\n",
-                  ss, ctx->zoomFactor,
-                  srcR.x, srcR.y, srcR.w, srcR.h,
-                  dstR.x, dstR.y, dstR.w, dstR.h);
-          fclose(f);
-        }
-      }
-    }
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 }
