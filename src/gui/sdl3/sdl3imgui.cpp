@@ -1766,10 +1766,42 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         if (ImGui::BeginMenu("Window Size")) {
+            /* Get display bounds to disable sizes that don't fit */
+            int dispW = 99999, dispH = 99999;
+            if (s_window) {
+                SDL_DisplayID dispID = SDL_GetDisplayForWindow(s_window);
+                SDL_Rect usable;
+                if (SDL_GetDisplayUsableBounds(dispID, &usable)) {
+                    dispW = usable.w;
+                    dispH = usable.h;
+                }
+            }
+            /* Cardinal sizes: width = zoom * 515, height = zoom * 325 + 22 (menu bar) */
+            bool fit1x = (1 * SDL3_SCREEN_W <= dispW) && (1 * SDL3_SCREEN_H + 22 <= dispH);
+            bool fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + 22 <= dispH);
+            bool fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + 22 <= dispH);
+            bool fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + 22 <= dispH);
+
+            ImGui::BeginDisabled(!fit1x);
             if (ImGui::MenuItem("Normal", nullptr, zoomFactor == ZOOM_FACTOR_NORMAL)) s_pendingZoom = ZOOM_FACTOR_NORMAL;
+            if (!fit1x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 1 * SDL3_SCREEN_W, 1 * SDL3_SCREEN_H + 22);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!fit2x);
             if (ImGui::MenuItem("Double", nullptr, zoomFactor == ZOOM_FACTOR_DOUBLE)) s_pendingZoom = ZOOM_FACTOR_DOUBLE;
+            if (!fit2x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 2 * SDL3_SCREEN_W, 2 * SDL3_SCREEN_H + 22);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!fit3x);
             if (ImGui::MenuItem("Triple", nullptr, zoomFactor == ZOOM_FACTOR_TRIPLE)) s_pendingZoom = ZOOM_FACTOR_TRIPLE;
+            if (!fit3x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 3 * SDL3_SCREEN_W, 3 * SDL3_SCREEN_H + 22);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!fit4x);
             if (ImGui::MenuItem("Quad",   nullptr, zoomFactor == ZOOM_FACTOR_QUAD))   s_pendingZoom = ZOOM_FACTOR_QUAD;
+            if (!fit4x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 4 * SDL3_SCREEN_W, 4 * SDL3_SCREEN_H + 22);
+            ImGui::EndDisabled();
             ImGui::Separator();
             if (ImGui::MenuItem("Custom (Resizable)", nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
             ImGui::EndMenu();
@@ -2601,12 +2633,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 if (zoomFactor != ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255 && !s_inModalResize) {
                     s_pendingZoom = ZOOM_FACTOR_CUSTOM;
                 }
-            }
-            /* Save custom size whenever window is resized */
-            if (zoomFactor == ZOOM_FACTOR_CUSTOM || s_pendingZoom == ZOOM_FACTOR_CUSTOM) {
-                int w, h;
-                SDL_GetWindowSize(s_window, &w, &h);
-                windowSetCustomSize(w, h);
+                /* Save custom size on USER-initiated resize (not programmatic menu changes).
+                   Only save if it's actually a non-cardinal size. */
+                if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
+                    (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                    int curW, curH;
+                    SDL_GetWindowSize(s_window, &curW, &curH);
+                    /* Don't save cardinal sizes as "custom" */
+                    bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
+                                       curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
+                    if (!isCardinal) {
+                        windowSetCustomSize(curW, curH);
+                    }
+                }
             }
             /* Save position on resize too (window may have been repositioned) */
             windowSaveCurrentPosition();
