@@ -300,13 +300,22 @@ set(CMAKE_CXX_STANDARD 17)
 # ---------------------------------------------------------------------------
 
 if(MSVC)
+    # COMPILE_LANGUAGE guard prevents these C/C++ flags from being passed
+    # to MASM (ml64.exe) for crashpad's .asm files.
     add_compile_options(
-        /WX /sdl /permissive-
-        /W4 /external:W3
-        /wd4005 /wd4013 /wd4057 /wd4100 /wd4101 /wd4127 /wd4131 /wd4152 /wd4189
-        /wd4244 /wd4245 /wd4310 /wd4456 /wd4457 /wd4459 /wd4554 /wd4702 /wd4996
-        /guard:cf /GL
-        $<$<CONFIG:Debug>:/RTC1>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/WX> $<$<COMPILE_LANGUAGE:C,CXX>:/sdl> $<$<COMPILE_LANGUAGE:C,CXX>:/permissive->
+        $<$<COMPILE_LANGUAGE:C,CXX>:/W4> $<$<COMPILE_LANGUAGE:C,CXX>:/external:W3>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4005> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4013>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4057> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4100>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4101> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4127>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4131> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4152>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4189> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4244>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4245> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4310>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4456> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4457>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4459> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4554>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4702> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4996>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/guard:cf> $<$<COMPILE_LANGUAGE:C,CXX>:/GL>
+        $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>>:/RTC1>
     )
     add_link_options(/GUARD:CF /INCREMENTAL:NO /LTCG)
 else()
@@ -798,7 +807,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/debug_overlay.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c

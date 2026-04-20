@@ -45,7 +45,6 @@
 #include "sdl3imgui.h"
 #include "cursor.h"
 #include "mapview.h"
-#include "debug_overlay.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -84,11 +83,6 @@ static SDL_Texture *gTankBarsTex    = NULL;  /* TOTALWIDTH x HEIGHT */
 static SDL_Texture *gBaseBarsTex    = NULL;  /* MAX_WIDTH x TOTALHEIGHT */
 
 static buildSelect  gCurrentBuildSelect = BsTrees;
-
-/* Slow-factor / pause / tick getters from winbolo.c */
-extern int  winboloGetSlowFactor(void);
-extern bool winboloGetPaused(void);
-extern int  winboloGetGameTickCount(void);
 
 /* Frame rate counting (mirrors g_dwFrame* in win32/draw.c) */
 static DWORD g_dwFrameTime  = 0;
@@ -1288,13 +1282,6 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       sdl3DrawTankLabels(tks);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
 
-      /* Debug overlays — hitboxes, gunsight, aim line (F1 toggle) */
-      if (debugOverlayIsEnabled()) {
-        debugOverlayDrawMain(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                             originX, originY, tileW, tileH, edgeX, edgeY,
-                             cs->xOffset, cs->yOffset, cs->myPlayerNum, gs, tank);
-      }
-
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isPillView) {
         sdl3DrawPillInView();
@@ -1305,29 +1292,6 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     }
 
     SDL_SetRenderClipRect(gRenderer, NULL);
-
-    /* Tick counter + slow-motion / pause indicator — top-left of game area */
-    if (gFontMsg) {
-      bool paused = winboloGetPaused();
-      int sf  = winboloGetSlowFactor();
-      int tc  = winboloGetGameTickCount();
-      float lx = (float)(originX + 4);
-      float ly = (float)(originY + 4);
-      char tickBuf[24];
-      SDL_snprintf(tickBuf, sizeof(tickBuf), "T:%d", tc);
-      SDL_Color white = {255, 255, 255, 200};
-      sdl3RenderText(gFontMsg, tickBuf, white, lx, ly);
-      ly += 14.0f;  /* second line */
-      if (paused) {
-        SDL_Color red = {255, 80, 80, 255};
-        sdl3RenderText(gFontMsg, "PAUSED", red, lx, ly);
-      } else if (sf > 1) {
-        char speedBuf[16];
-        SDL_snprintf(speedBuf, sizeof(speedBuf), "1/%dx", sf);
-        SDL_Color yellow = {255, 220, 0, 255};
-        sdl3RenderText(gFontMsg, speedBuf, yellow, lx, ly);
-      }
-    }
   }
 
   /* Refresh status panel textures every frame so bases/pills/tanks

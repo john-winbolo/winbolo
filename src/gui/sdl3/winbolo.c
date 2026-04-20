@@ -67,7 +67,6 @@
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
-#include "debug_overlay.h"
 
 #include "../aresource.h"
 #include "dialog_backend.h"
@@ -154,13 +153,6 @@ static bool doingTutorial = FALSE;
 /* Time to quit */
 static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
-
-/* Slow-motion: 1 = normal, 2 = half speed, … 128 = 1/128 speed (1.28s/tick).
- * Ctrl+Minus slows down (doubles factor), Ctrl+Plus/= speeds up (halves). */
-static int  gSlowFactor  = 1;
-static bool gPaused      = false;
-static bool gStepOnce    = false;
-static int  gGameTickCount = 0;
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -390,12 +382,7 @@ int main(int argc, char *argv[]) {
         sdl3ImguiPumpAndRender(cs);
         {
           SDL_Renderer *ren = sdl3DrawGetRenderer();
-          /* Capture main window pixels for zoom window BEFORE present
-           * (back buffer is undefined after SDL_RenderPresent). */
-          SDL_Surface *zoomSnap = debugZoomCaptureIfOpen(ren);
           if (ren) SDL_RenderPresent(ren);
-          debugZoomRenderFrame(zoomSnap);
-          if (zoomSnap) SDL_DestroySurface(zoomSnap);
         }
 
         /* Cap to configured frame rate */
@@ -455,7 +442,6 @@ int main(int argc, char *argv[]) {
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
-  debugZoomCleanup();
   sdl3DrawCleanup();
   steam_shutdown();
   SDL_Quit();
@@ -521,18 +507,9 @@ static void windowRunGameTick(ClientSim *cs) {
   }
 
   ttick = winboloTimer();
-  if (gPaused) {
-    if (gStepOnce) {
-      /* Force exactly one keys-tick + one game-tick through the while loop */
-      gStepOnce = false;
-      oldTick = ttick - (DWORD)(GAME_TICK_LENGTH * gSlowFactor) * 2 - 1;
-    } else {
-      oldTick = ttick;
-    }
-  }
   /* Update the game objects if required */
-  if ((ttick - oldTick) > (DWORD)(GAME_TICK_LENGTH * gSlowFactor)) {
-    while ((ttick - oldTick) > (DWORD)(GAME_TICK_LENGTH * gSlowFactor)) {
+  if ((ttick - oldTick) > GAME_TICK_LENGTH) {
+    while ((ttick - oldTick) > GAME_TICK_LENGTH) {
       if (doingTutorial == FALSE) {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (cs->netStat == netLobby || cs->netStat == netLobbyCountdown) {
@@ -644,12 +621,11 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimDisplayTick(cs, brainRunning);
           clientMutexRelease();
           simTickCounter++;
-          gGameTickCount++;
           ticks++;
           justKeysFlag = TRUE;
           used = TRUE;
         }
-        oldTick += GAME_TICK_LENGTH * gSlowFactor;
+        oldTick += GAME_TICK_LENGTH;
         if (oldTick > ttick) {
           oldTick = ttick;
         }
@@ -1054,34 +1030,6 @@ void windowKeyPressed(ClientSim *cs, int keyCode) {
   } else if (keyCode == keys.kiPillView) {
     screenPillViewCS(cs, 0, 0);
   }
-  if (keyCode == SDL_SCANCODE_F1)     { debugOverlayToggle(); }
-  if (keyCode == SDL_SCANCODE_F2)     { debugZoomToggle(); }
-  if (keyCode == SDL_SCANCODE_P)      { gPaused = !gPaused; gStepOnce = false; }
-  if (keyCode == SDL_SCANCODE_PERIOD) { gPaused = true; gStepOnce = true; }
-  {
-    SDL_Keymod mod = SDL_GetModState();
-    if (mod & SDL_KMOD_CTRL) {
-      if (keyCode == SDL_SCANCODE_MINUS) {
-        /* Ctrl+Minus — slow down: 1→2→4→…→128 */
-        if (gSlowFactor < 128) { gSlowFactor *= 2; oldTick = winboloTimer(); }
-      } else if (keyCode == SDL_SCANCODE_EQUALS) {
-        /* Ctrl+Plus (= key) — speed up: 8→4→2→1 */
-        if (gSlowFactor > 1) { gSlowFactor /= 2; oldTick = winboloTimer(); }
-      }
-    }
-  }
-}
-
-int winboloGetSlowFactor(void) {
-  return gSlowFactor;
-}
-
-bool winboloGetPaused(void) {
-  return gPaused;
-}
-
-int winboloGetGameTickCount(void) {
-  return gGameTickCount;
 }
 
 void windowButtonAdd(int keyCode) {

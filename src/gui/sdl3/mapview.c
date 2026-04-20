@@ -23,7 +23,6 @@
  *********************************************************/
 
 #include "mapview.h"
-#include "debug_overlay.h"
 #include "../tiles.h"
 #include "../../bolo/tilenum.h"
 #include "../../bolo/bolo_map.h"
@@ -540,17 +539,6 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       }
     }
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-
-    /* Debug: yellow = sprite (0,0), orange = tip (F1 overlays only) */
-    if (tipCol >= 0 && debugOverlayIsEnabled()) {
-      int zf = ctx->zoomFactor;
-      SDL_SetRenderDrawColor(ctx->renderer, 255, 255, 0, 255);
-      SDL_FRect yel = { sx, sy, (float)zf, (float)zf };
-      SDL_RenderFillRect(ctx->renderer, &yel);
-      SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
-      SDL_FRect orn = { sx + tipCol*zf, sy + tipRow*zf, (float)zf, (float)zf };
-      SDL_RenderFillRect(ctx->renderer, &orn);
-    }
   }
 }
 
