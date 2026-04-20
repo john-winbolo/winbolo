@@ -2602,6 +2602,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     s_pendingZoom = ZOOM_FACTOR_CUSTOM;
                 }
             }
+            /* Save custom size whenever window is resized */
+            if (zoomFactor == ZOOM_FACTOR_CUSTOM || s_pendingZoom == ZOOM_FACTOR_CUSTOM) {
+                int w, h;
+                SDL_GetWindowSize(s_window, &w, &h);
+                windowSetCustomSize(w, h);
+            }
+            /* Save position on resize too (window may have been repositioned) */
+            windowSaveCurrentPosition();
+        }
+        /* Window moved — save position */
+        if (ev.type == SDL_EVENT_WINDOW_MOVED &&
+            ev.window.windowID == SDL_GetWindowID(s_window)) {
+            windowSaveCurrentPosition();
         }
 
         /* Dispatch tap-style key actions (pill view, tank view) that are

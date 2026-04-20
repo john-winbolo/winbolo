@@ -207,6 +207,29 @@ void windowZoomChange(BYTE amount, bool fromDragResize);
 BYTE windowGetZoomFactor(void);
 
 /*********************************************************
+*NAME:          windowGetSavedPosition / windowSetSavedPosition
+*PURPOSE:
+*  Get/set the saved window position for preferences.
+*********************************************************/
+void windowGetSavedPosition(int *x, int *y);
+void windowSetSavedPosition(int x, int y);
+
+/*********************************************************
+*NAME:          windowGetCustomSize / windowSetCustomSize
+*PURPOSE:
+*  Get/set the saved custom window size for preferences.
+*********************************************************/
+void windowGetCustomSize(int *w, int *h);
+void windowSetCustomSize(int w, int h);
+
+/*********************************************************
+*NAME:          windowSaveCurrentPosition
+*PURPOSE:
+*  Save the current window position to preferences state.
+*********************************************************/
+void windowSaveCurrentPosition(void);
+
+/*********************************************************
 *NAME:          windowGetDrawTime
 *AUTHOR:        John Morrison
 *CREATION DATE: 30/1/99

@@ -327,8 +327,23 @@ int main(int argc, char *argv[]) {
       if (sdlWin) {
         /* All modes resizable - resizing auto-switches to Custom */
         SDL_SetWindowResizable(sdlWin, true);
-        if (zoomFactor != ZOOM_FACTOR_CUSTOM) {
+        if (zoomFactor == ZOOM_FACTOR_CUSTOM) {
+          /* Restore saved custom window size */
+          int customW, customH;
+          windowGetCustomSize(&customW, &customH);
+          if (customW > 0 && customH > 0) {
+            SDL_SetWindowSize(sdlWin, customW, customH);
+          }
+        } else {
           SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H + 22);
+        }
+        /* Restore saved window position from preferences */
+        {
+          int savedX, savedY;
+          windowGetSavedPosition(&savedX, &savedY);
+          if (savedX >= 0 && savedY >= 0) {
+            SDL_SetWindowPosition(sdlWin, savedX, savedY);
+          }
         }
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
@@ -773,6 +788,38 @@ static int s_customWinX = SDL_WINDOWPOS_CENTERED;
 static int s_customWinY = SDL_WINDOWPOS_CENTERED;
 static int s_customWinW = 0;
 static int s_customWinH = 0;
+
+/* Window position (for all zoom modes) */
+static int s_windowX = SDL_WINDOWPOS_CENTERED;
+static int s_windowY = SDL_WINDOWPOS_CENTERED;
+
+void windowGetSavedPosition(int *x, int *y) {
+  *x = s_windowX;
+  *y = s_windowY;
+}
+
+void windowSetSavedPosition(int x, int y) {
+  s_windowX = x;
+  s_windowY = y;
+}
+
+void windowGetCustomSize(int *w, int *h) {
+  *w = s_customWinW;
+  *h = s_customWinH;
+}
+
+void windowSetCustomSize(int w, int h) {
+  s_customWinW = w;
+  s_customWinH = h;
+}
+
+/* Update saved position from current window */
+void windowSaveCurrentPosition(void) {
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (win) {
+    SDL_GetWindowPosition(win, &s_windowX, &s_windowY);
+  }
+}
 
 /* Cardinal content widths.
    We only define width constants, not height, because:

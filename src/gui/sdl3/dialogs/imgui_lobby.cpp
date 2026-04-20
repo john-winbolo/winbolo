@@ -147,6 +147,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     dialogSetWindowTitle(window, "WinBolo - Game Lobby");
     SDL_SetWindowResizable(window, true);
 #endif
+    dialogRestorePosition(window);
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -198,6 +199,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT) {
                 running = false;
             }
