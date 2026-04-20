@@ -26,25 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
-#ifndef _MSC_VER
-#include <dirent.h>
-#else
-/* MSVC: implement opendir/readdir/closedir using Win32 FindFirstFile.
- * Include WinSock2.h (not windows.h) so winsock.h is not included first. */
-#include <WinSock2.h>
-struct dirent { char d_name[MAX_PATH]; };
-typedef struct { HANDLE h; WIN32_FIND_DATAA fd; struct dirent de; int first; } DIR;
-static DIR *opendir(const char *path) {
-    char pat[MAX_PATH]; snprintf(pat, sizeof(pat), "%s\\*", path);
-    DIR *d = malloc(sizeof(DIR)); if (!d) return NULL;
-    d->h = FindFirstFileA(pat, &d->fd); d->first = 1;
-    if (d->h == INVALID_HANDLE_VALUE) { free(d); return NULL; } return d; }
-static struct dirent *readdir(DIR *d) {
-    if (d->first) { d->first = 0; } else if (!FindNextFileA(d->h, &d->fd)) return NULL;
-    strncpy(d->de.d_name, d->fd.cFileName, MAX_PATH-1); d->de.d_name[MAX_PATH-1]=0;
-    return &d->de; }
-static void closedir(DIR *d) { if (d) { FindClose(d->h); free(d); } }
-#endif
+/* dirent.h not available on MSVC — use SDL_GlobDirectory instead */
 #include <SDL3/SDL.h>
 
 #include "../bolo/global.h"
@@ -2303,29 +2285,27 @@ bool serverSimCheckEmptyReset(ServerSim *sim) {
 }
 
 bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
-    DIR *dir;
-    struct dirent *entry;
     char fullPath[2048];
     char **tempList = NULL;
     int tempCount = 0;
     int tempCapacity = 0;
+    int globCount = 0;
+    int i;
     map mp;
     pillboxes pb;
     bases bs;
     starts ss;
 
-    dir = opendir(dirPath);
-    if (dir == NULL) {
-        fprintf(stderr, "Error: cannot open map directory '%s'\n", dirPath);
+    /* Use SDL3's cross-platform directory globbing */
+    char **files = SDL_GlobDirectory(dirPath, "*.map", 0, &globCount);
+    if (files == NULL || globCount == 0) {
+        fprintf(stderr, "Error: no .map files found in '%s'\n", dirPath);
+        if (files) SDL_free(files);
         return FALSE;
     }
 
-    while ((entry = readdir(dir)) != NULL) {
-        int len = (int)strlen(entry->d_name);
-        if (len < 5) continue;
-        if (strcmp(entry->d_name + len - 4, ".map") != 0) continue;
-
-        snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath, entry->d_name);
+    for (i = 0; i < globCount; i++) {
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath, files[i]);
 
         /* Validate map by attempting to load it */
         mapCreate(&mp);
@@ -2357,16 +2337,16 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
             tempCapacity = newCap;
         }
 
-        tempList[tempCount] = strdup(fullPath);
+        tempList[tempCount] = SDL_strdup(fullPath);
         if (tempList[tempCount] == NULL) {
             fprintf(stderr, "Error: out of memory duplicating path\n");
             break;
         }
         tempCount++;
-        fprintf(stderr, "Map directory: validated '%s'\n", entry->d_name);
+        fprintf(stderr, "Map directory: validated '%s'\n", files[i]);
     }
 
-    closedir(dir);
+    SDL_free(files);
 
     if (tempCount == 0) {
         fprintf(stderr, "Error: no valid .map files found in '%s'\n", dirPath);
