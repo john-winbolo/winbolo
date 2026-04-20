@@ -884,15 +884,26 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   }
 
   /* For custom mode, compute ceiling integer zoom from the target window size.
-     Use CURRENT window size (for resize-triggered switch) or saved custom size. */
+     Use CURRENT window size (for resize-triggered switch) or saved custom size (for menu). */
   BYTE internalZoom;
   int targetW = 0, targetH = 0;
   if (amount == ZOOM_FACTOR_CUSTOM) {
-    SDL_Window *win = sdl3DrawGetWindow();
-    if (win) {
-      SDL_GetWindowSize(win, &targetW, &targetH);
+    if (fromDragResize) {
+      /* Use current window size (user just dragged to this size) */
+      SDL_Window *win = sdl3DrawGetWindow();
+      if (win) {
+        SDL_GetWindowSize(win, &targetW, &targetH);
+        /* Save this as the new custom size (only if it's not a cardinal size) */
+        bool isCardinal = (targetW == 1 * SDL3_SCREEN_W || targetW == 2 * SDL3_SCREEN_W ||
+                           targetW == 3 * SDL3_SCREEN_W || targetW == 4 * SDL3_SCREEN_W);
+        if (!isCardinal && targetW > 0) {
+          s_customWinW = targetW;
+          s_customWinH = targetH;
+          SDL_GetWindowPosition(win, &s_customWinX, &s_customWinY);
+        }
+      }
     }
-    /* Fall back to saved custom size or default 2x */
+    /* Use saved custom size when coming from menu (or default 2x if none saved) */
     if (targetW <= 0) {
       targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
       targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
