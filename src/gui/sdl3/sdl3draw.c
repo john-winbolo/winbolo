@@ -1571,8 +1571,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     /* Clear window and blit game texture.
        Use BLENDMODE_NONE so that any alpha < 255 stored in the render target
        (e.g. from anti-aliased tile sprites drawn with BLENDMODE_NONE) doesn't
-       cause semi-transparency when composited onto the window. */
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+       cause semi-transparency when composited onto the window.
+       Use gray (107,107,107) to match chrome and hide any 1px rounding gaps. */
+    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
     SDL_RenderFillRect(gRenderer, NULL);
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
@@ -1691,7 +1692,8 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     gGameDestRect.h = destH;
     gGameScale = destW / (float)gGameRTWidth;
 
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    /* Gray background to match chrome and hide any 1px rounding gaps */
+    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
     SDL_RenderFillRect(gRenderer, NULL);
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
