@@ -457,7 +457,6 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
 
     int srcX, srcY, srcW, srcH;
-    int tipCol = -1, tipRow = -1;
     switch (frame) {
       case SHELL_EXPLOSION8: srcX=EXPLOSION8_X; srcY=EXPLOSION8_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
       case SHELL_EXPLOSION7: srcX=EXPLOSION7_X; srcY=EXPLOSION7_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
@@ -515,10 +514,8 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
         1, 0, 0, 0    /* W   WNW  NW   NNW  */
       };
       int dir = frame - SHELL_DIR0;
-      tipCol = kTipCol[dir];
-      tipRow = kTipRow[dir];
-      sx -= (float)(tipCol * ctx->zoomFactor);
-      sy -= (float)(tipRow * ctx->zoomFactor);
+      sx -= (float)(kTipCol[dir] * ctx->zoomFactor);
+      sy -= (float)(kTipRow[dir] * ctx->zoomFactor);
     }
 
     int ss = ctx->sheetScale;
