@@ -924,7 +924,7 @@ if(WIN32)
         src/res/winbolo.rc
     )
     set_target_properties(WinBolo PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32)
+    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32 comctl32)
     target_compile_options(WinBolo PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBolo PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")
