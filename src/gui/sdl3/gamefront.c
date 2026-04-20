@@ -178,6 +178,10 @@ char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
 
+/* Dialog window position (separate from game window) */
+int gameFrontDialogX = -1;
+int gameFrontDialogY = -1;
+
 /* Dialog states */
 openingStates dlgState = openStart;
 
@@ -449,6 +453,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     transportUdpClientDestroy(&udpTransport);
     udpTransportActive = FALSE;
   }
+  windowSaveCurrentPosition();  /* Capture current position before saving prefs */
   gameFrontPutPrefs(keys);
   if (humanSim != NULL) {
     netDestroy(humanSim);
@@ -1553,6 +1558,29 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Window Size", "1", buff, FILENAME_MAX, prefsFile);
   zoomFactor = atoi(buff);
+  /* Custom window size (for ZOOM_FACTOR_CUSTOM mode) */
+  GetPrivateProfileString("MENU", "Custom Width", "0", buff, FILENAME_MAX, prefsFile);
+  {
+    int customW = atoi(buff);
+    GetPrivateProfileString("MENU", "Custom Height", "0", buff, FILENAME_MAX, prefsFile);
+    int customH = atoi(buff);
+    if (customW > 0 && customH > 0) {
+      windowSetCustomSize(customW, customH);
+    }
+  }
+  /* Window position */
+  GetPrivateProfileString("MENU", "Window X", "-1", buff, FILENAME_MAX, prefsFile);
+  {
+    int winX = atoi(buff);
+    GetPrivateProfileString("MENU", "Window Y", "-1", buff, FILENAME_MAX, prefsFile);
+    int winY = atoi(buff);
+    windowSetSavedPosition(winX, winY);
+  }
+  /* Dialog window position (welcome screen, etc.) */
+  GetPrivateProfileString("MENU", "Dialog X", "-1", buff, FILENAME_MAX, prefsFile);
+  gameFrontDialogX = atoi(buff);
+  GetPrivateProfileString("MENU", "Dialog Y", "-1", buff, FILENAME_MAX, prefsFile);
+  gameFrontDialogY = atoi(buff);
   GetPrivateProfileString("MENU", "Message Label Size", "1", buff, FILENAME_MAX, prefsFile);
   labelMsg = atoi(buff);
   GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
@@ -1690,6 +1718,28 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf), prefsFile);
   intToStr(zoomFactor, buff, sizeof(buff));
   WritePrivateProfileString("MENU", "Window Size", buff, prefsFile);
+  /* Custom window size and position */
+  {
+    int customW, customH;
+    windowGetCustomSize(&customW, &customH);
+    intToStr(customW, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Custom Width", buff, prefsFile);
+    intToStr(customH, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Custom Height", buff, prefsFile);
+  }
+  {
+    int winX, winY;
+    windowGetSavedPosition(&winX, &winY);
+    intToStr(winX, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Window X", buff, prefsFile);
+    intToStr(winY, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Window Y", buff, prefsFile);
+  }
+  /* Dialog window position */
+  intToStr(gameFrontDialogX, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Dialog X", buff, prefsFile);
+  intToStr(gameFrontDialogY, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Dialog Y", buff, prefsFile);
   intToStr(labelMsg, buff, sizeof(buff));
   WritePrivateProfileString("MENU", "Message Label Size", buff, prefsFile);
   intToStr(labelTank, buff, sizeof(buff));
