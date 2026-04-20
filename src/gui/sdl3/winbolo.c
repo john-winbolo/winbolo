@@ -327,22 +327,66 @@ int main(int argc, char *argv[]) {
       if (sdlWin) {
         /* All modes resizable - resizing auto-switches to Custom */
         SDL_SetWindowResizable(sdlWin, true);
+
+        /* Get the monitor where the dialog was positioned */
+        SDL_Rect usable = {0, 0, 1920, 1080};  /* fallback */
+        {
+          SDL_Point dialogPt = { gameFrontDialogX, gameFrontDialogY };
+          if (dialogPt.x >= 0 && dialogPt.y >= 0) {
+            SDL_DisplayID dispID = SDL_GetDisplayForPoint(&dialogPt);
+            if (dispID) {
+              SDL_GetDisplayUsableBounds(dispID, &usable);
+            }
+          }
+        }
+
+        /* Determine target size, falling back to smaller cardinal if needed */
+        int targetW, targetH;
         if (zoomFactor == ZOOM_FACTOR_CUSTOM) {
-          /* Restore saved custom window size */
-          int customW, customH;
-          windowGetCustomSize(&customW, &customH);
-          if (customW > 0 && customH > 0) {
-            SDL_SetWindowSize(sdlWin, customW, customH);
+          windowGetCustomSize(&targetW, &targetH);
+          if (targetW <= 0 || targetH <= 0) {
+            targetW = 2 * SDL3_SCREEN_W;
+            targetH = 2 * SDL3_SCREEN_H + 22;
           }
         } else {
-          SDL_SetWindowSize(sdlWin, sdl3DrawGetZoomFactor() * SDL3_SCREEN_W, sdl3DrawGetZoomFactor() * SDL3_SCREEN_H + 22);
+          targetW = sdl3DrawGetZoomFactor() * SDL3_SCREEN_W;
+          targetH = sdl3DrawGetZoomFactor() * SDL3_SCREEN_H + 22;
         }
-        /* Restore saved window position from preferences */
+
+        /* If target doesn't fit on this monitor, fall back to smaller cardinal sizes */
+        if (targetW > usable.w || targetH > usable.h) {
+          /* Try 4x, 3x, 2x, 1x until one fits */
+          for (int z = 4; z >= 1; z--) {
+            int cardW = z * SDL3_SCREEN_W;
+            int cardH = z * SDL3_SCREEN_H + 22;
+            if (cardW <= usable.w && cardH <= usable.h) {
+              targetW = cardW;
+              targetH = cardH;
+              /* Update zoomFactor to match */
+              zoomFactor = (BYTE)z;
+              break;
+            }
+          }
+        }
+
+        SDL_SetWindowSize(sdlWin, targetW, targetH);
+
+        /* Restore saved window position from preferences, but ensure it's on this monitor */
         {
           int savedX, savedY;
           windowGetSavedPosition(&savedX, &savedY);
           if (savedX >= 0 && savedY >= 0) {
+            /* Clamp position to keep window on the target monitor */
+            if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
+            if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
+            if (savedX < usable.x) savedX = usable.x;
+            if (savedY < usable.y) savedY = usable.y;
             SDL_SetWindowPosition(sdlWin, savedX, savedY);
+          } else {
+            /* Center on the dialog's monitor */
+            int centeredX = usable.x + (usable.w - targetW) / 2;
+            int centeredY = usable.y + (usable.h - targetH) / 2;
+            SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
           }
         }
         SDL_ShowWindow(sdlWin);
@@ -856,7 +900,8 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   }
 
   /* Skip if dimensions unchanged from last time (no actual resize happened)
-     Only applies to resize-triggered changes, not menu selections */
+     Only applies to resize-triggered changes, not menu selections.
+     Don't change zoomFactor - just exit without doing anything. */
   if (fromDragResize && curW == s_lastWinW && curH == s_lastWinH && curW > 0) {
     FILE *logf = fopen("resize.log", "a");
     if (logf) {
@@ -866,7 +911,6 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
               amountName, curW, curH, s_lastWinW, s_lastWinH);
       fclose(logf);
     }
-    windowSetZoomFactor(amount);
     return;
   }
 
@@ -874,12 +918,38 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     return;
   }
 
-  /* Save custom window position and size if currently in custom mode */
+  /* Save custom window position and size if currently in custom mode.
+     Save CORRECTED size (proper aspect ratio) so maximize doesn't corrupt saved size.
+     Find the largest aspect-correct size that FITS WITHIN the actual window.
+     Also save centered position for the corrected size.
+     BUT: don't save if the current size is actually a cardinal size (bug recovery). */
   if (zoomFactor == ZOOM_FACTOR_CUSTOM) {
     SDL_Window *win = sdl3DrawGetWindow();
     if (win) {
-      SDL_GetWindowPosition(win, &s_customWinX, &s_customWinY);
-      SDL_GetWindowSize(win, &s_customWinW, &s_customWinH);
+      int curW, curH, curX, curY;
+      SDL_GetWindowPosition(win, &curX, &curY);
+      SDL_GetWindowSize(win, &curW, &curH);
+      /* Don't save cardinal sizes as "custom" */
+      bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
+                         curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
+      if (!isCardinal) {
+        /* Find largest aspect-correct size that fits within actual window. */
+        int contentH = curH - 22;
+        int correctContentH = curW * SDL3_SCREEN_H / SDL3_SCREEN_W;
+        if (correctContentH <= contentH) {
+          /* Width-based fits - center vertically */
+          s_customWinW = curW;
+          s_customWinH = correctContentH + 22;
+          s_customWinX = curX;
+          s_customWinY = curY + (curH - s_customWinH) / 2;
+        } else {
+          /* Too tall - use height-based, reduce width, center horizontally */
+          s_customWinW = contentH * SDL3_SCREEN_W / SDL3_SCREEN_H;
+          s_customWinH = curH;
+          s_customWinX = curX + (curW - s_customWinW) / 2;
+          s_customWinY = curY;
+        }
+      }
     }
   }
 
@@ -892,14 +962,31 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
       /* Use current window size (user just dragged to this size) */
       SDL_Window *win = sdl3DrawGetWindow();
       if (win) {
+        int curX, curY;
         SDL_GetWindowSize(win, &targetW, &targetH);
-        /* Save this as the new custom size (only if it's not a cardinal size) */
+        SDL_GetWindowPosition(win, &curX, &curY);
+        /* Save this as the new custom size (only if it's not a cardinal size).
+           Save CORRECTED size so maximize doesn't corrupt saved size.
+           Find the largest aspect-correct size that FITS WITHIN the actual window.
+           Also save centered position for the corrected size. */
         bool isCardinal = (targetW == 1 * SDL3_SCREEN_W || targetW == 2 * SDL3_SCREEN_W ||
                            targetW == 3 * SDL3_SCREEN_W || targetW == 4 * SDL3_SCREEN_W);
         if (!isCardinal && targetW > 0) {
-          s_customWinW = targetW;
-          s_customWinH = targetH;
-          SDL_GetWindowPosition(win, &s_customWinX, &s_customWinY);
+          int contentH = targetH - 22;
+          int correctContentH = targetW * SDL3_SCREEN_H / SDL3_SCREEN_W;
+          if (correctContentH <= contentH) {
+            /* Width-based fits - center vertically */
+            s_customWinW = targetW;
+            s_customWinH = correctContentH + 22;
+            s_customWinX = curX;
+            s_customWinY = curY + (targetH - s_customWinH) / 2;
+          } else {
+            /* Too tall - use height-based, reduce width, center horizontally */
+            s_customWinW = contentH * SDL3_SCREEN_W / SDL3_SCREEN_H;
+            s_customWinH = targetH;
+            s_customWinX = curX + (targetW - s_customWinW) / 2;
+            s_customWinY = curY;
+          }
         }
       }
     }
@@ -935,12 +1022,20 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
       if (amount != ZOOM_FACTOR_CUSTOM && win) {
         int cardinalW = internalZoom * SDL3_SCREEN_W;
         int cardinalH = internalZoom * SDL3_SCREEN_H + 22;
-        int curW, curH;
+        int curW, curH, curX, curY;
         SDL_GetWindowSize(win, &curW, &curH);
+        SDL_GetWindowPosition(win, &curX, &curY);
         if (curW != cardinalW || curH != cardinalH) {
-          if (logf) fprintf(logf, "  -> Resizing window %dx%d -> %dx%d and centering\n", curW, curH, cardinalW, cardinalH);
+          if (logf) fprintf(logf, "  -> Resizing window %dx%d -> %dx%d and centering on current monitor\n", curW, curH, cardinalW, cardinalH);
+          /* Get the display where the window currently is */
+          SDL_DisplayID dispID = SDL_GetDisplayForWindow(win);
+          SDL_Rect usable = {0, 0, 1920, 1080};
+          if (dispID) SDL_GetDisplayUsableBounds(dispID, &usable);
+          /* Center on that display */
+          int centeredX = usable.x + (usable.w - cardinalW) / 2;
+          int centeredY = usable.y + (usable.h - cardinalH) / 2;
           SDL_SetWindowSize(win, cardinalW, cardinalH);
-          SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+          SDL_SetWindowPosition(win, centeredX, centeredY);
         } else {
           if (logf) fprintf(logf, "  -> Window already at correct size\n");
         }
@@ -969,6 +1064,17 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   }
 
   drawBusy = TRUE;
+
+  /* Capture the display where the window currently is, BEFORE cleanup destroys it */
+  SDL_Rect savedDisplayBounds = {0, 0, 1920, 1080};
+  {
+    SDL_Window *oldWin = sdl3DrawGetWindow();
+    if (oldWin) {
+      SDL_DisplayID dispID = SDL_GetDisplayForWindow(oldWin);
+      if (dispID) SDL_GetDisplayUsableBounds(dispID, &savedDisplayBounds);
+    }
+  }
+
   clientMutexWaitFor();
   {
     FILE *logf = fopen("resize.log", "a");
@@ -1002,6 +1108,14 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
             SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
           }
         }
+      } else {
+        /* Cardinal mode: center on the display where the old window was */
+        int cardW = internalZoom * SDL3_SCREEN_W;
+        int cardH = internalZoom * SDL3_SCREEN_H + 22;
+        int centeredX = savedDisplayBounds.x + (savedDisplayBounds.w - cardW) / 2;
+        int centeredY = savedDisplayBounds.y + (savedDisplayBounds.h - cardH) / 2;
+        SDL_SetWindowSize(win, cardW, cardH);
+        SDL_SetWindowPosition(win, centeredX, centeredY);
       }
       SDL_ShowWindow(win);
     }

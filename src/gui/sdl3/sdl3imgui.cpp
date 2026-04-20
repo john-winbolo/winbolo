@@ -2277,6 +2277,14 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
         return true;
     }
 
+    /* Clear resize.log on first setup of each run */
+    static bool s_logCleared = false;
+    if (!s_logCleared) {
+        FILE *logf = fopen("resize.log", "w");
+        if (logf) fclose(logf);
+        s_logCleared = true;
+    }
+
     s_window   = window;
     s_renderer = renderer;
 
@@ -2614,6 +2622,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Window resized — enforce content aspect ratio (515:325) accounting for 22px menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
+            FILE *logf = fopen("resize.log", "a");
+            if (logf) fprintf(logf, "SDL_EVENT_WINDOW_RESIZED: %dx%d suppress=%d inModal=%d\n",
+                              ev.window.data1, ev.window.data2, s_suppressAutoCustom, s_inModalResize);
+            if (logf) fclose(logf);
             if (s_suppressAutoCustom) {
                 /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                    Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
@@ -2628,32 +2640,76 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     s_suppressAutoCustom = true;  /* Prevent recursion */
                     SDL_SetWindowSize(s_window, w, correctH);
                 }
-                /* Auto-switch to Custom if in a fixed mode — but NOT during modal
-                   resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE */
-                if (zoomFactor != ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255 && !s_inModalResize) {
-                    s_pendingZoom = ZOOM_FACTOR_CUSTOM;
+                /* Auto-switch zoom mode based on width — but NOT during modal
+                   resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE.
+                   If width matches a cardinal size, switch to that cardinal mode.
+                   Otherwise switch to custom. */
+                if (s_pendingZoom == 255 && !s_inModalResize) {
+                    BYTE targetZoom = ZOOM_FACTOR_CUSTOM;
+                    if (w == 1 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_NORMAL;
+                    else if (w == 2 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_DOUBLE;
+                    else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
+                    else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
+                    if (zoomFactor != targetZoom) {
+                        FILE *logf2 = fopen("resize.log", "a");
+                        if (logf2) fprintf(logf2, "AUTO-SWITCH: w=%d zoomFactor=%d targetZoom=%d (1x=%d 2x=%d 3x=%d 4x=%d)\n",
+                                           w, zoomFactor, targetZoom,
+                                           1*SDL3_SCREEN_W, 2*SDL3_SCREEN_W, 3*SDL3_SCREEN_W, 4*SDL3_SCREEN_W);
+                        if (logf2) fclose(logf2);
+                        s_pendingZoom = targetZoom;
+                    }
                 }
                 /* Save custom size on USER-initiated resize (not programmatic menu changes).
-                   Only save if it's actually a non-cardinal size. */
+                   Only save if it's actually a non-cardinal size.
+                   Save the CORRECTED size (proper aspect ratio), not actual window size,
+                   so maximize (which allows any ratio with gray bars) doesn't save a bad size.
+                   Find the largest aspect-correct size that FITS WITHIN the actual window. */
                 if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
                     (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
-                    int curW, curH;
+                    int curW, curH, curX, curY;
                     SDL_GetWindowSize(s_window, &curW, &curH);
+                    SDL_GetWindowPosition(s_window, &curX, &curY);
                     /* Don't save cardinal sizes as "custom" */
                     bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
                                        curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
                     if (!isCardinal) {
-                        windowSetCustomSize(curW, curH);
+                        /* Find largest aspect-correct size that fits within actual window.
+                           Try keeping width -> calculate height. If too tall, keep height -> calculate width.
+                           Also calculate centered position for the corrected size. */
+                        int contentH = curH - 22;
+                        int correctContentH = curW * SDL3_SCREEN_H / SDL3_SCREEN_W;
+                        int saveW, saveH, saveX, saveY;
+                        if (correctContentH <= contentH) {
+                            /* Width-based fits - center vertically */
+                            saveW = curW;
+                            saveH = correctContentH + 22;
+                            saveX = curX;
+                            saveY = curY + (curH - saveH) / 2;
+                        } else {
+                            /* Too tall - use height-based, reduce width, center horizontally */
+                            saveW = contentH * SDL3_SCREEN_W / SDL3_SCREEN_H;
+                            saveH = curH;
+                            saveX = curX + (curW - saveW) / 2;
+                            saveY = curY;
+                        }
+                        windowSetCustomSize(saveW, saveH);
+                        windowSetSavedPosition(saveX, saveY);
                     }
                 }
             }
-            /* Save position on resize too (window may have been repositioned) */
-            windowSaveCurrentPosition();
+            /* Save position on resize too (window may have been repositioned) - but only if
+               we didn't already save a corrected position above */
+            if (s_pendingZoom != ZOOM_FACTOR_CUSTOM &&
+                !(zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                windowSaveCurrentPosition();
+            }
+            gameFrontSaveWindowSettings();
         }
         /* Window moved — save position */
         if (ev.type == SDL_EVENT_WINDOW_MOVED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSaveCurrentPosition();
+            gameFrontSaveWindowSettings();
         }
 
         /* Dispatch tap-style key actions (pill view, tank view) that are
