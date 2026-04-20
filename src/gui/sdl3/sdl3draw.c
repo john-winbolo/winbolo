@@ -68,6 +68,9 @@
 #ifndef ZOOM_FACTOR_CUSTOM
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
+#ifndef MENU_BAR_HEIGHT
+#define MENU_BAR_HEIGHT 22
+#endif
 
 static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
@@ -867,7 +870,7 @@ bool sdl3DrawSetup(int zoomFactor) {
   } else {
     gWindow = SDL_CreateWindow("WinBolo SDL3",
                                zoomFactor * SDL3_SCREEN_W,
-                               zoomFactor * SDL3_SCREEN_H + 22,  /* +22 for menu bar */
+                               zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
 #if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
                                0);
 #else

@@ -127,8 +127,13 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #ifndef ZOOM_FACTOR_NORMAL
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
+#define ZOOM_FACTOR_TRIPLE 3
 #define ZOOM_FACTOR_QUAD   4
 #define ZOOM_FACTOR_CUSTOM 0
+#endif
+
+#ifndef MENU_BAR_HEIGHT
+#define MENU_BAR_HEIGHT 22
 #endif
 
 /* -------------------------------------------------------
@@ -158,6 +163,8 @@ extern "C" void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
 extern "C" void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
 extern "C" void windowSetFrameRate(int newFrameRate, bool setTimer);
 extern "C" void windowZoomChange(BYTE amount, bool fromDragResize = false);
+extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
+                                                int *outW, int *outH, int *outX, int *outY);
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
@@ -1776,31 +1783,31 @@ static void renderMenuBar(ClientSim *cs) {
                     dispH = usable.h;
                 }
             }
-            /* Cardinal sizes: width = zoom * 515, height = zoom * 325 + 22 (menu bar) */
-            bool fit1x = (1 * SDL3_SCREEN_W <= dispW) && (1 * SDL3_SCREEN_H + 22 <= dispH);
-            bool fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + 22 <= dispH);
-            bool fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + 22 <= dispH);
-            bool fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + 22 <= dispH);
+            /* Cardinal sizes: width = zoom * 515, height = zoom * 325 + MENU_BAR_HEIGHT */
+            bool fit1x = (1 * SDL3_SCREEN_W <= dispW) && (1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+            bool fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+            bool fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+            bool fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
 
             ImGui::BeginDisabled(!fit1x);
             if (ImGui::MenuItem("Normal", nullptr, zoomFactor == ZOOM_FACTOR_NORMAL)) s_pendingZoom = ZOOM_FACTOR_NORMAL;
             if (!fit1x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Requires %dx%d - exceeds display", 1 * SDL3_SCREEN_W, 1 * SDL3_SCREEN_H + 22);
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 1 * SDL3_SCREEN_W, 1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!fit2x);
             if (ImGui::MenuItem("Double", nullptr, zoomFactor == ZOOM_FACTOR_DOUBLE)) s_pendingZoom = ZOOM_FACTOR_DOUBLE;
             if (!fit2x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Requires %dx%d - exceeds display", 2 * SDL3_SCREEN_W, 2 * SDL3_SCREEN_H + 22);
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 2 * SDL3_SCREEN_W, 2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!fit3x);
             if (ImGui::MenuItem("Triple", nullptr, zoomFactor == ZOOM_FACTOR_TRIPLE)) s_pendingZoom = ZOOM_FACTOR_TRIPLE;
             if (!fit3x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Requires %dx%d - exceeds display", 3 * SDL3_SCREEN_W, 3 * SDL3_SCREEN_H + 22);
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 3 * SDL3_SCREEN_W, 3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!fit4x);
             if (ImGui::MenuItem("Quad",   nullptr, zoomFactor == ZOOM_FACTOR_QUAD))   s_pendingZoom = ZOOM_FACTOR_QUAD;
             if (!fit4x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Requires %dx%d - exceeds display", 4 * SDL3_SCREEN_W, 4 * SDL3_SCREEN_H + 22);
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 4 * SDL3_SCREEN_W, 4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
             ImGui::EndDisabled();
             ImGui::Separator();
             if (ImGui::MenuItem("Custom (Resizable)", nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
@@ -2156,7 +2163,7 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
     if (msg == WM_GETMINMAXINFO) {
         /* Enforce 1x minimum window size */
         MINMAXINFO *mmi = (MINMAXINFO *)lParam;
-        RECT clientRect = {0, 0, SDL3_SCREEN_W, SDL3_SCREEN_H + 22};
+        RECT clientRect = {0, 0, SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT};
         DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
         DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
@@ -2182,7 +2189,7 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
         int clientW = winW - frameW;
         int clientH = winH - frameH;
 
-        /* Content aspect ratio 515:325, plus 22px menu bar inside client area.
+        /* Content aspect ratio 515:325, plus MENU_BAR_HEIGHT menu bar inside client area.
            Always keep top-left fixed, expand right and down only.
            Use rounding (not truncation) to avoid 1px black borders. */
         int correctClientW, correctClientH;
@@ -2190,7 +2197,7 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
             case WMSZ_TOP:
             case WMSZ_BOTTOM: {
                 /* Vertical edge: keep height, adjust width to the right */
-                int contentH = clientH - 22;
+                int contentH = clientH - MENU_BAR_HEIGHT;
                 correctClientW = (contentH * SDL3_SCREEN_W + SDL3_SCREEN_H / 2) / SDL3_SCREEN_H;
                 correctClientH = clientH;
                 break;
@@ -2198,19 +2205,16 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
             default: {
                 /* Horizontal edges and corners: keep width, adjust height downward */
                 correctClientW = clientW;
-                correctClientH = (clientW * SDL3_SCREEN_H + SDL3_SCREEN_W / 2) / SDL3_SCREEN_W + 22;
+                correctClientH = (clientW * SDL3_SCREEN_H + SDL3_SCREEN_W / 2) / SDL3_SCREEN_W + MENU_BAR_HEIGHT;
                 break;
             }
         }
 
         /* Check for snap to cardinal sizes (1x, 2x, 3x, 4x) within 1% */
         s_snapIndicator = 0;
-        const char *snapNames[] = {"NONE", "NORMAL", "DOUBLE", "TRIPLE", "QUAD"};
-        FILE *logf = fopen("resize.log", "a");
-        if (logf) fprintf(logf, "--- correctClient: %d x %d, internalZoom: %d\n", correctClientW, correctClientH, sdl3DrawGetZoomFactor());
         for (int zoom = 1; zoom <= 4; zoom++) {
             int cardinalW = zoom * SDL3_SCREEN_W;
-            int cardinalH = zoom * SDL3_SCREEN_H + 22;
+            int cardinalH = zoom * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
             int threshW = cardinalW / 100;  /* 1% threshold */
             int threshH = cardinalH / 100;
             if (threshW < 2) threshW = 2;   /* minimum 2 pixels */
@@ -2219,17 +2223,13 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
             int diffH = correctClientH - cardinalH;
             if (diffW < 0) diffW = -diffW;
             if (diffH < 0) diffH = -diffH;
-            if (logf) fprintf(logf, "  %s: cardinal %d x %d, thresh %d x %d, diff %d x %d\n",
-                              snapNames[zoom], cardinalW, cardinalH, threshW, threshH, diffW, diffH);
             if (diffW <= threshW && diffH <= threshH) {
                 correctClientW = cardinalW;
                 correctClientH = cardinalH;
                 s_snapIndicator = zoom;
-                if (logf) fprintf(logf, "  -> SNAP to %s\n", snapNames[zoom]);
                 break;
             }
         }
-        if (logf) { fprintf(logf, "  snapIndicator = %s\n", snapNames[s_snapIndicator]); fclose(logf); }
 
         rect->right = rect->left + correctClientW + frameW;
         rect->bottom = rect->top + correctClientH + frameH;
@@ -2275,14 +2275,6 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
         s_window   = window;
         s_renderer = renderer;
         return true;
-    }
-
-    /* Clear resize.log on first setup of each run */
-    static bool s_logCleared = false;
-    if (!s_logCleared) {
-        FILE *logf = fopen("resize.log", "w");
-        if (logf) fclose(logf);
-        s_logCleared = true;
     }
 
     s_window   = window;
@@ -2619,13 +2611,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSetQuitting();
         }
-        /* Window resized — enforce content aspect ratio (515:325) accounting for 22px menu bar */
+        /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
-            FILE *logf = fopen("resize.log", "a");
-            if (logf) fprintf(logf, "SDL_EVENT_WINDOW_RESIZED: %dx%d suppress=%d inModal=%d\n",
-                              ev.window.data1, ev.window.data2, s_suppressAutoCustom, s_inModalResize);
-            if (logf) fclose(logf);
             if (s_suppressAutoCustom) {
                 /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                    Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
@@ -2633,9 +2621,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 /* Enforce aspect ratio: adjust height to match width */
                 int w = ev.window.data1;
                 int h = ev.window.data2;
-                int contentH = h - 22;
+                int contentH = h - MENU_BAR_HEIGHT;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
-                int correctH = correctContentH + 22;
+                int correctH = correctContentH + MENU_BAR_HEIGHT;
                 if (h != correctH) {
                     s_suppressAutoCustom = true;  /* Prevent recursion */
                     SDL_SetWindowSize(s_window, w, correctH);
@@ -2651,11 +2639,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
                     else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
                     if (zoomFactor != targetZoom) {
-                        FILE *logf2 = fopen("resize.log", "a");
-                        if (logf2) fprintf(logf2, "AUTO-SWITCH: w=%d zoomFactor=%d targetZoom=%d (1x=%d 2x=%d 3x=%d 4x=%d)\n",
-                                           w, zoomFactor, targetZoom,
-                                           1*SDL3_SCREEN_W, 2*SDL3_SCREEN_W, 3*SDL3_SCREEN_W, 4*SDL3_SCREEN_W);
-                        if (logf2) fclose(logf2);
                         s_pendingZoom = targetZoom;
                     }
                 }
@@ -2673,25 +2656,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
                                        curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
                     if (!isCardinal) {
-                        /* Find largest aspect-correct size that fits within actual window.
-                           Try keeping width -> calculate height. If too tall, keep height -> calculate width.
-                           Also calculate centered position for the corrected size. */
-                        int contentH = curH - 22;
-                        int correctContentH = curW * SDL3_SCREEN_H / SDL3_SCREEN_W;
                         int saveW, saveH, saveX, saveY;
-                        if (correctContentH <= contentH) {
-                            /* Width-based fits - center vertically */
-                            saveW = curW;
-                            saveH = correctContentH + 22;
-                            saveX = curX;
-                            saveY = curY + (curH - saveH) / 2;
-                        } else {
-                            /* Too tall - use height-based, reduce width, center horizontally */
-                            saveW = contentH * SDL3_SCREEN_W / SDL3_SCREEN_H;
-                            saveH = curH;
-                            saveX = curX + (curW - saveW) / 2;
-                            saveY = curY;
-                        }
+                        windowComputeAspectCorrectSize(curW, curH, curX, curY, &saveW, &saveH, &saveX, &saveY);
                         windowSetCustomSize(saveW, saveH);
                         windowSetSavedPosition(saveX, saveY);
                     }
@@ -2881,26 +2847,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
     }
 
-#ifdef _WIN32
-    /* Show snap indicator in bottom-right corner when snapping to cardinal size */
-    if (s_snapIndicator > 0) {
-        ImGuiIO &io = ImGui::GetIO();
-        const char *labels[] = {"", "1x", "2x", "3x", "4x"};
-        const char *label = labels[s_snapIndicator];
-        ImVec2 textSize = ImGui::CalcTextSize(label);
-        float padding = 16.0f;
-        ImVec2 pos(io.DisplaySize.x - textSize.x - padding * 2,
-                   io.DisplaySize.y - textSize.y - padding * 2);
-        ImGui::SetNextWindowPos(pos);
-        ImGui::SetNextWindowBgAlpha(0.75f);
-        ImGui::Begin("##SnapIndicator", nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
-        ImGui::TextUnformatted(label);
-        ImGui::End();
-    }
-#endif
 
     ImGui::EndFrame();
     ImGui::Render();
@@ -2946,13 +2892,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool fromResize = s_pendingZoomFromResize;
         s_pendingZoom = 255;
         s_pendingZoomFromResize = false;
-        FILE *logApply = fopen("resize.log", "a");
-        if (logApply) {
-            const char *zoomNames[] = {"CUSTOM", "NORMAL", "DOUBLE", "TRIPLE", "QUAD"};
-            const char *zoomName = (zoom <= 4) ? zoomNames[zoom] : "UNKNOWN";
-            fprintf(logApply, "Applying pendingZoom=%s fromResize=%s\n", zoomName, fromResize ? "YES" : "NO");
-            fclose(logApply);
-        }
         /* Suppress auto-switch to Custom for fixed mode changes */
         if (zoom != ZOOM_FACTOR_CUSTOM) {
             s_suppressAutoCustom = true;
@@ -3117,6 +3056,10 @@ void sdl3ImguiCleanup(void) {
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;
+#ifdef _WIN32
+    if (s_snapPopup) { DestroyWindow(s_snapPopup); s_snapPopup = NULL; }
+    if (s_snapFont) { DeleteObject(s_snapFont); s_snapFont = NULL; }
+#endif
     /* Guard against the ImGui context already being destroyed.
      * The welcome dialog (imguiWelcomeShow) creates and tears down its own
      * ImGui context, so by the time we get here the context set up in
