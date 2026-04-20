@@ -453,7 +453,9 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     transportUdpClientDestroy(&udpTransport);
     udpTransportActive = FALSE;
   }
-  windowSaveCurrentPosition();  /* Capture current position before saving prefs */
+  /* Don't call windowSaveCurrentPosition() here - we already save the corrected
+     position on every resize/move. Calling it here would overwrite the corrected
+     position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
   if (humanSim != NULL) {
     netDestroy(humanSim);
@@ -1581,6 +1583,20 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontDialogX = atoi(buff);
   GetPrivateProfileString("MENU", "Dialog Y", "-1", buff, FILENAME_MAX, prefsFile);
   gameFrontDialogY = atoi(buff);
+
+  /* Log loaded settings */
+  {
+    int cW, cH, wX, wY;
+    windowGetCustomSize(&cW, &cH);
+    windowGetSavedPosition(&wX, &wY);
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) {
+      fprintf(logf, "CONFIG LOAD: zoomFactor=%d customSize=%dx%d winPos=%d,%d dialogPos=%d,%d\n",
+              zoomFactor, cW, cH, wX, wY, gameFrontDialogX, gameFrontDialogY);
+      fclose(logf);
+    }
+  }
+
   GetPrivateProfileString("MENU", "Message Label Size", "1", buff, FILENAME_MAX, prefsFile);
   labelMsg = atoi(buff);
   GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
@@ -1740,6 +1756,20 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Dialog X", buff, prefsFile);
   intToStr(gameFrontDialogY, buff, sizeof(buff));
   WritePrivateProfileString("MENU", "Dialog Y", buff, prefsFile);
+
+  /* Log saved settings */
+  {
+    int cW, cH, wX, wY;
+    windowGetCustomSize(&cW, &cH);
+    windowGetSavedPosition(&wX, &wY);
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) {
+      fprintf(logf, "CONFIG SAVE: zoomFactor=%d customSize=%dx%d winPos=%d,%d dialogPos=%d,%d\n",
+              zoomFactor, cW, cH, wX, wY, gameFrontDialogX, gameFrontDialogY);
+      fclose(logf);
+    }
+  }
+
   intToStr(labelMsg, buff, sizeof(buff));
   WritePrivateProfileString("MENU", "Message Label Size", buff, prefsFile);
   intToStr(labelTank, buff, sizeof(buff));
@@ -1748,6 +1778,61 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Winbolo.net */
   WritePrivateProfileString("WINBOLO.NET", "Token", gameFrontWbnToken, prefsFile);
   WritePrivateProfileString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry, prefsFile);
+}
+
+/* -------------------------------------------------------
+ * gameFrontSaveWindowSettings — save only window position/size
+ *
+ * Lightweight version of gameFrontPutPrefs that only persists
+ * window-related settings. Called on every resize/move so the
+ * window state survives crashes without writing everything.
+ * ------------------------------------------------------- */
+void gameFrontSaveWindowSettings(void) {
+  char buff[FILENAME_MAX];
+  const char *prefsFile = getPreferenceFilePath();
+
+  /* Zoom factor */
+  intToStr(zoomFactor, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Window Size", buff, prefsFile);
+
+  /* Custom window size */
+  {
+    int customW, customH;
+    windowGetCustomSize(&customW, &customH);
+    intToStr(customW, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Custom Width", buff, prefsFile);
+    intToStr(customH, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Custom Height", buff, prefsFile);
+  }
+
+  /* Window position */
+  {
+    int winX, winY;
+    windowGetSavedPosition(&winX, &winY);
+    intToStr(winX, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Window X", buff, prefsFile);
+    intToStr(winY, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Window Y", buff, prefsFile);
+  }
+
+  /* Dialog window position */
+  intToStr(gameFrontDialogX, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Dialog X", buff, prefsFile);
+  intToStr(gameFrontDialogY, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Dialog Y", buff, prefsFile);
+
+  /* Log saved settings */
+  {
+    int cW, cH, wX, wY;
+    windowGetCustomSize(&cW, &cH);
+    windowGetSavedPosition(&wX, &wY);
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) {
+      fprintf(logf, "WINDOW SAVE: zoomFactor=%d customSize=%dx%d winPos=%d,%d dialogPos=%d,%d\n",
+              zoomFactor, cW, cH, wX, wY, gameFrontDialogX, gameFrontDialogY);
+      fclose(logf);
+    }
+  }
 }
 
 ServerSim *gameFrontGetServerSim(void) {
