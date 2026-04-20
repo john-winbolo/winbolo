@@ -429,7 +429,8 @@ void windowSetKeys(keyItems *value) { keys = *value; }
 void windowSetZoomFactor(BYTE amount)  { zoomFactor = amount; }
 BYTE windowGetZoomFactor(void)         { return zoomFactor; }
 
-void windowZoomChange(BYTE amount) {
+void windowZoomChange(BYTE amount, bool fromDragResize) {
+  (void)fromDragResize;  /* WASM doesn't use resize detection */
   if (amount == zoomFactor) return;
   printf("[WASM] windowZoomChange: %d -> %d\n", zoomFactor, amount);
   drawBusy = TRUE;

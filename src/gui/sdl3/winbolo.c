@@ -774,7 +774,55 @@ static int s_customWinY = SDL_WINDOWPOS_CENTERED;
 static int s_customWinW = 0;
 static int s_customWinH = 0;
 
-void windowZoomChange(BYTE amount) {
+/* Cardinal content widths.
+   We only define width constants, not height, because:
+   - Width = exact multiple of SDL3_SCREEN_W (515)
+   - Height = (multiple of SDL3_SCREEN_H) + menu bar
+   - Menu bar height can vary with Windows DPI scaling and font settings
+   - So we detect cardinal zoom by width alone, which is stable */
+#define CARDINAL_1X_W (1 * SDL3_SCREEN_W)
+#define CARDINAL_2X_W (2 * SDL3_SCREEN_W)
+#define CARDINAL_3X_W (3 * SDL3_SCREEN_W)
+#define CARDINAL_4X_W (4 * SDL3_SCREEN_W)
+
+/* Returns the cardinal zoom (1-4) if width matches exactly, or 0 for Custom */
+static BYTE detectCardinalZoom(int w, int h) {
+  (void)h;  /* Height varies with menu bar, only check width */
+  if (w == CARDINAL_1X_W) return ZOOM_FACTOR_NORMAL;
+  if (w == CARDINAL_2X_W) return ZOOM_FACTOR_DOUBLE;
+  if (w == CARDINAL_3X_W) return ZOOM_FACTOR_TRIPLE;
+  if (w == CARDINAL_4X_W) return ZOOM_FACTOR_QUAD;
+  return ZOOM_FACTOR_CUSTOM;
+}
+
+/* Last applied zoom and window dimensions - to skip redundant changes */
+static BYTE s_lastZoom = 255;
+static int s_lastWinW = 0;
+static int s_lastWinH = 0;
+
+void windowZoomChange(BYTE amount, bool fromDragResize) {
+  /* Get current window dimensions */
+  int curW = 0, curH = 0;
+  SDL_Window *curWin = sdl3DrawGetWindow();
+  if (curWin) {
+    SDL_GetWindowSize(curWin, &curW, &curH);
+  }
+
+  /* Skip if dimensions unchanged from last time (no actual resize happened)
+     Only applies to resize-triggered changes, not menu selections */
+  if (fromDragResize && curW == s_lastWinW && curH == s_lastWinH && curW > 0) {
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) {
+      const char *zoomNames[] = {"CUSTOM", "NORMAL", "DOUBLE", "TRIPLE", "QUAD"};
+      const char *amountName = (amount <= 4) ? zoomNames[amount] : "UNKNOWN";
+      fprintf(logf, "windowZoomChange: target=%s - Exiting because no resize happened (%dx%d == %dx%d)\n",
+              amountName, curW, curH, s_lastWinW, s_lastWinH);
+      fclose(logf);
+    }
+    windowSetZoomFactor(amount);
+    return;
+  }
+
   if (amount == zoomFactor) {
     return;
   }
@@ -788,23 +836,90 @@ void windowZoomChange(BYTE amount) {
     }
   }
 
-  drawBusy = TRUE;
-  clientMutexWaitFor();
-  sdl3DrawCleanup();
-
-  /* For custom mode, compute ceiling integer zoom from the target window size
-     so the render target is >= the window and the blit downscales (crisp). */
+  /* For custom mode, compute ceiling integer zoom from the target window size.
+     Use CURRENT window size (for resize-triggered switch) or saved custom size. */
   BYTE internalZoom;
+  int targetW = 0, targetH = 0;
   if (amount == ZOOM_FACTOR_CUSTOM) {
-    /* Default size: 2x game + menu bar height so aspect ratio matches exactly */
-    int targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
-    int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
+    SDL_Window *win = sdl3DrawGetWindow();
+    if (win) {
+      SDL_GetWindowSize(win, &targetW, &targetH);
+    }
+    /* Fall back to saved custom size or default 2x */
+    if (targetW <= 0) {
+      targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
+      targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
+    }
+    int contentH = targetH - 22;  /* Subtract menu bar */
     int zoomW = (targetW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
-    int zoomH = (targetH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
+    int zoomH = (contentH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
     internalZoom = (BYTE)((zoomW > zoomH) ? zoomW : zoomH);
     if (internalZoom < 1) internalZoom = 1;
   } else {
     internalZoom = amount;
+  }
+
+  /* Skip recreate if internal zoom isn't changing (avoids flash) */
+  int currentInternal = sdl3DrawGetZoomFactor();
+  {
+    const char *zoomNames[] = {"CUSTOM", "NORMAL", "DOUBLE", "TRIPLE", "QUAD"};
+    const char *amountName = (amount <= 4) ? zoomNames[amount] : "UNKNOWN";
+    const char *currentName = (zoomFactor <= 4) ? zoomNames[zoomFactor] : "UNKNOWN";
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) {
+      fprintf(logf, "windowZoomChange: current=%s, target=%s, currentInternal=%d, targetInternal=%d, winSize=%dx%d\n",
+              currentName, amountName, currentInternal, internalZoom, targetW, targetH);
+    }
+    if (currentInternal == internalZoom && sdl3DrawGetWindow() != NULL) {
+      if (logf) fprintf(logf, "  -> NO FLASH: internal zoom unchanged\n");
+      /* Still need to resize window for cardinal sizes if not already at that size */
+      SDL_Window *win = sdl3DrawGetWindow();
+      if (amount != ZOOM_FACTOR_CUSTOM && win) {
+        int cardinalW = internalZoom * SDL3_SCREEN_W;
+        int cardinalH = internalZoom * SDL3_SCREEN_H + 22;
+        int curW, curH;
+        SDL_GetWindowSize(win, &curW, &curH);
+        if (curW != cardinalW || curH != cardinalH) {
+          if (logf) fprintf(logf, "  -> Resizing window %dx%d -> %dx%d and centering\n", curW, curH, cardinalW, cardinalH);
+          SDL_SetWindowSize(win, cardinalW, cardinalH);
+          SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        } else {
+          if (logf) fprintf(logf, "  -> Window already at correct size\n");
+        }
+      }
+      /* Record final state and detect if we landed on a cardinal size */
+      if (win) {
+        SDL_GetWindowSize(win, &s_lastWinW, &s_lastWinH);
+        BYTE detectedZoom = detectCardinalZoom(s_lastWinW, s_lastWinH);
+        if (detectedZoom != ZOOM_FACTOR_CUSTOM) {
+          amount = detectedZoom;  /* Use detected cardinal */
+          if (logf) fprintf(logf, "  -> Final dimensions: %dx%d (detected as cardinal %d)\n", s_lastWinW, s_lastWinH, detectedZoom);
+        } else {
+          if (logf) fprintf(logf, "  -> Final dimensions: %dx%d (CUSTOM)\n", s_lastWinW, s_lastWinH);
+        }
+      }
+      windowSetZoomFactor(amount);
+      s_lastZoom = amount;
+      if (logf) fclose(logf);
+      return;
+    }
+    if (logf) {
+      fprintf(logf, "  -> FLASH! Recreating window because internal zoom changes %d -> %d\n",
+              currentInternal, internalZoom);
+      fclose(logf);
+    }
+  }
+
+  drawBusy = TRUE;
+  clientMutexWaitFor();
+  {
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) { fprintf(logf, "  -> sdl3DrawCleanup()\n"); fclose(logf); }
+  }
+  sdl3DrawCleanup();
+  {
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) { fprintf(logf, "  -> sdl3DrawSetup(%d)\n", internalZoom); fclose(logf); }
   }
   sdl3DrawSetup(internalZoom);
 
@@ -817,12 +932,17 @@ void windowZoomChange(BYTE amount) {
       SDL_SetWindowResizable(win, true);
 
       if (amount == ZOOM_FACTOR_CUSTOM) {
-        /* Restore saved custom position and size (default: 2x + menu bar) */
-        int targetW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
-        int targetH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
-        SDL_SetWindowSize(win, targetW, targetH);
-        if (s_customWinX != SDL_WINDOWPOS_CENTERED) {
-          SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
+        if (fromDragResize && curW > 0 && curH > 0) {
+          /* Use the size user just dragged to */
+          SDL_SetWindowSize(win, curW, curH);
+        } else {
+          /* Restore saved custom position and size (default: 2x + menu bar) */
+          int restoreW = s_customWinW > 0 ? s_customWinW : (2 * SDL3_SCREEN_W);
+          int restoreH = s_customWinH > 0 ? s_customWinH : (2 * SDL3_SCREEN_H + 22);
+          SDL_SetWindowSize(win, restoreW, restoreH);
+          if (s_customWinX != SDL_WINDOWPOS_CENTERED) {
+            SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
+          }
         }
       }
       SDL_ShowWindow(win);
@@ -834,7 +954,24 @@ void windowZoomChange(BYTE amount) {
   clientMutexRelease();
   drawBusy = FALSE;
 
+  /* Record final state and detect if we landed on a cardinal size */
+  SDL_Window *finalWin = sdl3DrawGetWindow();
+  if (finalWin) {
+    SDL_GetWindowSize(finalWin, &s_lastWinW, &s_lastWinH);
+    BYTE detectedZoom = detectCardinalZoom(s_lastWinW, s_lastWinH);
+    if (detectedZoom != ZOOM_FACTOR_CUSTOM) {
+      amount = detectedZoom;  /* Use detected cardinal */
+    }
+    FILE *logf = fopen("resize.log", "a");
+    if (logf) {
+      const char *zoomNames[] = {"CUSTOM", "NORMAL", "DOUBLE", "TRIPLE", "QUAD"};
+      fprintf(logf, "  -> Final dimensions: %dx%d (%s)\n", s_lastWinW, s_lastWinH,
+              (amount <= 4) ? zoomNames[amount] : "UNKNOWN");
+      fclose(logf);
+    }
+  }
   windowSetZoomFactor(amount);
+  s_lastZoom = amount;
 }
 
 /* -------------------------------------------------------

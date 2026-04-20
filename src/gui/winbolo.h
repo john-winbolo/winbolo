@@ -55,6 +55,7 @@ struct ClientSim;
 /* Zoom Factors */
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
+#define ZOOM_FACTOR_TRIPLE 3
 #define ZOOM_FACTOR_QUAD 4
 #define ZOOM_FACTOR_CUSTOM 0  /* Resizable window, renders at ceiling integer zoom */
 
@@ -190,7 +191,7 @@ void windowSetZoomFactor(BYTE amount);
 *ARGUMENTS:
 *  amount - New Zoom Factor
 *********************************************************/
-void windowZoomChange(BYTE amount);
+void windowZoomChange(BYTE amount, bool fromDragResize);
 
 /*********************************************************
 *NAME:          windowGetZoomFactor

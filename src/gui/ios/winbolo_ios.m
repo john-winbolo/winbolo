@@ -656,7 +656,8 @@ void windowSetKeys(keyItems *value) { keys = *value; }
 
 void windowSetZoomFactor(BYTE amount) { zoomFactor = amount; }
 BYTE windowGetZoomFactor(void) { return zoomFactor; }
-void windowZoomChange(BYTE amount) {
+void windowZoomChange(BYTE amount, bool fromDragResize) {
+    (void)fromDragResize;  /* iOS doesn't use resize detection */
     if (amount == zoomFactor) return;
     drawBusy = TRUE;
     clientMutexWaitFor();

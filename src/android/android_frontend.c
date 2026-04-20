@@ -115,7 +115,8 @@ void windowSetKeys(keyItems *value) { keys = *value; }
 void windowSetZoomFactor(BYTE amount)  { zoomFactor = amount; }
 BYTE windowGetZoomFactor(void)         { return zoomFactor; }
 
-void windowZoomChange(BYTE amount) {
+void windowZoomChange(BYTE amount, bool fromDragResize) {
+  (void)fromDragResize;  /* Android doesn't use resize detection */
   if (amount == zoomFactor) return;
   SDL_Log("[Android] windowZoomChange: %d -> %d", zoomFactor, amount);
   drawBusy = TRUE;
