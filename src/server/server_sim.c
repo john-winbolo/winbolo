@@ -120,11 +120,6 @@ void serverSimStartGame(ServerSim *sim);
 
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
-#ifdef _MSC_VER
-#ifndef _Thread_local
-#define _Thread_local __declspec(thread)
-#endif
-#endif
 static _Thread_local ServerSim *activeSim = NULL;
 
 /* Map change callback: records terrain changes into the dedicated map event
