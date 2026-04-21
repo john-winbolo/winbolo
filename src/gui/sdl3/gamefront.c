@@ -178,6 +178,10 @@ char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
 
+/* Dialog window position (separate from game window) */
+int gameFrontDialogX = -1;
+int gameFrontDialogY = -1;
+
 /* Dialog states */
 openingStates dlgState = openStart;
 
@@ -327,8 +331,14 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       OKStart = FALSE;
     }
 
-    if (sdl3DrawSetup(windowGetZoomFactor()) == FALSE) {
-      OKStart = FALSE;
+    {
+      /* For custom mode, use ceiling integer zoom so render target >= window.
+         sdl3DrawAdaptRenderTarget will adjust dynamically on resize. */
+      BYTE zf = windowGetZoomFactor();
+      if (zf == ZOOM_FACTOR_CUSTOM) zf = ZOOM_FACTOR_DOUBLE;
+      if (sdl3DrawSetup(zf) == FALSE) {
+        OKStart = FALSE;
+      }
     }
 
     if (soundSetup() == FALSE) {
@@ -443,6 +453,9 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     transportUdpClientDestroy(&udpTransport);
     udpTransportActive = FALSE;
   }
+  /* Don't call windowSaveCurrentPosition() here - we already save the corrected
+     position on every resize/move. Calling it here would overwrite the corrected
+     position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
   if (humanSim != NULL) {
     netDestroy(humanSim);
@@ -1547,6 +1560,30 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Window Size", "1", buff, FILENAME_MAX, prefsFile);
   zoomFactor = atoi(buff);
+  /* Custom window size (for ZOOM_FACTOR_CUSTOM mode) */
+  GetPrivateProfileString("MENU", "Custom Width", "0", buff, FILENAME_MAX, prefsFile);
+  {
+    int customW = atoi(buff);
+    GetPrivateProfileString("MENU", "Custom Height", "0", buff, FILENAME_MAX, prefsFile);
+    int customH = atoi(buff);
+    if (customW > 0 && customH > 0) {
+      windowSetCustomSize(customW, customH);
+    }
+  }
+  /* Window position */
+  GetPrivateProfileString("MENU", "Window X", "-1", buff, FILENAME_MAX, prefsFile);
+  {
+    int winX = atoi(buff);
+    GetPrivateProfileString("MENU", "Window Y", "-1", buff, FILENAME_MAX, prefsFile);
+    int winY = atoi(buff);
+    windowSetSavedPosition(winX, winY);
+  }
+  /* Dialog window position (welcome screen, etc.) */
+  GetPrivateProfileString("MENU", "Dialog X", "-1", buff, FILENAME_MAX, prefsFile);
+  gameFrontDialogX = atoi(buff);
+  GetPrivateProfileString("MENU", "Dialog Y", "-1", buff, FILENAME_MAX, prefsFile);
+  gameFrontDialogY = atoi(buff);
+
   GetPrivateProfileString("MENU", "Message Label Size", "1", buff, FILENAME_MAX, prefsFile);
   labelMsg = atoi(buff);
   GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
@@ -1559,6 +1596,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 
   return TRUE;
 }
+
+/* Forward declaration — defined after gameFrontPutPrefs */
+void gameFrontFlushWindowSettings(void);
 
 /* -------------------------------------------------------
  * gameFrontPutPrefs — write preferences to INI file
@@ -1682,8 +1722,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels), prefsFile);
   WritePrivateProfileString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels), prefsFile);
   WritePrivateProfileString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf), prefsFile);
-  intToStr(zoomFactor, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Window Size", buff, prefsFile);
+  /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
+     bypassing debounce since this is the shutdown save path. */
+  gameFrontFlushWindowSettings();
   intToStr(labelMsg, buff, sizeof(buff));
   WritePrivateProfileString("MENU", "Message Label Size", buff, prefsFile);
   intToStr(labelTank, buff, sizeof(buff));
@@ -1692,6 +1733,60 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Winbolo.net */
   WritePrivateProfileString("WINBOLO.NET", "Token", gameFrontWbnToken, prefsFile);
   WritePrivateProfileString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry, prefsFile);
+}
+
+/* -------------------------------------------------------
+ * gameFrontSaveWindowSettings — save window position/size
+ *
+ * Persists zoom, custom size, window position, and dialog
+ * position to the INI file. Called on resize/move and also
+ * from gameFrontPutPrefs at shutdown. Debounced: writes at
+ * most once per 500ms during rapid resize/move events.
+ * ------------------------------------------------------- */
+static bool s_windowSettingsDirty = false;
+
+void gameFrontFlushWindowSettings(void) {
+  char buff[FILENAME_MAX];
+  const char *prefsFile = getPreferenceFilePath();
+
+  intToStr(zoomFactor, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Window Size", buff, prefsFile);
+
+  {
+    int customW, customH;
+    windowGetCustomSize(&customW, &customH);
+    intToStr(customW, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Custom Width", buff, prefsFile);
+    intToStr(customH, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Custom Height", buff, prefsFile);
+  }
+
+  {
+    int winX, winY;
+    windowGetSavedPosition(&winX, &winY);
+    intToStr(winX, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Window X", buff, prefsFile);
+    intToStr(winY, buff, sizeof(buff));
+    WritePrivateProfileString("MENU", "Window Y", buff, prefsFile);
+  }
+
+  intToStr(gameFrontDialogX, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Dialog X", buff, prefsFile);
+  intToStr(gameFrontDialogY, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Dialog Y", buff, prefsFile);
+
+  s_windowSettingsDirty = false;
+}
+
+void gameFrontSaveWindowSettings(void) {
+  static Uint64 lastWriteTime = 0;
+  Uint64 now = SDL_GetTicks();
+  if (now - lastWriteTime < 500) {
+    s_windowSettingsDirty = true;
+    return;
+  }
+  gameFrontFlushWindowSettings();
+  lastWriteTime = now;
 }
 
 ServerSim *gameFrontGetServerSim(void) {

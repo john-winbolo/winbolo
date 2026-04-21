@@ -398,6 +398,20 @@ bool gameFrontGetPrefs(keyItems *keys, bool *useAutoslow, bool *useAutohide);
 void gameFrontPutPrefs(keyItems *keys);
 
 /*********************************************************
+*NAME:          gameFrontSaveWindowSettings
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 19/4/26
+*LAST MODIFIED: 19/4/26
+*PURPOSE:
+* Lightweight save of just window position/size settings.
+* Called on every resize/move so window state persists.
+*
+*ARGUMENTS:
+*  none
+*********************************************************/
+void gameFrontSaveWindowSettings(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRemeber
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/4/99
@@ -661,5 +675,9 @@ BYTE gameFrontGetPlayerNum(void);
 *  TRUE on success, FALSE on failure.
 *********************************************************/
 bool gameFrontLoadDeferredMap(struct ClientSim *cs);
+
+/* Dialog window position — used to place main window on same monitor */
+extern int gameFrontDialogX;
+extern int gameFrontDialogY;
 
 #endif
