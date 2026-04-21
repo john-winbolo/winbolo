@@ -315,6 +315,41 @@ static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Even
     return false;
 }
 
+/* Dialog window position — separate from game window position.
+ * Stored in gamefront.c, loaded/saved via INI prefs. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int gameFrontDialogX;
+extern int gameFrontDialogY;
+#ifdef __cplusplus
+}
+#endif
+
+/* Save current dialog window position */
+static inline void dialogSaveCurrentPosition(SDL_Window *win) {
+    if (win) {
+        SDL_GetWindowPosition(win, &gameFrontDialogX, &gameFrontDialogY);
+    }
+}
+
+/* Handle move/resize events — save dialog position */
+static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event *ev) {
+    if (!win) return;
+    SDL_WindowID winID = SDL_GetWindowID(win);
+    if ((ev->type == SDL_EVENT_WINDOW_MOVED || ev->type == SDL_EVENT_WINDOW_RESIZED) &&
+        ev->window.windowID == winID) {
+        dialogSaveCurrentPosition(win);
+    }
+}
+
+/* Restore dialog window position if we have a saved one */
+static inline void dialogRestorePosition(SDL_Window *win) {
+    if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+        SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
+    }
+}
+
 /* Check an SDL event for a winbolo:// URL drop.
  * Returns true if the event was consumed and the caller's dialog
  * should exit (dlgState has been changed). */

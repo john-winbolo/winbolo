@@ -168,6 +168,7 @@ extern "C" void imguiSkinsShow(void) {
     dialogSetWindowTitle(window, "WinBolo - Skin Selection");
     SDL_SetWindowResizable(window, false);
 #endif
+    dialogRestorePosition(window);
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -211,6 +212,7 @@ extern "C" void imguiSkinsShow(void) {
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                  ev.window.windowID == SDL_GetWindowID(window))) {
