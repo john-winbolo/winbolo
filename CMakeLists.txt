@@ -303,8 +303,9 @@ if(MSVC)
     add_compile_options(
         /WX /sdl /permissive-
         /W4 /external:W3
-        /wd4005 /wd4013 /wd4057 /wd4100 /wd4101 /wd4127 /wd4131 /wd4152 /wd4189
-        /wd4244 /wd4245 /wd4310 /wd4456 /wd4457 /wd4459 /wd4554 /wd4702 /wd4996
+        /wd4005 /wd4013 /wd4018 /wd4057 /wd4100 /wd4101 /wd4127 /wd4131 /wd4132
+        /wd4146 /wd4152 /wd4189 /wd4244 /wd4245 /wd4295 /wd4310 /wd4456 /wd4457
+        /wd4459 /wd4505 /wd4554 /wd4701 /wd4702 /wd4996
         /guard:cf /GL
         $<$<CONFIG:Debug>:/RTC1>
     )
@@ -923,7 +924,7 @@ if(WIN32)
         src/res/winbolo.rc
     )
     set_target_properties(WinBolo PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32)
+    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32 comctl32)
     target_compile_options(WinBolo PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBolo PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")

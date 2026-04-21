@@ -146,6 +146,7 @@ extern "C" int imguiKeySetupShow(void) {
     dialogSetWindowTitle(window, "WinBolo - Key Setup");
     SDL_SetWindowResizable(window, true);
 #endif
+    dialogRestorePosition(window);
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -195,6 +196,7 @@ extern "C" int imguiKeySetupShow(void) {
 
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                  ev.window.windowID == SDL_GetWindowID(window))) {
