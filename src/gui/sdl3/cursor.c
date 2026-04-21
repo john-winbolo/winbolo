@@ -29,6 +29,10 @@
 /* Is the cursor inside the main view area */
 bool cursorInMainView = false;
 
+/* Cached transformed mouse coordinates (in game logical coordinates) */
+static float gCachedMouseX = 0.0f;
+static float gCachedMouseY = 0.0f;
+
 static SDL_Cursor *s_saveCursor = NULL;
 static SDL_Cursor *s_boloCursor = NULL;
 
@@ -87,6 +91,10 @@ void cursorSetCursor(bool normalCurs) {
 *  the mouse is inside the main game-view area.
 *********************************************************/
 void cursorMove(int mouseX, int mouseY) {
+  /* Cache the transformed coordinates for use by cursorPos */
+  gCachedMouseX = (float)mouseX;
+  gCachedMouseY = (float)mouseY;
+
   int zf    = sdl3DrawGetZoomFactor();
   int left  = zf * MAIN_OFFSET_X;
   int right = left + (MAIN_SCREEN_SIZE_X * (zf * TILE_SIZE_X));
@@ -120,8 +128,10 @@ bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue) {
   static float oldY = -1.0f;
 
   if (cursorInMainView) {
-    float mx, my;
-    SDL_GetMouseState(&mx, &my);
+    /* Use cached transformed game coordinates instead of SDL_GetMouseState,
+       which returns raw window coords and doesn't account for scaling. */
+    float mx = gCachedMouseX;
+    float my = gCachedMouseY;
     if (mx != oldX || my != oldY) {
       oldX = mx;
       oldY = my;

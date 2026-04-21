@@ -33,7 +33,7 @@ extern "C" bool  isInMenu;
 #define ZOOM_FACTOR_QUAD   4
 #endif
 
-extern "C" void windowZoomChange(BYTE amount);
+extern "C" void windowZoomChange(BYTE amount, bool fromDragResize = false);
 
 /* -------------------------------------------------------
  * Local state

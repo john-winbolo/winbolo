@@ -64,6 +64,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     dialogSetWindowTitle(window, "WinBolo - Set Player Name");
     SDL_SetWindowResizable(window, false);
 #endif
+    dialogRestorePosition(window);
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -101,6 +102,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                  ev.window.windowID == SDL_GetWindowID(window))) {
