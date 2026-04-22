@@ -124,7 +124,8 @@ void mapEditorImguiNewFrame(void) {
 void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            const char recentFiles[][ME_PATH_MAX],
                            int numRecent,
-                           bool showGrid, bool showMines, bool dirty,
+                           bool showGrid, bool showMines, bool showPillRanges,
+                           bool dirty,
                            bool canUndo, bool canRedo,
                            bool hasSelection,
                            bool *showTerrain, bool *showTools,
@@ -258,6 +259,10 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             bool mines = showMines;
             if (ImGui::MenuItem("Show Mines", "M", &mines)) {
                 action->toggleMines = true;
+            }
+            bool pillRanges = showPillRanges;
+            if (ImGui::MenuItem("Show Pillbox Ranges", NULL, &pillRanges)) {
+                action->togglePillRanges = true;
             }
             ImGui::EndMenu();
         }
