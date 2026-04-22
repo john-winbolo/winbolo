@@ -261,7 +261,8 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
  * selX1..selY2: current drag region bounds.
  * Returns true if settings changed (caller should regenerate preview). */
 bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
-                                int selX1, int selY1, int selX2, int selY2);
+                                int selX1, int selY1, int selX2, int selY2,
+                                void *tilesTex, int tileSize);
 
 /* Render the generate tool settings panel.
  * Shown when the generate tool is active.

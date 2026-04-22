@@ -36,6 +36,8 @@ typedef struct {
     bool placeBases;
     bool placePills;
     int cityRooms;      /* 0-5, open rooms inside maze */
+    BYTE wallTerrain;   /* terrain for walls (default BUILDING) */
+    BYTE corridorTerrain; /* terrain for corridors (default ROAD) */
     uint32_t seed;
 } MazeConfig;
 

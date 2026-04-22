@@ -1191,6 +1191,8 @@ static void meRenderPreview(MapEditorState *ed, int screenW, int screenH) {
 /* -------------------------------------------------------
  * Render maze preview tiles (semi-transparent, per-tile terrain)
  * ------------------------------------------------------- */
+static BYTE meTerrainToIconTile(BYTE terrain);
+
 static void meRenderMazePreview(MapEditorState *ed, int screenW, int screenH) {
     if (ed->mazePreviewCount == 0) return;
 
@@ -1214,14 +1216,7 @@ static void meRenderMazePreview(MapEditorState *ed, int screenW, int screenH) {
         if (dx + scaledTile < 0 || dx > screenW ||
             dy + scaledTile < 0 || dy > screenH) continue;
 
-        /* Pick the icon tile based on the terrain type */
-        BYTE iconTile;
-        switch (ed->mazePreviewTerrain[i]) {
-        case BUILDING:     iconTile = BUILD_SOLID; break;
-        case HALFBUILDING: iconTile = HALFBUILDING; break;
-        case ROAD:         iconTile = ROAD_SOLID; break;
-        default:           iconTile = ROAD_SOLID; break;
-        }
+        BYTE iconTile = meTerrainToIconTile(ed->mazePreviewTerrain[i]);
 
         SDL_FRect src = {
             (float)mapViewPosX[iconTile],
@@ -4096,7 +4091,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             int mx1 = ed->mazeDragOriginX > ed->drawCurX ? ed->mazeDragOriginX : ed->drawCurX;
             int my1 = ed->mazeDragOriginY > ed->drawCurY ? ed->mazeDragOriginY : ed->drawCurY;
             bool mazeChanged = mapEditorImguiMazeSettings(&ed->mazeToolConfig,
-                                       ed->isDrawing, mx0, my0, mx1, my1);
+                                       ed->isDrawing, mx0, my0, mx1, my1,
+                                       ed->tilesTex, TILE_SIZE_X);
             /* If settings changed during drag, regenerate preview */
             if (mazeChanged && ed->isDrawing) {
                 ed->mazePreviewCount = mazeGeneratePreview(
