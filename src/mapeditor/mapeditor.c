@@ -3812,9 +3812,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (ed->showGrid) meRenderGrid(ed, renderW, renderH);
         meRenderStarts(ed, renderW, renderH);
 
-        /* Compute hover tile for overlays (uses screenW/screenH for mouse mapping) */
+        /* Compute hover tile for overlays (uses actual screen dims for mouse mapping) */
         int hoverMX = -1, hoverMY = -1;
-        meScreenToMap(ed, ed->mouseX, ed->mouseY, renderW, renderH, &hoverMX, &hoverMY);
+        meScreenToMap(ed, ed->mouseX, ed->mouseY, screenW, screenH, &hoverMX, &hoverMY);
 
         /* Render tool overlays (before ImGui) */
         if (ed->isDrawing) meRenderPreview(ed, renderW, renderH);
