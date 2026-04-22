@@ -1070,7 +1070,13 @@ void serverSimTick(ServerSim *sim) {
         return;
     }
 
-    serverSimLogTick(sim);
+    /* The legacy server ticked every 20ms (SERVER_TICK_LENGTH) and wrote
+     * one log entry per tick.  Our sim ticks every 10ms alternating
+     * keys/game.  Only log on game ticks (every 20ms) to match the
+     * legacy rate — the log viewer consumes one entry per 20ms. */
+    if (!isKeysTick) {
+        serverSimLogTick(sim);
+    }
     sim->tick++;
 }
 
