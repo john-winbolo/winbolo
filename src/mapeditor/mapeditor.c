@@ -136,6 +136,7 @@ typedef struct {
     /* Options */
     bool  showGrid;
     bool  showMines;
+    bool  showPillRanges;
     int   currentStartIndex;
 
     /* Async file dialog state */
@@ -2467,6 +2468,47 @@ static void meRenderObjSelection(MapEditorState *ed, int screenW, int screenH) {
     SDL_RenderRect(ed->renderer, &inner);
 }
 
+/* -------------------------------------------------------
+ * Render pillbox range circles (9-tile radius from center)
+ * ------------------------------------------------------- */
+static void meRenderPillRanges(MapEditorState *ed, int screenW, int screenH) {
+    if (!ed->showPillRanges) return;
+    if (ed->pb->numPills == 0) return;
+
+    int zf = ed->zoomFactor;
+    int tileSize = TILE_SIZE_X;
+    int centerPX = ((int)ed->viewCenterX * tileSize) >> 8;
+    int centerPY = ((int)ed->viewCenterY * tileSize) >> 8;
+    int camPX = centerPX - screenW / (2 * zf);
+    int camPY = centerPY - screenH / (2 * zf);
+
+    /* 9-tile radius in pixels, scaled by zoom */
+    float radiusPx = 9.0f * tileSize * zf;
+    /* Offset to center of tile */
+    float halfTile = tileSize * zf * 0.5f;
+
+    SDL_SetRenderDrawBlendMode(ed->renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ed->renderer, 255, 0, 0, 160);
+
+    /* Draw circle as line segments */
+    #define PILL_RANGE_SEGMENTS 64
+    for (int i = 0; i < ed->pb->numPills; i++) {
+        int px = ed->pb->item[i].x;
+        int py = ed->pb->item[i].y;
+        float cx = (float)(px * tileSize - camPX) * zf + halfTile;
+        float cy = (float)(py * tileSize - camPY) * zf + halfTile;
+
+        SDL_FPoint pts[PILL_RANGE_SEGMENTS + 1];
+        for (int s = 0; s <= PILL_RANGE_SEGMENTS; s++) {
+            float angle = (float)s * (2.0f * 3.14159265f / PILL_RANGE_SEGMENTS);
+            pts[s].x = cx + radiusPx * SDL_cosf(angle);
+            pts[s].y = cy + radiusPx * SDL_sinf(angle);
+        }
+        SDL_RenderLines(ed->renderer, pts, PILL_RANGE_SEGMENTS + 1);
+    }
+    #undef PILL_RANGE_SEGMENTS
+}
+
 static BYTE meComputeDirToLand(MapEditorState *ed, int sx, int sy);
 
 /* Render placement preview or drag preview at (hoverMX, hoverMY). */
@@ -2980,6 +3022,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->quit = false;
     ed->showMines = true;
     ed->showGrid = false;
+    ed->showPillRanges = false;
     ed->selectedObjKind = ME_SEL_NONE;
     ed->selectedObjIndex = -1;
     ed->showTerrain = true;
@@ -3811,6 +3854,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         meRenderTiles(ed, renderW, renderH);
         if (ed->showGrid) meRenderGrid(ed, renderW, renderH);
         meRenderStarts(ed, renderW, renderH);
+        meRenderPillRanges(ed, renderW, renderH);
 
         /* Compute hover tile for overlays (uses actual screen dims for mouse mapping) */
         int hoverMX = -1, hoverMY = -1;
@@ -3886,7 +3930,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         /* Menu bar */
         MapEditorMenuAction menuAction;
         mapEditorImguiMenuBar(&menuAction, ed->recentFiles, ed->numRecentFiles,
-                              ed->showGrid, ed->showMines, ed->dirty,
+                              ed->showGrid, ed->showMines, ed->showPillRanges,
+                              ed->dirty,
                               undoCanUndo(&ed->undoStack), undoCanRedo(&ed->undoStack),
                               ed->hasSelection,
                               &ed->showTerrain, &ed->showTools,
@@ -3954,6 +3999,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         }
         if (menuAction.toggleMines) {
             ed->showMines = !ed->showMines;
+        }
+        if (menuAction.togglePillRanges) {
+            ed->showPillRanges = !ed->showPillRanges;
         }
         if (menuAction.wantValidate) {
             meRunValidation(ed);

@@ -59,6 +59,7 @@ typedef struct {
     bool wantPointStarts;
     bool toggleGrid;
     bool toggleMines;
+    bool togglePillRanges;
     bool wantCut;
     bool wantCopy;
     bool wantPaste;
@@ -83,7 +84,8 @@ typedef struct {
 void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            const char recentFiles[][ME_PATH_MAX],
                            int numRecent,
-                           bool showGrid, bool showMines, bool dirty,
+                           bool showGrid, bool showMines, bool showPillRanges,
+                           bool dirty,
                            bool canUndo, bool canRedo,
                            bool hasSelection,
                            bool *showTerrain, bool *showTools,
