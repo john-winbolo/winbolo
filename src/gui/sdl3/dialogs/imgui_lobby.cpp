@@ -164,6 +164,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     ImGui_ImplSDLRenderer3_Init(renderer);
     dialogApplyScaling(s);
 
+    /* Load a large font for the countdown overlay */
+    float countdownFontSize = (s <= 1.05f) ? 54.0f : 60.0f * s;
+    ImFont *countdownFont = imguiLoadBoloFontSized(countdownFontSize);
+
     /* Chat state */
     char chatInput[CHAT_INPUT_SIZE];
     chatInput[0] = '\0';
@@ -1067,25 +1071,17 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             char countdownText[32];
             SDL_snprintf(countdownText, sizeof(countdownText),
                          "Starting in %d...", cs->countdownSeconds);
+            ImGui::PushFont(countdownFont);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
             ImVec2 textSize = ImGui::CalcTextSize(countdownText);
             ImVec2 winSize = ImGui::GetWindowSize();
             ImGui::SetCursorPos(ImVec2(
                 (winSize.x - textSize.x) * 0.5f,
                 (winSize.y - textSize.y) * 0.5f
             ));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-            float origScale = ImGui::GetFont()->Scale;
-            ImGui::GetFont()->Scale = 3.0f;
-            ImGui::PushFont(ImGui::GetFont());
-            textSize = ImGui::CalcTextSize(countdownText);
-            ImGui::SetCursorPos(ImVec2(
-                (winSize.x - textSize.x) * 0.5f,
-                (winSize.y - textSize.y) * 0.5f
-            ));
             ImGui::Text("%s", countdownText);
-            ImGui::GetFont()->Scale = origScale;
-            ImGui::PopFont();
             ImGui::PopStyleColor();
+            ImGui::PopFont();
         }
 
         ImGui::End(); /* ##LobbyBg */

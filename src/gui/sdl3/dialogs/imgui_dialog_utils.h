@@ -110,9 +110,12 @@ static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
 
 /* Set up a scaled font and touch-friendly ImGui style.
  * Call after ImGui::CreateContext() and before the first NewFrame().
- * On desktop (scale 1.0) this is a no-op — ImGui's default font is used. */
+ * Always loads the TTF font; on mobile also applies touch-friendly styling. */
 static inline void dialogApplyScaling(float uiScale) {
-    if (uiScale <= 1.05f) return;
+    if (uiScale <= 1.05f) {
+        imguiLoadBoloFont(18.0f);
+        return;
+    }
 
     imguiLoadBoloFont(20.0f * uiScale);
 
