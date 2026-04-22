@@ -1756,9 +1756,10 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 }
 
 bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
-                                int selX1, int selY1, int selX2, int selY2) {
+                                int selX1, int selY1, int selX2, int selY2,
+                                void *tilesTex, int tileSize) {
     static const char *mazeAlgoNames[] = { "Labyrinth", "Open" };
-    ImGui::SetNextWindowSize(ImVec2(220, 0), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(260, 0), ImGuiCond_Once);
     ImGui::Begin("Maze Settings", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
@@ -1789,6 +1790,12 @@ bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
 
     ImGui::SliderInt("Entries", &cfg->entries, 1, 8);
     ImGui::SliderInt("Rooms", &cfg->cityRooms, 0, 5);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    terrainPicker("Wall Terrain", &cfg->wallTerrain, false, tilesTex, tileSize);
+    ImGui::Spacing();
+    terrainPicker("Corridor Terrain", &cfg->corridorTerrain, false, tilesTex, tileSize);
 
     ImGui::End();
 

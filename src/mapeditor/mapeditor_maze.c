@@ -29,6 +29,8 @@ MazeConfig mazeDefaultConfig(void) {
     cfg.placeBases = false;
     cfg.placePills = false;
     cfg.cityRooms = 0;
+    cfg.wallTerrain = BUILDING;
+    cfg.corridorTerrain = ROAD;
     cfg.seed = 1;
     return cfg;
 }
@@ -54,7 +56,7 @@ static CellPos cellStack[MAZE_MAX_CELLS * MAZE_MAX_CELLS];
  * Corridor area is corridorWidth x corridorWidth tiles. */
 static void carveCell(BYTE terrain[256][256],
                       int x1, int y1, int wallThick, int corridorWidth,
-                      int cellSize, int col, int row) {
+                      int cellSize, int col, int row, BYTE corrT) {
     int ox = x1 + wallThick + col * cellSize;
     int oy = y1 + wallThick + row * cellSize;
     for (int dx = 0; dx < corridorWidth; dx++) {
@@ -62,7 +64,7 @@ static void carveCell(BYTE terrain[256][256],
             int tx = ox + dx;
             int ty = oy + dy;
             if (tx >= 0 && tx < 256 && ty >= 0 && ty < 256) {
-                terrain[tx][ty] = ROAD;
+                terrain[tx][ty] = corrT;
             }
         }
     }
@@ -72,7 +74,7 @@ static void carveCell(BYTE terrain[256][256],
  * Direction: 0=up, 1=right, 2=down, 3=left */
 static void carveWall(BYTE terrain[256][256],
                       int x1, int y1, int wallThick, int corridorWidth,
-                      int cellSize, int col, int row, int dir) {
+                      int cellSize, int col, int row, int dir, BYTE corrT) {
     int ox = x1 + wallThick + col * cellSize;
     int oy = y1 + wallThick + row * cellSize;
 
@@ -105,7 +107,7 @@ static void carveWall(BYTE terrain[256][256],
             int tx = sx + dx;
             int ty = sy + dy;
             if (tx >= 0 && tx < 256 && ty >= 0 && ty < 256) {
-                terrain[tx][ty] = ROAD;
+                terrain[tx][ty] = corrT;
             }
         }
     }
@@ -139,6 +141,8 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
 
     int wallThick = cfg->wallThick;
     int corridorWidth = cfg->corridorWidth;
+    BYTE wallT = cfg->wallTerrain;
+    BYTE corrT = cfg->corridorTerrain;
     if (wallThick < 1) wallThick = 1;
     if (wallThick > 2) wallThick = 2;
     if (corridorWidth < 1) corridorWidth = 1;
@@ -150,12 +154,12 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
     int cols = (regionW - wallThick) / cellSize;
     int rows = (regionH - wallThick) / cellSize;
 
-    /* If region is too small for even a 2x2 grid, fill with ROAD */
+    /* If region is too small for even a 2x2 grid, fill with corridor terrain */
     if (cols < 2 || rows < 2) {
         for (int x = x1; x <= x2; x++) {
             for (int y = y1; y <= y2; y++) {
                 if (x >= 0 && x < 256 && y >= 0 && y < 256)
-                    outTerrain[x][y] = ROAD;
+                    outTerrain[x][y] = corrT;
             }
         }
         return;
@@ -163,11 +167,11 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
     if (cols > MAZE_MAX_CELLS) cols = MAZE_MAX_CELLS;
     if (rows > MAZE_MAX_CELLS) rows = MAZE_MAX_CELLS;
 
-    /* Step 1: Fill region with BUILDING (walls) */
+    /* Step 1: Fill region with wall terrain */
     for (int x = x1; x <= x2; x++) {
         for (int y = y1; y <= y2; y++) {
             if (x >= 0 && x < 256 && y >= 0 && y < 256)
-                outTerrain[x][y] = BUILDING;
+                outTerrain[x][y] = wallT;
         }
     }
 
@@ -183,7 +187,7 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
     cellStack[stackTop].row = startRow;
     stackTop++;
     visited[startCol][startRow] = true;
-    carveCell(outTerrain, x1, y1, wallThick, corridorWidth, cellSize, startCol, startRow);
+    carveCell(outTerrain, x1, y1, wallThick, corridorWidth, cellSize, startCol, startRow, corrT);
 
     while (stackTop > 0) {
         int curCol = cellStack[stackTop - 1].col;
@@ -209,10 +213,10 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
 
             /* Carve wall between current and neighbor */
             carveWall(outTerrain, x1, y1, wallThick, corridorWidth, cellSize,
-                      curCol, curRow, dir);
+                      curCol, curRow, dir, corrT);
             /* Carve the neighbor cell */
             visited[nc][nr] = true;
-            carveCell(outTerrain, x1, y1, wallThick, corridorWidth, cellSize, nc, nr);
+            carveCell(outTerrain, x1, y1, wallThick, corridorWidth, cellSize, nc, nr, corrT);
 
             /* Push neighbor */
             cellStack[stackTop].col = nc;
@@ -257,21 +261,21 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
                 tx = ex; ty = ey + d;
             }
             if (tx >= 0 && tx < 256 && ty >= 0 && ty < 256) {
-                outTerrain[tx][ty] = ROAD;
+                outTerrain[tx][ty] = corrT;
             }
             /* Also carve the wall tile just inside the border */
             if (ey == y1 && ty + 1 < 256) {
                 for (int w = 0; w < wallThick && ty + 1 + w <= y2; w++)
-                    if (tx >= 0 && tx < 256) outTerrain[tx][ty + 1 + w] = ROAD;
+                    if (tx >= 0 && tx < 256) outTerrain[tx][ty + 1 + w] = corrT;
             } else if (ey == y2 && ty - 1 >= 0) {
                 for (int w = 0; w < wallThick && ty - 1 - w >= y1; w++)
-                    if (tx >= 0 && tx < 256) outTerrain[tx][ty - 1 - w] = ROAD;
+                    if (tx >= 0 && tx < 256) outTerrain[tx][ty - 1 - w] = corrT;
             } else if (ex == x1 && tx + 1 < 256) {
                 for (int w = 0; w < wallThick && tx + 1 + w <= x2; w++)
-                    if (ty >= 0 && ty < 256) outTerrain[tx + 1 + w][ty] = ROAD;
+                    if (ty >= 0 && ty < 256) outTerrain[tx + 1 + w][ty] = corrT;
             } else if (ex == x2 && tx - 1 >= 0) {
                 for (int w = 0; w < wallThick && tx - 1 - w >= x1; w++)
-                    if (ty >= 0 && ty < 256) outTerrain[tx - 1 - w][ty] = ROAD;
+                    if (ty >= 0 && ty < 256) outTerrain[tx - 1 - w][ty] = corrT;
             }
         }
     }
@@ -286,7 +290,7 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
                     uint32_t chance = mapGenXorshift32(&rng) % 100;
                     if (chance < 25) {
                         carveWall(outTerrain, x1, y1, wallThick, corridorWidth,
-                                  cellSize, c, r, 1);
+                                  cellSize, c, r, 1, corrT);
                     }
                 }
                 /* Check wall below */
@@ -294,24 +298,24 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
                     uint32_t chance = mapGenXorshift32(&rng) % 100;
                     if (chance < 25) {
                         carveWall(outTerrain, x1, y1, wallThick, corridorWidth,
-                                  cellSize, c, r, 2);
+                                  cellSize, c, r, 2, corrT);
                     }
                 }
             }
         }
 
         /* Clean up isolated single-tile wall pillars:
-         * BUILDING tiles with no BUILDING cardinal neighbor → ROAD */
+         * wall tiles with no wall cardinal neighbor → corridor */
         for (int x = x1 + 1; x < x2; x++) {
             for (int y = y1 + 1; y < y2; y++) {
                 if (x < 0 || x >= 256 || y < 0 || y >= 256) continue;
-                if (outTerrain[x][y] != BUILDING) continue;
+                if (outTerrain[x][y] != wallT) continue;
                 bool hasNeighbor = false;
-                if (x > 0   && outTerrain[x-1][y] == BUILDING) hasNeighbor = true;
-                if (x < 255 && outTerrain[x+1][y] == BUILDING) hasNeighbor = true;
-                if (y > 0   && outTerrain[x][y-1] == BUILDING) hasNeighbor = true;
-                if (y < 255 && outTerrain[x][y+1] == BUILDING) hasNeighbor = true;
-                if (!hasNeighbor) outTerrain[x][y] = ROAD;
+                if (x > 0   && outTerrain[x-1][y] == wallT) hasNeighbor = true;
+                if (x < 255 && outTerrain[x+1][y] == wallT) hasNeighbor = true;
+                if (y > 0   && outTerrain[x][y-1] == wallT) hasNeighbor = true;
+                if (y < 255 && outTerrain[x][y+1] == wallT) hasNeighbor = true;
+                if (!hasNeighbor) outTerrain[x][y] = corrT;
             }
         }
     }
@@ -346,7 +350,7 @@ void mazeGenerate(int x1, int y1, int x2, int y2,
                 int ty = cy + dy;
                 if (tx > x1 && tx < x2 && ty > y1 && ty < y2 &&
                     tx >= 0 && tx < 256 && ty >= 0 && ty < 256) {
-                    outTerrain[tx][ty] = ROAD;
+                    outTerrain[tx][ty] = corrT;
                 }
             }
         }

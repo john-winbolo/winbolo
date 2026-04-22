@@ -160,10 +160,11 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
         bytesToHex(buf, 14, hex);
         snprintf(out, outLen, "N%s", hex);
     } else if (cfg->genType == MAPGEN_MAZE) {
-        /* Maze bit layout (57 bits = 8 bytes, padded):
+        /* Maze bit layout (65 bits = 9 bytes, padded):
          *   algo(1) + wallThick(1) + corridorWidth(1) + entries(4)
-         *   + bases(5) + pills(5) + starts(5) + cityRooms(3) + seed(32) = 57 bits */
-        uint8_t buf[8];
+         *   + bases(5) + pills(5) + starts(5) + cityRooms(3)
+         *   + wallTerrain(4) + corridorTerrain(4) + seed(32) = 65 bits */
+        uint8_t buf[9];
         memset(buf, 0, sizeof(buf));
         BitWriter bw;
         bwInit(&bw, buf);
@@ -175,10 +176,15 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
         bwWrite(&bw, (uint32_t)cfg->pills, 5);
         bwWrite(&bw, (uint32_t)cfg->starts, 5);
         bwWrite(&bw, (uint32_t)cfg->params.maze.cityRooms, 3);
+        /* Terrain: 0-9 = normal, 10 = DEEP_SEA (0xFF) */
+        int wt = cfg->params.maze.wallTerrain;
+        int ct = cfg->params.maze.corridorTerrain;
+        bwWrite(&bw, (uint32_t)(wt == DEEP_SEA ? 10 : wt), 4);
+        bwWrite(&bw, (uint32_t)(ct == DEEP_SEA ? 10 : ct), 4);
         bwWrite(&bw, cfg->seed, 32);
 
-        char hex[17];
-        bytesToHex(buf, 8, hex);
+        char hex[19];
+        bytesToHex(buf, 9, hex);
         snprintf(out, outLen, "M%s", hex);
     } else if (cfg->genType == MAPGEN_FRACTAL) {
         /* Fractal bit layout (73 bits = 10 bytes, padded):
@@ -271,8 +277,32 @@ bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
     } else if (prefix == 'M') {
         const char *hex = seedStr + 1;
         size_t hexLen = strlen(hex);
-        if (hexLen == 16) {
-            /* New format: 8 bytes with bases/pills/starts counts */
+        /* Default terrain for older formats */
+        cfg->params.maze.wallTerrain = BUILDING;
+        cfg->params.maze.corridorTerrain = ROAD;
+        if (hexLen == 18) {
+            /* Current format: 9 bytes with terrain types */
+            uint8_t buf[9];
+            if (!hexToBytes(hex, buf, 9)) return false;
+
+            BitReader br;
+            brInit(&br, buf, 72);
+            cfg->genType = MAPGEN_MAZE;
+            cfg->params.maze.algo = (int)brRead(&br, 1);
+            cfg->params.maze.wallThick = (int)brRead(&br, 1) + 1;
+            cfg->params.maze.corridorWidth = (int)brRead(&br, 1) + 1;
+            cfg->params.maze.entries = (int)brRead(&br, 4);
+            cfg->bases = (int)brRead(&br, 5);
+            cfg->pills = (int)brRead(&br, 5);
+            cfg->starts = (int)brRead(&br, 5);
+            cfg->params.maze.cityRooms = (int)brRead(&br, 3);
+            int wt = (int)brRead(&br, 4);
+            int ct = (int)brRead(&br, 4);
+            cfg->params.maze.wallTerrain = (wt == 10) ? DEEP_SEA : wt;
+            cfg->params.maze.corridorTerrain = (ct == 10) ? DEEP_SEA : ct;
+            cfg->seed = brRead(&br, 32);
+        } else if (hexLen == 16) {
+            /* Previous format: 8 bytes with bases/pills/starts counts */
             uint8_t buf[8];
             if (!hexToBytes(hex, buf, 8)) return false;
 
@@ -2606,7 +2636,7 @@ static void clearObjectsInRegion(struct basesObj *bs, struct pillsObj *pb,
 static void mapGenMaze(struct mapObj *mp, struct basesObj *bs,
                        struct pillsObj *pb, struct startsObj *ss,
                        const MapGenConfig *cfg, uint32_t *rng) {
-    MazeConfig mc;
+    MazeConfig mc = mazeDefaultConfig();
     mc.algo = cfg->params.maze.algo;
     mc.wallThick = cfg->params.maze.wallThick;
     mc.corridorWidth = cfg->params.maze.corridorWidth;
@@ -2614,6 +2644,8 @@ static void mapGenMaze(struct mapObj *mp, struct basesObj *bs,
     mc.placeBases = true;
     mc.placePills = true;
     mc.cityRooms = cfg->params.maze.cityRooms;
+    mc.wallTerrain = (BYTE)cfg->params.maze.wallTerrain;
+    mc.corridorTerrain = (BYTE)cfg->params.maze.corridorTerrain;
     mc.seed = cfg->seed;
 
     /* Inset the maze by 1 tile from the region edges so there's a deep sea
@@ -2637,7 +2669,8 @@ static void mapGenMaze(struct mapObj *mp, struct basesObj *bs,
     /* Generate maze terrain into the inset region */
     mazeGenerate(mx1, my1, mx2, my2, mp->mapItem, &mc);
 
-    /* Place bases at random ROAD cells */
+    /* Place bases at random corridor cells */
+    BYTE corrTerrain = (BYTE)cfg->params.maze.corridorTerrain;
     if (cfg->bases > 0) {
         uint32_t placeRng = *rng;
         int maxBases = cfg->bases;
@@ -2647,7 +2680,7 @@ static void mapGenMaze(struct mapObj *mp, struct basesObj *bs,
             int bx = mx1 + 1 + (int)(mapGenXorshift32(&placeRng) % (uint32_t)(mx2 - mx1 - 1));
             int by = my1 + 1 + (int)(mapGenXorshift32(&placeRng) % (uint32_t)(my2 - my1 - 1));
             if (bx > 0 && bx < 255 && by > 0 && by < 255 &&
-                mp->mapItem[bx][by] == ROAD) {
+                mp->mapItem[bx][by] == corrTerrain) {
                 /* Check no existing base at this spot */
                 bool occupied = false;
                 for (int i = 0; i < bs->numBases; i++) {
@@ -2671,7 +2704,7 @@ static void mapGenMaze(struct mapObj *mp, struct basesObj *bs,
         *rng = placeRng;
     }
 
-    /* Place pillboxes on ROAD tiles */
+    /* Place pillboxes on corridor tiles */
     if (cfg->pills > 0) {
         uint32_t placeRng = *rng;
         int maxPills = cfg->pills;
@@ -2681,7 +2714,7 @@ static void mapGenMaze(struct mapObj *mp, struct basesObj *bs,
             int px = mx1 + 1 + (int)(mapGenXorshift32(&placeRng) % (uint32_t)(mx2 - mx1 - 1));
             int py = my1 + 1 + (int)(mapGenXorshift32(&placeRng) % (uint32_t)(my2 - my1 - 1));
             if (px > 0 && px < 255 && py > 0 && py < 255 &&
-                mp->mapItem[px][py] == ROAD) {
+                mp->mapItem[px][py] == corrTerrain) {
                 /* Check no existing pill/base at this spot */
                 bool occupied = false;
                 for (int i = 0; i < pb->numPills; i++) {
@@ -3645,6 +3678,8 @@ MapGenConfig mapGenDefaultConfig(int genType) {
             cfg.params.maze.corridorWidth = 1;
             cfg.params.maze.entries = 2;
             cfg.params.maze.cityRooms = 0;
+            cfg.params.maze.wallTerrain = BUILDING;
+            cfg.params.maze.corridorTerrain = ROAD;
             break;
         case MAPGEN_FRACTAL:
             cfg.params.fractal.landPct = 35;
