@@ -662,6 +662,9 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         triggerFetch(TAB_RECENT, 1);
     }
 
+    /* File dialog state */
+    struct { char path[FILENAME_MAX]; volatile int done; int ok; } fileDlgState = {};
+
     bool running = true;
 
     while (running) {
@@ -734,6 +737,16 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 running = false;
             } else {
                 statusText = "Download failed";
+            }
+        }
+
+        /* Process file dialog completion */
+        if (fileDlgState.done) {
+            fileDlgState.done = 0;
+            if (fileDlgState.ok) {
+                finalResult.action = WBN_BROWSER_PLAY_FILE;
+                SDL_strlcpy(finalResult.filePath, fileDlgState.path, sizeof(finalResult.filePath));
+                running = false;
             }
         }
 
@@ -1160,8 +1173,25 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
 
 #if !BOLO_MOBILE
             if (ImGui::Button("Open File...")) {
-                finalResult.action = WBN_BROWSER_OPEN_LOCAL;
-                running = false;
+                fileDlgState.done = 0;
+                fileDlgState.ok = 0;
+                fileDlgState.path[0] = '\0';
+                SDL_DialogFileFilter filters[] = {
+                    { "WinBolo Log Files", "wbv" },
+                    { NULL, NULL }
+                };
+                struct FileDlgState { char *path; size_t size; volatile int *done; int *ok; };
+                auto *ctx = new FileDlgState{fileDlgState.path, sizeof(fileDlgState.path),
+                                             &fileDlgState.done, &fileDlgState.ok};
+                SDL_ShowOpenFileDialog([](void *userdata, const char * const *filelist, int) {
+                    auto *s = (FileDlgState *)userdata;
+                    if (filelist && filelist[0]) {
+                        SDL_strlcpy(s->path, filelist[0], s->size);
+                        *s->ok = 1;
+                    }
+                    *s->done = 1;
+                    delete s;
+                }, ctx, window, filters, 1, NULL, false);
             }
             ImGui::SameLine();
 #endif
