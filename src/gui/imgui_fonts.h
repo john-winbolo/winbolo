@@ -39,8 +39,9 @@ static inline unsigned char *imguiFontLoadData(const char *path, int *outSize) {
 
 /* Load the Bolo UI font at the given pixel size.
  * Uses oversampling for crisp text on the SDL renderer.
- * Falls back to a scaled default font if the TTF is missing. */
-static inline void imguiLoadBoloFont(float sizePixels) {
+ * Falls back to a scaled default font if the TTF is missing.
+ * Returns the ImFont* so callers can load multiple sizes. */
+static inline ImFont *imguiLoadBoloFontSized(float sizePixels) {
     static const char *fontPaths[] = {
         "data/fonts/InterVariable.ttf",
         "data/InterVariable.ttf",
@@ -60,15 +61,19 @@ static inline void imguiLoadBoloFont(float sizePixels) {
         ImFontConfig config;
         config.OversampleH = 3;
         config.OversampleV = 2;
-        io.Fonts->AddFontFromMemoryTTF(fontData, fontDataSize, sizePixels, &config);
+        return io.Fonts->AddFontFromMemoryTTF(fontData, fontDataSize, sizePixels, &config);
     } else {
         /* Fallback: scale the built-in font with oversampling */
         ImFontConfig config;
         config.SizePixels = sizePixels;
         config.OversampleH = 3;
         config.OversampleV = 2;
-        io.Fonts->AddFontDefault(&config);
+        return io.Fonts->AddFontDefault(&config);
     }
+}
+
+static inline void imguiLoadBoloFont(float sizePixels) {
+    imguiLoadBoloFontSized(sizePixels);
 }
 
 #endif /* IMGUI_FONTS_H */
