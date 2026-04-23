@@ -114,6 +114,7 @@ extern "C" int imguiWelcomeShow(void) {
     dialogSetWindowTitle(window, "WinBolo - Game Selection");
     SDL_SetWindowResizable(window, true);
 #endif
+    dialogRestorePosition(window);
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -171,6 +172,7 @@ extern "C" int imguiWelcomeShow(void) {
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            dialogHandleWindowMoveResize(window, &ev);
             if (dialogHandleUrlDropEvent(&ev)) { result = 16; running = false; continue; } /* openInternetManual */
             if (ev.type == SDL_EVENT_QUIT) {
                 result = RESULT_QUIT;

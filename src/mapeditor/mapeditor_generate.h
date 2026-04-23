@@ -78,20 +78,22 @@ extern "C" {
 #define MAPGEN_LOCK_N_CITYCOUNT  (1u << 17)
 #define MAPGEN_LOCK_N_MAZECOUNT  (1u << 18)
 #define MAPGEN_LOCK_N_BOAT       (1u << 19)
-/* Maze-specific (bits 20-24) */
+/* Maze-specific (bits 20-26) */
 #define MAPGEN_LOCK_M_ALGO       (1u << 20)
 #define MAPGEN_LOCK_M_WALLTHICK  (1u << 21)
 #define MAPGEN_LOCK_M_CORRIDOR   (1u << 22)
 #define MAPGEN_LOCK_M_ENTRIES    (1u << 23)
 #define MAPGEN_LOCK_M_CITYROOMS  (1u << 24)
-/* Fractal-specific (bits 25-31) */
-#define MAPGEN_LOCK_F_LAND        (1u << 25)
-#define MAPGEN_LOCK_F_ROUGHNESS   (1u << 26)
-#define MAPGEN_LOCK_F_DETAIL      (1u << 27)
-#define MAPGEN_LOCK_F_COAST       (1u << 28)
-#define MAPGEN_LOCK_F_LAYERS      (1u << 29)
-#define MAPGEN_LOCK_F_RIVERS      (1u << 30)
-#define MAPGEN_LOCK_F_MINES       (1u << 31)
+#define MAPGEN_LOCK_M_WALLTERR   (1u << 25)
+#define MAPGEN_LOCK_M_CORRTERR   (1u << 26)
+/* Fractal-specific (bits 27-31, plus bit 32) */
+#define MAPGEN_LOCK_F_LAND        (1u << 27)
+#define MAPGEN_LOCK_F_ROUGHNESS   (1u << 28)
+#define MAPGEN_LOCK_F_DETAIL      (1u << 29)
+#define MAPGEN_LOCK_F_COAST       (1u << 30)
+#define MAPGEN_LOCK_F_LAYERS      (1u << 31)
+#define MAPGEN_LOCK_F_RIVERS      (1ull << 32)
+#define MAPGEN_LOCK_F_MINES       (1ull << 33)
 
 typedef struct {
     /* Region to generate into (playable area or selection, pre-normalized) */
@@ -105,7 +107,7 @@ typedef struct {
 
     /* Bitmask of locked parameters (MAPGEN_LOCK_*) — locked fields are
      * not changed by Randomize. */
-    uint32_t locks;
+    uint64_t locks;
 
     /* Object counts — shared across all generator types.
      * Stored at top level so locking/randomizing doesn't need per-type switches. */
@@ -142,6 +144,8 @@ typedef struct {
             int corridorWidth;    /* 1-2 */
             int entries;          /* 1-8 */
             int cityRooms;        /* 0-5 */
+            int wallTerrain;      /* terrain for walls (default BUILDING) */
+            int corridorTerrain;  /* terrain for corridors (default ROAD) */
         } maze;
 
         struct {

@@ -1061,15 +1061,20 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
       float ey = (float)((epy - camMY * tileSize) * zf - edgeY + originY);
 
       int srcX = 0, srcY = 0;
+      /* Explosion frames count down from 8 (start) to 1 (end).
+       * The SHELL_EXPLOSION constants invert this: SHELL_EXPLOSION8=1
+       * maps to the big sprite and SHELL_EXPLOSION1=8 maps to the tiny
+       * sprite.  Match the real game's mapping: length 8 (just started)
+       * renders as the smallest sprite, growing toward the biggest. */
       switch (q->length) {
-        case 8: srcX=EXPLOSION8_X; srcY=EXPLOSION8_Y; break;
-        case 7: srcX=EXPLOSION7_X; srcY=EXPLOSION7_Y; break;
-        case 6: srcX=EXPLOSION6_X; srcY=EXPLOSION6_Y; break;
-        case 5: srcX=EXPLOSION5_X; srcY=EXPLOSION5_Y; break;
-        case 4: srcX=EXPLOSION4_X; srcY=EXPLOSION4_Y; break;
-        case 3: srcX=EXPLOSION3_X; srcY=EXPLOSION3_Y; break;
-        case 2: srcX=EXPLOSION2_X; srcY=EXPLOSION2_Y; break;
-        case 1: srcX=EXPLOSION1_X; srcY=EXPLOSION1_Y; break;
+        case 8: srcX=EXPLOSION1_X; srcY=EXPLOSION1_Y; break;
+        case 7: srcX=EXPLOSION2_X; srcY=EXPLOSION2_Y; break;
+        case 6: srcX=EXPLOSION3_X; srcY=EXPLOSION3_Y; break;
+        case 5: srcX=EXPLOSION4_X; srcY=EXPLOSION4_Y; break;
+        case 4: srcX=EXPLOSION5_X; srcY=EXPLOSION5_Y; break;
+        case 3: srcX=EXPLOSION6_X; srcY=EXPLOSION6_Y; break;
+        case 2: srcX=EXPLOSION7_X; srcY=EXPLOSION7_Y; break;
+        case 1: srcX=EXPLOSION8_X; srcY=EXPLOSION8_Y; break;
         default: goto next_explosion;
       }
 
@@ -1126,7 +1131,9 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
       if (tx + scaledTile >= originX && tx <= originX + viewW &&
           ty + scaledTile >= originY && ty <= originY + viewH) {
-        SDL_FRect tSrc = { (float)(EXPLOSION8_X * ss), (float)(EXPLOSION8_Y * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
+        /* Fireball is TANK_EXPLOSION_FRAME (8) which in the real game maps
+         * through SHELL_EXPLOSION1 (=8) to the EXPLOSION1 sprite (small spark). */
+        SDL_FRect tSrc = { (float)(EXPLOSION1_X * ss), (float)(EXPLOSION1_Y * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
         SDL_FRect tDst = { tx, ty, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &tSrc, &tDst);
       }

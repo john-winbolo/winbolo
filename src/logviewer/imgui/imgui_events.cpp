@@ -13,6 +13,7 @@
 #include "imgui_context.h"
 #include "imgui.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -21,10 +22,17 @@
 /* External function from backend */
 extern "C" {
     void lv_screenGetTime(char *buffer);
+    uint32_t lv_screenGetTimeRunning(void);
 }
 
+/* Event with associated playback timestamp */
+struct LogEvent {
+    std::string text;
+    uint32_t timeMs;
+};
+
 /* Event list storage */
-static std::vector<std::string> s_events;
+static std::vector<LogEvent> s_events;
 static bool s_auto_scroll = true;
 static bool s_scroll_to_bottom = false;
 
@@ -42,16 +50,16 @@ void lv_imgui_events_init(void) {
 
 void lv_imgui_events_add(int eventType, const char *msg) {
     char line[512] = {0};
-    
+
     if (eventType == 0) {
         /* Add timestamp prefix */
         lv_screenGetTime(line);
         strncat(line, " - ", sizeof(line) - strlen(line) - 1);
     }
-    
+
     strncat(line, msg, sizeof(line) - strlen(line) - 1);
-    s_events.push_back(std::string(line));
-    
+    s_events.push_back({std::string(line), lv_screenGetTimeRunning()});
+
     /* Mark for auto-scroll */
     if (s_auto_scroll) {
         s_scroll_to_bottom = true;
@@ -62,6 +70,17 @@ void lv_imgui_events_clear(void) {
     s_events.clear();
     s_selected_index = -1;
     s_select_all = false;
+}
+
+void lv_imgui_events_remove_after(unsigned int timeMs) {
+    /* Remove events with timestamp strictly after timeMs */
+    while (!s_events.empty() && s_events.back().timeMs > timeMs) {
+        s_events.pop_back();
+    }
+    if (s_selected_index >= (int)s_events.size()) {
+        s_selected_index = -1;
+        s_select_all = false;
+    }
 }
 
 /* Copy selected text to clipboard */
@@ -109,7 +128,7 @@ void lv_imgui_events_window(void) {
         ImGui::BeginChild("EventsList", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
         
         for (int i = 0; i < (int)s_events.size(); i++) {
-            const char* event_text = s_events[i].c_str();
+            const char* event_text = s_events[i].text.c_str();
             
             /* Check if this item is selected */
             bool is_selected = (s_select_all) || (s_selected_index == i);
@@ -140,7 +159,7 @@ void lv_imgui_events_window(void) {
                     /* Build string of all events */
                     std::string all_events;
                     for (const auto& e : s_events) {
-                        all_events += e + "\r\n";
+                        all_events += e.text + "\r\n";
                     }
                     copy_to_clipboard(all_events.c_str());
                 }
@@ -167,7 +186,7 @@ void lv_imgui_events_window(void) {
             if (ImGui::MenuItem("Copy All", NULL, false, !s_events.empty())) {
                 std::string all_events;
                 for (const auto& e : s_events) {
-                    all_events += e + "\r\n";
+                    all_events += e.text + "\r\n";
                 }
                 copy_to_clipboard(all_events.c_str());
             }

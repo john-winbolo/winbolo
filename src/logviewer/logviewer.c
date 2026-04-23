@@ -137,8 +137,11 @@ void lv_windowAddEvent(int eventType, char *msg) {
     lv_imgui_events_add(eventType, msg);
 }
 
-/* Remove events that are ahead of the current playback position (during rewind).
- * ImGui events window doesn't support partial removal, so clear all. */
+/* Remove events that are ahead of the given playback time (during rewind/seek). */
+void lv_windowRemoveEventsAfter(uint32_t timeMs) {
+    lv_imgui_events_remove_after(timeMs);
+}
+
 void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
 }

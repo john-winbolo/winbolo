@@ -487,6 +487,11 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       *(logMem+logMemSize) = opt1 ^ logKey;
       logMemSize++;
       break;
+    case log_LobbyEnter:
+    case log_LobbyExit:
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      break;
     default:
       changeKey = FALSE;
       logNumEvents--;
@@ -555,7 +560,7 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
   BYTE xPos;                /* Current position on the map */
   BYTE yPos;
   int len;                 /* Length of the run to write */
-  long length;
+  int32_t length;
 
   if (logIsRunning == FALSE && check == TRUE) {
     return TRUE;
@@ -588,14 +593,14 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
   /* Write start delay and time left */
   if (returnValue == TRUE) {
     length = htonl(ssim->startDelay);
-    ret = writeData((BYTE *) &length, sizeof(long), logOldKey);
+    ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }
   }
   if (returnValue == TRUE) {
     length = htonl(ssim->gameLength);
-    ret = writeData((BYTE *) &length, sizeof(long), logOldKey);
+    ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }
@@ -690,7 +695,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
   int ret;            /* Function return value */
   zip_fileinfo zi;
   BYTE data[512];
-  long start;
+  int32_t start;
   unsigned short port;
   BYTE count;
 
@@ -790,8 +795,8 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Start time */
   if (returnValue == TRUE) {
-    start = htonl((long)ssim->timeCreated);
-    ret = zipWriteInFileInZip(logFile, &start, sizeof(long));
+    start = htonl((int32_t)ssim->timeCreated);
+    ret = zipWriteInFileInZip(logFile, &start, sizeof(int32_t));
     if (ret != Z_OK) {
       returnValue = FALSE;
     }
@@ -801,7 +806,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
   if (returnValue == TRUE) {
     char wbnKey[WINBOLONET_KEY_LEN];
     winboloNetGetServerKey(wbnKey);
-    ret = zipWriteInFileInZip(logFile, wbnKey, WINBOLONET_KEY_LEN);
+    ret = zipWriteInFileInZip(logFile, wbnKey, 32);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }

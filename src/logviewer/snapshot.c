@@ -274,6 +274,11 @@ bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePo
     q = q->next;
   }
 
+  /* If targetPos is before the first snapshot, use the first snapshot */
+  if (prev == NULL && *value != NULL) {
+    prev = *value;
+  }
+
   if (prev != NULL) {
     *filePos = prev->filePos;
     *time = prev->time;

@@ -110,9 +110,12 @@ static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
 
 /* Set up a scaled font and touch-friendly ImGui style.
  * Call after ImGui::CreateContext() and before the first NewFrame().
- * On desktop (scale 1.0) this is a no-op — ImGui's default font is used. */
+ * Always loads the TTF font; on mobile also applies touch-friendly styling. */
 static inline void dialogApplyScaling(float uiScale) {
-    if (uiScale <= 1.05f) return;
+    if (uiScale <= 1.05f) {
+        imguiLoadBoloFont(18.0f);
+        return;
+    }
 
     imguiLoadBoloFont(20.0f * uiScale);
 
@@ -313,6 +316,41 @@ static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Even
         return true;
     }
     return false;
+}
+
+/* Dialog window position — separate from game window position.
+ * Stored in gamefront.c, loaded/saved via INI prefs. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int gameFrontDialogX;
+extern int gameFrontDialogY;
+#ifdef __cplusplus
+}
+#endif
+
+/* Save current dialog window position */
+static inline void dialogSaveCurrentPosition(SDL_Window *win) {
+    if (win) {
+        SDL_GetWindowPosition(win, &gameFrontDialogX, &gameFrontDialogY);
+    }
+}
+
+/* Handle move/resize events — save dialog position */
+static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event *ev) {
+    if (!win) return;
+    SDL_WindowID winID = SDL_GetWindowID(win);
+    if ((ev->type == SDL_EVENT_WINDOW_MOVED || ev->type == SDL_EVENT_WINDOW_RESIZED) &&
+        ev->window.windowID == winID) {
+        dialogSaveCurrentPosition(win);
+    }
+}
+
+/* Restore dialog window position if we have a saved one */
+static inline void dialogRestorePosition(SDL_Window *win) {
+    if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+        SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
+    }
 }
 
 /* Check an SDL event for a winbolo:// URL drop.

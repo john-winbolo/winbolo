@@ -59,6 +59,7 @@ typedef struct {
     bool wantPointStarts;
     bool toggleGrid;
     bool toggleMines;
+    bool togglePillRanges;
     bool wantCut;
     bool wantCopy;
     bool wantPaste;
@@ -83,7 +84,8 @@ typedef struct {
 void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            const char recentFiles[][ME_PATH_MAX],
                            int numRecent,
-                           bool showGrid, bool showMines, bool dirty,
+                           bool showGrid, bool showMines, bool showPillRanges,
+                           bool dirty,
                            bool canUndo, bool canRedo,
                            bool hasSelection,
                            bool *showTerrain, bool *showTools,
@@ -259,7 +261,8 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
  * selX1..selY2: current drag region bounds.
  * Returns true if settings changed (caller should regenerate preview). */
 bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
-                                int selX1, int selY1, int selX2, int selY2);
+                                int selX1, int selY1, int selX2, int selY2,
+                                void *tilesTex, int tileSize);
 
 /* Render the generate tool settings panel.
  * Shown when the generate tool is active.

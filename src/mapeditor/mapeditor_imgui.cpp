@@ -124,7 +124,8 @@ void mapEditorImguiNewFrame(void) {
 void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            const char recentFiles[][ME_PATH_MAX],
                            int numRecent,
-                           bool showGrid, bool showMines, bool dirty,
+                           bool showGrid, bool showMines, bool showPillRanges,
+                           bool dirty,
                            bool canUndo, bool canRedo,
                            bool hasSelection,
                            bool *showTerrain, bool *showTools,
@@ -259,6 +260,10 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             if (ImGui::MenuItem("Show Mines", "M", &mines)) {
                 action->toggleMines = true;
             }
+            bool pillRanges = showPillRanges;
+            if (ImGui::MenuItem("Show Pillbox Ranges", NULL, &pillRanges)) {
+                action->togglePillRanges = true;
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Window")) {
@@ -382,8 +387,10 @@ void mapEditorImguiStatusBar(int tileX, int tileY, float zoomLevel,
 static float s_terrainWindowBottom = 20.0f;
 
 /* Defined in mapview.c — tile atlas pixel coordinates */
-extern "C" int mapViewPosX[256];
-extern "C" int mapViewPosY[256];
+extern "C" {
+extern int mapViewPosX[256];
+extern int mapViewPosY[256];
+}
 
 /* The 11 paintable terrain entries. Keep in sync with mapeditor.c meTerrainEntries */
 static const struct {
@@ -1749,9 +1756,10 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 }
 
 bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
-                                int selX1, int selY1, int selX2, int selY2) {
+                                int selX1, int selY1, int selX2, int selY2,
+                                void *tilesTex, int tileSize) {
     static const char *mazeAlgoNames[] = { "Labyrinth", "Open" };
-    ImGui::SetNextWindowSize(ImVec2(220, 0), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(260, 0), ImGuiCond_Once);
     ImGui::Begin("Maze Settings", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
@@ -1782,6 +1790,12 @@ bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
 
     ImGui::SliderInt("Entries", &cfg->entries, 1, 8);
     ImGui::SliderInt("Rooms", &cfg->cityRooms, 0, 5);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    terrainPicker("Wall Terrain", &cfg->wallTerrain, false, tilesTex, tileSize);
+    ImGui::Spacing();
+    terrainPicker("Corridor Terrain", &cfg->corridorTerrain, false, tilesTex, tileSize);
 
     ImGui::End();
 
