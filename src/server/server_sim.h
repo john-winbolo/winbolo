@@ -110,6 +110,7 @@ typedef struct ServerSim {
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
+    uint8_t      lastInputButtons[MAX_TANKS];    /* Last button bitmask for stall continuity */
     uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
