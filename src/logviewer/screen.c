@@ -61,6 +61,7 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
 BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
 BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
+uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
 
 // Some prototypes to cleanup and document
 
@@ -75,6 +76,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize);
 void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMinor, BYTE versionRevision, char *mapName, BYTE gameType, bool hiddenMines, BYTE aiType, int32_t startDelay, int32_t timeLimit, BYTE *wbnKey, int32_t startTime);
 void lv_startOfLog();
 void lv_windowRemoveEvents();
+void lv_windowRemoveEventsAfter(uint32_t timeMs);
 
 /*********************************************************
 *NAME:          lv_screenCalcSquare
@@ -412,9 +414,15 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
-  lv_playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) (g_lv->xOffset + lv_screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + lv_screenGetSizeY()));
-  lv_shellsCalcScreenBullets(&g_lv->shs, &sb, g_lv->xOffset, (BYTE) (g_lv->xOffset + lv_screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + lv_screenGetSizeY()));
-  lv_playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) (g_lv->xOffset + lv_screenGetSizeX()), g_lv->yOffset, (BYTE) (g_lv->yOffset + lv_screenGetSizeY()));
+  {
+    int rightEdge = (int)g_lv->xOffset + lv_screenGetSizeX();
+    int bottomEdge = (int)g_lv->yOffset + lv_screenGetSizeY();
+    if (rightEdge > 255) rightEdge = 255;
+    if (bottomEdge > 255) bottomEdge = 255;
+    lv_playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
+    lv_shellsCalcScreenBullets(&g_lv->shs, &sb, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
+    lv_playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
+  }
   lv_frontEndDrawMainScreen(&g_lv->view, &g_lv->mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
   lv_screenTanksDestroy(&st);
   lv_screenBulletsDestroy(&sb);
@@ -501,10 +509,15 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
       }
       lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE);
+      snprintf(mem, sizeof(mem), "%s joined the game.", name);
+      lv_windowAddEvent(0, mem);
       break;
     case log_PlayerQuit:
       logReadBytes(&opt1, 1);
+      lv_playersGetPlayerName(opt1, str);
       lv_playersLeaveGame(opt1, TRUE);
+      snprintf(mem, sizeof(mem), "%s left the game.", str);
+      lv_windowAddEvent(0, mem);
       break;
     case log_LostMan:
       logReadBytes(&opt1, 1);
@@ -685,9 +698,13 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       lv_playersGetPlayerName(opt1, mem);
-      lv_playersGetPlayerName(opt2, str);
-      strncat(str, " just killed player ", sizeof(str) - strlen(str) - 1);
-      strncat(str, mem, sizeof(str) - strlen(str) - 1);
+      if (opt1 == opt2 || opt2 == NEUTRAL) {
+        snprintf(str, sizeof(str), "%s has died", mem);
+      } else {
+        lv_playersGetPlayerName(opt2, str);
+        strncat(str, " just killed player ", sizeof(str) - strlen(str) - 1);
+        strncat(str, mem, sizeof(str) - strlen(str) - 1);
+      }
       lv_windowAddEvent(0, str);
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
       break;
@@ -709,6 +726,12 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_SaveMap:
       /* No-op — marker event with no visual effect on replay */
+      break;
+    case log_LobbyEnter:
+      lv_windowAddEvent(0, "Lobby opened.");
+      break;
+    case log_LobbyExit:
+      lv_windowAddEvent(0, "Game started.");
       break;
     default:
       lv_windowStop(TRUE);
@@ -817,15 +840,19 @@ bool lv_screenLogTick() {
       if (g_lv->centredTank == TRUE) {
         BYTE x = lv_playersGetCentredX();
         BYTE y = lv_playersGetCentredY();
-        BYTE newXOffset;
-        BYTE newYOffset;
         if (x != 0 && y != 0 && x != 255 && y != 255) {
-          newXOffset = x - (g_lv->screenSizeX / 2);
-          newYOffset = y - (g_lv->screenSizeY / 2);
+          int cx = (int)x - (int)(g_lv->screenSizeX / 2);
+          int cy = (int)y - (int)(g_lv->screenSizeY / 2);
+          if (cx < 0) cx = 0;
+          if (cy < 0) cy = 0;
+          if (cx + g_lv->screenSizeX > 255) cx = 255 - g_lv->screenSizeX;
+          if (cy + g_lv->screenSizeY > 255) cy = 255 - g_lv->screenSizeY;
+          BYTE newXOffset = (BYTE)cx;
+          BYTE newYOffset = (BYTE)cy;
           if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
             g_lv->xOffset = newXOffset;
             g_lv->yOffset = newYOffset;
-            lv_screenUpdate(redraw);
+            g_lv->wantScreenUpdate = TRUE;
           }
         }
       }
@@ -837,8 +864,6 @@ bool lv_screenLogTick() {
 void lv_screenCentreOnSelectedItem() {
   BYTE x;
   BYTE y;
-  BYTE newXOffset;
-  BYTE newYOffset;
   base b;
   pillbox p;
   if (g_lv->isPlaying == TRUE && g_lv->selectedItemType != 0) {
@@ -851,8 +876,14 @@ void lv_screenCentreOnSelectedItem() {
       x = b.x;
       y = b.y;
     }
-    newXOffset = x - (g_lv->screenSizeX / 2);
-    newYOffset = y - (g_lv->screenSizeY / 2);
+    int cx = (int)x - (int)(g_lv->screenSizeX / 2);
+    int cy = (int)y - (int)(g_lv->screenSizeY / 2);
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    if (cx + g_lv->screenSizeX > 255) cx = 255 - g_lv->screenSizeX;
+    if (cy + g_lv->screenSizeY > 255) cy = 255 - g_lv->screenSizeY;
+    BYTE newXOffset = (BYTE)cx;
+    BYTE newYOffset = (BYTE)cy;
     if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
       g_lv->xOffset = newXOffset;
       g_lv->yOffset = newYOffset;
@@ -1333,7 +1364,7 @@ bool lv_screenSetBase(BYTE x, BYTE y) {
 bool lv_screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
   bool returnValue = FALSE; /* Value to return */
 
-  if (xValue <= lv_screenGetSizeX() && yValue <= lv_screenGetSizeX()) {
+  if (xValue < lv_screenGetSizeX() && yValue < lv_screenGetSizeY()) {
     returnValue = *((*value)->mineItem+(yValue*lv_screenGetSizeX()+xValue));
   }
   return returnValue;
@@ -1581,10 +1612,11 @@ void lv_screenRewind() {
     g_lv->timeRunning = currentTime;
     lv_logSetPosition(wantedPos);
     lv_blocksSetKey(key);
-    lv_processSnapshot();
     lv_playersSetTeams(pTeams);
-    lv_windowRemoveEvents();
+    lv_processSnapshot();
+    lv_windowRemoveEventsAfter(g_lv->timeRunning);
     g_lv->isPlaying = TRUE;
+    g_lv->state = lv_lr_start;
     if (wantedPos == 0) {
       lv_startOfLog();
     }
@@ -1615,9 +1647,12 @@ void lv_screenSeekToPosition(float ratio) {
     g_lv->timeRunning = snapTime;
     lv_logSetPosition(snapPos);
     lv_blocksSetKey(key);
-    lv_processSnapshot();
+    /* Restore team colours before processing snapshot so that new players
+       appearing in the snapshot get a valid team assigned instead of being
+       overwritten with NO_TEAM_SET from the pre-snapshot pTeams. */
     lv_playersSetTeams(pTeams);
-    lv_windowRemoveEvents();
+    lv_processSnapshot();
+    lv_windowRemoveEventsAfter(snapTime);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
 

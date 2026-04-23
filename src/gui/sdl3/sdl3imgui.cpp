@@ -127,7 +127,13 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #ifndef ZOOM_FACTOR_NORMAL
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
+#define ZOOM_FACTOR_TRIPLE 3
 #define ZOOM_FACTOR_QUAD   4
+#define ZOOM_FACTOR_CUSTOM 0
+#endif
+
+#ifndef MENU_BAR_HEIGHT
+#define MENU_BAR_HEIGHT 22
 #endif
 
 /* -------------------------------------------------------
@@ -156,7 +162,9 @@ extern "C" void imguiWinbolonetReset(void);
 extern "C" void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
 extern "C" void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
 extern "C" void windowSetFrameRate(int newFrameRate, bool setTimer);
-extern "C" void windowZoomChange(BYTE amount);
+extern "C" void windowZoomChange(BYTE amount, bool fromDragResize = false);
+extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
+                                                int *outW, int *outH, int *outX, int *outY);
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
@@ -213,8 +221,22 @@ static bool s_showPlayersPanel = false;
 
 /* Deferred zoom change — windowZoomChange destroys the ImGui context, so we
    must not call it mid-frame.  Store the requested value and apply it after
-   the frame ends. 0 = no pending change. */
-static BYTE s_pendingZoom = 0;
+   the frame ends. 255 = no pending change. */
+static BYTE s_pendingZoom = 255;
+static bool s_pendingZoomFromResize = false;  /* True if zoom change came from resize snap */
+
+/* Suppress auto-switch to Custom on the next resize event.  Set before
+   programmatic SDL_SetWindowSize so the resulting event doesn't trigger
+   an unwanted mode change. */
+static bool s_suppressAutoCustom = false;
+
+/* True while user is dragging the window border (between WM_ENTERSIZEMOVE
+   and WM_EXITSIZEMOVE).  Suppresses auto-switch to Custom during drag. */
+static bool s_inModalResize = false;
+
+/* Saved custom window size — restored when switching back to Custom mode */
+static int s_customWindowW = 0;
+static int s_customWindowH = 0;
 
 /* Optional extra render callback (used by Android for players panel) */
 static sdl3ImguiExtraRenderFn s_extraRenderFn = nullptr;
@@ -1532,17 +1554,17 @@ static void renderSettingsPanel(ClientSim *cs) {
 #ifndef __ANDROID__
         if (!uiModeIsTablet()) {
             /* Window Size — desktop only */
-            const char *zoomLabels[] = { "Normal", "Double", "Quad" };
-            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD };
+            const char *zoomLabels[] = { "Normal", "Double", "Quad", "Custom" };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
             int curZoomIdx = 0;
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
             ImGui::Text("Window Size:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(100);
             if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-                for (int i = 0; i < 3; i++) {
+                for (int i = 0; i < 4; i++) {
                     bool selected = (curZoomIdx == i);
                     if (ImGui::Selectable(zoomLabels[i], selected)) {
                         s_pendingZoom = zoomValues[i];
@@ -1751,9 +1773,44 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         if (ImGui::BeginMenu("Window Size")) {
+            /* Get display bounds to disable sizes that don't fit */
+            int dispW = 99999, dispH = 99999;
+            if (s_window) {
+                SDL_DisplayID dispID = SDL_GetDisplayForWindow(s_window);
+                SDL_Rect usable;
+                if (SDL_GetDisplayUsableBounds(dispID, &usable)) {
+                    dispW = usable.w;
+                    dispH = usable.h;
+                }
+            }
+            /* Cardinal sizes: width = zoom * 515, height = zoom * 325 + MENU_BAR_HEIGHT */
+            bool fit1x = (1 * SDL3_SCREEN_W <= dispW) && (1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+            bool fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+            bool fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+            bool fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+
+            ImGui::BeginDisabled(!fit1x);
             if (ImGui::MenuItem("Normal", nullptr, zoomFactor == ZOOM_FACTOR_NORMAL)) s_pendingZoom = ZOOM_FACTOR_NORMAL;
+            if (!fit1x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 1 * SDL3_SCREEN_W, 1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!fit2x);
             if (ImGui::MenuItem("Double", nullptr, zoomFactor == ZOOM_FACTOR_DOUBLE)) s_pendingZoom = ZOOM_FACTOR_DOUBLE;
+            if (!fit2x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 2 * SDL3_SCREEN_W, 2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!fit3x);
+            if (ImGui::MenuItem("Triple", nullptr, zoomFactor == ZOOM_FACTOR_TRIPLE)) s_pendingZoom = ZOOM_FACTOR_TRIPLE;
+            if (!fit3x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 3 * SDL3_SCREEN_W, 3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!fit4x);
             if (ImGui::MenuItem("Quad",   nullptr, zoomFactor == ZOOM_FACTOR_QUAD))   s_pendingZoom = ZOOM_FACTOR_QUAD;
+            if (!fit4x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Requires %dx%d - exceeds display", 4 * SDL3_SCREEN_W, 4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+            ImGui::EndDisabled();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Custom (Resizable)", nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
             ImGui::EndMenu();
         }
 
@@ -2033,6 +2090,182 @@ static void renderMenuBar(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
+ * Windows aspect ratio enforcement via window subclassing
+ * ------------------------------------------------------- */
+#ifdef _WIN32
+#include <commctrl.h>  /* SetWindowSubclass */
+#pragma comment(lib, "comctl32.lib")
+
+#define ASPECT_SUBCLASS_ID 1
+
+/* Snap indicator: 0 = not snapped, 1-4 = snapped to that zoom level */
+static int s_snapIndicator = 0;
+static HWND s_snapPopup = NULL;
+
+static HFONT s_snapFont = NULL;
+
+static void showSnapPopup(HWND parent, const char *text) {
+    if (!s_snapFont) {
+        s_snapFont = CreateFontA(32, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                  DEFAULT_PITCH, "Segoe UI");
+    }
+    if (!s_snapPopup) {
+        s_snapPopup = CreateWindowExA(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            "STATIC", text,
+            WS_POPUP | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+            0, 0, 120, 50,
+            NULL, NULL, GetModuleHandle(NULL), NULL);  /* No parent - standalone top-level */
+    } else {
+        SetWindowTextA(s_snapPopup, text);
+    }
+    SendMessageA(s_snapPopup, WM_SETFONT, (WPARAM)s_snapFont, TRUE);
+    /* Position at bottom-right of parent */
+    RECT rc;
+    GetWindowRect(parent, &rc);
+    int popX = rc.right - 130;
+    int popY = rc.bottom - 60;
+    SetWindowPos(s_snapPopup, HWND_TOPMOST, popX, popY, 120, 50, SWP_SHOWWINDOW);
+
+    /* Force immediate repaint by drawing directly */
+    HDC hdc = GetDC(s_snapPopup);
+    if (hdc) {
+        RECT clientRc = {0, 0, 120, 50};
+        HBRUSH bgBrush = CreateSolidBrush(RGB(50, 50, 50));
+        FillRect(hdc, &clientRc, bgBrush);
+        DeleteObject(bgBrush);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(255, 255, 255));
+        SelectObject(hdc, s_snapFont);
+        DrawTextA(hdc, text, -1, &clientRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ReleaseDC(s_snapPopup, hdc);
+    }
+}
+
+static void hideSnapPopup(void) {
+    if (s_snapPopup) {
+        ShowWindow(s_snapPopup, SW_HIDE);
+    }
+}
+
+/* Subclass procedure to enforce aspect ratio during live resize.
+   WM_SIZING provides the drag rect which we modify in place.
+   WM_GETMINMAXINFO enforces 1x minimum size.
+   Snaps to cardinal sizes (1x-4x) within 2 pixels. */
+static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                            UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    (void)uIdSubclass; (void)dwRefData;
+    if (msg == WM_ENTERSIZEMOVE) {
+        s_inModalResize = true;
+    }
+    if (msg == WM_GETMINMAXINFO) {
+        /* Enforce 1x minimum window size */
+        MINMAXINFO *mmi = (MINMAXINFO *)lParam;
+        RECT clientRect = {0, 0, SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT};
+        DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
+        DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+        AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
+        mmi->ptMinTrackSize.x = clientRect.right - clientRect.left;
+        mmi->ptMinTrackSize.y = clientRect.bottom - clientRect.top;
+        return 0;
+    }
+    if (msg == WM_SIZING) {
+        RECT *rect = (RECT *)lParam;
+        int winW = rect->right - rect->left;
+        int winH = rect->bottom - rect->top;
+
+        /* Calculate frame size (title bar + borders) */
+        RECT clientRect = {0, 0, 100, 100};
+        RECT windowRect = clientRect;
+        DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
+        DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+        AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+        int frameW = (windowRect.right - windowRect.left) - 100;
+        int frameH = (windowRect.bottom - windowRect.top) - 100;
+
+        /* Client size from window size */
+        int clientW = winW - frameW;
+        int clientH = winH - frameH;
+
+        /* Content aspect ratio 515:325, plus MENU_BAR_HEIGHT menu bar inside client area.
+           Always keep top-left fixed, expand right and down only.
+           Use rounding (not truncation) to avoid 1px black borders. */
+        int correctClientW, correctClientH;
+        switch (wParam) {
+            case WMSZ_TOP:
+            case WMSZ_BOTTOM: {
+                /* Vertical edge: keep height, adjust width to the right */
+                int contentH = clientH - MENU_BAR_HEIGHT;
+                correctClientW = (contentH * SDL3_SCREEN_W + SDL3_SCREEN_H / 2) / SDL3_SCREEN_H;
+                correctClientH = clientH;
+                break;
+            }
+            default: {
+                /* Horizontal edges and corners: keep width, adjust height downward */
+                correctClientW = clientW;
+                correctClientH = (clientW * SDL3_SCREEN_H + SDL3_SCREEN_W / 2) / SDL3_SCREEN_W + MENU_BAR_HEIGHT;
+                break;
+            }
+        }
+
+        /* Check for snap to cardinal sizes (1x, 2x, 3x, 4x) within 1% */
+        s_snapIndicator = 0;
+        for (int zoom = 1; zoom <= 4; zoom++) {
+            int cardinalW = zoom * SDL3_SCREEN_W;
+            int cardinalH = zoom * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
+            int threshW = cardinalW / 100;  /* 1% threshold */
+            int threshH = cardinalH / 100;
+            if (threshW < 2) threshW = 2;   /* minimum 2 pixels */
+            if (threshH < 2) threshH = 2;
+            int diffW = correctClientW - cardinalW;
+            int diffH = correctClientH - cardinalH;
+            if (diffW < 0) diffW = -diffW;
+            if (diffH < 0) diffH = -diffH;
+            if (diffW <= threshW && diffH <= threshH) {
+                correctClientW = cardinalW;
+                correctClientH = cardinalH;
+                s_snapIndicator = zoom;
+                break;
+            }
+        }
+
+        rect->right = rect->left + correctClientW + frameW;
+        rect->bottom = rect->top + correctClientH + frameH;
+
+        /* Show snap indicator popup during resize (only when snapped) */
+        if (s_snapIndicator > 0) {
+            const char *labels[] = {"", "Normal", "Double", "Triple", "Quad"};
+            showSnapPopup(hwnd, labels[s_snapIndicator]);
+        } else {
+            hideSnapPopup();
+        }
+        return TRUE;
+    }
+    if (msg == WM_EXITSIZEMOVE) {
+        s_inModalResize = false;
+        /* If snapped to a cardinal size, switch to that zoom mode */
+        if (s_snapIndicator > 0) {
+            s_pendingZoom = (BYTE)s_snapIndicator;
+            s_pendingZoomFromResize = true;  /* Don't recenter window */
+        } else if (zoomFactor != ZOOM_FACTOR_CUSTOM) {
+            /* Not snapped — switch to Custom mode now that resize is done */
+            s_pendingZoom = ZOOM_FACTOR_CUSTOM;
+            s_pendingZoomFromResize = true;
+        }
+        /* Hide snap indicator and clear state when resize ends */
+        hideSnapPopup();
+        s_snapIndicator = 0;
+    }
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, aspectSubclassProc, ASPECT_SUBCLASS_ID);
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+#endif
+
+/* -------------------------------------------------------
  * Public API
  * ------------------------------------------------------- */
 
@@ -2046,6 +2279,15 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     s_window   = window;
     s_renderer = renderer;
+
+#ifdef _WIN32
+    /* Subclass the window to enforce aspect ratio during live resize */
+    HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(window),
+                                              SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    if (hwnd) {
+        SetWindowSubclass(hwnd, aspectSubclassProc, ASPECT_SUBCLASS_ID, 0);
+    }
+#endif
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -2369,6 +2611,72 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSetQuitting();
         }
+        /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
+        if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
+            ev.window.windowID == SDL_GetWindowID(s_window)) {
+            if (s_suppressAutoCustom) {
+                /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
+                   Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
+            } else {
+                /* Enforce aspect ratio: adjust height to match width */
+                int w = ev.window.data1;
+                int h = ev.window.data2;
+                int contentH = h - MENU_BAR_HEIGHT;
+                int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
+                int correctH = correctContentH + MENU_BAR_HEIGHT;
+                if (h != correctH) {
+                    s_suppressAutoCustom = true;  /* Prevent recursion */
+                    SDL_SetWindowSize(s_window, w, correctH);
+                }
+                /* Auto-switch zoom mode based on width — but NOT during modal
+                   resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE.
+                   If width matches a cardinal size, switch to that cardinal mode.
+                   Otherwise switch to custom. */
+                if (s_pendingZoom == 255 && !s_inModalResize) {
+                    BYTE targetZoom = ZOOM_FACTOR_CUSTOM;
+                    if (w == 1 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_NORMAL;
+                    else if (w == 2 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_DOUBLE;
+                    else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
+                    else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
+                    if (zoomFactor != targetZoom) {
+                        s_pendingZoom = targetZoom;
+                    }
+                }
+                /* Save custom size on USER-initiated resize (not programmatic menu changes).
+                   Only save if it's actually a non-cardinal size.
+                   Save the CORRECTED size (proper aspect ratio), not actual window size,
+                   so maximize (which allows any ratio with gray bars) doesn't save a bad size.
+                   Find the largest aspect-correct size that FITS WITHIN the actual window. */
+                if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
+                    (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                    int curW, curH, curX, curY;
+                    SDL_GetWindowSize(s_window, &curW, &curH);
+                    SDL_GetWindowPosition(s_window, &curX, &curY);
+                    /* Don't save cardinal sizes as "custom" */
+                    bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
+                                       curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
+                    if (!isCardinal) {
+                        int saveW, saveH, saveX, saveY;
+                        windowComputeAspectCorrectSize(curW, curH, curX, curY, &saveW, &saveH, &saveX, &saveY);
+                        windowSetCustomSize(saveW, saveH);
+                        windowSetSavedPosition(saveX, saveY);
+                    }
+                }
+            }
+            /* Save position on resize too (window may have been repositioned) - but only if
+               we didn't already save a corrected position above */
+            if (s_pendingZoom != ZOOM_FACTOR_CUSTOM &&
+                !(zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                windowSaveCurrentPosition();
+            }
+            gameFrontSaveWindowSettings();
+        }
+        /* Window moved — save position */
+        if (ev.type == SDL_EVENT_WINDOW_MOVED &&
+            ev.window.windowID == SDL_GetWindowID(s_window)) {
+            windowSaveCurrentPosition();
+            gameFrontSaveWindowSettings();
+        }
 
         /* Dispatch tap-style key actions (pill view, tank view) that are
          * not handled by the polling-based inputGetKeys(). */
@@ -2377,7 +2685,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             windowKeyPressed(cs, (int)ev.key.scancode);
         }
 
-        sdl3DrawHandleEvent(cs, &ev);
+        /* Pass RAW event to game handler - it does its own coordinate transform
+           using SDL_GetRenderLogicalPresentationRect for resizable window support */
+        sdl3DrawHandleEvent(cs, &rawEv);
     }
 }
 
@@ -2407,17 +2717,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     ImGui_ImplSDL3_NewFrame();
     dialogResetTextInputArea(s_window);
 
-    /* In tablet mode, override ImGui's DisplaySize to match the SDL
-       render logical presentation space so ImGui coordinates align
-       with SDL rendering coordinates (game tiles, etc.).
-       Also reset DisplayFramebufferScale to 1.0 — the logical
-       presentation already maps coordinates to the native render
-       output, so the ImGui renderer should not apply extra scaling. */
+    /* Override ImGui's DisplaySize for tablet mode only.
+       In tablet mode, SDL logical presentation scales the whole window,
+       so ImGui needs to render in that coordinate space.
+       In desktop mode, ImGui renders at native window coordinates (no override)
+       because the game is blitted to a scaled rect, not the whole window. */
     if (uiModeIsTablet()) {
         int logW = 0, logH = 0;
         SDL_RendererLogicalPresentation logMode;
         SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &logMode);
-        if (logW > 0 && logH > 0) {
+        if (logW > 0 && logH > 0 && logMode != SDL_LOGICAL_PRESENTATION_DISABLED) {
             ImGuiIO &io = ImGui::GetIO();
             io.DisplaySize = ImVec2((float)logW, (float)logH);
             io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
@@ -2538,6 +2847,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
     }
 
+
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_renderer);
@@ -2577,10 +2887,30 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Apply deferred zoom change after the frame is fully rendered.
        windowZoomChange destroys and recreates the ImGui context, so it
        must not run while we are mid-frame. */
-    if (s_pendingZoom != 0) {
+    if (s_pendingZoom != 255) {
         BYTE zoom = s_pendingZoom;
-        s_pendingZoom = 0;
-        windowZoomChange(zoom);
+        bool fromResize = s_pendingZoomFromResize;
+        s_pendingZoom = 255;
+        s_pendingZoomFromResize = false;
+        /* Suppress auto-switch to Custom for fixed mode changes */
+        if (zoom != ZOOM_FACTOR_CUSTOM) {
+            s_suppressAutoCustom = true;
+        }
+        /* Save window position if this came from a resize snap */
+        int savedX = 0, savedY = 0;
+        if (fromResize && s_window) {
+            SDL_GetWindowPosition(s_window, &savedX, &savedY);
+        }
+        windowZoomChange(zoom, fromResize);
+        /* Restore position after zoom change if from resize snap */
+        if (fromResize) {
+            SDL_Window *win = sdl3DrawGetWindow();
+            if (win) {
+                SDL_SetWindowPosition(win, savedX, savedY);
+            }
+        }
+        /* Clear suppress flag now that zoom change is complete */
+        s_suppressAutoCustom = false;
     }
 
     /* Initialise WBN popup state on first settings open */
@@ -2726,6 +3056,10 @@ void sdl3ImguiCleanup(void) {
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;
+#ifdef _WIN32
+    if (s_snapPopup) { DestroyWindow(s_snapPopup); s_snapPopup = NULL; }
+    if (s_snapFont) { DeleteObject(s_snapFont); s_snapFont = NULL; }
+#endif
     /* Guard against the ImGui context already being destroyed.
      * The welcome dialog (imguiWelcomeShow) creates and tears down its own
      * ImGui context, so by the time we get here the context set up in

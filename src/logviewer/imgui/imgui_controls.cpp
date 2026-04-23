@@ -123,7 +123,8 @@ void lv_imgui_controls_window(void) {
         }
 
         /* Playback buttons row */
-        if (!s_lv->isLoaded) ImGui::BeginDisabled();
+        bool controlsDisabled = !s_lv->isLoaded;
+        if (controlsDisabled) ImGui::BeginDisabled();
 
         if (ImGui::Button("<< Rew", ImVec2(60, 0))) {
             lv_windowRewind();
@@ -151,7 +152,7 @@ void lv_imgui_controls_window(void) {
             lv_windowFastForward();
         }
 
-        if (!s_lv->isLoaded) ImGui::EndDisabled();
+        if (controlsDisabled) ImGui::EndDisabled();
 
         /* Speed slider - same line as buttons */
         ImGui::SameLine(0, 15);

@@ -439,9 +439,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
 
     zoomFactor = lv_windowGetZoomFactor();
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
-    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
-    SDL_RenderClear(sdlRenderer);
-    
+
     for (x = 0, y = 0, done = FALSE; !done; ) {
         pos = lv_screenGetPos(value, x, y);
         shouldDraw = (lv_drawLast[x][y] == 10000) ||
@@ -514,6 +512,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
 }
 
 void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
+    if (mx < 0 || mx > 255 || my < 0 || my > 255) return;
     lv_drawLast[mx][my] = 10000;
     if (px > itemSize && mx < 255) { lv_drawLast[mx+1][my] = 10000; if (my < 255) lv_drawLast[mx+1][my+1] = 10000; }
     if (py > itemSize && my < 255) { lv_drawLast[mx][my+1] = 10000; if (mx < 255) lv_drawLast[mx+1][my+1] = 10000; }

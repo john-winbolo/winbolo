@@ -306,13 +306,16 @@ if(MSVC)
         $<$<COMPILE_LANGUAGE:C,CXX>:/WX> $<$<COMPILE_LANGUAGE:C,CXX>:/sdl> $<$<COMPILE_LANGUAGE:C,CXX>:/permissive->
         $<$<COMPILE_LANGUAGE:C,CXX>:/W4> $<$<COMPILE_LANGUAGE:C,CXX>:/external:W3>
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4005> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4013>
-        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4057> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4100>
-        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4101> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4127>
-        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4131> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4152>
-        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4189> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4244>
-        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4245> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4310>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4018> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4057>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4100> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4101>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4127> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4131>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4132> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4146>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4152> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4189>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4244> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4245>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4295> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4310>
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4456> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4457>
-        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4459> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4554>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4459> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4505>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4554> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4701>
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4702> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4996>
         $<$<COMPILE_LANGUAGE:C,CXX>:/guard:cf> $<$<COMPILE_LANGUAGE:C,CXX>:/GL>
         $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>>:/RTC1>
@@ -932,7 +935,7 @@ if(WIN32)
         src/res/winbolo.rc
     )
     set_target_properties(WinBolo PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32)
+    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32 comctl32)
     target_compile_options(WinBolo PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBolo PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")

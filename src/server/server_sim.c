@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
-/* dirent.h not available on MSVC — use SDL_GlobDirectory instead */
+/* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
 #include "../bolo/global.h"
@@ -102,7 +102,7 @@ void serverSimStartGame(ServerSim *sim);
 
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
-static _Thread_local ServerSim *activeSim = NULL;
+static THREAD_LOCAL ServerSim *activeSim = NULL;
 
 /* Map change callback: records terrain changes into the dedicated map event
  * buffer so they never compete with sound/game events for slots. */
@@ -714,12 +714,14 @@ void serverSimTick(ServerSim *sim) {
     case serverStateLobby:
         /* No simulation but still advance tick for periodic lobby broadcasts. */
         sim->tick++;
+        logWriteTick();
         return;
     case serverStateCountdown:
         sim->countdownTicks--;
         if (sim->countdownTicks <= 0) {
             serverSimStartGame(sim);
         }
+        logWriteTick();
         return;
     case serverStateGameOver:
         sim->countdownTicks--;
@@ -813,12 +815,6 @@ void serverSimTick(ServerSim *sim) {
                     sim->jitterTarget[count] < JITTER_BUFFER_MAX) {
                     sim->jitterTarget[count]++;
                     sim->jitterStallCount[count] = 0;
-                    {
-                        char name[FILENAME_MAX];
-                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-                        SDL_Log("Jitter buffer grow: player %d (%s) ping=%ums target=%u",
-                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
-                    }
                 }
             } else {
                 sim->jitterStallCount[count] = 0;
@@ -827,12 +823,6 @@ void serverSimTick(ServerSim *sim) {
                     sim->jitterTarget[count] > JITTER_BUFFER_MIN) {
                     sim->jitterTarget[count]--;
                     sim->jitterStableTicks[count] = 0;
-                    {
-                        char name[FILENAME_MAX];
-                        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-                        SDL_Log("Jitter buffer shrink: player %d (%s) ping=%ums target=%u",
-                                count, name, sim->playerPing[count], sim->jitterTarget[count]);
-                    }
                 }
             }
         }
@@ -1082,7 +1072,13 @@ void serverSimTick(ServerSim *sim) {
         return;
     }
 
-    serverSimLogTick(sim);
+    /* The legacy server ticked every 20ms (SERVER_TICK_LENGTH) and wrote
+     * one log entry per tick.  Our sim ticks every 10ms alternating
+     * keys/game.  Only log on game ticks (every 20ms) to match the
+     * legacy rate — the log viewer consumes one entry per 20ms. */
+    if (!isKeysTick) {
+        serverSimLogTick(sim);
+    }
     sim->tick++;
 }
 
@@ -1890,6 +1886,47 @@ void serverSimReturnToLobby(ServerSim *sim) {
 
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
+
+#ifndef HAVE_SCREEN_C
+    /* Start a new log file for the next round's lobby */
+    if (sim->wantLogging) {
+        extern char fileName[];
+        extern bool isLogging;
+        if (sim->userLogFileName[0] != '\0') {
+            strncpy(fileName, sim->userLogFileName, 512 - 1);
+        } else {
+            makeLogFileName(fileName, sim->mapName);
+        }
+        {
+            size_t flen = strlen(fileName);
+            if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
+                strncat(fileName, ".wbv", 512 - flen - 1);
+            }
+        }
+        isLogging = logStart(fileName, sim, &sim->sim.mp,
+                             &sim->sim.bs, &sim->sim.pb,
+                             &sim->sim.ss, &sim->sim.plyrs,
+                             0, MAX_TANKS, sim->hasPassword);
+        if (isLogging) {
+            logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
+            /* Emit join events for players already connected */
+            for (i = 0; i < MAX_TANKS; i++) {
+                if (sim->playerConnected[i]) {
+                    const char *name = transportUdpServerGetPlayerName(i);
+                    if (name != NULL) {
+                        char pstr[256];
+                        int nameLen = (int)strlen(name);
+                        if (nameLen > 255) nameLen = 255;
+                        pstr[0] = (char)nameLen;
+                        memcpy(pstr + 1, name, nameLen);
+                        logAddEvent(log_PlayerJoined, i, '?', '?', 0, 0, pstr);
+                    }
+                }
+            }
+            fprintf(stderr, "Logging to %s (lobby)\n", fileName);
+        }
+    }
+#endif
 }
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
@@ -2091,8 +2128,12 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimConsoleMessage("Game started!");
 
 #ifndef HAVE_SCREEN_C
-    /* Start log recording if requested (server target only) */
-    if (sim->wantLogging) {
+    /* Log the lobby-to-game transition; a snapshot will be written
+     * on the first running tick (tick 0 % FULL_SYNC_INTERVAL == 0). */
+    if (sim->wantLogging && logIsRecording()) {
+        logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
+    } else if (sim->wantLogging) {
+        /* Logging was requested but not yet started — start now */
         extern char fileName[];
         extern bool isLogging;
         if (sim->userLogFileName[0] != '\0') {
@@ -2100,7 +2141,6 @@ void serverSimStartGame(ServerSim *sim) {
         } else {
             makeLogFileName(fileName, sim->mapName);
         }
-        /* Ensure .wbv extension */
         {
             size_t flen = strlen(fileName);
             if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {

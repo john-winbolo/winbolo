@@ -1343,10 +1343,29 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: failed to start logging\n");
       }
     } else {
-      /* Lobby mode: defer logStart() to serverSimStartGame() */
+      /* Lobby mode: start logging now so lobby joins/chat are captured */
       serverSim.wantLogging = TRUE;
       if (userLogFile[0] != '\0') {
+        strncpy(fileName, userLogFile, MAX_PATH - 1);
         strncpy(serverSim.userLogFileName, userLogFile, sizeof(serverSim.userLogFileName) - 1);
+      } else {
+        makeLogFileName(fileName, serverSim.mapName);
+      }
+      {
+        size_t flen = strlen(fileName);
+        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
+          strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
+        }
+      }
+      isLogging = logStart(fileName, &serverSim, &serverSim.sim.mp,
+                           &serverSim.sim.bs, &serverSim.sim.pb,
+                           &serverSim.sim.ss, &serverSim.sim.plyrs,
+                           (BYTE)ai, (BYTE)maxPlayers, serverSim.hasPassword);
+      if (isLogging) {
+        fprintf(stderr, "Logging to %s (lobby)\n", fileName);
+        logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
+      } else {
+        fprintf(stderr, "Warning: failed to start logging\n");
       }
     }
   }

@@ -50,6 +50,45 @@ static const char *s_roughnessNames[] = { "Low", "Medium", "High" };
 static const char *s_mapStyleNames[]  = { "Ocean", "Continent", "Islands",
                                           "Archipelago", "Inland" };
 
+/* Terrain types for maze wall/corridor combo (non-mined only) */
+static const struct { const char *name; int value; } s_terrainTypes[] = {
+    { "Building",      BUILDING },
+    { "Half Building", HALFBUILDING },
+    { "Road",          ROAD },
+    { "Grass",         GRASS },
+    { "Forest",        FOREST },
+    { "River",         RIVER },
+    { "Swamp",         SWAMP },
+    { "Crater",        CRATER },
+    { "Rubble",        RUBBLE },
+    { "Boat",          BOAT },
+    { "Deep Sea",      DEEP_SEA },
+};
+#define NUM_TERRAIN_TYPES 11
+
+static bool terrainCombo(const char *label, int *terrain) {
+    const char *preview = "?";
+    for (int i = 0; i < NUM_TERRAIN_TYPES; i++) {
+        if (s_terrainTypes[i].value == *terrain) {
+            preview = s_terrainTypes[i].name;
+            break;
+        }
+    }
+    bool changed = false;
+    if (ImGui::BeginCombo(label, preview)) {
+        for (int i = 0; i < NUM_TERRAIN_TYPES; i++) {
+            bool selected = (s_terrainTypes[i].value == *terrain);
+            if (ImGui::Selectable(s_terrainTypes[i].name, selected)) {
+                *terrain = s_terrainTypes[i].value;
+                changed = true;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
 /* --- SVG icon helpers --- */
 
 static SDL_Texture *genLoadSvgIcon(const char *path, int sizePx) {
@@ -100,7 +139,7 @@ static void genLoadLockIcons(void) {
 
 /* --- Lock button widget --- */
 
-static void lockButton(const char *id, uint32_t *locks, uint32_t bit) {
+static void lockButton(const char *id, uint64_t *locks, uint64_t bit) {
     genLoadLockIcons();
     bool locked = (*locks & bit) != 0;
     SDL_Texture *icon = locked ? s_lockIcon : s_unlockIcon;
@@ -129,7 +168,7 @@ static void lockButton(const char *id, uint32_t *locks, uint32_t bit) {
 
 static void restoreLockedTournamentParams(MapGenConfig *cfg,
                                           const MapGenConfig *saved) {
-    uint32_t lk = cfg->locks;
+    uint64_t lk = cfg->locks;
     auto &t = cfg->params.tournament;
     const auto &s = saved->params.tournament;
     if (lk & MAPGEN_LOCK_T_SYMMETRY)  t.symmetryMode = s.symmetryMode;
@@ -140,7 +179,7 @@ static void restoreLockedTournamentParams(MapGenConfig *cfg,
 
 static void restoreLockedNaturalParams(MapGenConfig *cfg,
                                        const MapGenConfig *saved) {
-    uint32_t lk = cfg->locks;
+    uint64_t lk = cfg->locks;
     auto &n = cfg->params.natural;
     const auto &s = saved->params.natural;
     if (lk & MAPGEN_LOCK_N_GRASS)      n.grassPct = s.grassPct;
@@ -157,7 +196,7 @@ static void restoreLockedNaturalParams(MapGenConfig *cfg,
 
 static void restoreLockedMazeParams(MapGenConfig *cfg,
                                     const MapGenConfig *saved) {
-    uint32_t lk = cfg->locks;
+    uint64_t lk = cfg->locks;
     auto &m = cfg->params.maze;
     const auto &s = saved->params.maze;
     if (lk & MAPGEN_LOCK_M_ALGO)      m.algo = s.algo;
@@ -165,11 +204,13 @@ static void restoreLockedMazeParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_M_CORRIDOR)  m.corridorWidth = s.corridorWidth;
     if (lk & MAPGEN_LOCK_M_ENTRIES)   m.entries = s.entries;
     if (lk & MAPGEN_LOCK_M_CITYROOMS) m.cityRooms = s.cityRooms;
+    if (lk & MAPGEN_LOCK_M_WALLTERR)  m.wallTerrain = s.wallTerrain;
+    if (lk & MAPGEN_LOCK_M_CORRTERR)  m.corridorTerrain = s.corridorTerrain;
 }
 
 static void restoreLockedFractalParams(MapGenConfig *cfg,
                                        const MapGenConfig *saved) {
-    uint32_t lk = cfg->locks;
+    uint64_t lk = cfg->locks;
     auto &f = cfg->params.fractal;
     const auto &s = saved->params.fractal;
     if (lk & MAPGEN_LOCK_F_LAND)      f.landPct = s.landPct;
@@ -186,7 +227,7 @@ static void restoreLockedFractalParams(MapGenConfig *cfg,
 #endif
 static void restoreLockedParams(MapGenConfig *cfg,
                                 const MapGenConfig *saved) {
-    uint32_t lk = cfg->locks;
+    uint64_t lk = cfg->locks;
     if (lk & MAPGEN_LOCK_BASES)  cfg->bases = saved->bases;
     if (lk & MAPGEN_LOCK_PILLS)  cfg->pills = saved->pills;
     if (lk & MAPGEN_LOCK_STARTS) cfg->starts = saved->starts;
@@ -226,7 +267,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         hasSaved[prevGenType] = true;
 
         uint32_t savedSeed = cfg->seed;
-        uint32_t savedLocks = cfg->locks;
+        uint64_t savedLocks = cfg->locks;
         int savedBases = cfg->bases;
         int savedPills = cfg->pills;
         int savedStarts = cfg->starts;
@@ -261,7 +302,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     ImGui::SameLine();
     if (ImGui::Button("Randomize")) {
         uint32_t rng = (uint32_t)SDL_GetTicksNS();
-        uint32_t lk = cfg->locks;
+        uint64_t lk = cfg->locks;
         if (!(lk & MAPGEN_LOCK_SEED))    cfg->seed = rng;
         int prevType = cfg->genType;
         if (!(lk & MAPGEN_LOCK_GENTYPE)) cfg->genType = (int)(mapGenXorshift32(&rng) % MAPGEN_TYPE_COUNT);
@@ -308,6 +349,8 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             if (!(lk & MAPGEN_LOCK_M_CORRIDOR))   m.corridorWidth = 1 + (int)(mapGenXorshift32(&rng) % 2);
             if (!(lk & MAPGEN_LOCK_M_ENTRIES))    m.entries = 1 + (int)(mapGenXorshift32(&rng) % 8);
             if (!(lk & MAPGEN_LOCK_M_CITYROOMS))  m.cityRooms = (int)(mapGenXorshift32(&rng) % 6);
+            if (!(lk & MAPGEN_LOCK_M_WALLTERR))   m.wallTerrain = s_terrainTypes[mapGenXorshift32(&rng) % NUM_TERRAIN_TYPES].value;
+            if (!(lk & MAPGEN_LOCK_M_CORRTERR))   m.corridorTerrain = s_terrainTypes[mapGenXorshift32(&rng) % NUM_TERRAIN_TYPES].value;
         } else if (cfg->genType == MAPGEN_FRACTAL) {
             auto &f = cfg->params.fractal;
             if (!(lk & MAPGEN_LOCK_F_LAND))      f.landPct = 5 + (int)(mapGenXorshift32(&rng) % 76);
@@ -450,6 +493,12 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         ImGui::SliderInt("City Rooms", &m.cityRooms, 0, 5);
         lockButton("lk_mrooms", &cfg->locks, MAPGEN_LOCK_M_CITYROOMS);
 
+        ImGui::Spacing();
+        terrainCombo("Wall Terrain", &m.wallTerrain);
+        lockButton("lk_mwterr", &cfg->locks, MAPGEN_LOCK_M_WALLTERR);
+        terrainCombo("Corridor Terrain", &m.corridorTerrain);
+        lockButton("lk_mcterr", &cfg->locks, MAPGEN_LOCK_M_CORRTERR);
+
     } else if (cfg->genType == MAPGEN_FRACTAL) {
         auto &f = cfg->params.fractal;
 
@@ -490,7 +539,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
 
     /* Detect parameter changes (ignore lock-only changes) */
     if (!generated) {
-        uint32_t savedLocks = prevCfg.locks;
+        uint64_t savedLocks = prevCfg.locks;
         prevCfg.locks = cfg->locks;
         if (memcmp(&prevCfg, cfg, sizeof(MapGenConfig)) != 0) {
             generated = true;
