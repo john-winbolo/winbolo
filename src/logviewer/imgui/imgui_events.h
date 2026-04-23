@@ -30,6 +30,9 @@ void lv_imgui_events_add(int eventType, const char *msg);
 /* Clear all events */
 void lv_imgui_events_clear(void);
 
+/* Remove events with timestamp strictly after the given time (ms) */
+void lv_imgui_events_remove_after(unsigned int timeMs);
+
 #ifdef __cplusplus
 }
 #endif

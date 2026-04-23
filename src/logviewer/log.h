@@ -90,7 +90,9 @@ log_LostMan,
 log_KillPlayer,
 log_PlayerRejoin,
 log_PlayerLeaving,
-log_PlayerDied
+log_PlayerDied,
+log_LobbyEnter,
+log_LobbyExit
 } logitem;
 
 /*********************************************************

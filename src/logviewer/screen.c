@@ -61,6 +61,7 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
 BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
 BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
+uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
 
 // Some prototypes to cleanup and document
 
@@ -75,6 +76,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize);
 void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMinor, BYTE versionRevision, char *mapName, BYTE gameType, bool hiddenMines, BYTE aiType, int32_t startDelay, int32_t timeLimit, BYTE *wbnKey, int32_t startTime);
 void lv_startOfLog();
 void lv_windowRemoveEvents();
+void lv_windowRemoveEventsAfter(uint32_t timeMs);
 
 /*********************************************************
 *NAME:          lv_screenCalcSquare
@@ -696,8 +698,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       lv_playersGetPlayerName(opt1, mem);
-      if (opt2 == NEUTRAL) {
-        snprintf(str, sizeof(str), "%s was killed", mem);
+      if (opt1 == opt2 || opt2 == NEUTRAL) {
+        snprintf(str, sizeof(str), "%s has died", mem);
       } else {
         lv_playersGetPlayerName(opt2, str);
         strncat(str, " just killed player ", sizeof(str) - strlen(str) - 1);
@@ -724,6 +726,12 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_SaveMap:
       /* No-op — marker event with no visual effect on replay */
+      break;
+    case log_LobbyEnter:
+      lv_windowAddEvent(0, "Lobby opened.");
+      break;
+    case log_LobbyExit:
+      lv_windowAddEvent(0, "Game started.");
       break;
     default:
       lv_windowStop(TRUE);
@@ -1606,7 +1614,7 @@ void lv_screenRewind() {
     lv_blocksSetKey(key);
     lv_playersSetTeams(pTeams);
     lv_processSnapshot();
-    lv_windowRemoveEvents();
+    lv_windowRemoveEventsAfter(g_lv->timeRunning);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
     if (wantedPos == 0) {
@@ -1644,7 +1652,7 @@ void lv_screenSeekToPosition(float ratio) {
        overwritten with NO_TEAM_SET from the pre-snapshot pTeams. */
     lv_playersSetTeams(pTeams);
     lv_processSnapshot();
-    lv_windowRemoveEvents();
+    lv_windowRemoveEventsAfter(snapTime);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
 

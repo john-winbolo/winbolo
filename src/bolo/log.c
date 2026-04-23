@@ -487,6 +487,11 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       *(logMem+logMemSize) = opt1 ^ logKey;
       logMemSize++;
       break;
+    case log_LobbyEnter:
+    case log_LobbyExit:
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      break;
     default:
       changeKey = FALSE;
       logNumEvents--;
