@@ -3569,9 +3569,12 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
                         snap.lgmMX, snap.lgmMY, snap.lgmPX, snap.lgmPY,
                         snap.lgmFrame);
         } else if (!snap.alive) {
-          /* Dead player: move off-screen so they don't render or collide */
+          /* Dead player: move tank off-screen but keep LGM visible —
+           * the LGM outlives its owner tank and the server still sends
+           * its position in every snapshot. */
           playersUpdate(&csPtr->sim.plyrs, pn, 0, 0, 0, 0, 0, FALSE,
-                        0, 0, 0, 0, 0);
+                        snap.lgmMX, snap.lgmMY, snap.lgmPX, snap.lgmPY,
+                        snap.lgmFrame);
         }
       }
     }
