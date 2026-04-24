@@ -15,6 +15,14 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
+#endif
 
 #include "mapeditor.h"
 
@@ -22,6 +30,8 @@
 #define DEFAULT_WINDOW_H 800
 
 int main(int argc, char *argv[]) {
+    srand((unsigned int)(time(NULL) ^ getpid()));
+
     const char *mapPath = NULL;
     if (argc > 1) {
         mapPath = argv[1];
