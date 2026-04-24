@@ -64,6 +64,7 @@
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
+#include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 
 /* String resource IDs — integer IDs into the lang.c lookup table */
@@ -774,8 +775,9 @@ bool gameFrontSetDlgState(openingStates newState) {
                                              wantRejoin);
     if (transportUdpClientGetJoinState(&udpTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
-      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                               (reason && reason[0]) ? reason : langGetText(STR_GAMEFRONTERR_JOINGAME), NULL);
+      imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                        (reason && reason[0]) ? reason : langGetText(STR_GAMEFRONTERR_JOINGAME),
+                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
       transportUdpClientDestroy(&udpTransport);
       clientSimDestroy(humanSim);
       gameFrontShutdownServer();
@@ -875,8 +877,8 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
 
           if (!mapLoadOk) {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                                     "Failed to load map from server", NULL);
+            imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
+                              IMGUI_MSG_ERROR, IMGUI_MSG_OK);
             clientSimSetChatSendFunc(humanSim, NULL);
             clientSimSetNameChangeSendFunc(humanSim, NULL);
             clientSimSetLockToggleSendFunc(humanSim, NULL);
@@ -895,8 +897,9 @@ bool gameFrontSetDlgState(openingStates newState) {
         }
       } else {
         const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                                 (reason && reason[0]) ? reason : langGetText(NETERR_SERVERCONNECT), NULL);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          (reason && reason[0]) ? reason : langGetText(NETERR_SERVERCONNECT),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         transportUdpClientDestroy(&udpTransport);
         clientSimDestroy(humanSim);
         gameFrontShutdownServer();
@@ -923,8 +926,8 @@ bool gameFrontSetDlgState(openingStates newState) {
                    gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
                    gameFrontWbnToken) == FALSE) {
         wantRejoin = FALSE;
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                                 "Unable to start server", NULL);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Unable to start server",
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         netDestroy(humanSim);
         clientSimDestroy(humanSim);
         gameFrontShutdownServer();
@@ -934,8 +937,8 @@ bool gameFrontSetDlgState(openingStates newState) {
         dlgState = openFinished;
       }
     } else {
-      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                               "Error starting server", NULL);
+      imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error starting server",
+                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
       dlgState = openStart;
     }
   } else if (dlgState == openSetup && newState == openFinished) {

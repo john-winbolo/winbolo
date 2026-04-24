@@ -14,7 +14,8 @@
 
 /*********************************************************
  * Name:          imgui_messagebox.h
- * Purpose:       ImGui message box dialog.
+ * Purpose:       ImGui message box dialog with icon and
+ *                button configuration support.
  *********************************************************/
 
 #ifndef IMGUI_MESSAGEBOX_H
@@ -24,7 +25,32 @@
 extern "C" {
 #endif
 
-/* Show a blocking message box with an OK button. */
+/* Message type — determines which icon is shown. */
+typedef enum {
+    IMGUI_MSG_INFO,
+    IMGUI_MSG_WARNING,
+    IMGUI_MSG_ERROR
+} ImguiMsgType;
+
+/* Button configuration. */
+typedef enum {
+    IMGUI_MSG_OK,
+    IMGUI_MSG_YES_NO,
+    IMGUI_MSG_YES_NO_CANCEL
+} ImguiMsgButtons;
+
+/* Return values. */
+#define IMGUI_MSG_RESULT_OK      0
+#define IMGUI_MSG_RESULT_YES     0
+#define IMGUI_MSG_RESULT_NO      1
+#define IMGUI_MSG_RESULT_CANCEL  2
+
+/* Show a blocking ImGui message box.
+ * Returns IMGUI_MSG_RESULT_OK/YES/NO/CANCEL. */
+int imguiMessageBoxEx(const char *title, const char *message,
+                      ImguiMsgType type, ImguiMsgButtons buttons);
+
+/* Convenience: blocking OK-only info message box (legacy API). */
 void imguiMessageBox(const char *message, const char *title);
 
 #ifdef __cplusplus
