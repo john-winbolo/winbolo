@@ -270,6 +270,25 @@ static int startsMapDistance(int x1, int y1, int x2, int y2) {
 }
 
 /*********************************************************
+*NAME:          startsIsOwnerFriendly
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns whether owner is the same as playerNum or an
+*  ally. NEUTRAL is treated as not friendly.
+*********************************************************/
+static bool startsIsOwnerFriendly(GameSim *sim, BYTE owner, BYTE playerNum) {
+  if (owner == NEUTRAL) {
+    return FALSE;
+  }
+  if (owner == playerNum) {
+    return TRUE;
+  }
+  return playersIsAllie(&sim->plyrs, owner, playerNum);
+}
+
+/*********************************************************
 *NAME:          startsGetStartOpen
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/4/26
@@ -307,7 +326,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
   WORLD tankWX;
   WORLD tankWY;
   int dist;
-  pillAlliance pAlliance;
+  BYTE pillOwner;
   BYTE bt;
 
   secondChoice = -1;
@@ -343,16 +362,16 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
       }
     }
 
-    /* Check all pillboxes */
+    /* Check all pillboxes (alive, not in a tank) */
     for (pillCount = 0; pillCount < numPills; pillCount++) {
-      if ((*sim->pb).item[pillCount].inTank == TRUE || (*sim->pb).item[pillCount].armour == 0) {
+      if (sim->pb->item[pillCount].inTank == TRUE || sim->pb->item[pillCount].armour == 0) {
         continue;
       }
-      dist = startsMapDistance(sx, sy, (*sim->pb).item[pillCount].x, (*sim->pb).item[pillCount].y);
+      dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
       if (dist <= START_PILL_RANGE) {
         anyPillNearby = TRUE;
-        pAlliance = pillsGetAllianceNum(sim, &sim->pb, pillCount);
-        if (pAlliance == pillEvil) {
+        pillOwner = sim->pb->item[pillCount].owner;
+        if (pillOwner != NEUTRAL && startsIsOwnerFriendly(sim, pillOwner, playerNum) == FALSE) {
           hostilePillNearby = TRUE;
         }
       }
@@ -415,7 +434,6 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   BYTE numStarts = (*value)->numStarts;
   BYTE numBases = basesGetNumBases(&sim->bs);
   BYTE numPills = pillsGetNumPills(&sim->pb);
-  BYTE offset;
   BYTE idx;
   BYTE count;
   BYTE sx;
@@ -430,47 +448,44 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   bool hasNeutralBase;
   bool hostileTankNearby;
   bool hostilePillNearby;
+  bool hostileBaseNearby;
   bool anyTankNearby;
   bool anyPillNearby;
-  int bestOwnIdx;
-  int bestNeutralIdx;
-  int bestSafeIdx;
-  int fallbackIdx;
+  BYTE ownCandidates[MAX_STARTS];
+  BYTE neutralCandidates[MAX_STARTS];
+  BYTE safeCandidates[MAX_STARTS];
+  BYTE fallbackCandidates[MAX_STARTS];
+  BYTE numOwn = 0;
+  BYTE numNeutral = 0;
+  BYTE numSafe = 0;
+  BYTE numFallback = 0;
   WORLD tankWX;
   WORLD tankWY;
-  baseAlliance bAlliance;
-  pillAlliance pAlliance;
+  BYTE pillOwner;
+  BYTE baseOwner;
   BYTE bt;
 
   /* Count neutral bases to decide if neutral is preferred */
   neutralCount = 0;
   for (baseCount = 0; baseCount < numBases; baseCount++) {
-    bAlliance = basesGetStatusNum(sim, baseCount);
-    if (bAlliance == baseNeutral) {
+    if (sim->bs->item[baseCount].owner == NEUTRAL) {
       neutralCount++;
     }
   }
   neutralPreferred = (numBases > 0 && (neutralCount * 100 / numBases) > START_NEUTRAL_THRESHOLD_PCT);
 
-  bestOwnIdx = -1;
-  bestNeutralIdx = -1;
-  bestSafeIdx = -1;
-  fallbackIdx = -1;
-  offset = (BYTE)(rand() % numStarts);
-
   for (count = 0; count < numStarts; count++) {
-    idx = (BYTE)((offset + count) % numStarts);
-    sx = (*value)->item[idx].x;
-    sy = (*value)->item[idx].y;
+    sx = (*value)->item[count].x;
+    sy = (*value)->item[count].y;
 
     /* Must be deep sea with no mine */
     if (startsIsValidSquare(sim, sx, sy) == FALSE) {
       continue;
     }
 
-    /* Check for hostile units nearby */
     hostileTankNearby = FALSE;
     hostilePillNearby = FALSE;
+    hostileBaseNearby = FALSE;
     anyTankNearby = FALSE;
     anyPillNearby = FALSE;
 
@@ -489,72 +504,76 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
     }
 
     for (pillCount = 0; pillCount < numPills; pillCount++) {
-      if ((*sim->pb).item[pillCount].inTank == TRUE || (*sim->pb).item[pillCount].armour == 0) {
+      if (sim->pb->item[pillCount].inTank == TRUE || sim->pb->item[pillCount].armour == 0) {
         continue;
       }
-      dist = startsMapDistance(sx, sy, (*sim->pb).item[pillCount].x, (*sim->pb).item[pillCount].y);
+      dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
       if (dist <= START_PILL_RANGE) {
         anyPillNearby = TRUE;
-        pAlliance = pillsGetAllianceNum(sim, &sim->pb, pillCount);
-        if (pAlliance == pillEvil) {
+        pillOwner = sim->pb->item[pillCount].owner;
+        if (pillOwner != NEUTRAL && startsIsOwnerFriendly(sim, pillOwner, playerNum) == FALSE) {
           hostilePillNearby = TRUE;
         }
       }
     }
 
-    /* Skip positions near hostile units */
-    if (hostileTankNearby == TRUE || hostilePillNearby == TRUE) {
-      if (fallbackIdx == -1) {
-        fallbackIdx = idx;
-      }
-      continue;
-    }
-
-    /* Check for nearby own and neutral bases */
+    /* Check for nearby bases - both for hostile detection and own/neutral */
     hasOwnBase = FALSE;
     hasNeutralBase = FALSE;
     for (baseCount = 0; baseCount < numBases; baseCount++) {
-      dist = startsMapDistance(sx, sy, (*sim->bs).item[baseCount].x, (*sim->bs).item[baseCount].y);
+      if (sim->bs->item[baseCount].armour <= MIN_ARMOUR_CAPTURE) {
+        continue;
+      }
+      dist = startsMapDistance(sx, sy, sim->bs->item[baseCount].x, sim->bs->item[baseCount].y);
       if (dist <= START_BASE_RANGE) {
-        bAlliance = basesGetStatusNum(sim, baseCount);
-        if (bAlliance == baseOwnGood || bAlliance == baseAllieGood) {
-          hasOwnBase = TRUE;
-        } else if (bAlliance == baseNeutral) {
+        baseOwner = sim->bs->item[baseCount].owner;
+        if (baseOwner == NEUTRAL) {
           hasNeutralBase = TRUE;
+        } else if (startsIsOwnerFriendly(sim, baseOwner, playerNum)) {
+          hasOwnBase = TRUE;
+        } else {
+          hostileBaseNearby = TRUE;
         }
       }
     }
 
-    /* Best: near own base with no hostiles */
-    if (hasOwnBase == TRUE && bestOwnIdx == -1) {
-      bestOwnIdx = idx;
-    }
-    /* Good: near neutral base (when neutral is preferred) */
-    if (hasNeutralBase == TRUE && bestNeutralIdx == -1) {
-      bestNeutralIdx = idx;
-    }
-    /* Safe: no hostiles nearby (regardless of bases) */
-    if (anyTankNearby == FALSE && anyPillNearby == FALSE && bestSafeIdx == -1) {
-      bestSafeIdx = idx;
+    /* Skip positions near hostile units (tank, pill, or base) */
+    if (hostileTankNearby == TRUE || hostilePillNearby == TRUE || hostileBaseNearby == TRUE) {
+      fallbackCandidates[numFallback++] = count;
+      continue;
     }
 
-    if (fallbackIdx == -1) {
-      fallbackIdx = idx;
+    if (hasOwnBase == TRUE) {
+      ownCandidates[numOwn++] = count;
     }
+    if (hasNeutralBase == TRUE) {
+      neutralCandidates[numNeutral++] = count;
+    }
+    if (anyTankNearby == FALSE && anyPillNearby == FALSE) {
+      safeCandidates[numSafe++] = count;
+    }
+    fallbackCandidates[numFallback++] = count;
   }
 
-  /* Pick the best available option */
+  /* Pick the best available option, randomly within the chosen tier.
+   * When neutral bases are still plentiful (>20%), own and neutral
+   * are pooled and treated equally. Otherwise own is preferred. */
   idx = 0;
-  if (bestOwnIdx != -1) {
-    idx = (BYTE)bestOwnIdx;
-  } else if (neutralPreferred && bestNeutralIdx != -1) {
-    idx = (BYTE)bestNeutralIdx;
-  } else if (bestSafeIdx != -1) {
-    idx = (BYTE)bestSafeIdx;
-  } else if (bestNeutralIdx != -1) {
-    idx = (BYTE)bestNeutralIdx;
-  } else if (fallbackIdx != -1) {
-    idx = (BYTE)fallbackIdx;
+  if (neutralPreferred && (numOwn > 0 || numNeutral > 0)) {
+    BYTE pool[MAX_STARTS * 2];
+    BYTE poolSize = 0;
+    BYTE i;
+    for (i = 0; i < numOwn; i++) pool[poolSize++] = ownCandidates[i];
+    for (i = 0; i < numNeutral; i++) pool[poolSize++] = neutralCandidates[i];
+    idx = pool[rand() % poolSize];
+  } else if (numOwn > 0) {
+    idx = ownCandidates[rand() % numOwn];
+  } else if (numNeutral > 0) {
+    idx = neutralCandidates[rand() % numNeutral];
+  } else if (numSafe > 0) {
+    idx = safeCandidates[rand() % numSafe];
+  } else if (numFallback > 0) {
+    idx = fallbackCandidates[rand() % numFallback];
   }
 
   startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y);
