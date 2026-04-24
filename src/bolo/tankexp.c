@@ -94,13 +94,21 @@ void tkExplosionDestroy(tkExplosion *tke) {
 *  x           - World X Co-orindate
 *  y           - World X Co-orindate
 *  angle       - Angle of travel
-*  length      - Length of travel 
+*  length      - Length of travel
 *  explodeType - Type of explosions (big - small)
+*  creator     - Player number whose tank is exploding
 *********************************************************/
-void tkExplosionAddItem(GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE length, BYTE explodeType) {
-  tkExplosion *tke = &sim->tankExplosions;
+void tkExplosionAddItem(GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE length, BYTE explodeType, BYTE creator) {
+  tkExplosion *tke;
   tkExplosion q;
 
+  /* Server-authoritative: clients receive fireballs via EVENT_TK_EXPLOSION
+   * (handled in screen.c) which calls tkExplosionAddItemFromSnapshot. */
+  if (!sim->isServer) {
+    return;
+  }
+
+  tke = &sim->tankExplosions;
   New (q);
   q->x = x;
   q->y = y;
@@ -108,13 +116,18 @@ void tkExplosionAddItem(GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE len
   q->length = length;
   q->next = *tke;
   q->explodeType = explodeType;
-  q->creator = sim->viewPlayer;
+  q->creator = creator;
   q->prev = NULL;
   if (NonEmpty(*tke)) {
     (*tke)->prev = q;
   }
 
   *tke = q;
+
+  if (sim->callbacks.tkExplosion) {
+    sim->callbacks.tkExplosion(sim->callbacks.ctx, x, y, angle, length,
+                               explodeType, creator);
+  }
 }
 
 void tkExplosionAddItemFromSnapshot(GameSim *sim, WORLD x, WORLD y,

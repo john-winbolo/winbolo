@@ -60,6 +60,8 @@ typedef struct GameSimCallbacks {
     void (*consoleMessage)(void *ctx, char *msg);
     void (*mineVisible)(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer);
     void (*explosion)(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py);
+    void (*tkExplosion)(void *ctx, WORLD x, WORLD y, TURNTYPE angle,
+                        BYTE length, BYTE explodeType, BYTE creator);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
