@@ -858,8 +858,9 @@ static void renderSendMsgContent(ClientSim *cs) {
             dialogDismissKeyboard(s_window);
         }
 #else
-        /* Select all text so the user can overwrite immediately after cooldown */
-        ImGui::SetKeyboardFocusHere(-1);
+        /* Re-focus the input and select all so the user can type to
+         * overwrite the previous message immediately after cooldown. */
+        s_sendMsgFocusInput = true;
 #endif
     }
 }
