@@ -1010,14 +1010,11 @@ static bool udpClientTick(void *ctx) {
             c->lastPingSentTick = c->localTick;
         }
 
-        /* Timeout: if no snapshot received for CLIENT_TIMEOUT_TICKS,
+        /* Timeout: if no valid server packet received for CLIENT_TIMEOUT_TICKS,
          * the server has likely crashed or network is dead.
-         * Skip when in lobby — the server doesn't send snapshots during
-         * gameOver countdown or lobby state, and the catch-up loop can
-         * advance localTick far beyond lastSnapshotTick. */
+         * lastSnapshotTick is reset on any valid packet (line ~197), including
+         * LOBBY_STATE broadcasts, so this works in all states. */
         if (c->lastSnapshotTick > 0 &&
-            c->clientSim->netStat != netLobby &&
-            c->clientSim->netStat != netLobbyCountdown &&
             c->localTick - c->lastSnapshotTick >= CLIENT_TIMEOUT_TICKS) {
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
