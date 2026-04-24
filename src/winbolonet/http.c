@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <time.h>
 #include <curl/curl.h>
 #include "tweetnacl.h"
@@ -397,14 +398,37 @@ int wbn_api_call(const char *endpoint, cJSON *body, cJSON **response) {
 bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   (void)wantFeedback;
 
-  if (!httpStarted || fileName == NULL || key == NULL) return false;
+  if (!httpStarted || fileName == NULL || key == NULL) {
+    fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: skipped (httpStarted=%d, fileName=%s, key=%s)\n",
+            httpStarted, fileName ? fileName : "NULL", key ? "(set)" : "NULL");
+    return false;
+  }
 
   /* Build: <baseUrl>/log.php?key=<key> */
   char url[FILENAME_MAX + 64];
   snprintf(url, sizeof(url), "%s/log.php?key=%s", wbnBaseUrl, key);
 
+  fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: POST %s\n", url);
+  fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: file=%s\n", fileName);
+
+  /* Check file exists and log its size */
+  {
+    FILE *f = fopen(fileName, "rb");
+    if (f) {
+      fseek(f, 0, SEEK_END);
+      long fsize = ftell(f);
+      fclose(f);
+      fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: file size=%ld bytes\n", fsize);
+    } else {
+      fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: ERROR cannot open file '%s': %s\n", fileName, strerror(errno));
+    }
+  }
+
   CURL *curl = curl_easy_init();
-  if (!curl) return false;
+  if (!curl) {
+    fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: curl_easy_init failed\n");
+    return false;
+  }
 
   curl_mime     *mime = curl_mime_init(curl);
   curl_mimepart *part = curl_mime_addpart(mime);
@@ -413,7 +437,6 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   curl_mime_filename(part, "log.dat");
   curl_mime_type(part,     "application/octet-stream");
 
-  /* Discard response body */
   char respBuf[1024];
   WriteCtx ctx = { (BYTE *)respBuf, 0, (int)sizeof(respBuf) };
 
@@ -428,13 +451,24 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   }
 
   CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
   curl_mime_free(mime);
   curl_easy_cleanup(curl);
 
+  /* Null-terminate the response buffer */
+  if (ctx.pos < ctx.maxSize) {
+    ((char *)ctx.buf)[ctx.pos] = '\0';
+  } else {
+    ((char *)ctx.buf)[ctx.maxSize - 1] = '\0';
+  }
+
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net httpSendLogFile: %s\n", curl_easy_strerror(res));
+    fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: curl error: %s\n", curl_easy_strerror(res));
     return false;
   }
+
+  fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: HTTP %ld, response=%s\n", httpCode, respBuf);
   return true;
 }
 

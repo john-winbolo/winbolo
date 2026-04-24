@@ -1465,6 +1465,7 @@ int main(int argc, char **argv) {
   winbolonetDestroy(TRUE);
 
   if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
+    logStop(); /* Flush and close the zip so the file has content before upload */
     serverMessageConsoleMessage(&serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
     httpSendLogFile(fileName, key, FALSE);
