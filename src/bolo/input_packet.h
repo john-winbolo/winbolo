@@ -184,6 +184,7 @@ typedef struct {
 #define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, mx, my, hitPlayer] */
 #define EVENT_SOUND_SHOOT    16 /* data: [soundId, mx, my, firingPlayer] */
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
+#define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
 
 /* Assistant message IDs for EVENT_ASSISTANT_MSG */
 #define ASSIST_MSG_MAN_DEAD          1
@@ -217,6 +218,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_SOUND_SHOOT:    return 4;
     case EVENT_TANK_KILLED:    return 4;
     case EVENT_MINE_VISIBLE:   return 3;
+    case EVENT_TK_EXPLOSION:   return 8;
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

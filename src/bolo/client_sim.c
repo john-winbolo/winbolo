@@ -143,6 +143,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->sim.callbacks.consoleMessage = csCallbackConsoleMessage;
   cs->sim.callbacks.mineVisible = csCallbackMineVisible;
   cs->sim.callbacks.explosion = NULL;
+  cs->sim.callbacks.tkExplosion = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;

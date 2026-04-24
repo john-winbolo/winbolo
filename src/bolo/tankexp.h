@@ -118,10 +118,11 @@ void tkExplosionDestroy(tkExplosion *tke);
 *  x           - World X Co-orindate
 *  y           - World X Co-orindate
 *  angle       - Angle of travel
-*  length      - Length of travel 
+*  length      - Length of travel
 *  explodeType - Type of explosions (big - small)
+*  creator     - Player number whose tank is exploding
 *********************************************************/
-void tkExplosionAddItem(struct GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE length, BYTE explodeType);
+void tkExplosionAddItem(struct GameSim *sim, WORLD x, WORLD y, TURNTYPE angle, BYTE length, BYTE explodeType, BYTE creator);
 
 /*********************************************************
 *NAME:          tkExplosionAddItemFromSnapshot

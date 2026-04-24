@@ -3612,22 +3612,9 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
     }
   }
 
-  /* Rebuild tank explosions from snapshot */
-  if (tkExplSnaps != NULL && tkExplosionCount > 0) {
-    tkExplosionDestroy(&csPtr->sim.tankExplosions);
-    tkExplosionCreate(&csPtr->sim.tankExplosions);
-    for (i = 0; i < tkExplosionCount; i++) {
-      TURNTYPE angle = (TURNTYPE)(tkExplSnaps[i].angle);
-      tkExplosionAddItemFromSnapshot(&csPtr->sim,
-          tkExplSnaps[i].worldX, tkExplSnaps[i].worldY,
-          angle, tkExplSnaps[i].length,
-          tkExplSnaps[i].explodeType, tkExplSnaps[i].creator);
-    }
-  } else if (tkExplSnaps != NULL) {
-    /* No active tank explosions — clear the list */
-    tkExplosionDestroy(&csPtr->sim.tankExplosions);
-    tkExplosionCreate(&csPtr->sim.tankExplosions);
-  }
+  /* Tank fireballs are spawned via EVENT_TK_EXPLOSION (handled below) and
+   * simulated locally by tkExplosionUpdate — no per-tick replication. */
+  (void)tkExplSnaps; (void)tkExplosionCount;
 
   /* Update own LGM from snapshot data */
   for (i = 0; i < tankCount; i++) {
@@ -3754,6 +3741,19 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
                            events[i].data[2], events[i].data[3],
                            EXPLOSION_START);
         break;
+      case EVENT_TK_EXPLOSION: {
+        /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator]
+         * Spawn the fireball locally; tkExplosionUpdate animates it. */
+        WORLD tkX = (WORLD)(((uint16_t)events[i].data[0] << 8) | events[i].data[1]);
+        WORLD tkY = (WORLD)(((uint16_t)events[i].data[2] << 8) | events[i].data[3]);
+        TURNTYPE tkAngle = (TURNTYPE)events[i].data[4];
+        BYTE tkLength = events[i].data[5];
+        BYTE tkType = events[i].data[6];
+        BYTE tkCreator = events[i].data[7];
+        tkExplosionAddItemFromSnapshot(&csPtr->sim, tkX, tkY, tkAngle,
+                                       tkLength, tkType, tkCreator);
+        break;
+      }
       case EVENT_BASE_CAPTURED:
         /* data: [newOwner, previousOwner] */
         if (isHuman) {

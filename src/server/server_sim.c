@@ -252,6 +252,24 @@ static void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) 
     serverSimAddEvent(sim, &ev);
 }
 
+static void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
+                                   TURNTYPE angle, BYTE length,
+                                   BYTE explodeType, BYTE creator) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_TK_EXPLOSION;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = (uint8_t)((x >> 8) & 0xFF);
+    ev.data[1] = (uint8_t)(x & 0xFF);
+    ev.data[2] = (uint8_t)((y >> 8) & 0xFF);
+    ev.data[3] = (uint8_t)(y & 0xFF);
+    ev.data[4] = (uint8_t)angle;
+    ev.data[5] = length;
+    ev.data[6] = explodeType;
+    ev.data[7] = creator;
+    serverSimAddEvent(sim, &ev);
+}
+
 static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
@@ -320,6 +338,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.consoleMessage = serverSimCbConsoleMessage;
     sim->sim.callbacks.mineVisible = serverSimCbMineVisible;
     sim->sim.callbacks.explosion = serverSimCbExplosion;
+    sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -1397,20 +1416,12 @@ static int serverSimGetShells(ServerSim *sim, ShellSnapshot *out, int maxOut,
 }
 
 static int serverSimGetTkExplosions(ServerSim *sim, TkExplosionSnapshot *out, int maxOut) {
-    tkExplosion q = sim->sim.tankExplosions;
-    int count = 0;
-
-    while (q != NULL && count < maxOut) {
-        out[count].worldX = q->x;
-        out[count].worldY = q->y;
-        out[count].angle = (uint8_t)(q->angle);
-        out[count].length = q->length;
-        out[count].explodeType = q->explodeType;
-        out[count].creator = q->creator;
-        count++;
-        q = q->next;
-    }
-    return count;
+    /* Tank fireballs are now replicated as one-shot EVENT_TK_EXPLOSION
+     * reliable events at creation time (see serverSimCbTkExplosion). The
+     * client simulates the trail locally, so we no longer send per-tick
+     * snapshot data. */
+    (void)sim; (void)out; (void)maxOut;
+    return 0;
 }
 
 static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut) {

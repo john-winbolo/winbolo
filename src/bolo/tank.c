@@ -2366,10 +2366,11 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
   if (diffX < 384 && diffY < 384 && (*value)->armour <= TANK_FULL_ARMOUR) {
     (*value)->armour -= MINE_DAMAGE;
     if ((*value)->armour > TANK_FULL_ARMOUR) {
+      BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
       if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
-        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_BIG);
+        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_BIG, dyingPlayer);
       } else {
-        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_SMALL);
+        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_SMALL, dyingPlayer);
       }
       (*value)->deathWait = TANK_DEATH_WAIT;
       tankDropPills(sim, value);
