@@ -677,3 +677,68 @@ void endWinboloTimer(void) {
 #endif
 }
 
+/*********************************************************
+*NAME:          utilSpiralOffset
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns the x,y offset for a given step in a clockwise
+*  spiral pattern expanding outward from the origin.
+*  Step 0 = (0,0), then expands one ring at a time.
+*
+*ARGUMENTS:
+*  step - The spiral step index (0-based)
+*  dx   - Pointer to receive x offset
+*  dy   - Pointer to receive y offset
+*********************************************************/
+void utilSpiralOffset(int step, int *dx, int *dy) {
+  int ring;
+  int sideLen;
+  int perim;
+  int startStep;
+  int pos;
+  int side;
+  int offset;
+
+  if (step == 0) {
+    *dx = 0;
+    *dy = 0;
+    return;
+  }
+
+  /* Determine which ring this step falls in.
+   * Ring r starts at step 1 + 0 + 8 + 16 + ... = 1 + 8*(r-1)*r/2
+   * Each ring r has 8*r steps. */
+  ring = 1;
+  startStep = 1;
+  while (startStep + 8 * ring <= step) {
+    startStep += 8 * ring;
+    ring++;
+  }
+
+  sideLen = 2 * ring;
+  pos = step - startStep;
+  side = pos / sideLen;
+  offset = pos % sideLen;
+
+  switch (side) {
+  case 0: /* Top edge: left to right */
+    *dx = -ring + offset;
+    *dy = -ring;
+    break;
+  case 1: /* Right edge: top to bottom */
+    *dx = ring;
+    *dy = -ring + offset;
+    break;
+  case 2: /* Bottom edge: right to left */
+    *dx = ring - offset;
+    *dy = ring;
+    break;
+  default: /* Left edge: bottom to top */
+    *dx = -ring;
+    *dy = ring - offset;
+    break;
+  }
+}
+

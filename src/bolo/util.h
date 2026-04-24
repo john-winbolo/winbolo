@@ -312,6 +312,23 @@ void utilStripName(char *name);
 *********************************************************/
 int roundDouble(double number);
 
+/*********************************************************
+*NAME:          utilSpiralOffset
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns the x,y offset for a given step in a clockwise
+*  spiral pattern expanding outward from the origin.
+*  Step 0 = (0,0), then expands one ring at a time.
+*
+*ARGUMENTS:
+*  step - The spiral step index (0-based)
+*  dx   - Pointer to receive x offset
+*  dy   - Pointer to receive y offset
+*********************************************************/
+void utilSpiralOffset(int step, int *dx, int *dy);
+
 /* Timer functions (moved from screen.h) */
 void initWinboloTimer(void);
 DWORD winboloTimer(void);
