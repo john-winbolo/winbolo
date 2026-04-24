@@ -843,6 +843,33 @@ void serverSimTick(ServerSim *sim) {
             bool inputIsKeys = (currentInputs[count].tick % 2) == 1;
             tankButton tb = translateInputToTankButton(currentInputs[count].buttons);
 
+            /* Fill in gap ticks lost to packet loss.  When a UDP packet
+             * is dropped, the dequeued tick jumps ahead (e.g. 98 → 101).
+             * The missing ticks must still run so the turn ramp (firstLeft/
+             * firstRight) stays in sync with the client's prediction. */
+            {
+                uint32_t expected = sim->lastProcessedInput[count] + 1;
+                uint32_t gap = currentInputs[count].tick - expected;
+                if (gap > 0 && gap < 8) {
+                    tankButton gapTb = translateInputToTankButton(sim->lastInputButtons[count]);
+                    uint32_t gt;
+                    for (gt = expected; gt < currentInputs[count].tick; gt++) {
+                        bool gapIsKeys = (gt % 2) == 1;
+                        if (gapIsKeys) {
+                            BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
+                            BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
+                            tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, gapTb);
+                        } else {
+                            sim->sim.lagCompTicks = 0;
+                            tankUpdate(&sim->sim, &sim->sim.tanks[count], gapTb, FALSE, FALSE);
+                        }
+                    }
+                }
+            }
+
+            /* Save buttons for stall continuity */
+            sim->lastInputButtons[count] = currentInputs[count].buttons;
+
             /* Apply autoslowdown state from client flags */
             tankSetAutoSlowdown(&sim->sim.tanks[count],
                                 (currentInputs[count].flags & INPUT_FLAG_AUTOSLOW) != 0);
@@ -893,11 +920,21 @@ void serverSimTick(ServerSim *sim) {
                                   currentInputs[count].buildAction - 1);
                 }
             }
-        } else if (!isKeysTick) {
-            /* No input but it's a world-system game tick — still run
-             * tankUpdate with TNONE so physics (deceleration, etc.) apply */
+        } else {
+            /* No input available — repeat last known buttons so the tank
+             * continues turning/moving as the client predicts.  Using TNONE
+             * here would reset firstLeft/firstRight (turn ramp), causing
+             * the server to turn slower than the client predicted and
+             * producing visible angle "pull back" on reconciliation. */
+            tankButton stallTb = translateInputToTankButton(sim->lastInputButtons[count]);
             sim->sim.lagCompTicks = 0;
-            tankUpdate(&sim->sim, &sim->sim.tanks[count], TNONE, FALSE, FALSE);
+            if (isKeysTick) {
+                BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
+                BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
+                tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, stallTb);
+            } else {
+                tankUpdate(&sim->sim, &sim->sim.tanks[count], stallTb, FALSE, FALSE);
+            }
         }
     }
 
@@ -1136,6 +1173,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->lastInputButtons[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
@@ -1203,6 +1241,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->lastInputButtons[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
@@ -2023,6 +2062,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputQueueHead[i] = 0;
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
+        sim->lastInputButtons[i] = 0;
         sim->inputBufferFilled[i] = 0;
         sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
         sim->jitterStallCount[i] = 0;
