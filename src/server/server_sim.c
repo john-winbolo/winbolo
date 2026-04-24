@@ -2369,12 +2369,12 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
     char **tempList = NULL;
     int tempCount = 0;
     int tempCapacity = 0;
+    int globCount = 0;
+    int i;
     map mp;
     pillboxes pb;
     bases bs;
     starts ss;
-    int globCount = 0;
-    int i;
 
     /* Use SDL3's cross-platform directory globbing */
     char **files = SDL_GlobDirectory(dirPath, "*.map", 0, &globCount);

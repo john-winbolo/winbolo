@@ -1,0 +1,23 @@
+MSBuild version 18.4.0+6e61e96ac for .NET Framework
+
+  Checking File Globs
+  SDL_uclibc.vcxproj -> D:\Development\winbolo\build\_deps\sdl3-build\Debug\SDL_uclibc.lib
+  SDL3-shared.vcxproj -> D:\Development\winbolo\build\_deps\sdl3-build\Debug\SDL3.dll
+  freetype.vcxproj -> D:\Development\winbolo\build\_deps\sdl3_ttf-build\external\freetype\Debug\freetyped.lib
+  harfbuzz.vcxproj -> D:\Development\winbolo\build\_deps\sdl3_ttf-build\external\harfbuzz\Debug\harfbuzz.lib
+  plutovg.vcxproj -> D:\Development\winbolo\build\_deps\sdl3_ttf-build\external\plutovg\Debug\plutovg.lib
+  plutosvg.vcxproj -> D:\Development\winbolo\build\_deps\sdl3_ttf-build\external\plutosvg\Debug\plutosvg.lib
+  SDL3_ttf-shared.vcxproj -> D:\Development\winbolo\build\_deps\sdl3_ttf-build\Debug\SDL3_ttf.dll
+  cjson.vcxproj -> D:\Development\winbolo\build\_deps\cjson-build\Debug\cjson.lib
+  imgui_backends.vcxproj -> D:\Development\winbolo\build\Debug\imgui_backends.lib
+  libcurl_object.vcxproj -> D:\Development\winbolo\build\_deps\curl-build\lib\libcurl_object.dir\Debug\libcurl_object.lib
+  libcurl_shared.vcxproj -> D:\Development\winbolo\build\_deps\curl-build\lib\Debug\libcurl-d.dll
+  lua_static.vcxproj -> D:\Development\winbolo\build\_deps\lua-build\lua-5.4.7\Debug\lua_static.lib
+  maxminddb.vcxproj -> D:\Development\winbolo\build\_deps\libmaxminddb-build\Debug\maxminddb.lib
+  zlibstatic.vcxproj -> D:\Development\winbolo\build\_deps\zlib-build\Debug\zlibstaticd.lib
+  minizip.vcxproj -> D:\Development\winbolo\build\Debug\minizip.lib
+  nanosvg.vcxproj -> D:\Development\winbolo\build\Debug\nanosvg.lib
+  stb_image.vcxproj -> D:\Development\winbolo\build\Debug\stb_image.lib
+  stb_image_write.vcxproj -> D:\Development\winbolo\build\Debug\stb_image_write.lib
+  WinBolo.vcxproj -> D:\Development\winbolo\build\WinBolo.exe
+  Copying WinBolo data files to output directory	Copying brain scripts to output Brains/ directory	Copying SDL3 shared libraries to WinBolo output directory	Copying ONNX Runtime DLL to WinBolo output directory	Copying runtime DLLs to WinBolo output directory

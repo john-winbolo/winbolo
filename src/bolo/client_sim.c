@@ -400,6 +400,14 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
   ps = &cs->predictedShells[cs->predictedShellCount];
   ps->x = wx;
   ps->y = wy;
+  ps->fx = (float)(int)wx;
+  ps->fy = (float)(int)wy;
+  {
+    int32_t xStepHP, yStepHP;
+    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, SHELL_SPEED);
+    ps->vx = (float)xStepHP / 256.0f;
+    ps->vy = (float)yStepHP / 256.0f;
+  }
   ps->angle = angle;
   ps->length = (uint8_t)(1 + (SHELL_LIFE * (sightLen / 2)) - SHELL_START_ADD);
   ps->owner = gameSimGetTankPlayer(&cs->sim, tk);
@@ -419,7 +427,6 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
   int i;
   for (i = 0; i < cs->predictedShellCount; ) {
     PredictedShell *ps = &cs->predictedShells[i];
-    int xAdd, yAdd;
     WORLD newX, newY;
     BYTE mapX, mapY;
     if (ps->length <= SHELL_DEATH) {
@@ -428,10 +435,11 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
       cs->predictedShellCount--;
       continue;
     }
-    /* Move shell forward */
-    utilCalcDistance(&xAdd, &yAdd, ps->angle, SHELL_SPEED);
-    newX = (WORLD)(ps->x + xAdd);
-    newY = (WORLD)(ps->y + yAdd);
+    /* Move shell forward using float accumulation — matches server HP precision */
+    ps->fx += ps->vx;
+    ps->fy += ps->vy;
+    newX = (WORLD)(int)ps->fx;
+    newY = (WORLD)(int)ps->fy;
 
     /* Client-side collision check: remove predicted shell if it hits
      * a pillbox, impassable terrain, or a hostile base. This is purely

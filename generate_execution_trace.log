@@ -1,0 +1,15 @@
+=== Generate Execution Trace ===
+stateJsonPath: D:\Development\winbolo\build\debug_sessions/20260405_231521/2746.json
+ldumpPath: D:\Development\winbolo\build\debug_sessions/20260405_231521/2746.ldump
+stateLdump: loaded
+ldump first 500 chars:
+return {state={visited={[25452]=true,[25453]=true,[25706]=true,[25707]=true,[25708]=true,[25709]=true,[25710]=true,[25963]=true,[25964]=true,[25965]=true,[27226]=true,[25444]=true,[26220]=true,[27481]=true,[25442]=true,[25443]=true,[27736]=true,[27737]=true,[27990]=true,[27991]=true,[27992]=true,[28245]=true,[28246]=true,[28247]=true,[26198]=true,[26199]=true,[26200]=true,[26201]=true,[26202]=true,[25947]=true,[26203]=true,[26459]=true,[26458]=true,[26714]=true,[26713]=true,[26969]=true,[27989]=
+---
+_last_info override: OK
+--- After restore ---
+state.goal.kind after restore: capture_base sub=nil
+[runTraced] BEFORE think: stopAt=-1 goal=capture_base sub=nil tick=1373
+[runTraced] calling pcall(brain.think, info)...
+[runTraced] pcall OK (ran to completion)
+[runTraced] AFTER think: entries=391837 goal=capture_base sub=nil tick=1374
+[runTraced] visibleCount=391837 stopAtEntry=-1

@@ -352,6 +352,8 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
       int pi;
       for (pi = 0; pi < csPtr->predictedShellCount; pi++) {
         PredictedShell *ps = &csPtr->predictedShells[pi];
+        /* Don't render shells that have expired — prevents ghost frame alongside explosion */
+        if (ps->length <= SHELL_DEATH) continue;
         BYTE pmx = (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE);
         BYTE pmy = (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE);
         if (pmx >= csPtr->xOffset && pmx < (BYTE)(csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X - 1) &&

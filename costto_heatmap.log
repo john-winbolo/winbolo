@@ -1,0 +1,73 @@
+Heatmap from (156,100) boat=1 sh=40 tr=40 mn=40 arm=40
+PF map=00000271B4A4E060 mapCopy=00000271B4A4E060
+Map 5x5 around tank:
+  y=98: 0a 0a 0a 0a 0a
+  y=99: 0a 0a 0a 0a 0a
+  y=100: 0a 0a 0a 0a 0a
+  y=101: 0a 0a 0a 0a 0a
+  y=102: 01 01 01 01 01
+Tank terrain raw=0x0a type=10
+  terrain[0] cost=9999.0 boat_cost=9999.0 speed=0.0
+  terrain[1] cost=8.0 boat_cost=2.0 speed=3.0
+  terrain[2] cost=8.0 boat_cost=8.0 speed=3.0
+  terrain[3] cost=8.0 boat_cost=8.0 speed=3.0
+  terrain[4] cost=1.0 boat_cost=1.0 speed=16.0
+  terrain[5] cost=3.0 boat_cost=3.0 speed=6.0
+  terrain[6] cost=8.0 boat_cost=8.0 speed=3.0
+  terrain[7] cost=2.0 boat_cost=2.0 speed=12.0
+  terrain[8] cost=9999.0 boat_cost=9999.0 speed=0.0
+  terrain[9] cost=2.0 boat_cost=2.0 speed=16.0
+  terrain[10] cost=9999.0 boat_cost=2.0 speed=3.0
+  terrain[11] cost=1.0 boat_cost=1.0 speed=16.0
+  terrain[12] cost=2.0 boat_cost=1.0 speed=16.0
+  terrain[13] cost=3.0 boat_cost=3.0 speed=3.0
+  terrain[14] cost=9999.0 boat_cost=9999.0 speed=0.0
+  terrain[15] cost=9999.0 boat_cost=9999.0 speed=0.0
+  r=1 (155,99) terrain=10 cost=2.8
+  r=1 (155,100) terrain=10 cost=2.0
+  r=1 (155,101) terrain=10 cost=2.8
+  r=1 (156,99) terrain=10 cost=2.0
+  r=1 (156,101) terrain=10 cost=2.0
+  r=1 (157,99) terrain=10 cost=2.8
+  r=1 (157,100) terrain=10 cost=2.0
+  r=1 (157,101) terrain=10 cost=2.8
+  r=2 (154,98) terrain=10 cost=5.6
+  r=2 (154,99) terrain=10 cost=6.8
+  r=2 (154,100) terrain=10 cost=4.0
+  r=2 (154,101) terrain=10 cost=6.8
+  r=2 (154,102) terrain=1 cost=5.6
+  r=2 (155,98) terrain=10 cost=6.8
+  r=2 (155,102) terrain=1 cost=6.8
+  r=2 (156,98) terrain=10 cost=4.0
+  r=2 (156,102) terrain=1 cost=4.0
+  r=2 (157,98) terrain=10 cost=6.8
+  r=2 (157,102) terrain=1 cost=6.8
+  r=2 (158,98) terrain=10 cost=5.6
+  r=2 (158,99) terrain=10 cost=6.8
+  r=2 (158,100) terrain=10 cost=4.0
+  r=2 (158,101) terrain=10 cost=6.8
+  r=2 (158,102) terrain=1 cost=5.6
+  r=3 (153,97) terrain=10 cost=8.5
+  r=3 (153,98) terrain=10 cost=9.6
+  r=3 (153,99) terrain=10 cost=8.8
+  r=3 (153,100) terrain=10 cost=6.0
+  r=3 (153,101) terrain=10 cost=8.8
+  r=3 (153,102) terrain=1 cost=9.6
+  r=3 (153,103) terrain=1 cost=8.5
+  r=3 (154,97) terrain=10 cost=9.6
+  r=3 (154,103) terrain=1 cost=9.6
+  r=3 (155,97) terrain=10 cost=8.8
+  r=3 (155,103) terrain=1 cost=8.8
+  r=3 (156,97) terrain=10 cost=6.0
+  r=3 (156,103) terrain=1 cost=6.0
+  r=3 (157,97) terrain=10 cost=8.8
+  r=3 (157,103) terrain=1 cost=8.8
+  r=3 (158,97) terrain=10 cost=9.6
+  r=3 (158,103) terrain=1 cost=9.6
+  r=3 (159,97) terrain=10 cost=8.5
+  r=3 (159,98) terrain=10 cost=9.6
+  r=3 (159,99) terrain=10 cost=8.8
+  r=3 (159,100) terrain=10 cost=6.0
+  r=3 (159,101) terrain=10 cost=8.8
+  r=3 (159,102) terrain=1 cost=9.6
+  r=3 (159,103) terrain=1 cost=8.5

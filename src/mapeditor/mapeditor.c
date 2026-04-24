@@ -4282,7 +4282,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                                           &ed->textFontSource, &ed->textFontFamily,
                                           &ed->textFontStyleIdx, &ed->textTTFPixelSize)) {
                 BYTE tempTerrain[256][256];
-                int tw, th;
+                int tw = 0, th = 0;
                 bool ok = false;
 
                 if (ed->textFontSource == 0) {
