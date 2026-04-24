@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include <emscripten.h>
 #include <emscripten/html5.h>
@@ -304,6 +305,8 @@ int main(int argc, char *argv[]) {
 
   (void)argc;
   (void)argv;
+
+  srand((unsigned int)(time(NULL) ^ getpid()));
 
   if (argc > 1) {
     cmdLine = argv[1];

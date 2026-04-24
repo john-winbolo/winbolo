@@ -55,6 +55,7 @@
 #include <signal.h>
 #include <time.h>
 #include <math.h>
+#include <unistd.h>
 
 #include "../bolo/global.h"
 #include "../bolo/everard_map.h"
@@ -940,6 +941,8 @@ static void appRender(BrainTestApp *app) {
 /* ------------------------------------------------------------------ */
 
 int main(int argc, char *argv[]) {
+    srand((unsigned int)(time(NULL) ^ getpid()));
+
     BrainTestApp app;
     memset(&app, 0, sizeof(app));
     app.zoomFactor = 2;

@@ -126,7 +126,6 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   (void)srtDelay;  /* Used by screen.c for display */
   (void)gmeLen;    /* Used by screen.c for display */
   
-  srand((unsigned int) time(NULL));
   memset(cs, 0, sizeof(*cs));
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;

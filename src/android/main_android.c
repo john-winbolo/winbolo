@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 #include "../bolo/screen.h"
@@ -244,6 +245,8 @@ static void windowRunGameTick(ClientSim *cs) {
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   DWORD tick;
+
+  srand((unsigned int)(time(NULL) ^ getpid()));
 
   /* Check for winbolo:// URL passed via intent (see WinBoloActivity.getArguments) */
   for (int i = 1; i < argc; i++) {
