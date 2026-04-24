@@ -1778,6 +1778,15 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 # the time it runs, every DLL / .so / .dylib is already sitting there.
 # We use a helper cmake -P script to glob and copy them all into dist/.
 
+# Crashpad handler must be inside the dist target's command sequence (before the
+# zip step) so it ends up in the archive.  We build the COMMAND as a variable
+# because if() cannot appear inside add_custom_target().
+set(DIST_CRASHPAD_HANDLER_CMD "")
+if(HAVE_SENTRY AND TARGET crashpad_handler)
+    set(DIST_CRASHPAD_HANDLER_CMD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:crashpad_handler>" "${DIST_DIR}/")
+endif()
+
 add_custom_target(dist
     DEPENDS WinBolo WinBoloDS LogViewer
     COMMENT "Creating distribution zip ${DIST_ZIP}"
@@ -1790,6 +1799,7 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinBolo>"   "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinBoloDS>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:LogViewer>" "${DIST_DIR}/"
+    ${DIST_CRASHPAD_HANDLER_CMD}
 
     # Shared libraries — glob all DLLs / .so / .dylib from the build output
     # directory.  This picks up FetchContent libs AND vcpkg libs in one step.
