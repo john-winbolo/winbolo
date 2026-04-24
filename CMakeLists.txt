@@ -418,7 +418,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c
     src/bolo/treegrow.c src/bolo/udppackets.c src/bolo/util.c
     src/bolo/bot_manager.c
     src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
@@ -801,7 +801,7 @@ set(CLIENT_SOURCES
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/gui/ui_mode.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c
@@ -1107,7 +1107,7 @@ set(SERVER_SOURCES
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screenbrainmap.c src/bolo/screenbullet.c src/bolo/screencalc.c
     src/bolo/shells.c src/bolo/starts.c
-    src/bolo/swamp.c src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c
+    src/bolo/swamp.c src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c
     src/bolo/udppackets.c src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/server/geolookup.c
     src/server/servermain.c src/server/servermessages.c
@@ -1350,7 +1350,7 @@ set(HEADLESS_SOURCES
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
@@ -1473,7 +1473,7 @@ set(GYM_SOURCES
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
@@ -1579,7 +1579,7 @@ set(BRAINTEST_SOURCES
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
@@ -1669,7 +1669,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/treegrow.c src/bolo/udppackets.c
+    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c

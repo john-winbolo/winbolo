@@ -117,6 +117,8 @@ bool frontEndTutorial(BYTE pos) {
   return FALSE;
 }
 
+void frontEndTutorialReset(void) { }
+
 void windowRedrawAll(ClientSim *cs) {
   (void)cs;
 }

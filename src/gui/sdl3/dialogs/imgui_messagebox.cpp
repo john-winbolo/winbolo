@@ -246,6 +246,23 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
                  ev.window.windowID == SDL_GetWindowID(window))) {
                 result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
                          IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
+            } else if (ev.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Keycode k = ev.key.key;
+                /* Enter activates the default (affirmative) button. */
+                if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                    result = (buttons == IMGUI_MSG_OK)
+                             ? IMGUI_MSG_RESULT_OK
+                             : IMGUI_MSG_RESULT_YES;
+                /* Escape dismisses: OK on single-button dialogs, and
+                 * the "negative" button on multi-button dialogs. */
+                } else if (k == SDLK_ESCAPE) {
+                    if (buttons == IMGUI_MSG_OK)
+                        result = IMGUI_MSG_RESULT_OK;
+                    else if (buttons == IMGUI_MSG_YES_NO)
+                        result = IMGUI_MSG_RESULT_NO;
+                    else
+                        result = IMGUI_MSG_RESULT_CANCEL;
+                }
             }
         }
 
@@ -320,7 +337,17 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext(msgCtx);
 
-    if (bgTex) SDL_DestroyTexture(bgTex);
+    /* Leave the backbuffer holding the undimmed snapshot we captured
+     * when we opened. Without this, a subsequent back-to-back modal
+     * would capture our dim+dialog framebuffer, dim it again, and the
+     * dialogs would progressively darken (e.g. the 4-page tutorial
+     * intro would fade to grey by page four). Draw without presenting
+     * so the on-screen display keeps the last dialog frame until the
+     * next dialog or render pass replaces it. */
+    if (bgTex) {
+        SDL_RenderTexture(renderer, bgTex, NULL, NULL);
+        SDL_DestroyTexture(bgTex);
+    }
 
     /* Restore logical presentation */
     dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);

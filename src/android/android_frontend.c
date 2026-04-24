@@ -355,6 +355,8 @@ bool frontEndTutorial(BYTE pos) {
   return FALSE;
 }
 
+void frontEndTutorialReset(void) { }
+
 /* -------------------------------------------------------
  * Misc required symbols
  * ------------------------------------------------------- */

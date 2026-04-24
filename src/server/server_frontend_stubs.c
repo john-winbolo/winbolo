@@ -120,6 +120,7 @@ void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }
 void frontEndShowGunsight(ClientSim *cs, bool isShown) { (void)cs; (void)isShown; }
 void frontEndRedrawAll(ClientSim *cs) { (void)cs; }
 bool frontEndTutorial(BYTE pos) { (void)pos; return FALSE; }
+void frontEndTutorialReset(void) { }
 
 /* Screen stubs — only functions still called from bolo/ engine code in the server build */
 bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) { (void)sim; (void)viewerTank; (void)bmx; (void)bmy; return TRUE; }

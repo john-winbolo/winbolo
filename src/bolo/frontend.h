@@ -342,4 +342,9 @@ void frontEndRedrawAll(struct ClientSim *cs);
 *********************************************************/
 bool frontEndTutorial(BYTE pos);
 
+/* Reset the tutorial step sequencer. Call at the start of each new
+ * tutorial run so a previously-completed run doesn't leave the
+ * sequence past its end. */
+void frontEndTutorialReset(void);
+
 #endif /* _FRONT_END_H */

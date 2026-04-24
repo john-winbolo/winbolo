@@ -37,6 +37,7 @@ extern "C" {
 /* Match openingStates enum from gamefront.h */
 enum {
     RESULT_SINGLEPLAYER = 5,   /* openSetup */
+    RESULT_TUTORIAL     = 4,   /* openTutorial */
     RESULT_INTERNET     = 14,  /* openInternet */
     RESULT_LAN          = 10,  /* openLan */
     RESULT_SETTINGS     = 19,  /* openSettings */
@@ -135,11 +136,13 @@ extern "C" int imguiWelcomeShow(void) {
 
     /* Load images */
     SDL_Texture *logoTex     = loadPng(renderer, "smalllogo-transparent.png");
-    SDL_Texture *btnIcons[5] = {
+    SDL_Texture *btnIcons[7] = {
         loadBmp(renderer, "button_practice.bmp"),
+        nullptr,  /* no icon for tutorial yet */
         loadBmp(renderer, "button_internet.bmp"),
         loadBmp(renderer, "button_lan.bmp"),
         nullptr,  /* no icon for map editor yet */
+        nullptr,  /* no icon for log viewer yet */
         nullptr,  /* no icon for settings yet */
     };
 
@@ -294,6 +297,7 @@ extern "C" int imguiWelcomeShow(void) {
 
             struct { const char *label; int code; } miniModes[] = {
                 { "Single Player##mini", RESULT_SINGLEPLAYER },
+                { "Tutorial##mini",      RESULT_TUTORIAL },
                 { "Internet##mini",      RESULT_INTERNET },
                 { "Local##mini",         RESULT_LAN },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
@@ -410,6 +414,7 @@ extern "C" int imguiWelcomeShow(void) {
 
             struct { const char *label; int code; } modes[] = {
                 { "Single Player", RESULT_SINGLEPLAYER },
+                { "Tutorial",      RESULT_TUTORIAL },
                 { "Internet",      RESULT_INTERNET },
                 { "Local",         RESULT_LAN },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)

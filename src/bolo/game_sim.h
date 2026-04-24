@@ -109,6 +109,13 @@ typedef struct GameSim {
     /* Whether the UI is in a menu (engine checks this during tick) */
     bool        isInMenu;
 
+    /* True when this sim is driving the built-in tutorial. The server
+     * uses it to halt the player's tank at each tutorial trigger row;
+     * the client uses it to gate the frontEndTutorial dialog sequence.
+     * Set by the frontend after sim creation; zero-initialised by
+     * memset in clientSimCreate / serverSimCreate. */
+    bool        isTutorial;
+
     /* Pointer to the owning ClientSim's brainMap (NULL on server).
      * Used by shared code (bolo_map.c) to update the fog-of-war brain map. */
     BYTE (*brainMap)[MAP_ARRAY_SIZE];
