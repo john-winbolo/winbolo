@@ -684,6 +684,8 @@ bool frontEndTutorial(BYTE pos) {
   return FALSE;  /* Tutorial not supported in WASM build */
 }
 
+void frontEndTutorialReset(void) { }
+
 /* -------------------------------------------------------
  * Misc required symbols
  * ------------------------------------------------------- */

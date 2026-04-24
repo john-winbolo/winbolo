@@ -126,6 +126,8 @@ bool frontEndTutorial(BYTE pos) {
   return FALSE;
 }
 
+void frontEndTutorialReset(void) { }
+
 /* ================================================================== */
 /* Screen/draw stubs not needed in headless mode                       */
 /* ================================================================== */

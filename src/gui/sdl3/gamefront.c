@@ -51,6 +51,7 @@
 #include "../../bolo/global.h"
 #include "../../bolo/players.h"
 #include "../../bolo/gui_message.h"
+#include "../../bolo/frontend.h"
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
@@ -636,10 +637,31 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openTutorial:
-      gameFrontLoadTutorial();
-      screenNetSetupTankGoCS(humanSim);
+      /* Reuse the single-player setup path: preload the tutorial map,
+       * disable bots, then drive the state machine through openSetup ->
+       * openFinished so ServerSim / ClientSim / transport are created
+       * the same way as a normal single-player game. */
+      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      fileName[FILENAME_MAX - 1] = '\0';
+      gametype = gameStrictTournament;
+      hiddenMines = FALSE;
+      startDelay = 0;
+      timeLen = UNLIMITED_GAME_TIME;
+      compTanks = aiNone;
+      gameFrontBotSetupData.count = 0;
+      /* Raise the client UI flag before setup runs so the very first
+       * tick (which may already place the tank on a trigger row) is
+       * handled by frontEndTutorial. Reset the step sequencer so a
+       * previously-completed tutorial in this session starts fresh. */
+      frontEndTutorialReset();
       isTutorial = TRUE;
-      dlgState = openFinished;
+      dlgState = openSetup;
+      gameFrontSetDlgState(openFinished);
+      /* Mark both sims so tank.c's tutorial stop logic fires
+       * authoritatively on the server and keeps client prediction
+       * consistent. */
+      if (spServerSim != NULL) spServerSim->sim.isTutorial = true;
+      if (humanSim != NULL)    humanSim->sim.isTutorial = true;
       break;
     case openSettings: {
       const DialogBackend *db = dialogBackendGet();
@@ -1365,24 +1387,29 @@ bool gameFrontLoadInBuiltMap(void) {
 }
 
 bool gameFrontLoadTutorial(void) {
+  const char *candidates[3];
+  char basePathBuf[FILENAME_MAX];
   const char *basePath = SDL_GetBasePath();
-  char mapPath[FILENAME_MAX];
+  int i;
   FILE *fp;
 
-  if (basePath == NULL) {
-    return FALSE;
-  }
+  candidates[0] = "data/maps/Inbuilt Tutorial.map";
 
-  snprintf(mapPath, FILENAME_MAX, "%sInbuilt Tutorial.map", basePath);
-  fp = fopen(mapPath, "rb");
-  if (fp == NULL) {
-    snprintf(mapPath, FILENAME_MAX, "%s../../winbolo/src/gui/win32/Inbuilt Tutorial.map", basePath);
-    fp = fopen(mapPath, "rb");
+  if (basePath != NULL) {
+    snprintf(basePathBuf, FILENAME_MAX, "%sdata/maps/Inbuilt Tutorial.map", basePath);
+    candidates[1] = basePathBuf;
+  } else {
+    candidates[1] = NULL;
   }
+  candidates[2] = "Inbuilt Tutorial.map";
 
-  if (fp != NULL) {
-    fclose(fp);
-    return screenLoadMapCS(humanSim, mapPath, gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+  for (i = 0; i < 3; i++) {
+    if (candidates[i] == NULL) continue;
+    fp = fopen(candidates[i], "rb");
+    if (fp != NULL) {
+      fclose(fp);
+      return screenLoadMapCS(humanSim, candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+    }
   }
   return FALSE;
 }

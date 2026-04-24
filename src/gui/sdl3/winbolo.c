@@ -49,6 +49,7 @@
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/frontend.h"
+#include "../../bolo/tutorial.h"
 #include "../../bolo/players.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../bolo/transport.h"
@@ -176,6 +177,7 @@ static SDL_AtomicInt needsGameTick = { 0 };
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
+void frontEndTutorialNotePresentedFrame(void);
 static void windowRunGameTick(ClientSim *cs);
 int winboloCC(void);
 
@@ -460,6 +462,7 @@ int main(int argc, char *argv[]) {
           SDL_Renderer *ren = sdl3DrawGetRenderer();
           if (ren) SDL_RenderPresent(ren);
         }
+        frontEndTutorialNotePresentedFrame();
 
         /* Cap to configured frame rate */
         {
@@ -1579,309 +1582,87 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
  * frontEndTutorial — tutorial position-triggered messages
  * Uses imguiMessageBoxEx instead of Win32 MessageBoxA.
  * ------------------------------------------------------- */
-bool frontEndTutorial(BYTE pos) {
-  static BYTE upTo = 0;
-  bool returnValue = FALSE;
+/* Step index and render-frame counter are file-static so
+ * frontEndTutorialReset() / frontEndTutorialNotePresentedFrame() can
+ * touch them. The frame counter gates the intro: the tutorial starts
+ * on tick 1, but the first complete frame hasn't been rendered yet, so
+ * imguiMessageBoxEx's captureBackbuffer would grab a grey buffer. We
+ * require a few presented frames before firing the intro; by then the
+ * game screen is on the backbuffer and the modal dims over it. */
+#define TUTORIAL_INTRO_MIN_FRAMES 3
+static int tutorialStepIdx = 0;
+static int tutorialFramesPresented = 0;
 
-  if (isTutorial == TRUE) {
-    switch (upTo) {
-    case 0:
-      if (pos == 208) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL01), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 1:
-      if (pos == 197) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL02), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 2:
-      if (pos == 192) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL03), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 3:
-      if (pos == 186) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL04), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 4:
-      if (pos == 181) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL05), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 5:
-      if (pos == 175) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL06), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 6:
-      if (pos == 166) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL07), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 7:
-      if (pos == 159) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL08), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL09), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 8:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 9:
-      if (pos == 142) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL10), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL11), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 10:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 11:
-      if (pos == 122) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL12), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 12:
-      if (pos == 120) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL13), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL14), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 13:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 14:
-      if (pos == 110) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL15), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 15:
-      if (pos == 103) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL16), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 16:
-      if (pos == 98) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL17), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 17:
-      if (pos == 84) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL18), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL19), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 18:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 19:
-      if (pos == 66) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL20), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL21), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 20:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 21:
-      if (pos == 47) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL22), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL23), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL24), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        upTo++;
-        upTo++;
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    case 22:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 23:
-      if (pos == 1) {
-        returnValue = TRUE;
-        upTo++;
-      }
-      break;
-    case 24:
-      if (pos == 21) {
-        doingTutorial = TRUE;
-        clientMutexRelease();
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL25), IMGUI_MSG_INFO, IMGUI_MSG_OK);
-        returnValue = TRUE;
-        upTo++;
-        SDL_RemoveTimer(timerGameID);
-        clientMutexWaitFor();
-        doingTutorial = FALSE;
-        oldTick = winboloTimer();
-        ttick = oldTick;
-      }
-      break;
-    default:
-      break;
-    }
+/* humanSim lives in gamefront.c; we need it so the tutorial can clear
+ * sim->isTutorial on both sims when the final dialog closes, letting
+ * the player drive around freely afterwards. */
+extern ClientSim *humanSim;
+
+void frontEndTutorialReset(void) {
+  tutorialStepIdx = 0;
+  tutorialFramesPresented = 0;
+}
+
+/* Called from the main loop immediately after SDL_RenderPresent so we
+ * can defer the intro until a real game frame is on screen. */
+void frontEndTutorialNotePresentedFrame(void) {
+  if (tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
+    tutorialFramesPresented++;
+  }
+}
+
+bool frontEndTutorial(BYTE pos) {
+  int i;
+
+  if (isTutorial != TRUE) {
+    tutorialStepIdx = 0;    /* Reset for the next tutorial run. */
+    return FALSE;
+  }
+  if (tutorialStepIdx >= tutorialStepCount) return FALSE;
+  {
+    BYTE stepPos = tutorialSteps[tutorialStepIdx].pos;
+    if (stepPos != TUTORIAL_POS_ANY && stepPos != pos) return FALSE;
   }
 
-  return returnValue;
+  /* Intro step only: defer until the game has rendered a frame, so
+   * the backbuffer the modal captures shows the map, not grey. */
+  if (tutorialSteps[tutorialStepIdx].pos == TUTORIAL_POS_ANY &&
+      tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
+    return FALSE;
+  }
+
+  doingTutorial = TRUE;
+  /* Freeze the server sim's tankUpdate before we release the mutex so
+   * the tank doesn't drift forward while the modal is up. */
+  tutorialServerPaused = TRUE;
+  clientMutexRelease();
+  for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
+    uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
+    if (mid == 0) break;
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(mid),
+                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
+  }
+  /* Final step: exit tutorial mode so the player can keep driving.
+   * We clear the global client flag plus both sims' isTutorial so that
+   * frontEndTutorial() no-ops on future ticks and the server stops
+   * auto-halting the tank at old trigger rows. The game timer keeps
+   * running — the old implementation removed it, locking the player
+   * out of movement, which is not the behaviour we want. */
+  if (tutorialStepIdx == tutorialStepCount - 1) {
+    isTutorial = FALSE;
+    if (humanSim) humanSim->sim.isTutorial = false;
+    {
+      ServerSim *srv = gameFrontGetServerSim();
+      if (srv) srv->sim.isTutorial = false;
+    }
+  }
+  clientMutexWaitFor();
+  tutorialServerPaused = FALSE;
+  doingTutorial = FALSE;
+  oldTick = winboloTimer();
+  ttick = oldTick;
+  tutorialStepIdx++;
+  return TRUE;
 }
 
 /* -------------------------------------------------------

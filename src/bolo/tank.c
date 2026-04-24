@@ -42,6 +42,7 @@
 #include "players.h"
 #include "tank.h"
 #include "game_sim.h"
+#include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 
 typedef struct ClientSim ClientSim;
@@ -406,7 +407,15 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
   BYTE bmx;                   /* Map x and y co-ords as bytes */
   BYTE bmy;
 
-
+  /* Tutorial freeze: while a tutorial dialog is up the client has set
+   * tutorialServerPaused, so skip all server-side physics. The
+   * unmodified tick state is then replayed to the client in snapshots,
+   * keeping everything (tank, shells, timers via tankUpdate) stationary
+   * until the dialog closes. Client-side (prediction) still runs so
+   * the UI stays responsive. */
+  if (isServer && tutorialServerPaused) {
+    return;
+  }
 
   (*value)->obstructed = FALSE;
   (*value)->justFired = FALSE;
@@ -1547,11 +1556,20 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     newbmx = (BYTE) newmx;
     newbmy = (BYTE) newmy;
 
-    if (newbmy < bmy) {
+    if (sim->isTutorial) {
       if (!isServer) {
-        if (frontEndTutorial(newbmy) == TRUE) {
-          (*value)->speed = 0;
+        /* Client dialog sequencer: `<=` so the first step also fires
+         * when the tank spawns on a trigger row without ever "entering"
+         * it from above. Client-side speed=0 is cosmetic for prediction. */
+        if (newbmy <= bmy) {
+          if (frontEndTutorial(newbmy) == TRUE) {
+            (*value)->speed = 0;
+          }
         }
+      } else if (newbmy < bmy && tutorialIsStopPos(newbmy)) {
+        /* Server-authoritative stop: only on row entry, so the player
+         * isn't pinned on the trigger row once the dialog closes. */
+        (*value)->speed = 0;
       }
     }
     if (isServer) {

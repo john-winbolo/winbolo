@@ -1703,28 +1703,20 @@ void screenNetSetupTankCS(ClientSim *csPtr, bool isInStart) {
 *
 *********************************************************/
 void screenNetSetupTankGoCS(ClientSim *csPtr) {
-  WORLD wx;  /* World co-ordinates to set */
-  WORLD wy;
-  BYTE x;    /* Things to pass to get the player start position */
-  BYTE y;
-  TURNTYPE dir;
-  BYTE count;  /* Looping variables */
+  BYTE count;   /* Looping variables */
   BYTE count2;
 
-  csPtr->sim.inStartFind = TRUE;
-  startsGetStart(&csPtr->sim, &csPtr->sim.ss, &x, &y, &dir, gameSimGetTankPlayer(&csPtr->sim, &MY_TANK(csPtr)));
-  wx = x;
-  wx <<= TANK_SHIFT_MAPSIZE;
-  wx += MAP_SQUARE_MIDDLE;
-  wy = y;
-  wy <<= TANK_SHIFT_MAPSIZE;
-  wy += MAP_SQUARE_MIDDLE;
-  tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), wx, wy, dir, TRUE);
+  /* The server is authoritative for tank placement: serverSimAddPlayer
+   * has already chosen the start and the first snapshot has copied the
+   * position into MY_TANK. Calling startsGetStart on the client here
+   * would re-pick locally and, if it disagrees with the server (different
+   * sim state at the moment of call), leave the view centered on a spot
+   * the tank jumps away from on the next snapshot. Just centre on the
+   * existing position. */
   clientCenterTankCS(csPtr);
-  csPtr->sim.inStartFind = FALSE;
 
-  for (count=0;count<MAIN_BACK_BUFFER_SIZE_X;count++) {
-    for (count2=0;count2<MAIN_BACK_BUFFER_SIZE_Y;count2++) {
+  for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
+    for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
       (*csPtr->mineView).mineItem[count][count2] = FALSE;
     }
   }
