@@ -930,7 +930,7 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
     if (w[RC_PILL_CAPTURED] != 0.0f || w[RC_PILL_LOST] != 0.0f ||
         w[RC_PILL_DESTROYED] != 0.0f || w[RC_OWN_PILL_FRAC_DELTA] != 0.0f ||
         w[RC_PILL_PLACEMENT_QUAL] != 0.0f || w[RC_PILL_HEATED_TACTICAL] != 0.0f ||
-        w[RC_PILL_HIT] != 0.0f) {
+        w[RC_PILL_HIT] != 0.0f || w[RC_SHOOT_AT_PILL] != 0.0f) {
 
         comp[RC_PILL_CAPTURED] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
         comp[RC_PILL_LOST] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_LOST);
@@ -1009,6 +1009,37 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
                 }
             }
             comp[RC_PILL_HEATED_TACTICAL] = heated;
+        }
+
+        /* shoot_at_pill: fired a shot while facing a nearby non-owned pill
+         * Only on land, with ammo, within tank shooting range (8 tiles) */
+        if (alive && has_prev && action != NULL && w[RC_SHOOT_AT_PILL] != 0.0f
+            && sc[WBGYM_S_IN_BOAT] < 0.5f && sc[WBGYM_S_SHELLS] > 0.01f) {
+            bool shot = (psc[WBGYM_S_RELOAD] < 0.07f) && action->shoot;
+            if (shot) {
+                float fx = obs->scalar[5];   /* east component of facing */
+                float fy = -obs->scalar[6];  /* south component */
+                float best_dot = -2.0f;
+                float best_dist = 1e9f;
+                for (int pi = 0; pi < obs->num_pillboxes; pi++) {
+                    if (obs->pillboxes[pi].owner == WBGYM_OWNER_SELF ||
+                        obs->pillboxes[pi].owner == WBGYM_OWNER_ALLY)
+                        continue;
+                    float dx = (float)obs->pillboxes[pi].tx - tank_x;
+                    float dy = (float)obs->pillboxes[pi].ty - tank_y;
+                    float dist = sqrtf(dx*dx + dy*dy);
+                    if (dist < 0.5f || dist > 8.0f) continue;
+                    float dot = (fx*dx + fy*dy) / dist;
+                    if (dot > best_dot) {
+                        best_dot = dot;
+                        best_dist = dist;
+                    }
+                }
+                /* Reward if facing pill (dot > 0.7 ~ within 45 deg) and within range */
+                if (best_dot > 0.7f) {
+                    comp[RC_SHOOT_AT_PILL] = best_dot;
+                }
+            }
         }
     }
 
