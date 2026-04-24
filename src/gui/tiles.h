@@ -736,8 +736,8 @@
 #define SHELL_14_HEIGHT 4
 #define SHELL_15_X 456
 #define SHELL_15_Y 90
-#define SHELL_15_WIDTH 4
-#define SHELL_15_HEIGHT 3
+#define SHELL_15_WIDTH 3
+#define SHELL_15_HEIGHT 4
 
 
 /* Indents around the selected building item */

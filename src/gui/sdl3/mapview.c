@@ -490,6 +490,34 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
+    /* Anchor-pixel positioning: place the sprite so its leading pixel lands
+     * exactly on the shell's world position (the collision point).
+     *
+     * Each entry is the (col, row) of the tip pixel within that direction's
+     * sprite, read directly from the sprite shapes in tile.bmp.  We subtract
+     * these from the top-left position so the tip — not the top-left corner —
+     * sits at the shell coordinate.
+     *
+     * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
+     *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
+    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+      static const int8_t kTipCol[16] = {
+        1, 2, 3, 3,   /* N   NNE  NE   ENE  */
+        3, 3, 3, 2,   /* E   ESE  SE   SSE  */
+        1, 0, 0, 0,   /* S   SSW  SW   WSW  */
+        0, 0, 0, 0    /* W   WNW  NW   NNW  */
+      };
+      static const int8_t kTipRow[16] = {
+        0, 0, 0, 0,   /* N   NNE  NE   ENE  */
+        1, 2, 3, 3,   /* E   ESE  SE   SSE  */
+        3, 3, 2, 2,   /* S   SSW  SW   WSW  */
+        1, 0, 0, 0    /* W   WNW  NW   NNW  */
+      };
+      int dir = frame - SHELL_DIR0;
+      sx -= (float)(kTipCol[dir] * ctx->zoomFactor);
+      sy -= (float)(kTipRow[dir] * ctx->zoomFactor);
+    }
+
     int ss = ctx->sheetScale;
     SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
     SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };

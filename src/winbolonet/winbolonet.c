@@ -665,10 +665,13 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
 
   if (winboloNetRunning == TRUE && isServer == TRUE) {
     emptyKey[0] = '\0';
+    /* Bounds check: playerA/B are BYTE (0-255) but array is MAX_TANKS (16) */
+    if (playerA >= MAX_TANKS) return;
     keyA = winboloNetPlayerKey[playerA];
     if (playerB == WINBOLO_NET_NO_PLAYER) {
       keyB = emptyKey;
     } else {
+      if (playerB >= MAX_TANKS) return;
       keyB = winboloNetPlayerKey[playerB];
     }
     winbolonetEventsAddItem(eventType, keyA, keyB);
