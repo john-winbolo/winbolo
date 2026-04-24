@@ -32,6 +32,20 @@
 #include "players.h"
 #include "starts.h"
 #include "game_sim.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "bolo_map.h"
+#include "util.h"
+#include "gametype.h"
+
+/* Distance thresholds in map squares */
+#define START_TANK_RANGE 1
+#define START_PILL_RANGE 9
+#define START_BASE_RANGE 9
+/* Maximum spiral search steps */
+#define START_SCATTER_MAX 1000
+/* Fraction of neutral bases before we treat neutral same as own */
+#define START_NEUTRAL_THRESHOLD_PCT 20
 
 /*********************************************************
 *NAME:          startsCreate
@@ -177,59 +191,403 @@ bool startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
+*NAME:          startsIsValidSquare
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns whether a map square is deep sea with no mine.
+*
+*ARGUMENTS:
+*  sim - Pointer to the game simulation
+*  mx  - Map X coordinate
+*  my  - Map Y coordinate
+*********************************************************/
+static bool startsIsValidSquare(GameSim *sim, BYTE mx, BYTE my) {
+  return (mapGetPos(&sim->mp, mx, my) == DEEP_SEA && mapIsMine(&sim->mp, mx, my) == FALSE);
+}
+
+/*********************************************************
+*NAME:          startsScatterFind
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Spiral-searches outward from a centre position to find
+*  a valid deep-sea square with no mine.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game simulation
+*  centreX - Centre map X coordinate
+*  centreY - Centre map Y coordinate
+*  outX   - Pointer to receive result X
+*  outY   - Pointer to receive result Y
+*********************************************************/
+static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *outX, BYTE *outY) {
+  int step;
+  int dx;
+  int dy;
+  int sx;
+  int sy;
+
+  for (step = 0; step < START_SCATTER_MAX; step++) {
+    utilSpiralOffset(step, &dx, &dy);
+    sx = (int)centreX + dx;
+    sy = (int)centreY + dy;
+    if (sx > 0 && sx < MAP_ARRAY_SIZE && sy > 0 && sy < MAP_ARRAY_SIZE) {
+      if (startsIsValidSquare(sim, (BYTE)sx, (BYTE)sy)) {
+        *outX = (BYTE)sx;
+        *outY = (BYTE)sy;
+        return;
+      }
+    }
+  }
+  /* Fallback: use centre even if not ideal */
+  *outX = centreX;
+  *outY = centreY;
+}
+
+/*********************************************************
+*NAME:          startsMapDistance
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns the distance in map squares between two points.
+*
+*ARGUMENTS:
+*  x1 - First X coordinate
+*  y1 - First Y coordinate
+*  x2 - Second X coordinate
+*  y2 - Second Y coordinate
+*********************************************************/
+static int startsMapDistance(int x1, int y1, int x2, int y2) {
+  int dx = x1 - x2;
+  int dy = y1 - y2;
+  if (dx < 0) dx = -dx;
+  if (dy < 0) dy = -dy;
+  return (dx > dy) ? dx : dy;
+}
+
+/*********************************************************
+*NAME:          startsGetStartOpen
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns a start position for open games. Iterates all
+*  start positions looking for one with no nearby tanks or
+*  pillboxes. Falls back to a position near only friendly
+*  units, then to any valid start. Uses spiral scatter to
+*  find a nearby valid deep-sea square.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game simulation
+*  value     - Pointer to the starts structure
+*  x         - Pointer to receive X map coordinate
+*  y         - Pointer to receive Y map coordinate
+*  dir       - Pointer to receive direction
+*  playerNum - Player number requesting the start
+*********************************************************/
+static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir, BYTE playerNum) {
+  BYTE numStarts = (*value)->numStarts;
+  BYTE numPills = pillsGetNumPills(&sim->pb);
+  BYTE offset;
+  BYTE idx;
+  BYTE count;
+  BYTE sx;
+  BYTE sy;
+  int secondChoice;
+  bool anyTankNearby;
+  bool anyPillNearby;
+  bool hostileTankNearby;
+  bool hostilePillNearby;
+  BYTE tankCount;
+  BYTE pillCount;
+  WORLD tankWX;
+  WORLD tankWY;
+  int dist;
+  pillAlliance pAlliance;
+  BYTE bt;
+
+  secondChoice = -1;
+  offset = (BYTE)(rand() % numStarts);
+
+  for (count = 0; count < numStarts; count++) {
+    idx = (BYTE)((offset + count) % numStarts);
+    sx = (*value)->item[idx].x;
+    sy = (*value)->item[idx].y;
+
+    /* Must be deep sea with no mine */
+    if (startsIsValidSquare(sim, sx, sy) == FALSE) {
+      continue;
+    }
+
+    anyTankNearby = FALSE;
+    anyPillNearby = FALSE;
+    hostileTankNearby = FALSE;
+    hostilePillNearby = FALSE;
+
+    /* Check all tanks */
+    for (tankCount = 0; tankCount < MAX_TANKS; tankCount++) {
+      if (tankCount == playerNum || sim->tanks[tankCount] == NULL) {
+        continue;
+      }
+      tankGetWorld(&sim->tanks[tankCount], &tankWX, &tankWY);
+      dist = startsMapDistance(sx, sy, tankWX >> M_W_SHIFT_SIZE, tankWY >> M_W_SHIFT_SIZE);
+      if (dist <= START_TANK_RANGE) {
+        anyTankNearby = TRUE;
+        if (playersIsAllie(&sim->plyrs, playerNum, tankCount) == FALSE) {
+          hostileTankNearby = TRUE;
+        }
+      }
+    }
+
+    /* Check all pillboxes */
+    for (pillCount = 0; pillCount < numPills; pillCount++) {
+      if ((*sim->pb).item[pillCount].inTank == TRUE || (*sim->pb).item[pillCount].armour == 0) {
+        continue;
+      }
+      dist = startsMapDistance(sx, sy, (*sim->pb).item[pillCount].x, (*sim->pb).item[pillCount].y);
+      if (dist <= START_PILL_RANGE) {
+        anyPillNearby = TRUE;
+        pAlliance = pillsGetAllianceNum(sim, &sim->pb, pillCount);
+        if (pAlliance == pillEvil) {
+          hostilePillNearby = TRUE;
+        }
+      }
+    }
+
+    /* Ideal: no units nearby at all */
+    if (anyTankNearby == FALSE && anyPillNearby == FALSE) {
+      startsScatterFind(sim, sx, sy, x, y);
+      bt = startsConvertDir((*value)->item[idx].dir);
+      *dir = (TURNTYPE)(bt * START_TIMES_16);
+      return;
+    }
+
+    /* Good: only friendly units nearby */
+    if (hostileTankNearby == FALSE && hostilePillNearby == FALSE) {
+      if (secondChoice == -1) {
+        secondChoice = idx;
+      }
+      continue;
+    }
+
+    /* Fallback: at least it's a valid square */
+    if (secondChoice == -1) {
+      secondChoice = idx;
+    }
+  }
+
+  /* Phase 2: use best available */
+  if (secondChoice == -1) {
+    secondChoice = 0;
+  }
+
+  /* Phase 3: scatter search around chosen position */
+  startsScatterFind(sim, (*value)->item[secondChoice].x, (*value)->item[secondChoice].y, x, y);
+  bt = startsConvertDir((*value)->item[secondChoice].dir);
+  *dir = (TURNTYPE)(bt * START_TIMES_16);
+}
+
+/*********************************************************
+*NAME:          startsGetStartTournament
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns a start position for tournament/strict games.
+*  Builds on the open algorithm but biases towards starts
+*  near the player's own bases. If more than 20% of bases
+*  are still neutral, neutral bases are weighted equally
+*  with own bases.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game simulation
+*  value     - Pointer to the starts structure
+*  x         - Pointer to receive X map coordinate
+*  y         - Pointer to receive Y map coordinate
+*  dir       - Pointer to receive direction
+*  playerNum - Player number requesting the start
+*********************************************************/
+static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir, BYTE playerNum) {
+  BYTE numStarts = (*value)->numStarts;
+  BYTE numBases = basesGetNumBases(&sim->bs);
+  BYTE numPills = pillsGetNumPills(&sim->pb);
+  BYTE offset;
+  BYTE idx;
+  BYTE count;
+  BYTE sx;
+  BYTE sy;
+  BYTE baseCount;
+  BYTE pillCount;
+  BYTE tankCount;
+  int dist;
+  int neutralCount;
+  bool neutralPreferred;
+  bool hasOwnBase;
+  bool hasNeutralBase;
+  bool hostileTankNearby;
+  bool hostilePillNearby;
+  bool anyTankNearby;
+  bool anyPillNearby;
+  int bestOwnIdx;
+  int bestNeutralIdx;
+  int bestSafeIdx;
+  int fallbackIdx;
+  WORLD tankWX;
+  WORLD tankWY;
+  baseAlliance bAlliance;
+  pillAlliance pAlliance;
+  BYTE bt;
+
+  /* Count neutral bases to decide if neutral is preferred */
+  neutralCount = 0;
+  for (baseCount = 0; baseCount < numBases; baseCount++) {
+    bAlliance = basesGetStatusNum(sim, baseCount);
+    if (bAlliance == baseNeutral) {
+      neutralCount++;
+    }
+  }
+  neutralPreferred = (numBases > 0 && (neutralCount * 100 / numBases) > START_NEUTRAL_THRESHOLD_PCT);
+
+  bestOwnIdx = -1;
+  bestNeutralIdx = -1;
+  bestSafeIdx = -1;
+  fallbackIdx = -1;
+  offset = (BYTE)(rand() % numStarts);
+
+  for (count = 0; count < numStarts; count++) {
+    idx = (BYTE)((offset + count) % numStarts);
+    sx = (*value)->item[idx].x;
+    sy = (*value)->item[idx].y;
+
+    /* Must be deep sea with no mine */
+    if (startsIsValidSquare(sim, sx, sy) == FALSE) {
+      continue;
+    }
+
+    /* Check for hostile units nearby */
+    hostileTankNearby = FALSE;
+    hostilePillNearby = FALSE;
+    anyTankNearby = FALSE;
+    anyPillNearby = FALSE;
+
+    for (tankCount = 0; tankCount < MAX_TANKS; tankCount++) {
+      if (tankCount == playerNum || sim->tanks[tankCount] == NULL) {
+        continue;
+      }
+      tankGetWorld(&sim->tanks[tankCount], &tankWX, &tankWY);
+      dist = startsMapDistance(sx, sy, tankWX >> M_W_SHIFT_SIZE, tankWY >> M_W_SHIFT_SIZE);
+      if (dist <= START_TANK_RANGE) {
+        anyTankNearby = TRUE;
+        if (playersIsAllie(&sim->plyrs, playerNum, tankCount) == FALSE) {
+          hostileTankNearby = TRUE;
+        }
+      }
+    }
+
+    for (pillCount = 0; pillCount < numPills; pillCount++) {
+      if ((*sim->pb).item[pillCount].inTank == TRUE || (*sim->pb).item[pillCount].armour == 0) {
+        continue;
+      }
+      dist = startsMapDistance(sx, sy, (*sim->pb).item[pillCount].x, (*sim->pb).item[pillCount].y);
+      if (dist <= START_PILL_RANGE) {
+        anyPillNearby = TRUE;
+        pAlliance = pillsGetAllianceNum(sim, &sim->pb, pillCount);
+        if (pAlliance == pillEvil) {
+          hostilePillNearby = TRUE;
+        }
+      }
+    }
+
+    /* Skip positions near hostile units */
+    if (hostileTankNearby == TRUE || hostilePillNearby == TRUE) {
+      if (fallbackIdx == -1) {
+        fallbackIdx = idx;
+      }
+      continue;
+    }
+
+    /* Check for nearby own and neutral bases */
+    hasOwnBase = FALSE;
+    hasNeutralBase = FALSE;
+    for (baseCount = 0; baseCount < numBases; baseCount++) {
+      dist = startsMapDistance(sx, sy, (*sim->bs).item[baseCount].x, (*sim->bs).item[baseCount].y);
+      if (dist <= START_BASE_RANGE) {
+        bAlliance = basesGetStatusNum(sim, baseCount);
+        if (bAlliance == baseOwnGood || bAlliance == baseAllieGood) {
+          hasOwnBase = TRUE;
+        } else if (bAlliance == baseNeutral) {
+          hasNeutralBase = TRUE;
+        }
+      }
+    }
+
+    /* Best: near own base with no hostiles */
+    if (hasOwnBase == TRUE && bestOwnIdx == -1) {
+      bestOwnIdx = idx;
+    }
+    /* Good: near neutral base (when neutral is preferred) */
+    if (hasNeutralBase == TRUE && bestNeutralIdx == -1) {
+      bestNeutralIdx = idx;
+    }
+    /* Safe: no hostiles nearby (regardless of bases) */
+    if (anyTankNearby == FALSE && anyPillNearby == FALSE && bestSafeIdx == -1) {
+      bestSafeIdx = idx;
+    }
+
+    if (fallbackIdx == -1) {
+      fallbackIdx = idx;
+    }
+  }
+
+  /* Pick the best available option */
+  idx = 0;
+  if (bestOwnIdx != -1) {
+    idx = (BYTE)bestOwnIdx;
+  } else if (neutralPreferred && bestNeutralIdx != -1) {
+    idx = (BYTE)bestNeutralIdx;
+  } else if (bestSafeIdx != -1) {
+    idx = (BYTE)bestSafeIdx;
+  } else if (bestNeutralIdx != -1) {
+    idx = (BYTE)bestNeutralIdx;
+  } else if (fallbackIdx != -1) {
+    idx = (BYTE)fallbackIdx;
+  }
+
+  startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y);
+  bt = startsConvertDir((*value)->item[idx].dir);
+  *dir = (TURNTYPE)(bt * START_TIMES_16);
+}
+
+/*********************************************************
 *NAME:          startsGetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 7/1/99
-*LAST MODIFIED: 9/4/01
+*LAST MODIFIED: 24/4/26
 *PURPOSE:
-*  Returns a random start position
+*  Returns a start position. Dispatches to the appropriate
+*  algorithm based on game type.
 *
 *ARGUMENTS:
+*  sim       - Pointer to the game simulation
 *  value     - Pointer to the starts structure
-*  x         - X Value of the start
-*  y         - Y Value of the start
-*  dir       - Direction it is facing
-*  playerNum - Player Number requesting start
+*  x         - Pointer to receive X map coordinate
+*  y         - Pointer to receive Y map coordinate
+*  dir       - Pointer to receive direction
+*  playerNum - Player number requesting the start
 *********************************************************/
 void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir, BYTE playerNum) {
-  BYTE count; /* Looping variable */
-  BYTE val;
-  bool okTank;
-  bool found;
-  BYTE rnd;
-  BYTE bt;      /* Used to convert the BMAP starts (0 = east) to my starts */
+  if (*value == NULL || (*value)->numStarts == 0) {
+    return;
+  }
 
-  val = 0;
-  if (*value == NULL) {
-    return;
-  }
-  if ((*value)->numStarts ==0) {
-    return;
-  }
-  found = FALSE;
-  count = 0;
-  while (count < (*value)->numStarts && found == FALSE) {
-    okTank = TRUE;
-    rnd = (BYTE) ((rand()+1)% (*value)->numStarts);
-    okTank = gameSimCheckTankRange(sim, (*value)->item[rnd].x, (*value)->item[rnd].y, playerNum, 512.0);
-    if (okTank == TRUE) {
-      found = TRUE;
-      val = rnd;
-    }
-    count++;
-  }
-  if (found == TRUE) {
-    *x = (*value)->item[val].x;
-    *y = (*value)->item[val].y;
-    bt = startsConvertDir(((*value)->item[val].dir));
-    *dir = (TURNTYPE) (bt * START_TIMES_16);
+  if (sim->game == gameOpen) {
+    startsGetStartOpen(sim, value, x, y, dir, playerNum);
   } else {
-    /* Choose any */
-    rnd = (BYTE) ((rand()+1)% (*value)->numStarts);
-    *x = (*value)->item[rnd].x;
-    *y = (*value)->item[rnd].y;
-    bt = startsConvertDir(((*value)->item[rnd].dir));
-    *dir = (TURNTYPE) (bt * START_TIMES_16);
+    startsGetStartTournament(sim, value, x, y, dir, playerNum);
   }
 }
 
@@ -240,7 +598,9 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
 *LAST MODIFIED: 9/4/01
 *PURPOSE:
 *  Returns a random start position. Was the original
-*  startsGetStart() code
+*  startsGetStart() code. Now simplified and only
+*  used for LGM's parachuting in. Does not collision
+*  checks
 *
 *ARGUMENTS:
 *  value     - Pointer to the starts structure
@@ -251,41 +611,13 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
 void startsGetRandStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir) {
   int rnd;      /* Random number */
   BYTE bt;      /* Used to convert the BMAP starts (0 = east) to my starts */
-  bool found;   /* Have we found a start? */
-  WORLD testX;  /* Test world co-ordinates */
-  WORLD testY;
-  int dummy1;   /* Dummy variable for function parameters */
-  int dummy2;
-  rnd = rand();
 
   if ((*value)->numStarts > 0) {
-    found = FALSE;
-    while (rnd < 0 || rnd > (*value)->numStarts) {
-      rnd = rand() % (*value)->numStarts;
-    }
-    if (rnd == 0) {
-      rnd = 1;
-    }
-    while (found == FALSE) {
-      testX = (*value)->item[(rnd-1)].x;
-      testX <<= TANK_SHIFT_MAPSIZE;
-      testY = (*value)->item[(rnd-1)].y;
-      testY <<= TANK_SHIFT_MAPSIZE;
-      testX += 256;
-      testY += 256;
-      if (playersCheckCollision(&sim->plyrs, sim->viewPlayer, testX, testY, &dummy1, &dummy2) == FALSE) {
-        found = TRUE;
-        *x = (*value)->item[(rnd-1)].x;
-        *y = (*value)->item[(rnd-1)].y;
-        bt = startsConvertDir(((*value)->item[(rnd-1)].dir));
-        *dir = (TURNTYPE) (bt * START_TIMES_16);
-      } else {
-        rnd++;
-        if (rnd > (*value)->numStarts) {
-          rnd = 1;
-        }
-      }
-    }
+    rnd = rand() % (*value)->numStarts;
+    *x = (*value)->item[rnd].x;
+    *y = (*value)->item[rnd].y;
+    bt = startsConvertDir((*value)->item[rnd].dir);
+    *dir = (TURNTYPE) (bt * START_TIMES_16);
   } else {
     *x = BRADIANS_GAP;
     *y = BRADIANS_GAP;
