@@ -92,7 +92,15 @@ log_PlayerRejoin,
 log_PlayerLeaving,
 log_PlayerDied,
 log_LobbyEnter,
-log_LobbyExit
+log_LobbyExit,
+log_PlayerReady,
+log_PlayerUnready,
+log_TeamSet,
+log_CountdownStart,
+log_CountdownCancel,
+log_MapSkipVote,
+log_MapSkipApplied,
+log_BalanceApplied
 } logitem;
 
 /*********************************************************

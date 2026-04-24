@@ -1828,6 +1828,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
                 if (teamNum <= 16) {
                     sim->lobbyPlayers[clientIdx].teamNumber = teamNum;
+                    logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
                 }
             }
@@ -1842,10 +1843,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
                 if (sim->state == serverStateLobby) {
                     sim->lobbyPlayers[clientIdx].ready = ready;
+                    logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
                     serverSimLobbyCheckAllReady(sim);
                     /* If all-ready check triggered countdown, broadcast it */
                     if (sim->state == serverStateCountdown) {
+                        logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
                         uint8_t secs = (uint8_t)(sim->countdownTicks / 50);
                         transportUdpServerBroadcastCountdown(sim, secs);
                     }
@@ -1854,6 +1857,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     sim->lobbyPlayers[clientIdx].ready = FALSE;
                     sim->state = serverStateLobby;
                     sim->countdownTicks = 0;
+                    logAddEvent(log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
+                    logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
                     serverSimConsoleMessage("Countdown cancelled — player unreadied.");
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
                 }
@@ -1982,6 +1987,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
                 memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
+                logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
                 transportUdpServerBroadcastLobbyState(sim);
                 serverSimConsoleMessage("Team balance applied");
             }

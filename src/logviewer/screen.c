@@ -733,6 +733,51 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_LobbyExit:
       lv_windowAddEvent(0, "Game started.");
       break;
+    case log_PlayerReady:
+      logReadBytes(&opt1, 1);
+      lv_playersGetPlayerName(opt1, str);
+      snprintf(mem, sizeof(mem), "%s is ready.", str);
+      lv_windowAddEvent(0, mem);
+      break;
+    case log_PlayerUnready:
+      logReadBytes(&opt1, 1);
+      lv_playersGetPlayerName(opt1, str);
+      snprintf(mem, sizeof(mem), "%s is no longer ready.", str);
+      lv_windowAddEvent(0, mem);
+      break;
+    case log_TeamSet:
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      lv_playersGetPlayerName(opt1, str);
+      if (opt2 == 0) {
+        snprintf(mem, sizeof(mem), "%s left their team.", str);
+      } else {
+        snprintf(mem, sizeof(mem), "%s joined team %d.", str, opt2);
+      }
+      lv_windowAddEvent(0, mem);
+      break;
+    case log_CountdownStart:
+      lv_windowAddEvent(0, "Countdown started.");
+      break;
+    case log_CountdownCancel:
+      lv_windowAddEvent(0, "Countdown cancelled.");
+      break;
+    case log_MapSkipVote:
+      logReadBytes(&opt1, 1);
+      lv_playersGetPlayerName(opt1, str);
+      snprintf(mem, sizeof(mem), "%s voted to skip map.", str);
+      lv_windowAddEvent(0, mem);
+      break;
+    case log_MapSkipApplied:
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, str);
+      snprintf(mem, sizeof(mem), "Map skipped. New map: %s", str);
+      lv_windowAddEvent(0, mem);
+      break;
+    case log_BalanceApplied:
+      lv_windowAddEvent(0, "Team balance applied.");
+      break;
     default:
       lv_windowStop(TRUE);
       count = numEvents;

@@ -492,6 +492,39 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       *(logMem+logMemSize) = itemNum ^ logKey;
       logMemSize++;
       break;
+    case log_PlayerReady:
+    case log_PlayerUnready:
+    case log_MapSkipVote:
+      /* event code + player number */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      break;
+    case log_TeamSet:
+      /* event code + player number + team number */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      break;
+    case log_CountdownStart:
+    case log_CountdownCancel:
+    case log_BalanceApplied:
+      /* event code only, no payload */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      break;
+    case log_MapSkipApplied:
+      /* event code + pascal string map name */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
+      logMemSize += wordsLen;
+      break;
     default:
       changeKey = FALSE;
       logNumEvents--;
