@@ -71,6 +71,17 @@ void utilCalcDistance(int *xAmount, int *yAmount, TURNTYPE angle, int speed) {
   *yAmount = (int) roundDouble((speed * sin(dbAngle)));
 }
 
+void utilCalcDistanceHP(int32_t *xStep, int32_t *yStep, TURNTYPE angle, int speed) {
+  double dbAngle;
+  angle -= BRADIANS_EAST;
+  if (angle < 0) { angle += BRADIANS_MAX; }
+  dbAngle = (DEGREES_MAX / BRADIANS_MAX) * angle;
+  dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+  /* Scale by 256 to give 8 bits of fractional precision, round to nearest. */
+  *xStep = (int32_t) roundDouble(speed * cos(dbAngle) * 256.0);
+  *yStep = (int32_t) roundDouble(speed * sin(dbAngle) * 256.0);
+}
+
 
 /*********************************************************
 *NAME:          utilCalcTankSlide

@@ -76,6 +76,7 @@ static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
 static SDL_Texture  *gBackgroundTex = NULL;
 static SDL_Texture  *gTilesTex      = NULL;
+static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center pixel (8,8) is aim point */
 static int           gZoomFactor    = 1;
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
 
@@ -990,6 +991,40 @@ bool sdl3DrawSetup(int zoomFactor) {
      first sdl3DrawMainScreen call. */
   sdl3LoadTiles();
 
+  /* Load custom crosshair (17×17 PNG, center pixel (8,8) = aim point). */
+  {
+    const char *basePath = SDL_GetBasePath();
+    if (!basePath) basePath = "./";
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%sdata/crosshairs_17x17.png", basePath);
+    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+    if (io) {
+      Sint64 sz = SDL_GetIOSize(io);
+      if (sz > 0) {
+        unsigned char *buf = (unsigned char *)SDL_malloc((size_t)sz);
+        if (buf) {
+          SDL_ReadIO(io, buf, (size_t)sz);
+          int imgW, imgH, ch;
+          unsigned char *pix = stbi_load_from_memory(buf, (int)sz, &imgW, &imgH, &ch, 4);
+          SDL_free(buf);
+          if (pix) {
+            SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pix, imgW * 4);
+            if (surf) {
+              gCrosshairTex = SDL_CreateTextureFromSurface(gRenderer, surf);
+              SDL_DestroySurface(surf);
+              if (gCrosshairTex) {
+                SDL_SetTextureBlendMode(gCrosshairTex, SDL_BLENDMODE_BLEND);
+                SDL_SetTextureScaleMode(gCrosshairTex, SDL_SCALEMODE_NEAREST);
+              }
+            }
+            stbi_image_free(pix);
+          }
+        }
+      }
+      SDL_CloseIO(io);
+    }
+  }
+
   /* Create Phase 4 render-target textures.
      Man-status is created at zoom-factor resolution so the circle is drawn
      at actual screen pixels — no upscaling means no clipping or jaggedness.
@@ -1048,6 +1083,7 @@ void sdl3DrawCleanup(void) {
   if (gManStatusTex)     { SDL_DestroyTexture(gManStatusTex);     gManStatusTex     = NULL; }
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
   if (gBaseBarsTex)      { SDL_DestroyTexture(gBaseBarsTex);      gBaseBarsTex      = NULL; }
+  if (gCrosshairTex)     { SDL_DestroyTexture(gCrosshairTex);     gCrosshairTex     = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
@@ -1410,19 +1446,18 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         }
       }
 
-      /* Gunsight overlay */
-      if (gs->mapX != NO_GUNSIGHT) {
-        float gsInset = 0.05f;
-        SDL_FRect gsSrc = { (float)(GUNSIGHT_X * gSheetScale) + gsInset, (float)(GUNSIGHT_Y * gSheetScale) + gsInset,
-                            (float)(TILE_SIZE_X * gSheetScale) - 2.0f * gsInset, (float)(TILE_SIZE_Y * gSheetScale) - 2.0f * gsInset };
+      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
+       * Top-left is at the same position as the old 16×16 tile sprite so the
+       * center aligns with the gunsight world position. */
+      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
         int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
         int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
         SDL_FRect gsDest = {
           (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
           (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
-          (float)tileW, (float)tileH
+          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
         };
-        SDL_RenderTexture(gRenderer, gTilesTex, &gsSrc, &gsDest);
+        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
       }
 
       /* Build-mode cursor overlay */

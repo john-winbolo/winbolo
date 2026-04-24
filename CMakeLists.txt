@@ -300,14 +300,25 @@ set(CMAKE_CXX_STANDARD 17)
 # ---------------------------------------------------------------------------
 
 if(MSVC)
+    # COMPILE_LANGUAGE guard prevents these C/C++ flags from being passed
+    # to MASM (ml64.exe) for crashpad's .asm files.
     add_compile_options(
-        /WX /sdl /permissive-
-        /W4 /external:W3
-        /wd4005 /wd4013 /wd4018 /wd4057 /wd4100 /wd4101 /wd4127 /wd4131 /wd4132
-        /wd4146 /wd4152 /wd4189 /wd4244 /wd4245 /wd4295 /wd4310 /wd4456 /wd4457
-        /wd4459 /wd4505 /wd4554 /wd4701 /wd4702 /wd4996
-        /guard:cf /GL
-        $<$<CONFIG:Debug>:/RTC1>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/WX> $<$<COMPILE_LANGUAGE:C,CXX>:/sdl> $<$<COMPILE_LANGUAGE:C,CXX>:/permissive->
+        $<$<COMPILE_LANGUAGE:C,CXX>:/W4> $<$<COMPILE_LANGUAGE:C,CXX>:/external:W3>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4005> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4013>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4018> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4057>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4100> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4101>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4127> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4131>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4132> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4146>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4152> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4189>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4244> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4245>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4295> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4310>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4456> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4457>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4459> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4505>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4554> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4701>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/wd4702> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4996>
+        $<$<COMPILE_LANGUAGE:C,CXX>:/guard:cf> $<$<COMPILE_LANGUAGE:C,CXX>:/GL>
+        $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>>:/RTC1>
     )
     add_link_options(/GUARD:CF /INCREMENTAL:NO /LTCG)
 else()
@@ -928,6 +939,12 @@ if(WIN32)
     target_compile_options(WinBolo PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBolo PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")
+        # Suppress warnings in third-party sources that MSVC treats as errors
+        set_source_files_properties(src/third_party/tweetnacl/tweetnacl.c
+            PROPERTIES COMPILE_FLAGS "/wd4132 /wd4146 /wd4018 /wd4295")
+        # Suppress C4505 (unreferenced static function) in mapgen_imgui.cpp
+        set_source_files_properties(src/mapeditor/mapgen_imgui.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4505")
     endif()
 else()
     target_sources(WinBolo PRIVATE
