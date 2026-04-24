@@ -67,6 +67,10 @@ typedef void (*NetLockToggleSendFunc)(bool allow);
 typedef struct {
     WORLD x;
     WORLD y;
+    float fx;            /* float position accumulator — authoritative position */
+    float fy;
+    float vx;            /* float velocity per tick (SHELL_SPEED * cos/sin) */
+    float vy;
     TURNTYPE angle;
     uint8_t length;
     uint8_t owner;

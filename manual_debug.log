@@ -1,0 +1,134 @@
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=0
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(0) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok
+M pressed: manual=1
+Lua exec: if brain and brain.set_manual_mode then brain.set_manual_mode(1) end -> ok

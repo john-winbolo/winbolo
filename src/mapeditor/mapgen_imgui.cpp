@@ -222,6 +222,9 @@ static void restoreLockedFractalParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_F_MINES)     f.mineDensityPct = s.mineDensityPct;
 }
 
+#ifdef _MSC_VER
+#pragma warning(suppress: 4505)
+#endif
 static void restoreLockedParams(MapGenConfig *cfg,
                                 const MapGenConfig *saved) {
     uint64_t lk = cfg->locks;
