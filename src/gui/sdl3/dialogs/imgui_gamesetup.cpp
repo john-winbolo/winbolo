@@ -348,7 +348,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 #else
         float panelW = 700.0f * s;
         /* Base height for options, expands with player rows */
-        float baseH = 420.0f * s;
+        float baseH = 440.0f * s;
         float rowH = 28.0f * s;
         float extraRows = (numBots > 0) ? (numBots + 2) * rowH + 8.0f * s : 0; /* +2 for table header + "You" row */
         float panelH = baseH + extraRows;
@@ -373,7 +373,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
             ImGui::Spacing();
 
             float headerH = ImGui::GetCursorPosY();
-            float footerH = 50.0f * s;
+            float footerH = 60.0f * s;
             float contentH = panelH - headerH - footerH;
             if (contentH < 200.0f) contentH = 200.0f;
 
@@ -404,7 +404,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
              * Phase 2: Game Setup + Bot Table
              * ============================================================ */
             float headerH = ImGui::GetCursorPosY();
-            float footerH = 50.0f * s;
+            float footerH = 60.0f * s;
             float contentH = panelH - headerH - footerH;
             if (contentH < 200.0f) contentH = 200.0f;
 
@@ -448,9 +448,8 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     ImGui::SameLine();
                     ImGui::BeginGroup();
                     ImGui::Text("%s", mapChooser.selectedName);
+                    ImGui::Text("Bases: %d  Starts: %d", mapChooser.previewBases, mapChooser.previewStarts);
                     ImGui::Text("Pillboxes: %d", mapChooser.previewPills);
-                    ImGui::Text("Bases: %d", mapChooser.previewBases);
-                    ImGui::Text("Starts: %d", mapChooser.previewStarts);
                     ImGui::Spacing();
                     if (ImGui::SmallButton("Change Map")) {
                         phase = PHASE_MAP_CHOOSER;
@@ -614,9 +613,8 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 ImGui::Spacing();
 
                 ImGui::Text("%s", mapChooser.selectedName);
+                ImGui::Text("Bases: %d  Starts: %d", mapChooser.previewBases, mapChooser.previewStarts);
                 ImGui::Text("Pillboxes: %d", mapChooser.previewPills);
-                ImGui::Text("Bases: %d", mapChooser.previewBases);
-                ImGui::Text("Starts: %d", mapChooser.previewStarts);
 
                 ImGui::Spacing();
                 if (ImGui::Button("Change Map", ImVec2(-1, 0))) {
