@@ -1367,6 +1367,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     if (sim->lobbyEnabled && sim->state == serverStateCountdown) {
         sim->state = serverStateLobby;
         sim->countdownTicks = 0;
+        logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
         serverSimConsoleMessage("Countdown cancelled — player disconnected.");
     }
 
@@ -2510,6 +2511,9 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
     }
 
     sim->mapSkipVotes[playerNum] = !sim->mapSkipVotes[playerNum];
+    if (sim->mapSkipVotes[playerNum]) {
+        logAddEvent(log_MapSkipVote, playerNum, 0, 0, 0, 0, NULL);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
@@ -2526,6 +2530,14 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             serverSimRandomMapRegenerate(sim);
         } else {
             serverSimMapDirPickRandom(sim);
+        }
+        {
+            char pstr[256];
+            int nameLen = (int)strlen(sim->mapName);
+            if (nameLen > 255) nameLen = 255;
+            pstr[0] = (char)nameLen;
+            memcpy(pstr + 1, sim->mapName, nameLen);
+            logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
         transportUdpServerNotifyMapChange(sim);
