@@ -39,6 +39,7 @@
 #include "../sdl3/sdl3imgui.h"
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
+#include "../sdl3/dialogs/imgui_messagebox.h"
 #include "../mobile/touch_input.h"
 #include "../ui_mode.h"
 #include "../sdl3/input_touch.h"
@@ -155,10 +156,9 @@ static void iosSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNu
  * SDL message handler
  * ------------------------------------------------------- */
 void sdl3MessageHandler(const char *message, const char *title) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-                             title ? title : "WinBolo",
-                             message ? message : "",
-                             sdl3DrawGetWindow());
+    imguiMessageBoxEx(title ? title : "WinBolo",
+                      message ? message : "",
+                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
 /* -------------------------------------------------------
@@ -519,10 +519,10 @@ static void windowRunGameTick(ClientSim *cs) {
     if (gameFrontGetServerSim() == NULL &&
         transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
         screenConnectionLostCS(cs);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                                 "You have lost your connection to the server.\n"
-                                 "Returning to menu.",
-                                 sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          "You have lost your connection to the server.\n"
+                          "Returning to menu.",
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         finishedLoop = TRUE;
         winboloQuit = FALSE;
         return;

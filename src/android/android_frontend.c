@@ -28,6 +28,7 @@
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/aresource.h"
+#include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "players_panel.h"
 
 /* -------------------------------------------------------
@@ -77,10 +78,9 @@ extern time_t ticks;
  * SDL message handler
  * ------------------------------------------------------- */
 void sdl3MessageHandler(const char *message, const char *title) {
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-                           title ? title : "WinBolo",
-                           message ? message : "",
-                           sdl3DrawGetWindow());
+  imguiMessageBoxEx(title ? title : "WinBolo",
+                    message ? message : "",
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
 /* -------------------------------------------------------

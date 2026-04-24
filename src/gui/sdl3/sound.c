@@ -68,6 +68,8 @@ static SDL_AudioStream *keepaliveStream = NULL;
 static Uint8 *keepaliveData = NULL;
 static Uint32 keepaliveSize = 0;
 
+#include "dialogs/imgui_messagebox.h"
+
 #ifndef DIALOG_BOX_TITLE
 #define DIALOG_BOX_TITLE "WinBolo"
 #endif
@@ -294,8 +296,8 @@ bool soundSetup(void) {
 
     /* Initialize SDL audio subsystem */
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, DIALOG_BOX_TITLE,
-                                 "Error initializing SDL audio", NULL);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error initializing SDL audio",
+                          IMGUI_MSG_WARNING, IMGUI_MSG_OK);
         return FALSE;
     }
 
@@ -308,8 +310,8 @@ bool soundSetup(void) {
     /* Create mutex for sound slots */
     slotsMutex = SDL_CreateMutex();
     if (!slotsMutex) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, DIALOG_BOX_TITLE,
-                                 "Error creating mutex", NULL);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error creating mutex",
+                          IMGUI_MSG_WARNING, IMGUI_MSG_OK);
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return FALSE;
     }
@@ -325,8 +327,8 @@ bool soundSetup(void) {
     /* Open audio stream with callback for mixing */
     audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &deviceSpec, mixAudioCallback, NULL);
     if (!audioStream) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, DIALOG_BOX_TITLE,
-                                 "Error opening audio device", NULL);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error opening audio device",
+                          IMGUI_MSG_WARNING, IMGUI_MSG_OK);
         SDL_DestroyMutex(slotsMutex);
         slotsMutex = NULL;
         SDL_QuitSubSystem(SDL_INIT_AUDIO);

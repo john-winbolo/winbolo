@@ -48,6 +48,7 @@ extern "C" {
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
 #include "imgui_lobby.h"
+#include "imgui_messagebox.h"
 }
 
 #define MAX_TANKS 16
@@ -236,6 +237,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (transport) {
             UdpClientJoinState js = transportUdpClientGetJoinState(transport);
             if (js == UDP_CLIENT_SERVER_SHUTDOWN || js == UDP_CLIENT_ERROR) {
+                imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                    "You have lost your connection to the server.",
+                    IMGUI_MSG_ERROR, IMGUI_MSG_OK);
                 result = 0;
                 running = false;
                 break;

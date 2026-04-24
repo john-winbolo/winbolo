@@ -14,8 +14,17 @@
 
 /*********************************************************
  * Name:          imgui_messagebox.cpp
- * Purpose:       ImGui message box dialog.
- *                ImGui message box.
+ * Purpose:       Blocking ImGui message box with icon and
+ *                configurable buttons (OK / Yes-No /
+ *                Yes-No-Cancel).  Icons are loaded from
+ *                data/ui/dialog-{info,warning,error}.svg.
+ *
+ *                Renders as a centred modal popup on top of
+ *                the current window content (captured as a
+ *                background texture with a dark overlay).
+ *                Creates a dedicated ImGui context so it
+ *                can be called from anywhere — game loop,
+ *                lobby, or other dialogs.
  *********************************************************/
 
 #include <cstring>
@@ -27,46 +36,183 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../sdl3draw.h"
 #include "imgui_messagebox.h"
 }
 
-static const int DIALOG_W = 400;
-static const int DIALOG_H = 150;
+static const int ICON_SIZE = 48;
+static const float DIALOG_WIDTH_FRACTION = 0.5f;
+static const float DIALOG_MIN_W = 420.0f;
+static const float DIALOG_MAX_W = 700.0f;
 
-extern "C" void imguiMessageBox(const char *message, const char *title) {
+/* Load an SVG file and rasterize it to an SDL_Texture at the given size.
+ * Returns NULL on failure. Caller must SDL_DestroyTexture(). */
+static SDL_Texture *loadIconTexture(SDL_Renderer *renderer, const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+
+    float scale = (float)size / image->height;
+    if (image->width * scale > (float)size) scale = (float)size / image->width;
+    int w = size, h = size;
+
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+
+    float offX = ((float)w - image->width * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
+}
+
+static const char *iconPathForType(ImguiMsgType type) {
+    switch (type) {
+        case IMGUI_MSG_WARNING: return "data/ui/dialog-warning.svg";
+        case IMGUI_MSG_ERROR:   return "data/ui/dialog-error.svg";
+        default:                return "data/ui/dialog-info.svg";
+    }
+}
+
+/* Capture the current backbuffer as a texture for use as a background.
+ * Returns NULL if capture fails (caller should fall back to solid bg). */
+static SDL_Texture *captureBackbuffer(SDL_Renderer *renderer) {
+    SDL_Surface *surface = SDL_RenderReadPixels(renderer, NULL);
+    if (!surface) return nullptr;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    return tex;
+}
+
+/* Render the message box content (icon, text, buttons).
+ * Returns -1 while open, or a IMGUI_MSG_RESULT_* value when a button is pressed. */
+static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
+                                   SDL_Texture *iconTex, float scale, bool *focusBtn) {
+    int result = -1;
+
+    float iconDisplaySize = ICON_SIZE * scale;
+    if (iconTex) {
+        ImGui::Image((ImTextureID)iconTex,
+                     ImVec2(iconDisplaySize, iconDisplaySize));
+        ImGui::SameLine();
+    }
+
+    /* Vertically centre text beside icon */
+    float textStartY = ImGui::GetCursorPosY();
+    float iconMidY = textStartY + (iconDisplaySize * 0.5f) -
+                     (ImGui::GetTextLineHeight() * 0.5f);
+    if (iconTex && iconMidY > textStartY) {
+        ImGui::SetCursorPosY(iconMidY);
+    }
+
+    float textRegionW = ImGui::GetContentRegionAvail().x;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textRegionW);
+    ImGui::TextWrapped("%s", message ? message : "");
+    ImGui::PopTextWrapPos();
+
+    /* Push cursor below the icon if the text was shorter */
+    float afterTextY = ImGui::GetCursorPosY();
+    float afterIconY = textStartY + iconDisplaySize +
+                       ImGui::GetStyle().ItemSpacing.y;
+    if (afterIconY > afterTextY) {
+        ImGui::SetCursorPosY(afterIconY);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    /* Buttons */
+    float btnW = 80.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float availW = ImGui::GetContentRegionAvail().x;
+
+    if (buttons == IMGUI_MSG_OK) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW) / 2.0f);
+        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
+        if (ImGui::Button("OK", ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_OK;
+        }
+    } else if (buttons == IMGUI_MSG_YES_NO) {
+        float totalW = btnW * 2 + spacing;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
+        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
+        if (ImGui::Button("Yes", ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_YES;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_NO;
+        }
+    } else { /* IMGUI_MSG_YES_NO_CANCEL */
+        float totalW = btnW * 3 + spacing * 2;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
+        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
+        if (ImGui::Button("Yes", ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_YES;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_NO;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_CANCEL;
+        }
+    }
+
+    return result;
+}
+
+/* Guard against re-entrant calls (e.g. lobby + game loop both detecting
+ * the same disconnect). */
+static bool s_messageBoxActive = false;
+
+extern "C" int imguiMessageBoxEx(const char *title, const char *message,
+                                  ImguiMsgType type, ImguiMsgButtons buttons) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
-    if (!window || !renderer) return;
+    if (!window || !renderer) return IMGUI_MSG_RESULT_OK;
+
+    /* Prevent double-showing from overlapping detection paths. */
+    if (s_messageBoxActive) return IMGUI_MSG_RESULT_OK;
+    s_messageBoxActive = true;
+
+    /* Save caller's ImGui context (may be NULL). */
+    ImGuiContext *callerCtx = ImGui::GetCurrentContext();
 
     /* Save logical presentation (Android sets one for the game view) */
     int savedLogW = 0, savedLogH = 0;
     SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
     dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
 
-    /* Get screen size and compute UI scale */
     int screenW, screenH;
     SDL_GetWindowSize(window, &screenW, &screenH);
     if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
     float s = dialogComputeScale(screenW, screenH);
 
-#if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    {
-      char prefixedTitle[192];
-      SDL_snprintf(prefixedTitle, sizeof(prefixedTitle), "WinBolo - %s", title ? title : "Message");
-      dialogSetWindowTitle(window, prefixedTitle);
-    }
-    SDL_SetWindowResizable(window, false);
-#endif
-    dialogRestorePosition(window);
-    SDL_ShowWindow(window);
-    SDL_RaiseWindow(window);
+    /* Capture the current backbuffer so we can show it as the background
+     * behind the dimmed modal overlay. */
+    SDL_Texture *bgTex = captureBackbuffer(renderer);
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    /* Create a dedicated ImGui context for the messagebox.
+     * This avoids conflicts with any caller context that may be mid-frame. */
+    ImGuiContext *msgCtx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(msgCtx);
+
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -77,21 +223,43 @@ extern "C" void imguiMessageBox(const char *message, const char *title) {
     ImGui_ImplSDLRenderer3_Init(renderer);
     dialogApplyScaling(s);
 
-    bool running = true;
-    bool focusBtn = true;
+    SDL_Texture *iconTex = loadIconTexture(renderer, iconPathForType(type), ICON_SIZE);
 
-    while (running) {
+    /* Compute dialog width: 50% of window, clamped to [420, 700] */
+    float dialogW = (float)screenW * DIALOG_WIDTH_FRACTION;
+    if (dialogW < DIALOG_MIN_W) dialogW = DIALOG_MIN_W;
+    if (dialogW > DIALOG_MAX_W) dialogW = DIALOG_MAX_W;
+    dialogW *= s;
+
+    int result = -1;
+    bool focusBtn = true;
+    bool openedPopup = false;
+    const char *popupId = title ? title : "Message";
+
+    while (result < 0) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
-            if (dialogHandleDevicePresetEvent(window, &ev)) continue;
-            dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                  ev.window.windowID == SDL_GetWindowID(window))) {
-                running = false;
+                result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
+                         IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
             }
+        }
+
+        /* Draw background: captured backbuffer + dark overlay */
+        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+        SDL_RenderClear(renderer);
+        if (bgTex) {
+            SDL_RenderTexture(renderer, bgTex, NULL, NULL);
+            /* Semi-transparent dark overlay to dim the background */
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
+            SDL_FRect dimRect = { 0, 0, (float)screenW, (float)screenH };
+            SDL_RenderFillRect(renderer, &dimRect);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
         }
 
         ImGui_ImplSDLRenderer3_NewFrame();
@@ -99,51 +267,72 @@ extern "C" void imguiMessageBox(const char *message, const char *title) {
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
 
+        /* Full-screen invisible host window for the modal. */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
-        ImGui::Begin("##MsgBox", nullptr,
+        ImGui::Begin("##MsgBoxHost", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse);
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_NoInputs);
 
-        ImGui::TextWrapped("%s", message ? message : "");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float btnW = 80.0f;
-        ImGui::SetCursorPosX(((float)winW - btnW) / 2.0f);
-        if (focusBtn) {
-            ImGui::SetKeyboardFocusHere();
-            focusBtn = false;
-        }
-        if (ImGui::Button("OK", ImVec2(btnW, 0))) {
-            running = false;
+        if (!openedPopup) {
+            ImGui::OpenPopup(popupId);
+            openedPopup = true;
         }
 
-        ImGui::End();
+        ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
+                                            ImVec2(dialogW, FLT_MAX));
+        if (ImGui::BeginPopupModal(popupId, nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoMove)) {
+            /* Centre the modal in the window */
+            ImVec2 modalSize = ImGui::GetWindowSize();
+            ImGui::SetWindowPos(
+                ImVec2(((float)winW - modalSize.x) * 0.5f,
+                       ((float)winH - modalSize.y) * 0.5f));
+
+            int r = renderMessageBoxContent(message, buttons, iconTex,
+                                            s, &focusBtn);
+            if (r >= 0) {
+                result = r;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::End(); /* ##MsgBoxHost */
 
         ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
-        SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
         dialogFrameCapEnd(frameCapStart);
     }
 
+    if (iconTex) SDL_DestroyTexture(iconTex);
+
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
+    ImGui::DestroyContext(msgCtx);
+
+    if (bgTex) SDL_DestroyTexture(bgTex);
 
     /* Restore logical presentation */
     dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
 
-#if !BOLO_MOBILE
-    SDL_SetWindowResizable(window, true);
-#endif
+    /* Restore the caller's context (may be NULL if none existed). */
+    ImGui::SetCurrentContext(callerCtx);
 
     SDL_FlushEvent(SDL_EVENT_QUIT);
+    s_messageBoxActive = false;
+    return result;
+}
+
+extern "C" void imguiMessageBox(const char *message, const char *title) {
+    imguiMessageBoxEx(title, message, IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }

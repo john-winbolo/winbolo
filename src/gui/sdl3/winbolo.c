@@ -72,6 +72,7 @@
 
 #include "../aresource.h"
 #include "dialog_backend.h"
+#include "dialogs/imgui_messagebox.h"
 #include "../../common/sentry_integration.h"
 
 /* Forward declarations */
@@ -250,8 +251,8 @@ int main(int argc, char *argv[]) {
   initWinboloTimer();
 
   if (clientMutexCreate() == FALSE) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
-                             "Failed to create client mutex", NULL);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to create client mutex",
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     return 1;
   }
 
@@ -282,9 +283,8 @@ int main(int argc, char *argv[]) {
       /* lobbyResult == 1: game started — load the map that was
        * downloaded in the background during the lobby. */
       if (!gameFrontLoadDeferredMap(cs)) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                                 "Failed to load map from server",
-                                 sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         winboloQuit = FALSE;
         gameFrontEnd(&keys, TRUE, FALSE);
         if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
@@ -529,10 +529,9 @@ int main(int argc, char *argv[]) {
  * SDL message handler for guiMessageSetHandler
  * ------------------------------------------------------- */
 void sdl3MessageHandler(const char *message, const char *title) {
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-                           title ? title : "WinBolo",
-                           message ? message : "",
-                           sdl3DrawGetWindow());
+  imguiMessageBoxEx(title ? title : "WinBolo",
+                    message ? message : "",
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
 /* -------------------------------------------------------
@@ -573,10 +572,10 @@ static void windowRunGameTick(ClientSim *cs) {
   if (transport != NULL && gameFrontGetServerSim() == NULL &&
       transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
     screenConnectionLostCS(cs);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                             "You have lost your connection to the server.\n"
-                             "Returning to menu.",
-                             sdl3DrawGetWindow());
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      "You have lost your connection to the server.\n"
+                      "Returning to menu.",
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     finishedLoop = TRUE;
     winboloQuit = FALSE;
     return;
@@ -1340,9 +1339,8 @@ void windowSaveMap(ClientSim *cs) {
   }
   if (state.ok) {
     if (screenSaveMapCS(cs, state.path) == FALSE) {
-      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                               langGetText(STR_WBERR_SAVEMAP),
-                               sdl3DrawGetWindow());
+      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     }
   }
 }
@@ -1489,8 +1487,8 @@ void frontEndGameOver(void) {
   SDL_RemoveTimer(timerGameID);
   timerFrameID = 0;
   timerGameID = 0;
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                           langGetText(STR_WBTIMELIMIT_END), sdl3DrawGetWindow());
+  imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
   winboloQuit = TRUE;
 }
 
@@ -1579,7 +1577,7 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 
 /* -------------------------------------------------------
  * frontEndTutorial — tutorial position-triggered messages
- * Uses SDL_ShowSimpleMessageBox instead of Win32 MessageBoxA.
+ * Uses imguiMessageBoxEx instead of Win32 MessageBoxA.
  * ------------------------------------------------------- */
 bool frontEndTutorial(BYTE pos) {
   static BYTE upTo = 0;
@@ -1591,7 +1589,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 208) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL01), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL01), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1604,7 +1602,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 197) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL02), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL02), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1617,7 +1615,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 192) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL03), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL03), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1630,7 +1628,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 186) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL04), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL04), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1643,7 +1641,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 181) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL05), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL05), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1656,7 +1654,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 175) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL06), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL06), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1669,7 +1667,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 166) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL07), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL07), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1682,8 +1680,8 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 159) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL08), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL09), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL08), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL09), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         upTo++;
@@ -1703,8 +1701,8 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 142) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL10), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL11), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL10), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL11), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         upTo++;
@@ -1724,7 +1722,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 122) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL12), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL12), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1737,8 +1735,8 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 120) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL13), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL14), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL13), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL14), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         upTo++;
@@ -1758,7 +1756,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 110) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL15), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL15), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1771,7 +1769,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 103) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL16), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL16), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1784,7 +1782,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 98) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL17), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL17), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         clientMutexWaitFor();
@@ -1797,8 +1795,8 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 84) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL18), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL19), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL18), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL19), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         upTo++;
@@ -1818,8 +1816,8 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 66) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL20), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL21), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL20), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL21), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         upTo++;
@@ -1839,9 +1837,9 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 47) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL22), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL23), sdl3DrawGetWindow());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL24), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL22), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL23), IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL24), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         upTo++;
@@ -1868,7 +1866,7 @@ bool frontEndTutorial(BYTE pos) {
       if (pos == 21) {
         doingTutorial = TRUE;
         clientMutexRelease();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL25), sdl3DrawGetWindow());
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_TUTORIAL25), IMGUI_MSG_INFO, IMGUI_MSG_OK);
         returnValue = TRUE;
         upTo++;
         SDL_RemoveTimer(timerGameID);

@@ -33,6 +33,7 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../gui/sdl3/dialogs/imgui_messagebox.h"
 
 /* String resource IDs — integer IDs for langGetText() */
 #include "../gui/aresource.h"
@@ -103,10 +104,9 @@ static double lastFrameTime = 0.0;
  * SDL message handler
  * ------------------------------------------------------- */
 void sdl3MessageHandler(const char *message, const char *title) {
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-                           title ? title : "WinBolo",
-                           message ? message : "",
-                           sdl3DrawGetWindow());
+  imguiMessageBoxEx(title ? title : "WinBolo",
+                    message ? message : "",
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
 /* -------------------------------------------------------
@@ -559,9 +559,9 @@ void *windowWnd(void) { return NULL; }
 
 void windowSaveMap(ClientSim *cs) {
   (void)cs;
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                           "Save Map is not available in the web version.",
-                           sdl3DrawGetWindow());
+  imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                    "Save Map is not available in the web version.",
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
 void windowKeyPressed(ClientSim *cs, int keyCode) {
@@ -655,8 +655,8 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
 }
 
 void frontEndGameOver(void) {
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, DIALOG_BOX_TITLE,
-                           langGetText(STR_WBTIMELIMIT_END), sdl3DrawGetWindow());
+  imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
 }
 
