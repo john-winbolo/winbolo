@@ -28,7 +28,6 @@
 /* Includes */
 #include <stdlib.h>
 #include <memory.h>
-#include <time.h>
 #include "global.h"
 #include "players.h"
 #include "starts.h"
@@ -207,8 +206,6 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
   if ((*value)->numStarts ==0) {
     return;
   }
-  srand((unsigned int) time(NULL));
-  srand((unsigned int) (rand() * time(NULL)));
   found = FALSE;
   count = 0;
   while (count < (*value)->numStarts && found == FALSE) {
@@ -259,8 +256,6 @@ void startsGetRandStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE 
   WORLD testY;
   int dummy1;   /* Dummy variable for function parameters */
   int dummy2;
-  srand((unsigned int) time(NULL));
-  srand((unsigned int) (rand() * time(NULL)));
   rnd = rand();
 
   if ((*value)->numStarts > 0) {

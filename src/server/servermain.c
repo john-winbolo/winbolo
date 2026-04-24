@@ -23,6 +23,8 @@
 
 #ifdef _WIN32
   #include <WinSock2.h>
+  #include <process.h>
+  #define getpid _getpid
 #else
   #include <sys/time.h>
   #include <sys/types.h>
@@ -1000,6 +1002,7 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 #include <time.h>
 
 int main(int argc, char **argv) {
+  srand((unsigned int)(time(NULL) ^ getpid()));
   sentryInit("WinBoloDS", argc, argv);
   atexit(sentryClose);
 
@@ -1135,7 +1138,6 @@ int main(int argc, char **argv) {
     } else {
       /* Plain "-randommap" — fully random */
       int types[] = { MAPGEN_TOURNAMENT, MAPGEN_NATURAL, MAPGEN_MAZE, MAPGEN_FRACTAL };
-      srand((unsigned int)time(NULL));
       cfg = mapGenDefaultConfig(types[rand() % 4]);
     }
 
@@ -1203,7 +1205,6 @@ int main(int argc, char **argv) {
     char **savedFiles;
     int savedCount;
     int mdArg = findArg(argc, argv, "mapdir");
-    srand((unsigned int)time(NULL));
     if (serverSimMapDirBuild(&serverSim, (char *)argv[mdArg]) == FALSE) {
 #ifdef USING_SDL
       SDL_Quit();

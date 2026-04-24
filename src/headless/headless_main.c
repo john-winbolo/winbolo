@@ -50,6 +50,10 @@
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
 #endif
 
 #include <SDL3/SDL.h>
@@ -1468,6 +1472,7 @@ static int runNetworkMode(void) {
 int main(int argc, char *argv[]) {
   int result;
 
+  srand((unsigned int)(time(NULL) ^ getpid()));
   sentryInit("WinBoloHeadless", argc, argv);
   atexit(sentryClose);
 

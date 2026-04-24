@@ -280,7 +280,6 @@ static void serverSimCbConsoleMessage(void *ctx, char *msg) {
 static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
     BYTE count;
 
-    srand((unsigned int) time(NULL));
     memset(sim, 0, sizeof(ServerSim));
 
     sim->startDelay = startDelay;

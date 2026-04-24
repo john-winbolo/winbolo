@@ -39,7 +39,9 @@
 #include <time.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <process.h>
 #define chdir _chdir
+#define getpid _getpid
 #else
 #include <unistd.h>
 #endif
@@ -203,6 +205,8 @@ static void steamJoinRequested(const char *connect_str) {
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   ClientSim *cs = NULL;
+
+  srand((unsigned int)(time(NULL) ^ getpid()));
 
   for (int i = 1; i < argc; i++) {
     if (cmdLine[0] == '\0') {

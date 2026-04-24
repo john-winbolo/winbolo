@@ -559,7 +559,6 @@ static bool gameFrontDialogs(void) {
   BgGame bg;
   bool hasBg = false;
   {
-    srand((unsigned)time(NULL));
     char mapPath[512];
     if (pickRandomMap(mapPath, sizeof(mapPath))) {
       hasBg = bgGameCreate(&bg, mapPath, sdl3DrawGetRenderer());

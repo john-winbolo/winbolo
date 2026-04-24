@@ -169,6 +169,8 @@ int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
+    srand((unsigned int)(time(NULL) ^ getpid()));
+
     /* Initialize Sentry crash reporting if the user hasn't opted out */
 #ifdef HAVE_SENTRY
     if (iosCrashReportingGetEnabled()) {
