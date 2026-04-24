@@ -709,27 +709,29 @@ static void serverHandlePing(const uint8_t *buf, int len,
 
     clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
 
-    /* Server-measured RTT: the second uint32 from the client is the server
-     * timestamp we sent in the previous PONG, echoed back.  RTT = now - that.
-     * clientTime == 0 means this is an echo-only PING (no PONG reply needed). */
+    /* Only respond to pings from connected clients — otherwise a
+     * disconnected client keeps receiving pongs and never detects
+     * that the server dropped it. */
     {
         uint32_t now = SDL_GetTicks();
         int clientIdx = serverFindClient(fromAddr);
-        if (clientIdx >= 0) {
+        if (clientIdx < 0) return;
+
+        /* Server-measured RTT: the second uint32 from the client is the server
+         * timestamp we sent in the previous PONG, echoed back.  RTT = now - that. */
+        {
             uint32_t echoedServerTime = unpackU32(buf + PACKET_HEADER_SIZE + 4);
             if (echoedServerTime > 0) {
                 udpServer.clients[clientIdx].pingMs = (uint16_t)(now - echoedServerTime);
             }
-            udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
         }
+        udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
 
         /* Echo-only PING (clientTime == 0): server already computed RTT above,
          * don't send a PONG back or it creates an infinite ping-pong loop. */
         if (clientTime == 0) return;
 
-        if (clientIdx >= 0) {
-            udpServer.clients[clientIdx].lastPongSentMs = now;
-        }
+        udpServer.clients[clientIdx].lastPongSentMs = now;
         packHeader(pongBuf, PACKET_PONG, 0);
         packU32(pongBuf + PACKET_HEADER_SIZE, clientTime);
         packU32(pongBuf + PACKET_HEADER_SIZE + 4, now);
