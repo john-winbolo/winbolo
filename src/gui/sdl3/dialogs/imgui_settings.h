@@ -27,6 +27,14 @@ extern "C" {
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
 
+/* Draw the "Graphics" CollapsingHeader (Theme picker + Apply +
+ * Animation style + sprite/rotating-tank preview).  Shared between
+ * the splash dialog and the in-game Settings panel.  Must be called
+ * from inside an ImGui frame; the rotating preview uses the supplied
+ * renderer for SDL_RenderTextureRotated. */
+struct SDL_Renderer;
+void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *renderer);
+
 #ifdef __cplusplus
 }
 #endif

@@ -114,6 +114,209 @@ extern "C" {
 #endif
 }
 
+extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererArg) {
+    SDL_Renderer *renderer = (SDL_Renderer *)rendererArg;
+    if (!ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+
+    /* Theme picker — scan data/theme/* once per dialog open. */
+    static std::vector<std::string> themeDirs;
+    static bool themesScanned = false;
+    if (!themesScanned) {
+        themesScanned = true;
+        themeDirs.push_back("(default)");
+#ifdef _WIN32
+        WIN32_FIND_DATAA findData;
+        HANDLE h = FindFirstFileA("data\\theme\\*", &findData);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                    && strcmp(findData.cFileName, ".") != 0
+                    && strcmp(findData.cFileName, "..") != 0) {
+                    themeDirs.push_back(findData.cFileName);
+                }
+            } while (FindNextFileA(h, &findData));
+            FindClose(h);
+        }
+#else
+        DIR *d = opendir("data/theme");
+        if (d) {
+            struct dirent *de;
+            while ((de = readdir(d))) {
+                if (de->d_name[0] == '.') continue;
+                char path[1024];
+                snprintf(path, sizeof(path), "data/theme/%s", de->d_name);
+                struct stat st;
+                if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                    themeDirs.push_back(de->d_name);
+                }
+            }
+            closedir(d);
+        }
+#endif
+    }
+
+    /* Current selection — match active theme name to list. */
+    const char *currentTheme = tileLoaderGetTheme();
+    int curThemeIdx = 0;
+    for (int i = 0; i < (int)themeDirs.size(); ++i) {
+        if (i == 0 && (!currentTheme || !currentTheme[0])) {
+            curThemeIdx = 0; break;
+        }
+        if (currentTheme && currentTheme[0]
+            && strcmp(themeDirs[i].c_str(), currentTheme) == 0) {
+            curThemeIdx = i; break;
+        }
+    }
+
+    /* Pending preview selection (Apply commits it). */
+    static int s_previewThemeIdx = -1;
+    if (s_previewThemeIdx < 0) s_previewThemeIdx = curThemeIdx;
+    if (s_previewThemeIdx >= (int)themeDirs.size()) s_previewThemeIdx = curThemeIdx;
+
+    ImGui::TextUnformatted("Theme");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::BeginCombo("##theme", themeDirs[s_previewThemeIdx].c_str())) {
+        for (int i = 0; i < (int)themeDirs.size(); ++i) {
+            bool selected = (i == s_previewThemeIdx);
+            bool active = (i == curThemeIdx);
+            char label[256];
+            snprintf(label, sizeof(label), "%s%s",
+                     active ? "* " : "  ", themeDirs[i].c_str());
+            if (ImGui::Selectable(label, selected)) {
+                s_previewThemeIdx = i;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (s_previewThemeIdx != curThemeIdx) {
+        ImGui::SameLine();
+        if (ImGui::Button("Apply##theme")) {
+            if (s_previewThemeIdx == 0) {
+                tileLoaderSetTheme("");
+            } else {
+                tileLoaderSetTheme(themeDirs[s_previewThemeIdx].c_str());
+            }
+            sdl3DrawReloadTiles();
+        }
+    }
+
+    /* Animation style. */
+    const char *animLabels[] = { "Pixel Floor", "Pixel Nearest", "Smooth (sub-pixel)" };
+    int curAnim = (int)gfxSettingsGetAnimStyle();
+    ImGui::TextUnformatted("Animation");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::BeginCombo("##animstyle", animLabels[curAnim])) {
+        for (int i = 0; i < 3; ++i) {
+            bool sel = (i == curAnim);
+            if (ImGui::Selectable(animLabels[i], sel)) {
+                gfxSettingsSetAnimStyle((GfxAnimStyle)i);
+            }
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::TextDisabled(
+        "Floor = classic >>4 (default).  Nearest = round to game pixel.\n"
+        "Smooth = full sub-pixel; only meaningful with SVG themes.");
+
+    /* Theme preview strip + rotating preview. */
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Preview");
+    SDL_Texture *atlas = sdl3DrawGetTilesTex();
+    if (!atlas) {
+        ImGui::TextDisabled("(atlas not loaded yet)");
+        return;
+    }
+    float texW = 0.0f, texH = 0.0f;
+    SDL_GetTextureSize(atlas, &texW, &texH);
+    if (texW <= 0.0f || texH <= 0.0f) return;
+
+    struct { const char *label; int x, y, w, h; } previews[] = {
+        { "Self",   400, 32, 16, 16 },
+        { "Good",   464, 32, 16, 16 },
+        { "Evil",   336, 48, 16, 16 },
+        { "Boat",    64,  0, 16, 16 },
+        { "Shell",  452, 72,  3,  4 },
+        { "LGM",    431, 90,  3,  4 },
+    };
+    int previewPx = 32;
+    for (size_t i = 0; i < sizeof(previews)/sizeof(previews[0]); ++i) {
+        if (i > 0) ImGui::SameLine();
+        ImGui::BeginGroup();
+        float scaleX = texW / 496.0f;
+        float scaleY = texH / 176.0f;
+        ImVec2 uv0((previews[i].x * scaleX) / texW,
+                   (previews[i].y * scaleY) / texH);
+        ImVec2 uv1(((previews[i].x + previews[i].w) * scaleX) / texW,
+                   ((previews[i].y + previews[i].h) * scaleY) / texH);
+        ImGui::Image((ImTextureID)(intptr_t)atlas,
+                     ImVec2((float)previewPx, (float)previewPx),
+                     uv0, uv1);
+        ImGui::TextUnformatted(previews[i].label);
+        ImGui::EndGroup();
+    }
+
+    /* Rotating tank preview — needs renderer for SDL_RenderTextureRotated. */
+    if (!renderer) return;
+    static SDL_Texture *previewTarget = nullptr;
+    static double rotPreview = 0.0;
+    static Uint64 rotLastMs = 0;
+    const int previewSize = 96;
+    if (!previewTarget) {
+        previewTarget = SDL_CreateTexture(renderer,
+            SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET,
+            previewSize, previewSize);
+        if (previewTarget) {
+            SDL_SetTextureBlendMode(previewTarget, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(previewTarget, SDL_SCALEMODE_NEAREST);
+        }
+    }
+    if (previewTarget) {
+        Uint64 nowMs = SDL_GetTicks();
+        if (rotLastMs > 0) {
+            double dtSec = (double)(nowMs - rotLastMs) / 1000.0;
+            rotPreview += dtSec * 45.0;
+            if (rotPreview >= 360.0) rotPreview -= 360.0;
+        }
+        rotLastMs = nowMs;
+        SDL_Texture *prevTarget = SDL_GetRenderTarget(renderer);
+        SDL_SetRenderTarget(renderer, previewTarget);
+        SDL_SetRenderDrawColor(renderer, 30, 30, 36, 255);
+        SDL_RenderClear(renderer);
+        float ascaleX = texW / 496.0f;
+        float ascaleY = texH / 176.0f;
+        SDL_FRect srcR = { 400.0f * ascaleX, 32.0f * ascaleY,
+                           16.0f * ascaleX, 16.0f * ascaleY };
+        float dstSize = (float)previewSize * 0.7f;
+        SDL_FRect dstR = {
+            ((float)previewSize - dstSize) * 0.5f,
+            ((float)previewSize - dstSize) * 0.5f,
+            dstSize, dstSize
+        };
+        SDL_FPoint pivot = { dstSize * 0.5f, dstSize * 0.5f };
+        SDL_RenderTextureRotated(renderer, atlas, &srcR, &dstR,
+                                 rotPreview, &pivot, SDL_FLIP_NONE);
+        SDL_SetRenderTarget(renderer, prevTarget);
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Rotating preview:");
+        ImGui::Image((ImTextureID)(intptr_t)previewTarget,
+                     ImVec2((float)previewSize, (float)previewSize));
+        ImGui::SameLine();
+        ImGui::TextDisabled(
+            "Live preview of TANK_SELF_0 from the\n"
+            "active theme, rotated continuously.\n"
+            "With stock_svg_ingamerotate this is\n"
+            "what every facing direction will look\n"
+            "like in-game.");
+    }
+}
+
 extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -354,6 +557,8 @@ extern "C" void imguiSettingsShow(void) {
         }
 
         /* ---- Graphics ---- */
+        imguiSettingsDrawGraphicsSection(renderer);
+#if 0  /* moved into imguiSettingsDrawGraphicsSection() */
         if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
             /* Theme picker — scan data/theme/* once per dialog open. */
             static std::vector<std::string> themeDirs;
@@ -572,6 +777,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::TextDisabled("(atlas not loaded yet)");
             }
         }
+#endif /* moved into imguiSettingsDrawGraphicsSection() */
 
         /* ---- Tutorial ---- */
         if (ImGui::CollapsingHeader("Tutorial", ImGuiTreeNodeFlags_DefaultOpen)) {

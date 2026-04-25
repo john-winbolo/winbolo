@@ -201,6 +201,7 @@ extern "C" bool showNetworkDebugMessages;
 
 /* Device presets are defined in imgui_dialog_utils.h (shared with dialogs) */
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_settings.h"
 
 /* -------------------------------------------------------
  * Module state
@@ -1716,6 +1717,9 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
     }
+
+    /* ---- Graphics ---- */
+    imguiSettingsDrawGraphicsSection(s_renderer);
 
     /* ---- Game ---- */
     if (ImGui::CollapsingHeader("Game")) {
