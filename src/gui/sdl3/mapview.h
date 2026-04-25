@@ -59,7 +59,13 @@ void mapViewInit(void);
  * the same originX/Y/edgeX/Y/tileW/tileH the sprite renders use. */
 /* Forward decl: GameSim is the typedef'd struct in game_sim.h. */
 struct GameSim;
+/* xOffset/yOffset are the engine's camera tile origin (cs->xOffset/Y).
+ * Sim positions are world coords; the classic edgeX/Y is buffer-relative
+ * (camera offset is implicit in the pre-built screen buffers), so we
+ * have to subtract the camera tile origin to land at the same screen
+ * position as the classic path. */
 void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                              int xOffset, int yOffset,
                               int originX, int originY,
                               int tileW, int tileH,
                               int edgeX, int edgeY);
@@ -69,6 +75,7 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
  * with the (1.5, 2.0) game-pixel body anchor.  Called after
  * mapViewDrawLGMs when Animation Style is Smooth. */
 void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                            int xOffset, int yOffset,
                             int originX, int originY,
                             int tileW, int tileH,
                             int edgeX, int edgeY);

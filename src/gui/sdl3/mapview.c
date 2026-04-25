@@ -550,6 +550,7 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
  * frames (those still come from screenBullets).
  *********************************************************/
 void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                              int xOffset, int yOffset,
                               int originX, int originY,
                               int tileW, int tileH,
                               int edgeX, int edgeY) {
@@ -597,14 +598,16 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
       default: q = q->next; continue;
     }
 
-    /* World-pixel coords as float (no >>4 floor). */
-    float wpx = (float)q->x / 16.0f;
-    float wpy = (float)q->y / 16.0f;
+    /* World-pixel coords as float (no >>4 floor), converted to
+     * buffer-relative by subtracting the engine's camera tile origin
+     * — same convention the classic path uses with mx,px. */
+    float wpx = (float)q->x / 16.0f - (float)xOffset * (float)TILE_SIZE_X;
+    float wpy = (float)q->y / 16.0f - (float)yOffset * (float)TILE_SIZE_Y;
 
     /* Same screen-coord convention mapViewDrawShells uses:
      *   sx = originX - tileW + bbx*zf - edgeX
-     * where bbx is in game pixels.  We have wpx in game pixels
-     * directly (sub-pixel float). */
+     * where bbx is in game pixels.  wpx is now buffer-relative game
+     * pixels at sub-pixel float precision. */
     float sx = (float)originX - (float)tileW
              + wpx * (float)zf - (float)edgeX;
     float sy = (float)originY - (float)tileH
@@ -848,6 +851,7 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
  * mapViewDrawLGMsFromSim — sub-wu LGM render direct from sim.
  *********************************************************/
 void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                            int xOffset, int yOffset,
                             int originX, int originY,
                             int tileW, int tileH,
                             int edgeX, int edgeY) {
@@ -867,9 +871,11 @@ void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
       default: continue;
     }
 
-    /* World-pixel coords as float, with (1.5, 2.0) body anchor. */
-    float wpx = (float)(*l)->x / 16.0f;
-    float wpy = (float)(*l)->y / 16.0f;
+    /* World-pixel coords as float, with (1.5, 2.0) body anchor.
+     * Subtract the camera tile origin so this matches the classic
+     * path's buffer-relative convention. */
+    float wpx = (float)(*l)->x / 16.0f - (float)xOffset * (float)TILE_SIZE_X;
+    float wpy = (float)(*l)->y / 16.0f - (float)yOffset * (float)TILE_SIZE_Y;
     float sx = (float)originX - (float)tileW
              + wpx * (float)zf - (float)edgeX
              - 1.5f * (float)zf;

@@ -1554,6 +1554,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
        * the screenBullet's already-floored mx/my. */
       if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH && cs) {
         mapViewDrawShellsFromSim(&mvCtx, &cs->sim,
+                                 (int)cs->xOffset, (int)cs->yOffset,
                                  originX, originY, tileW, tileH, edgeX, edgeY);
       }
       /* Push live per-tank angles to mapview so the ingamerotate
@@ -1566,6 +1567,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
       if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH && cs) {
         mapViewDrawLGMsFromSim(&mvCtx, &cs->sim,
+                               (int)cs->xOffset, (int)cs->yOffset,
                                originX, originY, tileW, tileH, edgeX, edgeY);
       }
 
