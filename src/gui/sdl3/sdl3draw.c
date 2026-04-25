@@ -1329,10 +1329,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   int savedZoomFactor = gZoomFactor;
   if (tabletMode) {
     gZoomFactor = effectiveZoom;
-    /* Apply drag scroll pixel offset for smooth sub-tile scrolling */
-    edgeX += gDragOffsetX;
-    edgeY += gDragOffsetY;
   }
+  /* Apply scroll pixel offset for smooth sub-tile scrolling.
+     Source is touch drag in tablet mode, or arrow-key smooth scroll
+     on desktop.  Value is 0 when neither is active. */
+  edgeX += gDragOffsetX;
+  edgeY += gDragOffsetY;
 
   if (sdl3LoadTiles()) {
     int tileW  = TILE_SIZE_X * gZoomFactor;

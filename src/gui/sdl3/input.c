@@ -30,11 +30,23 @@
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../gamefront.h"
+#include "../tiles.h"
 #include "input.h"
 #include "input_touch.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
 #include "../ui_mode.h"
+
+extern bool smoothScrollingEnabled;
+
+/* Smooth-scroll speed: game pixels advanced per scroll tick.
+   Tile = 16 game pixels.  Adjust to taste. */
+static int smoothScrollSpeedPx = 4;
+
+/* Sub-tile pixel accumulators for smooth scrolling (in zoomed pixels,
+   matching gDragOffsetX/Y units). */
+static int smoothScrollAccumX = 0;
+static int smoothScrollAccumY = 0;
 
 static BYTE scrollKeyCount = 0;
 
@@ -85,7 +97,61 @@ static bool keyDown(int sc) {
 *********************************************************/
 bool inputSetup(void) {
   scrollKeyCount = 0;
+  smoothScrollAccumX = 0;
+  smoothScrollAccumY = 0;
   return TRUE;
+}
+
+/*********************************************************
+*NAME:          smoothScrollTick
+*PURPOSE:
+*  Smooth (pixel-level) arrow-key scrolling.  Advances a
+*  sub-tile pixel accumulator each call; commits full-tile
+*  crossings to the engine via screenUpdateCS and pushes
+*  the remainder to sdl3DrawSetDragOffset for sub-tile
+*  rendering.
+*
+*  When no scroll key is held, snaps the accumulator to
+*  the nearest tile boundary so the view comes to rest
+*  cleanly.
+*********************************************************/
+static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
+  int dx = 0, dy = 0;
+  if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
+  if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
+  if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
+  if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
+
+  int zoom = sdl3DrawGetZoomFactor();
+  if (zoom < 1) zoom = 1;
+  int tileW = TILE_SIZE_X * zoom;
+  int tileH = TILE_SIZE_Y * zoom;
+  int stepZoomed = smoothScrollSpeedPx * zoom;
+  if (stepZoomed < 1) stepZoomed = 1;
+
+  /* No direction held: snap to nearest tile boundary. */
+  if (dx == 0 && dy == 0) {
+    if (smoothScrollAccumX != 0 || smoothScrollAccumY != 0) {
+      if (smoothScrollAccumX >  tileW / 2) screenUpdateCS(cs, right);
+      if (smoothScrollAccumX < -tileW / 2) screenUpdateCS(cs, left);
+      if (smoothScrollAccumY >  tileH / 2) screenUpdateCS(cs, down);
+      if (smoothScrollAccumY < -tileH / 2) screenUpdateCS(cs, up);
+      smoothScrollAccumX = 0;
+      smoothScrollAccumY = 0;
+      sdl3DrawSetDragOffset(0, 0);
+    }
+    return;
+  }
+
+  smoothScrollAccumX += dx * stepZoomed;
+  smoothScrollAccumY += dy * stepZoomed;
+
+  while (smoothScrollAccumX >= tileW)  { screenUpdateCS(cs, right); smoothScrollAccumX -= tileW; }
+  while (smoothScrollAccumX <= -tileW) { screenUpdateCS(cs, left);  smoothScrollAccumX += tileW; }
+  while (smoothScrollAccumY >= tileH)  { screenUpdateCS(cs, down);  smoothScrollAccumY -= tileH; }
+  while (smoothScrollAccumY <= -tileH) { screenUpdateCS(cs, up);    smoothScrollAccumY += tileH; }
+
+  sdl3DrawSetDragOffset(smoothScrollAccumX, smoothScrollAccumY);
 }
 
 /*********************************************************
@@ -179,13 +245,20 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     }
   }
 
-  scrollKeyCount++;
-  if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
-    scrollKeyCount = 0;
-    if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up); }
-    if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down); }
-    if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left); }
-    if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); }
+  if (smoothScrollingEnabled) {
+    smoothScrollTick(cs, setKeys);
+  } else {
+    /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
+    smoothScrollAccumX = 0;
+    smoothScrollAccumY = 0;
+    scrollKeyCount++;
+    if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
+      scrollKeyCount = 0;
+      if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up); }
+      if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down); }
+      if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left); }
+      if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); }
+    }
   }
 
   gunsightKeyCount++;
@@ -218,6 +291,14 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     return;
   }
 
+  if (smoothScrollingEnabled) {
+    smoothScrollTick(cs, setKeys);
+    return;
+  }
+
+  /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
+  smoothScrollAccumX = 0;
+  smoothScrollAccumY = 0;
   scrollKeyCount++;
   if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
     scrollKeyCount = 0;
