@@ -113,6 +113,11 @@ Phase 8: LGM 1-wu boundary stop  — DONE (commit 9fa0b45)
          (same for X).  Pairs with the +25 LGM compensation removal.
 
 ==========================================================
+LATEST (since previous push):
+  90cc469  Override mode: arrow-key world pan
+  428289c  Themes: Apply button + 256-bolo-degree shell rotation
+  8ddbcc7  Tanks: 256-bolo-degree rotation in ingamerotate
+==========================================================
 PUSHED TO origin/andrew-hitbox-and-themes — ten commits
 ==========================================================
 
