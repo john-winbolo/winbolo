@@ -489,6 +489,65 @@ extern "C" void imguiSettingsShow(void) {
                         ImGui::TextUnformatted(previews[i].label);
                         ImGui::EndGroup();
                     }
+
+                    /* ---- Rotating tank preview (ingamerotate-style) ----
+                     * Render the N-facing TANK_SELF_0 sprite onto a small
+                     * SDL_Texture target each frame, with rotation, and
+                     * display via ImGui::Image. */
+                    static SDL_Texture *previewTarget = nullptr;
+                    static double rotPreview = 0.0;
+                    static Uint64 rotLastMs = 0;
+                    const int previewSize = 96;
+                    if (!previewTarget) {
+                        previewTarget = SDL_CreateTexture(renderer,
+                            SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET,
+                            previewSize, previewSize);
+                        if (previewTarget) {
+                            SDL_SetTextureBlendMode(previewTarget, SDL_BLENDMODE_BLEND);
+                            SDL_SetTextureScaleMode(previewTarget, SDL_SCALEMODE_NEAREST);
+                        }
+                    }
+                    if (previewTarget) {
+                        Uint64 nowMs = SDL_GetTicks();
+                        if (rotLastMs > 0) {
+                            double dtSec = (double)(nowMs - rotLastMs) / 1000.0;
+                            rotPreview += dtSec * 45.0;  /* 45 deg/sec */
+                            if (rotPreview >= 360.0) rotPreview -= 360.0;
+                        }
+                        rotLastMs = nowMs;
+                        SDL_Texture *prevTarget = SDL_GetRenderTarget(renderer);
+                        SDL_SetRenderTarget(renderer, previewTarget);
+                        SDL_SetRenderDrawColor(renderer, 30, 30, 36, 255);
+                        SDL_RenderClear(renderer);
+                        /* Source: TANK_SELF_0 atlas region. */
+                        float ascaleX = texW / 496.0f;
+                        float ascaleY = texH / 176.0f;
+                        SDL_FRect srcR = { 400.0f * ascaleX, 32.0f * ascaleY,
+                                           16.0f * ascaleX, 16.0f * ascaleY };
+                        /* Destination: centred in target. */
+                        float dstSize = (float)previewSize * 0.7f;
+                        SDL_FRect dstR = {
+                            ((float)previewSize - dstSize) * 0.5f,
+                            ((float)previewSize - dstSize) * 0.5f,
+                            dstSize, dstSize
+                        };
+                        SDL_FPoint pivot = { dstSize * 0.5f, dstSize * 0.5f };
+                        SDL_RenderTextureRotated(renderer, atlas, &srcR, &dstR,
+                                                 rotPreview, &pivot, SDL_FLIP_NONE);
+                        SDL_SetRenderTarget(renderer, prevTarget);
+
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("Rotating preview:");
+                        ImGui::Image((ImTextureID)(intptr_t)previewTarget,
+                                     ImVec2((float)previewSize, (float)previewSize));
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(
+                            "Live preview of TANK_SELF_0 from the\n"
+                            "active theme, rotated continuously.\n"
+                            "With stock_svg_ingamerotate this is\n"
+                            "what every facing direction will look\n"
+                            "like in-game.");
+                    }
                 }
             } else {
                 ImGui::TextDisabled("(atlas not loaded yet)");
