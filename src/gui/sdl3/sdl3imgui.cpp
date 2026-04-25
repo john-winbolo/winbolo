@@ -70,6 +70,7 @@ extern "C" {
 extern "C" {
 #include "input.h"
 #include "input_touch.h"
+#include "override_mode.h"
 #include "../ui_mode.h"
 }
 
@@ -2547,6 +2548,14 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             keyItems ki;
             windowGetKeys(&ki);
             inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
+        }
+
+        /* Ctrl-O toggles hitbox debug overlay (override mode). */
+        if (ev.type == SDL_EVENT_KEY_DOWN
+            && ev.key.key == SDLK_O
+            && (ev.key.mod & SDL_KMOD_CTRL)) {
+            overrideModeToggle();
+            continue;
         }
 
         /* While the Key Setup modal is open, swallow all mouse + keyboard events

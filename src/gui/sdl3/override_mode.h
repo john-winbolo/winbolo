@@ -1,0 +1,54 @@
+/*
+ * override_mode — Ctrl-O hitbox debug overlay state
+ *
+ * Toggled with Ctrl-O.  When active, overlay_drawAfterWorld() draws
+ * hitbox outlines (yellow ±128 wu for tanks, 1 tile for pills/bases)
+ * and sub-pixel orange dots at each shell's and LGM's authoritative
+ * (q->x, q->y) position over the rendered world view.
+ *
+ * Rendering otherwise stays on the classic mapViewDrawShells/Tanks/
+ * LGMs path so what you see is exactly the game client's render.
+ *
+ * TODO: free camera, scroll-wheel zoom up to 6x, world-grid overlay,
+ * Ctrl-[ / Ctrl-] speed control.  Tracked in progress.txt.
+ */
+
+#ifndef OVERRIDE_MODE_H
+#define OVERRIDE_MODE_H
+
+#include <stdbool.h>
+#include <SDL3/SDL.h>
+
+struct gameSim;     /* forward */
+struct ClientSim;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Toggle override mode on/off. Bound to Ctrl-O in the SDL event loop. */
+void overrideModeToggle(void);
+
+/* Returns true iff override mode is currently on. */
+bool overrideModeIsOn(void);
+
+/* Draw hitbox/sub-pixel overlays for the world view. Called from
+ * sdl3draw.c after mapViewDrawLGMs.  No-op when override mode is off.
+ *
+ * camera/origin params match the same conventions sdl3draw.c already
+ * passes to mapViewDrawShells: originX/Y is world view top-left in
+ * screen coords, tileW/tileH are screen pixels per tile, edgeX/Y is
+ * the sub-tile camera offset, zoomFactor is the global gZoomFactor.
+ */
+void overrideModeDrawOverlays(SDL_Renderer *renderer,
+                              struct ClientSim *cs,
+                              int originX, int originY,
+                              int tileW, int tileH,
+                              int edgeX, int edgeY,
+                              int zoomFactor);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* OVERRIDE_MODE_H */

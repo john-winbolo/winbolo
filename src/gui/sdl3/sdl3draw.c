@@ -45,6 +45,7 @@
 #include "sdl3imgui.h"
 #include "cursor.h"
 #include "mapview.h"
+#include "override_mode.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -1480,6 +1481,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Ctrl-O override mode: draw hitbox/sub-pixel overlays on top of
+       * the world view.  No-op when off. */
+      overrideModeDrawOverlays(gRenderer, cs,
+                               originX, originY, tileW, tileH,
+                               edgeX, edgeY, gZoomFactor);
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isPillView) {
