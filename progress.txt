@@ -1,0 +1,112 @@
+andrew-hitbox-and-themes — progress log
+========================================
+
+Started from origin/main (dbc84b2). Goal: hitbox debug override mode +
+SVG theme system. Source of sub-pixel work: optimize-performance-andrew-no-overrides.
+
+DECISIONS
+---------
+
+- Took next_dev.txt as the task list, broke it into phases below.
+- "Sub-pixel fixes for shells, LGMs, and tanks" — the source branch
+  has shell-tip and LGM-anchor changes but NO specific tank sub-pixel
+  changes. Tank sprite rendering is unchanged in the source branch.
+  Will mention this and bring forward only what actually exists.
+- Decided to do all sub-pixel cherry-picks as a single commit per the
+  user's "single commit OK" guidance.
+- For Ctrl-O override mode: keep the classic game render path
+  untouched (per the user's explicit requirement). Override mode only
+  changes camera (free-pan + scroll-wheel zoom) and adds overlays —
+  the sprites/world keep using `screenBullets`/`mapViewDrawShells`
+  etc.
+
+PHASES
+------
+
+Phase 1: setup
+  [x] new branch andrew-hitbox-and-themes from origin/main
+  [x] progress.txt
+
+Phase 2: cherry-pick sub-pixel fixes from optimize-performance-andrew-no-overrides
+  [x] mapview.c kTipCol/kTipRow float tables on BOTH render paths
+      (mapViewDrawShells + mapViewRenderCentered)
+  [x] mapview.c LGM anchor (1.5, 2.0) on mapViewDrawLGMs +
+      mapViewRenderCentered LGM block
+  [-] brain_overlay.h OVERLAY_CMD_RECT_FILL_SUBPIXEL — SKIPPED
+      (only useful with Lua-side LGM viz which we're doing C-side
+      in override mode instead)
+  [-] braincore.c overlay_rect subpixel arg — SKIPPED (same reason)
+  [n/a] brains/NewAutopilot/*.lua +25 removal — current main has
+      no +25 in those spots; nothing to do
+  [-] brains/NewAutopilot/init.lua LGM viz block — SKIPPED
+      (handled C-side in override mode instead)
+  [x] goals.lua filter_capture_pill broadening (any-owner dead pill
+      capturable)
+  [x] WinBolo build verified after cmake regen
+  [x] Commit done
+
+Phase 3: new fix not in branch
+  [ ] LGM-harvest tile centering: when LGM dispatches to harvest a
+      forest tile, target the tile center exactly (currently may be
+      off-center)
+
+Phase 4: Ctrl-O override mode (WinBolo.exe)
+  [ ] Add `overrideMode` global state
+  [ ] Ctrl-O toggle wired
+  [ ] Free-camera scrolling (arrows)
+  [ ] Mouse-wheel zoom in/out (1x..6x)
+  [ ] Grid overlay over the world: every game pixel (16x16 inside a
+      tile) gets a thin gridline; every 4 game pixels gets a slightly
+      thicker line; every tile gets the thickest divider
+  [ ] Yellow ±128 wu hitbox outline for own tank
+  [ ] Yellow hitbox outlines for other tanks, pillboxes, bases
+      (need to figure out actual hit-test radii for each)
+  [ ] Sub-pixel orange dot at each shell's exact (x, y)
+  [ ] Sub-pixel orange dot at each LGM's exact (x, y)
+  [ ] Toggle off restores tank-locked camera + normal scroll/zoom
+
+Phase 5: speed control
+  [ ] Ctrl-[ and Ctrl-] for slower/faster (cap at normal speed)
+
+Phase 6: SVG themes
+  [ ] tools/png_to_svg_pixelwise.py: each pixel = one rect SVG element
+  [ ] tools/png_to_svg_grouped.py: merge same-color neighbors
+  [ ] tools/png_to_svg_rotate.py: only N-facing variants for tanks/shells
+  [ ] generate stock_svg/, stock_svg_pixelgrouped/, stock_svg_ingamerotate/
+  [ ] tileLoaderBuildSheet: prefer data/theme/<active>/<name>.svg
+      over data/svg/<name>.svg; fall back if missing
+  [ ] In-game rotation in mapview.c for ingamerotate themes:
+      detect "no shell_NN.png exists, only shell_00", rotate the 00 by
+      angle * 360/256 degrees around centre
+
+Phase 7: graphics settings UI
+  [ ] Settings dialog: animation style (Pixel Floor / Pixel Nearest /
+      Smooth)
+  [ ] Theme picker with rotating-tank preview, Apply button
+
+Phase 8: LGM 1-wu boundary stop
+  [ ] LGM cannot enter walls/enemy pills/water — add 1 wu margin so
+      LGM stops 1 wu short of solid tile boundary
+  [ ] Brain-side: still report correct tile (no compensation needed)
+
+NOTES & GOTCHAS
+---------------
+
+- AimTest tool from andrew-aim-test-old is NOT in main; reference
+  only.
+- The classic WinBolo render path uses screenBullets/screenStartXY
+  (not mapViewRenderCentered which is BrainTest). Override mode
+  must not break the classic path.
+- The HUD layout is computed from the global `zoomFactor` (BYTE,
+  values 1-4 + CUSTOM=0). Override-mode zoom up to 6x can't just bump
+  that BYTE — would scale the HUD too. Need a separate
+  worldZoomMultiplier or render-target redirect for the world view.
+- tankIsTankHit uses |dx|, |dy| < 128 — that's the shell→tank hitbox.
+  Pillbox/base hit logic is tile-based (pillsIsPillHit checks the
+  shell's tile equals pill tile). So for the override yellow-box
+  overlay:
+    * Tanks: ±128 wu square
+    * Pills/Bases: 1 tile (256 wu) square at the entity tile
+- LGM viz from the source branch is in init.lua. For override mode
+  the user wants this in C (HUD-independent, works regardless of
+  bot brain). Plan to draw it C-side in WinBolo.exe's render path.

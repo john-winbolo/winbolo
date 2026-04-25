@@ -1009,7 +1009,19 @@ local function filter_capture_base(obj, state)
 end
 
 local function filter_capture_pill(obj, state)
-  if not (obj.owner == "neutral" and obj.health == 0) then return false end
+  -- Health == 0 + on the ground = capturable. Owner can be:
+  --   neutral  : freshly placed / never owned
+  --   friendly : an ally died carrying it (still claims it but worth 0)
+  --   hostile  : an enemy died carrying it (tank.c:1920 sets armour=0,
+  --              owner=dead-player). Without this branch the pill would
+  --              be invisible to capture_pill (only picks neutral) and
+  --              to attack_pill (requires health > 0), and so just sit
+  --              on the map ignored.
+  if not (obj.health == 0
+          and (obj.owner == "neutral" or obj.owner == "friendly"
+               or obj.owner == "hostile")) then return false end
+  -- Skip pills already in someone's tank — picked up, mx/my is stale.
+  if obj.in_tank then return false end
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end

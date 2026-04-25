@@ -501,21 +501,29 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      static const int8_t kTipCol[16] = {
-        1, 2, 3, 3,   /* N   NNE  NE   ENE  */
-        3, 3, 3, 2,   /* E   ESE  SE   SSE  */
-        1, 0, 0, 0,   /* S   SSW  SW   WSW  */
-        0, 0, 0, 0    /* W   WNW  NW   NNW  */
+      /* Sub-pixel tip anchors (game-pixel units inside the sprite).
+       * Floats so the tip can land between game pixels.  Layout:
+       *   - cardinals (N/E/S/W) at the centre of the sprite edge
+       *     opposite the tail
+       *   - true diagonals (NE/SE/SW/NW) at the outermost tip-pixel
+       *     corner (explicit overrides)
+       *   - in-betweens at cardinal ± sin(22.5°) on the perpendicular
+       *     axis. sin(22.5°) ≈ 0.38268, written here as 1.117 / 1.883. */
+      static const float kTipCol[16] = {
+        1.5f,    1.883f,  4.0f, 4.0f,  /* N   NNE  NE   ENE  */
+        4.0f,    4.0f,    4.0f, 1.883f,/* E   ESE  SE   SSE  */
+        1.5f,    1.117f,  0.0f, 0.0f,  /* S   SSW  SW   WSW  */
+        0.0f,    0.0f,    0.0f, 1.117f /* W   WNW  NW   NNW  */
       };
-      static const int8_t kTipRow[16] = {
-        0, 0, 0, 0,   /* N   NNE  NE   ENE  */
-        1, 2, 3, 3,   /* E   ESE  SE   SSE  */
-        3, 3, 2, 2,   /* S   SSW  SW   WSW  */
-        1, 0, 0, 0    /* W   WNW  NW   NNW  */
+      static const float kTipRow[16] = {
+        0.0f,    0.0f,    0.0f, 1.117f,/* N   NNE  NE   ENE  */
+        1.5f,    1.883f,  4.0f, 4.0f,  /* E   ESE  SE   SSE  */
+        4.0f,    4.0f,    3.0f, 1.883f,/* S   SSW  SW   WSW  */
+        1.5f,    1.117f,  0.0f, 0.0f   /* W   WNW  NW   NNW  */
       };
       int dir = frame - SHELL_DIR0;
-      sx -= (float)(kTipCol[dir] * ctx->zoomFactor);
-      sy -= (float)(kTipRow[dir] * ctx->zoomFactor);
+      sx -= kTipCol[dir] * (float)ctx->zoomFactor;
+      sy -= kTipRow[dir] * (float)ctx->zoomFactor;
     }
 
     int ss = ctx->sheetScale;
@@ -690,6 +698,16 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     int bby = (int)my * TILE_SIZE_Y + (int)py;
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+
+    /* LGM body anchor: shift the sprite up-left so its (1.5, 2.0)
+     * game-pixel anchor lands on the screen-bullets coord (which is
+     * the sim's lgman->x/y).  Without this the sprite top-left lands
+     * on the body coord, which puts the head 2 pixels north of where
+     * the engine actually thinks the LGM is. */
+    if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
+      sx -= 1.5f * (float)ctx->zoomFactor;
+      sy -= 2.0f * (float)ctx->zoomFactor;
+    }
 
     {
       int ss = ctx->sheetScale;
@@ -1035,8 +1053,23 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
           default: goto next_shell;
         }
 
-        float sx = (float)((spx - camMX * tileSize) * zf - edgeX + originX - (srcW * zf) / 2);
-        float sy = (float)((spy - camMY * tileSize) * zf - edgeY + originY - (srcH * zf) / 2);
+        /* Shell tip anchors — must match mapViewDrawShells. */
+        static const float kTipCol[16] = {
+          1.5f,    1.883f,  4.0f, 4.0f,  /* N   NNE  NE   ENE  */
+          4.0f,    4.0f,    4.0f, 1.883f,/* E   ESE  SE   SSE  */
+          1.5f,    1.117f,  0.0f, 0.0f,  /* S   SSW  SW   WSW  */
+          0.0f,    0.0f,    0.0f, 1.117f /* W   WNW  NW   NNW  */
+        };
+        static const float kTipRow[16] = {
+          0.0f,    0.0f,    0.0f, 1.117f,/* N   NNE  NE   ENE  */
+          1.5f,    1.883f,  4.0f, 4.0f,  /* E   ESE  SE   SSE  */
+          4.0f,    4.0f,    3.0f, 1.883f,/* S   SSW  SW   WSW  */
+          1.5f,    1.117f,  0.0f, 0.0f   /* W   WNW  NW   NNW  */
+        };
+        float sx = (float)((spx - camMX * tileSize) * zf - edgeX + originX)
+                   - kTipCol[dir] * (float)zf;
+        float sy = (float)((spy - camMY * tileSize) * zf - edgeY + originY)
+                   - kTipRow[dir] * (float)zf;
 
         /* Cull off-screen */
         if (sx + srcW * zf >= originX && sx <= originX + viewW &&
@@ -1097,8 +1130,12 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
     int lpx = ((int)(*l)->x * tileSize) >> 8;
     int lpy = ((int)(*l)->y * tileSize) >> 8;
-    float lx = (float)((lpx - camMX * tileSize) * zf - edgeX + originX);
-    float ly = (float)((lpy - camMY * tileSize) * zf - edgeY + originY);
+    /* LGM body anchor: place the sprite-local (1.5, 2.0) game-pixel
+     * point on the LGM's authoritative (l->x, l->y). */
+    float lx = (float)((lpx - camMX * tileSize) * zf - edgeX + originX)
+               - 1.5f * (float)zf;
+    float ly = (float)((lpy - camMY * tileSize) * zf - edgeY + originY)
+               - 2.0f * (float)zf;
 
     int srcX, srcY, srcW, srcH;
     switch ((*l)->frame) {
