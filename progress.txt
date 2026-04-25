@@ -89,10 +89,129 @@ Phase 7: graphics settings UI
       Smooth)
   [ ] Theme picker with rotating-tank preview, Apply button
 
-Phase 8: LGM 1-wu boundary stop
+Phase 8: LGM 1-wu boundary stop  — NOT STARTED
   [ ] LGM cannot enter walls/enemy pills/water — add 1 wu margin so
       LGM stops 1 wu short of solid tile boundary
   [ ] Brain-side: still report correct tile (no compensation needed)
+  Notes: lgm.c lines ~720-745.  Currently if mapGetManSpeed returns 0
+  for the target tile, the LGM doesn't move at all (newbmy = bmy).
+  To stop "1 wu short" requires moving up to the tile boundary minus
+  1 wu instead of staying put.  Per-axis logic:
+    if newbmx differs from bmx and target tile is blocking:
+      boundary_wu = (xAdd > 0 ? bmx + 1 : bmx) << 8
+      stop_at = (xAdd > 0 ? boundary_wu - 1 : boundary_wu)
+      lgman->x = stop_at
+  Risky game-logic change; deferred for the user to review/test.
+
+==========================================================
+PUSHED TO origin/andrew-hitbox-and-themes — three commits
+==========================================================
+
+  ea3fb13  Sub-pixel shell tips, LGM body anchor, broaden capture_pill
+  f7bd1dc  WinBolo: Ctrl-O hitbox overlay mode (toggle + draw)
+  d67e613  Override mode: world grid + Ctrl-[/Ctrl-] speed control
+
+What you can test right now in WinBolo.exe (build/WinBolo.exe):
+
+  Ctrl-O                    toggle override-mode hitbox overlays
+                            (yellow boxes for tanks/pills/bases,
+                             orange dots at shell+LGM auth positions,
+                             16/4/1 game-pixel grid)
+  Ctrl-[                    slow game speed by 10 ms/frame
+                            (caps at +200ms extra delay)
+  Ctrl-]                    speed up by 10 ms (caps at normal)
+  Off-toggle resets speed.
+
+What's still TODO (in priority-ish order):
+
+1. FREE CAMERA + 6x ZOOM (next_dev.txt phase 4 — partially done)
+   - Currently override mode shows overlays on the *existing* game
+     viewport (camera locked to player tank, zoom = global zoomFactor).
+   - To allow arrow-pan and mouse-wheel zoom up to 6x, need to:
+     * decouple world-render zoom from gZoomFactor (HUD uses
+       gZoomFactor, world view uses overrideZoom or
+       gZoomFactor * worldZoomMultiplier)
+     * intercept screenStartXY (the camera-center fn) when override
+       is on, returning overrideCameraX/Y instead of player-tank-
+       centered
+     * add scroll-wheel handler in sdl3imgui.cpp
+     * widen the tile-iteration bounds in screen_draw so 6x doesn't
+       try to render only 1.3 tiles wide
+   - 10-20 touchpoints in screen.c, draw.c, sdl3draw.c.
+
+2. SVG THEME SYSTEM (next_dev.txt phase 6, 7) — NOT STARTED
+   Three Python scripts to write (probably tools/png_to_svg_*.py):
+   - pixelwise: each opaque pixel = one <rect> in the SVG
+   - pixelgrouped: flood-fill same-color neighbors → one <path> per
+     region
+   - rotate: only the N-facing variant for tanks/boats/shells
+     (we have shell_00..shell_15.png; for ingamerotate just generate
+     shell_00.svg; same for tank_00.svg / tank_evil_00.svg /
+     tank_boat_00.svg).
+   Run each script over all data/svg/*.png to populate
+   data/theme/stock_svg/, data/theme/stock_svg_pixelgrouped/,
+   data/theme/stock_svg_ingamerotate/.
+   Then in tileLoaderBuildSheet, prefer
+   data/theme/<active>/<name>.svg over data/svg/<name>.svg, fall
+   through if missing.
+   For ingamerotate: detect "only shell_00 / tank_00 / tank_evil_00 /
+   tank_boat_00 exist", and at render time rotate them by
+   angle * 360/256 around centre.  Need to either pre-rasterize the
+   16 (or 256) angles or use SDL_RenderTextureRotated().
+
+3. GRAPHICS SETTINGS UI (next_dev.txt phase 7) — NOT STARTED
+   - "Animation style": Pixel Floor / Pixel Nearest / Smooth
+     - Pixel Floor: existing q->x >> 4 floor (current default)
+     - Pixel Nearest: round to nearest game pixel: (q->x + 8) >> 4
+     - Smooth: render at sub-wu (full float) — the dest rect uses
+       q->x/16.0 directly.  Pixel-art textures will sample-blur at
+       fractional positions, so probably want SDL_SetTextureScaleMode
+       SDL_SCALEMODE_NEAREST + sub-pixel positioning — or for SVG
+       themes, re-rasterize at the displayed sub-pixel offset.
+   - "Theme" picker: list data/theme/*/, show rotating-tank preview,
+     Apply button.  Preview: render a tank sprite rotating at e.g.
+     2 deg/frame using the theme's tank_00.svg (ingamerotate) or
+     tank_00..tank_15 (per-direction).
+
+4. LGM 1-WU BOUNDARY STOP (next_dev.txt phase 8) — NOT STARTED
+   See sketched implementation above.  Touches lgm.c movement logic.
+
+DECISIONS MADE
+==============
+
+* The brain_overlay.h OVERLAY_CMD_RECT_FILL_SUBPIXEL command from the
+  source branch was SKIPPED.  It was only useful with a Lua-side LGM
+  viz block; we draw LGM hit dots C-side in override_mode.c instead.
+* The +25 wu LGM tile compensation removal in builder/goals/init/
+  steering.lua was N/A — current main doesn't have those +25 lines
+  (already gone or never landed).  filter_capture_pill broadening is
+  applied (the genuine logic fix from that work).
+* mapview.c kTipCol/kTipRow tables are the FLOAT version applied to
+  BOTH render paths (mapViewDrawShells used by WinBolo.exe +
+  mapViewRenderCentered used by bg_game/BrainTest), keeping them in
+  sync.  mapViewRenderCentered previously had no tip table at all
+  (it just centered the sprite on (spx, spy)) — now matches the
+  classic-game tip-anchored placement.
+* mapViewDrawLGMs got the (1.5, 2.0) game-pixel anchor offset added
+  (it had none in main).  mapViewRenderCentered's LGM block too.
+* Override mode draws *on top of* the live render; render path is
+  unchanged.  This is what next_dev.txt asked for — exact game render
+  visible underneath the overlays.
+
+KNOWN ISSUES
+============
+
+* The world-grid overlay starts from `originX - tileW - edgeX` and
+  steps by gp/4*gp/tileW pixels.  At very low zooms the per-game-
+  pixel lines may look too dense (a 1px line every gp screen pixels
+  with gp=2 is 50% pixel coverage).  May want to skip the per-game
+  level when zoomFactor < 3.
+* The bases/pillboxes hitbox outlines are tile-centered ±128 wu
+  squares.  Whole-tile hit logic actually tests the shell's tile
+  index equals the entity's tile index, so the "true" hitbox is the
+  whole tile — same screen rect as ±128 from tile centre.  Visually
+  identical in practice.
+
 
 NOTES & GOTCHAS
 ---------------
