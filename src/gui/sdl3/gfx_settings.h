@@ -14,6 +14,8 @@
 #ifndef GFX_SETTINGS_H
 #define GFX_SETTINGS_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -34,6 +36,14 @@ GfxAnimStyle  gfxSettingsGetAnimStyle(void);
 /* Convert a world-unit (1/256 tile) coord to a game-pixel coord
  * using the active animation style. */
 float gfxSettingsWuToGamePixel(int wu);
+
+/* Allow SVG graphics — when true (default) tileLoader prefers SVG
+ * sources and the atlas texture uses linear sampling so rotated
+ * sprites smooth out at the edges.  When false, tileLoader skips
+ * SVG entirely (PNG / BMP only) and the atlas uses nearest-neighbor
+ * sampling for a crisp pixel-art look. */
+void gfxSettingsSetAllowSvg(bool allow);
+bool gfxSettingsGetAllowSvg(void);
 
 #ifdef __cplusplus
 }

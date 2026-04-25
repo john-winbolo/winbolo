@@ -283,14 +283,18 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
 
 /* sdl3SetupDrawArrays moved to mapview.c as mapViewInit() */
 /* (old sdl3SetupDrawArrays body removed — now in mapview.c) */
-/* Public reload: drop the cached tile texture so the next render
- * call rebuilds the sheet, picking up any theme change made via
- * tileLoaderSetTheme(). */
+static bool sdl3LoadTiles(void); /* forward */
+
+/* Public reload: drop the cached tile texture and immediately rebuild
+ * it so the new theme / SVG-allow setting is available right away —
+ * needed for the splash-mode Settings dialog where the world isn't
+ * rendering between frames to lazily rebuild for us. */
 void sdl3DrawReloadTiles(void) {
   if (gTilesTex != NULL) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
   }
+  sdl3LoadTiles();
 }
 
 SDL_Texture *sdl3DrawGetTilesTex(void) {
@@ -339,7 +343,14 @@ static bool sdl3LoadTiles(void) {
     return FALSE;
   }
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
-  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
+  /* Allow SVG graphics → linear sampling so rotated sprites smooth
+   * out at the edges.  Off → nearest for crisp pixel-art look.
+   * Ingamerotate themes always use NEAREST regardless of the toggle —
+   * crisp rotation is the look the user wants there. */
+  bool useLinear = gfxSettingsGetAllowSvg() && !tileLoaderThemeRotates();
+  SDL_SetTextureScaleMode(gTilesTex,
+                          useLinear ? SDL_SCALEMODE_LINEAR
+                                    : SDL_SCALEMODE_NEAREST);
   return TRUE;
 }
 

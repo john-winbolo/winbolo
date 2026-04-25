@@ -573,7 +573,13 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      *
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
-    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+    /* Ingamerotate: theme only ships shell_00, so for dir != 0
+     * redirect src to SHELL_0 and rotate at draw time.  Pivot is the
+     * N-tip (1.5, 0) sprite-local; place dst so the pivot lands on
+     * the un-tip-adjusted (sx, sy) world position. */
+    bool rotateLive = (tileLoaderThemeRotates()
+                       && frame >= SHELL_DIR1 && frame <= SHELL_DIR15);
+    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15 && !rotateLive) {
       int dir = frame - SHELL_DIR0;
 
       /* Sub-pixel tip anchors (game-pixel units inside the sprite). */
@@ -594,12 +600,29 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     }
 
     int ss = ctx->sheetScale;
-    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
-                       (float)(srcW * ss), (float)(srcH * ss) };
-    SDL_FRect dstR = { sx, sy,
-                       (float)(srcW * ctx->zoomFactor),
-                       (float)(srcH * ctx->zoomFactor) };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    if (rotateLive) {
+      int dir = frame - SHELL_DIR0;
+      /* dst placed so that (dst + pivot) == shell-coord (sx, sy
+       * un-tip-adjusted = the world coord in screen pixels). */
+      float dx = sx - 1.5f * (float)ctx->zoomFactor;
+      float dy = sy;
+      SDL_FRect srcR = { (float)(SHELL_0_X * ss), (float)(SHELL_0_Y * ss),
+                         (float)(SHELL_0_WIDTH * ss), (float)(SHELL_0_HEIGHT * ss) };
+      SDL_FRect dstR = { dx, dy,
+                         (float)(SHELL_0_WIDTH * ctx->zoomFactor),
+                         (float)(SHELL_0_HEIGHT * ctx->zoomFactor) };
+      SDL_FPoint pivot = { 1.5f * (float)ctx->zoomFactor, 0.0f };
+      double angle = (double)dir * 22.5;
+      SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
+                               angle, &pivot, SDL_FLIP_NONE);
+    } else {
+      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
+                         (float)(srcW * ss), (float)(srcH * ss) };
+      SDL_FRect dstR = { sx, sy,
+                         (float)(srcW * ctx->zoomFactor),
+                         (float)(srcH * ctx->zoomFactor) };
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    }
 
     /* Override-mode true-world-position marker: orange 1 game-pixel
      * dot at the shell's tip (the authoritative collision point).
@@ -619,11 +642,19 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
         4.0f,    4.0f,    3.0f, 1.883f,
         1.5f,    1.117f,  0.0f, 0.0f
       };
-      float tipX = sx + kTipColMark[dir] * (float)ctx->zoomFactor;
-      float tipY = sy + kTipRowMark[dir] * (float)ctx->zoomFactor;
-      /* 1 game pixel = zoomFactor screen pixels.  Clamped so the dot
-       * remains visible at low zoom. */
-      float dotSize = (float)ctx->zoomFactor;
+      float tipX, tipY;
+      if (rotateLive) {
+        /* sx, sy is the raw world coord in screen pixels (no
+         * tip-adjust applied in the rotate branch). */
+        tipX = sx;
+        tipY = sy;
+      } else {
+        tipX = sx + kTipColMark[dir] * (float)ctx->zoomFactor;
+        tipY = sy + kTipRowMark[dir] * (float)ctx->zoomFactor;
+      }
+      /* True 1 wu at the highest zoom; floors to 2 screen px at low
+       * zoom so the dot is always visible.  1 wu = zoomFactor/16. */
+      float dotSize = (float)ctx->zoomFactor / 16.0f;
       if (dotSize < 2.0f) dotSize = 2.0f;
       SDL_FRect dot = { tipX - dotSize * 0.5f, tipY - dotSize * 0.5f,
                         dotSize, dotSize };
@@ -875,10 +906,47 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     {
       int ss = ctx->sheetScale;
       float inset = 0.05f;
-      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+
+      /* Ingamerotate: theme only ships tank_*_00 of each colour.
+       * Redirect dir!=0 frames to the _0 atlas slot of their group
+       * and rotate at draw time around the sprite centre. */
+      int useSrcX = srcX;
+      int useSrcY = srcY;
+      double rotAngleDeg = 0.0;
+      bool useRotate = false;
+      if (tileLoaderThemeRotates()
+          && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
+        int dir = frame & 0x0F;
+        if (dir != 0) {
+          int group = frame >> 4;
+          int baseFrame = group * 16;
+          int bX = 0, bY = 0;
+          switch (baseFrame) {
+            case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
+            case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
+            case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
+            case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
+            case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
+            case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
+            default: bX = srcX; bY = srcY; break;
+          }
+          useSrcX = bX;
+          useSrcY = bY;
+          rotAngleDeg = (double)dir * 22.5;
+          useRotate = true;
+        }
+      }
+
+      SDL_FRect srcR = { (float)(useSrcX * ss) + inset, (float)(useSrcY * ss) + inset,
                          (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      if (useRotate) {
+        SDL_FPoint pivot = { (float)tileW * 0.5f, (float)tileH * 0.5f };
+        SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
+                                 rotAngleDeg, &pivot, SDL_FLIP_NONE);
+      } else {
+        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      }
     }
   }
 }
@@ -990,7 +1058,8 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     if (overrideModeIsOn() && isGround) {
       float anchorX = sx + 1.5f * (float)ctx->zoomFactor;
       float anchorY = sy + 2.0f * (float)ctx->zoomFactor;
-      float dotSize = (float)ctx->zoomFactor;
+      /* 1 wu at high zoom; floor to 2 screen px so it stays visible. */
+      float dotSize = (float)ctx->zoomFactor / 16.0f;
       if (dotSize < 2.0f) dotSize = 2.0f;
       SDL_FRect dot = { anchorX - dotSize * 0.5f, anchorY - dotSize * 0.5f,
                         dotSize, dotSize };

@@ -5,6 +5,10 @@
 #include <math.h>
 
 static GfxAnimStyle s_animStyle = GFX_ANIM_PIXEL_FLOOR;
+static bool         s_allowSvg  = true;
+
+void gfxSettingsSetAllowSvg(bool allow) { s_allowSvg = allow; }
+bool gfxSettingsGetAllowSvg(void)       { return s_allowSvg; }
 
 void gfxSettingsSetAnimStyle(GfxAnimStyle s) {
     s_animStyle = s;

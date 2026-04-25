@@ -135,11 +135,13 @@ static bool findThemeAsset(const char *themeName, const char *base,
         SDL_PathInfo info;
         return SDL_GetPathInfo(outPath, &info);
     };
+    /* SVG is always tried first (themes like stock_svg_ingamerotate
+     * only ship SVG; the AllowSvg toggle only changes the texture
+     * scale mode, not which sources we attempt). */
     if (themeName && themeName[0]) {
         if (tryPath("data/theme/%s/%s.%s", themeName, base, "svg")) return true;
         if (tryPath("data/theme/%s/%s.%s", themeName, base, "png")) return true;
     }
-    /* Fallback to default svg/png. */
     snprintf(outPath, outSize, "data/svg/%s.svg", base);
     SDL_PathInfo info;
     if (SDL_GetPathInfo(outPath, &info)) return true;
@@ -160,24 +162,54 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
         NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
         if (!image) return nullptr;
         if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-        float scale = (float)size / image->width;
-        if (image->height * scale > (float)size) scale = (float)size / image->height;
+        /* Ingamerotate themes always use point-sample regardless
+         * of the AllowSvg toggle. */
+        bool pointSample = !gfxSettingsGetAllowSvg()
+                           || tileLoaderThemeRotates();
         int w = size, h = size;
-        unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-        if (!pixels) { nsvgDelete(image); return nullptr; }
-        memset(pixels, 0, (size_t)(w * h * 4));
-        float offX = ((float)w - image->width  * scale) * 0.5f;
-        float offY = ((float)h - image->height * scale) * 0.5f;
+        const int kSuper = pointSample ? 4 : 1;
+        int hiW = w * kSuper, hiH = h * kSuper;
+        unsigned char *hi = (unsigned char *)SDL_malloc((size_t)(hiW * hiH * 4));
+        if (!hi) { nsvgDelete(image); return nullptr; }
+        memset(hi, 0, (size_t)(hiW * hiH * 4));
+        float scaleX = (float)hiW / image->width;
+        float scaleY = (float)hiH / image->height;
+        float scale = scaleX < scaleY ? scaleX : scaleY;
+        float offX = ((float)hiW - image->width  * scale) * 0.5f;
+        float offY = ((float)hiH - image->height * scale) * 0.5f;
         NSVGrasterizer *rast = nsvgCreateRasterizer();
-        nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+        nsvgRasterize(rast, image, offX, offY, scale, hi, hiW, hiH, hiW * 4);
         nsvgDeleteRasterizer(rast);
         nsvgDelete(image);
+        unsigned char *pixels;
+        if (pointSample) {
+            pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+            if (!pixels) { SDL_free(hi); return nullptr; }
+            for (int y = 0; y < h; y++) {
+                int sy = y * kSuper + kSuper / 2;
+                for (int x = 0; x < w; x++) {
+                    int sx = x * kSuper + kSuper / 2;
+                    const unsigned char *sp = hi + (sy * hiW + sx) * 4;
+                    unsigned char *dp = pixels + (y * w + x) * 4;
+                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
+                }
+            }
+            SDL_free(hi);
+        } else {
+            pixels = hi;
+        }
         SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
         if (!surface) { SDL_free(pixels); return nullptr; }
         SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
         SDL_DestroySurface(surface);
         SDL_free(pixels);
-        if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+        if (tex) {
+            bool useLinear = gfxSettingsGetAllowSvg()
+                             && !tileLoaderThemeRotates();
+            SDL_SetTextureScaleMode(tex,
+                useLinear ? SDL_SCALEMODE_LINEAR
+                          : SDL_SCALEMODE_NEAREST);
+        }
         return tex;
     }
 
@@ -193,7 +225,13 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
     SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
     SDL_DestroySurface(surface);
     stbi_image_free(data);
-    if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+    if (tex) {
+        bool useLinear = gfxSettingsGetAllowSvg()
+                         && !tileLoaderThemeRotates();
+        SDL_SetTextureScaleMode(tex,
+            useLinear ? SDL_SCALEMODE_LINEAR
+                      : SDL_SCALEMODE_NEAREST);
+    }
     return tex;
 }
 
@@ -317,6 +355,19 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         }
     }
 
+    /* Allow SVG graphics — SVG sources + smooth atlas sampling. */
+    {
+        bool allowSvg = gfxSettingsGetAllowSvg();
+        if (ImGui::Checkbox("Allow SVG graphics", &allowSvg)) {
+            gfxSettingsSetAllowSvg(allowSvg);
+            sdl3DrawReloadTiles();
+            extern void gameFrontSaveAllowSvg(bool);
+            gameFrontSaveAllowSvg(allowSvg);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(off = pixel-art look, on = smooth)");
+    }
+
     /* Animation style. */
     const char *animLabels[] = { "Pixel Floor", "Pixel Nearest", "Smooth (sub-pixel)" };
     int curAnim = (int)gfxSettingsGetAnimStyle();
@@ -365,7 +416,11 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     const int kNumCells = (int)(sizeof(cells)/sizeof(cells[0]));
     static SDL_Texture *cellTex[6] = { nullptr };
     static int cellLoadedIdx = -1;
-    if (cellLoadedIdx != s_previewThemeIdx) {
+    static bool cellLoadedAllowSvg = true;
+    bool curAllowSvg = gfxSettingsGetAllowSvg();
+    if (cellLoadedIdx != s_previewThemeIdx
+        || cellLoadedAllowSvg != curAllowSvg) {
+        cellLoadedAllowSvg = curAllowSvg;
         cellLoadedIdx = s_previewThemeIdx;
         for (int i = 0; i < kNumCells; i++) {
             if (cellTex[i]) { SDL_DestroyTexture(cellTex[i]); cellTex[i] = nullptr; }
@@ -419,15 +474,18 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     static SDL_Texture *previewTarget = nullptr;
     static SDL_Texture *previewTankFrames[16] = { nullptr };
     static int  previewLoadedIdx = -1;
+    static bool previewLoadedAllowSvg = true;
     static bool previewHasPerDir = false;  /* true if frames[1..] are loaded */
     static double rotPreview = 0.0;
     static Uint64 rotLastMs = 0;
     const int previewSize    = 96;
     const int tankRasterSize = 64;
 
-    /* Reload tank textures when selection changes. */
-    if (previewLoadedIdx != s_previewThemeIdx) {
+    /* Reload tank textures when selection or AllowSvg changes. */
+    if (previewLoadedIdx != s_previewThemeIdx
+        || previewLoadedAllowSvg != gfxSettingsGetAllowSvg()) {
         previewLoadedIdx = s_previewThemeIdx;
+        previewLoadedAllowSvg = gfxSettingsGetAllowSvg();
         for (int i = 0; i < 16; i++) {
             if (previewTankFrames[i]) { SDL_DestroyTexture(previewTankFrames[i]); previewTankFrames[i] = nullptr; }
         }

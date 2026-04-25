@@ -21,6 +21,7 @@
 
 #include "tileloader.h"
 #include "tilemap.h"
+#include "gfx_settings.h"
 #include "../tiles.h"
 
 #include "nanosvg.h"
@@ -53,9 +54,17 @@ static void blitRGBA(SDL_Surface *sheet, int dstX, int dstY,
 
 /* Try loading an SVG file and rasterizing it at the given size.
  * Uses SDL_LoadFile so that Android APK assets are accessible.
- * Returns true on success and writes RGBA pixels into `out`. */
-static bool tryLoadSVG(const char *path, int w, int h,
-                       unsigned char *out, NSVGrasterizer *rast) {
+ * Returns true on success and writes RGBA pixels into `out`.
+ *
+ * When `pointSample` is true, rasterize at 4× the target size and
+ * pick each output pixel from the centre of its 4×4 source block.
+ * That gives crisp pixel-art output (each output pixel = the SVG
+ * colour at that pixel's exact centre, no anti-aliased edge blending).
+ * Used when AllowSvg is off — preserves the SVG art's intent at
+ * pixel resolution without smoothing. */
+static bool tryLoadSVGEx(const char *path, int w, int h,
+                         unsigned char *out, NSVGrasterizer *rast,
+                         bool pointSample) {
     size_t fileSize = 0;
     char *fileData = (char *)SDL_LoadFile(path, &fileSize);
     if (!fileData) return false;
@@ -66,71 +75,49 @@ static bool tryLoadSVG(const char *path, int w, int h,
         nsvgDelete(image);
         return false;
     }
-    float scaleX = (float)w / image->width;
-    float scaleY = (float)h / image->height;
+    if (!pointSample) {
+        float scaleX = (float)w / image->width;
+        float scaleY = (float)h / image->height;
+        float scale = scaleX < scaleY ? scaleX : scaleY;
+        memset(out, 0, (size_t)(w * h * 4));
+        nsvgRasterize(rast, image, 0, 0, scale, out, w, h, w * 4);
+        nsvgDelete(image);
+        return true;
+    }
+    /* Centre-sample path: rasterize at 4× and pick centre of each
+     * 4×4 source block.  hi pixel index = 4*outIdx + 2. */
+    const int kSuper = 4;
+    int hiW = w * kSuper;
+    int hiH = h * kSuper;
+    unsigned char *hi = (unsigned char *)SDL_malloc((size_t)(hiW * hiH * 4));
+    if (!hi) { nsvgDelete(image); return false; }
+    memset(hi, 0, (size_t)(hiW * hiH * 4));
+    float scaleX = (float)hiW / image->width;
+    float scaleY = (float)hiH / image->height;
     float scale = scaleX < scaleY ? scaleX : scaleY;
-    memset(out, 0, (size_t)(w * h * 4));
-    nsvgRasterize(rast, image, 0, 0, scale, out, w, h, w * 4);
+    nsvgRasterize(rast, image, 0, 0, scale, hi, hiW, hiH, hiW * 4);
     nsvgDelete(image);
-    return true;
-}
-
-/* Rotate an RGBA bitmap by angleDeg around its centre, writing to dst.
- * Nearest-neighbor sampling — preserves the pixel-art aesthetic.  src
- * and dst must both be w*h*4 bytes. */
-static void rotateRGBA(const unsigned char *src, unsigned char *dst,
-                       int w, int h, double angleDeg) {
-    double rad = angleDeg * 3.14159265358979323846 / 180.0;
-    double cs = SDL_cos(rad);
-    double sn = SDL_sin(rad);
-    double cx = (double)w * 0.5;
-    double cy = (double)h * 0.5;
-    SDL_memset(dst, 0, (size_t)(w * h * 4));
+    memset(out, 0, (size_t)(w * h * 4));
     for (int y = 0; y < h; y++) {
+        int sy = y * kSuper + kSuper / 2;
         for (int x = 0; x < w; x++) {
-            double dx = (double)x + 0.5 - cx;
-            double dy = (double)y + 0.5 - cy;
-            /* Inverse rotation: rotate dst-coord backward to find src. */
-            double sx = cs * dx + sn * dy + cx;
-            double sy = -sn * dx + cs * dy + cy;
-            int isx = (int)sx;
-            int isy = (int)sy;
-            if (isx < 0 || isx >= w || isy < 0 || isy >= h) continue;
-            const unsigned char *sp = src + (isy * w + isx) * 4;
-            unsigned char *dp = dst + (y * w + x) * 4;
+            int sx = x * kSuper + kSuper / 2;
+            const unsigned char *sp = hi + (sy * hiW + sx) * 4;
+            unsigned char *dp = out + (y * w + x) * 4;
             dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
         }
     }
+    SDL_free(hi);
+    return true;
 }
 
-/* Parse a "<prefix>_NN" name where <prefix> is one of the known
- * rotation groups.  Returns N (1..15) and copies the prefix
- * (including the trailing underscore, e.g. "tank_self_") into
- * outPrefix.  Returns -1 if the name doesn't match. */
-static int parseRotationDir(const char *name, char *outPrefix, size_t prefSize) {
-    static const char *kRotGroups[] = {
-        "tank_self_",   "tank_good_",  "tank_evil_",
-        "tank_selfboat_","tank_goodboat_","tank_evilboat_",
-        "shell_",
-        NULL
-    };
-    size_t n = SDL_strlen(name);
-    if (n < 3) return -1;
-    char d0 = name[n - 2], d1 = name[n - 1];
-    if (d0 < '0' || d0 > '9' || d1 < '0' || d1 > '9') return -1;
-    int dir = (d0 - '0') * 10 + (d1 - '0');
-    if (dir <= 0 || dir > 15) return -1;
-    for (int g = 0; kRotGroups[g]; g++) {
-        size_t gl = SDL_strlen(kRotGroups[g]);
-        if (n == gl + 2 && SDL_memcmp(name, kRotGroups[g], gl) == 0) {
-            if (prefSize > gl) {
-                SDL_memcpy(outPrefix, kRotGroups[g], gl);
-                outPrefix[gl] = '\0';
-            }
-            return dir;
-        }
-    }
-    return -1;
+/* Backwards-compat wrapper.  Ingamerotate themes always use point-
+ * sampling regardless of AllowSvg — the toggle is ignored for those. */
+static bool tryLoadSVG(const char *path, int w, int h,
+                       unsigned char *out, NSVGrasterizer *rast) {
+    bool pointSample = !gfxSettingsGetAllowSvg()
+                       || tileLoaderThemeRotates();
+    return tryLoadSVGEx(path, w, h, out, rast, pointSample);
 }
 
 /* Try loading a PNG file via stb_image.
@@ -270,7 +257,11 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int dstY = e->sheetY * scale;
         bool loaded = false;
 
-        /* Theme override: try data/theme/<theme>/<name>.svg|png first. */
+        /* Theme override: try data/theme/<theme>/<name>.svg|png first.
+         * SVGs are always loaded — themes that only ship SVG (like
+         * stock_svg_ingamerotate) need them to display at all.  The
+         * AllowSvg toggle only affects the atlas SCALE MODE (linear
+         * vs nearest), not which sources are loaded. */
         if (!loaded && s_themeName[0]) {
             SDL_snprintf(pathBuf, sizeof(pathBuf),
                          "data/theme/%s/%s.svg", s_themeName, e->name);
@@ -288,42 +279,11 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
                     pngCount++;
                 }
             }
-
-            /* Fallback for rotation-group sprites: if the theme only
-             * ships <prefix>_00 (or similar — the explicit per-direction
-             * file is missing), rotate _00 by dir * 22.5° and bake it
-             * into the per-direction atlas slot.  This means runtime
-             * code never has to know the theme is "ingamerotate" — the
-             * per-direction sprites are baked once at sheet build. */
-            if (!loaded) {
-                char prefix[32];
-                int dir = parseRotationDir(e->name, prefix, sizeof(prefix));
-                if (dir > 0) {
-                    /* Try _00 source: SVG then PNG. */
-                    unsigned char *srcBuf = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-                    bool haveSrc = false;
-                    if (srcBuf) {
-                        SDL_snprintf(pathBuf, sizeof(pathBuf),
-                                     "data/theme/%s/%s00.svg",
-                                     s_themeName, prefix);
-                        haveSrc = tryLoadSVG(pathBuf, w, h, srcBuf, rast);
-                        if (!haveSrc) {
-                            SDL_snprintf(pathBuf, sizeof(pathBuf),
-                                         "data/theme/%s/%s00.png",
-                                         s_themeName, prefix);
-                            haveSrc = tryLoadPNG(pathBuf, w, h, srcBuf);
-                        }
-                    }
-                    if (haveSrc) {
-                        rotateRGBA(srcBuf, tmpBuf, w, h,
-                                   (double)dir * 22.5);
-                        blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
-                        loaded = true;
-                        svgCount++;
-                    }
-                    if (srcBuf) SDL_free(srcBuf);
-                }
-            }
+            /* Ingamerotate themes only ship _00 of rotation groups —
+             * the per-direction _01..15 atlas slots stay empty here
+             * and runtime code (mapview.c) detects this via
+             * tileLoaderThemeRotates() and uses SDL_RenderTextureRotated
+             * to rotate _00 at draw time. */
         }
 
         /* Try SVG first — rasterized at scaled size. */

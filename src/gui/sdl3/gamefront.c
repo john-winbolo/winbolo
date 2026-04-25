@@ -47,6 +47,7 @@
 #include <time.h>
 
 #include "tileloader.h"
+#include "gfx_settings.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/global.h"
@@ -1670,6 +1671,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     GetPrivateProfileString("GRAPHICS", "Theme", "", themeBuf, sizeof(themeBuf), prefsFile);
     tileLoaderSetTheme(themeBuf);
   }
+  /* Allow SVG graphics — controls SVG vs PNG source preference and
+   * atlas scale-mode (smooth vs nearest). */
+  {
+    char buf[16] = "";
+    GetPrivateProfileString("GRAPHICS", "AllowSvg", "1", buf, sizeof(buf), prefsFile);
+    gfxSettingsSetAllowSvg(atoi(buf) != 0);
+  }
 
   /* Winbolo.net */
   GetPrivateProfileString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX, prefsFile);
@@ -1688,6 +1696,13 @@ void gameFrontFlushWindowSettings(void);
 void gameFrontSaveThemeChoice(const char *themeName) {
   WritePrivateProfileString("GRAPHICS", "Theme",
                              themeName ? themeName : "",
+                             getPreferenceFilePath());
+}
+
+/* Persist the Allow SVG graphics toggle. */
+void gameFrontSaveAllowSvg(bool allow) {
+  WritePrivateProfileString("GRAPHICS", "AllowSvg",
+                             allow ? "1" : "0",
                              getPreferenceFilePath());
 }
 
