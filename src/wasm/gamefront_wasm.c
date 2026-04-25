@@ -36,9 +36,6 @@
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
-/* String resource IDs — integer IDs for langGetText() */
-#include "../gui/aresource.h"
-
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
 

@@ -16,7 +16,6 @@
 #include <string.h>
 
 #include "../Input.h"
-#include "../aresource.h"
 #include "../lang.h"
 #include "../ui_mode.h"
 

@@ -37,6 +37,40 @@ static inline unsigned char *imguiFontLoadData(const char *path, int *outSize) {
     return buf;
 }
 
+/* Build the merged glyph range covering every script that Inter
+ * Variable actually carries: Default (0x0020-0x00FF) + Latin Extended
+ * A/B + Cyrillic + Greek + Vietnamese. Without this, Polish/Czech/
+ * Russian/Greek/Vietnamese strings render as boxes even though the
+ * TTF has the glyphs.
+ *
+ * The returned pointer must outlive the font atlas — ImGui keeps a
+ * reference, it does not copy. We back it with a function-local
+ * `static ImVector<ImWchar>` so the storage lasts for the program
+ * lifetime; the builder runs exactly once. */
+static inline const ImWchar *imguiBoloGlyphRanges() {
+    static ImVector<ImWchar> ranges;
+    if (!ranges.empty()) return ranges.Data;
+
+    ImFontAtlas *atlas = ImGui::GetIO().Fonts;
+    ImFontGlyphRangesBuilder builder;
+    builder.AddRanges(atlas->GetGlyphRangesDefault());
+
+    /* Latin Extended A (0x0100-0x017F) and Latin Extended B
+     * (0x0180-0x024F). These need to be added explicitly; ImGui has
+     * no canned helper. The trailing 0 terminates the range list. */
+    static const ImWchar kLatinExtA[] = { 0x0100, 0x017F, 0 };
+    static const ImWchar kLatinExtB[] = { 0x0180, 0x024F, 0 };
+    builder.AddRanges(kLatinExtA);
+    builder.AddRanges(kLatinExtB);
+
+    builder.AddRanges(atlas->GetGlyphRangesCyrillic());
+    builder.AddRanges(atlas->GetGlyphRangesGreek());
+    builder.AddRanges(atlas->GetGlyphRangesVietnamese());
+
+    builder.BuildRanges(&ranges);
+    return ranges.Data;
+}
+
 /* Load the Bolo UI font at the given pixel size.
  * Uses oversampling for crisp text on the SDL renderer.
  * Falls back to a scaled default font if the TTF is missing.
@@ -61,6 +95,7 @@ static inline ImFont *imguiLoadBoloFontSized(float sizePixels) {
         ImFontConfig config;
         config.OversampleH = 3;
         config.OversampleV = 2;
+        config.GlyphRanges = imguiBoloGlyphRanges();
         return io.Fonts->AddFontFromMemoryTTF(fontData, fontDataSize, sizePixels, &config);
     } else {
         /* Fallback: scale the built-in font with oversampling */

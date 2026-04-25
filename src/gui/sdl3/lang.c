@@ -12,14 +12,17 @@
 *Filename:      lang.c
 *Author:        John Morrison
 *Purpose:
-*  Cross-platform string table (English built-in).
-*  No Win32 resource DLL loading — all strings are
-*  compiled in as a static lookup table.
+*  Cross-platform string table (English built-in) plus an
+*  optional runtime override table loaded from lang/<code>.txt.
+*  The static langTable[] below remains the source of truth
+*  for English; non-English builds layer overrides on top.
 *********************************************************/
 
 #include "../lang.h"
-#include <string.h>
+#include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static char langFileName[FILENAME_MAX];
 static char langBuff[16 * 1024];
@@ -367,20 +370,246 @@ static const char *lookupString(unsigned int id) {
     return "";
 }
 
+/* -------------------------------------------------------
+ * Generated symbolic-name -> langid table.
+ * Sorted alphabetically by name; resolved with bsearch().
+ * Re-run tools/dump_lang_en.py after editing lang.h or this file.
+ * ------------------------------------------------------- */
+#include "lang_names.inc"
+
+/* -------------------------------------------------------
+ * Runtime override table for non-English translations.
+ *
+ * overrideTable is a sparse array indexed by langid. NULL means
+ * "no override; fall back to the static langTable[]". Strings
+ * are heap-allocated (strdup-style) and freed on reload/unload.
+ * ------------------------------------------------------- */
+static char        **overrideTable      = NULL;
+static unsigned int  overrideTableSize  = 0;
+static LangFileMeta  loadedMeta         = {{0}, {0}, {0}};
+static bool          loadedMetaValid    = FALSE;
+
+static int langNameCmp(const void *a, const void *b) {
+    const char          *key   = (const char *)a;
+    const LangNameEntry *entry = (const LangNameEntry *)b;
+    return strcmp(key, entry->name);
+}
+
+static langid resolveName(const char *name) {
+    const LangNameEntry *hit = (const LangNameEntry *)bsearch(
+        name, kLangNameTable, K_LANG_NAME_TABLE_SIZE,
+        sizeof(kLangNameTable[0]), langNameCmp);
+    return hit ? hit->id : 0;
+}
+
+static char *unescapeValue(const char *raw) {
+    size_t len = strlen(raw);
+    char *out = (char *)malloc(len + 1);
+    if (!out) return NULL;
+    char *w = out;
+    for (size_t i = 0; i < len; i++) {
+        char c = raw[i];
+        if (c == '\\' && i + 1 < len) {
+            char nxt = raw[i + 1];
+            switch (nxt) {
+                case 'n': *w++ = '\n'; i++; continue;
+                case 't': *w++ = '\t'; i++; continue;
+                case 'r': *w++ = '\r'; i++; continue;
+                case '\\': *w++ = '\\'; i++; continue;
+                case '"': *w++ = '"';  i++; continue;
+                default:  break;
+            }
+        }
+        *w++ = c;
+    }
+    *w = '\0';
+    return out;
+}
+
+static void clearOverrides(void) {
+    if (overrideTable) {
+        for (unsigned int i = 0; i < overrideTableSize; i++) {
+            if (overrideTable[i]) {
+                free(overrideTable[i]);
+            }
+        }
+        free(overrideTable);
+        overrideTable = NULL;
+        overrideTableSize = 0;
+    }
+    memset(&loadedMeta, 0, sizeof(loadedMeta));
+    loadedMetaValid = FALSE;
+}
+
+static bool ensureOverrideSlot(unsigned int id) {
+    if (id < overrideTableSize) return TRUE;
+    unsigned int newSize = overrideTableSize ? overrideTableSize : 64;
+    while (newSize <= id) newSize *= 2;
+    char **grown = (char **)realloc(overrideTable, newSize * sizeof(char *));
+    if (!grown) return FALSE;
+    for (unsigned int i = overrideTableSize; i < newSize; i++) {
+        grown[i] = NULL;
+    }
+    overrideTable = grown;
+    overrideTableSize = newSize;
+    return TRUE;
+}
+
+static void setOverride(langid id, char *value) {
+    if (!ensureOverrideSlot(id)) {
+        free(value);
+        return;
+    }
+    if (overrideTable[id]) {
+        free(overrideTable[id]);
+    }
+    overrideTable[id] = value;
+}
+
+/* Strip leading and trailing horizontal whitespace (and CR/LF) in
+ * place. Returns a pointer into the original buffer. Used for the
+ * KEY portion of a `key=value` line; never call it on the value side
+ * — translators must be able to encode trailing spaces in values
+ * (e.g. "Map Name: ") just by typing them. */
+static char *trim(char *s) {
+    while (*s == ' ' || *s == '\t') s++;
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' ||
+                     s[n - 1] == '\r' || s[n - 1] == '\n')) {
+        s[--n] = '\0';
+    }
+    return s;
+}
+
+static void copyMetaField(char *dst, size_t dstSize, const char *src) {
+    size_t n = strlen(src);
+    if (n >= dstSize) n = dstSize - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 bool langSetup(void) {
     langFileName[0] = '\0';
     return TRUE;
 }
 
 void langCleanup(void) {
+    clearOverrides();
     langFileName[0] = '\0';
 }
 
-bool langLoadFile(char *filename, char *langName) {
-    /* No external language files supported — always use built-in English */
-    (void)filename;
-    (void)langName;
+bool langLoadFile(const char *path) {
+    if (!path || !*path) return FALSE;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        SDL_Log("langLoadFile: could not open '%s'", path);
+        clearOverrides();
+        return FALSE;
+    }
+
+    /* Replace any previously-loaded translation. */
+    clearOverrides();
+
+    /* Header parsing remains active until the first body line is seen. */
+    bool inHeader = TRUE;
+    bool firstLine = TRUE;
+    char line[8192];
+
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+
+        /* Strip optional UTF-8 BOM on the first line. */
+        if (firstLine) {
+            firstLine = FALSE;
+            if ((unsigned char)p[0] == 0xEF &&
+                (unsigned char)p[1] == 0xBB &&
+                (unsigned char)p[2] == 0xBF) {
+                p += 3;
+            }
+        }
+
+        /* Strip ONLY CR/LF from the end. Spaces and tabs are
+         * significant in the value side (some labels end in a space,
+         * e.g. "Map Name: "). */
+        size_t lineLen = strlen(p);
+        while (lineLen > 0 && (p[lineLen - 1] == '\r' ||
+                               p[lineLen - 1] == '\n')) {
+            p[--lineLen] = '\0';
+        }
+
+        /* Skip leading horizontal whitespace before the blank/comment
+         * check so that indented "# comment" lines still count. */
+        char *t = p;
+        while (*t == ' ' || *t == '\t') t++;
+        if (*t == '\0' || *t == '#') continue;
+
+        char *eq = strchr(t, '=');
+        if (!eq) {
+            SDL_Log("langLoadFile: skipping malformed line: %s", t);
+            continue;
+        }
+        *eq = '\0';
+        char *key = trim(t);     /* whitespace not meaningful in keys */
+        char *value = eq + 1;    /* value preserved verbatim, including
+                                    any leading or trailing spaces */
+
+        if (inHeader) {
+            if (strcmp(key, "name") == 0) {
+                copyMetaField(loadedMeta.name, sizeof(loadedMeta.name), value);
+                loadedMetaValid = TRUE;
+                continue;
+            }
+            if (strcmp(key, "author") == 0) {
+                copyMetaField(loadedMeta.author, sizeof(loadedMeta.author), value);
+                loadedMetaValid = TRUE;
+                continue;
+            }
+            if (strcmp(key, "notes") == 0) {
+                copyMetaField(loadedMeta.notes, sizeof(loadedMeta.notes), value);
+                loadedMetaValid = TRUE;
+                continue;
+            }
+            /* Anything that isn't a known header key starts the body. */
+            inHeader = FALSE;
+        }
+
+        langid id = resolveName(key);
+        if (id == 0) {
+            SDL_Log("langLoadFile: unknown ID '%s' — skipping", key);
+            continue;
+        }
+
+        if (id < overrideTableSize && overrideTable && overrideTable[id]) {
+            SDL_Log("langLoadFile: duplicate ID '%s' — last one wins", key);
+        }
+
+        char *decoded = unescapeValue(value);
+        if (!decoded) {
+            SDL_Log("langLoadFile: out of memory decoding '%s'", key);
+            continue;
+        }
+        setOverride(id, decoded);
+    }
+
+    fclose(f);
+
+    /* Remember which file is loaded for the language picker. */
+    size_t n = strlen(path);
+    if (n >= sizeof(langFileName)) n = sizeof(langFileName) - 1;
+    memcpy(langFileName, path, n);
+    langFileName[n] = '\0';
+
     return TRUE;
+}
+
+void langUnloadFile(void) {
+    clearOverrides();
+    langFileName[0] = '\0';
+}
+
+const LangFileMeta *langGetLoadedMeta(void) {
+    return loadedMetaValid ? &loadedMeta : NULL;
 }
 
 void langGetFileName(char *fileName) {
@@ -388,9 +617,98 @@ void langGetFileName(char *fileName) {
 }
 
 char *langGetText(langid id) {
+    if (overrideTable && id < overrideTableSize && overrideTable[id]) {
+        return overrideTable[id];
+    }
     return (char *)lookupString(id);
 }
 
 char *langGetText2(langid id) {
-    return (char *)lookupString(id);
+    return langGetText(id);
+}
+
+/* -------------------------------------------------------
+ * langGetTextFmt — single-pass named-placeholder substitution.
+ *
+ * Substitutes the literal tokens {player}, {other}, {number} with
+ * fields from `args`. Substitution is non-recursive: braces inside a
+ * substituted value (e.g. a player name like "{ACCEL}lover") are not
+ * rescanned. Output is written into one of a small ring of thread-local
+ * buffers, so up to LANG_FMT_RING_BUFFERS overlapping calls (e.g.
+ * `printf("%s vs %s", langGetTextFmt(...), langGetTextFmt(...))`) all
+ * keep their pointers valid for the lifetime of the printf. Anything
+ * past the cap is truncated cleanly.
+ * ------------------------------------------------------- */
+
+#define LANG_FMT_BUFFER_SIZE   512
+#define LANG_FMT_RING_BUFFERS  4
+
+static THREAD_LOCAL char    g_fmtBuffers[LANG_FMT_RING_BUFFERS][LANG_FMT_BUFFER_SIZE];
+static THREAD_LOCAL unsigned g_fmtBufferIdx = 0;
+
+static void appendBounded(char *dst, size_t cap, size_t *used, const char *src,
+                          size_t srcLen) {
+    if (*used >= cap - 1) return;
+    size_t room = cap - 1 - *used;
+    if (srcLen > room) srcLen = room;
+    memcpy(dst + *used, src, srcLen);
+    *used += srcLen;
+    dst[*used] = '\0';
+}
+
+const char *langGetTextFmt(langid id, const MessageArgs *args) {
+    const char *src = langGetText(id);
+    if (!args || !src) return src ? src : "";
+
+    char *dst = g_fmtBuffers[g_fmtBufferIdx];
+    g_fmtBufferIdx = (g_fmtBufferIdx + 1) % LANG_FMT_RING_BUFFERS;
+
+    size_t used = 0;
+    dst[0] = '\0';
+
+    char numberBuf[32];
+    int numberLen = -1;  /* lazily formatted on first use */
+
+    const char *p = src;
+    while (*p) {
+        if (*p == '{') {
+            const char *end = strchr(p, '}');
+            if (end) {
+                size_t tokLen = (size_t)(end - p - 1);
+                const char *replacement = NULL;
+                size_t      replLen     = 0;
+
+                if (tokLen == 6 && memcmp(p + 1, "player", 6) == 0) {
+                    replacement = args->playerName;
+                    replLen     = 0;
+                    while (replLen < PLAYER_NAME_LEN &&
+                           args->playerName[replLen] != '\0') replLen++;
+                } else if (tokLen == 5 && memcmp(p + 1, "other", 5) == 0) {
+                    replacement = args->otherName;
+                    replLen     = 0;
+                    while (replLen < PLAYER_NAME_LEN &&
+                           args->otherName[replLen] != '\0') replLen++;
+                } else if (tokLen == 6 && memcmp(p + 1, "number", 6) == 0) {
+                    if (numberLen < 0) {
+                        numberLen = snprintf(numberBuf, sizeof(numberBuf),
+                                             "%d", args->number);
+                        if (numberLen < 0) numberLen = 0;
+                    }
+                    replacement = numberBuf;
+                    replLen     = (size_t)numberLen;
+                }
+
+                if (replacement) {
+                    appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used,
+                                  replacement, replLen);
+                    p = end + 1;
+                    continue;
+                }
+            }
+        }
+        appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used, p, 1);
+        p++;
+    }
+
+    return dst;
 }

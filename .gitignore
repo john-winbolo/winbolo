@@ -23,3 +23,7 @@ src/winbolonet/wbn_signing_key.h
 
 # Steamworks SDK — NDA/license restricted, cannot be in public repo.
 third_party/steamworks/
+
+# Python bytecode caches (tools/)
+__pycache__/
+*.pyc

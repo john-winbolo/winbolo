@@ -71,7 +71,6 @@
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
 
-#include "../aresource.h"
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
 #include "tutorial_text.h"
