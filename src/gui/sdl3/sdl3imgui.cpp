@@ -2573,6 +2573,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             }
         }
 
+        /* Override-mode scroll-wheel zoom (1× .. 6×). */
+        if (overrideModeIsOn() && ev.type == SDL_EVENT_MOUSE_WHEEL) {
+            if (ev.wheel.y > 0) overrideModeZoomIn();
+            else if (ev.wheel.y < 0) overrideModeZoomOut();
+            continue;
+        }
+
         /* While override mode is on, arrow keys pan the world view.
          * 32 screen pixels per press; key-repeat counts so holding scrolls. */
         if (overrideModeIsOn()

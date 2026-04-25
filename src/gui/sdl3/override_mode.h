@@ -50,6 +50,28 @@ void overrideModePan(int dx, int dy);
 void overrideModeGetPanOffset(int *outDx, int *outDy);
 void overrideModeResetPan(void);
 
+/* Mouse-wheel zoom while override mode is on.  Returns a multiplier
+ * (1..6) applied on top of gZoomFactor — so at gZoomFactor=4 with mul
+ * 6 you get 24× effective zoom for the world tiles/sprites.  HUD is
+ * unaffected.  Reset on toggle off. */
+void overrideModeZoomIn(void);
+void overrideModeZoomOut(void);
+int  overrideModeZoomMul(void);
+
+/* Draw the full visible region's tiles directly from sim (instead of
+ * the engine's 17×17 screen buffer).  Called before the classic
+ * mapViewDrawTiles so the surrounding area is filled in when the
+ * camera has been panned beyond the buffer.  No-op when override
+ * mode is off. */
+void overrideModeDrawFullMapTiles(SDL_Renderer *renderer,
+                                  struct ClientSim *cs,
+                                  int originX, int originY,
+                                  int gameW,   int gameH,
+                                  int tileW,   int tileH,
+                                  int edgeX,   int edgeY,
+                                  int sheetScale,
+                                  SDL_Texture *tilesTex);
+
 /* Draw hitbox/sub-pixel overlays for the world view. Called from
  * sdl3draw.c after mapViewDrawLGMs.  No-op when override mode is off.
  *

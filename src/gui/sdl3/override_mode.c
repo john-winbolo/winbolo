@@ -47,6 +47,9 @@ static bool s_overrideOn = false;
 static int  s_extraDelayMs = 0;        /* 0 = normal speed; >0 = slower */
 static int  s_panX = 0;                /* screen-pixel pan offset, accumulated */
 static int  s_panY = 0;
+static int  s_zoomMul = 1;             /* mouse-wheel world zoom multiplier */
+#define ZOOM_MUL_MIN 1
+#define ZOOM_MUL_MAX 6
 #define EXTRA_DELAY_STEP_MS 10
 #define EXTRA_DELAY_MAX_MS 200
 
@@ -58,6 +61,7 @@ void overrideModeToggle(void) {
     s_extraDelayMs = 0;
     s_panX = 0;
     s_panY = 0;
+    s_zoomMul = 1;
   }
   SDL_Log("[OverrideMode] %s", s_overrideOn ? "ON" : "OFF");
 }
@@ -95,6 +99,95 @@ void overrideModeGetPanOffset(int *outDx, int *outDy) {
 void overrideModeResetPan(void) {
   s_panX = 0;
   s_panY = 0;
+}
+
+void overrideModeZoomIn(void) {
+  if (s_zoomMul < ZOOM_MUL_MAX) s_zoomMul++;
+  SDL_Log("[OverrideMode] zoom mul = %d", s_zoomMul);
+}
+
+void overrideModeZoomOut(void) {
+  if (s_zoomMul > ZOOM_MUL_MIN) s_zoomMul--;
+  SDL_Log("[OverrideMode] zoom mul = %d", s_zoomMul);
+}
+
+int overrideModeZoomMul(void) {
+  return s_zoomMul;
+}
+
+/* Render a wide tile region direct from sim using mapViewCalcSquare,
+ * so tiles outside the engine's 17×17 screen buffer (which only covers
+ * the immediate camera vicinity) still get drawn when the override
+ * camera has been panned beyond the buffer.  Drawn before the classic
+ * mapViewDrawTiles call so the central tiles get overdrawn with the
+ * engine's "fog" / "you can't see" treatment, while the perimeter is
+ * filled with raw map data.
+ */
+#include "mapview.h"
+void overrideModeDrawFullMapTiles(SDL_Renderer *renderer,
+                                  struct ClientSim *cs,
+                                  int originX, int originY,
+                                  int gameW,   int gameH,
+                                  int tileW,   int tileH,
+                                  int edgeX,   int edgeY,
+                                  int sheetScale,
+                                  SDL_Texture *tilesTex) {
+  if (!s_overrideOn) return;
+  if (!renderer || !cs || !tilesTex) return;
+  if (tileW <= 0 || tileH <= 0) return;
+
+  GameSim *sim = &cs->sim;
+  BYTE selfPlayer = cs->myPlayerNum;
+  BYTE xOffset = cs->xOffset;
+  BYTE yOffset = cs->yOffset;
+
+  /* Buffer-space tile (bx, by) renders at:
+   *   sx = originX + (bx - 1) * tileW - edgeX
+   *   sy = originY + (by - 1) * tileH - edgeY
+   * with bx in [0..MAIN_BACK_BUFFER_SIZE_X-1] for the engine buffer.
+   * To cover the visible viewport we want sx in [originX..originX+gameW]
+   * and sy similarly, so the bx range is:
+   *   bxMin = floor((edgeX) / tileW)               [- 1 buffer slack]
+   *   bxMax = ceil((edgeX + gameW) / tileW) + 1
+   * Iterate from bxMin-1 to bxMax+2 to cover edges with a margin. */
+  int bxMin = (edgeX - tileW) / tileW - 1;
+  int bxMax = (edgeX + gameW) / tileW + 3;
+  int byMin = (edgeY - tileH) / tileH - 1;
+  int byMax = (edgeY + gameH) / tileH + 3;
+
+  int ss = sheetScale;
+  for (int by = byMin; by <= byMax; by++) {
+    for (int bx = bxMin; bx <= bxMax; bx++) {
+      int worldX = (int)xOffset + bx;
+      int worldY = (int)yOffset + by;
+      if (worldX < 0 || worldX > 255) continue;
+      if (worldY < 0 || worldY > 255) continue;
+
+      bool isMine = false;
+      BYTE pos = mapViewCalcSquare(sim, (BYTE)worldX, (BYTE)worldY,
+                                   &isMine, selfPlayer);
+
+      SDL_FRect src = {
+        (float)(mapViewPosX[pos] * ss),
+        (float)(mapViewPosY[pos] * ss),
+        (float)(TILE_SIZE_X * ss),
+        (float)(TILE_SIZE_Y * ss)
+      };
+      SDL_FRect dest = {
+        (float)(originX + (bx - 1) * tileW - edgeX),
+        (float)(originY + (by - 1) * tileH - edgeY),
+        (float)tileW,
+        (float)tileH
+      };
+      SDL_RenderTexture(renderer, tilesTex, &src, &dest);
+
+      if (isMine) {
+        SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
+                              (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
+        SDL_RenderTexture(renderer, tilesTex, &mineSrc, &dest);
+      }
+    }
+  }
 }
 
 /* Convert world units to screen X using the same convention as

@@ -1313,12 +1313,23 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     edgeY += gDragOffsetY;
   }
 
-  /* Override mode arrow-key pan: applied regardless of tablet mode. */
+  /* Override mode arrow-key pan + scroll-wheel zoom.  Applies on top
+   * of tablet drag offset.  Zoom multiplier scales gZoomFactor for
+   * the world section only; HUD reads savedZoomFactor (restored at
+   * line ~1609 below). */
   if (overrideModeIsOn()) {
     int opx = 0, opy = 0;
     overrideModeGetPanOffset(&opx, &opy);
     edgeX += opx;
     edgeY += opy;
+    int zmul = overrideModeZoomMul();
+    if (zmul > 1) {
+      gZoomFactor = (BYTE)(gZoomFactor * zmul);
+      /* edgeX/Y are in screen pixels — scale them along with zoom so
+       * pan accumulator and existing offset stay visually consistent. */
+      edgeX *= zmul;
+      edgeY *= zmul;
+    }
   }
 
   if (sdl3LoadTiles()) {
@@ -1419,6 +1430,15 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     } else {
       /* Draw map tiles via mapview */
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };
+      /* Override-mode wide-area tile fill: paint a margin around the
+       * 17×17 engine buffer using mapViewCalcSquare direct from sim,
+       * so panning/zooming beyond the buffer doesn't show black. */
+      if (overrideModeIsOn() && cs) {
+        overrideModeDrawFullMapTiles(gRenderer, cs,
+                                     originX, originY, gameW, gameH,
+                                     tileW, tileH, edgeX, edgeY,
+                                     gSheetScale, gTilesTex);
+      }
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Draw pillbox/base number labels (needs fonts — stays here) */
