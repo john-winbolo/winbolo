@@ -175,6 +175,16 @@ char gameFrontTrackerAddr[FILENAME_MAX];
 unsigned short gameFrontTrackerPort;
 bool gameFrontTrackerEnabled;
 
+/* Tutorial: shown on the welcome menu until the player completes it.
+ * Defaults to TRUE on a fresh install (key absent from INI). The player
+ * can toggle it back on from the Settings dialog at any time. */
+static bool gameFrontShowTutorialButton = TRUE;
+
+/* One-shot flag set by the Settings dialog's "Play Tutorial" button.
+ * Consumed by the openSettings handler in gameFrontDialogs() so that
+ * settings → tutorial transitions in one menu cycle. */
+static bool gameFrontPlayTutorialRequested = FALSE;
+
 /* Winbolo.net settings */
 char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
@@ -666,7 +676,14 @@ static bool gameFrontDialogs(void) {
     case openSettings: {
       const DialogBackend *db = dialogBackendGet();
       db->settingsShow();
-      dlgState = openWelcome;
+      /* Settings → Tutorial shortcut: if the Play Tutorial button was
+       * clicked inside the settings dialog, jump straight into the
+       * tutorial state instead of bouncing back to the welcome menu. */
+      if (gameFrontConsumePlayTutorialRequest()) {
+        dlgState = openTutorial;
+      } else {
+        dlgState = openWelcome;
+      }
       break;
     }
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
@@ -1237,6 +1254,29 @@ bool gameFrontGetRemeber(void) {
   return gameFrontRemeber;
 }
 
+bool gameFrontGetShowTutorialButton(void) {
+  return gameFrontShowTutorialButton;
+}
+
+void gameFrontSetShowTutorialButton(bool show) {
+  gameFrontShowTutorialButton = show;
+  /* Persist immediately so a crash or hard quit after completing the
+   * tutorial doesn't leave the welcome-menu entry showing again. */
+  WritePrivateProfileString("SETTINGS", "Show Tutorial Button",
+                            TRUEFALSE_TO_STR(show),
+                            getPreferenceFilePath());
+}
+
+void gameFrontRequestPlayTutorial(void) {
+  gameFrontPlayTutorialRequested = TRUE;
+}
+
+bool gameFrontConsumePlayTutorialRequest(void) {
+  bool was = gameFrontPlayTutorialRequested;
+  gameFrontPlayTutorialRequested = FALSE;
+  return was;
+}
+
 void gameFrontGetTrackerOptions(char *address, unsigned short *port, bool *enabled) {
   strcpy(address, gameFrontTrackerAddr);
   *port = gameFrontTrackerPort;
@@ -1408,7 +1448,8 @@ bool gameFrontLoadTutorial(void) {
     fp = fopen(candidates[i], "rb");
     if (fp != NULL) {
       fclose(fp);
-      return screenLoadMapCS(humanSim, candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+      /* screenLoadMapCS takes char* (not const) but doesn't mutate. */
+      return screenLoadMapCS(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
     }
   }
   return FALSE;
@@ -1519,6 +1560,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Remember */
   GetPrivateProfileString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontRemeber = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Tutorial visibility — defaults to "Yes" (show on first run). */
+  GetPrivateProfileString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Game Options */
   GetPrivateProfileString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX, prefsFile);

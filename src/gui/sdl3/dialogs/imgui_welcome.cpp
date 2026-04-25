@@ -32,6 +32,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "imgui_welcome.h"
+#include "../../gamefront.h"
 }
 
 /* Match openingStates enum from gamefront.h */
@@ -136,14 +137,16 @@ extern "C" int imguiWelcomeShow(void) {
 
     /* Load images */
     SDL_Texture *logoTex     = loadPng(renderer, "smalllogo-transparent.png");
+    /* Icons in the same order as modes[] below. Tutorial is the first
+     * row (no icon yet). */
     SDL_Texture *btnIcons[7] = {
-        loadBmp(renderer, "button_practice.bmp"),
-        nullptr,  /* no icon for tutorial yet */
-        loadBmp(renderer, "button_internet.bmp"),
-        loadBmp(renderer, "button_lan.bmp"),
-        nullptr,  /* no icon for map editor yet */
-        nullptr,  /* no icon for log viewer yet */
-        nullptr,  /* no icon for settings yet */
+        nullptr,  /* tutorial */
+        loadBmp(renderer, "button_practice.bmp"),  /* single player */
+        loadBmp(renderer, "button_internet.bmp"),  /* internet */
+        loadBmp(renderer, "button_lan.bmp"),       /* local */
+        nullptr,  /* map editor */
+        nullptr,  /* log viewer */
+        nullptr,  /* settings */
     };
 
     /* Query logo dimensions (scaled) */
@@ -295,23 +298,25 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
-            struct { const char *label; int code; } miniModes[] = {
-                { "Single Player##mini", RESULT_SINGLEPLAYER },
-                { "Tutorial##mini",      RESULT_TUTORIAL },
-                { "Internet##mini",      RESULT_INTERNET },
-                { "Local##mini",         RESULT_LAN },
+            const bool showTutorial = gameFrontGetShowTutorialButton();
+            struct { const char *label; int code; bool show; } miniModes[] = {
+                { "Tutorial##mini",      RESULT_TUTORIAL,     showTutorial },
+                { "Single Player##mini", RESULT_SINGLEPLAYER, true },
+                { "Internet##mini",      RESULT_INTERNET,     true },
+                { "Local##mini",         RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { "Map Editor##mini",    RESULT_MAPEDITOR },
-                { "Log Viewer##mini",    RESULT_LOGVIEWER },
+                { "Map Editor##mini",    RESULT_MAPEDITOR,    true },
+                { "Log Viewer##mini",    RESULT_LOGVIEWER,    true },
 #endif
-                { "Settings##mini",      RESULT_SETTINGS },
+                { "Settings##mini",      RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
-                { "Quit##mini",          RESULT_QUIT },
+                { "Quit##mini",          RESULT_QUIT,         true },
 #endif
             };
             int miniCount = sizeof(miniModes) / sizeof(miniModes[0]);
 
             for (int i = 0; i < miniCount; i++) {
+                if (!miniModes[i].show) continue;
                 ImGui::SetCursorPos(ImVec2(btnX, btnY));
                 bool hovered = false;
                 ImVec2 hoverMin(btnX, btnY);
@@ -412,20 +417,22 @@ extern "C" int imguiWelcomeShow(void) {
             const float rowW = iconSize + iconGap + btnW;
             const float rowStartX = (panelW - rowW) * 0.5f;
 
-            struct { const char *label; int code; } modes[] = {
-                { "Single Player", RESULT_SINGLEPLAYER },
-                { "Tutorial",      RESULT_TUTORIAL },
-                { "Internet",      RESULT_INTERNET },
-                { "Local",         RESULT_LAN },
+            const bool showTutorialMain = gameFrontGetShowTutorialButton();
+            struct { const char *label; int code; bool show; } modes[] = {
+                { "Tutorial",      RESULT_TUTORIAL,     showTutorialMain },
+                { "Single Player", RESULT_SINGLEPLAYER, true },
+                { "Internet",      RESULT_INTERNET,     true },
+                { "Local",         RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { "Map Editor",    RESULT_MAPEDITOR },
-                { "Log Viewer",    RESULT_LOGVIEWER },
+                { "Map Editor",    RESULT_MAPEDITOR,    true },
+                { "Log Viewer",    RESULT_LOGVIEWER,    true },
 #endif
-                { "Settings",      RESULT_SETTINGS },
+                { "Settings",      RESULT_SETTINGS,     true },
             };
             int modeCount = sizeof(modes) / sizeof(modes[0]);
 
             for (int i = 0; i < modeCount; i++) {
+                if (!modes[i].show) continue;
                 /* Small gap before Map Editor and before Settings */
                 if (modes[i].code == RESULT_MAPEDITOR || modes[i].code == RESULT_SETTINGS) {
                     ImGui::Spacing();

@@ -438,6 +438,34 @@ void gameFrontSetRemeber(bool isSet);
 bool gameFrontGetRemeber(void);
 
 /*********************************************************
+*NAME:          gameFrontGetShowTutorialButton
+*PURPOSE:
+* Returns whether the Tutorial entry should appear on the welcome
+* menu. TRUE on a fresh install; flipped to FALSE automatically when
+* the player completes the tutorial; can be re-enabled from Settings.
+*********************************************************/
+bool gameFrontGetShowTutorialButton(void);
+
+/*********************************************************
+*NAME:          gameFrontSetShowTutorialButton
+*PURPOSE:
+* Sets the Tutorial-on-main-menu visibility and persists it to the
+* INI file immediately so the change survives a crash or hard quit.
+*********************************************************/
+void gameFrontSetShowTutorialButton(bool show);
+
+/*********************************************************
+*NAME:          gameFrontRequestPlayTutorial
+*PURPOSE:
+* Settings dialog calls this when the user clicks "Play Tutorial".
+* The next gameFrontConsumePlayTutorialRequest() call returns TRUE
+* and clears the flag, so the openSettings handler can route to
+* openTutorial instead of falling back to openWelcome.
+*********************************************************/
+void gameFrontRequestPlayTutorial(void);
+bool gameFrontConsumePlayTutorialRequest(void);
+
+/*********************************************************
 *NAME:          gameFrontSetupServer
 *AUTHOR:        John Morrison
 *CREATION DATE: 3/11/99
