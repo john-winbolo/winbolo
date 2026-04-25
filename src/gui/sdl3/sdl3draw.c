@@ -1275,6 +1275,52 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                          (float)(gZoomFactor * SDL3_SCREEN_W),
                          (float)(gZoomFactor * SDL3_SCREEN_H) };
     SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
+  } else if (tabletMode) {
+    /* Tablet chrome: beveled gray background matching desktop background.bmp style.
+       Draw via SDL so it appears behind the game tiles (which draw next).
+       Panel borders in the gutters are drawn later by renderTabletBackground()
+       in sdl3imgui_tablet.cpp via ImGui's BackgroundDrawList. */
+    int scrW, scrH;
+    {
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+      if (scrW <= 0 || scrH <= 0)
+        SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+    }
+    float ps = (float)scrH / 480.0f;
+    if (ps < 0.7f) ps = 0.7f;
+    float border = 2.0f * ps;
+    float vpPad = 3.0f * ps;
+
+    /* Fill entire screen with chrome gray */
+    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+    SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
+    SDL_RenderFillRect(gRenderer, &fullScr);
+
+    /* Inset bevel around the game viewport */
+    float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom);
+    float gamePixH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * effectiveZoom);
+    float bx = (float)tabletOriginX - vpPad - border;
+    float by = (float)tabletOriginY - vpPad - border;
+    float bw = gamePixW + (vpPad + border) * 2;
+    float bh = gamePixH + (vpPad + border) * 2;
+    /* Dark edge on top and left */
+    SDL_SetRenderDrawColor(gRenderer, 64, 64, 64, 255);
+    SDL_FRect topE  = { bx, by, bw, border };
+    SDL_FRect leftE = { bx, by + border, border, bh - border };
+    SDL_RenderFillRect(gRenderer, &topE);
+    SDL_RenderFillRect(gRenderer, &leftE);
+    /* Light edge on bottom and right */
+    SDL_SetRenderDrawColor(gRenderer, 160, 160, 160, 255);
+    SDL_FRect botE   = { bx, by + bh - border, bw, border };
+    SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
+    SDL_RenderFillRect(gRenderer, &botE);
+    SDL_RenderFillRect(gRenderer, &rightE);
+    /* Black fill inside bevel (game tiles draw over this) */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_FRect inner = { bx + border, by + border,
+                        bw - border * 2, bh - border * 2 };
+    SDL_RenderFillRect(gRenderer, &inner);
   }
 
   /* In tablet mode, temporarily override gZoomFactor so that sprite
@@ -1610,8 +1656,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
        Use BLENDMODE_NONE so that any alpha < 255 stored in the render target
        (e.g. from anti-aliased tile sprites drawn with BLENDMODE_NONE) doesn't
        cause semi-transparency when composited onto the window.
-       Use gray (107,107,107) to match chrome and hide any 1px rounding gaps. */
-    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+       Black letterbox/pillarbox fill — visible when the window aspect ratio
+       differs from the game (e.g. fullscreen on a widescreen monitor). */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
     SDL_RenderFillRect(gRenderer, NULL);
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
@@ -1730,8 +1777,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     gGameDestRect.h = destH;
     gGameScale = destW / (float)gGameRTWidth;
 
-    /* Gray background to match chrome and hide any 1px rounding gaps */
-    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+    /* Black letterbox/pillarbox fill — visible when window aspect differs
+       from the game (e.g. fullscreen on a widescreen monitor). */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
     SDL_RenderFillRect(gRenderer, NULL);
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);

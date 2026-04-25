@@ -308,6 +308,166 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
 }
 
 /* -------------------------------------------------------
+ * Beveled chrome background (matches desktop background.bmp style)
+ * ------------------------------------------------------- */
+
+/* Draw a recessed (inset) beveled rectangle — dark top/left, light bottom/right,
+   black fill inside.  border is the bevel thickness in pixels. */
+static void drawInsetRect(ImDrawList *dl, float x, float y, float w, float h,
+                          float border, ImU32 colLight, ImU32 colDark, ImU32 colFill) {
+  /* Dark edge on top and left */
+  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + border), colDark);              /* top */
+  dl->AddRectFilled(ImVec2(x, y + border), ImVec2(x + border, y + h), colDark);     /* left */
+  /* Light edge on bottom and right */
+  dl->AddRectFilled(ImVec2(x, y + h - border), ImVec2(x + w, y + h), colLight);     /* bottom */
+  dl->AddRectFilled(ImVec2(x + w - border, y), ImVec2(x + w, y + h - border), colLight); /* right */
+  /* Black fill */
+  dl->AddRectFilled(ImVec2(x + border, y + border),
+                    ImVec2(x + w - border, y + h - border), colFill);
+}
+
+/* Draw a raised (outset) beveled rectangle — light top/left, dark bottom/right,
+   medium gray fill inside. */
+static void drawRaisedRect(ImDrawList *dl, float x, float y, float w, float h,
+                           float border, ImU32 colLight, ImU32 colDark, ImU32 colFill) {
+  /* Light edge on top and left */
+  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + border), colLight);             /* top */
+  dl->AddRectFilled(ImVec2(x, y + border), ImVec2(x + border, y + h), colLight);    /* left */
+  /* Dark edge on bottom and right */
+  dl->AddRectFilled(ImVec2(x, y + h - border), ImVec2(x + w, y + h), colDark);      /* bottom */
+  dl->AddRectFilled(ImVec2(x + w - border, y), ImVec2(x + w, y + h - border), colDark); /* right */
+  /* Fill */
+  dl->AddRectFilled(ImVec2(x + border, y + border),
+                    ImVec2(x + w - border, y + h - border), colFill);
+}
+
+static void renderTabletBackground(void) {
+  /* Panel borders for the gutter UI elements.  The chrome gray fill and
+     viewport bevel are drawn earlier via SDL in sdl3DrawMainScreen()
+     (sdl3draw.c) so they appear behind the game tiles.  These borders
+     use ImGui's BackgroundDrawList which renders behind ImGui windows
+     but on top of SDL content — correct for the gutter panels which
+     are all ImGui-drawn. */
+  const TabletLayoutConfig &c = s_cfg;
+  float ps = (float)c.screenH / 480.0f;
+  if (ps < 0.7f) ps = 0.7f;
+  float border = 2.0f * ps;  /* bevel thickness — 2px at reference 480p */
+
+  ImU32 colLight  = IM_COL32(160, 160, 160, 255);  /* highlight edge */
+  ImU32 colDark   = IM_COL32(64,  64,  64,  255);  /* shadow edge */
+  ImU32 colBlack  = IM_COL32(0,   0,   0,   255);  /* recessed fill */
+
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
+
+  /* --- Left gutter: status grids (tanks, pills, bases) --- */
+  if (c.showStatusGrids) {
+    float gridW = 90.0f * ps * c.statusGridScale;
+    float gridH = 66.0f * ps * c.statusGridScale;
+    float gridPad = 2.0f * ps;
+
+    drawInsetRect(dl,
+      c.tanksGridX - gridPad - border, c.tanksGridY - gridPad - border,
+      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
+      border, colLight, colDark, colBlack);
+
+    drawInsetRect(dl,
+      c.pillsGridX - gridPad - border, c.pillsGridY - gridPad - border,
+      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
+      border, colLight, colDark, colBlack);
+
+    drawInsetRect(dl,
+      c.basesGridX - gridPad - border, c.basesGridY - gridPad - border,
+      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: top buttons row --- */
+  {
+    float rowX = c.playersBtnX - 3.0f * ps;
+    float rowY = c.topBtnY - 3.0f * ps;
+    float rowW = (c.cogBtnX + c.topBtnSize) - c.playersBtnX + 6.0f * ps;
+    float rowH = c.topBtnSize + 6.0f * ps;
+    drawInsetRect(dl, rowX - border, rowY - border,
+      rowW + border * 2, rowH + border * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: resource bars area --- */
+  {
+    float pad = 3.0f * ps;
+    drawInsetRect(dl,
+      c.tankBarsX - pad - border, c.tankBarsY - pad - border,
+      c.topBtnSize + (pad + border) * 2, c.barsH + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+
+    float baseH = c.barsH - 16.0f;
+    drawInsetRect(dl,
+      c.baseBarsX - pad - border, c.baseBarsY - pad - border,
+      c.topBtnSize + (pad + border) * 2, baseH + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: build bar area --- */
+  {
+    float iconSize = c.buildIconSize;
+    float btnPad = 8.0f;
+    float btnSize = iconSize + btnPad * 2;
+    float spacing = c.buildSpacing;
+    int cols = 2, rows = 3;
+    float gridW = btnSize * cols + spacing * (cols - 1);
+    float gridH = btnSize * rows + spacing * (rows - 1);
+    float pad = 3.0f * ps;
+    /* Account for ImGui window padding (6px) */
+    float winPadX = 6.0f;
+    float winPadY = 6.0f;
+    drawInsetRect(dl,
+      c.buildBarX - pad - border, c.buildBarY - pad - border,
+      gridW + winPadX * 2 + (pad + border) * 2,
+      gridH + winPadY * 2 + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: fire/mine button area --- */
+  {
+    float pad = 3.0f * ps;
+    /* Encompass fire, mine, pill view, and tank view buttons */
+    float leftEdge = c.pillViewCenterX - c.pillViewRadius;
+    float topEdge = c.tankViewCenterY - c.tankViewRadius;
+    float rightEdge = c.fireCenterX + c.fireRadius;
+    float bottomEdge = c.fireCenterY + c.fireRadius;
+    drawInsetRect(dl,
+      leftEdge - pad - border, topEdge - pad - border,
+      (rightEdge - leftEdge) + (pad + border) * 2,
+      (bottomEdge - topEdge) + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: gunsight +/- buttons --- */
+  {
+    float pad = 3.0f * ps;
+    float leftEdge = c.gsDecCenterX - c.gsDecRadius;
+    float topEdge = c.gsDecCenterY - c.gsDecRadius;
+    float rightEdge = c.gsIncCenterX + c.gsIncRadius;
+    float bottomEdge = c.gsIncCenterY + c.gsIncRadius;
+    drawInsetRect(dl,
+      leftEdge - pad - border, topEdge - pad - border,
+      (rightEdge - leftEdge) + (pad + border) * 2,
+      (bottomEdge - topEdge) + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Bottom: messages overlay area --- */
+  {
+    float pad = 3.0f * ps;
+    float msgH = 76.0f * ps;  /* matches renderMessagesOverlay height */
+    drawInsetRect(dl,
+      c.msgOverlayX - pad - border, c.msgOverlayY - pad - border,
+      c.msgOverlayW + (pad + border) * 2, msgH + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+}
+
+/* -------------------------------------------------------
  * Alpha helper
  * ------------------------------------------------------- */
 
@@ -1219,6 +1379,9 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
 
   /* Reconfigure layout each frame */
   tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
+
+  /* Draw beveled chrome background behind everything */
+  renderTabletBackground();
 
   /* Register button positions for touch hit-testing */
   registerTouchButtons();
