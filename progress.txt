@@ -79,15 +79,21 @@ Phase 5: speed control
   [x] Speed extra-delay applied in winbolo.c main loop frame cap
 
 Phase 6: SVG themes
-  [ ] tools/png_to_svg_pixelwise.py: each pixel = one rect SVG element
-  [ ] tools/png_to_svg_grouped.py: merge same-color neighbors
-  [ ] tools/png_to_svg_rotate.py: only N-facing variants for tanks/shells
-  [ ] generate stock_svg/, stock_svg_pixelgrouped/, stock_svg_ingamerotate/
-  [ ] tileLoaderBuildSheet: prefer data/theme/<active>/<name>.svg
-      over data/svg/<name>.svg; fall back if missing
-  [ ] In-game rotation in mapview.c for ingamerotate themes:
-      detect "no shell_NN.png exists, only shell_00", rotate the 00 by
-      angle * 360/256 degrees around centre
+  [x] tools/generate_themes.py — single script with three modes;
+      produces pixelwise (each pixel = one <rect>), pixelgrouped
+      (flood-fill same-rgba), and ingamerotate (N-facing _00 only)
+      variants in one pass.
+  [x] generated stock_svg/ (305 files), stock_svg_pixelgrouped/
+      (305 files), stock_svg_ingamerotate/ (200 files) under
+      data/theme/.
+  [x] tileLoaderBuildSheet prefers data/theme/<active>/<name>.svg|png
+      over data/svg/<name>.svg with fall-through; active theme
+      managed via tileLoaderSetTheme + WINBOLO_THEME env.
+  [x] In-game rotation in mapview.c for ingamerotate themes:
+      tileLoaderThemeRotates() gates the rotated render path; shells
+      and tanks rotate via SDL_RenderTextureRotated.  Initial pass
+      used dir * 22.5° (16 steps); now upgraded to full 256-bolo-
+      degree rotation (angle * 360/256) for both shells and tanks.
 
 Phase 7: graphics settings UI
   [x] Settings dialog: animation style combo (Pixel Floor / Pixel
