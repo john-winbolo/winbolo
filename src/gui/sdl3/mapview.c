@@ -670,7 +670,9 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
     SDL_FRect dstR = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
     if (useRotate) {
       SDL_FPoint pivot = { 1.5f * (float)zf, 0.0f };
-      double angle = (double)dir * 22.5;
+      /* Full 256-bolo-degree rotation: q->angle is 0..255 (TURNTYPE).
+       * SDL angle is degrees clockwise; Bolo 0 = North, increases CW. */
+      double angle = (double)q->angle * (360.0 / 256.0);
       SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
                                angle, &pivot, SDL_FLIP_NONE);
     } else {

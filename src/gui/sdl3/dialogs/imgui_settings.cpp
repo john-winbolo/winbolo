@@ -405,23 +405,42 @@ extern "C" void imguiSettingsShow(void) {
                 }
             }
 
+            /* Pending preview selection (Apply commits it). */
+            static int s_previewThemeIdx = -1;
+            if (s_previewThemeIdx < 0) s_previewThemeIdx = curThemeIdx;
+            if (s_previewThemeIdx >= (int)themeDirs.size()) s_previewThemeIdx = curThemeIdx;
+
             ImGui::TextUnformatted("Theme");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(220);
-            if (ImGui::BeginCombo("##theme", themeDirs[curThemeIdx].c_str())) {
+            if (ImGui::BeginCombo("##theme", themeDirs[s_previewThemeIdx].c_str())) {
                 for (int i = 0; i < (int)themeDirs.size(); ++i) {
-                    bool selected = (i == curThemeIdx);
-                    if (ImGui::Selectable(themeDirs[i].c_str(), selected)) {
-                        if (i == 0) {
-                            tileLoaderSetTheme("");
-                        } else {
-                            tileLoaderSetTheme(themeDirs[i].c_str());
-                        }
-                        sdl3DrawReloadTiles();
+                    bool selected = (i == s_previewThemeIdx);
+                    bool active = (i == curThemeIdx);
+                    /* Mark active with a leading dot so the user knows
+                     * which one is currently in effect, vs. the one
+                     * being previewed. */
+                    char label[256];
+                    snprintf(label, sizeof(label), "%s%s",
+                             active ? "* " : "  ", themeDirs[i].c_str());
+                    if (ImGui::Selectable(label, selected)) {
+                        s_previewThemeIdx = i;
                     }
                     if (selected) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
+            }
+            /* Apply button: visible when preview differs from active. */
+            if (s_previewThemeIdx != curThemeIdx) {
+                ImGui::SameLine();
+                if (ImGui::Button("Apply##theme")) {
+                    if (s_previewThemeIdx == 0) {
+                        tileLoaderSetTheme("");
+                    } else {
+                        tileLoaderSetTheme(themeDirs[s_previewThemeIdx].c_str());
+                    }
+                    sdl3DrawReloadTiles();
+                }
             }
 
             /* Animation style. */
