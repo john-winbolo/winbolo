@@ -889,8 +889,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         if (tab.fetching) {
             ImGui::TextUnformatted(langGetText(STR_DLGWBN_LOADING));
         } else if (tab.error) {
-            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), langGetText(STR_DLGWBN_ERROR_FMT),
-                               statusText ? statusText : langGetText(STR_DLGWBN_UNKNOWN_ERR));
+            MessageArgs args = {};
+            const char *errText = statusText ? statusText : langGetText(STR_DLGWBN_UNKNOWN_ERR);
+            SDL_strlcpy(args.string1, errText, sizeof(args.string1));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.3f, 0.3f, 1));
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_ERROR, &args));
+            ImGui::PopStyleColor();
         }
 
         /* ---- Results table ---- */
@@ -994,11 +998,22 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 }
 
                 /* Stats row */
-                char durBuf[32];
-                formatDuration(e.game_length_seconds, durBuf, sizeof(durBuf));
-                ImGui::Text(langGetText(STR_DLGWBN_DURATION_FMT), durBuf);
+                {
+                    char durBuf[32];
+                    formatDuration(e.game_length_seconds, durBuf, sizeof(durBuf));
+                    MessageArgs args = {};
+                    SDL_strlcpy(args.string1, durBuf, sizeof(args.string1));
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_DURATION, &args));
+                }
                 ImGui::SameLine(0, 20);
-                ImGui::Text(langGetText(STR_DLGWBN_RATING_FMT), e.rating, e.num_ratings);
+                {
+                    char ratingBuf[16];
+                    SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", e.rating);
+                    MessageArgs args = {};
+                    SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
+                    args.number = e.num_ratings;
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+                }
                 ImGui::SameLine(0, 20);
                 {
                     MessageArgs args = {};
@@ -1006,7 +1021,11 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_DOWNLOADS_FMT, &args));
                 }
                 ImGui::SameLine(0, 20);
-                ImGui::Text(langGetText(STR_DLGWBN_SIZE_FMT), e.log_size_formatted);
+                {
+                    MessageArgs args = {};
+                    SDL_strlcpy(args.string1, e.log_size_formatted, sizeof(args.string1));
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_SIZE, &args));
+                }
 
                 /* Comments */
                 if (e.detailLoaded) {
@@ -1170,7 +1189,13 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
             if (isFirst) ImGui::EndDisabled();
 
             ImGui::SameLine();
-            ImGui::Text(langGetText(STR_DLGWBN_PAGE_FMT), tab.page, tab.totalPages, tab.total);
+            {
+                MessageArgs args = {};
+                args.number = tab.page;
+                args.number2 = tab.totalPages;
+                args.number3 = tab.total;
+                ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_PAGE, &args));
+            }
             ImGui::SameLine();
 
             if (isLast) ImGui::BeginDisabled();

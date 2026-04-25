@@ -395,11 +395,11 @@ STR_DLGSYSINFO_AITANKS=AI Tanks:
 # Network Info panel additions
 STR_DLGNETINFO_SERVER=Server:
 STR_DLGNETINFO_THISGAME=This game:
-STR_DLGNETINFO_PINGGRAPH_FMT=Ping: min %d / avg %d / max %d ms
+STR_DLGNETINFO_PINGGRAPH=Ping: min {number} / avg {number2} / max {number3} ms
 STR_DLGNETINFO_KBIN=KB/s In:
 STR_DLGNETINFO_KBOUT=KB/s Out:
-STR_DLGNETINFO_PACKETS_FMT=Packets/sec: %d in / %d out
-STR_DLGNETINFO_KB_FMT=KB/sec: %.1f in / %.1f out
+STR_DLGNETINFO_PACKETS_RATE=Packets/sec: {number} in / {number2} out
+STR_DLGNETINFO_KB_RATE=KB/sec: {string1} in / {string2} out
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Copy Seed
@@ -475,7 +475,7 @@ STR_MENU_DOUBLE=Double
 STR_MENU_TRIPLE=Triple
 STR_MENU_QUAD=Quad
 STR_MENU_CUSTOM_RESIZABLE=Custom (Resizable)
-STR_MENU_REQUIRES_FMT=Requires %dx%d - exceeds display
+STR_MENU_REQUIRES=Requires {number}x{number2} - exceeds display
 STR_MENU_SMOOTH_SCROLLING=Smooth Scrolling
 STR_MENU_AUTO_SCROLLING=Automatic Scrolling
 STR_MENU_SHOW_GUNSIGHT=Show Gunsight
@@ -540,7 +540,7 @@ STR_DLGLOBBY_BASES=Bases:
 STR_DLGLOBBY_STARTS=Starts:
 STR_DLGLOBBY_SKIPMAP=Skip Map
 STR_DLGLOBBY_CANCELSKIP=Cancel Skip
-STR_DLGLOBBY_VOTES_FMT=%d/%d votes to skip
+STR_DLGLOBBY_VOTES={number}/{number2} votes to skip
 STR_DLGLOBBY_CHAT=Chat
 STR_DLGLOBBY_READY=Ready
 STR_DLGLOBBY_UNREADY=Unready
@@ -569,9 +569,8 @@ STR_DLGLOBBY_GAME_LBL=Game:
 STR_DLGLOBBY_MINES_LBL=Mines:
 STR_DLGLOBBY_AI_LBL=AI:
 STR_DLGLOBBY_TIME_LBL=Time:
-STR_DLGLOBBY_HEADER_FMT=%s:%u | %s | %s Mines | AI: %s | %s
-STR_DLGLOBBY_TIME_HMS=%dh %02dm %02ds
-STR_DLGLOBBY_TIME_MS=%dm %02ds
+STR_DLGLOBBY_TIME_HMS={number}h {string1}m {string2}s
+STR_DLGLOBBY_TIME_MS={number}m {string1}s
 STR_DLGLOBBY_TIME_S={number}s
 STR_DLGLOBBY_MAP_LBL=Map:
 
@@ -579,7 +578,7 @@ STR_DLGLOBBY_MAP_LBL=Map:
 STR_DLGGAMESETUP_WINTITLE=WinBolo - Game Setup
 STR_DLGGAMESETUP_SELECTAMAP=Select a map:
 STR_BACK=Back
-STR_DLGGAMESETUP_BASES_STARTS_FMT=Bases: %d  Starts: %d
+STR_DLGGAMESETUP_BASES_STARTS=Bases: {number}  Starts: {number2}
 STR_DLGGAMESETUP_PILLBOXES_FMT=Pillboxes: {number}
 STR_DLGGAMESETUP_CHANGEMAP=Change Map
 STR_DLGGAMESETUP_GAMETYPE_LBL=Game Type
@@ -607,9 +606,9 @@ STR_DLGTCP_WINTITLE=WinBolo - UDP (Internet) Setup
 STR_ERR_TITLE=Error
 
 # Game Browser dialog
-STR_DLGBROWSER_WINTITLE_FMT=WinBolo - %s
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
 STR_DLGBROWSER_REFRESH=Refresh
-STR_DLGBROWSER_LOADING_FMT=Loading games list%s
+STR_DLGBROWSER_LOADING=Loading games list{string1}
 STR_DLGBROWSER_TRACKER_INSTRUCTION=Click Refresh to load games...
 STR_DLGBROWSER_LAN_INSTRUCTION=Click Refresh to scan...
 STR_DLGBROWSER_GAMES_LOADED=Games loaded.
@@ -630,8 +629,8 @@ STR_DLGBROWSER_FILTER_UNLOCKED=Unlocked Only
 STR_DLGBROWSER_FILTER_ALLLOBBY=All Lobby
 STR_DLGBROWSER_FILTER_INLOBBY=In Lobby
 STR_DLGBROWSER_FILTER_STARTING=Starting
-STR_DLGBROWSER_STATUS_PINGING_FMT=Status: %s  |  %d servers  |  Pinging %d...
-STR_DLGBROWSER_STATUS_FMT=Status: %s  |  %d servers
+STR_DLGBROWSER_STATUS_PINGING=Status: {string1}  |  {number} servers  |  Pinging {number2}...
+STR_DLGBROWSER_STATUS=Status: {string1}  |  {number} servers
 STR_DLGBROWSER_NEWGAME=New Game
 STR_DLGBROWSER_PLAYER_NAME_BTN=Player Name
 STR_DLGBROWSER_MANUAL=Manual
@@ -655,7 +654,7 @@ STR_DLGWBN_SEARCHFILTERS=Search Filters:
 STR_DLGWBN_HINT_PLAYER=Player
 STR_DLGWBN_HINT_MAP=Map
 STR_DLGWBN_SEARCH_BTN=Search
-STR_DLGWBN_ERROR_FMT=Error: %s
+STR_DLGWBN_ERROR=Error: {string1}
 STR_DLGWBN_COL_MAP=Map
 STR_DLGWBN_COL_TYPE=Type
 STR_DLGWBN_COL_PLAYERS=Players
@@ -664,10 +663,10 @@ STR_DLGWBN_COL_SIZE=Size
 STR_DLGWBN_COL_DATE=Date
 STR_DLGWBN_PLAYERS_LBL=Players: 
 STR_DLGWBN_NUMPLAYERS_FMT={number} player(s)
-STR_DLGWBN_DURATION_FMT=Duration: %s
-STR_DLGWBN_RATING_FMT=Rating: %.1f/10 (%d)
+STR_DLGWBN_DURATION=Duration: {string1}
+STR_DLGWBN_RATING=Rating: {string1}/10 ({number})
 STR_DLGWBN_DOWNLOADS_FMT=Downloads: {number}
-STR_DLGWBN_SIZE_FMT=Size: %s
+STR_DLGWBN_SIZE=Size: {string1}
 STR_DLGWBN_COMMENTS_FMT=Comments ({number}):
 STR_DLGWBN_NOCOMMENTS=No comments yet.
 STR_DLGWBN_ADDCOMMENT=Add Comment:
@@ -680,7 +679,7 @@ STR_DLGWBN_VIEWLOG=View Log
 STR_DLGWBN_NOLOG=Log file is not available for this game.
 STR_DLGWBN_PREV=< Prev
 STR_DLGWBN_NEXT=Next >
-STR_DLGWBN_PAGE_FMT=Page %d of %d  (%d total)
+STR_DLGWBN_PAGE=Page {number} of {number2}  ({number3} total)
 STR_DLGWBN_OPENFILE=Open File...
 STR_DLGWBN_PARSERR=Failed to parse response
 STR_DLGWBN_NETERR=Network error
@@ -718,7 +717,7 @@ STR_DLGTRACKER_INVALIDPORT=Invalid port number.
 STR_DLGWBN_CHECKING=Checking WinBolo.net...
 STR_DLGWBN_LABEL=WinBolo.net:
 STR_DLGWBN_SIGNED_IN=Signed in
-STR_DLGWBN_EXPIRES_FMT=(expires %s)
+STR_DLGWBN_EXPIRES=(expires {string1})
 STR_DLGWBN_SIGN_OUT=Sign out of WBN
 STR_DLGWBN_NOT_SIGNED_IN=Not signed in
 STR_DLGWBN_SIGN_IN_BTN=Sign in to WBN...
@@ -746,13 +745,13 @@ STR_MAPCHOOSER_GENRANDOM=Generate Random Map
 STR_MAPCHOOSER_RANDOMMAP=Random Map
 STR_MAPCHOOSER_CLICKGEN=Click Generate to preview
 STR_MAPCHOOSER_NOPREVIEW=No preview available
-STR_MAPCHOOSER_STATS_FMT=Pillboxes: %d  Bases: %d  Starts: %d
+STR_MAPCHOOSER_STATS=Pillboxes: {number}  Bases: {number2}  Starts: {number3}
 STR_MAPCHOOSER_MAPFILES=Map Files
 STR_MAPCHOOSER_ALLFILES=All Files
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
-STR_TABLET_KILLS_DEATHS_FMT=Kills: %d  Deaths: %d
+STR_TABLET_KILLS_DEATHS=Kills: {number}  Deaths: {number2}
 STR_TABLET_TANK_RESOURCES=Tank Resources
 STR_TABLET_SHELLS=Shells
 STR_TABLET_MINES=Mines
@@ -770,4 +769,305 @@ STR_TABLET_BTN_SET=Set
 
 # Generic dialog titles (cross-dialog)
 STR_DLGSETPLAYERNAME_TITLE=Set Player Name
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Open...
+STR_MAPEDIT_MENU_RECENT=Recent Files
+STR_MAPEDIT_MENU_SAVE=Save
+STR_MAPEDIT_MENU_SAVEAS=Save As...
+STR_MAPEDIT_MENU_EXPORT=Export as PNG...
+STR_MAPEDIT_MENU_RETURN=Return to Menu
+STR_MAPEDIT_MENU_UNDO=Undo
+STR_MAPEDIT_MENU_REDO=Redo
+STR_MAPEDIT_MENU_CUT=Cut
+STR_MAPEDIT_MENU_COPY=Copy
+STR_MAPEDIT_MENU_PASTE=Paste
+STR_MAPEDIT_MENU_MAP=Map
+STR_MAPEDIT_MENU_RANDOMMAP=Random Map...
+STR_MAPEDIT_MENU_TEXT=Text...
+STR_MAPEDIT_MENU_IMPORTIMG=Import Image...
+STR_MAPEDIT_MENU_VALIDATE=Validate
+STR_MAPEDIT_MENU_MIRROR_H=Mirror Horizontal {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Mirror Vertical {string1}
+STR_MAPEDIT_MENU_ROTATE_90=Rotate 90\\xC2\\xB0 CW {string1}
+STR_MAPEDIT_MENU_ROTATE_180=Rotate 180\\xC2\\xB0 {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(selection)
+STR_MAPEDIT_SCOPE_FULLMAP=(full map)
+STR_MAPEDIT_MENU_OPTIONS=Options
+STR_MAPEDIT_MENU_CENTER=Center Map
+STR_MAPEDIT_MENU_POINT_STARTS=Point Start Points
+STR_MAPEDIT_MENU_SHOWGRID=Show Grid
+STR_MAPEDIT_MENU_SHOWMINES=Show Mines
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Show Pillbox Ranges
+STR_MAPEDIT_MENU_WINDOW=Window
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Terrain
+STR_MAPEDIT_WIN_TOOLS=Tools
+STR_MAPEDIT_WIN_INSPECTOR=Inspector
+STR_MAPEDIT_WIN_OBJECTS=Objects
+STR_MAPEDIT_WIN_OVERVIEW=Overview
+STR_MAPEDIT_WIN_STATS=Statistics
+STR_MAPEDIT_WIN_STAMP_LIB=Stamp Library
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Deep Sea
+STR_MAPEDIT_TERR_GRASS=Grass
+STR_MAPEDIT_TERR_FOREST=Forest
+STR_MAPEDIT_TERR_ROAD=Road
+STR_MAPEDIT_TERR_BUILDING=Building
+STR_MAPEDIT_TERR_HALFBUILDING=Half Building
+STR_MAPEDIT_TERR_RIVER=River
+STR_MAPEDIT_TERR_SWAMP=Swamp
+STR_MAPEDIT_TERR_CRATER=Crater
+STR_MAPEDIT_TERR_RUBBLE=Rubble
+STR_MAPEDIT_TERR_BOAT=Boat
+STR_MAPEDIT_TERR_MINETOOL=Mine Tool
+STR_MAPEDIT_MINE_CHECKERED=Checkered
+STR_MAPEDIT_MINE_FULL=Full
+STR_MAPEDIT_MINE_RANDOM=Random
+STR_MAPEDIT_MINE_CLEAR=Clear Mines
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Pencil
+STR_MAPEDIT_TOOL_LINE=Line
+STR_MAPEDIT_TOOL_RECT=Rectangle
+STR_MAPEDIT_TOOL_RECTFILL=Filled Rectangle
+STR_MAPEDIT_TOOL_OVAL=Oval
+STR_MAPEDIT_TOOL_OVALFILL=Filled Oval
+STR_MAPEDIT_TOOL_SELECT=Selection
+STR_MAPEDIT_TOOL_FILL=Fill
+STR_MAPEDIT_TOOL_MAZE=Maze
+STR_MAPEDIT_TOOL_GENERATE=Generate
+STR_MAPEDIT_TOOL_WAND=Wand
+STR_MAPEDIT_TOOL_TEXT=Text
+STR_MAPEDIT_TOOL_TEXT_TIP=Text (stamp text onto map)
+STR_MAPEDIT_BRUSH=Brush
+STR_MAPEDIT_BRUSH_SQUARE=Square
+STR_MAPEDIT_BRUSH_CIRCLE=Circle
+STR_MAPEDIT_OBJTOOL_BASE=Base
+STR_MAPEDIT_OBJTOOL_PILL=Pillbox
+STR_MAPEDIT_OBJTOOL_START=Start
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Tile: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Tile: --
+STR_MAPEDIT_STATUS_ZOOM=Zoom: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Modified
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Unsaved Changes
+STR_MAPEDIT_UNSAVED_BLURB=The map has unsaved changes.\nDo you want to save before continuing?
+STR_MAPEDIT_GOTO_TITLE=Go To Coordinates
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=No object selected
+STR_MAPEDIT_INSP_BASE_HASH=Base #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Pillbox #{number}
+STR_MAPEDIT_INSP_START_HASH=Start #{number}
+STR_MAPEDIT_INSP_POSITION=Position: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Owner
+STR_MAPEDIT_INSP_ARMOUR=Armour
+STR_MAPEDIT_INSP_SPEED=Speed
+STR_MAPEDIT_INSP_DIR=Direction
+STR_MAPEDIT_OWNER_NEUTRAL=Neutral
+STR_MAPEDIT_OWNER_PLAYER=Player {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Bases ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Pillboxes ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Starts ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Armour: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Dir: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Validation
+STR_MAPEDIT_VAL_NOISSUES=No issues
+STR_MAPEDIT_VAL_ERRORS={number} error(s)
+STR_MAPEDIT_VAL_NOERRORS=0 errors
+STR_MAPEDIT_VAL_WARNINGS={number} warning(s)
+STR_MAPEDIT_VAL_NOWARNINGS=0 warnings
+STR_MAPEDIT_VAL_ERRORS_TITLE=Validation Errors
+STR_MAPEDIT_VAL_HASERRORS=Map has {number} error(s). Fix them before saving.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Generate Random Map
+STR_MAPEDIT_GENRANDAREA_TITLE=Generate Random Area
+STR_MAPEDIT_GENSCOPE_SELECTION=Scope: Selection ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Scope: Full map ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Text Tool
+STR_MAPEDIT_TEXT_LABEL=Text:
+STR_MAPEDIT_TEXT_BUILTIN=Built-in
+STR_MAPEDIT_TEXT_SYSTEM=System Font
+STR_MAPEDIT_TEXT_FONTSIZE=Font Size
+STR_MAPEDIT_TEXT_STYLE=Style
+STR_MAPEDIT_TEXT_FONTSIZE_S=Small (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Medium (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Large (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=XL (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Regular
+STR_MAPEDIT_TEXT_STYLE_BOLD=Bold
+STR_MAPEDIT_TEXT_STYLE_ITALIC=Italic
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Bold Italic
+STR_MAPEDIT_TEXT_FONTFAMILY=Font Family
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (bundled)
+STR_MAPEDIT_TEXT_SIZEPX=Size (px)
+STR_MAPEDIT_TEXT_NOFONTS=No fonts found. Add .ttf files to data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=Text Terrain
+STR_MAPEDIT_TEXT_TERR_EDGE=Edge Terrain
+STR_MAPEDIT_TEXT_TERR_BG=Background
+STR_MAPEDIT_TEXT_PREVIEW=Preview ({number}x{number2} tiles):
+STR_MAPEDIT_TEXT_TOOLARGE=Text too large (max 256x256 tiles) or font error
+STR_MAPEDIT_GENERATE_BTN=Generate
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Maze Settings
+STR_MAPEDIT_MAZE_REGION=Region: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Drag on map to generate
+STR_MAPEDIT_ALGORITHM=Algorithm
+STR_MAPEDIT_ALGO_LABYRINTH=Labyrinth
+STR_MAPEDIT_ALGO_OPEN=Open
+STR_MAPEDIT_WALL=Wall
+STR_MAPEDIT_CORRIDOR=Corridor
+STR_MAPEDIT_ENTRIES=Entries
+STR_MAPEDIT_ROOMS=Rooms
+STR_MAPEDIT_WALLTERRAIN=Wall Terrain
+STR_MAPEDIT_CORRIDORTERRAIN=Corridor Terrain
+STR_MAPEDIT_GENSETTINGS_TITLE=Generate Settings
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Terrain Distribution
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Mines: {number} ({string1}% land)
+STR_MAPEDIT_STATS_SPATIAL=Spatial Analysis
+STR_MAPEDIT_STATS_LAND_COVERAGE=Land coverage: {string1}%
+STR_MAPEDIT_STATS_LARGEST=Largest landmass: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=Base spacing: {string1} tiles
+STR_MAPEDIT_STATS_PILL_SPACING=Pill spacing: {string1} tiles
+STR_MAPEDIT_STATS_SYMMETRY=Symmetry: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=Mirror-H:   {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=Mirror-V:   {string1}%
+STR_MAPEDIT_STATS_4CORNER=4-corner:   {string1}%
+STR_MAPEDIT_STATS_ROTATE180=Rotate-180: {string1}%
+STR_MAPEDIT_STATS_STALE=(stale \\xe2\\x80\\x94 click Refresh)
+STR_MAPEDIT_STATS_REFRESH=Refresh Spatial
+STR_MAPEDIT_STATS_STARTS=Starts
+STR_MAPEDIT_TERRNAME_HALFBLD=Half-Building
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Import Image
+STR_MAPEDIT_IMG_FILE=File:
+STR_MAPEDIT_IMG_NONE=(none)
+STR_MAPEDIT_BROWSE=Browse...
+STR_MAPEDIT_IMG_SOURCE=Source: {number}x{number2} pixels
+STR_MAPEDIT_IMG_PREVIEW_LBL=Preview:
+STR_MAPEDIT_IMG_SCALEMODE=Scale Mode:
+STR_MAPEDIT_IMG_FIT_SEL=Fit selection
+STR_MAPEDIT_IMG_FIT_PLAY=Fit playable
+STR_MAPEDIT_IMG_OUTPUT=Output: {number} x {number2} tiles
+STR_MAPEDIT_IMG_COLORS=Colors:
+STR_MAPEDIT_IMG_REDETECT=Re-detect
+STR_MAPEDIT_IMG_COLORMAP=Color Mapping
+STR_MAPEDIT_IMPORT_BTN=Import
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Bundled Stamps
+STR_MAPEDIT_STAMP_USER=User Stamps
+STR_MAPEDIT_STAMP_NOUSER=No user stamps yet.
+STR_MAPEDIT_STAMP_HINT=Use "Save Clipboard..." to create one.
+STR_MAPEDIT_DELETE=Delete
+STR_MAPEDIT_STAMP_SAVECLIP=Save Clipboard...
+STR_MAPEDIT_STAMP_TIP_COPY=Copy a selection first (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=Import...
+STR_MAPEDIT_STAMP_UNTITLED=Untitled
+STR_MAPEDIT_STAMP_SAVE_TITLE=Save Stamp
+STR_MAPEDIT_STAMP_SAVE_BLURB=Enter a name for this stamp:
+STR_MAPEDIT_STAMP_SAVE_NAME=Name
+STR_MAPEDIT_SAVE_BTN=Save
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=Export as PNG
+STR_MAPEDIT_PREVIEW=Preview
+STR_MAPEDIT_EXPORT_MODE=Mode:
+STR_MAPEDIT_EXPORT_FULL=Full resolution (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Preview size:
+STR_MAPEDIT_EXPORT_OPTIONS=Options:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Show objects
+STR_MAPEDIT_EXPORT_SHOWMINES=Show mines
+STR_MAPEDIT_EXPORT_SHOWGRID=Show grid (full mode only)
+STR_MAPEDIT_EXPORT_BTN=Export...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Locked: won't change on Randomize
+STR_MAPGEN_UNLOCKED_TIP=Unlocked: will change on Randomize
+STR_MAPGEN_GENERATOR=Generator
+STR_MAPGEN_TYPE_TOURNAMENT=Tournament
+STR_MAPGEN_TYPE_NATURAL=Natural
+STR_MAPGEN_TYPE_MAZE=Maze
+STR_MAPGEN_TYPE_FRACTAL=Fractal
+STR_MAPGEN_SEED=Seed
+STR_MAPGEN_RANDOMIZE=Randomize
+STR_MAPGEN_SYMMETRY=Symmetry
+STR_MAPGEN_SYM_4CORNER=4-Corner Mirror
+STR_MAPGEN_SYM_MIRROR_H=Mirror Horizontal
+STR_MAPGEN_SYM_MIRROR_V=Mirror Vertical
+STR_MAPGEN_SYM_ROT180=Rotate 180\\xC2\\xB0
+STR_MAPGEN_SYM_ROT90=Rotate 90\\xC2\\xB0
+STR_MAPGEN_LANDMASS_PCT=Land Mass %
+STR_MAPGEN_ROUGHNESS=Roughness
+STR_MAPGEN_ROUGH_LOW=Low
+STR_MAPGEN_ROUGH_MED=Medium
+STR_MAPGEN_ROUGH_HIGH=High
+STR_MAPGEN_INCLUDE_ROADS=Include Roads
+STR_MAPGEN_MAP_STYLE=Map Style
+STR_MAPGEN_STYLE_OCEAN=Ocean
+STR_MAPGEN_STYLE_CONTINENT=Continent
+STR_MAPGEN_STYLE_ISLANDS=Islands
+STR_MAPGEN_STYLE_ARCHIPELAGO=Archipelago
+STR_MAPGEN_STYLE_INLAND=Inland
+STR_MAPGEN_TERRAIN_MIX=Terrain Mix (% land share):
+STR_MAPGEN_GRASS_PCT=Grass %
+STR_MAPGEN_FOREST_PCT=Forest %
+STR_MAPGEN_BUILDING_PCT=Building %
+STR_MAPGEN_SWAMP_PCT=Swamp %
+STR_MAPGEN_RIVER_PCT=River %
+STR_MAPGEN_BOAT_PCT=Boat %
+STR_MAPGEN_REMAINING_GRASS=Remaining grass: {number}%
+STR_MAPGEN_MINE_DENSITY=Mine Density %
+STR_MAPGEN_RIVER_COUNT=River Count
+STR_MAPGEN_CITY_COUNT=City Count
+STR_MAPGEN_MAZE_COUNT=Maze Count
+STR_MAPGEN_WALL_THICKNESS=Wall Thickness
+STR_MAPGEN_CORRIDOR_WIDTH=Corridor Width
+STR_MAPGEN_CITY_ROOMS=City Rooms
+STR_MAPGEN_LAND_COVERAGE=Land Coverage %
+STR_MAPGEN_DETAIL_PASSES=Detail Passes
+STR_MAPGEN_COAST_JAG=Coast Jaggedness
+STR_MAPGEN_TERRAIN_LAYERS=Terrain Layers
+STR_MAPGEN_RIVERS=Rivers
+STR_MAPGEN_LAKES=Lakes
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=Too many starts: {number} (max {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=Base #{number} at ({number2},{number3}): on non-traversable terrain
+STR_MAPVALIDATE_BASE_BORDER_ZONE=Base #{number} at ({number2},{number3}): in mine border zone
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Pillbox #{number} at ({number2},{number3}): on non-traversable terrain
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Pillbox #{number} at ({number2},{number3}): in mine border zone
+STR_MAPVALIDATE_START_NOT_DEEP=Start #{number} at ({number2},{number3}): must be on deep sea
+STR_MAPVALIDATE_START_BORDER_ZONE=Start #{number} at ({number2},{number3}): in mine border zone
+STR_MAPVALIDATE_NO_STARTS=No start positions placed \\xe2\\x80\\x94 map is unplayable
+STR_MAPVALIDATE_ONE_START=Only 1 start position \\xe2\\x80\\x94 single player only
+STR_MAPVALIDATE_BASE_OVERLAP=Base #{number} and Base #{number2} overlap at ({number3},{number4})
+STR_MAPVALIDATE_PILL_OVERLAP=Pillbox #{number} and Pillbox #{number2} overlap at ({number3},{number4})
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=Base #{number} and Pillbox #{number2} overlap at ({number3},{number4})
+STR_MAPVALIDATE_START_OVERLAP=Start #{number} and Start #{number2} overlap at ({number3},{number4})
+STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} and Base #{number2} overlap at ({number3},{number4})
+STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} and Pillbox #{number2} overlap at ({number3},{number4})
 

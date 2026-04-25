@@ -118,9 +118,16 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     int mins = (totalSecs % 3600) / 60;
     int secs = totalSecs % 60;
     if (hours > 0) {
-        SDL_snprintf(buf, bufSize, langGetText(STR_DLGLOBBY_TIME_HMS), hours, mins, secs);
+        MessageArgs args = {};
+        args.number = hours;
+        SDL_snprintf(args.string1, sizeof(args.string1), "%02d", mins);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%02d", secs);
+        SDL_snprintf(buf, bufSize, "%s", langGetTextFmt(STR_DLGLOBBY_TIME_HMS, &args));
     } else if (mins > 0) {
-        SDL_snprintf(buf, bufSize, langGetText(STR_DLGLOBBY_TIME_MS), mins, secs);
+        MessageArgs args = {};
+        args.number = mins;
+        SDL_snprintf(args.string1, sizeof(args.string1), "%02d", secs);
+        SDL_snprintf(buf, bufSize, "%s", langGetTextFmt(STR_DLGLOBBY_TIME_MS, &args));
     } else {
         MessageArgs args = {};
         args.number = secs;
@@ -319,11 +326,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             formatTimeLimit(cs->lobbyTimeLimit, timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
-            ImGui::TextWrapped(langGetText(STR_DLGLOBBY_HEADER_FMT),
-                         inet_ntoa(cs->serverAddress), cs->serverPort,
-                         gameTypeStr(cs->lobbyGameType),
-                         cs->lobbyHiddenMines ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE),
-                         aiTypeStr(cs->lobbyAiType), timeStr);
+            /* Stack labels vertically on mobile so the line wraps cleanly. */
+            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), serverStr);
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(cs->lobbyGameType));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
+                        cs->lobbyHiddenMines ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), aiTypeStr(cs->lobbyAiType));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
 #else
             ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), serverStr);
             ImGui::SameLine(0, 16);
@@ -584,7 +593,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 if (cs->mapSkipVotes[j]) skipCount++;
                             }
                         }
-                        ImGui::Text(langGetText(STR_DLGLOBBY_VOTES_FMT), skipCount, humanCount);
+                        {
+                            MessageArgs args = {};
+                            args.number = skipCount;
+                            args.number2 = humanCount;
+                            ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_VOTES, &args));
+                        }
                         if (countdownActive) ImGui::EndDisabled();
                     }
 

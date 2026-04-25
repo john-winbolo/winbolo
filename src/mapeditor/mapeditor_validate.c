@@ -13,10 +13,10 @@
 
 #include "mapeditor_validate.h"
 #include "../bolo/bolo_map.h"
+#include "../gui/lang.h"
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <string.h>
 
 /* Initial capacity for the issues array */
@@ -24,7 +24,7 @@
 
 static void addIssue(ValidateResult *r, ValidateSeverity sev,
                      ValidateLocType loc, int idx, BYTE x, BYTE y,
-                     const char *fmt, ...) {
+                     langid msgId, const MessageArgs *args) {
     if (r->count >= r->capacity) {
         int newCap = r->capacity ? r->capacity * 2 : VALIDATE_INIT_CAP;
         ValidateIssue *tmp = (ValidateIssue *)realloc(r->issues,
@@ -40,10 +40,11 @@ static void addIssue(ValidateResult *r, ValidateSeverity sev,
     iss->locX = x;
     iss->locY = y;
 
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(iss->message, sizeof(iss->message), fmt, ap);
-    va_end(ap);
+    const char *text = langGetTextFmt(msgId, args);
+    size_t n = strlen(text);
+    if (n >= sizeof(iss->message)) n = sizeof(iss->message) - 1;
+    memcpy(iss->message, text, n);
+    iss->message[n] = '\0';
 
     if (sev == VALIDATE_ERROR) r->errorCount++;
     else r->warningCount++;
@@ -72,20 +73,30 @@ static BYTE stripMine(BYTE terrain) {
 
 ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     ValidateResult r;
+    MessageArgs args;
     memset(&r, 0, sizeof(r));
 
     /* 1-3: Object count limits */
     if (bs->numBases > MAX_BASES) {
+        memset(&args, 0, sizeof(args));
+        args.number = bs->numBases;
+        args.number2 = MAX_BASES;
         addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_NONE, -1, 0, 0,
-                 "Too many bases: %d (max %d)", bs->numBases, MAX_BASES);
+                 STR_MAPVALIDATE_TOO_MANY_BASES, &args);
     }
     if (pb->numPills > MAX_PILLS) {
+        memset(&args, 0, sizeof(args));
+        args.number = pb->numPills;
+        args.number2 = MAX_PILLS;
         addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_NONE, -1, 0, 0,
-                 "Too many pillboxes: %d (max %d)", pb->numPills, MAX_PILLS);
+                 STR_MAPVALIDATE_TOO_MANY_PILLS, &args);
     }
     if (ss->numStarts > MAX_STARTS) {
+        memset(&args, 0, sizeof(args));
+        args.number = ss->numStarts;
+        args.number2 = MAX_STARTS;
         addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_NONE, -1, 0, 0,
-                 "Too many starts: %d (max %d)", ss->numStarts, MAX_STARTS);
+                 STR_MAPVALIDATE_TOO_MANY_STARTS, &args);
     }
 
     /* 4: Base on non-traversable terrain */
@@ -93,13 +104,21 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
         BYTE x = bs->item[i].x, y = bs->item[i].y;
         BYTE t = stripMine(mp->mapItem[x][y]);
         if (!isTraversable(t)) {
+            memset(&args, 0, sizeof(args));
+            args.number = i;
+            args.number2 = x;
+            args.number3 = y;
             addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_BASE, i, x, y,
-                     "Base #%d at (%d,%d): on non-traversable terrain", i, x, y);
+                     STR_MAPVALIDATE_BASE_BAD_TERRAIN, &args);
         }
         /* 7: Base in border zone */
         if (!isInPlayableArea(x, y)) {
+            memset(&args, 0, sizeof(args));
+            args.number = i;
+            args.number2 = x;
+            args.number3 = y;
             addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_BASE, i, x, y,
-                     "Base #%d at (%d,%d): in mine border zone", i, x, y);
+                     STR_MAPVALIDATE_BASE_BORDER_ZONE, &args);
         }
     }
 
@@ -108,13 +127,21 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
         BYTE x = pb->item[i].x, y = pb->item[i].y;
         BYTE t = stripMine(mp->mapItem[x][y]);
         if (!isTraversable(t)) {
+            memset(&args, 0, sizeof(args));
+            args.number = i;
+            args.number2 = x;
+            args.number3 = y;
             addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_PILL, i, x, y,
-                     "Pillbox #%d at (%d,%d): on non-traversable terrain", i, x, y);
+                     STR_MAPVALIDATE_PILL_BAD_TERRAIN, &args);
         }
         /* 7: Pillbox in border zone */
         if (!isInPlayableArea(x, y)) {
+            memset(&args, 0, sizeof(args));
+            args.number = i;
+            args.number2 = x;
+            args.number3 = y;
             addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_PILL, i, x, y,
-                     "Pillbox #%d at (%d,%d): in mine border zone", i, x, y);
+                     STR_MAPVALIDATE_PILL_BORDER_ZONE, &args);
         }
     }
 
@@ -123,22 +150,30 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
         BYTE x = ss->item[i].x, y = ss->item[i].y;
         BYTE t = stripMine(mp->mapItem[x][y]);
         if (t != DEEP_SEA) {
+            memset(&args, 0, sizeof(args));
+            args.number = i;
+            args.number2 = x;
+            args.number3 = y;
             addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_START, i, x, y,
-                     "Start #%d at (%d,%d): must be on deep sea", i, x, y);
+                     STR_MAPVALIDATE_START_NOT_DEEP, &args);
         }
         if (!isInPlayableArea(x, y)) {
+            memset(&args, 0, sizeof(args));
+            args.number = i;
+            args.number2 = x;
+            args.number3 = y;
             addIssue(&r, VALIDATE_ERROR, VALIDATE_LOC_START, i, x, y,
-                     "Start #%d at (%d,%d): in mine border zone", i, x, y);
+                     STR_MAPVALIDATE_START_BORDER_ZONE, &args);
         }
     }
 
     /* 8-9: Start count warnings */
     if (ss->numStarts == 0) {
         addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_NONE, -1, 0, 0,
-                 "No start positions placed — map is unplayable");
+                 STR_MAPVALIDATE_NO_STARTS, NULL);
     } else if (ss->numStarts == 1) {
         addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_NONE, -1, 0, 0,
-                 "Only 1 start position — single player only");
+                 STR_MAPVALIDATE_ONE_START, NULL);
     }
 
     /* 10: Stacked objects */
@@ -146,10 +181,14 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     for (int i = 0; i < bs->numBases && i < MAX_BASES; i++) {
         for (int j = i + 1; j < bs->numBases && j < MAX_BASES; j++) {
             if (bs->item[i].x == bs->item[j].x && bs->item[i].y == bs->item[j].y) {
+                memset(&args, 0, sizeof(args));
+                args.number = i;
+                args.number2 = j;
+                args.number3 = bs->item[i].x;
+                args.number4 = bs->item[i].y;
                 addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_TILE, -1,
                          bs->item[i].x, bs->item[i].y,
-                         "Base #%d and Base #%d overlap at (%d,%d)",
-                         i, j, bs->item[i].x, bs->item[i].y);
+                         STR_MAPVALIDATE_BASE_OVERLAP, &args);
             }
         }
     }
@@ -157,10 +196,14 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     for (int i = 0; i < pb->numPills && i < MAX_PILLS; i++) {
         for (int j = i + 1; j < pb->numPills && j < MAX_PILLS; j++) {
             if (pb->item[i].x == pb->item[j].x && pb->item[i].y == pb->item[j].y) {
+                memset(&args, 0, sizeof(args));
+                args.number = i;
+                args.number2 = j;
+                args.number3 = pb->item[i].x;
+                args.number4 = pb->item[i].y;
                 addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_TILE, -1,
                          pb->item[i].x, pb->item[i].y,
-                         "Pillbox #%d and Pillbox #%d overlap at (%d,%d)",
-                         i, j, pb->item[i].x, pb->item[i].y);
+                         STR_MAPVALIDATE_PILL_OVERLAP, &args);
             }
         }
     }
@@ -168,10 +211,14 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     for (int i = 0; i < bs->numBases && i < MAX_BASES; i++) {
         for (int j = 0; j < pb->numPills && j < MAX_PILLS; j++) {
             if (bs->item[i].x == pb->item[j].x && bs->item[i].y == pb->item[j].y) {
+                memset(&args, 0, sizeof(args));
+                args.number = i;
+                args.number2 = j;
+                args.number3 = bs->item[i].x;
+                args.number4 = bs->item[i].y;
                 addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_TILE, -1,
                          bs->item[i].x, bs->item[i].y,
-                         "Base #%d and Pillbox #%d overlap at (%d,%d)",
-                         i, j, bs->item[i].x, bs->item[i].y);
+                         STR_MAPVALIDATE_BASE_PILL_OVERLAP, &args);
             }
         }
     }
@@ -179,10 +226,14 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     for (int i = 0; i < ss->numStarts && i < MAX_STARTS; i++) {
         for (int j = i + 1; j < ss->numStarts && j < MAX_STARTS; j++) {
             if (ss->item[i].x == ss->item[j].x && ss->item[i].y == ss->item[j].y) {
+                memset(&args, 0, sizeof(args));
+                args.number = i;
+                args.number2 = j;
+                args.number3 = ss->item[i].x;
+                args.number4 = ss->item[i].y;
                 addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_TILE, -1,
                          ss->item[i].x, ss->item[i].y,
-                         "Start #%d and Start #%d overlap at (%d,%d)",
-                         i, j, ss->item[i].x, ss->item[i].y);
+                         STR_MAPVALIDATE_START_OVERLAP, &args);
             }
         }
     }
@@ -190,10 +241,14 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     for (int i = 0; i < ss->numStarts && i < MAX_STARTS; i++) {
         for (int j = 0; j < bs->numBases && j < MAX_BASES; j++) {
             if (ss->item[i].x == bs->item[j].x && ss->item[i].y == bs->item[j].y) {
+                memset(&args, 0, sizeof(args));
+                args.number = i;
+                args.number2 = j;
+                args.number3 = ss->item[i].x;
+                args.number4 = ss->item[i].y;
                 addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_TILE, -1,
                          ss->item[i].x, ss->item[i].y,
-                         "Start #%d and Base #%d overlap at (%d,%d)",
-                         i, j, ss->item[i].x, ss->item[i].y);
+                         STR_MAPVALIDATE_START_BASE_OVERLAP, &args);
             }
         }
     }
@@ -201,10 +256,14 @@ ValidateResult mapEditorValidate(map mp, bases bs, pillboxes pb, starts ss) {
     for (int i = 0; i < ss->numStarts && i < MAX_STARTS; i++) {
         for (int j = 0; j < pb->numPills && j < MAX_PILLS; j++) {
             if (ss->item[i].x == pb->item[j].x && ss->item[i].y == pb->item[j].y) {
+                memset(&args, 0, sizeof(args));
+                args.number = i;
+                args.number2 = j;
+                args.number3 = ss->item[i].x;
+                args.number4 = ss->item[i].y;
                 addIssue(&r, VALIDATE_WARNING, VALIDATE_LOC_TILE, -1,
                          ss->item[i].x, ss->item[i].y,
-                         "Start #%d and Pillbox #%d overlap at (%d,%d)",
-                         i, j, ss->item[i].x, ss->item[i].y);
+                         STR_MAPVALIDATE_START_PILL_OVERLAP, &args);
             }
         }
     }

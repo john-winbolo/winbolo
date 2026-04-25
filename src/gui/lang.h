@@ -423,11 +423,11 @@
 /* Network Info panel additions */
 #define STR_DLGNETINFO_SERVER               485
 #define STR_DLGNETINFO_THISGAME             486
-#define STR_DLGNETINFO_PINGGRAPH_FMT        487
+#define STR_DLGNETINFO_PINGGRAPH            487
 #define STR_DLGNETINFO_KBIN                 488
 #define STR_DLGNETINFO_KBOUT                489
-#define STR_DLGNETINFO_PACKETS_FMT          490
-#define STR_DLGNETINFO_KB_FMT               491
+#define STR_DLGNETINFO_PACKETS_RATE         490
+#define STR_DLGNETINFO_KB_RATE              491
 
 /* Game Info panel additions */
 #define STR_DLGGAMEINFO_COPYSEED            492
@@ -503,7 +503,7 @@
 #define STR_MENU_TRIPLE                     548
 #define STR_MENU_QUAD                       549
 #define STR_MENU_CUSTOM_RESIZABLE           550
-#define STR_MENU_REQUIRES_FMT               551
+#define STR_MENU_REQUIRES                   551
 #define STR_MENU_SMOOTH_SCROLLING           552
 #define STR_MENU_AUTO_SCROLLING             553
 #define STR_MENU_SHOW_GUNSIGHT              554
@@ -568,7 +568,7 @@
 #define STR_DLGLOBBY_STARTS                 609
 #define STR_DLGLOBBY_SKIPMAP                610
 #define STR_DLGLOBBY_CANCELSKIP             611
-#define STR_DLGLOBBY_VOTES_FMT              612
+#define STR_DLGLOBBY_VOTES                  612
 #define STR_DLGLOBBY_CHAT                   613
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
@@ -597,7 +597,6 @@
 #define STR_DLGLOBBY_MINES_LBL              638
 #define STR_DLGLOBBY_AI_LBL                 639
 #define STR_DLGLOBBY_TIME_LBL               640
-#define STR_DLGLOBBY_HEADER_FMT             641
 #define STR_DLGLOBBY_TIME_HMS               642
 #define STR_DLGLOBBY_TIME_MS                643
 #define STR_DLGLOBBY_TIME_S                 644
@@ -607,7 +606,7 @@
 #define STR_DLGGAMESETUP_WINTITLE           646
 #define STR_DLGGAMESETUP_SELECTAMAP         647
 #define STR_BACK                            648
-#define STR_DLGGAMESETUP_BASES_STARTS_FMT   649
+#define STR_DLGGAMESETUP_BASES_STARTS       649
 #define STR_DLGGAMESETUP_PILLBOXES_FMT      650
 #define STR_DLGGAMESETUP_CHANGEMAP          651
 #define STR_DLGGAMESETUP_GAMETYPE_LBL       652
@@ -635,9 +634,9 @@
 #define STR_ERR_TITLE                       674
 
 /* Game Browser dialog */
-#define STR_DLGBROWSER_WINTITLE_FMT         675
+#define STR_DLGBROWSER_WINTITLE             675
 #define STR_DLGBROWSER_REFRESH              676
-#define STR_DLGBROWSER_LOADING_FMT          677
+#define STR_DLGBROWSER_LOADING              677
 #define STR_DLGBROWSER_TRACKER_INSTRUCTION  678
 #define STR_DLGBROWSER_LAN_INSTRUCTION      679
 #define STR_DLGBROWSER_GAMES_LOADED         680
@@ -658,8 +657,8 @@
 #define STR_DLGBROWSER_FILTER_ALLLOBBY      695
 #define STR_DLGBROWSER_FILTER_INLOBBY       696
 #define STR_DLGBROWSER_FILTER_STARTING      697
-#define STR_DLGBROWSER_STATUS_PINGING_FMT   698
-#define STR_DLGBROWSER_STATUS_FMT           699
+#define STR_DLGBROWSER_STATUS_PINGING       698
+#define STR_DLGBROWSER_STATUS               699
 #define STR_DLGBROWSER_NEWGAME              700
 #define STR_DLGBROWSER_PLAYER_NAME_BTN      701
 #define STR_DLGBROWSER_MANUAL               702
@@ -683,7 +682,7 @@
 #define STR_DLGWBN_HINT_PLAYER              718
 #define STR_DLGWBN_HINT_MAP                 719
 #define STR_DLGWBN_SEARCH_BTN               720
-#define STR_DLGWBN_ERROR_FMT                721
+#define STR_DLGWBN_ERROR                    721
 #define STR_DLGWBN_COL_MAP                  722
 #define STR_DLGWBN_COL_TYPE                 723
 #define STR_DLGWBN_COL_PLAYERS              724
@@ -692,10 +691,10 @@
 #define STR_DLGWBN_COL_DATE                 727
 #define STR_DLGWBN_PLAYERS_LBL              728
 #define STR_DLGWBN_NUMPLAYERS_FMT           729
-#define STR_DLGWBN_DURATION_FMT             730
-#define STR_DLGWBN_RATING_FMT               731
+#define STR_DLGWBN_DURATION                 730
+#define STR_DLGWBN_RATING                   731
 #define STR_DLGWBN_DOWNLOADS_FMT            732
-#define STR_DLGWBN_SIZE_FMT                 733
+#define STR_DLGWBN_SIZE                     733
 #define STR_DLGWBN_COMMENTS_FMT             734
 #define STR_DLGWBN_NOCOMMENTS               735
 #define STR_DLGWBN_ADDCOMMENT               736
@@ -708,7 +707,7 @@
 #define STR_DLGWBN_NOLOG                    743
 #define STR_DLGWBN_PREV                     744
 #define STR_DLGWBN_NEXT                     745
-#define STR_DLGWBN_PAGE_FMT                 746
+#define STR_DLGWBN_PAGE                     746
 #define STR_DLGWBN_OPENFILE                 747
 #define STR_DLGWBN_PARSERR                  748
 #define STR_DLGWBN_NETERR                   749
@@ -746,7 +745,7 @@
 #define STR_DLGWBN_CHECKING                 773
 #define STR_DLGWBN_LABEL                    774
 #define STR_DLGWBN_SIGNED_IN                775
-#define STR_DLGWBN_EXPIRES_FMT              776
+#define STR_DLGWBN_EXPIRES                  776
 #define STR_DLGWBN_SIGN_OUT                 777
 #define STR_DLGWBN_NOT_SIGNED_IN            778
 #define STR_DLGWBN_SIGN_IN_BTN              779
@@ -774,13 +773,13 @@
 #define STR_MAPCHOOSER_RANDOMMAP            797
 #define STR_MAPCHOOSER_CLICKGEN             798
 #define STR_MAPCHOOSER_NOPREVIEW            799
-#define STR_MAPCHOOSER_STATS_FMT            800
+#define STR_MAPCHOOSER_STATS                800
 #define STR_MAPCHOOSER_MAPFILES             801
 #define STR_MAPCHOOSER_ALLFILES             802
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
-#define STR_TABLET_KILLS_DEATHS_FMT         804
+#define STR_TABLET_KILLS_DEATHS             804
 #define STR_TABLET_TANK_RESOURCES           805
 #define STR_TABLET_SHELLS                   806
 #define STR_TABLET_MINES                    807
@@ -798,6 +797,307 @@
 
 /* Generic dialog titles (cross-dialog) */
 #define STR_DLGSETPLAYERNAME_TITLE          819
+
+/* Map editor menu bar */
+#define STR_MAPEDIT_MENU_OPEN               837
+#define STR_MAPEDIT_MENU_RECENT             838
+#define STR_MAPEDIT_MENU_SAVE               839
+#define STR_MAPEDIT_MENU_SAVEAS             840
+#define STR_MAPEDIT_MENU_EXPORT             841
+#define STR_MAPEDIT_MENU_RETURN             842
+#define STR_MAPEDIT_MENU_UNDO               843
+#define STR_MAPEDIT_MENU_REDO               844
+#define STR_MAPEDIT_MENU_CUT                845
+#define STR_MAPEDIT_MENU_COPY               846
+#define STR_MAPEDIT_MENU_PASTE              847
+#define STR_MAPEDIT_MENU_MAP                848
+#define STR_MAPEDIT_MENU_RANDOMMAP          849
+#define STR_MAPEDIT_MENU_TEXT               850
+#define STR_MAPEDIT_MENU_IMPORTIMG          851
+#define STR_MAPEDIT_MENU_VALIDATE           852
+#define STR_MAPEDIT_MENU_MIRROR_H           853
+#define STR_MAPEDIT_MENU_MIRROR_V           854
+#define STR_MAPEDIT_MENU_ROTATE_90          855
+#define STR_MAPEDIT_MENU_ROTATE_180         856
+#define STR_MAPEDIT_SCOPE_SELECTION         857
+#define STR_MAPEDIT_SCOPE_FULLMAP           858
+#define STR_MAPEDIT_MENU_OPTIONS            859
+#define STR_MAPEDIT_MENU_CENTER             860
+#define STR_MAPEDIT_MENU_POINT_STARTS       861
+#define STR_MAPEDIT_MENU_SHOWGRID           862
+#define STR_MAPEDIT_MENU_SHOWMINES          863
+#define STR_MAPEDIT_MENU_SHOWPILLRANGES     864
+#define STR_MAPEDIT_MENU_WINDOW             865
+
+/* Map editor windows */
+#define STR_MAPEDIT_WIN_TERRAIN             866
+#define STR_MAPEDIT_WIN_TOOLS               867
+#define STR_MAPEDIT_WIN_INSPECTOR           868
+#define STR_MAPEDIT_WIN_OBJECTS             869
+#define STR_MAPEDIT_WIN_OVERVIEW            870
+#define STR_MAPEDIT_WIN_STATS               871
+#define STR_MAPEDIT_WIN_STAMP_LIB           872
+
+/* Map editor terrain palette */
+#define STR_MAPEDIT_TERR_DEEPSEA            873
+#define STR_MAPEDIT_TERR_GRASS              874
+#define STR_MAPEDIT_TERR_FOREST             875
+#define STR_MAPEDIT_TERR_ROAD               876
+#define STR_MAPEDIT_TERR_BUILDING           877
+#define STR_MAPEDIT_TERR_HALFBUILDING       878
+#define STR_MAPEDIT_TERR_RIVER              879
+#define STR_MAPEDIT_TERR_SWAMP              880
+#define STR_MAPEDIT_TERR_CRATER             881
+#define STR_MAPEDIT_TERR_RUBBLE             882
+#define STR_MAPEDIT_TERR_BOAT               883
+#define STR_MAPEDIT_TERR_MINETOOL           884
+#define STR_MAPEDIT_MINE_CHECKERED          885
+#define STR_MAPEDIT_MINE_FULL               886
+#define STR_MAPEDIT_MINE_RANDOM             887
+#define STR_MAPEDIT_MINE_CLEAR              888
+
+/* Map editor drawing tools */
+#define STR_MAPEDIT_TOOL_PENCIL             889
+#define STR_MAPEDIT_TOOL_LINE               890
+#define STR_MAPEDIT_TOOL_RECT               891
+#define STR_MAPEDIT_TOOL_RECTFILL           892
+#define STR_MAPEDIT_TOOL_OVAL               893
+#define STR_MAPEDIT_TOOL_OVALFILL           894
+#define STR_MAPEDIT_TOOL_SELECT             895
+#define STR_MAPEDIT_TOOL_FILL               896
+#define STR_MAPEDIT_TOOL_MAZE               897
+#define STR_MAPEDIT_TOOL_GENERATE           898
+#define STR_MAPEDIT_TOOL_WAND               899
+#define STR_MAPEDIT_TOOL_TEXT               900
+#define STR_MAPEDIT_TOOL_TEXT_TIP           901
+#define STR_MAPEDIT_BRUSH                   902
+#define STR_MAPEDIT_BRUSH_SQUARE            903
+#define STR_MAPEDIT_BRUSH_CIRCLE            904
+#define STR_MAPEDIT_OBJTOOL_BASE            905
+#define STR_MAPEDIT_OBJTOOL_PILL            906
+#define STR_MAPEDIT_OBJTOOL_START           907
+
+/* Map editor status bar */
+#define STR_MAPEDIT_STATUS_TILE             908
+#define STR_MAPEDIT_STATUS_TILE_NONE        909
+#define STR_MAPEDIT_STATUS_ZOOM             910
+#define STR_MAPEDIT_STATUS_MODIFIED         911
+
+/* Map editor modals */
+#define STR_MAPEDIT_UNSAVED_TITLE           912
+#define STR_MAPEDIT_UNSAVED_BLURB           913
+#define STR_MAPEDIT_GOTO_TITLE              914
+#define STR_MAPEDIT_GOTO_X                  915
+#define STR_MAPEDIT_GOTO_Y                  916
+
+/* Map editor inspector */
+#define STR_MAPEDIT_INSP_NOSEL              917
+#define STR_MAPEDIT_INSP_BASE_HASH          918
+#define STR_MAPEDIT_INSP_PILL_HASH          919
+#define STR_MAPEDIT_INSP_START_HASH         920
+#define STR_MAPEDIT_INSP_POSITION           921
+#define STR_MAPEDIT_INSP_OWNER              922
+#define STR_MAPEDIT_INSP_ARMOUR             923
+#define STR_MAPEDIT_INSP_SPEED              924
+#define STR_MAPEDIT_INSP_DIR                925
+#define STR_MAPEDIT_OWNER_NEUTRAL           926
+#define STR_MAPEDIT_OWNER_PLAYER            927
+
+/* Map editor object list */
+#define STR_MAPEDIT_OBJ_BASES_COUNT         928
+#define STR_MAPEDIT_OBJ_PILLS_COUNT         929
+#define STR_MAPEDIT_OBJ_STARTS_COUNT        930
+#define STR_MAPEDIT_OBJ_BASE_ROW            931
+#define STR_MAPEDIT_OBJ_PILL_ROW            932
+#define STR_MAPEDIT_OBJ_START_ROW           933
+
+/* Map editor validation panel */
+#define STR_MAPEDIT_VALIDATION              934
+#define STR_MAPEDIT_VAL_NOISSUES            935
+#define STR_MAPEDIT_VAL_ERRORS              936
+#define STR_MAPEDIT_VAL_NOERRORS            937
+#define STR_MAPEDIT_VAL_WARNINGS            938
+#define STR_MAPEDIT_VAL_NOWARNINGS          939
+#define STR_MAPEDIT_VAL_ERRORS_TITLE        940
+#define STR_MAPEDIT_VAL_HASERRORS           941
+
+/* Map editor generate dialog */
+#define STR_MAPEDIT_GENRANDMAP_TITLE        942
+#define STR_MAPEDIT_GENRANDAREA_TITLE       943
+#define STR_MAPEDIT_GENSCOPE_SELECTION      944
+#define STR_MAPEDIT_GENSCOPE_FULLMAP        945
+
+/* Map editor text tool dialog */
+#define STR_MAPEDIT_TEXT_TITLE              946
+#define STR_MAPEDIT_TEXT_LABEL              947
+#define STR_MAPEDIT_TEXT_BUILTIN            948
+#define STR_MAPEDIT_TEXT_SYSTEM             949
+#define STR_MAPEDIT_TEXT_FONTSIZE           950
+#define STR_MAPEDIT_TEXT_STYLE              951
+#define STR_MAPEDIT_TEXT_FONTSIZE_S         952
+#define STR_MAPEDIT_TEXT_FONTSIZE_M         953
+#define STR_MAPEDIT_TEXT_FONTSIZE_L         954
+#define STR_MAPEDIT_TEXT_FONTSIZE_XL        955
+#define STR_MAPEDIT_TEXT_STYLE_REGULAR      956
+#define STR_MAPEDIT_TEXT_STYLE_BOLD         957
+#define STR_MAPEDIT_TEXT_STYLE_ITALIC       958
+#define STR_MAPEDIT_TEXT_STYLE_BOLDITALIC   959
+#define STR_MAPEDIT_TEXT_FONTFAMILY         960
+#define STR_MAPEDIT_TEXT_FONTBUNDLED        961
+#define STR_MAPEDIT_TEXT_SIZEPX             962
+#define STR_MAPEDIT_TEXT_NOFONTS            963
+#define STR_MAPEDIT_TEXT_TERR_TEXT          964
+#define STR_MAPEDIT_TEXT_TERR_EDGE          965
+#define STR_MAPEDIT_TEXT_TERR_BG            966
+#define STR_MAPEDIT_TEXT_PREVIEW            967
+#define STR_MAPEDIT_TEXT_TOOLARGE           968
+#define STR_MAPEDIT_GENERATE_BTN            969
+
+/* Map editor maze settings */
+#define STR_MAPEDIT_MAZE_TITLE              970
+#define STR_MAPEDIT_MAZE_REGION             971
+#define STR_MAPEDIT_DRAG_HINT               972
+#define STR_MAPEDIT_ALGORITHM               973
+#define STR_MAPEDIT_ALGO_LABYRINTH          974
+#define STR_MAPEDIT_ALGO_OPEN               975
+#define STR_MAPEDIT_WALL                    976
+#define STR_MAPEDIT_CORRIDOR                977
+#define STR_MAPEDIT_ENTRIES                 978
+#define STR_MAPEDIT_ROOMS                   979
+#define STR_MAPEDIT_WALLTERRAIN             980
+#define STR_MAPEDIT_CORRIDORTERRAIN         981
+#define STR_MAPEDIT_GENSETTINGS_TITLE       982
+
+/* Map editor statistics panel */
+#define STR_MAPEDIT_STATS_TERRAIN           983
+#define STR_MAPEDIT_STATS_OBJ_LINE          984
+#define STR_MAPEDIT_STATS_MINES             985
+#define STR_MAPEDIT_STATS_SPATIAL           986
+#define STR_MAPEDIT_STATS_LAND_COVERAGE     987
+#define STR_MAPEDIT_STATS_LARGEST           988
+#define STR_MAPEDIT_STATS_BASE_SPACING      989
+#define STR_MAPEDIT_STATS_PILL_SPACING      990
+#define STR_MAPEDIT_STATS_SYMMETRY          991
+#define STR_MAPEDIT_STATS_MIRROR_H          992
+#define STR_MAPEDIT_STATS_MIRROR_V          993
+#define STR_MAPEDIT_STATS_4CORNER           994
+#define STR_MAPEDIT_STATS_ROTATE180         995
+#define STR_MAPEDIT_STATS_STALE             996
+#define STR_MAPEDIT_STATS_REFRESH           997
+#define STR_MAPEDIT_STATS_STARTS            998
+#define STR_MAPEDIT_TERRNAME_HALFBLD        999
+
+/* Map editor image import */
+#define STR_MAPEDIT_IMG_TITLE               1000
+#define STR_MAPEDIT_IMG_FILE                1001
+#define STR_MAPEDIT_IMG_NONE                1002
+#define STR_MAPEDIT_BROWSE                  1003
+#define STR_MAPEDIT_IMG_SOURCE              1004
+#define STR_MAPEDIT_IMG_PREVIEW_LBL         1005
+#define STR_MAPEDIT_IMG_SCALEMODE           1006
+#define STR_MAPEDIT_IMG_FIT_SEL             1007
+#define STR_MAPEDIT_IMG_FIT_PLAY            1008
+#define STR_MAPEDIT_IMG_OUTPUT              1009
+#define STR_MAPEDIT_IMG_COLORS              1010
+#define STR_MAPEDIT_IMG_REDETECT            1011
+#define STR_MAPEDIT_IMG_COLORMAP            1012
+#define STR_MAPEDIT_IMPORT_BTN              1013
+
+/* Map editor stamp library */
+#define STR_MAPEDIT_STAMP_BUNDLED           1014
+#define STR_MAPEDIT_STAMP_USER              1015
+#define STR_MAPEDIT_STAMP_NOUSER            1016
+#define STR_MAPEDIT_STAMP_HINT              1017
+#define STR_MAPEDIT_DELETE                  1018
+#define STR_MAPEDIT_STAMP_SAVECLIP          1019
+#define STR_MAPEDIT_STAMP_TIP_COPY          1020
+#define STR_MAPEDIT_STAMP_IMPORT            1021
+#define STR_MAPEDIT_STAMP_UNTITLED          1022
+#define STR_MAPEDIT_STAMP_SAVE_TITLE        1023
+#define STR_MAPEDIT_STAMP_SAVE_BLURB        1024
+#define STR_MAPEDIT_STAMP_SAVE_NAME         1025
+#define STR_MAPEDIT_SAVE_BTN                1026
+
+/* Map editor export PNG */
+#define STR_MAPEDIT_EXPORT_TITLE            1027
+#define STR_MAPEDIT_PREVIEW                 1028
+#define STR_MAPEDIT_EXPORT_MODE             1029
+#define STR_MAPEDIT_EXPORT_FULL             1030
+#define STR_MAPEDIT_EXPORT_PREVSIZE         1031
+#define STR_MAPEDIT_EXPORT_OPTIONS          1032
+#define STR_MAPEDIT_EXPORT_SHOWOBJ          1033
+#define STR_MAPEDIT_EXPORT_SHOWMINES        1034
+#define STR_MAPEDIT_EXPORT_SHOWGRID         1035
+#define STR_MAPEDIT_EXPORT_BTN              1036
+
+/* Map generator panel (mapgen_imgui.cpp) */
+#define STR_MAPGEN_LOCKED_TIP               1037
+#define STR_MAPGEN_UNLOCKED_TIP             1038
+#define STR_MAPGEN_GENERATOR                1039
+#define STR_MAPGEN_TYPE_TOURNAMENT          1040
+#define STR_MAPGEN_TYPE_NATURAL             1041
+#define STR_MAPGEN_TYPE_MAZE                1042
+#define STR_MAPGEN_TYPE_FRACTAL             1043
+#define STR_MAPGEN_SEED                     1044
+#define STR_MAPGEN_RANDOMIZE                1045
+#define STR_MAPGEN_SYMMETRY                 1046
+#define STR_MAPGEN_SYM_4CORNER              1047
+#define STR_MAPGEN_SYM_MIRROR_H             1048
+#define STR_MAPGEN_SYM_MIRROR_V             1049
+#define STR_MAPGEN_SYM_ROT180               1050
+#define STR_MAPGEN_SYM_ROT90                1051
+#define STR_MAPGEN_LANDMASS_PCT             1052
+#define STR_MAPGEN_ROUGHNESS                1053
+#define STR_MAPGEN_ROUGH_LOW                1054
+#define STR_MAPGEN_ROUGH_MED                1055
+#define STR_MAPGEN_ROUGH_HIGH               1056
+#define STR_MAPGEN_INCLUDE_ROADS            1057
+#define STR_MAPGEN_MAP_STYLE                1058
+#define STR_MAPGEN_STYLE_OCEAN              1059
+#define STR_MAPGEN_STYLE_CONTINENT          1060
+#define STR_MAPGEN_STYLE_ISLANDS            1061
+#define STR_MAPGEN_STYLE_ARCHIPELAGO        1062
+#define STR_MAPGEN_STYLE_INLAND             1063
+#define STR_MAPGEN_TERRAIN_MIX              1064
+#define STR_MAPGEN_GRASS_PCT                1065
+#define STR_MAPGEN_FOREST_PCT               1066
+#define STR_MAPGEN_BUILDING_PCT             1067
+#define STR_MAPGEN_SWAMP_PCT                1068
+#define STR_MAPGEN_RIVER_PCT                1069
+#define STR_MAPGEN_BOAT_PCT                 1070
+#define STR_MAPGEN_REMAINING_GRASS          1071
+#define STR_MAPGEN_MINE_DENSITY             1072
+#define STR_MAPGEN_RIVER_COUNT              1073
+#define STR_MAPGEN_CITY_COUNT               1074
+#define STR_MAPGEN_MAZE_COUNT               1075
+#define STR_MAPGEN_WALL_THICKNESS           1076
+#define STR_MAPGEN_CORRIDOR_WIDTH           1077
+#define STR_MAPGEN_CITY_ROOMS               1078
+#define STR_MAPGEN_LAND_COVERAGE            1079
+#define STR_MAPGEN_DETAIL_PASSES            1080
+#define STR_MAPGEN_COAST_JAG                1081
+#define STR_MAPGEN_TERRAIN_LAYERS           1082
+#define STR_MAPGEN_RIVERS                   1083
+#define STR_MAPGEN_LAKES                    1084
+
+/* Map editor validation */
+#define STR_MAPVALIDATE_TOO_MANY_BASES      820
+#define STR_MAPVALIDATE_TOO_MANY_PILLS      821
+#define STR_MAPVALIDATE_TOO_MANY_STARTS     822
+#define STR_MAPVALIDATE_BASE_BAD_TERRAIN    823
+#define STR_MAPVALIDATE_BASE_BORDER_ZONE    824
+#define STR_MAPVALIDATE_PILL_BAD_TERRAIN    825
+#define STR_MAPVALIDATE_PILL_BORDER_ZONE    826
+#define STR_MAPVALIDATE_START_NOT_DEEP      827
+#define STR_MAPVALIDATE_START_BORDER_ZONE   828
+#define STR_MAPVALIDATE_NO_STARTS           829
+#define STR_MAPVALIDATE_ONE_START           830
+#define STR_MAPVALIDATE_BASE_OVERLAP        831
+#define STR_MAPVALIDATE_PILL_OVERLAP        832
+#define STR_MAPVALIDATE_BASE_PILL_OVERLAP   833
+#define STR_MAPVALIDATE_START_OVERLAP       834
+#define STR_MAPVALIDATE_START_BASE_OVERLAP  835
+#define STR_MAPVALIDATE_START_PILL_OVERLAP  836
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
@@ -819,15 +1119,24 @@ typedef struct {
 
 /* Per-message arguments substituted into named placeholders by
  * langGetTextFmt(). The placeholders are:
- *   {player}  -> playerName
- *   {other}   -> otherName
- *   {number}  -> number rendered as %d
+ *   {player}                    -> playerName
+ *   {other}                     -> otherName
+ *   {number}/{number2..4}       -> rendered as %d
+ *   {string1}/{string2}         -> arbitrary short strings (e.g. a
+ *                                  pre-formatted "%.1f", a duration
+ *                                  label, etc.)
  * Substitution is non-recursive — braces inside a substituted value
  * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
+#define LANG_MSGARG_STRING_LEN 64
 typedef struct {
     char playerName[PLAYER_NAME_LEN];
     char otherName[PLAYER_NAME_LEN];
     int  number;
+    int  number2;
+    int  number3;
+    int  number4;
+    char string1[LANG_MSGARG_STRING_LEN];
+    char string2[LANG_MSGARG_STRING_LEN];
 } MessageArgs;
 
 bool langSetup(void);

@@ -36,7 +36,9 @@ DEFAULT_EN = REPO_ROOT / "lang" / "en.txt"
 # per-ID; the per-string multiset must match (ordering may differ —
 # that's the whole point of using named placeholders, see localize.md).
 PLACEHOLDER_TOKENS = (
-    "{player}", "{other}", "{number}",
+    "{player}", "{other}",
+    "{number}", "{number2}", "{number3}", "{number4}",
+    "{string1}", "{string2}",
     "{ACCEL}", "{BRAKE}", "{FIRE}",
     "{LEFT}", "{RIGHT}", "{MINE}",
     "{SCROLL_UP}", "{SCROLL_DOWN}", "{SCROLL_LEFT}", "{SCROLL_RIGHT}",
