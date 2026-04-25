@@ -101,6 +101,11 @@ static const TankBoundingBox tank_bbox_boat[16] = {
     /* 15 (NNW) */ { .top = 1, .left = 2, .bottom = 0, .right = 1 },
 };
 
+TankBoundingBox tankGetBoundingBox(BYTE dirIndex, bool onBoat) {
+  if (dirIndex >= 16) dirIndex = 0;
+  return onBoat ? tank_bbox_boat[dirIndex] : tank_bbox_land[dirIndex];
+}
+
 /*********************************************************
  * tankBuildingCollision - Check if a WORLD coordinate
  * collides with a solid object (building, pillbox, base).

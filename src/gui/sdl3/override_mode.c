@@ -36,6 +36,7 @@
 #include "../../bolo/global.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/tank.h"
+#include "../../bolo/util.h"
 #include "../../bolo/pillbox.h"
 #include "../../bolo/bases.h"
 #include "../../bolo/lgm.h"
@@ -187,8 +188,12 @@ void overrideModeDrawOverlays(SDL_Renderer *renderer,
   /* Grid first so hitboxes/dots overlay on top. */
   drawWorldGrid(renderer, originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
 
-  /* Yellow tank ±128 wu hitboxes (tankIsTankHit threshold). */
-  SDL_SetRenderDrawColor(renderer, 255, 255, 0, 220);
+  /* Tank hitboxes:
+   *   YELLOW = tankIsTankHit ±128 wu shell-vs-tank box (tank.c:1089).
+   *   CYAN   = direction-dependent tank-vs-world bbox used by
+   *            tankNudgeBuildings (boat or land table).  This is the
+   *            collision shape against walls/pillboxes/bases — and
+   *            it's NOT a square: it varies per facing direction. */
   for (int i = 0; i < MAX_TANKS; i++) {
     tank *tk = &sim->tanks[i];
     if (*tk == NULL) continue;
@@ -196,8 +201,28 @@ void overrideModeDrawOverlays(SDL_Renderer *renderer,
     if (tankGetArmour(tk) > TANK_FULL_ARMOUR) continue;
     WORLD twx, twy;
     tankGetWorld(tk, &twx, &twy);
+
+    /* Yellow shell hitbox first */
+    SDL_SetRenderDrawColor(renderer, 255, 255, 0, 220);
     drawHitboxRect(renderer, (int)twx, (int)twy, 128,
                    originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
+
+    /* Cyan world-collision bbox: per-direction insets from edge of
+     * 16x16 sprite, converted to wu offsets via (8 - inset) * 16. */
+    BYTE dirIdx = utilGetDir(tankGetAngle(tk));
+    bool onBoat = tankIsOnBoat(tk);
+    TankBoundingBox bb = tankGetBoundingBox(dirIdx, onBoat);
+    int leftWu   = (int)twx - ((8 - (int)bb.left)   * 16);
+    int rightWu  = (int)twx + ((8 - (int)bb.right)  * 16);
+    int topWu    = (int)twy - ((8 - (int)bb.top)    * 16);
+    int bottomWu = (int)twy + ((8 - (int)bb.bottom) * 16);
+    float l = wuToScreenX(leftWu,   originX, tileW, edgeX, zoomFactor);
+    float r = wuToScreenX(rightWu,  originX, tileW, edgeX, zoomFactor);
+    float t = wuToScreenY(topWu,    originY, tileH, edgeY, zoomFactor);
+    float b = wuToScreenY(bottomWu, originY, tileH, edgeY, zoomFactor);
+    SDL_FRect bbRect = { l, t, r - l, b - t };
+    SDL_SetRenderDrawColor(renderer, 0, 220, 220, 220);
+    SDL_RenderRect(renderer, &bbRect);
   }
 
   /* Yellow pill 1-tile hitboxes (pillsIsPillHit is whole-tile). */

@@ -189,6 +189,14 @@ typedef struct {
     BYTE right;
 } TankBoundingBox;
 
+/* Look up the tank's tank-vs-building collision bounding box for the
+ * given 0..15 direction index.  Use onBoat=true for the boat-tank
+ * table.  The returned struct is owned by the caller (a copy of the
+ * static table entry); the values are margins in game pixels from
+ * each edge of the 16x16 sprite.  Used by tankNudgeBuildings; useful
+ * for hitbox debug visualisation. */
+TankBoundingBox tankGetBoundingBox(BYTE dirIndex, bool onBoat);
+
 /* Collision constants */
 #define TANK_COLLISION_DISTANCE   256    /* Tank-to-tank overlap distance (1 map square in WORLD units) */
 #define TANK_NUDGE_THRESHOLD      96     /* X vs Y axis nudge priority threshold in WORLD units */
