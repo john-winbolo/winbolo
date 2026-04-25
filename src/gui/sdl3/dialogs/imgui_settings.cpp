@@ -276,12 +276,13 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     if (s_previewThemeIdx != curThemeIdx) {
         ImGui::SameLine();
         if (ImGui::Button("Apply##theme")) {
-            if (s_previewThemeIdx == 0) {
-                tileLoaderSetTheme("");
-            } else {
-                tileLoaderSetTheme(themeDirs[s_previewThemeIdx].c_str());
-            }
+            const char *newTheme = (s_previewThemeIdx == 0)
+                                     ? "" : themeDirs[s_previewThemeIdx].c_str();
+            tileLoaderSetTheme(newTheme);
             sdl3DrawReloadTiles();
+            /* Persist to INI so the choice survives restart. */
+            extern void gameFrontSaveThemeChoice(const char *);
+            gameFrontSaveThemeChoice(newTheme);
         }
     }
 

@@ -46,6 +46,7 @@
 #include <ctype.h>
 #include <time.h>
 
+#include "tileloader.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/global.h"
@@ -1663,6 +1664,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
   labelTank = atoi(buff);
 
+  /* Graphics theme — applied here so the first sheet build picks it up. */
+  {
+    char themeBuf[128] = "";
+    GetPrivateProfileString("GRAPHICS", "Theme", "", themeBuf, sizeof(themeBuf), prefsFile);
+    tileLoaderSetTheme(themeBuf);
+  }
+
   /* Winbolo.net */
   GetPrivateProfileString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX, prefsFile);
   GetPrivateProfileString("WINBOLO.NET", "TokenExpiry", "", gameFrontWbnTokenExpiry, FILENAME_MAX, prefsFile);
@@ -1673,6 +1681,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 
 /* Forward declaration — defined after gameFrontPutPrefs */
 void gameFrontFlushWindowSettings(void);
+
+/* Persist the selected graphics theme name (empty string = default).
+ * Called from the Settings dialog Apply button so the choice survives
+ * a restart. */
+void gameFrontSaveThemeChoice(const char *themeName) {
+  WritePrivateProfileString("GRAPHICS", "Theme",
+                             themeName ? themeName : "",
+                             getPreferenceFilePath());
+}
 
 /* -------------------------------------------------------
  * gameFrontPutPrefs — write preferences to INI file
