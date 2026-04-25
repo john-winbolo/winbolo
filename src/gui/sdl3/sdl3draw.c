@@ -1548,15 +1548,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Sprites via mapview */
       gCurrentEdgeX = edgeX;
       gCurrentEdgeY = edgeY;
+      /* Push live shell sub-wu offsets to mapview so the classic
+       * shell render can add the fractional game-pixel from sim
+       * on top of the discrete (mx,px) the engine packs. */
+      if (cs) mapViewSetShellsFromSim(&cs->sim,
+                                       (int)cs->xOffset, (int)cs->yOffset);
       mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
-      /* Smooth Animation Style: re-draw shells from sim at sub-wu so
-       * the on-screen position matches q->x / q->y exactly instead of
-       * the screenBullet's already-floored mx/my. */
-      if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH && cs) {
-        mapViewDrawShellsFromSim(&mvCtx, &cs->sim,
-                                 (int)cs->xOffset, (int)cs->yOffset,
-                                 originX, originY, tileW, tileH, edgeX, edgeY);
-      }
       /* Push live per-tank angles to mapview so the ingamerotate
        * theme can rotate to full 256-bolo-degree precision instead
        * of the 16-step direction encoded in screenTanks frames. */

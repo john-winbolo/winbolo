@@ -450,23 +450,70 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
 /*********************************************************
  * mapViewDrawShells — moved from sdl3DrawShells.
  *********************************************************/
+/* Smooth-mode sub-wu cache for shells, populated from sim before
+ * mapViewDrawShells runs.  Keyed by (worldTileX, worldTileY, dir).
+ * Stores the fractional game-pixel offset to add on top of the
+ * classic screen position so the shell slides at 1/256-tile precision
+ * even though the engine packs only game-pixel-discrete (mx,px). */
+typedef struct {
+  BYTE worldX, worldY, dir;
+  float fracX, fracY;
+} ShellSubPx;
+#define MAX_SHELL_CACHE 256
+static ShellSubPx s_shellSubPx[MAX_SHELL_CACHE];
+static int        s_shellSubPxCount = 0;
+static int        s_shellCacheXOffset = 0;
+static int        s_shellCacheYOffset = 0;
+
+void mapViewSetShellsFromSim(struct GameSim *sim, int xOffset, int yOffset) {
+  s_shellSubPxCount = 0;
+  s_shellCacheXOffset = xOffset;
+  s_shellCacheYOffset = yOffset;
+  if (!sim) return;
+  shells q = sim->shs;
+  while (q != NULL && s_shellSubPxCount < MAX_SHELL_CACHE) {
+    if (!q->shellDead) {
+      int dir = utilGetDir(q->angle);
+      if (dir >= 0 && dir <= 15) {
+        BYTE wx = (BYTE)(q->x >> 8); /* world tile */
+        BYTE wy = (BYTE)(q->y >> 8);
+        float gpxF = (float)q->x / 16.0f; /* world game-pixel float */
+        float gpyF = (float)q->y / 16.0f;
+        float fracX = gpxF - (float)((int)gpxF);
+        float fracY = gpyF - (float)((int)gpyF);
+        s_shellSubPx[s_shellSubPxCount++] =
+          (ShellSubPx){ wx, wy, (BYTE)dir, fracX, fracY };
+      }
+    }
+    q = q->next;
+  }
+}
+
+static bool shellSubPxLookup(BYTE bufMx, BYTE bufMy, int dir,
+                             float *outFracX, float *outFracY) {
+  BYTE wx = (BYTE)(bufMx + s_shellCacheXOffset);
+  BYTE wy = (BYTE)(bufMy + s_shellCacheYOffset);
+  for (int i = 0; i < s_shellSubPxCount; i++) {
+    if (s_shellSubPx[i].worldX == wx
+        && s_shellSubPx[i].worldY == wy
+        && s_shellSubPx[i].dir == dir) {
+      *outFracX = s_shellSubPx[i].fracX;
+      *outFracY = s_shellSubPx[i].fracY;
+      return true;
+    }
+  }
+  return false;
+}
+
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
-  /* Smooth animation: skip live shell-direction frames here so the
-   * sub-wu pass below (mapViewDrawShellsFromSim) draws them at full
-   * 1/256-tile precision instead.  Explosion frames are still drawn
-   * here — they live in screenBullets only. */
-  bool skipDirShells = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
+  bool smooth = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
 
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
     screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
-
-    if (skipDirShells && frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      continue;
-    }
 
     int srcX, srcY, srcW, srcH;
     switch (frame) {
@@ -501,6 +548,19 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     int bby = (int)my * TILE_SIZE_Y + (int)py;
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+
+    /* Smooth-mode sub-wu correction: add the fractional game-pixel
+     * from the sim's WORLD coord on top of the classic position.
+     * Purely additive — if the cache lookup misses, the classic
+     * position still draws. */
+    if (smooth && frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+      int dir = frame - SHELL_DIR0;
+      float fracX = 0.0f, fracY = 0.0f;
+      if (shellSubPxLookup(mx, my, dir, &fracX, &fracY)) {
+        sx += fracX * (float)ctx->zoomFactor;
+        sy += fracY * (float)ctx->zoomFactor;
+      }
+    }
 
     /* Anchor-pixel positioning: place the sprite so its leading pixel lands
      * exactly on the shell's world position (the collision point).
