@@ -365,30 +365,39 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         ImGui::EndGroup();
     }
 
-    /* Rotating tank preview — loads the SELECTED theme's tank_00
-     * directly from disk so the preview reflects what Apply would do,
-     * not just the currently-active atlas. */
+    /* Rotating tank preview — loads the SELECTED theme's tank sprites
+     * directly from disk.  If the theme has per-direction sprites
+     * (tank_self_01..tank_self_15) we cycle through those as discrete
+     * frames; if only tank_self_00 exists we rotate that single
+     * sprite (matching what the engine does for _ingamerotate themes). */
     if (!renderer) return;
     static SDL_Texture *previewTarget = nullptr;
-    static SDL_Texture *previewTankTex = nullptr;   /* loaded tank sprite */
-    static int  previewLoadedIdx = -1;              /* which themeDirs idx is loaded */
-    static bool previewIsRotate  = false;           /* ingamerotate? */
+    static SDL_Texture *previewTankFrames[16] = { nullptr };
+    static int  previewLoadedIdx = -1;
+    static bool previewHasPerDir = false;  /* true if frames[1..] are loaded */
     static double rotPreview = 0.0;
     static Uint64 rotLastMs = 0;
     const int previewSize    = 96;
-    const int tankRasterSize = 64;  /* internal texture size */
+    const int tankRasterSize = 64;
 
-    /* Reload tank texture when selection changes. */
+    /* Reload tank textures when selection changes. */
     if (previewLoadedIdx != s_previewThemeIdx) {
         previewLoadedIdx = s_previewThemeIdx;
-        if (previewTankTex) { SDL_DestroyTexture(previewTankTex); previewTankTex = nullptr; }
+        for (int i = 0; i < 16; i++) {
+            if (previewTankFrames[i]) { SDL_DestroyTexture(previewTankFrames[i]); previewTankFrames[i] = nullptr; }
+        }
+        previewHasPerDir = false;
         const char *themeName = (s_previewThemeIdx == 0)
                                   ? ""  /* default */
                                   : themeDirs[s_previewThemeIdx].c_str();
-        previewIsRotate = themeIsIngamerotate(themeName);
         char path[1024];
-        if (findThemeAsset(themeName, "tank_self_00", path, sizeof(path))) {
-            previewTankTex = loadSvgToTexture(renderer, path, tankRasterSize);
+        for (int i = 0; i < 16; i++) {
+            char base[32];
+            snprintf(base, sizeof(base), "tank_self_%02d", i);
+            if (findThemeAsset(themeName, base, path, sizeof(path))) {
+                previewTankFrames[i] = loadSvgToTexture(renderer, path, tankRasterSize);
+            }
+            if (i > 0 && previewTankFrames[i]) previewHasPerDir = true;
         }
     }
 
@@ -420,13 +429,19 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
             dstSize, dstSize
         };
         SDL_FPoint pivot = { dstSize * 0.5f, dstSize * 0.5f };
-        if (previewTankTex) {
-            /* Rotate continuously regardless of theme — gives the
-             * "what does each direction look like" feel.  For non-
-             * ingamerotate themes this still shows the _00 sprite
-             * tilted, which is informative even if the in-game
-             * render would swap to _01.._15 for those angles. */
-            SDL_RenderTextureRotated(renderer, previewTankTex, NULL, &dstR,
+        if (previewHasPerDir) {
+            /* Cycle through the 16 per-direction sprites at the same
+             * angular rate (22.5° per frame).  No rotation applied —
+             * this is what the in-game render does. */
+            int frameIdx = ((int)(rotPreview / 22.5)) & 15;
+            SDL_Texture *frameTex = previewTankFrames[frameIdx];
+            if (!frameTex) frameTex = previewTankFrames[0];
+            if (frameTex) {
+                SDL_RenderTexture(renderer, frameTex, NULL, &dstR);
+            }
+        } else if (previewTankFrames[0]) {
+            /* Only _00 exists (ingamerotate-style): rotate it. */
+            SDL_RenderTextureRotated(renderer, previewTankFrames[0], NULL, &dstR,
                                      rotPreview, &pivot, SDL_FLIP_NONE);
         } else {
             /* Theme has no tank_00 file — fall back to the live atlas. */
@@ -446,23 +461,21 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         ImGui::Image((ImTextureID)(intptr_t)previewTarget,
                      ImVec2((float)previewSize, (float)previewSize));
         ImGui::SameLine();
-        if (previewTankTex) {
+        if (previewHasPerDir) {
             ImGui::TextDisabled(
-                previewIsRotate
-                    ? "Selected theme's tank_00.svg, rotated\n"
-                      "continuously — this is exactly what\n"
-                      "every facing direction will look like\n"
-                      "(ingamerotate theme rotates _00 in\n"
-                      "place at full 256-bolo-degree precision)."
-                    : "Selected theme's tank_00.svg, rotated\n"
-                      "for preview.  In-game this theme would\n"
-                      "swap between tank_00..tank_15 sprites\n"
-                      "instead of rotating _00, but the still\n"
-                      "is the actual asset you'd see facing N.");
+                "Cycling through tank_self_00..15 from the\n"
+                "selected theme — exactly what the in-game\n"
+                "render uses (one sprite per direction, no\n"
+                "rotation).");
+        } else if (previewTankFrames[0]) {
+            ImGui::TextDisabled(
+                "Only tank_self_00 in this theme — rotated\n"
+                "continuously.  In-game this gives full\n"
+                "256-bolo-degree precision rotation.");
         } else {
             ImGui::TextDisabled(
-                "(tank_00 not found in this theme — falling\n"
-                "back to live atlas)");
+                "(tank_self_00 not found — falling back\n"
+                "to live atlas)");
         }
     }
 }
