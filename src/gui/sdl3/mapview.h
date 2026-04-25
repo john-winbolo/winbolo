@@ -64,6 +64,15 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
                               int tileW, int tileH,
                               int edgeX, int edgeY);
 
+/* Smooth-mode LGM render: like the shell version above, walks
+ * sim->lgmen[] and draws each live LGM at full 1/256-tile precision
+ * with the (1.5, 2.0) game-pixel body anchor.  Called after
+ * mapViewDrawLGMs when Animation Style is Smooth. */
+void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                            int originX, int originY,
+                            int tileW, int tileH,
+                            int edgeX, int edgeY);
+
 /* Draw pre-built tile buffer. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,

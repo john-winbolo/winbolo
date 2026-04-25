@@ -856,10 +856,18 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY) {
+  /* Smooth animation: skip ground-LGM frames here so the sub-wu pass
+   * (mapViewDrawLGMsFromSim) draws them at full precision.  Helicopter
+   * frame still renders here — that one comes from screen state. */
+  bool skipGround = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
     screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
+
+    if (skipGround && (frame == LGM0 || frame == LGM1 || frame == LGM2)) {
+      continue;
+    }
 
     int srcX, srcY, srcW, srcH;
     switch (frame) {
@@ -894,6 +902,47 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
       SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
+  }
+}
+
+/*********************************************************
+ * mapViewDrawLGMsFromSim — sub-wu LGM render direct from sim.
+ *********************************************************/
+void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                            int originX, int originY,
+                            int tileW, int tileH,
+                            int edgeX, int edgeY) {
+  if (!ctx || !sim) return;
+  int zf = ctx->zoomFactor;
+  int ss = ctx->sheetScale;
+  for (int i = 0; i < MAX_TANKS; i++) {
+    lgm *l = &sim->lgmen[i];
+    if (*l == NULL) continue;
+    if ((*l)->inTank || (*l)->isDead) continue;
+
+    int srcX, srcY;
+    switch ((*l)->frame) {
+      case LGM0: srcX = LGM0_X; srcY = LGM0_Y; break;
+      case LGM1: srcX = LGM1_X; srcY = LGM1_Y; break;
+      case LGM2: srcX = LGM2_X; srcY = LGM2_Y; break;
+      default: continue;
+    }
+
+    /* World-pixel coords as float, with (1.5, 2.0) body anchor. */
+    float wpx = (float)(*l)->x / 16.0f;
+    float wpy = (float)(*l)->y / 16.0f;
+    float sx = (float)originX - (float)tileW
+             + wpx * (float)zf - (float)edgeX
+             - 1.5f * (float)zf;
+    float sy = (float)originY - (float)tileH
+             + wpy * (float)zf - (float)edgeY
+             - 2.0f * (float)zf;
+
+    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
+                       (float)(LGM_WIDTH * ss), (float)(LGM_HEIGHT * ss) };
+    SDL_FRect dstR = { sx, sy,
+                       (float)(LGM_WIDTH * zf), (float)(LGM_HEIGHT * zf) };
+    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 }
 
