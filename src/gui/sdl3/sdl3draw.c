@@ -1578,6 +1578,15 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
     }
 
+    /* Restore gZoomFactor BEFORE the clip is cleared, but only for
+     * override-mode zoom — tablet mode expects gZoomFactor to stay
+     * at effectiveZoom through the status-panel draws below.
+     * Override mode must only affect tiles + sprites inside the
+     * playfield clip; HUD/labels stay at the unscaled zoom. */
+    if (overrideModeIsOn() && overrideModeZoomMul() > 1) {
+      gZoomFactor = savedZoomFactor;
+    }
+
     SDL_SetRenderClipRect(gRenderer, NULL);
   }
 
