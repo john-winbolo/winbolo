@@ -40,6 +40,16 @@ void overrideModeSlower(void);
 void overrideModeFaster(void);
 int  overrideModeExtraDelayMs(void);
 
+/* Arrow-key world panning while override mode is on.  Applied in
+ * sdl3draw as a sub-tile screen-pixel offset on edgeX/edgeY (same
+ * mechanism the tablet drag-scroll uses), so the camera still
+ * follows the player tank but the visible region is shifted.
+ * overrideModePan() adds a delta in screen pixels.
+ * overrideModeGetPanOffset() reads the current offset for sdl3draw. */
+void overrideModePan(int dx, int dy);
+void overrideModeGetPanOffset(int *outDx, int *outDy);
+void overrideModeResetPan(void);
+
 /* Draw hitbox/sub-pixel overlays for the world view. Called from
  * sdl3draw.c after mapViewDrawLGMs.  No-op when override mode is off.
  *

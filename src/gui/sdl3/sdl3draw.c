@@ -1313,6 +1313,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     edgeY += gDragOffsetY;
   }
 
+  /* Override mode arrow-key pan: applied regardless of tablet mode. */
+  if (overrideModeIsOn()) {
+    int opx = 0, opy = 0;
+    overrideModeGetPanOffset(&opx, &opy);
+    edgeX += opx;
+    edgeY += opy;
+  }
+
   if (sdl3LoadTiles()) {
     int tileW  = TILE_SIZE_X * gZoomFactor;
     int tileH  = TILE_SIZE_Y * gZoomFactor;

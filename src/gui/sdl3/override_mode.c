@@ -45,6 +45,8 @@
 
 static bool s_overrideOn = false;
 static int  s_extraDelayMs = 0;        /* 0 = normal speed; >0 = slower */
+static int  s_panX = 0;                /* screen-pixel pan offset, accumulated */
+static int  s_panY = 0;
 #define EXTRA_DELAY_STEP_MS 10
 #define EXTRA_DELAY_MAX_MS 200
 
@@ -52,7 +54,11 @@ void overrideModeToggle(void) {
   s_overrideOn = !s_overrideOn;
   /* Toggling override OFF resets speed back to normal so we don't
    * leave the game running slow without the visual indicator. */
-  if (!s_overrideOn) s_extraDelayMs = 0;
+  if (!s_overrideOn) {
+    s_extraDelayMs = 0;
+    s_panX = 0;
+    s_panY = 0;
+  }
   SDL_Log("[OverrideMode] %s", s_overrideOn ? "ON" : "OFF");
 }
 
@@ -74,6 +80,21 @@ void overrideModeFaster(void) {
 
 int overrideModeExtraDelayMs(void) {
   return s_extraDelayMs;
+}
+
+void overrideModePan(int dx, int dy) {
+  s_panX += dx;
+  s_panY += dy;
+}
+
+void overrideModeGetPanOffset(int *outDx, int *outDy) {
+  if (outDx) *outDx = s_panX;
+  if (outDy) *outDy = s_panY;
+}
+
+void overrideModeResetPan(void) {
+  s_panX = 0;
+  s_panY = 0;
 }
 
 /* Convert world units to screen X using the same convention as

@@ -2569,6 +2569,30 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             }
         }
 
+        /* While override mode is on, arrow keys pan the world view.
+         * 32 screen pixels per press; key-repeat counts so holding scrolls. */
+        if (overrideModeIsOn()
+            && ev.type == SDL_EVENT_KEY_DOWN
+            && !(ev.key.mod & SDL_KMOD_CTRL)) {
+            const int kPanStep = 32;
+            if (ev.key.key == SDLK_LEFT) {
+                overrideModePan(-kPanStep, 0);
+                continue;
+            }
+            if (ev.key.key == SDLK_RIGHT) {
+                overrideModePan(kPanStep, 0);
+                continue;
+            }
+            if (ev.key.key == SDLK_UP) {
+                overrideModePan(0, -kPanStep);
+                continue;
+            }
+            if (ev.key.key == SDLK_DOWN) {
+                overrideModePan(0, kPanStep);
+                continue;
+            }
+        }
+
         /* While the Key Setup modal is open, swallow all mouse + keyboard events
          * so they never reach the game. */
         ImGuiIO &io = ImGui::GetIO();
