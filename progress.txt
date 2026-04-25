@@ -89,22 +89,15 @@ Phase 7: graphics settings UI
       Smooth)
   [ ] Theme picker with rotating-tank preview, Apply button
 
-Phase 8: LGM 1-wu boundary stop  — NOT STARTED
-  [ ] LGM cannot enter walls/enemy pills/water — add 1 wu margin so
-      LGM stops 1 wu short of solid tile boundary
-  [ ] Brain-side: still report correct tile (no compensation needed)
-  Notes: lgm.c lines ~720-745.  Currently if mapGetManSpeed returns 0
-  for the target tile, the LGM doesn't move at all (newbmy = bmy).
-  To stop "1 wu short" requires moving up to the tile boundary minus
-  1 wu instead of staying put.  Per-axis logic:
-    if newbmx differs from bmx and target tile is blocking:
-      boundary_wu = (xAdd > 0 ? bmx + 1 : bmx) << 8
-      stop_at = (xAdd > 0 ? boundary_wu - 1 : boundary_wu)
-      lgman->x = stop_at
-  Risky game-logic change; deferred for the user to review/test.
+Phase 8: LGM 1-wu boundary stop  — DONE (commit 9fa0b45)
+  [x] LGM snaps to ±1 wu of tile boundary along the motion axis when
+      blocked, instead of freezing mid-tile.
+  Logic: if Y blocked and yAdd > 0  → lgman->y = (bmy+1)*256 - 1
+         if Y blocked and yAdd < 0  → lgman->y = bmy*256
+         (same for X).  Pairs with the +25 LGM compensation removal.
 
 ==========================================================
-PUSHED TO origin/andrew-hitbox-and-themes — five commits
+PUSHED TO origin/andrew-hitbox-and-themes — ten commits
 ==========================================================
 
   ea3fb13  Sub-pixel shell tips, LGM body anchor, broaden capture_pill
@@ -112,7 +105,11 @@ PUSHED TO origin/andrew-hitbox-and-themes — five commits
   d67e613  Override mode: world grid + Ctrl-[/Ctrl-] speed control
   dd90558  Update progress.txt with detailed status, design notes, TODOs
   d903bbb  SVG theme generator + tileLoader theme override + WINBOLO_THEME env
-  (uncommitted) sdl3DrawReloadTiles + small docs
+  6fb64eb  sdl3DrawReloadTiles + progress.txt update
+  0690b0e  Override mode: visualize tank-vs-world TankBoundingBox in cyan
+  9fa0b45  LGM: stop 1 wu inside tile boundary instead of mid-tile freeze
+  82fbd19  Engine support for ingamerotate theme: rotate _00 sprite at runtime
+  e5a6024  Graphics settings: Theme picker + Animation style combo
 
 What you can test right now in WinBolo.exe (build/WinBolo.exe):
 
@@ -156,7 +153,7 @@ What's still TODO (in priority-ish order):
        try to render only 1.3 tiles wide
    - 10-20 touchpoints in screen.c, draw.c, sdl3draw.c.
 
-2. SVG THEME SYSTEM (next_dev.txt phase 6, 7) — NOT STARTED
+2. SVG THEME SYSTEM (next_dev.txt phase 6, 7) — DONE
    Three Python scripts to write (probably tools/png_to_svg_*.py):
    - pixelwise: each opaque pixel = one <rect> in the SVG
    - pixelgrouped: flood-fill same-color neighbors → one <path> per
