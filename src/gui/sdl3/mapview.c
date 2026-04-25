@@ -687,6 +687,24 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
  * Note: does NOT draw tank labels (labels need fonts
  * which stay in sdl3draw.c).
  *********************************************************/
+/* Per-player full-precision tank angles, optionally provided by sdl3draw
+ * via mapViewSetTankAnglesFromSim().  If valid, the ingamerotate path
+ * uses these (TURNTYPE 0..255 -> 360 degrees) instead of the 16-step
+ * dir from screenTanks frame.  Indexed by player number. */
+static BYTE   s_tankAnglesByPlayer[MAX_TANKS];
+static bool   s_tankAnglesValid = false;
+
+void mapViewSetTankAnglesFromSim(struct GameSim *sim) {
+  s_tankAnglesValid = false;
+  if (!sim) return;
+  for (int i = 0; i < MAX_TANKS; i++) {
+    tank *tk = &sim->tanks[i];
+    if (*tk == NULL) { s_tankAnglesByPlayer[i] = 0; continue; }
+    s_tankAnglesByPlayer[i] = (BYTE)tankGetAngle(tk);
+  }
+  s_tankAnglesValid = true;
+}
+
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
@@ -835,6 +853,34 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
           useSrcY = bY;
           rotAngleDeg = (double)dir * 22.5;
           useRotate = true;
+        } else {
+          /* dir == 0 from screenTanks, but the live tank may have a
+           * sub-22.5° angle.  Promote to rotated render if we have
+           * full-precision angles from sim. */
+          if (s_tankAnglesValid && playerNum < MAX_TANKS
+              && s_tankAnglesByPlayer[playerNum] != 0) {
+            int group = frame >> 4;
+            int baseFrame = group * 16;
+            int bX = 0, bY = 0;
+            switch (baseFrame) {
+              case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
+              case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
+              case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
+              case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
+              case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
+              case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
+              default: bX = srcX; bY = srcY; break;
+            }
+            useSrcX = bX;
+            useSrcY = bY;
+            useRotate = true;
+          }
+        }
+        /* Override with full 256-bolo-degree rotation when we have
+         * the live tank's angle from sim. */
+        if (useRotate && s_tankAnglesValid && playerNum < MAX_TANKS) {
+          rotAngleDeg = (double)s_tankAnglesByPlayer[playerNum]
+                      * (360.0 / 256.0);
         }
       }
 

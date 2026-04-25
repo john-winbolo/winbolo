@@ -46,9 +46,9 @@ Phase 2: cherry-pick sub-pixel fixes from optimize-performance-andrew-no-overrid
   [x] Commit done
 
 Phase 3: new fix not in branch
-  [ ] LGM-harvest tile centering: when LGM dispatches to harvest a
-      forest tile, target the tile center exactly (currently may be
-      off-center)
+  [x] LGM-harvest tile centering: lgmNewPrimaryRequest already sets
+      destX/Y = (mapX << 8) + MAP_SQUARE_MIDDLE (=128), i.e. exact
+      tile center.  No change needed — engine was already correct.
 
 Phase 4: Ctrl-O override mode (WinBolo.exe)
   [x] override_mode.{c,h} module created
@@ -60,9 +60,14 @@ Phase 4: Ctrl-O override mode (WinBolo.exe)
   [x] Sub-pixel orange dot for LGMs
   [x] Grid overlay: thin per-game-pixel, slightly thicker on /4
       boundaries, brightest on tile boundaries
-  [ ] DEFERRED: Free-camera scrolling (arrows). Requires upstream
-      camera override — touchpoints in screenStartXY and the
-      tile-iteration bounds. Marked TODO in override_mode.h.
+  [x] Arrow-key world pan: 32 screen-px/press, accumulates while
+      override is on, resets on toggle off.  Stacks with tablet drag
+      offset so it works in both modes.  (Camera still follows tank;
+      pan is a sub-tile screen-pixel shift via edgeX/edgeY — same
+      mechanism as gDragOffsetX/Y.)
+  [ ] DEFERRED: arrow keys also drive tank movement in normal play;
+      while override is on the game can't see them.  Acceptable for
+      a debug mode but worth documenting.
   [ ] DEFERRED: Mouse-wheel zoom up to 6x. zoomFactor is BYTE 1-4
       and drives the HUD layout too — needs a separate
       worldZoomMultiplier or render-target redirect.
@@ -85,9 +90,20 @@ Phase 6: SVG themes
       angle * 360/256 degrees around centre
 
 Phase 7: graphics settings UI
-  [ ] Settings dialog: animation style (Pixel Floor / Pixel Nearest /
-      Smooth)
-  [ ] Theme picker with rotating-tank preview, Apply button
+  [x] Settings dialog: animation style combo (Pixel Floor / Pixel
+      Nearest / Smooth)
+  [x] Theme picker with rotating-tank preview
+  [x] Apply button — selecting a theme sets a preview index; Apply
+      commits via tileLoaderSetTheme + sdl3DrawReloadTiles.  Active
+      theme is marked with a leading '*' in the dropdown.
+  [x] Full 256-bolo-degree tank rotation in ingamerotate themes:
+      mapViewSetTankAnglesFromSim() pushes per-player TURNTYPE angles
+      from sim before mapViewDrawTanks.  When set, the rotated render
+      path uses (angle * 360/256) instead of (dir * 22.5°), and even
+      the dir==0 frames render rotated when the sub-22.5° angle is
+      non-zero.  Wired in sdl3draw.c right before mapViewDrawTanks.
+  [x] 256-bolo-degree shell rotation in smooth+ingamerotate (via
+      mapViewDrawShellsFromSim, using q->angle directly).
 
 Phase 8: LGM 1-wu boundary stop  — DONE (commit 9fa0b45)
   [x] LGM snaps to ±1 wu of tile boundary along the motion axis when

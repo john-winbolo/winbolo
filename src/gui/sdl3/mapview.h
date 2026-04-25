@@ -87,6 +87,12 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY);
 
+/* Provide per-player tank angles direct from sim before
+ * mapViewDrawTanks runs.  When set, the ingamerotate path uses these
+ * full TURNTYPE (0..255) angles instead of the 16-step dir derived
+ * from the screenTanks frame.  Pass NULL to clear. */
+void mapViewSetTankAnglesFromSim(struct GameSim *sim);
+
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY);

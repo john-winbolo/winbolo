@@ -1516,6 +1516,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         mapViewDrawShellsFromSim(&mvCtx, &cs->sim,
                                  originX, originY, tileW, tileH, edgeX, edgeY);
       }
+      /* Push live per-tank angles to mapview so the ingamerotate
+       * theme can rotate to full 256-bolo-degree precision instead
+       * of the 16-step direction encoded in screenTanks frames. */
+      if (cs) mapViewSetTankAnglesFromSim(&cs->sim);
       mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
