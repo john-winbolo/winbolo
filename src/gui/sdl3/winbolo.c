@@ -69,6 +69,7 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "override_mode.h"
 #include "luabrainshandler.h"
 
 #include "../aresource.h"
@@ -465,14 +466,18 @@ int main(int argc, char *argv[]) {
         }
         frontEndTutorialNotePresentedFrame();
 
-        /* Cap to configured frame rate */
+        /* Cap to configured frame rate (plus override-mode extra delay
+         * for the Ctrl-[ slowdown).  Extra delay never lets the game
+         * run faster than the configured frame rate. */
         {
           static Uint64 frameStart = 0;
           Uint64 now = SDL_GetTicks();
+          int extraDelay = overrideModeExtraDelayMs();
           if (frameStart > 0) {
             Uint64 elapsed = now - frameStart;
-            if (elapsed < (Uint64)frameRateTime) {
-              SDL_Delay((Uint32)((Uint64)frameRateTime - elapsed));
+            Uint64 want = (Uint64)frameRateTime + (Uint64)extraDelay;
+            if (elapsed < want) {
+              SDL_Delay((Uint32)(want - elapsed));
             }
           }
           frameStart = SDL_GetTicks();

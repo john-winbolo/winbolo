@@ -32,6 +32,14 @@ void overrideModeToggle(void);
 /* Returns true iff override mode is currently on. */
 bool overrideModeIsOn(void);
 
+/* Game-speed slowdown.  Bound to Ctrl-[ (slower) and Ctrl-] (faster).
+ * Adds an extra ms delay per frame; capped at 0 (= no extra delay,
+ * normal speed) on the upper end so playing fast is impossible.
+ * Each Ctrl-[ adds 10 ms; each Ctrl-] subtracts 10 ms. */
+void overrideModeSlower(void);
+void overrideModeFaster(void);
+int  overrideModeExtraDelayMs(void);
+
 /* Draw hitbox/sub-pixel overlays for the world view. Called from
  * sdl3draw.c after mapViewDrawLGMs.  No-op when override mode is off.
  *

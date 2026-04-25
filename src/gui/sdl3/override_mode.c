@@ -42,14 +42,36 @@
 #include "../tiles.h"
 
 static bool s_overrideOn = false;
+static int  s_extraDelayMs = 0;        /* 0 = normal speed; >0 = slower */
+#define EXTRA_DELAY_STEP_MS 10
+#define EXTRA_DELAY_MAX_MS 200
 
 void overrideModeToggle(void) {
   s_overrideOn = !s_overrideOn;
+  /* Toggling override OFF resets speed back to normal so we don't
+   * leave the game running slow without the visual indicator. */
+  if (!s_overrideOn) s_extraDelayMs = 0;
   SDL_Log("[OverrideMode] %s", s_overrideOn ? "ON" : "OFF");
 }
 
 bool overrideModeIsOn(void) {
   return s_overrideOn;
+}
+
+void overrideModeSlower(void) {
+  s_extraDelayMs += EXTRA_DELAY_STEP_MS;
+  if (s_extraDelayMs > EXTRA_DELAY_MAX_MS) s_extraDelayMs = EXTRA_DELAY_MAX_MS;
+  SDL_Log("[OverrideMode] speed slower (extra delay %d ms)", s_extraDelayMs);
+}
+
+void overrideModeFaster(void) {
+  s_extraDelayMs -= EXTRA_DELAY_STEP_MS;
+  if (s_extraDelayMs < 0) s_extraDelayMs = 0;
+  SDL_Log("[OverrideMode] speed faster (extra delay %d ms)", s_extraDelayMs);
+}
+
+int overrideModeExtraDelayMs(void) {
+  return s_extraDelayMs;
 }
 
 /* Convert world units to screen X using the same convention as
@@ -100,6 +122,56 @@ static void drawHitDot(SDL_Renderer *r, int cxWu, int cyWu,
   SDL_RenderFillRect(r, &dot);
 }
 
+/* Draw a 16-grid over the world view.  Per-game-pixel lines are thin
+ * blue, every 4th game pixel is a slightly thicker line, every tile
+ * boundary is the thickest.  Tile lines are drawn last so they sit
+ * on top of the finer divisions. */
+static void drawWorldGrid(SDL_Renderer *r,
+                          int originX, int originY,
+                          int tileW, int tileH,
+                          int edgeX, int edgeY, int zoomFactor) {
+  /* The world covers a 256-tile grid.  In screen pixels, the screen
+   * area for the world view is approximately MAIN_BACK_BUFFER_SIZE_X
+   * tiles by MAIN_BACK_BUFFER_SIZE_Y, but we don't have those here.
+   * Just iterate enough lines to cover the visible viewport: pull
+   * the renderer's draw bounds. */
+  int viewW = 0, viewH = 0;
+  SDL_GetCurrentRenderOutputSize(r, &viewW, &viewH);
+
+  /* World pixel = wu / 16.  Screen pixel = world_pixel * zoomFactor.
+   * gridSpacing in screen pixels for one game-pixel line = zoomFactor.
+   * For a tile boundary it's tileW (= 16 * zoomFactor). */
+  int gp = zoomFactor;          /* screen pixels per game pixel */
+  if (gp < 1) gp = 1;
+
+  /* Faint per-game-pixel lines (1/16 of a tile). */
+  SDL_SetRenderDrawColor(r, 60, 60, 110, 60);
+  for (float x = (float)(originX - tileW - edgeX); x < (float)viewW; x += (float)gp) {
+    if (x >= (float)originX) SDL_RenderLine(r, x, 0, x, (float)viewH);
+  }
+  for (float y = (float)(originY - tileH - edgeY); y < (float)viewH; y += (float)gp) {
+    if (y >= (float)originY) SDL_RenderLine(r, 0, y, (float)viewW, y);
+  }
+
+  /* Slightly thicker on every 4th game pixel. */
+  SDL_SetRenderDrawColor(r, 90, 90, 160, 100);
+  for (float x = (float)(originX - tileW - edgeX); x < (float)viewW; x += (float)(gp * 4)) {
+    if (x >= (float)originX) SDL_RenderLine(r, x, 0, x, (float)viewH);
+  }
+  for (float y = (float)(originY - tileH - edgeY); y < (float)viewH; y += (float)(gp * 4)) {
+    if (y >= (float)originY) SDL_RenderLine(r, 0, y, (float)viewW, y);
+  }
+
+  /* Tile boundaries (thickest looking) drawn brighter. */
+  SDL_SetRenderDrawColor(r, 160, 160, 220, 180);
+  for (float x = (float)(originX - tileW - edgeX); x < (float)viewW; x += (float)tileW) {
+    if (x >= (float)originX) SDL_RenderLine(r, x, 0, x, (float)viewH);
+  }
+  for (float y = (float)(originY - tileH - edgeY); y < (float)viewH; y += (float)tileH) {
+    if (y >= (float)originY) SDL_RenderLine(r, 0, y, (float)viewW, y);
+  }
+}
+
 void overrideModeDrawOverlays(SDL_Renderer *renderer,
                               struct ClientSim *cs,
                               int originX, int originY,
@@ -111,6 +183,9 @@ void overrideModeDrawOverlays(SDL_Renderer *renderer,
 
   GameSim *sim = &cs->sim;
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+  /* Grid first so hitboxes/dots overlay on top. */
+  drawWorldGrid(renderer, originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
 
   /* Yellow tank ±128 wu hitboxes (tankIsTankHit threshold). */
   SDL_SetRenderDrawColor(renderer, 255, 255, 0, 220);

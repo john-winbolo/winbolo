@@ -51,22 +51,27 @@ Phase 3: new fix not in branch
       off-center)
 
 Phase 4: Ctrl-O override mode (WinBolo.exe)
-  [ ] Add `overrideMode` global state
-  [ ] Ctrl-O toggle wired
-  [ ] Free-camera scrolling (arrows)
-  [ ] Mouse-wheel zoom in/out (1x..6x)
-  [ ] Grid overlay over the world: every game pixel (16x16 inside a
-      tile) gets a thin gridline; every 4 game pixels gets a slightly
-      thicker line; every tile gets the thickest divider
-  [ ] Yellow ±128 wu hitbox outline for own tank
-  [ ] Yellow hitbox outlines for other tanks, pillboxes, bases
-      (need to figure out actual hit-test radii for each)
-  [ ] Sub-pixel orange dot at each shell's exact (x, y)
-  [ ] Sub-pixel orange dot at each LGM's exact (x, y)
-  [ ] Toggle off restores tank-locked camera + normal scroll/zoom
+  [x] override_mode.{c,h} module created
+  [x] Ctrl-O toggles
+  [x] Yellow ±128 wu hitbox outline for tanks (uses tankIsTankHit
+      threshold)
+  [x] Yellow ±128 wu (1-tile) outlines for live pillboxes and bases
+  [x] Sub-pixel orange dot for shells
+  [x] Sub-pixel orange dot for LGMs
+  [x] Grid overlay: thin per-game-pixel, slightly thicker on /4
+      boundaries, brightest on tile boundaries
+  [ ] DEFERRED: Free-camera scrolling (arrows). Requires upstream
+      camera override — touchpoints in screenStartXY and the
+      tile-iteration bounds. Marked TODO in override_mode.h.
+  [ ] DEFERRED: Mouse-wheel zoom up to 6x. zoomFactor is BYTE 1-4
+      and drives the HUD layout too — needs a separate
+      worldZoomMultiplier or render-target redirect.
+  [x] Toggle off resets speed to normal
 
 Phase 5: speed control
-  [ ] Ctrl-[ and Ctrl-] for slower/faster (cap at normal speed)
+  [x] Ctrl-[ slows (adds extra ms delay per frame, cap +200ms)
+  [x] Ctrl-] speeds up (subtracts, capped at 0 = normal)
+  [x] Speed extra-delay applied in winbolo.c main loop frame cap
 
 Phase 6: SVG themes
   [ ] tools/png_to_svg_pixelwise.py: each pixel = one rect SVG element

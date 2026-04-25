@@ -2550,12 +2550,23 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
         }
 
-        /* Ctrl-O toggles hitbox debug overlay (override mode). */
+        /* Ctrl-O toggles hitbox debug overlay (override mode).
+         * Ctrl-[ slows game speed (cap +200ms extra delay/frame);
+         * Ctrl-] speeds up (capped at normal). */
         if (ev.type == SDL_EVENT_KEY_DOWN
-            && ev.key.key == SDLK_O
             && (ev.key.mod & SDL_KMOD_CTRL)) {
-            overrideModeToggle();
-            continue;
+            if (ev.key.key == SDLK_O) {
+                overrideModeToggle();
+                continue;
+            }
+            if (ev.key.key == SDLK_LEFTBRACKET) {
+                overrideModeSlower();
+                continue;
+            }
+            if (ev.key.key == SDLK_RIGHTBRACKET) {
+                overrideModeFaster();
+                continue;
+            }
         }
 
         /* While the Key Setup modal is open, swallow all mouse + keyboard events
