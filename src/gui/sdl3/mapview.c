@@ -24,6 +24,7 @@
 
 #include "mapview.h"
 #include "tileloader.h"
+#include "gfx_settings.h"
 #include "../tiles.h"
 #include "../../bolo/tilenum.h"
 #include "../../bolo/bolo_map.h"
@@ -1098,8 +1099,12 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     while (q != NULL) {
       if (!q->shellDead) {
         /* Convert shell world coords to pixel position relative to camera */
-        int spx = ((int)q->x * tileSize) >> 8;
-        int spy = ((int)q->y * tileSize) >> 8;
+        /* Quantisation controlled by Graphics → Animation style.
+         * Pixel Floor (default) gives the classic >>4 behaviour. */
+        float spxF = gfxSettingsWuToGamePixel((int)q->x);
+        float spyF = gfxSettingsWuToGamePixel((int)q->y);
+        int spx = (int)spxF;
+        int spy = (int)spyF;
         BYTE dir = utilGetDir(q->angle);
         BYTE frame = dir + SHELL_START_EXPLODE + 1;  /* SHELL_DIR0 + dir */
 
@@ -1199,13 +1204,16 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     if (*l == NULL) continue;
     if ((*l)->inTank || (*l)->isDead) continue;
 
-    int lpx = ((int)(*l)->x * tileSize) >> 8;
-    int lpy = ((int)(*l)->y * tileSize) >> 8;
-    /* LGM body anchor: place the sprite-local (1.5, 2.0) game-pixel
-     * point on the LGM's authoritative (l->x, l->y). */
-    float lx = (float)((lpx - camMX * tileSize) * zf - edgeX + originX)
+    /* LGM body anchor: place sprite-local (1.5, 2.0) game-pixel
+     * point on the LGM's authoritative (l->x, l->y).  Quantised by
+     * Graphics → Animation style. */
+    float lpxF = gfxSettingsWuToGamePixel((int)(*l)->x);
+    float lpyF = gfxSettingsWuToGamePixel((int)(*l)->y);
+    float lx = (lpxF - (float)(camMX * tileSize)) * (float)zf
+               - (float)edgeX + (float)originX
                - 1.5f * (float)zf;
-    float ly = (float)((lpy - camMY * tileSize) * zf - edgeY + originY)
+    float ly = (lpyF - (float)(camMY * tileSize)) * (float)zf
+               - (float)edgeY + (float)originY
                - 2.0f * (float)zf;
 
     int srcX, srcY, srcW, srcH;

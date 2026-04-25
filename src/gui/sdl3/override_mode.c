@@ -32,6 +32,7 @@
  */
 
 #include "override_mode.h"
+#include "gfx_settings.h"
 
 #include "../../bolo/global.h"
 #include "../../bolo/client_sim.h"
@@ -76,12 +77,14 @@ int overrideModeExtraDelayMs(void) {
 }
 
 /* Convert world units to screen X using the same convention as
- * mapViewDrawShells.  wx is in 1/256-tile (full precision). */
+ * mapViewDrawShells.  wx is in 1/256-tile (full precision).
+ * Quantisation is controlled by the Graphics → Animation style:
+ *   Pixel Floor    → floor(wx/16)        — integer game pixel
+ *   Pixel Nearest  → round(wx/16)        — nearest game pixel
+ *   Smooth         → wx/16.0             — full sub-pixel float */
 static float wuToScreenX(int wx, int originX, int tileW,
                          int edgeX, int zoomFactor) {
-  /* Game pixels (float, sub-pixel) */
-  float gpx = (float)wx / 16.0f;
-  /* Offset by 1 tile (head-room left of origin) and scale */
+  float gpx = gfxSettingsWuToGamePixel(wx);
   return (float)originX - (float)tileW
        + gpx * (float)zoomFactor
        - (float)edgeX;
@@ -89,7 +92,7 @@ static float wuToScreenX(int wx, int originX, int tileW,
 
 static float wuToScreenY(int wy, int originY, int tileH,
                          int edgeY, int zoomFactor) {
-  float gpy = (float)wy / 16.0f;
+  float gpy = gfxSettingsWuToGamePixel(wy);
   return (float)originY - (float)tileH
        + gpy * (float)zoomFactor
        - (float)edgeY;
