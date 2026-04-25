@@ -724,14 +724,31 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   newbmx = (BYTE) newmx;
   newbmy = (BYTE) newmy; */
 
+  /* Y-axis advance.  When the next tile in Y is blocking, move up
+   * to (but not past) the boundary so the LGM stops 1 wu inside the
+   * current tile rather than freezing earlier inside it.  This makes
+   * the LGM appear right at the edge of the wall/pillbox/water tile,
+   * which matches what the brain expects after the +25 compensation
+   * removal — the LGM's body tile == the tile it's standing in. */
   if ((mapGetManSpeed(sim, mp, pb, bs, bmx, newbmy, (*lgman)->playerNum)) > 0 || onBoat == TRUE) {
     (*lgman)->y = (WORLD) ((*lgman)->y  + yAdd);
   } else if (bmx == (*lgman)->blessX && newbmy == (*lgman)->blessY && lgmCheckBlessedSquare(bmx, newbmy, (*lgman)->action, mp, pb, bs, tnk) == TRUE) {
     (*lgman)->y = (WORLD) ((*lgman)->y + yAdd);
-    
-//  } else if (bmx == (*lgman)->blessX && newbmy == (*lgman)->blessY) {
-//    (*lgman)->y = (WORLD) ((*lgman)->y + yAdd);
+
   } else {
+    /* Blocked on Y: snap to 1 wu inside the current tile boundary
+     * along the direction of motion.  yAdd > 0 → moving south,
+     * stop at (bmy+1)*256 - 1.  yAdd < 0 → moving north, stop at
+     * bmy*256 + 0 (first wu of current tile from above).  This was
+     * previously a no-op (newbmy = bmy keeping the old position),
+     * which left the LGM stuck mid-tile. */
+    if (yAdd > 0) {
+      WORLD edge = (WORLD)(((BYTE)(bmy + 1)) << TANK_SHIFT_MAPSIZE);
+      if (edge > 0) (*lgman)->y = (WORLD)(edge - 1);
+    } else if (yAdd < 0) {
+      WORLD edge = (WORLD)(((BYTE)bmy) << TANK_SHIFT_MAPSIZE);
+      (*lgman)->y = edge;
+    }
     (*lgman)->obstructed = LGM_BRAIN_PARTIAL;
     noGo = TRUE;
     newbmy = bmy;
@@ -740,11 +757,18 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
     (*lgman)->x = (WORLD) ((*lgman)->x + xAdd);
   } else if (newbmx == (*lgman)->blessX && bmy == (*lgman)->blessY && lgmCheckBlessedSquare(newbmx, newbmy, (*lgman)->action, mp, pb, bs, tnk) == TRUE) {
     (*lgman)->x = (WORLD) ((*lgman)->x + xAdd);
-//  } else if (newbmx == (*lgman)->blessX && bmy == (*lgman)->blessY) {
-//    (*lgman)->x = (WORLD) ((*lgman)->x + xAdd);
   } else if (noGo == TRUE || yAdd == 0) {
+    /* X-axis blocked too — snap to tile boundary along motion if
+     * we actually had any X-component. */
+    if (xAdd > 0) {
+      WORLD edge = (WORLD)(((BYTE)(bmx + 1)) << TANK_SHIFT_MAPSIZE);
+      if (edge > 0) (*lgman)->x = (WORLD)(edge - 1);
+    } else if (xAdd < 0) {
+      WORLD edge = (WORLD)(((BYTE)bmx) << TANK_SHIFT_MAPSIZE);
+      (*lgman)->x = edge;
+    }
     (*lgman)->state = LGM_STATE_RETURN;
-  } 
+  }
 
   /* Check for achieved goal */
   if (((*lgman)->x - (*lgman)->destX) >= LGM_MIN_GOAL  && ((*lgman)->x - (*lgman)->destX) <= LGM_MAX_GOAL && ((*lgman)->y - (*lgman)->destY) >= LGM_MIN_GOAL && ((*lgman)->y - (*lgman)->destY) <= LGM_MAX_GOAL) {
