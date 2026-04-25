@@ -61,6 +61,7 @@ extern "C" {
 extern "C" {
   extern bool showGunsight;
   extern bool autoScrollingEnabled;
+  extern bool smoothScrollingEnabled;
   extern bool showPillLabels;
   extern bool showBaseLabels;
   extern bool hideMainView;
@@ -80,6 +81,7 @@ extern "C" {
 
   void windowSetFrameRate(int newFrameRate, bool setTimer);
   void windowAutomaticScrolling_toggle(struct ClientSim *cs);
+  void windowSmoothScrolling_toggle(void);
   void windowShowGunsight_toggle(struct ClientSim *cs);
   void windowShowPillLabels_toggle(struct ClientSim *cs);
   void windowShowBaseLabels_toggle(struct ClientSim *cs);
@@ -285,6 +287,12 @@ extern "C" void imguiSettingsShow(void) {
                 bool as = (bool)autoScrollingEnabled;
                 if (ImGui::Checkbox("Automatic Scrolling", &as)) {
                     windowAutomaticScrolling_toggle(NULL);
+                }
+            }
+            {
+                bool ss = (bool)smoothScrollingEnabled;
+                if (ImGui::Checkbox("Smooth Scrolling", &ss)) {
+                    windowSmoothScrolling_toggle();
                 }
             }
             {

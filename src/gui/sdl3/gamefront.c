@@ -292,6 +292,7 @@ extern bool showAIMessages;
 extern bool showNetworkStatusMessages;
 extern bool showNetworkDebugMessages;
 extern bool autoScrollingEnabled;
+extern bool smoothScrollingEnabled;
 extern BYTE zoomFactor;
 extern bool showPillLabels;
 extern bool showBaseLabels;
@@ -1626,6 +1627,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("MENU", "Autoscroll Enabled", "No", buff, FILENAME_MAX, prefsFile);
 #endif
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX, prefsFile);
+  smoothScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX, prefsFile);
   showPillLabels = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Base Labels", "No", buff, FILENAME_MAX, prefsFile);
@@ -1793,6 +1796,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Show Network Status Messages", TRUEFALSE_TO_STR(showNetworkStatusMessages), prefsFile);
   WritePrivateProfileString("MENU", "Show Network Debug Messages", TRUEFALSE_TO_STR(showNetworkDebugMessages), prefsFile);
   WritePrivateProfileString("MENU", "Autoscroll Enabled", TRUEFALSE_TO_STR(autoScrollingEnabled), prefsFile);
+  WritePrivateProfileString("MENU", "Smooth Scrolling", TRUEFALSE_TO_STR(smoothScrollingEnabled), prefsFile);
   WritePrivateProfileString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels), prefsFile);
   WritePrivateProfileString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels), prefsFile);
   WritePrivateProfileString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf), prefsFile);

@@ -144,6 +144,7 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 /* Direct menu command handlers in winbolo.c */
 extern "C" void windowShowGunsight_toggle(struct ClientSim *cs);
 extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
+extern "C" void windowSmoothScrolling_toggle(void);
 extern "C" void windowShowPillLabels_toggle(struct ClientSim *cs);
 extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
@@ -179,6 +180,7 @@ extern "C" void screenTogglePlayerCheckStateCS(struct ClientSim *csPtr, BYTE pla
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
+extern "C" bool smoothScrollingEnabled;
 extern "C" bool showPillLabels;
 extern "C" bool showBaseLabels;
 extern "C" bool hideMainView;
@@ -1581,6 +1583,14 @@ static void renderSettingsPanel(ClientSim *cs) {
                     windowHideMainView_toggle();
                 }
             }
+
+            /* Smooth Scrolling — desktop only */
+            {
+                bool ss = (bool)smoothScrollingEnabled;
+                if (ImGui::Checkbox("Smooth Scrolling", &ss)) {
+                    windowSmoothScrolling_toggle();
+                }
+            }
         }
 #endif
 
@@ -1814,6 +1824,8 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem("Custom (Resizable)", nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
             ImGui::EndMenu();
         }
+
+        if (ImGui::MenuItem("Smooth Scrolling", nullptr, (bool)smoothScrollingEnabled)) windowSmoothScrolling_toggle();
 
         ImGui::Separator();
         if (ImGui::MenuItem("Automatic Scrolling", "Ctrl+A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);

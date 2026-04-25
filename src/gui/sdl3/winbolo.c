@@ -117,6 +117,12 @@ bool showNetworkDebugMessages = FALSE;
 /* Automatic Scrolling */
 bool autoScrollingEnabled = FALSE;
 
+/* Smooth (pixel-level) scrolling for arrow keys.
+   When TRUE, arrow keys scroll the map by sub-tile pixel
+   amounts each tick.  When FALSE, the legacy 1-tile-at-a-time
+   behavior (gated by INPUT_SCROLL_WAIT_TIME) is used. */
+bool smoothScrollingEnabled = TRUE;
+
 /* The Window scaling */
 BYTE zoomFactor = ZOOM_FACTOR_NORMAL;
 
@@ -1148,6 +1154,15 @@ void windowShowGunsight_toggle(ClientSim *cs) {
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
   if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
+}
+
+void windowSmoothScrolling_toggle(void) {
+  smoothScrollingEnabled = !smoothScrollingEnabled;
+  /* Clear any in-progress sub-tile offset so the view snaps cleanly
+     to a tile boundary when toggling off. */
+  if (!smoothScrollingEnabled) {
+    sdl3DrawSetDragOffset(0, 0);
+  }
 }
 
 void windowShowPillLabels_toggle(ClientSim *cs) {

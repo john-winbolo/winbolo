@@ -63,6 +63,7 @@ bool showNetworkStatusMessages = TRUE;
 bool showNetworkDebugMessages = FALSE;
 
 bool autoScrollingEnabled = FALSE;
+bool smoothScrollingEnabled = FALSE;  /* Touch platform: arrow-key smooth scroll inactive */
 BYTE zoomFactor = ZOOM_FACTOR_DOUBLE;
 
 bool showPillLabels = FALSE;
