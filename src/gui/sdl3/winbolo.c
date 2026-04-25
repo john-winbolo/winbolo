@@ -74,6 +74,7 @@
 #include "../aresource.h"
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
+#include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
 
 /* Forward declarations */
@@ -1639,7 +1640,7 @@ bool frontEndTutorial(BYTE pos) {
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
     if (mid == 0) break;
-    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(mid),
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, tutorialResolveText(mid),
                       IMGUI_MSG_INFO, IMGUI_MSG_OK);
   }
   /* Final step: exit tutorial mode so the player can keep driving.
