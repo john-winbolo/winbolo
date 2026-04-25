@@ -599,6 +599,38 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        (float)(srcW * ctx->zoomFactor),
                        (float)(srcH * ctx->zoomFactor) };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+
+    /* True-world-position marker: orange 1-wu dot at the shell's
+     * authoritative WORLD coordinate.  In smooth mode it tracks at
+     * sub-wu precision via the sub-pixel cache; otherwise it sits at
+     * the discrete game-pixel position (still useful for seeing the
+     * collision point under the sprite).  Shown for live shell
+     * frames only — explosions don't have a meaningful "tip". */
+    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+      int dir = frame - SHELL_DIR0;
+      static const float kTipColMark[16] = {
+        1.5f,    1.883f,  4.0f, 4.0f,
+        4.0f,    4.0f,    4.0f, 1.883f,
+        1.5f,    1.117f,  0.0f, 0.0f,
+        0.0f,    0.0f,    0.0f, 1.117f
+      };
+      static const float kTipRowMark[16] = {
+        0.0f,    0.0f,    0.0f, 1.117f,
+        1.5f,    1.883f,  4.0f, 4.0f,
+        4.0f,    4.0f,    3.0f, 1.883f,
+        1.5f,    1.117f,  0.0f, 0.0f
+      };
+      float tipX = sx + kTipColMark[dir] * (float)ctx->zoomFactor;
+      float tipY = sy + kTipRowMark[dir] * (float)ctx->zoomFactor;
+      /* 1 wu in screen pixels = zoomFactor / 16; clamp to >=1 so it
+       * stays visible at low zoom. */
+      float oneWu = (float)ctx->zoomFactor / 16.0f;
+      float dotSize = oneWu < 1.0f ? 1.0f : oneWu;
+      SDL_FRect dot = { tipX - dotSize * 0.5f, tipY - dotSize * 0.5f,
+                        dotSize, dotSize };
+      SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
+      SDL_RenderFillRect(ctx->renderer, &dot);
+    }
   }
 }
 
