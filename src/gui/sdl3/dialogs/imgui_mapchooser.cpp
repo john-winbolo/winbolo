@@ -496,8 +496,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     }
 
     if (state->previewTex) {
-        ImGui::Text(langGetText(STR_MAPCHOOSER_STATS_FMT),
-                     state->previewPills, state->previewBases, state->previewStarts);
+        MessageArgs args = {};
+        args.number = state->previewPills;
+        args.number2 = state->previewBases;
+        args.number3 = state->previewStarts;
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPCHOOSER_STATS, &args));
     }
 
     ImGui::EndChild(); /* ##MapPreview */

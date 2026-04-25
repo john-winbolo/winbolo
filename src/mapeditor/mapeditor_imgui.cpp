@@ -37,6 +37,7 @@
 #include "mapeditor_stats.h"
 #include "mapeditor_stamp.h"
 #include "../bolo/tilenum.h"
+#include "../gui/lang.h"
 #include "../gui/tiles.h"
 #include "../gui/sdl3/minimap_render.h"
 
@@ -137,14 +138,14 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
     action->openRecentIndex = -1;
 
     if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New", "Ctrl+N")) {
+        if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_NEW), "Ctrl+N")) {
                 action->wantNew = true;
             }
-            if (ImGui::MenuItem("Open...", "Ctrl+O")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_OPEN), "Ctrl+O")) {
                 action->wantOpen = true;
             }
-            if (ImGui::BeginMenu("Recent Files", numRecent > 0)) {
+            if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_RECENT), numRecent > 0)) {
                 for (int i = 0; i < numRecent; i++) {
                     /* Show just the filename, not the full path */
                     const char *name = recentFiles[i];
@@ -163,117 +164,116 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                 ImGui::EndMenu();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Save", "Ctrl+S")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_SAVE), "Ctrl+S")) {
                 action->wantSave = true;
             }
-            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_SAVEAS), "Ctrl+Shift+S")) {
                 action->wantSaveAs = true;
             }
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
             ImGui::Separator();
-            if (ImGui::MenuItem("Export as PNG...")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_EXPORT))) {
                 action->wantExportPNG = true;
             }
 #endif
             ImGui::Separator();
             if (fromMainMenu) {
-                if (ImGui::MenuItem("Return to Menu")) {
+                if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_RETURN))) {
                     action->wantExit = true;
                 }
             } else {
-                if (ImGui::MenuItem("Exit", "Ctrl+Q")) {
+                if (ImGui::MenuItem(langGetText(STR_MENU_EXIT), "Ctrl+Q")) {
                     action->wantExit = true;
                 }
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, canUndo)) {
+        if (ImGui::BeginMenu(langGetText(STR_MENU_EDIT))) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_UNDO), "Ctrl+Z", false, canUndo)) {
                 action->wantUndo = true;
             }
-            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_REDO), "Ctrl+Y", false, canRedo)) {
                 action->wantRedo = true;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Cut", "Ctrl+X", false, hasSelection)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_CUT), "Ctrl+X", false, hasSelection)) {
                 action->wantCut = true;
             }
-            if (ImGui::MenuItem("Copy", "Ctrl+C", false, hasSelection)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_COPY), "Ctrl+C", false, hasSelection)) {
                 action->wantCopy = true;
             }
-            if (ImGui::MenuItem("Paste", "Ctrl+V")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_PASTE), "Ctrl+V")) {
                 action->wantPaste = true;
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Map")) {
-            if (ImGui::MenuItem("Random Map...", nullptr)) {
+        if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_MAP))) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_RANDOMMAP), nullptr)) {
                 action->wantGenerate = true;
             }
-            if (ImGui::MenuItem("Text...", nullptr)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_TEXT), nullptr)) {
                 action->wantText = true;
             }
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
-            if (ImGui::MenuItem("Import Image...", nullptr)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_IMPORTIMG), nullptr)) {
                 action->wantImageImport = true;
             }
 #endif
-            if (ImGui::MenuItem("Validate", "Ctrl+Shift+V")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_VALIDATE), "Ctrl+Shift+V")) {
                 action->wantValidate = true;
             }
             ImGui::Separator();
             {
-                const char *scope = hasSelection ? "(selection)" : "(full map)";
-                char label[64];
-                snprintf(label, sizeof(label), "Mirror Horizontal %s", scope);
-                if (ImGui::MenuItem(label)) {
+                MessageArgs scopeArgs = {};
+                const char *scope = langGetText(hasSelection
+                                                ? STR_MAPEDIT_SCOPE_SELECTION
+                                                : STR_MAPEDIT_SCOPE_FULLMAP);
+                SDL_strlcpy(scopeArgs.string1, scope, sizeof(scopeArgs.string1));
+                if (ImGui::MenuItem(langGetTextFmt(STR_MAPEDIT_MENU_MIRROR_H, &scopeArgs))) {
                     action->wantSymMirrorH = true;
                 }
-                snprintf(label, sizeof(label), "Mirror Vertical %s", scope);
-                if (ImGui::MenuItem(label)) {
+                if (ImGui::MenuItem(langGetTextFmt(STR_MAPEDIT_MENU_MIRROR_V, &scopeArgs))) {
                     action->wantSymMirrorV = true;
                 }
-                snprintf(label, sizeof(label), "Rotate 90%s CW %s", "\xC2\xB0", scope);
-                if (ImGui::MenuItem(label)) {
+                if (ImGui::MenuItem(langGetTextFmt(STR_MAPEDIT_MENU_ROTATE_90, &scopeArgs))) {
                     action->wantSymRotate90 = true;
                 }
-                snprintf(label, sizeof(label), "Rotate 180%s %s", "\xC2\xB0", scope);
-                if (ImGui::MenuItem(label)) {
+                if (ImGui::MenuItem(langGetTextFmt(STR_MAPEDIT_MENU_ROTATE_180, &scopeArgs))) {
                     action->wantSymRotate180 = true;
                 }
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Options")) {
-            if (ImGui::MenuItem("Center Map", "Home")) {
+        if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_OPTIONS))) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_CENTER), "Home")) {
                 action->wantCenter = true;
             }
-            if (ImGui::MenuItem("Point Start Points")) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_POINT_STARTS))) {
                 action->wantPointStarts = true;
             }
             ImGui::Separator();
             bool grid = showGrid;
-            if (ImGui::MenuItem("Show Grid", "G", &grid)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_SHOWGRID), "G", &grid)) {
                 action->toggleGrid = true;
             }
             bool mines = showMines;
-            if (ImGui::MenuItem("Show Mines", "M", &mines)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_SHOWMINES), "M", &mines)) {
                 action->toggleMines = true;
             }
             bool pillRanges = showPillRanges;
-            if (ImGui::MenuItem("Show Pillbox Ranges", NULL, &pillRanges)) {
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_SHOWPILLRANGES), NULL, &pillRanges)) {
                 action->togglePillRanges = true;
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Window")) {
-            ImGui::MenuItem("Terrain",   "Ctrl+1", showTerrain);
-            ImGui::MenuItem("Tools",     "Ctrl+2", showTools);
-            ImGui::MenuItem("Inspector", "Ctrl+3", showInspector);
-            ImGui::MenuItem("Objects",   "Ctrl+4", showObjects);
-            ImGui::MenuItem("Overview",  "Ctrl+5", showOverview);
-            ImGui::MenuItem("Statistics", "Ctrl+7", showStats);
-            ImGui::MenuItem("Stamp Library", "Ctrl+6", showStampLibrary);
+        if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_WINDOW))) {
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_TERRAIN),   "Ctrl+1", showTerrain);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_TOOLS),     "Ctrl+2", showTools);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_INSPECTOR), "Ctrl+3", showInspector);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_OBJECTS),   "Ctrl+4", showObjects);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_OVERVIEW),  "Ctrl+5", showOverview);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_STATS), "Ctrl+7", showStats);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_STAMP_LIB), "Ctrl+6", showStampLibrary);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -282,10 +282,10 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
 
 int mapEditorImguiUnsavedModal(void) {
     int result = 0;
-    if (ImGui::BeginPopupModal("Unsaved Changes", nullptr,
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_UNSAVED_TITLE), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
-        ImGui::Text("The map has unsaved changes.\nDo you want to save before continuing?");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_UNSAVED_BLURB));
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -296,17 +296,17 @@ int mapEditorImguiUnsavedModal(void) {
         float startX = (ImGui::GetContentRegionAvail().x - totalW) * 0.5f;
         if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
 
-        if (ImGui::Button("Yes", ImVec2(buttonW, 0))) {
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(buttonW, 0))) {
             result = 1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("No", ImVec2(buttonW, 0))) {
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(buttonW, 0))) {
             result = 2;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(buttonW, 0))) {
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0))) {
             result = 3;
             ImGui::CloseCurrentPopup();
         }
@@ -317,7 +317,7 @@ int mapEditorImguiUnsavedModal(void) {
 
 bool mapEditorImguiErrorModal(const char *message) {
     bool dismissed = false;
-    if (ImGui::BeginPopupModal("Error", nullptr,
+    if (ImGui::BeginPopupModal(langGetText(STR_ERR_TITLE), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
         ImGui::TextWrapped("%s", message);
@@ -327,7 +327,7 @@ bool mapEditorImguiErrorModal(const char *message) {
         float buttonW = 80.0f;
         float startX = (ImGui::GetContentRegionAvail().x - buttonW) * 0.5f;
         if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-        if (ImGui::Button("OK", ImVec2(buttonW, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(buttonW, 0))) {
             dismissed = true;
             ImGui::CloseCurrentPopup();
         }
@@ -358,18 +358,25 @@ void mapEditorImguiStatusBar(int tileX, int tileY, float zoomLevel,
                  ImGuiWindowFlags_NoFocusOnAppearing);
 
     if (tileX >= 0 && tileY >= 0) {
-        ImGui::Text("Tile: %d, %d", tileX, tileY);
+        MessageArgs args = {};
+        args.number = tileX;
+        args.number2 = tileY;
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATUS_TILE, &args));
     } else {
-        ImGui::Text("Tile: --");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_STATUS_TILE_NONE));
     }
     ImGui::SameLine(winW * 0.3f);
-    if (zoomLevel < 1.0f)
-        ImGui::Text("Zoom: %.1fx", zoomLevel);
-    else
-        ImGui::Text("Zoom: %dx", (int)zoomLevel);
+    {
+        MessageArgs args = {};
+        if (zoomLevel < 1.0f)
+            SDL_snprintf(args.string1, sizeof(args.string1), "%.1fx", zoomLevel);
+        else
+            SDL_snprintf(args.string1, sizeof(args.string1), "%dx", (int)zoomLevel);
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATUS_ZOOM, &args));
+    }
     ImGui::SameLine(winW * 0.5f);
     if (dirty) {
-        ImGui::Text("Modified");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_STATUS_MODIFIED));
     }
     if (startInfo) {
         ImGui::SameLine(winW * 0.7f);
@@ -392,25 +399,28 @@ extern int mapViewPosX[256];
 extern int mapViewPosY[256];
 }
 
-/* The 11 paintable terrain entries. Keep in sync with mapeditor.c meTerrainEntries */
+/* The 11 paintable terrain entries. Keep in sync with mapeditor.c meTerrainEntries.
+ * `name` is a stable English string used as the ImGui widget ID;
+ * `nameId` is the localized display label used in tooltips. */
 static const struct {
     const char *name;
+    langid      nameId;
     unsigned char rawValue;
     unsigned char iconTile;
     bool canMine;
-    const char *shortcut;   /* keyboard shortcut label for tooltip */
+    const char *shortcut;
 } s_terrainEntries[] = {
-    { "Deep Sea",      0xFF, 113, false, "0" }, /* DEEP_SEA_SOLID */
-    { "Grass",         7,    7,   true,  "1" },
-    { "Forest",        5,    164, true,  "2" }, /* FOREST_SINGLE */
-    { "Road",          4,    27,  true,  "3" }, /* ROAD_SOLID */
-    { "Building",      0,    57,  false, "4" }, /* BUILD_SOLID */
-    { "Half Building", 8,    8,   false, "9" },
-    { "River",         1,    101, false, "5" }, /* RIVER_SOLID */
-    { "Swamp",         2,    2,   true,  "6" },
-    { "Crater",        3,    3,   true,  "7" },
-    { "Rubble",        6,    6,   true,  "8" },
-    { "Boat",          9,    138, false, "`" },
+    { "Deep Sea",      STR_MAPEDIT_TERR_DEEPSEA,       0xFF, 113, false, "0" },
+    { "Grass",         STR_MAPEDIT_TERR_GRASS,         7,    7,   true,  "1" },
+    { "Forest",        STR_MAPEDIT_TERR_FOREST,        5,    164, true,  "2" },
+    { "Road",          STR_MAPEDIT_TERR_ROAD,          4,    27,  true,  "3" },
+    { "Building",      STR_MAPEDIT_TERR_BUILDING,      0,    57,  false, "4" },
+    { "Half Building", STR_MAPEDIT_TERR_HALFBUILDING,  8,    8,   false, "9" },
+    { "River",         STR_MAPEDIT_TERR_RIVER,         1,    101, false, "5" },
+    { "Swamp",         STR_MAPEDIT_TERR_SWAMP,         2,    2,   true,  "6" },
+    { "Crater",        STR_MAPEDIT_TERR_CRATER,        3,    3,   true,  "7" },
+    { "Rubble",        STR_MAPEDIT_TERR_RUBBLE,        6,    6,   true,  "8" },
+    { "Boat",          STR_MAPEDIT_TERR_BOAT,          9,    138, false, "`" },
 };
 #define ME_NUM_TERRAINS 11
 
@@ -426,7 +436,7 @@ bool mapEditorImguiTerrainPalette(void *tilesTex, int tileSize,
     ImGuiCond posCond = s_displayResized ? ImGuiCond_Always : ImGuiCond_Once;
     ImGui::SetNextWindowPos(ImVec2(0, 20), posCond);
     ImGui::SetNextWindowSize(ImVec2(110, 0), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Terrain", p_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(langGetText(STR_MAPEDIT_WIN_TERRAIN), p_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     for (int i = 0; i < ME_NUM_TERRAINS; i++) {
         int tile = s_terrainEntries[i].iconTile;
@@ -458,7 +468,7 @@ bool mapEditorImguiTerrainPalette(void *tilesTex, int tileSize,
                 IM_COL32(80, 160, 255, 255), 0.0f, 0, 2.0f);
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s (%s)", s_terrainEntries[i].name, s_terrainEntries[i].shortcut);
+            ImGui::SetTooltip("%s (%s)", langGetText(s_terrainEntries[i].nameId), s_terrainEntries[i].shortcut);
         }
 
         if (selected) {
@@ -500,7 +510,7 @@ bool mapEditorImguiTerrainPalette(void *tilesTex, int tileSize,
                 IM_COL32(255, 80, 80, 255), 0.0f, 0, 2.0f);
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Mine Tool (N)");
+            ImGui::SetTooltip("%s (N)", langGetText(STR_MAPEDIT_TERR_MINETOOL));
         }
         if (mineSelected) {
             ImGui::PopStyleColor(3);
@@ -509,7 +519,12 @@ bool mapEditorImguiTerrainPalette(void *tilesTex, int tileSize,
 
         /* Mine pattern combo — only shown when mine tool is active */
         if (*mineMode) {
-            static const char *patternNames[] = { "Checkered", "Full", "Random", "Clear Mines" };
+            const char *patternNames[ME_MINE_PATTERN_COUNT] = {
+                langGetText(STR_MAPEDIT_MINE_CHECKERED),
+                langGetText(STR_MAPEDIT_MINE_FULL),
+                langGetText(STR_MAPEDIT_MINE_RANDOM),
+                langGetText(STR_MAPEDIT_MINE_CLEAR),
+            };
             ImGui::SetNextItemWidth(-1);
             if (ImGui::Combo("##MinePattern", minePattern, patternNames, ME_MINE_PATTERN_COUNT)) {
                 changed = true;
@@ -530,22 +545,23 @@ bool mapEditorImguiTerrainPalette(void *tilesTex, int tileSize,
 #include "nanosvgrast.h"
 
 static const struct {
-    int      toolIdx;
+    int         toolIdx;
     const char *svgFile;
-    const char *name;
+    const char *name;     /* stable English string used as widget ID */
+    langid      nameId;   /* localized name shown in tooltips */
     const char *shortcut;
 } s_drawingTools[ME_NUM_DRAWING_TOOLS] = {
-    { ME_TOOL_PENCIL,    "data/ui/mapeditor/pencil.svg",             "Pencil",           "P" },
-    { ME_TOOL_LINE,      "data/ui/mapeditor/line.svg",               "Line",             "L" },
-    { ME_TOOL_RECT,      "data/ui/mapeditor/rectangle.svg",          "Rectangle",        "R" },
-    { ME_TOOL_RECT_FILL, "data/ui/mapeditor/filled_rectangle.svg",   "Filled Rectangle", "Shift+R" },
-    { ME_TOOL_OVAL,      "data/ui/mapeditor/oval.svg",               "Oval",             "O" },
-    { ME_TOOL_OVAL_FILL, "data/ui/mapeditor/filled_oval.svg",        "Filled Oval",      "Shift+O" },
-    { ME_TOOL_SELECT,    "data/ui/mapeditor/selection.svg",          "Selection",        "S" },
-    { ME_TOOL_FILL,      "data/ui/mapeditor/fill.svg",               "Fill",             "F" },
-    { ME_TOOL_MAZE,      "data/ui/mapeditor/maze.svg",               "Maze",             "M" },
-    { ME_TOOL_GENERATE,  "data/ui/mapeditor/random.svg",             "Generate",         "Shift+G" },
-    { ME_TOOL_WAND,      "data/ui/mapeditor/wand.svg",              "Wand",             "W" },
+    { ME_TOOL_PENCIL,    "data/ui/mapeditor/pencil.svg",             "Pencil",           STR_MAPEDIT_TOOL_PENCIL,    "P" },
+    { ME_TOOL_LINE,      "data/ui/mapeditor/line.svg",               "Line",             STR_MAPEDIT_TOOL_LINE,      "L" },
+    { ME_TOOL_RECT,      "data/ui/mapeditor/rectangle.svg",          "Rectangle",        STR_MAPEDIT_TOOL_RECT,      "R" },
+    { ME_TOOL_RECT_FILL, "data/ui/mapeditor/filled_rectangle.svg",   "Filled Rectangle", STR_MAPEDIT_TOOL_RECTFILL,  "Shift+R" },
+    { ME_TOOL_OVAL,      "data/ui/mapeditor/oval.svg",               "Oval",             STR_MAPEDIT_TOOL_OVAL,      "O" },
+    { ME_TOOL_OVAL_FILL, "data/ui/mapeditor/filled_oval.svg",        "Filled Oval",      STR_MAPEDIT_TOOL_OVALFILL,  "Shift+O" },
+    { ME_TOOL_SELECT,    "data/ui/mapeditor/selection.svg",          "Selection",        STR_MAPEDIT_TOOL_SELECT,    "S" },
+    { ME_TOOL_FILL,      "data/ui/mapeditor/fill.svg",               "Fill",             STR_MAPEDIT_TOOL_FILL,      "F" },
+    { ME_TOOL_MAZE,      "data/ui/mapeditor/maze.svg",               "Maze",             STR_MAPEDIT_TOOL_MAZE,      "M" },
+    { ME_TOOL_GENERATE,  "data/ui/mapeditor/random.svg",             "Generate",         STR_MAPEDIT_TOOL_GENERATE,  "Shift+G" },
+    { ME_TOOL_WAND,      "data/ui/mapeditor/wand.svg",              "Wand",              STR_MAPEDIT_TOOL_WAND,      "W" },
 };
 
 static void meLoadToolIcons(void) {
@@ -615,7 +631,7 @@ bool mapEditorImguiToolbar(int *activeTool,
         if (s_toolsPosFrames < 3) s_toolsPosFrames++;
     }
     ImGui::SetNextWindowSize(ImVec2(120, 0), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Tools", p_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(langGetText(STR_MAPEDIT_WIN_TOOLS), p_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     /* Drawing tools — SVG icon buttons in 2-column grid */
     for (int i = 0; i < ME_NUM_DRAWING_TOOLS; i++) {
@@ -636,9 +652,7 @@ bool mapEditorImguiToolbar(int *activeTool,
             }
         } else {
             /* Fallback: text button if SVG failed to load */
-            char label[64];
-            snprintf(label, sizeof(label), "%s", s_drawingTools[i].name);
-            if (ImGui::Button(label, ImVec2(btnSize + 8, btnSize + 8))) {
+            if (ImGui::Button(langGetText(s_drawingTools[i].nameId), ImVec2(btnSize + 8, btnSize + 8))) {
                 *activeTool = s_drawingTools[i].toolIdx;
                 changed = true;
             }
@@ -650,7 +664,7 @@ bool mapEditorImguiToolbar(int *activeTool,
                 IM_COL32(80, 160, 255, 255), 0.0f, 0, 2.0f);
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s (%s)", s_drawingTools[i].name, s_drawingTools[i].shortcut);
+            ImGui::SetTooltip("%s (%s)", langGetText(s_drawingTools[i].nameId), s_drawingTools[i].shortcut);
         }
 
         if (selected) {
@@ -706,36 +720,36 @@ bool mapEditorImguiToolbar(int *activeTool,
                 if (wantText) *wantText = true;
             }
         } else {
-            if (ImGui::Button("Text", ImVec2(btnSize + 8, btnSize + 8))) {
+            if (ImGui::Button(langGetText(STR_MAPEDIT_TOOL_TEXT), ImVec2(btnSize + 8, btnSize + 8))) {
                 if (wantText) *wantText = true;
             }
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Text (stamp text onto map)");
+            ImGui::SetTooltip("%s", langGetText(STR_MAPEDIT_TOOL_TEXT_TIP));
         }
         ImGui::PopID();
     }
 
     /* Brush size selector */
     ImGui::Separator();
-    ImGui::Text("Brush");
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_BRUSH));
     static const char *sizeLabels[] = { "1", "3", "5", "7", "9" };
     ImGui::SetNextItemWidth(-1);
     if (ImGui::Combo("##BrushSize", brushSize, sizeLabels, ME_BRUSH_SIZE_COUNT)) {
         changed = true;
     }
-    ImGui::RadioButton("Square", brushShape, ME_BRUSH_SQUARE);
+    ImGui::RadioButton(langGetText(STR_MAPEDIT_BRUSH_SQUARE), brushShape, ME_BRUSH_SQUARE);
     ImGui::SameLine();
-    ImGui::RadioButton("Circle", brushShape, ME_BRUSH_CIRCLE);
+    ImGui::RadioButton(langGetText(STR_MAPEDIT_BRUSH_CIRCLE), brushShape, ME_BRUSH_CIRCLE);
 
     /* Object placement tools — icon buttons from tile atlas */
     ImGui::Separator();
-    ImGui::Text("Objects");
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_WIN_OBJECTS));
 
-    struct { int tileX; int tileY; int toolIdx; const char *tooltip; } objTools[] = {
-        { mapViewPosX[BASE_NEUTRAL],  mapViewPosY[BASE_NEUTRAL],  ME_TOOL_PLACE_BASE,  "Base (B)" },
-        { mapViewPosX[PILL_EVIL_15],  mapViewPosY[PILL_EVIL_15],  ME_TOOL_PLACE_PILL,  "Pillbox (I)" },
-        { TANK_SELFBOAT_0_X,         TANK_SELFBOAT_0_Y,          ME_TOOL_PLACE_START, "Start (T)" },
+    struct { int tileX; int tileY; int toolIdx; langid tooltipId; const char *shortcut; const char *idStr; } objTools[] = {
+        { mapViewPosX[BASE_NEUTRAL],  mapViewPosY[BASE_NEUTRAL],  ME_TOOL_PLACE_BASE,  STR_MAPEDIT_OBJTOOL_BASE,  "B", "Base" },
+        { mapViewPosX[PILL_EVIL_15],  mapViewPosY[PILL_EVIL_15],  ME_TOOL_PLACE_PILL,  STR_MAPEDIT_OBJTOOL_PILL,  "I", "Pillbox" },
+        { TANK_SELFBOAT_0_X,         TANK_SELFBOAT_0_Y,          ME_TOOL_PLACE_START, STR_MAPEDIT_OBJTOOL_START, "T", "Start" },
     };
 
     for (int i = 0; i < 3; i++) {
@@ -751,7 +765,7 @@ bool mapEditorImguiToolbar(int *activeTool,
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 1.0f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.85f, 1.0f));
         }
-        if (ImGui::ImageButton(objTools[i].tooltip,
+        if (ImGui::ImageButton(objTools[i].idStr,
                                (ImTextureID)tilesTex,
                                ImVec2(btnSize, btnSize),
                                ImVec2(u0, v0), ImVec2(u1, v1))) {
@@ -765,7 +779,7 @@ bool mapEditorImguiToolbar(int *activeTool,
                 IM_COL32(80, 160, 255, 255), 0.0f, 0, 2.0f);
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", objTools[i].tooltip);
+            ImGui::SetTooltip("%s (%s)", langGetText(objTools[i].tooltipId), objTools[i].shortcut);
         }
         if (selected) {
             ImGui::PopStyleColor(3);
@@ -787,12 +801,6 @@ bool mapEditorImguiToolbar(int *activeTool,
 #include "mapeditor_undo.h"
 #include "../bolo/types.h"
 
-static const char *s_ownerNames[] = {
-    "Neutral", "Player 0", "Player 1", "Player 2", "Player 3",
-    "Player 4", "Player 5", "Player 6", "Player 7", "Player 8",
-    "Player 9", "Player 10", "Player 11", "Player 12", "Player 13",
-    "Player 14", "Player 15"
-};
 #define ME_NUM_OWNERS 17
 
 static const char *s_dirLabels[] = {
@@ -829,22 +837,43 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
     ImGuiIO &iio = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(iio.DisplaySize.x - 260, 20), posCond);
     ImGui::SetNextWindowSize(ImVec2(250, 0), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Inspector", p_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(langGetText(STR_MAPEDIT_WIN_INSPECTOR), p_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     if (selKind == ME_SEL_NONE || selKind < 0) {
-        ImGui::Text("No object selected");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_INSP_NOSEL));
         s_inspectorWindowBottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
         ImGui::End();
         return false;
     }
 
+    /* Build localized owner name list (Neutral + Player 0..15) */
+    char ownerLabels[ME_NUM_OWNERS][32];
+    const char *ownerLabelPtrs[ME_NUM_OWNERS];
+    SDL_strlcpy(ownerLabels[0], langGetText(STR_MAPEDIT_OWNER_NEUTRAL), sizeof(ownerLabels[0]));
+    ownerLabelPtrs[0] = ownerLabels[0];
+    for (int oi = 1; oi < ME_NUM_OWNERS; oi++) {
+        MessageArgs oargs = {};
+        oargs.number = oi - 1;
+        SDL_strlcpy(ownerLabels[oi], langGetTextFmt(STR_MAPEDIT_OWNER_PLAYER, &oargs), sizeof(ownerLabels[oi]));
+        ownerLabelPtrs[oi] = ownerLabels[oi];
+    }
+
     if (selKind == ME_SEL_BASE && selIndex >= 0 && selIndex < bs->numBases) {
         base *b = &bs->item[selIndex];
-        ImGui::Text("Base #%d", selIndex);
-        ImGui::Text("Position: (%d, %d)", b->x, b->y);
+        {
+            MessageArgs args = {};
+            args.number = selIndex;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_BASE_HASH, &args));
+        }
+        {
+            MessageArgs args = {};
+            args.number = b->x;
+            args.number2 = b->y;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_POSITION, &args));
+        }
 
         int ownerCombo = ownerToCombo(b->owner);
-        if (ImGui::Combo("Owner", &ownerCombo, s_ownerNames, ME_NUM_OWNERS)) {
+        if (ImGui::Combo(langGetText(STR_MAPEDIT_INSP_OWNER), &ownerCombo, ownerLabelPtrs, ME_NUM_OWNERS)) {
             base old = *b;
             b->owner = comboToOwner(ownerCombo);
             undoBeginCommand(undo);
@@ -855,7 +884,7 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
 
         /* Armour slider */
         int armour = b->armour;
-        if (ImGui::SliderInt("Armour", &armour, 0, 90)) {
+        if (ImGui::SliderInt(langGetText(STR_MAPEDIT_INSP_ARMOUR), &armour, 0, 90)) {
             b->armour = (unsigned char)armour;
         }
         if (ImGui::IsItemActivated()) {
@@ -874,7 +903,7 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
 
         /* Shells slider */
         int shells = b->shells;
-        if (ImGui::SliderInt("Shells", &shells, 0, 90)) {
+        if (ImGui::SliderInt(langGetText(STR_TABLET_SHELLS), &shells, 0, 90)) {
             b->shells = (unsigned char)shells;
         }
         if (ImGui::IsItemActivated()) {
@@ -893,7 +922,7 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
 
         /* Mines slider */
         int mines = b->mines;
-        if (ImGui::SliderInt("Mines", &mines, 0, 90)) {
+        if (ImGui::SliderInt(langGetText(STR_TABLET_MINES), &mines, 0, 90)) {
             b->mines = (unsigned char)mines;
         }
         if (ImGui::IsItemActivated()) {
@@ -911,11 +940,20 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
         }
     } else if (selKind == ME_SEL_PILL && selIndex >= 0 && selIndex < pb->numPills) {
         pillbox *p = &pb->item[selIndex];
-        ImGui::Text("Pillbox #%d", selIndex);
-        ImGui::Text("Position: (%d, %d)", p->x, p->y);
+        {
+            MessageArgs args = {};
+            args.number = selIndex;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_PILL_HASH, &args));
+        }
+        {
+            MessageArgs args = {};
+            args.number = p->x;
+            args.number2 = p->y;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_POSITION, &args));
+        }
 
         int ownerCombo = ownerToCombo(p->owner);
-        if (ImGui::Combo("Owner", &ownerCombo, s_ownerNames, ME_NUM_OWNERS)) {
+        if (ImGui::Combo(langGetText(STR_MAPEDIT_INSP_OWNER), &ownerCombo, ownerLabelPtrs, ME_NUM_OWNERS)) {
             pillbox old = *p;
             p->owner = comboToOwner(ownerCombo);
             undoBeginCommand(undo);
@@ -925,7 +963,7 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
         }
 
         int armour = p->armour;
-        if (ImGui::SliderInt("Armour", &armour, 0, 15)) {
+        if (ImGui::SliderInt(langGetText(STR_MAPEDIT_INSP_ARMOUR), &armour, 0, 15)) {
             p->armour = (unsigned char)armour;
         }
         if (ImGui::IsItemActivated()) {
@@ -943,7 +981,7 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
         }
 
         int speed = p->speed;
-        if (ImGui::SliderInt("Speed", &speed, 1, 200)) {
+        if (ImGui::SliderInt(langGetText(STR_MAPEDIT_INSP_SPEED), &speed, 1, 200)) {
             p->speed = (unsigned char)speed;
         }
         if (ImGui::IsItemActivated()) {
@@ -961,11 +999,20 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
         }
     } else if (selKind == ME_SEL_START && selIndex >= 0 && selIndex < ss->numStarts) {
         start *s = &ss->item[selIndex];
-        ImGui::Text("Start #%d", selIndex);
-        ImGui::Text("Position: (%d, %d)", s->x, s->y);
+        {
+            MessageArgs args = {};
+            args.number = selIndex;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_START_HASH, &args));
+        }
+        {
+            MessageArgs args = {};
+            args.number = s->x;
+            args.number2 = s->y;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_POSITION, &args));
+        }
 
         int dir = s->dir;
-        if (ImGui::SliderInt("Direction", &dir, 0, 15)) {
+        if (ImGui::SliderInt(langGetText(STR_MAPEDIT_INSP_DIR), &dir, 0, 15)) {
             s->dir = (unsigned char)dir;
         }
         if (ImGui::IsItemActivated()) {
@@ -985,7 +1032,7 @@ bool mapEditorImguiInspector(int selKind, int selIndex,
             ImGui::Text("%s", s_dirLabels[s->dir]);
         }
     } else {
-        ImGui::Text("No object selected");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_INSP_NOSEL));
     }
 
     s_inspectorWindowBottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
@@ -1018,12 +1065,14 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
     float objY = (s_inspectorWindowBottom > 20.0f) ? s_inspectorWindowBottom : 20.0f;
     ImGui::SetNextWindowPos(ImVec2(oio.DisplaySize.x - 260, objY), posCond);
     ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Objects", p_open, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(langGetText(STR_MAPEDIT_WIN_OBJECTS), p_open, ImGuiWindowFlags_NoCollapse);
 
     /* Bases section */
     {
-        char header[64];
-        snprintf(header, sizeof(header), "Bases (%d/%d)", bs->numBases, MAX_BASES);
+        MessageArgs hargs = {};
+        hargs.number = bs->numBases;
+        hargs.number2 = MAX_BASES;
+        const char *header = langGetTextFmt(STR_MAPEDIT_OBJ_BASES_COUNT, &hargs);
         if (bs->numBases >= MAX_BASES) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
         }
@@ -1033,17 +1082,21 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
         }
         if (open) {
             for (int i = 0; i < bs->numBases; i++) {
-                char label[128];
-                const char *ownerStr = bs->item[i].owner == 0xFF ? "Neutral" : "";
+                char ownerBuf[32];
                 if (bs->item[i].owner != 0xFF) {
-                    snprintf(label, sizeof(label), "#%d  (%d, %d)  Player %d",
-                             i, bs->item[i].x, bs->item[i].y, bs->item[i].owner);
+                    MessageArgs oa = {};
+                    oa.number = bs->item[i].owner;
+                    SDL_strlcpy(ownerBuf, langGetTextFmt(STR_MAPEDIT_OWNER_PLAYER, &oa), sizeof(ownerBuf));
                 } else {
-                    snprintf(label, sizeof(label), "#%d  (%d, %d)  %s",
-                             i, bs->item[i].x, bs->item[i].y, ownerStr);
+                    SDL_strlcpy(ownerBuf, langGetText(STR_MAPEDIT_OWNER_NEUTRAL), sizeof(ownerBuf));
                 }
+                MessageArgs args = {};
+                args.number = i;
+                args.number2 = bs->item[i].x;
+                args.number3 = bs->item[i].y;
+                SDL_strlcpy(args.string1, ownerBuf, sizeof(args.string1));
                 bool isSel = (selKind == ME_SEL_BASE && selIndex == i);
-                if (ImGui::Selectable(label, isSel)) {
+                if (ImGui::Selectable(langGetTextFmt(STR_MAPEDIT_OBJ_BASE_ROW, &args), isSel)) {
                     *clickedKind = ME_SEL_BASE;
                     *clickedIndex = i;
                     *panX = bs->item[i].x;
@@ -1055,8 +1108,10 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
 
     /* Pillboxes section */
     {
-        char header[64];
-        snprintf(header, sizeof(header), "Pillboxes (%d/%d)", pb->numPills, MAX_PILLS);
+        MessageArgs hargs = {};
+        hargs.number = pb->numPills;
+        hargs.number2 = MAX_PILLS;
+        const char *header = langGetTextFmt(STR_MAPEDIT_OBJ_PILLS_COUNT, &hargs);
         if (pb->numPills >= MAX_PILLS) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
         }
@@ -1066,16 +1121,22 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
         }
         if (open) {
             for (int i = 0; i < pb->numPills; i++) {
-                char label[128];
+                char ownerBuf[32];
                 if (pb->item[i].owner != 0xFF) {
-                    snprintf(label, sizeof(label), "#%d  (%d, %d)  Player %d  Armour: %d",
-                             i, pb->item[i].x, pb->item[i].y, pb->item[i].owner, pb->item[i].armour);
+                    MessageArgs oa = {};
+                    oa.number = pb->item[i].owner;
+                    SDL_strlcpy(ownerBuf, langGetTextFmt(STR_MAPEDIT_OWNER_PLAYER, &oa), sizeof(ownerBuf));
                 } else {
-                    snprintf(label, sizeof(label), "#%d  (%d, %d)  Neutral  Armour: %d",
-                             i, pb->item[i].x, pb->item[i].y, pb->item[i].armour);
+                    SDL_strlcpy(ownerBuf, langGetText(STR_MAPEDIT_OWNER_NEUTRAL), sizeof(ownerBuf));
                 }
+                MessageArgs args = {};
+                args.number = i;
+                args.number2 = pb->item[i].x;
+                args.number3 = pb->item[i].y;
+                args.number4 = pb->item[i].armour;
+                SDL_strlcpy(args.string1, ownerBuf, sizeof(args.string1));
                 bool isSel = (selKind == ME_SEL_PILL && selIndex == i);
-                if (ImGui::Selectable(label, isSel)) {
+                if (ImGui::Selectable(langGetTextFmt(STR_MAPEDIT_OBJ_PILL_ROW, &args), isSel)) {
                     *clickedKind = ME_SEL_PILL;
                     *clickedIndex = i;
                     *panX = pb->item[i].x;
@@ -1087,8 +1148,10 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
 
     /* Starts section */
     {
-        char header[64];
-        snprintf(header, sizeof(header), "Starts (%d/%d)", ss->numStarts, MAX_STARTS);
+        MessageArgs hargs = {};
+        hargs.number = ss->numStarts;
+        hargs.number2 = MAX_STARTS;
+        const char *header = langGetTextFmt(STR_MAPEDIT_OBJ_STARTS_COUNT, &hargs);
         if (ss->numStarts >= MAX_STARTS) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
         }
@@ -1098,12 +1161,14 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
         }
         if (open) {
             for (int i = 0; i < ss->numStarts; i++) {
-                char label[128];
                 const char *dirStr = ss->item[i].dir < 16 ? s_dirLabels[ss->item[i].dir] : "?";
-                snprintf(label, sizeof(label), "#%d  (%d, %d)  Dir: %s",
-                         i, ss->item[i].x, ss->item[i].y, dirStr);
+                MessageArgs args = {};
+                args.number = i;
+                args.number2 = ss->item[i].x;
+                args.number3 = ss->item[i].y;
+                SDL_strlcpy(args.string1, dirStr, sizeof(args.string1));
                 bool isSel = (selKind == ME_SEL_START && selIndex == i);
-                if (ImGui::Selectable(label, isSel)) {
+                if (ImGui::Selectable(langGetTextFmt(STR_MAPEDIT_OBJ_START_ROW, &args), isSel)) {
                     *clickedKind = ME_SEL_START;
                     *clickedIndex = i;
                     *panX = ss->item[i].x;
@@ -1137,7 +1202,7 @@ void mapEditorImguiOverview(void *minimapTex,
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - winSize.x - 10,
                                    io.DisplaySize.y - winSize.y - 10),
                             posCond);
-    ImGui::Begin("Overview", p_open, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(langGetText(STR_MAPEDIT_WIN_OVERVIEW), p_open, ImGuiWindowFlags_NoCollapse);
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float displaySize = avail.x < avail.y ? avail.x : avail.y;
@@ -1190,15 +1255,15 @@ bool mapEditorImguiGotoDialog(int *gotoX, int *gotoY) {
     static int inputY = 128;
     bool confirmed = false;
 
-    if (ImGui::BeginPopupModal("Go To Coordinates", nullptr,
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_GOTO_TITLE), nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoMove)) {
         /* Focus X field on first appearance */
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetKeyboardFocusHere();
         }
-        ImGui::InputInt("X", &inputX);
-        ImGui::InputInt("Y", &inputY);
+        ImGui::InputInt(langGetText(STR_MAPEDIT_GOTO_X), &inputX);
+        ImGui::InputInt(langGetText(STR_MAPEDIT_GOTO_Y), &inputY);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -1210,7 +1275,7 @@ bool mapEditorImguiGotoDialog(int *gotoX, int *gotoY) {
         float startXPos = (ImGui::GetContentRegionAvail().x - totalW) * 0.5f;
         if (startXPos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startXPos);
 
-        if (ImGui::Button("OK", ImVec2(buttonW, 0)) ||
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(buttonW, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Enter)) {
             /* Clamp to valid range */
             if (inputX < 0) inputX = 0;
@@ -1223,7 +1288,7 @@ bool mapEditorImguiGotoDialog(int *gotoX, int *gotoY) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(buttonW, 0)) ||
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             ImGui::CloseCurrentPopup();
         }
@@ -1251,27 +1316,35 @@ void mapEditorImguiValidationPanel(const void *issuesPtr, int count,
     if (!*visible) return;
 
     ImGui::SetNextWindowSize(ImVec2(400, 250), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Validation", visible, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(langGetText(STR_MAPEDIT_VALIDATION), visible, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
 
     /* Summary line */
     if (errorCount == 0 && warningCount == 0) {
-        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.2f, 1.0f), "No issues");
+        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.2f, 1.0f), "%s", langGetText(STR_MAPEDIT_VAL_NOISSUES));
     } else {
         if (errorCount > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%d error(s)", errorCount);
+            MessageArgs args = {};
+            args.number = errorCount;
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_VAL_ERRORS, &args));
+            ImGui::PopStyleColor();
         } else {
-            ImGui::Text("0 errors");
+            ImGui::TextUnformatted(langGetText(STR_MAPEDIT_VAL_NOERRORS));
         }
         ImGui::SameLine();
-        ImGui::Text(", ");
+        ImGui::TextUnformatted(", ");
         ImGui::SameLine();
         if (warningCount > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "%d warning(s)", warningCount);
+            MessageArgs args = {};
+            args.number = warningCount;
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.3f, 1.0f));
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_VAL_WARNINGS, &args));
+            ImGui::PopStyleColor();
         } else {
-            ImGui::Text("0 warnings");
+            ImGui::TextUnformatted(langGetText(STR_MAPEDIT_VAL_NOWARNINGS));
         }
     }
     ImGui::Separator();
@@ -1313,17 +1386,19 @@ void mapEditorImguiValidationPanel(const void *issuesPtr, int count,
 
 bool mapEditorImguiValidationErrorModal(int errorCount) {
     bool dismissed = false;
-    if (ImGui::BeginPopupModal("Validation Errors", nullptr,
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_VAL_ERRORS_TITLE), nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoMove)) {
-        ImGui::Text("Map has %d error(s). Fix them before saving.", errorCount);
+        MessageArgs args = {};
+        args.number = errorCount;
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_VAL_HASERRORS, &args));
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
         float buttonW = 80.0f;
         float startX = (ImGui::GetContentRegionAvail().x - buttonW) * 0.5f;
         if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-        if (ImGui::Button("OK", ImVec2(buttonW, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(buttonW, 0))) {
             dismissed = true;
             ImGui::CloseCurrentPopup();
         }
@@ -1348,7 +1423,8 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
     bool justOpened = !wasOpen && *open;
     wasOpen = *open;
 
-    const char *title = selectionScope ? "Generate Random Area" : "Generate Random Map";
+    const char *title = langGetText(selectionScope ? STR_MAPEDIT_GENRANDAREA_TITLE
+                                                   : STR_MAPEDIT_GENRANDMAP_TITLE);
     ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Once);
     if (!ImGui::Begin(title, open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
@@ -1357,12 +1433,17 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
     }
 
     /* Scope banner */
-    if (selectionScope) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
-                           "Scope: Selection (%d,%d)-(%d,%d)", selX1, selY1, selX2, selY2);
-    } else {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
-                           "Scope: Full map (%d,%d)-(%d,%d)", selX1, selY1, selX2, selY2);
+    {
+        MessageArgs args = {};
+        args.number = selX1;
+        args.number2 = selY1;
+        args.number3 = selX2;
+        args.number4 = selY2;
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        ImGui::TextUnformatted(langGetTextFmt(selectionScope
+                                              ? STR_MAPEDIT_GENSCOPE_SELECTION
+                                              : STR_MAPEDIT_GENSCOPE_FULLMAP, &args));
+        ImGui::PopStyleColor();
     }
     ImGui::Separator();
 
@@ -1375,7 +1456,7 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
     float startX = (ImGui::GetContentRegionAvail().x - buttonW) * 0.5f;
     if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
 
-    if (ImGui::Button("Close", ImVec2(buttonW, 0))) {
+    if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(buttonW, 0))) {
         *open = false;
     }
 
@@ -1405,7 +1486,7 @@ static bool terrainPicker(const char *label, BYTE *terrain, bool allowNone,
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 1.0f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.85f, 1.0f));
         }
-        if (ImGui::Button("None", ImVec2(btnSize + 8, btnSize))) {
+        if (ImGui::Button(langGetText(STR_NONE), ImVec2(btnSize + 8, btnSize))) {
             *terrain = ME_TRANSPARENT;
             changed = true;
         }
@@ -1452,7 +1533,7 @@ static bool terrainPicker(const char *label, BYTE *terrain, bool allowNone,
             ImGui::PopStyleColor(3);
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", s_terrainEntries[i].name);
+            ImGui::SetTooltip("%s", langGetText(s_terrainEntries[i].nameId));
         }
         ImGui::PopID();
 
@@ -1496,19 +1577,19 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 #endif
 
     ImGui::SetNextWindowSize(ImVec2(450, 0), ImGuiCond_Once);
-    ImGui::Begin("Text Tool", open,
+    ImGui::Begin(langGetText(STR_MAPEDIT_TEXT_TITLE), open,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     /* Text input */
-    ImGui::Text("Text:");
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_TEXT_LABEL));
     ImGui::InputTextMultiline("##text_input", s_textBuf, sizeof(s_textBuf),
                               ImVec2(-1, 80));
 
     /* Font source toggle */
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
-    ImGui::RadioButton("Built-in", fontSource, 0);
+    ImGui::RadioButton(langGetText(STR_MAPEDIT_TEXT_BUILTIN), fontSource, 0);
     ImGui::SameLine();
-    ImGui::RadioButton("System Font", fontSource, 1);
+    ImGui::RadioButton(langGetText(STR_MAPEDIT_TEXT_SYSTEM), fontSource, 1);
 #endif
 
     /* Shared across font UI and preview cache */
@@ -1517,11 +1598,21 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 
     if (*fontSource == 0) {
         /* Built-in bitmap font controls */
-        static const char *s_fontSizes[] = { "Small (5x7)", "Medium (10x14)", "Large (15x21)", "XL (20x28)" };
-        ImGui::Combo("Font Size", &cfg->fontSize, s_fontSizes, TEXT_SIZE_COUNT);
+        const char *s_fontSizes[TEXT_SIZE_COUNT] = {
+            langGetText(STR_MAPEDIT_TEXT_FONTSIZE_S),
+            langGetText(STR_MAPEDIT_TEXT_FONTSIZE_M),
+            langGetText(STR_MAPEDIT_TEXT_FONTSIZE_L),
+            langGetText(STR_MAPEDIT_TEXT_FONTSIZE_XL),
+        };
+        ImGui::Combo(langGetText(STR_MAPEDIT_TEXT_FONTSIZE), &cfg->fontSize, s_fontSizes, TEXT_SIZE_COUNT);
 
-        static const char *s_styles[] = { "Regular", "Bold", "Italic", "Bold Italic" };
-        ImGui::Combo("Style", &cfg->style, s_styles, TEXT_STYLE_COUNT);
+        const char *s_styles[TEXT_STYLE_COUNT] = {
+            langGetText(STR_MAPEDIT_TEXT_STYLE_REGULAR),
+            langGetText(STR_MAPEDIT_TEXT_STYLE_BOLD),
+            langGetText(STR_MAPEDIT_TEXT_STYLE_ITALIC),
+            langGetText(STR_MAPEDIT_TEXT_STYLE_BOLDITALIC),
+        };
+        ImGui::Combo(langGetText(STR_MAPEDIT_TEXT_STYLE), &cfg->style, s_styles, TEXT_STYLE_COUNT);
     }
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
     else {
@@ -1533,7 +1624,8 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
             if (*fontFamily >= s_numFamilies) *fontFamily = 0;
 
             /* Font family combo — use a callback to generate display items */
-            if (ImGui::BeginCombo("Font Family", *fontFamily < s_numFamilies ? s_familyNames[*fontFamily] : "")) {
+            if (ImGui::BeginCombo(langGetText(STR_MAPEDIT_TEXT_FONTFAMILY),
+                                  *fontFamily < s_numFamilies ? s_familyNames[*fontFamily] : "")) {
                 for (int i = 0; i < s_numFamilies; i++) {
                     /* Check if this family is bundled */
                     bool isBundled = false;
@@ -1544,11 +1636,15 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
                         }
                     }
 
-                    char label[256];
+                    const char *label;
+                    char bundledBuf[256];
                     if (isBundled) {
-                        SDL_snprintf(label, sizeof(label), "%s (bundled)", s_familyNames[i]);
+                        MessageArgs ba = {};
+                        SDL_strlcpy(ba.string1, s_familyNames[i], sizeof(ba.string1));
+                        SDL_strlcpy(bundledBuf, langGetTextFmt(STR_MAPEDIT_TEXT_FONTBUNDLED, &ba), sizeof(bundledBuf));
+                        label = bundledBuf;
                     } else {
-                        SDL_strlcpy(label, s_familyNames[i], sizeof(label));
+                        label = s_familyNames[i];
                     }
 
                     bool selected = (*fontFamily == i);
@@ -1570,7 +1666,7 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
                     if (*fontStyleIdx >= numStyles) *fontStyleIdx = 0;
 
                     const char *currentStyle = fontList->entries[styleIndices[*fontStyleIdx]].styleName;
-                    if (ImGui::BeginCombo("Style", currentStyle)) {
+                    if (ImGui::BeginCombo(langGetText(STR_MAPEDIT_TEXT_STYLE), currentStyle)) {
                         for (int i = 0; i < numStyles; i++) {
                             bool selected = (*fontStyleIdx == i);
                             if (ImGui::Selectable(fontList->entries[styleIndices[i]].styleName, selected)) {
@@ -1584,10 +1680,11 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
             }
 
             /* Size slider */
-            ImGui::SliderInt("Size (px)", ttfPixelSize, 8, 64);
+            ImGui::SliderInt(langGetText(STR_MAPEDIT_TEXT_SIZEPX), ttfPixelSize, 8, 64);
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
-                               "No fonts found. Add .ttf files to data/fonts/");
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.2f, 1.0f));
+            ImGui::TextUnformatted(langGetText(STR_MAPEDIT_TEXT_NOFONTS));
+            ImGui::PopStyleColor();
         }
     }
 #endif
@@ -1595,9 +1692,9 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
     ImGui::Separator();
 
     /* Terrain pickers */
-    terrainPicker("Text Terrain", &cfg->textTerrain, false, tilesTex, tileSize);
-    terrainPicker("Edge Terrain", &cfg->edgeTerrain, true, tilesTex, tileSize);
-    terrainPicker("Background", &cfg->bgTerrain, true, tilesTex, tileSize);
+    terrainPicker(langGetText(STR_MAPEDIT_TEXT_TERR_TEXT), &cfg->textTerrain, false, tilesTex, tileSize);
+    terrainPicker(langGetText(STR_MAPEDIT_TEXT_TERR_EDGE), &cfg->edgeTerrain, true, tilesTex, tileSize);
+    terrainPicker(langGetText(STR_MAPEDIT_TEXT_TERR_BG), &cfg->bgTerrain, true, tilesTex, tileSize);
 
     ImGui::Separator();
 
@@ -1683,7 +1780,10 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
         bool previewOk = s_cachedOk;
 
         if (previewOk && pw > 0 && ph > 0) {
-            ImGui::Text("Preview (%dx%d tiles):", pw, ph);
+            MessageArgs args = {};
+            args.number = pw;
+            args.number2 = ph;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_TEXT_PREVIEW, &args));
 
             float maxW = 300.0f, maxH = 200.0f;
             float tileScale = 1.0f;
@@ -1725,8 +1825,9 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 
             ImGui::Dummy(ImVec2(pw * cellSize, ph * cellSize));
         } else if (s_textBuf[0] != '\0') {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                               "Text too large (max 256x256 tiles) or font error");
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::TextUnformatted(langGetText(STR_MAPEDIT_TEXT_TOOLARGE));
+            ImGui::PopStyleColor();
         }
     }
 
@@ -1739,14 +1840,14 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
     float startX = (ImGui::GetContentRegionAvail().x - totalBtnW) * 0.5f;
     if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
 
-    if (ImGui::Button("Generate", ImVec2(buttonW, 0))) {
+    if (ImGui::Button(langGetText(STR_MAPEDIT_GENERATE_BTN), ImVec2(buttonW, 0))) {
         SDL_strlcpy(cfg->text, s_textBuf, sizeof(cfg->text));
         generated = true;
         *open = false;
         s_firstOpen = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(buttonW, 0))) {
+    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0))) {
         *open = false;
         s_firstOpen = true;
     }
@@ -1758,44 +1859,54 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
                                 int selX1, int selY1, int selX2, int selY2,
                                 void *tilesTex, int tileSize) {
-    static const char *mazeAlgoNames[] = { "Labyrinth", "Open" };
+    const char *mazeAlgoNames[MAZE_ALGO_COUNT] = {
+        langGetText(STR_MAPEDIT_ALGO_LABYRINTH),
+        langGetText(STR_MAPEDIT_ALGO_OPEN),
+    };
     ImGui::SetNextWindowSize(ImVec2(260, 0), ImGuiCond_Once);
-    ImGui::Begin("Maze Settings", nullptr,
+    ImGui::Begin(langGetText(STR_MAPEDIT_MAZE_TITLE), nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     /* Selection info */
     if (isDragging) {
         int w = selX2 - selX1 + 1;
         int h = selY2 - selY1 + 1;
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
-                           "Region: (%d,%d)-(%d,%d)  %dx%d",
-                           selX1, selY1, selX2, selY2, w, h);
+        MessageArgs args = {};
+        args.number = selX1;
+        args.number2 = selY1;
+        args.number3 = selX2;
+        args.number4 = selY2;
+        SDL_snprintf(args.string1, sizeof(args.string1), "%dx%d", w, h);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_MAZE_REGION, &args));
+        ImGui::PopStyleColor();
     } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                           "Drag on map to generate");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_DRAG_HINT));
+        ImGui::PopStyleColor();
     }
     ImGui::Separator();
 
     MazeConfig prev = *cfg;
 
-    ImGui::Combo("Algorithm", &cfg->algo, mazeAlgoNames, MAZE_ALGO_COUNT);
+    ImGui::Combo(langGetText(STR_MAPEDIT_ALGORITHM), &cfg->algo, mazeAlgoNames, MAZE_ALGO_COUNT);
 
     int wallIdx = cfg->wallThick - 1;
-    ImGui::SliderInt("Wall", &wallIdx, 0, 1, wallIdx == 0 ? "1" : "2");
+    ImGui::SliderInt(langGetText(STR_MAPEDIT_WALL), &wallIdx, 0, 1, wallIdx == 0 ? "1" : "2");
     cfg->wallThick = wallIdx + 1;
 
     int corrIdx = cfg->corridorWidth - 1;
-    ImGui::SliderInt("Corridor", &corrIdx, 0, 1, corrIdx == 0 ? "1" : "2");
+    ImGui::SliderInt(langGetText(STR_MAPEDIT_CORRIDOR), &corrIdx, 0, 1, corrIdx == 0 ? "1" : "2");
     cfg->corridorWidth = corrIdx + 1;
 
-    ImGui::SliderInt("Entries", &cfg->entries, 1, 8);
-    ImGui::SliderInt("Rooms", &cfg->cityRooms, 0, 5);
+    ImGui::SliderInt(langGetText(STR_MAPEDIT_ENTRIES), &cfg->entries, 1, 8);
+    ImGui::SliderInt(langGetText(STR_MAPEDIT_ROOMS), &cfg->cityRooms, 0, 5);
 
     ImGui::Spacing();
     ImGui::Separator();
-    terrainPicker("Wall Terrain", &cfg->wallTerrain, false, tilesTex, tileSize);
+    terrainPicker(langGetText(STR_MAPEDIT_WALLTERRAIN), &cfg->wallTerrain, false, tilesTex, tileSize);
     ImGui::Spacing();
-    terrainPicker("Corridor Terrain", &cfg->corridorTerrain, false, tilesTex, tileSize);
+    terrainPicker(langGetText(STR_MAPEDIT_CORRIDORTERRAIN), &cfg->corridorTerrain, false, tilesTex, tileSize);
 
     ImGui::End();
 
@@ -1805,19 +1916,26 @@ bool mapEditorImguiMazeSettings(MazeConfig *cfg, bool isDragging,
 bool mapEditorImguiGenerateSettings(MapGenConfig *cfg, bool isDragging,
                                     int selX1, int selY1, int selX2, int selY2) {
     ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_Once);
-    ImGui::Begin("Generate Settings", nullptr,
+    ImGui::Begin(langGetText(STR_MAPEDIT_GENSETTINGS_TITLE), nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     /* Selection info */
     if (isDragging) {
         int w = selX2 - selX1 + 1;
         int h = selY2 - selY1 + 1;
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
-                           "Region: (%d,%d)-(%d,%d)  %dx%d",
-                           selX1, selY1, selX2, selY2, w, h);
+        MessageArgs args = {};
+        args.number = selX1;
+        args.number2 = selY1;
+        args.number3 = selX2;
+        args.number4 = selY2;
+        SDL_snprintf(args.string1, sizeof(args.string1), "%dx%d", w, h);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_MAZE_REGION, &args));
+        ImGui::PopStyleColor();
     } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                           "Drag on map to generate");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_DRAG_HINT));
+        ImGui::PopStyleColor();
     }
     ImGui::Separator();
 
@@ -1840,20 +1958,22 @@ static const BYTE s_statTerrainTypes[] = {
 #define STAT_TERRAIN_COUNT (sizeof(s_statTerrainTypes) / sizeof(s_statTerrainTypes[0]))
 
 static const char *statTerrainName(BYTE t) {
+    langid id;
     switch (t) {
-    case BUILDING:     return "Building";
-    case RIVER:        return "River";
-    case SWAMP:        return "Swamp";
-    case CRATER:       return "Crater";
-    case ROAD:         return "Road";
-    case FOREST:       return "Forest";
-    case RUBBLE:       return "Rubble";
-    case GRASS:        return "Grass";
-    case HALFBUILDING: return "Half-Building";
-    case BOAT:         return "Boat";
-    case DEEP_SEA:     return "Deep Sea";
-    default:           return "Unknown";
+    case BUILDING:     id = STR_MAPEDIT_TERR_BUILDING;     break;
+    case RIVER:        id = STR_MAPEDIT_TERR_RIVER;        break;
+    case SWAMP:        id = STR_MAPEDIT_TERR_SWAMP;        break;
+    case CRATER:       id = STR_MAPEDIT_TERR_CRATER;       break;
+    case ROAD:         id = STR_MAPEDIT_TERR_ROAD;         break;
+    case FOREST:       id = STR_MAPEDIT_TERR_FOREST;       break;
+    case RUBBLE:       id = STR_MAPEDIT_TERR_RUBBLE;       break;
+    case GRASS:        id = STR_MAPEDIT_TERR_GRASS;        break;
+    case HALFBUILDING: id = STR_MAPEDIT_TERRNAME_HALFBLD;  break;
+    case BOAT:         id = STR_MAPEDIT_TERR_BOAT;         break;
+    case DEEP_SEA:     id = STR_MAPEDIT_TERR_DEEPSEA;      break;
+    default:           id = STR_UNKNOWN;                   break;
     }
+    return langGetText(id);
 }
 
 /* Format an integer with comma separators (e.g. 46225 → "46,225") */
@@ -1877,13 +1997,13 @@ static void formatComma(int value, char *buf, int bufSize) {
 void mapEditorImguiStatsPanel(const MapStats *stats, bool *p_open, bool *wantRefresh) {
     if (!*p_open) return;
     ImGui::SetNextWindowSize(ImVec2(320, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Statistics", p_open, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(langGetText(STR_MAPEDIT_WIN_STATS), p_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
 
     /* --- Terrain Distribution --- */
-    if (ImGui::CollapsingHeader("Terrain Distribution", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(langGetText(STR_MAPEDIT_STATS_TERRAIN), ImGuiTreeNodeFlags_DefaultOpen)) {
         /* Sort terrain types by count descending */
         struct TerrainEntry { BYTE type; int count; float pct; };
         TerrainEntry entries[STAT_TERRAIN_COUNT];
@@ -1919,59 +2039,87 @@ void mapEditorImguiStatsPanel(const MapStats *stats, bool *p_open, bool *wantRef
             ImVec4 barColor((float)r / 255.0f, (float)g / 255.0f,
                             (float)b / 255.0f, 1.0f);
 
-            char overlay[64];
-            snprintf(overlay, sizeof(overlay), "%s  %s (%.1f%%)",
-                     countBuf, statTerrainName(t), entries[i].pct * 100.0f);
+            char pctBuf[16];
+            SDL_snprintf(pctBuf, sizeof(pctBuf), "%.1f", entries[i].pct * 100.0f);
+            char overlayBuf[96];
+            SDL_snprintf(overlayBuf, sizeof(overlayBuf), "%s  %s (%s%%)",
+                         countBuf, statTerrainName(t), pctBuf);
 
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
-            ImGui::ProgressBar(entries[i].pct, ImVec2(-FLT_MIN, 0), overlay);
+            ImGui::ProgressBar(entries[i].pct, ImVec2(-FLT_MIN, 0), overlayBuf);
             ImGui::PopStyleColor();
         }
     }
 
     /* --- Objects --- */
-    if (ImGui::CollapsingHeader("Objects", ImGuiTreeNodeFlags_DefaultOpen)) {
-        auto objLine = [](const char *label, int count, int maxCount) {
-            if (count < maxCount)
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                                   "%s: %d / %d", label, count, maxCount);
-            else
-                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                                   "%s: %d / %d", label, count, maxCount);
+    if (ImGui::CollapsingHeader(langGetText(STR_MAPEDIT_WIN_OBJECTS), ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto objLine = [](langid labelId, int count, int maxCount) {
+            MessageArgs oargs = {};
+            SDL_strlcpy(oargs.string1, langGetText(labelId), sizeof(oargs.string1));
+            oargs.number = count;
+            oargs.number2 = maxCount;
+            ImVec4 col = (count < maxCount) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f)
+                                            : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATS_OBJ_LINE, &oargs));
+            ImGui::PopStyleColor();
         };
-        objLine("Bases",     stats->numBases,  MAX_BASES);
-        objLine("Pillboxes", stats->numPills,  MAX_PILLS);
-        objLine("Starts",    stats->numStarts, MAX_STARTS);
+        objLine(STR_TABLET_BASES,     stats->numBases,  MAX_BASES);
+        objLine(STR_TABLET_PILLBOXES, stats->numPills,  MAX_PILLS);
+        objLine(STR_MAPEDIT_STATS_STARTS, stats->numStarts, MAX_STARTS);
         ImGui::Separator();
-        ImGui::Text("Mines: %d (%.1f%% of land)", stats->mineCount,
-                     stats->mineDensity * 100.0f);
+        {
+            MessageArgs args = {};
+            args.number = stats->mineCount;
+            SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", stats->mineDensity * 100.0f);
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATS_MINES, &args));
+        }
     }
 
     /* --- Spatial Analysis --- */
-    if (ImGui::CollapsingHeader("Spatial Analysis", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(langGetText(STR_MAPEDIT_STATS_SPATIAL), ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto pctLine = [](langid id, float v) {
+            MessageArgs args = {};
+            SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", v * 100.0f);
+            ImGui::TextUnformatted(langGetTextFmt(id, &args));
+        };
         if (stats->spatialValid) {
-            ImGui::Text("Land coverage: %.1f%%", stats->landPct * 100.0f);
-            ImGui::Text("Largest landmass: %.1f%%", stats->largestLandPct * 100.0f);
+            pctLine(STR_MAPEDIT_STATS_LAND_COVERAGE, stats->landPct);
+            pctLine(STR_MAPEDIT_STATS_LARGEST,       stats->largestLandPct);
             ImGui::Separator();
-            ImGui::Text("Base spacing: %.1f tiles", stats->baseSpacing);
-            ImGui::Text("Pill spacing: %.1f tiles", stats->pillSpacing);
+            {
+                MessageArgs args = {};
+                SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", stats->baseSpacing);
+                ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATS_BASE_SPACING, &args));
+            }
+            {
+                MessageArgs args = {};
+                SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", stats->pillSpacing);
+                ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATS_PILL_SPACING, &args));
+            }
             ImGui::Separator();
-            ImGui::Text("Symmetry: %s (%.0f%%)", stats->symLabel,
-                         stats->symBest * 100.0f);
+            {
+                MessageArgs args = {};
+                SDL_strlcpy(args.string1, stats->symLabel, sizeof(args.string1));
+                SDL_snprintf(args.string2, sizeof(args.string2), "%.0f", stats->symBest * 100.0f);
+                ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_STATS_SYMMETRY, &args));
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
-                ImGui::Text("Mirror-H:   %.1f%%", stats->symH * 100.0f);
-                ImGui::Text("Mirror-V:   %.1f%%", stats->symV * 100.0f);
-                ImGui::Text("4-corner:   %.1f%%", stats->sym4 * 100.0f);
-                ImGui::Text("Rotate-180: %.1f%%", stats->symR180 * 100.0f);
+                pctLine(STR_MAPEDIT_STATS_MIRROR_H,  stats->symH);
+                pctLine(STR_MAPEDIT_STATS_MIRROR_V,  stats->symV);
+                pctLine(STR_MAPEDIT_STATS_4CORNER,   stats->sym4);
+                pctLine(STR_MAPEDIT_STATS_ROTATE180, stats->symR180);
                 ImGui::EndTooltip();
             }
         } else {
-            ImGui::Text("Land coverage: %.1f%%", stats->landPct * 100.0f);
-            ImGui::TextDisabled("(stale \xe2\x80\x94 click Refresh)");
+            pctLine(STR_MAPEDIT_STATS_LAND_COVERAGE, stats->landPct);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+            ImGui::TextUnformatted(langGetText(STR_MAPEDIT_STATS_STALE));
+            ImGui::PopStyleColor();
         }
         ImGui::Spacing();
-        if (ImGui::Button("Refresh Spatial")) {
+        if (ImGui::Button(langGetText(STR_MAPEDIT_STATS_REFRESH))) {
             *wantRefresh = true;
         }
     }
@@ -2013,7 +2161,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
     bool imported = false;
 
     ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Import Image", open, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::Begin(langGetText(STR_MAPEDIT_IMG_TITLE), open, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return false;
     }
@@ -2031,7 +2179,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
     }
 
     /* File row */
-    ImGui::Text("File:");
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_IMG_FILE));
     ImGui::SameLine();
     if (cfg->filePath[0]) {
         /* Show just the filename */
@@ -2040,10 +2188,10 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
         if (name2 && (!name || name2 > name)) name = name2;
         ImGui::TextWrapped("%s", name ? name + 1 : cfg->filePath);
     } else {
-        ImGui::TextDisabled("(none)");
+        ImGui::TextDisabled("%s", langGetText(STR_MAPEDIT_IMG_NONE));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Browse...") && !s_imgBrowsePending) {
+    if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE)) && !s_imgBrowsePending) {
         s_imgBrowsePending = true;
         s_imgBrowseGotResult = false;
         SDL_DialogFileFilter filters[] = {
@@ -2064,11 +2212,16 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
         ImGui::Separator();
 
         /* Image info */
-        ImGui::Text("Source: %dx%d pixels", cfg->imgW, cfg->imgH);
+        {
+            MessageArgs args = {};
+            args.number = cfg->imgW;
+            args.number2 = cfg->imgH;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_IMG_SOURCE, &args));
+        }
 
         /* Previews side by side — display at fixed size fitting within 256x256 */
         if (cfg->previewTex || cfg->resultPreviewTex) {
-            ImGui::Text("Preview:");
+            ImGui::TextUnformatted(langGetText(STR_MAPEDIT_IMG_PREVIEW_LBL));
             if (cfg->previewTex) {
                 float tw, th;
                 SDL_GetTextureSize(cfg->previewTex, &tw, &th);
@@ -2091,14 +2244,14 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
         ImGui::Separator();
 
         /* Scale mode */
-        ImGui::Text("Scale Mode:");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_IMG_SCALEMODE));
         bool modeChanged = false;
-        if (ImGui::RadioButton("Fit selection", cfg->scaleMode == ME_SCALE_FIT_SELECTION)) {
+        if (ImGui::RadioButton(langGetText(STR_MAPEDIT_IMG_FIT_SEL), cfg->scaleMode == ME_SCALE_FIT_SELECTION)) {
             cfg->scaleMode = ME_SCALE_FIT_SELECTION;
             modeChanged = true;
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton("Fit playable", cfg->scaleMode == ME_SCALE_FIT_PLAYABLE)) {
+        if (ImGui::RadioButton(langGetText(STR_MAPEDIT_IMG_FIT_PLAY), cfg->scaleMode == ME_SCALE_FIT_PLAYABLE)) {
             cfg->scaleMode = ME_SCALE_FIT_PLAYABLE;
             modeChanged = true;
         }
@@ -2114,23 +2267,28 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
         }
 
         /* Output dimensions */
-        ImGui::Text("Output: %d x %d tiles", cfg->outW, cfg->outH);
+        {
+            MessageArgs args = {};
+            args.number = cfg->outW;
+            args.number2 = cfg->outH;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_IMG_OUTPUT, &args));
+        }
 
         ImGui::Separator();
 
         /* Number of colors */
-        ImGui::Text("Colors:");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_IMG_COLORS));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120);
         ImGui::SliderInt("##numcolors", &cfg->numColors, 2, 16);
         ImGui::SameLine();
-        if (ImGui::Button("Re-detect")) {
+        if (ImGui::Button(langGetText(STR_MAPEDIT_IMG_REDETECT))) {
             imageImportAutoMap(cfg);
             imageImportConvert(cfg, (SDL_Renderer *)renderer);
         }
 
         /* Color mapping section */
-        if (cfg->numMappings > 0 && ImGui::CollapsingHeader("Color Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (cfg->numMappings > 0 && ImGui::CollapsingHeader(langGetText(STR_MAPEDIT_IMG_COLORMAP), ImGuiTreeNodeFlags_DefaultOpen)) {
             bool mappingChanged = false;
             for (int i = 0; i < cfg->numMappings; i++) {
                 ImGui::PushID(i);
@@ -2150,7 +2308,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
                 const char *currentName = "?";
                 for (int k = 0; k < ME_NUM_TERRAINS; k++) {
                     if (s_terrainEntries[k].rawValue == cfg->mappings[i].terrain) {
-                        currentName = s_terrainEntries[k].name;
+                        currentName = langGetText(s_terrainEntries[k].nameId);
                         break;
                     }
                 }
@@ -2158,7 +2316,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
                 if (ImGui::BeginCombo("##terrain", currentName)) {
                     for (int k = 0; k < ME_NUM_TERRAINS; k++) {
                         bool selected = (s_terrainEntries[k].rawValue == cfg->mappings[i].terrain);
-                        if (ImGui::Selectable(s_terrainEntries[k].name, selected)) {
+                        if (ImGui::Selectable(langGetText(s_terrainEntries[k].nameId), selected)) {
                             cfg->mappings[i].terrain = s_terrainEntries[k].rawValue;
                             mappingChanged = true;
                         }
@@ -2182,7 +2340,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
         ImGui::Separator();
 
         /* Import / Cancel buttons */
-        if (cfg->resultReady && ImGui::Button("Import")) {
+        if (cfg->resultReady && ImGui::Button(langGetText(STR_MAPEDIT_IMPORT_BTN))) {
             imported = true;
             *open = false;
             s_imgDialogOpen = false;
@@ -2190,7 +2348,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
         if (cfg->resultReady) ImGui::SameLine();
     }
 
-    if (ImGui::Button("Cancel")) {
+    if (ImGui::Button(langGetText(STR_CANCEL))) {
         imageImportFree(cfg);
         *open = false;
         s_imgDialogOpen = false;
@@ -2248,7 +2406,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
     int loadIndex = -1;
 
     ImGui::SetNextWindowSize(ImVec2(340, 450), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Stamp Library", p_open, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(langGetText(STR_MAPEDIT_WIN_STAMP_LIB), p_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return -1;
     }
@@ -2267,7 +2425,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
     }
 
     /* Bundled stamps section */
-    if (bundledCount > 0 && ImGui::CollapsingHeader("Bundled Stamps", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (bundledCount > 0 && ImGui::CollapsingHeader(langGetText(STR_MAPEDIT_STAMP_BUNDLED), ImGuiTreeNodeFlags_DefaultOpen)) {
         int col = 0;
         for (int i = 0; i < lib->count; i++) {
             if (!lib->entries[i].isBundled) continue;
@@ -2325,10 +2483,10 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
     }
 
     /* User stamps section */
-    if (ImGui::CollapsingHeader("User Stamps", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(langGetText(STR_MAPEDIT_STAMP_USER), ImGuiTreeNodeFlags_DefaultOpen)) {
         if (userCount == 0) {
-            ImGui::TextDisabled("No user stamps yet.");
-            ImGui::TextDisabled("Use \"Save Clipboard...\" to create one.");
+            ImGui::TextDisabled("%s", langGetText(STR_MAPEDIT_STAMP_NOUSER));
+            ImGui::TextDisabled("%s", langGetText(STR_MAPEDIT_STAMP_HINT));
         } else {
             int col = 0;
             static int contextMenuIdx = -1;
@@ -2358,7 +2516,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
                 /* Right-click context menu for user stamps */
                 if (ImGui::BeginPopupContextItem("##stampctx")) {
                     contextMenuIdx = i;
-                    if (ImGui::MenuItem("Delete")) {
+                    if (ImGui::MenuItem(langGetText(STR_MAPEDIT_DELETE))) {
                         if (remove(entry->filePath) == 0) {
                             loadIndex = -2; /* sentinel: refresh needed */
                         }
@@ -2405,23 +2563,22 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
     {
         /* Save Clipboard button */
         if (!hasClipboard) ImGui::BeginDisabled();
-        if (ImGui::Button("Save Clipboard...")) {
+        if (ImGui::Button(langGetText(STR_MAPEDIT_STAMP_SAVECLIP))) {
             if (wantSave) *wantSave = true;
             if (saveName && saveNameLen > 0) {
-                strncpy(saveName, "Untitled", (size_t)(saveNameLen - 1));
-                saveName[saveNameLen - 1] = '\0';
+                SDL_strlcpy(saveName, langGetText(STR_MAPEDIT_STAMP_UNTITLED), (size_t)saveNameLen);
             }
         }
         if (!hasClipboard) ImGui::EndDisabled();
         if (!hasClipboard && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Copy a selection first (Ctrl+C)");
+            ImGui::SetTooltip("%s", langGetText(STR_MAPEDIT_STAMP_TIP_COPY));
         }
 
         ImGui::SameLine();
 
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
         /* Import button */
-        if (ImGui::Button("Import...")) {
+        if (ImGui::Button(langGetText(STR_MAPEDIT_STAMP_IMPORT))) {
             SDL_DialogFileFilter filters[] = {
                 { "Stamp Files", "bstamp" },
                 { "All Files", "*" },
@@ -2478,7 +2635,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
 #endif
 
         /* Refresh button */
-        if (ImGui::Button("Refresh")) {
+        if (ImGui::Button(langGetText(STR_DLGBROWSER_REFRESH))) {
             loadIndex = -2; /* signal refresh */
         }
     }
@@ -2494,16 +2651,16 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
 int mapEditorImguiSaveStampModal(char *name, int nameLen) {
     int result = 0;
 
-    if (ImGui::BeginPopupModal("Save Stamp", nullptr,
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_STAMP_SAVE_TITLE), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
-        ImGui::Text("Enter a name for this stamp:");
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_STAMP_SAVE_BLURB));
         ImGui::Spacing();
 
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetKeyboardFocusHere();
         }
-        bool enter = ImGui::InputText("Name", name, (size_t)nameLen,
+        bool enter = ImGui::InputText(langGetText(STR_MAPEDIT_STAMP_SAVE_NAME), name, (size_t)nameLen,
                                        ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::Spacing();
@@ -2513,14 +2670,14 @@ int mapEditorImguiSaveStampModal(char *name, int nameLen) {
         bool canSave = name[0] != '\0';
 
         if (!canSave) ImGui::BeginDisabled();
-        if (ImGui::Button("Save", ImVec2(80, 0)) || (enter && canSave)) {
+        if (ImGui::Button(langGetText(STR_MAPEDIT_SAVE_BTN), ImVec2(80, 0)) || (enter && canSave)) {
             result = 1;
             ImGui::CloseCurrentPopup();
         }
         if (!canSave) ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0))) {
             result = 2;
             ImGui::CloseCurrentPopup();
         }
@@ -2578,26 +2735,27 @@ bool mapEditorImguiExportDialog(bool *open, ExportConfig *cfg,
 
     if (!*open) return false;
 
-    if (!ImGui::IsPopupOpen("Export as PNG")) {
-        ImGui::OpenPopup("Export as PNG");
+    const char *exportTitle = langGetText(STR_MAPEDIT_EXPORT_TITLE);
+    if (!ImGui::IsPopupOpen(exportTitle)) {
+        ImGui::OpenPopup(exportTitle);
     }
 
-    if (!ImGui::BeginPopupModal("Export as PNG", open,
+    if (!ImGui::BeginPopupModal(exportTitle, open,
                                  ImGuiWindowFlags_AlwaysAutoResize |
                                  ImGuiWindowFlags_NoMove)) {
         return false;
     }
 
     /* Mode radio buttons */
-    ImGui::Text("Mode:");
-    ImGui::RadioButton("Full resolution (4096x4096)", &cfg->mode, ME_EXPORT_FULL);
-    ImGui::RadioButton("Preview", &cfg->mode, ME_EXPORT_PREVIEW);
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_EXPORT_MODE));
+    ImGui::RadioButton(langGetText(STR_MAPEDIT_EXPORT_FULL), &cfg->mode, ME_EXPORT_FULL);
+    ImGui::RadioButton(langGetText(STR_MAPEDIT_PREVIEW), &cfg->mode, ME_EXPORT_PREVIEW);
 
     ImGui::Spacing();
 
     /* Preview size (disabled when Full is selected) */
     if (cfg->mode == ME_EXPORT_FULL) ImGui::BeginDisabled();
-    ImGui::Text("Preview size:");
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_EXPORT_PREVSIZE));
     ImGui::SameLine();
     ImGui::RadioButton("256x256", &cfg->previewSize, ME_PREVIEW_256);
     ImGui::SameLine();
@@ -2609,12 +2767,12 @@ bool mapEditorImguiExportDialog(bool *open, ExportConfig *cfg,
     ImGui::Spacing();
 
     /* Options */
-    ImGui::Text("Options:");
-    ImGui::Checkbox("Show objects", &cfg->showObjects);
-    ImGui::Checkbox("Show mines", &cfg->showMines);
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_EXPORT_OPTIONS));
+    ImGui::Checkbox(langGetText(STR_MAPEDIT_EXPORT_SHOWOBJ), &cfg->showObjects);
+    ImGui::Checkbox(langGetText(STR_MAPEDIT_EXPORT_SHOWMINES), &cfg->showMines);
 
     if (cfg->mode == ME_EXPORT_PREVIEW) ImGui::BeginDisabled();
-    ImGui::Checkbox("Show grid (full mode only)", &cfg->showGrid);
+    ImGui::Checkbox(langGetText(STR_MAPEDIT_EXPORT_SHOWGRID), &cfg->showGrid);
     if (cfg->mode == ME_EXPORT_PREVIEW) ImGui::EndDisabled();
 
     ImGui::Spacing();
@@ -2627,7 +2785,7 @@ bool mapEditorImguiExportDialog(bool *open, ExportConfig *cfg,
     float avail = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - totalW) * 0.5f);
 
-    if (ImGui::Button("Export...", ImVec2(buttonW, 0))) {
+    if (ImGui::Button(langGetText(STR_MAPEDIT_EXPORT_BTN), ImVec2(buttonW, 0))) {
         if (!s_exportDialogPending) {
             SDL_DialogFileFilter filters[] = {
                 { "PNG Images", "png" },
@@ -2638,7 +2796,7 @@ bool mapEditorImguiExportDialog(bool *open, ExportConfig *cfg,
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(buttonW, 0))) {
+    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0))) {
         *open = false;
         ImGui::CloseCurrentPopup();
     }

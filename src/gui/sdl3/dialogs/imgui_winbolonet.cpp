@@ -189,7 +189,11 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
         if (expiry[0] != '\0') {
             ImGui::SameLine();
-            ImGui::TextDisabled(langGetText(STR_DLGWBN_EXPIRES_FMT), expiry);
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, expiry, sizeof(args.string1));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_EXPIRES, &args));
+            ImGui::PopStyleColor();
         }
         if (inGame) ImGui::BeginDisabled();
         if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {

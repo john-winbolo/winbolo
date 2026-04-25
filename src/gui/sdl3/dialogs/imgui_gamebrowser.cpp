@@ -353,9 +353,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* On desktop, resize window */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
     {
-      char prefixedTitle[192];
-      SDL_snprintf(prefixedTitle, sizeof(prefixedTitle), langGetText(STR_DLGBROWSER_WINTITLE_FMT), title);
-      dialogSetWindowTitle(window, prefixedTitle);
+      MessageArgs args = {};
+      SDL_strlcpy(args.string1, title, sizeof(args.string1));
+      dialogSetWindowTitle(window, langGetTextFmt(STR_DLGBROWSER_WINTITLE, &args));
     }
     SDL_SetWindowResizable(window, true);
 #endif
@@ -789,7 +789,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             float time = (float)SDL_GetTicks() / 1000.0f;
             const char *dots[] = { "", ".", "..", "..." };
             int dotIdx = ((int)(time * 2.0f)) % 4;
-            ImGui::Text(langGetText(STR_DLGBROWSER_LOADING_FMT), dots[dotIdx]);
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, dots[dotIdx], sizeof(args.string1));
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_LOADING, &args));
             ImGui::PopStyleColor();
         }
 
@@ -1025,10 +1027,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     if (s.pingMs == -1) pendingPings++;
                 }
             }
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, statusText, sizeof(args.string1));
+            args.number = total;
             if (pendingPings > 0) {
-                ImGui::Text(langGetText(STR_DLGBROWSER_STATUS_PINGING_FMT), statusText, total, pendingPings);
+                args.number2 = pendingPings;
+                ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS_PINGING, &args));
             } else {
-                ImGui::Text(langGetText(STR_DLGBROWSER_STATUS_FMT), statusText, total);
+                ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS, &args));
             }
         }
 

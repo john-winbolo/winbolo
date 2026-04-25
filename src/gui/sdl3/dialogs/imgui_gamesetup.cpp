@@ -449,7 +449,12 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     ImGui::SameLine();
                     ImGui::BeginGroup();
                     ImGui::Text("%s", mapChooser.selectedName);
-                    ImGui::Text(langGetText(STR_DLGGAMESETUP_BASES_STARTS_FMT), mapChooser.previewBases, mapChooser.previewStarts);
+                    {
+                        MessageArgs args = {};
+                        args.number = mapChooser.previewBases;
+                        args.number2 = mapChooser.previewStarts;
+                        ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMESETUP_BASES_STARTS, &args));
+                    }
                     {
                         MessageArgs args = {};
                         args.number = mapChooser.previewPills;
@@ -622,7 +627,12 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 ImGui::Spacing();
 
                 ImGui::Text("%s", mapChooser.selectedName);
-                ImGui::Text(langGetText(STR_DLGGAMESETUP_BASES_STARTS_FMT), mapChooser.previewBases, mapChooser.previewStarts);
+                {
+                    MessageArgs args = {};
+                    args.number = mapChooser.previewBases;
+                    args.number2 = mapChooser.previewStarts;
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMESETUP_BASES_STARTS, &args));
+                }
                 {
                     MessageArgs args = {};
                     args.number = mapChooser.previewPills;

@@ -597,8 +597,18 @@ static void renderNetInfoContent(ClientSim *cs) {
         args.number = ping;
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_SERVERPING, &args));
     }
-    ImGui::Text(langGetText(STR_DLGNETINFO_PACKETS_FMT), ppsIn, ppsOut);
-    ImGui::Text(langGetText(STR_DLGNETINFO_KB_FMT), (float)bpsIn / 1024.0f, (float)bpsOut / 1024.0f);
+    {
+        MessageArgs args = {};
+        args.number = ppsIn;
+        args.number2 = ppsOut;
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_PACKETS_RATE, &args));
+    }
+    {
+        MessageArgs args = {};
+        SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", (float)bpsIn / 1024.0f);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%.1f", (float)bpsOut / 1024.0f);
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_KB_RATE, &args));
+    }
     {
         MessageArgs args = {};
         args.number = numErrors;
@@ -619,8 +629,13 @@ static void renderNetInfoContent(ClientSim *cs) {
         if (maxPing < 10) maxPing = 10;
 
         ImGui::Separator();
-        ImGui::Text(langGetText(STR_DLGNETINFO_PINGGRAPH_FMT),
-                    (int)minPing, (int)avgPing, (int)maxPing);
+        {
+            MessageArgs args = {};
+            args.number = (int)minPing;
+            args.number2 = (int)avgPing;
+            args.number3 = (int)maxPing;
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_PINGGRAPH, &args));
+        }
         ImGui::PlotLines("##ping", s_pingHistory, s_pingHistoryCount,
                          s_pingHistoryOffset, nullptr,
                          0.0f, maxPing * 1.2f,
@@ -1868,25 +1883,31 @@ static void renderMenuBar(ClientSim *cs) {
             bool fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
             bool fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
 
+            auto requiresTip = [](int zoom) {
+                MessageArgs args = {};
+                args.number = zoom * SDL3_SCREEN_W;
+                args.number2 = zoom * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
+                ImGui::SetTooltip("%s", langGetTextFmt(STR_MENU_REQUIRES, &args));
+            };
             ImGui::BeginDisabled(!fit1x);
             if (ImGui::MenuItem(langGetText(STR_MENU_NORMAL), nullptr, zoomFactor == ZOOM_FACTOR_NORMAL)) s_pendingZoom = ZOOM_FACTOR_NORMAL;
             if (!fit1x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip(langGetText(STR_MENU_REQUIRES_FMT), 1 * SDL3_SCREEN_W, 1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+                requiresTip(1);
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!fit2x);
             if (ImGui::MenuItem(langGetText(STR_MENU_DOUBLE), nullptr, zoomFactor == ZOOM_FACTOR_DOUBLE)) s_pendingZoom = ZOOM_FACTOR_DOUBLE;
             if (!fit2x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip(langGetText(STR_MENU_REQUIRES_FMT), 2 * SDL3_SCREEN_W, 2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+                requiresTip(2);
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!fit3x);
             if (ImGui::MenuItem(langGetText(STR_MENU_TRIPLE), nullptr, zoomFactor == ZOOM_FACTOR_TRIPLE)) s_pendingZoom = ZOOM_FACTOR_TRIPLE;
             if (!fit3x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip(langGetText(STR_MENU_REQUIRES_FMT), 3 * SDL3_SCREEN_W, 3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+                requiresTip(3);
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!fit4x);
             if (ImGui::MenuItem(langGetText(STR_MENU_QUAD),   nullptr, zoomFactor == ZOOM_FACTOR_QUAD))   s_pendingZoom = ZOOM_FACTOR_QUAD;
             if (!fit4x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip(langGetText(STR_MENU_REQUIRES_FMT), 4 * SDL3_SCREEN_W, 4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT);
+                requiresTip(4);
             ImGui::EndDisabled();
             ImGui::Separator();
             if (ImGui::MenuItem(langGetText(STR_MENU_CUSTOM_RESIZABLE), nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;

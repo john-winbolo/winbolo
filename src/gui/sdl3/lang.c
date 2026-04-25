@@ -347,11 +347,11 @@ static const LangEntry langTable[] = {
     /* Network Info panel additions */
     {485,  "Server:"},
     {486,  "This game:"},
-    {487,  "Ping: min %d / avg %d / max %d ms"},
+    {487,  "Ping: min {number} / avg {number2} / max {number3} ms"},
     {488,  "KB/s In:"},
     {489,  "KB/s Out:"},
-    {490,  "Packets/sec: %d in / %d out"},
-    {491,  "KB/sec: %.1f in / %.1f out"},
+    {490,  "Packets/sec: {number} in / {number2} out"},
+    {491,  "KB/sec: {string1} in / {string2} out"},
 
     /* Game Info panel additions */
     {492,  "Copy Seed"},
@@ -427,7 +427,7 @@ static const LangEntry langTable[] = {
     {548,  "Triple"},
     {549,  "Quad"},
     {550,  "Custom (Resizable)"},
-    {551,  "Requires %dx%d - exceeds display"},
+    {551,  "Requires {number}x{number2} - exceeds display"},
     {552,  "Smooth Scrolling"},
     {553,  "Automatic Scrolling"},
     {554,  "Show Gunsight"},
@@ -488,7 +488,7 @@ static const LangEntry langTable[] = {
     {609,  "Starts:"},
     {610,  "Skip Map"},
     {611,  "Cancel Skip"},
-    {612,  "%d/%d votes to skip"},
+    {612,  "{number}/{number2} votes to skip"},
     {613,  "Chat"},
     {614,  "Ready"},
     {615,  "Unready"},
@@ -517,15 +517,14 @@ static const LangEntry langTable[] = {
     {638,  "Mines:"},
     {639,  "AI:"},
     {640,  "Time:"},
-    {641,  "%s:%u | %s | %s Mines | AI: %s | %s"},
-    {642,  "%dh %02dm %02ds"},
-    {643,  "%dm %02ds"},
+    {642,  "{number}h {string1}m {string2}s"},
+    {643,  "{number}m {string1}s"},
     {644,  "{number}s"},
     {645,  "Map:"},
     {646,  "WinBolo - Game Setup"},
     {647,  "Select a map:"},
     {648,  "Back"},
-    {649,  "Bases: %d  Starts: %d"},
+    {649,  "Bases: {number}  Starts: {number2}"},
     {650,  "Pillboxes: {number}"},
     {651,  "Change Map"},
     {652,  "Game Type"},
@@ -551,9 +550,9 @@ static const LangEntry langTable[] = {
     {672,  "Strict"},
     {673,  "WinBolo - UDP (Internet) Setup"},
     {674,  "Error"},
-    {675,  "WinBolo - %s"},
+    {675,  "WinBolo - {string1}"},
     {676,  "Refresh"},
-    {677,  "Loading games list%s"},
+    {677,  "Loading games list{string1}"},
     {678,  "Click Refresh to load games..."},
     {679,  "Click Refresh to scan..."},
     {680,  "Games loaded."},
@@ -574,8 +573,8 @@ static const LangEntry langTable[] = {
     {695,  "All Lobby"},
     {696,  "In Lobby"},
     {697,  "Starting"},
-    {698,  "Status: %s  |  %d servers  |  Pinging %d..."},
-    {699,  "Status: %s  |  %d servers"},
+    {698,  "Status: {string1}  |  {number} servers  |  Pinging {number2}..."},
+    {699,  "Status: {string1}  |  {number} servers"},
     {700,  "New Game"},
     {701,  "Player Name"},
     {702,  "Manual"},
@@ -597,7 +596,7 @@ static const LangEntry langTable[] = {
     {718,  "Player"},
     {719,  "Map"},
     {720,  "Search"},
-    {721,  "Error: %s"},
+    {721,  "Error: {string1}"},
     {722,  "Map"},
     {723,  "Type"},
     {724,  "Players"},
@@ -606,10 +605,10 @@ static const LangEntry langTable[] = {
     {727,  "Date"},
     {728,  "Players: "},
     {729,  "{number} player(s)"},
-    {730,  "Duration: %s"},
-    {731,  "Rating: %.1f/10 (%d)"},
+    {730,  "Duration: {string1}"},
+    {731,  "Rating: {string1}/10 ({number})"},
     {732,  "Downloads: {number}"},
-    {733,  "Size: %s"},
+    {733,  "Size: {string1}"},
     {734,  "Comments ({number}):"},
     {735,  "No comments yet."},
     {736,  "Add Comment:"},
@@ -622,7 +621,7 @@ static const LangEntry langTable[] = {
     {743,  "Log file is not available for this game."},
     {744,  "< Prev"},
     {745,  "Next >"},
-    {746,  "Page %d of %d  (%d total)"},
+    {746,  "Page {number} of {number2}  ({number3} total)"},
     {747,  "Open File..."},
     {748,  "Failed to parse response"},
     {749,  "Network error"},
@@ -652,7 +651,7 @@ static const LangEntry langTable[] = {
     {773,  "Checking WinBolo.net..."},
     {774,  "WinBolo.net:"},
     {775,  "Signed in"},
-    {776,  "(expires %s)"},
+    {776,  "(expires {string1})"},
     {777,  "Sign out of WBN"},
     {778,  "Not signed in"},
     {779,  "Sign in to WBN..."},
@@ -676,11 +675,11 @@ static const LangEntry langTable[] = {
     {797,  "Random Map"},
     {798,  "Click Generate to preview"},
     {799,  "No preview available"},
-    {800,  "Pillboxes: %d  Bases: %d  Starts: %d"},
+    {800,  "Pillboxes: {number}  Bases: {number2}  Starts: {number3}"},
     {801,  "Map Files"},
     {802,  "All Files"},
     {803,  "Status"},
-    {804,  "Kills: %d  Deaths: %d"},
+    {804,  "Kills: {number}  Deaths: {number2}"},
     {805,  "Tank Resources"},
     {806,  "Shells"},
     {807,  "Mines"},
@@ -696,6 +695,307 @@ static const LangEntry langTable[] = {
     {817,  "Ply"},
     {818,  "Set"},
     {819,  "Set Player Name"},
+
+    /* Map editor validation */
+    {820,  "Too many bases: {number} (max {number2})"},
+    {821,  "Too many pillboxes: {number} (max {number2})"},
+    {822,  "Too many starts: {number} (max {number2})"},
+    {823,  "Base #{number} at ({number2},{number3}): on non-traversable terrain"},
+    {824,  "Base #{number} at ({number2},{number3}): in mine border zone"},
+    {825,  "Pillbox #{number} at ({number2},{number3}): on non-traversable terrain"},
+    {826,  "Pillbox #{number} at ({number2},{number3}): in mine border zone"},
+    {827,  "Start #{number} at ({number2},{number3}): must be on deep sea"},
+    {828,  "Start #{number} at ({number2},{number3}): in mine border zone"},
+    {829,  "No start positions placed \xe2\x80\x94 map is unplayable"},
+    {830,  "Only 1 start position \xe2\x80\x94 single player only"},
+    {831,  "Base #{number} and Base #{number2} overlap at ({number3},{number4})"},
+    {832,  "Pillbox #{number} and Pillbox #{number2} overlap at ({number3},{number4})"},
+    {833,  "Base #{number} and Pillbox #{number2} overlap at ({number3},{number4})"},
+    {834,  "Start #{number} and Start #{number2} overlap at ({number3},{number4})"},
+    {835,  "Start #{number} and Base #{number2} overlap at ({number3},{number4})"},
+    {836,  "Start #{number} and Pillbox #{number2} overlap at ({number3},{number4})"},
+
+    /* Map editor menu bar */
+    {837,  "Open..."},
+    {838,  "Recent Files"},
+    {839,  "Save"},
+    {840,  "Save As..."},
+    {841,  "Export as PNG..."},
+    {842,  "Return to Menu"},
+    {843,  "Undo"},
+    {844,  "Redo"},
+    {845,  "Cut"},
+    {846,  "Copy"},
+    {847,  "Paste"},
+    {848,  "Map"},
+    {849,  "Random Map..."},
+    {850,  "Text..."},
+    {851,  "Import Image..."},
+    {852,  "Validate"},
+    {853,  "Mirror Horizontal {string1}"},
+    {854,  "Mirror Vertical {string1}"},
+    {855,  "Rotate 90\xC2\xB0 CW {string1}"},
+    {856,  "Rotate 180\xC2\xB0 {string1}"},
+    {857,  "(selection)"},
+    {858,  "(full map)"},
+    {859,  "Options"},
+    {860,  "Center Map"},
+    {861,  "Point Start Points"},
+    {862,  "Show Grid"},
+    {863,  "Show Mines"},
+    {864,  "Show Pillbox Ranges"},
+    {865,  "Window"},
+
+    /* Map editor windows */
+    {866,  "Terrain"},
+    {867,  "Tools"},
+    {868,  "Inspector"},
+    {869,  "Objects"},
+    {870,  "Overview"},
+    {871,  "Statistics"},
+    {872,  "Stamp Library"},
+
+    /* Map editor terrain palette */
+    {873,  "Deep Sea"},
+    {874,  "Grass"},
+    {875,  "Forest"},
+    {876,  "Road"},
+    {877,  "Building"},
+    {878,  "Half Building"},
+    {879,  "River"},
+    {880,  "Swamp"},
+    {881,  "Crater"},
+    {882,  "Rubble"},
+    {883,  "Boat"},
+    {884,  "Mine Tool"},
+    {885,  "Checkered"},
+    {886,  "Full"},
+    {887,  "Random"},
+    {888,  "Clear Mines"},
+
+    /* Map editor drawing tools */
+    {889,  "Pencil"},
+    {890,  "Line"},
+    {891,  "Rectangle"},
+    {892,  "Filled Rectangle"},
+    {893,  "Oval"},
+    {894,  "Filled Oval"},
+    {895,  "Selection"},
+    {896,  "Fill"},
+    {897,  "Maze"},
+    {898,  "Generate"},
+    {899,  "Wand"},
+    {900,  "Text"},
+    {901,  "Text (stamp text onto map)"},
+    {902,  "Brush"},
+    {903,  "Square"},
+    {904,  "Circle"},
+    {905,  "Base"},
+    {906,  "Pillbox"},
+    {907,  "Start"},
+
+    /* Map editor status bar */
+    {908,  "Tile: {number}, {number2}"},
+    {909,  "Tile: --"},
+    {910,  "Zoom: {string1}"},
+    {911,  "Modified"},
+
+    /* Map editor modals */
+    {912,  "Unsaved Changes"},
+    {913,  "The map has unsaved changes.\nDo you want to save before continuing?"},
+    {914,  "Go To Coordinates"},
+    {915,  "X"},
+    {916,  "Y"},
+
+    /* Map editor inspector */
+    {917,  "No object selected"},
+    {918,  "Base #{number}"},
+    {919,  "Pillbox #{number}"},
+    {920,  "Start #{number}"},
+    {921,  "Position: ({number}, {number2})"},
+    {922,  "Owner"},
+    {923,  "Armour"},
+    {924,  "Speed"},
+    {925,  "Direction"},
+    {926,  "Neutral"},
+    {927,  "Player {number}"},
+
+    /* Map editor object list */
+    {928,  "Bases ({number}/{number2})"},
+    {929,  "Pillboxes ({number}/{number2})"},
+    {930,  "Starts ({number}/{number2})"},
+    {931,  "#{number}  ({number2}, {number3})  {string1}"},
+    {932,  "#{number}  ({number2}, {number3})  {string1}  Armour: {number4}"},
+    {933,  "#{number}  ({number2}, {number3})  Dir: {string1}"},
+
+    /* Map editor validation panel */
+    {934,  "Validation"},
+    {935,  "No issues"},
+    {936,  "{number} error(s)"},
+    {937,  "0 errors"},
+    {938,  "{number} warning(s)"},
+    {939,  "0 warnings"},
+    {940,  "Validation Errors"},
+    {941,  "Map has {number} error(s). Fix them before saving."},
+
+    /* Map editor generate dialog */
+    {942,  "Generate Random Map"},
+    {943,  "Generate Random Area"},
+    {944,  "Scope: Selection ({number},{number2})-({number3},{number4})"},
+    {945,  "Scope: Full map ({number},{number2})-({number3},{number4})"},
+
+    /* Map editor text tool dialog */
+    {946,  "Text Tool"},
+    {947,  "Text:"},
+    {948,  "Built-in"},
+    {949,  "System Font"},
+    {950,  "Font Size"},
+    {951,  "Style"},
+    {952,  "Small (5x7)"},
+    {953,  "Medium (10x14)"},
+    {954,  "Large (15x21)"},
+    {955,  "XL (20x28)"},
+    {956,  "Regular"},
+    {957,  "Bold"},
+    {958,  "Italic"},
+    {959,  "Bold Italic"},
+    {960,  "Font Family"},
+    {961,  "{string1} (bundled)"},
+    {962,  "Size (px)"},
+    {963,  "No fonts found. Add .ttf files to data/fonts/"},
+    {964,  "Text Terrain"},
+    {965,  "Edge Terrain"},
+    {966,  "Background"},
+    {967,  "Preview ({number}x{number2} tiles):"},
+    {968,  "Text too large (max 256x256 tiles) or font error"},
+    {969,  "Generate"},
+
+    /* Map editor maze settings */
+    {970,  "Maze Settings"},
+    {971,  "Region: ({number},{number2})-({number3},{number4})  {string1}"},
+    {972,  "Drag on map to generate"},
+    {973,  "Algorithm"},
+    {974,  "Labyrinth"},
+    {975,  "Open"},
+    {976,  "Wall"},
+    {977,  "Corridor"},
+    {978,  "Entries"},
+    {979,  "Rooms"},
+    {980,  "Wall Terrain"},
+    {981,  "Corridor Terrain"},
+    {982,  "Generate Settings"},
+
+    /* Map editor statistics panel */
+    {983,  "Terrain Distribution"},
+    {984,  "{string1}: {number} / {number2}"},
+    {985,  "Mines: {number} ({string1}% land)"},
+    {986,  "Spatial Analysis"},
+    {987,  "Land coverage: {string1}%"},
+    {988,  "Largest landmass: {string1}%"},
+    {989,  "Base spacing: {string1} tiles"},
+    {990,  "Pill spacing: {string1} tiles"},
+    {991,  "Symmetry: {string1} ({string2}%)"},
+    {992,  "Mirror-H:   {string1}%"},
+    {993,  "Mirror-V:   {string1}%"},
+    {994,  "4-corner:   {string1}%"},
+    {995,  "Rotate-180: {string1}%"},
+    {996,  "(stale \xe2\x80\x94 click Refresh)"},
+    {997,  "Refresh Spatial"},
+    {998,  "Starts"},
+    {999,  "Half-Building"},
+
+    /* Map editor image import */
+    {1000, "Import Image"},
+    {1001, "File:"},
+    {1002, "(none)"},
+    {1003, "Browse..."},
+    {1004, "Source: {number}x{number2} pixels"},
+    {1005, "Preview:"},
+    {1006, "Scale Mode:"},
+    {1007, "Fit selection"},
+    {1008, "Fit playable"},
+    {1009, "Output: {number} x {number2} tiles"},
+    {1010, "Colors:"},
+    {1011, "Re-detect"},
+    {1012, "Color Mapping"},
+    {1013, "Import"},
+
+    /* Map editor stamp library */
+    {1014, "Bundled Stamps"},
+    {1015, "User Stamps"},
+    {1016, "No user stamps yet."},
+    {1017, "Use \"Save Clipboard...\" to create one."},
+    {1018, "Delete"},
+    {1019, "Save Clipboard..."},
+    {1020, "Copy a selection first (Ctrl+C)"},
+    {1021, "Import..."},
+    {1022, "Untitled"},
+    {1023, "Save Stamp"},
+    {1024, "Enter a name for this stamp:"},
+    {1025, "Name"},
+    {1026, "Save"},
+
+    /* Map editor export PNG */
+    {1027, "Export as PNG"},
+    {1028, "Preview"},
+    {1029, "Mode:"},
+    {1030, "Full resolution (4096x4096)"},
+    {1031, "Preview size:"},
+    {1032, "Options:"},
+    {1033, "Show objects"},
+    {1034, "Show mines"},
+    {1035, "Show grid (full mode only)"},
+    {1036, "Export..."},
+
+    /* Map generator panel */
+    {1037, "Locked: won't change on Randomize"},
+    {1038, "Unlocked: will change on Randomize"},
+    {1039, "Generator"},
+    {1040, "Tournament"},
+    {1041, "Natural"},
+    {1042, "Maze"},
+    {1043, "Fractal"},
+    {1044, "Seed"},
+    {1045, "Randomize"},
+    {1046, "Symmetry"},
+    {1047, "4-Corner Mirror"},
+    {1048, "Mirror Horizontal"},
+    {1049, "Mirror Vertical"},
+    {1050, "Rotate 180\xC2\xB0"},
+    {1051, "Rotate 90\xC2\xB0"},
+    {1052, "Land Mass %"},
+    {1053, "Roughness"},
+    {1054, "Low"},
+    {1055, "Medium"},
+    {1056, "High"},
+    {1057, "Include Roads"},
+    {1058, "Map Style"},
+    {1059, "Ocean"},
+    {1060, "Continent"},
+    {1061, "Islands"},
+    {1062, "Archipelago"},
+    {1063, "Inland"},
+    {1064, "Terrain Mix (% land share):"},
+    {1065, "Grass %"},
+    {1066, "Forest %"},
+    {1067, "Building %"},
+    {1068, "Swamp %"},
+    {1069, "River %"},
+    {1070, "Boat %"},
+    {1071, "Remaining grass: {number}%"},
+    {1072, "Mine Density %"},
+    {1073, "River Count"},
+    {1074, "City Count"},
+    {1075, "Maze Count"},
+    {1076, "Wall Thickness"},
+    {1077, "Corridor Width"},
+    {1078, "City Rooms"},
+    {1079, "Land Coverage %"},
+    {1080, "Detail Passes"},
+    {1081, "Coast Jaggedness"},
+    {1082, "Terrain Layers"},
+    {1083, "Rivers"},
+    {1084, "Lakes"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
@@ -1024,8 +1324,8 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
     size_t used = 0;
     dst[0] = '\0';
 
-    char numberBuf[32];
-    int numberLen = -1;  /* lazily formatted on first use */
+    char numberBuf[4][32];
+    int  numberLen[4] = {-1, -1, -1, -1};
 
     const char *p = src;
     while (*p) {
@@ -1046,14 +1346,42 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
                     replLen     = 0;
                     while (replLen < PLAYER_NAME_LEN &&
                            args->otherName[replLen] != '\0') replLen++;
-                } else if (tokLen == 6 && memcmp(p + 1, "number", 6) == 0) {
-                    if (numberLen < 0) {
-                        numberLen = snprintf(numberBuf, sizeof(numberBuf),
-                                             "%d", args->number);
-                        if (numberLen < 0) numberLen = 0;
+                } else if (tokLen >= 6 && tokLen <= 7 &&
+                           memcmp(p + 1, "number", 6) == 0) {
+                    int slot = -1;
+                    if (tokLen == 6) {
+                        slot = 0;
+                    } else {
+                        char d = p[7];
+                        if (d == '2') slot = 1;
+                        else if (d == '3') slot = 2;
+                        else if (d == '4') slot = 3;
                     }
-                    replacement = numberBuf;
-                    replLen     = (size_t)numberLen;
+                    if (slot >= 0) {
+                        if (numberLen[slot] < 0) {
+                            int v = (slot == 0) ? args->number
+                                  : (slot == 1) ? args->number2
+                                  : (slot == 2) ? args->number3
+                                                : args->number4;
+                            numberLen[slot] = snprintf(numberBuf[slot],
+                                                       sizeof(numberBuf[slot]),
+                                                       "%d", v);
+                            if (numberLen[slot] < 0) numberLen[slot] = 0;
+                        }
+                        replacement = numberBuf[slot];
+                        replLen     = (size_t)numberLen[slot];
+                    }
+                } else if (tokLen == 7 && memcmp(p + 1, "string", 6) == 0) {
+                    char d = p[7];
+                    const char *s = NULL;
+                    if (d == '1') s = args->string1;
+                    else if (d == '2') s = args->string2;
+                    if (s) {
+                        replacement = s;
+                        replLen     = 0;
+                        while (replLen < LANG_MSGARG_STRING_LEN &&
+                               s[replLen] != '\0') replLen++;
+                    }
                 }
 
                 if (replacement) {

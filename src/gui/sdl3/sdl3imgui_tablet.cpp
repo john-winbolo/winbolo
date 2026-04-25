@@ -1144,7 +1144,10 @@ static void renderStatusDrawer(ClientSim *cs) {
     {
       int kills, deaths;
       screenGetKillsDeathsCS(cs, &kills, &deaths);
-      ImGui::Text(langGetText(STR_TABLET_KILLS_DEATHS_FMT), kills, deaths);
+      MessageArgs args = {0};
+      args.number = kills;
+      args.number2 = deaths;
+      ImGui::TextUnformatted(langGetTextFmt(STR_TABLET_KILLS_DEATHS, &args));
     }
     ImGui::Separator();
 
