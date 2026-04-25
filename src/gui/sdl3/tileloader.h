@@ -23,6 +23,7 @@
 #define TILELOADER_H
 
 #include <SDL3/SDL.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,12 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize);
  *********************************************************/
 void        tileLoaderSetTheme(const char *name);
 const char *tileLoaderGetTheme(void);
+
+/* True when the active theme is "ingamerotate"-style: only the
+ * north-facing (_00) sprite is on disk for tanks/boats/shells, and
+ * the renderer is expected to rotate it for the other 15 (or 256)
+ * directions at draw time.  Detected by name suffix _ingamerotate. */
+bool tileLoaderThemeRotates(void);
 
 /*********************************************************
  * NAME:          tileLoaderCleanup

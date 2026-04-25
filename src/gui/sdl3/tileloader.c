@@ -146,6 +146,17 @@ const char *tileLoaderGetTheme(void) {
     return s_themeName;
 }
 
+bool tileLoaderThemeRotates(void) {
+    if (!s_themeName[0]) return false;
+    /* Convention: any theme dir ending with "_ingamerotate" only
+     * ships the north-facing (_00) variant of rotation groups. */
+    size_t n = SDL_strlen(s_themeName);
+    const char *suffix = "_ingamerotate";
+    size_t sn = SDL_strlen(suffix);
+    if (n < sn) return false;
+    return SDL_strcmp(s_themeName + (n - sn), suffix) == 0;
+}
+
 SDL_Surface *tileLoaderBuildSheet(int tileSize) {
     /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
        and the sheet is the classic 496x176.  When tileSize==32, scale==2

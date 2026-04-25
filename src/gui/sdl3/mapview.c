@@ -23,6 +23,7 @@
  *********************************************************/
 
 #include "mapview.h"
+#include "tileloader.h"
 #include "../tiles.h"
 #include "../../bolo/tilenum.h"
 #include "../../bolo/bolo_map.h"
@@ -500,15 +501,28 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      *
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
+    bool useRotate = false;
+    double rotAngleDeg = 0.0;
+    int srcXrot = srcX, srcYrot = srcY, srcWrot = srcW, srcHrot = srcH;
+
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+      int dir = frame - SHELL_DIR0;
+
+      if (tileLoaderThemeRotates() && dir != 0) {
+        /* Ingamerotate theme: only shell_00 was loaded into the atlas
+         * (at SHELL_0_X / SHELL_0_Y).  Rotate it for dir != 0. */
+        srcXrot = SHELL_0_X;
+        srcYrot = SHELL_0_Y;
+        srcWrot = SHELL_0_WIDTH;
+        srcHrot = SHELL_0_HEIGHT;
+        rotAngleDeg = (double)dir * 22.5;  /* 16 dirs * 22.5° = 360° */
+        useRotate = true;
+      }
+
       /* Sub-pixel tip anchors (game-pixel units inside the sprite).
-       * Floats so the tip can land between game pixels.  Layout:
-       *   - cardinals (N/E/S/W) at the centre of the sprite edge
-       *     opposite the tail
-       *   - true diagonals (NE/SE/SW/NW) at the outermost tip-pixel
-       *     corner (explicit overrides)
-       *   - in-betweens at cardinal ± sin(22.5°) on the perpendicular
-       *     axis. sin(22.5°) ≈ 0.38268, written here as 1.117 / 1.883. */
+       * Layout: cardinals at centre of opposite edge, true diagonals
+       * at outermost tip-pixel corner, in-betweens cardinal ± sin(22.5°)
+       * on perpendicular axis (sin(22.5°) ≈ 0.38268). */
       static const float kTipCol[16] = {
         1.5f,    1.883f,  4.0f, 4.0f,  /* N   NNE  NE   ENE  */
         4.0f,    4.0f,    4.0f, 1.883f,/* E   ESE  SE   SSE  */
@@ -521,15 +535,40 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
         4.0f,    4.0f,    3.0f, 1.883f,/* S   SSW  SW   WSW  */
         1.5f,    1.117f,  0.0f, 0.0f   /* W   WNW  NW   NNW  */
       };
-      int dir = frame - SHELL_DIR0;
-      sx -= kTipCol[dir] * (float)ctx->zoomFactor;
-      sy -= kTipRow[dir] * (float)ctx->zoomFactor;
+
+      if (useRotate) {
+        /* For rotated rendering, place the dest rect so its tip
+         * (1.5, 0 in the N-facing source) stays on the shell pos,
+         * then rotate around that tip pixel. */
+        sx -= 1.5f * (float)ctx->zoomFactor;
+        sy -= 0.0f * (float)ctx->zoomFactor;
+      } else {
+        sx -= kTipCol[dir] * (float)ctx->zoomFactor;
+        sy -= kTipRow[dir] * (float)ctx->zoomFactor;
+      }
     }
 
     int ss = ctx->sheetScale;
-    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
-    SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    if (useRotate) {
+      SDL_FRect srcR = { (float)(srcXrot * ss), (float)(srcYrot * ss),
+                         (float)(srcWrot * ss), (float)(srcHrot * ss) };
+      SDL_FRect dstR = { sx, sy,
+                         (float)(srcWrot * ctx->zoomFactor),
+                         (float)(srcHrot * ctx->zoomFactor) };
+      /* Pivot at sprite-local (1.5, 0) in screen pixels. */
+      SDL_FPoint pivot = { 1.5f * (float)ctx->zoomFactor,
+                           0.0f * (float)ctx->zoomFactor };
+      SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex,
+                               &srcR, &dstR, rotAngleDeg,
+                               &pivot, SDL_FLIP_NONE);
+    } else {
+      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
+                         (float)(srcW * ss), (float)(srcH * ss) };
+      SDL_FRect dstR = { sx, sy,
+                         (float)(srcW * ctx->zoomFactor),
+                         (float)(srcH * ctx->zoomFactor) };
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    }
   }
 }
 
@@ -658,15 +697,47 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
 
     {
       int ss = ctx->sheetScale;
-      /* Inset the source rect by a tiny amount to prevent the GPU from
-         sampling the adjacent atlas row due to float-to-UV precision
-         errors.  BMP-sourced sprites above have green (0,255,0,0) in
-         their transparent pixels which would otherwise bleed through. */
       float inset = 0.05f;
-      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+
+      /* Ingamerotate theme: redirect dir != 0 frames to the _0 atlas
+       * position of their tank group and rotate by dir * 22.5°. */
+      int useSrcX = srcX;
+      int useSrcY = srcY;
+      double rotAngleDeg = 0.0;
+      bool useRotate = false;
+      if (tileLoaderThemeRotates() && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
+        int dir = frame & 0x0F;
+        if (dir != 0) {
+          int group = frame >> 4;     /* 0..5 */
+          int baseFrame = group * 16; /* TANK_*_0 */
+          /* Re-run the atlas lookup with baseFrame to find _0 X/Y. */
+          int bX = 0, bY = 0;
+          switch (baseFrame) {
+            case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
+            case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
+            case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
+            case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
+            case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
+            case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
+            default: bX = srcX; bY = srcY; break;
+          }
+          useSrcX = bX;
+          useSrcY = bY;
+          rotAngleDeg = (double)dir * 22.5;
+          useRotate = true;
+        }
+      }
+
+      SDL_FRect srcR = { (float)(useSrcX * ss) + inset, (float)(useSrcY * ss) + inset,
                          (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      if (useRotate) {
+        SDL_FPoint pivot = { (float)tileW * 0.5f, (float)tileH * 0.5f };
+        SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
+                                 rotAngleDeg, &pivot, SDL_FLIP_NONE);
+      } else {
+        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      }
     }
   }
 }
