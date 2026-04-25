@@ -25,6 +25,7 @@
 #include "mapview.h"
 #include "tileloader.h"
 #include "gfx_settings.h"
+#include "override_mode.h"
 #include "../tiles.h"
 #include "../../bolo/tilenum.h"
 #include "../../bolo/bolo_map.h"
@@ -600,13 +601,11 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        (float)(srcH * ctx->zoomFactor) };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
 
-    /* True-world-position marker: orange 1-wu dot at the shell's
-     * authoritative WORLD coordinate.  In smooth mode it tracks at
-     * sub-wu precision via the sub-pixel cache; otherwise it sits at
-     * the discrete game-pixel position (still useful for seeing the
-     * collision point under the sprite).  Shown for live shell
-     * frames only — explosions don't have a meaningful "tip". */
-    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+    /* Override-mode true-world-position marker: orange 1 game-pixel
+     * dot at the shell's tip (the authoritative collision point).
+     * Off in normal play; only useful as a debug overlay. */
+    if (overrideModeIsOn()
+        && frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
       int dir = frame - SHELL_DIR0;
       static const float kTipColMark[16] = {
         1.5f,    1.883f,  4.0f, 4.0f,
@@ -622,10 +621,10 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       };
       float tipX = sx + kTipColMark[dir] * (float)ctx->zoomFactor;
       float tipY = sy + kTipRowMark[dir] * (float)ctx->zoomFactor;
-      /* 1 wu in screen pixels = zoomFactor / 16; clamp to >=1 so it
-       * stays visible at low zoom. */
-      float oneWu = (float)ctx->zoomFactor / 16.0f;
-      float dotSize = oneWu < 1.0f ? 1.0f : oneWu;
+      /* 1 game pixel = zoomFactor screen pixels.  Clamped so the dot
+       * remains visible at low zoom. */
+      float dotSize = (float)ctx->zoomFactor;
+      if (dotSize < 2.0f) dotSize = 2.0f;
       SDL_FRect dot = { tipX - dotSize * 0.5f, tipY - dotSize * 0.5f,
                         dotSize, dotSize };
       SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
@@ -986,15 +985,13 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
 
-    /* True-world-position marker: orange 1-wu dot at the LGM body
-     * anchor (1.5, 2.0 sprite-local).  In smooth mode it tracks
-     * sub-wu via the cache; otherwise sits at the discrete game-pixel
-     * position.  Helicopter frame skipped — it has no body anchor. */
-    if (isGround) {
+    /* Override-mode true-world-position marker: orange 1 game-pixel
+     * dot at the LGM body anchor (1.5, 2.0 sprite-local). */
+    if (overrideModeIsOn() && isGround) {
       float anchorX = sx + 1.5f * (float)ctx->zoomFactor;
       float anchorY = sy + 2.0f * (float)ctx->zoomFactor;
-      float oneWu = (float)ctx->zoomFactor / 16.0f;
-      float dotSize = oneWu < 1.0f ? 1.0f : oneWu;
+      float dotSize = (float)ctx->zoomFactor;
+      if (dotSize < 2.0f) dotSize = 2.0f;
       SDL_FRect dot = { anchorX - dotSize * 0.5f, anchorY - dotSize * 0.5f,
                         dotSize, dotSize };
       SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
