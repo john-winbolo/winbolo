@@ -1496,21 +1496,14 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
 *********************************************************/
 bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
   bool returnValue;                 /* Value to return */
-  char name[FILENAME_MAX];         /* The Me@This computer line */
-  char output[FILENAME_MAX];        /* The message eg Me just saved map etc */
-
-  output[0] = '\0';
-  name[0] = '\0';
 
   returnValue = mapWrite(fileName, &csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss);
   if (returnValue == TRUE) {
     if (csPtr->networkGameType == netSingle) {
-      playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, name);
-      strcat(output, MESSAGE_QUOTES);
-      strcat(output, name);
-      strcat(output, MESSAGE_QUOTES);
-      strcat(output, langGetText(MESSAGE_SAVED_MAP));
-      clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), output);
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, args.playerName);
+      csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
     }
   }
   return returnValue;
@@ -1604,23 +1597,6 @@ int32_t screenGetTimeGameCreatedCS(ClientSim *csPtr) {
 *********************************************************/
 void screenSetTimeGameCreatedCS(ClientSim *csPtr, int32_t value) {
   csPtr->timeStart = value;
-}
-
-/*********************************************************
-*NAME:          screenNetMapItem
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 23/2/99
-*PURPOSE:
-* A map item sent from the network
-*
-*ARGUMENTS:
-*  mx      - X position of the data item
-*  my      - Y position of the data item
-*  terrain - Terrain the data item
-*********************************************************/
-void screenNetMapItemCS(ClientSim *csPtr, BYTE mx, BYTE my, BYTE terrain) {
-  mapNetPacket(&csPtr->sim, &csPtr->sim.mp, mx, my, terrain);
 }
 
 /*********************************************************
@@ -1803,42 +1779,6 @@ void screenSetPillNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
 *********************************************************/
 void screenSetStartsNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
   startsSetStartNetData(&csPtr->sim.ss, buff, dataLen); 
-}
-
-/*********************************************************
-*NAME:          screenExtractMapData
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/2/99
-*LAST MODIFIED: 28/2/99
-*PURPOSE:
-*  Extracts map data from the packet
-*
-*ARGUMENTS:
-*  buff - Packet data
-*  len  - Length of the data
-*  yPos - Position data must be less then to use
-*********************************************************/
-void screenExtractMapDataCS(ClientSim *csPtr, BYTE *buff, BYTE len, BYTE yPos) {
-  BYTE pos;     /* Position through the data */
-  BYTE mx;      /* Map X position */
-  BYTE my;      /* Map Y position */
-  BYTE terrain; /* Terrain position */
-
-  len--;
-  pos = 0;
-  while (pos < len) {
-    mx = buff[pos];
-    pos++;
-    my = buff[pos];
-    pos++;
-    terrain = buff[pos];
-    pos++;
-    if (my < yPos) {
-      /* Update map with it */
-      mapNetIncomingItem(&csPtr->sim, &csPtr->sim.mp, mx, my, terrain);
-    }
-  }
-  screenReCalcCS(csPtr);
 }
 
 /*********************************************************
@@ -3749,19 +3689,15 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_BASE_CAPTURED:
         /* data: [newOwner, previousOwner] */
         if (isHuman) {
-          char capMsg[FILENAME_MAX];
-          char prevName[FILENAME_MAX];
-          capMsg[0] = '\0';
-          prevName[0] = '\0';
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], capMsg);
+          MessageArgs args;
+          memset(&args, 0, sizeof(args));
+          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
           if (events[i].data[1] != NEUTRAL) {
-            strcat(capMsg, langGetText(MESSAGE_STOLE_BASE));
-            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], prevName, FALSE);
-            strcat(capMsg, prevName);
+            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
           } else {
-            strcat(capMsg, langGetText(MESSAGE_CAPTURE_BASE));
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
           }
-          clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
         }
         /* Steam stat: base captures */
         if (events[i].data[0] == playerNum) {
@@ -3787,19 +3723,15 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_PILL_CAPTURED:
         /* data: [newOwner, previousOwner] */
         if (isHuman) {
-          char capMsg[FILENAME_MAX];
-          char prevName[FILENAME_MAX];
-          capMsg[0] = '\0';
-          prevName[0] = '\0';
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], capMsg);
+          MessageArgs args;
+          memset(&args, 0, sizeof(args));
+          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
           if (events[i].data[1] != NEUTRAL) {
-            strcat(capMsg, langGetText(MESSAGE_STOLE_PILL));
-            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], prevName, FALSE);
-            strcat(capMsg, prevName);
+            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
           } else {
-            strcat(capMsg, langGetText(MESSAGE_CAPTURE_PILL));
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
           }
-          clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), capMsg);
         }
         /* Steam stat: pill captures */
         if (events[i].data[0] == playerNum) {
@@ -3874,14 +3806,10 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_LGM_LOST:
         /* data: [victim, killer] — builder killed, broadcast newswire */
         if (isHuman) {
-          char lgmMsg[FILENAME_MAX];
-          char lgmName[FILENAME_MAX];
-          lgmMsg[0] = '\0';
-          lgmName[0] = '\0';
-          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], lgmName, FALSE);
-          labelMakeMessage(csPtr, lgmMsg, lgmName, langGetText(MESSAGE_THIS_COMPUTER));
-          strcat(lgmMsg, langGetText(MESSAGE_LGM_DEAD));
-          clientMessageAdd(&csPtr->messages, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), lgmMsg);
+          MessageArgs args;
+          memset(&args, 0, sizeof(args));
+          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], args.playerName, FALSE);
+          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
         }
         /* Steam stats: LGM losses and kills */
         if (events[i].data[0] == playerNum) {
@@ -3913,7 +3841,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           case ASSIST_MSG_TANK_SUNK:         assistLangId = MESSAGE_TANKSUNK; break;
           }
           if (assistLangId != 0) {
-            clientMessageAdd(&csPtr->messages, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(assistLangId));
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, assistLangId, NULL);
           }
         }
         break;

@@ -477,7 +477,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
       tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
       sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
       if (!isServer) {
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(MESSAGE_TANKSUNK));
+        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
       }
       sim->callbacks.tankKill(sim->callbacks.ctx, drownedPlayer, drownedPlayer, LAST_DEATH_BY_DEEPSEA, tankGetNumCarriedPills(value));
       tankDropPills(sim, value);

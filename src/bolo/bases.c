@@ -528,12 +528,6 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
   bases *value = &sim->bs;
   bool isServer = sim->isServer;
   BYTE returnValue;         /* Value to return */
-  /* Message stuff */
-  char oldOwner[FILENAME_MAX];
-  char messageStr[FILENAME_MAX];
-
-  oldOwner[0] = '\0';
-  messageStr[0] = '\0';
 
   returnValue = FALSE;
   if (baseNum > 0 && baseNum <= (*value)->numBases) {
@@ -544,20 +538,19 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
     } else if (owner == NEUTRAL) {
       (*value)->item[baseNum].owner = owner;
     } else if ((*value)->item[baseNum].owner != owner) {
-      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
       if (returnValue != NEUTRAL) {
         (*value)->item[baseNum].armour = 0;
         (*value)->item[baseNum].shells = 0;
         (*value)->item[baseNum].mines = 0;
         (*value)->item[baseNum].baseTime = 0;
-        strcat(messageStr, langGetText(MESSAGE_STOLE_BASE));
-        playersGetPlayerName(&sim->plyrs, returnValue, oldOwner, sim->isServer);
-        strcat(messageStr, oldOwner);
-        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+        playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
       } else {
         /* Neutral */
-        strcat(messageStr, langGetText(MESSAGE_CAPTURE_BASE));
-        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
       }
       (*value)->item[baseNum].owner = owner;
     }
@@ -609,12 +602,6 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
   BYTE returnValue;         /* Value to return */
   bool done;                /* Finished looping */
   BYTE count;               /* Looping Variable */
-  /* Message stuff */
-  char oldOwner[FILENAME_MAX];
-  char messageStr[FILENAME_MAX];
-
-  oldOwner[0] = '\0';
-  messageStr[0] = '\0';
 
   returnValue = FALSE;
   count = 0;
@@ -629,20 +616,19 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
-        playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
         if (returnValue != NEUTRAL) {
           (*value)->item[count].armour = 0;
           (*value)->item[count].shells = 0;
           (*value)->item[count].mines = 0;
           (*value)->item[count].baseTime = 0;
-          strcat(messageStr, langGetText(MESSAGE_STOLE_BASE));
-          playersGetPlayerName(&sim->plyrs, returnValue, oldOwner, sim->isServer);
-          strcat(messageStr, oldOwner);
-          sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+          playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+          sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
         } else {
           /* Neutral */
-          strcat(messageStr, langGetText(MESSAGE_CAPTURE_BASE));
-          sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+          sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
         }
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
