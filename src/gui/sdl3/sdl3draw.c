@@ -1313,23 +1313,15 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     edgeY += gDragOffsetY;
   }
 
-  /* Override mode arrow-key pan + scroll-wheel zoom.  Applies on top
-   * of tablet drag offset.  Zoom multiplier scales gZoomFactor for
-   * the world section only; HUD reads savedZoomFactor (restored at
-   * line ~1609 below). */
+  /* Override-mode arrow-key pan.  Applies on top of tablet drag
+   * offset.  Scroll-wheel zoom is applied later (after originX/Y +
+   * gameClip are computed) so the HUD layout stays put — only tiles
+   * and sprites within the gameClip get bigger. */
   if (overrideModeIsOn()) {
     int opx = 0, opy = 0;
     overrideModeGetPanOffset(&opx, &opy);
     edgeX += opx;
     edgeY += opy;
-    int zmul = overrideModeZoomMul();
-    if (zmul > 1) {
-      gZoomFactor = (BYTE)(gZoomFactor * zmul);
-      /* edgeX/Y are in screen pixels — scale them along with zoom so
-       * pan accumulator and existing offset stay visually consistent. */
-      edgeX *= zmul;
-      edgeY *= zmul;
-    }
   }
 
   if (sdl3LoadTiles()) {
@@ -1352,6 +1344,28 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       gameW, gameH
     };
     SDL_SetRenderClipRect(gRenderer, &gameClip);
+
+    /* Override-mode scroll-wheel zoom: scale gZoomFactor + tileW/H +
+     * edgeX/Y for the world rendering only.  originX/Y + gameClip
+     * were computed with the unscaled gZoomFactor, so the playfield
+     * bounds stay put.  Centre the zoom on the playfield middle so
+     * zooming feels anchored to the camera, not the top-left. */
+    if (overrideModeIsOn()) {
+      int zmul = overrideModeZoomMul();
+      if (zmul > 1) {
+        /* Anchor zoom on the playfield centre.  When zooming, tile
+         * sizes grow by zmul; to keep the same world point under the
+         * centre of the view, we must shift edgeX/Y by the centre's
+         * pixel growth: deltaEdge = (centrePx) * (zmul - 1). */
+        int centrePxX = gameW / 2;
+        int centrePxY = gameH / 2;
+        edgeX = edgeX * zmul + centrePxX * (zmul - 1);
+        edgeY = edgeY * zmul + centrePxY * (zmul - 1);
+        gZoomFactor = (BYTE)(gZoomFactor * zmul);
+        tileW *= zmul;
+        tileH *= zmul;
+      }
+    }
 
     if (srtDelay > 0) {
       /* Black out the game area during start delay */
