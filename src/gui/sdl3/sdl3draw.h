@@ -68,6 +68,10 @@ typedef struct { long left, top, right, bottom; } RECT;
 int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
+/* Live tile-sheet texture (loaded from data/skin.bmp + theme override).
+ * Returned pointer is owned by sdl3draw and may be invalidated by
+ * sdl3DrawReloadTiles().  Useful for ImGui-based theme previews. */
+SDL_Texture  *sdl3DrawGetTilesTex(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);

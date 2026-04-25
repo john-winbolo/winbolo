@@ -292,6 +292,10 @@ void sdl3DrawReloadTiles(void) {
   }
 }
 
+SDL_Texture *sdl3DrawGetTilesTex(void) {
+  return gTilesTex;
+}
+
 /* Builds the sprite sheet from individual SVG/PNG files (with BMP fallback)
  * and creates gTilesTex from the assembled surface. */
 static bool sdl3LoadTiles(void) {

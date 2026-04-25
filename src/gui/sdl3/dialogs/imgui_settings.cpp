@@ -443,6 +443,56 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::TextDisabled(
                 "Floor = classic >>4 (default).  Nearest = round to game pixel.\n"
                 "Smooth = full sub-pixel; only meaningful with SVG themes.");
+
+            /* Theme preview — render a strip of N-facing tank/shell
+             * sprites from the live atlas so the user sees the
+             * effect of the active theme.  Atlas constants come from
+             * tile.bmp's classic layout (see src/gui/tiles.h). */
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Preview");
+            SDL_Texture *atlas = sdl3DrawGetTilesTex();
+            if (atlas) {
+                /* sheet is 496x176 (1x atlas) or scaled up; we use UV
+                 * fractions so it works at any sheet scale. */
+                float texW = 0.0f, texH = 0.0f;
+                SDL_GetTextureSize(atlas, &texW, &texH);
+                if (texW > 0.0f && texH > 0.0f) {
+                    /* (atlasX, atlasY, w, h) for each preview sprite,
+                     * in 1x atlas pixels.  These match the constants
+                     * in src/gui/tiles.h. */
+                    struct { const char *label; int x, y, w, h; } previews[] = {
+                        { "Self",   400, 32, 16, 16 },   /* TANK_SELF_0  */
+                        { "Good",   464, 32, 16, 16 },   /* TANK_GOOD_0  */
+                        { "Evil",   336, 48, 16, 16 },   /* TANK_EVIL_0  */
+                        { "Boat",    64,  0, 16, 16 },   /* boat0        */
+                        { "Shell",  452, 72,  3,  4 },   /* SHELL_0      */
+                        { "LGM",    431, 90,  3,  4 },   /* LGM0         */
+                    };
+                    /* The atlas may be at sheet-scale > 1 — scale UV
+                     * accordingly via the texture's native size. */
+                    int previewPx = 32;  /* on-screen size of each cell */
+                    for (size_t i = 0; i < sizeof(previews)/sizeof(previews[0]); ++i) {
+                        if (i > 0) ImGui::SameLine();
+                        ImGui::BeginGroup();
+                        /* Atlas is at sheet scale.  Source UV is in
+                         * texture-coordinate space [0..1].  Multiply
+                         * 1x atlas coords by (texSize / 496|176). */
+                        float scaleX = texW / 496.0f;
+                        float scaleY = texH / 176.0f;
+                        ImVec2 uv0((previews[i].x * scaleX) / texW,
+                                   (previews[i].y * scaleY) / texH);
+                        ImVec2 uv1(((previews[i].x + previews[i].w) * scaleX) / texW,
+                                   ((previews[i].y + previews[i].h) * scaleY) / texH);
+                        ImGui::Image((ImTextureID)(intptr_t)atlas,
+                                     ImVec2((float)previewPx, (float)previewPx),
+                                     uv0, uv1);
+                        ImGui::TextUnformatted(previews[i].label);
+                        ImGui::EndGroup();
+                    }
+                }
+            } else {
+                ImGui::TextDisabled("(atlas not loaded yet)");
+            }
         }
 
         /* ---- Tutorial ---- */
