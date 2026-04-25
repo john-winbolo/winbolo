@@ -97,7 +97,7 @@ static void discoverMaps(MapChooserState *state) {
     state->numMaps = 0;
 
     /* First entry is always "Everard Island (Inbuilt)" */
-    SDL_strlcpy(state->maps[0].name, "Everard Island (Inbuilt)", sizeof(state->maps[0].name));
+    SDL_strlcpy(state->maps[0].name, langGetText(STR_MAPCHOOSER_EVERARD), sizeof(state->maps[0].name));
     state->maps[0].path[0] = '\0'; /* empty = inbuilt */
     state->numMaps = 1;
 
@@ -288,7 +288,7 @@ void mapChooserInit(MapChooserState *state, SDL_Renderer *renderer) {
     SDL_memset(state, 0, sizeof(*state));
     state->selectedIdx = 0;
     state->selectedPath[0] = '\0';
-    SDL_strlcpy(state->selectedName, "Everard Island (Inbuilt)", sizeof(state->selectedName));
+    SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_EVERARD), sizeof(state->selectedName));
     state->fileDialogPending = false;
     state->fileDialogGotResult = false;
     state->randomMapSelected = false;
@@ -406,7 +406,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         /* --- Random map generator mode --- */
 
         /* Back button */
-        if (ImGui::Button("Load a Map", ImVec2(-1, 0))) {
+        if (ImGui::Button(langGetText(STR_MAPCHOOSER_LOADMAP), ImVec2(-1, 0))) {
             state->randomMapSelected = false;
             /* Restore the previously selected map preview */
             updatePreview(state, renderer);
@@ -433,11 +433,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         {
             bool disabled = state->fileDialogPending;
             if (disabled) ImGui::BeginDisabled();
-            if (ImGui::Button("Load from Device...", ImVec2(-1, 0))) {
+            if (ImGui::Button(langGetText(STR_MAPCHOOSER_LOADDEVICE), ImVec2(-1, 0))) {
                 SDL_Window *window = sdl3DrawGetWindow();
                 SDL_DialogFileFilter filters[] = {
-                    { "Map Files", "map" },
-                    { "All Files", "*" },
+                    { langGetText(STR_MAPCHOOSER_MAPFILES), "map" },
+                    { langGetText(STR_MAPCHOOSER_ALLFILES), "*" },
                 };
                 state->fileDialogPending = true;
                 state->fileDialogGotResult = false;
@@ -447,10 +447,10 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         }
 
         /* Generate Random Map button */
-        if (ImGui::Button("Generate Random Map", ImVec2(-1, 0))) {
+        if (ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0))) {
             state->randomMapSelected = true;
             state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
-            SDL_strlcpy(state->selectedName, "Random Map", sizeof(state->selectedName));
+            SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
             initGenConfig(state);
             generateRandomPreview(state, renderer);
             changed = true;
@@ -489,14 +489,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
 
     if (!renderPreviewImage(state)) {
         if (state->randomMapSelected) {
-            ImGui::TextDisabled("Click Generate to preview");
+            ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
         } else {
-            ImGui::TextDisabled("No preview available");
+            ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
         }
     }
 
     if (state->previewTex) {
-        ImGui::Text("Pillboxes: %d  Bases: %d  Starts: %d",
+        ImGui::Text(langGetText(STR_MAPCHOOSER_STATS_FMT),
                      state->previewPills, state->previewBases, state->previewStarts);
     }
 

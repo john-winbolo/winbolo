@@ -45,6 +45,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "../../gamefront.h"
+#include "../../lang.h"
 #include "../../../winbolonet/http.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
@@ -95,7 +96,12 @@ enum BrowserTab {
     TAB_COUNT
 };
 
-static const char *s_tabNames[] = { "Recent", "Top Rated", "Most Downloaded", "Search" };
+static const langid s_tabNameIds[] = {
+    STR_DLGWBN_TAB_RECENT,
+    STR_DLGWBN_TAB_TOPRATED,
+    STR_DLGWBN_TAB_MOSTDOWNLOADED,
+    STR_DLGWBN_TAB_SEARCH,
+};
 
 /* ---- Per-tab state ---- */
 struct TabState {
@@ -304,7 +310,7 @@ static void formatTimestamp(int ts, char *buf, size_t bufSize) {
     if (tm)
         strftime(buf, bufSize, "%b %d, %Y %H:%M", tm);
     else
-        SDL_strlcpy(buf, "Unknown", bufSize);
+        SDL_strlcpy(buf, langGetText(STR_UNKNOWN), bufSize);
 }
 
 /* ---- Async fetch state ---- */
@@ -371,7 +377,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - Log Browser");
+    dialogSetWindowTitle(window, langGetText(STR_DLGWBN_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -450,7 +456,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
     const char *commentSuccess = nullptr;
 
     /* Status */
-    const char *statusText = httpOk ? "Loading..." : "Could not connect to WinBolo.net";
+    const char *statusText = httpOk ? langGetText(STR_DLGWBN_LOADING) : langGetText(STR_DLGWBN_NOCONNECT);
 
     /* Trigger initial fetch of recent logs */
     auto triggerFetch = [&](BrowserTab tab, int page) {
@@ -521,7 +527,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     res.success = true;
                     cJSON_Delete(json);
                 } else {
-                    SDL_strlcpy(res.error, "Failed to parse response", sizeof(res.error));
+                    SDL_strlcpy(res.error, langGetText(STR_DLGWBN_PARSERR), sizeof(res.error));
                 }
             } else if (response) {
                 cJSON *json = cJSON_Parse(response);
@@ -536,7 +542,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     SDL_snprintf(res.error, sizeof(res.error), "HTTP %d", status);
                 }
             } else {
-                SDL_strlcpy(res.error, "Network error", sizeof(res.error));
+                SDL_strlcpy(res.error, langGetText(STR_DLGWBN_NETERR), sizeof(res.error));
             }
 
             free(response);
@@ -579,7 +585,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     cJSON_Delete(json);
                 }
             } else {
-                SDL_strlcpy(res.error, "Failed to load details", sizeof(res.error));
+                SDL_strlcpy(res.error, langGetText(STR_DLGWBN_LOADERR), sizeof(res.error));
             }
 
             free(response);
@@ -624,7 +630,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 res.success = true;
             } else {
                 free(data);
-                SDL_strlcpy(res.error, "Download failed", sizeof(res.error));
+                SDL_strlcpy(res.error, langGetText(STR_DLGWBN_DOWNLOAD_FAILED), sizeof(res.error));
             }
 #else
             /* Desktop: download to file cache */
@@ -641,10 +647,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 if (status == 200) {
                     res.success = true;
                 } else {
-                    SDL_strlcpy(res.error, "Download failed", sizeof(res.error));
+                    SDL_strlcpy(res.error, langGetText(STR_DLGWBN_DOWNLOAD_FAILED), sizeof(res.error));
                 }
             } else {
-                SDL_strlcpy(res.error, "Could not determine save path", sizeof(res.error));
+                SDL_strlcpy(res.error, langGetText(STR_DLGWBN_NOSAVEPATH), sizeof(res.error));
             }
 #endif
 
@@ -698,7 +704,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 tabs[tab].error = nullptr;
                 statusText = nullptr;
             } else {
-                tabs[tab].error = "Fetch failed";
+                tabs[tab].error = langGetText(STR_DLGWBN_FETCHERR);
                 statusText = fetchResult.error;
             }
             selectedItem = -1;
@@ -736,7 +742,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 }
                 running = false;
             } else {
-                statusText = "Download failed";
+                statusText = langGetText(STR_DLGWBN_DOWNLOAD_FAILED);
             }
         }
 
@@ -755,7 +761,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
             commentDone = false;
             std::lock_guard<std::mutex> lock(commentMtx);
             if (commentResultData.success) {
-                commentSuccess = "Comment posted!";
+                commentSuccess = langGetText(STR_DLGWBN_POSTED);
                 commentError = nullptr;
                 commentText[0] = '\0';
                 commentRating = 0;
@@ -820,7 +826,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         /* ---- Title ---- */
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
         ImGui::SetWindowFontScale(1.3f);
-        ImGui::Text("WinBolo.net Log Browser");
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_TITLE));
         ImGui::SetWindowFontScale(1.0f);
         ImGui::PopStyleColor();
 
@@ -829,7 +835,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         /* ---- Tab bar ---- */
         if (ImGui::BeginTabBar("##WbnTabs")) {
             for (int i = 0; i < TAB_COUNT; i++) {
-                if (ImGui::BeginTabItem(s_tabNames[i])) {
+                if (ImGui::BeginTabItem(langGetText(s_tabNameIds[i]))) {
                     if (currentTab != (BrowserTab)i) {
                         currentTab = (BrowserTab)i;
                         selectedItem = -1;
@@ -848,26 +854,28 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
 
         /* ---- Filter bar ---- */
         {
-            ImGui::Text("Filter:");
+            ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_FILTER));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80 * s);
-            ImGui::InputInt("Min Players##filterPlayers", &filterMinPlayers, 1, 1);
+            char minPlayersLbl[64];
+            snprintf(minPlayersLbl, sizeof(minPlayersLbl), "%s##filterPlayers", langGetText(STR_DLGWBN_MINPLAYERS));
+            ImGui::InputInt(minPlayersLbl, &filterMinPlayers, 1, 1);
             if (filterMinPlayers < 0) filterMinPlayers = 0;
         }
 
         /* ---- Search filters (Search tab only) ---- */
         if (currentTab == TAB_SEARCH) {
-            ImGui::Text("Search Filters:");
+            ImGui::TextUnformatted(langGetText(STR_DLGWBN_SEARCHFILTERS));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120 * s);
-            ImGui::InputTextWithHint("##player", "Player", searchPlayer, sizeof(searchPlayer));
+            ImGui::InputTextWithHint("##player", langGetText(STR_DLGWBN_HINT_PLAYER), searchPlayer, sizeof(searchPlayer));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120 * s);
-            ImGui::InputTextWithHint("##map", "Map", searchMap, sizeof(searchMap));
+            ImGui::InputTextWithHint("##map", langGetText(STR_DLGWBN_HINT_MAP), searchMap, sizeof(searchMap));
             ImGui::SameLine();
             bool isSearchFetching = tabs[TAB_SEARCH].fetching;
             if (isSearchFetching) ImGui::BeginDisabled();
-            if (ImGui::Button("Search")) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_SEARCH_BTN))) {
                 tabs[TAB_SEARCH].fetched = false;
                 triggerFetch(TAB_SEARCH, 1);
             }
@@ -879,9 +887,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
 
         /* ---- Loading / Error ---- */
         if (tab.fetching) {
-            ImGui::Text("Loading...");
+            ImGui::TextUnformatted(langGetText(STR_DLGWBN_LOADING));
         } else if (tab.error) {
-            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Error: %s", statusText ? statusText : "Unknown error");
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), langGetText(STR_DLGWBN_ERROR_FMT),
+                               statusText ? statusText : langGetText(STR_DLGWBN_UNKNOWN_ERR));
         }
 
         /* ---- Results table ---- */
@@ -893,12 +902,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
                                          ImGuiTableFlags_BordersOuter;
             if (ImGui::BeginTable("##LogsTable", 6, tableFlags, ImVec2(0, tableH))) {
-                ImGui::TableSetupColumn("Map",     0, 3.0f);
-                ImGui::TableSetupColumn("Type",    0, 1.0f);
-                ImGui::TableSetupColumn("Players", 0, 1.0f);
-                ImGui::TableSetupColumn("Rating",  0, 1.5f);
-                ImGui::TableSetupColumn("Size",    0, 1.0f);
-                ImGui::TableSetupColumn("Date",    0, 2.0f);
+                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_MAP),     0, 3.0f);
+                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_TYPE),    0, 1.0f);
+                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_PLAYERS), 0, 1.0f);
+                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_RATING),  0, 1.5f);
+                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_SIZE),    0, 1.0f);
+                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_DATE),    0, 2.0f);
                 ImGui::TableHeadersRow();
 
                 for (int i = 0; i < (int)tab.logs.size(); i++) {
@@ -970,7 +979,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 ImGui::TextDisabled("(%s v%s)", e.game_type, e.version);
 
                 /* Players */
-                ImGui::Text("Players: ");
+                ImGui::TextUnformatted(langGetText(STR_DLGWBN_PLAYERS_LBL));
                 ImGui::SameLine();
                 for (size_t p = 0; p < e.players.size(); p++) {
                     if (p > 0) { ImGui::SameLine(0, 0); ImGui::TextUnformatted(", "); ImGui::SameLine(0, 0); }
@@ -979,25 +988,33 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 }
                 if (e.players.empty()) {
                     ImGui::SameLine();
-                    ImGui::Text("%d player(s)", e.num_players);
+                    MessageArgs args = {};
+                    args.number = e.num_players;
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_NUMPLAYERS_FMT, &args));
                 }
 
                 /* Stats row */
                 char durBuf[32];
                 formatDuration(e.game_length_seconds, durBuf, sizeof(durBuf));
-                ImGui::Text("Duration: %s", durBuf);
+                ImGui::Text(langGetText(STR_DLGWBN_DURATION_FMT), durBuf);
                 ImGui::SameLine(0, 20);
-                ImGui::Text("Rating: %.1f/10 (%d)", e.rating, e.num_ratings);
+                ImGui::Text(langGetText(STR_DLGWBN_RATING_FMT), e.rating, e.num_ratings);
                 ImGui::SameLine(0, 20);
-                ImGui::Text("Downloads: %d", e.num_downloads);
+                {
+                    MessageArgs args = {};
+                    args.number = e.num_downloads;
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_DOWNLOADS_FMT, &args));
+                }
                 ImGui::SameLine(0, 20);
-                ImGui::Text("Size: %s", e.log_size_formatted);
+                ImGui::Text(langGetText(STR_DLGWBN_SIZE_FMT), e.log_size_formatted);
 
                 /* Comments */
                 if (e.detailLoaded) {
                     ImGui::Separator();
                     if (!e.comments.empty()) {
-                        ImGui::Text("Comments (%d):", (int)e.comments.size());
+                        MessageArgs args = {};
+                        args.number = (int)e.comments.size();
+                        ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_COMMENTS_FMT, &args));
                         for (auto &c : e.comments) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
                             ImGui::TextUnformatted(c.username.c_str());
@@ -1013,12 +1030,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                             ImGui::Spacing();
                         }
                     } else {
-                        ImGui::TextDisabled("No comments yet.");
+                        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOCOMMENTS));
                     }
 
                     /* Comment form */
                     ImGui::Separator();
-                    ImGui::Text("Add Comment:");
+                    ImGui::TextUnformatted(langGetText(STR_DLGWBN_ADDCOMMENT));
 
                     /* Check if signed in to WBN */
                     char wbnToken[256], wbnExpiry[256];
@@ -1033,12 +1050,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                                  "None\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(panelW * 0.5f);
-                    ImGui::InputTextWithHint("##cmtText", "Write a comment...", commentText, sizeof(commentText));
+                    ImGui::InputTextWithHint("##cmtText", langGetText(STR_DLGWBN_HINT_COMMENT), commentText, sizeof(commentText));
                     ImGui::SameLine();
 
                     bool canPost = commentText[0] != '\0' && !commenting;
                     if (!canPost) ImGui::BeginDisabled();
-                    if (ImGui::Button("Post")) {
+                    if (ImGui::Button(langGetText(STR_DLGWBN_POST))) {
                         commenting = true;
                         commentDone = false;
                         commentError = nullptr;
@@ -1070,7 +1087,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
 
                             if (status == 200 || status == 201) {
                                 res.success = true;
-                                SDL_strlcpy(res.message, "Comment posted!", sizeof(res.message));
+                                SDL_strlcpy(res.message, langGetText(STR_DLGWBN_POSTED), sizeof(res.message));
                             } else {
                                 res.success = false;
                                 if (response) {
@@ -1086,7 +1103,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                                         SDL_snprintf(res.message, sizeof(res.message), "HTTP %d", status);
                                     }
                                 } else {
-                                    SDL_strlcpy(res.message, "Network error", sizeof(res.message));
+                                    SDL_strlcpy(res.message, langGetText(STR_DLGWBN_NETERR), sizeof(res.message));
                                 }
                             }
 
@@ -1115,7 +1132,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     } /* end wbnLoggedIn else */
                 } else if (detailFetching) {
                     ImGui::Separator();
-                    ImGui::TextDisabled("Loading details...");
+                    ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
                 }
 
                 /* Download button */
@@ -1123,7 +1140,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                 if (e.log_available) {
                     bool isDownloading = downloading;
                     if (isDownloading) ImGui::BeginDisabled();
-                    if (ImGui::Button(isDownloading ? "Downloading..." : "View Log")) {
+                    if (ImGui::Button(isDownloading ? langGetText(STR_DLGWBN_DOWNLOADING) : langGetText(STR_DLGWBN_VIEWLOG))) {
                         triggerDownload(e.key);
                     }
                     if (isDownloading) ImGui::EndDisabled();
@@ -1131,10 +1148,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                         ImGui::SameLine();
                         float progress = (float)fmod(ImGui::GetTime() * 0.4, 1.0);
                         ImGui::SetNextItemWidth(150);
-                        ImGui::ProgressBar(progress, ImVec2(0, 0), "Downloading...");
+                        ImGui::ProgressBar(progress, ImVec2(0, 0), langGetText(STR_DLGWBN_DOWNLOADING));
                     }
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Log file is not available for this game.");
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", langGetText(STR_DLGWBN_NOLOG));
                 }
             }
             ImGui::EndChild();
@@ -1147,17 +1164,17 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
             bool isLast  = (tab.page >= tab.totalPages);
 
             if (isFirst) ImGui::BeginDisabled();
-            if (ImGui::Button("< Prev")) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_PREV))) {
                 triggerFetch(currentTab, tab.page - 1);
             }
             if (isFirst) ImGui::EndDisabled();
 
             ImGui::SameLine();
-            ImGui::Text("Page %d of %d  (%d total)", tab.page, tab.totalPages, tab.total);
+            ImGui::Text(langGetText(STR_DLGWBN_PAGE_FMT), tab.page, tab.totalPages, tab.total);
             ImGui::SameLine();
 
             if (isLast) ImGui::BeginDisabled();
-            if (ImGui::Button("Next >")) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_NEXT))) {
                 triggerFetch(currentTab, tab.page + 1);
             }
             if (isLast) ImGui::EndDisabled();
@@ -1172,12 +1189,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
             }
 
 #if !BOLO_MOBILE
-            if (ImGui::Button("Open File...")) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_OPENFILE))) {
                 fileDlgState.done = 0;
                 fileDlgState.ok = 0;
                 fileDlgState.path[0] = '\0';
                 SDL_DialogFileFilter filters[] = {
-                    { "WinBolo Log Files", "wbv" },
+                    { langGetText(STR_DLGWBN_FILEFILTER), "wbv" },
                     { NULL, NULL }
                 };
                 struct FileDlgState { char *path; size_t size; volatile int *done; int *ok; };
@@ -1196,9 +1213,9 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
             ImGui::SameLine();
 #endif
 
-            float closeW = ImGui::CalcTextSize("Close").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            float closeW = ImGui::CalcTextSize(langGetText(STR_CLOSE)).x + ImGui::GetStyle().FramePadding.x * 2.0f;
             ImGui::SameLine(panelW - closeW - ImGui::GetStyle().WindowPadding.x);
-            if (ImGui::Button("Close")) {
+            if (ImGui::Button(langGetText(STR_CLOSE))) {
                 running = false;
             }
         }

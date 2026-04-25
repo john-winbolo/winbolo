@@ -42,6 +42,7 @@ extern "C" {
 #include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
 #include "../map_preview_popup.h"
+#include "../../lang.h"
 #include "imgui_mapchooser.h"
 #include "imgui_gamesetup.h"
 }
@@ -162,7 +163,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - Game Setup");
+    dialogSetWindowTitle(window, langGetText(STR_DLGGAMESETUP_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -279,8 +280,8 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
     }
 
     /* Team combo items */
-    static const char *teamItems[] = {
-        "None", "1", "2", "3", "4", "5", "6", "7", "8",
+    const char *teamItems[] = {
+        langGetText(STR_NONE), "1", "2", "3", "4", "5", "6", "7", "8",
         "9", "10", "11", "12", "13", "14", "15", "16"
     };
 
@@ -369,7 +370,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
             /* ============================================================
              * Phase 1: Map Chooser
              * ============================================================ */
-            ImGui::Text("Select a map:");
+            ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_SELECTAMAP));
             ImGui::Spacing();
 
             float headerH = ImGui::GetCursorPosY();
@@ -389,11 +390,11 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 float totalW = btnW * 2 + 8.0f * s;
                 ImGui::SetCursorPosX((panelW - totalW) * 0.5f);
 
-                if (ImGui::Button("OK", ImVec2(btnW, 0))) {
+                if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
                     phase = PHASE_GAME_SETUP;
                 }
                 ImGui::SameLine(0.0f, 8.0f);
-                if (ImGui::Button("Back", ImVec2(btnW, 0)) ||
+                if (ImGui::Button(langGetText(STR_BACK), ImVec2(btnW, 0)) ||
                     (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     phase = PHASE_GAME_SETUP;
@@ -448,10 +449,14 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     ImGui::SameLine();
                     ImGui::BeginGroup();
                     ImGui::Text("%s", mapChooser.selectedName);
-                    ImGui::Text("Bases: %d  Starts: %d", mapChooser.previewBases, mapChooser.previewStarts);
-                    ImGui::Text("Pillboxes: %d", mapChooser.previewPills);
+                    ImGui::Text(langGetText(STR_DLGGAMESETUP_BASES_STARTS_FMT), mapChooser.previewBases, mapChooser.previewStarts);
+                    {
+                        MessageArgs args = {};
+                        args.number = mapChooser.previewPills;
+                        ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMESETUP_PILLBOXES_FMT, &args));
+                    }
                     ImGui::Spacing();
-                    if (ImGui::SmallButton("Change Map")) {
+                    if (ImGui::SmallButton(langGetText(STR_DLGGAMESETUP_CHANGEMAP))) {
                         phase = PHASE_MAP_CHOOSER;
                     }
                     ImGui::EndGroup();
@@ -462,29 +467,29 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 ImGui::Spacing();
 
                 /* Game options */
-                ImGui::Text("Game Type");
-                ImGui::RadioButton("Open Game", &gameTypeIdx, 0);
+                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_GAMETYPE_LBL));
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_OPENGAME_SHORT), &gameTypeIdx, 0);
                 ImGui::SameLine();
-                ImGui::RadioButton("Tournament", &gameTypeIdx, 1);
+                ImGui::RadioButton(langGetText(STR_DLGGAMEINFO_TOURN), &gameTypeIdx, 1);
                 ImGui::SameLine();
-                ImGui::RadioButton("Strict", &gameTypeIdx, 2);
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_STRICT_SHORT), &gameTypeIdx, 2);
 
-                ImGui::Checkbox("Hidden Mines", &hiddenMines);
-
-                ImGui::Spacing();
-
-                ImGui::Text("AI Computer Players");
-                ImGui::RadioButton("None", &aiIdx, 0);
-                ImGui::SameLine();
-                ImGui::RadioButton("Allow", &aiIdx, 1);
-                ImGui::SameLine();
-                ImGui::RadioButton("Advantage", &aiIdx, 2);
-                ImGui::SameLine();
-                ImGui::RadioButton("Full Map", &aiIdx, 3);
+                ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT), &hiddenMines);
 
                 ImGui::Spacing();
 
-                ImGui::Checkbox("Time Limit", &useTimeLimit);
+                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_AICOMPPLAYERS));
+                ImGui::RadioButton(langGetText(STR_NONE), &aiIdx, 0);
+                ImGui::SameLine();
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOW), &aiIdx, 1);
+                ImGui::SameLine();
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ADVANTAGE), &aiIdx, 2);
+                ImGui::SameLine();
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_FULLMAP), &aiIdx, 3);
+
+                ImGui::Spacing();
+
+                ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT), &useTimeLimit);
                 if (useTimeLimit) {
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60 * s);
@@ -498,9 +503,9 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
                 /* Team Setup */
                 {
-                    ImGui::Text("Team Setup");
+                    ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_TEAMSETUP));
                     ImGui::SameLine();
-                    ImGui::Text("  Number of AI players:");
+                    ImGui::Text("  %s", langGetText(STR_DLGGAMESETUP_AINUM));
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60.0f * s);
                     int prevNumBotsS = numBots;
@@ -511,15 +516,15 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     }
 
                     if (numBrains == 0 && numBots > 0) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No brains found");
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", langGetText(STR_DLGGAMESETUP_NOBRAINS));
                     } else if (numBots > 0) {
                         if (ImGui::BeginTable("##TeamTable", 4,
                                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                               ImGuiTableFlags_SizingStretchProp)) {
                             ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 25.0f * s);
-                            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("Team", ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
-                            ImGui::TableSetupColumn("Brain", ImGuiTableColumnFlags_WidthStretch);
+                            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PLAYER_COL), ImGuiTableColumnFlags_WidthStretch);
+                            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_TEAM_COL), ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+                            ImGui::TableSetupColumn(langGetText(STR_DLGGAMESETUP_BRAIN_COL), ImGuiTableColumnFlags_WidthStretch);
                             ImGui::TableHeadersRow();
 
                             /* Row 1: Human player */
@@ -527,7 +532,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                             ImGui::TableSetColumnIndex(0);
                             ImGui::Text("1");
                             ImGui::TableSetColumnIndex(1);
-                            ImGui::Text("You");
+                            ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_YOU));
                             ImGui::TableSetColumnIndex(2);
                             ImGui::SetNextItemWidth(-1);
                             ImGui::Combo("##tmPS", &playerTeamIdx, teamItems, 17);
@@ -541,7 +546,11 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                                 ImGui::Text("%d", i + 2);
 
                                 ImGui::TableSetColumnIndex(1);
-                                ImGui::Text("Bot %d", i + 1);
+                                {
+                                    MessageArgs args = {};
+                                    args.number = i + 1;
+                                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMESETUP_BOT_FMT, &args));
+                                }
 
                                 ImGui::TableSetColumnIndex(2);
                                 ImGui::SetNextItemWidth(-1);
@@ -605,7 +614,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                         }
                     }
                 } else {
-                    ImGui::TextDisabled("No preview");
+                    ImGui::TextDisabled("%s", langGetText(STR_DLGGAMESETUP_NOPREVIEW));
                 }
 
                 ImGui::Spacing();
@@ -613,11 +622,15 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 ImGui::Spacing();
 
                 ImGui::Text("%s", mapChooser.selectedName);
-                ImGui::Text("Bases: %d  Starts: %d", mapChooser.previewBases, mapChooser.previewStarts);
-                ImGui::Text("Pillboxes: %d", mapChooser.previewPills);
+                ImGui::Text(langGetText(STR_DLGGAMESETUP_BASES_STARTS_FMT), mapChooser.previewBases, mapChooser.previewStarts);
+                {
+                    MessageArgs args = {};
+                    args.number = mapChooser.previewPills;
+                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMESETUP_PILLBOXES_FMT, &args));
+                }
 
                 ImGui::Spacing();
-                if (ImGui::Button("Change Map", ImVec2(-1, 0))) {
+                if (ImGui::Button(langGetText(STR_DLGGAMESETUP_CHANGEMAP), ImVec2(-1, 0))) {
                     phase = PHASE_MAP_CHOOSER;
                 }
 
@@ -629,39 +642,39 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 ImGui::BeginChild("##OptionsPanel", ImVec2(optionsPanelW, contentH), ImGuiChildFlags_None);
 
                 /* Game Type */
-                ImGui::Text("Game Type");
-                ImGui::RadioButton("Open Game (pre-armed)", &gameTypeIdx, 0);
-                ImGui::RadioButton("Tournament (free ammo early)", &gameTypeIdx, 1);
-                ImGui::RadioButton("Strict Tournament (no free ammo)", &gameTypeIdx, 2);
+                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_GAMETYPE_LBL));
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_RADIO1), &gameTypeIdx, 0);
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_RADIO2), &gameTypeIdx, 1);
+                ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_RADIO3), &gameTypeIdx, 2);
 
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                ImGui::Checkbox("Allow Hidden Mines", &hiddenMines);
+                ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_HIDDENMINES), &hiddenMines);
 
                 ImGui::Spacing();
 
                 /* AI Computer Players - 2 column layout */
-                ImGui::Text("AI Computer Players");
+                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_AICOMPPLAYERS));
                 {
                     float indent = ImGui::GetStyle().IndentSpacing;
                     float availW = ImGui::GetContentRegionAvail().x;
                     float col2X = indent + (availW - indent) * 0.5f;
                     ImGui::Indent();
-                    ImGui::RadioButton("No computer tanks", &aiIdx, 0);
+                    ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_NOAI), &aiIdx, 0);
                     ImGui::SameLine(col2X);
-                    ImGui::RadioButton("Allow computer tanks", &aiIdx, 1);
-                    ImGui::RadioButton("Allow with advantage", &aiIdx, 2);
+                    ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOWAI), &aiIdx, 1);
+                    ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOWADV), &aiIdx, 2);
                     ImGui::SameLine(col2X);
-                    ImGui::RadioButton("Allow with full map", &aiIdx, 3);
+                    ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOWFULL), &aiIdx, 3);
                     ImGui::Unindent();
                 }
 
                 ImGui::Spacing();
 
                 /* Time Limit */
-                ImGui::Checkbox("Game time limit", &useTimeLimit);
+                ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_TIMELIMIT), &useTimeLimit);
                 if (useTimeLimit) {
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60 * s);
@@ -675,9 +688,9 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
                 /* Team Setup */
                 {
-                    ImGui::Text("Team Setup");
+                    ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_TEAMSETUP));
                     ImGui::SameLine();
-                    ImGui::Text("  Number of AI players:");
+                    ImGui::Text("  %s", langGetText(STR_DLGGAMESETUP_AINUM));
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60.0f * s);
                     int prevNumBots = numBots;
@@ -689,7 +702,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     }
 
                     if (numBrains == 0 && numBots > 0) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No brains found");
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", langGetText(STR_DLGGAMESETUP_NOBRAINS));
                     } else if (numBots > 0) {
                         if (ImGui::BeginTable("##TeamTable", 4,
                                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -705,7 +718,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                             ImGui::TableSetColumnIndex(0);
                             ImGui::Text("1");
                             ImGui::TableSetColumnIndex(1);
-                            ImGui::Text("You");
+                            ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_YOU));
                             ImGui::TableSetColumnIndex(2);
                             ImGui::SetNextItemWidth(-1);
                             ImGui::Combo("##tmP", &playerTeamIdx, teamItems, 17);
@@ -719,7 +732,11 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                                 ImGui::Text("%d", i + 2);
 
                                 ImGui::TableSetColumnIndex(1);
-                                ImGui::Text("Bot %d", i + 1);
+                                {
+                                    MessageArgs args = {};
+                                    args.number = i + 1;
+                                    ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMESETUP_BOT_FMT, &args));
+                                }
 
                                 ImGui::TableSetColumnIndex(2);
                                 ImGui::SetNextItemWidth(-1);
@@ -759,7 +776,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 float totalW = btnW * 2 + 8.0f * s;
                 ImGui::SetCursorPosX((panelW - totalW) * 0.5f);
 
-                if (ImGui::Button("Start Game", ImVec2(btnW, 0))) {
+                if (ImGui::Button(langGetText(STR_DLGGAMESETUP_STARTGAME), ImVec2(btnW, 0))) {
                     /* Save game options */
                     gameType newGt = (gameTypeIdx == 0) ? gameOpen :
                                      (gameTypeIdx == 1) ? gameTournament : gameStrictTournament;
@@ -798,7 +815,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
                 ImGui::SameLine(0.0f, 8.0f);
 
-                if (ImGui::Button("Cancel", ImVec2(btnW, 0)) ||
+                if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
                     (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     running = false;
