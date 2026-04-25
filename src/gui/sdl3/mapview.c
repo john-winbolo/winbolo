@@ -453,10 +453,20 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
+  /* Smooth animation: skip live shell-direction frames here so the
+   * sub-wu pass below (mapViewDrawShellsFromSim) draws them at full
+   * 1/256-tile precision instead.  Explosion frames are still drawn
+   * here — they live in screenBullets only. */
+  bool skipDirShells = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
+
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
     screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
+
+    if (skipDirShells && frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+      continue;
+    }
 
     int srcX, srcY, srcW, srcH;
     switch (frame) {
@@ -570,6 +580,103 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                          (float)(srcH * ctx->zoomFactor) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
+  }
+}
+
+/*********************************************************
+ * mapViewDrawShellsFromSim — render live shells at full 1/256-tile
+ * precision direct from sim->shs.  Used when Animation Style is
+ * Smooth, instead of the classic screenBullets path which has
+ * already discretised positions.  Skips dead shells and explosion
+ * frames (those still come from screenBullets).
+ *********************************************************/
+void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                              int originX, int originY,
+                              int tileW, int tileH,
+                              int edgeX, int edgeY) {
+  if (!ctx || !sim) return;
+  /* Match the sub-pixel tip table in mapViewDrawShells. */
+  static const float kTipCol[16] = {
+    1.5f,    1.883f,  4.0f, 4.0f,  /* N   NNE  NE   ENE  */
+    4.0f,    4.0f,    4.0f, 1.883f,/* E   ESE  SE   SSE  */
+    1.5f,    1.117f,  0.0f, 0.0f,  /* S   SSW  SW   WSW  */
+    0.0f,    0.0f,    0.0f, 1.117f /* W   WNW  NW   NNW  */
+  };
+  static const float kTipRow[16] = {
+    0.0f,    0.0f,    0.0f, 1.117f,/* N   NNE  NE   ENE  */
+    1.5f,    1.883f,  4.0f, 4.0f,  /* E   ESE  SE   SSE  */
+    4.0f,    4.0f,    3.0f, 1.883f,/* S   SSW  SW   WSW  */
+    1.5f,    1.117f,  0.0f, 0.0f   /* W   WNW  NW   NNW  */
+  };
+  int zf = ctx->zoomFactor;
+  int ss = ctx->sheetScale;
+  shells q = sim->shs;
+  while (q != NULL) {
+    if (q->shellDead) { q = q->next; continue; }
+    int dir = utilGetDir(q->angle);
+    if (dir < 0 || dir > 15) { q = q->next; continue; }
+
+    /* Atlas src coords for the per-direction shell sprite. */
+    int srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    switch (dir) {
+      case 0:  srcX=SHELL_0_X;  srcY=SHELL_0_Y;  srcW=SHELL_0_WIDTH;  srcH=SHELL_0_HEIGHT;  break;
+      case 1:  srcX=SHELL_1_X;  srcY=SHELL_1_Y;  srcW=SHELL_1_WIDTH;  srcH=SHELL_1_HEIGHT;  break;
+      case 2:  srcX=SHELL_2_X;  srcY=SHELL_2_Y;  srcW=SHELL_2_WIDTH;  srcH=SHELL_2_HEIGHT;  break;
+      case 3:  srcX=SHELL_3_X;  srcY=SHELL_3_Y;  srcW=SHELL_3_WIDTH;  srcH=SHELL_3_HEIGHT;  break;
+      case 4:  srcX=SHELL_4_X;  srcY=SHELL_4_Y;  srcW=SHELL_4_WIDTH;  srcH=SHELL_4_HEIGHT;  break;
+      case 5:  srcX=SHELL_5_X;  srcY=SHELL_5_Y;  srcW=SHELL_5_WIDTH;  srcH=SHELL_5_HEIGHT;  break;
+      case 6:  srcX=SHELL_6_X;  srcY=SHELL_6_Y;  srcW=SHELL_6_WIDTH;  srcH=SHELL_6_HEIGHT;  break;
+      case 7:  srcX=SHELL_7_X;  srcY=SHELL_7_Y;  srcW=SHELL_7_WIDTH;  srcH=SHELL_7_HEIGHT;  break;
+      case 8:  srcX=SHELL_8_X;  srcY=SHELL_8_Y;  srcW=SHELL_8_WIDTH;  srcH=SHELL_8_HEIGHT;  break;
+      case 9:  srcX=SHELL_9_X;  srcY=SHELL_9_Y;  srcW=SHELL_9_WIDTH;  srcH=SHELL_9_HEIGHT;  break;
+      case 10: srcX=SHELL_10_X; srcY=SHELL_10_Y; srcW=SHELL_10_WIDTH; srcH=SHELL_10_HEIGHT; break;
+      case 11: srcX=SHELL_11_X; srcY=SHELL_11_Y; srcW=SHELL_11_WIDTH; srcH=SHELL_11_HEIGHT; break;
+      case 12: srcX=SHELL_12_X; srcY=SHELL_12_Y; srcW=SHELL_12_WIDTH; srcH=SHELL_12_HEIGHT; break;
+      case 13: srcX=SHELL_13_X; srcY=SHELL_13_Y; srcW=SHELL_13_WIDTH; srcH=SHELL_13_HEIGHT; break;
+      case 14: srcX=SHELL_14_X; srcY=SHELL_14_Y; srcW=SHELL_14_WIDTH; srcH=SHELL_14_HEIGHT; break;
+      case 15: srcX=SHELL_15_X; srcY=SHELL_15_Y; srcW=SHELL_15_WIDTH; srcH=SHELL_15_HEIGHT; break;
+      default: q = q->next; continue;
+    }
+
+    /* World-pixel coords as float (no >>4 floor). */
+    float wpx = (float)q->x / 16.0f;
+    float wpy = (float)q->y / 16.0f;
+
+    /* Same screen-coord convention mapViewDrawShells uses:
+     *   sx = originX - tileW + bbx*zf - edgeX
+     * where bbx is in game pixels.  We have wpx in game pixels
+     * directly (sub-pixel float). */
+    float sx = (float)originX - (float)tileW
+             + wpx * (float)zf - (float)edgeX;
+    float sy = (float)originY - (float)tileH
+             + wpy * (float)zf - (float)edgeY;
+
+    bool useRotate = (tileLoaderThemeRotates() && dir != 0);
+    if (useRotate) {
+      /* Pivot at sprite-local (1.5, 0) — the N-facing tip pixel. */
+      sx -= 1.5f * (float)zf;
+      sy -= 0.0f * (float)zf;
+      srcX = SHELL_0_X;
+      srcY = SHELL_0_Y;
+      srcW = SHELL_0_WIDTH;
+      srcH = SHELL_0_HEIGHT;
+    } else {
+      sx -= kTipCol[dir] * (float)zf;
+      sy -= kTipRow[dir] * (float)zf;
+    }
+
+    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
+                       (float)(srcW * ss), (float)(srcH * ss) };
+    SDL_FRect dstR = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
+    if (useRotate) {
+      SDL_FPoint pivot = { 1.5f * (float)zf, 0.0f };
+      double angle = (double)dir * 22.5;
+      SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
+                               angle, &pivot, SDL_FLIP_NONE);
+    } else {
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    }
+    q = q->next;
   }
 }
 

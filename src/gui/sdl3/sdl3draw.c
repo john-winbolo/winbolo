@@ -46,6 +46,7 @@
 #include "cursor.h"
 #include "mapview.h"
 #include "override_mode.h"
+#include "gfx_settings.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -1500,6 +1501,13 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       gCurrentEdgeX = edgeX;
       gCurrentEdgeY = edgeY;
       mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
+      /* Smooth Animation Style: re-draw shells from sim at sub-wu so
+       * the on-screen position matches q->x / q->y exactly instead of
+       * the screenBullet's already-floored mx/my. */
+      if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH && cs) {
+        mapViewDrawShellsFromSim(&mvCtx, &cs->sim,
+                                 originX, originY, tileW, tileH, edgeX, edgeY);
+      }
       mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);

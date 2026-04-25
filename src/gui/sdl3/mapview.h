@@ -51,6 +51,19 @@ extern int mapViewPosY[256];
 /* Initialize lookup tables. Called once at startup. */
 void mapViewInit(void);
 
+/* Smooth-mode shell render: walks sim->shs and draws each live
+ * shell at its full 1/256-tile (sub-wu) position with the same
+ * tip-anchor / ingamerotate logic as the classic path.  Called
+ * after mapViewDrawShells when Animation Style is Smooth so the
+ * tip-anchor lands on the shell's authoritative coordinate.  Pass
+ * the same originX/Y/edgeX/Y/tileW/tileH the sprite renders use. */
+/* Forward decl: GameSim is the typedef'd struct in game_sim.h. */
+struct GameSim;
+void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
+                              int originX, int originY,
+                              int tileW, int tileH,
+                              int edgeX, int edgeY);
+
 /* Draw pre-built tile buffer. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,
