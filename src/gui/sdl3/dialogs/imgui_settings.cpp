@@ -31,6 +31,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -113,6 +115,71 @@ extern "C" {
   bool iosCrashReportingGetEnabled(void);
   void iosCrashReportingSetEnabled(bool enabled);
 #endif
+}
+
+/* Try to find a theme's tank sprite file.  Returns true on success and
+ * fills outPath with the resolved path (.svg or .png).  themeName ==
+ * NULL or "" means the default (data/svg/<base>).  Falls through to
+ * data/svg/ if the theme is missing the asset. */
+static bool findThemeAsset(const char *themeName, const char *base,
+                           char *outPath, size_t outSize) {
+    auto tryPath = [&](const char *fmt, const char *a, const char *b,
+                       const char *ext) -> bool {
+        snprintf(outPath, outSize, fmt, a, b, ext);
+        SDL_PathInfo info;
+        return SDL_GetPathInfo(outPath, &info);
+    };
+    if (themeName && themeName[0]) {
+        if (tryPath("data/theme/%s/%s.%s", themeName, base, "svg")) return true;
+        if (tryPath("data/theme/%s/%s.%s", themeName, base, "png")) return true;
+    }
+    /* Fallback to default svg/png. */
+    snprintf(outPath, outSize, "data/svg/%s.svg", base);
+    SDL_PathInfo info;
+    if (SDL_GetPathInfo(outPath, &info)) return true;
+    snprintf(outPath, outSize, "data/svg/%s.png", base);
+    return SDL_GetPathInfo(outPath, &info);
+}
+
+/* Rasterize an SVG to an SDL_Texture at the given size.  Returns NULL
+ * if path doesn't end in .svg or load fails. */
+static SDL_Texture *loadSvgToTexture(SDL_Renderer *r, const char *path, int size) {
+    if (!path) return nullptr;
+    size_t n = strlen(path);
+    if (n < 4 || strcmp(path + n - 4, ".svg") != 0) return nullptr;
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+    float scale = (float)size / image->width;
+    if (image->height * scale > (float)size) scale = (float)size / image->height;
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    float offX = ((float)w - image->width  * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+    return tex;
+}
+
+/* True when the theme dir has only the _00 sprite for tanks (i.e. an
+ * "_ingamerotate" theme), so previews must rotate the single sprite
+ * to show all directions. */
+static bool themeIsIngamerotate(const char *themeName) {
+    if (!themeName || !themeName[0]) return false;
+    /* Same convention as tileLoaderThemeRotates. */
+    const char *suffix = "_ingamerotate";
+    size_t n = strlen(themeName), s = strlen(suffix);
+    return n >= s && strcmp(themeName + n - s, suffix) == 0;
 }
 
 extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererArg) {
@@ -262,12 +329,33 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         ImGui::EndGroup();
     }
 
-    /* Rotating tank preview — needs renderer for SDL_RenderTextureRotated. */
+    /* Rotating tank preview — loads the SELECTED theme's tank_00
+     * directly from disk so the preview reflects what Apply would do,
+     * not just the currently-active atlas. */
     if (!renderer) return;
     static SDL_Texture *previewTarget = nullptr;
+    static SDL_Texture *previewTankTex = nullptr;   /* loaded tank sprite */
+    static int  previewLoadedIdx = -1;              /* which themeDirs idx is loaded */
+    static bool previewIsRotate  = false;           /* ingamerotate? */
     static double rotPreview = 0.0;
     static Uint64 rotLastMs = 0;
-    const int previewSize = 96;
+    const int previewSize    = 96;
+    const int tankRasterSize = 64;  /* internal texture size */
+
+    /* Reload tank texture when selection changes. */
+    if (previewLoadedIdx != s_previewThemeIdx) {
+        previewLoadedIdx = s_previewThemeIdx;
+        if (previewTankTex) { SDL_DestroyTexture(previewTankTex); previewTankTex = nullptr; }
+        const char *themeName = (s_previewThemeIdx == 0)
+                                  ? ""  /* default */
+                                  : themeDirs[s_previewThemeIdx].c_str();
+        previewIsRotate = themeIsIngamerotate(themeName);
+        char path[1024];
+        if (findThemeAsset(themeName, "tank_00", path, sizeof(path))) {
+            previewTankTex = loadSvgToTexture(renderer, path, tankRasterSize);
+        }
+    }
+
     if (!previewTarget) {
         previewTarget = SDL_CreateTexture(renderer,
             SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET,
@@ -289,12 +377,6 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         SDL_SetRenderTarget(renderer, previewTarget);
         SDL_SetRenderDrawColor(renderer, 30, 30, 36, 255);
         SDL_RenderClear(renderer);
-        float ascaleX = texW / 496.0f;
-        float ascaleY = texH / 176.0f;
-        SDL_FRect srcR = { (float)TANK_SELF_0_X * ascaleX,
-                           (float)TANK_SELF_0_Y * ascaleY,
-                           (float)TILE_SIZE_X * ascaleX,
-                           (float)TILE_SIZE_Y * ascaleY };
         float dstSize = (float)previewSize * 0.7f;
         SDL_FRect dstR = {
             ((float)previewSize - dstSize) * 0.5f,
@@ -302,8 +384,25 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
             dstSize, dstSize
         };
         SDL_FPoint pivot = { dstSize * 0.5f, dstSize * 0.5f };
-        SDL_RenderTextureRotated(renderer, atlas, &srcR, &dstR,
-                                 rotPreview, &pivot, SDL_FLIP_NONE);
+        if (previewTankTex) {
+            /* Rotate continuously regardless of theme — gives the
+             * "what does each direction look like" feel.  For non-
+             * ingamerotate themes this still shows the _00 sprite
+             * tilted, which is informative even if the in-game
+             * render would swap to _01.._15 for those angles. */
+            SDL_RenderTextureRotated(renderer, previewTankTex, NULL, &dstR,
+                                     rotPreview, &pivot, SDL_FLIP_NONE);
+        } else {
+            /* Theme has no tank_00 file — fall back to the live atlas. */
+            float ascaleX = texW / 496.0f;
+            float ascaleY = texH / 176.0f;
+            SDL_FRect srcR = { (float)TANK_SELF_0_X * ascaleX,
+                               (float)TANK_SELF_0_Y * ascaleY,
+                               (float)TILE_SIZE_X   * ascaleX,
+                               (float)TILE_SIZE_Y   * ascaleY };
+            SDL_RenderTextureRotated(renderer, atlas, &srcR, &dstR,
+                                     rotPreview, &pivot, SDL_FLIP_NONE);
+        }
         SDL_SetRenderTarget(renderer, prevTarget);
 
         ImGui::Spacing();
@@ -311,12 +410,24 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         ImGui::Image((ImTextureID)(intptr_t)previewTarget,
                      ImVec2((float)previewSize, (float)previewSize));
         ImGui::SameLine();
-        ImGui::TextDisabled(
-            "Live preview of TANK_SELF_0 from the\n"
-            "active theme, rotated continuously.\n"
-            "With stock_svg_ingamerotate this is\n"
-            "what every facing direction will look\n"
-            "like in-game.");
+        if (previewTankTex) {
+            ImGui::TextDisabled(
+                previewIsRotate
+                    ? "Selected theme's tank_00.svg, rotated\n"
+                      "continuously — this is exactly what\n"
+                      "every facing direction will look like\n"
+                      "(ingamerotate theme rotates _00 in\n"
+                      "place at full 256-bolo-degree precision)."
+                    : "Selected theme's tank_00.svg, rotated\n"
+                      "for preview.  In-game this theme would\n"
+                      "swap between tank_00..tank_15 sprites\n"
+                      "instead of rotating _00, but the still\n"
+                      "is the actual asset you'd see facing N.");
+        } else {
+            ImGui::TextDisabled(
+                "(tank_00 not found in this theme — falling\n"
+                "back to live atlas)");
+        }
     }
 }
 
