@@ -1647,7 +1647,9 @@ bool frontEndTutorial(BYTE pos) {
    * frontEndTutorial() no-ops on future ticks and the server stops
    * auto-halting the tank at old trigger rows. The game timer keeps
    * running — the old implementation removed it, locking the player
-   * out of movement, which is not the behaviour we want. */
+   * out of movement, which is not the behaviour we want.
+   * Also persist that the tutorial is complete so the welcome menu
+   * stops offering it (the player can re-enable from Settings). */
   if (tutorialStepIdx == tutorialStepCount - 1) {
     isTutorial = FALSE;
     if (humanSim) humanSim->sim.isTutorial = false;
@@ -1655,6 +1657,7 @@ bool frontEndTutorial(BYTE pos) {
       ServerSim *srv = gameFrontGetServerSim();
       if (srv) srv->sim.isTutorial = false;
     }
+    gameFrontSetShowTutorialButton(false);
   }
   clientMutexWaitFor();
   tutorialServerPaused = FALSE;

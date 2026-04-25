@@ -341,6 +341,21 @@ extern "C" void imguiSettingsShow(void) {
             }
         }
 
+        /* ---- Tutorial ---- */
+        if (ImGui::CollapsingHeader("Tutorial", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Button("Play Tutorial", ImVec2(140, 0))) {
+                gameFrontRequestPlayTutorial();
+                running = false;  /* Close settings; openSettings handler routes to openTutorial. */
+            }
+            ImGui::SameLine();
+            {
+                bool showOnMain = gameFrontGetShowTutorialButton();
+                if (ImGui::Checkbox("Show on main menu", &showOnMain)) {
+                    gameFrontSetShowTutorialButton(showOnMain);
+                }
+            }
+        }
+
         /* ---- Sound ---- */
         if (ImGui::CollapsingHeader("Sound", ImGuiTreeNodeFlags_DefaultOpen)) {
             {
