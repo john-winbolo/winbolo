@@ -49,9 +49,12 @@
 #include "sounddist.h"
 #include "util.h"
 #include "position_history.h"
+#include "../gui/lang.h"
 
 typedef struct GameSimCallbacks {
-    void (*messageAdd)(void *ctx, messageType msgType, char *top, char *bottom);
+    void (*messageAdd)(void *ctx, messageType msgType,
+                       langid topId, langid bodyId,
+                       const MessageArgs *args);
     void (*soundDist)(void *ctx, sndEffects value, BYTE mx, BYTE my);
     void (*soundDistShoot)(void *ctx, BYTE mx, BYTE my, BYTE owner);
     void (*soundDistTankHit)(void *ctx, BYTE mx, BYTE my, BYTE hitPlayer);

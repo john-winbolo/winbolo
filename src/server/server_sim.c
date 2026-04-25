@@ -159,29 +159,40 @@ static tankButton translateInputToTankButton(uint8_t buttons) {
     return TNONE;
 }
 
-/* Map assistant message strings to wire IDs for EVENT_ASSISTANT_MSG */
-static uint8_t assistantMsgStringToId(const char *bottom) {
-    if (strcmp(bottom, "You cannot build until your new man parachutes in") == 0) return ASSIST_MSG_MAN_DEAD;
-    if (strcmp(bottom, "There is no tree to farm there") == 0) return ASSIST_MSG_NO_TREE;
-    if (strcmp(bottom, "You cannot build that there") == 0) return ASSIST_MSG_NO_BUILD;
-    if (strcmp(bottom, "The man cannot build under your boat") == 0) return ASSIST_MSG_NO_BUILD_BOAT;
-    if (strcmp(bottom, "You don't have the trees you require to build that") == 0) return ASSIST_MSG_INSUFFICIENT_TREES;
-    if (strcmp(bottom, "The man cannot build on a tank") == 0) return ASSIST_MSG_BUILDTANK;
-    if (strcmp(bottom, "That pillbox does not need repairing") == 0) return ASSIST_MSG_PILL_NO_REPAIR;
-    if (strcmp(bottom, "You have no pillbox to place") == 0) return ASSIST_MSG_NO_PILLS;
-    if (strcmp(bottom, "You have no mines to place") == 0) return ASSIST_MSG_INSUFFICIENT_MINES;
-    if (strcmp(bottom, "The man cannot build on a mine. It would kill him.") == 0) return ASSIST_MSG_PILL_ON_MINE;
-    if (strcmp(bottom, "Tank Sunk in Deep Sea") == 0) return ASSIST_MSG_TANK_SUNK;
-    return 0;
+/* Map an assistant body lang ID to the wire ID carried by
+ * EVENT_ASSISTANT_MSG. Wire format unchanged — clients still receive
+ * [targetPlayer, msgId] and resolve back to the matching LGM_* /
+ * MESSAGE_* string locally. Returns 0 for any non-assistant body. */
+static uint8_t assistantBodyIdToWireId(langid bodyId) {
+    switch (bodyId) {
+        case LGM_MAN_DEAD:               return ASSIST_MSG_MAN_DEAD;
+        case LGM_NO_TREE:                return ASSIST_MSG_NO_TREE;
+        case LGM_NO_BUILD:               return ASSIST_MSG_NO_BUILD;
+        case LGM_NO_BUILD_UNDER_BOAT:    return ASSIST_MSG_NO_BUILD_BOAT;
+        case LGM_INSUFFICIENT_TREES:     return ASSIST_MSG_INSUFFICIENT_TREES;
+        case LGM_BUILDTANK:              return ASSIST_MSG_BUILDTANK;
+        case LGM_PILL_NO_NEED_REPAIR:    return ASSIST_MSG_PILL_NO_REPAIR;
+        case LGM_NO_PILLS:               return ASSIST_MSG_NO_PILLS;
+        case LGM_INSUFFICIENT_MINES:     return ASSIST_MSG_INSUFFICIENT_MINES;
+        case LGM_PILL_NO_BUILD_ON_MINE:  return ASSIST_MSG_PILL_ON_MINE;
+        case MESSAGE_TANKSUNK:           return ASSIST_MSG_TANK_SUNK;
+        default:                         return 0;
+    }
 }
 
-/* Server-side messageAdd callback — emits EVENT_ASSISTANT_MSG for assistant messages */
-static void serverSimCbMessageAdd(void *ctx, messageType msgType, char *top, char *bottom) {
+/* Server-side messageAdd callback. Only assistant messages turn into
+ * EVENT_ASSISTANT_MSG events; other message types (newswire, chat, AI)
+ * are client-local — the server has no listener for them, so they are
+ * silently dropped. */
+static void serverSimCbMessageAdd(void *ctx, messageType msgType,
+                                  langid topId, langid bodyId,
+                                  const MessageArgs *args) {
     ServerSim *sim = (ServerSim *)ctx;
-    (void)top;
+    (void)topId;
+    (void)args;
 
     if (msgType == assistantMessage) {
-        uint8_t msgId = assistantMsgStringToId(bottom);
+        uint8_t msgId = assistantBodyIdToWireId(bodyId);
         if (msgId != 0) {
             GameEvent ev;
             ev.type = EVENT_ASSISTANT_MSG;
