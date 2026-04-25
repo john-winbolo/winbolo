@@ -1561,12 +1561,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
+      /* Push live LGM sub-wu offsets so the classic LGM render adds
+       * the fractional game-pixel from sim on top of (mx,px). */
+      if (cs) mapViewSetLgmsFromSim(&cs->sim,
+                                     (int)cs->xOffset, (int)cs->yOffset);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
-      if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH && cs) {
-        mapViewDrawLGMsFromSim(&mvCtx, &cs->sim,
-                               (int)cs->xOffset, (int)cs->yOffset,
-                               originX, originY, tileW, tileH, edgeX, edgeY);
-      }
 
       /* Ctrl-O override mode: draw hitbox/sub-pixel overlays on top of
        * the world view.  No-op when off. */

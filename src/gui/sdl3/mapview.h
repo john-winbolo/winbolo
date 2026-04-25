@@ -66,6 +66,9 @@ struct GameSim;
  * normal position so shells slide at 1/256-tile precision. */
 void mapViewSetShellsFromSim(struct GameSim *sim, int xOffset, int yOffset);
 
+/* Same idea for LGMs — populate before mapViewDrawLGMs. */
+void mapViewSetLgmsFromSim(struct GameSim *sim, int xOffset, int yOffset);
+
 /* xOffset/yOffset are the engine's camera tile origin (cs->xOffset/Y).
  * Sim positions are world coords; the classic edgeX/Y is buffer-relative
  * (camera offset is implicit in the pre-built screen buffers), so we

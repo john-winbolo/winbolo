@@ -884,24 +884,61 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
   }
 }
 
+/* Smooth-mode sub-wu cache for LGMs.  Keyed by world tile only
+ * (one ground LGM per tile is the practical case); stores the
+ * fractional game-pixel offset.  Same additive pattern as shells. */
+typedef struct { BYTE worldX, worldY; float fracX, fracY; } LgmSubPx;
+#define MAX_LGM_CACHE 32
+static LgmSubPx s_lgmSubPx[MAX_LGM_CACHE];
+static int      s_lgmSubPxCount = 0;
+static int      s_lgmCacheXOffset = 0;
+static int      s_lgmCacheYOffset = 0;
+
+void mapViewSetLgmsFromSim(struct GameSim *sim, int xOffset, int yOffset) {
+  s_lgmSubPxCount = 0;
+  s_lgmCacheXOffset = xOffset;
+  s_lgmCacheYOffset = yOffset;
+  if (!sim) return;
+  for (int i = 0; i < MAX_TANKS && s_lgmSubPxCount < MAX_LGM_CACHE; i++) {
+    lgm *l = &sim->lgmen[i];
+    if (*l == NULL) continue;
+    if ((*l)->inTank || (*l)->isDead) continue;
+    BYTE wx = (BYTE)((*l)->x >> 8);
+    BYTE wy = (BYTE)((*l)->y >> 8);
+    float gpxF = (float)(*l)->x / 16.0f;
+    float gpyF = (float)(*l)->y / 16.0f;
+    float fracX = gpxF - (float)((int)gpxF);
+    float fracY = gpyF - (float)((int)gpyF);
+    s_lgmSubPx[s_lgmSubPxCount++] =
+      (LgmSubPx){ wx, wy, fracX, fracY };
+  }
+}
+
+static bool lgmSubPxLookup(BYTE bufMx, BYTE bufMy,
+                           float *outFracX, float *outFracY) {
+  BYTE wx = (BYTE)(bufMx + s_lgmCacheXOffset);
+  BYTE wy = (BYTE)(bufMy + s_lgmCacheYOffset);
+  for (int i = 0; i < s_lgmSubPxCount; i++) {
+    if (s_lgmSubPx[i].worldX == wx && s_lgmSubPx[i].worldY == wy) {
+      *outFracX = s_lgmSubPx[i].fracX;
+      *outFracY = s_lgmSubPx[i].fracY;
+      return true;
+    }
+  }
+  return false;
+}
+
 /*********************************************************
  * mapViewDrawLGMs — moved from sdl3DrawLGMs.
  *********************************************************/
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY) {
-  /* Smooth animation: skip ground-LGM frames here so the sub-wu pass
-   * (mapViewDrawLGMsFromSim) draws them at full precision.  Helicopter
-   * frame still renders here — that one comes from screen state. */
-  bool skipGround = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
+  bool smooth = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
     screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
-
-    if (skipGround && (frame == LGM0 || frame == LGM1 || frame == LGM2)) {
-      continue;
-    }
 
     int srcX, srcY, srcW, srcH;
     switch (frame) {
@@ -925,9 +962,21 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
      * the sim's lgman->x/y).  Without this the sprite top-left lands
      * on the body coord, which puts the head 2 pixels north of where
      * the engine actually thinks the LGM is. */
-    if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
+    bool isGround = (frame == LGM0 || frame == LGM1 || frame == LGM2);
+    if (isGround) {
       sx -= 1.5f * (float)ctx->zoomFactor;
       sy -= 2.0f * (float)ctx->zoomFactor;
+    }
+
+    /* Smooth-mode sub-wu correction: add the fractional game-pixel
+     * from sim to the classic position.  Purely additive — if the
+     * cache misses, classic position still draws. */
+    if (smooth && isGround) {
+      float fracX = 0.0f, fracY = 0.0f;
+      if (lgmSubPxLookup(mx, my, &fracX, &fracY)) {
+        sx += fracX * (float)ctx->zoomFactor;
+        sy += fracY * (float)ctx->zoomFactor;
+      }
     }
 
     {
@@ -935,6 +984,21 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
       SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
       SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    }
+
+    /* True-world-position marker: orange 1-wu dot at the LGM body
+     * anchor (1.5, 2.0 sprite-local).  In smooth mode it tracks
+     * sub-wu via the cache; otherwise sits at the discrete game-pixel
+     * position.  Helicopter frame skipped — it has no body anchor. */
+    if (isGround) {
+      float anchorX = sx + 1.5f * (float)ctx->zoomFactor;
+      float anchorY = sy + 2.0f * (float)ctx->zoomFactor;
+      float oneWu = (float)ctx->zoomFactor / 16.0f;
+      float dotSize = oneWu < 1.0f ? 1.0f : oneWu;
+      SDL_FRect dot = { anchorX - dotSize * 0.5f, anchorY - dotSize * 0.5f,
+                        dotSize, dotSize };
+      SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
+      SDL_RenderFillRect(ctx->renderer, &dot);
     }
   }
 }
