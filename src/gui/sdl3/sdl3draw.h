@@ -98,6 +98,15 @@ bool sdl3DrawSetup(int zoomFactor);
 void sdl3DrawCleanup(void);
 
 /*********************************************************
+*NAME:          sdl3DrawReloadTiles
+*PURPOSE:
+*  Force a tile-sheet rebuild on the next frame.  Call after
+*  switching themes (tileLoaderSetTheme) so new sprites take
+*  effect without restarting the game.
+*********************************************************/
+void sdl3DrawReloadTiles(void);
+
+/*********************************************************
 *NAME:          sdl3DrawMainScreen
 *PURPOSE:
 *  Mirror of drawMainScreen. Draws background chrome,

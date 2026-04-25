@@ -104,12 +104,15 @@ Phase 8: LGM 1-wu boundary stop  — NOT STARTED
   Risky game-logic change; deferred for the user to review/test.
 
 ==========================================================
-PUSHED TO origin/andrew-hitbox-and-themes — three commits
+PUSHED TO origin/andrew-hitbox-and-themes — five commits
 ==========================================================
 
   ea3fb13  Sub-pixel shell tips, LGM body anchor, broaden capture_pill
   f7bd1dc  WinBolo: Ctrl-O hitbox overlay mode (toggle + draw)
   d67e613  Override mode: world grid + Ctrl-[/Ctrl-] speed control
+  dd90558  Update progress.txt with detailed status, design notes, TODOs
+  d903bbb  SVG theme generator + tileLoader theme override + WINBOLO_THEME env
+  (uncommitted) sdl3DrawReloadTiles + small docs
 
 What you can test right now in WinBolo.exe (build/WinBolo.exe):
 
@@ -121,6 +124,20 @@ What you can test right now in WinBolo.exe (build/WinBolo.exe):
                             (caps at +200ms extra delay)
   Ctrl-]                    speed up by 10 ms (caps at normal)
   Off-toggle resets speed.
+
+  WINBOLO_THEME env          select a theme dir under data/theme/
+                             before launching:
+                               cmd> set WINBOLO_THEME=stock_svg & WinBolo.exe
+                               cmd> set WINBOLO_THEME=stock_svg_pixelgrouped & WinBolo.exe
+                             (ingamerotate is incomplete — engine
+                              doesn't rotate yet, so missing _01.._15
+                              variants won't render in that theme.)
+
+  sdl3DrawReloadTiles()      C-side API.  Call after
+                             tileLoaderSetTheme(name) to force a
+                             tile-sheet rebuild without restarting.
+                             A future Settings UI's Apply button
+                             should chain these two.
 
 What's still TODO (in priority-ish order):
 

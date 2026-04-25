@@ -282,6 +282,16 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
 
 /* sdl3SetupDrawArrays moved to mapview.c as mapViewInit() */
 /* (old sdl3SetupDrawArrays body removed — now in mapview.c) */
+/* Public reload: drop the cached tile texture so the next render
+ * call rebuilds the sheet, picking up any theme change made via
+ * tileLoaderSetTheme(). */
+void sdl3DrawReloadTiles(void) {
+  if (gTilesTex != NULL) {
+    SDL_DestroyTexture(gTilesTex);
+    gTilesTex = NULL;
+  }
+}
+
 /* Builds the sprite sheet from individual SVG/PNG files (with BMP fallback)
  * and creates gTilesTex from the assembled surface. */
 static bool sdl3LoadTiles(void) {
