@@ -440,9 +440,14 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
                 SDL_RenderTexture(renderer, frameTex, NULL, &dstR);
             }
         } else if (previewTankFrames[0]) {
-            /* Only _00 exists (ingamerotate-style): rotate it. */
+            /* Only _00 exists (ingamerotate-style): rotate it.  Step
+             * in 22.5° increments to match the in-game render, which
+             * bakes 16 discrete sprites at sheet build time and never
+             * rotates at runtime. */
+            int frameIdx = ((int)(rotPreview / 22.5)) & 15;
+            double quantizedAngle = (double)frameIdx * 22.5;
             SDL_RenderTextureRotated(renderer, previewTankFrames[0], NULL, &dstR,
-                                     rotPreview, &pivot, SDL_FLIP_NONE);
+                                     quantizedAngle, &pivot, SDL_FLIP_NONE);
         } else {
             /* Theme has no tank_00 file — fall back to the live atlas. */
             float ascaleX = texW / 496.0f;
@@ -469,9 +474,10 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
                 "rotation).");
         } else if (previewTankFrames[0]) {
             ImGui::TextDisabled(
-                "Only tank_self_00 in this theme — rotated\n"
-                "continuously.  In-game this gives full\n"
-                "256-bolo-degree precision rotation.");
+                "Only tank_self_00 in this theme — rotated in\n"
+                "22.5° steps.  In-game the 16 directional sprites\n"
+                "are baked from _00 at sheet build, so this is\n"
+                "exactly what each facing direction looks like.");
         } else {
             ImGui::TextDisabled(
                 "(tank_self_00 not found — falling back\n"
