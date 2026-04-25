@@ -754,33 +754,28 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       default: continue;
     }
 
-    /* Smooth-mode override: replace the engine's discrete game-pixel
-     * (mx,px) with the live tank's full sub-wu world position so the
-     * sprite tracks at 1/256-tile precision instead of snapping to
-     * the 16-pixel-per-tile grid.  Falls through to the classic
-     * (mx,px) packing when smooth is off or the cache isn't valid. */
-    bool smooth = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH)
-                  && s_tankPosValid && playerNum < MAX_TANKS;
-    float sx, sy;
-    if (smooth) {
-      /* Tank world coords are the centre; sprite is 16x16 game pixels
-       * so top-left = centre - 8 game pixels. */
-      float gpxCx = (float)s_tankPosX[playerNum] / 16.0f;
-      float gpyCy = (float)s_tankPosY[playerNum] / 16.0f;
-      float gpxTL = gpxCx - 8.0f;
-      float gpyTL = gpyCy - 8.0f;
-      sx = (float)originX - (float)tileW
-         + gpxTL * (float)ctx->zoomFactor - (float)edgeX;
-      sy = (float)originY - (float)tileH
-         + gpyTL * (float)ctx->zoomFactor - (float)edgeY;
-    } else {
-      /* Win32 adds 2 to px/py before computing position */
-      int apx = (int)px;// + 2;
-      int apy = (int)py;// + 2;
-      int bbx = (int)mx * TILE_SIZE_X + apx;
-      int bby = (int)my * TILE_SIZE_Y + apy;
-      sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
-      sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+    /* Win32 adds 2 to px/py before computing position */
+    int apx = (int)px;// + 2;
+    int apy = (int)py;// + 2;
+    int bbx = (int)mx * TILE_SIZE_X + apx;
+    int bby = (int)my * TILE_SIZE_Y + apy;
+    float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
+    float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+
+    /* Smooth-mode sub-wu correction: the engine packs the tank as a
+     * discrete game-pixel position (snaps to the 1/16-tile grid).
+     * Add the fractional game-pixel from the sim's WORLD coordinate
+     * back on top so the sprite slides at full 1/256-tile precision
+     * — purely additive, so if the cache isn't ready the classic
+     * position is still correct. */
+    if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH
+        && s_tankPosValid && playerNum < MAX_TANKS) {
+      float gpxF = (float)s_tankPosX[playerNum] / 16.0f - 8.0f; /* TL game-px */
+      float gpyF = (float)s_tankPosY[playerNum] / 16.0f - 8.0f;
+      float fracX = gpxF - (float)((int)gpxF);
+      float fracY = gpyF - (float)((int)gpyF);
+      sx += fracX * (float)ctx->zoomFactor;
+      sy += fracY * (float)ctx->zoomFactor;
     }
 
     {
