@@ -626,14 +626,22 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
  * Note: does NOT draw tank labels (labels need fonts
  * which stay in sdl3draw.c).
  *********************************************************/
-/* No-op: the previous design pushed live tank angles for in-game 256
- * bolo-degree rotation.  Now ingamerotate themes bake their 16
- * directional sprites at sheet build time, so per-direction rendering
- * is handled by the existing screenTanks frame index — no runtime
- * angle plumbing needed.  Kept as an exported symbol so sdl3draw.c's
- * call site doesn't have to be torn out. */
+/* Per-player sim cache used by mapViewDrawTanks when Smooth animation
+ * is on, to render live tanks at full sub-wu precision instead of the
+ * game-pixel-discrete (mx,px) the engine packs into screenTanks. */
+static WORLD s_tankPosX[MAX_TANKS];
+static WORLD s_tankPosY[MAX_TANKS];
+static bool  s_tankPosValid = false;
+
 void mapViewSetTankAnglesFromSim(struct GameSim *sim) {
-  (void)sim;
+  s_tankPosValid = false;
+  if (!sim) return;
+  for (int i = 0; i < MAX_TANKS; i++) {
+    tank *tk = &sim->tanks[i];
+    if (*tk == NULL) { s_tankPosX[i] = 0; s_tankPosY[i] = 0; continue; }
+    tankGetWorld(tk, &s_tankPosX[i], &s_tankPosY[i]);
+  }
+  s_tankPosValid = true;
 }
 
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
@@ -746,13 +754,34 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       default: continue;
     }
 
-    /* Win32 adds 2 to px/py before computing position */
-    int apx = (int)px;// + 2;
-    int apy = (int)py;// + 2;
-    int bbx = (int)mx * TILE_SIZE_X + apx;
-    int bby = (int)my * TILE_SIZE_Y + apy;
-    float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
-    float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+    /* Smooth-mode override: replace the engine's discrete game-pixel
+     * (mx,px) with the live tank's full sub-wu world position so the
+     * sprite tracks at 1/256-tile precision instead of snapping to
+     * the 16-pixel-per-tile grid.  Falls through to the classic
+     * (mx,px) packing when smooth is off or the cache isn't valid. */
+    bool smooth = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH)
+                  && s_tankPosValid && playerNum < MAX_TANKS;
+    float sx, sy;
+    if (smooth) {
+      /* Tank world coords are the centre; sprite is 16x16 game pixels
+       * so top-left = centre - 8 game pixels. */
+      float gpxCx = (float)s_tankPosX[playerNum] / 16.0f;
+      float gpyCy = (float)s_tankPosY[playerNum] / 16.0f;
+      float gpxTL = gpxCx - 8.0f;
+      float gpyTL = gpyCy - 8.0f;
+      sx = (float)originX - (float)tileW
+         + gpxTL * (float)ctx->zoomFactor - (float)edgeX;
+      sy = (float)originY - (float)tileH
+         + gpyTL * (float)ctx->zoomFactor - (float)edgeY;
+    } else {
+      /* Win32 adds 2 to px/py before computing position */
+      int apx = (int)px;// + 2;
+      int apy = (int)py;// + 2;
+      int bbx = (int)mx * TILE_SIZE_X + apx;
+      int bby = (int)my * TILE_SIZE_Y + apy;
+      sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
+      sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+    }
 
     {
       int ss = ctx->sheetScale;
