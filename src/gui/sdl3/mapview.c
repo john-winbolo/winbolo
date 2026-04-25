@@ -512,74 +512,33 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      *
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
-    bool useRotate = false;
-    double rotAngleDeg = 0.0;
-    int srcXrot = srcX, srcYrot = srcY, srcWrot = srcW, srcHrot = srcH;
-
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
       int dir = frame - SHELL_DIR0;
 
-      if (tileLoaderThemeRotates() && dir != 0) {
-        /* Ingamerotate theme: only shell_00 was loaded into the atlas
-         * (at SHELL_0_X / SHELL_0_Y).  Rotate it for dir != 0. */
-        srcXrot = SHELL_0_X;
-        srcYrot = SHELL_0_Y;
-        srcWrot = SHELL_0_WIDTH;
-        srcHrot = SHELL_0_HEIGHT;
-        rotAngleDeg = (double)dir * 22.5;  /* 16 dirs * 22.5° = 360° */
-        useRotate = true;
-      }
-
-      /* Sub-pixel tip anchors (game-pixel units inside the sprite).
-       * Layout: cardinals at centre of opposite edge, true diagonals
-       * at outermost tip-pixel corner, in-betweens cardinal ± sin(22.5°)
-       * on perpendicular axis (sin(22.5°) ≈ 0.38268). */
+      /* Sub-pixel tip anchors (game-pixel units inside the sprite). */
       static const float kTipCol[16] = {
-        1.5f,    1.883f,  4.0f, 4.0f,  /* N   NNE  NE   ENE  */
-        4.0f,    4.0f,    4.0f, 1.883f,/* E   ESE  SE   SSE  */
-        1.5f,    1.117f,  0.0f, 0.0f,  /* S   SSW  SW   WSW  */
-        0.0f,    0.0f,    0.0f, 1.117f /* W   WNW  NW   NNW  */
+        1.5f,    1.883f,  4.0f, 4.0f,
+        4.0f,    4.0f,    4.0f, 1.883f,
+        1.5f,    1.117f,  0.0f, 0.0f,
+        0.0f,    0.0f,    0.0f, 1.117f
       };
       static const float kTipRow[16] = {
-        0.0f,    0.0f,    0.0f, 1.117f,/* N   NNE  NE   ENE  */
-        1.5f,    1.883f,  4.0f, 4.0f,  /* E   ESE  SE   SSE  */
-        4.0f,    4.0f,    3.0f, 1.883f,/* S   SSW  SW   WSW  */
-        1.5f,    1.117f,  0.0f, 0.0f   /* W   WNW  NW   NNW  */
+        0.0f,    0.0f,    0.0f, 1.117f,
+        1.5f,    1.883f,  4.0f, 4.0f,
+        4.0f,    4.0f,    3.0f, 1.883f,
+        1.5f,    1.117f,  0.0f, 0.0f
       };
-
-      if (useRotate) {
-        /* For rotated rendering, place the dest rect so its tip
-         * (1.5, 0 in the N-facing source) stays on the shell pos,
-         * then rotate around that tip pixel. */
-        sx -= 1.5f * (float)ctx->zoomFactor;
-        sy -= 0.0f * (float)ctx->zoomFactor;
-      } else {
-        sx -= kTipCol[dir] * (float)ctx->zoomFactor;
-        sy -= kTipRow[dir] * (float)ctx->zoomFactor;
-      }
+      sx -= kTipCol[dir] * (float)ctx->zoomFactor;
+      sy -= kTipRow[dir] * (float)ctx->zoomFactor;
     }
 
     int ss = ctx->sheetScale;
-    if (useRotate) {
-      SDL_FRect srcR = { (float)(srcXrot * ss), (float)(srcYrot * ss),
-                         (float)(srcWrot * ss), (float)(srcHrot * ss) };
-      SDL_FRect dstR = { sx, sy,
-                         (float)(srcWrot * ctx->zoomFactor),
-                         (float)(srcHrot * ctx->zoomFactor) };
-      /* Pivot at sprite-local (1.5, 0) in screen pixels. */
-      SDL_FPoint pivot = { 1.5f * (float)ctx->zoomFactor,
-                           0.0f * (float)ctx->zoomFactor };
-      SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex,
-                               &srcR, &dstR, rotAngleDeg,
-                               &pivot, SDL_FLIP_NONE);
-    } else {
-      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
-                         (float)(srcW * ss), (float)(srcH * ss) };
-      SDL_FRect dstR = { sx, sy,
-                         (float)(srcW * ctx->zoomFactor),
-                         (float)(srcH * ctx->zoomFactor) };
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-    }
+    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
+                       (float)(srcW * ss), (float)(srcH * ss) };
+    SDL_FRect dstR = { sx, sy,
+                       (float)(srcW * ctx->zoomFactor),
+                       (float)(srcH * ctx->zoomFactor) };
+    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 }
 
@@ -651,33 +610,13 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
     float sy = (float)originY - (float)tileH
              + wpy * (float)zf - (float)edgeY;
 
-    bool useRotate = (tileLoaderThemeRotates() && dir != 0);
-    if (useRotate) {
-      /* Pivot at sprite-local (1.5, 0) — the N-facing tip pixel. */
-      sx -= 1.5f * (float)zf;
-      sy -= 0.0f * (float)zf;
-      srcX = SHELL_0_X;
-      srcY = SHELL_0_Y;
-      srcW = SHELL_0_WIDTH;
-      srcH = SHELL_0_HEIGHT;
-    } else {
-      sx -= kTipCol[dir] * (float)zf;
-      sy -= kTipRow[dir] * (float)zf;
-    }
+    sx -= kTipCol[dir] * (float)zf;
+    sy -= kTipRow[dir] * (float)zf;
 
     SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
                        (float)(srcW * ss), (float)(srcH * ss) };
     SDL_FRect dstR = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
-    if (useRotate) {
-      SDL_FPoint pivot = { 1.5f * (float)zf, 0.0f };
-      /* Full 256-bolo-degree rotation: q->angle is 0..255 (TURNTYPE).
-       * SDL angle is degrees clockwise; Bolo 0 = North, increases CW. */
-      double angle = (double)q->angle * (360.0 / 256.0);
-      SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
-                               angle, &pivot, SDL_FLIP_NONE);
-    } else {
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-    }
+    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     q = q->next;
   }
 }
@@ -687,22 +626,14 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
  * Note: does NOT draw tank labels (labels need fonts
  * which stay in sdl3draw.c).
  *********************************************************/
-/* Per-player full-precision tank angles, optionally provided by sdl3draw
- * via mapViewSetTankAnglesFromSim().  If valid, the ingamerotate path
- * uses these (TURNTYPE 0..255 -> 360 degrees) instead of the 16-step
- * dir from screenTanks frame.  Indexed by player number. */
-static BYTE   s_tankAnglesByPlayer[MAX_TANKS];
-static bool   s_tankAnglesValid = false;
-
+/* No-op: the previous design pushed live tank angles for in-game 256
+ * bolo-degree rotation.  Now ingamerotate themes bake their 16
+ * directional sprites at sheet build time, so per-direction rendering
+ * is handled by the existing screenTanks frame index — no runtime
+ * angle plumbing needed.  Kept as an exported symbol so sdl3draw.c's
+ * call site doesn't have to be torn out. */
 void mapViewSetTankAnglesFromSim(struct GameSim *sim) {
-  s_tankAnglesValid = false;
-  if (!sim) return;
-  for (int i = 0; i < MAX_TANKS; i++) {
-    tank *tk = &sim->tanks[i];
-    if (*tk == NULL) { s_tankAnglesByPlayer[i] = 0; continue; }
-    s_tankAnglesByPlayer[i] = (BYTE)tankGetAngle(tk);
-  }
-  s_tankAnglesValid = true;
+  (void)sim;
 }
 
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
@@ -826,74 +757,10 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     {
       int ss = ctx->sheetScale;
       float inset = 0.05f;
-
-      /* Ingamerotate theme: redirect dir != 0 frames to the _0 atlas
-       * position of their tank group and rotate by dir * 22.5°. */
-      int useSrcX = srcX;
-      int useSrcY = srcY;
-      double rotAngleDeg = 0.0;
-      bool useRotate = false;
-      if (tileLoaderThemeRotates() && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
-        int dir = frame & 0x0F;
-        if (dir != 0) {
-          int group = frame >> 4;     /* 0..5 */
-          int baseFrame = group * 16; /* TANK_*_0 */
-          /* Re-run the atlas lookup with baseFrame to find _0 X/Y. */
-          int bX = 0, bY = 0;
-          switch (baseFrame) {
-            case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
-            case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
-            case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
-            case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
-            case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
-            case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
-            default: bX = srcX; bY = srcY; break;
-          }
-          useSrcX = bX;
-          useSrcY = bY;
-          rotAngleDeg = (double)dir * 22.5;
-          useRotate = true;
-        } else {
-          /* dir == 0 from screenTanks, but the live tank may have a
-           * sub-22.5° angle.  Promote to rotated render if we have
-           * full-precision angles from sim. */
-          if (s_tankAnglesValid && playerNum < MAX_TANKS
-              && s_tankAnglesByPlayer[playerNum] != 0) {
-            int group = frame >> 4;
-            int baseFrame = group * 16;
-            int bX = 0, bY = 0;
-            switch (baseFrame) {
-              case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
-              case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
-              case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
-              case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
-              case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
-              case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
-              default: bX = srcX; bY = srcY; break;
-            }
-            useSrcX = bX;
-            useSrcY = bY;
-            useRotate = true;
-          }
-        }
-        /* Override with full 256-bolo-degree rotation when we have
-         * the live tank's angle from sim. */
-        if (useRotate && s_tankAnglesValid && playerNum < MAX_TANKS) {
-          rotAngleDeg = (double)s_tankAnglesByPlayer[playerNum]
-                      * (360.0 / 256.0);
-        }
-      }
-
-      SDL_FRect srcR = { (float)(useSrcX * ss) + inset, (float)(useSrcY * ss) + inset,
+      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
                          (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
-      if (useRotate) {
-        SDL_FPoint pivot = { (float)tileW * 0.5f, (float)tileH * 0.5f };
-        SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
-                                 rotAngleDeg, &pivot, SDL_FLIP_NONE);
-      } else {
-        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-      }
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
   }
 }
