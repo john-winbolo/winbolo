@@ -351,6 +351,10 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureScaleMode(gTilesTex,
                           useLinear ? SDL_SCALEMODE_LINEAR
                                     : SDL_SCALEMODE_NEAREST);
+  /* Bake the per-direction rotated texture cache for ingamerotate
+   * themes — vector-rotated, point-sampled, on a canvas large enough
+   * that rotation never clips.  No-op for other themes. */
+  tileLoaderBuildRotatedCache(gRenderer);
   return TRUE;
 }
 
@@ -1362,6 +1366,20 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
      * bounds stay put.  Anchor the zoom on the cursor position when
      * available (mouse-wheel zoom keeps the world point under the
      * cursor stationary) — falls back to the playfield centre. */
+    /* Override mode also forces atlas NEAREST sampling for the world
+     * pass — zooming in (Ctrl-O wheel) should show crisp pixels, not
+     * blurry LINEAR-filtered upscale.  Restore at end of the world
+     * block so the rest of the frame uses the user's preference. */
+    SDL_ScaleMode savedAtlasScale = SDL_SCALEMODE_NEAREST;
+    bool atlasScaleOverridden = false;
+    if (overrideModeIsOn() && gTilesTex) {
+      SDL_GetTextureScaleMode(gTilesTex, &savedAtlasScale);
+      if (savedAtlasScale != SDL_SCALEMODE_NEAREST) {
+        SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
+        atlasScaleOverridden = true;
+      }
+    }
+
     if (overrideModeIsOn()) {
       int zmul = overrideModeZoomMul();
       if (zmul > 1) {
@@ -1600,6 +1618,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
      * playfield clip; HUD/labels stay at the unscaled zoom. */
     if (overrideModeIsOn() && overrideModeZoomMul() > 1) {
       gZoomFactor = savedZoomFactor;
+    }
+    /* Restore atlas scale mode if the override-mode world pass
+     * temporarily forced NEAREST. */
+    if (atlasScaleOverridden && gTilesTex) {
+      SDL_SetTextureScaleMode(gTilesTex, savedAtlasScale);
     }
 
     SDL_SetRenderClipRect(gRenderer, NULL);

@@ -600,10 +600,24 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     }
 
     int ss = ctx->sheetScale;
+    SDL_Texture *cachedRot = NULL;
+    TileLoaderRotInfo rotInfo;
     if (rotateLive) {
       int dir = frame - SHELL_DIR0;
-      /* dst placed so that (dst + pivot) == shell-coord (sx, sy
-       * un-tip-adjusted = the world coord in screen pixels). */
+      cachedRot = tileLoaderGetRotatedTexture(TLR_GROUP_SHELL, dir);
+    }
+    if (cachedRot && tileLoaderGetRotInfo(TLR_GROUP_SHELL, &rotInfo)) {
+      /* Pre-baked rotated texture: pivot inside cache lands on the
+       * shell's world coord (sx, sy un-tip-adjusted). */
+      float dx = sx - rotInfo.pivotX * (float)ctx->zoomFactor;
+      float dy = sy - rotInfo.pivotY * (float)ctx->zoomFactor;
+      SDL_FRect dstR = { dx, dy,
+                         (float)(rotInfo.cacheSize * ctx->zoomFactor),
+                         (float)(rotInfo.cacheSize * ctx->zoomFactor) };
+      SDL_RenderTexture(ctx->renderer, cachedRot, NULL, &dstR);
+    } else if (rotateLive) {
+      /* Cache miss fallback: SDL runtime rotation. */
+      int dir = frame - SHELL_DIR0;
       float dx = sx - 1.5f * (float)ctx->zoomFactor;
       float dy = sy;
       SDL_FRect srcR = { (float)(SHELL_0_X * ss), (float)(SHELL_0_Y * ss),
@@ -908,43 +922,58 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       float inset = 0.05f;
 
       /* Ingamerotate: theme only ships tank_*_00 of each colour.
-       * Redirect dir!=0 frames to the _0 atlas slot of their group
-       * and rotate at draw time around the sprite centre. */
-      int useSrcX = srcX;
-      int useSrcY = srcY;
-      double rotAngleDeg = 0.0;
-      bool useRotate = false;
-      if (tileLoaderThemeRotates()
-          && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
-        int dir = frame & 0x0F;
-        if (dir != 0) {
-          int group = frame >> 4;
-          int baseFrame = group * 16;
-          int bX = 0, bY = 0;
-          switch (baseFrame) {
-            case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
-            case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
-            case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
-            case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
-            case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
-            case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
-            default: bX = srcX; bY = srcY; break;
-          }
-          useSrcX = bX;
-          useSrcY = bY;
-          rotAngleDeg = (double)dir * 22.5;
-          useRotate = true;
-        }
+       * Prefer the pre-baked rotated cache (vector-rotated, point-
+       * sampled, larger canvas → no clipping).  Fall back to runtime
+       * SDL_RenderTextureRotated if the cache miss anything.  Falls
+       * through to the classic per-direction atlas slot when not
+       * ingamerotate or dir == 0. */
+      bool wantRotate = (tileLoaderThemeRotates()
+                         && frame >= TANK_SELF_0
+                         && frame <= TANK_EVILBOAT_0 + 15);
+      int dir = frame & 0x0F;
+      SDL_Texture *cachedRot = NULL;
+      TileLoaderRotInfo rotInfo;
+      bool haveRotInfo = false;
+      if (wantRotate && dir != 0) {
+        int group = frame >> 4;  /* TLR_GROUP_TANK_SELF..EVILBOAT */
+        cachedRot = tileLoaderGetRotatedTexture((TileLoaderRotGroup)group, dir);
+        haveRotInfo = tileLoaderGetRotInfo((TileLoaderRotGroup)group, &rotInfo);
       }
 
-      SDL_FRect srcR = { (float)(useSrcX * ss) + inset, (float)(useSrcY * ss) + inset,
-                         (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
-      SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
-      if (useRotate) {
+      if (cachedRot && haveRotInfo) {
+        /* Tank centre in screen coords = sprite top-left + 8*zf. */
+        float tankCx = sx + 8.0f * (float)ctx->zoomFactor;
+        float tankCy = sy + 8.0f * (float)ctx->zoomFactor;
+        float dx = tankCx - rotInfo.pivotX * (float)ctx->zoomFactor;
+        float dy = tankCy - rotInfo.pivotY * (float)ctx->zoomFactor;
+        SDL_FRect dstR = { dx, dy,
+                           (float)(rotInfo.cacheSize * ctx->zoomFactor),
+                           (float)(rotInfo.cacheSize * ctx->zoomFactor) };
+        SDL_RenderTexture(ctx->renderer, cachedRot, NULL, &dstR);
+      } else if (wantRotate && dir != 0) {
+        /* Cache miss fallback: runtime rotation of the _0 atlas slot. */
+        int group = frame >> 4;
+        int baseFrame = group * 16;
+        int bX = 0, bY = 0;
+        switch (baseFrame) {
+          case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
+          case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
+          case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
+          case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
+          case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
+          case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
+          default: bX = srcX; bY = srcY; break;
+        }
+        SDL_FRect srcR = { (float)(bX * ss) + inset, (float)(bY * ss) + inset,
+                           (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
+        SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
         SDL_FPoint pivot = { (float)tileW * 0.5f, (float)tileH * 0.5f };
         SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
-                                 rotAngleDeg, &pivot, SDL_FLIP_NONE);
+                                 (double)dir * 22.5, &pivot, SDL_FLIP_NONE);
       } else {
+        SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+                           (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
+        SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
       }
     }

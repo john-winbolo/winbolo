@@ -52,6 +52,30 @@ static void blitRGBA(SDL_Surface *sheet, int dstX, int dstY,
     }
 }
 
+/* Rotate every (x,y) pair in every NSVG path around (cx, cy) by
+ * angleDeg.  Bolo convention: 0° = North, increases clockwise; in
+ * screen coords (y-down) that maps to the standard math rotation
+ * matrix: x' = cos*x − sin*y, y' = sin*x + cos*y. */
+static void rotateNSVGPaths(NSVGimage *image, float cx, float cy,
+                            double angleDeg) {
+    if (!image) return;
+    double rad = angleDeg * 3.14159265358979323846 / 180.0;
+    double cs = SDL_cos(rad);
+    double sn = SDL_sin(rad);
+    for (NSVGshape *shape = image->shapes; shape != NULL; shape = shape->next) {
+        for (NSVGpath *path = shape->paths; path != NULL; path = path->next) {
+            for (int i = 0; i + 1 < path->npts * 2; i += 2) {
+                float x = path->pts[i]     - cx;
+                float y = path->pts[i + 1] - cy;
+                float xr = (float)(cs * x - sn * y) + cx;
+                float yr = (float)(sn * x + cs * y) + cy;
+                path->pts[i]     = xr;
+                path->pts[i + 1] = yr;
+            }
+        }
+    }
+}
+
 /* Try loading an SVG file and rasterizing it at the given size.
  * Uses SDL_LoadFile so that Android APK assets are accessible.
  * Returns true on success and writes RGBA pixels into `out`.
@@ -346,7 +370,186 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
     return sheet;
 }
 
+/* ============================================================
+ * Ingamerotate rotated-texture cache
+ * ============================================================
+ *
+ * For themes whose name ends in "_ingamerotate" we pre-bake 16
+ * vector-rotated copies of each rotation group's _00 SVG into
+ * separate SDL textures sized larger than the atlas slot.  At draw
+ * time the engine uses these directly (no SDL_RenderTextureRotated),
+ * so:
+ *   * the rotation is applied in vector-space then point-sampled
+ *     onto the cache texture's axis-aligned grid → crisp pixels;
+ *   * the cache canvas leaves margin around the original sprite so
+ *     rotated corners don't clip.
+ *
+ * Pivot policy:
+ *   * tanks: rotate around the sprite centre; cache size 24 with
+ *     pivot at (12,12).  Render dest top-left = world-pos − 12*zf
+ *     on each axis so the rotated tank centres on world-pos.
+ *   * shells: rotate around the N-tip pixel (1.5, 0); cache size 8
+ *     with the tip lands at (4, 2).  Render dest top-left =
+ *     world-pos − (4*zf, 2*zf) so the tip stays glued to the
+ *     authoritative shell coord across all 16 directions.
+ */
+
+#define TLR_TANK_CACHE  24
+#define TLR_SHELL_CACHE  8
+
+static SDL_Texture *s_rotatedCache[TLR_GROUP_COUNT][16];
+
+static const struct {
+    const char *base;       /* file basename, e.g. "tank_self" */
+    int         cacheSize;  /* output texture size in atlas-1× px */
+    float       pivotX;     /* pivot inside cache (world-pos lands here) */
+    float       pivotY;
+    float       svgPivotX;  /* pivot in SVG coords (rotation centre) */
+    float       svgPivotY;
+} kRotGroups[TLR_GROUP_COUNT] = {
+    /* Order MUST match TileLoaderRotGroup enum, which mirrors the
+     * engine's screenTanks `frame >> 4` encoding. */
+    /* base                cache  pivotX pivotY  svgX svgY */
+    { "tank_self",          24,    12.0f, 12.0f,  8.0f, 8.0f },
+    { "tank_selfboat",      24,    12.0f, 12.0f,  8.0f, 8.0f },
+    { "tank_good",          24,    12.0f, 12.0f,  8.0f, 8.0f },
+    { "tank_goodboat",      24,    12.0f, 12.0f,  8.0f, 8.0f },
+    { "tank_evil",          24,    12.0f, 12.0f,  8.0f, 8.0f },
+    { "tank_evilboat",      24,    12.0f, 12.0f,  8.0f, 8.0f },
+    { "shell",               8,     4.0f,  2.0f,  1.5f, 0.0f },
+};
+
+bool tileLoaderGetRotInfo(TileLoaderRotGroup group, TileLoaderRotInfo *out) {
+    if (group < 0 || group >= TLR_GROUP_COUNT) return false;
+    if (out) {
+        out->cacheSize = kRotGroups[group].cacheSize;
+        out->pivotX    = kRotGroups[group].pivotX;
+        out->pivotY    = kRotGroups[group].pivotY;
+    }
+    return true;
+}
+
+void tileLoaderClearRotatedCache(void) {
+    for (int g = 0; g < TLR_GROUP_COUNT; g++) {
+        for (int d = 0; d < 16; d++) {
+            if (s_rotatedCache[g][d]) {
+                SDL_DestroyTexture(s_rotatedCache[g][d]);
+                s_rotatedCache[g][d] = NULL;
+            }
+        }
+    }
+}
+
+SDL_Texture *tileLoaderGetRotatedTexture(TileLoaderRotGroup group, int dir) {
+    if (group < 0 || group >= TLR_GROUP_COUNT) return NULL;
+    if (dir <= 0 || dir > 15) return NULL;
+    return s_rotatedCache[group][dir];
+}
+
+/* Bake one (group, dir) cache entry: parse <theme>/<base>_00.svg,
+ * rotate paths around svgPivot by dir*22.5°, point-sample-rasterize
+ * into a (cacheSize × cacheSize) RGBA buffer with the SVG positioned
+ * so its pivot lands at (pivotX, pivotY) in cache coords.  Then
+ * upload as an SDL_Texture. */
+static SDL_Texture *bakeRotatedTexture(SDL_Renderer *renderer,
+                                       const char *themeName,
+                                       int group, int dir,
+                                       NSVGrasterizer *rast) {
+    char path[512];
+    SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_00.svg",
+                 themeName, kRotGroups[group].base);
+
+    size_t fileSize = 0;
+    char *fileData = (char *)SDL_LoadFile(path, &fileSize);
+    if (!fileData) return NULL;
+    NSVGimage *image = nsvgParse(fileData, "px", 96.0f);
+    SDL_free(fileData);
+    if (!image) return NULL;
+    if (image->width < 1.0f || image->height < 1.0f) {
+        nsvgDelete(image);
+        return NULL;
+    }
+
+    /* Rotate in vector space around the group's SVG-coord pivot. */
+    rotateNSVGPaths(image,
+                    kRotGroups[group].svgPivotX,
+                    kRotGroups[group].svgPivotY,
+                    (double)dir * 22.5);
+
+    int cacheSize = kRotGroups[group].cacheSize;
+    const int kSuper = 4;
+    int hiW = cacheSize * kSuper;
+    int hiH = cacheSize * kSuper;
+    unsigned char *hi = (unsigned char *)SDL_malloc((size_t)(hiW * hiH * 4));
+    if (!hi) { nsvgDelete(image); return NULL; }
+    SDL_memset(hi, 0, (size_t)(hiW * hiH * 4));
+
+    /* Render at scale=kSuper (same px count as a 1× SVG render but
+     * 4× supersampled for the centre-pick).  Place the SVG so its
+     * pivot lands at the cache pivot:
+     *   nsvg final coord = (svg_x + offX) * scale (well, scale + offset
+     *   in the rasterize call).  We want
+     *     (svgPivotX) * scale + offX_super = pivotX * kSuper
+     *   → offX_super = pivotX*kSuper − svgPivotX*scale
+     * with scale = kSuper (so the SVG's 1-unit ≈ 1 cache pixel × kSuper). */
+    float scale = (float)kSuper;
+    float offX = kRotGroups[group].pivotX * (float)kSuper
+               - kRotGroups[group].svgPivotX * scale;
+    float offY = kRotGroups[group].pivotY * (float)kSuper
+               - kRotGroups[group].svgPivotY * scale;
+    nsvgRasterize(rast, image, offX, offY, scale, hi, hiW, hiH, hiW * 4);
+    nsvgDelete(image);
+
+    /* Point-sample (4×4 centre) → cacheSize × cacheSize. */
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(cacheSize * cacheSize * 4));
+    if (!pixels) { SDL_free(hi); return NULL; }
+    SDL_memset(pixels, 0, (size_t)(cacheSize * cacheSize * 4));
+    for (int y = 0; y < cacheSize; y++) {
+        int sy = y * kSuper + kSuper / 2;
+        for (int x = 0; x < cacheSize; x++) {
+            int sx = x * kSuper + kSuper / 2;
+            const unsigned char *sp = hi + (sy * hiW + sx) * 4;
+            unsigned char *dp = pixels + (y * cacheSize + x) * 4;
+            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
+        }
+    }
+    SDL_free(hi);
+
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(cacheSize, cacheSize,
+                                                  SDL_PIXELFORMAT_RGBA32,
+                                                  pixels, cacheSize * 4);
+    if (!surface) { SDL_free(pixels); return NULL; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+    }
+    return tex;
+}
+
+void tileLoaderBuildRotatedCache(SDL_Renderer *renderer) {
+    tileLoaderClearRotatedCache();
+    if (!renderer) return;
+    if (!tileLoaderThemeRotates()) return;
+
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    if (!rast) return;
+    int built = 0;
+    for (int g = 0; g < TLR_GROUP_COUNT; g++) {
+        for (int d = 1; d <= 15; d++) {
+            s_rotatedCache[g][d] = bakeRotatedTexture(renderer,
+                                                      s_themeName,
+                                                      g, d, rast);
+            if (s_rotatedCache[g][d]) built++;
+        }
+    }
+    nsvgDeleteRasterizer(rast);
+    SDL_Log("tileLoaderBuildRotatedCache: built %d rotated textures for theme '%s'",
+            built, s_themeName);
+}
+
 void tileLoaderCleanup(void) {
-    /* Currently no persistent state to free.
-     * Reserved for future caching (e.g. keeping parsed SVGs for re-rasterization). */
+    tileLoaderClearRotatedCache();
 }
