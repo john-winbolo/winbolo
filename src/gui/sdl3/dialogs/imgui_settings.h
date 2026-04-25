@@ -35,6 +35,12 @@ void imguiSettingsShow(void);
 struct SDL_Renderer;
 void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *renderer);
 
+/* Reset the Graphics section's pending preview selection back to the
+ * currently-active theme.  Call when opening the Settings dialog so
+ * the dropdown shows the active theme on every fresh open instead of
+ * the last-previewed one from a prior session. */
+void imguiSettingsResetGraphicsSelection(void);
+
 #ifdef __cplusplus
 }
 #endif

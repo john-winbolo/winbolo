@@ -182,6 +182,15 @@ static bool themeIsIngamerotate(const char *themeName) {
     return n >= s && strcmp(themeName + n - s, suffix) == 0;
 }
 
+/* Set by imguiSettingsResetGraphicsSelection to make the next draw of
+ * the Graphics section snap the preview index back to the active
+ * theme (curThemeIdx). */
+static bool s_resetPreviewOnNextDraw = false;
+
+extern "C" void imguiSettingsResetGraphicsSelection(void) {
+    s_resetPreviewOnNextDraw = true;
+}
+
 extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererArg) {
     SDL_Renderer *renderer = (SDL_Renderer *)rendererArg;
     if (!ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -240,6 +249,10 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
 
     /* Pending preview selection (Apply commits it). */
     static int s_previewThemeIdx = -1;
+    if (s_resetPreviewOnNextDraw) {
+        s_previewThemeIdx = curThemeIdx;
+        s_resetPreviewOnNextDraw = false;
+    }
     if (s_previewThemeIdx < 0) s_previewThemeIdx = curThemeIdx;
     if (s_previewThemeIdx >= (int)themeDirs.size()) s_previewThemeIdx = curThemeIdx;
 
@@ -490,6 +503,8 @@ extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return;
+    /* Snap dropdown back to the active theme on every fresh open. */
+    imguiSettingsResetGraphicsSelection();
 
     /* Save logical presentation */
     int savedLogW = 0, savedLogH = 0;
