@@ -41,6 +41,18 @@ extern "C" {
 SDL_Surface *tileLoaderBuildSheet(int tileSize);
 
 /*********************************************************
+ * NAME:          tileLoaderSetTheme / tileLoaderGetTheme
+ * PURPOSE:
+ *   Select a theme directory under data/theme/.  When set
+ *   (non-empty), tileLoaderBuildSheet looks first in
+ *   data/theme/<name>/<spritename>.svg|png and falls back
+ *   to data/svg/<spritename>.svg|png if missing.  Pass an
+ *   empty string or NULL to disable the theme override.
+ *********************************************************/
+void        tileLoaderSetTheme(const char *name);
+const char *tileLoaderGetTheme(void);
+
+/*********************************************************
  * NAME:          tileLoaderCleanup
  * PURPOSE:
  *   Frees any cached state held by the tile loader.

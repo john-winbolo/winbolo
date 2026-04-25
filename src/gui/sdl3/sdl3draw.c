@@ -297,6 +297,15 @@ static bool sdl3LoadTiles(void) {
   if (atlasZoom < 1) atlasZoom = 1;
   gSheetScale = atlasZoom;
 
+  /* Apply theme override from environment variable WINBOLO_THEME if
+   * set.  Useful for testing themes before the Graphics Settings UI
+   * lands.  Setting it to "" or unsetting picks the vanilla sprites. */
+  const char *envTheme = SDL_getenv("WINBOLO_THEME");
+  if (envTheme && envTheme[0]) {
+    tileLoaderSetTheme(envTheme);
+    SDL_Log("sdl3LoadTiles: theme = '%s' (from WINBOLO_THEME)", envTheme);
+  }
+
   SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * atlasZoom);
   if (!sheet) {
     SDL_Log("sdl3LoadTiles: tileLoaderBuildSheet failed");

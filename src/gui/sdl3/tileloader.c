@@ -129,6 +129,23 @@ static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
     SDL_BlitSurface(bmp, &srcRect, sheet, &dstRect);
 }
 
+/* Theme override.  When non-empty, tileLoaderBuildSheet looks for
+ * sprites in data/theme/<themeName>/<name>.svg|png BEFORE falling
+ * back to data/svg/<name>.svg|png and finally the BMP. */
+static char s_themeName[64] = "";
+
+void tileLoaderSetTheme(const char *name) {
+    if (!name || !name[0]) {
+        s_themeName[0] = '\0';
+    } else {
+        SDL_strlcpy(s_themeName, name, sizeof(s_themeName));
+    }
+}
+
+const char *tileLoaderGetTheme(void) {
+    return s_themeName;
+}
+
 SDL_Surface *tileLoaderBuildSheet(int tileSize) {
     /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
        and the sheet is the classic 496x176.  When tileSize==32, scale==2
@@ -183,6 +200,26 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int dstX = e->sheetX * scale;
         int dstY = e->sheetY * scale;
         bool loaded = false;
+
+        /* Theme override: try data/theme/<theme>/<name>.svg|png first. */
+        if (!loaded && s_themeName[0]) {
+            SDL_snprintf(pathBuf, sizeof(pathBuf),
+                         "data/theme/%s/%s.svg", s_themeName, e->name);
+            if (tryLoadSVG(pathBuf, w, h, tmpBuf, rast)) {
+                blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                loaded = true;
+                svgCount++;
+            }
+            if (!loaded) {
+                SDL_snprintf(pathBuf, sizeof(pathBuf),
+                             "data/theme/%s/%s.png", s_themeName, e->name);
+                if (tryLoadPNG(pathBuf, w, h, tmpBuf)) {
+                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                    loaded = true;
+                    pngCount++;
+                }
+            }
+        }
 
         /* Try SVG first — rasterized at scaled size. */
         SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.svg", e->name);
