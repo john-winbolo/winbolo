@@ -466,18 +466,16 @@ int main(int argc, char *argv[]) {
         }
         frontEndTutorialNotePresentedFrame();
 
-        /* Cap to configured frame rate (plus override-mode extra delay
-         * for the Ctrl-[ slowdown).  Extra delay never lets the game
-         * run faster than the configured frame rate. */
+        /* Cap to configured frame rate.  Override-mode Ctrl-[
+         * slowdown is applied to the tick scheduler, not the frame
+         * rate, so the display stays smooth while gameplay slows. */
         {
           static Uint64 frameStart = 0;
           Uint64 now = SDL_GetTicks();
-          int extraDelay = overrideModeExtraDelayMs();
           if (frameStart > 0) {
             Uint64 elapsed = now - frameStart;
-            Uint64 want = (Uint64)frameRateTime + (Uint64)extraDelay;
-            if (elapsed < want) {
-              SDL_Delay((Uint32)(want - elapsed));
+            if (elapsed < (Uint64)frameRateTime) {
+              SDL_Delay((Uint32)((Uint64)frameRateTime - elapsed));
             }
           }
           frameStart = SDL_GetTicks();
@@ -591,9 +589,16 @@ static void windowRunGameTick(ClientSim *cs) {
   }
 
   ttick = winboloTimer();
+  /* Override-mode slowdown: extend the tick interval by Ctrl-[ extra
+   * delay, but only in single-player (where there's no remote server
+   * to keep up with).  Each tick is then GAME_TICK_LENGTH + extra ms. */
+  long tickLen = GAME_TICK_LENGTH;
+  if (gameFrontGetServerSim() != NULL) {
+    tickLen += overrideModeExtraDelayMs();
+  }
   /* Update the game objects if required */
-  if ((ttick - oldTick) > GAME_TICK_LENGTH) {
-    while ((ttick - oldTick) > GAME_TICK_LENGTH) {
+  if ((ttick - oldTick) > tickLen) {
+    while ((ttick - oldTick) > tickLen) {
       if (doingTutorial == FALSE) {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (cs->netStat == netLobby || cs->netStat == netLobbyCountdown) {
@@ -709,7 +714,7 @@ static void windowRunGameTick(ClientSim *cs) {
           justKeysFlag = TRUE;
           used = TRUE;
         }
-        oldTick += GAME_TICK_LENGTH;
+        oldTick += tickLen;
         if (oldTick > ttick) {
           oldTick = ttick;
         }

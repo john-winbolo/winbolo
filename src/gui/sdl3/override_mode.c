@@ -52,8 +52,8 @@ static int  s_zoomAnchorX = -1;        /* screen-px anchor; -1 = use centre */
 static int  s_zoomAnchorY = -1;
 #define ZOOM_MUL_MIN 1
 #define ZOOM_MUL_MAX 6
-#define EXTRA_DELAY_STEP_MS 10
-#define EXTRA_DELAY_MAX_MS 200
+#define EXTRA_DELAY_STEP_MS 20
+#define EXTRA_DELAY_MAX_MS 400
 
 void overrideModeToggle(void) {
   s_overrideOn = !s_overrideOn;

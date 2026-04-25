@@ -2564,11 +2564,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 continue;
             }
             if (ev.key.key == SDLK_LEFTBRACKET) {
-                overrideModeSlower();
+                /* Slow-down only meaningful in single-player —
+                 * a network client has no business stalling ticks. */
+                if (gameFrontGetServerSim() != NULL) overrideModeSlower();
                 continue;
             }
             if (ev.key.key == SDLK_RIGHTBRACKET) {
-                overrideModeFaster();
+                if (gameFrontGetServerSim() != NULL) overrideModeFaster();
                 continue;
             }
         }
@@ -2839,6 +2841,28 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         sdl3ImguiTabletOverlay(cs);
     } else {
         renderMenuBar(cs);
+    }
+
+    /* Override-mode slowdown indicator — small overlay top-left of the
+     * playfield so the user always knows the tick rate is throttled. */
+    if (overrideModeIsOn() && overrideModeExtraDelayMs() > 0) {
+        ImGuiIO &io2 = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(8.0f, 28.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.55f);
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration
+                               | ImGuiWindowFlags_AlwaysAutoResize
+                               | ImGuiWindowFlags_NoSavedSettings
+                               | ImGuiWindowFlags_NoFocusOnAppearing
+                               | ImGuiWindowFlags_NoNav
+                               | ImGuiWindowFlags_NoMove
+                               | ImGuiWindowFlags_NoInputs;
+        if (ImGui::Begin("##slowdown", nullptr, flags)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                               "SLOW: +%dms / tick (Ctrl-] faster, Ctrl-[ slower)",
+                               overrideModeExtraDelayMs());
+        }
+        ImGui::End();
+        (void)io2;
     }
 
     /* Detect when a menu-bar dropdown (child menu popup) just closed.
