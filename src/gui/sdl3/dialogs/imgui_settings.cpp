@@ -36,6 +36,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../tileloader.h"
 #include "../gfx_settings.h"
+#include "../../tiles.h"
 #include "../../gamefront.h"
 
 #ifdef _WIN32
@@ -237,12 +238,12 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     if (texW <= 0.0f || texH <= 0.0f) return;
 
     struct { const char *label; int x, y, w, h; } previews[] = {
-        { "Self",   400, 32, 16, 16 },
-        { "Good",   464, 32, 16, 16 },
-        { "Evil",   336, 48, 16, 16 },
-        { "Boat",    64,  0, 16, 16 },
-        { "Shell",  452, 72,  3,  4 },
-        { "LGM",    431, 90,  3,  4 },
+        { "Self",   TANK_SELF_0_X,     TANK_SELF_0_Y,     TILE_SIZE_X, TILE_SIZE_Y },
+        { "Good",   TANK_GOOD_0_X,     TANK_GOOD_0_Y,     TILE_SIZE_X, TILE_SIZE_Y },
+        { "Evil",   TANK_EVIL_0_X,     TANK_EVIL_0_Y,     TILE_SIZE_X, TILE_SIZE_Y },
+        { "Boat",   TANK_SELFBOAT_0_X, TANK_SELFBOAT_0_Y, TILE_SIZE_X, TILE_SIZE_Y },
+        { "Shell",  SHELL_0_X,         SHELL_0_Y,         SHELL_0_WIDTH, SHELL_0_HEIGHT },
+        { "LGM",    LGM0_X,            LGM0_Y,            LGM_WIDTH,     LGM_HEIGHT     },
     };
     int previewPx = 32;
     for (size_t i = 0; i < sizeof(previews)/sizeof(previews[0]); ++i) {
@@ -290,8 +291,10 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         SDL_RenderClear(renderer);
         float ascaleX = texW / 496.0f;
         float ascaleY = texH / 176.0f;
-        SDL_FRect srcR = { 400.0f * ascaleX, 32.0f * ascaleY,
-                           16.0f * ascaleX, 16.0f * ascaleY };
+        SDL_FRect srcR = { (float)TANK_SELF_0_X * ascaleX,
+                           (float)TANK_SELF_0_Y * ascaleY,
+                           (float)TILE_SIZE_X * ascaleX,
+                           (float)TILE_SIZE_Y * ascaleY };
         float dstSize = (float)previewSize * 0.7f;
         SDL_FRect dstR = {
             ((float)previewSize - dstSize) * 0.5f,
