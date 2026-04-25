@@ -21,6 +21,8 @@
  *********************************************************/
 
 #include <cstring>
+#include <vector>
+#include <string>
 
 #include <SDL3/SDL.h>
 
@@ -32,7 +34,17 @@
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "../tileloader.h"
+#include "../gfx_settings.h"
 #include "../../gamefront.h"
+
+#ifdef _WIN32
+#  include <windows.h>
+#  include <io.h>
+#else
+#  include <dirent.h>
+#  include <sys/stat.h>
+#endif
 #include "../../../bolo/global.h"
 #include "../../../bolo/screen.h"
 #include "../bg_game.h"
@@ -339,6 +351,98 @@ extern "C" void imguiSettingsShow(void) {
                     showBaseLabels = !showBaseLabels;
                 }
             }
+        }
+
+        /* ---- Graphics ---- */
+        if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            /* Theme picker — scan data/theme/* once per dialog open. */
+            static std::vector<std::string> themeDirs;
+            static bool themesScanned = false;
+            if (!themesScanned) {
+                themesScanned = true;
+                themeDirs.push_back("(default)");
+#ifdef _WIN32
+                WIN32_FIND_DATAA findData;
+                HANDLE h = FindFirstFileA("data\\theme\\*", &findData);
+                if (h != INVALID_HANDLE_VALUE) {
+                    do {
+                        if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                            && strcmp(findData.cFileName, ".") != 0
+                            && strcmp(findData.cFileName, "..") != 0) {
+                            themeDirs.push_back(findData.cFileName);
+                        }
+                    } while (FindNextFileA(h, &findData));
+                    FindClose(h);
+                }
+#else
+                DIR *d = opendir("data/theme");
+                if (d) {
+                    struct dirent *de;
+                    while ((de = readdir(d))) {
+                        if (de->d_name[0] == '.') continue;
+                        char path[1024];
+                        snprintf(path, sizeof(path), "data/theme/%s", de->d_name);
+                        struct stat st;
+                        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                            themeDirs.push_back(de->d_name);
+                        }
+                    }
+                    closedir(d);
+                }
+#endif
+            }
+
+            /* Current selection — match active theme name to list. */
+            const char *currentTheme = tileLoaderGetTheme();
+            int curThemeIdx = 0;
+            for (int i = 0; i < (int)themeDirs.size(); ++i) {
+                if (i == 0 && (!currentTheme || !currentTheme[0])) {
+                    curThemeIdx = 0; break;
+                }
+                if (currentTheme && currentTheme[0]
+                    && strcmp(themeDirs[i].c_str(), currentTheme) == 0) {
+                    curThemeIdx = i; break;
+                }
+            }
+
+            ImGui::TextUnformatted("Theme");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::BeginCombo("##theme", themeDirs[curThemeIdx].c_str())) {
+                for (int i = 0; i < (int)themeDirs.size(); ++i) {
+                    bool selected = (i == curThemeIdx);
+                    if (ImGui::Selectable(themeDirs[i].c_str(), selected)) {
+                        if (i == 0) {
+                            tileLoaderSetTheme("");
+                        } else {
+                            tileLoaderSetTheme(themeDirs[i].c_str());
+                        }
+                        sdl3DrawReloadTiles();
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            /* Animation style. */
+            const char *animLabels[] = { "Pixel Floor", "Pixel Nearest", "Smooth (sub-pixel)" };
+            int curAnim = (int)gfxSettingsGetAnimStyle();
+            ImGui::TextUnformatted("Animation");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::BeginCombo("##animstyle", animLabels[curAnim])) {
+                for (int i = 0; i < 3; ++i) {
+                    bool sel = (i == curAnim);
+                    if (ImGui::Selectable(animLabels[i], sel)) {
+                        gfxSettingsSetAnimStyle((GfxAnimStyle)i);
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::TextDisabled(
+                "Floor = classic >>4 (default).  Nearest = round to game pixel.\n"
+                "Smooth = full sub-pixel; only meaningful with SVG themes.");
         }
 
         /* ---- Tutorial ---- */
