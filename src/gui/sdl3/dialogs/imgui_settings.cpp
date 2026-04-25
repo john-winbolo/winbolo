@@ -35,6 +35,12 @@
 #include "nanosvgrast.h"
 
 extern "C" {
+    unsigned char *stbi_load(const char *filename, int *x, int *y,
+                              int *channels_in_file, int desired_channels);
+    void stbi_image_free(void *retval_from_stbi_load);
+}
+
+extern "C" {
 #include "../sdl3draw.h"
 #include "../tileloader.h"
 #include "../gfx_settings.h"
@@ -141,34 +147,59 @@ static bool findThemeAsset(const char *themeName, const char *base,
     return SDL_GetPathInfo(outPath, &info);
 }
 
-/* Rasterize an SVG to an SDL_Texture at the given size.  Returns NULL
- * if path doesn't end in .svg or load fails. */
-static SDL_Texture *loadSvgToTexture(SDL_Renderer *r, const char *path, int size) {
+/* Load an SVG or PNG into an SDL_Texture sized to fit a `size`x`size`
+ * box (preserving aspect).  Returns NULL on load failure. */
+static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int size) {
     if (!path) return nullptr;
     size_t n = strlen(path);
-    if (n < 4 || strcmp(path + n - 4, ".svg") != 0) return nullptr;
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-    float scale = (float)size / image->width;
-    if (image->height * scale > (float)size) scale = (float)size / image->height;
-    int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-    float offX = ((float)w - image->width  * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
+    bool isSvg = (n >= 4 && strcmp(path + n - 4, ".svg") == 0);
+    bool isPng = (n >= 4 && strcmp(path + n - 4, ".png") == 0);
+    if (!isSvg && !isPng) return nullptr;
+
+    if (isSvg) {
+        NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+        if (!image) return nullptr;
+        if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+        float scale = (float)size / image->width;
+        if (image->height * scale > (float)size) scale = (float)size / image->height;
+        int w = size, h = size;
+        unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+        if (!pixels) { nsvgDelete(image); return nullptr; }
+        memset(pixels, 0, (size_t)(w * h * 4));
+        float offX = ((float)w - image->width  * scale) * 0.5f;
+        float offY = ((float)h - image->height * scale) * 0.5f;
+        NSVGrasterizer *rast = nsvgCreateRasterizer();
+        nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+        nsvgDeleteRasterizer(rast);
+        nsvgDelete(image);
+        SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+        if (!surface) { SDL_free(pixels); return nullptr; }
+        SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
+        SDL_DestroySurface(surface);
+        SDL_free(pixels);
+        if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+        return tex;
+    }
+
+    /* PNG path — data/svg/*.png is the standard pixel-art tileset.
+     * stb_image is already linked in this codebase. */
+    int imgW = 0, imgH = 0, channels = 0;
+    unsigned char *data = stbi_load(path, &imgW, &imgH, &channels, 4);
+    if (!data) return nullptr;
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(imgW, imgH,
+                                                  SDL_PIXELFORMAT_RGBA32,
+                                                  data, imgW * 4);
+    if (!surface) { stbi_image_free(data); return nullptr; }
     SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
     SDL_DestroySurface(surface);
-    SDL_free(pixels);
+    stbi_image_free(data);
     if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
     return tex;
+}
+
+/* Backwards-compat wrapper. */
+static SDL_Texture *loadSvgToTexture(SDL_Renderer *r, const char *path, int size) {
+    return loadSpriteToTexture(r, path, size);
 }
 
 /* True when the theme dir has only the _00 sprite for tanks (i.e. an
