@@ -12,6 +12,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#include "../imgui_fonts.h"
 
 extern "C" {
 #include "../../bolo/global.h"
@@ -64,11 +65,11 @@ bool imguiIosSetup(SDL_Window *window, SDL_Renderer *renderer) {
     io.IniFilename = nullptr;
 
     /* Scale font for touch — 20px in the 515x325 logical space
-       gives comfortable tap targets (~72+ physical px on iPhone). */
+       gives comfortable tap targets (~72+ physical px on iPhone).
+       Use the shared Inter loader so non-Latin glyph ranges work
+       (configured in imguiBoloGlyphRanges()). */
     io.FontGlobalScale = 1.0f;
-    ImFontConfig fontCfg;
-    fontCfg.SizePixels = 20.0f;
-    io.Fonts->AddFontDefault(&fontCfg);
+    imguiLoadBoloFontSized(20.0f);
 
     ImGui::StyleColorsDark();
 

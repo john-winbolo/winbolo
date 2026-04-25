@@ -408,6 +408,8 @@
 #define STR_DLGOPENING_BUTTON3              460
 #define STR_DLGOPENING_BUTTON4              461
 #define STRERR_HELPFILE                     462
+#define STR_DLGSKIN_TITLE                   463
+#define STR_DLGSKIN_BLURB                   464
 
 /* Player name error */
 #define STR_DLGGAMEFINDER_PLAYERWRONG       466
@@ -422,12 +424,55 @@ typedef unsigned int langid;
 
 #include "../bolo/global.h"
 
+/* Header values parsed from a loaded lang/<code>.txt. Returned by
+ * langGetLoadedMeta() once a translation has been loaded. The picker
+ * UI uses these for the language list. */
+typedef struct {
+    char name[64];
+    char author[64];
+    char notes[256];
+} LangFileMeta;
+
+/* Per-message arguments substituted into named placeholders by
+ * langGetTextFmt(). The placeholders are:
+ *   {player}  -> playerName
+ *   {other}   -> otherName
+ *   {number}  -> number rendered as %d
+ * Substitution is non-recursive — braces inside a substituted value
+ * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
+typedef struct {
+    char playerName[PLAYER_NAME_LEN];
+    char otherName[PLAYER_NAME_LEN];
+    int  number;
+} MessageArgs;
+
 bool langSetup(void);
 void langCleanup(void);
-bool langLoadFile(char *filename, char *langName);
+
+/* Load the translation file at `path` (UTF-8, optional BOM, see
+ * lang/en.txt for the format). Replaces any previously loaded
+ * translation. Returns FALSE on I/O error; the override table is
+ * cleared in that case so langGetText() falls back to English. */
+bool langLoadFile(const char *path);
+
+/* Free the override table loaded by langLoadFile() and reset the
+ * loaded-file metadata. */
+void langUnloadFile(void);
+
+/* Returns the header metadata of the currently-loaded file, or NULL
+ * if no translation is loaded. */
+const LangFileMeta *langGetLoadedMeta(void);
+
 void langGetFileName(char *fileName);
 char *langGetText(langid id);
 char *langGetText2(langid id);
+
+/* Like langGetText, but expands the named placeholders {player},
+ * {other}, {number} from `args`. If `args` is NULL it behaves like
+ * langGetText. The result points into a small thread-local ring of
+ * buffers; the pointer remains valid until the calling thread makes
+ * LANG_FMT_RING_BUFFERS more calls (currently 4). */
+const char *langGetTextFmt(langid id, const MessageArgs *args);
 
 #endif /* RC_INVOKED */
 

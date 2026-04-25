@@ -68,9 +68,6 @@
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 
-/* String resource IDs — integer IDs into the lang.c lookup table */
-#include "../aresource.h"
-
 #include "../../bolo/everard_map.h"
 #include "../../bolo/bolo_map.h"
 #include "../../bolo/platform_net.h"

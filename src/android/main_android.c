@@ -36,7 +36,6 @@
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../bolo/bot_manager.h"
 #include "../gui/sdl3/dialog_backend.h"
-#include "../gui/aresource.h"
 #include "touch_input.h"
 #include "players_panel.h"
 
