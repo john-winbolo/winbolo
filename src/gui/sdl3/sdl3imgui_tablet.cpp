@@ -46,6 +46,7 @@ extern "C" {
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
+#include "../lang.h"
 #include "input_touch.h"
 #include "sdl3draw.h"
 }
@@ -952,9 +953,9 @@ static void renderTopBarButtons(ClientSim *cs) {
     SDL_Texture *icon;
     const char *fallback;
   } btns[] = {
-    { s_cfg.playersBtnX + radius, btnY + radius, s_iconMessages, "Msg" },
-    { s_cfg.msgBtnX     + radius, btnY + radius, s_iconPlayers,  "Ply" },
-    { s_cfg.cogBtnX     + radius, btnY + radius, s_iconSettings, "Set" },
+    { s_cfg.playersBtnX + radius, btnY + radius, s_iconMessages, langGetText(STR_TABLET_BTN_MSG) },
+    { s_cfg.msgBtnX     + radius, btnY + radius, s_iconPlayers,  langGetText(STR_TABLET_BTN_PLY) },
+    { s_cfg.cogBtnX     + radius, btnY + radius, s_iconSettings, langGetText(STR_TABLET_BTN_SET) },
   };
 
   for (int i = 0; i < 3; i++) {
@@ -1133,7 +1134,9 @@ static void renderStatusDrawer(ClientSim *cs) {
   ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - panelW, 0));
   ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
 
-  if (ImGui::Begin("Status", &s_statusDrawerOpen,
+  char statusTitle[128];
+  snprintf(statusTitle, sizeof(statusTitle), "%s###tabletstatus", langGetText(STR_TABLET_STATUS_TITLE));
+  if (ImGui::Begin(statusTitle, &s_statusDrawerOpen,
                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                     ImGuiWindowFlags_NoCollapse)) {
 
@@ -1141,22 +1144,22 @@ static void renderStatusDrawer(ClientSim *cs) {
     {
       int kills, deaths;
       screenGetKillsDeathsCS(cs, &kills, &deaths);
-      ImGui::Text("Kills: %d  Deaths: %d", kills, deaths);
+      ImGui::Text(langGetText(STR_TABLET_KILLS_DEATHS_FMT), kills, deaths);
     }
     ImGui::Separator();
 
     /* Tank resource bars */
-    if (ImGui::CollapsingHeader("Tank Resources", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANK_RESOURCES), ImGuiTreeNodeFlags_DefaultOpen)) {
       BYTE shells, mines, armour, trees;
       screenGetTankStatsCS(cs, &shells, &mines, &armour, &trees);
-      ImGui::ProgressBar((float)shells / 40.0f, ImVec2(-1, 0), "Shells");
-      ImGui::ProgressBar((float)mines  / 40.0f, ImVec2(-1, 0), "Mines");
-      ImGui::ProgressBar((float)armour / 40.0f, ImVec2(-1, 0), "Armour");
-      ImGui::ProgressBar((float)trees  / 40.0f, ImVec2(-1, 0), "Trees");
+      ImGui::ProgressBar((float)shells / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_SHELLS));
+      ImGui::ProgressBar((float)mines  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_MINES));
+      ImGui::ProgressBar((float)armour / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_ARMOUR));
+      ImGui::ProgressBar((float)trees  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_TREES));
     }
 
     /* Pillbox status */
-    if (ImGui::CollapsingHeader("Pillboxes")) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
       BYTE total = pillsGetNumPills(&cs->sim.pb);
       for (BYTE i = 1; i <= total; i++) {
         pillAlliance pa = screenPillAllianceCS(cs, i);
@@ -1168,13 +1171,15 @@ static void renderStatusDrawer(ClientSim *cs) {
           case pillEvil:    col = ImVec4(0.8f, 0.0f, 0.0f, 1.0f); break;
           default:          col = ImVec4(0.3f, 0.3f, 0.3f, 1.0f); break;
         }
-        ImGui::TextColored(col, "Pill %d", i);
+        MessageArgs args = {};
+        args.number = i;
+        ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_PILL_FMT, &args));
         if (i % 4 != 0 && i < total) ImGui::SameLine(0, 20);
       }
     }
 
     /* Base status */
-    if (ImGui::CollapsingHeader("Bases")) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
       BYTE total = basesGetNumBases(&cs->sim.bs);
       for (BYTE i = 1; i <= total; i++) {
         baseAlliance ba = screenBaseAllianceCS(cs, i);
@@ -1186,13 +1191,15 @@ static void renderStatusDrawer(ClientSim *cs) {
           case baseEvil:    col = ImVec4(0.8f, 0.0f, 0.0f, 1.0f); break;
           default:          col = ImVec4(0.3f, 0.3f, 0.3f, 1.0f); break;
         }
-        ImGui::TextColored(col, "Base %d", i);
+        MessageArgs args = {};
+        args.number = i;
+        ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_BASE_FMT, &args));
         if (i % 4 != 0 && i < total) ImGui::SameLine(0, 20);
       }
     }
 
     /* Tanks status */
-    if (ImGui::CollapsingHeader("Tanks")) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANKS))) {
       for (BYTE i = 1; i <= MAX_TANKS; i++) {
         tankAlliance ta = screenTankAllianceCS(cs, i);
         ImVec4 col;
@@ -1203,7 +1210,9 @@ static void renderStatusDrawer(ClientSim *cs) {
           default:          col = ImVec4(0.3f, 0.3f, 0.3f, 1.0f); break;
         }
         if (ta != tankNone) {
-          ImGui::TextColored(col, "Tank %d", i);
+          MessageArgs args = {};
+          args.number = i;
+          ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_TANK_FMT, &args));
           if (i % 4 != 0) ImGui::SameLine(0, 20);
         }
       }

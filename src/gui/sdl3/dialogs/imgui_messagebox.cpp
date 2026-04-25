@@ -41,6 +41,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "../../lang.h"
 #include "imgui_messagebox.h"
 }
 
@@ -143,33 +144,33 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
     if (buttons == IMGUI_MSG_OK) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW) / 2.0f);
         if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button("OK", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_OK;
         }
     } else if (buttons == IMGUI_MSG_YES_NO) {
         float totalW = btnW * 2 + spacing;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
         if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button("Yes", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_YES;
         }
         ImGui::SameLine();
-        if (ImGui::Button("No", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_NO;
         }
     } else { /* IMGUI_MSG_YES_NO_CANCEL */
         float totalW = btnW * 3 + spacing * 2;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
         if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button("Yes", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_YES;
         }
         ImGui::SameLine();
-        if (ImGui::Button("No", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_NO;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_CANCEL;
         }
     }

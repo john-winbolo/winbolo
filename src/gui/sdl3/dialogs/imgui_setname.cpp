@@ -36,6 +36,7 @@ extern "C" {
 #include "../../../bolo/client_sim.h"
 #include "../../../bolo/util.h"
 #include "../../../winbolonet/winbolonet.h"
+#include "../../lang.h"
 #include "imgui_setname.h"
 }
 
@@ -61,7 +62,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
 #if !BOLO_MOBILE
     /* Resize and show window for the dialog */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - Set Player Name");
+    dialogSetWindowTitle(window, langGetText(STR_DLGSETNAME_WINTITLE));
     SDL_SetWindowResizable(window, false);
 #endif
     dialogRestorePosition(window);
@@ -129,13 +130,13 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         bool wbnLocked = gameFrontGetWinbolonetUse();
 
         if (wbnLocked) {
-            ImGui::Text("Your player name is set by WinBolo.net.");
+            ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
         } else {
-            ImGui::Text("Please enter your player name.");
+            ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_PLEASE_ENTER));
         }
         ImGui::Spacing();
 
-        ImGui::Text("Player Name:");
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
         ImGui::SameLine(120.0f * s);
         ImGui::SetNextItemWidth((float)winW - 120.0f * s - 16.0f);
         if (wbnLocked) ImGui::BeginDisabled();
@@ -151,22 +152,25 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         ImGui::Separator();
         ImGui::Spacing();
 
+        char errPopupId[64];
+        SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##setname", langGetText(STR_ERR_TITLE));
+
         float btnW = 80.0f * s;
         float btnX = ((float)winW - btnW * 2 - 8.0f * s) / 2.0f;
         ImGui::SetCursorPosX(btnX);
 
         if (wbnLocked) ImGui::BeginDisabled();
-        if (ImGui::Button("OK", ImVec2(btnW, 0)) || enterPressed) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0)) || enterPressed) {
             char newName[PLAYER_NAME_LEN];
             SDL_strlcpy(newName, playerName, PLAYER_NAME_LEN);
             utilStripName(newName);
 
             if (newName[0] == '\0') {
-                errorMsg = "Sorry, you can not leave this blank";
-                ImGui::OpenPopup("Error##setname");
+                errorMsg = langGetText(STR_DLGSETNAME_BLANK_ERR);
+                ImGui::OpenPopup(errPopupId);
             } else if (newName[0] == '*') {
-                errorMsg = "Sorry, names can not begin with a '*'";
-                ImGui::OpenPopup("Error##setname");
+                errorMsg = langGetText(STR_DLGSETNAME_STAR_ERR);
+                ImGui::OpenPopup(errPopupId);
             } else if (inGame) {
                 char oldName[PLAYER_NAME_LEN];
                 oldName[0] = '\0';
@@ -176,8 +180,8 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 } else {
                     bool changeOK = screenSetPlayerNameCS(cs, newName);
                     if (!changeOK) {
-                        errorMsg = "That name is already in use by another player.";
-                        ImGui::OpenPopup("Error##setname");
+                        errorMsg = langGetText(STR_DLGSETNAME_INUSE_ERR);
+                        ImGui::OpenPopup(errPopupId);
                     } else {
                         running = false;
                     }
@@ -190,19 +194,23 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         if (wbnLocked) ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0)) ||
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
             (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
             running = false;
         }
 
         /* Error popup */
-        if (ImGui::BeginPopupModal("Error##setname", nullptr,
+        if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button("OK##err", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
+            {
+                char okBuf[64];
+                snprintf(okBuf, sizeof(okBuf), "%s##err", langGetText(STR_OK));
+                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }

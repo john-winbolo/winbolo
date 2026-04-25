@@ -35,13 +35,13 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "../../skins.h"
+#include "../../lang.h"
 #include "imgui_skins.h"
 }
 
 static const int DIALOG_W = 420;
 static const int DIALOG_H = 400;
 
-#define DEFAULT_NO_SKIN "No Skin (Default)"
 
 /* Read a value from a simple ini file: [Skin] section, given key.
  * Returns empty string if not found. */
@@ -136,13 +136,13 @@ static SkinInfo getSkinInfo() {
         info.author = readSkinIni(iniPath, "Author");
         info.notes = readSkinIni(iniPath, "Notes");
 
-        if (info.name.empty()) info.name = "N/A";
-        if (info.author.empty()) info.author = "N/A";
-        if (info.notes.empty()) info.notes = "N/A";
+        if (info.name.empty()) info.name = langGetText(STR_DLGSKIN_NA);
+        if (info.author.empty()) info.author = langGetText(STR_DLGSKIN_NA);
+        if (info.notes.empty()) info.notes = langGetText(STR_DLGSKIN_NA);
     } else {
-        info.name = "English (Default)";
-        info.author = "John Morrison";
-        info.notes = "None.";
+        info.name = langGetText(STR_DLGLANG_NAME);
+        info.author = langGetText(STR_DLGLANG_AUTHOR);
+        info.notes = langGetText(STR_DLGLANG_NOTES);
     }
     return info;
 }
@@ -165,7 +165,7 @@ extern "C" void imguiSkinsShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - Skin Selection");
+    dialogSetWindowTitle(window, langGetText(STR_DLGSKIN_WINTITLE));
     SDL_SetWindowResizable(window, false);
 #endif
     dialogRestorePosition(window);
@@ -206,6 +206,9 @@ extern "C" void imguiSkinsShow(void) {
     const char *errorMsg = nullptr;
     bool running = true;
 
+    char errPopupId[64];
+    SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##skins", langGetText(STR_ERR_TITLE));
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -237,10 +240,10 @@ extern "C" void imguiSkinsShow(void) {
                      ImGuiWindowFlags_NoCollapse);
 
         /* Skin list */
-        ImGui::Text("Select a skin:");
+        ImGui::TextUnformatted(langGetText(STR_DLGSKIN_SELECT));
         float listH = 150.0f;
         if (ImGui::BeginListBox("##skinlist", ImVec2(-1, listH))) {
-            if (ImGui::Selectable(DEFAULT_NO_SKIN, selectedIdx == 0)) {
+            if (ImGui::Selectable(langGetText(STR_DLGSKIN_NOSKIN), selectedIdx == 0)) {
                 if (selectedIdx != 0) {
                     selectedIdx = 0;
                     skinsLoadSkin((char *)"");
@@ -257,8 +260,8 @@ extern "C" void imguiSkinsShow(void) {
                         if (skinsLoadSkin(skinName)) {
                             info = getSkinInfo();
                         } else {
-                            errorMsg = "Unable to load Skin File";
-                            ImGui::OpenPopup("Error##skins");
+                            errorMsg = langGetText(STR_DLGSKIN_LOADERR);
+                            ImGui::OpenPopup(errPopupId);
                         }
                     }
                 }
@@ -269,13 +272,12 @@ extern "C" void imguiSkinsShow(void) {
         ImGui::Spacing();
 
         /* Info labels */
-        ImGui::Text("Name:   %s", info.name.c_str());
-        ImGui::Text("Author: %s", info.author.c_str());
-        ImGui::Text("Notes:  %s", info.notes.c_str());
+        ImGui::Text("%s   %s", langGetText(STR_DLGSKIN_NAME_LBL),   info.name.c_str());
+        ImGui::Text("%s %s",   langGetText(STR_DLGSKIN_AUTHOR_LBL), info.author.c_str());
+        ImGui::Text("%s  %s",  langGetText(STR_DLGSKIN_NOTES_LBL),  info.notes.c_str());
 
         ImGui::Spacing();
-        ImGui::TextWrapped("If not all skin items are present then the default "
-                           "built in skin/sounds are used.");
+        ImGui::TextWrapped("%s", langGetText(STR_DLGSKIN_BLURB));
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -285,13 +287,13 @@ extern "C" void imguiSkinsShow(void) {
         float btnX = ((float)winW - btnW * 2 - 8.0f) / 2.0f;
         ImGui::SetCursorPosX(btnX);
 
-        if (ImGui::Button("OK", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
             gameFrontReloadSkins();
             running = false;
         }
 
         ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0)) ||
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
             (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
             skinsLoadSkin(prevSkin);
@@ -299,12 +301,16 @@ extern "C" void imguiSkinsShow(void) {
         }
 
         /* Error popup */
-        if (ImGui::BeginPopupModal("Error##skins", nullptr,
+        if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button("OK##err", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
+            {
+                char okBuf[64];
+                snprintf(okBuf, sizeof(okBuf), "%s##err", langGetText(STR_OK));
+                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }

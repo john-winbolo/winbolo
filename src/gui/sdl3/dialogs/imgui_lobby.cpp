@@ -47,6 +47,7 @@ extern "C" {
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
+#include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_messagebox.h"
 }
@@ -90,26 +91,26 @@ static SDL_Texture *buildMapPreview(SDL_Renderer *renderer,
 
 static const char *gameTypeStr(gameType gt) {
     switch (gt) {
-        case gameOpen:             return "Open";
-        case gameTournament:       return "Tournament";
-        case gameStrictTournament: return "Strict Tournament";
-        default:                   return "Unknown";
+        case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
+        case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
+        case gameStrictTournament: return langGetText(STR_DLGGAMEINFO_STRICT);
+        default:                   return langGetText(STR_UNKNOWN);
     }
 }
 
 static const char *aiTypeStr(uint8_t ai) {
     switch (ai) {
-        case 0:  return "No";
-        case 1:  return "Yes";
-        case 2:  return "Yes (Advantage)";
-        case 3:  return "Yes (Full)";
-        default: return "Unknown";
+        case 0:  return langGetText(STR_NO);
+        case 1:  return langGetText(STR_YES);
+        case 2:  return langGetText(STR_DLGGAMEINFO_AIADV);
+        case 3:  return langGetText(STR_DLGGAMEINFO_AIFULL);
+        default: return langGetText(STR_UNKNOWN);
     }
 }
 
 static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     if (ticks <= 0) {
-        SDL_snprintf(buf, bufSize, "Unlimited");
+        SDL_snprintf(buf, bufSize, "%s", langGetText(STR_DLGGAMEINFO_UNLIMITED));
         return;
     }
     int totalSecs = ticks / 50;
@@ -117,11 +118,13 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     int mins = (totalSecs % 3600) / 60;
     int secs = totalSecs % 60;
     if (hours > 0) {
-        SDL_snprintf(buf, bufSize, "%dh %02dm %02ds", hours, mins, secs);
+        SDL_snprintf(buf, bufSize, langGetText(STR_DLGLOBBY_TIME_HMS), hours, mins, secs);
     } else if (mins > 0) {
-        SDL_snprintf(buf, bufSize, "%dm %02ds", mins, secs);
+        SDL_snprintf(buf, bufSize, langGetText(STR_DLGLOBBY_TIME_MS), mins, secs);
     } else {
-        SDL_snprintf(buf, bufSize, "%ds", secs);
+        MessageArgs args = {};
+        args.number = secs;
+        SDL_snprintf(buf, bufSize, "%s", langGetTextFmt(STR_DLGLOBBY_TIME_S, &args));
     }
 }
 
@@ -145,7 +148,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - Game Lobby");
+    dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -174,8 +177,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     chatInput[0] = '\0';
 
     /* Team combo items */
-    static const char *teamItems[] = {
-        "None", "1", "2", "3", "4", "5", "6", "7", "8",
+    const char *teamItems[] = {
+        langGetText(STR_NONE), "1", "2", "3", "4", "5", "6", "7", "8",
         "9", "10", "11", "12", "13", "14", "15", "16"
     };
 
@@ -238,7 +241,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             UdpClientJoinState js = transportUdpClientGetJoinState(transport);
             if (js == UDP_CLIENT_SERVER_SHUTDOWN || js == UDP_CLIENT_ERROR) {
                 imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                    "You have lost your connection to the server.",
+                    langGetText(STR_DLGLOBBY_LOSTCONNECTION),
                     IMGUI_MSG_ERROR, IMGUI_MSG_OK);
                 result = 0;
                 running = false;
@@ -316,21 +319,22 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             formatTimeLimit(cs->lobbyTimeLimit, timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
-            ImGui::TextWrapped("%s:%u | %s | %s Mines | AI: %s | %s",
+            ImGui::TextWrapped(langGetText(STR_DLGLOBBY_HEADER_FMT),
                          inet_ntoa(cs->serverAddress), cs->serverPort,
                          gameTypeStr(cs->lobbyGameType),
-                         cs->lobbyHiddenMines ? "Hidden" : "Visible",
+                         cs->lobbyHiddenMines ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE),
                          aiTypeStr(cs->lobbyAiType), timeStr);
 #else
-            ImGui::Text("Server: %s", serverStr);
+            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), serverStr);
             ImGui::SameLine(0, 16);
-            ImGui::Text("Game: %s", gameTypeStr(cs->lobbyGameType));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(cs->lobbyGameType));
             ImGui::SameLine(0, 16);
-            ImGui::Text("Mines: %s", cs->lobbyHiddenMines ? "Hidden" : "Visible");
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
+                        cs->lobbyHiddenMines ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
             ImGui::SameLine(0, 16);
-            ImGui::Text("AI: %s", aiTypeStr(cs->lobbyAiType));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), aiTypeStr(cs->lobbyAiType));
             ImGui::SameLine(0, 16);
-            ImGui::Text("Time: %s", timeStr);
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
 #endif
         }
 
@@ -354,7 +358,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             if (ImGui::BeginTabBar("##LobbyTabs")) {
                 /* --- Players tab --- */
-                if (ImGui::BeginTabItem("Players")) {
+                if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS))) {
                     activeTab = 0;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
                     ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_None);
@@ -364,10 +368,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                           ImGuiTableFlags_RowBg |
                                           ImGuiTableFlags_SizingStretchProp |
                                           ImGuiTableFlags_ScrollY)) {
-                        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-                        ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
-                        ImGui::TableSetupColumn("Team", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
-                        ImGui::TableSetupColumn("Ready", ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PLAYER_COL), ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PING_COL), ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_TEAM_COL), ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_READY_COL), ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
                         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 65.0f * s);
                         ImGui::TableHeadersRow();
 
@@ -404,11 +408,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     }
                                 }
                                 if (cs->lobbySlots[i].isBot) {
-                                    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
-                                                       "%s [Bot]", cs->lobbySlots[i].playerName);
+                                    MessageArgs args = {};
+                                    strncpy(args.playerName, cs->lobbySlots[i].playerName, sizeof(args.playerName) - 1);
+                                    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s",
+                                                       langGetTextFmt(STR_DLGLOBBY_BOT_FMT, &args));
                                 } else if (isMe) {
-                                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
-                                                       "%s (You)", cs->lobbySlots[i].playerName);
+                                    MessageArgs args = {};
+                                    strncpy(args.playerName, cs->lobbySlots[i].playerName, sizeof(args.playerName) - 1);
+                                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s",
+                                                       langGetTextFmt(STR_DLGLOBBY_YOU_FMT, &args));
                                 } else {
                                     ImGui::Text("%s", cs->lobbySlots[i].playerName);
                                 }
@@ -439,7 +447,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     if (cs->lobbySlots[i].teamNumber > 0) {
                                         ImGui::Text("%d", cs->lobbySlots[i].teamNumber);
                                     } else {
-                                        ImGui::TextDisabled("None");
+                                        ImGui::TextDisabled("%s", langGetText(STR_NONE));
                                     }
                                 }
                                 if (cs->balanceProposalActive && cs->balanceProposal[i] != 0 &&
@@ -451,16 +459,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 /* Ready */
                                 ImGui::TableSetColumnIndex(3);
                                 if (cs->lobbySlots[i].ready) {
-                                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Yes");
+                                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "%s", langGetText(STR_YES));
                                 } else {
-                                    ImGui::TextDisabled("No");
+                                    ImGui::TextDisabled("%s", langGetText(STR_NO));
                                 }
 
                                 /* Action */
                                 ImGui::TableSetColumnIndex(4);
                                 if (cs->lobbySlots[i].isBot && transport) {
-                                    char btnId[16];
-                                    SDL_snprintf(btnId, sizeof(btnId), "Remove##%d", i);
+                                    char btnId[64];
+                                    SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_REMOVE), i);
                                     if (ImGui::SmallButton(btnId)) {
                                         transportUdpClientSendRemoveBot(transport, (uint8_t)i);
                                     }
@@ -477,8 +485,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 ImGui::TextDisabled("-");
                                 ImGui::TableSetColumnIndex(4);
                                 if (botsAllowed && transport) {
-                                    char btnId[16];
-                                    SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
+                                    char btnId[64];
+                                    SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
                                     if (ImGui::SmallButton(btnId)) {
                                         transportUdpClientSendAddBot(transport);
                                     }
@@ -493,12 +501,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
 
                 /* --- Map tab --- */
-                if (ImGui::BeginTabItem("Map")) {
+                if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB))) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
 
                     if (!cs->mapDownloadComplete) {
-                        ImGui::Text("Downloading map...");
+                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
                         ImGui::Spacing();
                         float progress = (float)netGetDownloadPos() / 255.0f;
                         ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
@@ -543,7 +551,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
                     } else {
-                        ImGui::Text("Map preview unavailable");
+                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
                     }
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", cs->mapName, cs->lobbyPillCount, cs->lobbyBaseCount, cs->lobbyStartCount);
@@ -553,7 +561,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         bool countdownActive = cs->countdownSeconds > 0;
                         if (countdownActive) ImGui::BeginDisabled();
                         bool voted = cs->mapSkipMyVote;
-                        const char *skipLabel = voted ? "Cancel Skip" : "Skip Map";
+                        const char *skipLabel = voted ? langGetText(STR_DLGLOBBY_CANCELSKIP) : langGetText(STR_DLGLOBBY_SKIPMAP);
                         if (voted) {
                             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
@@ -576,7 +584,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 if (cs->mapSkipVotes[j]) skipCount++;
                             }
                         }
-                        ImGui::Text("%d/%d votes to skip", skipCount, humanCount);
+                        ImGui::Text(langGetText(STR_DLGLOBBY_VOTES_FMT), skipCount, humanCount);
                         if (countdownActive) ImGui::EndDisabled();
                     }
 
@@ -591,7 +599,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
                         chatTabColorPushed = true;
                     }
-                    if (ImGui::BeginTabItem("Chat")) {
+                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT))) {
                         activeTab = 2;
                         chatUnread = false;
                         if (chatTabColorPushed) {
@@ -618,13 +626,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             ImGui::SameLine();
                             bool chatEmpty = (chatInput[0] == '\0');
                             if (chatEmpty) ImGui::BeginDisabled();
-                            bool sendClicked = ImGui::Button("Send", ImVec2(btnW, 0));
+                            bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
                             if (chatEmpty) ImGui::EndDisabled();
                             if ((sendClicked || enterPressed) &&
                                 !chatEmpty && transport) {
                                 transportUdpClientSendChat(transport, 0xFF, chatInput);
                                 const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
-                                    ? cs->lobbySlots[myPlayerNum].playerName : "Me";
+                                    ? cs->lobbySlots[myPlayerNum].playerName : langGetText(STR_DLGLOBBY_ME);
                                 clientSimAppendLobbyChat(cs, myName, chatInput);
                                 chatInput[0] = '\0';
                             }
@@ -650,7 +658,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 bool canReady = cs->mapDownloadComplete;
 
                 if (!canReady) ImGui::BeginDisabled();
-                const char *readyLabel = myReady ? "Unready" : "Ready";
+                const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                     if (transport) {
                         transportUdpClientSendReady(transport, !myReady);
@@ -672,7 +680,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     if (hasWbnPlayers) {
                         ImGui::SameLine(0, 20);
                         if (connectedCount < 2) ImGui::BeginDisabled();
-                        if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
+                        if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(120 * s, 0))) {
                             uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
                             transportUdpClientSendBalanceRequest(transport, teamSize);
                         }
@@ -681,21 +689,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
                     ImGui::SameLine(0, 20);
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
-                    if (ImGui::Button("Apply Balance", ImVec2(120 * s, 0))) {
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
                         transportUdpClientSendBalanceApply(transport);
                     }
                     ImGui::PopStyleColor();
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Dismiss", ImVec2(80 * s, 0))) {
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
                         transportUdpClientSendBalanceDismiss(transport);
                     }
                 }
 
                 ImGui::SameLine(0, 20);
-                if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
+                if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
                     (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                    ImGui::OpenPopup("Leave Game?##lobby");
+                    char leavePopupId[64];
+                    SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
+                    ImGui::OpenPopup(leavePopupId);
                 }
             }
         }
@@ -718,12 +728,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                   ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_SizingStretchProp |
                                   ImGuiTableFlags_ScrollY)) {
-                ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, 30.0f * s);
-                ImGui::TableSetupColumn("Player Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
-                ImGui::TableSetupColumn("Team", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
-                ImGui::TableSetupColumn("Ready", ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
-                ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_SLOT_COL),   ImGuiTableColumnFlags_WidthFixed, 30.0f * s);
+                ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_NAME_COL),   ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PING_COL),   ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
+                ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_TEAM_COL),   ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_READY_COL),  ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_ACTION_COL), ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
                 ImGui::TableHeadersRow();
 
                 bool botsAllowed = (cs->lobbyAiType != 0);
@@ -795,7 +805,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             if (cs->lobbySlots[i].teamNumber > 0) {
                                 ImGui::Text("%d", cs->lobbySlots[i].teamNumber);
                             } else {
-                                ImGui::TextDisabled("None");
+                                ImGui::TextDisabled("%s", langGetText(STR_NONE));
                             }
                         }
                         if (cs->balanceProposalActive && cs->balanceProposal[i] != 0 &&
@@ -807,9 +817,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         /* Ready */
                         ImGui::TableSetColumnIndex(4);
                         if (cs->lobbySlots[i].ready) {
-                            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Yes");
+                            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "%s", langGetText(STR_YES));
                         } else {
-                            ImGui::TextDisabled("No");
+                            ImGui::TextDisabled("%s", langGetText(STR_NO));
                         }
 
                         /* Action */
@@ -853,7 +863,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             if (!cs->mapDownloadComplete) {
                 /* Map downloading - show progress */
-                ImGui::Text("Downloading map...");
+                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
                 ImGui::Spacing();
                 float progress = (float)netGetDownloadPos() / 255.0f;
                 ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
@@ -904,7 +914,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                            mapBounds.maxX, mapBounds.maxY);
                 }
             } else {
-                ImGui::Text("Map preview unavailable");
+                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
             }
 
             ImGui::Spacing();
@@ -912,10 +922,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Spacing();
 
             /* Map info */
-            ImGui::Text("Map: %s", cs->mapName);
-            ImGui::Text("Pillboxes: %d", cs->lobbyPillCount);
-            ImGui::Text("Bases: %d", cs->lobbyBaseCount);
-            ImGui::Text("Starts: %d", cs->lobbyStartCount);
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), cs->mapName);
+            ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), cs->lobbyPillCount);
+            ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), cs->lobbyBaseCount);
+            ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), cs->lobbyStartCount);
 
             if (cs->mapSkipAvailable && cs->inLobby) {
                 ImGui::Spacing();
@@ -957,7 +967,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::Spacing();
 
         /* --- Chat section --- */
-        ImGui::Text("Chat");
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CHAT));
         {
             float chatHeight = ImGui::GetTextLineHeightWithSpacing() * 4;
             ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
@@ -976,13 +986,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::SameLine();
             bool chatEmpty = (chatInput[0] == '\0');
             if (chatEmpty) ImGui::BeginDisabled();
-            bool sendClicked = ImGui::Button("Send", ImVec2(btnW, 0));
+            bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
             if (chatEmpty) ImGui::EndDisabled();
             if ((sendClicked || enterPressed) &&
                 !chatEmpty && transport) {
                 transportUdpClientSendChat(transport, 0xFF, chatInput);
                 const char *myName = (myPlayerNum < MAX_TANKS && cs->lobbySlots[myPlayerNum].connected)
-                    ? cs->lobbySlots[myPlayerNum].playerName : "Me";
+                    ? cs->lobbySlots[myPlayerNum].playerName : langGetText(STR_DLGLOBBY_ME);
                 clientSimAppendLobbyChat(cs, myName, chatInput);
                 chatInput[0] = '\0';
             }
@@ -999,7 +1009,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool canReady = cs->mapDownloadComplete;
 
             if (!canReady) ImGui::BeginDisabled();
-            const char *readyLabel = myReady ? "Unready" : "Ready";
+            const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
             if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                 if (transport) {
                     transportUdpClientSendReady(transport, !myReady);
@@ -1021,7 +1031,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (hasWbnPlayers) {
                     ImGui::SameLine(0, 20);
                     if (connectedCount < 2) ImGui::BeginDisabled();
-                    if (ImGui::Button("Balance Teams", ImVec2(120 * s, 0))) {
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(120 * s, 0))) {
                         uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
                         transportUdpClientSendBalanceRequest(transport, teamSize);
                     }
@@ -1030,21 +1040,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             } else if (myPlayerNum == 0 && transport && cs->balanceProposalActive) {
                 ImGui::SameLine(0, 20);
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
-                if (ImGui::Button("Apply Balance", ImVec2(120 * s, 0))) {
+                if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
                     transportUdpClientSendBalanceApply(transport);
                 }
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 8);
-                if (ImGui::Button("Dismiss", ImVec2(80 * s, 0))) {
+                if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
                     transportUdpClientSendBalanceDismiss(transport);
                 }
             }
 
             ImGui::SameLine(0, 20);
-            if (ImGui::Button("Leave", ImVec2(100 * s, 0)) ||
+            if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
                 (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                ImGui::OpenPopup("Leave Game?##lobby");
+                char leavePopupId[64];
+                SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
+                ImGui::OpenPopup(leavePopupId);
             }
         }
 #endif
@@ -1053,17 +1065,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         mapPreviewPopupRenderModal(renderer);
 
         /* --- Leave confirmation popup --- */
-        if (ImGui::BeginPopupModal("Leave Game?##lobby", nullptr,
+        char leavePopupModalId[64];
+        SDL_snprintf(leavePopupModalId, sizeof(leavePopupModalId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
+        if (ImGui::BeginPopupModal(leavePopupModalId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Are you sure you want to leave this game?");
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LEAVE_BLURB));
             ImGui::Spacing();
-            if (ImGui::Button("Yes", ImVec2(80 * s, 0))) {
+            if (ImGui::Button(langGetText(STR_YES), ImVec2(80 * s, 0))) {
                 ImGui::CloseCurrentPopup();
                 result = 0;
                 running = false;
             }
             ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("No", ImVec2(80 * s, 0)) ||
+            if (ImGui::Button(langGetText(STR_NO), ImVec2(80 * s, 0)) ||
                 ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                 ImGui::CloseCurrentPopup();
             }
@@ -1072,9 +1086,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         /* --- Countdown overlay --- */
         if (cs->netStat == netLobbyCountdown && cs->countdownSeconds > 0) {
-            char countdownText[32];
-            SDL_snprintf(countdownText, sizeof(countdownText),
-                         "Starting in %d...", cs->countdownSeconds);
+            char countdownText[64];
+            MessageArgs args = {};
+            args.number = cs->countdownSeconds;
+            SDL_snprintf(countdownText, sizeof(countdownText), "%s",
+                         langGetTextFmt(STR_DLGLOBBY_STARTING_FMT, &args));
             ImGui::PushFont(countdownFont);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
             ImVec2 textSize = ImGui::CalcTextSize(countdownText);

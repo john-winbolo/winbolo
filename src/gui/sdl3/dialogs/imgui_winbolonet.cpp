@@ -29,6 +29,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
 #include "../../../winbolonet/winbolonet.h"
+#include "../../lang.h"
 #include "imgui_winbolonet.h"
 }
 
@@ -178,36 +179,36 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     bool loggedIn = (token[0] != '\0');
 
     if (wbnState == WBN_VALIDATING) {
-        wbnDrawSpinner("Checking WinBolo.net...");
+        wbnDrawSpinner(langGetText(STR_DLGWBN_CHECKING));
         return;
     }
 
     if (loggedIn) {
-        ImGui::Text("WinBolo.net:");
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Signed in");
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
         if (expiry[0] != '\0') {
             ImGui::SameLine();
-            ImGui::TextDisabled("(expires %s)", expiry);
+            ImGui::TextDisabled(langGetText(STR_DLGWBN_EXPIRES_FMT), expiry);
         }
         if (inGame) ImGui::BeginDisabled();
-        if (ImGui::Button("Sign out of WBN")) {
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
             gameFrontClearWinbolonetToken();
         }
         if (inGame) ImGui::EndDisabled();
     } else {
-        ImGui::Text("WinBolo.net:");
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
         ImGui::SameLine();
-        ImGui::TextDisabled("Not signed in");
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
         if (inGame) ImGui::BeginDisabled();
-        if (ImGui::Button("Sign in to WBN...")) {
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
             wbnPopupOpen = true;
             wbnFocusUser = true;
             wbnState = WBN_IDLE;
             wbnErrorBuf[0] = '\0';
             wbnUsername[0] = '\0';
             wbnPassword[0] = '\0';
-            ImGui::OpenPopup("Sign in to WinBolo.net");
+            ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
         }
         if (inGame) ImGui::EndDisabled();
     }
@@ -217,14 +218,11 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
 
-    if (ImGui::BeginPopupModal("Sign in to WinBolo.net", &wbnPopupOpen,
+    if (ImGui::BeginPopupModal(langGetText(STR_DLGWBN_SIGNIN_TITLE), &wbnPopupOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         bool busy = (wbnState == WBN_LOGGING_IN);
 
-        ImGui::TextWrapped(
-            "Sign in with your WinBolo.net username and password. "
-            "A token will be saved so you don't need to enter your "
-            "password again.");
+        ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -232,7 +230,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (busy) ImGui::BeginDisabled();
 
         float labelW = 90.0f;
-        ImGui::Text("Username:");
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(-1);
         if (wbnFocusUser) {
@@ -241,7 +239,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         }
         ImGui::InputText("##wbnuser", wbnUsername, sizeof(wbnUsername));
 
-        ImGui::Text("Password:");
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_PASSWORD));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(-1);
         bool enterPressed = ImGui::InputText("##wbnpass", wbnPassword, sizeof(wbnPassword),
@@ -272,23 +270,23 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
 
         /* Buttons */
         if (busy) {
-            wbnDrawSpinner("Signing in...");
+            wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
         } else {
             float btnW = 80.0f;
             float totalW = btnW * 2 + 8.0f;
             float avail = ImGui::GetContentRegionAvail().x;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - totalW) * 0.5f);
 
-            if (ImGui::Button("Sign in", ImVec2(btnW, 0)) || enterPressed) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_OK), ImVec2(btnW, 0)) || enterPressed) {
                 if (strlen(wbnUsername) == 0 || strlen(wbnPassword) == 0) {
-                    SDL_strlcpy(wbnErrorBuf, "Please enter your username and password.", sizeof(wbnErrorBuf));
+                    SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_NEEDCREDS), sizeof(wbnErrorBuf));
                     wbnState = WBN_ERROR;
                 } else {
                     wbnStartLogin();
                 }
             }
             ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("Cancel", ImVec2(btnW, 0))) {
+            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
                 ImGui::CloseCurrentPopup();
                 wbnPopupOpen = false;
             }

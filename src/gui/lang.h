@@ -415,6 +415,390 @@
 #define STR_DLGGAMEFINDER_PLAYERWRONG       466
 #define NETERR_MAPSERIALIZE                 467
 
+/* System Info panel additions */
+#define STR_DLGSYSINFO_FRAMERATE            482
+#define STR_DLGSYSINFO_GRAPHICS             483
+#define STR_DLGSYSINFO_AITANKS              484
+
+/* Network Info panel additions */
+#define STR_DLGNETINFO_SERVER               485
+#define STR_DLGNETINFO_THISGAME             486
+#define STR_DLGNETINFO_PINGGRAPH_FMT        487
+#define STR_DLGNETINFO_KBIN                 488
+#define STR_DLGNETINFO_KBOUT                489
+#define STR_DLGNETINFO_PACKETS_FMT          490
+#define STR_DLGNETINFO_KB_FMT               491
+
+/* Game Info panel additions */
+#define STR_DLGGAMEINFO_COPYSEED            492
+#define STR_DLGGAMEINFO_AILABEL             493
+#define STR_DLGGAMEINFO_FULLADV             494
+#define STR_DLGGAMEINFO_UNLIMITED           495
+
+/* Players panel */
+#define STR_DLGPLAYERS_TITLE                496
+#define STR_DLGPLAYERS_ALL                  497
+#define STR_DLGPLAYERS_NONE                 498
+#define STR_DLGPLAYERS_ALLIES               499
+#define STR_DLGPLAYERS_NEARBY               500
+#define STR_LEAVE_ALLIANCE                  501
+#define STR_REQUEST_ALLIANCE                502
+#define STR_ALLOW_NEW_PLAYERS               503
+
+/* About modal */
+#define STR_DLGABOUT_VERSION                504
+#define STR_DLGABOUT_COPYRIGHT              505
+#define STR_DLGABOUT_BOLOCOPYRIGHT          506
+
+/* Join Game confirmation modal */
+#define STR_DLGJOIN_TITLE                   507
+#define STR_DLGJOIN_BLURB                   508
+#define STR_DLGJOIN_BUTTON                  509
+
+/* Change Player Name modal */
+#define STR_DLGCHANGENAME_TITLE             510
+
+/* Key Setup modal additions */
+#define STR_DLGKEYSETUP_NONE_VAL            511
+#define STR_DLGKEYSETUP_PRESSAKEY           512
+#define STR_DLGKEYSETUP_PRESS_OR_CANCEL     513
+#define STR_DLGKEYSETUP_CHANGE              514
+#define STR_DLGKEYSETUP_COL_ACTION          515
+#define STR_DLGKEYSETUP_COL_KEY             516
+#define STR_DLGKEYSETUP_QUICKKEYS           517
+#define STR_DLGKEYSETUP_TREE                518
+#define STR_DLGKEYSETUP_ROAD                519
+#define STR_DLGKEYSETUP_WALL                520
+#define STR_DLGKEYSETUP_QUICKPILLBOX        521
+#define STR_DLGKEYSETUP_QUICKMINE           522
+
+/* Settings panel */
+#define STR_DLGSETTINGS_TITLE               523
+#define STR_DLGSETTINGS_PLAYER              524
+#define STR_DLGSETTINGS_PLAYERNAME          525
+#define STR_DLGSETTINGS_APPLY               526
+#define STR_DLGSETTINGS_SETKEYS             527
+#define STR_DLGSETTINGS_DISPLAY             528
+#define STR_DLGSETTINGS_WINDOWSIZE          529
+#define STR_DLGSETTINGS_RELSTEER            530
+#define STR_DLGSETTINGS_RELSTEER_TIP        531
+#define STR_DLGSETTINGS_TABLETMODE          532
+#define STR_DLGSETTINGS_LABELS              533
+#define STR_DLGSETTINGS_MSGNAMES            534
+#define STR_DLGSETTINGS_TANKLABELS          535
+#define STR_DLGSETTINGS_SOUND               536
+#define STR_DLGSETTINGS_MESSAGES            537
+#define STR_DLGSETTINGS_GAME                538
+
+/* Menu bar */
+#define STR_MENU_FILE                       539
+#define STR_MENU_NEW                        540
+#define STR_MENU_SAVE_MAP                   541
+#define STR_MENU_EXIT                       542
+#define STR_MENU_EDIT                       543
+#define STR_MENU_FRAME_RATE                 544
+#define STR_MENU_WINDOW_SIZE                545
+#define STR_MENU_NORMAL                     546
+#define STR_MENU_DOUBLE                     547
+#define STR_MENU_TRIPLE                     548
+#define STR_MENU_QUAD                       549
+#define STR_MENU_CUSTOM_RESIZABLE           550
+#define STR_MENU_REQUIRES_FMT               551
+#define STR_MENU_SMOOTH_SCROLLING           552
+#define STR_MENU_AUTO_SCROLLING             553
+#define STR_MENU_SHOW_GUNSIGHT              554
+#define STR_MENU_MSG_NAMES_SUB              555
+#define STR_MENU_TANK_LABELS_SUB            556
+#define STR_NONE                            557
+#define STR_SHORT                           558
+#define STR_LONG                            559
+#define STR_MENU_NO_OWN_LABEL               560
+#define STR_MENU_PILLBOX_LABELS             561
+#define STR_MENU_BASE_LABELS                562
+#define STR_MENU_HIDE_MAIN                  563
+#define STR_MENU_DEVICE                     564
+#define STR_MENU_DESKTOP                    565
+#define STR_MENU_WINBOLO                    566
+#define STR_MENU_SETKEYS                    567
+#define STR_MENU_SOUND_EFFECTS              568
+#define STR_MENU_BACKGROUND_SOUND           569
+#define STR_MENU_SOUND_KEEPALIVE            570
+#define STR_MENU_NEWSWIRE_MSGS              571
+#define STR_MENU_ASSISTANT_MSGS             572
+#define STR_MENU_AI_MSGS                    573
+#define STR_MENU_NETSTATUS_MSGS             574
+#define STR_MENU_NETDEBUG_MSGS              575
+#define STR_MENU_SETTINGS                   576
+#define STR_MENU_PLAYERS                    577
+#define STR_MENU_SEND_MESSAGE               578
+#define STR_MENU_SELECT_ALL                 579
+#define STR_MENU_SELECT_NONE                580
+#define STR_MENU_SELECT_ALLIES              581
+#define STR_MENU_SELECT_NEARBY              582
+#define STR_MENU_BRAINS                     583
+#define STR_MENU_MANUAL                     584
+#define STR_MENU_HELP                       585
+#define STR_MENU_ABOUT                      586
+#define STR_MENU_LEAVE_GAME                 587
+#define STR_BRAINSETTINGS_NONE              588
+#define STR_BRAINSETTINGS_TITLE             589
+
+/* Settings panel additions (pre-game) */
+#define STR_DLGSETTINGS_TUTORIAL            590
+#define STR_DLGSETTINGS_PLAY_TUTORIAL       591
+#define STR_DLGSETTINGS_SHOW_ON_MAIN        592
+#define STR_DLGSETTINGS_CRASH_REPORTING     593
+#define STR_DLGSETTINGS_ENABLE_CRASH        594
+#define STR_DLGSETTINGS_CRASH_HELP          595
+#define STR_DLGSETTINGS_CRASH_NEXTLAUNCH    596
+#define STR_CLOSE                           597
+#define STR_DLGSETTINGS_WINTITLE            598
+#define STR_DLGKEYSETUP_WINTITLE            599
+
+/* Lobby dialog */
+#define STR_DLGLOBBY_WINTITLE               600
+#define STR_UNKNOWN                         601
+#define STR_DLGGAMEINFO_AIFULL              602
+#define STR_DLGLOBBY_HIDDEN                 603
+#define STR_DLGLOBBY_VISIBLE                604
+#define STR_DLGLOBBY_DOWNLOADING            605
+#define STR_DLGLOBBY_MAP_UNAVAILABLE        606
+#define STR_DLGLOBBY_PILLBOXES              607
+#define STR_DLGLOBBY_BASES                  608
+#define STR_DLGLOBBY_STARTS                 609
+#define STR_DLGLOBBY_SKIPMAP                610
+#define STR_DLGLOBBY_CANCELSKIP             611
+#define STR_DLGLOBBY_VOTES_FMT              612
+#define STR_DLGLOBBY_CHAT                   613
+#define STR_DLGLOBBY_READY                  614
+#define STR_DLGLOBBY_UNREADY                615
+#define STR_DLGLOBBY_BALANCE_TEAMS          616
+#define STR_DLGLOBBY_APPLY_BALANCE          617
+#define STR_DLGLOBBY_DISMISS                618
+#define STR_DLGLOBBY_LEAVE                  619
+#define STR_DLGLOBBY_LEAVE_TITLE            620
+#define STR_DLGLOBBY_LEAVE_BLURB            621
+#define STR_DLGLOBBY_BOT_FMT                622
+#define STR_DLGLOBBY_YOU_FMT                623
+#define STR_DLGLOBBY_STARTING_FMT           624
+#define STR_DLGLOBBY_LOSTCONNECTION         625
+#define STR_DLGLOBBY_ME                     626
+#define STR_DLGLOBBY_PLAYER_COL             627
+#define STR_DLGLOBBY_PING_COL               628
+#define STR_DLGLOBBY_TEAM_COL               629
+#define STR_DLGLOBBY_READY_COL              630
+#define STR_DLGLOBBY_SLOT_COL               631
+#define STR_DLGLOBBY_NAME_COL               632
+#define STR_DLGLOBBY_ACTION_COL             633
+#define STR_DLGLOBBY_ADDBOT                 634
+#define STR_DLGLOBBY_REMOVE                 635
+#define STR_DLGLOBBY_MAP_TAB                636
+#define STR_DLGLOBBY_GAME_LBL               637
+#define STR_DLGLOBBY_MINES_LBL              638
+#define STR_DLGLOBBY_AI_LBL                 639
+#define STR_DLGLOBBY_TIME_LBL               640
+#define STR_DLGLOBBY_HEADER_FMT             641
+#define STR_DLGLOBBY_TIME_HMS               642
+#define STR_DLGLOBBY_TIME_MS                643
+#define STR_DLGLOBBY_TIME_S                 644
+#define STR_DLGLOBBY_MAP_LBL                645
+
+/* Game Setup dialog additions */
+#define STR_DLGGAMESETUP_WINTITLE           646
+#define STR_DLGGAMESETUP_SELECTAMAP         647
+#define STR_BACK                            648
+#define STR_DLGGAMESETUP_BASES_STARTS_FMT   649
+#define STR_DLGGAMESETUP_PILLBOXES_FMT      650
+#define STR_DLGGAMESETUP_CHANGEMAP          651
+#define STR_DLGGAMESETUP_GAMETYPE_LBL       652
+#define STR_DLGGAMESETUP_OPENGAME_SHORT     653
+#define STR_DLGGAMESETUP_HIDDENMINES_SHORT  654
+#define STR_DLGGAMESETUP_AICOMPPLAYERS      655
+#define STR_DLGGAMESETUP_ALLOW              656
+#define STR_DLGGAMESETUP_ADVANTAGE          657
+#define STR_DLGGAMESETUP_FULLMAP            658
+#define STR_DLGGAMESETUP_TIMELIMIT_SHORT    659
+#define STR_DLGGAMESETUP_TEAMSETUP          660
+#define STR_DLGGAMESETUP_AINUM              661
+#define STR_DLGGAMESETUP_NOBRAINS           662
+#define STR_DLGGAMESETUP_BRAIN_COL          663
+#define STR_DLGGAMESETUP_YOU                664
+#define STR_DLGGAMESETUP_BOT_FMT            665
+#define STR_DLGGAMESETUP_NOAI               666
+#define STR_DLGGAMESETUP_ALLOWAI            667
+#define STR_DLGGAMESETUP_ALLOWADV           668
+#define STR_DLGGAMESETUP_ALLOWFULL          669
+#define STR_DLGGAMESETUP_NOPREVIEW          670
+#define STR_DLGGAMESETUP_STARTGAME          671
+#define STR_DLGGAMESETUP_STRICT_SHORT       672
+#define STR_DLGTCP_WINTITLE                 673
+#define STR_ERR_TITLE                       674
+
+/* Game Browser dialog */
+#define STR_DLGBROWSER_WINTITLE_FMT         675
+#define STR_DLGBROWSER_REFRESH              676
+#define STR_DLGBROWSER_LOADING_FMT          677
+#define STR_DLGBROWSER_TRACKER_INSTRUCTION  678
+#define STR_DLGBROWSER_LAN_INSTRUCTION      679
+#define STR_DLGBROWSER_GAMES_LOADED         680
+#define STR_DLGBROWSER_NO_GAMES             681
+#define STR_DLGBROWSER_SEARCH_FAILED        682
+#define STR_DLGBROWSER_SEARCHING            683
+#define STR_DLGBROWSER_COL_SERVER           684
+#define STR_DLGBROWSER_COL_MAP              685
+#define STR_DLGBROWSER_COL_PLAYERS          686
+#define STR_DLGBROWSER_COL_TYPE             687
+#define STR_DLGBROWSER_COL_AI               688
+#define STR_DLGBROWSER_COL_BASES            689
+#define STR_DLGBROWSER_COL_PILLS            690
+#define STR_DLGBROWSER_COL_PING             691
+#define STR_DLGBROWSER_FILTER               692
+#define STR_DLGBROWSER_FILTER_ALLTYPES      693
+#define STR_DLGBROWSER_FILTER_UNLOCKED      694
+#define STR_DLGBROWSER_FILTER_ALLLOBBY      695
+#define STR_DLGBROWSER_FILTER_INLOBBY       696
+#define STR_DLGBROWSER_FILTER_STARTING      697
+#define STR_DLGBROWSER_STATUS_PINGING_FMT   698
+#define STR_DLGBROWSER_STATUS_FMT           699
+#define STR_DLGBROWSER_NEWGAME              700
+#define STR_DLGBROWSER_PLAYER_NAME_BTN      701
+#define STR_DLGBROWSER_MANUAL               702
+#define STR_DLGBROWSER_ERR_VERSION          703
+#define STR_DLGBROWSER_ERR_NEEDNAME         704
+#define STR_DLGBROWSER_SETNAME_TITLE        705
+#define STR_DLGBROWSER_AI_ADV               706
+#define STR_DLGBROWSER_AI_FULL              707
+
+/* WBN Log Browser dialog */
+#define STR_DLGWBN_WINTITLE                 708
+#define STR_DLGWBN_TITLE                    709
+#define STR_DLGWBN_TAB_RECENT               710
+#define STR_DLGWBN_TAB_TOPRATED             711
+#define STR_DLGWBN_TAB_MOSTDOWNLOADED       712
+#define STR_DLGWBN_TAB_SEARCH               713
+#define STR_DLGWBN_LOADING                  714
+#define STR_DLGWBN_NOCONNECT                715
+#define STR_DLGWBN_MINPLAYERS               716
+#define STR_DLGWBN_SEARCHFILTERS            717
+#define STR_DLGWBN_HINT_PLAYER              718
+#define STR_DLGWBN_HINT_MAP                 719
+#define STR_DLGWBN_SEARCH_BTN               720
+#define STR_DLGWBN_ERROR_FMT                721
+#define STR_DLGWBN_COL_MAP                  722
+#define STR_DLGWBN_COL_TYPE                 723
+#define STR_DLGWBN_COL_PLAYERS              724
+#define STR_DLGWBN_COL_RATING               725
+#define STR_DLGWBN_COL_SIZE                 726
+#define STR_DLGWBN_COL_DATE                 727
+#define STR_DLGWBN_PLAYERS_LBL              728
+#define STR_DLGWBN_NUMPLAYERS_FMT           729
+#define STR_DLGWBN_DURATION_FMT             730
+#define STR_DLGWBN_RATING_FMT               731
+#define STR_DLGWBN_DOWNLOADS_FMT            732
+#define STR_DLGWBN_SIZE_FMT                 733
+#define STR_DLGWBN_COMMENTS_FMT             734
+#define STR_DLGWBN_NOCOMMENTS               735
+#define STR_DLGWBN_ADDCOMMENT               736
+#define STR_DLGWBN_HINT_COMMENT             737
+#define STR_DLGWBN_POST                     738
+#define STR_DLGWBN_POSTED                   739
+#define STR_DLGWBN_LOADINGDETAIL            740
+#define STR_DLGWBN_DOWNLOADING              741
+#define STR_DLGWBN_VIEWLOG                  742
+#define STR_DLGWBN_NOLOG                    743
+#define STR_DLGWBN_PREV                     744
+#define STR_DLGWBN_NEXT                     745
+#define STR_DLGWBN_PAGE_FMT                 746
+#define STR_DLGWBN_OPENFILE                 747
+#define STR_DLGWBN_PARSERR                  748
+#define STR_DLGWBN_NETERR                   749
+#define STR_DLGWBN_LOADERR                  750
+#define STR_DLGWBN_DOWNLOAD_FAILED          751
+#define STR_DLGWBN_NOSAVEPATH               752
+#define STR_DLGWBN_POSTERR                  753
+#define STR_DLGWBN_FETCHERR                 754
+#define STR_DLGWBN_UNKNOWN_ERR              755
+#define STR_DLGWBN_FILEFILTER               756
+
+/* SetName dialog additions */
+#define STR_DLGSETNAME_WINTITLE             757
+#define STR_DLGSETNAME_WBN_LOCKED           758
+#define STR_DLGSETNAME_PLEASE_ENTER         759
+#define STR_DLGSETNAME_BLANK_ERR            760
+#define STR_DLGSETNAME_STAR_ERR             761
+#define STR_DLGSETNAME_INUSE_ERR            762
+
+/* Skin selection dialog additions */
+#define STR_DLGSKIN_WINTITLE                763
+#define STR_DLGSKIN_NOSKIN                  764
+#define STR_DLGSKIN_NA                      765
+#define STR_DLGSKIN_SELECT                  766
+#define STR_DLGSKIN_NAME_LBL                767
+#define STR_DLGSKIN_AUTHOR_LBL              768
+#define STR_DLGSKIN_NOTES_LBL               769
+#define STR_DLGSKIN_LOADERR                 770
+
+/* Tracker Setup dialog */
+#define STR_DLGTRACKER_WINTITLE             771
+#define STR_DLGTRACKER_INVALIDPORT          772
+
+/* WinBolo.net section */
+#define STR_DLGWBN_CHECKING                 773
+#define STR_DLGWBN_LABEL                    774
+#define STR_DLGWBN_SIGNED_IN                775
+#define STR_DLGWBN_EXPIRES_FMT              776
+#define STR_DLGWBN_SIGN_OUT                 777
+#define STR_DLGWBN_NOT_SIGNED_IN            778
+#define STR_DLGWBN_SIGN_IN_BTN              779
+#define STR_DLGWBN_SIGNIN_TITLE             780
+#define STR_DLGWBN_SIGNIN_BLURB             781
+#define STR_DLGWBN_USERNAME                 782
+#define STR_DLGWBN_PASSWORD                 783
+#define STR_DLGWBN_SIGNINGIN                784
+#define STR_DLGWBN_SIGNIN_OK                785
+#define STR_DLGWBN_NEEDCREDS                786
+
+/* Welcome dialog */
+#define STR_DLGWELCOME_WINTITLE             787
+#define STR_DLGWELCOME_SINGLE               788
+#define STR_DLGWELCOME_LOCAL                789
+#define STR_DLGWELCOME_MAPEDITOR            790
+#define STR_DLGWELCOME_LOGVIEWER            791
+#define STR_DLGWELCOME_INTERNET             792
+
+/* Map Chooser dialog */
+#define STR_MAPCHOOSER_EVERARD              793
+#define STR_MAPCHOOSER_LOADMAP              794
+#define STR_MAPCHOOSER_LOADDEVICE           795
+#define STR_MAPCHOOSER_GENRANDOM            796
+#define STR_MAPCHOOSER_RANDOMMAP            797
+#define STR_MAPCHOOSER_CLICKGEN             798
+#define STR_MAPCHOOSER_NOPREVIEW            799
+#define STR_MAPCHOOSER_STATS_FMT            800
+#define STR_MAPCHOOSER_MAPFILES             801
+#define STR_MAPCHOOSER_ALLFILES             802
+
+/* Tablet HUD */
+#define STR_TABLET_STATUS_TITLE             803
+#define STR_TABLET_KILLS_DEATHS_FMT         804
+#define STR_TABLET_TANK_RESOURCES           805
+#define STR_TABLET_SHELLS                   806
+#define STR_TABLET_MINES                    807
+#define STR_TABLET_ARMOUR                   808
+#define STR_TABLET_TREES                    809
+#define STR_TABLET_PILLBOXES                810
+#define STR_TABLET_BASES                    811
+#define STR_TABLET_TANKS                    812
+#define STR_TABLET_PILL_FMT                 813
+#define STR_TABLET_BASE_FMT                 814
+#define STR_TABLET_TANK_FMT                 815
+#define STR_TABLET_BTN_MSG                  816
+#define STR_TABLET_BTN_PLY                  817
+#define STR_TABLET_BTN_SET                  818
+
+/* Generic dialog titles (cross-dialog) */
+#define STR_DLGSETPLAYERNAME_TITLE          819
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

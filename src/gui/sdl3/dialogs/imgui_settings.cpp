@@ -36,6 +36,7 @@ extern "C" {
 #include "../../../bolo/global.h"
 #include "../../../bolo/screen.h"
 #include "../bg_game.h"
+#include "../../lang.h"
 #include "imgui_settings.h"
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
@@ -122,7 +123,7 @@ extern "C" void imguiSettingsShow(void) {
 #if !BOLO_MOBILE
     /* Keep the window at the same size as the welcome dialog */
     dialogSetWindowSize(window, 1024, 768);
-    dialogSetWindowTitle(window, "WinBolo - Settings");
+    dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -219,7 +220,7 @@ extern "C" void imguiSettingsShow(void) {
         /* Title */
         {
             ImGui::SetWindowFontScale(1.4f);
-            const char *title = "Settings";
+            const char *title = langGetText(STR_DLGSETTINGS_TITLE);
             ImVec2 textSize = ImGui::CalcTextSize(title);
             ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
             ImGui::Text("%s", title);
@@ -230,13 +231,13 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::Spacing();
 
         /* ---- Player ---- */
-        if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
             bool wbnActive = gameFrontGetWinbolonetUse();
             if (wbnActive) {
                 /* Refresh local buffer from gameFront in case WBN login just set it */
                 gameFrontGetPlayerName(playerName);
             }
-            ImGui::Text("Player Name:");
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(200);
             if (wbnActive) ImGui::BeginDisabled();
@@ -248,10 +249,14 @@ extern "C" void imguiSettingsShow(void) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Apply##name")) {
-                playerName[32] = '\0';
-                if (playerName[0] != '\0') {
-                    gameFrontSetPlayerName(playerName);
+            {
+                char applyBuf[64];
+                snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
+                if (ImGui::Button(applyBuf)) {
+                    playerName[32] = '\0';
+                    if (playerName[0] != '\0') {
+                        gameFrontSetPlayerName(playerName);
+                    }
                 }
             }
             if (wbnActive) ImGui::EndDisabled();
@@ -261,7 +266,7 @@ extern "C" void imguiSettingsShow(void) {
         }
 
         /* ---- Display ---- */
-        if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
             const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
             int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
                                FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
@@ -269,7 +274,7 @@ extern "C" void imguiSettingsShow(void) {
             for (int i = 0; i < 7; i++) {
                 if (frameRate == frValues[i]) { curFrIdx = i; break; }
             }
-            ImGui::Text("Frame Rate:");
+            ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80);
             if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
@@ -285,103 +290,110 @@ extern "C" void imguiSettingsShow(void) {
 #if !BOLO_MOBILE
             {
                 bool as = (bool)autoScrollingEnabled;
-                if (ImGui::Checkbox("Automatic Scrolling", &as)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_AUTO_SCROLLING), &as)) {
                     windowAutomaticScrolling_toggle(NULL);
                 }
             }
             {
                 bool ss = (bool)smoothScrollingEnabled;
-                if (ImGui::Checkbox("Smooth Scrolling", &ss)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
                     windowSmoothScrolling_toggle();
                 }
             }
             {
                 bool gs = (bool)showGunsight;
-                if (ImGui::Checkbox("Show Gunsight", &gs)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
                     /* Pre-game: just toggle the global directly */
                     showGunsight = !showGunsight;
                 }
             }
             ImGui::Spacing();
-            if (ImGui::Button("Set Keys...", ImVec2(120, 0))) {
+            if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
                 showKeySetup = true;
             }
 #endif
         }
 
         /* ---- Labels ---- */
-        if (ImGui::CollapsingHeader("Labels", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Text("Message Names:");
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_LABELS), ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MSGNAMES));
             ImGui::SameLine();
             {
                 bool isShort = (labelMsg == lblShort);
-                if (ImGui::RadioButton("Short##msg", isShort)) windowSetMessageLabelLen(NULL, lblShort);
+                char shortBuf[64], longBuf[64];
+                snprintf(shortBuf, sizeof(shortBuf), "%s##msg", langGetText(STR_SHORT));
+                snprintf(longBuf,  sizeof(longBuf),  "%s##msg", langGetText(STR_LONG));
+                if (ImGui::RadioButton(shortBuf, isShort)) windowSetMessageLabelLen(NULL, lblShort);
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Long##msg", !isShort)) windowSetMessageLabelLen(NULL, lblLong);
+                if (ImGui::RadioButton(longBuf,  !isShort)) windowSetMessageLabelLen(NULL, lblLong);
             }
 
-            ImGui::Text("Tank Labels:");
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_TANKLABELS));
             ImGui::SameLine();
             {
-                if (ImGui::RadioButton("None##tank", labelTank == lblNone))  windowSetTankLabelLen(NULL, lblNone);
+                char noneBuf[64], shortBuf[64], longBuf[64];
+                snprintf(noneBuf,  sizeof(noneBuf),  "%s##tank", langGetText(STR_NONE));
+                snprintf(shortBuf, sizeof(shortBuf), "%s##tank", langGetText(STR_SHORT));
+                snprintf(longBuf,  sizeof(longBuf),  "%s##tank", langGetText(STR_LONG));
+                if (ImGui::RadioButton(noneBuf,  labelTank == lblNone))  windowSetTankLabelLen(NULL, lblNone);
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Short##tank", labelTank == lblShort)) windowSetTankLabelLen(NULL, lblShort);
+                if (ImGui::RadioButton(shortBuf, labelTank == lblShort)) windowSetTankLabelLen(NULL, lblShort);
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Long##tank", labelTank == lblLong))  windowSetTankLabelLen(NULL, lblLong);
+                if (ImGui::RadioButton(longBuf,  labelTank == lblLong))  windowSetTankLabelLen(NULL, lblLong);
             }
             {
                 bool noSelf = !(bool)labelSelf;
-                if (ImGui::Checkbox("Don't label own tank", &noSelf)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_NO_OWN_LABEL), &noSelf)) {
                     windowLabelOwnTank_toggle(NULL);
                 }
             }
             {
                 bool pl = (bool)showPillLabels;
-                if (ImGui::Checkbox("Pillbox Labels", &pl)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_PILLBOX_LABELS), &pl)) {
                     showPillLabels = !showPillLabels;
                 }
             }
             {
                 bool bl = (bool)showBaseLabels;
-                if (ImGui::Checkbox("Refuelling Base Labels", &bl)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_BASE_LABELS), &bl)) {
                     showBaseLabels = !showBaseLabels;
                 }
             }
         }
 
         /* ---- Tutorial ---- */
-        if (ImGui::CollapsingHeader("Tutorial", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Button("Play Tutorial", ImVec2(140, 0))) {
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_TUTORIAL), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
                 gameFrontRequestPlayTutorial();
                 running = false;  /* Close settings; openSettings handler routes to openTutorial. */
             }
             ImGui::SameLine();
             {
                 bool showOnMain = gameFrontGetShowTutorialButton();
-                if (ImGui::Checkbox("Show on main menu", &showOnMain)) {
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
                     gameFrontSetShowTutorialButton(showOnMain);
                 }
             }
         }
 
         /* ---- Sound ---- */
-        if (ImGui::CollapsingHeader("Sound", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_SOUND), ImGuiTreeNodeFlags_DefaultOpen)) {
             {
                 bool se = (bool)soundEffects;
-                if (ImGui::Checkbox("Sound Effects", &se)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) {
                     windowSoundEffects_toggle();
                 }
             }
             {
                 bool bgs = (bool)backgroundSound;
-                if (ImGui::Checkbox("Background Sound", &bgs)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) {
                     windowBackgroundSoundChange_toggle();
                 }
             }
 #if !BOLO_MOBILE
             {
                 bool sk = (bool)useSoundKeepalive;
-                if (ImGui::Checkbox("Sound Keepalive", &sk)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) {
                     windowSoundKeepalive();
                 }
             }
@@ -389,34 +401,34 @@ extern "C" void imguiSettingsShow(void) {
         }
 
         /* ---- Messages ---- */
-        if (ImGui::CollapsingHeader("Messages", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_MESSAGES), ImGuiTreeNodeFlags_DefaultOpen)) {
             {
                 bool nw = (bool)showNewswireMessages;
-                if (ImGui::Checkbox("Newswire Messages", &nw)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_NEWSWIRE_MSGS), &nw)) {
                     windowMenuNewswire_toggle(NULL);
                 }
             }
             {
                 bool am = (bool)showAssistantMessages;
-                if (ImGui::Checkbox("Assistant Messages", &am)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_ASSISTANT_MSGS), &am)) {
                     windowMenuAssistant_toggle(NULL);
                 }
             }
             {
                 bool ai = (bool)showAIMessages;
-                if (ImGui::Checkbox("AI Brain Messages", &ai)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_AI_MSGS), &ai)) {
                     windowMenuAI_toggle(NULL);
                 }
             }
             {
                 bool ns = (bool)showNetworkStatusMessages;
-                if (ImGui::Checkbox("Network Status Messages", &ns)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_NETSTATUS_MSGS), &ns)) {
                     windowMenuNetwork_toggle(NULL);
                 }
             }
             {
                 bool nd = (bool)showNetworkDebugMessages;
-                if (ImGui::Checkbox("Network Debug Messages", &nd)) {
+                if (ImGui::Checkbox(langGetText(STR_MENU_NETDEBUG_MSGS), &nd)) {
                     windowMenuNetworkDebug_toggle(NULL);
                 }
             }
@@ -424,14 +436,14 @@ extern "C" void imguiSettingsShow(void) {
 
 #if defined(__IPHONEOS__)
         /* ---- Crash Reporting ---- */
-        if (ImGui::CollapsingHeader("Crash Reporting", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_CRASH_REPORTING), ImGuiTreeNodeFlags_DefaultOpen)) {
             bool cr = iosCrashReportingGetEnabled();
-            if (ImGui::Checkbox("Enable Crash Reporting", &cr)) {
+            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_ENABLE_CRASH), &cr)) {
                 iosCrashReportingSetEnabled(cr);
             }
-            ImGui::TextWrapped("Help improve WinBolo by sending crash reports");
+            ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_CRASH_HELP));
             ImGui::Spacing();
-            ImGui::TextDisabled("Changes take effect on next launch.");
+            ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
         }
 #endif
 
@@ -442,7 +454,7 @@ extern "C" void imguiSettingsShow(void) {
         float btnW = 80.0f;
         float btnX = (panelW - btnW) / 2.0f;
         ImGui::SetCursorPosX(btnX);
-        if (ImGui::Button("Close", ImVec2(btnW, 0)) ||
+        if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             running = false;
         }
@@ -497,7 +509,7 @@ extern "C" void imguiSettingsShow(void) {
             dialogApplyScaling(s);
 
             dialogSetWindowSize(window, 1024, 768);
-            dialogSetWindowTitle(window, "WinBolo - Settings");
+            dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
 
             lastTickTime = SDL_GetTicks();
         }
