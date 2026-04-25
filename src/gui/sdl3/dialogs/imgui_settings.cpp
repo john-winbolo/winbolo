@@ -304,28 +304,64 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     SDL_GetTextureSize(atlas, &texW, &texH);
     if (texW <= 0.0f || texH <= 0.0f) return;
 
-    struct { const char *label; int x, y, w, h; } previews[] = {
-        { "Self",   TANK_SELF_0_X,     TANK_SELF_0_Y,     TILE_SIZE_X, TILE_SIZE_Y },
-        { "Good",   TANK_GOOD_0_X,     TANK_GOOD_0_Y,     TILE_SIZE_X, TILE_SIZE_Y },
-        { "Evil",   TANK_EVIL_0_X,     TANK_EVIL_0_Y,     TILE_SIZE_X, TILE_SIZE_Y },
-        { "Boat",   TANK_SELFBOAT_0_X, TANK_SELFBOAT_0_Y, TILE_SIZE_X, TILE_SIZE_Y },
-        { "Shell",  SHELL_0_X,         SHELL_0_Y,         SHELL_0_WIDTH, SHELL_0_HEIGHT },
-        { "LGM",    LGM0_X,            LGM0_Y,            LGM_WIDTH,     LGM_HEIGHT     },
+    /* Per-cell sprite previews — load each from the SELECTED theme's
+     * file on disk so changing the dropdown updates them immediately,
+     * even before Apply. */
+    struct CellSpec { const char *label; const char *base;
+                      int atlasX, atlasY, atlasW, atlasH; };
+    static const CellSpec cells[] = {
+        { "Self",  "tank_self_00",     TANK_SELF_0_X,     TANK_SELF_0_Y,     TILE_SIZE_X,    TILE_SIZE_Y    },
+        { "Good",  "tank_good_00",     TANK_GOOD_0_X,     TANK_GOOD_0_Y,     TILE_SIZE_X,    TILE_SIZE_Y    },
+        { "Evil",  "tank_evil_00",     TANK_EVIL_0_X,     TANK_EVIL_0_Y,     TILE_SIZE_X,    TILE_SIZE_Y    },
+        { "Boat",  "tank_selfboat_00", TANK_SELFBOAT_0_X, TANK_SELFBOAT_0_Y, TILE_SIZE_X,    TILE_SIZE_Y    },
+        { "Shell", "shell_00",         SHELL_0_X,         SHELL_0_Y,         SHELL_0_WIDTH,  SHELL_0_HEIGHT },
+        { "LGM",   "lgm_frame0",       LGM0_X,            LGM0_Y,            LGM_WIDTH,      LGM_HEIGHT     },
     };
+    const int kNumCells = (int)(sizeof(cells)/sizeof(cells[0]));
+    static SDL_Texture *cellTex[6] = { nullptr };
+    static int cellLoadedIdx = -1;
+    if (cellLoadedIdx != s_previewThemeIdx) {
+        cellLoadedIdx = s_previewThemeIdx;
+        for (int i = 0; i < kNumCells; i++) {
+            if (cellTex[i]) { SDL_DestroyTexture(cellTex[i]); cellTex[i] = nullptr; }
+            const char *themeName = (s_previewThemeIdx == 0)
+                                      ? "" : themeDirs[s_previewThemeIdx].c_str();
+            char path[1024];
+            if (findThemeAsset(themeName, cells[i].base, path, sizeof(path))) {
+                /* Rasterize at a reasonable internal size — keep aspect
+                 * for non-square sprites (shell/LGM). */
+                int rasterW = 64, rasterH = 64;
+                if (cells[i].atlasW < cells[i].atlasH) {
+                    rasterW = (cells[i].atlasW * 64) / cells[i].atlasH;
+                } else if (cells[i].atlasH < cells[i].atlasW) {
+                    rasterH = (cells[i].atlasH * 64) / cells[i].atlasW;
+                }
+                int rasterMax = rasterW > rasterH ? rasterW : rasterH;
+                cellTex[i] = loadSvgToTexture(renderer, path, rasterMax);
+            }
+        }
+    }
+
     int previewPx = 32;
-    for (size_t i = 0; i < sizeof(previews)/sizeof(previews[0]); ++i) {
+    for (int i = 0; i < kNumCells; i++) {
         if (i > 0) ImGui::SameLine();
         ImGui::BeginGroup();
-        float scaleX = texW / 496.0f;
-        float scaleY = texH / 176.0f;
-        ImVec2 uv0((previews[i].x * scaleX) / texW,
-                   (previews[i].y * scaleY) / texH);
-        ImVec2 uv1(((previews[i].x + previews[i].w) * scaleX) / texW,
-                   ((previews[i].y + previews[i].h) * scaleY) / texH);
-        ImGui::Image((ImTextureID)(intptr_t)atlas,
-                     ImVec2((float)previewPx, (float)previewPx),
-                     uv0, uv1);
-        ImGui::TextUnformatted(previews[i].label);
+        if (cellTex[i]) {
+            ImGui::Image((ImTextureID)(intptr_t)cellTex[i],
+                         ImVec2((float)previewPx, (float)previewPx));
+        } else {
+            /* Fallback: live atlas UV (whatever's currently active). */
+            float scaleX = texW / 496.0f;
+            float scaleY = texH / 176.0f;
+            ImVec2 uv0((cells[i].atlasX * scaleX) / texW,
+                       (cells[i].atlasY * scaleY) / texH);
+            ImVec2 uv1(((cells[i].atlasX + cells[i].atlasW) * scaleX) / texW,
+                       ((cells[i].atlasY + cells[i].atlasH) * scaleY) / texH);
+            ImGui::Image((ImTextureID)(intptr_t)atlas,
+                         ImVec2((float)previewPx, (float)previewPx),
+                         uv0, uv1);
+        }
+        ImGui::TextUnformatted(cells[i].label);
         ImGui::EndGroup();
     }
 
@@ -351,7 +387,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
                                   : themeDirs[s_previewThemeIdx].c_str();
         previewIsRotate = themeIsIngamerotate(themeName);
         char path[1024];
-        if (findThemeAsset(themeName, "tank_00", path, sizeof(path))) {
+        if (findThemeAsset(themeName, "tank_self_00", path, sizeof(path))) {
             previewTankTex = loadSvgToTexture(renderer, path, tankRasterSize);
         }
     }
