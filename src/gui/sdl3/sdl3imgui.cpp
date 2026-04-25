@@ -2573,11 +2573,47 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             }
         }
 
-        /* Override-mode scroll-wheel zoom (1× .. 6×). */
+        /* Override-mode scroll-wheel zoom (1× .. 6×).  Anchor the
+         * next zoom step on the cursor so the world point under the
+         * cursor stays under the cursor. */
         if (overrideModeIsOn() && ev.type == SDL_EVENT_MOUSE_WHEEL) {
+            overrideModeSetZoomAnchor((int)ev.wheel.mouse_x,
+                                      (int)ev.wheel.mouse_y);
             if (ev.wheel.y > 0) overrideModeZoomIn();
             else if (ev.wheel.y < 0) overrideModeZoomOut();
             continue;
+        }
+
+        /* Override-mode mouse-drag pan (middle or right button). */
+        if (overrideModeIsOn()) {
+            static bool s_overrideDragging = false;
+            static float s_dragLastX = 0.0f;
+            static float s_dragLastY = 0.0f;
+            if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN
+                && (ev.button.button == SDL_BUTTON_MIDDLE
+                 || ev.button.button == SDL_BUTTON_RIGHT)) {
+                s_overrideDragging = true;
+                s_dragLastX = ev.button.x;
+                s_dragLastY = ev.button.y;
+                continue;
+            }
+            if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP
+                && (ev.button.button == SDL_BUTTON_MIDDLE
+                 || ev.button.button == SDL_BUTTON_RIGHT)) {
+                s_overrideDragging = false;
+                continue;
+            }
+            if (s_overrideDragging && ev.type == SDL_EVENT_MOUSE_MOTION) {
+                float dx = ev.motion.x - s_dragLastX;
+                float dy = ev.motion.y - s_dragLastY;
+                s_dragLastX = ev.motion.x;
+                s_dragLastY = ev.motion.y;
+                /* Drag right → world slides right under cursor → edgeX
+                 * decreases (subtracts).  overrideModePan adds to edgeX,
+                 * so negate the delta. */
+                overrideModePan(-(int)dx, -(int)dy);
+                continue;
+            }
         }
 
         /* While override mode is on, arrow keys pan the world view.

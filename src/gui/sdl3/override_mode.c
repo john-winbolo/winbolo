@@ -48,6 +48,8 @@ static int  s_extraDelayMs = 0;        /* 0 = normal speed; >0 = slower */
 static int  s_panX = 0;                /* screen-pixel pan offset, accumulated */
 static int  s_panY = 0;
 static int  s_zoomMul = 1;             /* mouse-wheel world zoom multiplier */
+static int  s_zoomAnchorX = -1;        /* screen-px anchor; -1 = use centre */
+static int  s_zoomAnchorY = -1;
 #define ZOOM_MUL_MIN 1
 #define ZOOM_MUL_MAX 6
 #define EXTRA_DELAY_STEP_MS 10
@@ -62,6 +64,8 @@ void overrideModeToggle(void) {
     s_panX = 0;
     s_panY = 0;
     s_zoomMul = 1;
+    s_zoomAnchorX = -1;
+    s_zoomAnchorY = -1;
   }
   SDL_Log("[OverrideMode] %s", s_overrideOn ? "ON" : "OFF");
 }
@@ -113,6 +117,18 @@ void overrideModeZoomOut(void) {
 
 int overrideModeZoomMul(void) {
   return s_zoomMul;
+}
+
+void overrideModeSetZoomAnchor(int screenX, int screenY) {
+  s_zoomAnchorX = screenX;
+  s_zoomAnchorY = screenY;
+}
+
+bool overrideModeGetZoomAnchor(int *outX, int *outY) {
+  if (s_zoomAnchorX < 0 || s_zoomAnchorY < 0) return false;
+  if (outX) *outX = s_zoomAnchorX;
+  if (outY) *outY = s_zoomAnchorY;
+  return true;
 }
 
 /* Render a wide tile region direct from sim using mapViewCalcSquare,

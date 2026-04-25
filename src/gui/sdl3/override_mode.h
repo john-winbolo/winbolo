@@ -58,6 +58,13 @@ void overrideModeZoomIn(void);
 void overrideModeZoomOut(void);
 int  overrideModeZoomMul(void);
 
+/* Set / read the screen-pixel point that a subsequent zoom step
+ * should keep stationary.  Default is the playfield centre.  Set to
+ * the cursor position before each scroll-wheel zoom so the world
+ * point under the cursor stays under the cursor across zoom. */
+void overrideModeSetZoomAnchor(int screenX, int screenY);
+bool overrideModeGetZoomAnchor(int *outX, int *outY);
+
 /* Draw the full visible region's tiles directly from sim (instead of
  * the engine's 17×17 screen buffer).  Called before the classic
  * mapViewDrawTiles so the surrounding area is filled in when the

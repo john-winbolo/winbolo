@@ -1348,19 +1348,25 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     /* Override-mode scroll-wheel zoom: scale gZoomFactor + tileW/H +
      * edgeX/Y for the world rendering only.  originX/Y + gameClip
      * were computed with the unscaled gZoomFactor, so the playfield
-     * bounds stay put.  Centre the zoom on the playfield middle so
-     * zooming feels anchored to the camera, not the top-left. */
+     * bounds stay put.  Anchor the zoom on the cursor position when
+     * available (mouse-wheel zoom keeps the world point under the
+     * cursor stationary) — falls back to the playfield centre. */
     if (overrideModeIsOn()) {
       int zmul = overrideModeZoomMul();
       if (zmul > 1) {
-        /* Anchor zoom on the playfield centre.  When zooming, tile
-         * sizes grow by zmul; to keep the same world point under the
-         * centre of the view, we must shift edgeX/Y by the centre's
-         * pixel growth: deltaEdge = (centrePx) * (zmul - 1). */
-        int centrePxX = gameW / 2;
-        int centrePxY = gameH / 2;
-        edgeX = edgeX * zmul + centrePxX * (zmul - 1);
-        edgeY = edgeY * zmul + centrePxY * (zmul - 1);
+        int anchorScreenX = -1, anchorScreenY = -1;
+        int anchorRelX, anchorRelY;
+        if (overrideModeGetZoomAnchor(&anchorScreenX, &anchorScreenY)
+            && anchorScreenX >= originX && anchorScreenX < originX + gameW
+            && anchorScreenY >= originY && anchorScreenY < originY + gameH) {
+          anchorRelX = anchorScreenX - originX;
+          anchorRelY = anchorScreenY - originY;
+        } else {
+          anchorRelX = gameW / 2;
+          anchorRelY = gameH / 2;
+        }
+        edgeX = edgeX * zmul + anchorRelX * (zmul - 1);
+        edgeY = edgeY * zmul + anchorRelY * (zmul - 1);
         gZoomFactor = (BYTE)(gZoomFactor * zmul);
         tileW *= zmul;
         tileH *= zmul;
