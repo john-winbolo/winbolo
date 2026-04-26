@@ -113,6 +113,14 @@ typedef struct {
     uint32_t netErrors;           /* Cumulative: stale snapshots, truncated packets */
 
     bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
+
+    /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
+     * punch entirely (LAN/manual-connect joiners). */
+    char           trackerAddr[FILENAME_MAX];
+    unsigned short trackerPort;
+    struct in_addr targetIp;       /* host IP (network order) for PUNCH_REQUEST body */
+    unsigned short targetPort;     /* host port (host order) for PUNCH_REQUEST body */
+    bool           punchSent;      /* sent at least one PUNCH_REQUEST */
 } TransportUdpClientCtx;
 
 /* Client send wrapper — tracks packet and byte counters */
@@ -937,9 +945,41 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
+    case PACKET_PUNCH_REQUEST_ACK:
+        /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
+         * could drive UX someday; for now just consume so it doesn't fall
+         * into the unknown-packet warning path. */
+        break;
+
     default:
         break;
     }
+}
+
+/* Send a PACKET_PUNCH_REQUEST to the configured tracker over the join
+ * socket so the tracker learns our reflexive address as seen by the
+ * same mapping the host's punch packet will land on. Wire body is the
+ * host (target) IP+port the tracker should forward to. */
+static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
+    struct sockaddr_in dest;
+    struct hostent *he;
+    uint8_t buf[PACKET_HEADER_SIZE + 6];
+
+    if (c->sock == INVALID_SOCKET) return;
+    if (c->trackerAddr[0] == '\0') return;
+    he = gethostbyname(c->trackerAddr);
+    if (he == NULL) return;
+
+    packHeader(buf, PACKET_PUNCH_REQUEST, c->outSequence++);
+    memcpy(buf + PACKET_HEADER_SIZE, &c->targetIp.s_addr, 4);
+    packU16(buf + PACKET_HEADER_SIZE + 4, c->targetPort);
+
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_port = htons(c->trackerPort);
+    sendto(c->sock, (const char *)buf, sizeof(buf), 0,
+           (const struct sockaddr *)&dest, sizeof(dest));
 }
 
 /* Client tick: receive packets from server, handle join flow, ping */
@@ -994,6 +1034,17 @@ static bool udpClientTick(void *ctx) {
                 udpClientSendTo(c, jbuf, joffset);
                 c->joinAttempts++;
                 c->ticksSinceJoinSent = 0;
+
+                /* On the second JOIN attempt with no response, kick off
+                 * the punch fallback. Only fires once per session — once
+                 * the host's punch packet arrives, our subsequent
+                 * JOIN_REQUEST retries will get through. Skipped when no
+                 * tracker configured (LAN/manual-connect joiners). */
+                if (!c->punchSent && c->joinAttempts >= 2 &&
+                    c->trackerAddr[0] != '\0') {
+                    udpClientSendPunchRequest(c);
+                    c->punchSent = true;
+                }
             }
         }
     }
@@ -1083,7 +1134,9 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *playerName,
                                    const char *password,
                                    const char *wbnToken,
-                                   bool wantRejoin) {
+                                   bool wantRejoin,
+                                   const char *trackerAddr,
+                                   unsigned short trackerPort) {
     Transport t;
     TransportUdpClientCtx *c;
     struct hostent *he;
@@ -1140,6 +1193,15 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     }
 
     c->wantRejoin = wantRejoin;
+
+    c->trackerAddr[0] = '\0';
+    if (trackerAddr != NULL) {
+        strncpy(c->trackerAddr, trackerAddr, sizeof(c->trackerAddr) - 1);
+    }
+    c->trackerPort = trackerPort;
+    c->targetIp    = c->serverAddr.sin_addr;
+    c->targetPort  = serverPort;
+    c->punchSent   = false;
 
     c->joinState = UDP_CLIENT_JOINING;
     c->joinAttempts = 0;

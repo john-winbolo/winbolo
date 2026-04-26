@@ -368,11 +368,26 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                        pm.externalIp, (unsigned)pm.externalPort);
                     ImGui::Spacing();
                     break;
+                case SERVER_PORTMAP_HOLE_PUNCH_OK:
+                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f),
+                                       "NAT traversal active — joiners on most "
+                                       "networks can connect (%s:%u).",
+                                       pm.externalIp, (unsigned)pm.externalPort);
+                    ImGui::Spacing();
+                    break;
+                case SERVER_PORTMAP_SYMMETRIC_NAT:
+                    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.4f, 1.0f),
+                                       "Symmetric NAT detected — joiners cannot "
+                                       "connect through your network. Manual "
+                                       "port-forward of UDP %u required.",
+                                       (unsigned)27500);
+                    ImGui::Spacing();
+                    break;
                 case SERVER_PORTMAP_FAILED:
                     ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.4f, 1.0f),
-                                       "Could not open port automatically — "
-                                       "only LAN players can join unless you "
-                                       "manually port-forward UDP %u.",
+                                       "Could not establish a network path. "
+                                       "Manual port-forward of UDP %u required "
+                                       "for joiners to connect.",
                                        (unsigned)27500);
                     ImGui::Spacing();
                     break;

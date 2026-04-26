@@ -861,7 +861,9 @@ bool gameFrontSetDlgState(openingStates newState) {
                                              gameFrontTargetUdp,
                                              gameFrontName, password,
                                              gameFrontWbnUse ? gameFrontWbnToken : "",
-                                             wantRejoin);
+                                             wantRejoin,
+                                             gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
+                                             gameFrontTrackerPort);
     if (transportUdpClientGetJoinState(&udpTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
       imguiMessageBoxEx(DIALOG_BOX_TITLE,

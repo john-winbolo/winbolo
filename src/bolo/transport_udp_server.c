@@ -35,6 +35,7 @@
 #include "game_sim.h"
 #include "../server/geolookup.h"
 #include "../server/server_sim.h"
+#include "../server/server_lifecycle.h"
 #include "../winbolonet/winbolonet.h"
 #include "../server/threads.h"
 #include "sounddist.h"
@@ -225,6 +226,18 @@ static struct {
  * and a zero address. */
 static char           udpServerPublicIp[64];
 static unsigned short udpServerPublicPort;
+
+typedef struct {
+    struct sockaddr_in addr;
+    int packetsRemaining;   /* 0 = slot empty */
+    int ticksUntilNext;
+} PunchQueueEntry;
+
+#define PUNCH_QUEUE_SIZE        8
+#define PUNCH_BURST_PACKETS     5
+#define PUNCH_BURST_INTERVAL    3   /* 3 ticks @ 50 Hz ≈ 60 ms */
+
+static PunchQueueEntry punchQueue[PUNCH_QUEUE_SIZE];
 
 /* Forward declaration */
 static bool serverClientsAllLocked(void);
@@ -1056,6 +1069,7 @@ bool transportUdpServerCreate(unsigned short port,
 
     bolo_net_init();
     memset(&udpServer, 0, sizeof(udpServer));
+    memset(punchQueue, 0, sizeof(punchQueue));
 
     udpServer.sock = createUdpSocket();
     if (udpServer.sock == INVALID_SOCKET) {
@@ -1148,6 +1162,7 @@ void transportUdpServerDestroy(void) {
 
     udpServerPublicIp[0] = '\0';
     udpServerPublicPort  = 0;
+    memset(punchQueue, 0, sizeof(punchQueue));
 }
 
 /* Handle an old-protocol info request (server browser compatibility).
@@ -1527,24 +1542,81 @@ void transportUdpServerSetPublicAddress(const char *externalIp,
     udpServerPublicPort = externalPort;
 }
 
-void transportUdpServerSendNatKeepalive(const char *trackerAddr,
+void transportUdpServerSendNatKeepalive(ServerSim *sim,
+                                        const char *trackerAddr,
                                         unsigned short trackerPort) {
     struct sockaddr_in dest;
     struct hostent *he;
-    static const uint8_t sentinel[4] = { 'W', 'B', 'K', 'A' };
+    uint8_t buf[8];
 
     if (udpServer.sock == INVALID_SOCKET) return;
+    if (trackerAddr == NULL || trackerAddr[0] == '\0') return;
 
     he = gethostbyname(trackerAddr);
     if (he == NULL) return;
+
+    buf[0] = 'W';
+    buf[1] = 'B';
+    buf[2] = 'K';
+    buf[3] = 'A';
+    /* 4-byte game token = sim->timeCreated, big-endian. Tracker's exact-
+     * match path uses (sourceIp, starttime) so multiple games behind one
+     * NAT each refresh their own entry. */
+    packU32(buf + 4, (uint32_t)sim->timeCreated);
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
     memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
     dest.sin_port = htons(trackerPort);
 
-    sendto(udpServer.sock, (const char *)sentinel, sizeof(sentinel), 0,
+    sendto(udpServer.sock, (const char *)buf, sizeof(buf), 0,
            (const struct sockaddr *)&dest, sizeof(dest));
+}
+
+void transportUdpServerSendPunchProbe(const char *trackerAddr,
+                                      unsigned short trackerPort) {
+    struct sockaddr_in dest;
+    struct hostent *he;
+    uint8_t buf[PACKET_HEADER_SIZE];
+
+    if (udpServer.sock == INVALID_SOCKET) return;
+    if (trackerAddr == NULL || trackerAddr[0] == '\0') return;
+
+    he = gethostbyname(trackerAddr);
+    if (he == NULL) return;
+
+    packHeader(buf, PACKET_PUNCH_PROBE_REQUEST, 0);
+
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_port = htons(trackerPort);
+
+    sendto(udpServer.sock, (const char *)buf, sizeof(buf), 0,
+           (const struct sockaddr *)&dest, sizeof(dest));
+}
+
+void transportUdpServerDrainPunchQueue(void) {
+    int i;
+    if (udpServer.sock == INVALID_SOCKET) return;
+    for (i = 0; i < PUNCH_QUEUE_SIZE; i++) {
+        PunchQueueEntry *e = &punchQueue[i];
+        uint8_t sentinel;
+        if (e->packetsRemaining == 0) continue;
+        if (e->ticksUntilNext > 0) {
+            e->ticksUntilNext--;
+            continue;
+        }
+        /* 1-byte sentinel — joiner's recv loop drops anything shorter
+         * than PACKET_HEADER_SIZE (8 bytes), so this is harmless on
+         * arrival; its only purpose is to open our outbound NAT
+         * mapping toward the joiner. */
+        sentinel = 'P';
+        sendto(udpServer.sock, (const char *)&sentinel, 1, 0,
+               (const struct sockaddr *)&e->addr, sizeof(e->addr));
+        e->packetsRemaining--;
+        e->ticksUntilNext = PUNCH_BURST_INTERVAL;
+    }
 }
 
 /* Process a single received packet — extracted from the recv loop so both
@@ -2065,6 +2137,43 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
                 transportUdpServerBroadcastMapSkipState(sim);
             }
+            break;
+        }
+        case PACKET_PUNCH_NOTIFY: {
+            /* Wire: [header 8] [joiner reflexive IP 4 BE] [joiner port 2 BE].
+             * Total 14 bytes. Tracker pushed this through our keepalive's NAT
+             * mapping; the body tells us where to fire punch packets. */
+            if (len < PACKET_HEADER_SIZE + 6) break;
+            int slot;
+            for (slot = 0; slot < PUNCH_QUEUE_SIZE; slot++) {
+                if (punchQueue[slot].packetsRemaining == 0) break;
+            }
+            if (slot >= PUNCH_QUEUE_SIZE) break;
+            memset(&punchQueue[slot].addr, 0, sizeof(punchQueue[slot].addr));
+            punchQueue[slot].addr.sin_family = AF_INET;
+            memcpy(&punchQueue[slot].addr.sin_addr, buf + PACKET_HEADER_SIZE, 4);
+            punchQueue[slot].addr.sin_port =
+                htons(unpackU16(buf + PACKET_HEADER_SIZE + 4));
+            punchQueue[slot].packetsRemaining = PUNCH_BURST_PACKETS;
+            punchQueue[slot].ticksUntilNext   = 0;
+            break;
+        }
+        case PACKET_PUNCH_PROBE_REPLY: {
+            /* Wire: [header 8] [reflexive IP 4 bytes network order]
+             *       [reflexive port 2 bytes BE]. Total 14 bytes. */
+            if (len < PACKET_HEADER_SIZE + 6) break;
+            char reflexiveIp[64];
+            uint16_t reflexivePort;
+            struct in_addr addr;
+            memcpy(&addr.s_addr, buf + PACKET_HEADER_SIZE, 4);
+            {
+                const char *s = inet_ntoa(addr);
+                if (s == NULL) break;
+                strncpy(reflexiveIp, s, sizeof(reflexiveIp) - 1);
+                reflexiveIp[sizeof(reflexiveIp) - 1] = '\0';
+            }
+            reflexivePort = unpackU16(buf + PACKET_HEADER_SIZE + 4);
+            serverInstanceRecordProbeReply(reflexiveIp, reflexivePort);
             break;
         }
         default:

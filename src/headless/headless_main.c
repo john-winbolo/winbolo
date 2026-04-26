@@ -97,6 +97,8 @@ static bool logToStdout = FALSE;
 /* Command-line options */
 static char optServer[256] = "";
 static unsigned short optPort = 27500;
+static char optTrackerAddr[256] = "";
+static unsigned short optTrackerPort = 0;
 static char optName[64] = "HeadlessBot";
 static char optBrain[512] = "";
 static int optTicks = 0; /* 0 = unlimited */
@@ -839,6 +841,8 @@ static void printUsage(const char *prog) {
     "  --server HOST     Server address\n"
     "  --port PORT       Server port\n"
     "  --password PASS   Server password\n"
+    "  --tracker HOST    Tracker address (enables hole-punch fallback)\n"
+    "  --tracker-port PORT Tracker port\n"
     "\n"
     "Fast mode options:\n"
     "  --fast            Run locally as fast as possible (no wall-clock gating)\n"
@@ -854,6 +858,10 @@ static bool parseArgs(int argc, char **argv) {
       strncpy(optServer, argv[++i], sizeof(optServer) - 1);
     } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
       optPort = (unsigned short)atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--tracker") == 0 && i + 1 < argc) {
+      strncpy(optTrackerAddr, argv[++i], sizeof(optTrackerAddr) - 1);
+    } else if (strcmp(argv[i], "--tracker-port") == 0 && i + 1 < argc) {
+      optTrackerPort = (unsigned short)atoi(argv[++i]);
     } else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
       strncpy(optName, argv[++i], sizeof(optName) - 1);
     } else if (strcmp(argv[i], "--brain") == 0 && i + 1 < argc) {
@@ -1268,7 +1276,8 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "", false);
+  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "", false,
+                                                optTrackerAddr, optTrackerPort);
   if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_ERROR) {
     const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");

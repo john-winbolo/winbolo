@@ -36,6 +36,16 @@ static int   natPortmapWaitTicks = 0;
 static bool  natPortmapNotified = FALSE;
 static bool  natPortmapTimedOut = FALSE;
 
+static int   probeWaitTicks       = 0;     /* ticks since last probe send  */
+static int   probeReplyWaitTicks  = 0;     /* ticks since last probe reply */
+static bool  probeReceived        = FALSE; /* any reply ever arrived       */
+static bool  probeTimedOut        = FALSE; /* deadline elapsed w/o reply   */
+static char  probeReflexiveIp[64];
+static unsigned short probeReflexivePort = 0;
+
+#define PROBE_SEND_INTERVAL_TICKS  500   /* 10 s @ 50 Hz */
+#define PROBE_TIMEOUT_TICKS       1500   /* 30 s @ 50 Hz */
+
 /* 1500 slices @ ~50Hz (SERVER_TICK_LENGTH = 20ms) ≈ 30s.  After this many
  * ticks without a successful libplum mapping, give up and let Phase 2d's
  * lobby UI surface the "could not open port automatically" state. */
@@ -90,6 +100,12 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   natPortmapWaitTicks = 0;
   natPortmapNotified  = FALSE;
   natPortmapTimedOut  = FALSE;
+  probeWaitTicks       = 0;
+  probeReplyWaitTicks  = 0;
+  probeReceived        = FALSE;
+  probeTimedOut        = FALSE;
+  probeReflexiveIp[0]  = '\0';
+  probeReflexivePort   = 0;
   if (cfg->useNatPortmap) {
     natPortMapRequest(cfg->udpPort, &instancePortMap);
   }
@@ -99,6 +115,8 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
 void serverInstanceTick(ServerSim *sim) {
   trackerTime++;
   wbnTime++;
+
+  transportUdpServerDrainPunchQueue();
 
   threadsWaitForMutex();
   /* Receive packets — queues inputs for both ticks */
@@ -323,7 +341,7 @@ void serverInstanceTick(ServerSim *sim) {
   if (instanceUseNatKeepalive && instanceUseTracker) {
     natKeepaliveTime++;
     if (natKeepaliveTime >= 1250) {
-      transportUdpServerSendNatKeepalive(instanceTrackerAddr, instanceTrackerPort);
+      transportUdpServerSendNatKeepalive(sim, instanceTrackerAddr, instanceTrackerPort);
       natKeepaliveTime = 0;
     }
   }
@@ -350,6 +368,20 @@ void serverInstanceTick(ServerSim *sim) {
       natPortmapTimedOut = TRUE;
     }
   }
+
+  if (instanceUseNatPortmap && instanceUseTracker &&
+      instanceTrackerAddr[0] != '\0') {
+    if (++probeWaitTicks >= PROBE_SEND_INTERVAL_TICKS) {
+      transportUdpServerSendPunchProbe(instanceTrackerAddr,
+                                       instanceTrackerPort);
+      probeWaitTicks = 0;
+    }
+    if (!probeReceived) {
+      if (++probeReplyWaitTicks >= PROBE_TIMEOUT_TICKS) {
+        probeTimedOut = TRUE;
+      }
+    }
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
@@ -368,6 +400,12 @@ void serverInstanceShutdown(ServerSim *sim) {
   natPortmapWaitTicks = 0;
   natPortmapNotified  = FALSE;
   natPortmapTimedOut  = FALSE;
+  probeWaitTicks       = 0;
+  probeReplyWaitTicks  = 0;
+  probeReceived        = FALSE;
+  probeTimedOut        = FALSE;
+  probeReflexiveIp[0]  = '\0';
+  probeReflexivePort   = 0;
 }
 
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
@@ -378,20 +416,56 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
   if (!instanceUseNatPortmap) {
     out->status = SERVER_PORTMAP_DISABLED;
   } else if (instancePortMap.mapped) {
-    out->status = SERVER_PORTMAP_SUCCEEDED;
+    /* libplum says we have a stable external mapping. Cross-check the
+     * reflexive address against what the tracker reports — if they
+     * differ, a NAT layer above libplum's gateway is rewriting our
+     * port per destination (symmetric NAT) and the libplum mapping
+     * is unreachable from third parties. */
+    if (probeReceived &&
+        (strcmp(probeReflexiveIp, instancePortMap.externalIp) != 0 ||
+         probeReflexivePort != instancePortMap.externalPort)) {
+      out->status = SERVER_PORTMAP_SYMMETRIC_NAT;
+    } else {
+      out->status = SERVER_PORTMAP_SUCCEEDED;
+    }
   } else if (natPortmapTimedOut) {
-    out->status = SERVER_PORTMAP_FAILED;
+    /* libplum gave up. Hole-punching is the fallback — viable iff the
+     * tracker probe round-trips. */
+    if (probeReceived) {
+      out->status = SERVER_PORTMAP_HOLE_PUNCH_OK;
+    } else if (probeTimedOut) {
+      out->status = SERVER_PORTMAP_FAILED;
+    } else {
+      out->status = SERVER_PORTMAP_PENDING;
+    }
   } else {
     out->status = SERVER_PORTMAP_PENDING;
   }
+  out->externalIp[0]  = '\0';
+  out->externalPort   = 0;
   if (out->status == SERVER_PORTMAP_SUCCEEDED) {
     strncpy(out->externalIp, instancePortMap.externalIp,
             sizeof(out->externalIp) - 1);
     out->externalIp[sizeof(out->externalIp) - 1] = '\0';
     out->externalPort = instancePortMap.externalPort;
-  } else {
-    out->externalIp[0] = '\0';
-    out->externalPort = 0;
+  } else if (probeReceived) {
+    strncpy(out->externalIp, probeReflexiveIp,
+            sizeof(out->externalIp) - 1);
+    out->externalIp[sizeof(out->externalIp) - 1] = '\0';
+    out->externalPort = probeReflexivePort;
   }
+  threadsReleaseMutex();
+}
+
+void serverInstanceRecordProbeReply(const char *reflexiveIp,
+                                    unsigned short reflexivePort) {
+  if (reflexiveIp == NULL) return;
+  threadsWaitForMutex();
+  strncpy(probeReflexiveIp, reflexiveIp, sizeof(probeReflexiveIp) - 1);
+  probeReflexiveIp[sizeof(probeReflexiveIp) - 1] = '\0';
+  probeReflexivePort  = reflexivePort;
+  probeReceived       = TRUE;
+  probeTimedOut       = FALSE;       /* mapping is alive; reset deadline */
+  probeReplyWaitTicks = 0;
   threadsReleaseMutex();
 }
