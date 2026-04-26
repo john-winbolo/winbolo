@@ -72,6 +72,7 @@
 #include "../../bolo/bolo_map.h"
 #include "../../bolo/platform_net.h"
 #include "../../bolo/transport_udp.h"
+#include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
@@ -216,8 +217,15 @@ static Transport spTransport;
 static bool spServerSimActive = FALSE;
 static bool spTransportLocalUsed = FALSE;
 static bool spServerHosted = FALSE;
-static int gfTrackerTime = 11500;
-static int gfNatKeepaliveTicks = 0;
+static SDL_TimerID hostedServerTimerID = 0;
+
+static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
+  (void)userdata; (void)id;
+  if (spServerHosted && spServerSim != NULL) {
+    serverInstanceTick(spServerSim);
+  }
+  return interval;
+}
 
 /* UDP multiplayer transport state */
 static Transport udpTransport;
@@ -990,38 +998,18 @@ bool gameFrontSetDlgState(openingStates newState) {
     dlgState = openLan;
   } else if ((dlgState == openUdpSetup || dlgState == openInternetSetup ||
               dlgState == openLanSetup) && newState == openFinished) {
-    /* Start network game as host */
+    /* Host joins its own server via loopback UDP — same JOIN_REQUEST
+     * handshake every joiner uses, so the server's join handler owns
+     * slot 0 registration and the lobby/name-collision checks behave
+     * identically for host and joiners. */
     gameFrontValidateWbnBeforeJoin();
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
-      humanSim = &humanSimStorage;
-      {
-        BYTE compressedMap[65536];
-        int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
-        if (compLen > 0) {
-          screenLoadCompressedMapCS(humanSim, compressedMap, compLen, spServerSim->mapName,
-                                    gametype, hiddenMines, startDelay,
-                                    timeLen, gameFrontName, 0, FALSE);
-        } else {
-          clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
-        }
-      }
-      if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
-      if (netSetup(humanSim, netUdp, gameFrontMyUdp, "127.0.0.1", gameFrontTargetUdp,
-                   password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
-                   gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                   gameFrontWbnToken) == FALSE) {
-        wantRejoin = FALSE;
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Unable to start server",
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        netDestroy(humanSim);
-        clientSimDestroy(humanSim);
-        gameFrontShutdownServer();
-        returnValue = FALSE;
-        dlgState = openStart;
-      } else {
-        dlgState = openFinished;
-      }
+      strncpy(gameFrontUdpAddress, "127.0.0.1", sizeof(gameFrontUdpAddress) - 1);
+      gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
+      gameFrontTargetUdp = gameFrontMyUdp;
+      dlgState = (prevState == openInternetSetup) ? openInternet : openLan;
+      gameFrontSetDlgState(openUdpJoin);
     } else {
       imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error starting server",
                         IMGUI_MSG_ERROR, IMGUI_MSG_OK);
@@ -1463,35 +1451,22 @@ void gameFrontReloadSkins(void) {
 
 void gameFrontShutdownServer(void) {
   if (!spServerSimActive) return;
-
-  transportUdpServerSendServerMessage("Server shutting down");
-  transportUdpServerDestroy();
-
-  if (gameFrontWbnUse) {
-    winbolonetDestroy(TRUE);
+  if (hostedServerTimerID != 0) {
+    SDL_RemoveTimer(hostedServerTimerID);
+    hostedServerTimerID = 0;
   }
-
-  botManagerDestroy(spServerSim);
-  {
-    BYTE i;
-    for (i = 0; i < MAX_TANKS; i++) {
-      if (spServerSim->sim.tanks[i] != NULL) {
-        tankDestroy(&spServerSim->sim, &spServerSim->sim.tanks[i]);
-      }
-    }
-  }
-  if (spTransportLocalUsed) {
-    transportLocalDestroy(&spTransport);
-    spTransportLocalUsed = FALSE;
-  }
-  serverSimClearActive(spServerSim);
+  /* SDL_RemoveTimer does not block on an in-flight callback (SDL3 only
+   * sets an atomic "canceled" flag). Acquire/release the threading
+   * mutex to wait for any serverInstanceTick currently mid-execution
+   * to release it before we destroy state it may still be reading. */
+  threadsWaitForMutex();
+  threadsReleaseMutex();
+  serverInstanceShutdown(spServerSim);
   serverSimDestroy(spServerSim);
   free(spServerSim);
   spServerSim = NULL;
   spServerSimActive = FALSE;
   spServerHosted = FALSE;
-  gfTrackerTime = 11500;
-  gfNatKeepaliveTicks = 0;
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -1508,6 +1483,19 @@ bool gameFrontPreferencesExist(void) {
 
 bool gameFrontSetupServer(void) {
   bool simOk = FALSE;
+  ServerInstanceConfig cfg;
+
+  /* Welcome-screen BgGame leaves the global botManager state populated
+   * with its eye-candy bots; without clearing it here, serverFindFreeSlot
+   * skips those slots and the host's loopback JOIN_REQUEST gets a
+   * non-zero player number. Mirrors the SP path. */
+  {
+    BgGame *sharedBg = bgGameGetShared();
+    if (sharedBg != NULL) {
+      bgGameDestroy(sharedBg);
+      bgGameSetShared(NULL);
+    }
+  }
 
   spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
   if (spServerSim == NULL) {
@@ -1515,14 +1503,14 @@ bool gameFrontSetupServer(void) {
   }
 
   if (strncmp(fileName, "randommap:", 10) == 0) {
-    MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+    MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
-    if (!mapGenSeedToConfig(seedStr, &cfg)) {
+    if (!mapGenSeedToConfig(seedStr, &mcfg)) {
       SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
     }
-    cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
-    cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-    simOk = serverSimCreateRandomMap(spServerSim, &cfg, gametype, hiddenMines, startDelay, timeLen);
+    mcfg.x1 = MAP_MINE_EDGE_LEFT + 1; mcfg.y1 = MAP_MINE_EDGE_TOP + 1;
+    mcfg.x2 = MAP_MINE_EDGE_RIGHT - 1; mcfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+    simOk = serverSimCreateRandomMap(spServerSim, &mcfg, gametype, hiddenMines, startDelay, timeLen);
   } else if (fileName[0] != '\0') {
     simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
@@ -1540,29 +1528,32 @@ bool gameFrontSetupServer(void) {
   spServerSim->state = serverStateLobby;
   spServerSim->hasPassword = (password[0] != '\0');
 
-  if (!transportUdpServerCreate(gameFrontMyUdp, "", spServerSim,
-                                password, MAX_TANKS)) {
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.udpPort         = gameFrontMyUdp;
+  cfg.bindAddr        = "";
+  cfg.password        = password;
+  cfg.maxPlayers      = MAX_TANKS;
+  cfg.useWbn          = gameFrontWbnUse;
+  cfg.compTanks       = (BYTE)compTanks;
+  cfg.useTracker      = gameFrontTrackerEnabled;
+  cfg.trackerAddr     = gameFrontTrackerAddr;
+  cfg.trackerPort     = gameFrontTrackerPort;
+  cfg.useNatKeepalive = TRUE;
+
+  if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);
     free(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }
 
-  serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-  spServerSim->sim.viewPlayer = 0;
-
-  spTransport = transportLocalCreate(spServerSim, 0);
-  spTransportLocalUsed = TRUE;
-
-  if (gameFrontWbnUse) {
-    winbolonetCreateServer(spServerSim->mapName, gameFrontMyUdp,
-                           (BYTE)gametype, (BYTE)compTanks,
-                           (BYTE)hiddenMines, (BYTE)spServerSim->hasPassword,
-                           basesGetNumBases(&spServerSim->sim.bs),
-                           pillsGetNumPills(&spServerSim->sim.pb),
-                           serverSimGetNumNeutralBases(spServerSim),
-                           serverSimGetNumNeutralPills(spServerSim),
-                           serverSimGetNumPlayers(spServerSim));
+  hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
+  if (hostedServerTimerID == 0) {
+    serverInstanceShutdown(spServerSim);
+    serverSimDestroy(spServerSim);
+    free(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
   }
 
   spServerSimActive = TRUE;
@@ -2034,36 +2025,14 @@ ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
 }
 
-ServerSim *gameFrontGetHostedServerSim(void) {
-  return (spServerSimActive && spServerHosted) ? spServerSim : NULL;
-}
-
-void gameFrontTrackerCadenceTick(void) {
-  /* @ 100 Hz: 12000 ticks ≈ 120 s, 2500 ticks ≈ 25 s. */
-  if (!spServerHosted || !spServerSimActive) return;
-  if (!gameFrontTrackerEnabled) return;
-
-  if (++gfTrackerTime >= 12000) {
-    gfTrackerTime = 0;
-    transportUdpServerSendTrackerUpdate(spServerSim,
-                                        gameFrontTrackerAddr,
-                                        gameFrontTrackerPort);
-  }
-  if (++gfNatKeepaliveTicks >= 2500) {
-    gfNatKeepaliveTicks = 0;
-    transportUdpServerSendNatKeepalive(gameFrontTrackerAddr,
-                                       gameFrontTrackerPort);
-  }
-}
-
 Transport *gameFrontGetTransport(void) {
-  if (spServerSimActive) return &spTransport;
+  if (spServerSimActive && !spServerHosted) return &spTransport;
   if (udpTransportActive) return &udpTransport;
   return NULL;
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  if (spServerSimActive) return 0;
+  if (spServerSimActive && !spServerHosted) return 0;
   if (udpTransportActive) return udpPlayerNum;
   return 0;
 }

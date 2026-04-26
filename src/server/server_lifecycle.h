@@ -26,7 +26,10 @@
 #define SERVER_LIFECYCLE_H
 
 #include "../bolo/global.h"
+#include "../bolo/screen.h"
 #include "server_sim.h"
+
+#define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
 
 typedef struct {
   unsigned short udpPort;
@@ -40,6 +43,11 @@ typedef struct {
   bool           useTracker;      /* false = skip tracker periodic update */
   const char    *trackerAddr;     /* required if useTracker */
   unsigned short trackerPort;     /* required if useTracker */
+
+  bool           useNatKeepalive; /* fire transportUdpServerSendNatKeepalive
+                                     on the tracker connection ~every 25s,
+                                     to keep the host's NAT mapping alive
+                                     for tracker push-back. */
 } ServerInstanceConfig;
 
 /* Bind UDP transport, optionally register with WBN, store tracker config

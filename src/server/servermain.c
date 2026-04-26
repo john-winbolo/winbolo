@@ -104,10 +104,7 @@ static char  sTrackerAddr[FILENAME_MAX] = "";
 static unsigned short sTrackerPort = 0;
 static bool  sTrackerUse = FALSE;
 
-/* Game Tick */
-#define SERVER_TICK_LENGTH (GAME_TICK_LENGTH*2)
-
-#define WIND_CLASSNAME "WinBoloServ" 
+#define WIND_CLASSNAME "WinBoloServ"
 #define WIND_TITLE "WinBoloServ"
 
 /* There are 60 seconds in a minute */
@@ -1080,6 +1077,7 @@ int main(int argc, char **argv) {
     instCfg.useTracker   = sTrackerUse;
     instCfg.trackerAddr  = sTrackerAddr;
     instCfg.trackerPort  = sTrackerPort;
+    instCfg.useNatKeepalive = FALSE;
     if (serverInstanceStartup(&serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(&serverSim);
@@ -1208,8 +1206,7 @@ int main(int argc, char **argv) {
   if (threadsCreate(TRUE) == FALSE) {
     fprintf(stderr, "Error starting Thread Manager\n");
     threadsDestroy();
-    transportUdpServerDestroy();
-    botManagerDestroy(&serverSim);
+    serverInstanceShutdown(&serverSim);
     serverSimDestroy(&serverSim);
 #ifdef USING_SDL
     SDL_Quit();

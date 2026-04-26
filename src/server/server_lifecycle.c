@@ -28,9 +28,11 @@ static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
 static bool  instanceUseTracker = FALSE;
 static bool  instanceUseWbn = FALSE;
+static bool  instanceUseNatKeepalive = FALSE;
 
 static int trackerTime = 5500;
 static int wbnTime = 0;
+static int natKeepaliveTime = 0;
 
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
@@ -66,9 +68,11 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     instanceTrackerAddr[0] = '\0';
   }
   instanceTrackerPort = cfg->trackerPort;
+  instanceUseNatKeepalive = cfg->useNatKeepalive;
 
   trackerTime = 5500;
   wbnTime = 0;
+  natKeepaliveTime = 0;
   return TRUE;
 }
 
@@ -295,6 +299,14 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerSendTrackerUpdate(sim, instanceTrackerAddr, instanceTrackerPort);
     trackerTime = 0;
   }
+
+  if (instanceUseNatKeepalive && instanceUseTracker) {
+    natKeepaliveTime++;
+    if (natKeepaliveTime >= 1250) {
+      transportUdpServerSendNatKeepalive(instanceTrackerAddr, instanceTrackerPort);
+      natKeepaliveTime = 0;
+    }
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
@@ -305,4 +317,5 @@ void serverInstanceShutdown(ServerSim *sim) {
   botManagerDestroy(sim);
   instanceUseWbn = FALSE;
   instanceUseTracker = FALSE;
+  instanceUseNatKeepalive = FALSE;
 }
