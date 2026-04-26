@@ -946,7 +946,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 bool countdownActive = cs->countdownSeconds > 0;
                 if (countdownActive) ImGui::BeginDisabled();
                 bool voted = cs->mapSkipMyVote;
-                const char *skipLabel = voted ? "Cancel Skip" : "Skip Map";
+                const char *skipLabel = langGetText(
+                    voted ? STR_DLGLOBBY_CANCELSKIP : STR_DLGLOBBY_SKIPMAP);
                 if (voted) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
@@ -969,7 +970,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         if (cs->mapSkipVotes[j]) skipCount++;
                     }
                 }
-                ImGui::Text("%d/%d votes to skip", skipCount, humanCount);
+                {
+                    MessageArgs vargs;
+                    memset(&vargs, 0, sizeof(vargs));
+                    vargs.number  = skipCount;
+                    vargs.number2 = humanCount;
+                    ImGui::TextUnformatted(
+                        langGetTextFmt(STR_DLGLOBBY_VOTES, &vargs));
+                }
                 if (countdownActive) ImGui::EndDisabled();
             }
 

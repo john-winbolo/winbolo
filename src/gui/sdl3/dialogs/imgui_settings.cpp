@@ -455,9 +455,14 @@ extern "C" void imguiSettingsShow(void) {
                     bool selected = (curLangIdx == i);
                     if (ImGui::Selectable(itemLabel, selected)) {
                         if (i == 0) {
-                            /* English baseline — drop any loaded override. */
+                            /* English baseline — drop any loaded override.
+                             * Persist as "en" rather than "" so that on
+                             * relaunch gameFrontStart treats this as a
+                             * deliberate choice and skips langAutoDetect
+                             * (otherwise a German-locale machine would flip
+                             * back to German on every restart). */
                             langUnloadFile();
-                            gameFrontSetLanguageCode("");
+                            gameFrontSetLanguageCode("en");
                         } else {
                             if (langLoadFile(langEntries[i].path)) {
                                 gameFrontSetLanguageCode(langEntries[i].code);
