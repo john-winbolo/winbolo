@@ -1,0 +1,1199 @@
+# WinBolo Polish language file
+# Translated by Claude (Opus 4.7) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=Polski
+author=Claude (Opus 4.7), Please help improve this
+notes=Initial machine translation. Please help improve this
+
+# Opening dialog
+STR_DLGOPENING_TITLE=Wybór gry WinBolo
+STR_DLGOPENING_TEXT=Witaj w WinBolo, wieloosobowej grze czołgowej.\nWybierz typ gry z listy poniżej:
+STR_DLGOPENING_OPTION1=Trening
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_DLGOPENING_OPTION3=Internet
+STR_DLGOPENING_SKIP=Nie pokazuj tego okna następnym razem
+STR_OK=OK
+STR_DLGOPENING_BUTTON2=Wyjdź
+
+# Language dialog
+STR_DLGLANG_TITLE=Wybór języka
+STR_DLGLANG_NAME_CAPTION=Nazwa:
+STR_DLGLANG_NAME=Polski
+STR_DLGLANG_AUTHOR_CAPTION=Autor: 
+STR_DLGLANG_AUTHOR=John Morrison
+STR_DLGOPENING_OPTION4=Sieć lokalna
+STR_DLGOPENING_OPTION0=Samouczek
+STR_DLGLANG_NOTES_CAPTION=Uwagi: 
+STR_DLGLANG_NOTES=Brak.
+STR_DLGLANG_DEFAULTNOTE=Uwaga: dla niekompletnych tłumaczeń brakujące pozycje są zastępowane wersją angielską.
+
+# About dialog
+STR_DLGABOUT_TITLE=O programie WinBolo
+STR_DLGABOUT_BLURB=Pakiet WinBolo można swobodnie rozpowszechniać pod warunkiem, że ani sam program, ani żaden z dołączonych plików nie zostanie pominięty ani w żaden sposób zmodyfikowany.\n\nWinBolo to program typu shareware. Oprogramowanie shareware nie jest darmowe. Kosztuje pieniądze, tak jak inne programy, które kupujesz, z tą różnicą, że shareware pozwala najpierw wypróbować program i zdecydować, czy ci się podoba.\n\nWinBolo kosztuje 25 dolarów USA. Jeśli zdecydujesz się zatrzymać WinBolo, możesz zapłacić jedną z poniższych metod:\n\nUruchom program register.exe w katalogu WinBolo — pozwala on zapłacić czekiem, przekazem pieniężnym, gotówką lub kartą kredytową przez e-mail, faks lub pocztę.\n\nAby zapłacić kartą kredytową przez internet, odwiedź: http://order.kagi.com/?XYV i wypełnij formularz.\n\nWięcej informacji znajdziesz w pliku tekstowym Readme(Shareware) dołączonym do dystrybucji.
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=Prośba o sojusz
+STR_DLGALLIANCE_ACCEPT=Akceptuj
+STR_DLGALLIANCE_DECLINE=Odrzuć
+STR_DLGALLIANCE_BLURB={player} prosi o sojusz. Akceptujesz?
+
+# Game finder dialog
+STR_DLGGAMEFINDER_REFRESHFIRST=Spróbuj najpierw odświeżyć.
+STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Wiadomość dnia
+STR_DLGGAMEFINDER_WRONGVERSION=Gra, do której próbujesz dołączyć, używa innej wersji WinBolo. Spróbuj dołączyć do innej gry
+STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Brak trwających gier (rozpocznij własną!)
+STR_YES=Tak
+STR_NO=Nie
+STR_DLGGAMEFINDER_YESADV=Tak (z przew.)
+STR_DLGGAMEFINDER_OPEN=Otwarta
+STR_DLGGAMEFINDER_TOURNAMENT=Turniej
+STR_DLGGAMEFINDER_STRICTTOURNAMENT=Ścisły
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=Informacje o grze
+STR_DLGGAMEINFO_MAPNAME=Mapa: 
+STR_DLGGAMEINFO_NUMPLAYERS=Graczy: {number}
+STR_DLGGAMEINFO_GAMETYPE=Typ gry: 
+STR_DLGGAMEINFO_HIDDENMINES=Ukryte miny: 
+STR_DLGGAMEINFO_ALLOWCOMPTANKS=Czołgi komputerowe dozwolone: 
+STR_DLGGAMEINFO_TIMELIMIT=Limit czasu:
+
+# Game setup dialog
+STR_DLGGAMESETUP_BLURB=Wybierz opcje dla nowej gry:
+STR_CANCEL=Anuluj
+STR_DLGGAMESETUP_TITLE=Konfiguracja gry
+STR_DLGGAMESETUP_CHOOSEMAP=Wybierz mapę
+STR_DLGGAMESETUP_SELECTEDMAP=Wybrana mapa: 
+STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Wybrana mapa: Everard Island (wbudowana)
+STR_DLGGAMESETUP_RADIO1=Otwarta gra (z gotowym uzbrojeniem)
+STR_DLGGAMESETUP_RADIO2=Turniej (darmowa amunicja na początku)
+STR_DLGGAMESETUP_RADIO3=Ścisły turniej (bez darmowej amunicji)
+STR_DLGGAMESETUP_HIDDENMINES=Pozwól na ukryte miny
+STR_DLGGAMESETUP_ALLOWCOMPTANKS=Pozwól na czołgi komputerowe
+STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=i daj im przewagę
+STR_DLGGAMESETUP_PASSWORD=Hasło gry
+STR_DLGGAMESETUP_MINUTES=minut
+STR_DLGGAMESETUP_SECONDS=sekund
+STR_DLGGAMESETUP_STARTDELAY=Opóźnienie startu gry
+STR_DLGGAMESETUP_TIMELIMIT=Limit czasu gry
+STR_DLGGAMESETUP_ERROROPENINGMAP=Błąd otwierania mapy.
+STR_DLGGAMEINFO_TIMEREMAINING=Około {number} min
+STR_DLGGAMEINFO_OPEN=Otwarta
+STR_DLGGAMEINFO_TOURN=Turniej
+STR_DLGGAMEINFO_STRICT=Ścisły turniej
+STR_DLGGAMEINFO_AIADV=Tak (z przewagą)
+STR_DLGGAMESETUP_DEFAULTNAME=Ja
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=Konfiguracja klawiszy
+STR_DLGKEYSETUP_BLURB=Kliknij na opcję, którą chcesz zmienić, a kolejny naciśnięty klawisz zostanie do niej przypisany. Klawisze ALT, PRINT SCREEN i PAUSE nie mogą być przypisane.
+STR_DLGKEYSETUP_DRIVETANK=Sterowanie czołgiem
+STR_DLGKEYSETUP_TURNTANK=Obrót czołgu:
+STR_DLGKEYSETUP_GUNRANGE=Zasięg działa
+STR_DLGKEYSETUP_WEAPONS=Broń
+STR_DLGKEYSETUP_VIEW=Widoki
+STR_DLGKEYSETUP_SCROLL=Przewijanie
+STR_DLGKEYSETUP_LEFT=(w lewo)
+STR_DLGKEYSETUP_RIGHT=(w prawo)
+STR_DLGKEYSETUP_AUTOSLOWDOWN=Auto-zwalnianie
+STR_DLGKEYSETUP_AUTOGUNSIGHT=Auto-ukrywanie celownika
+STR_DLGKEYSETUP_FASTER=Szybciej
+STR_DLGKEYSETUP_SLOWER=Wolniej
+STR_DLGKEYSETUP_TURNLEFT=Obrót w lewo
+STR_DLGKEYSETUP_TURNRIGHT=Obrót w prawo
+STR_DLGKEYSETUP_INCREASE=Zwiększ
+STR_DLGKEYSETUP_DECREASE=Zmniejsz
+STR_DLGKEYSETUP_SHOOT=Strzał
+STR_DLGKEYSETUP_LAYMINE=Połóż minę
+STR_DLGKEYSETUP_TANKVIEW=Widok czołgu
+STR_DLGKEYSETUP_PILLVIEW=Widok bunkra
+STR_DLGKEYSETUP_SCROLLUP=W górę
+STR_DLGKEYSETUP_SCROLLDOWN=W dół
+STR_DLGKEYSETUP_SCROLLLEFT=W lewo
+STR_DLGKEYSETUP_SCROLLRIGHT=W prawo
+STR_DLGKEYSETUP_NEWKEYFOR=Naciśnij nowy klawisz dla 
+STR_DLGKEYSETUP_FORWARD=naprzód
+STR_DLGKEYSETUP_BACKWARD=wstecz
+STR_DLGKEYSETUP_ROTATELEFT=obrót w lewo
+STR_DLGKEYSETUP_ROTATERIGHT=obrót w prawo
+STR_DLGKEYSETUP_INCREASERANGE=zwiększ zasięg
+STR_DLGKEYSETUP_DECREASERANGE=zmniejsz zasięg
+STR_DLGKEYSETUP_SETSHOOT=strzał
+STR_DLGKEYSETUP_SETLAYMINE=połóż minę
+STR_DLGKEYSETUP_SETTANKVIEW=widok czołgu
+STR_DLGKEYSETUP_SETPILLVIEW=widok bunkra
+STR_DLGKEYSETUP_SETSCROLLUP=przewiń w górę
+STR_DLGKEYSETUP_SETSCROLLDOWN=przewiń w dół
+STR_DLGKEYSETUP_SETSCROLLLEFT=przewiń w lewo
+STR_DLGKEYSETUP_SETSCROLLRIGHT=przewiń w prawo
+
+# Messages dialog
+STR_DLGMSG_BUTTON=Wyślij
+STR_DLGMSG_ALLPLAYERS=Wszyscy gracze
+STR_DLGMSG_ALLALLIES=Wszyscy sojusznicy
+STR_DLGMSG_NEARBY=Wszyscy w pobliżu
+STR_DLGMSG_SELECTION=Wybrani gracze
+STR_DLGMSG_SENDPLAYER=Wysyłanie wiadomości do {number} gracza
+STR_DLGMSG_SENDPLAYERS=Wysyłanie wiadomości do {number} graczy
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=Informacje o sieci
+STR_DLGNETINFO_SERVERADDRESS=Adres serwera:
+STR_DLGNETINFO_THISGAMEADDRESS=Adres tej gry:
+STR_DLGNETINFO_SERVERPING=Ping serwera: {number} ms
+STR_DLGNETINFO_PACKETS=Pakiety na sekundę (na gracza):
+STR_DLGNETINFO_STATUS=Stan:
+STR_DLGNETINFO_ERRORS=Błędy sieci: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=Wymagane hasło
+STR_DLGPASSWORD_BLURB=Ta gra wymaga hasła:
+
+# Set name dialog
+STR_DLGSETNAME_TITLE=Wprowadź nazwę gracza
+STR_DLGSETNAME_BLURB=Wprowadź nową nazwę gracza dla swojego czołgu:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=Konfiguracja trackera
+STR_DLGTRACKER_USETRACKER=Używaj trackera
+STR_DLGTRACKER_TRACKERADDRESS=Adres trackera:
+STR_DLGTRACKER_TRACKERPORT=Port trackera:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=Informacje systemowe
+STR_DLGSYSINFO_CPUUSAGE=Użycie CPU:
+STR_DLGSYSINFO_SIMMODELING=Modelowanie symulacji:
+STR_DLGSYSINFO_COMPROCESSING=Przetwarzanie komunikacji:
+STR_DLGSYSINFO_GRAHPICSDISPLAY=Wyświetlanie grafiki:
+STR_DLGSYSINFO_AICONTROLPROCESSING=Sterowanie czołgami AI:
+STR_DLGSYSINFO_TOTAL=Łącznie:
+STR_DLGSYSINFO_GRAPHICSFPS=Klatki na sekundę
+
+# TCP/IP setup dialog
+STR_DLGTCP_TITLE=Konfiguracja UDP (Internet)
+STR_DLGTCP_BLURB=Aby dołączyć do internetowej gry Bolo, musisz podać nazwę (lub adres IP) komputera-hosta z uruchomionym Bolo oraz numer portu UDP procesu Bolo na tym komputerze.
+STR_DLGTCP_JOIN=Dołącz
+STR_DLGTCP_REJOIN=Dołącz ponownie
+STR_DLGTCP_NEW=Nowa
+STR_DLGTCP_TRACKERSETUP=Konfiguracja trackera
+STR_DLGTCP_REMEMBER=Zapamiętaj nazwę gracza
+STR_DLGTCP_MACHINENAME=Nazwa komputera (lub adres IP):
+STR_DLGTCP_THEREUDP=Port UDP Bolo na tamtym komputerze:
+STR_DLGTCP_USUDP=Port UDP dla Bolo na tym komputerze:
+STR_DLGTCP_NAME=Twoja nazwa gracza w grze:
+STR_DLGTCP_NEWBLURB=Kliknij "Nowa", aby rozpocząć grę
+STR_DLGTCP_JOINBLURB=Kliknij "Dołącz", aby dołączyć do istniejącej gry
+STR_DLGTCP_REJOINBLURB=Kliknij "Dołącz ponownie", aby wrócić do gry i odzyskać swoje rzeczy
+STR_ERR_DLGTCP_PORTS=Port serwera i własny port są takie same!
+STR_ERR_DLGTCP_NOTRIGHT=Coś tu się nie zgadza...
+STR_ERR_DLGTCP_SUBCLASS=Nie można ustawić podklasy okna do kopiowania!
+
+# Game finder extra
+STR_DLGGAMEFINDER_JOINADDRESS=Dołącz po &adresie
+STR_DLGGAMEFINDER_REFRESH=&Odśwież
+STR_DLGGAMEFINDER_PLAYERNAME=Ustaw nazwę &gracza
+STR_DLGGAMEFINDER_MOTD=&Wiadomość dnia
+STR_DLGGAMEFINDER_STATUSBLURB=Stan: 
+STR_DLGGAMEFINDER_SELECTEDGAME=Informacje o wybranej grze
+STR_DLGGAMEFINDER_BRAINS=Brains:
+STR_DLGGAMEFINDER_PASSWORD=Hasło:
+STR_DLGGAMEFINDER_PILLS=Liczba wolnych bunkrów:
+STR_DLGGAMEFINDER_BASES=Liczba wolnych baz:
+STR_DLGGAMEFINDER_HIDDENMINES=Ukryte miny:
+STR_DLGGAMEFINDER_NUMPLAYERS=Liczba graczy:
+STR_DLGGAMEFINDER_VERSION=Wersja:
+STR_DLGGAMEFINDER_GAMETYPE=Typ gry:
+STR_DLGGAMEFINDER_PORT=Port serwera:
+STR_DLGGAMEFINDER_ADDRESS=Adres serwera:
+
+# Brain errors
+STR_BRAINERR_BRAINDIR=Katalog Brains nie istnieje.\nBrains nie zostaną wczytane!
+STR_BRAINERR_LAUNCH=Błąd uruchamiania Brain
+STR_BRAINERR_LAUNCHMAIN=Błąd uruchamiania Brain — Brain nie zawiera "BrainMain"
+STR_BRAINERR_INIT=Błąd inicjalizacji Brain
+STR_BRAINERR_EXEC=Nie można uruchomić Brain
+
+# Draw errors
+STR_DRAWERROR_CREATEOBJECT=Tworzenie obiektu DD nie powiodło się
+STR_DRAWERROR_SETCOOPLEVEL=Ustawienie poziomu współpracy DD nie powiodło się
+STR_DRAWERROR_CREATEPRIMARY=Tworzenie głównej powierzchni DD nie powiodło się
+STR_DRAWERROR_GETPIXELFORMAT=Pobranie formatu piksela DD nie powiodło się
+STR_DRAWERROR_GETDESC=Pobranie opisu powierzchni nie powiodło się
+STR_DRAWERROR_TOOFEWCOLOURS=Ta wersja WinBolo nie działa w trybie palety.\n Zmień głębię kolorów na większą niż 256 kolorów
+STR_DRAWERROR_BUFFERCREATE=Tworzenie bufora DD nie powiodło się
+STR_DRAWERROR_GETDCFAILED=DD Get DC nie powiodło się
+STR_DRAWERROR_CLIPPERFAILED=Tworzenie clippera DD nie powiodło się
+STR_DRAWERROR_BRUSH=Błąd tworzenia pędzla rysującego
+STR_DRAWERROR_PEN=Błąd tworzenia pióra rysującego
+STR_DRAW_GAMESTARTSIN=Gra zaczyna się za 
+STR_DRAWERROR_RELEASEDC=Błąd zwalniania DC dla rysowania etykiety czołgu (To źle)
+STR_DRAW_PILLBOXVIEW=Widok bunkra
+
+# Font errors
+STR_FONTERR_NOCOURIERFONT=Nie można wczytać czcionki Courier New
+
+# Game front errors
+STR_GAMEFRONTERR_CORRUPTPREFS=Wystąpił błąd przy odczycie ustawień. Zostaną użyte wartości domyślne
+STR_GAMEFRONTERR_WINDOW=Błąd tworzenia okna
+STR_GAMEFRONTERR_DDRAW=Błąd konfiguracji Direct Draw
+STR_GAMEFRONTERR_DSOUND=Błąd konfiguracji Direct Sound
+STR_GAMEFRONTERR_DINPUT=Błąd konfiguracji Direct Input
+STR_GAMEFRONTERR_CURSOR=Błąd wczytywania kursora
+STR_GAMEFRONTERR_FONTS=Błąd wczytywania czcionek
+STR_GAMEFRONT_LANFINDER_TITLE=Wyszukiwarka gier LAN
+STR_GAMEFRONT_TRACKERFINDER_TITLE=Wyszukiwarka gier trackera
+STR_GAMEFRONTERR_JOINGAME=Wystąpił błąd przy próbie dołączenia do gry
+STR_GAMEFRONTERR_SPAWNSERVER=Wystąpił błąd przy próbie uruchomienia procesu serwera.\n Czy program "WinBoloDS" znajduje się w tym samym katalogu co WinBolo?
+STR_GAMEFRONTERR_NETSINGLEPLAYER=Coś naprawdę dziwnego stało się w podsystemach sieciowych — co jest dziwne, bo wybrałeś grę dla jednego gracza. Masz szczęście...
+STR_GAMEFRONT_SERVERSTARTMSG=Uruchamianie dedykowanego serwera. Wpisz "quit" w jego oknie, aby zakończyć.
+STR_GAMEFRONT_INPUTERR_CREATE=Utworzenie urządzenia klawiatury Direct Input nie powiodło się
+STR_GAMEFRONT_INPUTERR_DATAFORMAT=Ustawienie formatu danych dla urządzenia klawiatury Direct Input nie powiodło się
+STR_GAMEFRONT_INPUTERR_COOPLEVEL=Ustawienie poziomu współpracy dla urządzenia klawiatury Direct Input nie powiodło się
+
+# Network client errors
+STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Błąd uruchamiania Winsock
+STR_NETCLIENTERR_CREATEUDPFAIL=Błąd tworzenia gniazda UDP
+STR_NETCLIENTERR_CREATETCPFAIL=Błąd tworzenia gniazda TCP
+STR_NETCLIENTERR_BINDUDPFAIL=Błąd przypisania gniazda UDP\n Inny program ma już przypisany ten port. Spróbuj wybrać inny.\n\nUWAGA: Jeśli uruchomiłeś grę sieciową i uruchomiła się pomyślnie, to wciąż działa.\n Nie musisz uruchamiać jej ponownie
+STR_NETCLIENTERR_CHAINFAIL=Błąd dodawania zdarzeń sieciowych do łańcucha komunikatów
+STR_NETCLIENTERR_TRACKERVERSIONFAIL=Nieobsługiwana wersja trackera
+STR_NETCLIENTERR_TRACKERDNSFAIL=Błąd znajdowania trackera (niepowodzenie wyszukiwania DNS)
+STR_NETCLIENTERR_TRACKERCONNECTFAIL=Błąd połączenia z trackerem
+STR_NETCLIENTERR_TRACKERNOBLOCK=Błąd ustawiania gniazda jako nieblokującego
+STR_NETCLIENT_TRACKERGETRESPONSE=Odbieranie informacji o grze...
+STR_NETCLIENT_TRACKERPROCESSRESPONSE=Przetwarzanie danych trackera...
+STR_NETCLIENTERR_TRACKERNODATA=Błąd: tracker nie wysłał danych
+STR_NETCLIENT_TRACKERCONNECT=Łączenie: 
+STR_NETCLIENT_IDLE=Bezczynny
+STR_NETCLIENTERR_BIND=Błąd przypisania gniazda
+STR_NETCLIENTERR_BROADCAST=Błąd wysyłania transmisji
+STR_NETCLIENT_GETRESPONSES=Odbieranie odpowiedzi...
+
+# Sound errors
+STR_SOUNDERR_FILENOTFOUND=Nie można wczytać dźwięków WinBolo — kontynuacja bez dźwięku
+STR_SOUNDERR_HARDWAREINUSE=Błąd konfiguracji Direct Sound — sprzęt jest używany przez inną aplikację.\nKontynuacja bez dźwięku.
+STR_SOUNDERR_CREATEFAILED=Tworzenie obiektu DS nie powiodło się\nKontynuacja bez dźwięku.
+STR_SOUNDERR_COOPFAILED=Tworzenie poziomu współpracy DS nie powiodło się
+STR_SOUNDERR_PRIMARYBUFFFAIL=Tworzenie głównego bufora DS nie powiodło się
+STR_SOUNDERR_LOADSOUNDFAILED=Wczytanie jednego lub więcej plików dźwiękowych nie powiodło się
+
+# General WinBolo errors
+STR_WBERR_MUTEXCREATE=Błąd tworzenia muteksu. (To źle)
+STR_WBERR_BRAINLISTLOAD=Błąd wczytywania listy Brain
+STR_WBERR_KEYCLASSSETUP=Błąd konfiguracji klasy konfiguracji klawiszy
+STR_WBTIMELIMIT_END=Limit czasu wygasł. Gra dobiegła końca.
+STR_WBERR_SAVEMAP=Błąd zapisywania mapy (Dysk pełny?)
+
+# Tutorial strings
+STR_TUTORIAL01=Przed tobą jest krótka rzeka prowadząca w głąb lądu.\nPrzytrzymaj klawisz {ACCEL}, aby pokierować łodzią\ndo końca rzeki.\n\nGdy tam dotrzesz, nie puszczaj {ACCEL}. Czołg zejdzie\nz łodzi, a łódź pozostanie zacumowana na końcu rzeki
+STR_TUTORIAL02=Jesteś teraz na trawie. Czołg porusza się po trawie\ndość szybko.\n\n\nNaciskaj {ACCEL}, aby przejechać do lasu.
+STR_TUTORIAL03=Jesteś teraz w lesie. Czołg porusza się w lesie\nwolniej niż na trawie.\n\n\nNaciskaj {ACCEL}, aby przejechać do bagna.
+STR_TUTORIAL04=Jesteś teraz na bagnie. Czołg porusza się po bagnie\nbardzo wolno. Na szczęście przed tobą jest droga.\n\n\nNaciskaj {ACCEL}, aby przejechać do drogi.
+STR_TUTORIAL05=Jesteś teraz na drodze. Czołg może poruszać się\npo drodze bardzo szybko, a po naciśnięciu {ACCEL}\nczołg przyspieszy.\n\n\nJeśli stwierdzisz, że jedziesz zbyt szybko, możesz\nnacisnąć {BRAKE}
+STR_TUTORIAL06=Przed tobą stoją budynki. Budynki to solidne\nprzeszkody, których nie da się przejechać, więc\nbędziesz musiał znaleźć drogę przez labirynt na\ndrugą stronę.\n\nAby skręcić czołgiem w lewo, naciśnij {LEFT}\nAby skręcić czołgiem w prawo, naciśnij {RIGHT}
+STR_TUTORIAL07=Te okrągłe obiekty z wystającymi czerwonymi działami\nto automatyczne bunkry. Strzelają do każdego czołgu,\nktóry znajdzie się w ich zasięgu.\n\n\nNa szczęście budynki dają osłonę przed pociskami,\nwięc bunkry nie trafią cię, chyba że będziesz czekać\ntak długo, że zdążą całkowicie przestrzelić budynki.
+STR_TUTORIAL08=Las również daje osłonę przed bunkrami, ale w inny\nsposób. Oprócz mocnego spowolnienia czołgu,\njazda przez las również ogranicza widoczność.\n\n\nGdy jesteś w lesie, nadal wyraźnie widzisz wszystko\npoza lasem, ale bunkry (i inni gracze) nie widzą\ntwojego czołgu, dopóki nie znajdziesz się bardzo blisko.
+STR_TUTORIAL09=Ustaw czołg na środku pasa lasu i jedź na północ.\nJeśli pojedziesz prosto i nie zboczysz zbyt blisko\nbrzegów lasu, bunkry cię nie zobaczą i nie strzelą.\n\n\nNie wyjeżdżaj poza las, bo zostaniesz rozerwany na strzępy.\n
+STR_TUTORIAL10=Jest jeszcze jeden prosty sposób na ucieczkę przed\nbunkrami — szybkość.\n\n\nUpewnij się, że jesteś dobrze ustawiony na środku\ndrogi, i przytrzymaj {ACCEL}, aby pełną prędkością\nprzemknąć obok bunkrów.
+STR_TUTORIAL11=Gdy cię zauważą, zaczną strzelać, ale jeśli pojedziesz\nprosto i nie stracisz zimnej krwi, znajdziesz się poza\nzasięgiem, zanim pociski cię trafią.\n\n\nNie zjeżdżaj z drogi w bagno, bo będziesz jak kaczka\nna strzelnicy dla bunkrów i nie będziesz w stanie\nporuszać się dość szybko, aby uciec.
+STR_TUTORIAL12=Przed tobą jest baza zaopatrzenia. Bazy zaopatrzenia\ndostarczają pocisków do strzelania, min do zakładania\ntajnych pułapek, a także naprawiają pancerz czołgu\ndo pełnej wytrzymałości, jeśli został uszkodzony.\n\n\nZatrzymaj się na bazie zaopatrzenia i załaduj czołg\npociskami.
+STR_TUTORIAL13=Jesteś na bazie zaopatrzenia. Twój czołg załaduje\nteraz pociski i miny, jak pokażą wskaźniki po prawej.\nPrzed tobą, za budynkami, znajduje się pole minowe.
+STR_TUTORIAL14=Jeśli wjedziesz czołgiem w pole minowe, zostanie\nzniszczony. Na szczęście pole minowe można\noczyścić strzelaniem. Naciśnij {FIRE}, aby strzelić.\n\nZrób dziurę w budynku, a następnie umieść pocisk\nna środku pola minowego, aby je zdetonować.\nGdy wysadzisz miny, zrobią duży krater w ziemi,\nprzez który możesz przejechać, choć jest to równie\npowolne jak jazda przez bagno.
+STR_TUTORIAL15=Przed tobą kolejne pole minowe. Powtórz tę samą\nsztuczkę: wjedź na bazę zaopatrzenia, przestrzel\nścianę i umieść pocisk na środku pola minowego,\naby je zdetonować.\n\nTym razem jednak pole minowe sąsiaduje z dużą\nrzeką, a woda zaleje kratery. Czołgiem możesz\njechać przez wodę tak samo jak przez kratery i bagno.
+STR_TUTORIAL16=WinBolo automatycznie przewija okno, aby pokazać ci\nobszar wokół czołgu, ale możesz użyć klawiszy\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT},\naby ręcznie nadpisać widok wybrany przez WinBolo.\n\nNaciśnij teraz {SCROLL_UP}, aby lepiej zobaczyć\nrzekę przed tobą.
+STR_TUTORIAL17=Oprócz tego, że jest bardzo wolna, jazda przez wodę\nma jeszcze jedną wadę: zużywa również zapasy\npocisków i min czołgu.\n\n\nGdy dotrzesz na drugą stronę, twój czołg nadal\nbędzie sprawny, ale stracisz całą zdolność\nbojową.
+STR_TUTORIAL18=Tym razem przekroczymy rzekę bardziej subtelnie.\nZamiast po prostu przejeżdżać przez wodę,\nzbudujemy most.\n\n\nWybierz tryb sadzenia drzew, klikając ikonę lasu\n(lewy górny róg okna), i kliknij na lesie. Twój\nbudowniczy wybiegnie z czołgu i ścinie jedno\ndrzewo na materiały budowlane.
+STR_TUTORIAL19=Po ścięciu kilku drzew wybierz narzędzie droga/most\n(drugi przycisk od góry) i kliknij myszą na rzece\nna końcu drogi.\n\n\nTwój budowniczy wybiegnie z czołgu i zbuduje jeden\nodcinek mostu. Kliknij ponownie, aby dokończyć most,\na potem przejedź na drugą stronę.
+STR_TUTORIAL20=Ta rzeka jest szersza niż poprzednia, a w środku jest\nzbyt głęboka, abyś mógł zbudować most. Jeśli\nspróbujesz po prostu przejechać, czołg utonie\ni zostanie zniszczony.
+STR_TUTORIAL21=Aby przekroczyć tę rzekę, musisz zbudować łódź.\nŁodzie wymagają pięciu drzew, więc kliknij na pięciu\ndrzewach, aby je ściąć. Następnie wybierz narzędzie\nściana/łódź (trzeci przycisk od góry) i kliknij na\nwodzie, aby zbudować łódź.\n\nJeśli klikniesz na lądzie, zbudujesz ścianę zamiast\nłodzi i będziesz musiał ściąć więcej drzew, aby\nzbudować łódź. Wjedź na łódź i przepłyń na drugą\nstronę.
+STR_TUTORIAL22=Przed tobą jest bunkier i kilka baz zaopatrzenia,\nktóre dostarczą ci amunicji. Zbierz pociski z bazy\nzaopatrzenia i zaatakuj bunkier.\n\n\nBunkier odpowie ogniem, ale jeśli twój czołg zostanie\ntrafiony, możesz łatwo wrócić do bazy zaopatrzenia,\naby naprawić pancerz do pełnej wytrzymałości.
+STR_TUTORIAL23=Z cierpliwością i ostrożnością powinieneś dać radę\nzniszczyć ten bunkier. Wykorzystaj umiejętności,\nktórych się nauczyłeś, aby było łatwiej:\n\n\nUkryj się w lesie, aby bunkier cię nie widział, ścinaj\ndrzewa, buduj drogi, aby twój czołg poruszał się\nszybciej, i buduj budynki, które dadzą osłonę przed\npociskami z bunkra.
+STR_TUTORIAL24=Po pokonaniu tego bunkra ostatnim wyzwaniem\nsamouczka jest zniszczenie dwóch bunkrów\nstrzegących wyjścia, zbudowanie łodzi i ucieczka.\n\n\nZwróć szczególną uwagę na poziom pancerza czołgu —\njeśli czołg zostanie zniszczony, będziesz musiał\nzaczynać z nowym czołgiem na nowej łodzi na morzu.
+STR_TUTORIAL25=Gratulacje. Ukończyłeś samouczek WinBolo.\n\n\n\nTeraz zorganizuj kilku znajomych do gry i przekonaj\nsię, jak to jest rywalizować z inteligentnymi ludzkimi\nprzeciwnikami zamiast nieruchomych, bezmyślnych\ncelów.\n\nJeśli chciałbyś później powtórzyć samouczek, możesz\nuruchomić go ponownie z menu Ustawień.
+STR_TUTORIAL_START01=Witaj w samouczku WinBolo. Ta wyspa wprowadza\npodstawowe zasady WinBolo i prowadzi cię przez\nnie po kolei. Każda nowa zasada zostanie opisana\nw oknie podobnym do tego.\n\nPo przeczytaniu każdej wiadomości możesz przejść\ndalej, klikając przycisk "OK" myszą lub po prostu\nnaciskając klawisz <Return> na klawiaturze
+STR_TUTORIAL_START02=WinBolo to jedyny autoryzowany klon klasycznej macintoshowej gry sieciowej Bolo autorstwa Stuarta Cheshire'a.\nWskazówki strategiczne i inne informacje znajdziesz na oficjalnej stronie:\n\nhttps://www.winbolo.com\n\nLub dołącz do nas na Reddicie i Discordzie\n
+STR_TUTORIAL_START03=Krótka uwaga o grze przez internet.\n\nJeśli dołączysz do gry online i wystąpi dużo błędów\nsieciowych, opuść grę natychmiast, zanim\nzepsujesz ją innym graczom.
+STR_TUTORIAL_START04=Sterujesz czołgiem, który aktualnie znajduje się na\nłodzi na morzu. Naciśnij {ACCEL}, aby czołg (i łódź)\nruszył naprzód, a {BRAKE}, aby zwolnił i się\nzatrzymał.\n\nNie naciskaj klawiszy jak przy pisaniu listu —\nprzytrzymaj je, aż czołg osiągnie żądaną prędkość,\na potem puść. Naciśnij teraz {ACCEL}, aby łódź\npopłynęła w stronę lądu.\n(Naciśnij najpierw <Return>, aby zamknąć to okno)
+STR_TUTORIAL01_TOUCH=Przed tobą jest krótka rzeka prowadząca w głąb lądu.\nPrzesuń drążek do przodu, aby pokierować łodzią\ndo końca rzeki.\n\nGdy tam dotrzesz, trzymaj drążek przesunięty\ndo przodu. Czołg zejdzie z łodzi, a łódź pozostanie\nzacumowana na końcu rzeki
+STR_TUTORIAL02_TOUCH=Jesteś teraz na trawie. Czołg porusza się po trawie\ndość szybko.\n\n\nTrzymaj drążek przesunięty do przodu, aby\nprzejechać do lasu.
+STR_TUTORIAL03_TOUCH=Jesteś teraz w lesie. Czołg porusza się w lesie\nwolniej niż na trawie.\n\n\nTrzymaj drążek przesunięty do przodu, aby\nprzejechać do bagna.
+STR_TUTORIAL04_TOUCH=Jesteś teraz na bagnie. Czołg porusza się po bagnie\nbardzo wolno. Na szczęście przed tobą jest droga.\n\n\nTrzymaj drążek przesunięty do przodu, aby\nprzejechać do drogi.
+STR_TUTORIAL05_TOUCH=Jesteś teraz na drodze. Czołg może poruszać się\npo drodze bardzo szybko, a przesunięcie drążka\ndo oporu w przód go przyspieszy.\n\n\nJeśli stwierdzisz, że jedziesz zbyt szybko, pociągnij\ndrążek z powrotem, aby zwolnić.
+STR_TUTORIAL06_TOUCH=Przed tobą stoją budynki. Budynki to solidne\nprzeszkody, których nie da się przejechać, więc\nbędziesz musiał znaleźć drogę przez labirynt na\ndrugą stronę.\n\nPrzesuń drążek w lewo lub w prawo, aby skręcić\nczołgiem w tym kierunku.
+STR_TUTORIAL10_TOUCH=Jest jeszcze jeden prosty sposób na ucieczkę przed\nbunkrami — szybkość.\n\n\nUpewnij się, że jesteś dobrze ustawiony na środku\ndrogi, i przesuń drążek do oporu w przód, aby pełną\nprędkością przemknąć obok bunkrów.
+STR_TUTORIAL14_TOUCH=Jeśli wjedziesz czołgiem w pole minowe, zostanie\nzniszczony. Na szczęście pole minowe można\noczyścić strzelaniem. Stuknij przycisk strzału, aby strzelić.\n\nZrób dziurę w budynku, a następnie umieść pocisk\nna środku pola minowego, aby je zdetonować.\nGdy wysadzisz miny, zrobią duży krater w ziemi,\nprzez który możesz przejechać, choć jest to równie\npowolne jak jazda przez bagno.
+STR_TUTORIAL16_TOUCH=WinBolo automatycznie przewija okno, aby pokazać ci\nobszar wokół czołgu, ale możesz przeciągnąć mapę\npalcem, aby ręcznie nadpisać widok.\n\nPrzeciągnij mapę w dół teraz, aby zobaczyć\nrzekę przed tobą.
+STR_TUTORIAL18_TOUCH=Tym razem przekroczymy rzekę bardziej subtelnie.\nZamiast po prostu przejeżdżać przez wodę,\nzbudujemy most.\n\n\nWybierz tryb sadzenia drzew, stukając ikonę lasu\n(lewy górny róg okna), i stuknij na lesie. Twój\nbudowniczy wybiegnie z czołgu i ścinie jedno\ndrzewo na materiały budowlane.
+STR_TUTORIAL19_TOUCH=Po ścięciu kilku drzew wybierz narzędzie droga/most\n(drugi przycisk od góry) i stuknij na rzece\nna końcu drogi.\n\n\nTwój budowniczy wybiegnie z czołgu i zbuduje jeden\nodcinek mostu. Stuknij ponownie, aby dokończyć most,\na potem przejedź na drugą stronę.
+STR_TUTORIAL21_TOUCH=Aby przekroczyć tę rzekę, musisz zbudować łódź.\nŁodzie wymagają pięciu drzew, więc stuknij na pięciu\ndrzewach, aby je ściąć. Następnie wybierz narzędzie\nściana/łódź (trzeci przycisk od góry) i stuknij na\nwodzie, aby zbudować łódź.\n\nJeśli stukniesz na lądzie, zbudujesz ścianę zamiast\nłodzi i będziesz musiał ściąć więcej drzew, aby\nzbudować łódź. Wjedź na łódź i przepłyń na drugą\nstronę.
+STR_TUTORIAL_START01_TOUCH=Witaj w samouczku WinBolo. Ta wyspa wprowadza\npodstawowe zasady WinBolo i prowadzi cię przez\nnie po kolei. Każda nowa zasada zostanie opisana\nw oknie podobnym do tego.\n\nPo przeczytaniu każdej wiadomości możesz przejść\ndalej, stukając przycisk "OK".
+STR_TUTORIAL_START04_TOUCH=Sterujesz czołgiem, który aktualnie znajduje się na\nłodzi na morzu. Użyj drążka po lewej stronie ekranu,\naby kierować: przesuń go w przód, by przyspieszyć,\npociągnij w tył, by zwolnić i się zatrzymać.\n\nIm dalej przesuniesz drążek, tym szybciej jedzie\nczołg. Przesuń teraz drążek w przód, aby łódź\npopłynęła w stronę lądu.\n(Stuknij najpierw OK, aby zamknąć to okno)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=Nie możesz budować, dopóki twój nowy człowiek nie wyląduje na spadochronie
+LGM_NO_BUILD=Nie możesz budować w tym miejscu
+LGM_INSUFFICIENT_TREES=Nie masz drzew potrzebnych do zbudowania tego
+LGM_NO_PILLS=Nie masz bunkra do umieszczenia
+LGM_INSUFFICIENT_MINES=Nie masz min do umieszczenia
+LGM_BUILDTANK=Człowiek nie może budować na czołgu
+LGM_NO_TREE=Nie ma tu drzewa do ścięcia
+LGM_PILL_NO_NEED_REPAIR=Ten bunkier nie wymaga naprawy
+LGM_PILL_NO_BUILD_ON_MINE=Człowiek nie może budować na minie. Zabiłaby go.
+LGM_NO_BUILD_UNDER_BOAT=Człowiek nie może budować pod twoją łodzią
+
+# In-game messages
+MESSAGE_ASSISTANT=Asystent online
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}" przekazał kontrolę "{player}"
+MESSAGE_NETSERVER=Serwer sieciowy
+MESSAGE_THIS_COMPUTER=Ten komputer
+MESSAGE_CAPTURE_BASE={player} zdobył neutralną bazę
+MESSAGE_CAPTURE_PILL={player} zdobył neutralny bunkier
+MESSAGE_STOLE_PILL={player} ukradł bunkier graczowi {other}
+MESSAGE_STOLE_BASE={player} ukradł bazę graczowi {other}
+MESSAGE_LGM_DEAD={player} stracił swojego budowniczego
+MESSAGE_SAVED_MAP={player} zapisał plik mapy
+MESSAGE_QUIT_GAME={player} opuścił grę
+MESSAGE_TIME_LIMIT_EXPIRED=Limit czasu wygasł. Gra dobiegła końca. Idź w pokoju
+MESSAGE_TANKSUNK=Czołg zatonął w otwartym morzu
+
+# Network errors
+NETERR_TRACKERDNS=Wyszukiwanie nazwy hosta trackera nie powiodło się. Powiadomienia trackera wyłączone
+NETERR_JOININIT=Nie było odpowiedzi z gry, z którą próbowałeś się skontaktować.\nZazwyczaj oznacza to jedną z 3 rzeczy:\n1. Pola adresu i portu są nieprawidłowe.\n2. Jesteś za jakimś firewallem blokującym dostęp UDP.\n3. Sprawdź, czy twoja wersja WinBolo jest taka sama jak w grze
+NETERR_GAMEFULL=Ta gra jest obecnie pełna
+NETERR_SERVERCONNECT=Nie udało się nawiązać połączenia z serwerem. Spróbuj inny komputer lub poczekaj kilka sekund i spróbuj ponownie.
+NETERR_PASSWORDWRONG=Hasło jest nieprawidłowe
+NETERR_PLAYERNAMEINUSE=Twoja nazwa gracza jest już używana. Wybierz inną i spróbuj ponownie
+NETERR_NONEWPLAYERS=Niestety, ta gra obecnie nie przyjmuje graczy
+NETERR_CONNECTNOJOIN=Udało ci się połączyć z grą, ale nie pozwolono ci dołączyć. Prawdopodobnie oznacza to, że twoja nazwa gracza jest zajęta. Spróbuj ponownie z nową nazwą
+
+# Network status
+NET_STATUS_JOINING=Dołączanie
+NET_STATUS_OK=OK
+NET_STATUS_FAILED=Niepowodzenie
+NETERR_LOSTCONNECTION=Utracono połączenie z serwerem.\nPrzełączanie do trybu jednoosobowego
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=Wyślij wiadomość
+STR_DLGOPENING_BUTTON3=Języki
+STR_DLGOPENING_BUTTON4=Pomoc
+STRERR_HELPFILE=Błąd otwierania pliku pomocy.
+STR_DLGSKIN_TITLE=Wybór skórki
+STR_DLGSKIN_BLURB=Jeśli nie wszystkie elementy skórki są dostępne, używana jest domyślna wbudowana skórka i dźwięki.
+
+# Player name error
+STR_DLGGAMEFINDER_PLAYERWRONG=Niestety, twoja nazwa gracza jest pusta — musisz mieć nazwę gracza
+NETERR_MAPSERIALIZE=Serwer nie był w stanie przygotować danych mapy. Spróbuj ponownie
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=Liczba klatek:
+STR_DLGSYSINFO_GRAPHICS=Grafika:
+STR_DLGSYSINFO_AITANKS=Czołgi AI:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=Serwer:
+STR_DLGNETINFO_THISGAME=Ta gra:
+STR_DLGNETINFO_PINGGRAPH=Ping: min {number} / śr {number2} / max {number3} ms
+STR_DLGNETINFO_KBIN=KB/s wej.:
+STR_DLGNETINFO_KBOUT=KB/s wyj.:
+STR_DLGNETINFO_PACKETS_RATE=Pakiety/s: {number} wej. / {number2} wyj.
+STR_DLGNETINFO_KB_RATE=KB/sec: {string1} wej. / {string2} wyj.
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=Kopiuj seed
+STR_DLGGAMEINFO_AILABEL=Czołgi AI:
+STR_DLGGAMEINFO_FULLADV=Pełna przewaga
+STR_DLGGAMEINFO_UNLIMITED=Bez limitu
+
+# Players panel
+STR_DLGPLAYERS_TITLE=Gracze
+STR_DLGPLAYERS_ALL=Wszyscy
+STR_DLGPLAYERS_NONE=Nikt
+STR_DLGPLAYERS_ALLIES=Sojusznicy
+STR_DLGPLAYERS_NEARBY=W pobliżu
+STR_LEAVE_ALLIANCE=Opuść sojusz
+STR_REQUEST_ALLIANCE=Poproś o sojusz
+STR_ALLOW_NEW_PLAYERS=Pozwalaj na nowych graczy
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=Dołączyć do gry?
+STR_DLGJOIN_BLURB=Opuścić bieżącą grę i dołączyć do serwera?
+STR_DLGJOIN_BUTTON=Dołącz
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=Zmień nazwę gracza
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(brak)
+STR_DLGKEYSETUP_PRESSAKEY=Naciśnij klawisz...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=Naciśnij klawisz, aby przypisać, lub kliknij Anuluj.
+STR_DLGKEYSETUP_CHANGE=Zmień
+STR_DLGKEYSETUP_COL_ACTION=Akcja
+STR_DLGKEYSETUP_COL_KEY=Klawisz
+STR_DLGKEYSETUP_QUICKKEYS=Szybkie klawisze
+STR_DLGKEYSETUP_TREE=Drzewo
+STR_DLGKEYSETUP_ROAD=Droga
+STR_DLGKEYSETUP_WALL=Ściana
+STR_DLGKEYSETUP_QUICKPILLBOX=Bunkier
+STR_DLGKEYSETUP_QUICKMINE=Mina
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=Ustawienia
+STR_DLGSETTINGS_PLAYER=Gracz
+STR_DLGSETTINGS_PLAYERNAME=Nazwa gracza:
+STR_DLGSETTINGS_APPLY=Zastosuj
+STR_DLGSETTINGS_SETKEYS=Ustaw klawisze...
+STR_DLGSETTINGS_DISPLAY=Wyświetlanie
+STR_DLGSETTINGS_WINDOWSIZE=Rozmiar okna:
+STR_DLGSETTINGS_RELSTEER=Sterowanie względne
+STR_DLGSETTINGS_RELSTEER_TIP=Gdy wyłączone, joystick wskazuje czołgowi kierunek bezpośrednio.\nGdy włączone, joystick obraca w lewo/prawo względem czołgu.
+STR_DLGSETTINGS_TABLETMODE=Tryb UI tabletu
+STR_DLGSETTINGS_LABELS=Etykiety
+STR_DLGSETTINGS_MSGNAMES=Nazwy w wiadomościach:
+STR_DLGSETTINGS_TANKLABELS=Etykiety czołgów:
+STR_DLGSETTINGS_SOUND=Dźwięk
+STR_DLGSETTINGS_MESSAGES=Wiadomości
+STR_DLGSETTINGS_GAME=Gra
+
+# Menu bar
+STR_MENU_FILE=Plik
+STR_MENU_NEW=Nowa
+STR_MENU_SAVE_MAP=Zapisz mapę
+STR_MENU_EXIT=Zakończ
+STR_MENU_EDIT=Edycja
+STR_MENU_FRAME_RATE=Liczba klatek
+STR_MENU_WINDOW_SIZE=Rozmiar okna
+STR_MENU_NORMAL=Normalny
+STR_MENU_DOUBLE=Podwójny
+STR_MENU_TRIPLE=Potrójny
+STR_MENU_QUAD=Poczwórny
+STR_MENU_CUSTOM_RESIZABLE=Niestandardowy (skalowalny)
+STR_MENU_REQUIRES=Wymaga {number}x{number2} — przekracza wyświetlacz
+STR_MENU_SMOOTH_SCROLLING=Płynne przewijanie
+STR_MENU_AUTO_SCROLLING=Automatyczne przewijanie
+STR_MENU_SHOW_GUNSIGHT=Pokaż celownik
+STR_MENU_MSG_NAMES_SUB=Nazwy nadawców wiadomości
+STR_MENU_TANK_LABELS_SUB=Etykiety czołgów
+STR_NONE=Brak
+STR_SHORT=Krótkie
+STR_LONG=Długie
+STR_MENU_NO_OWN_LABEL=Nie etykietuj własnego czołgu
+STR_MENU_PILLBOX_LABELS=Etykiety bunkrów
+STR_MENU_BASE_LABELS=Etykiety baz zaopatrzenia
+STR_MENU_HIDE_MAIN=Ukryj widok główny
+STR_MENU_DEVICE=Urządzenie:
+STR_MENU_DESKTOP=Pulpit
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=Ustaw klawisze
+STR_MENU_SOUND_EFFECTS=Efekty dźwiękowe
+STR_MENU_BACKGROUND_SOUND=Dźwięk w tle
+STR_MENU_SOUND_KEEPALIVE=Podtrzymanie dźwięku
+STR_MENU_NEWSWIRE_MSGS=Wiadomości Newswire
+STR_MENU_ASSISTANT_MSGS=Wiadomości asystenta
+STR_MENU_AI_MSGS=Wiadomości Brain AI
+STR_MENU_NETSTATUS_MSGS=Wiadomości stanu sieci
+STR_MENU_NETDEBUG_MSGS=Wiadomości debugowania sieci
+STR_MENU_SETTINGS=Ustawienia...
+STR_MENU_PLAYERS=Gracze
+STR_MENU_SEND_MESSAGE=Wyślij wiadomość
+STR_MENU_SELECT_ALL=Zaznacz wszystkich
+STR_MENU_SELECT_NONE=Odznacz wszystkich
+STR_MENU_SELECT_ALLIES=Zaznacz sojuszników
+STR_MENU_SELECT_NEARBY=Zaznacz pobliskie czołgi
+STR_MENU_BRAINS=Brains
+STR_MENU_MANUAL=Podręcznik
+STR_MENU_HELP=Pomoc
+STR_MENU_ABOUT=O programie
+STR_MENU_LEAVE_GAME=Opuść grę
+STR_BRAINSETTINGS_NONE=(brak ustawień)
+STR_BRAINSETTINGS_TITLE=Ustawienia Brain
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=Samouczek
+STR_DLGSETTINGS_PLAY_TUTORIAL=Zagraj samouczek
+STR_DLGSETTINGS_SHOW_ON_MAIN=Pokaż w menu głównym
+STR_DLGSETTINGS_CRASH_REPORTING=Raporty o awariach
+STR_DLGSETTINGS_ENABLE_CRASH=Włącz raporty o awariach
+STR_DLGSETTINGS_CRASH_HELP=Pomóż ulepszyć WinBolo, wysyłając raporty o awariach
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=Zmiany zostaną zastosowane przy następnym uruchomieniu.
+STR_CLOSE=Zamknij
+STR_DLGSETTINGS_WINTITLE=WinBolo - Ustawienia
+STR_DLGKEYSETUP_WINTITLE=WinBolo - Konfiguracja klawiszy
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo - Lobby gry
+STR_UNKNOWN=Nieznane
+STR_DLGGAMEINFO_AIFULL=Tak (pełne)
+STR_DLGLOBBY_HIDDEN=Ukryte
+STR_DLGLOBBY_VISIBLE=Widoczne
+STR_DLGLOBBY_DOWNLOADING=Pobieranie mapy...
+STR_DLGLOBBY_MAP_UNAVAILABLE=Podgląd mapy niedostępny
+STR_DLGLOBBY_PILLBOXES=Bunkry:
+STR_DLGLOBBY_BASES=Bazy:
+STR_DLGLOBBY_STARTS=Starty:
+STR_DLGLOBBY_SKIPMAP=Pomiń mapę
+STR_DLGLOBBY_CANCELSKIP=Anuluj pominięcie
+STR_DLGLOBBY_VOTES={number}/{number2} głosów za pominięciem
+STR_DLGLOBBY_CHAT=Czat
+STR_DLGLOBBY_READY=Gotowy
+STR_DLGLOBBY_UNREADY=Niegotowy
+STR_DLGLOBBY_BALANCE_TEAMS=Wyrównaj drużyny
+STR_DLGLOBBY_APPLY_BALANCE=Zastosuj wyrównanie
+STR_DLGLOBBY_DISMISS=Odrzuć
+STR_DLGLOBBY_LEAVE=Opuść
+STR_DLGLOBBY_LEAVE_TITLE=Opuścić grę?
+STR_DLGLOBBY_LEAVE_BLURB=Czy na pewno chcesz opuścić tę grę?
+STR_DLGLOBBY_BOT_FMT={player} [Bot]
+STR_DLGLOBBY_YOU_FMT={player} (Ty)
+STR_DLGLOBBY_STARTING_FMT=Start za {number}...
+STR_DLGLOBBY_LOSTCONNECTION=Utracono połączenie z serwerem.
+STR_DLGLOBBY_ME=Ja
+STR_DLGLOBBY_PLAYER_COL=Gracz
+STR_DLGLOBBY_PING_COL=Ping
+STR_DLGLOBBY_TEAM_COL=Drużyna
+STR_DLGLOBBY_READY_COL=Gotowy
+STR_DLGLOBBY_SLOT_COL=Slot
+STR_DLGLOBBY_NAME_COL=Nazwa gracza
+STR_DLGLOBBY_ACTION_COL=Akcja
+STR_DLGLOBBY_ADDBOT=Dodaj bota
+STR_DLGLOBBY_REMOVE=Usuń
+STR_DLGLOBBY_MAP_TAB=Mapa
+STR_DLGLOBBY_GAME_LBL=Gra:
+STR_DLGLOBBY_MINES_LBL=Miny:
+STR_DLGLOBBY_AI_LBL=AI:
+STR_DLGLOBBY_TIME_LBL=Czas:
+STR_DLGLOBBY_TIME_HMS={number}h {string1}m {string2}s
+STR_DLGLOBBY_TIME_MS={number}m {string1}s
+STR_DLGLOBBY_TIME_S={number}s
+STR_DLGLOBBY_MAP_LBL=Mapa:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo - Konfiguracja gry
+STR_DLGGAMESETUP_SELECTAMAP=Wybierz mapę:
+STR_BACK=Wstecz
+STR_DLGGAMESETUP_BASES_STARTS=Bazy: {number}  Starty: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=Bunkry: {number}
+STR_DLGGAMESETUP_CHANGEMAP=Zmień mapę
+STR_DLGGAMESETUP_GAMETYPE_LBL=Typ gry
+STR_DLGGAMESETUP_OPENGAME_SHORT=Otwarta gra
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=Ukryte miny
+STR_DLGGAMESETUP_AICOMPPLAYERS=Komputerowi gracze AI
+STR_DLGGAMESETUP_ALLOW=Zezwól
+STR_DLGGAMESETUP_ADVANTAGE=Przewaga
+STR_DLGGAMESETUP_FULLMAP=Pełna mapa
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=Limit czasu
+STR_DLGGAMESETUP_TEAMSETUP=Konfiguracja drużyn
+STR_DLGGAMESETUP_AINUM=Liczba graczy AI:
+STR_DLGGAMESETUP_NOBRAINS=Nie znaleziono Brains
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=Ty
+STR_DLGGAMESETUP_BOT_FMT=Bot {number}
+STR_DLGGAMESETUP_NOAI=Bez czołgów komputerowych
+STR_DLGGAMESETUP_ALLOWAI=Zezwól na czołgi komputerowe
+STR_DLGGAMESETUP_ALLOWADV=Zezwól z przewagą
+STR_DLGGAMESETUP_ALLOWFULL=Zezwól z pełną mapą
+STR_DLGGAMESETUP_NOPREVIEW=Brak podglądu
+STR_DLGGAMESETUP_STARTGAME=Rozpocznij grę
+STR_DLGGAMESETUP_STRICT_SHORT=Ścisły
+STR_DLGTCP_WINTITLE=WinBolo - Konfiguracja UDP (Internet)
+STR_ERR_TITLE=Błąd
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
+STR_DLGBROWSER_REFRESH=Odśwież
+STR_DLGBROWSER_LOADING=Wczytywanie listy gier{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=Kliknij Odśwież, aby wczytać gry...
+STR_DLGBROWSER_LAN_INSTRUCTION=Kliknij Odśwież, aby skanować...
+STR_DLGBROWSER_GAMES_LOADED=Gry wczytane.
+STR_DLGBROWSER_NO_GAMES=Nie znaleziono gier. Rozpocznij własną!
+STR_DLGBROWSER_SEARCH_FAILED=Wyszukiwanie nie powiodło się.
+STR_DLGBROWSER_SEARCHING=Wyszukiwanie...
+STR_DLGBROWSER_COL_SERVER=Serwer
+STR_DLGBROWSER_COL_MAP=Mapa
+STR_DLGBROWSER_COL_PLAYERS=Graczy
+STR_DLGBROWSER_COL_TYPE=Typ
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=Bazy
+STR_DLGBROWSER_COL_PILLS=Bunkry
+STR_DLGBROWSER_COL_PING=Ping
+STR_DLGBROWSER_FILTER=Filtr:
+STR_DLGBROWSER_FILTER_ALLTYPES=Wszystkie typy
+STR_DLGBROWSER_FILTER_UNLOCKED=Tylko odblokowane
+STR_DLGBROWSER_FILTER_ALLLOBBY=Całe lobby
+STR_DLGBROWSER_FILTER_INLOBBY=W lobby
+STR_DLGBROWSER_FILTER_STARTING=Rozpoczynające się
+STR_DLGBROWSER_STATUS_PINGING=Stan: {string1}  |  {number} serwerów  |  Pingowanie {number2}...
+STR_DLGBROWSER_STATUS=Stan: {string1}  |  {number} serwerów
+STR_DLGBROWSER_NEWGAME=Nowa gra
+STR_DLGBROWSER_PLAYER_NAME_BTN=Nazwa gracza
+STR_DLGBROWSER_MANUAL=Podręcznik
+STR_DLGBROWSER_ERR_VERSION=Serwer używa innej wersji WinBolo.
+STR_DLGBROWSER_ERR_NEEDNAME=Najpierw musisz ustawić nazwę gracza.
+STR_DLGBROWSER_SETNAME_TITLE=Ustaw nazwę gracza
+STR_DLGBROWSER_AI_ADV=Przew.
+STR_DLGBROWSER_AI_FULL=Pełna
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo - Przeglądarka logów
+STR_DLGWBN_TITLE=WinBolo.net — przeglądarka logów
+STR_DLGWBN_TAB_RECENT=Ostatnie
+STR_DLGWBN_TAB_TOPRATED=Najwyżej oceniane
+STR_DLGWBN_TAB_MOSTDOWNLOADED=Najczęściej pobierane
+STR_DLGWBN_TAB_SEARCH=Szukaj
+STR_DLGWBN_LOADING=Wczytywanie...
+STR_DLGWBN_NOCONNECT=Nie udało się połączyć z WinBolo.net
+STR_DLGWBN_MINPLAYERS=Min. graczy
+STR_DLGWBN_SEARCHFILTERS=Filtry wyszukiwania:
+STR_DLGWBN_HINT_PLAYER=Gracz
+STR_DLGWBN_HINT_MAP=Mapa
+STR_DLGWBN_SEARCH_BTN=Szukaj
+STR_DLGWBN_ERROR=Błąd: {string1}
+STR_DLGWBN_COL_MAP=Mapa
+STR_DLGWBN_COL_TYPE=Typ
+STR_DLGWBN_COL_PLAYERS=Graczy
+STR_DLGWBN_COL_RATING=Ocena
+STR_DLGWBN_COL_SIZE=Rozmiar
+STR_DLGWBN_COL_DATE=Data
+STR_DLGWBN_PLAYERS_LBL=Graczy: 
+STR_DLGWBN_NUMPLAYERS_FMT=Graczy: {number}
+STR_DLGWBN_DURATION=Czas trwania: {string1}
+STR_DLGWBN_RATING=Ocena: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=Pobrań: {number}
+STR_DLGWBN_SIZE=Rozmiar: {string1}
+STR_DLGWBN_COMMENTS_FMT=Komentarze ({number}):
+STR_DLGWBN_NOCOMMENTS=Brak komentarzy.
+STR_DLGWBN_ADDCOMMENT=Dodaj komentarz:
+STR_DLGWBN_HINT_COMMENT=Napisz komentarz...
+STR_DLGWBN_POST=Opublikuj
+STR_DLGWBN_POSTED=Komentarz opublikowany!
+STR_DLGWBN_LOADINGDETAIL=Wczytywanie szczegółów...
+STR_DLGWBN_DOWNLOADING=Pobieranie...
+STR_DLGWBN_VIEWLOG=Pokaż log
+STR_DLGWBN_NOLOG=Plik logu nie jest dostępny dla tej gry.
+STR_DLGWBN_PREV=< Poprz.
+STR_DLGWBN_NEXT=Nast. >
+STR_DLGWBN_PAGE=Strona {number} z {number2}  ({number3} łącznie)
+STR_DLGWBN_OPENFILE=Otwórz plik...
+STR_DLGWBN_PARSERR=Nie udało się sparsować odpowiedzi
+STR_DLGWBN_NETERR=Błąd sieci
+STR_DLGWBN_LOADERR=Nie udało się wczytać szczegółów
+STR_DLGWBN_DOWNLOAD_FAILED=Pobieranie nie powiodło się
+STR_DLGWBN_NOSAVEPATH=Nie można ustalić ścieżki zapisu
+STR_DLGWBN_POSTERR=Nie udało się opublikować komentarza
+STR_DLGWBN_FETCHERR=Pobieranie nie powiodło się
+STR_DLGWBN_UNKNOWN_ERR=Nieznany błąd
+STR_DLGWBN_FILEFILTER=Pliki logów WinBolo
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo - Ustaw nazwę gracza
+STR_DLGSETNAME_WBN_LOCKED=Twoja nazwa gracza jest ustawiana przez WinBolo.net.
+STR_DLGSETNAME_PLEASE_ENTER=Wprowadź swoją nazwę gracza.
+STR_DLGSETNAME_BLANK_ERR=Niestety, nie możesz pozostawić tego pola pustego
+STR_DLGSETNAME_STAR_ERR=Niestety, nazwy nie mogą zaczynać się od '*'
+STR_DLGSETNAME_INUSE_ERR=Ta nazwa jest już używana przez innego gracza.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo - Wybór skórki
+STR_DLGSKIN_NOSKIN=Brak skórki (domyślna)
+STR_DLGSKIN_NA=N/D
+STR_DLGSKIN_SELECT=Wybierz skórkę:
+STR_DLGSKIN_NAME_LBL=Nazwa:
+STR_DLGSKIN_AUTHOR_LBL=Autor:
+STR_DLGSKIN_NOTES_LBL=Uwagi:
+STR_DLGSKIN_LOADERR=Nie można wczytać pliku skórki
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo - Konfiguracja trackera
+STR_DLGTRACKER_INVALIDPORT=Nieprawidłowy numer portu.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=Sprawdzanie WinBolo.net...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=Zalogowano
+STR_DLGWBN_EXPIRES=(wygasa {string1})
+STR_DLGWBN_SIGN_OUT=Wyloguj się z WBN
+STR_DLGWBN_NOT_SIGNED_IN=Niezalogowany
+STR_DLGWBN_SIGN_IN_BTN=Zaloguj się do WBN...
+STR_DLGWBN_SIGNIN_TITLE=Zaloguj się do WinBolo.net
+STR_DLGWBN_SIGNIN_BLURB=Zaloguj się przy użyciu nazwy użytkownika i hasła WinBolo.net. Token zostanie zapisany, dzięki czemu nie będziesz musiał ponownie wpisywać hasła.
+STR_DLGWBN_USERNAME=Nazwa użytkownika:
+STR_DLGWBN_PASSWORD=Hasło:
+STR_DLGWBN_SIGNINGIN=Logowanie...
+STR_DLGWBN_SIGNIN_OK=Zaloguj
+STR_DLGWBN_NEEDCREDS=Wprowadź nazwę użytkownika i hasło.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo - Wybór gry
+STR_DLGWELCOME_SINGLE=Jeden gracz
+STR_DLGWELCOME_LOCAL=Lokalna
+STR_DLGWELCOME_MAPEDITOR=Edytor map
+STR_DLGWELCOME_LOGVIEWER=Przeglądarka logów
+STR_DLGWELCOME_INTERNET=Internet
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (wbudowana)
+STR_MAPCHOOSER_LOADMAP=Wczytaj mapę
+STR_MAPCHOOSER_LOADDEVICE=Wczytaj z urządzenia...
+STR_MAPCHOOSER_GENRANDOM=Generuj losową mapę
+STR_MAPCHOOSER_RANDOMMAP=Losowa mapa
+STR_MAPCHOOSER_CLICKGEN=Kliknij Generuj, aby zobaczyć podgląd
+STR_MAPCHOOSER_NOPREVIEW=Podgląd niedostępny
+STR_MAPCHOOSER_STATS=Bunkry: {number}  Bazy: {number2}  Starty: {number3}
+STR_MAPCHOOSER_MAPFILES=Pliki map
+STR_MAPCHOOSER_ALLFILES=Wszystkie pliki
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=Stan
+STR_TABLET_KILLS_DEATHS=Zabicia: {number}  Śmierci: {number2}
+STR_TABLET_TANK_RESOURCES=Zasoby czołgu
+STR_TABLET_SHELLS=Pociski
+STR_TABLET_MINES=Miny
+STR_TABLET_ARMOUR=Pancerz
+STR_TABLET_TREES=Drzewa
+STR_TABLET_PILLBOXES=Bunkry
+STR_TABLET_BASES=Bazy
+STR_TABLET_TANKS=Czołgi
+STR_TABLET_PILL_FMT=Bunkier {number}
+STR_TABLET_BASE_FMT=Baza {number}
+STR_TABLET_TANK_FMT=Czołg {number}
+STR_TABLET_BTN_MSG=Wia.
+STR_TABLET_BTN_PLY=Gra.
+STR_TABLET_BTN_SET=Ust.
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=Ustaw nazwę gracza
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Otwórz...
+STR_MAPEDIT_MENU_RECENT=Ostatnie pliki
+STR_MAPEDIT_MENU_SAVE=Zapisz
+STR_MAPEDIT_MENU_SAVEAS=Zapisz jako...
+STR_MAPEDIT_MENU_EXPORT=Eksportuj jako PNG...
+STR_MAPEDIT_MENU_RETURN=Wróć do menu
+STR_MAPEDIT_MENU_UNDO=Cofnij
+STR_MAPEDIT_MENU_REDO=Ponów
+STR_MAPEDIT_MENU_CUT=Wytnij
+STR_MAPEDIT_MENU_COPY=Kopiuj
+STR_MAPEDIT_MENU_PASTE=Wklej
+STR_MAPEDIT_MENU_MAP=Mapa
+STR_MAPEDIT_MENU_RANDOMMAP=Losowa mapa...
+STR_MAPEDIT_MENU_TEXT=Tekst...
+STR_MAPEDIT_MENU_IMPORTIMG=Importuj obraz...
+STR_MAPEDIT_MENU_VALIDATE=Sprawdź
+STR_MAPEDIT_MENU_MIRROR_H=Odbicie poziome {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Odbicie pionowe {string1}
+STR_MAPEDIT_MENU_ROTATE_90=Obróć 90° w prawo {string1}
+STR_MAPEDIT_MENU_ROTATE_180=Obróć 180° {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(zaznaczenie)
+STR_MAPEDIT_SCOPE_FULLMAP=(cała mapa)
+STR_MAPEDIT_MENU_OPTIONS=Opcje
+STR_MAPEDIT_MENU_CENTER=Wyśrodkuj mapę
+STR_MAPEDIT_MENU_POINT_STARTS=Punkty startowe
+STR_MAPEDIT_MENU_SHOWGRID=Pokaż siatkę
+STR_MAPEDIT_MENU_SHOWMINES=Pokaż miny
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Pokaż zasięgi bunkrów
+STR_MAPEDIT_MENU_WINDOW=Okno
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Teren
+STR_MAPEDIT_WIN_TOOLS=Narzędzia
+STR_MAPEDIT_WIN_INSPECTOR=Inspektor
+STR_MAPEDIT_WIN_OBJECTS=Obiekty
+STR_MAPEDIT_WIN_OVERVIEW=Przegląd
+STR_MAPEDIT_WIN_STATS=Statystyki
+STR_MAPEDIT_WIN_STAMP_LIB=Biblioteka stempli
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Otwarte morze
+STR_MAPEDIT_TERR_GRASS=Trawa
+STR_MAPEDIT_TERR_FOREST=Las
+STR_MAPEDIT_TERR_ROAD=Droga
+STR_MAPEDIT_TERR_BUILDING=Budynek
+STR_MAPEDIT_TERR_HALFBUILDING=Pół budynku
+STR_MAPEDIT_TERR_RIVER=Rzeka
+STR_MAPEDIT_TERR_SWAMP=Bagno
+STR_MAPEDIT_TERR_CRATER=Krater
+STR_MAPEDIT_TERR_RUBBLE=Gruzy
+STR_MAPEDIT_TERR_BOAT=Łódź
+STR_MAPEDIT_TERR_MINETOOL=Narzędzie min
+STR_MAPEDIT_MINE_CHECKERED=Szachownica
+STR_MAPEDIT_MINE_FULL=Pełne
+STR_MAPEDIT_MINE_RANDOM=Losowo
+STR_MAPEDIT_MINE_CLEAR=Wyczyść miny
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Ołówek
+STR_MAPEDIT_TOOL_LINE=Linia
+STR_MAPEDIT_TOOL_RECT=Prostokąt
+STR_MAPEDIT_TOOL_RECTFILL=Wypełniony prostokąt
+STR_MAPEDIT_TOOL_OVAL=Owal
+STR_MAPEDIT_TOOL_OVALFILL=Wypełniony owal
+STR_MAPEDIT_TOOL_SELECT=Zaznaczenie
+STR_MAPEDIT_TOOL_FILL=Wypełnienie
+STR_MAPEDIT_TOOL_MAZE=Labirynt
+STR_MAPEDIT_TOOL_GENERATE=Generuj
+STR_MAPEDIT_TOOL_WAND=Różdżka
+STR_MAPEDIT_TOOL_TEXT=Tekst
+STR_MAPEDIT_TOOL_TEXT_TIP=Tekst (umieść tekst na mapie)
+STR_MAPEDIT_BRUSH=Pędzel
+STR_MAPEDIT_BRUSH_SQUARE=Kwadrat
+STR_MAPEDIT_BRUSH_CIRCLE=Koło
+STR_MAPEDIT_OBJTOOL_BASE=Baza
+STR_MAPEDIT_OBJTOOL_PILL=Bunkier
+STR_MAPEDIT_OBJTOOL_START=Start
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Pole: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Pole: --
+STR_MAPEDIT_STATUS_ZOOM=Powiększenie: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Zmodyfikowano
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Niezapisane zmiany
+STR_MAPEDIT_UNSAVED_BLURB=Mapa ma niezapisane zmiany.\nCzy chcesz zapisać przed kontynuacją?
+STR_MAPEDIT_GOTO_TITLE=Idź do współrzędnych
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=Nie wybrano obiektu
+STR_MAPEDIT_INSP_BASE_HASH=Baza #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Bunkier #{number}
+STR_MAPEDIT_INSP_START_HASH=Start #{number}
+STR_MAPEDIT_INSP_POSITION=Pozycja: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Właściciel
+STR_MAPEDIT_INSP_ARMOUR=Pancerz
+STR_MAPEDIT_INSP_SPEED=Prędkość
+STR_MAPEDIT_INSP_DIR=Kierunek
+STR_MAPEDIT_OWNER_NEUTRAL=Neutralny
+STR_MAPEDIT_OWNER_PLAYER=Gracz {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Bazy ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Bunkry ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Starty ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Pancerz: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Kier: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Walidacja
+STR_MAPEDIT_VAL_NOISSUES=Brak problemów
+STR_MAPEDIT_VAL_ERRORS={number} błędów
+STR_MAPEDIT_VAL_NOERRORS=0 błędów
+STR_MAPEDIT_VAL_WARNINGS={number} ostrzeżeń
+STR_MAPEDIT_VAL_NOWARNINGS=0 ostrzeżeń
+STR_MAPEDIT_VAL_ERRORS_TITLE=Błędy walidacji
+STR_MAPEDIT_VAL_HASERRORS=Mapa ma {number} błędów. Napraw je przed zapisaniem.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Generuj losową mapę
+STR_MAPEDIT_GENRANDAREA_TITLE=Generuj losowy obszar
+STR_MAPEDIT_GENSCOPE_SELECTION=Zakres: zaznaczenie ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Zakres: cała mapa ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Narzędzie tekstu
+STR_MAPEDIT_TEXT_LABEL=Tekst:
+STR_MAPEDIT_TEXT_BUILTIN=Wbudowana
+STR_MAPEDIT_TEXT_SYSTEM=Czcionka systemowa
+STR_MAPEDIT_TEXT_FONTSIZE=Rozmiar czcionki
+STR_MAPEDIT_TEXT_STYLE=Styl
+STR_MAPEDIT_TEXT_FONTSIZE_S=Mała (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Średnia (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Duża (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=XL (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Zwykła
+STR_MAPEDIT_TEXT_STYLE_BOLD=Pogrubiona
+STR_MAPEDIT_TEXT_STYLE_ITALIC=Kursywa
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Pogrubiona kursywa
+STR_MAPEDIT_TEXT_FONTFAMILY=Rodzina czcionek
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (dołączona)
+STR_MAPEDIT_TEXT_SIZEPX=Rozmiar (px)
+STR_MAPEDIT_TEXT_NOFONTS=Nie znaleziono czcionek. Dodaj pliki .ttf do data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=Teren tekstu
+STR_MAPEDIT_TEXT_TERR_EDGE=Teren krawędzi
+STR_MAPEDIT_TEXT_TERR_BG=Tło
+STR_MAPEDIT_TEXT_PREVIEW=Podgląd ({number}x{number2} pól):
+STR_MAPEDIT_TEXT_TOOLARGE=Tekst zbyt duży (maks. 256x256 pól) lub błąd czcionki
+STR_MAPEDIT_GENERATE_BTN=Generuj
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Ustawienia labiryntu
+STR_MAPEDIT_MAZE_REGION=Region: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Przeciągnij na mapie, aby wygenerować
+STR_MAPEDIT_ALGORITHM=Algorytm
+STR_MAPEDIT_ALGO_LABYRINTH=Labirynt
+STR_MAPEDIT_ALGO_OPEN=Otwarty
+STR_MAPEDIT_WALL=Ściana
+STR_MAPEDIT_CORRIDOR=Korytarz
+STR_MAPEDIT_ENTRIES=Wejścia
+STR_MAPEDIT_ROOMS=Pomieszczenia
+STR_MAPEDIT_WALLTERRAIN=Teren ścian
+STR_MAPEDIT_CORRIDORTERRAIN=Teren korytarzy
+STR_MAPEDIT_GENSETTINGS_TITLE=Ustawienia generowania
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Rozkład terenu
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Miny: {number} ({string1}% lądu)
+STR_MAPEDIT_STATS_SPATIAL=Analiza przestrzenna
+STR_MAPEDIT_STATS_LAND_COVERAGE=Pokrycie lądem: {string1}%
+STR_MAPEDIT_STATS_LARGEST=Największa masa lądu: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=Odstęp baz: {string1} pól
+STR_MAPEDIT_STATS_PILL_SPACING=Odstęp bunkrów: {string1} pól
+STR_MAPEDIT_STATS_SYMMETRY=Symetria: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=Odbicie pozio.: {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=Odbicie pion.: {string1}%
+STR_MAPEDIT_STATS_4CORNER=4 narożniki: {string1}%
+STR_MAPEDIT_STATS_ROTATE180=Obrót 180°: {string1}%
+STR_MAPEDIT_STATS_STALE=(nieaktualne — kliknij Odśwież)
+STR_MAPEDIT_STATS_REFRESH=Odśwież analizę
+STR_MAPEDIT_STATS_STARTS=Starty
+STR_MAPEDIT_TERRNAME_HALFBLD=Pół budynku
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Importuj obraz
+STR_MAPEDIT_IMG_FILE=Plik:
+STR_MAPEDIT_IMG_NONE=(brak)
+STR_MAPEDIT_BROWSE=Przeglądaj...
+STR_MAPEDIT_IMG_SOURCE=Źródło: {number}x{number2} pikseli
+STR_MAPEDIT_IMG_PREVIEW_LBL=Podgląd:
+STR_MAPEDIT_IMG_SCALEMODE=Tryb skalowania:
+STR_MAPEDIT_IMG_FIT_SEL=Dopasuj do zaznaczenia
+STR_MAPEDIT_IMG_FIT_PLAY=Dopasuj do obszaru gry
+STR_MAPEDIT_IMG_OUTPUT=Wynik: {number} x {number2} pól
+STR_MAPEDIT_IMG_COLORS=Kolory:
+STR_MAPEDIT_IMG_REDETECT=Wykryj ponownie
+STR_MAPEDIT_IMG_COLORMAP=Mapowanie kolorów
+STR_MAPEDIT_IMPORT_BTN=Importuj
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Stemple dołączone
+STR_MAPEDIT_STAMP_USER=Stemple użytkownika
+STR_MAPEDIT_STAMP_NOUSER=Brak stempli użytkownika.
+STR_MAPEDIT_STAMP_HINT=Użyj "Zapisz schowek...", aby utworzyć.
+STR_MAPEDIT_DELETE=Usuń
+STR_MAPEDIT_STAMP_SAVECLIP=Zapisz schowek...
+STR_MAPEDIT_STAMP_TIP_COPY=Najpierw skopiuj zaznaczenie (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=Importuj...
+STR_MAPEDIT_STAMP_UNTITLED=Bez nazwy
+STR_MAPEDIT_STAMP_SAVE_TITLE=Zapisz stempel
+STR_MAPEDIT_STAMP_SAVE_BLURB=Wprowadź nazwę dla tego stempla:
+STR_MAPEDIT_STAMP_SAVE_NAME=Nazwa
+STR_MAPEDIT_SAVE_BTN=Zapisz
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=Eksportuj jako PNG
+STR_MAPEDIT_PREVIEW=Podgląd
+STR_MAPEDIT_EXPORT_MODE=Tryb:
+STR_MAPEDIT_EXPORT_FULL=Pełna rozdzielczość (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Rozmiar podglądu:
+STR_MAPEDIT_EXPORT_OPTIONS=Opcje:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Pokaż obiekty
+STR_MAPEDIT_EXPORT_SHOWMINES=Pokaż miny
+STR_MAPEDIT_EXPORT_SHOWGRID=Pokaż siatkę (tylko tryb pełny)
+STR_MAPEDIT_EXPORT_BTN=Eksportuj...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Zablokowane: nie zmieni się przy losowaniu
+STR_MAPGEN_UNLOCKED_TIP=Odblokowane: zmieni się przy losowaniu
+STR_MAPGEN_GENERATOR=Generator
+STR_MAPGEN_TYPE_TOURNAMENT=Turniej
+STR_MAPGEN_TYPE_NATURAL=Naturalny
+STR_MAPGEN_TYPE_MAZE=Labirynt
+STR_MAPGEN_TYPE_FRACTAL=Fraktalny
+STR_MAPGEN_SEED=Seed
+STR_MAPGEN_RANDOMIZE=Losuj
+STR_MAPGEN_SYMMETRY=Symetria
+STR_MAPGEN_SYM_4CORNER=Odbicie 4-narożnikowe
+STR_MAPGEN_SYM_MIRROR_H=Odbicie poziome
+STR_MAPGEN_SYM_MIRROR_V=Odbicie pionowe
+STR_MAPGEN_SYM_ROT180=Obrót 180°
+STR_MAPGEN_SYM_ROT90=Obrót 90°
+STR_MAPGEN_LANDMASS_PCT=Masa lądu %
+STR_MAPGEN_ROUGHNESS=Chropowatość
+STR_MAPGEN_ROUGH_LOW=Niska
+STR_MAPGEN_ROUGH_MED=Średnia
+STR_MAPGEN_ROUGH_HIGH=Wysoka
+STR_MAPGEN_INCLUDE_ROADS=Uwzględnij drogi
+STR_MAPGEN_MAP_STYLE=Styl mapy
+STR_MAPGEN_STYLE_OCEAN=Ocean
+STR_MAPGEN_STYLE_CONTINENT=Kontynent
+STR_MAPGEN_STYLE_ISLANDS=Wyspy
+STR_MAPGEN_STYLE_ARCHIPELAGO=Archipelag
+STR_MAPGEN_STYLE_INLAND=Lądowy
+STR_MAPGEN_TERRAIN_MIX=Mieszanka terenu (udział lądu w %):
+STR_MAPGEN_GRASS_PCT=Trawa %
+STR_MAPGEN_FOREST_PCT=Las %
+STR_MAPGEN_BUILDING_PCT=Budynek %
+STR_MAPGEN_SWAMP_PCT=Bagno %
+STR_MAPGEN_RIVER_PCT=Rzeka %
+STR_MAPGEN_BOAT_PCT=Łódź %
+STR_MAPGEN_REMAINING_GRASS=Pozostała trawa: {number}%
+STR_MAPGEN_MINE_DENSITY=Gęstość min %
+STR_MAPGEN_RIVER_COUNT=Liczba rzek
+STR_MAPGEN_CITY_COUNT=Liczba miast
+STR_MAPGEN_MAZE_COUNT=Liczba labiryntów
+STR_MAPGEN_WALL_THICKNESS=Grubość ścian
+STR_MAPGEN_CORRIDOR_WIDTH=Szerokość korytarzy
+STR_MAPGEN_CITY_ROOMS=Pomieszczenia miast
+STR_MAPGEN_LAND_COVERAGE=Pokrycie lądem %
+STR_MAPGEN_DETAIL_PASSES=Przebiegi szczegółów
+STR_MAPGEN_COAST_JAG=Postrzępienie wybrzeża
+STR_MAPGEN_TERRAIN_LAYERS=Warstwy terenu
+STR_MAPGEN_RIVERS=Rzeki
+STR_MAPGEN_LAKES=Jeziora
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} dołączył do gry.
+STR_LV_HAS_JOINED={string1} dołączył do gry
+STR_LV_ALLY_REQUEST={player} poprosił o sojusz z {other}
+STR_LV_ALLY_ACCEPT={player} przyjął sojusz z {other}
+STR_LV_ALLY_LEAVE={player} opuścił sojusz
+STR_LV_MSG_ALL=Wiadomość do wszystkich od {player}: {string1}
+STR_LV_MSG_PLAYERS=Wiadomość od {player} do {other}: {string1}
+STR_LV_MSG_SERVER=Wiadomość serwera: {string1}
+STR_LV_PLAYER_DIED={player} zginął
+STR_LV_PLAYER_KILLED={player} właśnie zabił gracza {other}
+STR_LV_PLAYER_REJOINED={player} ponownie dołączył do gry.
+STR_LV_PLAYER_LEAVING={player} opuszcza grę.
+STR_LV_LOBBY_OPENED=Otwarto lobby.
+STR_LV_GAME_STARTED=Gra rozpoczęta.
+STR_LV_PLAYER_READY={player} jest gotowy.
+STR_LV_PLAYER_UNREADY={player} nie jest już gotowy.
+STR_LV_PLAYER_LEFT_TEAM={player} opuścił swoją drużynę.
+STR_LV_PLAYER_JOINED_TEAM={player} dołączył do drużyny {number}.
+STR_LV_COUNTDOWN_START=Odliczanie rozpoczęte.
+STR_LV_COUNTDOWN_CANCEL=Odliczanie anulowane.
+STR_LV_MAP_SKIP_VOTE={player} zagłosował za pominięciem mapy.
+STR_LV_MAP_SKIPPED=Mapa pominięta. Nowa mapa: {string1}
+STR_LV_TEAM_BALANCE=Wyrównanie drużyn zastosowane.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Otwórz
+STR_LV_MENU_ACTION=Akcja
+STR_LV_PLAY=Odtwórz
+STR_LV_PAUSE=Pauza
+STR_LV_STOP=Zatrzymaj
+STR_LV_FAST_FORWARD=Przewiń w przód
+STR_LV_REWIND=Przewiń wstecz
+STR_LV_MODE=Tryb
+STR_LV_MODE_INFO=Informacje
+STR_LV_SELECT_TEAM=Wybierz drużynę
+STR_LV_USE_TEAM_COLOURS=Używaj kolorów drużyn
+STR_LV_TANK_CENTRED=Czołg wyśrodkowany
+STR_LV_DNS_LOOKUPS=Wyszukiwania DNS
+STR_LV_TEAM_COLOURS=Kolory drużyn
+STR_LV_MENU_WINDOWS=Okna
+STR_LV_WIN_CONTROLS=Sterowanie
+STR_LV_WIN_EVENTS=Zdarzenia
+STR_LV_WIN_GAMEINFO=Informacje o grze
+STR_LV_WIN_ITEMINFO=Informacje o elemencie
+STR_LV_RESET_WINDOWS=Resetuj pozycje okien
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Przypisz kolory do każdej drużyny graczy:
+STR_LV_PLAYER_LBL=Gracz {number}:
+STR_LV_NEUTRAL_LBL=Neutralny:
+STR_LV_ABOUT_TITLE=Przeglądarka logów WinBolo
+STR_LV_VERSION_FMT=Wersja: {string1}
+STR_LV_LICENSE=Ten program jest wolnym oprogramowaniem; możesz go\nrozpowszechniać i/lub modyfikować na warunkach Powszechnej\nLicencji Publicznej GNU opublikowanej przez Free Software Foundation.
+STR_LV_WEBSITE_LBL=Strona:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Szary
+STR_LV_COL_KHAKI=Khaki
+STR_LV_COL_GREEN=Zielony
+STR_LV_COL_PINK=Różowy
+STR_LV_COL_YELLOW=Żółty
+STR_LV_COL_LIGHTBLUE=Jasnoniebieski
+STR_LV_COL_ORANGE=Pomarańczowy
+STR_LV_COL_LIGHTPURPLE=Jasnofioletowy
+STR_LV_COL_AQUA=Akwamaryn
+STR_LV_COL_LIGHTGREEN=Jasnozielony
+STR_LV_COL_LIGHTGREY=Jasnoszary
+STR_LV_COL_RED=Czerwony
+STR_LV_COL_BLUE=Niebieski
+STR_LV_COL_BROWN=Brązowy
+STR_LV_COL_LIGHTPINK=Jasnoróżowy
+STR_LV_COL_PALEGREEN=Bladozielony
+STR_LV_COL_PURPLE=Fioletowy
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} s
+STR_LV_INFO_MAP=Nazwa mapy: {string1}
+STR_LV_INFO_GAMETYPE=Typ gry: {string1}
+STR_LV_INFO_HIDDENMINES=Ukryte miny: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Czołgi komputerowe: {string1}
+STR_LV_INFO_TIME_LIMIT=Limit czasu: {string1}
+STR_LV_INFO_START_DELAY=Opóźnienie startu: {string1}
+STR_LV_INFO_WBN_KEY=Klucz WBN:
+STR_LV_INFO_START_TIME=Czas rozpoczęcia: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=Nie wybrano elementu
+STR_LV_LOCATION_FMT=Położenie: {string1}
+STR_LV_OWNER_LBL=Właściciel: {string1}
+STR_LV_ARMOUR_FMT=Pancerz: {number}
+STR_LV_SHELLS_FMT=Pociski: {number}
+STR_LV_MINES_FMT=Miny: {number}
+STR_LV_IN_TANK_FMT=W czołgu: {string1}
+STR_LV_CENTER_ON_MAP=Wyśrodkuj na mapie
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Wstecz
+STR_LV_PLAY_BTN=Odtwórz >
+STR_LV_FWD_BTN=Naprzód >>
+STR_LV_SPEED_LBL=Prędkość:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} pozostało
+STR_LV_NO_LOG_LOADED=Brak wczytanego logu
+
+# Log viewer events panel
+STR_LV_COPY=Kopiuj
+STR_LV_COPY_ALL=Kopiuj wszystko
+STR_LV_CLEAR_ALL=Wyczyść wszystko
+STR_LV_AUTO_SCROLL=Auto-przewijanie
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=Osiągnięto koniec pliku logu
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Powiększenie
+STR_DLGSETTINGS_PERFORMANCE=Wydajność
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=Utracono połączenie z serwerem.\nPowrót do menu.
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Język:
+STR_DLGLANG_MIDGAME_NOTE=Istniejące wpisy w dzienniku wiadomości nie zmienią języka, dopóki nie zostaną wygenerowane ponownie.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=Zbyt wiele baz: {number} (maks. {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=Zbyt wiele bunkrów: {number} (maks. {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=Zbyt wiele startów: {number} (maks. {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=Baza #{number} w ({number2},{number3}): na nieprzejezdnym terenie
+STR_MAPVALIDATE_BASE_BORDER_ZONE=Baza #{number} w ({number2},{number3}): w strefie granicznej min
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Bunkier #{number} w ({number2},{number3}): na nieprzejezdnym terenie
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Bunkier #{number} w ({number2},{number3}): w strefie granicznej min
+STR_MAPVALIDATE_START_NOT_DEEP=Start #{number} w ({number2},{number3}): musi być na otwartym morzu
+STR_MAPVALIDATE_START_BORDER_ZONE=Start #{number} w ({number2},{number3}): w strefie granicznej min
+STR_MAPVALIDATE_NO_STARTS=Nie umieszczono pozycji startowych — mapa jest niegrywalna
+STR_MAPVALIDATE_ONE_START=Tylko 1 pozycja startowa — wyłącznie tryb jednoosobowy
+STR_MAPVALIDATE_BASE_OVERLAP=Baza #{number} i Baza #{number2} nakładają się w ({number3},{number4})
+STR_MAPVALIDATE_PILL_OVERLAP=Bunkier #{number} i Bunkier #{number2} nakładają się w ({number3},{number4})
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=Baza #{number} i Bunkier #{number2} nakładają się w ({number3},{number4})
+STR_MAPVALIDATE_START_OVERLAP=Start #{number} i Start #{number2} nakładają się w ({number3},{number4})
+STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} i Baza #{number2} nakładają się w ({number3},{number4})
+STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} i Bunkier #{number2} nakładają się w ({number3},{number4})
+

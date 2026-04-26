@@ -1,0 +1,1198 @@
+# WinBolo Ukrainian language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=Українська
+author=Claude (Sonnet 4.6), Please help improve this
+notes=Initial machine translation. Please help improve this
+
+# Opening dialog
+STR_DLGOPENING_TITLE=WinBolo — вибір гри
+STR_DLGOPENING_TEXT=Ласкаво просимо до WinBolo — багатокористувацької танкової гри.\nБудь ласка, виберіть тип гри зі списку нижче:
+STR_DLGOPENING_OPTION1=Практика
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_DLGOPENING_OPTION3=Інтернет
+STR_DLGOPENING_SKIP=Більше не показувати цей діалог
+STR_OK=OK
+STR_DLGOPENING_BUTTON2=Вийти
+
+# Language dialog
+STR_DLGLANG_TITLE=Вибір мови
+STR_DLGLANG_NAME_CAPTION=Назва:
+STR_DLGLANG_NAME=Українська
+STR_DLGLANG_AUTHOR_CAPTION=Автор: 
+STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
+STR_DLGOPENING_OPTION4=Локальна мережа
+STR_DLGOPENING_OPTION0=Навчання
+STR_DLGLANG_NOTES_CAPTION=Примітки: 
+STR_DLGLANG_NOTES=Немає.
+STR_DLGLANG_DEFAULTNOTE=Примітка: для незавершених перекладів відсутні рядки відображаються англійською.
+
+# About dialog
+STR_DLGABOUT_TITLE=Про WinBolo
+STR_DLGABOUT_BLURB=Пакет WinBolo можна вільно розповсюджувати за умови, що ані програма, ані будь-які з прикладених файлів не будуть пропущені або змінені.\n\nWinBolo є програмою типу «shareware». Програмне забезпечення shareware не є безкоштовним. Воно коштує грошей — як і будь-яке інше програмне забезпечення, яке ви купуєте, але з shareware ви можете спочатку спробувати його, перш ніж вирішити, чи хочете його придбати.\n\nWinBolo коштує 25 доларів США. Якщо ви вирішите залишити WinBolo, ви можете оплатити її одним із наведених способів:\n\nЗапустіть програму register.exe у директорії WinBolo — вона дозволяє оплату чеком, поштовим переказом, готівкою або кредитною карткою через електронну пошту, факс або поштові відправлення.\n\nДля реєстрації кредитною карткою онлайн відвідайте: http://order.kagi.com/?XYV і заповніть форму.\n\nПрочитайте текстовий файл Readme(Shareware), включений у дистрибутив, для отримання додаткової інформації.
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=Запит на альянс
+STR_DLGALLIANCE_ACCEPT=Прийняти
+STR_DLGALLIANCE_DECLINE=Відхилити
+STR_DLGALLIANCE_BLURB={player} запрошує до альянсу. Прийняти?
+
+# Game finder dialog
+STR_DLGGAMEFINDER_REFRESHFIRST=Спочатку спробуйте натиснути «Оновити».
+STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Повідомлення дня
+STR_DLGGAMEFINDER_WRONGVERSION=Гра, до якої ви намагаєтесь приєднатись, використовує іншу версію WinBolo. Спробуйте приєднатись до іншої гри
+STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Немає активних ігор (Розпочніть свою!)
+STR_YES=Так
+STR_NO=Ні
+STR_DLGGAMEFINDER_YESADV=Так (Перев.)
+STR_DLGGAMEFINDER_OPEN=Відкрита
+STR_DLGGAMEFINDER_TOURNAMENT=Турнір
+STR_DLGGAMEFINDER_STRICTTOURNAMENT=Суворий
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=Інформація про гру
+STR_DLGGAMEINFO_MAPNAME=Карта: 
+STR_DLGGAMEINFO_NUMPLAYERS=Гравців: {number}
+STR_DLGGAMEINFO_GAMETYPE=Тип гри: 
+STR_DLGGAMEINFO_HIDDENMINES=Приховані міни: 
+STR_DLGGAMEINFO_ALLOWCOMPTANKS=Комп'ютерні танки дозволені: 
+STR_DLGGAMEINFO_TIMELIMIT=Ліміт часу:
+
+# Game setup dialog
+STR_DLGGAMESETUP_BLURB=Будь ласка, оберіть параметри нової гри:
+STR_CANCEL=Скасувати
+STR_DLGGAMESETUP_TITLE=Налаштування гри
+STR_DLGGAMESETUP_CHOOSEMAP=Вибрати карту
+STR_DLGGAMESETUP_SELECTEDMAP=Вибрана карта: 
+STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Вибрана карта: Everard Island (вбудована)
+STR_DLGGAMESETUP_RADIO1=Відкрита гра (зі зброєю)
+STR_DLGGAMESETUP_RADIO2=Турнір (безкоштовні набої на початку)
+STR_DLGGAMESETUP_RADIO3=Суворий турнір (без безкоштовних набоїв)
+STR_DLGGAMESETUP_HIDDENMINES=Дозволити приховані міни
+STR_DLGGAMESETUP_ALLOWCOMPTANKS=Дозволити комп'ютерні танки
+STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=і дати їм перевагу
+STR_DLGGAMESETUP_PASSWORD=Пароль гри
+STR_DLGGAMESETUP_MINUTES=хвилин
+STR_DLGGAMESETUP_SECONDS=секунд
+STR_DLGGAMESETUP_STARTDELAY=Затримка перед початком
+STR_DLGGAMESETUP_TIMELIMIT=Ліміт часу гри
+STR_DLGGAMESETUP_ERROROPENINGMAP=Помилка відкриття карти.
+STR_DLGGAMEINFO_TIMEREMAINING=Близько {number} хв
+STR_DLGGAMEINFO_OPEN=Відкрита
+STR_DLGGAMEINFO_TOURN=Турнір
+STR_DLGGAMEINFO_STRICT=Суворий турнір
+STR_DLGGAMEINFO_AIADV=Так (Перевага)
+STR_DLGGAMESETUP_DEFAULTNAME=Я
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=Налаштування клавіш
+STR_DLGKEYSETUP_BLURB=Натисніть на параметр, який хочете змінити, а потім натисніть потрібну клавішу. Клавіші ALT, PRINT SCREEN та PAUSE не можна призначити.
+STR_DLGKEYSETUP_DRIVETANK=Керування танком
+STR_DLGKEYSETUP_TURNTANK=Поворот танка:
+STR_DLGKEYSETUP_GUNRANGE=Дальність стрільби
+STR_DLGKEYSETUP_WEAPONS=Зброя
+STR_DLGKEYSETUP_VIEW=Вид
+STR_DLGKEYSETUP_SCROLL=Прокрутка
+STR_DLGKEYSETUP_LEFT=(ліворуч)
+STR_DLGKEYSETUP_RIGHT=(праворуч)
+STR_DLGKEYSETUP_AUTOSLOWDOWN=Автогальмування
+STR_DLGKEYSETUP_AUTOGUNSIGHT=Автоприховування прицілу
+STR_DLGKEYSETUP_FASTER=Швидше
+STR_DLGKEYSETUP_SLOWER=Повільніше
+STR_DLGKEYSETUP_TURNLEFT=Поворот ліворуч
+STR_DLGKEYSETUP_TURNRIGHT=Поворот праворуч
+STR_DLGKEYSETUP_INCREASE=Збільшити
+STR_DLGKEYSETUP_DECREASE=Зменшити
+STR_DLGKEYSETUP_SHOOT=Стріляти
+STR_DLGKEYSETUP_LAYMINE=Встановити міну
+STR_DLGKEYSETUP_TANKVIEW=Вид танка
+STR_DLGKEYSETUP_PILLVIEW=Вид бункера
+STR_DLGKEYSETUP_SCROLLUP=Вгору
+STR_DLGKEYSETUP_SCROLLDOWN=Вниз
+STR_DLGKEYSETUP_SCROLLLEFT=Ліворуч
+STR_DLGKEYSETUP_SCROLLRIGHT=Праворуч
+STR_DLGKEYSETUP_NEWKEYFOR=Натисніть нову клавішу для 
+STR_DLGKEYSETUP_FORWARD=вперед
+STR_DLGKEYSETUP_BACKWARD=назад
+STR_DLGKEYSETUP_ROTATELEFT=поворот ліворуч
+STR_DLGKEYSETUP_ROTATERIGHT=поворот праворуч
+STR_DLGKEYSETUP_INCREASERANGE=збільшити дальність
+STR_DLGKEYSETUP_DECREASERANGE=зменшити дальність
+STR_DLGKEYSETUP_SETSHOOT=стріляти
+STR_DLGKEYSETUP_SETLAYMINE=встановити міну
+STR_DLGKEYSETUP_SETTANKVIEW=вид танка
+STR_DLGKEYSETUP_SETPILLVIEW=вид бункера
+STR_DLGKEYSETUP_SETSCROLLUP=прокрутка вгору
+STR_DLGKEYSETUP_SETSCROLLDOWN=прокрутка вниз
+STR_DLGKEYSETUP_SETSCROLLLEFT=прокрутка ліворуч
+STR_DLGKEYSETUP_SETSCROLLRIGHT=прокрутка праворуч
+
+# Messages dialog
+STR_DLGMSG_BUTTON=Надіслати
+STR_DLGMSG_ALLPLAYERS=Усім гравцям
+STR_DLGMSG_ALLALLIES=Усім союзникам
+STR_DLGMSG_NEARBY=Усім поруч
+STR_DLGMSG_SELECTION=Вибраним гравцям
+STR_DLGMSG_SENDPLAYER=Надсилання повідомлення {number} гравцю
+STR_DLGMSG_SENDPLAYERS=Надсилання повідомлення {number} гравцям
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=Мережева інформація
+STR_DLGNETINFO_SERVERADDRESS=Адреса сервера:
+STR_DLGNETINFO_THISGAMEADDRESS=Адреса цієї гри:
+STR_DLGNETINFO_SERVERPING=Пінг сервера: {number} мс
+STR_DLGNETINFO_PACKETS=Пакетів на секунду (на гравця):
+STR_DLGNETINFO_STATUS=Статус:
+STR_DLGNETINFO_ERRORS=Мережеві помилки: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=Потрібен пароль
+STR_DLGPASSWORD_BLURB=Для цієї гри потрібен пароль:
+
+# Set name dialog
+STR_DLGSETNAME_TITLE=Введіть ім'я гравця
+STR_DLGSETNAME_BLURB=Введіть нове ім'я гравця для вашого танка:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=Налаштування трекера
+STR_DLGTRACKER_USETRACKER=Використовувати трекер
+STR_DLGTRACKER_TRACKERADDRESS=Адреса трекера:
+STR_DLGTRACKER_TRACKERPORT=Порт трекера:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=Системна інформація
+STR_DLGSYSINFO_CPUUSAGE=Використання ЦП:
+STR_DLGSYSINFO_SIMMODELING=Симуляція:
+STR_DLGSYSINFO_COMPROCESSING=Обробка зв'язку:
+STR_DLGSYSINFO_GRAHPICSDISPLAY=Відображення графіки:
+STR_DLGSYSINFO_AICONTROLPROCESSING=Обробка керування ІІ-танком:
+STR_DLGSYSINFO_TOTAL=Разом:
+STR_DLGSYSINFO_GRAPHICSFPS=Кадрів на секунду
+
+# TCP/IP setup dialog
+STR_DLGTCP_TITLE=Налаштування UDP (Інтернет)
+STR_DLGTCP_BLURB=Щоб приєднатись до інтернет-гри Bolo, необхідно вказати ім'я (або IP-адресу) хост-машини, на якій запущено Bolo, та номер UDP-порту процесу Bolo на цій машині.
+STR_DLGTCP_JOIN=Приєднатись
+STR_DLGTCP_REJOIN=Повторно приєднатись
+STR_DLGTCP_NEW=Нова
+STR_DLGTCP_TRACKERSETUP=Налаштування трекера
+STR_DLGTCP_REMEMBER=Запам'ятати ім'я гравця
+STR_DLGTCP_MACHINENAME=Ім'я машини (або IP-адреса):
+STR_DLGTCP_THEREUDP=UDP-порт Bolo на тій машині:
+STR_DLGTCP_USUDP=UDP-порт для Bolo на цій машині:
+STR_DLGTCP_NAME=Ваше ім'я гравця в грі:
+STR_DLGTCP_NEWBLURB=Натисніть «Нова», щоб розпочати гру
+STR_DLGTCP_JOINBLURB=Натисніть «Приєднатись», щоб приєднатись до існуючої гри
+STR_DLGTCP_REJOINBLURB=Натисніть «Повторно приєднатись», щоб повернутись до гри та відновити свої попередні здобутки
+STR_ERR_DLGTCP_PORTS=Порт сервера та власний порт збігаються!
+STR_ERR_DLGTCP_NOTRIGHT=Тут щось не так...
+STR_ERR_DLGTCP_SUBCLASS=Не вдалося встановити підклас вікна для копіювання!
+
+# Game finder extra
+STR_DLGGAMEFINDER_JOINADDRESS=&Приєднатись за адресою
+STR_DLGGAMEFINDER_REFRESH=&Оновити
+STR_DLGGAMEFINDER_PLAYERNAME=&Ім'я гравця
+STR_DLGGAMEFINDER_MOTD=&Повідомлення дня
+STR_DLGGAMEFINDER_STATUSBLURB=Статус: 
+STR_DLGGAMEFINDER_SELECTEDGAME=Інформація про вибрану гру
+STR_DLGGAMEFINDER_BRAINS=Brain:
+STR_DLGGAMEFINDER_PASSWORD=Пароль:
+STR_DLGGAMEFINDER_PILLS=Кількість вільних бункерів:
+STR_DLGGAMEFINDER_BASES=Кількість вільних баз:
+STR_DLGGAMEFINDER_HIDDENMINES=Приховані міни:
+STR_DLGGAMEFINDER_NUMPLAYERS=Кількість гравців:
+STR_DLGGAMEFINDER_VERSION=Версія:
+STR_DLGGAMEFINDER_GAMETYPE=Тип гри:
+STR_DLGGAMEFINDER_PORT=Порт сервера:
+STR_DLGGAMEFINDER_ADDRESS=Адреса сервера:
+
+# Brain errors
+STR_BRAINERR_BRAINDIR=Директорія Brain не існує.\nBrain не буде завантажено!
+STR_BRAINERR_LAUNCH=Помилка запуску Brain
+STR_BRAINERR_LAUNCHMAIN=Помилка запуску Brain — Brain не містить «BrainMain»
+STR_BRAINERR_INIT=Помилка ініціалізації Brain
+STR_BRAINERR_EXEC=Не вдалося запустити Brain
+
+# Draw errors
+STR_DRAWERROR_CREATEOBJECT=Помилка створення DD-об'єкта
+STR_DRAWERROR_SETCOOPLEVEL=Помилка створення DD кооп-рівня
+STR_DRAWERROR_CREATEPRIMARY=Помилка створення основної DD-поверхні
+STR_DRAWERROR_GETPIXELFORMAT=Помилка отримання формату пікселів DD
+STR_DRAWERROR_GETDESC=Помилка отримання опису поверхні
+STR_DRAWERROR_TOOFEWCOLOURS=Ця версія WinBolo не підтримує палітровий режим.\n Будь ласка, змініть глибину кольору на більше ніж 256 кольорів
+STR_DRAWERROR_BUFFERCREATE=Помилка створення DD-буфера
+STR_DRAWERROR_GETDCFAILED=Помилка DD Get DC
+STR_DRAWERROR_CLIPPERFAILED=Помилка створення DD-кліпера
+STR_DRAWERROR_BRUSH=Помилка створення пензля
+STR_DRAWERROR_PEN=Помилка створення пера
+STR_DRAW_GAMESTARTSIN=Гра починається через 
+STR_DRAWERROR_RELEASEDC=Помилка звільнення DC під час малювання мітки танка (це погано)
+STR_DRAW_PILLBOXVIEW=Вид бункера
+
+# Font errors
+STR_FONTERR_NOCOURIERFONT=Не вдалося завантажити шрифт Courier New
+
+# Game front errors
+STR_GAMEFRONTERR_CORRUPTPREFS=Помилка читання налаштувань. Будуть використані стандартні значення
+STR_GAMEFRONTERR_WINDOW=Помилка створення вікна
+STR_GAMEFRONTERR_DDRAW=Помилка налаштування Direct Draw
+STR_GAMEFRONTERR_DSOUND=Помилка налаштування Direct Sound
+STR_GAMEFRONTERR_DINPUT=Помилка налаштування Direct Input
+STR_GAMEFRONTERR_CURSOR=Помилка завантаження курсора
+STR_GAMEFRONTERR_FONTS=Помилка завантаження шрифтів
+STR_GAMEFRONT_LANFINDER_TITLE=Пошук LAN-гри
+STR_GAMEFRONT_TRACKERFINDER_TITLE=Пошук гри через трекер
+STR_GAMEFRONTERR_JOINGAME=Помилка спроби приєднатись до гри
+STR_GAMEFRONTERR_SPAWNSERVER=Помилка запуску серверного процесу.\n Чи знаходиться програма «WinBoloDS» в тій самій директорії, що і WinBolo?
+STR_GAMEFRONTERR_NETSINGLEPLAYER=Сталося щось дуже дивне в мережевій підсистемі — тоді як ви вибрали одиночну гру. Пощастило вам...
+STR_GAMEFRONT_SERVERSTARTMSG=Запуск виділеного сервера. Введіть «quit» у його вікні для виходу.
+STR_GAMEFRONT_INPUTERR_CREATE=Помилка створення клавіатурного пристрою Direct Input
+STR_GAMEFRONT_INPUTERR_DATAFORMAT=Помилка встановлення формату даних для клавіатурного пристрою Direct Input
+STR_GAMEFRONT_INPUTERR_COOPLEVEL=Помилка встановлення кооп-рівня для клавіатурного пристрою Direct Input
+
+# Network client errors
+STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Помилка запуску Winsock
+STR_NETCLIENTERR_CREATEUDPFAIL=Помилка створення UDP-сокета
+STR_NETCLIENTERR_CREATETCPFAIL=Помилка створення TCP-сокета
+STR_NETCLIENTERR_BINDUDPFAIL=Помилка прив'язки UDP-сокета\n Цей порт вже використовується іншою програмою. Спробуйте вибрати інший.\n\nПРИМІТКА: Якщо ви розпочали мережеву гру і вона успішно запустилась, вона все ще працює.\n Вам не потрібно запускати її знову
+STR_NETCLIENTERR_CHAINFAIL=Помилка додавання мережевих подій до ланцюжка повідомлень
+STR_NETCLIENTERR_TRACKERVERSIONFAIL=Непідтримувана версія трекера
+STR_NETCLIENTERR_TRACKERDNSFAIL=Помилка пошуку трекера (збій DNS-запиту)
+STR_NETCLIENTERR_TRACKERCONNECTFAIL=Помилка підключення до трекера
+STR_NETCLIENTERR_TRACKERNOBLOCK=Помилка переведення сокета в неблокуючий режим
+STR_NETCLIENT_TRACKERGETRESPONSE=Отримання інформації про гру...
+STR_NETCLIENT_TRACKERPROCESSRESPONSE=Обробка даних трекера...
+STR_NETCLIENTERR_TRACKERNODATA=Помилка: трекер не надіслав даних
+STR_NETCLIENT_TRACKERCONNECT=Підключення: 
+STR_NETCLIENT_IDLE=Очікування
+STR_NETCLIENTERR_BIND=Помилка прив'язки сокета
+STR_NETCLIENTERR_BROADCAST=Помилка надсилання широкомовного пакету
+STR_NETCLIENT_GETRESPONSES=Отримання відповідей...
+
+# Sound errors
+STR_SOUNDERR_FILENOTFOUND=Не вдалося завантажити звуки WinBolo — продовження без звуку
+STR_SOUNDERR_HARDWAREINUSE=Помилка налаштування Direct Sound — обладнання використовується іншою програмою.\nПродовження без звуку.
+STR_SOUNDERR_CREATEFAILED=Помилка створення DS-об'єкта\nПродовження без звуку.
+STR_SOUNDERR_COOPFAILED=Помилка створення DS кооп-рівня
+STR_SOUNDERR_PRIMARYBUFFFAIL=Помилка створення основного DS-буфера
+STR_SOUNDERR_LOADSOUNDFAILED=Помилка завантаження одного або більше звукових файлів
+
+# General WinBolo errors
+STR_WBERR_MUTEXCREATE=Помилка створення м'ютексу. (Це погано)
+STR_WBERR_BRAINLISTLOAD=Помилка завантаження списку Brain
+STR_WBERR_KEYCLASSSETUP=Помилка налаштування класу клавіш
+STR_WBTIMELIMIT_END=Час вийшов. Гру завершено.
+STR_WBERR_SAVEMAP=Помилка збереження карти (Диск заповнений?)
+
+# Tutorial strings
+STR_TUTORIAL01=Попереду невелика річка, що веде вглиб суші. Утримуйте\nклавішу {ACCEL}, щоб керувати човном до кінця\nрічки.\n\nКоли доберетесь туди, продовжуйте утримувати {ACCEL}. Танк\nзійде з човна, а човен залишиться\nпришвартованим наприкінці річки
+STR_TUTORIAL02=Тепер ви на траві. Танк рухається досить\nшвидко по траві.\n\n\nПродовжуйте натискати {ACCEL}, щоб рухатись вперед до лісу.
+STR_TUTORIAL03=Тепер ви у лісі. Танк рухається повільніше\nу лісі, ніж по траві.\n\n\nПродовжуйте натискати {ACCEL}, щоб рухатись вперед до болота.
+STR_TUTORIAL04=Тепер ви на болоті. Танк рухається дуже\nповільно на болоті. На щастя, попереду є дорога.\n\n\nПродовжуйте натискати {ACCEL}, щоб рухатись вперед до дороги.
+STR_TUTORIAL05=Тепер ви на дорозі. Танк може рухатись дуже\nшвидко по дорозі, і якщо ви натиснете {ACCEL}, танк\nприскориться.\n\n\nЯкщо ви рухаєтесь надто швидко, ви можете натиснути {BRAKE}
+STR_TUTORIAL06=Попереду кілька будівель. Будівлі — суцільні\nперешкоди, крізь які не можна проїхати, тому вам\nдоведеться знайти шлях через лабіринт до іншого\nбоку.\n\nЩоб повернути танк ліворуч, натисніть {LEFT}\nЩоб повернути танк праворуч, натисніть {RIGHT}
+STR_TUTORIAL07=Ці круглі об'єкти з червоними гарматами, що стирчать — це\nавтоматичні бункери. Вони стрілятимуть у будь-який танк,\nщо потрапить у зону досяжності.\n\n\nНа щастя, будівлі захищають від\nпострілів, тому бункери не зможуть влучити у вас,\nякщо ви не чекаєте так довго, що вони встигнуть\nповністю прострілити крізь будівлі.
+STR_TUTORIAL08=Ліс також захищає від бункерів, але\nіншим чином. Крім того, що він сильно сповільнює танк,\nпроїзд через ліс також обмежує видимість.\n\n\nКоли ви всередині лісу, ви ще можете чітко бачити\nвсе за межами лісу, але бункери (і\nінші гравці) не бачать ваш танк, якщо ви не\nпідійдете дуже близько до них.
+STR_TUTORIAL09=Вирівняйте ваш танк по центру смуги\nлісу і їдьте строго на північ. Якщо ви їдете прямо\nі не підходите надто близько до країв лісу,\nбункери не побачать вас і не стрілятимуть.\n\n\nНе виїжджайте з лісу, бо вас рознесе на шматки.\n
+STR_TUTORIAL10=Є ще один простий спосіб уникнути бункерів —\nшвидкість.\n\n\nПереконайтесь, що ви правильно вирівняні по центру\nдороги, і утримуйте {ACCEL}, щоб проїхати повз бункери\nна повній швидкості.
+STR_TUTORIAL11=Коли вони помітять вас, вони почнуть стріляти, але якщо\nви продовжуватимете їхати прямо і не втратите\nнерви, ви виїдете з зони досяжності раніше, ніж постріли\nзможуть влучити в вас.\n\n\nНе з'їжджайте з дороги на болото, бо ви станете\nлегкою мішенню для бункерів, і ви не зможете\nрухатись достатньо швидко, щоб утекти.
+STR_TUTORIAL12=Попереду база поповнення. Бази поповнення надають\nснаряди для стрільби, міни для встановлення таємних пасток,\nі вони також відновлюють броню вашого танка до повної\nміцності, якщо вона була пошкоджена.\n\n\nЗупиніться на базі поповнення і завантажте ваш танк\nснарядами.
+STR_TUTORIAL13=Ви на базі поповнення. Ваш танк тепер\nзавантажиться снарядами і мінами — індикатори\nправоруч покажуть це. Попереду, за\nбудівлями, знаходиться мінне поле.
+STR_TUTORIAL14=Якщо ви заїдете вашим танком у мінне поле, його буде\nзнищено. На щастя, ви можете очистити мінне поле,\nстріляючи. Натисніть {FIRE}, щоб вистрілити.\n\nПрострілте отвір у будівлі, а потім влучте\nснарядом у центр мінного поля, щоб підірвати його.\nКоли ви підриваєте міни, вони залишать великий\nкратер у землі, крізь який можна проїхати,\nхоча це так само повільно, як і болото.
+STR_TUTORIAL15=Попереду ще одне мінне поле. Зробіть те саме:\nПроїдьте до бази поповнення, прострілте\nстіну і влучте снарядом у центр мінного поля, щоб\nпідірвати його.\n\nЦього разу мінне поле знаходиться поруч із великою\nрічкою, і вода затопить кратери. Ви можете\nпроїхати танком крізь воду, як і крізь\nкратери і болото.
+STR_TUTORIAL16=WinBolo автоматично прокручує вікно, щоб показати\nвам область навколо вашого танка, але ви можете використовувати\nклавіші {SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT},\nщоб вручну змінити вид.\n\nНатисніть {SCROLL_UP}, щоб краще побачити\nрічку попереду.
+STR_TUTORIAL17=Крім того, що їзда крізь воду дуже повільна, вона має\nще один недолік: вона також витратить\nзапаси снарядів і мін вашого танка.\n\n\nКоли ви дістанетесь іншого берегу, ваш танк ще буде\nпрацездатним, але ви втратите всю\nнаступальну можливість.
+STR_TUTORIAL18=Цього разу ми підійдемо до переправи через річку\nтонше. Замість того, щоб просто проїхати крізь\nводу, ми побудуємо міст.\n\n\nВиберіть режим збору дерев, натиснувши на значок лісу\n(у верхньому лівому кутку вікна) і натисніть на ліс.\nВаш будівельник вибіжить з танка і зрубає одне\nдерево для будівельних матеріалів.
+STR_TUTORIAL19=Після збору дерева виберіть інструмент «дорога/міст»\n(другу кнопку зверху) і натисніть мишею\nна річку в кінці дороги.\n\n\nВаш будівельник вибіжить з танка і побудує одну\nсекцію мосту. Натисніть ще раз, щоб завершити міст,\nа потім переїдьте на інший берег.
+STR_TUTORIAL20=Ця річка ширша за попередню, і в центрі вона\nнадто глибока для будівництва мосту. Якщо ви спробуєте\nпросто проїхати, танк потоне і буде\nзнищено.
+STR_TUTORIAL21=Щоб перетнути цю річку, вам доведеться збудувати човен. Човни\nпотребують п'ять дерев, тому натисніть на п'ять дерев, щоб зрубати їх.\nПотім виберіть інструмент «стіна/човен» (третю кнопку зверху)\nі натисніть на воду, щоб збудувати човен.\n\nЯкщо ви натиснете на сушу, ви збудуєте стіну\nі вам доведеться зрубати ще дерев, щоб збудувати\nчовен. Заїдьте на човен і переправтесь на інший берег.
+STR_TUTORIAL22=Попереду бункер і кілька баз поповнення,\nщо забезпечать вас боєприпасами. Зберіть снаряди з\nбази поповнення і атакуйте бункер.\n\n\nВін стрілятиме у відповідь, але якщо ваш танк отримає\nпопадання, ви легко можете повернутись до бази поповнення,\nщоб відновити броню до повної міцності.
+STR_TUTORIAL23=З терпінням і обережністю ви зможете знищити цей\nбункер. Використовуйте набуті навички, щоб полегшити завдання:\n\n\nПереховуйтесь у лісі, щоб бункер вас не бачив,\nрубайте дерева, будуйте дороги, щоб танк рухався\nшвидше, і зводьте будівлі як укриття від\nпострілів бункера.
+STR_TUTORIAL24=Після того як знищите цей бункер, вашим фінальним\nвипробуванням у навчанні буде знешкодити два\nбункери, що охороняють вихід, збудувати човен і втекти.\n\n\nОсобливо стежте за рівнем броні вашого танка —\nякщо ваш танк буде знищено, вам доведеться починати\nзнову з новим танком на новому човні у відкритому морі.
+STR_TUTORIAL25=Вітаємо! Ви завершили навчання WinBolo.\n\n\n\nТепер зберіть друзів і дізнайтесь,\nяково це — змагатись проти розумних людських\nсуперників замість нерухомих бездумних цілей.\n\nЯкщо захочете пройти навчання знову, ви можете\nзапустити його знову з меню Налаштування.
+STR_TUTORIAL_START01=Ласкаво просимо до навчання WinBolo. Цей острів знайомить\nвас з основними принципами WinBolo і веде вас\nкрізь них по одному. Кожен новий принцип буде\nописано у вікні, подібному до цього.\n\nПрочитавши кожне повідомлення, ви можете продовжити,\nнатиснувши кнопку «OK» мишею або просто\nнатиснувши клавішу <Enter> на клавіатурі
+STR_TUTORIAL_START02=WinBolo — єдиний авторизований клон класичної мережевої гри Stuart Cheshire для Macintosh — Bolo.\nСтратегічні підказки та іншу інформацію можна знайти на офіційному сайті:\n\nhttps://www.winbolo.com\n\nАбо приєднуйтесь до нас на Reddit та Discord\n
+STR_TUTORIAL_START03=Одна коротка нотатка про гру через Інтернет.\n\nЯкщо ви приєднуєтесь до онлайн-гри і спостерігаєте багато мережевих помилок,\nзалиште гру негайно, перш ніж\nзіпсуєте гру для інших гравців.
+STR_TUTORIAL_START04=Ви керуєте танком, який зараз знаходиться на\nчовні в морі. Натисніть {ACCEL}, щоб рухати танк (і човен) вперед,\nі натисніть {BRAKE}, щоб сповільнитись і\nзупинитись.\n\nНе торкайтесь клавіш, ніби ви друкуєте літеру —\nнатисніть і утримуйте їх, доки танк не рухатиметься з потрібною швидкістю,\nа потім відпустіть. Натисніть {ACCEL}, щоб рушити\nчовен вперед до суші.\n(Спочатку натисніть <Enter>, щоб закрити це вікно)
+STR_TUTORIAL01_TOUCH=Попереду невелика річка, що веде вглиб суші. Штовхніть\nджойстик вперед, щоб керувати човном до кінця\nрічки.\n\nКоли доберетесь туди, тримайте джойстик\nштовхнутим вперед. Танк зійде з човна, а\nчовен залишиться пришвартованим наприкінці річки
+STR_TUTORIAL02_TOUCH=Тепер ви на траві. Танк рухається досить\nшвидко по траві.\n\n\nТримайте джойстик штовхнутим вперед, щоб рухатись\nдо лісу.
+STR_TUTORIAL03_TOUCH=Тепер ви у лісі. Танк рухається повільніше\nу лісі, ніж по траві.\n\n\nТримайте джойстик штовхнутим вперед, щоб рухатись\nдо болота.
+STR_TUTORIAL04_TOUCH=Тепер ви на болоті. Танк рухається дуже\nповільно на болоті. На щастя, попереду є дорога.\n\n\nТримайте джойстик штовхнутим вперед, щоб рухатись\nдо дороги.
+STR_TUTORIAL05_TOUCH=Тепер ви на дорозі. Танк може рухатись дуже\nшвидко по дорозі, і якщо штовхнути джойстик\nповністю вперед, він прискориться.\n\n\nЯкщо ви рухаєтесь надто швидко, потягніть\nджойстик назад, щоб сповільнитись.
+STR_TUTORIAL06_TOUCH=Попереду кілька будівель. Будівлі — суцільні\nперешкоди, крізь які не можна проїхати, тому вам\nдоведеться знайти шлях через лабіринт до іншого\nбоку.\n\nШтовхніть джойстик ліворуч або праворуч, щоб повернути\nтанк у відповідному напрямку.
+STR_TUTORIAL10_TOUCH=Є ще один простий спосіб уникнути бункерів —\nшвидкість.\n\n\nПереконайтесь, що ви правильно вирівняні по центру\nдороги, і штовхніть джойстик повністю вперед,\nщоб проїхати повз бункери на повній швидкості.
+STR_TUTORIAL14_TOUCH=Якщо ви заїдете вашим танком у мінне поле, його буде\nзнищено. На щастя, ви можете очистити мінне поле,\nстріляючи. Торкніться кнопки вогню, щоб вистрілити.\n\nПрострілте отвір у будівлі, а потім влучте\nснарядом у центр мінного поля, щоб підірвати його.\nКоли ви підриваєте міни, вони залишать великий\nкратер у землі, крізь який можна проїхати,\nхоча це так само повільно, як і болото.
+STR_TUTORIAL16_TOUCH=WinBolo автоматично прокручує вікно, щоб показати вам\nобласть навколо вашого танка, але ви можете перетягнути карту\nпальцем, щоб вручну змінити вид.\n\nПеретягніть карту вниз, щоб побачити річку\nпопереду.
+STR_TUTORIAL18_TOUCH=Цього разу ми підійдемо до переправи через річку\nтонше. Замість того, щоб просто проїхати крізь\nводу, ми побудуємо міст.\n\n\nВиберіть режим збору дерев, торкнувшись значка лісу\n(у верхньому лівому кутку вікна) і торкніться лісу. Ваш\nбудівельник вибіжить з танка і зрубає одне дерево\nдля будівельних матеріалів.
+STR_TUTORIAL19_TOUCH=Після збору дерева виберіть інструмент «дорога/міст»\n(другу кнопку зверху) і торкніться\nрічки в кінці дороги.\n\n\nВаш будівельник вибіжить з танка і побудує одну\nсекцію мосту. Торкніться ще раз, щоб завершити міст,\nа потім переїдьте на інший берег.
+STR_TUTORIAL21_TOUCH=Щоб перетнути цю річку, вам доведеться збудувати човен. Човни\nпотребують п'ять дерев, тому торкніться п'яти дерев, щоб зрубати їх.\nПотім виберіть інструмент «стіна/човен» (третю кнопку зверху)\nі торкніться води, щоб збудувати човен.\n\nЯкщо ви торкнетесь суші, ви збудуєте стіну\nі вам доведеться зрубати ще дерев, щоб збудувати\nчовен. Заїдьте на човен і переправтесь на інший берег.
+STR_TUTORIAL_START01_TOUCH=Ласкаво просимо до навчання WinBolo. Цей острів знайомить\nвас з основними принципами WinBolo і веде вас\nкрізь них по одному. Кожен новий принцип буде\nописано у вікні, подібному до цього.\n\nПрочитавши кожне повідомлення, ви можете продовжити,\nторкнувшись кнопки «OK».
+STR_TUTORIAL_START04_TOUCH=Ви керуєте танком, який зараз знаходиться на\nчовні в морі. Використовуйте джойстик з лівого боку\nекрана для керування: штовхніть його вперед для прискорення, потягніть\nназад для сповільнення і зупинки.\n\nЧим далі ви штовхаєте джойстик, тим швидше\nрухається танк. Штовхніть джойстик вперед, щоб рушити\nчовен вперед до суші.\n(Спочатку торкніться OK, щоб закрити це вікно)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=Ви не можете будувати, поки ваш новий чоловічок не зіскочить на парашуті
+LGM_NO_BUILD=Ви не можете будувати тут
+LGM_INSUFFICIENT_TREES=У вас недостатньо дерев для будівництва
+LGM_NO_PILLS=У вас немає бункера для розміщення
+LGM_INSUFFICIENT_MINES=У вас немає мін для встановлення
+LGM_BUILDTANK=Чоловічок не може будувати на танку
+LGM_NO_TREE=Тут немає дерева для рубки
+LGM_PILL_NO_NEED_REPAIR=Цей бункер не потребує ремонту
+LGM_PILL_NO_BUILD_ON_MINE=Чоловічок не може будувати на міні. Це вбило б його.
+LGM_NO_BUILD_UNDER_BOAT=Чоловічок не може будувати під вашим човном
+
+# In-game messages
+MESSAGE_ASSISTANT=Онлайн-помічник
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}" передав управління "{player}"
+MESSAGE_NETSERVER=Мережевий сервер
+MESSAGE_THIS_COMPUTER=Цей комп'ютер
+MESSAGE_CAPTURE_BASE={player} захопив нейтральну базу
+MESSAGE_CAPTURE_PILL={player} захопив нейтральний бункер
+MESSAGE_STOLE_PILL={player} щойно вкрав бункер у {other}
+MESSAGE_STOLE_BASE={player} щойно вкрав базу у {other}
+MESSAGE_LGM_DEAD={player} щойно втратив будівельника
+MESSAGE_SAVED_MAP={player} щойно зберіг файл карти
+MESSAGE_QUIT_GAME={player} вийшов з гри
+MESSAGE_TIME_LIMIT_EXPIRED=Час вийшов. Гра завершена. Ідіть з миром
+MESSAGE_TANKSUNK=Танк потонув у відкритому морі
+
+# Network errors
+NETERR_TRACKERDNS=Помилка DNS-пошуку імені трекера. Сповіщення трекера вимкнено
+NETERR_JOININIT=Не отримано відповіді від гри, до якої ви намагались підключитись.\nЗазвичай це означає одне з трьох:\n1. Поля адреси та порту заповнені неправильно.\n2. Ви знаходитесь за брандмауером, що блокує UDP.\n3. Перевірте, чи збігається ваша версія WinBolo з версією гри
+NETERR_GAMEFULL=Ця гра зараз заповнена
+NETERR_SERVERCONNECT=Не вдалося встановити з'єднання з сервером. Спробуйте іншу машину або зачекайте кілька секунд і спробуйте знову.
+NETERR_PASSWORDWRONG=Пароль невірний
+NETERR_PLAYERNAMEINUSE=Ваше ім'я гравця вже використовується. Виберіть інше і спробуйте знову
+NETERR_NONEWPLAYERS=На жаль, ця гра зараз не приймає нових гравців
+NETERR_CONNECTNOJOIN=Ви змогли підключитись до гри, але вам не дозволили приєднатись. Можливо, ваше ім'я гравця вже зайняте. Будь ласка, спробуйте знову з новим іменем
+
+# Network status
+NET_STATUS_JOINING=Приєднання
+NET_STATUS_OK=OK
+NET_STATUS_FAILED=Помилка
+NETERR_LOSTCONNECTION=Ви втратили з'єднання з сервером.\nПереходимо в режим одиночної гри
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=Надіслати повідомлення
+STR_DLGOPENING_BUTTON3=Мови
+STR_DLGOPENING_BUTTON4=Довідка
+STRERR_HELPFILE=Помилка відкриття файлу довідки.
+STR_DLGSKIN_TITLE=Вибір теми оформлення
+STR_DLGSKIN_BLURB=Якщо не всі елементи теми присутні, використовується вбудована тема/звуки за замовчуванням.
+
+# Player name error
+STR_DLGGAMEFINDER_PLAYERWRONG=На жаль, ваше ім'я гравця порожнє — ім'я гравця є обов'язковим
+NETERR_MAPSERIALIZE=Сервер не зміг підготувати дані карти. Будь ласка, спробуйте знову
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=Частота кадрів:
+STR_DLGSYSINFO_GRAPHICS=Графіка:
+STR_DLGSYSINFO_AITANKS=Танки ІІ:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=Сервер:
+STR_DLGNETINFO_THISGAME=Ця гра:
+STR_DLGNETINFO_PINGGRAPH=Пінг: мін {number} / сер {number2} / макс {number3} мс
+STR_DLGNETINFO_KBIN=КБ/с вхід:
+STR_DLGNETINFO_KBOUT=КБ/с вихід:
+STR_DLGNETINFO_PACKETS_RATE=Пакетів/с: {number} вхід / {number2} вихід
+STR_DLGNETINFO_KB_RATE=КБ/с: {string1} вхід / {string2} вихід
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=Копіювати seed
+STR_DLGGAMEINFO_AILABEL=Танки ІІ:
+STR_DLGGAMEINFO_FULLADV=Повна перевага
+STR_DLGGAMEINFO_UNLIMITED=Необмежено
+
+# Players panel
+STR_DLGPLAYERS_TITLE=Гравці
+STR_DLGPLAYERS_ALL=Усі
+STR_DLGPLAYERS_NONE=Жодного
+STR_DLGPLAYERS_ALLIES=Союзники
+STR_DLGPLAYERS_NEARBY=Поблизу
+STR_LEAVE_ALLIANCE=Покинути альянс
+STR_REQUEST_ALLIANCE=Запросити альянс
+STR_ALLOW_NEW_PLAYERS=Дозволити нових гравців
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=Приєднатись до гри?
+STR_DLGJOIN_BLURB=Покинути поточну гру і приєднатись до сервера?
+STR_DLGJOIN_BUTTON=Приєднатись
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=Змінити ім'я гравця
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(немає)
+STR_DLGKEYSETUP_PRESSAKEY=Натисніть клавішу...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=Натисніть клавішу для призначення або натисніть «Скасувати».
+STR_DLGKEYSETUP_CHANGE=Змінити
+STR_DLGKEYSETUP_COL_ACTION=Дія
+STR_DLGKEYSETUP_COL_KEY=Клавіша
+STR_DLGKEYSETUP_QUICKKEYS=Швидкі клавіші
+STR_DLGKEYSETUP_TREE=Дерево
+STR_DLGKEYSETUP_ROAD=Дорога
+STR_DLGKEYSETUP_WALL=Стіна
+STR_DLGKEYSETUP_QUICKPILLBOX=Бункер
+STR_DLGKEYSETUP_QUICKMINE=Міна
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=Налаштування
+STR_DLGSETTINGS_PLAYER=Гравець
+STR_DLGSETTINGS_PLAYERNAME=Ім'я гравця:
+STR_DLGSETTINGS_APPLY=Застосувати
+STR_DLGSETTINGS_SETKEYS=Налаштувати клавіші...
+STR_DLGSETTINGS_DISPLAY=Відображення
+STR_DLGSETTINGS_WINDOWSIZE=Розмір вікна:
+STR_DLGSETTINGS_RELSTEER=Відносне керування
+STR_DLGSETTINGS_RELSTEER_TIP=Якщо вимкнено, джойстик вказує напрямок танка безпосередньо.\nЯкщо увімкнено, джойстик повертає ліворуч/праворуч відносно танка.
+STR_DLGSETTINGS_TABLETMODE=Режим планшетного інтерфейсу
+STR_DLGSETTINGS_LABELS=Мітки
+STR_DLGSETTINGS_MSGNAMES=Імена в повідомленнях:
+STR_DLGSETTINGS_TANKLABELS=Мітки танків:
+STR_DLGSETTINGS_SOUND=Звук
+STR_DLGSETTINGS_MESSAGES=Повідомлення
+STR_DLGSETTINGS_GAME=Гра
+
+# Menu bar
+STR_MENU_FILE=Файл
+STR_MENU_NEW=Нова
+STR_MENU_SAVE_MAP=Зберегти карту
+STR_MENU_EXIT=Вийти
+STR_MENU_EDIT=Редагувати
+STR_MENU_FRAME_RATE=Частота кадрів
+STR_MENU_WINDOW_SIZE=Розмір вікна
+STR_MENU_NORMAL=Звичайний
+STR_MENU_DOUBLE=Подвійний
+STR_MENU_TRIPLE=Потрійний
+STR_MENU_QUAD=Четвертний
+STR_MENU_CUSTOM_RESIZABLE=Довільний (з можливістю зміни розміру)
+STR_MENU_REQUIRES=Потрібно {number}x{number2} — перевищує розмір екрана
+STR_MENU_SMOOTH_SCROLLING=Плавна прокрутка
+STR_MENU_AUTO_SCROLLING=Автоматична прокрутка
+STR_MENU_SHOW_GUNSIGHT=Показати приціл
+STR_MENU_MSG_NAMES_SUB=Імена відправників повідомлень
+STR_MENU_TANK_LABELS_SUB=Мітки танків
+STR_NONE=Жодних
+STR_SHORT=Короткі
+STR_LONG=Довгі
+STR_MENU_NO_OWN_LABEL=Не мітити власний танк
+STR_MENU_PILLBOX_LABELS=Мітки бункерів
+STR_MENU_BASE_LABELS=Мітки баз поповнення
+STR_MENU_HIDE_MAIN=Приховати головний вид
+STR_MENU_DEVICE=Пристрій:
+STR_MENU_DESKTOP=Робочий стіл
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=Налаштувати клавіші
+STR_MENU_SOUND_EFFECTS=Звукові ефекти
+STR_MENU_BACKGROUND_SOUND=Фоновий звук
+STR_MENU_SOUND_KEEPALIVE=Підтримка звуку
+STR_MENU_NEWSWIRE_MSGS=Повідомлення Newswire
+STR_MENU_ASSISTANT_MSGS=Повідомлення помічника
+STR_MENU_AI_MSGS=Повідомлення Brain
+STR_MENU_NETSTATUS_MSGS=Повідомлення про стан мережі
+STR_MENU_NETDEBUG_MSGS=Налагоджувальні повідомлення мережі
+STR_MENU_SETTINGS=Налаштування...
+STR_MENU_PLAYERS=Гравці
+STR_MENU_SEND_MESSAGE=Надіслати повідомлення
+STR_MENU_SELECT_ALL=Вибрати всіх
+STR_MENU_SELECT_NONE=Зняти вибір
+STR_MENU_SELECT_ALLIES=Вибрати союзників
+STR_MENU_SELECT_NEARBY=Вибрати танки поблизу
+STR_MENU_BRAINS=Brain
+STR_MENU_MANUAL=Вручну
+STR_MENU_HELP=Довідка
+STR_MENU_ABOUT=Про програму
+STR_MENU_LEAVE_GAME=Покинути гру
+STR_BRAINSETTINGS_NONE=(немає налаштувань)
+STR_BRAINSETTINGS_TITLE=Налаштування Brain
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=Навчання
+STR_DLGSETTINGS_PLAY_TUTORIAL=Пройти навчання
+STR_DLGSETTINGS_SHOW_ON_MAIN=Показувати в головному меню
+STR_DLGSETTINGS_CRASH_REPORTING=Звіти про збої
+STR_DLGSETTINGS_ENABLE_CRASH=Увімкнути звіти про збої
+STR_DLGSETTINGS_CRASH_HELP=Допоможіть покращити WinBolo, надсилаючи звіти про збої
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=Зміни набудуть чинності при наступному запуску.
+STR_CLOSE=Закрити
+STR_DLGSETTINGS_WINTITLE=WinBolo — Налаштування
+STR_DLGKEYSETUP_WINTITLE=WinBolo — Налаштування клавіш
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo — Лобі гри
+STR_UNKNOWN=Невідомо
+STR_DLGGAMEINFO_AIFULL=Так (Повна)
+STR_DLGLOBBY_HIDDEN=Приховані
+STR_DLGLOBBY_VISIBLE=Видимі
+STR_DLGLOBBY_DOWNLOADING=Завантаження карти...
+STR_DLGLOBBY_MAP_UNAVAILABLE=Попередній перегляд карти недоступний
+STR_DLGLOBBY_PILLBOXES=Бункери:
+STR_DLGLOBBY_BASES=Бази:
+STR_DLGLOBBY_STARTS=Стартові позиції:
+STR_DLGLOBBY_SKIPMAP=Пропустити карту
+STR_DLGLOBBY_CANCELSKIP=Скасувати пропуск
+STR_DLGLOBBY_VOTES={number}/{number2} голосів за пропуск
+STR_DLGLOBBY_CHAT=Чат
+STR_DLGLOBBY_READY=Готовий
+STR_DLGLOBBY_UNREADY=Не готовий
+STR_DLGLOBBY_BALANCE_TEAMS=Збалансувати команди
+STR_DLGLOBBY_APPLY_BALANCE=Застосувати баланс
+STR_DLGLOBBY_DISMISS=Відхилити
+STR_DLGLOBBY_LEAVE=Вийти
+STR_DLGLOBBY_LEAVE_TITLE=Вийти з гри?
+STR_DLGLOBBY_LEAVE_BLURB=Ви впевнені, що хочете вийти з цієї гри?
+STR_DLGLOBBY_BOT_FMT={player} [Бот]
+STR_DLGLOBBY_YOU_FMT={player} (Ви)
+STR_DLGLOBBY_STARTING_FMT=Початок через {number}...
+STR_DLGLOBBY_LOSTCONNECTION=Ви втратили з'єднання з сервером.
+STR_DLGLOBBY_ME=Я
+STR_DLGLOBBY_PLAYER_COL=Гравець
+STR_DLGLOBBY_PING_COL=Пінг
+STR_DLGLOBBY_TEAM_COL=Команда
+STR_DLGLOBBY_READY_COL=Готовність
+STR_DLGLOBBY_SLOT_COL=Слот
+STR_DLGLOBBY_NAME_COL=Ім'я гравця
+STR_DLGLOBBY_ACTION_COL=Дія
+STR_DLGLOBBY_ADDBOT=Додати бота
+STR_DLGLOBBY_REMOVE=Видалити
+STR_DLGLOBBY_MAP_TAB=Карта
+STR_DLGLOBBY_GAME_LBL=Гра:
+STR_DLGLOBBY_MINES_LBL=Міни:
+STR_DLGLOBBY_AI_LBL=ІІ:
+STR_DLGLOBBY_TIME_LBL=Час:
+STR_DLGLOBBY_TIME_HMS={number}г {string1}хв {string2}с
+STR_DLGLOBBY_TIME_MS={number}хв {string1}с
+STR_DLGLOBBY_TIME_S={number}с
+STR_DLGLOBBY_MAP_LBL=Карта:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo — Налаштування гри
+STR_DLGGAMESETUP_SELECTAMAP=Виберіть карту:
+STR_BACK=Назад
+STR_DLGGAMESETUP_BASES_STARTS=Бази: {number}  Старти: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=Бункери: {number}
+STR_DLGGAMESETUP_CHANGEMAP=Змінити карту
+STR_DLGGAMESETUP_GAMETYPE_LBL=Тип гри
+STR_DLGGAMESETUP_OPENGAME_SHORT=Відкрита гра
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=Приховані міни
+STR_DLGGAMESETUP_AICOMPPLAYERS=Комп'ютерні гравці ІІ
+STR_DLGGAMESETUP_ALLOW=Дозволити
+STR_DLGGAMESETUP_ADVANTAGE=Перевага
+STR_DLGGAMESETUP_FULLMAP=Повна карта
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=Ліміт часу
+STR_DLGGAMESETUP_TEAMSETUP=Налаштування команд
+STR_DLGGAMESETUP_AINUM=Кількість гравців ІІ:
+STR_DLGGAMESETUP_NOBRAINS=Brain не знайдено
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=Ви
+STR_DLGGAMESETUP_BOT_FMT=Бот {number}
+STR_DLGGAMESETUP_NOAI=Без комп'ютерних танків
+STR_DLGGAMESETUP_ALLOWAI=Дозволити комп'ютерні танки
+STR_DLGGAMESETUP_ALLOWADV=Дозволити з перевагою
+STR_DLGGAMESETUP_ALLOWFULL=Дозволити з повною картою
+STR_DLGGAMESETUP_NOPREVIEW=Немає попереднього перегляду
+STR_DLGGAMESETUP_STARTGAME=Почати гру
+STR_DLGGAMESETUP_STRICT_SHORT=Суворий
+STR_DLGTCP_WINTITLE=WinBolo — Налаштування UDP (Інтернет)
+STR_ERR_TITLE=Помилка
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo — {string1}
+STR_DLGBROWSER_REFRESH=Оновити
+STR_DLGBROWSER_LOADING=Завантаження списку ігор{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=Натисніть «Оновити» для завантаження ігор...
+STR_DLGBROWSER_LAN_INSTRUCTION=Натисніть «Оновити» для сканування...
+STR_DLGBROWSER_GAMES_LOADED=Ігри завантажено.
+STR_DLGBROWSER_NO_GAMES=Ігор не знайдено. Розпочніть свою!
+STR_DLGBROWSER_SEARCH_FAILED=Пошук не вдався.
+STR_DLGBROWSER_SEARCHING=Пошук...
+STR_DLGBROWSER_COL_SERVER=Сервер
+STR_DLGBROWSER_COL_MAP=Карта
+STR_DLGBROWSER_COL_PLAYERS=Гравці
+STR_DLGBROWSER_COL_TYPE=Тип
+STR_DLGBROWSER_COL_AI=ІІ
+STR_DLGBROWSER_COL_BASES=Бази
+STR_DLGBROWSER_COL_PILLS=Бункери
+STR_DLGBROWSER_COL_PING=Пінг
+STR_DLGBROWSER_FILTER=Фільтр:
+STR_DLGBROWSER_FILTER_ALLTYPES=Усі типи
+STR_DLGBROWSER_FILTER_UNLOCKED=Тільки незахищені
+STR_DLGBROWSER_FILTER_ALLLOBBY=Усі лобі
+STR_DLGBROWSER_FILTER_INLOBBY=У лобі
+STR_DLGBROWSER_FILTER_STARTING=Починаються
+STR_DLGBROWSER_STATUS_PINGING=Статус: {string1}  |  Серверів: {number}  |  Пінгується {number2}...
+STR_DLGBROWSER_STATUS=Статус: {string1}  |  Серверів: {number}
+STR_DLGBROWSER_NEWGAME=Нова гра
+STR_DLGBROWSER_PLAYER_NAME_BTN=Ім'я гравця
+STR_DLGBROWSER_MANUAL=Вручну
+STR_DLGBROWSER_ERR_VERSION=Сервер використовує іншу версію WinBolo.
+STR_DLGBROWSER_ERR_NEEDNAME=Спочатку необхідно вказати ім'я гравця.
+STR_DLGBROWSER_SETNAME_TITLE=Вказати ім'я гравця
+STR_DLGBROWSER_AI_ADV=Перев.
+STR_DLGBROWSER_AI_FULL=Повна
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo — Перегляд журналів
+STR_DLGWBN_TITLE=Перегляд журналів WinBolo.net
+STR_DLGWBN_TAB_RECENT=Нещодавні
+STR_DLGWBN_TAB_TOPRATED=Найкращі за рейтингом
+STR_DLGWBN_TAB_MOSTDOWNLOADED=Найпопулярніші
+STR_DLGWBN_TAB_SEARCH=Пошук
+STR_DLGWBN_LOADING=Завантаження...
+STR_DLGWBN_NOCONNECT=Не вдалося підключитись до WinBolo.net
+STR_DLGWBN_MINPLAYERS=Мін. гравців
+STR_DLGWBN_SEARCHFILTERS=Фільтри пошуку:
+STR_DLGWBN_HINT_PLAYER=Гравець
+STR_DLGWBN_HINT_MAP=Карта
+STR_DLGWBN_SEARCH_BTN=Пошук
+STR_DLGWBN_ERROR=Помилка: {string1}
+STR_DLGWBN_COL_MAP=Карта
+STR_DLGWBN_COL_TYPE=Тип
+STR_DLGWBN_COL_PLAYERS=Гравці
+STR_DLGWBN_COL_RATING=Рейтинг
+STR_DLGWBN_COL_SIZE=Розмір
+STR_DLGWBN_COL_DATE=Дата
+STR_DLGWBN_PLAYERS_LBL=Гравці: 
+STR_DLGWBN_NUMPLAYERS_FMT=Гравців: {number}
+STR_DLGWBN_DURATION=Тривалість: {string1}
+STR_DLGWBN_RATING=Рейтинг: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=Завантажень: {number}
+STR_DLGWBN_SIZE=Розмір: {string1}
+STR_DLGWBN_COMMENTS_FMT=Коментарі ({number}):
+STR_DLGWBN_NOCOMMENTS=Коментарів ще немає.
+STR_DLGWBN_ADDCOMMENT=Додати коментар:
+STR_DLGWBN_HINT_COMMENT=Напишіть коментар...
+STR_DLGWBN_POST=Опублікувати
+STR_DLGWBN_POSTED=Коментар опубліковано!
+STR_DLGWBN_LOADINGDETAIL=Завантаження деталей...
+STR_DLGWBN_DOWNLOADING=Завантаження...
+STR_DLGWBN_VIEWLOG=Переглянути журнал
+STR_DLGWBN_NOLOG=Файл журналу недоступний для цієї гри.
+STR_DLGWBN_PREV=< Назад
+STR_DLGWBN_NEXT=Вперед >
+STR_DLGWBN_PAGE=Сторінка {number} з {number2}  ({number3} всього)
+STR_DLGWBN_OPENFILE=Відкрити файл...
+STR_DLGWBN_PARSERR=Помилка розбору відповіді
+STR_DLGWBN_NETERR=Мережева помилка
+STR_DLGWBN_LOADERR=Помилка завантаження деталей
+STR_DLGWBN_DOWNLOAD_FAILED=Завантаження не вдалося
+STR_DLGWBN_NOSAVEPATH=Не вдалося визначити шлях для збереження
+STR_DLGWBN_POSTERR=Помилка публікації коментаря
+STR_DLGWBN_FETCHERR=Помилка отримання даних
+STR_DLGWBN_UNKNOWN_ERR=Невідома помилка
+STR_DLGWBN_FILEFILTER=Файли журналів WinBolo
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo — Вказати ім'я гравця
+STR_DLGSETNAME_WBN_LOCKED=Ваше ім'я гравця встановлено WinBolo.net.
+STR_DLGSETNAME_PLEASE_ENTER=Будь ласка, введіть ваше ім'я гравця.
+STR_DLGSETNAME_BLANK_ERR=Вибачте, це поле не може бути порожнім
+STR_DLGSETNAME_STAR_ERR=Вибачте, імена не можуть починатись з «*»
+STR_DLGSETNAME_INUSE_ERR=Це ім'я вже використовується іншим гравцем.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo — Вибір теми оформлення
+STR_DLGSKIN_NOSKIN=Без теми (за замовчуванням)
+STR_DLGSKIN_NA=Н/Д
+STR_DLGSKIN_SELECT=Виберіть тему:
+STR_DLGSKIN_NAME_LBL=Назва:
+STR_DLGSKIN_AUTHOR_LBL=Автор:
+STR_DLGSKIN_NOTES_LBL=Примітки:
+STR_DLGSKIN_LOADERR=Не вдалося завантажити файл теми
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo — Налаштування трекера
+STR_DLGTRACKER_INVALIDPORT=Недійсний номер порту.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=Перевірка WinBolo.net...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=Увійшли
+STR_DLGWBN_EXPIRES=(закінчується {string1})
+STR_DLGWBN_SIGN_OUT=Вийти з WBN
+STR_DLGWBN_NOT_SIGNED_IN=Не увійшли
+STR_DLGWBN_SIGN_IN_BTN=Увійти до WBN...
+STR_DLGWBN_SIGNIN_TITLE=Увійти до WinBolo.net
+STR_DLGWBN_SIGNIN_BLURB=Увійдіть за допомогою імені користувача та пароля WinBolo.net. Токен буде збережено, щоб вам не потрібно було вводити пароль знову.
+STR_DLGWBN_USERNAME=Ім'я користувача:
+STR_DLGWBN_PASSWORD=Пароль:
+STR_DLGWBN_SIGNINGIN=Вхід...
+STR_DLGWBN_SIGNIN_OK=Увійти
+STR_DLGWBN_NEEDCREDS=Будь ласка, введіть ім'я користувача та пароль.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo — Вибір гри
+STR_DLGWELCOME_SINGLE=Одиночна гра
+STR_DLGWELCOME_LOCAL=Локальна
+STR_DLGWELCOME_MAPEDITOR=Редактор карт
+STR_DLGWELCOME_LOGVIEWER=Перегляд журналів
+STR_DLGWELCOME_INTERNET=Інтернет
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (вбудована)
+STR_MAPCHOOSER_LOADMAP=Завантажити карту
+STR_MAPCHOOSER_LOADDEVICE=Завантажити з пристрою...
+STR_MAPCHOOSER_GENRANDOM=Згенерувати випадкову карту
+STR_MAPCHOOSER_RANDOMMAP=Випадкова карта
+STR_MAPCHOOSER_CLICKGEN=Натисніть «Генерувати» для попереднього перегляду
+STR_MAPCHOOSER_NOPREVIEW=Попередній перегляд недоступний
+STR_MAPCHOOSER_STATS=Бункери: {number}  Бази: {number2}  Старти: {number3}
+STR_MAPCHOOSER_MAPFILES=Файли карт
+STR_MAPCHOOSER_ALLFILES=Усі файли
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=Статус
+STR_TABLET_KILLS_DEATHS=Знищень: {number}  Смертей: {number2}
+STR_TABLET_TANK_RESOURCES=Ресурси танка
+STR_TABLET_SHELLS=Снаряди
+STR_TABLET_MINES=Міни
+STR_TABLET_ARMOUR=Броня
+STR_TABLET_TREES=Дерева
+STR_TABLET_PILLBOXES=Бункери
+STR_TABLET_BASES=Бази
+STR_TABLET_TANKS=Танки
+STR_TABLET_PILL_FMT=Бункер {number}
+STR_TABLET_BASE_FMT=База {number}
+STR_TABLET_TANK_FMT=Танк {number}
+STR_TABLET_BTN_MSG=Пов
+STR_TABLET_BTN_PLY=Грав
+STR_TABLET_BTN_SET=Нал
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=Вказати ім'я гравця
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Відкрити...
+STR_MAPEDIT_MENU_RECENT=Нещодавні файли
+STR_MAPEDIT_MENU_SAVE=Зберегти
+STR_MAPEDIT_MENU_SAVEAS=Зберегти як...
+STR_MAPEDIT_MENU_EXPORT=Експортувати як PNG...
+STR_MAPEDIT_MENU_RETURN=Повернутись до меню
+STR_MAPEDIT_MENU_UNDO=Скасувати
+STR_MAPEDIT_MENU_REDO=Повторити
+STR_MAPEDIT_MENU_CUT=Вирізати
+STR_MAPEDIT_MENU_COPY=Копіювати
+STR_MAPEDIT_MENU_PASTE=Вставити
+STR_MAPEDIT_MENU_MAP=Карта
+STR_MAPEDIT_MENU_RANDOMMAP=Випадкова карта...
+STR_MAPEDIT_MENU_TEXT=Текст...
+STR_MAPEDIT_MENU_IMPORTIMG=Імпорт зображення...
+STR_MAPEDIT_MENU_VALIDATE=Перевірити
+STR_MAPEDIT_MENU_MIRROR_H=Відобразити горизонтально {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Відобразити вертикально {string1}
+STR_MAPEDIT_MENU_ROTATE_90=Повернути на 90° за год. стр. {string1}
+STR_MAPEDIT_MENU_ROTATE_180=Повернути на 180° {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(виділення)
+STR_MAPEDIT_SCOPE_FULLMAP=(повна карта)
+STR_MAPEDIT_MENU_OPTIONS=Параметри
+STR_MAPEDIT_MENU_CENTER=Центрувати карту
+STR_MAPEDIT_MENU_POINT_STARTS=Вказати стартові позиції
+STR_MAPEDIT_MENU_SHOWGRID=Показати сітку
+STR_MAPEDIT_MENU_SHOWMINES=Показати міни
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Показати зони дії бункерів
+STR_MAPEDIT_MENU_WINDOW=Вікно
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Рельєф
+STR_MAPEDIT_WIN_TOOLS=Інструменти
+STR_MAPEDIT_WIN_INSPECTOR=Інспектор
+STR_MAPEDIT_WIN_OBJECTS=Об'єкти
+STR_MAPEDIT_WIN_OVERVIEW=Огляд
+STR_MAPEDIT_WIN_STATS=Статистика
+STR_MAPEDIT_WIN_STAMP_LIB=Бібліотека штампів
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Відкрите море
+STR_MAPEDIT_TERR_GRASS=Трава
+STR_MAPEDIT_TERR_FOREST=Ліс
+STR_MAPEDIT_TERR_ROAD=Дорога
+STR_MAPEDIT_TERR_BUILDING=Будівля
+STR_MAPEDIT_TERR_HALFBUILDING=Напівбудівля
+STR_MAPEDIT_TERR_RIVER=Річка
+STR_MAPEDIT_TERR_SWAMP=Болото
+STR_MAPEDIT_TERR_CRATER=Кратер
+STR_MAPEDIT_TERR_RUBBLE=Руїни
+STR_MAPEDIT_TERR_BOAT=Човен
+STR_MAPEDIT_TERR_MINETOOL=Інструмент мін
+STR_MAPEDIT_MINE_CHECKERED=Шаховий
+STR_MAPEDIT_MINE_FULL=Повний
+STR_MAPEDIT_MINE_RANDOM=Випадковий
+STR_MAPEDIT_MINE_CLEAR=Очистити міни
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Олівець
+STR_MAPEDIT_TOOL_LINE=Лінія
+STR_MAPEDIT_TOOL_RECT=Прямокутник
+STR_MAPEDIT_TOOL_RECTFILL=Заповнений прямокутник
+STR_MAPEDIT_TOOL_OVAL=Овал
+STR_MAPEDIT_TOOL_OVALFILL=Заповнений овал
+STR_MAPEDIT_TOOL_SELECT=Виділення
+STR_MAPEDIT_TOOL_FILL=Заливка
+STR_MAPEDIT_TOOL_MAZE=Лабіринт
+STR_MAPEDIT_TOOL_GENERATE=Генерувати
+STR_MAPEDIT_TOOL_WAND=Паличка
+STR_MAPEDIT_TOOL_TEXT=Текст
+STR_MAPEDIT_TOOL_TEXT_TIP=Текст (накладення тексту на карту)
+STR_MAPEDIT_BRUSH=Пензель
+STR_MAPEDIT_BRUSH_SQUARE=Квадратний
+STR_MAPEDIT_BRUSH_CIRCLE=Круглий
+STR_MAPEDIT_OBJTOOL_BASE=База
+STR_MAPEDIT_OBJTOOL_PILL=Бункер
+STR_MAPEDIT_OBJTOOL_START=Старт
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Тайл: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Тайл: --
+STR_MAPEDIT_STATUS_ZOOM=Масштаб: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Змінено
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Незбережені зміни
+STR_MAPEDIT_UNSAVED_BLURB=Карта має незбережені зміни.\nЗберегти перед продовженням?
+STR_MAPEDIT_GOTO_TITLE=Перейти до координат
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=Жоден об'єкт не вибрано
+STR_MAPEDIT_INSP_BASE_HASH=База #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Бункер #{number}
+STR_MAPEDIT_INSP_START_HASH=Старт #{number}
+STR_MAPEDIT_INSP_POSITION=Позиція: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Власник
+STR_MAPEDIT_INSP_ARMOUR=Броня
+STR_MAPEDIT_INSP_SPEED=Швидкість
+STR_MAPEDIT_INSP_DIR=Напрямок
+STR_MAPEDIT_OWNER_NEUTRAL=Нейтральний
+STR_MAPEDIT_OWNER_PLAYER=Гравець {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Бази ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Бункери ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Старти ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Броня: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Напр.: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Перевірка
+STR_MAPEDIT_VAL_NOISSUES=Проблем не виявлено
+STR_MAPEDIT_VAL_ERRORS={number} помилок
+STR_MAPEDIT_VAL_NOERRORS=0 помилок
+STR_MAPEDIT_VAL_WARNINGS={number} попереджень
+STR_MAPEDIT_VAL_NOWARNINGS=0 попереджень
+STR_MAPEDIT_VAL_ERRORS_TITLE=Помилки перевірки
+STR_MAPEDIT_VAL_HASERRORS=Карта містить {number} помилок. Виправте їх перед збереженням.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Генерація випадкової карти
+STR_MAPEDIT_GENRANDAREA_TITLE=Генерація випадкової ділянки
+STR_MAPEDIT_GENSCOPE_SELECTION=Область: Виділення ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Область: Повна карта ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Текстовий інструмент
+STR_MAPEDIT_TEXT_LABEL=Текст:
+STR_MAPEDIT_TEXT_BUILTIN=Вбудований
+STR_MAPEDIT_TEXT_SYSTEM=Системний шрифт
+STR_MAPEDIT_TEXT_FONTSIZE=Розмір шрифту
+STR_MAPEDIT_TEXT_STYLE=Стиль
+STR_MAPEDIT_TEXT_FONTSIZE_S=Малий (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Середній (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Великий (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=Дуже великий (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Звичайний
+STR_MAPEDIT_TEXT_STYLE_BOLD=Жирний
+STR_MAPEDIT_TEXT_STYLE_ITALIC=Курсив
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Жирний курсив
+STR_MAPEDIT_TEXT_FONTFAMILY=Сімейство шрифтів
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (вбудований)
+STR_MAPEDIT_TEXT_SIZEPX=Розмір (пкс)
+STR_MAPEDIT_TEXT_NOFONTS=Шрифтів не знайдено. Додайте файли .ttf до data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=Рельєф тексту
+STR_MAPEDIT_TEXT_TERR_EDGE=Рельєф краю
+STR_MAPEDIT_TEXT_TERR_BG=Фон
+STR_MAPEDIT_TEXT_PREVIEW=Попередній перегляд ({number}x{number2} тайлів):
+STR_MAPEDIT_TEXT_TOOLARGE=Текст завеликий (макс. 256x256 тайлів) або помилка шрифту
+STR_MAPEDIT_GENERATE_BTN=Генерувати
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Налаштування лабіринту
+STR_MAPEDIT_MAZE_REGION=Область: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Перетягніть по карті для генерації
+STR_MAPEDIT_ALGORITHM=Алгоритм
+STR_MAPEDIT_ALGO_LABYRINTH=Лабіринт
+STR_MAPEDIT_ALGO_OPEN=Відкритий
+STR_MAPEDIT_WALL=Стіна
+STR_MAPEDIT_CORRIDOR=Коридор
+STR_MAPEDIT_ENTRIES=Входи
+STR_MAPEDIT_ROOMS=Кімнати
+STR_MAPEDIT_WALLTERRAIN=Рельєф стін
+STR_MAPEDIT_CORRIDORTERRAIN=Рельєф коридорів
+STR_MAPEDIT_GENSETTINGS_TITLE=Параметри генерації
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Розподіл рельєфу
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Міни: {number} ({string1}% суші)
+STR_MAPEDIT_STATS_SPATIAL=Просторовий аналіз
+STR_MAPEDIT_STATS_LAND_COVERAGE=Покриття суші: {string1}%
+STR_MAPEDIT_STATS_LARGEST=Найбільший масив суші: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=Відстань між базами: {string1} тайлів
+STR_MAPEDIT_STATS_PILL_SPACING=Відстань між бункерами: {string1} тайлів
+STR_MAPEDIT_STATS_SYMMETRY=Симетрія: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=Дзерк.-Г:   {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=Дзерк.-В:   {string1}%
+STR_MAPEDIT_STATS_4CORNER=4 кути:   {string1}%
+STR_MAPEDIT_STATS_ROTATE180=Поворот-180: {string1}%
+STR_MAPEDIT_STATS_STALE=(застарілий — натисніть «Оновити»)
+STR_MAPEDIT_STATS_REFRESH=Оновити аналіз
+STR_MAPEDIT_STATS_STARTS=Старти
+STR_MAPEDIT_TERRNAME_HALFBLD=Напівбудівля
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Імпорт зображення
+STR_MAPEDIT_IMG_FILE=Файл:
+STR_MAPEDIT_IMG_NONE=(немає)
+STR_MAPEDIT_BROWSE=Огляд...
+STR_MAPEDIT_IMG_SOURCE=Джерело: {number}x{number2} пікселів
+STR_MAPEDIT_IMG_PREVIEW_LBL=Попередній перегляд:
+STR_MAPEDIT_IMG_SCALEMODE=Режим масштабування:
+STR_MAPEDIT_IMG_FIT_SEL=За розміром виділення
+STR_MAPEDIT_IMG_FIT_PLAY=За розміром ігрової зони
+STR_MAPEDIT_IMG_OUTPUT=Результат: {number} x {number2} тайлів
+STR_MAPEDIT_IMG_COLORS=Кольори:
+STR_MAPEDIT_IMG_REDETECT=Перевизначити
+STR_MAPEDIT_IMG_COLORMAP=Відображення кольорів
+STR_MAPEDIT_IMPORT_BTN=Імпорт
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Вбудовані штампи
+STR_MAPEDIT_STAMP_USER=Користувацькі штампи
+STR_MAPEDIT_STAMP_NOUSER=Користувацьких штампів ще немає.
+STR_MAPEDIT_STAMP_HINT=Використайте «Зберегти буфер...», щоб створити один.
+STR_MAPEDIT_DELETE=Видалити
+STR_MAPEDIT_STAMP_SAVECLIP=Зберегти буфер...
+STR_MAPEDIT_STAMP_TIP_COPY=Спочатку скопіюйте виділення (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=Імпортувати...
+STR_MAPEDIT_STAMP_UNTITLED=Без назви
+STR_MAPEDIT_STAMP_SAVE_TITLE=Зберегти штамп
+STR_MAPEDIT_STAMP_SAVE_BLURB=Введіть назву для цього штампу:
+STR_MAPEDIT_STAMP_SAVE_NAME=Назва
+STR_MAPEDIT_SAVE_BTN=Зберегти
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=Експортувати як PNG
+STR_MAPEDIT_PREVIEW=Попередній перегляд
+STR_MAPEDIT_EXPORT_MODE=Режим:
+STR_MAPEDIT_EXPORT_FULL=Повна роздільна здатність (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Розмір попереднього перегляду:
+STR_MAPEDIT_EXPORT_OPTIONS=Параметри:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Показати об'єкти
+STR_MAPEDIT_EXPORT_SHOWMINES=Показати міни
+STR_MAPEDIT_EXPORT_SHOWGRID=Показати сітку (лише у повному режимі)
+STR_MAPEDIT_EXPORT_BTN=Експортувати...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Заблоковано: не зміниться при рандомізації
+STR_MAPGEN_UNLOCKED_TIP=Розблоковано: зміниться при рандомізації
+STR_MAPGEN_GENERATOR=Генератор
+STR_MAPGEN_TYPE_TOURNAMENT=Турнір
+STR_MAPGEN_TYPE_NATURAL=Природний
+STR_MAPGEN_TYPE_MAZE=Лабіринт
+STR_MAPGEN_TYPE_FRACTAL=Фрактальний
+STR_MAPGEN_SEED=Seed
+STR_MAPGEN_RANDOMIZE=Рандомізувати
+STR_MAPGEN_SYMMETRY=Симетрія
+STR_MAPGEN_SYM_4CORNER=Дзеркало 4 кути
+STR_MAPGEN_SYM_MIRROR_H=Дзеркало горизонтальне
+STR_MAPGEN_SYM_MIRROR_V=Дзеркало вертикальне
+STR_MAPGEN_SYM_ROT180=Поворот 180°
+STR_MAPGEN_SYM_ROT90=Поворот 90°
+STR_MAPGEN_LANDMASS_PCT=% суші
+STR_MAPGEN_ROUGHNESS=Нерівність
+STR_MAPGEN_ROUGH_LOW=Низька
+STR_MAPGEN_ROUGH_MED=Середня
+STR_MAPGEN_ROUGH_HIGH=Висока
+STR_MAPGEN_INCLUDE_ROADS=Включити дороги
+STR_MAPGEN_MAP_STYLE=Стиль карти
+STR_MAPGEN_STYLE_OCEAN=Океан
+STR_MAPGEN_STYLE_CONTINENT=Континент
+STR_MAPGEN_STYLE_ISLANDS=Острови
+STR_MAPGEN_STYLE_ARCHIPELAGO=Архіпелаг
+STR_MAPGEN_STYLE_INLAND=Внутрішній
+STR_MAPGEN_TERRAIN_MIX=Склад рельєфу (% від суші):
+STR_MAPGEN_GRASS_PCT=Трава %
+STR_MAPGEN_FOREST_PCT=Ліс %
+STR_MAPGEN_BUILDING_PCT=Будівлі %
+STR_MAPGEN_SWAMP_PCT=Болото %
+STR_MAPGEN_RIVER_PCT=Річки %
+STR_MAPGEN_BOAT_PCT=Човен %
+STR_MAPGEN_REMAINING_GRASS=Залишок трави: {number}%
+STR_MAPGEN_MINE_DENSITY=Щільність мін %
+STR_MAPGEN_RIVER_COUNT=Кількість річок
+STR_MAPGEN_CITY_COUNT=Кількість міст
+STR_MAPGEN_MAZE_COUNT=Кількість лабіринтів
+STR_MAPGEN_WALL_THICKNESS=Товщина стін
+STR_MAPGEN_CORRIDOR_WIDTH=Ширина коридорів
+STR_MAPGEN_CITY_ROOMS=Кімнати міста
+STR_MAPGEN_LAND_COVERAGE=Покриття суші %
+STR_MAPGEN_DETAIL_PASSES=Проходи деталізації
+STR_MAPGEN_COAST_JAG=Зубчастість узбережжя
+STR_MAPGEN_TERRAIN_LAYERS=Шари рельєфу
+STR_MAPGEN_RIVERS=Річки
+STR_MAPGEN_LAKES=Озера
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} приєднався до гри.
+STR_LV_HAS_JOINED={string1} приєднався до гри
+STR_LV_ALLY_REQUEST={player} надіслав запит на альянс до {other}
+STR_LV_ALLY_ACCEPT={player} прийняв альянс з {other}
+STR_LV_ALLY_LEAVE={player} вийшов з альянсу
+STR_LV_MSG_ALL=Повідомлення всім від {player}: {string1}
+STR_LV_MSG_PLAYERS=Повідомлення від {player} до {other}: {string1}
+STR_LV_MSG_SERVER=Повідомлення сервера: {string1}
+STR_LV_PLAYER_DIED={player} загинув
+STR_LV_PLAYER_KILLED={player} знищив гравця {other}
+STR_LV_PLAYER_REJOINED={player} щойно повернувся до гри.
+STR_LV_PLAYER_LEAVING={player} виходить з гри.
+STR_LV_LOBBY_OPENED=Лобі відкрито.
+STR_LV_GAME_STARTED=Гра розпочата.
+STR_LV_PLAYER_READY={player} готовий.
+STR_LV_PLAYER_UNREADY={player} більше не готовий.
+STR_LV_PLAYER_LEFT_TEAM={player} покинув свою команду.
+STR_LV_PLAYER_JOINED_TEAM={player} приєднався до команди {number}.
+STR_LV_COUNTDOWN_START=Зворотний відлік розпочато.
+STR_LV_COUNTDOWN_CANCEL=Зворотний відлік скасовано.
+STR_LV_MAP_SKIP_VOTE={player} проголосував за пропуск карти.
+STR_LV_MAP_SKIPPED=Карту пропущено. Нова карта: {string1}
+STR_LV_TEAM_BALANCE=Баланс команд застосовано.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Відкрити
+STR_LV_MENU_ACTION=Дія
+STR_LV_PLAY=Відтворити
+STR_LV_PAUSE=Пауза
+STR_LV_STOP=Зупинити
+STR_LV_FAST_FORWARD=Перемотати вперед
+STR_LV_REWIND=Перемотати назад
+STR_LV_MODE=Режим
+STR_LV_MODE_INFO=Інформація
+STR_LV_SELECT_TEAM=Вибрати команду
+STR_LV_USE_TEAM_COLOURS=Використовувати кольори команд
+STR_LV_TANK_CENTRED=Центрування на танку
+STR_LV_DNS_LOOKUPS=DNS-запити
+STR_LV_TEAM_COLOURS=Кольори команд
+STR_LV_MENU_WINDOWS=Вікна
+STR_LV_WIN_CONTROLS=Керування
+STR_LV_WIN_EVENTS=Події
+STR_LV_WIN_GAMEINFO=Інформація про гру
+STR_LV_WIN_ITEMINFO=Інформація про об'єкт
+STR_LV_RESET_WINDOWS=Скинути позиції вікон
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Призначте кольори кожній команді гравців:
+STR_LV_PLAYER_LBL=Гравець {number}:
+STR_LV_NEUTRAL_LBL=Нейтральний:
+STR_LV_ABOUT_TITLE=Перегляд журналів WinBolo
+STR_LV_VERSION_FMT=Версія: {string1}
+STR_LV_LICENSE=Ця програма є вільним програмним забезпеченням; ви можете розповсюджувати\nта/або змінювати її відповідно до умов GNU General\nPublic License, опублікованої Free Software Foundation.
+STR_LV_WEBSITE_LBL=Сайт:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Сірий
+STR_LV_COL_KHAKI=Хакі
+STR_LV_COL_GREEN=Зелений
+STR_LV_COL_PINK=Рожевий
+STR_LV_COL_YELLOW=Жовтий
+STR_LV_COL_LIGHTBLUE=Блакитний
+STR_LV_COL_ORANGE=Помаранчевий
+STR_LV_COL_LIGHTPURPLE=Світло-фіолетовий
+STR_LV_COL_AQUA=Аква
+STR_LV_COL_LIGHTGREEN=Світло-зелений
+STR_LV_COL_LIGHTGREY=Світло-сірий
+STR_LV_COL_RED=Червоний
+STR_LV_COL_BLUE=Синій
+STR_LV_COL_BROWN=Коричневий
+STR_LV_COL_LIGHTPINK=Світло-рожевий
+STR_LV_COL_PALEGREEN=Блідо-зелений
+STR_LV_COL_PURPLE=Фіолетовий
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} с
+STR_LV_INFO_MAP=Назва карти: {string1}
+STR_LV_INFO_GAMETYPE=Тип гри: {string1}
+STR_LV_INFO_HIDDENMINES=Приховані міни: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Комп'ютерні танки: {string1}
+STR_LV_INFO_TIME_LIMIT=Ліміт часу: {string1}
+STR_LV_INFO_START_DELAY=Затримка початку: {string1}
+STR_LV_INFO_WBN_KEY=Ключ WBN:
+STR_LV_INFO_START_TIME=Час початку: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=Жоден об'єкт не вибрано
+STR_LV_LOCATION_FMT=Розташування: {string1}
+STR_LV_OWNER_LBL=Власник: {string1}
+STR_LV_ARMOUR_FMT=Броня: {number}
+STR_LV_SHELLS_FMT=Снаряди: {number}
+STR_LV_MINES_FMT=Міни: {number}
+STR_LV_IN_TANK_FMT=У танку: {string1}
+STR_LV_CENTER_ON_MAP=Центрувати на карті
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Назад
+STR_LV_PLAY_BTN=Відтворити >
+STR_LV_FWD_BTN=Вперед >>
+STR_LV_SPEED_LBL=Швидкість:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} залишилось
+STR_LV_NO_LOG_LOADED=Журнал не завантажено
+
+# Log viewer events panel
+STR_LV_COPY=Копіювати
+STR_LV_COPY_ALL=Копіювати все
+STR_LV_CLEAR_ALL=Очистити все
+STR_LV_AUTO_SCROLL=Автопрокрутка
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=Досягнуто кінець файлу журналу
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Масштаб
+STR_DLGSETTINGS_PERFORMANCE=Продуктивність
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=Ви втратили з'єднання з сервером.\nПовернення до меню.
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Мова:
+STR_DLGLANG_MIDGAME_NOTE=Наявні записи журналу повідомлень не зміняться, доки не будуть перегенеровані.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=Забагато баз: {number} (макс. {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=Забагато бункерів: {number} (макс. {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=Забагато стартових позицій: {number} (макс. {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=База #{number} на ({number2},{number3}): на непрохідному рельєфі
+STR_MAPVALIDATE_BASE_BORDER_ZONE=База #{number} на ({number2},{number3}): у прикордонній зоні мін
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Бункер #{number} на ({number2},{number3}): на непрохідному рельєфі
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Бункер #{number} на ({number2},{number3}): у прикордонній зоні мін
+STR_MAPVALIDATE_START_NOT_DEEP=Старт #{number} на ({number2},{number3}): має бути у відкритому морі
+STR_MAPVALIDATE_START_BORDER_ZONE=Старт #{number} на ({number2},{number3}): у прикордонній зоні мін
+STR_MAPVALIDATE_NO_STARTS=Стартових позицій немає — карта непридатна для гри
+STR_MAPVALIDATE_ONE_START=Лише 1 стартова позиція — лише для одиночної гри
+STR_MAPVALIDATE_BASE_OVERLAP=База #{number} і База #{number2} перекриваються на ({number3},{number4})
+STR_MAPVALIDATE_PILL_OVERLAP=Бункер #{number} і Бункер #{number2} перекриваються на ({number3},{number4})
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=База #{number} і Бункер #{number2} перекриваються на ({number3},{number4})
+STR_MAPVALIDATE_START_OVERLAP=Старт #{number} і Старт #{number2} перекриваються на ({number3},{number4})
+STR_MAPVALIDATE_START_BASE_OVERLAP=Старт #{number} і База #{number2} перекриваються на ({number3},{number4})
+STR_MAPVALIDATE_START_PILL_OVERLAP=Старт #{number} і Бункер #{number2} перекриваються на ({number3},{number4})
