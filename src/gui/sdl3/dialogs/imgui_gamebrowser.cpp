@@ -1110,11 +1110,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(btnW, btnH))) {
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
-                gameFrontSetUdpOptions(playerName, (char *)"", 27500, 0);
+                gameFrontSetUdpOptions(playerName, (char *)"", 27500, 27500);
                 openingStates setupState = useTracker ? openInternetSetup : openLanSetup;
                 gameFrontSetDlgState(setupState);
                 result = (int)setupState;
                 running = false;
+            }
+            if (useTracker && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Requires port forwarding for non-LAN players to join. (Coming: automatic NAT setup.)");
             }
 
             /* Player Name */

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # test_lang_roundtrip.py
 #
-# Verifies that lang/en.txt round-trips byte-for-byte against the C
+# Verifies that data/lang/en.txt round-trips byte-for-byte against the C
 # string table in src/gui/sdl3/lang.c (langTable[]). This catches the
 # class of bug where the loader silently strips trailing spaces from
 # values — several real labels end in a space ("Map Name: ", etc.) so
@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 from dump_lang_en import parse_lang_c, LANG_C_PATH  # noqa: E402
 
-EN_TXT_PATH = REPO_ROOT / "lang" / "en.txt"
+EN_TXT_PATH = REPO_ROOT / "data" / "lang" / "en.txt"
 
 
 def unescape_value(raw):
@@ -62,7 +62,7 @@ def unescape_value(raw):
 
 
 def parse_en_txt_like_c_loader(path):
-    """Parse lang/en.txt the same way the C loader does.
+    """Parse data/lang/en.txt the same way the C loader does.
 
     Returns (entries_by_name, errors). Header lines (name/author/notes)
     are returned in `meta`. Body lines use the symbolic ID name as the

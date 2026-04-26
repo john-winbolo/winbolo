@@ -694,6 +694,26 @@ void gameFrontShutdownServer(void);
 ServerSim *gameFrontGetServerSim(void);
 
 /*********************************************************
+*NAME:          gameFrontGetHostedServerSim
+*PURPOSE:
+*  Returns the ServerSim when this client is hosting a UDP
+*  multiplayer game, NULL otherwise. Used by the GUI tick
+*  loop to drive the server transport.
+*********************************************************/
+ServerSim *gameFrontGetHostedServerSim(void);
+
+/*********************************************************
+*NAME:          gameFrontTrackerCadenceTick
+*PURPOSE:
+*  Per-GUI-tick driver for hosted-server tracker traffic:
+*  refreshes the tracker browser entry every ~120 s and
+*  fires a small NAT keepalive every ~25 s so the tracker
+*  can reach the host between heavy updates.
+*  No-op when not hosting or tracker is disabled.
+*********************************************************/
+void gameFrontTrackerCadenceTick(void);
+
+/*********************************************************
 *NAME:          gameFrontGetTransport
 *PURPOSE:
 *  Returns a pointer to the active Transport, or NULL

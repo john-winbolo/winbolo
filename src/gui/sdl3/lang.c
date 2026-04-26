@@ -13,7 +13,7 @@
 *Author:        John Morrison
 *Purpose:
 *  Cross-platform string table (English built-in) plus an
-*  optional runtime override table loaded from lang/<code>.txt.
+*  optional runtime override table loaded from data/lang/<code>.txt.
 *  The static langTable[] below remains the source of truth
 *  for English; non-English builds layer overrides on top.
 *********************************************************/
@@ -1403,7 +1403,7 @@ void langGetFileName(char *fileName) {
 }
 
 /* -------------------------------------------------------
- * Header-only parse of a lang/<code>.txt: read just the
+ * Header-only parse of a data/lang/<code>.txt: read just the
  * header lines (name=/author=/notes=) and stop at the first
  * body line. Used by the language picker so it can show the
  * translation's name without loading hundreds of override
@@ -1520,7 +1520,7 @@ LangFileEntry *langPickerScan(int *outCount) {
     n = 1;
 
     int globCount = 0;
-    char **files = SDL_GlobDirectory("lang", "*.txt", SDL_GLOB_CASEINSENSITIVE,
+    char **files = SDL_GlobDirectory("data/lang", "*.txt", SDL_GLOB_CASEINSENSITIVE,
                                      &globCount);
     if (files) {
         for (int i = 0; i < globCount; i++) {
@@ -1537,13 +1537,13 @@ LangFileEntry *langPickerScan(int *outCount) {
             stripTxtExt(code);
             lowercaseAscii(code);
 
-            /* Skip the synthetic English baseline if a generated lang/en.txt
+            /* Skip the synthetic English baseline if a generated data/lang/en.txt
              * is present alongside it — they're functionally equivalent and
              * we don't want a duplicate entry in the dropdown. */
             if (strcmp(code, "en") == 0) continue;
 
             char path[FILENAME_MAX];
-            snprintf(path, sizeof(path), "lang/%s", fname);
+            snprintf(path, sizeof(path), "data/lang/%s", fname);
 
             LangFileMeta meta;
             if (!readHeaderOnly(path, &meta)) {

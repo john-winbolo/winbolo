@@ -214,6 +214,10 @@ ClientSim *humanSim = NULL;
 static ServerSim *spServerSim = NULL;
 static Transport spTransport;
 static bool spServerSimActive = FALSE;
+static bool spTransportLocalUsed = FALSE;
+static bool spServerHosted = FALSE;
+static int gfTrackerTime = 11500;
+static int gfNatKeepaliveTicks = 0;
 
 /* UDP multiplayer transport state */
 static Transport udpTransport;
@@ -336,7 +340,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * (deleted, renamed) silently fall back to English. */
     if (strcmp(gameFrontLanguageCode, "en") != 0) {
       char langPath[FILENAME_MAX];
-      snprintf(langPath, sizeof(langPath), "lang/%s.txt",
+      snprintf(langPath, sizeof(langPath), "data/lang/%s.txt",
                gameFrontLanguageCode);
       if (!langLoadFile(langPath)) {
         SDL_Log("gameFrontStart: persisted language '%s' not found — "
@@ -464,7 +468,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
    * since Phase 4 prediction, so we must free them here before screenDestroy
    * invalidates the shared map/bases/pills pointers.
    * We still must NOT call serverSimDestroy (would double-free map etc.). */
-  if (spServerSimActive) {
+  if (spServerSimActive && !spServerHosted) {
     /* Destroy bot brains before cleaning up tanks */
     botManagerDestroy(spServerSim);
     /* Free server's tanks — they're separate from the client's predicted
@@ -478,7 +482,10 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
         }
       }
     }
-    transportLocalDestroy(&spTransport);
+    if (spTransportLocalUsed) {
+      transportLocalDestroy(&spTransport);
+      spTransportLocalUsed = FALSE;
+    }
     serverSimClearActive(spServerSim);
     free(spServerSim);
     spServerSim = NULL;
@@ -987,7 +994,18 @@ bool gameFrontSetDlgState(openingStates newState) {
     gameFrontValidateWbnBeforeJoin();
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
-      humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+      humanSim = &humanSimStorage;
+      {
+        BYTE compressedMap[65536];
+        int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
+        if (compLen > 0) {
+          screenLoadCompressedMapCS(humanSim, compressedMap, compLen, spServerSim->mapName,
+                                    gametype, hiddenMines, startDelay,
+                                    timeLen, gameFrontName, 0, FALSE);
+        } else {
+          clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
+        }
+      }
       if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
       if (netSetup(humanSim, netUdp, gameFrontMyUdp, "127.0.0.1", gameFrontTargetUdp,
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
@@ -1042,6 +1060,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
           spServerSim->sim.viewPlayer = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
+          spTransportLocalUsed = TRUE;
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */
           humanSim = &humanSimStorage;
@@ -1443,7 +1462,36 @@ void gameFrontReloadSkins(void) {
 }
 
 void gameFrontShutdownServer(void) {
-  /* TODO: implement server shutdown for hosted games */
+  if (!spServerSimActive) return;
+
+  transportUdpServerSendServerMessage("Server shutting down");
+  transportUdpServerDestroy();
+
+  if (gameFrontWbnUse) {
+    winbolonetDestroy(TRUE);
+  }
+
+  botManagerDestroy(spServerSim);
+  {
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (spServerSim->sim.tanks[i] != NULL) {
+        tankDestroy(&spServerSim->sim, &spServerSim->sim.tanks[i]);
+      }
+    }
+  }
+  if (spTransportLocalUsed) {
+    transportLocalDestroy(&spTransport);
+    spTransportLocalUsed = FALSE;
+  }
+  serverSimClearActive(spServerSim);
+  serverSimDestroy(spServerSim);
+  free(spServerSim);
+  spServerSim = NULL;
+  spServerSimActive = FALSE;
+  spServerHosted = FALSE;
+  gfTrackerTime = 11500;
+  gfNatKeepaliveTicks = 0;
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -1459,8 +1507,68 @@ bool gameFrontPreferencesExist(void) {
 }
 
 bool gameFrontSetupServer(void) {
-  /* TODO: implement in-process or external server start */
-  return FALSE;
+  bool simOk = FALSE;
+
+  spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
+  if (spServerSim == NULL) {
+    return FALSE;
+  }
+
+  if (strncmp(fileName, "randommap:", 10) == 0) {
+    MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+    const char *seedStr = fileName + 10;
+    if (!mapGenSeedToConfig(seedStr, &cfg)) {
+      SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+    }
+    cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+    cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+    simOk = serverSimCreateRandomMap(spServerSim, &cfg, gametype, hiddenMines, startDelay, timeLen);
+  } else if (fileName[0] != '\0') {
+    simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
+  } else {
+    BYTE emap[6000] = E_MAP;
+    simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+  }
+  if (!simOk) {
+    free(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
+  }
+
+  spServerSim->lobbyEnabled = true;
+  spServerSim->emptyResetEnabled = true;
+  spServerSim->state = serverStateLobby;
+  spServerSim->hasPassword = (password[0] != '\0');
+
+  if (!transportUdpServerCreate(gameFrontMyUdp, "", spServerSim,
+                                password, MAX_TANKS)) {
+    serverSimDestroy(spServerSim);
+    free(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
+  }
+
+  serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
+  spServerSim->sim.viewPlayer = 0;
+
+  spTransport = transportLocalCreate(spServerSim, 0);
+  spTransportLocalUsed = TRUE;
+
+  if (gameFrontWbnUse) {
+    winbolonetCreateServer(spServerSim->mapName, gameFrontMyUdp,
+                           (BYTE)gametype, (BYTE)compTanks,
+                           (BYTE)hiddenMines, (BYTE)spServerSim->hasPassword,
+                           basesGetNumBases(&spServerSim->sim.bs),
+                           pillsGetNumPills(&spServerSim->sim.pb),
+                           serverSimGetNumNeutralBases(spServerSim),
+                           serverSimGetNumNeutralPills(spServerSim),
+                           serverSimGetNumPlayers(spServerSim));
+  }
+
+  spServerSimActive = TRUE;
+  spServerHosted = TRUE;
+  isServer = TRUE;
+  return TRUE;
 }
 
 bool gameFrontLoadInBuiltMap(void) {
@@ -1924,6 +2032,28 @@ void gameFrontSaveWindowSettings(void) {
 
 ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
+}
+
+ServerSim *gameFrontGetHostedServerSim(void) {
+  return (spServerSimActive && spServerHosted) ? spServerSim : NULL;
+}
+
+void gameFrontTrackerCadenceTick(void) {
+  /* @ 100 Hz: 12000 ticks ≈ 120 s, 2500 ticks ≈ 25 s. */
+  if (!spServerHosted || !spServerSimActive) return;
+  if (!gameFrontTrackerEnabled) return;
+
+  if (++gfTrackerTime >= 12000) {
+    gfTrackerTime = 0;
+    transportUdpServerSendTrackerUpdate(spServerSim,
+                                        gameFrontTrackerAddr,
+                                        gameFrontTrackerPort);
+  }
+  if (++gfNatKeepaliveTicks >= 2500) {
+    gfNatKeepaliveTicks = 0;
+    transportUdpServerSendNatKeepalive(gameFrontTrackerAddr,
+                                       gameFrontTrackerPort);
+  }
 }
 
 Transport *gameFrontGetTransport(void) {

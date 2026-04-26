@@ -1495,6 +1495,26 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
            (const struct sockaddr *)&dest, sizeof(dest));
 }
 
+void transportUdpServerSendNatKeepalive(const char *trackerAddr,
+                                        unsigned short trackerPort) {
+    struct sockaddr_in dest;
+    struct hostent *he;
+    static const uint8_t sentinel[4] = { 'W', 'B', 'K', 'A' };
+
+    if (udpServer.sock == INVALID_SOCKET) return;
+
+    he = gethostbyname(trackerAddr);
+    if (he == NULL) return;
+
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_port = htons(trackerPort);
+
+    sendto(udpServer.sock, (const char *)sentinel, sizeof(sentinel), 0,
+           (const struct sockaddr *)&dest, sizeof(dest));
+}
+
 /* Process a single received packet — extracted from the recv loop so both
  * the polled fallback and the recv-thread drain path can share it. */
 static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,

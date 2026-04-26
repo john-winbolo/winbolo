@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # validate_lang.py
 #
-# Validate a translation file (lang/<code>.txt) against the canonical
-# English source (lang/en.txt). Catches the failure modes a translator
+# Validate a translation file (data/lang/<code>.txt) against the canonical
+# English source (data/lang/en.txt). Catches the failure modes a translator
 # is likely to introduce:
 #
 #   * unknown ID (typo of a STR_/MESSAGE_/etc. name) — FAIL
@@ -18,8 +18,8 @@
 # silently passes until the table has entries.
 #
 # Usage:
-#   python3 tools/validate_lang.py lang/de.txt
-#   python3 tools/validate_lang.py --en lang/en.txt lang/de.txt
+#   python3 tools/validate_lang.py data/lang/de.txt
+#   python3 tools/validate_lang.py --en data/lang/en.txt data/lang/de.txt
 #
 # Exit code 0 on clean, 1 on any failure.
 
@@ -30,7 +30,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_EN = REPO_ROOT / "lang" / "en.txt"
+DEFAULT_EN = REPO_ROOT / "data" / "lang" / "en.txt"
 
 # Tokens substituted at render time. The validator counts occurrences
 # per-ID; the per-string multiset must match (ordering may differ —

@@ -160,9 +160,9 @@ tasks.register<Copy>("copyBrainAssets") {
     into(assetsBrainsDir)
 }
 
-// Copy language files into assets/lang/ so the runtime picker can find them
-val langDir = file("../../lang")
-val assetsLangDir = file("src/main/assets/lang")
+// Copy language files into assets/data/lang/ so the runtime picker can find them
+val langDir = file("../../data/lang")
+val assetsLangDir = file("src/main/assets/data/lang")
 
 tasks.register<Copy>("copyLangAssets") {
     from(langDir) {
