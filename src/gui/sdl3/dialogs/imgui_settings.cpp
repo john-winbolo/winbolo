@@ -164,7 +164,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
         if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
         /* Ingamerotate themes always use point-sample regardless
          * of the AllowSvg toggle. */
-        bool pointSample = !gfxSettingsGetAllowSvg()
+        bool pointSample = (gfxSettingsGetThemeDetail() != GFX_THEME_DETAIL_MAX_DETAIL)
                            || tileLoaderThemeRotates();
         int w = size, h = size;
         const int kSuper = pointSample ? 4 : 1;
@@ -204,7 +204,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
         SDL_DestroySurface(surface);
         SDL_free(pixels);
         if (tex) {
-            bool useLinear = gfxSettingsGetAllowSvg()
+            bool useLinear = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL)
                              && !tileLoaderThemeRotates();
             SDL_SetTextureScaleMode(tex,
                 useLinear ? SDL_SCALEMODE_LINEAR
@@ -226,7 +226,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
     SDL_DestroySurface(surface);
     stbi_image_free(data);
     if (tex) {
-        bool useLinear = gfxSettingsGetAllowSvg()
+        bool useLinear = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL)
                          && !tileLoaderThemeRotates();
         SDL_SetTextureScaleMode(tex,
             useLinear ? SDL_SCALEMODE_LINEAR
@@ -355,38 +355,51 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         }
     }
 
-    /* Allow SVG graphics — SVG sources + smooth atlas sampling. */
+    /* Theme Detail Allowed. */
     {
-        bool allowSvg = gfxSettingsGetAllowSvg();
-        if (ImGui::Checkbox("Allow SVG graphics", &allowSvg)) {
-            gfxSettingsSetAllowSvg(allowSvg);
-            sdl3DrawReloadTiles();
-            extern void gameFrontSaveAllowSvg(bool);
-            gameFrontSaveAllowSvg(allowSvg);
-        }
+        const char *detailLabels[] = {
+            "Pixelate Normal",
+            "Pixelate to Zoom",
+            "Max Detail",
+        };
+        int curDetail = (int)gfxSettingsGetThemeDetail();
+        if (curDetail < 0 || curDetail > 2) curDetail = 0;
+        ImGui::TextUnformatted("Theme Detail Allowed");
         ImGui::SameLine();
-        ImGui::TextDisabled("(off = pixel-art look, on = smooth)");
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo("##themedetail", detailLabels[curDetail])) {
+            for (int i = 0; i < 3; ++i) {
+                bool sel = (i == curDetail);
+                if (ImGui::Selectable(detailLabels[i], sel)) {
+                    gfxSettingsSetThemeDetail((GfxThemeDetail)i);
+                    sdl3DrawReloadTiles();
+                    extern void gameFrontSaveThemeDetail(int);
+                    gameFrontSaveThemeDetail(i);
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextDisabled(
+            "Pixelate Normal: SVG @ 1× (chunky pixel art).\n"
+            "Pixelate to Zoom: prefer hand-crafted N-<name>.png\n"
+            "  prefixes (32-, 48-, 64-) at the active zoom.\n"
+            "Max Detail: SVG rasterized smoothly at zoom.");
     }
 
-    /* Animation style. */
-    const char *animLabels[] = { "Pixel Floor", "Pixel Nearest", "Smooth (sub-pixel)" };
-    int curAnim = (int)gfxSettingsGetAnimStyle();
-    ImGui::TextUnformatted("Animation");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(220);
-    if (ImGui::BeginCombo("##animstyle", animLabels[curAnim])) {
-        for (int i = 0; i < 3; ++i) {
-            bool sel = (i == curAnim);
-            if (ImGui::Selectable(animLabels[i], sel)) {
-                gfxSettingsSetAnimStyle((GfxAnimStyle)i);
-            }
-            if (sel) ImGui::SetItemDefaultFocus();
+    /* Allow Smooth Path Shells — cosmetic shell sub-wu motion. */
+    {
+        bool smooth = gfxSettingsGetAllowSmoothShells();
+        if (ImGui::Checkbox("Allow smooth path shells", &smooth)) {
+            gfxSettingsSetAllowSmoothShells(smooth);
+            extern void gameFrontSaveAllowSmoothShells(bool);
+            gameFrontSaveAllowSmoothShells(smooth);
         }
-        ImGui::EndCombo();
+        ImGui::TextDisabled(
+            "Cosmetic - shells appear to fly more directly and\n"
+            "smoothly, but their position no longer snaps to the\n"
+            "pixel grid.");
     }
-    ImGui::TextDisabled(
-        "Floor = classic >>4 (default).  Nearest = round to game pixel.\n"
-        "Smooth = full sub-pixel; only meaningful with SVG themes.");
 
     /* Theme preview strip + rotating preview. */
     ImGui::Spacing();
@@ -416,11 +429,11 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     const int kNumCells = (int)(sizeof(cells)/sizeof(cells[0]));
     static SDL_Texture *cellTex[6] = { nullptr };
     static int cellLoadedIdx = -1;
-    static bool cellLoadedAllowSvg = true;
-    bool curAllowSvg = gfxSettingsGetAllowSvg();
+    static int cellLoadedDetail = -1;
+    int curDetail = (int)gfxSettingsGetThemeDetail();
     if (cellLoadedIdx != s_previewThemeIdx
-        || cellLoadedAllowSvg != curAllowSvg) {
-        cellLoadedAllowSvg = curAllowSvg;
+        || cellLoadedDetail != curDetail) {
+        cellLoadedDetail = curDetail;
         cellLoadedIdx = s_previewThemeIdx;
         for (int i = 0; i < kNumCells; i++) {
             if (cellTex[i]) { SDL_DestroyTexture(cellTex[i]); cellTex[i] = nullptr; }
@@ -474,18 +487,18 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     static SDL_Texture *previewTarget = nullptr;
     static SDL_Texture *previewTankFrames[16] = { nullptr };
     static int  previewLoadedIdx = -1;
-    static bool previewLoadedAllowSvg = true;
+    static int  previewLoadedDetail = -1;
     static bool previewHasPerDir = false;  /* true if frames[1..] are loaded */
     static double rotPreview = 0.0;
     static Uint64 rotLastMs = 0;
     const int previewSize    = 96;
     const int tankRasterSize = 64;
 
-    /* Reload tank textures when selection or AllowSvg changes. */
+    /* Reload tank textures when selection or ThemeDetail changes. */
     if (previewLoadedIdx != s_previewThemeIdx
-        || previewLoadedAllowSvg != gfxSettingsGetAllowSvg()) {
+        || previewLoadedDetail != (int)gfxSettingsGetThemeDetail()) {
         previewLoadedIdx = s_previewThemeIdx;
-        previewLoadedAllowSvg = gfxSettingsGetAllowSvg();
+        previewLoadedDetail = (int)gfxSettingsGetThemeDetail();
         for (int i = 0; i < 16; i++) {
             if (previewTankFrames[i]) { SDL_DestroyTexture(previewTankFrames[i]); previewTankFrames[i] = nullptr; }
         }

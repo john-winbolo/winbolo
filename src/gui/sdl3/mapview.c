@@ -509,7 +509,7 @@ static bool shellSubPxLookup(BYTE bufMx, BYTE bufMy, int dir,
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
-  bool smooth = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
+  bool smooth = gfxSettingsGetAllowSmoothShells();
 
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
@@ -907,15 +907,9 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
      * back on top so the sprite slides at full 1/256-tile precision
      * — purely additive, so if the cache isn't ready the classic
      * position is still correct. */
-    if (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH
-        && s_tankPosValid && playerNum < MAX_TANKS) {
-      float gpxF = (float)s_tankPosX[playerNum] / 16.0f - 8.0f; /* TL game-px */
-      float gpyF = (float)s_tankPosY[playerNum] / 16.0f - 8.0f;
-      float fracX = gpxF - (float)((int)gpxF);
-      float fracY = gpyF - (float)((int)gpyF);
-      sx += fracX * (float)ctx->zoomFactor;
-      sy += fracY * (float)ctx->zoomFactor;
-    }
+    /* Tanks always render on the engine's pixel grid (Pixel Nearest);
+     * the smooth-shells toggle is shell-only by design. */
+    (void)s_tankPosValid; (void)s_tankPosX; (void)s_tankPosY;
 
     {
       int ss = ctx->sheetScale;
@@ -1030,7 +1024,9 @@ static bool lgmSubPxLookup(BYTE bufMx, BYTE bufMy,
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY) {
-  bool smooth = (gfxSettingsGetAnimStyle() == GFX_ANIM_SMOOTH);
+  /* LGMs always render on the engine's pixel grid — sub-wu shell
+   * smoothing is shell-only. */
+  bool smooth = false;
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;

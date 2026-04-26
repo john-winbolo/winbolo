@@ -37,13 +37,32 @@ GfxAnimStyle  gfxSettingsGetAnimStyle(void);
  * using the active animation style. */
 float gfxSettingsWuToGamePixel(int wu);
 
-/* Allow SVG graphics — when true (default) tileLoader prefers SVG
- * sources and the atlas texture uses linear sampling so rotated
- * sprites smooth out at the edges.  When false, tileLoader skips
- * SVG entirely (PNG / BMP only) and the atlas uses nearest-neighbor
- * sampling for a crisp pixel-art look. */
-void gfxSettingsSetAllowSvg(bool allow);
-bool gfxSettingsGetAllowSvg(void);
+/* Theme detail level — how much vector / hand-crafted PNG quality
+ * the renderer pulls from a theme.
+ *   PixelateNormal: SVG point-sampled at 1× regardless of zoom.
+ *                   Atlas NEAREST.  Pure pixel-art look.
+ *   PixelateToZoom: prefer hand-crafted N-<name>.png (e.g. 32-, 48-,
+ *                   64-) at the active atlas zoom; fall back to
+ *                   smaller prefixes, then to the SVG point-sampled
+ *                   at 1×.  Atlas NEAREST.
+ *   MaxDetail:      rasterize SVG at the atlas zoom with anti-
+ *                   aliasing.  Atlas LINEAR sampling for smooth
+ *                   rotation. */
+typedef enum {
+    GFX_THEME_DETAIL_PIXELATE_NORMAL = 0,
+    GFX_THEME_DETAIL_PIXELATE_ZOOM   = 1,
+    GFX_THEME_DETAIL_MAX_DETAIL      = 2,
+} GfxThemeDetail;
+
+void           gfxSettingsSetThemeDetail(GfxThemeDetail d);
+GfxThemeDetail gfxSettingsGetThemeDetail(void);
+
+/* Cosmetic: when true, shells render at full sub-wu (1/256-tile)
+ * precision instead of snapping to the game-pixel grid.  Makes flight
+ * paths look smoother / more direct but breaks pixel-art alignment
+ * for the shell sprite.  Default off. */
+void gfxSettingsSetAllowSmoothShells(bool allow);
+bool gfxSettingsGetAllowSmoothShells(void);
 
 #ifdef __cplusplus
 }

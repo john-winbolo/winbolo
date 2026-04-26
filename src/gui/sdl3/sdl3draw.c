@@ -347,7 +347,9 @@ static bool sdl3LoadTiles(void) {
    * out at the edges.  Off → nearest for crisp pixel-art look.
    * Ingamerotate themes always use NEAREST regardless of the toggle —
    * crisp rotation is the look the user wants there. */
-  bool useLinear = gfxSettingsGetAllowSvg() && !tileLoaderThemeRotates();
+  /* Theme Detail = Max Detail uses LINEAR sampling so rotation/zoom
+   * blend smoothly.  Pixelate modes use NEAREST for crisp pixel art. */
+  bool useLinear = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL);
   SDL_SetTextureScaleMode(gTilesTex,
                           useLinear ? SDL_SCALEMODE_LINEAR
                                     : SDL_SCALEMODE_NEAREST);
@@ -1366,13 +1368,13 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
      * bounds stay put.  Anchor the zoom on the cursor position when
      * available (mouse-wheel zoom keeps the world point under the
      * cursor stationary) — falls back to the playfield centre. */
-    /* Override mode also forces atlas NEAREST sampling for the world
-     * pass — zooming in (Ctrl-O wheel) should show crisp pixels, not
-     * blurry LINEAR-filtered upscale.  Restore at end of the world
-     * block so the rest of the frame uses the user's preference. */
+    /* Override mode forces atlas NEAREST sampling for the world pass
+     * UNLESS the user picked Max Detail — they explicitly want vector-
+     * smooth upscale at high zoom.  Restore at end of the world block. */
     SDL_ScaleMode savedAtlasScale = SDL_SCALEMODE_NEAREST;
     bool atlasScaleOverridden = false;
-    if (overrideModeIsOn() && gTilesTex) {
+    if (overrideModeIsOn() && gTilesTex
+        && gfxSettingsGetThemeDetail() != GFX_THEME_DETAIL_MAX_DETAIL) {
       SDL_GetTextureScaleMode(gTilesTex, &savedAtlasScale);
       if (savedAtlasScale != SDL_SCALEMODE_NEAREST) {
         SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);

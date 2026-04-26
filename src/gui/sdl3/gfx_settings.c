@@ -4,11 +4,17 @@
 
 #include <math.h>
 
-static GfxAnimStyle s_animStyle = GFX_ANIM_PIXEL_FLOOR;
-static bool         s_allowSvg  = true;
+/* Animation style is now locked to Pixel Nearest — kept as state for
+ * any code still calling gfxSettingsWuToGamePixel(). */
+static GfxAnimStyle    s_animStyle        = GFX_ANIM_PIXEL_NEAREST;
+static GfxThemeDetail  s_themeDetail      = GFX_THEME_DETAIL_PIXELATE_NORMAL;
+static bool            s_allowSmoothShells = false;
 
-void gfxSettingsSetAllowSvg(bool allow) { s_allowSvg = allow; }
-bool gfxSettingsGetAllowSvg(void)       { return s_allowSvg; }
+void           gfxSettingsSetThemeDetail(GfxThemeDetail d) { s_themeDetail = d; }
+GfxThemeDetail gfxSettingsGetThemeDetail(void)             { return s_themeDetail; }
+
+void gfxSettingsSetAllowSmoothShells(bool allow) { s_allowSmoothShells = allow; }
+bool gfxSettingsGetAllowSmoothShells(void)       { return s_allowSmoothShells; }
 
 void gfxSettingsSetAnimStyle(GfxAnimStyle s) {
     s_animStyle = s;

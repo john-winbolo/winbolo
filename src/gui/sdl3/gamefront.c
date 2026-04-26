@@ -1671,12 +1671,20 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     GetPrivateProfileString("GRAPHICS", "Theme", "", themeBuf, sizeof(themeBuf), prefsFile);
     tileLoaderSetTheme(themeBuf);
   }
-  /* Allow SVG graphics — controls SVG vs PNG source preference and
-   * atlas scale-mode (smooth vs nearest). */
+  /* Theme Detail Allowed — pixelate / pixelate-to-zoom / max detail.
+   * Replaces the older AllowSvg toggle. */
   {
     char buf[16] = "";
-    GetPrivateProfileString("GRAPHICS", "AllowSvg", "1", buf, sizeof(buf), prefsFile);
-    gfxSettingsSetAllowSvg(atoi(buf) != 0);
+    GetPrivateProfileString("GRAPHICS", "ThemeDetail", "0", buf, sizeof(buf), prefsFile);
+    int v = atoi(buf);
+    if (v < 0 || v > 2) v = 0;
+    gfxSettingsSetThemeDetail((GfxThemeDetail)v);
+  }
+  /* Allow Smooth Path Shells — cosmetic sub-wu shell motion. */
+  {
+    char buf[16] = "";
+    GetPrivateProfileString("GRAPHICS", "AllowSmoothShells", "0", buf, sizeof(buf), prefsFile);
+    gfxSettingsSetAllowSmoothShells(atoi(buf) != 0);
   }
 
   /* Winbolo.net */
@@ -1699,9 +1707,17 @@ void gameFrontSaveThemeChoice(const char *themeName) {
                              getPreferenceFilePath());
 }
 
-/* Persist the Allow SVG graphics toggle. */
-void gameFrontSaveAllowSvg(bool allow) {
-  WritePrivateProfileString("GRAPHICS", "AllowSvg",
+/* Persist the Theme Detail dropdown choice. */
+void gameFrontSaveThemeDetail(int themeDetail) {
+  char buf[8];
+  SDL_snprintf(buf, sizeof(buf), "%d", themeDetail);
+  WritePrivateProfileString("GRAPHICS", "ThemeDetail", buf,
+                             getPreferenceFilePath());
+}
+
+/* Persist the Allow Smooth Path Shells checkbox. */
+void gameFrontSaveAllowSmoothShells(bool allow) {
+  WritePrivateProfileString("GRAPHICS", "AllowSmoothShells",
                              allow ? "1" : "0",
                              getPreferenceFilePath());
 }

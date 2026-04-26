@@ -136,12 +136,12 @@ static bool tryLoadSVGEx(const char *path, int w, int h,
     return true;
 }
 
-/* Backwards-compat wrapper.  Ingamerotate themes always use point-
- * sampling regardless of AllowSvg — the toggle is ignored for those. */
+/* Backwards-compat wrapper.  Point-sample for the Pixelate modes,
+ * standard AA for Max Detail (regardless of theme — Max Detail
+ * means Max Detail). */
 static bool tryLoadSVG(const char *path, int w, int h,
                        unsigned char *out, NSVGrasterizer *rast) {
-    bool pointSample = !gfxSettingsGetAllowSvg()
-                       || tileLoaderThemeRotates();
+    bool pointSample = (gfxSettingsGetThemeDetail() != GFX_THEME_DETAIL_MAX_DETAIL);
     return tryLoadSVGEx(path, w, h, out, rast, pointSample);
 }
 
@@ -227,6 +227,34 @@ bool tileLoaderThemeRotates(void) {
     return SDL_strcmp(s_themeName + (n - sn), suffix) == 0;
 }
 
+/* For Pixelate-to-Zoom: try N-<name>.png in <dir> at the largest
+ * prefix ≤ targetSize first, then smaller, returning the first
+ * match.  Loaded into out at (w x h) — tryLoadPNG nearest-neighbor
+ * scales to that size if the source dimensions differ. */
+static bool tryLoadPrefixedPNG(const char *dir, const char *name,
+                                int targetSize, int w, int h,
+                                unsigned char *out) {
+    /* Prefixes the user might supply, in decreasing order. */
+    static const int kPrefixes[] = { 64, 48, 32, 24 };
+    char path[512];
+    /* Try sizes ≤ targetSize in decreasing order (best match first). */
+    for (size_t i = 0; i < sizeof(kPrefixes) / sizeof(kPrefixes[0]); i++) {
+        int p = kPrefixes[i];
+        if (p > targetSize) continue;
+        SDL_snprintf(path, sizeof(path), "%s/%d-%s.png", dir, p, name);
+        if (tryLoadPNG(path, w, h, out)) return true;
+    }
+    /* If targetSize is bigger than any prefix we tried, also accept
+     * larger prefixes (downscale) — better than nothing. */
+    for (size_t i = 0; i < sizeof(kPrefixes) / sizeof(kPrefixes[0]); i++) {
+        int p = kPrefixes[i];
+        if (p <= targetSize) continue;
+        SDL_snprintf(path, sizeof(path), "%s/%d-%s.png", dir, p, name);
+        if (tryLoadPNG(path, w, h, out)) return true;
+    }
+    return false;
+}
+
 SDL_Surface *tileLoaderBuildSheet(int tileSize) {
     /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
        and the sheet is the classic 496x176.  When tileSize==32, scale==2
@@ -273,6 +301,8 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 
     char pathBuf[512];
     int svgCount = 0, pngCount = 0, bmpCount = 0;
+    GfxThemeDetail detail = gfxSettingsGetThemeDetail();
+    bool tryPrefixedPng = (detail == GFX_THEME_DETAIL_PIXELATE_ZOOM);
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const TileMapEntry *e = &gTileMap[i];
@@ -282,11 +312,29 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int dstY = e->sheetY * scale;
         bool loaded = false;
 
-        /* Theme override: try data/theme/<theme>/<name>.svg|png first.
-         * SVGs are always loaded — themes that only ship SVG (like
-         * stock_svg_ingamerotate) need them to display at all.  The
-         * AllowSvg toggle only affects the atlas SCALE MODE (linear
-         * vs nearest), not which sources are loaded. */
+        /* Pixelate-to-Zoom: hand-crafted N-<name>.png prefixes win
+         * over SVG when the user has supplied them.  Try the active
+         * theme dir first, then the default. */
+        if (tryPrefixedPng) {
+            char dir[256];
+            if (s_themeName[0]) {
+                SDL_snprintf(dir, sizeof(dir), "data/theme/%s", s_themeName);
+                if (tryLoadPrefixedPNG(dir, e->name, w, w, h, tmpBuf)) {
+                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                    loaded = true;
+                    pngCount++;
+                }
+            }
+            if (!loaded) {
+                if (tryLoadPrefixedPNG("data/svg", e->name, w, w, h, tmpBuf)) {
+                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                    loaded = true;
+                    pngCount++;
+                }
+            }
+        }
+
+        /* Theme override: try data/theme/<theme>/<name>.svg|png. */
         if (!loaded && s_themeName[0]) {
             SDL_snprintf(pathBuf, sizeof(pathBuf),
                          "data/theme/%s/%s.svg", s_themeName, e->name);
@@ -305,10 +353,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
                 }
             }
             /* Ingamerotate themes only ship _00 of rotation groups —
-             * the per-direction _01..15 atlas slots stay empty here
-             * and runtime code (mapview.c) detects this via
-             * tileLoaderThemeRotates() and uses SDL_RenderTextureRotated
-             * to rotate _00 at draw time. */
+             * runtime code rotates _00 at draw time. */
         }
 
         /* Try SVG first — rasterized at scaled size. */
@@ -478,7 +523,13 @@ static SDL_Texture *bakeRotatedTexture(SDL_Renderer *renderer,
                     (double)dir * 22.5);
 
     int cacheSize = kRotGroups[group].cacheSize;
-    const int kSuper = 4;
+    /* Pixelate modes only need 4× super for the centre-pick to skip
+     * AA-edge samples.  Max Detail uses 10× — that lands the cached
+     * texture at cacheSize*10 px (240 for tanks, 80 for shells), so
+     * the rotated tank stays 1:1 sharp through ~10× display zoom and
+     * only softens (LINEAR upscale) at extreme override zoom. */
+    bool maxDetailBake = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL);
+    const int kSuper = maxDetailBake ? 10 : 4;
     int hiW = cacheSize * kSuper;
     int hiH = cacheSize * kSuper;
     unsigned char *hi = (unsigned char *)SDL_malloc((size_t)(hiW * hiH * 4));
@@ -501,37 +552,53 @@ static SDL_Texture *bakeRotatedTexture(SDL_Renderer *renderer,
     nsvgRasterize(rast, image, offX, offY, scale, hi, hiW, hiH, hiW * 4);
     nsvgDelete(image);
 
-    /* Centre-pick + alpha threshold: each output pixel takes the SVG
-     * colour at the centre of its 4×4 hi-res block.  Alpha is snapped
-     * to 0 or 255 so AA-fringe pixels don't bleed the terrain through. */
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(cacheSize * cacheSize * 4));
-    if (!pixels) { SDL_free(hi); return NULL; }
-    SDL_memset(pixels, 0, (size_t)(cacheSize * cacheSize * 4));
-    for (int y = 0; y < cacheSize; y++) {
-        int sy = y * kSuper + kSuper / 2;
-        for (int x = 0; x < cacheSize; x++) {
-            int sx = x * kSuper + kSuper / 2;
-            const unsigned char *sp = hi + (sy * hiW + sx) * 4;
-            unsigned char *dp = pixels + (y * cacheSize + x) * 4;
-            if (sp[3] >= 128) {
-                dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = 255;
-            } else {
-                dp[0] = 0; dp[1] = 0; dp[2] = 0; dp[3] = 0;
+    bool maxDetail = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL);
+    SDL_Surface *surface = NULL;
+    unsigned char *outPixels = NULL;
+    int outSize = 0;
+
+    if (maxDetail) {
+        /* Store the full kSuper-supersampled buffer as the cache
+         * texture — at runtime the dest rect is still cacheSize*zoom,
+         * so SDL has kSuper× more source pixels per dest pixel and
+         * LINEAR sampling stays sharp at high override zoom. */
+        outSize   = hiW;          /* hiW == cacheSize * kSuper */
+        outPixels = hi;           /* hand off ownership */
+        hi = NULL;
+    } else {
+        /* Pixelate modes: centre-pick + alpha threshold → crisp
+         * pixel-art rotation. */
+        outSize   = cacheSize;
+        outPixels = (unsigned char *)SDL_malloc((size_t)(cacheSize * cacheSize * 4));
+        if (!outPixels) { SDL_free(hi); return NULL; }
+        SDL_memset(outPixels, 0, (size_t)(cacheSize * cacheSize * 4));
+        for (int y = 0; y < cacheSize; y++) {
+            int sy = y * kSuper + kSuper / 2;
+            for (int x = 0; x < cacheSize; x++) {
+                int sx = x * kSuper + kSuper / 2;
+                const unsigned char *sp = hi + (sy * hiW + sx) * 4;
+                unsigned char *dp = outPixels + (y * cacheSize + x) * 4;
+                if (sp[3] >= 128) {
+                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = 255;
+                } else {
+                    dp[0] = 0; dp[1] = 0; dp[2] = 0; dp[3] = 0;
+                }
             }
         }
+        SDL_free(hi);
     }
-    SDL_free(hi);
 
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(cacheSize, cacheSize,
-                                                  SDL_PIXELFORMAT_RGBA32,
-                                                  pixels, cacheSize * 4);
-    if (!surface) { SDL_free(pixels); return NULL; }
+    surface = SDL_CreateSurfaceFrom(outSize, outSize,
+                                     SDL_PIXELFORMAT_RGBA32,
+                                     outPixels, outSize * 4);
+    if (!surface) { SDL_free(outPixels); return NULL; }
     SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
-    SDL_free(pixels);
+    SDL_free(outPixels);
     if (tex) {
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+        SDL_SetTextureScaleMode(tex,
+            maxDetail ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
     }
     return tex;
 }
