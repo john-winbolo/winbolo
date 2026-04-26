@@ -86,7 +86,16 @@ typedef enum {
                                  joiners, or BOLO_PORTMAP=OFF builds) */
   SERVER_PORTMAP_PENDING,     /* requested, libplum still working      */
   SERVER_PORTMAP_SUCCEEDED,   /* gateway accepted; externalIp/Port set */
-  SERVER_PORTMAP_FAILED       /* deadline elapsed without a mapping    */
+  SERVER_PORTMAP_FAILED,      /* deadline elapsed without a mapping    */
+  SERVER_PORTMAP_HOLE_PUNCH_OK,    /* libplum failed but tracker probe
+                                      round-trips — joiners on most
+                                      networks can still connect via
+                                      hole-punching */
+  SERVER_PORTMAP_SYMMETRIC_NAT     /* libplum succeeded but the tracker
+                                      sees a different reflexive address
+                                      than libplum reported — symmetric
+                                      NAT layer means joiners cannot
+                                      hole-punch through */
 } ServerPortmapStatus;
 
 typedef struct {
@@ -99,5 +108,13 @@ typedef struct {
  * briefly so the caller never sees a half-written externalIp from
  * libplum's worker thread. */
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out);
+
+/* Called from the recv path when a PACKET_PUNCH_PROBE_REPLY arrives.
+ * The reflexive address is what the tracker sees as our external
+ * IP:port — used to detect symmetric NAT and confirm bidirectional
+ * reachability. Takes the threading mutex briefly to update state
+ * read by serverInstanceGetPortmapInfo. */
+void serverInstanceRecordProbeReply(const char *reflexiveIp,
+                                    unsigned short reflexivePort);
 
 #endif /* SERVER_LIFECYCLE_H */

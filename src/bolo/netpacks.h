@@ -248,6 +248,17 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_MAP_SKIP_VOTE    151  /* Client -> Server: toggle skip vote */
 #define PACKET_MAP_SKIP_STATE   152  /* Server -> Clients: current vote tally */
 
+/* Phase 3 — UDP hole-punching coordination via tracker. Numbered to
+ * match tracker/udp.h (153-157 range chosen to avoid the existing
+ * 130-133 lobby packet collision). Constants 153-155 are reserved
+ * here for cross-codebase numbering but NOT implemented in this
+ * commit — only the probe round-trip (156/157) ships now. */
+#define PACKET_PUNCH_REQUEST        153   /* joiner → tracker */
+#define PACKET_PUNCH_NOTIFY         154   /* tracker → host */
+#define PACKET_PUNCH_REQUEST_ACK    155   /* tracker → joiner */
+#define PACKET_PUNCH_PROBE_REQUEST  156   /* host → tracker, this commit */
+#define PACKET_PUNCH_PROBE_REPLY    157   /* tracker → host, this commit */
+
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
 #define ALLIANCE_EVENT_ACCEPT   1

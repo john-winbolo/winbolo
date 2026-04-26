@@ -351,7 +351,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                                               gameFrontTargetUdp,
                                               gameFrontName, password,
                                               gameFrontWbnUse ? gameFrontWbnToken : "",
-                                              wantRejoin);
+                                              wantRejoin,
+                                              "", 0);
     if (transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&wasmTransport);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
