@@ -110,9 +110,9 @@ extern "C" int imguiWelcomeShow(void) {
     float fontSize = 20.0f * uiScale;
     {
         int fontDataSize = 0;
-        unsigned char *fontData = loadFontFromAssets("data/CourierPrime-Regular.ttf", &fontDataSize);
+        unsigned char *fontData = loadFontFromAssets("data/fonts/CourierPrime-Regular.ttf", &fontDataSize);
         if (!fontData) {
-            fontData = loadFontFromAssets("CourierPrime-Regular.ttf", &fontDataSize);
+            fontData = loadFontFromAssets("fonts/CourierPrime-Regular.ttf", &fontDataSize);
         }
         if (fontData) {
             SDL_Log("[Welcome] Loaded font, %d bytes, size=%.0f", fontDataSize, fontSize);
