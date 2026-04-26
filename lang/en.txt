@@ -1174,6 +1174,10 @@ STR_DLGSETTINGS_PERFORMANCE=Performance
 STR_DLGSETTINGS_FPS_FMT=FPS: {number}
 NETERR_LOSTCONNECTION_RETURN_MENU=You have lost your connection to the server.\nReturning to menu.
 
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Language:
+STR_DLGLANG_MIDGAME_NOTE=Existing message-log entries won't change language until they're regenerated.
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

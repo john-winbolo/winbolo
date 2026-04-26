@@ -156,6 +156,29 @@ extern "C" void imguiSettingsShow(void) {
     imguiWinbolonetReset();
     imguiWinbolonetStartValidation();
 
+    /* Scan available translations once for the language dropdown.
+     * Re-scanning every frame would hit the disk on every redraw; the
+     * picker is local to this dialog so a fresh scan on next open is
+     * sufficient if a translator drops a new file in lang/. */
+    int            langCount = 0;
+    LangFileEntry *langEntries = langPickerScan(&langCount);
+    int            curLangIdx = 0;
+    {
+        char curCode[32];
+        curCode[0] = '\0';
+        gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
+        if (curCode[0] == '\0') {
+            curLangIdx = 0;  /* English baseline */
+        } else {
+            for (int i = 0; i < langCount; i++) {
+                if (strcmp(curCode, langEntries[i].code) == 0) {
+                    curLangIdx = i;
+                    break;
+                }
+            }
+        }
+    }
+
     bool running = true;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
@@ -286,6 +309,66 @@ extern "C" void imguiSettingsShow(void) {
                 }
                 ImGui::EndCombo();
             }
+
+            /* ---- Language picker ---- */
+            ImGui::Spacing();
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(220);
+            const char *curLangLabel =
+                (curLangIdx >= 0 && curLangIdx < langCount &&
+                 langEntries[curLangIdx].meta.name[0] != '\0')
+                    ? langEntries[curLangIdx].meta.name
+                    : langGetText(STR_DLGLANG_NAME);
+            if (ImGui::BeginCombo("##language", curLangLabel)) {
+                for (int i = 0; i < langCount; i++) {
+                    const char *itemLabel =
+                        (langEntries[i].meta.name[0] != '\0')
+                            ? langEntries[i].meta.name
+                            : langEntries[i].code;
+                    bool selected = (curLangIdx == i);
+                    if (ImGui::Selectable(itemLabel, selected)) {
+                        if (i == 0) {
+                            /* English baseline — drop any loaded override. */
+                            langUnloadFile();
+                            gameFrontSetLanguageCode("");
+                        } else {
+                            if (langLoadFile(langEntries[i].path)) {
+                                gameFrontSetLanguageCode(langEntries[i].code);
+                            }
+                        }
+                        curLangIdx = i;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            /* Author / Notes / fallback footnote. When English is
+             * selected (no override loaded) the meta on entry 0 was
+             * populated from STR_DLGLANG_NAME/AUTHOR/NOTES so this
+             * block stays consistent. langGetLoadedMeta() may also be
+             * non-NULL for a loaded file; prefer that for non-English
+             * entries so live re-translation of the meta works. */
+            const LangFileMeta *displayMeta = nullptr;
+            if (curLangIdx == 0 || curLangIdx >= langCount) {
+                displayMeta = (langCount > 0) ? &langEntries[0].meta : nullptr;
+            } else {
+                const LangFileMeta *loaded = langGetLoadedMeta();
+                displayMeta = loaded ? loaded : &langEntries[curLangIdx].meta;
+            }
+            if (displayMeta) {
+                ImGui::Text("%s%s",
+                            langGetText(STR_DLGLANG_AUTHOR_CAPTION),
+                            displayMeta->author);
+                if (displayMeta->notes[0] != '\0') {
+                    ImGui::TextWrapped("%s%s",
+                                       langGetText(STR_DLGLANG_NOTES_CAPTION),
+                                       displayMeta->notes);
+                }
+            }
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGLANG_DEFAULTNOTE));
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGLANG_MIDGAME_NOTE));
 
 #if !BOLO_MOBILE
             {
@@ -520,6 +603,10 @@ extern "C" void imguiSettingsShow(void) {
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
+
+    if (langEntries) {
+        langPickerFreeEntries(langEntries, langCount);
+    }
 
     dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
 
