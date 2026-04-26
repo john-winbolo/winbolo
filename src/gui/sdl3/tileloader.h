@@ -59,6 +59,47 @@ const char *tileLoaderGetTheme(void);
  * directions at draw time.  Detected by name suffix _ingamerotate. */
 bool tileLoaderThemeRotates(void);
 
+/* Theme metadata loaded from data/theme/<active>/theme.ini.  All
+ * fields are NUL-terminated strings; max_pixel_density is the
+ * theme author's declared cap on density (default 1 — "classic
+ * Bolo only").  Strings are owned by tileloader; copy if you need
+ * to keep them across a tileLoaderSetTheme call. */
+typedef struct {
+    char  name[64];
+    char  author[64];
+    char  email[128];
+    char  website[256];
+    char  release_date[32];
+    int   max_pixel_density;   /* 1, 2, 3, 4, … */
+    bool  has_ini;             /* false = defaults; theme.ini missing */
+} TileLoaderThemeInfo;
+
+/* Returns the active theme's metadata.  Always non-NULL — defaults
+ * (max_pixel_density=1, all strings empty, has_ini=false) when the
+ * theme has no theme.ini or no theme is active.  The pointer is
+ * valid until the next tileLoaderSetTheme call. */
+const TileLoaderThemeInfo *tileLoaderGetThemeInfo(void);
+
+/* Density coverage of the active theme.  Filled in once at theme
+ * load.  density (1..max_pixel_density) maps to:
+ *   0 = no tiles at all at this density
+ *   1 = some tiles at this density (partial coverage)
+ *   2 = all tiles at this density (full coverage)
+ * Density 1 is always 2 (every base sprite has at least the 1×
+ * default).  SVG covers densities up to themeInfo.max_pixel_density. */
+int tileLoaderGetDensityCoverage(int density);
+
+/* Highest "all tiles" density at or below cap.  Used by the
+ * Match-to-zoom path to pick the atlas resolution.  Always returns
+ * at least 1. */
+int tileLoaderGetAllTilesDensityAtMost(int cap);
+
+/* Per-sprite max density actually available — what the High Detail
+ * path uses.  spriteName is one of gTileMap[]'s names ("tank_self_00",
+ * "shell_03", etc.).  Returns 1 when no theme prefix or SVG provides
+ * higher detail. */
+int tileLoaderGetSpriteMaxDensity(const char *spriteName);
+
 /* True when the active theme actually ships a hand-crafted sprite
  * for <baseName>_<NN> (e.g. "tank_selfboat", 5).  Checks .svg, .png,
  * and prefixed N-<baseName>_<NN>.png variants under

@@ -37,52 +37,45 @@ GfxAnimStyle  gfxSettingsGetAnimStyle(void);
  * using the active animation style. */
 float gfxSettingsWuToGamePixel(int wu);
 
-/* Theme detail level — how much vector / hand-crafted PNG quality
- * the renderer pulls from a theme.
- *   PixelateNormal: SVG point-sampled at 1× regardless of zoom.
- *                   Atlas NEAREST.  Pure pixel-art look.
- *   PixelateToZoom: prefer hand-crafted N-<name>.png (e.g. 32-, 48-,
- *                   64-) at the active atlas zoom; fall back to
- *                   smaller prefixes, then to the SVG point-sampled
- *                   at 1×.  Atlas NEAREST.
- *   MaxDetail:      rasterize SVG at the atlas zoom with anti-
- *                   aliasing.  Atlas LINEAR sampling for smooth
- *                   rotation. */
+/* Tile Detail Level — how the tile atlas is built from the active
+ * theme's assets.  Independent of motion (see GfxAnimSmoothness).
+ *   Classic:     density 1 only.  Pixelation matches standard
+ *                bolo's size.
+ *   MatchToZoom: at the active gZoomFactor, use the highest density
+ *                <= gZoomFactor for which the theme provides ALL
+ *                tiles; fall back to a lower density that's full.
+ *   HighDetail:  per sprite, use the highest density the theme
+ *                actually provides for that sprite — partial
+ *                coverage is fine. */
 typedef enum {
-    GFX_THEME_DETAIL_PIXELATE_NORMAL    = 0,
-    GFX_THEME_DETAIL_PIXELATE_ZOOM      = 1,
-    GFX_THEME_DETAIL_MAX_DETAIL         = 2,
-    /* Same atlas + sampling treatment as MAX_DETAIL but also
-     * forces smooth-path shells regardless of the user's persisted
-     * AllowSmoothShells preference. */
-    GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH  = 3,
-} GfxThemeDetail;
+    GFX_TILE_DETAIL_CLASSIC       = 0,
+    GFX_TILE_DETAIL_MATCH_TO_ZOOM = 1,
+    GFX_TILE_DETAIL_HIGH_DETAIL   = 2,
+} GfxTileDetail;
 
-void           gfxSettingsSetThemeDetail(GfxThemeDetail d);
-GfxThemeDetail gfxSettingsGetThemeDetail(void);
+/* Animation Smoothness — motion granularity for tanks / shells /
+ * LGMs (builders).  Independent of tile detail.
+ *   Classic:           game-pixel grid (16 wu/step).  Bolo's old feel.
+ *   MatchToPixelation: sprites step at the same pixel size that the
+ *                      tile detail produces (per sprite).
+ *   Max:               finest motion the screen can show
+ *                      (16 / gZoomFactor wu/step). */
+typedef enum {
+    GFX_ANIM_SMOOTH_CLASSIC             = 0,
+    GFX_ANIM_SMOOTH_MATCH_TO_PIXELATION = 1,
+    GFX_ANIM_SMOOTH_MAX                 = 2,
+} GfxAnimSmoothness;
 
-/* True when the active ThemeDetail uses the Max Detail rendering
- * path (atlas LINEAR/PIXELART, AA SVG bake, runtime _00 rotation
- * etc.).  Both MAX_DETAIL and MAX_DETAIL_SMOOTH return true. */
-bool gfxSettingsThemeDetailIsMax(void);
+void              gfxSettingsSetTileDetail(GfxTileDetail d);
+GfxTileDetail     gfxSettingsGetTileDetail(void);
+void              gfxSettingsSetAnimSmoothness(GfxAnimSmoothness s);
+GfxAnimSmoothness gfxSettingsGetAnimSmoothness(void);
 
-/* Cosmetic: when true, shells render at full sub-wu (1/256-tile)
- * precision instead of snapping to the game-pixel grid.  Makes flight
- * paths look smoother / more direct but breaks pixel-art alignment
- * for the shell sprite.  Default off. */
-void gfxSettingsSetAllowSmoothShells(bool allow);
-bool gfxSettingsGetAllowSmoothShells(void);
-
-/* Effective smooth-shells flag for the renderer: returns true when
- * AllowSmoothShells is set OR ThemeDetail is MAX_DETAIL_SMOOTH.
- * The persisted AllowSmoothShells value is preserved either way. */
-bool gfxSettingsEffectiveSmoothShells(void);
-
-/* True when the active ThemeDetail wants ALL animated sprites
- * (tanks, shells, LGMs) to render at full sub-wu (1/256-tile)
- * precision instead of snapping to the game-pixel grid.  Currently
- * only MAX_DETAIL_SMOOTH enables this. */
-bool gfxSettingsAllSmoothMotion(void);
+/* "Force smooth path shells" override.  When ON shells move at MAX
+ * smoothness regardless of AnimSmoothness (unless AnimSmoothness is
+ * already MAX, in which case the toggle is hidden in the UI). */
+void gfxSettingsSetForceSmoothShells(bool on);
+bool gfxSettingsGetForceSmoothShells(void);
 
 #ifdef __cplusplus
 }

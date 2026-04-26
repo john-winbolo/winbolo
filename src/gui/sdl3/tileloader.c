@@ -117,7 +117,7 @@ static bool tryLoadSVGEx(const char *path, int w, int h,
  * means Max Detail). */
 static bool tryLoadSVG(const char *path, int w, int h,
                        unsigned char *out, NSVGrasterizer *rast) {
-    bool pointSample = !gfxSettingsThemeDetailIsMax();
+    bool pointSample = (gfxSettingsGetTileDetail() != GFX_TILE_DETAIL_HIGH_DETAIL);
     return tryLoadSVGEx(path, w, h, out, rast, pointSample);
 }
 
@@ -189,14 +189,197 @@ typedef struct {
 static ThemeMaskEntry s_themeMasks[8];
 static int            s_themeMaskCount = 0;
 
+/* Theme metadata, populated from data/theme/<active>/theme.ini on
+ * tileLoaderSetTheme.  Defaults to "no INI / classic only" when
+ * absent. */
+static TileLoaderThemeInfo s_themeInfo = { .max_pixel_density = 1 };
+
+#ifdef _WIN32
+#include <windows.h>
+#define GetPrivateProfileString GetPrivateProfileStringA
+#else
+extern DWORD GetPrivateProfileString(const char *section, const char *key,
+                                      const char *def, char *dest,
+                                      DWORD size, const char *file);
+#endif
+
+static void resetThemeInfo(void) {
+    s_themeInfo.name[0]         = '\0';
+    s_themeInfo.author[0]       = '\0';
+    s_themeInfo.email[0]        = '\0';
+    s_themeInfo.website[0]      = '\0';
+    s_themeInfo.release_date[0] = '\0';
+    s_themeInfo.max_pixel_density = 1;
+    s_themeInfo.has_ini         = false;
+}
+
+static void loadThemeInfo(void) {
+    resetThemeInfo();
+    if (!s_themeName[0]) return;
+    char iniPath[512];
+    SDL_snprintf(iniPath, sizeof(iniPath), "data/theme/%s/theme.ini", s_themeName);
+    SDL_PathInfo pinfo;
+    if (!SDL_GetPathInfo(iniPath, &pinfo)) return;
+    s_themeInfo.has_ini = true;
+    char buf[16];
+    GetPrivateProfileString("theme", "name",         "", s_themeInfo.name,         sizeof(s_themeInfo.name),         iniPath);
+    GetPrivateProfileString("theme", "author",       "", s_themeInfo.author,       sizeof(s_themeInfo.author),       iniPath);
+    GetPrivateProfileString("theme", "email",        "", s_themeInfo.email,        sizeof(s_themeInfo.email),        iniPath);
+    GetPrivateProfileString("theme", "website",      "", s_themeInfo.website,      sizeof(s_themeInfo.website),      iniPath);
+    GetPrivateProfileString("theme", "release_date", "", s_themeInfo.release_date, sizeof(s_themeInfo.release_date), iniPath);
+    GetPrivateProfileString("theme", "max_pixel_density", "1", buf, sizeof(buf), iniPath);
+    int v = atoi(buf);
+    if (v < 1) v = 1;
+    if (v > 16) v = 16;
+    s_themeInfo.max_pixel_density = v;
+    SDL_Log("tileLoader: theme '%s' loaded (max_pixel_density=%d)",
+            s_themeName, s_themeInfo.max_pixel_density);
+}
+
+const TileLoaderThemeInfo *tileLoaderGetThemeInfo(void) {
+    return &s_themeInfo;
+}
+
+/* Coverage scan: for each density 1..max we flag whether the active
+ * theme has all/some/none of the tiles at that density.  Per-sprite
+ * max density is also recorded so High Detail can pick per sprite.
+ * Density 1 is always FULL because every TileMap sprite has at
+ * least a 1× default in data/svg/.  SVG counts as covering up to
+ * themeInfo.max_pixel_density. */
+#define TLR_MAX_DENSITY 16
+static unsigned char s_densityCov[TLR_MAX_DENSITY + 1];   /* 0=none,1=some,2=all */
+
+/* Per-sprite max density.  We don't know gTileMap size at compile
+ * time so use a small dynamic array; theme reload tears it down. */
+typedef struct { char name[64]; int maxDensity; } SpriteDensity;
+static SpriteDensity *s_spriteDensities = NULL;
+static int            s_spriteDensitiesCount = 0;
+
+/* True when data/theme/<active>/<density>-<sprite>.png exists, OR
+ * (when density <= themeInfo.max_pixel_density) the theme provides
+ * the sprite as an SVG that the engine treats as covering this
+ * density. */
+static bool spriteAtDensity(const char *spriteName, int density) {
+    if (!s_themeName[0]) return false;
+    char path[512];
+    SDL_PathInfo pi;
+    int prefix = density * TILE_SIZE_X;   /* density 2 => "32-" */
+    SDL_snprintf(path, sizeof(path), "data/theme/%s/%d-%s.png",
+                 s_themeName, prefix, spriteName);
+    if (SDL_GetPathInfo(path, &pi)) return true;
+    if (density == 1) {
+        /* Density 1 also accepts the unprefixed PNG / SVG in the
+         * theme dir (legacy 1× sprites). */
+        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.png",
+                     s_themeName, spriteName);
+        if (SDL_GetPathInfo(path, &pi)) return true;
+        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.svg",
+                     s_themeName, spriteName);
+        if (SDL_GetPathInfo(path, &pi)) return true;
+    }
+    /* SVG counts up to declared max_pixel_density. */
+    if (density <= s_themeInfo.max_pixel_density) {
+        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.svg",
+                     s_themeName, spriteName);
+        if (SDL_GetPathInfo(path, &pi)) return true;
+    }
+    return false;
+}
+
+static void scanDensityCoverage(void) {
+    SDL_memset(s_densityCov, 0, sizeof(s_densityCov));
+    if (s_spriteDensities) { SDL_free(s_spriteDensities); s_spriteDensities = NULL; }
+    s_spriteDensitiesCount = 0;
+
+    /* Density 1 always full (default theme always supplies 1×). */
+    s_densityCov[1] = 2;
+    int maxD = s_themeInfo.max_pixel_density;
+    if (maxD < 1) maxD = 1;
+    if (maxD > TLR_MAX_DENSITY) maxD = TLR_MAX_DENSITY;
+    if (!s_themeName[0]) {
+        /* No theme override: density 1 is fully covered, nothing else.
+         * Still want per-sprite max=1 for the High Detail path. */
+        return;
+    }
+
+    /* Count sprites in gTileMap. */
+    int spriteCount = 0;
+    while (gTileMap[spriteCount].name != NULL) spriteCount++;
+    s_spriteDensities = (SpriteDensity *)SDL_malloc((size_t)spriteCount * sizeof(SpriteDensity));
+    if (!s_spriteDensities) return;
+    s_spriteDensitiesCount = spriteCount;
+
+    /* Per-density: hasAll/hasAny across the entire gTileMap. */
+    for (int d = 2; d <= maxD; d++) {
+        bool any = false;
+        bool all = true;
+        for (int i = 0; i < spriteCount; i++) {
+            if (spriteAtDensity(gTileMap[i].name, d)) {
+                any = true;
+            } else {
+                all = false;
+            }
+            if (any && !all) break;
+        }
+        s_densityCov[d] = all ? 2 : (any ? 1 : 0);
+    }
+
+    /* Per-sprite max density: highest d where the file exists. */
+    for (int i = 0; i < spriteCount; i++) {
+        SDL_strlcpy(s_spriteDensities[i].name, gTileMap[i].name,
+                    sizeof(s_spriteDensities[i].name));
+        s_spriteDensities[i].maxDensity = 1;
+        for (int d = maxD; d >= 1; d--) {
+            if (spriteAtDensity(gTileMap[i].name, d)) {
+                s_spriteDensities[i].maxDensity = d;
+                break;
+            }
+        }
+    }
+
+    SDL_Log("tileLoader: density coverage for theme '%s': "
+            "1=all, 2=%s, 3=%s, 4=%s",
+            s_themeName,
+            s_densityCov[2] == 2 ? "all" : (s_densityCov[2] == 1 ? "some" : "none"),
+            s_densityCov[3] == 2 ? "all" : (s_densityCov[3] == 1 ? "some" : "none"),
+            s_densityCov[4] == 2 ? "all" : (s_densityCov[4] == 1 ? "some" : "none"));
+}
+
+int tileLoaderGetDensityCoverage(int density) {
+    if (density < 1 || density > TLR_MAX_DENSITY) return 0;
+    return (int)s_densityCov[density];
+}
+
+int tileLoaderGetAllTilesDensityAtMost(int cap) {
+    if (cap < 1) return 1;
+    if (cap > TLR_MAX_DENSITY) cap = TLR_MAX_DENSITY;
+    for (int d = cap; d >= 1; d--) {
+        if (s_densityCov[d] == 2) return d;
+    }
+    return 1;
+}
+
+int tileLoaderGetSpriteMaxDensity(const char *spriteName) {
+    if (!spriteName) return 1;
+    for (int i = 0; i < s_spriteDensitiesCount; i++) {
+        if (SDL_strcmp(s_spriteDensities[i].name, spriteName) == 0) {
+            return s_spriteDensities[i].maxDensity;
+        }
+    }
+    return 1;
+}
+
 void tileLoaderSetTheme(const char *name) {
     if (!name || !name[0]) {
         s_themeName[0] = '\0';
     } else {
         SDL_strlcpy(s_themeName, name, sizeof(s_themeName));
     }
-    /* Theme changed → drop the per-direction-presence cache. */
+    /* Theme changed → drop the per-direction-presence cache and
+     * reload theme metadata + density coverage. */
     s_themeMaskCount = 0;
+    loadThemeInfo();
+    scanDensityCoverage();
 }
 
 const char *tileLoaderGetTheme(void) {
@@ -338,8 +521,10 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 
     char pathBuf[512];
     int svgCount = 0, pngCount = 0, bmpCount = 0;
-    GfxThemeDetail detail = gfxSettingsGetThemeDetail();
-    bool tryPrefixedPng = (detail == GFX_THEME_DETAIL_PIXELATE_ZOOM);
+    GfxTileDetail detail = gfxSettingsGetTileDetail();
+
+    /* For Match-to-Zoom: pick a single density covering all sprites. */
+    int matchToZoomDensity = tileLoaderGetAllTilesDensityAtMost(scale);
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const TileMapEntry *e = &gTileMap[i];
@@ -349,10 +534,26 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int dstY = e->sheetY * scale;
         bool loaded = false;
 
-        /* Pixelate-to-Zoom: hand-crafted N-<name>.png prefixes win
-         * over SVG when the user has supplied them.  Try the active
-         * theme dir first, then the default. */
-        if (tryPrefixedPng) {
+        /* Determine target density per the Tile Detail mode. */
+        int targetDensity = 1;
+        switch (detail) {
+        case GFX_TILE_DETAIL_CLASSIC:
+            targetDensity = 1;
+            break;
+        case GFX_TILE_DETAIL_MATCH_TO_ZOOM:
+            targetDensity = matchToZoomDensity;
+            break;
+        case GFX_TILE_DETAIL_HIGH_DETAIL:
+            targetDensity = tileLoaderGetSpriteMaxDensity(e->name);
+            break;
+        }
+
+        /* Try N-<name>.png prefix at the chosen density, in the
+         * theme dir first then the default.  tryLoadPrefixedPNG
+         * already handles exact / smaller / larger fallback. */
+        if (targetDensity > 1) {
+            int targetPx = targetDensity * TILE_SIZE_X * (e->width / TILE_SIZE_X);
+            (void)targetPx;
             char dir[256];
             if (s_themeName[0]) {
                 SDL_snprintf(dir, sizeof(dir), "data/theme/%s", s_themeName);

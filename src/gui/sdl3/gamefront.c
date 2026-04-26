@@ -1671,20 +1671,27 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     GetPrivateProfileString("GRAPHICS", "Theme", "", themeBuf, sizeof(themeBuf), prefsFile);
     tileLoaderSetTheme(themeBuf);
   }
-  /* Theme Detail Allowed — pixelate / pixelate-to-zoom / max detail.
-   * Replaces the older AllowSvg toggle. */
+  /* Tile Detail Level (Classic / MatchToZoom / HighDetail). */
   {
     char buf[16] = "";
-    GetPrivateProfileString("GRAPHICS", "ThemeDetail", "0", buf, sizeof(buf), prefsFile);
+    GetPrivateProfileString("GRAPHICS", "TileDetail", "0", buf, sizeof(buf), prefsFile);
     int v = atoi(buf);
-    if (v < 0 || v > 3) v = 0;
-    gfxSettingsSetThemeDetail((GfxThemeDetail)v);
+    if (v < 0 || v > 2) v = 0;
+    gfxSettingsSetTileDetail((GfxTileDetail)v);
   }
-  /* Allow Smooth Path Shells — cosmetic sub-wu shell motion. */
+  /* Animation Smoothness (Classic / MatchToPixelation / Max). */
   {
     char buf[16] = "";
-    GetPrivateProfileString("GRAPHICS", "AllowSmoothShells", "0", buf, sizeof(buf), prefsFile);
-    gfxSettingsSetAllowSmoothShells(atoi(buf) != 0);
+    GetPrivateProfileString("GRAPHICS", "AnimSmoothness", "0", buf, sizeof(buf), prefsFile);
+    int v = atoi(buf);
+    if (v < 0 || v > 2) v = 0;
+    gfxSettingsSetAnimSmoothness((GfxAnimSmoothness)v);
+  }
+  /* Force smooth path shells override. */
+  {
+    char buf[16] = "";
+    GetPrivateProfileString("GRAPHICS", "ForceSmoothShells", "0", buf, sizeof(buf), prefsFile);
+    gfxSettingsSetForceSmoothShells(atoi(buf) != 0);
   }
 
   /* Winbolo.net */
@@ -1707,18 +1714,26 @@ void gameFrontSaveThemeChoice(const char *themeName) {
                              getPreferenceFilePath());
 }
 
-/* Persist the Theme Detail dropdown choice. */
-void gameFrontSaveThemeDetail(int themeDetail) {
+/* Persist the Tile Detail Level dropdown choice. */
+void gameFrontSaveTileDetail(int tileDetail) {
   char buf[8];
-  SDL_snprintf(buf, sizeof(buf), "%d", themeDetail);
-  WritePrivateProfileString("GRAPHICS", "ThemeDetail", buf,
+  SDL_snprintf(buf, sizeof(buf), "%d", tileDetail);
+  WritePrivateProfileString("GRAPHICS", "TileDetail", buf,
                              getPreferenceFilePath());
 }
 
-/* Persist the Allow Smooth Path Shells checkbox. */
-void gameFrontSaveAllowSmoothShells(bool allow) {
-  WritePrivateProfileString("GRAPHICS", "AllowSmoothShells",
-                             allow ? "1" : "0",
+/* Persist the Animation Smoothness dropdown choice. */
+void gameFrontSaveAnimSmoothness(int animSmoothness) {
+  char buf[8];
+  SDL_snprintf(buf, sizeof(buf), "%d", animSmoothness);
+  WritePrivateProfileString("GRAPHICS", "AnimSmoothness", buf,
+                             getPreferenceFilePath());
+}
+
+/* Persist the Force smooth path shells checkbox. */
+void gameFrontSaveForceSmoothShells(bool on) {
+  WritePrivateProfileString("GRAPHICS", "ForceSmoothShells",
+                             on ? "1" : "0",
                              getPreferenceFilePath());
 }
 

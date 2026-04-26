@@ -509,10 +509,13 @@ static bool shellSubPxLookup(BYTE bufMx, BYTE bufMy, int dir,
   return false;
 }
 
+static int spriteStepDensity(const char *spriteName, bool isShell, int zoomFactor);
+
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
-  bool smooth = gfxSettingsEffectiveSmoothShells();
+  /* Step density per shell — see spriteStepDensity(). */
+  (void)0;
 
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
@@ -553,16 +556,21 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    /* Smooth-mode sub-wu correction: add the fractional game-pixel
-     * from the sim's WORLD coord on top of the classic position.
-     * Purely additive — if the cache lookup misses, the classic
-     * position still draws. */
-    if (smooth && frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+    /* Step-density sub-wu correction: add the fractional game-pixel
+     * from sim, quantized to step_size = 1/density game pixels.
+     * Density 1 → no fraction added (Classic motion).
+     * Density gZoomFactor → finest possible (rounded to 1 screen px). */
+    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
       int dir = frame - SHELL_DIR0;
-      float fracX = 0.0f, fracY = 0.0f;
-      if (shellSubPxLookup(mx, my, dir, &fracX, &fracY)) {
-        sx += fracX * (float)ctx->zoomFactor;
-        sy += fracY * (float)ctx->zoomFactor;
+      int density = spriteStepDensity("shell", true, ctx->zoomFactor);
+      if (density > 1) {
+        float fracX = 0.0f, fracY = 0.0f;
+        if (shellSubPxLookup(mx, my, dir, &fracX, &fracY)) {
+          float qx = SDL_floorf(fracX * (float)density) / (float)density;
+          float qy = SDL_floorf(fracY * (float)density) / (float)density;
+          sx += qx * (float)ctx->zoomFactor;
+          sy += qy * (float)ctx->zoomFactor;
+        }
       }
     }
 
@@ -585,7 +593,7 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      * theme when the user's theme didn't ship shell_<NN>) render
      * directly — no rotation, no pixel-art-rotated mush. */
     bool rotateLive = false;
-    if (gfxSettingsThemeDetailIsMax()
+    if (gfxSettingsGetTileDetail() == GFX_TILE_DETAIL_HIGH_DETAIL
         && tileLoaderThemeRotates()
         && frame >= SHELL_DIR1 && frame <= SHELL_DIR15) {
       int liveDir = frame - SHELL_DIR0;
@@ -784,6 +792,28 @@ static WORLD s_tankPosX[MAX_TANKS];
 static WORLD s_tankPosY[MAX_TANKS];
 static bool  s_tankPosValid = false;
 
+/* Effective step density (wu per step = 16 / density) for a sprite,
+ * given AnimSmoothness, the Force-smooth-shells override, and the
+ * sprite's per-spriteset max density.  Capped to gZoomFactor —
+ * can't be more granular than one screen pixel.
+ *   density = 1            → game-pixel grid (Bolo classic)
+ *   density = gZoomFactor  → screen-pixel grid (max smoothness)
+ *   1 < density < gZoom    → match-to-pixelation, rounded coarser
+ *                            than max but finer than classic. */
+static int spriteStepDensity(const char *spriteName, bool isShell, int zoomFactor) {
+  GfxAnimSmoothness s = gfxSettingsGetAnimSmoothness();
+  bool forceSmoothShell = isShell && gfxSettingsGetForceSmoothShells();
+  if (forceSmoothShell || s == GFX_ANIM_SMOOTH_MAX) {
+    return zoomFactor;
+  }
+  if (s == GFX_ANIM_SMOOTH_CLASSIC) return 1;
+  /* MATCH_TO_PIXELATION: per-sprite density, capped at zoomFactor. */
+  int d = tileLoaderGetSpriteMaxDensity(spriteName);
+  if (d < 1) d = 1;
+  if (d > zoomFactor) d = zoomFactor;
+  return d;
+}
+
 void mapViewSetTankAnglesFromSim(struct GameSim *sim) {
   s_tankPosValid = false;
   if (!sim) return;
@@ -919,20 +949,35 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
      * back on top so the sprite slides at full 1/256-tile precision
      * — purely additive, so if the cache isn't ready the classic
      * position is still correct. */
-    /* Smooth-motion mode (Max Detail with Smooth Animations): add
-     * the fractional game-pixel from sim's full WORLD coord on top
-     * of the classic engine-grid position, so the tank slides at
-     * 1/256-tile precision.  Other modes leave it on the pixel grid. */
-    if (gfxSettingsAllSmoothMotion()
-        && s_tankPosValid && playerNum < MAX_TANKS) {
-      float gpxF = (float)s_tankPosX[playerNum] / 16.0f - 8.0f; /* TL game-px */
-      float gpyF = (float)s_tankPosY[playerNum] / 16.0f - 8.0f;
-      float fracX = gpxF - (float)((int)gpxF);
-      float fracY = gpyF - (float)((int)gpyF);
-      sx += fracX * (float)ctx->zoomFactor;
-      sy += fracY * (float)ctx->zoomFactor;
+    /* Step-density sub-wu correction.  density=1 (Classic) → no
+     * fraction added; tank stays on engine game-pixel grid.  Higher
+     * density quantizes the sub-game-pixel offset from sim. */
+    if (s_tankPosValid && playerNum < MAX_TANKS) {
+      char fullName[32];
+      const char *baseName;
+      switch (frame >> 4) {
+        case 0: baseName = "tank_self";     break;
+        case 1: baseName = "tank_selfboat"; break;
+        case 2: baseName = "tank_good";     break;
+        case 3: baseName = "tank_goodboat"; break;
+        case 4: baseName = "tank_evil";     break;
+        case 5: baseName = "tank_evilboat"; break;
+        default: baseName = "tank_self";    break;
+      }
+      SDL_snprintf(fullName, sizeof(fullName), "%s_%02d",
+                   baseName, frame & 0x0F);
+      int density = spriteStepDensity(fullName, false, ctx->zoomFactor);
+      if (density > 1) {
+        float gpxF = (float)s_tankPosX[playerNum] / 16.0f - 8.0f;
+        float gpyF = (float)s_tankPosY[playerNum] / 16.0f - 8.0f;
+        float fracX = gpxF - (float)((int)gpxF);
+        float fracY = gpyF - (float)((int)gpyF);
+        float qx = SDL_floorf(fracX * (float)density) / (float)density;
+        float qy = SDL_floorf(fracY * (float)density) / (float)density;
+        sx += qx * (float)ctx->zoomFactor;
+        sy += qy * (float)ctx->zoomFactor;
+      }
     }
-    /* Round to nearest screen pixel. */
     sx = SDL_floorf(sx + 0.5f);
     sy = SDL_floorf(sy + 0.5f);
 
@@ -952,7 +997,7 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       /* Runtime tank rotation is Max-Detail-only.  Pixelate modes
        * use whatever's in the per-direction atlas slot (theme's
        * file if present, stock fallback otherwise). */
-      if (gfxSettingsThemeDetailIsMax()
+      if (gfxSettingsGetTileDetail() == GFX_TILE_DETAIL_HIGH_DETAIL
           && tileLoaderThemeRotates()
           && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
         int dir = frame & 0x0F;
@@ -1046,9 +1091,6 @@ static bool lgmSubPxLookup(BYTE bufMx, BYTE bufMy,
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY) {
-  /* Smooth-motion mode adds sub-wu fractional offset for LGMs from
-   * sim coords.  Other modes lock to the engine's pixel grid. */
-  bool smooth = gfxSettingsAllSmoothMotion();
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
@@ -1082,14 +1124,22 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
       sy -= 2.0f * (float)ctx->zoomFactor;
     }
 
-    /* Smooth-mode sub-wu correction: add the fractional game-pixel
-     * from sim to the classic position.  Purely additive — if the
-     * cache misses, classic position still draws. */
-    if (smooth && isGround) {
-      float fracX = 0.0f, fracY = 0.0f;
-      if (lgmSubPxLookup(mx, my, &fracX, &fracY)) {
-        sx += fracX * (float)ctx->zoomFactor;
-        sy += fracY * (float)ctx->zoomFactor;
+    /* Step-density sub-wu correction.  density=1 (Classic) → no
+     * fraction added; LGM stays on engine game-pixel grid. */
+    if (isGround) {
+      const char *spriteName =
+          (frame == LGM0) ? "lgm0" :
+          (frame == LGM1) ? "lgm1" :
+          (frame == LGM2) ? "lgm2" : "lgm0";
+      int density = spriteStepDensity(spriteName, false, ctx->zoomFactor);
+      if (density > 1) {
+        float fracX = 0.0f, fracY = 0.0f;
+        if (lgmSubPxLookup(mx, my, &fracX, &fracY)) {
+          float qx = SDL_floorf(fracX * (float)density) / (float)density;
+          float qy = SDL_floorf(fracY * (float)density) / (float)density;
+          sx += qx * (float)ctx->zoomFactor;
+          sy += qy * (float)ctx->zoomFactor;
+        }
       }
     }
     /* Round to nearest screen pixel. */

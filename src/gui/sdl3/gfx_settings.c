@@ -4,31 +4,21 @@
 
 #include <math.h>
 
-/* Animation style is now locked to Pixel Nearest — kept as state for
- * any code still calling gfxSettingsWuToGamePixel(). */
-static GfxAnimStyle    s_animStyle        = GFX_ANIM_PIXEL_NEAREST;
-static GfxThemeDetail  s_themeDetail      = GFX_THEME_DETAIL_PIXELATE_NORMAL;
-static bool            s_allowSmoothShells = false;
+/* Animation style locked to Pixel Nearest internally — kept as
+ * state for any code still calling gfxSettingsWuToGamePixel(). */
+static GfxAnimStyle       s_animStyle          = GFX_ANIM_PIXEL_NEAREST;
+static GfxTileDetail      s_tileDetail         = GFX_TILE_DETAIL_CLASSIC;
+static GfxAnimSmoothness  s_animSmoothness     = GFX_ANIM_SMOOTH_CLASSIC;
+static bool               s_forceSmoothShells  = false;
 
-void           gfxSettingsSetThemeDetail(GfxThemeDetail d) { s_themeDetail = d; }
-GfxThemeDetail gfxSettingsGetThemeDetail(void)             { return s_themeDetail; }
+void          gfxSettingsSetTileDetail(GfxTileDetail d) { s_tileDetail = d; }
+GfxTileDetail gfxSettingsGetTileDetail(void)            { return s_tileDetail; }
 
-void gfxSettingsSetAllowSmoothShells(bool allow) { s_allowSmoothShells = allow; }
-bool gfxSettingsGetAllowSmoothShells(void)       { return s_allowSmoothShells; }
+void              gfxSettingsSetAnimSmoothness(GfxAnimSmoothness s) { s_animSmoothness = s; }
+GfxAnimSmoothness gfxSettingsGetAnimSmoothness(void)                { return s_animSmoothness; }
 
-bool gfxSettingsThemeDetailIsMax(void) {
-    return s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL
-        || s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH;
-}
-
-bool gfxSettingsEffectiveSmoothShells(void) {
-    if (s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH) return true;
-    return s_allowSmoothShells;
-}
-
-bool gfxSettingsAllSmoothMotion(void) {
-    return s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH;
-}
+void gfxSettingsSetForceSmoothShells(bool on) { s_forceSmoothShells = on; }
+bool gfxSettingsGetForceSmoothShells(void)    { return s_forceSmoothShells; }
 
 void gfxSettingsSetAnimStyle(GfxAnimStyle s) {
     s_animStyle = s;

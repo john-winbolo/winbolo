@@ -162,7 +162,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
         NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
         if (!image) return nullptr;
         if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-        bool pointSample = !gfxSettingsThemeDetailIsMax();
+        bool pointSample = (gfxSettingsGetTileDetail() != GFX_TILE_DETAIL_HIGH_DETAIL);
         int w = size, h = size;
         const int kSuper = pointSample ? 4 : 1;
         int hiW = w * kSuper, hiH = h * kSuper;
@@ -251,8 +251,6 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         return;
     }
 
-    ImGui::TextDisabled("All themes are cosmetic and do not affect game play.");
-
     /* Theme picker — scan data/theme/* once per dialog open. */
     static std::vector<std::string> themeDirs;
     static bool themesScanned = false;
@@ -312,6 +310,84 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     if (s_previewThemeIdx < 0) s_previewThemeIdx = curThemeIdx;
     if (s_previewThemeIdx >= (int)themeDirs.size()) s_previewThemeIdx = curThemeIdx;
 
+    /* Tile Detail Level. */
+    int curTileDetail = (int)gfxSettingsGetTileDetail();
+    {
+        const char *labels[] = {
+            "Classic",
+            "Match to zoom",
+            "High Detail",
+        };
+        const int kNum = 3;
+        if (curTileDetail < 0 || curTileDetail >= kNum) curTileDetail = 0;
+        ImGui::TextUnformatted("Tile Detail Level");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(280);
+        if (ImGui::BeginCombo("##tiledetail", labels[curTileDetail])) {
+            for (int i = 0; i < kNum; ++i) {
+                bool sel = (i == curTileDetail);
+                if (ImGui::Selectable(labels[i], sel)) {
+                    gfxSettingsSetTileDetail((GfxTileDetail)i);
+                    sdl3DrawReloadTiles();
+                    extern void gameFrontSaveTileDetail(int);
+                    gameFrontSaveTileDetail(i);
+                    curTileDetail = i;
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (curTileDetail == GFX_TILE_DETAIL_MATCH_TO_ZOOM) {
+            ImGui::TextDisabled(
+                "Match to zoom - Pixelation matches the window zoom,\n"
+                "if the theme provides that level of detail.");
+        }
+    }
+
+    /* Animation Smoothness. */
+    int curAnim = (int)gfxSettingsGetAnimSmoothness();
+    {
+        const char *labels[] = {
+            "Classic",
+            "Match to pixelation",
+            "Max - finest motion the screen can show, regardless of pixelation",
+        };
+        const int kNum = 3;
+        if (curAnim < 0 || curAnim >= kNum) curAnim = 0;
+        ImGui::TextUnformatted("Animation Smoothness (Tanks, Shells, and Builders)");
+        ImGui::SetNextItemWidth(420);
+        if (ImGui::BeginCombo("##animsmoothness", labels[curAnim])) {
+            for (int i = 0; i < kNum; ++i) {
+                bool sel = (i == curAnim);
+                if (ImGui::Selectable(labels[i], sel)) {
+                    gfxSettingsSetAnimSmoothness((GfxAnimSmoothness)i);
+                    extern void gameFrontSaveAnimSmoothness(int);
+                    gameFrontSaveAnimSmoothness(i);
+                    curAnim = i;
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    /* Force smooth path shells — hidden when Animation Smoothness is Max
+     * (shells are already maximally smooth there). */
+    if (curAnim != GFX_ANIM_SMOOTH_MAX) {
+        bool smooth = gfxSettingsGetForceSmoothShells();
+        if (ImGui::Checkbox("Force smooth path shells", &smooth)) {
+            gfxSettingsSetForceSmoothShells(smooth);
+            extern void gameFrontSaveForceSmoothShells(bool);
+            gameFrontSaveForceSmoothShells(smooth);
+        }
+        ImGui::TextDisabled(
+            "Cosmetic - shells appear to fly more directly and\n"
+            "smoothly, but their position no longer snaps to the\n"
+            "pixel grid.");
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("All themes are cosmetic and do not affect game play.");
     ImGui::TextUnformatted("Theme");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220);
@@ -321,7 +397,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
             bool active = (i == curThemeIdx);
             char label[256];
             snprintf(label, sizeof(label), "%s%s",
-                     active ? "* " : "  ", themeDirs[i].c_str());
+                     active ? "\xE2\x97\x8F " : "  ", themeDirs[i].c_str());
             if (ImGui::Selectable(label, selected)) {
                 s_previewThemeIdx = i;
             }
@@ -342,52 +418,19 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         }
     }
 
-    /* Theme Detail Allowed. */
-    int curDetail = (int)gfxSettingsGetThemeDetail();
+    /* Theme info display (author/email/website/release date). */
     {
-        const char *detailLabels[] = {
-            "Pixelate Normal",
-            "Pixelate to Zoom",
-            "Max Detail",
-            "Max Detail with Smooth Animations",
-        };
-        const int kNumDetail = 4;
-        if (curDetail < 0 || curDetail >= kNumDetail) curDetail = 0;
-        ImGui::TextUnformatted("Theme Detail Allowed");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(280);
-        if (ImGui::BeginCombo("##themedetail", detailLabels[curDetail])) {
-            for (int i = 0; i < kNumDetail; ++i) {
-                bool sel = (i == curDetail);
-                if (ImGui::Selectable(detailLabels[i], sel)) {
-                    gfxSettingsSetThemeDetail((GfxThemeDetail)i);
-                    sdl3DrawReloadTiles();
-                    extern void gameFrontSaveThemeDetail(int);
-                    gameFrontSaveThemeDetail(i);
-                    curDetail = i;
-                }
-                if (sel) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
+        const TileLoaderThemeInfo *info = tileLoaderGetThemeInfo();
+        if (info && info->has_ini) {
+            if (info->author[0])
+                ImGui::Text("Author: %s", info->author);
+            if (info->email[0])
+                ImGui::Text("Email: %s", info->email);
+            if (info->website[0])
+                ImGui::Text("Website: %s", info->website);
+            if (info->release_date[0])
+                ImGui::Text("Released: %s", info->release_date);
         }
-    }
-
-    /* Allow Smooth Path Shells — cosmetic shell sub-wu motion.
-     * Hidden when ThemeDetail is "Max Detail with Smooth Animations"
-     * (that mode forces smooth shells on regardless of this toggle;
-     * the persisted value is preserved for when the user switches
-     * back to one of the other modes). */
-    if (curDetail != GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH) {
-        bool smooth = gfxSettingsGetAllowSmoothShells();
-        if (ImGui::Checkbox("Allow smooth path shells", &smooth)) {
-            gfxSettingsSetAllowSmoothShells(smooth);
-            extern void gameFrontSaveAllowSmoothShells(bool);
-            gameFrontSaveAllowSmoothShells(smooth);
-        }
-        ImGui::TextDisabled(
-            "Cosmetic - shells appear to fly more directly and\n"
-            "smoothly, but their position no longer snaps to the\n"
-            "pixel grid.");
     }
 
     /* Theme preview strip + rotating preview. */
@@ -419,7 +462,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     static SDL_Texture *cellTex[6] = { nullptr };
     static int cellLoadedIdx = -1;
     static int cellLoadedDetail = -1;
-    int curDetailNow = (int)gfxSettingsGetThemeDetail();
+    int curDetailNow = (int)gfxSettingsGetTileDetail();
     if (cellLoadedIdx != s_previewThemeIdx
         || cellLoadedDetail != curDetailNow) {
         cellLoadedDetail = curDetailNow;
@@ -485,9 +528,9 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
 
     /* Reload tank textures when selection or ThemeDetail changes. */
     if (previewLoadedIdx != s_previewThemeIdx
-        || previewLoadedDetail != (int)gfxSettingsGetThemeDetail()) {
+        || previewLoadedDetail != (int)gfxSettingsGetTileDetail()) {
         previewLoadedIdx = s_previewThemeIdx;
-        previewLoadedDetail = (int)gfxSettingsGetThemeDetail();
+        previewLoadedDetail = (int)gfxSettingsGetTileDetail();
         for (int i = 0; i < 16; i++) {
             if (previewTankFrames[i]) { SDL_DestroyTexture(previewTankFrames[i]); previewTankFrames[i] = nullptr; }
         }
@@ -903,7 +946,7 @@ extern "C" void imguiSettingsShow(void) {
                      * being previewed. */
                     char label[256];
                     snprintf(label, sizeof(label), "%s%s",
-                             active ? "* " : "  ", themeDirs[i].c_str());
+                             active ? "\xE2\x97\x8F " : "  ", themeDirs[i].c_str());
                     if (ImGui::Selectable(label, selected)) {
                         s_previewThemeIdx = i;
                     }
