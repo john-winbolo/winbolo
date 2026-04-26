@@ -1539,6 +1539,7 @@ bool gameFrontSetupServer(void) {
   cfg.trackerAddr     = gameFrontTrackerAddr;
   cfg.trackerPort     = gameFrontTrackerPort;
   cfg.useNatKeepalive = TRUE;
+  cfg.useNatPortmap   = TRUE;
 
   if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);

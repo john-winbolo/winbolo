@@ -17,6 +17,7 @@
 
 #include "../bolo/global.h"
 #include "../bolo/gametype.h"
+#include "../bolo/nat_portmap.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/bot_manager.h"
 #include "../winbolonet/winbolonet.h"
@@ -29,6 +30,8 @@ static unsigned short instanceTrackerPort = 0;
 static bool  instanceUseTracker = FALSE;
 static bool  instanceUseWbn = FALSE;
 static bool  instanceUseNatKeepalive = FALSE;
+static bool  instanceUseNatPortmap = FALSE;
+static NatPortMap instancePortMap;
 
 static int trackerTime = 5500;
 static int wbnTime = 0;
@@ -73,6 +76,12 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   trackerTime = 5500;
   wbnTime = 0;
   natKeepaliveTime = 0;
+
+  instanceUseNatPortmap = cfg->useNatPortmap;
+  memset(&instancePortMap, 0, sizeof(instancePortMap));
+  if (cfg->useNatPortmap) {
+    natPortMapRequest(cfg->udpPort, &instancePortMap);
+  }
   return TRUE;
 }
 
@@ -307,9 +316,16 @@ void serverInstanceTick(ServerSim *sim) {
       natKeepaliveTime = 0;
     }
   }
+
+  if (instanceUseNatPortmap) {
+    natPortMapRenewIfNeeded(&instancePortMap);
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  if (instanceUseNatPortmap) {
+    natPortMapRelease(&instancePortMap);
+  }
   if (instanceUseWbn) {
     winbolonetDestroy(TRUE);
   }
@@ -318,4 +334,5 @@ void serverInstanceShutdown(ServerSim *sim) {
   instanceUseWbn = FALSE;
   instanceUseTracker = FALSE;
   instanceUseNatKeepalive = FALSE;
+  instanceUseNatPortmap = FALSE;
 }
