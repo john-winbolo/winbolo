@@ -599,6 +599,11 @@ static void windowRunGameTick(ClientSim *cs) {
         if (cs->netStat == netLobby || cs->netStat == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
           transport->tick(transport->ctx);
+          {
+            ServerSim *hostSim = gameFrontGetHostedServerSim();
+            if (hostSim != NULL) transportUdpServerTick(hostSim);
+          }
+          gameFrontTrackerCadenceTick();
           justKeysFlag = !justKeysFlag; /* Alternate to maintain tick cadence */
         } else if (justKeysFlag == TRUE) {
           /* Keys tick */
@@ -618,6 +623,11 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexRelease();
           transport->recordInput(transport->ctx, &pkt);
           transport->tick(transport->ctx);
+          {
+            ServerSim *hostSim = gameFrontGetHostedServerSim();
+            if (hostSim != NULL) transportUdpServerTick(hostSim);
+          }
+          gameFrontTrackerCadenceTick();
           clientMutexWaitFor();
           {
             SnapshotHeader snapHdr;
@@ -677,6 +687,11 @@ static void windowRunGameTick(ClientSim *cs) {
             }
           }
           transport->tick(transport->ctx);
+          {
+            ServerSim *hostSim = gameFrontGetHostedServerSim();
+            if (hostSim != NULL) transportUdpServerTick(hostSim);
+          }
+          gameFrontTrackerCadenceTick();
           clientMutexWaitFor();
           {
             SnapshotHeader snapHdr;

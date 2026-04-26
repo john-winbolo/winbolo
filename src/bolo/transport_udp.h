@@ -348,4 +348,10 @@ void transportUdpServerSendTrackerUpdate(struct ServerSim *sim,
                                          const char *trackerAddr,
                                          unsigned short trackerPort);
 
+/* Send a 4-byte sentinel to the tracker over the same socket the
+ * server is bound to, so the host's NAT mapping for that source
+ * port stays alive between heavier tracker updates. */
+void transportUdpServerSendNatKeepalive(const char *trackerAddr,
+                                        unsigned short trackerPort);
+
 #endif /* TRANSPORT_UDP_H */

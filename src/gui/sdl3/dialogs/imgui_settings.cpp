@@ -235,7 +235,7 @@ extern "C" void imguiSettingsShow(void) {
      * needs to click on. Re-scanning every frame would hit the disk
      * on every redraw; the picker is local to this dialog so a fresh
      * scan on next open is sufficient if a translator drops a new
-     * file in lang/. */
+     * file in data/lang/. */
     int            langCount = 0;
     LangFileEntry *langEntries = langPickerScan(&langCount);
 
