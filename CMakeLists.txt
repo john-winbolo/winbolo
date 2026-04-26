@@ -404,6 +404,7 @@ file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
+file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/lang/*.txt")
 
 # Bolo engine sources (matching desktop CLIENT_SOURCES)
 set(IOS_BOLO_SOURCES
@@ -505,6 +506,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_SOUNDS}
     ${IOS_DATA_SVG}
     ${IOS_DATA_UI}
+    ${IOS_LANG_FILES}
     ${IOS_ASSET_CATALOG}
 )
 
@@ -534,6 +536,9 @@ set_source_files_properties(${IOS_DATA_SVG} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_UI} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/ui"
+)
+set_source_files_properties(${IOS_LANG_FILES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "lang"
 )
 set_source_files_properties(${IOS_DATA_ROOT} PROPERTIES
     MACOSX_PACKAGE_LOCATION ""
@@ -1019,6 +1024,12 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang" "${WINBOLO_DATA_DIR}/lang"
+    COMMENT "Copying WinBolo lang files to output directory"
+)
+
+add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
@@ -1204,6 +1215,12 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloDS>"
     COMMENT "Copying SDL3 shared library to WinBoloDS output directory"
 )
+
+add_custom_command(TARGET WinBoloDS POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:WinBoloDS>/lang"
+    COMMENT "Copying WinBoloDS lang files to output directory"
+)
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     add_custom_command(TARGET WinBoloDS POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:WinBoloDS> "$<TARGET_FILE_DIR:WinBoloDS>"
@@ -1327,13 +1344,18 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/data"
             "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/data"
-        COMMENT "Copying data files into app bundle Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/lang"
+            "$<TARGET_BUNDLE_CONTENT_DIR:LogViewer>/Resources/lang"
+        COMMENT "Copying data and lang files into app bundle Resources"
     )
 else()
     add_custom_command(TARGET LogViewer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:LogViewer>/data"
-        COMMENT "Copying LogViewer data files to output directory"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:LogViewer>/lang"
+        COMMENT "Copying LogViewer data and lang files to output directory"
     )
 endif()
 
@@ -1451,6 +1473,11 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
+add_custom_command(TARGET WinBoloHeadless POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:WinBoloHeadless>/lang"
+    COMMENT "Copying WinBoloHeadless lang files to output directory"
+)
 # Copy crashpad_handler next to WinBoloHeadless executable
 if(HAVE_SENTRY AND TARGET crashpad_handler)
     add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -1560,6 +1587,11 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
 )
+add_custom_command(TARGET winbolo_gym POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:winbolo_gym>/lang"
+    COMMENT "Copying winbolo_gym lang files to output directory"
+)
 
 # ---------------------------------------------------------------------------
 # gym_batch_test (Phase 0 determinism baseline)
@@ -1653,7 +1685,9 @@ add_custom_command(TARGET BrainTest POST_BUILD
         "$<TARGET_FILE_DIR:BrainTest>/Brains/NewAutopilot"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
-    COMMENT "Copying BrainTest data files to output directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:BrainTest>/lang"
+    COMMENT "Copying BrainTest data and lang files to output directory"
 )
 
 # ---------------------------------------------------------------------------
@@ -1745,7 +1779,9 @@ add_custom_command(TARGET MapEditor POST_BUILD
 add_custom_command(TARGET MapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:MapEditor>/data"
-    COMMENT "Copying MapEditor data files to output directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:MapEditor>/lang"
+    COMMENT "Copying MapEditor data and lang files to output directory"
 )
 
 # MinGW: statically link the GCC/C++ runtime so the executables don't need
@@ -1812,6 +1848,9 @@ add_custom_target(dist
 
     # Data assets
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
+
+    # Language files
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/lang" "${DIST_DIR}/lang"
 
     # Brain scripts
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/NewAutopilot" "${DIST_DIR}/Brains/NewAutopilot"
