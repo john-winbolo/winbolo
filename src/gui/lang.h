@@ -1205,6 +1205,10 @@
  * mentions dropping to single-player mode) */
 #define NETERR_LOSTCONNECTION_RETURN_MENU   1186
 
+/* Language picker (Settings → Display) */
+#define STR_DLGSETTINGS_LANGUAGE_LBL        1187
+#define STR_DLGLANG_MIDGAME_NOTE            1188
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
@@ -1229,9 +1233,13 @@
  * ------------------------------------------------------- */
 #ifndef RC_INVOKED
 
-typedef unsigned int langid;
-
 #include "../bolo/global.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef unsigned int langid;
 
 /* Header values parsed from a loaded lang/<code>.txt. Returned by
  * langGetLoadedMeta() once a translation has been loaded. The picker
@@ -1291,6 +1299,39 @@ char *langGetText2(langid id);
  * buffers; the pointer remains valid until the calling thread makes
  * LANG_FMT_RING_BUFFERS more calls (currently 4). */
 const char *langGetTextFmt(langid id, const MessageArgs *args);
+
+/* -------------------------------------------------------
+ * Language picker — scans lang/<code>.txt files for the
+ * Settings → Display dropdown. Header-only parse (does
+ * not load the body of any file).
+ * ------------------------------------------------------- */
+typedef struct {
+    char         code[32];           /* basename, lowercased — e.g. "en", "pt-br" */
+    char         path[FILENAME_MAX]; /* path passed to langLoadFile() */
+    LangFileMeta meta;               /* parsed name=/author=/notes= */
+} LangFileEntry;
+
+/* Scan lang/ for *.txt and return a heap-allocated array of entries.
+ * The list always begins with a synthetic English entry whose path is
+ * empty and whose meta.name is STR_DLGLANG_NAME — selecting it calls
+ * langUnloadFile() rather than langLoadFile(). Caller must free with
+ * langPickerFreeEntries(). Returns NULL with *outCount = 0 only on
+ * allocation failure (the synthetic English entry alone is otherwise
+ * always present). */
+LangFileEntry *langPickerScan(int *outCount);
+void           langPickerFreeEntries(LangFileEntry *entries, int count);
+
+/* Run on first launch (or when the persisted language code is empty):
+ * walks SDL_GetPreferredLocales() and matches each preferred locale
+ * against the entries returned by langPickerScan(). On a hit, calls
+ * langLoadFile() on the matching file and copies the chosen code into
+ * outCode (sized outSize bytes); on no hit, leaves the override table
+ * empty (English) and writes "" to outCode. */
+void langAutoDetect(char *outCode, int outSize);
+
+#ifdef __cplusplus
+}  /* extern "C" */
+#endif
 
 #endif /* RC_INVOKED */
 

@@ -1121,6 +1121,10 @@ static const LangEntry langTable[] = {
     /* iOS disconnect-to-menu */
     {1186, "You have lost your connection to the server.\nReturning to menu."},
 
+    /* Language picker (Settings → Display) */
+    {1187, "Language:"},
+    {1188, "Existing message-log entries won't change language until they're regenerated."},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */
@@ -1396,6 +1400,258 @@ const LangFileMeta *langGetLoadedMeta(void) {
 
 void langGetFileName(char *fileName) {
     strcpy(fileName, langFileName);
+}
+
+/* -------------------------------------------------------
+ * Header-only parse of a lang/<code>.txt: read just the
+ * header lines (name=/author=/notes=) and stop at the first
+ * body line. Used by the language picker so it can show the
+ * translation's name without loading hundreds of override
+ * strings into memory. Does NOT touch the global override
+ * table. Returns TRUE if at least one header field was read.
+ * ------------------------------------------------------- */
+static bool readHeaderOnly(const char *path, LangFileMeta *out) {
+    if (!path || !out) return FALSE;
+    memset(out, 0, sizeof(*out));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return FALSE;
+
+    bool firstLine = TRUE;
+    bool gotAny    = FALSE;
+    char line[1024];
+
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+
+        if (firstLine) {
+            firstLine = FALSE;
+            if ((unsigned char)p[0] == 0xEF &&
+                (unsigned char)p[1] == 0xBB &&
+                (unsigned char)p[2] == 0xBF) {
+                p += 3;
+            }
+        }
+
+        size_t lineLen = strlen(p);
+        while (lineLen > 0 && (p[lineLen - 1] == '\r' ||
+                               p[lineLen - 1] == '\n')) {
+            p[--lineLen] = '\0';
+        }
+
+        char *t = p;
+        while (*t == ' ' || *t == '\t') t++;
+        if (*t == '\0' || *t == '#') continue;
+
+        char *eq = strchr(t, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *key = trim(t);
+        char *value = eq + 1;
+
+        if (strcmp(key, "name") == 0) {
+            copyMetaField(out->name, sizeof(out->name), value);
+            gotAny = TRUE;
+            continue;
+        }
+        if (strcmp(key, "author") == 0) {
+            copyMetaField(out->author, sizeof(out->author), value);
+            gotAny = TRUE;
+            continue;
+        }
+        if (strcmp(key, "notes") == 0) {
+            copyMetaField(out->notes, sizeof(out->notes), value);
+            gotAny = TRUE;
+            continue;
+        }
+        /* First non-header key — stop. */
+        break;
+    }
+
+    fclose(f);
+    return gotAny;
+}
+
+static void lowercaseAscii(char *s) {
+    for (; *s; s++) {
+        if (*s >= 'A' && *s <= 'Z') *s = (char)(*s + ('a' - 'A'));
+    }
+}
+
+/* Strip ".txt" (case-insensitive) off the end of `name`, in place. */
+static void stripTxtExt(char *name) {
+    size_t n = strlen(name);
+    if (n >= 4) {
+        char tail[5];
+        tail[0] = (char)((name[n - 4] >= 'A' && name[n - 4] <= 'Z') ? name[n - 4] + 32 : name[n - 4]);
+        tail[1] = (char)((name[n - 3] >= 'A' && name[n - 3] <= 'Z') ? name[n - 3] + 32 : name[n - 3]);
+        tail[2] = (char)((name[n - 2] >= 'A' && name[n - 2] <= 'Z') ? name[n - 2] + 32 : name[n - 2]);
+        tail[3] = (char)((name[n - 1] >= 'A' && name[n - 1] <= 'Z') ? name[n - 1] + 32 : name[n - 1]);
+        tail[4] = '\0';
+        if (strcmp(tail, ".txt") == 0) {
+            name[n - 4] = '\0';
+        }
+    }
+}
+
+LangFileEntry *langPickerScan(int *outCount) {
+    if (outCount) *outCount = 0;
+
+    /* Always start with the synthetic "English (Default)" entry. The
+     * static langTable[] is the English baseline, so selecting English
+     * is equivalent to clearing any loaded override file. */
+    int    cap   = 16;
+    int    n     = 0;
+    LangFileEntry *list = (LangFileEntry *)calloc((size_t)cap, sizeof(*list));
+    if (!list) return NULL;
+
+    strcpy(list[0].code, "en");
+    list[0].path[0] = '\0';
+    /* Use the IDs the dialog already exposes for the English defaults so
+     * the picker stays consistent if a translator re-localizes them. */
+    {
+        const char *engName   = (const char *)lookupString(STR_DLGLANG_NAME);
+        const char *engAuthor = (const char *)lookupString(STR_DLGLANG_AUTHOR);
+        const char *engNotes  = (const char *)lookupString(STR_DLGLANG_NOTES);
+        copyMetaField(list[0].meta.name,   sizeof(list[0].meta.name),   engName);
+        copyMetaField(list[0].meta.author, sizeof(list[0].meta.author), engAuthor);
+        copyMetaField(list[0].meta.notes,  sizeof(list[0].meta.notes),  engNotes);
+    }
+    n = 1;
+
+    int globCount = 0;
+    char **files = SDL_GlobDirectory("lang", "*.txt", SDL_GLOB_CASEINSENSITIVE,
+                                     &globCount);
+    if (files) {
+        for (int i = 0; i < globCount; i++) {
+            const char *fname = files[i];
+            if (!fname || !*fname) continue;
+
+            /* basename → code. SDL_GlobDirectory returns just the
+             * basename (no directory prefix), so we can copy directly. */
+            char code[32];
+            size_t fnLen = strlen(fname);
+            if (fnLen >= sizeof(code)) fnLen = sizeof(code) - 1;
+            memcpy(code, fname, fnLen);
+            code[fnLen] = '\0';
+            stripTxtExt(code);
+            lowercaseAscii(code);
+
+            /* Skip the synthetic English baseline if a generated lang/en.txt
+             * is present alongside it — they're functionally equivalent and
+             * we don't want a duplicate entry in the dropdown. */
+            if (strcmp(code, "en") == 0) continue;
+
+            char path[FILENAME_MAX];
+            snprintf(path, sizeof(path), "lang/%s", fname);
+
+            LangFileMeta meta;
+            if (!readHeaderOnly(path, &meta)) {
+                /* Header missing or unreadable; still list the file with
+                 * a fallback name derived from the code so the user has
+                 * something to click on. */
+                memset(&meta, 0, sizeof(meta));
+                copyMetaField(meta.name, sizeof(meta.name), code);
+            }
+
+            if (n >= cap) {
+                int newCap = cap * 2;
+                LangFileEntry *grown = (LangFileEntry *)realloc(
+                    list, (size_t)newCap * sizeof(*list));
+                if (!grown) break;
+                memset(grown + cap, 0,
+                       (size_t)(newCap - cap) * sizeof(*list));
+                list = grown;
+                cap  = newCap;
+            }
+
+            strcpy(list[n].code, code);
+            strcpy(list[n].path, path);
+            list[n].meta = meta;
+            n++;
+        }
+        SDL_free(files);
+    }
+
+    if (outCount) *outCount = n;
+    return list;
+}
+
+void langPickerFreeEntries(LangFileEntry *entries, int count) {
+    (void)count;
+    /* Entries are stored inline in one heap allocation; no per-entry
+     * cleanup needed. */
+    free(entries);
+}
+
+void langAutoDetect(char *outCode, int outSize) {
+    if (outCode && outSize > 0) outCode[0] = '\0';
+
+    int             count   = 0;
+    LangFileEntry  *entries = langPickerScan(&count);
+    if (!entries || count <= 1) {
+        /* No translation files on disk; nothing to detect. */
+        if (entries) langPickerFreeEntries(entries, count);
+        return;
+    }
+
+    int             localeCount = 0;
+    SDL_Locale    **locales     = SDL_GetPreferredLocales(&localeCount);
+    if (!locales || localeCount <= 0) {
+        if (locales) SDL_free(locales);
+        langPickerFreeEntries(entries, count);
+        return;
+    }
+
+    /* Walk preferred locales in order; for each, try language-COUNTRY
+     * first ("pt-br"), then language alone ("pt"). First match wins. */
+    for (int li = 0; li < localeCount; li++) {
+        const SDL_Locale *loc = locales[li];
+        if (!loc || !loc->language || !*loc->language) continue;
+
+        char tag[64];
+        if (loc->country && *loc->country) {
+            snprintf(tag, sizeof(tag), "%s-%s", loc->language, loc->country);
+        } else {
+            snprintf(tag, sizeof(tag), "%s", loc->language);
+        }
+        lowercaseAscii(tag);
+
+        /* Two passes: first the full BCP47-ish tag, then the language
+         * portion alone. Skip index 0 (synthetic English baseline) on
+         * matching — fresh installs whose locale is en-* fall through
+         * with no override loaded, which is the correct behaviour. */
+        for (int pass = 0; pass < 2; pass++) {
+            const char *target = tag;
+            if (pass == 1) {
+                char *dash = strchr(tag, '-');
+                if (!dash) continue; /* nothing to retry */
+                *dash = '\0';
+                target = tag;
+            }
+
+            for (int ei = 1; ei < count; ei++) {
+                if (strcmp(target, entries[ei].code) == 0) {
+                    if (langLoadFile(entries[ei].path)) {
+                        if (outCode && outSize > 0) {
+                            size_t cl = strlen(entries[ei].code);
+                            if (cl >= (size_t)outSize) cl = (size_t)outSize - 1;
+                            memcpy(outCode, entries[ei].code, cl);
+                            outCode[cl] = '\0';
+                        }
+                        SDL_free(locales);
+                        langPickerFreeEntries(entries, count);
+                        return;
+                    }
+                }
+            }
+            /* Restore tag for pass 1 if pass 0 mutated it (it didn't,
+             * so this is a no-op — but keep the structure clear). */
+        }
+    }
+
+    SDL_free(locales);
+    langPickerFreeEntries(entries, count);
 }
 
 char *langGetText(langid id) {

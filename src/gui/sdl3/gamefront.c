@@ -177,6 +177,11 @@ bool gameFrontTrackerEnabled;
  * can toggle it back on from the Settings dialog at any time. */
 static bool gameFrontShowTutorialButton = TRUE;
 
+/* Persisted BCP-47 language code (e.g. "en", "de", "pt-br"). Empty
+ * string means the user has not picked one yet — Phase 5 startup runs
+ * langAutoDetect() in that case. */
+static char gameFrontLanguageCode[32] = "";
+
 /* One-shot flag set by the Settings dialog's "Play Tutorial" button.
  * Consumed by the openSettings handler in gameFrontDialogs() so that
  * settings → tutorial transitions in one menu cycle. */
@@ -321,6 +326,32 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
+
+  /* Apply persisted language, or auto-detect if this is a fresh
+   * install (empty Language slot in the INI). Either way, this runs
+   * before any dialog draws so langGetText() returns the right text
+   * on the very first frame. */
+  if (gameFrontLanguageCode[0] != '\0') {
+    /* Try to load the file matching the saved code. If it's gone
+     * (deleted, renamed) silently fall back to English. */
+    if (strcmp(gameFrontLanguageCode, "en") != 0) {
+      char langPath[FILENAME_MAX];
+      snprintf(langPath, sizeof(langPath), "lang/%s.txt",
+               gameFrontLanguageCode);
+      if (!langLoadFile(langPath)) {
+        SDL_Log("gameFrontStart: persisted language '%s' not found — "
+                "falling back to English",
+                gameFrontLanguageCode);
+      }
+    }
+  } else {
+    char detected[32];
+    detected[0] = '\0';
+    langAutoDetect(detected, (int)sizeof(detected));
+    if (detected[0] != '\0') {
+      gameFrontSetLanguageCode(detected);
+    }
+  }
 
   /* Process the command line argument.
      If fileName already contains a pending winbolo:// URL (set by
@@ -1265,6 +1296,26 @@ void gameFrontSetShowTutorialButton(bool show) {
                             getPreferenceFilePath());
 }
 
+void gameFrontGetLanguageCode(char *out, int outSize) {
+  if (!out || outSize <= 0) return;
+  size_t n = strlen(gameFrontLanguageCode);
+  if (n >= (size_t)outSize) n = (size_t)outSize - 1;
+  memcpy(out, gameFrontLanguageCode, n);
+  out[n] = '\0';
+}
+
+void gameFrontSetLanguageCode(const char *code) {
+  if (!code) code = "";
+  size_t n = strlen(code);
+  if (n >= sizeof(gameFrontLanguageCode)) n = sizeof(gameFrontLanguageCode) - 1;
+  memcpy(gameFrontLanguageCode, code, n);
+  gameFrontLanguageCode[n] = '\0';
+  /* Persist immediately so the picked language survives a hard quit
+   * even if the user never reaches gameFrontPutPrefs. */
+  WritePrivateProfileString("SETTINGS", "Language",
+                            gameFrontLanguageCode, getPreferenceFilePath());
+}
+
 void gameFrontRequestPlayTutorial(void) {
   gameFrontPlayTutorialRequested = TRUE;
 }
@@ -1563,6 +1614,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
+   * fresh install — startup walks SDL_GetPreferredLocales() in that
+   * case (see gameFrontStart). */
+  GetPrivateProfileString("SETTINGS", "Language", "",
+                          gameFrontLanguageCode,
+                          (DWORD)sizeof(gameFrontLanguageCode), prefsFile);
+
   /* Game Options */
   GetPrivateProfileString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX, prefsFile);
   hiddenMines = YESNO_TO_TRUEFALSE(buff[0]);
@@ -1700,9 +1758,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontMyUdp, buff, sizeof(buff));
   WritePrivateProfileString("SETTINGS", "UDP Port", buff, prefsFile);
 
-  /* Languages */
-  langGetFileName(buff);
-  WritePrivateProfileString("SETTINGS", "Language", buff, prefsFile);
+  /* Language — persist the BCP-47 code, not a file path. */
+  WritePrivateProfileString("SETTINGS", "Language",
+                            gameFrontLanguageCode, prefsFile);
 
   /* Keys — driving */
   intToStr(keys->kiForward, buff, sizeof(buff));
