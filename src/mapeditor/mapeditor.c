@@ -44,6 +44,7 @@
 #include "../bolo/screencalc.h"
 #include "../bolo/tilenum.h"
 #include "../gui/tiles.h"
+#include "../gui/lang.h"
 #include "../gui/sdl3/minimap_render.h"
 
 /* From mapview.h — declared directly to avoid pulling in game_sim.h */
@@ -3912,13 +3913,13 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Open the unsaved-changes modal if requested */
         if (openUnsavedModal) {
-            ImGui_OpenPopup("Unsaved Changes");
+            ImGui_OpenPopup(langGetText(STR_MAPEDIT_UNSAVED_TITLE));
             openUnsavedModal = false;
         }
 
         /* Open error modal if there's a new error message */
         if (ed->errorMessage[0] && !ed->errorModalOpen) {
-            ImGui_OpenPopup("Error");
+            ImGui_OpenPopup(langGetText(STR_ERR_TITLE));
             ed->errorModalOpen = true;
         }
 
@@ -4165,7 +4166,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Go To Coordinates dialog */
         if (ed->openGotoDialog) {
-            ImGui_OpenPopup("Go To Coordinates");
+            ImGui_OpenPopup(langGetText(STR_MAPEDIT_GOTO_TITLE));
             ed->openGotoDialog = false;
         }
         {
@@ -4435,7 +4436,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Save stamp modal */
         if (ed->showSaveStampDialog) {
-            ImGui_OpenPopup("Save Stamp");
+            ImGui_OpenPopup(langGetText(STR_MAPEDIT_STAMP_SAVE_TITLE));
             ed->showSaveStampDialog = false;
         }
         {
@@ -4481,7 +4482,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Validation error modal (blocks saving) */
         if (ed->validationErrorModalOpen) {
-            ImGui_OpenPopup("Validation Errors");
+            ImGui_OpenPopup(langGetText(STR_MAPEDIT_VAL_ERRORS_TITLE));
             ed->validationErrorModalOpen = false;
         }
         mapEditorImguiValidationErrorModal(ed->lastValidation.errorCount);
