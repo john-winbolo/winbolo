@@ -50,6 +50,8 @@
 #include "blocks.h"
 #include "dns.h"
 #include "logviewer.h"
+#include "messages.h"
+#include "../gui/lang.h"
 
 /* File-scope pointer to the central LogViewerState */
 static LogViewerState *g_lv = NULL;
@@ -509,21 +511,33 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
       }
       lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE);
-      snprintf(mem, sizeof(mem), "%s joined the game.", name);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, name, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
+      }
       break;
     case log_PlayerQuit:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
       lv_playersLeaveGame(opt1, TRUE);
-      snprintf(mem, sizeof(mem), "%s left the game.", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      }
       break;
     case log_LostMan:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
-      strncat(str, " just lost his builder.", sizeof(str) - strlen(str) - 1);
-      lv_windowAddEvent(0, str);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
+      }
       break;
     case log_MapChange:
       logReadBytes(&opt1, 1);
@@ -543,9 +557,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       lv_playersGetPlayerName(opt1, str);
       lv_playersGetPlayerName(opt2, mem);
-      strncat(str, " just requested alliance with ", sizeof(str) - strlen(str) - 1);
-      strncat(str, mem, sizeof(str) - strlen(str) - 1);
-      lv_windowAddEvent(0, str);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        strncpy(args.otherName, mem, sizeof(args.otherName) - 1);
+        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_REQUEST, &args);
+      }
       break;
     case log_AllyAccept:
       logReadBytes(&opt1, 1);
@@ -553,16 +572,25 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersAcceptAlliance(opt1, opt2);
       lv_playersGetPlayerName(opt1, str);
       lv_playersGetPlayerName(opt2, mem);
-      strncat(str, " just accepted alliance with ", sizeof(str) - strlen(str) - 1);
-      strncat(str, mem, sizeof(str) - strlen(str) - 1);
-      lv_windowAddEvent(0, str);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        strncpy(args.otherName, mem, sizeof(args.otherName) - 1);
+        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_ACCEPT, &args);
+      }
       break;
     case log_AllyLeave:
       logReadBytes(&opt1, 1);
       lv_playersLeaveAlliance(opt1);
       lv_playersGetPlayerName(opt1, str);
-      strncat(str, " just left alliance", sizeof(str) - strlen(str) - 1);
-      lv_windowAddEvent(0, str);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_LEAVE, &args);
+      }
       break;
     case log_SoundBuild:
     case log_SoundFarm:
@@ -638,8 +666,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
       lv_playersGetPlayerName(opt1, name);
-      snprintf(mem, sizeof(mem), "Message to all from %s: %s", name, str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, name, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        strncpy(args.string1, str, sizeof(args.string1) - 1);
+        args.string1[sizeof(args.string1) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
+      }
       break;
     case log_MessagePlayers:
       logReadBytes(&opt1, 1);
@@ -649,15 +683,27 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       lv_playersGetPlayerName(opt1, name);
       lv_playersGetPlayerName(opt2, name2);
-      snprintf(mem, sizeof(mem), "Message from %s to %s: %s", name, name2, str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, name, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        strncpy(args.otherName, name2, sizeof(args.otherName) - 1);
+        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        strncpy(args.string1, str, sizeof(args.string1) - 1);
+        args.string1[sizeof(args.string1) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
+      }
       break;
     case log_MessageServer:
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
-      snprintf(mem, sizeof(mem), "Server Message: %s", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.string1, str, sizeof(args.string1) - 1);
+        args.string1[sizeof(args.string1) - 1] = '\0';
+        lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
+      }
       break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
@@ -699,26 +745,40 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       lv_playersGetPlayerName(opt1, mem);
       if (opt1 == opt2 || opt2 == NEUTRAL) {
-        snprintf(str, sizeof(str), "%s has died", mem);
+        MessageArgs args = {0};
+        strncpy(args.playerName, mem, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
+        MessageArgs args = {0};
         lv_playersGetPlayerName(opt2, str);
-        strncat(str, " just killed player ", sizeof(str) - strlen(str) - 1);
-        strncat(str, mem, sizeof(str) - strlen(str) - 1);
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        strncpy(args.otherName, mem, sizeof(args.otherName) - 1);
+        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
-      lv_windowAddEvent(0, str);
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
       break;
     case log_PlayerRejoin:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
-      snprintf(mem, sizeof(mem), "%s just rejoined game.", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
+      }
       break;
     case log_PlayerLeaving:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
-      snprintf(mem, sizeof(mem), "%s is leaving game.", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
+      }
       break;
     case log_PlayerDied:
       logReadBytes(&opt1, 1);
@@ -728,55 +788,76 @@ void lv_screenProcessLog(unsigned short numEvents) {
       /* No-op — marker event with no visual effect on replay */
       break;
     case log_LobbyEnter:
-      lv_windowAddEvent(0, "Lobby opened.");
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_LOBBY_OPENED, NULL);
       break;
     case log_LobbyExit:
-      lv_windowAddEvent(0, "Game started.");
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_GAME_STARTED, NULL);
       break;
     case log_PlayerReady:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
-      snprintf(mem, sizeof(mem), "%s is ready.", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_READY, &args);
+      }
       break;
     case log_PlayerUnready:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
-      snprintf(mem, sizeof(mem), "%s is no longer ready.", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_UNREADY, &args);
+      }
       break;
     case log_TeamSet:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       lv_playersGetPlayerName(opt1, str);
-      if (opt2 == 0) {
-        snprintf(mem, sizeof(mem), "%s left their team.", str);
-      } else {
-        snprintf(mem, sizeof(mem), "%s joined team %d.", str, opt2);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        if (opt2 == 0) {
+          lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_LEFT_TEAM, &args);
+        } else {
+          args.number = opt2;
+          lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_JOINED_TEAM, &args);
+        }
       }
-      lv_windowAddEvent(0, mem);
       break;
     case log_CountdownStart:
-      lv_windowAddEvent(0, "Countdown started.");
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_START, NULL);
       break;
     case log_CountdownCancel:
-      lv_windowAddEvent(0, "Countdown cancelled.");
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_CANCEL, NULL);
       break;
     case log_MapSkipVote:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
-      snprintf(mem, sizeof(mem), "%s voted to skip map.", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
+        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MAP_SKIP_VOTE, &args);
+      }
       break;
     case log_MapSkipApplied:
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
-      snprintf(mem, sizeof(mem), "Map skipped. New map: %s", str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        strncpy(args.string1, str, sizeof(args.string1) - 1);
+        args.string1[sizeof(args.string1) - 1] = '\0';
+        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
+      }
       break;
     case log_BalanceApplied:
-      lv_windowAddEvent(0, "Team balance applied.");
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
       break;
     default:
       lv_windowStop(TRUE);
@@ -829,7 +910,7 @@ bool lv_screenLogTick() {
       switch (code) {
       case LOG_QUIT:
         g_lv->isPlaying = FALSE;
-        lv_windowAddEvent(0, "End of Log File Reached");
+        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_END_OF_LOG, NULL);
         lv_finished();
         returnValue = TRUE;
         break;
@@ -1520,8 +1601,23 @@ void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
   lv_screenUpdate(redraw);
 }
 
-void lv_messageAdd(char *messageStr) {
-  lv_windowAddEvent(0, messageStr);
+void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
+                   const MessageArgs *args) {
+  /* The events panel renders a single line per message — the channel
+   * header (topId) is not displayed. Render the body via the lang
+   * runtime so each viewer sees its own language; switching languages
+   * mid-replay does not retranslate prior entries (acceptable per the
+   * Phase 1 caveat — the events panel stores rendered strings). */
+  (void)msgType;
+  (void)topId;
+  char body[FILENAME_MAX];
+  const char *rendered = langGetTextFmt(bodyId, args);
+  body[0] = '\0';
+  if (rendered) {
+    strncpy(body, rendered, sizeof(body) - 1);
+    body[sizeof(body) - 1] = '\0';
+  }
+  lv_windowAddEvent(0, body);
 }
 
 void lv_screenGetTime(char *dest) {

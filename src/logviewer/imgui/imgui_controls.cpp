@@ -13,6 +13,7 @@
 #include "imgui_context.h"
 #include "imgui.h"
 #include "platform_config.h"
+#include "../../gui/lang.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -97,7 +98,9 @@ void lv_imgui_controls_window(void) {
         ImGui::SetNextWindowPos(ImVec2((vp.x - 420) * 0.5f, vp.y - 120 - 10), cond);
     }
 
-    if (ImGui::Begin("Controls", &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
+    char ctrl_title[128];
+    snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
+    if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
         if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
@@ -126,29 +129,29 @@ void lv_imgui_controls_window(void) {
         bool controlsDisabled = !s_lv->isLoaded;
         if (controlsDisabled) ImGui::BeginDisabled();
 
-        if (ImGui::Button("<< Rew", ImVec2(60, 0))) {
+        if (ImGui::Button(langGetText(STR_LV_REW_BTN), ImVec2(60, 0))) {
             lv_windowRewind();
         }
         ImGui::SameLine();
 
         /* Play/Pause toggle button */
         if (s_lv->playIsPlaying) {
-            if (ImGui::Button("Pause", ImVec2(50, 0))) {
+            if (ImGui::Button(langGetText(STR_LV_PAUSE), ImVec2(50, 0))) {
                 lv_windowPause();
             }
         } else {
-            if (ImGui::Button("Play >", ImVec2(50, 0))) {
+            if (ImGui::Button(langGetText(STR_LV_PLAY_BTN), ImVec2(50, 0))) {
                 lv_windowPlay();
             }
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("Stop", ImVec2(50, 0))) {
+        if (ImGui::Button(langGetText(STR_LV_STOP), ImVec2(50, 0))) {
             lv_windowStop(0);
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("Fwd >>", ImVec2(60, 0))) {
+        if (ImGui::Button(langGetText(STR_LV_FWD_BTN), ImVec2(60, 0))) {
             lv_windowFastForward();
         }
 
@@ -156,7 +159,7 @@ void lv_imgui_controls_window(void) {
 
         /* Speed slider - same line as buttons */
         ImGui::SameLine(0, 15);
-        ImGui::Text("Speed:");
+        ImGui::TextUnformatted(langGetText(STR_LV_SPEED_LBL));
         ImGui::SameLine();
 
         int spd = (int)s_lv->speed;
@@ -227,11 +230,20 @@ void lv_imgui_controls_window(void) {
             ImGui::PopItemWidth();
 
             /* Time display row */
-            ImGui::Text("%s / %s", s_current_time, total_time_str);
+            {
+                MessageArgs args = {};
+                strncpy(args.string1, s_current_time, sizeof(args.string1) - 1);
+                strncpy(args.string2, total_time_str, sizeof(args.string2) - 1);
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIME_FMT, &args));
+            }
             ImGui::SameLine(0, 15);
-            ImGui::TextDisabled("-%s remaining", remaining_str);
+            {
+                MessageArgs args = {};
+                strncpy(args.string1, remaining_str, sizeof(args.string1) - 1);
+                ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TIME_REMAINING, &args));
+            }
         } else {
-            ImGui::Text("No log loaded");
+            ImGui::TextUnformatted(langGetText(STR_LV_NO_LOG_LOADED));
         }
     }
     ImGui::End();

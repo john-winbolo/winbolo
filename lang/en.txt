@@ -1052,6 +1052,122 @@ STR_MAPGEN_TERRAIN_LAYERS=Terrain Layers
 STR_MAPGEN_RIVERS=Rivers
 STR_MAPGEN_LAKES=Lakes
 
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} joined the game.
+STR_LV_HAS_JOINED={string1} has joined game
+STR_LV_ALLY_REQUEST={player} just requested alliance with {other}
+STR_LV_ALLY_ACCEPT={player} just accepted alliance with {other}
+STR_LV_ALLY_LEAVE={player} just left alliance
+STR_LV_MSG_ALL=Message to all from {player}: {string1}
+STR_LV_MSG_PLAYERS=Message from {player} to {other}: {string1}
+STR_LV_MSG_SERVER=Server Message: {string1}
+STR_LV_PLAYER_DIED={player} has died
+STR_LV_PLAYER_KILLED={player} just killed player {other}
+STR_LV_PLAYER_REJOINED={player} just rejoined game.
+STR_LV_PLAYER_LEAVING={player} is leaving game.
+STR_LV_LOBBY_OPENED=Lobby opened.
+STR_LV_GAME_STARTED=Game started.
+STR_LV_PLAYER_READY={player} is ready.
+STR_LV_PLAYER_UNREADY={player} is no longer ready.
+STR_LV_PLAYER_LEFT_TEAM={player} left their team.
+STR_LV_PLAYER_JOINED_TEAM={player} joined team {number}.
+STR_LV_COUNTDOWN_START=Countdown started.
+STR_LV_COUNTDOWN_CANCEL=Countdown cancelled.
+STR_LV_MAP_SKIP_VOTE={player} voted to skip map.
+STR_LV_MAP_SKIPPED=Map skipped. New map: {string1}
+STR_LV_TEAM_BALANCE=Team balance applied.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Open
+STR_LV_MENU_ACTION=Action
+STR_LV_PLAY=Play
+STR_LV_PAUSE=Pause
+STR_LV_STOP=Stop
+STR_LV_FAST_FORWARD=Fast Forward
+STR_LV_REWIND=Rewind
+STR_LV_MODE=Mode
+STR_LV_MODE_INFO=Information
+STR_LV_SELECT_TEAM=Select Team
+STR_LV_USE_TEAM_COLOURS=Use Team Colours
+STR_LV_TANK_CENTRED=Tank Centred
+STR_LV_DNS_LOOKUPS=DNS Lookups
+STR_LV_TEAM_COLOURS=Team Colours
+STR_LV_MENU_WINDOWS=Windows
+STR_LV_WIN_CONTROLS=Controls
+STR_LV_WIN_EVENTS=Events
+STR_LV_WIN_GAMEINFO=Game Information
+STR_LV_WIN_ITEMINFO=Item Information
+STR_LV_RESET_WINDOWS=Reset Window Positions
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
+STR_LV_PLAYER_LBL=Player {number}:
+STR_LV_NEUTRAL_LBL=Neutral:
+STR_LV_ABOUT_TITLE=WinBolo Log Viewer
+STR_LV_VERSION_FMT=Version: {string1}
+STR_LV_LICENSE=This program is free software; you can redistribute it\nand/or modify it under the terms of the GNU General\nPublic License as published by the Free Software Foundation.
+STR_LV_WEBSITE_LBL=Website:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Grey
+STR_LV_COL_KHAKI=Khaki
+STR_LV_COL_GREEN=Green
+STR_LV_COL_PINK=Pink
+STR_LV_COL_YELLOW=Yellow
+STR_LV_COL_LIGHTBLUE=Light Blue
+STR_LV_COL_ORANGE=Orange
+STR_LV_COL_LIGHTPURPLE=Light Purple
+STR_LV_COL_AQUA=Aqua
+STR_LV_COL_LIGHTGREEN=Light Green
+STR_LV_COL_LIGHTGREY=Light Grey
+STR_LV_COL_RED=Red
+STR_LV_COL_BLUE=Blue
+STR_LV_COL_BROWN=Brown
+STR_LV_COL_LIGHTPINK=Light Pink
+STR_LV_COL_PALEGREEN=Pale Green
+STR_LV_COL_PURPLE=Purple
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} second(s)
+STR_LV_INFO_MAP=Map Name: {string1}
+STR_LV_INFO_GAMETYPE=Game Type: {string1}
+STR_LV_INFO_HIDDENMINES=Hidden Mines: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Computer Tanks: {string1}
+STR_LV_INFO_TIME_LIMIT=Time Limit: {string1}
+STR_LV_INFO_START_DELAY=Start Delay: {string1}
+STR_LV_INFO_WBN_KEY=WBN Key:
+STR_LV_INFO_START_TIME=Start Time: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=No item selected
+STR_LV_LOCATION_FMT=Location: {string1}
+STR_LV_OWNER_LBL=Owner: {string1}
+STR_LV_ARMOUR_FMT=Armour: {number}
+STR_LV_SHELLS_FMT=Shells: {number}
+STR_LV_MINES_FMT=Mines: {number}
+STR_LV_IN_TANK_FMT=In Tank: {string1}
+STR_LV_CENTER_ON_MAP=Center on Map
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Rew
+STR_LV_PLAY_BTN=Play >
+STR_LV_FWD_BTN=Fwd >>
+STR_LV_SPEED_LBL=Speed:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} remaining
+STR_LV_NO_LOG_LOADED=No log loaded
+
+# Log viewer events panel
+STR_LV_COPY=Copy
+STR_LV_COPY_ALL=Copy All
+STR_LV_CLEAR_ALL=Clear All
+STR_LV_AUTO_SCROLL=Auto Scroll
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=End of Log File Reached
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

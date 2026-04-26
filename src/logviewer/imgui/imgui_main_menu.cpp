@@ -12,6 +12,7 @@
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
+#include "../../gui/lang.h"
 #include <SDL3/SDL.h>
 
 #include <cstdio>
@@ -151,18 +152,18 @@ int lv_imgui_main_menu_bar(void) {
 
     if (ImGui::BeginMainMenuBar()) {
         /* File Menu */
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open", "Ctrl+O")) {
+        if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN), "Ctrl+O")) {
                 lv_windowOpenFile(NULL);
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Save Map", NULL, false, s_lv->isLoaded != 0)) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), NULL, false, s_lv->isLoaded != 0)) {
                 lv_windowSaveMap();
                 clicked = 1;
             }
             ImGui::Separator();
             if (s_lv->fromMainMenu) {
-                if (ImGui::MenuItem("Return to Menu")) {
+                if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_RETURN))) {
                     SDL_Event quit_event;
                     SDL_zero(quit_event);
                     quit_event.type = SDL_EVENT_QUIT;
@@ -170,7 +171,7 @@ int lv_imgui_main_menu_bar(void) {
                     clicked = 1;
                 }
             } else {
-                if (ImGui::MenuItem("Exit")) {
+                if (ImGui::MenuItem(langGetText(STR_MENU_EXIT))) {
                     SDL_Event quit_event;
                     SDL_zero(quit_event);
                     quit_event.type = SDL_EVENT_QUIT;
@@ -180,62 +181,62 @@ int lv_imgui_main_menu_bar(void) {
             }
             ImGui::EndMenu();
         }
-        
+
         /* Action Menu */
-        if (ImGui::BeginMenu("Action")) {
-            if (ImGui::MenuItem("Play", "Ctrl+P", false, s_lv->isLoaded != 0 && !s_lv->playIsPlaying)) {
+        if (ImGui::BeginMenu(langGetText(STR_LV_MENU_ACTION))) {
+            if (ImGui::MenuItem(langGetText(STR_LV_PLAY), "Ctrl+P", false, s_lv->isLoaded != 0 && !s_lv->playIsPlaying)) {
                 lv_windowPlay();
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Pause", "Ctrl+U", false, s_lv->isLoaded != 0 && s_lv->playIsPlaying)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_PAUSE), "Ctrl+U", false, s_lv->isLoaded != 0 && s_lv->playIsPlaying)) {
                 lv_windowPause();
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Stop", "Ctrl+S", false, s_lv->isLoaded != 0)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_STOP), "Ctrl+S", false, s_lv->isLoaded != 0)) {
                 lv_windowStop(0);
                 clicked = 1;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Fast Forward", "Ctrl+F", false, s_lv->isLoaded != 0)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_FAST_FORWARD), "Ctrl+F", false, s_lv->isLoaded != 0)) {
                 lv_windowFastForward();
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Rewind", "Ctrl+R", false, s_lv->isLoaded != 0)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_REWIND), "Ctrl+R", false, s_lv->isLoaded != 0)) {
                 lv_windowRewind();
                 clicked = 1;
             }
             ImGui::EndMenu();
         }
-        
+
         /* Options Menu */
-        if (ImGui::BeginMenu("Options")) {
+        if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_OPTIONS))) {
             /* Mode submenu */
-            if (ImGui::BeginMenu("Mode")) {
-                if (ImGui::MenuItem("Information", "Ctrl+I", s_mode_information)) {
+            if (ImGui::BeginMenu(langGetText(STR_LV_MODE))) {
+                if (ImGui::MenuItem(langGetText(STR_LV_MODE_INFO), "Ctrl+I", s_mode_information)) {
                     s_mode_information = true;
                     clicked = 1;
                 }
-                if (ImGui::MenuItem("Select Team", "Ctrl+C", !s_mode_information)) {
+                if (ImGui::MenuItem(langGetText(STR_LV_SELECT_TEAM), "Ctrl+C", !s_mode_information)) {
                     s_mode_information = false;
                     clicked = 1;
                 }
                 ImGui::EndMenu();
             }
-            
-            if (ImGui::MenuItem("Use Team Colours", NULL, s_lv->useTeamColours != 0)) {
+
+            if (ImGui::MenuItem(langGetText(STR_LV_USE_TEAM_COLOURS), NULL, s_lv->useTeamColours != 0)) {
                 s_lv->useTeamColours = s_lv->useTeamColours ? 0 : 1;
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Tank Centred", "Ctrl+T", s_tank_centred)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_CENTRED), "Ctrl+T", s_tank_centred)) {
                 s_tank_centred = !s_tank_centred;
                 lv_screenTankCentred(s_tank_centred ? 1 : 0);
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Sound Effects", NULL, s_lv->isSoundsPlaying != 0)) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
                 clicked = 1;
             }
-            if (ImGui::MenuItem("DNS Lookups", NULL, s_dns_lookups)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_DNS_LOOKUPS), NULL, s_dns_lookups)) {
                 s_dns_lookups = !s_dns_lookups;
                 if (s_dns_lookups) {
                     s_dns_lookups = lv_dnsSetEnabled(1) ? true : false;
@@ -244,56 +245,56 @@ int lv_imgui_main_menu_bar(void) {
                 }
                 clicked = 1;
             }
-            
+
             ImGui::Separator();
-            
-            if (ImGui::MenuItem("Team Colours")) {
+
+            if (ImGui::MenuItem(langGetText(STR_LV_TEAM_COLOURS))) {
                 show_team_colours_dialog();
                 clicked = 1;
             }
-            
+
             ImGui::EndMenu();
         }
-        
+
         /* Windows Menu */
-        if (ImGui::BeginMenu("Windows")) {
-            if (ImGui::MenuItem("Controls", "Ctrl+1", lv_g_show_controls_window)) {
+        if (ImGui::BeginMenu(langGetText(STR_LV_MENU_WINDOWS))) {
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_CONTROLS), "Ctrl+1", lv_g_show_controls_window)) {
                 lv_g_show_controls_window = !lv_g_show_controls_window;
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Events", "Ctrl+2", lv_g_show_events_window)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_EVENTS), "Ctrl+2", lv_g_show_events_window)) {
                 lv_g_show_events_window = !lv_g_show_events_window;
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Game Information", "Ctrl+3", lv_g_show_game_info_window)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_GAMEINFO), "Ctrl+3", lv_g_show_game_info_window)) {
                 lv_g_show_game_info_window = !lv_g_show_game_info_window;
                 clicked = 1;
             }
-            if (ImGui::MenuItem("Item Information", "Ctrl+4", lv_g_show_item_info_window)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_ITEMINFO), "Ctrl+4", lv_g_show_item_info_window)) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
                 clicked = 1;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Reset Window Positions")) {
+            if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS))) {
                 lv_g_reset_window_positions = true;
                 clicked = 1;
             }
             ImGui::EndMenu();
         }
-        
+
         /* Help Menu */
-        if (ImGui::BeginMenu("Help")) {
-            if (ImGui::MenuItem("Help")) {
+        if (ImGui::BeginMenu(langGetText(STR_MENU_HELP))) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_HELP))) {
                 /* Open help file - Phase 3 */
                 clicked = 1;
             }
-            if (ImGui::MenuItem("About")) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) {
                 show_about_dialog();
                 clicked = 1;
             }
             ImGui::EndMenu();
         }
-        
+
         ImGui::EndMainMenuBar();
     }
     

@@ -229,10 +229,6 @@ void lv_efree(Generic object);
 #define DIALOG_BOX_TITLE "Log Viewer"
 
 #define MESSAGE_QUOTES "\""
-#define MESSAGE_THIS_COMPUTER "This Computer"
-#define MESSAGE_CHANGENAME " has changed name to "
-
-#define MESSAGE_QUIT_GAME " has quit game."
 
 #define TANK_SUBTRACT 128
 #define TANK_SHIFT_RIGHT2 4

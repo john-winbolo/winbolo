@@ -30,8 +30,8 @@
 #include "bases.h"
 #include "backend.h"
 #include "players.h"
-
-void lv_messageAdd(char *messageStr);
+#include "messages.h"
+#include "../gui/lang.h"
 
 
 /*********************************************************
@@ -321,12 +321,11 @@ baseAlliance lv_basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
 *********************************************************/
 BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   BYTE returnValue;         /* Value to return */
-  /* Message stuff */
+  char ownerName[FILENAME_MAX];
   char oldOwner[FILENAME_MAX];
-  char messageStr[FILENAME_MAX];
 
+  ownerName[0] = '\0';
   oldOwner[0] = '\0';
-  messageStr[0] = '\0';
 
   returnValue = (*value)->item[baseNum].owner;
   if (migrate == TRUE) {
@@ -334,16 +333,20 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   } else if (owner == NEUTRAL) {
     (*value)->item[baseNum].owner = owner;
   } else if ((*value)->item[baseNum].owner != owner) {
-    lv_playersMakeMessageName(owner, messageStr);
+    lv_playersMakeMessageName(owner, ownerName);
+    MessageArgs args = {0};
+    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
+    args.playerName[sizeof(args.playerName) - 1] = '\0';
     if (returnValue != NEUTRAL) {
       lv_playersGetPlayerName(returnValue, oldOwner);
-      strncat(messageStr, " just stole base from ", sizeof(messageStr) - strlen(messageStr) - 1);
-      strncat(messageStr, oldOwner, sizeof(messageStr) - strlen(messageStr) - 1);
-      lv_messageAdd(messageStr);
+      strncpy(args.otherName, oldOwner, sizeof(args.otherName) - 1);
+      args.otherName[sizeof(args.otherName) - 1] = '\0';
+      lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
     } else {
-      /* Neutral */
-      strncat(messageStr, " just captured a neutral base", sizeof(messageStr) - strlen(messageStr) - 1);
-      lv_messageAdd(messageStr);
+      /* Wording normalizes to bolo's MESSAGE_CAPTURE_BASE
+       * ("Neutral Base"); the legacy lower-case "neutral base"
+       * variant is gone. */
+      lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
     }
     (*value)->item[baseNum].owner = owner;
   }

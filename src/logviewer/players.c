@@ -36,6 +36,8 @@
 #include "util.h"
 #include "players.h"
 #include "bolo_map.h"
+#include "messages.h"
+#include "../gui/lang.h"
 
 
 static players plrs;
@@ -124,17 +126,23 @@ BYTE lv_playersGetSelf() {
 *********************************************************/
 bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
   bool returnValue;           /* Value to return */
-  char messageStr[FILENAME_MAX + 256]; /* Newswire Message - extra space for format overhead */
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
-  
-  messageStr[0] = '\0';
+
   label[0] = '\0';
   returnValue = FALSE;
   plrs.item[playerNum].inUse = TRUE;
-  /* Make Message */
-  lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
-  snprintf(messageStr, sizeof(messageStr), "\"%s\"%s%s\"", label, MESSAGE_CHANGENAME, playerName);
-  lv_windowAddEvent(0, messageStr);
+  /* Reuse MESSAGE_CHANGENAME (bolo wording: "{other}" has handed
+   * control over to "{player}"). The legacy logviewer wording
+   * (" has changed name to ") is normalized to the bolo phrasing. */
+  {
+    MessageArgs args = {0};
+    lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
+    strncpy(args.otherName, label, sizeof(args.otherName) - 1);
+    args.otherName[sizeof(args.otherName) - 1] = '\0';
+    strncpy(args.playerName, playerName, sizeof(args.playerName) - 1);
+    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
+  }
 
   /* Update the name */
   strncpy(plrs.item[playerNum].playerName, playerName, PLAYER_NAME_LEN - 1);
@@ -167,7 +175,6 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
 *********************************************************/
 void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override) {
   BYTE count; /* Looping variable */
-  char str[1024]; /* The player name - extra space for format overhead */
 
   if (plrs.item[playerNum].inUse == FALSE || override == TRUE) {
     
@@ -200,14 +207,19 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
   }
 
   if (announce == TRUE) {
+    /* Compose "name <loc>" or "name@loc" (depending on whether the
+     * location is a bracketed country code) and pass it as a single
+     * pre-formatted string1 — translators decide where the rest of
+     * the sentence goes around it. */
+    MessageArgs args = {0};
     if (plrs.item[playerNum].location[0] == '[') {
-      snprintf(str, sizeof(str), "%s %s has joined game",
+      snprintf(args.string1, sizeof(args.string1), "%s %s",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     } else {
-      snprintf(str, sizeof(str), "%s@%s has joined game",
+      snprintf(args.string1, sizeof(args.string1), "%s@%s",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     }
-    lv_windowAddEvent(0, str);
+    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_HAS_JOINED, &args);
   }
 
 //  frontEndSetPlayer((playerNumbers) playerNum, str);
@@ -584,7 +596,6 @@ BYTE lv_playersGetNumPlayers() {
 *********************************************************/
 void lv_playersLeaveGame(BYTE playerNum, bool announce) {
   char name[FILENAME_MAX];   /* The Player Name */
-  char output[FILENAME_MAX + 256]; /* The message - extra space for format overhead */
   BYTE count;                /* Looping variable */
 
 
@@ -605,11 +616,10 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
     if (announce == TRUE) {
       name[0] = '\0';
       lv_playersMakeMessageName(playerNum, name);
-  //    frontEndClearPlayer((playerNumbers) playerNum);
-  //    frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
-      /* Make a message about it */
-      snprintf(output, sizeof(output), "\"%s\"%s", name, MESSAGE_QUIT_GAME);
-      lv_windowAddEvent(0, output);
+      MessageArgs args = {0};
+      strncpy(args.playerName, name, sizeof(args.playerName) - 1);
+      args.playerName[sizeof(args.playerName) - 1] = '\0';
+      lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
   }
 }
