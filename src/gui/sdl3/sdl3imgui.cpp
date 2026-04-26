@@ -408,6 +408,7 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
+    imguiLoadBoloFont(18.0f);
     ImGui_ImplSDL3_InitForSDLRenderer(pw->window, pw->renderer);
     ImGui_ImplSDLRenderer3_Init(pw->renderer);
 
