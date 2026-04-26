@@ -665,6 +665,10 @@ if(ENABLE_PILLMASSAGE_BUG)
     add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
 endif()
 
+# libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
+# When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
+option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
+
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
 # Set -DENABLE_ONNXRUNTIME=OFF to skip entirely.
@@ -792,6 +796,35 @@ else()
     message(STATUS "Sentry crash reporting disabled")
 endif()
 
+# libplum — UPnP / NAT-PMP / PCP port mapping for hosted servers.
+# Skipped on iOS (mobile) and Emscripten (wasm); the wrapper compiles to
+# no-op stubs there.  Build static so we don't ship an extra shared library.
+set(HAVE_LIBPLUM FALSE)
+if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
+    FetchContent_Declare(
+        libplum
+        GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
+        GIT_TAG        v0.5.3
+        GIT_SHALLOW    TRUE
+        SYSTEM
+        EXCLUDE_FROM_ALL
+    )
+    set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
+    set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
+    set(BUILD_SHARED_LIBS_SAVE_PLUM "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(libplum)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_PLUM}" CACHE BOOL "" FORCE)
+    # PIC so the static lib can also link into shared targets (winbolo_gym).
+    if(TARGET plum)
+        set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
+    set(HAVE_LIBPLUM TRUE)
+    message(STATUS "libplum enabled — automatic NAT port mapping")
+else()
+    message(STATUS "libplum disabled — nat_portmap wrapper compiles to no-ops")
+endif()
+
 # ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
@@ -823,6 +856,7 @@ set(CLIENT_SOURCES
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/discovery.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
@@ -974,6 +1008,12 @@ target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image cjson)
 
+# libplum NAT port mapping (optional)
+if(HAVE_LIBPLUM)
+    target_compile_definitions(WinBolo PRIVATE BOLO_PORTMAP)
+    target_link_libraries(WinBolo PRIVATE LibPlum::LibPlum)
+endif()
+
 # ONNX Runtime ML brain support (optional)
 if(HAVE_ONNXRUNTIME)
     target_sources(WinBolo PRIVATE src/bolo/ml_brain.c)
@@ -1123,6 +1163,7 @@ set(SERVER_SOURCES
     src/server/server_lifecycle.c
     src/server/server_frontend_stubs.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
@@ -1177,6 +1218,12 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson)
+
+# libplum NAT port mapping (optional)
+if(HAVE_LIBPLUM)
+    target_compile_definitions(WinBoloDS PRIVATE BOLO_PORTMAP)
+    target_link_libraries(WinBoloDS PRIVATE LibPlum::LibPlum)
+endif()
 
 # ONNX Runtime ML brain support for server bots (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1374,6 +1421,7 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1503,6 +1551,7 @@ set(GYM_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
