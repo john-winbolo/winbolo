@@ -120,35 +120,6 @@ static SDL_Texture *s_starHalf  = nullptr;
 static SDL_Texture *s_starEmpty = nullptr;
 static bool s_starsLoaded = false;
 
-static SDL_Texture *loadSvgIcon(SDL_Renderer *renderer, const char *path, int size) {
-    NSVGimage *svg = nsvgParseFromFile(path, "px", 96.0f);
-    if (!svg) return nullptr;
-
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    if (!rast) { nsvgDelete(svg); return nullptr; }
-
-    float scale = (float)size / (svg->width > svg->height ? svg->width : svg->height);
-    int w = (int)(svg->width * scale);
-    int h = (int)(svg->height * scale);
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-
-    unsigned char *pixels = (unsigned char *)SDL_calloc(1, (size_t)(w * h * 4));
-    if (!pixels) { nsvgDeleteRasterizer(rast); nsvgDelete(svg); return nullptr; }
-
-    nsvgRasterize(rast, svg, 0, 0, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(svg);
-
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_ABGR8888, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 static void loadStarIcons(SDL_Renderer *renderer) {
     if (s_starsLoaded) return;
     s_starsLoaded = true;
@@ -165,10 +136,10 @@ static void loadStarIcons(SDL_Renderer *renderer) {
     SDL_Texture **targets[] = { &s_starFull, &s_starHalf, &s_starEmpty };
 
     for (int i = 0; i < 3; i++) {
-        *targets[i] = loadSvgIcon(renderer, paths[i][0], iconSize);
+        *targets[i] = imguiLoadSvgIcon(renderer, paths[i][0], iconSize);
         if (!*targets[i] && base) {
             SDL_snprintf(baseBuf, sizeof(baseBuf), "%s%s", base, paths[i][0]);
-            *targets[i] = loadSvgIcon(renderer, baseBuf, iconSize);
+            *targets[i] = imguiLoadSvgIcon(renderer, baseBuf, iconSize);
         }
     }
 }

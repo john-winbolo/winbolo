@@ -138,30 +138,6 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     }
 }
 
-static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-    float scale = (float)size / image->height;
-    if (image->width * scale > (float)size) scale = (float)size / image->width;
-    int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-    float offX = ((float)w - image->width * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 static SDL_Texture *s_iconSuccess = nullptr;
 static SDL_Texture *s_iconError   = nullptr;
 static SDL_Texture *s_iconInfo    = nullptr;
@@ -184,14 +160,14 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     };
 
     for (int i = 0; i < 3; i++) {
-        *icons[i].target = loadSvgIcon(renderer, icons[i].relPath, iconPx);
+        *icons[i].target = imguiLoadSvgIcon(renderer, icons[i].relPath, iconPx);
         if (*icons[i].target == nullptr) {
             char basePathBuf[FILENAME_MAX];
             const char *base = SDL_GetBasePath();
             if (base) {
                 SDL_snprintf(basePathBuf, sizeof(basePathBuf),
                              "%s%s", base, icons[i].relPath);
-                *icons[i].target = loadSvgIcon(renderer, basePathBuf, iconPx);
+                *icons[i].target = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
             }
         }
     }
