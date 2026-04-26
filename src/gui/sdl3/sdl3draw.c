@@ -848,6 +848,22 @@ static void sdl3DrawShowLoadingScreen(void) {
   SDL_DestroyTexture(logoTex);
 }
 
+/* Map the active BCP-47 language code to the Sarasa Mono region that
+ * carries its CJK glyphs, or NULL for non-CJK languages. Sarasa Mono
+ * is a true monospace (Iosevka Latin merged with Source Han Sans),
+ * which keeps the columnar status panels aligned when mixing Latin
+ * and CJK characters. The picker normalises codes to lowercase
+ * (lang.c langPickerScan); compare case-insensitively to also accept
+ * codes set by other paths. */
+static const char *sarasaMonoFontPath(const char *langCode) {
+  if (!langCode || !*langCode) return NULL;
+  if (SDL_strcasecmp(langCode, "ja")    == 0) return "data/fonts/SarasaMonoJ-Regular.ttf";
+  if (SDL_strcasecmp(langCode, "ko")    == 0) return "data/fonts/SarasaMonoK-Regular.ttf";
+  if (SDL_strcasecmp(langCode, "zh-CN") == 0) return "data/fonts/SarasaMonoSC-Regular.ttf";
+  if (SDL_strcasecmp(langCode, "zh-TW") == 0) return "data/fonts/SarasaMonoTC-Regular.ttf";
+  return NULL;
+}
+
 bool sdl3DrawSetup(int zoomFactor) {
   gZoomFactor = zoomFactor;
 
@@ -946,27 +962,64 @@ bool sdl3DrawSetup(int zoomFactor) {
   /* --- Now load fonts at the correct zoom --- */
   bool ttfOk = TTF_Init();
   if (ttfOk) {
+    /* For CJK languages, prefer Sarasa Mono (Iosevka Latin merged with
+     * Source Han Sans) — true monospace with correct half-width/full-
+     * width cells, so the columnar status panels and message overlay
+     * stay aligned when mixing Latin and CJK. SDL_ttf can't merge
+     * fonts cleanly the way ImGui can, so this is a swap, not a chain.
+     * Fall back to Courier Prime if the Sarasa file is missing. */
+    char langCode[32];
+    langCode[0] = '\0';
+    gameFrontGetLanguageCode(langCode, (int)sizeof(langCode));
+    const char *sarasaRel = sarasaMonoFontPath(langCode);
+    const char *courierRel = "data/CourierPrime-Regular.ttf";
+
 #if defined(__EMSCRIPTEN__)
-    const char *fontPath = "/data/CourierPrime-Regular.ttf";
+    /* Emscripten preload uses a leading slash. */
+    static char sarasaBuf[1024];
+    const char *sarasaPath = NULL;
+    if (sarasaRel) {
+      SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "/%s", sarasaRel);
+      sarasaPath = sarasaBuf;
+    }
+    const char *courierPath = "/data/CourierPrime-Regular.ttf";
 #elif defined(__ANDROID__)
     /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
      * asset manager when given a relative path.  Don't prepend BasePath. */
-    const char *fontPath = "data/CourierPrime-Regular.ttf";
+    const char *sarasaPath  = sarasaRel;
+    const char *courierPath = courierRel;
 #else
-    const char *relPath = "data/CourierPrime-Regular.ttf";
-    /* Use SDL_GetBasePath() to resolve font path relative to the executable,
-       so it works regardless of CWD */
     const char *base = SDL_GetBasePath();
-    static char fontBuf[1024];
+    static char sarasaBuf[1024];
+    static char courierBuf[1024];
     if (base) {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
+      SDL_snprintf(courierBuf, sizeof(courierBuf), "%s%s", base, courierRel);
+      if (sarasaRel) SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s%s", base, sarasaRel);
     } else {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
+      SDL_snprintf(courierBuf, sizeof(courierBuf), "%s", courierRel);
+      if (sarasaRel) SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s", sarasaRel);
     }
-    const char *fontPath = fontBuf;
+    const char *sarasaPath  = sarasaRel ? sarasaBuf : NULL;
+    const char *courierPath = courierBuf;
 #endif
-    gFontMsg  = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
-    gFontKD   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
+
+    /* Probe Sarasa Mono once via SDL_IOFromFile so we can warn cleanly
+     * before TTF_OpenFont sees a missing file. */
+    const char *fontPath = courierPath;
+    if (sarasaPath) {
+      SDL_IOStream *probe = SDL_IOFromFile(sarasaPath, "rb");
+      if (probe) {
+        SDL_CloseIO(probe);
+        fontPath = sarasaPath;
+      } else {
+        SDL_Log("sdl3DrawSetup: Sarasa Mono font %s missing for language %s — "
+                "falling back to Courier Prime (CJK glyphs will tofu)",
+                sarasaPath, langCode);
+      }
+    }
+
+    gFontMsg   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
+    gFontKD    = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
     gFontTiny  = TTF_OpenFont(fontPath,  8 * gZoomFactor); /* pill/base status labels */
     gFontLabel = TTF_OpenFont(fontPath, 10 * gZoomFactor); /* pill/base main view labels */
   }

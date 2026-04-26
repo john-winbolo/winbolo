@@ -136,6 +136,62 @@ static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) 
     return tex;
 }
 
+/* Chain a Noto Sans CJK font into the atlas covering exactly the CJK
+ * codepoints that appear in the picker's language-name labels. Without
+ * this, language entries written in their native script (日本語, 한국어,
+ * 简体中文, 繁體中文) render as tofu in the dropdown until the user
+ * actually selects them — a chicken-and-egg UX problem.
+ *
+ * The umbrella font is NotoSansCJKsc-Regular.otf: every regional Noto
+ * Sans CJK .otf shares the same character set (CJK Unified Ideographs +
+ * Hiragana + Katakana + Hangul) and differs only in glyph forms for
+ * disputed-region ideographs. SC is therefore sufficient to render
+ * names from all four CJK regions; the active-language chain (which
+ * runs first via imguiLoadBoloFontSized) already wins for any
+ * codepoints that overlap, so JP users still see JP-style kanji
+ * elsewhere in the UI.
+ *
+ * Storage: ImGui keeps a pointer to the glyph range, so the ImWchar
+ * vector must outlive the atlas. A function-local static suffices —
+ * only one settings dialog atlas can exist at a time. */
+static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
+                                  float fontSize) {
+    if (!entries || count <= 0) return;
+
+    ImFontGlyphRangesBuilder builder;
+    bool anyCjk = false;
+    for (int i = 0; i < count; i++) {
+        const char *name = entries[i].meta.name;
+        if (!name || !*name) continue;
+        for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+            if (*p >= 0x80) { anyCjk = true; break; }
+        }
+        builder.AddText(name);
+    }
+    if (!anyCjk) return;
+
+    static ImVector<ImWchar> pickerRanges;
+    pickerRanges.clear();
+    builder.BuildRanges(&pickerRanges);
+    if (pickerRanges.empty()) return;
+
+    int            sz   = 0;
+    unsigned char *data = imguiFontLoadData(
+        "data/fonts/NotoSansCJKsc-Regular.otf", &sz);
+    if (!data) {
+        SDL_Log("imgui_settings: NotoSansCJKsc-Regular.otf missing — "
+                "picker CJK names will render as tofu");
+        return;
+    }
+
+    ImFontConfig cfg;
+    cfg.MergeMode    = true;
+    cfg.OversampleH  = 1;
+    cfg.OversampleV  = 1;
+    cfg.GlyphRanges  = pickerRanges.Data;
+    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, sz, fontSize, &cfg);
+}
+
 extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -171,7 +227,23 @@ extern "C" void imguiSettingsShow(void) {
     imguiApplyBoloTheme();
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
+
+    /* Scan available translations BEFORE loading fonts. The dropdown
+     * displays each language's name in its native script (日本語, 한국어,
+     * etc.); we need those codepoints in the atlas from the first
+     * frame, otherwise the picker tofus the very entries the user
+     * needs to click on. Re-scanning every frame would hit the disk
+     * on every redraw; the picker is local to this dialog so a fresh
+     * scan on next open is sufficient if a translator drops a new
+     * file in lang/. */
+    int            langCount = 0;
+    LangFileEntry *langEntries = langPickerScan(&langCount);
+
     dialogApplyScaling(s);
+    {
+        float pickerFontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
+        chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
+    }
 
     /* Load current player name */
     char playerName[FILENAME_MAX];
@@ -204,13 +276,7 @@ extern "C" void imguiSettingsShow(void) {
         }
     }
 
-    /* Scan available translations once for the language dropdown.
-     * Re-scanning every frame would hit the disk on every redraw; the
-     * picker is local to this dialog so a fresh scan on next open is
-     * sufficient if a translator drops a new file in lang/. */
-    int            langCount = 0;
-    LangFileEntry *langEntries = langPickerScan(&langCount);
-    int            curLangIdx = 0;
+    int curLangIdx = 0;
     {
         char curCode[32];
         curCode[0] = '\0';
@@ -231,6 +297,18 @@ extern "C" void imguiSettingsShow(void) {
 #if !BOLO_MOBILE
     bool showKeySetup = false;
 #endif
+
+    /* Track the CJK font requirement currently baked into the ImGui
+     * font atlas. The atlas was built for the language that was active
+     * when dialogApplyScaling() ran above, so seed it from the same
+     * gameFront state. When the user picks a language whose CJK
+     * requirement differs, we rebuild the atlas in-place at end-of-
+     * frame so non-Latin glyphs render in the same dialog session
+     * (no app restart needed). */
+    char        atlasLangCode[32] = {0};
+    gameFrontGetLanguageCode(atlasLangCode, (int)sizeof(atlasLangCode));
+    const char *atlasCjkPath = cjkNotoFontPath(atlasLangCode);
+    bool        pendingFontRebuild = false;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -386,6 +464,21 @@ extern "C" void imguiSettingsShow(void) {
                             }
                         }
                         curLangIdx = i;
+
+                        /* If the selected language requires a different
+                         * CJK font region than the one currently baked
+                         * into the atlas, schedule a rebuild at end-of
+                         * frame. Latin↔Latin and same-region CJK
+                         * switches don't need a rebuild — langLoadFile
+                         * already updated the override table and the
+                         * next frame picks up new strings. */
+                        char        newLangCode[32] = {0};
+                        gameFrontGetLanguageCode(newLangCode,
+                                                  (int)sizeof(newLangCode));
+                        const char *newCjkPath = cjkNotoFontPath(newLangCode);
+                        if (newCjkPath != atlasCjkPath) {
+                            pendingFontRebuild = true;
+                        }
                     }
                 }
                 ImGui::EndCombo();
@@ -636,6 +729,34 @@ extern "C" void imguiSettingsShow(void) {
         SDL_RenderPresent(renderer);
         dialogFrameCapEnd(frameCapStart);
 
+        /* Rebuild the font atlas in-place when the user picks a
+         * language whose CJK requirement differs from the one that's
+         * currently baked into the atlas. Doing this between Present
+         * and the next NewFrame is safe — no draw commands are
+         * pending against the old font texture. We re-add Inter (and
+         * the chained CJK font, picked up automatically inside
+         * imguiLoadBoloFontSized via gameFrontGetLanguageCode) at the
+         * same pixel size dialogApplyScaling() used so the dialog's
+         * style metrics still match. The SDL3 backend exposes the
+         * ImGuiBackendFlags_RendererHasTextures contract, so atlas
+         * texture lifecycle (WantDestroy on the old, WantCreate on
+         * the new) is handled automatically inside the next
+         * RenderDrawData call — we don't need to drive it manually. */
+        if (pendingFontRebuild) {
+            float fontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
+            ImGui::GetIO().Fonts->Clear();
+            imguiLoadBoloFont(fontSize);
+            chainPickerNameGlyphs(langEntries, langCount, fontSize);
+
+            /* Refresh the recorded atlas state so subsequent picks
+             * compare against what's actually in the atlas now. */
+            char rebuiltLangCode[32] = {0};
+            gameFrontGetLanguageCode(rebuiltLangCode,
+                                     (int)sizeof(rebuiltLangCode));
+            atlasCjkPath = cjkNotoFontPath(rebuiltLangCode);
+            pendingFontRebuild = false;
+        }
+
 #if !BOLO_MOBILE
         if (showKeySetup) {
             showKeySetup = false;
@@ -664,6 +785,17 @@ extern "C" void imguiSettingsShow(void) {
             ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
             ImGui_ImplSDLRenderer3_Init(renderer);
             dialogApplyScaling(s);
+            {
+                float pickerFontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
+                chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
+            }
+            /* Atlas was rebuilt with the now-active language; resync. */
+            {
+                char resumeLangCode[32] = {0};
+                gameFrontGetLanguageCode(resumeLangCode,
+                                         (int)sizeof(resumeLangCode));
+                atlasCjkPath = cjkNotoFontPath(resumeLangCode);
+            }
 
             dialogSetWindowSize(window, 1024, 768);
             dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
