@@ -29,6 +29,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -105,6 +107,35 @@ extern "C" {
 #endif
 }
 
+/* Cached language-info icon. The SDL renderer is process-lifetime, so the
+ * texture stays valid between settings opens. */
+static SDL_Texture *s_langInfoIcon = nullptr;
+static bool s_langInfoIconAttempted = false;
+
+static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+    float scale = (float)size / image->height;
+    if (image->width * scale > (float)size) scale = (float)size / image->width;
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    float offX = ((float)w - image->width * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
+}
+
 extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -155,6 +186,23 @@ extern "C" void imguiSettingsShow(void) {
     /* Initialise WBN popup state and kick off token validation */
     imguiWinbolonetReset();
     imguiWinbolonetStartValidation();
+
+    /* Lazily rasterise the info icon at a size that suits the dropdown row. */
+    if (!s_langInfoIcon && !s_langInfoIconAttempted) {
+        s_langInfoIconAttempted = true;
+        int iconPx = (int)(20.0f * s);
+        if (iconPx < 16) iconPx = 16;
+        s_langInfoIcon = loadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
+        if (!s_langInfoIcon) {
+            char basePathBuf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                             "%sdata/ui/dialog-info.svg", base);
+                s_langInfoIcon = loadSvgIcon(renderer, basePathBuf, iconPx);
+            }
+        }
+    }
 
     /* Scan available translations once for the language dropdown.
      * Re-scanning every frame would hit the disk on every redraw; the
@@ -342,33 +390,59 @@ extern "C" void imguiSettingsShow(void) {
                 }
                 ImGui::EndCombo();
             }
-            /* Author / Notes / fallback footnote. When English is
-             * selected (no override loaded) the meta on entry 0 was
-             * populated from STR_DLGLANG_NAME/AUTHOR/NOTES so this
-             * block stays consistent. langGetLoadedMeta() may also be
-             * non-NULL for a loaded file; prefer that for non-English
-             * entries so live re-translation of the meta works. */
-            const LangFileMeta *displayMeta = nullptr;
-            if (curLangIdx == 0 || curLangIdx >= langCount) {
-                displayMeta = (langCount > 0) ? &langEntries[0].meta : nullptr;
+
+            /* Info icon next to the combo opens a popup carrying the
+             * author / notes / footnotes that used to be inlined below.
+             * langGetLoadedMeta() may be non-NULL for a loaded file; prefer
+             * that for non-English entries so live re-translation of the
+             * meta works. Entry 0's meta is populated from
+             * STR_DLGLANG_NAME/AUTHOR/NOTES for the English baseline. */
+            ImGui::SameLine();
+            float iconH = ImGui::GetFrameHeight();
+            ImVec2 iconSz(iconH, iconH);
+            bool openInfo = false;
+            if (s_langInfoIcon) {
+                if (ImGui::ImageButton("##langInfoBtn",
+                                       (ImTextureID)s_langInfoIcon,
+                                       iconSz)) {
+                    openInfo = true;
+                }
             } else {
-                const LangFileMeta *loaded = langGetLoadedMeta();
-                displayMeta = loaded ? loaded : &langEntries[curLangIdx].meta;
-            }
-            if (displayMeta) {
-                ImGui::Text("%s%s",
-                            langGetText(STR_DLGLANG_AUTHOR_CAPTION),
-                            displayMeta->author);
-                if (displayMeta->notes[0] != '\0') {
-                    ImGui::TextWrapped("%s%s",
-                                       langGetText(STR_DLGLANG_NOTES_CAPTION),
-                                       displayMeta->notes);
+                if (ImGui::SmallButton("?##langInfoBtn")) {
+                    openInfo = true;
                 }
             }
-            ImGui::TextDisabled("%s",
-                                langGetText(STR_DLGLANG_DEFAULTNOTE));
-            ImGui::TextDisabled("%s",
-                                langGetText(STR_DLGLANG_MIDGAME_NOTE));
+            if (openInfo) {
+                ImGui::OpenPopup("##LangInfoPopup");
+            }
+            if (ImGui::BeginPopup("##LangInfoPopup")) {
+                const LangFileMeta *displayMeta = nullptr;
+                if (curLangIdx == 0 || curLangIdx >= langCount) {
+                    displayMeta = (langCount > 0) ? &langEntries[0].meta : nullptr;
+                } else {
+                    const LangFileMeta *loaded = langGetLoadedMeta();
+                    displayMeta = loaded ? loaded : &langEntries[curLangIdx].meta;
+                }
+                float wrapW = 360.0f * s;
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapW);
+                if (displayMeta) {
+                    ImGui::TextWrapped("%s%s",
+                                       langGetText(STR_DLGLANG_AUTHOR_CAPTION),
+                                       displayMeta->author);
+                    if (displayMeta->notes[0] != '\0') {
+                        ImGui::TextWrapped("%s%s",
+                                           langGetText(STR_DLGLANG_NOTES_CAPTION),
+                                           displayMeta->notes);
+                    }
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("%s",
+                                    langGetText(STR_DLGLANG_DEFAULTNOTE));
+                ImGui::TextDisabled("%s",
+                                    langGetText(STR_DLGLANG_MIDGAME_NOTE));
+                ImGui::PopTextWrapPos();
+                ImGui::EndPopup();
+            }
 
 #if !BOLO_MOBILE
             {
