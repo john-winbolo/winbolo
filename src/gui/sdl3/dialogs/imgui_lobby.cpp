@@ -30,6 +30,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "nanosvg.h"
+#include "nanosvgrast.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -133,6 +135,65 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
         MessageArgs args = {};
         args.number = secs;
         SDL_snprintf(buf, bufSize, "%s", langGetTextFmt(STR_DLGLOBBY_TIME_S, &args));
+    }
+}
+
+static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+    float scale = (float)size / image->height;
+    if (image->width * scale > (float)size) scale = (float)size / image->width;
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    float offX = ((float)w - image->width * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
+}
+
+static SDL_Texture *s_iconSuccess = nullptr;
+static SDL_Texture *s_iconError   = nullptr;
+static SDL_Texture *s_iconInfo    = nullptr;
+static bool         s_iconsAttempted = false;
+
+static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
+    if (s_iconsAttempted) return;
+    s_iconsAttempted = true;
+
+    int iconPx = (int)(18.0f * scale);
+    if (iconPx < 16) iconPx = 16;
+
+    struct {
+        SDL_Texture **target;
+        const char   *relPath;
+    } icons[] = {
+        { &s_iconSuccess, "data/ui/dialog-success.svg" },
+        { &s_iconError,   "data/ui/dialog-error.svg" },
+        { &s_iconInfo,    "data/ui/dialog-info.svg" },
+    };
+
+    for (int i = 0; i < 3; i++) {
+        *icons[i].target = loadSvgIcon(renderer, icons[i].relPath, iconPx);
+        if (*icons[i].target == nullptr) {
+            char basePathBuf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                             "%s%s", base, icons[i].relPath);
+                *icons[i].target = loadSvgIcon(renderer, basePathBuf, iconPx);
+            }
+        }
     }
 }
 
@@ -356,43 +417,116 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         {
             ServerPortmapInfo pm;
             serverInstanceGetPortmapInfo(&pm);
+
+            loadStatusIconsOnce(renderer, s);
+
+            SDL_Texture *icon       = nullptr;
+            const char  *shortText  = nullptr;
+            ImVec4       color;
+            const char  *detailFmt  = nullptr;
+
             switch (pm.status) {
-                case SERVER_PORTMAP_PENDING:
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f),
-                                       "Opening firewall port...");
-                    ImGui::Spacing();
-                    break;
-                case SERVER_PORTMAP_SUCCEEDED:
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
-                                       "Port forwarded automatically (%s:%u)",
-                                       pm.externalIp, (unsigned)pm.externalPort);
-                    ImGui::Spacing();
-                    break;
-                case SERVER_PORTMAP_HOLE_PUNCH_OK:
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f),
-                                       "NAT traversal active — joiners on most "
-                                       "networks can connect (%s:%u).",
-                                       pm.externalIp, (unsigned)pm.externalPort);
-                    ImGui::Spacing();
-                    break;
-                case SERVER_PORTMAP_SYMMETRIC_NAT:
-                    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.4f, 1.0f),
-                                       "Symmetric NAT detected — joiners cannot "
-                                       "connect through your network. Manual "
-                                       "port-forward of UDP %u required.",
-                                       (unsigned)27500);
-                    ImGui::Spacing();
-                    break;
-                case SERVER_PORTMAP_FAILED:
-                    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.4f, 1.0f),
-                                       "Could not establish a network path. "
-                                       "Manual port-forward of UDP %u required "
-                                       "for joiners to connect.",
-                                       (unsigned)27500);
-                    ImGui::Spacing();
-                    break;
                 case SERVER_PORTMAP_DISABLED:
                     break;
+                case SERVER_PORTMAP_PENDING:
+                    icon      = s_iconInfo;
+                    shortText = "Checking server reachability...";
+                    color     = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                    detailFmt = "Trying to open a firewall port via UPnP / NAT-PMP "
+                                "and confirming the tracker can reach back through "
+                                "your network. This usually completes within 30 "
+                                "seconds.";
+                    break;
+                case SERVER_PORTMAP_SUCCEEDED:
+                    icon      = s_iconSuccess;
+                    shortText = "Server accessible";
+                    color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
+                    detailFmt = "Port forwarded automatically via UPnP/NAT-PMP at "
+                                "%s:%u. Joiners connect directly with no further "
+                                "steps required.";
+                    break;
+                case SERVER_PORTMAP_HOLE_PUNCH_OK:
+                    icon      = s_iconSuccess;
+                    shortText = "Server accessible";
+                    color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
+                    detailFmt = "Direct port forwarding could not be established, "
+                                "but NAT traversal is active. Joiners coordinate "
+                                "through the tracker to punch through your "
+                                "network's firewall. This works for most home "
+                                "networks; joiners on symmetric NAT or "
+                                "carrier-grade NAT may still fail to connect.";
+                    break;
+                case SERVER_PORTMAP_SYMMETRIC_NAT:
+                    icon      = s_iconError;
+                    shortText = "Server unreachable";
+                    color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+                    detailFmt = "Symmetric NAT detected — your network rewrites the "
+                                "source port for every destination, which prevents "
+                                "joiners from reaching you even via NAT traversal. "
+                                "To host successfully, manually forward UDP port "
+                                "%u on your router to this machine.";
+                    break;
+                case SERVER_PORTMAP_FAILED:
+                    icon      = s_iconError;
+                    shortText = "Server unreachable";
+                    color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+                    detailFmt = "Could not open a firewall port automatically "
+                                "(UPnP/NAT-PMP refused or unavailable) and the "
+                                "tracker could not confirm bidirectional "
+                                "reachability. To host successfully, manually "
+                                "forward UDP port %u on your router to this "
+                                "machine.";
+                    break;
+            }
+
+            if (shortText != nullptr) {
+                ImGui::BeginGroup();
+                if (icon != nullptr) {
+                    float iconSize = 18.0f * s;
+                    ImGui::Image((ImTextureID)icon, ImVec2(iconSize, iconSize));
+                    ImGui::SameLine();
+                    float textOffset = (iconSize - ImGui::GetTextLineHeight()) * 0.5f;
+                    if (textOffset > 0.0f) {
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + textOffset);
+                    }
+                }
+                ImGui::TextColored(color, "%s", shortText);
+                ImGui::EndGroup();
+
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                }
+                if (ImGui::IsItemClicked()) {
+                    ImGui::OpenPopup("portmap_details");
+                }
+                ImGui::Spacing();
+
+                if (ImGui::BeginPopupModal("portmap_details", nullptr,
+                                           ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ServerPortmapInfo pm2;
+                    serverInstanceGetPortmapInfo(&pm2);
+                    ImGui::PushTextWrapPos(420.0f * s);
+                    switch (pm2.status) {
+                        case SERVER_PORTMAP_SUCCEEDED:
+                            ImGui::Text(detailFmt, pm2.externalIp,
+                                        (unsigned)pm2.externalPort);
+                            break;
+                        case SERVER_PORTMAP_SYMMETRIC_NAT:
+                        case SERVER_PORTMAP_FAILED:
+                            ImGui::Text(detailFmt, (unsigned)27500);
+                            break;
+                        default:
+                            ImGui::TextUnformatted(detailFmt);
+                            break;
+                    }
+                    ImGui::PopTextWrapPos();
+                    ImGui::Spacing();
+                    if (ImGui::Button("Close") ||
+                        ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
             }
         }
 
