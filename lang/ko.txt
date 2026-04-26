@@ -1,0 +1,1198 @@
+# WinBolo Korean language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=한국어
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_TITLE=WinBolo 게임 선택
+STR_DLGOPENING_TEXT=멀티플레이어 탱크 게임 WinBolo에 오신 것을 환영해요.\n아래 목록에서 게임 유형을 선택하세요:
+STR_DLGOPENING_OPTION1=연습
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_DLGOPENING_OPTION3=인터넷
+STR_DLGOPENING_SKIP=다음에는 이 대화상자 건너뛰기
+STR_OK=확인
+STR_DLGOPENING_BUTTON2=종료
+
+# Language dialog
+STR_DLGLANG_TITLE=언어 선택
+STR_DLGLANG_NAME_CAPTION=이름:
+STR_DLGLANG_NAME=한국어
+STR_DLGLANG_AUTHOR_CAPTION=작성자: 
+STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
+STR_DLGOPENING_OPTION4=로컬 네트워크
+STR_DLGOPENING_OPTION0=튜토리얼
+STR_DLGLANG_NOTES_CAPTION=참고: 
+STR_DLGLANG_NOTES=없음.
+STR_DLGLANG_DEFAULTNOTE=참고: 번역이 불완전한 경우 누락된 항목은 영어로 표시돼요.
+
+# About dialog
+STR_DLGABOUT_TITLE=WinBolo 정보
+STR_DLGABOUT_BLURB=WinBolo 패키지는 프로그램이나 동봉된 파일이 생략되거나 수정되지 않는 한 자유롭게 배포할 수 있어요.\n\nWinBolo는 셰어웨어 프로그램이에요. 셰어웨어 소프트웨어는 무료가 아니에요. 다른 소프트웨어처럼 비용이 들지만, 셰어웨어는 마음에 드는지 먼저 체험해 볼 수 있어요.\n\nWinBolo의 가격은 25 미국 달러예요. WinBolo를 계속 사용하려면 다음 방법으로 결제할 수 있어요:\n\nWinBolo 디렉토리에 있는 register.exe 프로그램을 실행하면 이메일, 팩스, 우편을 통해 수표, 우편환, 현금 또는 신용카드로 결제할 수 있어요.\n\n신용카드로 온라인 등록하려면 http://order.kagi.com/?XYV 를 방문하여 양식을 작성하세요.\n\n자세한 정보는 배포본에 포함된 Readme(Shareware) 텍스트 파일을 읽어보세요.
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=동맹 요청
+STR_DLGALLIANCE_ACCEPT=수락
+STR_DLGALLIANCE_DECLINE=거절
+STR_DLGALLIANCE_BLURB={player}님이 동맹을 요청했어요. 수락할까요?
+
+# Game finder dialog
+STR_DLGGAMEFINDER_REFRESHFIRST=먼저 새로 고침을 눌러보세요.
+STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=오늘의 메시지
+STR_DLGGAMEFINDER_WRONGVERSION=참여하려는 게임이 다른 버전의 WinBolo를 사용해요. 다른 게임에 참여해 보세요
+STR_DLGGAMEFINDER_NOGAMESINPROGRESS=진행 중인 게임 없음 (하나 시작해 보세요!)
+STR_YES=예
+STR_NO=아니요
+STR_DLGGAMEFINDER_YESADV=예 (유리)
+STR_DLGGAMEFINDER_OPEN=오픈
+STR_DLGGAMEFINDER_TOURNAMENT=토너먼트
+STR_DLGGAMEFINDER_STRICTTOURNAMENT=엄격함
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=게임 정보
+STR_DLGGAMEINFO_MAPNAME=맵: 
+STR_DLGGAMEINFO_NUMPLAYERS=플레이어: {number}명
+STR_DLGGAMEINFO_GAMETYPE=게임 유형: 
+STR_DLGGAMEINFO_HIDDENMINES=숨겨진 지뢰: 
+STR_DLGGAMEINFO_ALLOWCOMPTANKS=컴퓨터 탱크 허용: 
+STR_DLGGAMEINFO_TIMELIMIT=제한 시간:
+
+# Game setup dialog
+STR_DLGGAMESETUP_BLURB=새 게임에 적용할 옵션을 선택하세요:
+STR_CANCEL=취소
+STR_DLGGAMESETUP_TITLE=게임 설정
+STR_DLGGAMESETUP_CHOOSEMAP=맵 선택
+STR_DLGGAMESETUP_SELECTEDMAP=선택된 맵: 
+STR_DLGGAMESETUP_SELECTEDMAPINBUILT=선택된 맵: Everard Island (내장)
+STR_DLGGAMESETUP_RADIO1=오픈 게임 (사전 장전)
+STR_DLGGAMESETUP_RADIO2=토너먼트 (초기 무료 탄약)
+STR_DLGGAMESETUP_RADIO3=엄격한 토너먼트 (무료 탄약 없음)
+STR_DLGGAMESETUP_HIDDENMINES=숨겨진 지뢰 허용
+STR_DLGGAMESETUP_ALLOWCOMPTANKS=컴퓨터 탱크 허용
+STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=그리고 유리한 조건 부여
+STR_DLGGAMESETUP_PASSWORD=게임 비밀번호
+STR_DLGGAMESETUP_MINUTES=분
+STR_DLGGAMESETUP_SECONDS=초
+STR_DLGGAMESETUP_STARTDELAY=게임 시작 지연
+STR_DLGGAMESETUP_TIMELIMIT=게임 제한 시간
+STR_DLGGAMESETUP_ERROROPENINGMAP=맵 열기 오류.
+STR_DLGGAMEINFO_TIMEREMAINING=약 {number}분
+STR_DLGGAMEINFO_OPEN=오픈
+STR_DLGGAMEINFO_TOURN=토너먼트
+STR_DLGGAMEINFO_STRICT=엄격한 토너먼트
+STR_DLGGAMEINFO_AIADV=예 (유리)
+STR_DLGGAMESETUP_DEFAULTNAME=나
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=키 설정
+STR_DLGKEYSETUP_BLURB=변경할 항목을 클릭한 후 다음에 누르는 키가 그 항목에 할당돼요. ALT, PRINT SCREEN, PAUSE 키는 할당할 수 없어요.
+STR_DLGKEYSETUP_DRIVETANK=탱크 주행
+STR_DLGKEYSETUP_TURNTANK=탱크 회전:
+STR_DLGKEYSETUP_GUNRANGE=사거리
+STR_DLGKEYSETUP_WEAPONS=무기
+STR_DLGKEYSETUP_VIEW=보기
+STR_DLGKEYSETUP_SCROLL=스크롤
+STR_DLGKEYSETUP_LEFT=(왼쪽)
+STR_DLGKEYSETUP_RIGHT=(오른쪽)
+STR_DLGKEYSETUP_AUTOSLOWDOWN=자동 감속
+STR_DLGKEYSETUP_AUTOGUNSIGHT=조준선 자동 숨기기
+STR_DLGKEYSETUP_FASTER=빠르게
+STR_DLGKEYSETUP_SLOWER=느리게
+STR_DLGKEYSETUP_TURNLEFT=왼쪽으로 회전
+STR_DLGKEYSETUP_TURNRIGHT=오른쪽으로 회전
+STR_DLGKEYSETUP_INCREASE=증가
+STR_DLGKEYSETUP_DECREASE=감소
+STR_DLGKEYSETUP_SHOOT=발사
+STR_DLGKEYSETUP_LAYMINE=지뢰 설치
+STR_DLGKEYSETUP_TANKVIEW=탱크 뷰
+STR_DLGKEYSETUP_PILLVIEW=토치카 뷰
+STR_DLGKEYSETUP_SCROLLUP=위
+STR_DLGKEYSETUP_SCROLLDOWN=아래
+STR_DLGKEYSETUP_SCROLLLEFT=왼쪽
+STR_DLGKEYSETUP_SCROLLRIGHT=오른쪽
+STR_DLGKEYSETUP_NEWKEYFOR=새 키를 누르세요: 
+STR_DLGKEYSETUP_FORWARD=전진
+STR_DLGKEYSETUP_BACKWARD=후진
+STR_DLGKEYSETUP_ROTATELEFT=왼쪽 회전
+STR_DLGKEYSETUP_ROTATERIGHT=오른쪽 회전
+STR_DLGKEYSETUP_INCREASERANGE=사거리 증가
+STR_DLGKEYSETUP_DECREASERANGE=사거리 감소
+STR_DLGKEYSETUP_SETSHOOT=발사
+STR_DLGKEYSETUP_SETLAYMINE=지뢰 설치
+STR_DLGKEYSETUP_SETTANKVIEW=탱크 뷰
+STR_DLGKEYSETUP_SETPILLVIEW=토치카 뷰
+STR_DLGKEYSETUP_SETSCROLLUP=위로 스크롤
+STR_DLGKEYSETUP_SETSCROLLDOWN=아래로 스크롤
+STR_DLGKEYSETUP_SETSCROLLLEFT=왼쪽으로 스크롤
+STR_DLGKEYSETUP_SETSCROLLRIGHT=오른쪽으로 스크롤
+
+# Messages dialog
+STR_DLGMSG_BUTTON=보내기
+STR_DLGMSG_ALLPLAYERS=전체 플레이어
+STR_DLGMSG_ALLALLIES=전체 동맹
+STR_DLGMSG_NEARBY=주변 전체
+STR_DLGMSG_SELECTION=선택된 플레이어
+STR_DLGMSG_SENDPLAYER={number}명의 플레이어에게 메시지 전송 중
+STR_DLGMSG_SENDPLAYERS={number}명의 플레이어에게 메시지 전송 중
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=네트워크 정보
+STR_DLGNETINFO_SERVERADDRESS=서버 주소:
+STR_DLGNETINFO_THISGAMEADDRESS=이 게임 주소:
+STR_DLGNETINFO_SERVERPING=서버 핑: {number} ms
+STR_DLGNETINFO_PACKETS=초당 패킷 수 (플레이어당):
+STR_DLGNETINFO_STATUS=상태:
+STR_DLGNETINFO_ERRORS=네트워크 오류: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=비밀번호 필요
+STR_DLGPASSWORD_BLURB=이 게임에는 비밀번호가 필요해요:
+
+# Set name dialog
+STR_DLGSETNAME_TITLE=플레이어 이름 입력
+STR_DLGSETNAME_BLURB=탱크의 새 플레이어 이름을 입력하세요:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=트래커 설정
+STR_DLGTRACKER_USETRACKER=트래커 사용
+STR_DLGTRACKER_TRACKERADDRESS=트래커 주소:
+STR_DLGTRACKER_TRACKERPORT=트래커 포트:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=시스템 정보
+STR_DLGSYSINFO_CPUUSAGE=CPU 사용량:
+STR_DLGSYSINFO_SIMMODELING=시뮬레이션 처리:
+STR_DLGSYSINFO_COMPROCESSING=통신 처리:
+STR_DLGSYSINFO_GRAHPICSDISPLAY=그래픽 표시:
+STR_DLGSYSINFO_AICONTROLPROCESSING=AI 탱크 제어 처리:
+STR_DLGSYSINFO_TOTAL=합계:
+STR_DLGSYSINFO_GRAPHICSFPS=그래픽 초당 프레임
+
+# TCP/IP setup dialog
+STR_DLGTCP_TITLE=UDP (인터넷) 설정
+STR_DLGTCP_BLURB=인터넷 Bolo 게임에 참여하려면 Bolo가 실행 중인 호스트 컴퓨터의 이름 (또는 IP 주소)과 해당 컴퓨터의 Bolo 프로세스 UDP 포트 번호를 입력하세요.
+STR_DLGTCP_JOIN=참여
+STR_DLGTCP_REJOIN=재참여
+STR_DLGTCP_NEW=새로 만들기
+STR_DLGTCP_TRACKERSETUP=트래커 설정
+STR_DLGTCP_REMEMBER=플레이어 이름 기억
+STR_DLGTCP_MACHINENAME=컴퓨터 이름 (또는 IP 주소):
+STR_DLGTCP_THEREUDP=해당 컴퓨터의 Bolo UDP 포트:
+STR_DLGTCP_USUDP=이 컴퓨터의 Bolo UDP 포트:
+STR_DLGTCP_NAME=게임에서 사용할 플레이어 이름:
+STR_DLGTCP_NEWBLURB="새로 만들기"를 클릭해 게임을 시작하세요
+STR_DLGTCP_JOINBLURB="참여"를 클릭해 기존 게임에 참여하세요
+STR_DLGTCP_REJOINBLURB="재참여"를 클릭해 게임에 다시 참여하고 이전 소유물을 되찾으세요
+STR_ERR_DLGTCP_PORTS=서버 포트와 자신의 포트가 같아요!
+STR_ERR_DLGTCP_NOTRIGHT=여기에 뭔가 잘못된 것 같아요...
+STR_ERR_DLGTCP_SUBCLASS=복사를 위한 윈도우 서브클래스를 설정할 수 없어요!
+
+# Game finder extra
+STR_DLGGAMEFINDER_JOINADDRESS=주소로 참여(&B)
+STR_DLGGAMEFINDER_REFRESH=새로 고침(&R)
+STR_DLGGAMEFINDER_PLAYERNAME=플레이어 이름 설정(&P)
+STR_DLGGAMEFINDER_MOTD=오늘의 메시지(&M)
+STR_DLGGAMEFINDER_STATUSBLURB=상태: 
+STR_DLGGAMEFINDER_SELECTEDGAME=선택된 게임 정보
+STR_DLGGAMEFINDER_BRAINS=Brain:
+STR_DLGGAMEFINDER_PASSWORD=비밀번호:
+STR_DLGGAMEFINDER_PILLS=빈 토치카 수:
+STR_DLGGAMEFINDER_BASES=빈 기지 수:
+STR_DLGGAMEFINDER_HIDDENMINES=숨겨진 지뢰:
+STR_DLGGAMEFINDER_NUMPLAYERS=플레이어 수:
+STR_DLGGAMEFINDER_VERSION=버전:
+STR_DLGGAMEFINDER_GAMETYPE=게임 유형:
+STR_DLGGAMEFINDER_PORT=서버 포트:
+STR_DLGGAMEFINDER_ADDRESS=서버 주소:
+
+# Brain errors
+STR_BRAINERR_BRAINDIR=Brain 디렉토리가 존재하지 않아요.\nBrain을 불러오지 않을게요!
+STR_BRAINERR_LAUNCH=Brain 실행 오류
+STR_BRAINERR_LAUNCHMAIN=Brain 실행 오류 - Brain에 "BrainMain"이 없어요
+STR_BRAINERR_INIT=Brain 초기화 오류
+STR_BRAINERR_EXEC=Brain을 실행할 수 없어요
+
+# Draw errors
+STR_DRAWERROR_CREATEOBJECT=DD 객체 생성 실패
+STR_DRAWERROR_SETCOOPLEVEL=DD 협력 레벨 생성 실패
+STR_DRAWERROR_CREATEPRIMARY=DD 기본 서피스 생성 실패
+STR_DRAWERROR_GETPIXELFORMAT=DD 픽셀 포맷 가져오기 실패
+STR_DRAWERROR_GETDESC=서피스 설명 가져오기 실패
+STR_DRAWERROR_TOOFEWCOLOURS=이 버전의 WinBolo는 팔레트 모드에서 실행되지 않아요.\n 색상 깊이를 256색 이상으로 변경해 주세요
+STR_DRAWERROR_BUFFERCREATE=DD 버퍼 생성 실패
+STR_DRAWERROR_GETDCFAILED=DD DC 가져오기 실패
+STR_DRAWERROR_CLIPPERFAILED=DD 클리퍼 생성 실패
+STR_DRAWERROR_BRUSH=드로잉 브러시 생성 오류
+STR_DRAWERROR_PEN=드로잉 펜 생성 오류
+STR_DRAW_GAMESTARTSIN=게임 시작까지 
+STR_DRAWERROR_RELEASEDC=탱크 라벨 그리기용 DC 해제 오류 (심각한 문제예요)
+STR_DRAW_PILLBOXVIEW=토치카 뷰
+
+# Font errors
+STR_FONTERR_NOCOURIERFONT=Courier New 폰트를 불러올 수 없어요
+
+# Game front errors
+STR_GAMEFRONTERR_CORRUPTPREFS=환경설정을 읽는 중 오류가 발생했어요. 기본값을 사용할게요
+STR_GAMEFRONTERR_WINDOW=윈도우 생성 오류
+STR_GAMEFRONTERR_DDRAW=Direct Draw 설정 오류
+STR_GAMEFRONTERR_DSOUND=Direct Sound 설정 오류
+STR_GAMEFRONTERR_DINPUT=Direct Input 설정 오류
+STR_GAMEFRONTERR_CURSOR=커서 불러오기 오류
+STR_GAMEFRONTERR_FONTS=폰트 불러오기 오류
+STR_GAMEFRONT_LANFINDER_TITLE=LAN 게임 찾기
+STR_GAMEFRONT_TRACKERFINDER_TITLE=트래커 게임 찾기
+STR_GAMEFRONTERR_JOINGAME=게임 참여 중 오류가 발생했어요
+STR_GAMEFRONTERR_SPAWNSERVER=서버 프로세스 실행 중 오류가 발생했어요.\n "WinBoloDS" 프로그램이 WinBolo와 같은 디렉토리에 있나요?
+STR_GAMEFRONTERR_NETSINGLEPLAYER=싱글 플레이어 게임을 선택했는데 네트워크 서브시스템에서 정말 이상한 일이 생겼어요. 운이 좋네요...
+STR_GAMEFRONT_SERVERSTARTMSG=전용 서버를 실행해요. 서버 창에 "quit"을 입력해 종료하세요.
+STR_GAMEFRONT_INPUTERR_CREATE=Direct Input 키보드 장치 생성 실패
+STR_GAMEFRONT_INPUTERR_DATAFORMAT=Direct Input 키보드 장치의 데이터 포맷 설정 실패
+STR_GAMEFRONT_INPUTERR_COOPLEVEL=Direct Input 키보드 장치의 협력 레벨 설정 실패
+
+# Network client errors
+STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Winsock 시작 오류
+STR_NETCLIENTERR_CREATEUDPFAIL=UDP 소켓 생성 오류
+STR_NETCLIENTERR_CREATETCPFAIL=TCP 소켓 생성 오류
+STR_NETCLIENTERR_BINDUDPFAIL=UDP 소켓 바인딩 오류\n 이 포트는 이미 다른 프로그램이 사용 중이에요. 다른 포트를 선택해 보세요.\n\n참고: 네트워크 게임을 시작해서 성공적으로 실행됐다면 게임이 아직 실행 중이에요.\n 다시 시작할 필요가 없어요
+STR_NETCLIENTERR_CHAINFAIL=네트워크 이벤트를 메시지 체인에 추가하는 중 오류 발생
+STR_NETCLIENTERR_TRACKERVERSIONFAIL=지원하지 않는 트래커 버전이에요
+STR_NETCLIENTERR_TRACKERDNSFAIL=트래커 찾기 오류 (DNS 조회 실패)
+STR_NETCLIENTERR_TRACKERCONNECTFAIL=트래커 연결 오류
+STR_NETCLIENTERR_TRACKERNOBLOCK=소켓을 논블로킹으로 설정하는 중 오류 발생
+STR_NETCLIENT_TRACKERGETRESPONSE=게임 정보 수신 중...
+STR_NETCLIENT_TRACKERPROCESSRESPONSE=트래커 데이터 처리 중...
+STR_NETCLIENTERR_TRACKERNODATA=오류: 트래커가 데이터를 보내지 않았어요
+STR_NETCLIENT_TRACKERCONNECT=연결 중: 
+STR_NETCLIENT_IDLE=대기 중
+STR_NETCLIENTERR_BIND=소켓 바인딩 오류
+STR_NETCLIENTERR_BROADCAST=브로드캐스트 전송 오류
+STR_NETCLIENT_GETRESPONSES=응답 수신 중...
+
+# Sound errors
+STR_SOUNDERR_FILENOTFOUND=WinBolo 사운드를 불러올 수 없어요 - 사운드 없이 계속해요
+STR_SOUNDERR_HARDWAREINUSE=Direct Sound 설정 오류 - 다른 애플리케이션이 하드웨어를 사용 중이에요.\n사운드 없이 계속해요.
+STR_SOUNDERR_CREATEFAILED=DS 객체 생성 실패\n사운드 없이 계속해요.
+STR_SOUNDERR_COOPFAILED=DS 협력 레벨 생성 실패
+STR_SOUNDERR_PRIMARYBUFFFAIL=DS 기본 버퍼 생성 실패
+STR_SOUNDERR_LOADSOUNDFAILED=하나 이상의 사운드 파일 불러오기 실패
+
+# General WinBolo errors
+STR_WBERR_MUTEXCREATE=뮤텍스 생성 오류. (심각한 문제예요)
+STR_WBERR_BRAINLISTLOAD=Brain 목록 불러오기 오류
+STR_WBERR_KEYCLASSSETUP=키 설정 클래스 설정 오류
+STR_WBTIMELIMIT_END=제한 시간이 만료됐어요. 게임이 종료됐어요.
+STR_WBERR_SAVEMAP=맵 저장 오류 (디스크가 꽉 찼나요?)
+
+# Tutorial strings
+STR_TUTORIAL01=앞에 육지로 이어지는 짧은 강이 있어요. {ACCEL} 키를\n길게 눌러 보트를 강 끝까지 몰아가세요.\n\n도착하면 {ACCEL} 키를 계속 누르고 있으세요. 탱크가\n보트에서 내리고 보트는 강 끝에 정박해요
+STR_TUTORIAL02=이제 풀밭 위에 있어요. 탱크는 풀밭에서\n꽤 빠르게 움직여요.\n\n\n{ACCEL} 키를 계속 눌러 숲으로 이동하세요.
+STR_TUTORIAL03=이제 숲 안에 있어요. 탱크는 숲에서\n풀밭보다 더 느리게 움직여요.\n\n\n{ACCEL} 키를 계속 눌러 늪으로 이동하세요.
+STR_TUTORIAL04=이제 늪 안에 있어요. 탱크는 늪에서 매우\n느리게 움직여요. 다행히 앞에 도로가 있어요.\n\n\n{ACCEL} 키를 계속 눌러 도로로 이동하세요.
+STR_TUTORIAL05=이제 도로 위에 있어요. 탱크는 도로에서 매우\n빠르게 움직이며 {ACCEL} 키를 누르면 가속돼요.\n\n\n너무 빠르다 싶으면 {BRAKE} 키를 누르세요
+STR_TUTORIAL06=앞에 건물들이 있어요. 건물은 뚫고 지나갈 수 없는\n장애물이에요. 미로를 찾아 반대편으로\n빠져나가야 해요.\n\n탱크를 왼쪽으로 돌리려면 {LEFT} 키를 누르세요\n탱크를 오른쪽으로 돌리려면 {RIGHT} 키를 누르세요
+STR_TUTORIAL07=빨간 총이 돌출된 이 둥근 물체들은\n자동 토치카예요. 사거리 내에 들어오는 탱크에\n발사해요.\n\n\n다행히 건물이 총알을 막아줘요. 건물을 완전히\n뚫을 만큼 오래 기다리지 않으면\n토치카는 여러분을 맞출 수 없어요.
+STR_TUTORIAL08=숲도 토치카로부터 보호해 주지만,\n방식이 달라요. 탱크를 많이 느리게 할 뿐만 아니라,\n숲을 통과하면 시야도 제한돼요.\n\n\n숲 안에 있으면 숲 밖은 선명하게 보이지만,\n토치카(와 다른 플레이어)는 매우 가까이 오지 않으면\n여러분의 탱크를 볼 수 없어요.
+STR_TUTORIAL09=탱크를 숲 중앙과 일직선으로 맞추고\n정북 방향으로 직진하세요. 직선으로 가서\n숲 가장자리에 너무 가까이 가지 않으면,\n토치카는 여러분을 발견하지 못하고 발사하지 않아요.\n\n\n숲 밖으로 나가면 박살날 거예요.\n
+STR_TUTORIAL10=토치카에서 벗어나는 또 다른 간단한 방법이 있어요 -\n바로 속도예요.\n\n\n도로 중앙과 정확히 일직선으로 맞추고,\n{ACCEL} 키를 눌러 전속력으로 토치카를 지나치세요.
+STR_TUTORIAL11=발견되면 발사하기 시작하지만,\n직진을 유지하고 당황하지 않으면\n총알이 맞기 전에 사거리를 벗어날 거예요.\n\n\n습지 쪽 도로를 벗어나지 마세요. 그러면\n토치카의 좋은 표적이 되고,\n빠져나갈 만큼 빠르게 움직일 수 없어요.
+STR_TUTORIAL12=앞에 보급기지가 있어요. 보급기지는 발사할 포탄과\n비밀 함정을 위한 지뢰를 제공하고,\n손상된 탱크의 장갑을 완전히 수리해 줘요.\n\n\n보급기지 위에 정차하고 탱크에 포탄을\n가득 채우세요.
+STR_TUTORIAL13=지금 보급기지 위에 있어요. 탱크에 포탄과\n지뢰가 가득 채워질 거예요. 오른쪽 표시기에서\n확인할 수 있어요. 앞 건물 너머에\n지뢰밭이 있어요.
+STR_TUTORIAL14=탱크를 지뢰밭으로 몰면 파괴돼요. 다행히\n발사로 지뢰밭을 제거할 수 있어요. {FIRE} 키를 눌러 발사하세요.\n\n건물에 구멍을 뚫은 다음 지뢰밭 한가운데에\n포탄을 떨어뜨려 폭파하세요.\n지뢰가 터지면 큰 분화구가 생기고,\n늪처럼 느리지만 통과할 수 있어요.
+STR_TUTORIAL15=앞에 또 다른 지뢰밭이 있어요. 같은 방법을 반복하세요:\n보급기지로 이동해 벽에 구멍을 뚫고\n지뢰밭 한가운데에 포탄을 떨어뜨려 폭파하세요.\n\n이번에는 지뢰밭이 큰 강 옆에 있어서\n분화구에 물이 차요. 분화구와 늪처럼\n물속을 탱크로 통과할 수 있어요.
+STR_TUTORIAL16=WinBolo는 탱크 주변 지역을 자동으로 스크롤하지만\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\n키로 보기를 수동으로 변경할 수 있어요.\n\n지금 {SCROLL_UP} 키를 눌러 앞에 있는\n강을 더 잘 보세요.
+STR_TUTORIAL17=물속을 통과하면 매우 느릴 뿐만 아니라\n또 다른 단점이 있어요: 탱크의 포탄과\n지뢰 보급량이 줄어들어요.\n\n\n반대편에 도착해도 탱크는 작동하지만\n모든 공격 능력을 잃게 돼요.
+STR_TUTORIAL18=이번에는 강을 건너는 더 영리한 방법을 써볼 거예요.\n그냥 물속을 통과하는 대신 다리를 건설할 거예요.\n\n\n숲 아이콘 (윈도우 왼쪽 상단)을 클릭해\n나무 벌채 모드를 선택하고 숲을 클릭하세요.\n건설자가 탱크에서 뛰어나와 건설 재료로 쓸\n나무 하나를 수확해요.
+STR_TUTORIAL19=나무를 수확한 후 도로/다리 도구\n(위에서 두 번째 버튼)를 선택하고 도로 끝\n강 위를 마우스로 클릭하세요.\n\n\n건설자가 뛰어나와 다리를 한 구간 건설해요.\n다시 클릭해 다리를 완성하고\n반대편으로 건너가세요.
+STR_TUTORIAL20=이 강은 이전 강보다 넓고 중앙은 너무 깊어서\n다리를 건설할 수 없어요. 그냥 통과하려고 하면\n탱크가 가라앉아 파괴될 거예요.
+STR_TUTORIAL21=이 강을 건너려면 보트를 건조해야 해요. 보트에는\n나무 다섯 그루가 필요해요. 나무 다섯 그루를 클릭해\n수확하세요. 그런 다음 벽/보트 도구 (위에서 세 번째\n버튼)를 선택하고 물 위를 클릭해 보트를 건조하세요.\n\n땅을 클릭하면 보트 대신 벽이 생겨요.\n보트를 만들려면 나무를 더 수확해야 해요.\n보트에 탑승해 강을 건너세요.
+STR_TUTORIAL22=앞에 토치카가 있고, 탄약을 보급할 보급기지가\n몇 곳 있어요. 보급기지에서 포탄을 모은 후\n토치카를 공격하세요.\n\n\n반격하겠지만, 탱크가 맞으면 쉽게\n보급기지로 돌아가 장갑을 완전히 수리할 수 있어요.
+STR_TUTORIAL23=인내심과 신중함으로 이 토치카를 파괴할 수 있어요.\n배운 기술을 활용해 더 쉽게 만드세요:\n\n\n숲에 숨어 토치카가 보지 못하게 하고,\n나무를 수확해 도로를 건설해 탱크를 더 빠르게 하고,\n토치카 포탄을 막을 건물을 지으세요.
+STR_TUTORIAL24=이 토치카를 물리친 후, 튜토리얼의 마지막 과제는\n출구를 지키는 두 토치카를 제거하고\n보트를 건조해 탈출하는 거예요.\n\n\n탱크의 장갑 수준을 잘 확인하세요 -\n탱크가 파괴되면 새 탱크를 타고 바다 위\n새 보트에서 다시 시작해야 해요.
+STR_TUTORIAL25=축하해요. WinBolo 튜토리얼을 완료했어요.\n\n\n\n이제 친구들을 모아 게임하고 움직이지 않는\n생각 없는 표적 대신 지능적인 인간 상대와\n경쟁하는 게 어떤 건지 경험해 보세요.\n\n나중에 튜토리얼을 다시 하고 싶다면\n설정 메뉴에서 다시 실행할 수 있어요.
+STR_TUTORIAL_START01=WinBolo 튜토리얼에 오신 것을 환영해요. 이 섬은\nWinBolo의 기본 원리를 소개하고\n하나씩 안내해 줘요. 각각의 새 원리는\n이것과 같은 창에 설명될 거예요.\n\n각 메시지를 읽은 후 마우스로 "확인" 버튼을\n클릭하거나 키보드에서 <Return> 키를\n눌러 진행할 수 있어요
+STR_TUTORIAL_START02=WinBolo는 Stuart Cheshire의 클래식 Macintosh 네트워크 게임 Bolo의 유일한 공인 클론이에요.\n공식 웹사이트에서 전략 힌트와 다른 정보를 찾을 수 있어요:\n\nhttps://www.winbolo.com\n\nReddit과 Discord에서 함께해요\n
+STR_TUTORIAL_START03=인터넷 플레이에 관해 간단한 참고사항이 있어요.\n\n온라인 게임에 참여했는데 네트워크 오류가 많이 발생하면\n다른 플레이어들의 게임을 망치기 전에\n바로 게임을 나가세요.
+STR_TUTORIAL_START04=현재 바다 위 보트에 탱크를 조종 중이에요. {ACCEL} 키를 눌러\n탱크(와 보트)를 앞으로 전진시키고, {BRAKE} 키를 눌러\n속도를 줄이고 정지시키세요.\n\n타자 치듯 키를 톡톡 누르지 말고 -\n탱크가 원하는 속도에 도달할 때까지 키를 길게 누른 후\n놓으세요. 지금 {ACCEL} 키를 눌러\n보트를 육지 쪽으로 전진시키세요.\n(<Return> 키를 먼저 눌러 창을 닫으세요)
+STR_TUTORIAL01_TOUCH=앞에 육지로 이어지는 짧은 강이 있어요.\n썸스틱을 앞으로 밀어 보트를 강\n끝까지 몰아가세요.\n\n도착하면 썸스틱을 계속 앞으로 밀고 있으세요.\n탱크가 보트에서 내리고 보트는 강 끝에\n정박해요
+STR_TUTORIAL02_TOUCH=이제 풀밭 위에 있어요. 탱크는 풀밭에서\n꽤 빠르게 움직여요.\n\n\n썸스틱을 앞으로 계속 밀어 숲으로\n이동하세요.
+STR_TUTORIAL03_TOUCH=이제 숲 안에 있어요. 탱크는 숲에서\n풀밭보다 더 느리게 움직여요.\n\n\n썸스틱을 앞으로 계속 밀어 늪으로\n이동하세요.
+STR_TUTORIAL04_TOUCH=이제 늪 안에 있어요. 탱크는 늪에서\n매우 느리게 움직여요. 다행히 앞에 도로가 있어요.\n\n\n썸스틱을 앞으로 계속 밀어 도로로\n이동하세요.
+STR_TUTORIAL05_TOUCH=이제 도로 위에 있어요. 탱크는 도로에서\n매우 빠르게 움직이며 썸스틱을 끝까지\n밀면 가속돼요.\n\n\n너무 빠르다 싶으면 썸스틱을\n뒤로 당겨 속도를 줄이세요.
+STR_TUTORIAL06_TOUCH=앞에 건물들이 있어요. 건물은 뚫고 지나갈 수 없는\n장애물이에요. 미로를 찾아 반대편으로\n빠져나가야 해요.\n\n썸스틱을 왼쪽 또는 오른쪽으로 밀어\n해당 방향으로 탱크를 돌리세요.
+STR_TUTORIAL10_TOUCH=토치카에서 벗어나는 또 다른 간단한 방법이 있어요 -\n바로 속도예요.\n\n\n도로 중앙과 정확히 일직선으로 맞추고,\n썸스틱을 끝까지 밀어 전속력으로\n토치카를 지나치세요.
+STR_TUTORIAL14_TOUCH=탱크를 지뢰밭으로 몰면 파괴돼요. 다행히\n발사로 지뢰밭을 제거할 수 있어요. 발사 버튼을 탭해 발사하세요.\n\n건물에 구멍을 뚫은 다음 지뢰밭 한가운데에\n포탄을 떨어뜨려 폭파하세요.\n지뢰가 터지면 큰 분화구가 생기고,\n늪처럼 느리지만 통과할 수 있어요.
+STR_TUTORIAL16_TOUCH=WinBolo는 탱크 주변 지역을 자동으로 스크롤하지만\n손가락으로 맵을 드래그해 보기를\n수동으로 변경할 수 있어요.\n\n지금 맵을 아래로 드래그해 앞에 있는\n강을 화면에 가져오세요.
+STR_TUTORIAL18_TOUCH=이번에는 강을 건너는 더 영리한 방법을 써볼 거예요.\n그냥 물속을 통과하는 대신 다리를 건설할 거예요.\n\n\n숲 아이콘 (윈도우 왼쪽 상단)을 탭해\n나무 벌채 모드를 선택하고 숲을 탭하세요.\n건설자가 탱크에서 뛰어나와 건설 재료로 쓸\n나무 하나를 수확해요.
+STR_TUTORIAL19_TOUCH=나무를 수확한 후 도로/다리 도구\n(위에서 두 번째 버튼)를 선택하고 도로 끝\n강 위를 탭하세요.\n\n\n건설자가 뛰어나와 다리를 한 구간 건설해요.\n다시 탭해 다리를 완성하고\n반대편으로 건너가세요.
+STR_TUTORIAL21_TOUCH=이 강을 건너려면 보트를 건조해야 해요. 보트에는\n나무 다섯 그루가 필요해요. 나무 다섯 그루를 탭해\n수확하세요. 그런 다음 벽/보트 도구 (위에서 세 번째\n버튼)를 선택하고 물 위를 탭해 보트를 건조하세요.\n\n땅을 탭하면 보트 대신 벽이 생겨요.\n보트를 만들려면 나무를 더 수확해야 해요.\n보트에 탑승해 강을 건너세요.
+STR_TUTORIAL_START01_TOUCH=WinBolo 튜토리얼에 오신 것을 환영해요. 이 섬은\nWinBolo의 기본 원리를 소개하고\n하나씩 안내해 줘요. 각각의 새 원리는\n이것과 같은 창에 설명될 거예요.\n\n각 메시지를 읽은 후 "확인" 버튼을\n탭해 진행할 수 있어요.
+STR_TUTORIAL_START04_TOUCH=현재 바다 위 보트에 탱크를 조종 중이에요. 화면 왼쪽의\n썸스틱으로 조종하세요: 앞으로 밀면 가속되고\n뒤로 당기면 속도가 줄어 정지해요.\n\n썸스틱을 더 세게 밀수록 탱크가\n빠르게 움직여요. 지금 썸스틱을 앞으로 밀어\n보트를 육지 쪽으로 전진시키세요.\n(이 창을 닫으려면 먼저 확인을 탭하세요)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=새 건설자가 낙하산으로 착지할 때까지 건설할 수 없어요
+LGM_NO_BUILD=그곳에는 건설할 수 없어요
+LGM_INSUFFICIENT_TREES=그것을 건설하기에 나무가 부족해요
+LGM_NO_PILLS=배치할 토치카가 없어요
+LGM_INSUFFICIENT_MINES=배치할 지뢰가 없어요
+LGM_BUILDTANK=건설자는 탱크 위에서 건설할 수 없어요
+LGM_NO_TREE=그곳에는 수확할 나무가 없어요
+LGM_PILL_NO_NEED_REPAIR=이 토치카는 수리가 필요하지 않아요
+LGM_PILL_NO_BUILD_ON_MINE=건설자는 지뢰 위에서 건설할 수 없어요. 죽을 수 있어요.
+LGM_NO_BUILD_UNDER_BOAT=건설자는 보트 아래에서 건설할 수 없어요
+
+# In-game messages
+MESSAGE_ASSISTANT=온라인 어시스턴트
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}"의 조종권이 "{player}"에게 넘어갔어요
+MESSAGE_NETSERVER=네트워크 서버
+MESSAGE_THIS_COMPUTER=이 컴퓨터
+MESSAGE_CAPTURE_BASE={player}가 중립 기지를 점령했어요
+MESSAGE_CAPTURE_PILL={player}가 중립 토치카를 점령했어요
+MESSAGE_STOLE_PILL={player}가 {other}의 토치카를 탈취했어요
+MESSAGE_STOLE_BASE={player}가 {other}의 기지를 탈취했어요
+MESSAGE_LGM_DEAD={player}의 건설자가 사망했어요
+MESSAGE_SAVED_MAP={player}가 맵 파일을 저장했어요
+MESSAGE_QUIT_GAME={player}가 게임을 나갔어요
+MESSAGE_TIME_LIMIT_EXPIRED=제한 시간이 만료됐어요. 게임이 종료됐어요. 편히 가세요
+MESSAGE_TANKSUNK=탱크가 심해에 침몰했어요
+
+# Network errors
+NETERR_TRACKERDNS=트래커 호스트명 조회에 실패했어요. 트래커 알림이 비활성화됐어요
+NETERR_JOININIT=접속하려는 게임에서 응답이 없어요.\n보통 다음 세 가지 중 하나예요:\n1. 주소와 포트 필드가 잘못됐어요.\n2. UDP 접속을 막는 방화벽 뒤에 있어요.\n3. WinBolo 버전이 해당 게임과 같은지 확인하세요
+NETERR_GAMEFULL=이 게임은 현재 가득 차 있어요
+NETERR_SERVERCONNECT=서버에 연결하지 못했어요. 다른 서버를 이용하거나 잠시 후 다시 시도해 보세요.
+NETERR_PASSWORDWRONG=비밀번호가 틀렸어요
+NETERR_PLAYERNAMEINUSE=플레이어 이름이 이미 사용 중이에요. 다른 이름을 선택하고 다시 시도해 보세요
+NETERR_NONEWPLAYERS=죄송해요, 이 게임은 현재 새 플레이어를 받지 않아요
+NETERR_CONNECTNOJOIN=게임에 연결했지만 참여가 허용되지 않았어요. 플레이어 이름이 이미 사용 중일 가능성이 높아요. 새 이름으로 다시 시도해 보세요
+
+# Network status
+NET_STATUS_JOINING=참여 중
+NET_STATUS_OK=정상
+NET_STATUS_FAILED=실패
+NETERR_LOSTCONNECTION=서버와의 연결이 끊겼어요.\n싱글 플레이어 모드로 전환해요
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=메시지 보내기
+STR_DLGOPENING_BUTTON3=언어
+STR_DLGOPENING_BUTTON4=도움말
+STRERR_HELPFILE=도움말 파일 열기 오류.
+STR_DLGSKIN_TITLE=스킨 선택
+STR_DLGSKIN_BLURB=스킨 항목이 모두 없으면 기본 내장 스킨/사운드가 사용돼요.
+
+# Player name error
+STR_DLGGAMEFINDER_PLAYERWRONG=죄송해요, 플레이어 이름이 비어 있어요. 플레이어 이름을 설정해야 해요
+NETERR_MAPSERIALIZE=서버가 맵 데이터를 준비하지 못했어요. 다시 시도해 보세요
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=프레임 레이트:
+STR_DLGSYSINFO_GRAPHICS=그래픽:
+STR_DLGSYSINFO_AITANKS=AI 탱크:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=서버:
+STR_DLGNETINFO_THISGAME=이 게임:
+STR_DLGNETINFO_PINGGRAPH=핑: 최솟값 {number} / 평균 {number2} / 최댓값 {number3} ms
+STR_DLGNETINFO_KBIN=KB/s 수신:
+STR_DLGNETINFO_KBOUT=KB/s 송신:
+STR_DLGNETINFO_PACKETS_RATE=패킷/초: {number} 수신 / {number2} 송신
+STR_DLGNETINFO_KB_RATE=KB/초: {string1} 수신 / {string2} 송신
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=시드 복사
+STR_DLGGAMEINFO_AILABEL=AI 탱크:
+STR_DLGGAMEINFO_FULLADV=완전 유리
+STR_DLGGAMEINFO_UNLIMITED=무제한
+
+# Players panel
+STR_DLGPLAYERS_TITLE=플레이어
+STR_DLGPLAYERS_ALL=전체
+STR_DLGPLAYERS_NONE=없음
+STR_DLGPLAYERS_ALLIES=동맹
+STR_DLGPLAYERS_NEARBY=주변
+STR_LEAVE_ALLIANCE=동맹 탈퇴
+STR_REQUEST_ALLIANCE=동맹 요청
+STR_ALLOW_NEW_PLAYERS=새 플레이어 허용
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=게임 참여?
+STR_DLGJOIN_BLURB=현재 게임을 나가고 서버에 참여할까요?
+STR_DLGJOIN_BUTTON=참여
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=플레이어 이름 변경
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(없음)
+STR_DLGKEYSETUP_PRESSAKEY=키를 누르세요...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=할당할 키를 누르거나 취소를 클릭하세요.
+STR_DLGKEYSETUP_CHANGE=변경
+STR_DLGKEYSETUP_COL_ACTION=동작
+STR_DLGKEYSETUP_COL_KEY=키
+STR_DLGKEYSETUP_QUICKKEYS=빠른 키
+STR_DLGKEYSETUP_TREE=나무
+STR_DLGKEYSETUP_ROAD=도로
+STR_DLGKEYSETUP_WALL=벽
+STR_DLGKEYSETUP_QUICKPILLBOX=토치카
+STR_DLGKEYSETUP_QUICKMINE=지뢰
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=설정
+STR_DLGSETTINGS_PLAYER=플레이어
+STR_DLGSETTINGS_PLAYERNAME=플레이어 이름:
+STR_DLGSETTINGS_APPLY=적용
+STR_DLGSETTINGS_SETKEYS=키 설정...
+STR_DLGSETTINGS_DISPLAY=디스플레이
+STR_DLGSETTINGS_WINDOWSIZE=윈도우 크기:
+STR_DLGSETTINGS_RELSTEER=상대적 조향
+STR_DLGSETTINGS_RELSTEER_TIP=끄면 조이스틱이 탱크를 직접 가리켜요.\n켜면 조이스틱이 탱크를 기준으로 좌/우로 회전해요.
+STR_DLGSETTINGS_TABLETMODE=태블릿 UI 모드
+STR_DLGSETTINGS_LABELS=라벨
+STR_DLGSETTINGS_MSGNAMES=메시지 이름:
+STR_DLGSETTINGS_TANKLABELS=탱크 라벨:
+STR_DLGSETTINGS_SOUND=사운드
+STR_DLGSETTINGS_MESSAGES=메시지
+STR_DLGSETTINGS_GAME=게임
+
+# Menu bar
+STR_MENU_FILE=파일
+STR_MENU_NEW=새로 만들기
+STR_MENU_SAVE_MAP=맵 저장
+STR_MENU_EXIT=종료
+STR_MENU_EDIT=편집
+STR_MENU_FRAME_RATE=프레임 레이트
+STR_MENU_WINDOW_SIZE=윈도우 크기
+STR_MENU_NORMAL=보통
+STR_MENU_DOUBLE=2배
+STR_MENU_TRIPLE=3배
+STR_MENU_QUAD=4배
+STR_MENU_CUSTOM_RESIZABLE=사용자 지정 (크기 조절 가능)
+STR_MENU_REQUIRES={number}x{number2} 필요 - 디스플레이 초과
+STR_MENU_SMOOTH_SCROLLING=부드러운 스크롤
+STR_MENU_AUTO_SCROLLING=자동 스크롤
+STR_MENU_SHOW_GUNSIGHT=조준선 표시
+STR_MENU_MSG_NAMES_SUB=메시지 발신자 이름
+STR_MENU_TANK_LABELS_SUB=탱크 라벨
+STR_NONE=없음
+STR_SHORT=짧게
+STR_LONG=길게
+STR_MENU_NO_OWN_LABEL=자신의 탱크에 라벨 없음
+STR_MENU_PILLBOX_LABELS=토치카 라벨
+STR_MENU_BASE_LABELS=보급기지 라벨
+STR_MENU_HIDE_MAIN=메인 보기 숨기기
+STR_MENU_DEVICE=장치:
+STR_MENU_DESKTOP=데스크탑
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=키 설정
+STR_MENU_SOUND_EFFECTS=음향 효과
+STR_MENU_BACKGROUND_SOUND=배경 음악
+STR_MENU_SOUND_KEEPALIVE=사운드 킵얼라이브
+STR_MENU_NEWSWIRE_MSGS=Newswire 메시지
+STR_MENU_ASSISTANT_MSGS=어시스턴트 메시지
+STR_MENU_AI_MSGS=AI Brain 메시지
+STR_MENU_NETSTATUS_MSGS=네트워크 상태 메시지
+STR_MENU_NETDEBUG_MSGS=네트워크 디버그 메시지
+STR_MENU_SETTINGS=설정...
+STR_MENU_PLAYERS=플레이어
+STR_MENU_SEND_MESSAGE=메시지 보내기
+STR_MENU_SELECT_ALL=전체 선택
+STR_MENU_SELECT_NONE=선택 해제
+STR_MENU_SELECT_ALLIES=동맹 선택
+STR_MENU_SELECT_NEARBY=주변 탱크 선택
+STR_MENU_BRAINS=Brains
+STR_MENU_MANUAL=수동
+STR_MENU_HELP=도움말
+STR_MENU_ABOUT=정보
+STR_MENU_LEAVE_GAME=게임 나가기
+STR_BRAINSETTINGS_NONE=(설정 없음)
+STR_BRAINSETTINGS_TITLE=Brain 설정
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=튜토리얼
+STR_DLGSETTINGS_PLAY_TUTORIAL=튜토리얼 시작
+STR_DLGSETTINGS_SHOW_ON_MAIN=메인 메뉴에 표시
+STR_DLGSETTINGS_CRASH_REPORTING=충돌 보고
+STR_DLGSETTINGS_ENABLE_CRASH=충돌 보고 활성화
+STR_DLGSETTINGS_CRASH_HELP=충돌 보고서를 보내 WinBolo 개선에 도움을 주세요
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=변경 사항은 다음 실행 시 적용돼요.
+STR_CLOSE=닫기
+STR_DLGSETTINGS_WINTITLE=WinBolo - 설정
+STR_DLGKEYSETUP_WINTITLE=WinBolo - 키 설정
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo - 게임 로비
+STR_UNKNOWN=알 수 없음
+STR_DLGGAMEINFO_AIFULL=예 (완전)
+STR_DLGLOBBY_HIDDEN=숨김
+STR_DLGLOBBY_VISIBLE=보임
+STR_DLGLOBBY_DOWNLOADING=맵 다운로드 중...
+STR_DLGLOBBY_MAP_UNAVAILABLE=맵 미리보기 없음
+STR_DLGLOBBY_PILLBOXES=토치카:
+STR_DLGLOBBY_BASES=기지:
+STR_DLGLOBBY_STARTS=시작점:
+STR_DLGLOBBY_SKIPMAP=맵 건너뛰기
+STR_DLGLOBBY_CANCELSKIP=건너뛰기 취소
+STR_DLGLOBBY_VOTES={number}/{number2}표로 건너뛰기
+STR_DLGLOBBY_CHAT=채팅
+STR_DLGLOBBY_READY=준비
+STR_DLGLOBBY_UNREADY=준비 취소
+STR_DLGLOBBY_BALANCE_TEAMS=팀 밸런스
+STR_DLGLOBBY_APPLY_BALANCE=밸런스 적용
+STR_DLGLOBBY_DISMISS=해제
+STR_DLGLOBBY_LEAVE=나가기
+STR_DLGLOBBY_LEAVE_TITLE=게임 나가기?
+STR_DLGLOBBY_LEAVE_BLURB=이 게임을 나갈까요?
+STR_DLGLOBBY_BOT_FMT={player} [봇]
+STR_DLGLOBBY_YOU_FMT={player} (나)
+STR_DLGLOBBY_STARTING_FMT={number}초 후 시작...
+STR_DLGLOBBY_LOSTCONNECTION=서버와의 연결이 끊겼어요.
+STR_DLGLOBBY_ME=나
+STR_DLGLOBBY_PLAYER_COL=플레이어
+STR_DLGLOBBY_PING_COL=핑
+STR_DLGLOBBY_TEAM_COL=팀
+STR_DLGLOBBY_READY_COL=준비
+STR_DLGLOBBY_SLOT_COL=슬롯
+STR_DLGLOBBY_NAME_COL=플레이어 이름
+STR_DLGLOBBY_ACTION_COL=동작
+STR_DLGLOBBY_ADDBOT=봇 추가
+STR_DLGLOBBY_REMOVE=제거
+STR_DLGLOBBY_MAP_TAB=맵
+STR_DLGLOBBY_GAME_LBL=게임:
+STR_DLGLOBBY_MINES_LBL=지뢰:
+STR_DLGLOBBY_AI_LBL=AI:
+STR_DLGLOBBY_TIME_LBL=시간:
+STR_DLGLOBBY_TIME_HMS={number}시간 {string1}분 {string2}초
+STR_DLGLOBBY_TIME_MS={number}분 {string1}초
+STR_DLGLOBBY_TIME_S={number}초
+STR_DLGLOBBY_MAP_LBL=맵:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo - 게임 설정
+STR_DLGGAMESETUP_SELECTAMAP=맵 선택:
+STR_BACK=뒤로
+STR_DLGGAMESETUP_BASES_STARTS=기지: {number}  시작점: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=토치카: {number}
+STR_DLGGAMESETUP_CHANGEMAP=맵 변경
+STR_DLGGAMESETUP_GAMETYPE_LBL=게임 유형
+STR_DLGGAMESETUP_OPENGAME_SHORT=오픈 게임
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=숨겨진 지뢰
+STR_DLGGAMESETUP_AICOMPPLAYERS=AI 컴퓨터 플레이어
+STR_DLGGAMESETUP_ALLOW=허용
+STR_DLGGAMESETUP_ADVANTAGE=유리
+STR_DLGGAMESETUP_FULLMAP=전체 맵
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=제한 시간
+STR_DLGGAMESETUP_TEAMSETUP=팀 설정
+STR_DLGGAMESETUP_AINUM=AI 플레이어 수:
+STR_DLGGAMESETUP_NOBRAINS=Brain 없음
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=나
+STR_DLGGAMESETUP_BOT_FMT=봇 {number}
+STR_DLGGAMESETUP_NOAI=컴퓨터 탱크 없음
+STR_DLGGAMESETUP_ALLOWAI=컴퓨터 탱크 허용
+STR_DLGGAMESETUP_ALLOWADV=유리한 조건으로 허용
+STR_DLGGAMESETUP_ALLOWFULL=전체 맵으로 허용
+STR_DLGGAMESETUP_NOPREVIEW=미리보기 없음
+STR_DLGGAMESETUP_STARTGAME=게임 시작
+STR_DLGGAMESETUP_STRICT_SHORT=엄격함
+STR_DLGTCP_WINTITLE=WinBolo - UDP (인터넷) 설정
+STR_ERR_TITLE=오류
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
+STR_DLGBROWSER_REFRESH=새로 고침
+STR_DLGBROWSER_LOADING=게임 목록 불러오는 중{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=새로 고침을 클릭해 게임을 불러오세요...
+STR_DLGBROWSER_LAN_INSTRUCTION=새로 고침을 클릭해 검색하세요...
+STR_DLGBROWSER_GAMES_LOADED=게임 불러오기 완료.
+STR_DLGBROWSER_NO_GAMES=게임이 없어요. 하나 시작해 보세요!
+STR_DLGBROWSER_SEARCH_FAILED=검색에 실패했어요.
+STR_DLGBROWSER_SEARCHING=검색 중...
+STR_DLGBROWSER_COL_SERVER=서버
+STR_DLGBROWSER_COL_MAP=맵
+STR_DLGBROWSER_COL_PLAYERS=플레이어
+STR_DLGBROWSER_COL_TYPE=유형
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=기지
+STR_DLGBROWSER_COL_PILLS=토치카
+STR_DLGBROWSER_COL_PING=핑
+STR_DLGBROWSER_FILTER=필터:
+STR_DLGBROWSER_FILTER_ALLTYPES=모든 유형
+STR_DLGBROWSER_FILTER_UNLOCKED=잠금 해제만
+STR_DLGBROWSER_FILTER_ALLLOBBY=모든 로비
+STR_DLGBROWSER_FILTER_INLOBBY=로비 중
+STR_DLGBROWSER_FILTER_STARTING=시작 중
+STR_DLGBROWSER_STATUS_PINGING=상태: {string1}  |  서버 {number}개  |  핑 중 {number2}...
+STR_DLGBROWSER_STATUS=상태: {string1}  |  서버 {number}개
+STR_DLGBROWSER_NEWGAME=새 게임
+STR_DLGBROWSER_PLAYER_NAME_BTN=플레이어 이름
+STR_DLGBROWSER_MANUAL=수동
+STR_DLGBROWSER_ERR_VERSION=서버가 다른 버전의 WinBolo를 실행 중이에요.
+STR_DLGBROWSER_ERR_NEEDNAME=먼저 플레이어 이름을 설정해야 해요.
+STR_DLGBROWSER_SETNAME_TITLE=플레이어 이름 설정
+STR_DLGBROWSER_AI_ADV=유리
+STR_DLGBROWSER_AI_FULL=완전
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo - 로그 뷰어
+STR_DLGWBN_TITLE=WinBolo.net 로그 뷰어
+STR_DLGWBN_TAB_RECENT=최근
+STR_DLGWBN_TAB_TOPRATED=높은 평점
+STR_DLGWBN_TAB_MOSTDOWNLOADED=많이 다운로드됨
+STR_DLGWBN_TAB_SEARCH=검색
+STR_DLGWBN_LOADING=불러오는 중...
+STR_DLGWBN_NOCONNECT=WinBolo.net에 연결할 수 없어요
+STR_DLGWBN_MINPLAYERS=최소 플레이어
+STR_DLGWBN_SEARCHFILTERS=검색 필터:
+STR_DLGWBN_HINT_PLAYER=플레이어
+STR_DLGWBN_HINT_MAP=맵
+STR_DLGWBN_SEARCH_BTN=검색
+STR_DLGWBN_ERROR=오류: {string1}
+STR_DLGWBN_COL_MAP=맵
+STR_DLGWBN_COL_TYPE=유형
+STR_DLGWBN_COL_PLAYERS=플레이어
+STR_DLGWBN_COL_RATING=평점
+STR_DLGWBN_COL_SIZE=크기
+STR_DLGWBN_COL_DATE=날짜
+STR_DLGWBN_PLAYERS_LBL=플레이어: 
+STR_DLGWBN_NUMPLAYERS_FMT={number}명
+STR_DLGWBN_DURATION=지속 시간: {string1}
+STR_DLGWBN_RATING=평점: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=다운로드: {number}
+STR_DLGWBN_SIZE=크기: {string1}
+STR_DLGWBN_COMMENTS_FMT=댓글 ({number}):
+STR_DLGWBN_NOCOMMENTS=아직 댓글이 없어요.
+STR_DLGWBN_ADDCOMMENT=댓글 추가:
+STR_DLGWBN_HINT_COMMENT=댓글을 입력하세요...
+STR_DLGWBN_POST=게시
+STR_DLGWBN_POSTED=댓글이 게시됐어요!
+STR_DLGWBN_LOADINGDETAIL=세부 정보 불러오는 중...
+STR_DLGWBN_DOWNLOADING=다운로드 중...
+STR_DLGWBN_VIEWLOG=로그 보기
+STR_DLGWBN_NOLOG=이 게임의 로그 파일을 사용할 수 없어요.
+STR_DLGWBN_PREV=< 이전
+STR_DLGWBN_NEXT=다음 >
+STR_DLGWBN_PAGE=페이지 {number} / {number2}  (총 {number3}개)
+STR_DLGWBN_OPENFILE=파일 열기...
+STR_DLGWBN_PARSERR=응답 파싱에 실패했어요
+STR_DLGWBN_NETERR=네트워크 오류
+STR_DLGWBN_LOADERR=세부 정보 불러오기 실패
+STR_DLGWBN_DOWNLOAD_FAILED=다운로드에 실패했어요
+STR_DLGWBN_NOSAVEPATH=저장 경로를 확인할 수 없어요
+STR_DLGWBN_POSTERR=댓글 게시에 실패했어요
+STR_DLGWBN_FETCHERR=가져오기에 실패했어요
+STR_DLGWBN_UNKNOWN_ERR=알 수 없는 오류
+STR_DLGWBN_FILEFILTER=WinBolo 로그 파일
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo - 플레이어 이름 설정
+STR_DLGSETNAME_WBN_LOCKED=플레이어 이름이 WinBolo.net에서 설정됐어요.
+STR_DLGSETNAME_PLEASE_ENTER=플레이어 이름을 입력하세요.
+STR_DLGSETNAME_BLANK_ERR=죄송해요, 비워 둘 수 없어요
+STR_DLGSETNAME_STAR_ERR=죄송해요, 이름은 '*'로 시작할 수 없어요
+STR_DLGSETNAME_INUSE_ERR=이 이름은 이미 다른 플레이어가 사용 중이에요.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo - 스킨 선택
+STR_DLGSKIN_NOSKIN=스킨 없음 (기본)
+STR_DLGSKIN_NA=해당 없음
+STR_DLGSKIN_SELECT=스킨 선택:
+STR_DLGSKIN_NAME_LBL=이름:
+STR_DLGSKIN_AUTHOR_LBL=작성자:
+STR_DLGSKIN_NOTES_LBL=참고:
+STR_DLGSKIN_LOADERR=스킨 파일을 불러올 수 없어요
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo - 트래커 설정
+STR_DLGTRACKER_INVALIDPORT=유효하지 않은 포트 번호예요.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=WinBolo.net 확인 중...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=로그인됨
+STR_DLGWBN_EXPIRES=(만료: {string1})
+STR_DLGWBN_SIGN_OUT=WBN 로그아웃
+STR_DLGWBN_NOT_SIGNED_IN=로그인하지 않음
+STR_DLGWBN_SIGN_IN_BTN=WBN 로그인...
+STR_DLGWBN_SIGNIN_TITLE=WinBolo.net 로그인
+STR_DLGWBN_SIGNIN_BLURB=WinBolo.net 사용자 이름과 비밀번호로 로그인하세요. 토큰이 저장돼 다음에는 비밀번호를 다시 입력하지 않아도 돼요.
+STR_DLGWBN_USERNAME=사용자 이름:
+STR_DLGWBN_PASSWORD=비밀번호:
+STR_DLGWBN_SIGNINGIN=로그인 중...
+STR_DLGWBN_SIGNIN_OK=로그인
+STR_DLGWBN_NEEDCREDS=사용자 이름과 비밀번호를 입력하세요.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo - 게임 선택
+STR_DLGWELCOME_SINGLE=싱글 플레이어
+STR_DLGWELCOME_LOCAL=로컬
+STR_DLGWELCOME_MAPEDITOR=맵 에디터
+STR_DLGWELCOME_LOGVIEWER=로그 뷰어
+STR_DLGWELCOME_INTERNET=인터넷
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (내장)
+STR_MAPCHOOSER_LOADMAP=맵 불러오기
+STR_MAPCHOOSER_LOADDEVICE=장치에서 불러오기...
+STR_MAPCHOOSER_GENRANDOM=랜덤 맵 생성
+STR_MAPCHOOSER_RANDOMMAP=랜덤 맵
+STR_MAPCHOOSER_CLICKGEN=생성을 클릭해 미리보기
+STR_MAPCHOOSER_NOPREVIEW=미리보기 없음
+STR_MAPCHOOSER_STATS=토치카: {number}  기지: {number2}  시작점: {number3}
+STR_MAPCHOOSER_MAPFILES=맵 파일
+STR_MAPCHOOSER_ALLFILES=모든 파일
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=상태
+STR_TABLET_KILLS_DEATHS=킬: {number}  데스: {number2}
+STR_TABLET_TANK_RESOURCES=탱크 자원
+STR_TABLET_SHELLS=포탄
+STR_TABLET_MINES=지뢰
+STR_TABLET_ARMOUR=장갑
+STR_TABLET_TREES=나무
+STR_TABLET_PILLBOXES=토치카
+STR_TABLET_BASES=기지
+STR_TABLET_TANKS=탱크
+STR_TABLET_PILL_FMT=토치카 {number}
+STR_TABLET_BASE_FMT=기지 {number}
+STR_TABLET_TANK_FMT=탱크 {number}
+STR_TABLET_BTN_MSG=메시지
+STR_TABLET_BTN_PLY=플레이어
+STR_TABLET_BTN_SET=설정
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=플레이어 이름 설정
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=열기...
+STR_MAPEDIT_MENU_RECENT=최근 파일
+STR_MAPEDIT_MENU_SAVE=저장
+STR_MAPEDIT_MENU_SAVEAS=다른 이름으로 저장...
+STR_MAPEDIT_MENU_EXPORT=PNG로 내보내기...
+STR_MAPEDIT_MENU_RETURN=메뉴로 돌아가기
+STR_MAPEDIT_MENU_UNDO=실행 취소
+STR_MAPEDIT_MENU_REDO=다시 실행
+STR_MAPEDIT_MENU_CUT=잘라내기
+STR_MAPEDIT_MENU_COPY=복사
+STR_MAPEDIT_MENU_PASTE=붙여넣기
+STR_MAPEDIT_MENU_MAP=맵
+STR_MAPEDIT_MENU_RANDOMMAP=랜덤 맵...
+STR_MAPEDIT_MENU_TEXT=텍스트...
+STR_MAPEDIT_MENU_IMPORTIMG=이미지 가져오기...
+STR_MAPEDIT_MENU_VALIDATE=유효성 검사
+STR_MAPEDIT_MENU_MIRROR_H=수평 대칭 {string1}
+STR_MAPEDIT_MENU_MIRROR_V=수직 대칭 {string1}
+STR_MAPEDIT_MENU_ROTATE_90=90° 시계방향 회전 {string1}
+STR_MAPEDIT_MENU_ROTATE_180=180° 회전 {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(선택 영역)
+STR_MAPEDIT_SCOPE_FULLMAP=(전체 맵)
+STR_MAPEDIT_MENU_OPTIONS=옵션
+STR_MAPEDIT_MENU_CENTER=맵 중앙으로
+STR_MAPEDIT_MENU_POINT_STARTS=시작점 표시
+STR_MAPEDIT_MENU_SHOWGRID=격자 표시
+STR_MAPEDIT_MENU_SHOWMINES=지뢰 표시
+STR_MAPEDIT_MENU_SHOWPILLRANGES=토치카 범위 표시
+STR_MAPEDIT_MENU_WINDOW=윈도우
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=지형
+STR_MAPEDIT_WIN_TOOLS=도구
+STR_MAPEDIT_WIN_INSPECTOR=인스펙터
+STR_MAPEDIT_WIN_OBJECTS=객체
+STR_MAPEDIT_WIN_OVERVIEW=개요
+STR_MAPEDIT_WIN_STATS=통계
+STR_MAPEDIT_WIN_STAMP_LIB=스탬프 라이브러리
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=심해
+STR_MAPEDIT_TERR_GRASS=풀
+STR_MAPEDIT_TERR_FOREST=숲
+STR_MAPEDIT_TERR_ROAD=도로
+STR_MAPEDIT_TERR_BUILDING=건물
+STR_MAPEDIT_TERR_HALFBUILDING=반건물
+STR_MAPEDIT_TERR_RIVER=강
+STR_MAPEDIT_TERR_SWAMP=늪
+STR_MAPEDIT_TERR_CRATER=분화구
+STR_MAPEDIT_TERR_RUBBLE=잔해
+STR_MAPEDIT_TERR_BOAT=보트
+STR_MAPEDIT_TERR_MINETOOL=지뢰 도구
+STR_MAPEDIT_MINE_CHECKERED=체커
+STR_MAPEDIT_MINE_FULL=가득
+STR_MAPEDIT_MINE_RANDOM=랜덤
+STR_MAPEDIT_MINE_CLEAR=지뢰 지우기
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=연필
+STR_MAPEDIT_TOOL_LINE=선
+STR_MAPEDIT_TOOL_RECT=사각형
+STR_MAPEDIT_TOOL_RECTFILL=채운 사각형
+STR_MAPEDIT_TOOL_OVAL=타원
+STR_MAPEDIT_TOOL_OVALFILL=채운 타원
+STR_MAPEDIT_TOOL_SELECT=선택
+STR_MAPEDIT_TOOL_FILL=채우기
+STR_MAPEDIT_TOOL_MAZE=미로
+STR_MAPEDIT_TOOL_GENERATE=생성
+STR_MAPEDIT_TOOL_WAND=완드
+STR_MAPEDIT_TOOL_TEXT=텍스트
+STR_MAPEDIT_TOOL_TEXT_TIP=텍스트 (맵에 텍스트 스탬프)
+STR_MAPEDIT_BRUSH=브러시
+STR_MAPEDIT_BRUSH_SQUARE=사각형
+STR_MAPEDIT_BRUSH_CIRCLE=원형
+STR_MAPEDIT_OBJTOOL_BASE=기지
+STR_MAPEDIT_OBJTOOL_PILL=토치카
+STR_MAPEDIT_OBJTOOL_START=시작점
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=타일: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=타일: --
+STR_MAPEDIT_STATUS_ZOOM=확대: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=수정됨
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=저장되지 않은 변경 사항
+STR_MAPEDIT_UNSAVED_BLURB=맵에 저장되지 않은 변경 사항이 있어요.\n계속하기 전에 저장할까요?
+STR_MAPEDIT_GOTO_TITLE=좌표로 이동
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=선택된 객체 없음
+STR_MAPEDIT_INSP_BASE_HASH=기지 #{number}
+STR_MAPEDIT_INSP_PILL_HASH=토치카 #{number}
+STR_MAPEDIT_INSP_START_HASH=시작점 #{number}
+STR_MAPEDIT_INSP_POSITION=위치: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=소유자
+STR_MAPEDIT_INSP_ARMOUR=장갑
+STR_MAPEDIT_INSP_SPEED=속도
+STR_MAPEDIT_INSP_DIR=방향
+STR_MAPEDIT_OWNER_NEUTRAL=중립
+STR_MAPEDIT_OWNER_PLAYER=플레이어 {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=기지 ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=토치카 ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=시작점 ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  장갑: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  방향: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=유효성 검사
+STR_MAPEDIT_VAL_NOISSUES=문제 없음
+STR_MAPEDIT_VAL_ERRORS={number}개 오류
+STR_MAPEDIT_VAL_NOERRORS=오류 없음
+STR_MAPEDIT_VAL_WARNINGS={number}개 경고
+STR_MAPEDIT_VAL_NOWARNINGS=경고 없음
+STR_MAPEDIT_VAL_ERRORS_TITLE=유효성 검사 오류
+STR_MAPEDIT_VAL_HASERRORS=맵에 {number}개 오류가 있어요. 저장하기 전에 수정하세요.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=랜덤 맵 생성
+STR_MAPEDIT_GENRANDAREA_TITLE=랜덤 영역 생성
+STR_MAPEDIT_GENSCOPE_SELECTION=범위: 선택 ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=범위: 전체 맵 ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=텍스트 도구
+STR_MAPEDIT_TEXT_LABEL=텍스트:
+STR_MAPEDIT_TEXT_BUILTIN=내장
+STR_MAPEDIT_TEXT_SYSTEM=시스템 폰트
+STR_MAPEDIT_TEXT_FONTSIZE=폰트 크기
+STR_MAPEDIT_TEXT_STYLE=스타일
+STR_MAPEDIT_TEXT_FONTSIZE_S=작게 (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=보통 (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=크게 (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=XL (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=보통
+STR_MAPEDIT_TEXT_STYLE_BOLD=굵게
+STR_MAPEDIT_TEXT_STYLE_ITALIC=기울임
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=굵은 기울임
+STR_MAPEDIT_TEXT_FONTFAMILY=폰트 패밀리
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (번들)
+STR_MAPEDIT_TEXT_SIZEPX=크기 (px)
+STR_MAPEDIT_TEXT_NOFONTS=폰트를 찾을 수 없어요. data/fonts/ 에 .ttf 파일을 추가하세요
+STR_MAPEDIT_TEXT_TERR_TEXT=텍스트 지형
+STR_MAPEDIT_TEXT_TERR_EDGE=가장자리 지형
+STR_MAPEDIT_TEXT_TERR_BG=배경
+STR_MAPEDIT_TEXT_PREVIEW=미리보기 ({number}x{number2} 타일):
+STR_MAPEDIT_TEXT_TOOLARGE=텍스트가 너무 커요 (최대 256x256 타일) 또는 폰트 오류
+STR_MAPEDIT_GENERATE_BTN=생성
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=미로 설정
+STR_MAPEDIT_MAZE_REGION=영역: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=맵을 드래그해 생성하세요
+STR_MAPEDIT_ALGORITHM=알고리즘
+STR_MAPEDIT_ALGO_LABYRINTH=미궁
+STR_MAPEDIT_ALGO_OPEN=열린
+STR_MAPEDIT_WALL=벽
+STR_MAPEDIT_CORRIDOR=통로
+STR_MAPEDIT_ENTRIES=입구
+STR_MAPEDIT_ROOMS=방
+STR_MAPEDIT_WALLTERRAIN=벽 지형
+STR_MAPEDIT_CORRIDORTERRAIN=통로 지형
+STR_MAPEDIT_GENSETTINGS_TITLE=생성 설정
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=지형 분포
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=지뢰: {number}개 ({string1}% 육지)
+STR_MAPEDIT_STATS_SPATIAL=공간 분석
+STR_MAPEDIT_STATS_LAND_COVERAGE=육지 비율: {string1}%
+STR_MAPEDIT_STATS_LARGEST=최대 육지: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=기지 간격: {string1} 타일
+STR_MAPEDIT_STATS_PILL_SPACING=토치카 간격: {string1} 타일
+STR_MAPEDIT_STATS_SYMMETRY=대칭: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=수평 대칭: {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=수직 대칭: {string1}%
+STR_MAPEDIT_STATS_4CORNER=4코너: {string1}%
+STR_MAPEDIT_STATS_ROTATE180=180° 회전: {string1}%
+STR_MAPEDIT_STATS_STALE=(오래됨 — 새로 고침을 클릭하세요)
+STR_MAPEDIT_STATS_REFRESH=공간 분석 새로 고침
+STR_MAPEDIT_STATS_STARTS=시작점
+STR_MAPEDIT_TERRNAME_HALFBLD=반건물
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=이미지 가져오기
+STR_MAPEDIT_IMG_FILE=파일:
+STR_MAPEDIT_IMG_NONE=(없음)
+STR_MAPEDIT_BROWSE=찾아보기...
+STR_MAPEDIT_IMG_SOURCE=원본: {number}x{number2} 픽셀
+STR_MAPEDIT_IMG_PREVIEW_LBL=미리보기:
+STR_MAPEDIT_IMG_SCALEMODE=배율 모드:
+STR_MAPEDIT_IMG_FIT_SEL=선택에 맞추기
+STR_MAPEDIT_IMG_FIT_PLAY=플레이 영역에 맞추기
+STR_MAPEDIT_IMG_OUTPUT=출력: {number} x {number2} 타일
+STR_MAPEDIT_IMG_COLORS=색상:
+STR_MAPEDIT_IMG_REDETECT=다시 감지
+STR_MAPEDIT_IMG_COLORMAP=색상 매핑
+STR_MAPEDIT_IMPORT_BTN=가져오기
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=번들 스탬프
+STR_MAPEDIT_STAMP_USER=사용자 스탬프
+STR_MAPEDIT_STAMP_NOUSER=사용자 스탬프가 없어요.
+STR_MAPEDIT_STAMP_HINT="클립보드 저장..."을 사용해 만들어 보세요.
+STR_MAPEDIT_DELETE=삭제
+STR_MAPEDIT_STAMP_SAVECLIP=클립보드 저장...
+STR_MAPEDIT_STAMP_TIP_COPY=먼저 선택 영역을 복사하세요 (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=가져오기...
+STR_MAPEDIT_STAMP_UNTITLED=제목 없음
+STR_MAPEDIT_STAMP_SAVE_TITLE=스탬프 저장
+STR_MAPEDIT_STAMP_SAVE_BLURB=이 스탬프의 이름을 입력하세요:
+STR_MAPEDIT_STAMP_SAVE_NAME=이름
+STR_MAPEDIT_SAVE_BTN=저장
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=PNG로 내보내기
+STR_MAPEDIT_PREVIEW=미리보기
+STR_MAPEDIT_EXPORT_MODE=모드:
+STR_MAPEDIT_EXPORT_FULL=전체 해상도 (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=미리보기 크기:
+STR_MAPEDIT_EXPORT_OPTIONS=옵션:
+STR_MAPEDIT_EXPORT_SHOWOBJ=객체 표시
+STR_MAPEDIT_EXPORT_SHOWMINES=지뢰 표시
+STR_MAPEDIT_EXPORT_SHOWGRID=격자 표시 (전체 모드만)
+STR_MAPEDIT_EXPORT_BTN=내보내기...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=잠김: 랜덤화에 변경되지 않아요
+STR_MAPGEN_UNLOCKED_TIP=잠금 해제: 랜덤화에 변경돼요
+STR_MAPGEN_GENERATOR=생성기
+STR_MAPGEN_TYPE_TOURNAMENT=토너먼트
+STR_MAPGEN_TYPE_NATURAL=자연
+STR_MAPGEN_TYPE_MAZE=미로
+STR_MAPGEN_TYPE_FRACTAL=프랙탈
+STR_MAPGEN_SEED=시드
+STR_MAPGEN_RANDOMIZE=랜덤화
+STR_MAPGEN_SYMMETRY=대칭
+STR_MAPGEN_SYM_4CORNER=4코너 대칭
+STR_MAPGEN_SYM_MIRROR_H=수평 대칭
+STR_MAPGEN_SYM_MIRROR_V=수직 대칭
+STR_MAPGEN_SYM_ROT180=180° 회전
+STR_MAPGEN_SYM_ROT90=90° 회전
+STR_MAPGEN_LANDMASS_PCT=육지 비율 %
+STR_MAPGEN_ROUGHNESS=거칠기
+STR_MAPGEN_ROUGH_LOW=낮음
+STR_MAPGEN_ROUGH_MED=보통
+STR_MAPGEN_ROUGH_HIGH=높음
+STR_MAPGEN_INCLUDE_ROADS=도로 포함
+STR_MAPGEN_MAP_STYLE=맵 스타일
+STR_MAPGEN_STYLE_OCEAN=해양
+STR_MAPGEN_STYLE_CONTINENT=대륙
+STR_MAPGEN_STYLE_ISLANDS=섬
+STR_MAPGEN_STYLE_ARCHIPELAGO=군도
+STR_MAPGEN_STYLE_INLAND=내륙
+STR_MAPGEN_TERRAIN_MIX=지형 구성 (% 육지 비율):
+STR_MAPGEN_GRASS_PCT=풀 %
+STR_MAPGEN_FOREST_PCT=숲 %
+STR_MAPGEN_BUILDING_PCT=건물 %
+STR_MAPGEN_SWAMP_PCT=늪 %
+STR_MAPGEN_RIVER_PCT=강 %
+STR_MAPGEN_BOAT_PCT=보트 %
+STR_MAPGEN_REMAINING_GRASS=남은 풀: {number}%
+STR_MAPGEN_MINE_DENSITY=지뢰 밀도 %
+STR_MAPGEN_RIVER_COUNT=강 개수
+STR_MAPGEN_CITY_COUNT=도시 개수
+STR_MAPGEN_MAZE_COUNT=미로 개수
+STR_MAPGEN_WALL_THICKNESS=벽 두께
+STR_MAPGEN_CORRIDOR_WIDTH=통로 너비
+STR_MAPGEN_CITY_ROOMS=도시 방 수
+STR_MAPGEN_LAND_COVERAGE=육지 비율 %
+STR_MAPGEN_DETAIL_PASSES=세부 패스
+STR_MAPGEN_COAST_JAG=해안 울퉁불퉁함
+STR_MAPGEN_TERRAIN_LAYERS=지형 레이어
+STR_MAPGEN_RIVERS=강
+STR_MAPGEN_LAKES=호수
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player}님이 게임에 참여했어요.
+STR_LV_HAS_JOINED={string1}님이 게임에 참여했어요
+STR_LV_ALLY_REQUEST={player}님이 {other}님에게 동맹을 요청했어요
+STR_LV_ALLY_ACCEPT={player}님이 {other}님의 동맹을 수락했어요
+STR_LV_ALLY_LEAVE={player}님이 동맹을 탈퇴했어요
+STR_LV_MSG_ALL={player}님이 전체에게 보낸 메시지: {string1}
+STR_LV_MSG_PLAYERS={player}님이 {other}님에게 보낸 메시지: {string1}
+STR_LV_MSG_SERVER=서버 메시지: {string1}
+STR_LV_PLAYER_DIED={player}님이 사망했어요
+STR_LV_PLAYER_KILLED={player}님이 플레이어 {other}님을 처치했어요
+STR_LV_PLAYER_REJOINED={player}님이 게임에 다시 참여했어요.
+STR_LV_PLAYER_LEAVING={player}님이 게임을 나가고 있어요.
+STR_LV_LOBBY_OPENED=로비가 열렸어요.
+STR_LV_GAME_STARTED=게임이 시작됐어요.
+STR_LV_PLAYER_READY={player}님이 준비 완료했어요.
+STR_LV_PLAYER_UNREADY={player}님이 더 이상 준비 완료가 아니에요.
+STR_LV_PLAYER_LEFT_TEAM={player}님이 팀을 나갔어요.
+STR_LV_PLAYER_JOINED_TEAM={player}님이 팀 {number}에 참여했어요.
+STR_LV_COUNTDOWN_START=카운트다운이 시작됐어요.
+STR_LV_COUNTDOWN_CANCEL=카운트다운이 취소됐어요.
+STR_LV_MAP_SKIP_VOTE={player}님이 맵 건너뛰기에 투표했어요.
+STR_LV_MAP_SKIPPED=맵을 건너뛰었어요. 새 맵: {string1}
+STR_LV_TEAM_BALANCE=팀 밸런스가 적용됐어요.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=열기
+STR_LV_MENU_ACTION=동작
+STR_LV_PLAY=재생
+STR_LV_PAUSE=일시 정지
+STR_LV_STOP=정지
+STR_LV_FAST_FORWARD=빠르게 감기
+STR_LV_REWIND=되감기
+STR_LV_MODE=모드
+STR_LV_MODE_INFO=정보
+STR_LV_SELECT_TEAM=팀 선택
+STR_LV_USE_TEAM_COLOURS=팀 색상 사용
+STR_LV_TANK_CENTRED=탱크 중심
+STR_LV_DNS_LOOKUPS=DNS 조회
+STR_LV_TEAM_COLOURS=팀 색상
+STR_LV_MENU_WINDOWS=윈도우
+STR_LV_WIN_CONTROLS=컨트롤
+STR_LV_WIN_EVENTS=이벤트
+STR_LV_WIN_GAMEINFO=게임 정보
+STR_LV_WIN_ITEMINFO=아이템 정보
+STR_LV_RESET_WINDOWS=윈도우 위치 초기화
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=각 플레이어 팀에 색상을 할당하세요:
+STR_LV_PLAYER_LBL=플레이어 {number}:
+STR_LV_NEUTRAL_LBL=중립:
+STR_LV_ABOUT_TITLE=WinBolo 로그 뷰어
+STR_LV_VERSION_FMT=버전: {string1}
+STR_LV_LICENSE=이 프로그램은 자유 소프트웨어예요. GNU 일반\n공중 사용 허가서(GPL)의 조건에 따라\n재배포하거나 수정할 수 있어요.
+STR_LV_WEBSITE_LBL=웹사이트:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=회색
+STR_LV_COL_KHAKI=카키
+STR_LV_COL_GREEN=초록
+STR_LV_COL_PINK=분홍
+STR_LV_COL_YELLOW=노랑
+STR_LV_COL_LIGHTBLUE=하늘색
+STR_LV_COL_ORANGE=주황
+STR_LV_COL_LIGHTPURPLE=연보라
+STR_LV_COL_AQUA=청록
+STR_LV_COL_LIGHTGREEN=연두
+STR_LV_COL_LIGHTGREY=연회색
+STR_LV_COL_RED=빨강
+STR_LV_COL_BLUE=파랑
+STR_LV_COL_BROWN=갈색
+STR_LV_COL_LIGHTPINK=연분홍
+STR_LV_COL_PALEGREEN=연초록
+STR_LV_COL_PURPLE=보라
+
+# Log viewer game info panel
+STR_LV_SECONDS={number}초
+STR_LV_INFO_MAP=맵 이름: {string1}
+STR_LV_INFO_GAMETYPE=게임 유형: {string1}
+STR_LV_INFO_HIDDENMINES=숨겨진 지뢰: {string1}
+STR_LV_INFO_COMPUTER_TANKS=컴퓨터 탱크: {string1}
+STR_LV_INFO_TIME_LIMIT=제한 시간: {string1}
+STR_LV_INFO_START_DELAY=시작 지연: {string1}
+STR_LV_INFO_WBN_KEY=WBN 키:
+STR_LV_INFO_START_TIME=시작 시간: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=선택된 아이템 없음
+STR_LV_LOCATION_FMT=위치: {string1}
+STR_LV_OWNER_LBL=소유자: {string1}
+STR_LV_ARMOUR_FMT=장갑: {number}
+STR_LV_SHELLS_FMT=포탄: {number}
+STR_LV_MINES_FMT=지뢰: {number}
+STR_LV_IN_TANK_FMT=탱크 내: {string1}
+STR_LV_CENTER_ON_MAP=맵에서 중앙으로
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< 되감기
+STR_LV_PLAY_BTN=재생 >
+STR_LV_FWD_BTN=빨리감기 >>
+STR_LV_SPEED_LBL=속도:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} 남음
+STR_LV_NO_LOG_LOADED=로그 파일이 없어요
+
+# Log viewer events panel
+STR_LV_COPY=복사
+STR_LV_COPY_ALL=전체 복사
+STR_LV_CLEAR_ALL=전체 지우기
+STR_LV_AUTO_SCROLL=자동 스크롤
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=로그 파일의 끝에 도달했어요
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=확대
+STR_DLGSETTINGS_PERFORMANCE=성능
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=서버와의 연결이 끊겼어요.\n메뉴로 돌아가요.
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=언어:
+STR_DLGLANG_MIDGAME_NOTE=기존 메시지 로그 항목은 다시 생성될 때까지 언어가 바뀌지 않아요.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=기지가 너무 많아요: {number}개 (최대 {number2}개)
+STR_MAPVALIDATE_TOO_MANY_PILLS=토치카가 너무 많아요: {number}개 (최대 {number2}개)
+STR_MAPVALIDATE_TOO_MANY_STARTS=시작점이 너무 많아요: {number}개 (최대 {number2}개)
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=기지 #{number} 위치 ({number2},{number3}): 통과할 수 없는 지형 위에 있어요
+STR_MAPVALIDATE_BASE_BORDER_ZONE=기지 #{number} 위치 ({number2},{number3}): 지뢰 경계 구역에 있어요
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=토치카 #{number} 위치 ({number2},{number3}): 통과할 수 없는 지형 위에 있어요
+STR_MAPVALIDATE_PILL_BORDER_ZONE=토치카 #{number} 위치 ({number2},{number3}): 지뢰 경계 구역에 있어요
+STR_MAPVALIDATE_START_NOT_DEEP=시작점 #{number} 위치 ({number2},{number3}): 심해 위에 있어야 해요
+STR_MAPVALIDATE_START_BORDER_ZONE=시작점 #{number} 위치 ({number2},{number3}): 지뢰 경계 구역에 있어요
+STR_MAPVALIDATE_NO_STARTS=시작점이 없어요 — 맵을 플레이할 수 없어요
+STR_MAPVALIDATE_ONE_START=시작점이 1개뿐이에요 — 싱글 플레이어만 가능해요
+STR_MAPVALIDATE_BASE_OVERLAP=기지 #{number}와 기지 #{number2}가 ({number3},{number4})에서 겹쳐요
+STR_MAPVALIDATE_PILL_OVERLAP=토치카 #{number}와 토치카 #{number2}가 ({number3},{number4})에서 겹쳐요
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=기지 #{number}와 토치카 #{number2}가 ({number3},{number4})에서 겹쳐요
+STR_MAPVALIDATE_START_OVERLAP=시작점 #{number}와 시작점 #{number2}가 ({number3},{number4})에서 겹쳐요
+STR_MAPVALIDATE_START_BASE_OVERLAP=시작점 #{number}와 기지 #{number2}가 ({number3},{number4})에서 겹쳐요
+STR_MAPVALIDATE_START_PILL_OVERLAP=시작점 #{number}와 토치카 #{number2}가 ({number3},{number4})에서 겹쳐요

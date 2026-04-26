@@ -3,8 +3,8 @@
 # Re-run lang/en.txt regenerator if upstream English changes.
 
 name=Русский
-author=Claude (Opus 4.7), Please help improve this
-notes=Initial machine translation. Please help improve this
+author=Claude (Opus 4.7), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
 STR_DLGOPENING_TITLE=WinBolo — выбор игры
