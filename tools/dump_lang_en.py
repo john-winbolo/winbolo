@@ -32,9 +32,9 @@ LANG_C_PATH = REPO_ROOT / "src" / "gui" / "sdl3" / "lang.c"
 EN_TXT_PATH = REPO_ROOT / "data" / "lang" / "en.txt"
 NAMES_INC_PATH = REPO_ROOT / "src" / "gui" / "sdl3" / "lang_names.inc"
 
-# Symbolic IDs that participate in localization. The aresource.h header
-# also #defines IDD_*, IDR_*, IDB_*, IDC_*, IDI_*, ID_*; those are Win32
-# resource IDs and are intentionally excluded.
+# Symbolic IDs that participate in localization. lang.h also carries
+# Win32-style IDD_*, IDR_*, IDB_*, IDC_*, IDI_*, ID_* resource IDs which
+# are non-localizable and intentionally excluded.
 ID_PREFIXES = (
     "STR_",
     "STRERR_",

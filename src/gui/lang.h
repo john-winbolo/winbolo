@@ -1291,7 +1291,6 @@ const LangFileMeta *langGetLoadedMeta(void);
 
 void langGetFileName(char *fileName);
 char *langGetText(langid id);
-char *langGetText2(langid id);
 
 /* Like langGetText, but expands the named placeholders {player},
  * {other}, {number} from `args`. If `args` is NULL it behaves like
