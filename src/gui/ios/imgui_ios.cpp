@@ -16,6 +16,7 @@
 
 extern "C" {
 #include "../../bolo/global.h"
+#include "../lang.h"
 }
 
 #include "imgui_ios.h"
@@ -151,14 +152,14 @@ void imguiIosRender(void) {
                                 ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(220, 0), ImGuiCond_Appearing);
 
-        ImGui::Begin("Settings", &s_showSettings,
+        ImGui::Begin(langGetText(STR_DLGSETTINGS_TITLE), &s_showSettings,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
 
         /* Update isInMenu when the X button is clicked */
         isInMenu = s_showSettings;
 
         /* --- Zoom --- */
-        ImGui::SeparatorText("Zoom");
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_ZOOM));
         {
             bool z1 = (zoomFactor == ZOOM_FACTOR_NORMAL);
             bool z2 = (zoomFactor == ZOOM_FACTOR_DOUBLE);
@@ -172,12 +173,16 @@ void imguiIosRender(void) {
         }
 
         /* --- Sound --- */
-        ImGui::SeparatorText("Sound");
-        ImGui::Checkbox("Sound Effects", &soundEffects);
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
+        ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &soundEffects);
 
         /* --- FPS --- */
-        ImGui::SeparatorText("Performance");
-        ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_PERFORMANCE));
+        {
+            MessageArgs args = {};
+            args.number = (int)(ImGui::GetIO().Framerate + 0.5f);
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGSETTINGS_FPS_FMT, &args));
+        }
 
         ImGui::End();
     }

@@ -24,6 +24,7 @@ extern "C" {
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/bg_game.h"
 #include "../gui/gamefront.h"
+#include "../gui/lang.h"
 #include "../bolo/global.h"
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
@@ -47,12 +48,6 @@ static unsigned char *loadFontFromAssets(const char *path, int *outSize) {
     return buf;
 }
 
-/* List of bundled maps available in assets */
-static const char *bundledMaps[] = {
-    "Everard Island (Inbuilt)",
-    NULL
-};
-
 /* Scan for .map files in data/maps/ assets directory */
 #define MAX_MAP_FILES 32
 static char mapFiles[MAX_MAP_FILES][256];
@@ -64,7 +59,7 @@ static void scanBundledMaps(void) {
 
     /* Always include the inbuilt map as first option */
     SDL_strlcpy(mapFiles[0], "", sizeof(mapFiles[0]));
-    mapLabels[0] = "Everard Island (Inbuilt)";
+    mapLabels[0] = langGetText(STR_MAPCHOOSER_EVERARD);
     mapCount = 1;
 
     /* Try to enumerate map files from the assets */
@@ -245,12 +240,12 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
         ImGui::BeginGroup();
 
         ImGui::SetWindowFontScale(1.3f);
-        ImGui::Text("Game Setup");
+        ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_TITLE));
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Spacing();
 
         /* --- Map selection via combo --- */
-        ImGui::Text("Map");
+        ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_CHOOSEMAP));
         ImGui::SetNextItemWidth(contentW * 0.8f);
         if (ImGui::BeginCombo("##MapSelect", mapLabels[selectedMap])) {
             for (int i = 0; i < mapCount; i++) {
@@ -282,30 +277,30 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
         ImGui::Spacing();
 
         /* --- Game Type --- */
-        ImGui::Text("Game Type");
-        ImGui::RadioButton("Open Game (pre-armed)", &gameTypeIdx, 0);
-        ImGui::RadioButton("Tournament (free ammo early)", &gameTypeIdx, 1);
-        ImGui::RadioButton("Strict Tournament (no free ammo)", &gameTypeIdx, 2);
+        ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_GAMETYPE_LBL));
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_RADIO1), &gameTypeIdx, 0);
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_RADIO2), &gameTypeIdx, 1);
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_RADIO3), &gameTypeIdx, 2);
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
         /* --- Options --- */
-        ImGui::Checkbox("Allow Hidden Mines", &hiddenMines);
+        ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_HIDDENMINES), &hiddenMines);
         ImGui::Spacing();
 
-        ImGui::Text("Computer Tanks");
+        ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_AICOMPPLAYERS));
         ImGui::Indent();
-        ImGui::RadioButton("No computer tanks", &aiIdx, 0);
-        ImGui::RadioButton("Allow computer tanks", &aiIdx, 1);
-        ImGui::RadioButton("Allow with advantage", &aiIdx, 2);
-        ImGui::RadioButton("Allow with full map", &aiIdx, 3);
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_NOAI), &aiIdx, 0);
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOWAI), &aiIdx, 1);
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOWADV), &aiIdx, 2);
+        ImGui::RadioButton(langGetText(STR_DLGGAMESETUP_ALLOWFULL), &aiIdx, 3);
         ImGui::Unindent();
 
         ImGui::Spacing();
 
-        ImGui::Checkbox("Game Password", &usePassword);
+        ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_PASSWORD), &usePassword);
         if (usePassword) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(160.0f * uiScale);
@@ -313,19 +308,25 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                              ImGuiInputTextFlags_Password);
         }
 
-        ImGui::Checkbox("Start delay", &useStartDelay);
+        ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_STARTDELAY), &useStartDelay);
         if (useStartDelay) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80.0f * uiScale);
-            ImGui::InputInt("sec##sd", &startDelaySec, 0, 0);
+            char secLabel[64];
+            SDL_snprintf(secLabel, sizeof(secLabel), "%s##sd",
+                         langGetText(STR_DLGGAMESETUP_SECONDS));
+            ImGui::InputInt(secLabel, &startDelaySec, 0, 0);
             if (startDelaySec < 0) startDelaySec = 0;
         }
 
-        ImGui::Checkbox("Time limit", &useTimeLimit);
+        ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_TIMELIMIT), &useTimeLimit);
         if (useTimeLimit) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80.0f * uiScale);
-            ImGui::InputInt("min##tl", &timeLimitMin, 0, 0);
+            char minLabel[64];
+            SDL_snprintf(minLabel, sizeof(minLabel), "%s##tl",
+                         langGetText(STR_DLGGAMESETUP_MINUTES));
+            ImGui::InputInt(minLabel, &timeLimitMin, 0, 0);
             if (timeLimitMin < 0) timeLimitMin = 0;
         }
 
@@ -340,7 +341,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
             float totalW = btnW * 2 + 16.0f * uiScale;
             ImGui::SetCursorPosX(padX + (contentW - totalW) * 0.5f);
 
-            if (ImGui::Button("OK", ImVec2(btnW, btnH))) {
+            if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, btnH))) {
                 gameType newGt = (gameTypeIdx == 0) ? gameOpen :
                                  (gameTypeIdx == 1) ? gameTournament : gameStrictTournament;
                 aiType newAi = (aiIdx == 0) ? aiNone :
@@ -371,7 +372,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
 
             ImGui::SameLine(0.0f, 16.0f * uiScale);
 
-            if (ImGui::Button("Cancel", ImVec2(btnW, btnH))) {
+            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH))) {
                 running = false;
             }
         }
