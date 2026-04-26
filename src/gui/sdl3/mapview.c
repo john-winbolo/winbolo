@@ -610,6 +610,12 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       sx -= kTipCol[dir] * (float)ctx->zoomFactor;
       sy -= kTipRow[dir] * (float)ctx->zoomFactor;
     }
+    /* Round shell dest to nearest screen pixel — keeps the sprite
+     * on the screen-pixel grid even after the per-direction tip
+     * subtraction (kTipCol values are non-integer) and any
+     * smooth-shells sub-wu offset.  Cheap; no perf hit. */
+    sx = SDL_floorf(sx + 0.5f);
+    sy = SDL_floorf(sy + 0.5f);
 
     int ss = ctx->sheetScale;
     /* Atlas-bleed inset: with SCALEMODE_LINEAR (Max Detail) SDL
@@ -913,9 +919,22 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
      * back on top so the sprite slides at full 1/256-tile precision
      * — purely additive, so if the cache isn't ready the classic
      * position is still correct. */
-    /* Tanks always render on the engine's pixel grid (Pixel Nearest);
-     * the smooth-shells toggle is shell-only by design. */
-    (void)s_tankPosValid; (void)s_tankPosX; (void)s_tankPosY;
+    /* Smooth-motion mode (Max Detail with Smooth Animations): add
+     * the fractional game-pixel from sim's full WORLD coord on top
+     * of the classic engine-grid position, so the tank slides at
+     * 1/256-tile precision.  Other modes leave it on the pixel grid. */
+    if (gfxSettingsAllSmoothMotion()
+        && s_tankPosValid && playerNum < MAX_TANKS) {
+      float gpxF = (float)s_tankPosX[playerNum] / 16.0f - 8.0f; /* TL game-px */
+      float gpyF = (float)s_tankPosY[playerNum] / 16.0f - 8.0f;
+      float fracX = gpxF - (float)((int)gpxF);
+      float fracY = gpyF - (float)((int)gpyF);
+      sx += fracX * (float)ctx->zoomFactor;
+      sy += fracY * (float)ctx->zoomFactor;
+    }
+    /* Round to nearest screen pixel. */
+    sx = SDL_floorf(sx + 0.5f);
+    sy = SDL_floorf(sy + 0.5f);
 
     {
       int ss = ctx->sheetScale;
@@ -1027,9 +1046,9 @@ static bool lgmSubPxLookup(BYTE bufMx, BYTE bufMy,
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY) {
-  /* LGMs always render on the engine's pixel grid — sub-wu shell
-   * smoothing is shell-only. */
-  bool smooth = false;
+  /* Smooth-motion mode adds sub-wu fractional offset for LGMs from
+   * sim coords.  Other modes lock to the engine's pixel grid. */
+  bool smooth = gfxSettingsAllSmoothMotion();
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
@@ -1073,6 +1092,9 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
         sy += fracY * (float)ctx->zoomFactor;
       }
     }
+    /* Round to nearest screen pixel. */
+    sx = SDL_floorf(sx + 0.5f);
+    sy = SDL_floorf(sy + 0.5f);
 
     {
       int ss = ctx->sheetScale;

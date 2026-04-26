@@ -78,6 +78,12 @@ bool gfxSettingsGetAllowSmoothShells(void);
  * The persisted AllowSmoothShells value is preserved either way. */
 bool gfxSettingsEffectiveSmoothShells(void);
 
+/* True when the active ThemeDetail wants ALL animated sprites
+ * (tanks, shells, LGMs) to render at full sub-wu (1/256-tile)
+ * precision instead of snapping to the game-pixel grid.  Currently
+ * only MAX_DETAIL_SMOOTH enables this. */
+bool gfxSettingsAllSmoothMotion(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -26,6 +26,10 @@ bool gfxSettingsEffectiveSmoothShells(void) {
     return s_allowSmoothShells;
 }
 
+bool gfxSettingsAllSmoothMotion(void) {
+    return s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH;
+}
+
 void gfxSettingsSetAnimStyle(GfxAnimStyle s) {
     s_animStyle = s;
 }
