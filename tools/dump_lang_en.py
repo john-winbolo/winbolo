@@ -125,7 +125,7 @@ def parse_lang_c(path):
 
 def decode_c_string(s):
     """Convert a C string literal body (without the surrounding quotes)
-    into the actual Python string. Handles \\n, \\t, \\\\, \\\".
+    into the actual Python string. Handles \\n, \\t, \\\\, \\\", \\xHH.
     """
     out = []
     i = 0
@@ -135,24 +135,47 @@ def decode_c_string(s):
             nxt = s[i + 1]
             if nxt == "n":
                 out.append("\n")
-            elif nxt == "t":
+                i += 2
+                continue
+            if nxt == "t":
                 out.append("\t")
-            elif nxt == "r":
+                i += 2
+                continue
+            if nxt == "r":
                 out.append("\r")
-            elif nxt == "\\":
+                i += 2
+                continue
+            if nxt == "\\":
                 out.append("\\")
-            elif nxt == "\"":
+                i += 2
+                continue
+            if nxt == "\"":
                 out.append("\"")
-            elif nxt == "'":
+                i += 2
+                continue
+            if nxt == "'":
                 out.append("'")
-            else:
-                # Unknown escape — keep as-is.
-                out.append(c)
-                out.append(nxt)
-            i += 2
-        else:
+                i += 2
+                continue
+            if nxt == "x":
+                # \xHH — single byte. Consecutive \xHH\xHH... are a
+                # UTF-8 sequence; collect all the bytes then decode.
+                byte_str = bytearray()
+                while i + 3 < len(s) and s[i] == "\\" and s[i + 1] == "x":
+                    hex2 = s[i + 2:i + 4]
+                    if len(hex2) != 2 or not all(ch in "0123456789abcdefABCDEF" for ch in hex2):
+                        break
+                    byte_str.append(int(hex2, 16))
+                    i += 4
+                out.append(byte_str.decode("utf-8", errors="replace"))
+                continue
+            # Unknown escape — keep as-is (warn-worthy but tolerated).
             out.append(c)
-            i += 1
+            out.append(nxt)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
     return "".join(out)
 
 
