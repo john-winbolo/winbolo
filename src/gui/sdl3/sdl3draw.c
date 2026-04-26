@@ -972,7 +972,7 @@ bool sdl3DrawSetup(int zoomFactor) {
     langCode[0] = '\0';
     gameFrontGetLanguageCode(langCode, (int)sizeof(langCode));
     const char *sarasaRel = sarasaMonoFontPath(langCode);
-    const char *courierRel = "data/CourierPrime-Regular.ttf";
+    const char *courierRel = "data/fonts/CourierPrime-Regular.ttf";
 
 #if defined(__EMSCRIPTEN__)
     /* Emscripten preload uses a leading slash. */
@@ -982,7 +982,7 @@ bool sdl3DrawSetup(int zoomFactor) {
       SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "/%s", sarasaRel);
       sarasaPath = sarasaBuf;
     }
-    const char *courierPath = "/data/CourierPrime-Regular.ttf";
+    const char *courierPath = "/data/fonts/CourierPrime-Regular.ttf";
 #elif defined(__ANDROID__)
     /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
      * asset manager when given a relative path.  Don't prepend BasePath. */
@@ -1230,7 +1230,7 @@ static void sdl3DrawAdaptRenderTarget(void) {
 
   /* Reload fonts at new zoom */
   {
-    const char *relPath = "data/CourierPrime-Regular.ttf";
+    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
     const char *base = SDL_GetBasePath();
     static char fontBuf[1024];
     if (base) {

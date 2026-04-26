@@ -81,7 +81,7 @@ WinBolo uses the following third-party libraries and code.
 - Author: Rasmus Andersson
 
 ### Courier Prime
-- Location: data/CourierPrime-Regular.ttf
+- Location: data/fonts/CourierPrime-Regular.ttf
 - License: SIL Open Font License 1.1
 - https://github.com/quoteunquoteapps/CourierPrime
 - Author: Alan Dague-Greene, Quote-Unquote Apps

@@ -138,7 +138,7 @@ tasks.register<Copy>("copyGameAssets") {
     from(dataDir) {
         include("*.bmp")
         include("*.png")
-        include("*.ttf")
+        include("fonts/*.ttf")
         include("sounds/*.wav")
         include("maps/*.map")
         include("flags/*.svg")
