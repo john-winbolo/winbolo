@@ -33,6 +33,34 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Nearest-neighbor upscale a srcW x srcH RGBA buffer into a dstW x dstH
+ * region of the sheet at (dstX, dstY).  Used by Classic mode at scale>1
+ * to preserve the chunky-pixel look of the 1x source instead of letting
+ * the SVG rasterizer make crisp lines at the larger size. */
+static void blitRGBAScaled(SDL_Surface *sheet, int dstX, int dstY,
+                           int dstW, int dstH,
+                           int srcW, int srcH,
+                           const unsigned char *pixels) {
+    if (!pixels || srcW <= 0 || srcH <= 0) return;
+    unsigned char *dst = (unsigned char *)sheet->pixels;
+    int pitch = sheet->pitch;
+    for (int row = 0; row < dstH; row++) {
+        int sy = row * srcH / dstH;
+        if (dstY + row < 0 || dstY + row >= sheet->h) continue;
+        const unsigned char *srcRow = pixels + sy * srcW * 4;
+        unsigned char *dstRow = dst + (dstY + row) * pitch + dstX * 4;
+        for (int col = 0; col < dstW; col++) {
+            int sx = col * srcW / dstW;
+            if (dstX + col < 0 || dstX + col >= sheet->w) continue;
+            const unsigned char *s = srcRow + sx * 4;
+            dstRow[col * 4 + 0] = s[0];
+            dstRow[col * 4 + 1] = s[1];
+            dstRow[col * 4 + 2] = s[2];
+            dstRow[col * 4 + 3] = s[3];
+        }
+    }
+}
+
 /* Copy RGBA pixel data into the sheet surface at (dstX, dstY). */
 static void blitRGBA(SDL_Surface *sheet, int dstX, int dstY,
                      int w, int h, const unsigned char *pixels) {
@@ -561,6 +589,9 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             break;
         case GFX_TILE_DETAIL_HIGH_DETAIL:
             targetDensity = tileLoaderGetSpriteMaxDensity(e->name);
+            /* Atlas slot is `scale` game-pixels wide — anything above
+             * that just gets nearest-downscaled to fit, so cap. */
+            if (targetDensity > scale) targetDensity = scale;
             break;
         }
 
@@ -588,20 +619,27 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             }
         }
 
+        /* Classic mode at zoom > 1: rasterize/load at 1x source size
+         * and nearest-upscale into the atlas slot, preserving the
+         * chunky pixelated look of the legacy 16px tiles. */
+        bool classicUpscale = (detail == GFX_TILE_DETAIL_CLASSIC) && scale > 1;
+        int srcW = classicUpscale ? e->width  : w;
+        int srcH = classicUpscale ? e->height : h;
+
         /* Theme override: try data/theme/<theme>/<name>.svg|png. */
         if (!loaded && s_themeName[0]) {
             SDL_snprintf(pathBuf, sizeof(pathBuf),
                          "data/theme/%s/%s.svg", s_themeName, e->name);
-            if (tryLoadSVG(pathBuf, w, h, tmpBuf, rast)) {
-                blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+            if (tryLoadSVG(pathBuf, srcW, srcH, tmpBuf, rast)) {
+                blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                 loaded = true;
                 svgCount++;
             }
             if (!loaded) {
                 SDL_snprintf(pathBuf, sizeof(pathBuf),
                              "data/theme/%s/%s.png", s_themeName, e->name);
-                if (tryLoadPNG(pathBuf, w, h, tmpBuf)) {
-                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                if (tryLoadPNG(pathBuf, srcW, srcH, tmpBuf)) {
+                    blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                     loaded = true;
                     pngCount++;
                 }
@@ -610,19 +648,19 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
              * runtime code rotates _00 at draw time. */
         }
 
-        /* Try SVG first — rasterized at scaled size. */
+        /* Try SVG first — rasterized at source size, then upscaled. */
         SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.svg", e->name);
-        if (!loaded && tryLoadSVG(pathBuf, w, h, tmpBuf, rast)) {
-            blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+        if (!loaded && tryLoadSVG(pathBuf, srcW, srcH, tmpBuf, rast)) {
+            blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
             loaded = true;
             svgCount++;
         }
 
-        /* Try PNG next — scaled to target size. */
+        /* Try PNG next — scaled to source size, then upscaled. */
         if (!loaded) {
             SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.png", e->name);
-            if (tryLoadPNG(pathBuf, w, h, tmpBuf)) {
-                blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+            if (tryLoadPNG(pathBuf, srcW, srcH, tmpBuf)) {
+                blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                 loaded = true;
                 pngCount++;
             }
