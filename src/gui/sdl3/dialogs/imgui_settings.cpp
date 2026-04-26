@@ -427,31 +427,77 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         }
     }
 
-    /* Theme info display from theme.ini, with human-readable labels.
-     * Wrapped in a child panel so it visually reads as an info card. */
+    /* Theme info display from theme.ini for the *previewed* theme
+     * (so the card updates as soon as the user changes the dropdown,
+     * before Apply).  Wrapped in a tinted child panel to read as an
+     * info card. */
     {
-        const TileLoaderThemeInfo *info = tileLoaderGetThemeInfo();
+        const char *previewName = (s_previewThemeIdx == 0)
+                                    ? "" : themeDirs[s_previewThemeIdx].c_str();
+        TileLoaderThemeInfo info;
+        tileLoaderQueryThemeInfo(previewName, &info);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
         ImGui::BeginChild("##themeinfo",
                           ImVec2(0, 0),
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-        if (info && info->has_ini) {
-            if (info->name[0])
-                ImGui::Text("Theme name: %s", info->name);
-            if (info->author[0])
-                ImGui::Text("Author: %s", info->author);
-            if (info->email[0])
-                ImGui::Text("Contact email: %s", info->email);
-            if (info->website[0])
-                ImGui::Text("Website: %s", info->website);
-            if (info->release_date[0])
-                ImGui::Text("Release date: %s", info->release_date);
+        if (info.has_ini) {
+            if (info.name[0])
+                ImGui::Text("Theme name: %s", info.name);
+            if (info.author[0])
+                ImGui::Text("Author: %s", info.author);
+            if (info.email[0])
+                ImGui::Text("Contact email: %s", info.email);
+            if (info.website[0])
+                ImGui::Text("Website: %s", info.website);
+            if (info.release_date[0])
+                ImGui::Text("Release date: %s", info.release_date);
             ImGui::Text("Maximum tile size with detail: %dpx (%dx)",
-                        info->max_pixel_density * TILE_SIZE_X,
-                        info->max_pixel_density);
+                        info.max_pixel_density * TILE_SIZE_X,
+                        info.max_pixel_density);
         } else {
             ImGui::TextDisabled("(no theme.ini metadata - assuming a 16px tile)");
         }
+
+        /* Coverage check at theme's declared max density. */
+        if (info.has_ini && info.max_pixel_density > 1) {
+            int density = info.max_pixel_density;
+            int missing = tileLoaderQueryMissingSprites(previewName, density, NULL, 0);
+            if (missing > 0) {
+                ImGui::Text("Theme is missing %d tile%s short of full tile "
+                            "coverage at %dx",
+                            missing, missing == 1 ? "" : "s", density);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("See full list")) {
+                    ImGui::OpenPopup("Missing tiles");
+                }
+                if (ImGui::BeginPopupModal("Missing tiles", nullptr,
+                        ImGuiWindowFlags_AlwaysAutoResize)) {
+                    static char s_missingBuf[16384];
+                    static int  s_missingDensity = -1;
+                    static int  s_missingThemeIdx = -1;
+                    if (s_missingDensity != density
+                        || s_missingThemeIdx != s_previewThemeIdx) {
+                        tileLoaderQueryMissingSprites(previewName, density,
+                                                      s_missingBuf,
+                                                      sizeof(s_missingBuf));
+                        s_missingDensity = density;
+                        s_missingThemeIdx = s_previewThemeIdx;
+                    }
+                    ImGui::Text("%d sprite%s missing at %dx:",
+                                missing, missing == 1 ? "" : "s", density);
+                    ImGui::InputTextMultiline("##missingList", s_missingBuf,
+                                              sizeof(s_missingBuf),
+                                              ImVec2(420, 260),
+                                              ImGuiInputTextFlags_ReadOnly);
+                    if (ImGui::Button("OK", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+        }
         ImGui::EndChild();
+        ImGui::PopStyleColor();
     }
 
     /* Theme preview — fixed-content tile grid at densities 1x, 2x, 4x.

@@ -241,25 +241,44 @@ static void resetThemeInfo(void) {
     s_themeInfo.has_ini         = false;
 }
 
-static void loadThemeInfo(void) {
-    resetThemeInfo();
-    if (!s_themeName[0]) return;
+/* Fill *out from data/theme/<themeName>/theme.ini.  Pure read — does
+ * not touch any global state.  out is reset to defaults first; on
+ * a missing INI file out->has_ini stays false. */
+static void readThemeInfo(const char *themeName, TileLoaderThemeInfo *out) {
+    out->name[0]         = '\0';
+    out->author[0]       = '\0';
+    out->email[0]        = '\0';
+    out->website[0]      = '\0';
+    out->release_date[0] = '\0';
+    out->max_pixel_density = 1;
+    out->has_ini         = false;
+    if (!themeName || !themeName[0]) return;
     char iniPath[512];
-    SDL_snprintf(iniPath, sizeof(iniPath), "data/theme/%s/theme.ini", s_themeName);
+    SDL_snprintf(iniPath, sizeof(iniPath), "data/theme/%s/theme.ini", themeName);
     SDL_PathInfo pinfo;
     if (!SDL_GetPathInfo(iniPath, &pinfo)) return;
-    s_themeInfo.has_ini = true;
+    out->has_ini = true;
     char buf[16];
-    GetPrivateProfileString("theme", "name",         "", s_themeInfo.name,         sizeof(s_themeInfo.name),         iniPath);
-    GetPrivateProfileString("theme", "author",       "", s_themeInfo.author,       sizeof(s_themeInfo.author),       iniPath);
-    GetPrivateProfileString("theme", "email",        "", s_themeInfo.email,        sizeof(s_themeInfo.email),        iniPath);
-    GetPrivateProfileString("theme", "website",      "", s_themeInfo.website,      sizeof(s_themeInfo.website),      iniPath);
-    GetPrivateProfileString("theme", "release_date", "", s_themeInfo.release_date, sizeof(s_themeInfo.release_date), iniPath);
+    GetPrivateProfileString("theme", "name",         "", out->name,         sizeof(out->name),         iniPath);
+    GetPrivateProfileString("theme", "author",       "", out->author,       sizeof(out->author),       iniPath);
+    GetPrivateProfileString("theme", "email",        "", out->email,        sizeof(out->email),        iniPath);
+    GetPrivateProfileString("theme", "website",      "", out->website,      sizeof(out->website),      iniPath);
+    GetPrivateProfileString("theme", "release_date", "", out->release_date, sizeof(out->release_date), iniPath);
     GetPrivateProfileString("theme", "max_pixel_density", "1", buf, sizeof(buf), iniPath);
     int v = atoi(buf);
     if (v < 1) v = 1;
     if (v > 16) v = 16;
-    s_themeInfo.max_pixel_density = v;
+    out->max_pixel_density = v;
+}
+
+void tileLoaderQueryThemeInfo(const char *themeName, TileLoaderThemeInfo *out) {
+    if (!out) return;
+    readThemeInfo(themeName, out);
+}
+
+static void loadThemeInfo(void) {
+    readThemeInfo(s_themeName, &s_themeInfo);
+    if (!s_themeInfo.has_ini) return;
     SDL_Log("tileLoader: theme '%s' loaded (max_pixel_density=%d)",
             s_themeName, s_themeInfo.max_pixel_density);
 }
@@ -287,36 +306,42 @@ static int            s_spriteDensitiesCount = 0;
  * (when density <= themeInfo.max_pixel_density) the theme provides
  * the sprite as an SVG that the engine treats as covering this
  * density. */
-static bool spriteAtDensity(const char *spriteName, int density) {
-    if (!s_themeName[0]) return false;
+static bool spriteAtDensityFor(const char *themeName, int themeMaxDensity,
+                               const char *spriteName, int density) {
+    if (!themeName || !themeName[0]) return false;
     char path[512];
     SDL_PathInfo pi;
     int sizePx = density * TILE_SIZE_X;   /* density 2 => 32 */
     /* Suffix form: <name>_<size>.png (Inkscape batch-export friendly). */
     SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%d.png",
-                 s_themeName, spriteName, sizePx);
+                 themeName, spriteName, sizePx);
     if (SDL_GetPathInfo(path, &pi)) return true;
     /* Legacy prefix form: <size>-<name>.png. */
     SDL_snprintf(path, sizeof(path), "data/theme/%s/%d-%s.png",
-                 s_themeName, sizePx, spriteName);
+                 themeName, sizePx, spriteName);
     if (SDL_GetPathInfo(path, &pi)) return true;
     if (density == 1) {
         /* Density 1 also accepts the unprefixed PNG / SVG in the
          * theme dir (legacy 1× sprites). */
         SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.png",
-                     s_themeName, spriteName);
+                     themeName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
         SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.svg",
-                     s_themeName, spriteName);
+                     themeName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
     }
     /* SVG counts up to declared max_pixel_density. */
-    if (density <= s_themeInfo.max_pixel_density) {
+    if (density <= themeMaxDensity) {
         SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.svg",
-                     s_themeName, spriteName);
+                     themeName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
     }
     return false;
+}
+
+static bool spriteAtDensity(const char *spriteName, int density) {
+    return spriteAtDensityFor(s_themeName, s_themeInfo.max_pixel_density,
+                              spriteName, density);
 }
 
 static void scanDensityCoverage(void) {
@@ -400,6 +425,34 @@ int tileLoaderGetSpriteMaxDensity(const char *spriteName) {
         }
     }
     return 1;
+}
+
+int tileLoaderGetMissingSprites(int density, char *outBuf, int outBufSize) {
+    return tileLoaderQueryMissingSprites(s_themeName, density, outBuf, outBufSize);
+}
+
+int tileLoaderQueryMissingSprites(const char *themeName, int density,
+                                   char *outBuf, int outBufSize) {
+    if (outBuf && outBufSize > 0) outBuf[0] = '\0';
+    if (!themeName || !themeName[0]) return 0;
+    if (density < 1) density = 1;
+    /* Need the theme's declared max so SVG-as-coverage logic matches. */
+    TileLoaderThemeInfo info;
+    readThemeInfo(themeName, &info);
+    int count = 0;
+    int writePos = 0;
+    for (int i = 0; gTileMap[i].name != NULL; i++) {
+        const char *name = gTileMap[i].name;
+        if (spriteAtDensityFor(themeName, info.max_pixel_density, name, density)) continue;
+        count++;
+        if (outBuf && outBufSize > 0) {
+            int remaining = outBufSize - writePos;
+            int n = SDL_snprintf(outBuf + writePos, remaining,
+                                 (writePos == 0) ? "%s" : "\n%s", name);
+            if (n > 0 && n < remaining) writePos += n;
+        }
+    }
+    return count;
 }
 
 void tileLoaderSetTheme(const char *name) {

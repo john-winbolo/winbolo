@@ -109,6 +109,24 @@ int tileLoaderGetSpriteMaxDensity(const char *spriteName);
  * cached per (baseName, theme) so per-frame use is cheap. */
 bool tileLoaderThemeHasSprite(const char *baseName, int dir);
 
+/* Enumerate sprite names missing from the active theme at the given
+ * density.  Fills outBuf with newline-separated names (NUL-terminated)
+ * and returns the count of missing sprites.  When the active theme is
+ * empty (default sprites), returns 0.  outBuf may be NULL to query
+ * just the count. */
+int tileLoaderGetMissingSprites(int density, char *outBuf, int outBufSize);
+
+/* Same as tileLoaderGetMissingSprites but for an arbitrary theme name
+ * (does not change the active theme).  Useful for previewing a
+ * dropdown selection before the user clicks Apply. */
+int tileLoaderQueryMissingSprites(const char *themeName, int density,
+                                   char *outBuf, int outBufSize);
+
+/* Read theme metadata (theme.ini fields and max_pixel_density) for an
+ * arbitrary theme name into *out.  Pure read; does not change the
+ * active theme.  Useful for previewing dropdown selections. */
+void tileLoaderQueryThemeInfo(const char *themeName, TileLoaderThemeInfo *out);
+
 /*********************************************************
  * NAME:          tileLoaderCleanup
  * PURPOSE:
