@@ -112,30 +112,6 @@ extern "C" {
 static SDL_Texture *s_langInfoIcon = nullptr;
 static bool s_langInfoIconAttempted = false;
 
-static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-    float scale = (float)size / image->height;
-    if (image->width * scale > (float)size) scale = (float)size / image->width;
-    int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-    float offX = ((float)w - image->width * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 /* Chain a Noto Sans CJK font into the atlas covering exactly the CJK
  * codepoints that appear in the picker's language-name labels. Without
  * this, language entries written in their native script (日本語, 한국어,
@@ -264,14 +240,14 @@ extern "C" void imguiSettingsShow(void) {
         s_langInfoIconAttempted = true;
         int iconPx = (int)(20.0f * s);
         if (iconPx < 16) iconPx = 16;
-        s_langInfoIcon = loadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
+        s_langInfoIcon = imguiLoadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
         if (!s_langInfoIcon) {
             char basePathBuf[FILENAME_MAX];
             const char *base = SDL_GetBasePath();
             if (base) {
                 SDL_snprintf(basePathBuf, sizeof(basePathBuf),
                              "%sdata/ui/dialog-info.svg", base);
-                s_langInfoIcon = loadSvgIcon(renderer, basePathBuf, iconPx);
+                s_langInfoIcon = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
             }
         }
     }

@@ -302,30 +302,6 @@ extern "C" void broadcastServerCallback(INFO_PACKET *info, struct in_addr *addr,
 static SDL_Texture *s_refreshIcon = nullptr;
 static bool s_refreshIconAttempted = false;
 
-static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-    float scale = (float)size / image->height;
-    if (image->width * scale > (float)size) scale = (float)size / image->width;
-    int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-    float offX = ((float)w - image->width * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Copy title — the caller passes langGetText() which returns a shared
      * static buffer that gets overwritten by any later langGetText() call
@@ -689,7 +665,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 for (int i = 0; i < 2 && !s_refreshIcon; i++) {
                     if (candidates[i]) {
                         SDL_Log("[GameBrowser] Trying refresh icon: %s", candidates[i]);
-                        s_refreshIcon = loadSvgIcon(renderer, candidates[i], iconSize);
+                        s_refreshIcon = imguiLoadSvgIcon(renderer, candidates[i], iconSize);
                     }
                 }
                 SDL_Log("[GameBrowser] Refresh icon loaded: %s", s_refreshIcon ? "yes" : "no");
