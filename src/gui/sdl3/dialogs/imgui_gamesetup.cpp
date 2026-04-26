@@ -718,9 +718,9 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                               ImGuiTableFlags_SizingStretchProp)) {
                             ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f * s);
-                            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 0.3f);
-                            ImGui::TableSetupColumn("Team", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
-                            ImGui::TableSetupColumn("Brain", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+                            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PLAYER_COL), ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_TEAM_COL), ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+                            ImGui::TableSetupColumn(langGetText(STR_DLGGAMESETUP_BRAIN_COL), ImGuiTableColumnFlags_WidthStretch, 0.7f);
                             ImGui::TableHeadersRow();
 
                             /* Row 1: Human player */

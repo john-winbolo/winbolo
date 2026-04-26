@@ -23,6 +23,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__IPHONEOS__)
+#include <dirent.h>
+#endif
 
 static char langFileName[FILENAME_MAX];
 static char langBuff[16 * 1024];
@@ -1519,16 +1522,51 @@ LangFileEntry *langPickerScan(int *outCount) {
     }
     n = 1;
 
-    int globCount = 0;
-    char **files = SDL_GlobDirectory("data/lang", "*.txt", SDL_GLOB_CASEINSENSITIVE,
-                                     &globCount);
-    if (files) {
-        for (int i = 0; i < globCount; i++) {
-            const char *fname = files[i];
+    /* Per-platform directory scan. SDL_GlobDirectory doesn't see files
+     * inside the iOS app bundle (verified via the bg_game pickRandomMap
+     * path in gamefront.c), so iOS uses opendir/readdir directly.
+     * Both branches feed the same per-entry processing below. */
+    int   fileCount = 0;
+    char **fileNames = NULL;
+#if defined(__IPHONEOS__)
+    {
+        DIR *d = opendir("data/lang");
+        if (d) {
+            int   dcap = 16;
+            char **arr = (char **)calloc((size_t)dcap, sizeof(*arr));
+            if (arr) {
+                struct dirent *ent;
+                while ((ent = readdir(d)) != NULL) {
+                    size_t nlen = strlen(ent->d_name);
+                    if (nlen <= 4) continue;
+                    if (strcasecmp(ent->d_name + nlen - 4, ".txt") != 0) continue;
+                    if (fileCount >= dcap) {
+                        int dnew = dcap * 2;
+                        char **grown = (char **)realloc(arr,
+                            (size_t)dnew * sizeof(*arr));
+                        if (!grown) break;
+                        arr = grown;
+                        dcap = dnew;
+                    }
+                    arr[fileCount++] = SDL_strdup(ent->d_name);
+                }
+                fileNames = arr;
+            }
+            closedir(d);
+        }
+    }
+#else
+    fileNames = SDL_GlobDirectory("data/lang", "*.txt",
+                                  SDL_GLOB_CASEINSENSITIVE, &fileCount);
+#endif
+
+    if (fileNames) {
+        for (int i = 0; i < fileCount; i++) {
+            const char *fname = fileNames[i];
             if (!fname || !*fname) continue;
 
-            /* basename → code. SDL_GlobDirectory returns just the
-             * basename (no directory prefix), so we can copy directly. */
+            /* basename → code. Both SDL_GlobDirectory and our iOS readdir
+             * pass return basenames only, so copy directly. */
             char code[32];
             size_t fnLen = strlen(fname);
             if (fnLen >= sizeof(code)) fnLen = sizeof(code) - 1;
@@ -1570,7 +1608,12 @@ LangFileEntry *langPickerScan(int *outCount) {
             list[n].meta = meta;
             n++;
         }
-        SDL_free(files);
+#if defined(__IPHONEOS__)
+        for (int i = 0; i < fileCount; i++) SDL_free(fileNames[i]);
+        free(fileNames);
+#else
+        SDL_free(fileNames);
+#endif
     }
 
     if (outCount) *outCount = n;
