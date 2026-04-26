@@ -1468,7 +1468,7 @@ static void renderSettingsPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(800, 720), ImGuiCond_FirstUseEver);
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -1728,6 +1728,18 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Checkbox("Allow New Players", &anp)) {
                 windowMenuAllowNewPlayers_toggle(cs);
             }
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    {
+        float btnW = 120.0f;
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > btnW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW) * 0.5f);
+        if (ImGui::Button("Close", ImVec2(btnW, 0))) {
+            s_showSettings = false;
         }
     }
 

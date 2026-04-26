@@ -263,9 +263,14 @@ static bool spriteAtDensity(const char *spriteName, int density) {
     if (!s_themeName[0]) return false;
     char path[512];
     SDL_PathInfo pi;
-    int prefix = density * TILE_SIZE_X;   /* density 2 => "32-" */
+    int sizePx = density * TILE_SIZE_X;   /* density 2 => 32 */
+    /* Suffix form: <name>_<size>.png (Inkscape batch-export friendly). */
+    SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%d.png",
+                 s_themeName, spriteName, sizePx);
+    if (SDL_GetPathInfo(path, &pi)) return true;
+    /* Legacy prefix form: <size>-<name>.png. */
     SDL_snprintf(path, sizeof(path), "data/theme/%s/%d-%s.png",
-                 s_themeName, prefix, spriteName);
+                 s_themeName, sizePx, spriteName);
     if (SDL_GetPathInfo(path, &pi)) return true;
     if (density == 1) {
         /* Density 1 also accepts the unprefixed PNG / SVG in the
@@ -400,11 +405,17 @@ static Uint16 computeThemeMask(const char *base) {
         SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%02d.png",
                      s_themeName, base, dir);
         if (SDL_GetPathInfo(path, &info)) { mask |= (Uint16)(1 << dir); continue; }
-        for (int i = 0; i < kNumPref; i++) {
+        bool found = false;
+        for (int i = 0; i < kNumPref && !found; i++) {
+            /* Suffix form first, then legacy prefix. */
+            SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%02d_%d.png",
+                         s_themeName, base, dir, kPrefixes[i]);
+            if (SDL_GetPathInfo(path, &info)) { found = true; break; }
             SDL_snprintf(path, sizeof(path), "data/theme/%s/%d-%s_%02d.png",
                          s_themeName, kPrefixes[i], base, dir);
-            if (SDL_GetPathInfo(path, &info)) { mask |= (Uint16)(1 << dir); break; }
+            if (SDL_GetPathInfo(path, &info)) { found = true; break; }
         }
+        if (found) mask |= (Uint16)(1 << dir);
     }
     return mask;
 }
@@ -438,39 +449,44 @@ bool tileLoaderThemeRotates(void) {
     return SDL_strcmp(s_themeName + (n - sn), suffix) == 0;
 }
 
-/* For Pixelate-to-Zoom: pick the best N-<name>.png in <dir> for the
- * given targetSize.  Priority:
+/* For Pixelate-to-Zoom: pick the best size-tagged PNG in <dir> for
+ * the given targetSize.  Accepts both the suffix form
+ * <name>_<size>.png (Inkscape batch-export) and the legacy prefix
+ * form <size>-<name>.png.  Priority:
  *   1. Exact match (target).
- *   2. Larger prefixes in increasing order (downscale — preserves
+ *   2. Larger sizes in increasing order (downscale — preserves
  *      detail).
- *   3. Smaller prefixes in decreasing order (upscale — last resort).
+ *   3. Smaller sizes in decreasing order (upscale — last resort).
  *   4. Failure → caller falls back to SVG.
  * tryLoadPNG nearest-neighbor scales the source to (w x h). */
-static bool tryLoadPrefixedPNG(const char *dir, const char *name,
-                                int targetSize, int w, int h,
-                                unsigned char *out) {
-    /* Prefixes the user might supply, in increasing order. */
-    static const int kPrefixes[] = { 24, 32, 48, 64, 96, 128 };
-    const int kCount = (int)(sizeof(kPrefixes) / sizeof(kPrefixes[0]));
+static bool tryLoadSizedPNGAt(const char *dir, const char *name, int sz,
+                              int w, int h, unsigned char *out) {
     char path[512];
+    SDL_snprintf(path, sizeof(path), "%s/%s_%d.png", dir, name, sz);
+    if (tryLoadPNG(path, w, h, out)) return true;
+    SDL_snprintf(path, sizeof(path), "%s/%d-%s.png", dir, sz, name);
+    return tryLoadPNG(path, w, h, out);
+}
+
+static bool tryLoadSizedPNG(const char *dir, const char *name,
+                            int targetSize, int w, int h,
+                            unsigned char *out) {
+    static const int kSizes[] = { 24, 32, 48, 64, 96, 128, 160 };
+    const int kCount = (int)(sizeof(kSizes) / sizeof(kSizes[0]));
     /* 1. Exact match. */
     for (int i = 0; i < kCount; i++) {
-        if (kPrefixes[i] != targetSize) continue;
-        SDL_snprintf(path, sizeof(path), "%s/%d-%s.png", dir, kPrefixes[i], name);
-        if (tryLoadPNG(path, w, h, out)) return true;
+        if (kSizes[i] != targetSize) continue;
+        if (tryLoadSizedPNGAt(dir, name, kSizes[i], w, h, out)) return true;
     }
-    /* 2. Larger (downscale) — smallest larger first so we don't
-     * waste detail unnecessarily. */
+    /* 2. Larger (downscale). */
     for (int i = 0; i < kCount; i++) {
-        if (kPrefixes[i] <= targetSize) continue;
-        SDL_snprintf(path, sizeof(path), "%s/%d-%s.png", dir, kPrefixes[i], name);
-        if (tryLoadPNG(path, w, h, out)) return true;
+        if (kSizes[i] <= targetSize) continue;
+        if (tryLoadSizedPNGAt(dir, name, kSizes[i], w, h, out)) return true;
     }
-    /* 3. Smaller (upscale) — largest smaller first. */
+    /* 3. Smaller (upscale). */
     for (int i = kCount - 1; i >= 0; i--) {
-        if (kPrefixes[i] >= targetSize) continue;
-        SDL_snprintf(path, sizeof(path), "%s/%d-%s.png", dir, kPrefixes[i], name);
-        if (tryLoadPNG(path, w, h, out)) return true;
+        if (kSizes[i] >= targetSize) continue;
+        if (tryLoadSizedPNGAt(dir, name, kSizes[i], w, h, out)) return true;
     }
     return false;
 }
@@ -549,7 +565,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         }
 
         /* Try N-<name>.png prefix at the chosen density, in the
-         * theme dir first then the default.  tryLoadPrefixedPNG
+         * theme dir first then the default.  tryLoadSizedPNG
          * already handles exact / smaller / larger fallback. */
         if (targetDensity > 1) {
             int targetPx = targetDensity * TILE_SIZE_X * (e->width / TILE_SIZE_X);
@@ -557,14 +573,14 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             char dir[256];
             if (s_themeName[0]) {
                 SDL_snprintf(dir, sizeof(dir), "data/theme/%s", s_themeName);
-                if (tryLoadPrefixedPNG(dir, e->name, w, w, h, tmpBuf)) {
+                if (tryLoadSizedPNG(dir, e->name, w, w, h, tmpBuf)) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                     loaded = true;
                     pngCount++;
                 }
             }
             if (!loaded) {
-                if (tryLoadPrefixedPNG("data/svg", e->name, w, w, h, tmpBuf)) {
+                if (tryLoadSizedPNG("data/svg", e->name, w, w, h, tmpBuf)) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                     loaded = true;
                     pngCount++;

@@ -251,6 +251,13 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         return;
     }
 
+    ImGui::TextWrapped(
+        "All pixelation and animation settings do not affect "
+        "gameplay. Internally, all tanks, shells and builders "
+        "are stored with max precision and pixelation affects "
+        "the visual display only.");
+    ImGui::Spacing();
+
     /* Theme picker — scan data/theme/* once per dialog open. */
     static std::vector<std::string> themeDirs;
     static bool themesScanned = false;
@@ -315,7 +322,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     {
         const char *labels[] = {
             "Classic",
-            "Match to zoom",
+            "Match to zoom (if theme supports it)",
             "High Detail",
         };
         const int kNum = 3;
@@ -350,7 +357,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         const char *labels[] = {
             "Classic",
             "Match to pixelation",
-            "Max - finest motion the screen can show, regardless of pixelation",
+            "Max - smoothest, ignores pixelation",
         };
         const int kNum = 3;
         if (curAnim < 0 || curAnim >= kNum) curAnim = 0;
@@ -370,6 +377,8 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
             ImGui::EndCombo();
         }
     }
+    ImGui::Spacing();
+    ImGui::Spacing();
 
     /* Force smooth path shells — hidden when Animation Smoothness is Max
      * (shells are already maximally smooth there). */
@@ -418,218 +427,123 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         }
     }
 
-    /* Theme info display (author/email/website/release date). */
+    /* Theme info display from theme.ini, with human-readable labels.
+     * Wrapped in a child panel so it visually reads as an info card. */
     {
         const TileLoaderThemeInfo *info = tileLoaderGetThemeInfo();
+        ImGui::BeginChild("##themeinfo",
+                          ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         if (info && info->has_ini) {
+            if (info->name[0])
+                ImGui::Text("Theme name: %s", info->name);
             if (info->author[0])
                 ImGui::Text("Author: %s", info->author);
             if (info->email[0])
-                ImGui::Text("Email: %s", info->email);
+                ImGui::Text("Contact email: %s", info->email);
             if (info->website[0])
                 ImGui::Text("Website: %s", info->website);
             if (info->release_date[0])
-                ImGui::Text("Released: %s", info->release_date);
+                ImGui::Text("Release date: %s", info->release_date);
+            ImGui::Text("Maximum tile size with detail: %dpx (%dx)",
+                        info->max_pixel_density * TILE_SIZE_X,
+                        info->max_pixel_density);
+        } else {
+            ImGui::TextDisabled("(no theme.ini metadata - assuming a 16px tile)");
         }
+        ImGui::EndChild();
     }
 
-    /* Theme preview strip + rotating preview. */
+    /* Theme preview — fixed-content tile grid at densities 1x, 2x, 4x.
+     * Rows above the theme's max_pixel_density are skipped. */
     ImGui::Spacing();
     ImGui::TextUnformatted("Preview");
-    SDL_Texture *atlas = sdl3DrawGetTilesTex();
-    if (!atlas) {
-        ImGui::TextDisabled("(atlas not loaded yet)");
-        return;
-    }
-    float texW = 0.0f, texH = 0.0f;
-    SDL_GetTextureSize(atlas, &texW, &texH);
-    if (texW <= 0.0f || texH <= 0.0f) return;
 
-    /* Per-cell sprite previews — load each from the SELECTED theme's
-     * file on disk so changing the dropdown updates them immediately,
-     * even before Apply. */
-    struct CellSpec { const char *label; const char *base;
-                      int atlasX, atlasY, atlasW, atlasH; };
-    static const CellSpec cells[] = {
-        { "Self",  "tank_self_00",     TANK_SELF_0_X,     TANK_SELF_0_Y,     TILE_SIZE_X,    TILE_SIZE_Y    },
-        { "Good",  "tank_good_00",     TANK_GOOD_0_X,     TANK_GOOD_0_Y,     TILE_SIZE_X,    TILE_SIZE_Y    },
-        { "Evil",  "tank_evil_00",     TANK_EVIL_0_X,     TANK_EVIL_0_Y,     TILE_SIZE_X,    TILE_SIZE_Y    },
-        { "Boat",  "tank_selfboat_00", TANK_SELFBOAT_0_X, TANK_SELFBOAT_0_Y, TILE_SIZE_X,    TILE_SIZE_Y    },
-        { "Shell", "shell_00",         SHELL_0_X,         SHELL_0_Y,         SHELL_0_WIDTH,  SHELL_0_HEIGHT },
-        { "LGM",   "lgm_frame0",       LGM0_X,            LGM0_Y,            LGM_WIDTH,      LGM_HEIGHT     },
+    if (!renderer) return;
+
+    struct PreviewCell { const char *label; const char *base; };
+    static const PreviewCell cells[] = {
+        { "Tank",    "tank_self_00"   },
+        { "Base",    "base_neutral"   },
+        { "Pillbox", "pillbox_good_00"},
+        { "Grass",   "grass"          },
+        { "Tree",    "forest"         },
+        { "Wall",    "building_single"},
+        { "Road",    "road_horizontal"},
+        { "Water",   "river_solid"    },
+        { "Swamp",   "swamp"          },
     };
     const int kNumCells = (int)(sizeof(cells)/sizeof(cells[0]));
-    static SDL_Texture *cellTex[6] = { nullptr };
-    static int cellLoadedIdx = -1;
-    static int cellLoadedDetail = -1;
+    static const int kDensities[] = { 1, 2, 3, 4 };
+    const int kNumDensities = (int)(sizeof(kDensities)/sizeof(kDensities[0]));
+
+    /* density-aware asset lookup: try N-<base>.png first for N>1. */
+    auto findCellAsset = [](const char *themeName, const char *base, int density,
+                            char *outPath, size_t outSize) -> bool {
+        SDL_PathInfo info;
+        if (density > 1 && themeName && themeName[0]) {
+            int sizePx = density * TILE_SIZE_X;
+            /* Suffix form first (Inkscape-friendly). */
+            snprintf(outPath, outSize, "data/theme/%s/%s_%d.png",
+                     themeName, base, sizePx);
+            if (SDL_GetPathInfo(outPath, &info)) return true;
+            /* Legacy prefix form. */
+            snprintf(outPath, outSize, "data/theme/%s/%d-%s.png",
+                     themeName, sizePx, base);
+            if (SDL_GetPathInfo(outPath, &info)) return true;
+        }
+        if (themeName && themeName[0]) {
+            snprintf(outPath, outSize, "data/theme/%s/%s.svg", themeName, base);
+            if (SDL_GetPathInfo(outPath, &info)) return true;
+            snprintf(outPath, outSize, "data/theme/%s/%s.png", themeName, base);
+            if (SDL_GetPathInfo(outPath, &info)) return true;
+        }
+        snprintf(outPath, outSize, "data/svg/%s.svg", base);
+        if (SDL_GetPathInfo(outPath, &info)) return true;
+        snprintf(outPath, outSize, "data/svg/%s.png", base);
+        return SDL_GetPathInfo(outPath, &info);
+    };
+
+    static SDL_Texture *previewTex[4][9] = { { nullptr } };
+    static int previewLoadedIdx = -1;
+    static int previewLoadedDetail = -1;
     int curDetailNow = (int)gfxSettingsGetTileDetail();
-    if (cellLoadedIdx != s_previewThemeIdx
-        || cellLoadedDetail != curDetailNow) {
-        cellLoadedDetail = curDetailNow;
-        cellLoadedIdx = s_previewThemeIdx;
-        for (int i = 0; i < kNumCells; i++) {
-            if (cellTex[i]) { SDL_DestroyTexture(cellTex[i]); cellTex[i] = nullptr; }
-            const char *themeName = (s_previewThemeIdx == 0)
-                                      ? "" : themeDirs[s_previewThemeIdx].c_str();
-            char path[1024];
-            if (findThemeAsset(themeName, cells[i].base, path, sizeof(path))) {
-                /* Rasterize at a reasonable internal size — keep aspect
-                 * for non-square sprites (shell/LGM). */
-                int rasterW = 64, rasterH = 64;
-                if (cells[i].atlasW < cells[i].atlasH) {
-                    rasterW = (cells[i].atlasW * 64) / cells[i].atlasH;
-                } else if (cells[i].atlasH < cells[i].atlasW) {
-                    rasterH = (cells[i].atlasH * 64) / cells[i].atlasW;
-                }
-                int rasterMax = rasterW > rasterH ? rasterW : rasterH;
-                cellTex[i] = loadSvgToTexture(renderer, path, rasterMax);
-            }
-        }
-    }
-
-    int previewPx = 32;
-    for (int i = 0; i < kNumCells; i++) {
-        if (i > 0) ImGui::SameLine();
-        ImGui::BeginGroup();
-        if (cellTex[i]) {
-            ImGui::Image((ImTextureID)(intptr_t)cellTex[i],
-                         ImVec2((float)previewPx, (float)previewPx));
-        } else {
-            /* Fallback: live atlas UV (whatever's currently active). */
-            float scaleX = texW / 496.0f;
-            float scaleY = texH / 176.0f;
-            ImVec2 uv0((cells[i].atlasX * scaleX) / texW,
-                       (cells[i].atlasY * scaleY) / texH);
-            ImVec2 uv1(((cells[i].atlasX + cells[i].atlasW) * scaleX) / texW,
-                       ((cells[i].atlasY + cells[i].atlasH) * scaleY) / texH);
-            ImGui::Image((ImTextureID)(intptr_t)atlas,
-                         ImVec2((float)previewPx, (float)previewPx),
-                         uv0, uv1);
-        }
-        ImGui::TextUnformatted(cells[i].label);
-        ImGui::EndGroup();
-    }
-
-    /* Rotating tank preview — loads the SELECTED theme's tank sprites
-     * directly from disk.  If the theme has per-direction sprites
-     * (tank_self_01..tank_self_15) we cycle through those as discrete
-     * frames; if only tank_self_00 exists we rotate that single
-     * sprite (matching what the engine does for _ingamerotate themes). */
-    if (!renderer) return;
-    static SDL_Texture *previewTarget = nullptr;
-    static SDL_Texture *previewTankFrames[16] = { nullptr };
-    static int  previewLoadedIdx = -1;
-    static int  previewLoadedDetail = -1;
-    static bool previewHasPerDir = false;  /* true if frames[1..] are loaded */
-    static double rotPreview = 0.0;
-    static Uint64 rotLastMs = 0;
-    const int previewSize    = 96;
-    const int tankRasterSize = 64;
-
-    /* Reload tank textures when selection or ThemeDetail changes. */
     if (previewLoadedIdx != s_previewThemeIdx
-        || previewLoadedDetail != (int)gfxSettingsGetTileDetail()) {
+        || previewLoadedDetail != curDetailNow) {
         previewLoadedIdx = s_previewThemeIdx;
-        previewLoadedDetail = (int)gfxSettingsGetTileDetail();
-        for (int i = 0; i < 16; i++) {
-            if (previewTankFrames[i]) { SDL_DestroyTexture(previewTankFrames[i]); previewTankFrames[i] = nullptr; }
-        }
-        previewHasPerDir = false;
+        previewLoadedDetail = curDetailNow;
         const char *themeName = (s_previewThemeIdx == 0)
-                                  ? ""  /* default */
-                                  : themeDirs[s_previewThemeIdx].c_str();
-        char path[1024];
-        for (int i = 0; i < 16; i++) {
-            char base[32];
-            snprintf(base, sizeof(base), "tank_self_%02d", i);
-            if (findThemeAsset(themeName, base, path, sizeof(path))) {
-                previewTankFrames[i] = loadSvgToTexture(renderer, path, tankRasterSize);
+                                  ? "" : themeDirs[s_previewThemeIdx].c_str();
+        for (int r = 0; r < kNumDensities; r++) {
+            for (int c = 0; c < kNumCells; c++) {
+                if (previewTex[r][c]) {
+                    SDL_DestroyTexture(previewTex[r][c]);
+                    previewTex[r][c] = nullptr;
+                }
+                char path[1024];
+                if (findCellAsset(themeName, cells[c].base,
+                                  kDensities[r], path, sizeof(path))) {
+                    int sz = TILE_SIZE_X * kDensities[r];
+                    previewTex[r][c] = loadSvgToTexture(renderer, path, sz);
+                }
             }
-            if (i > 0 && previewTankFrames[i]) previewHasPerDir = true;
         }
     }
 
-    if (!previewTarget) {
-        previewTarget = SDL_CreateTexture(renderer,
-            SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET,
-            previewSize, previewSize);
-        if (previewTarget) {
-            SDL_SetTextureBlendMode(previewTarget, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(previewTarget, SDL_SCALEMODE_NEAREST);
-        }
-    }
-    if (previewTarget) {
-        Uint64 nowMs = SDL_GetTicks();
-        if (rotLastMs > 0) {
-            double dtSec = (double)(nowMs - rotLastMs) / 1000.0;
-            rotPreview += dtSec * 45.0;
-            if (rotPreview >= 360.0) rotPreview -= 360.0;
-        }
-        rotLastMs = nowMs;
-        SDL_Texture *prevTarget = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, previewTarget);
-        SDL_SetRenderDrawColor(renderer, 30, 30, 36, 255);
-        SDL_RenderClear(renderer);
-        float dstSize = (float)previewSize * 0.7f;
-        SDL_FRect dstR = {
-            ((float)previewSize - dstSize) * 0.5f,
-            ((float)previewSize - dstSize) * 0.5f,
-            dstSize, dstSize
-        };
-        SDL_FPoint pivot = { dstSize * 0.5f, dstSize * 0.5f };
-        if (previewHasPerDir) {
-            /* Cycle through the 16 per-direction sprites at the same
-             * angular rate (22.5° per frame).  No rotation applied —
-             * this is what the in-game render does. */
-            int frameIdx = ((int)(rotPreview / 22.5)) & 15;
-            SDL_Texture *frameTex = previewTankFrames[frameIdx];
-            if (!frameTex) frameTex = previewTankFrames[0];
-            if (frameTex) {
-                SDL_RenderTexture(renderer, frameTex, NULL, &dstR);
+    for (int r = 0; r < kNumDensities; r++) {
+        float cellSize = (float)(TILE_SIZE_X * kDensities[r]);
+        ImGui::Text("%dx", kDensities[r]);
+        for (int c = 0; c < kNumCells; c++) {
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            if (previewTex[r][c]) {
+                ImGui::Image((ImTextureID)(intptr_t)previewTex[r][c],
+                             ImVec2(cellSize, cellSize));
+            } else {
+                ImGui::Dummy(ImVec2(cellSize, cellSize));
             }
-        } else if (previewTankFrames[0]) {
-            /* Only _00 exists (ingamerotate-style): rotate it.  Step
-             * in 22.5° increments to match the in-game render, which
-             * bakes 16 discrete sprites at sheet build time and never
-             * rotates at runtime. */
-            int frameIdx = ((int)(rotPreview / 22.5)) & 15;
-            double quantizedAngle = (double)frameIdx * 22.5;
-            SDL_RenderTextureRotated(renderer, previewTankFrames[0], NULL, &dstR,
-                                     quantizedAngle, &pivot, SDL_FLIP_NONE);
-        } else {
-            /* Theme has no tank_00 file — fall back to the live atlas. */
-            float ascaleX = texW / 496.0f;
-            float ascaleY = texH / 176.0f;
-            SDL_FRect srcR = { (float)TANK_SELF_0_X * ascaleX,
-                               (float)TANK_SELF_0_Y * ascaleY,
-                               (float)TILE_SIZE_X   * ascaleX,
-                               (float)TILE_SIZE_Y   * ascaleY };
-            SDL_RenderTextureRotated(renderer, atlas, &srcR, &dstR,
-                                     rotPreview, &pivot, SDL_FLIP_NONE);
-        }
-        SDL_SetRenderTarget(renderer, prevTarget);
-
-        ImGui::Spacing();
-        ImGui::TextUnformatted("Rotating preview:");
-        ImGui::Image((ImTextureID)(intptr_t)previewTarget,
-                     ImVec2((float)previewSize, (float)previewSize));
-        ImGui::SameLine();
-        if (previewHasPerDir) {
-            ImGui::TextDisabled(
-                "Cycling through tank_self_00..15 from the\n"
-                "selected theme — exactly what the in-game\n"
-                "render uses (one sprite per direction, no\n"
-                "rotation).");
-        } else if (previewTankFrames[0]) {
-            ImGui::TextDisabled(
-                "Only tank_self_00 in this theme — rotated in\n"
-                "22.5° steps.  In-game the 16 directional sprites\n"
-                "are baked from _00 at sheet build, so this is\n"
-                "exactly what each facing direction looks like.");
-        } else {
-            ImGui::TextDisabled(
-                "(tank_self_00 not found — falling back\n"
-                "to live atlas)");
+            if (r == 0) ImGui::TextUnformatted(cells[c].label);
+            ImGui::EndGroup();
         }
     }
 }
@@ -735,9 +649,9 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         /* Centered overlay panel */
-        float panelW = 500.0f * s, panelH = 580.0f * s;
-        if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
-        if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
+        float panelW = 800.0f * s, panelH = 720.0f * s;
+        if (panelW > (float)winW) panelW = (float)winW;
+        if (panelH > (float)winH) panelH = (float)winH;
 
         ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
         ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
