@@ -29,6 +29,7 @@
 
 #include "stb_image.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -500,7 +501,9 @@ static SDL_Texture *bakeRotatedTexture(SDL_Renderer *renderer,
     nsvgRasterize(rast, image, offX, offY, scale, hi, hiW, hiH, hiW * 4);
     nsvgDelete(image);
 
-    /* Point-sample (4×4 centre) → cacheSize × cacheSize. */
+    /* Centre-pick + alpha threshold: each output pixel takes the SVG
+     * colour at the centre of its 4×4 hi-res block.  Alpha is snapped
+     * to 0 or 255 so AA-fringe pixels don't bleed the terrain through. */
     unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(cacheSize * cacheSize * 4));
     if (!pixels) { SDL_free(hi); return NULL; }
     SDL_memset(pixels, 0, (size_t)(cacheSize * cacheSize * 4));
@@ -510,7 +513,11 @@ static SDL_Texture *bakeRotatedTexture(SDL_Renderer *renderer,
             int sx = x * kSuper + kSuper / 2;
             const unsigned char *sp = hi + (sy * hiW + sx) * 4;
             unsigned char *dp = pixels + (y * cacheSize + x) * 4;
-            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
+            if (sp[3] >= 128) {
+                dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = 255;
+            } else {
+                dp[0] = 0; dp[1] = 0; dp[2] = 0; dp[3] = 0;
+            }
         }
     }
     SDL_free(hi);
