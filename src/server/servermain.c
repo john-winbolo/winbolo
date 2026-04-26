@@ -1078,6 +1078,7 @@ int main(int argc, char **argv) {
     instCfg.trackerAddr  = sTrackerAddr;
     instCfg.trackerPort  = sTrackerPort;
     instCfg.useNatKeepalive = FALSE;
+    instCfg.useNatPortmap = FALSE;
     if (serverInstanceStartup(&serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(&serverSim);

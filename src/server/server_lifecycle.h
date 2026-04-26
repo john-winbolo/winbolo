@@ -48,6 +48,12 @@ typedef struct {
                                      on the tracker connection ~every 25s,
                                      to keep the host's NAT mapping alive
                                      for tracker push-back. */
+
+  bool           useNatPortmap;   /* request UPnP/NAT-PMP/PCP port mapping
+                                     via libplum on startup, release on
+                                     shutdown.  Hosted MP sets true;
+                                     dedicated defaults false (admins
+                                     control routers). */
 } ServerInstanceConfig;
 
 /* Bind UDP transport, optionally register with WBN, store tracker config
