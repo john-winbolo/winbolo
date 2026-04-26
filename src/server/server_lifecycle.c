@@ -32,6 +32,14 @@ static bool  instanceUseWbn = FALSE;
 static bool  instanceUseNatKeepalive = FALSE;
 static bool  instanceUseNatPortmap = FALSE;
 static NatPortMap instancePortMap;
+static int   natPortmapWaitTicks = 0;
+static bool  natPortmapNotified = FALSE;
+static bool  natPortmapTimedOut = FALSE;
+
+/* 1500 slices @ ~50Hz (SERVER_TICK_LENGTH = 20ms) ≈ 30s.  After this many
+ * ticks without a successful libplum mapping, give up and let Phase 2d's
+ * lobby UI surface the "could not open port automatically" state. */
+#define NAT_PORTMAP_TIMEOUT_TICKS 1500
 
 static int trackerTime = 5500;
 static int wbnTime = 0;
@@ -79,6 +87,9 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
 
   instanceUseNatPortmap = cfg->useNatPortmap;
   memset(&instancePortMap, 0, sizeof(instancePortMap));
+  natPortmapWaitTicks = 0;
+  natPortmapNotified  = FALSE;
+  natPortmapTimedOut  = FALSE;
   if (cfg->useNatPortmap) {
     natPortMapRequest(cfg->udpPort, &instancePortMap);
   }
@@ -320,6 +331,25 @@ void serverInstanceTick(ServerSim *sim) {
   if (instanceUseNatPortmap) {
     natPortMapRenewIfNeeded(&instancePortMap);
   }
+
+  if (instanceUseNatPortmap && !natPortmapNotified && !natPortmapTimedOut) {
+    if (instancePortMap.mapped) {
+      /* First completion — point INFO_PACKET at the external address and
+       * force a tracker refresh so the registered entry self-corrects in
+       * one round trip instead of waiting up to ~120s for the next
+       * periodic update. */
+      transportUdpServerSetPublicAddress(instancePortMap.externalIp,
+                                         instancePortMap.externalPort);
+      if (instanceUseTracker && instanceTrackerAddr[0] != '\0') {
+        transportUdpServerSendTrackerUpdate(sim, instanceTrackerAddr,
+                                            instanceTrackerPort);
+        trackerTime = 0;
+      }
+      natPortmapNotified = TRUE;
+    } else if (++natPortmapWaitTicks >= NAT_PORTMAP_TIMEOUT_TICKS) {
+      natPortmapTimedOut = TRUE;
+    }
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
@@ -335,4 +365,7 @@ void serverInstanceShutdown(ServerSim *sim) {
   instanceUseTracker = FALSE;
   instanceUseNatKeepalive = FALSE;
   instanceUseNatPortmap = FALSE;
+  natPortmapWaitTicks = 0;
+  natPortmapNotified  = FALSE;
+  natPortmapTimedOut  = FALSE;
 }
