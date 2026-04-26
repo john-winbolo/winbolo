@@ -28,8 +28,6 @@
 #endif
 
 static char langFileName[FILENAME_MAX];
-static char langBuff[16 * 1024];
-static char langBuff2[16 * 1024];
 
 typedef struct { unsigned int id; const char *text; } LangEntry;
 
