@@ -347,16 +347,10 @@ static bool sdl3LoadTiles(void) {
    * out at the edges.  Off → nearest for crisp pixel-art look.
    * Ingamerotate themes always use NEAREST regardless of the toggle —
    * crisp rotation is the look the user wants there. */
-  /* Theme Detail = Max Detail uses LINEAR sampling so rotation/zoom
-   * blend smoothly.  Pixelate modes use NEAREST for crisp pixel art. */
-  bool useLinear = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL);
-  SDL_SetTextureScaleMode(gTilesTex,
-                          useLinear ? SDL_SCALEMODE_LINEAR
-                                    : SDL_SCALEMODE_NEAREST);
-  /* Bake the per-direction rotated texture cache for ingamerotate
-   * themes — vector-rotated, point-sampled, on a canvas large enough
-   * that rotation never clips.  No-op for other themes. */
-  tileLoaderBuildRotatedCache(gRenderer);
+  /* Theme Detail = Max Detail uses PIXELART sampling — nearest-
+   * neighbor + edge anti-aliasing tuned for upscaled pixel art.
+   * Pixelate modes use NEAREST for the classic blocky look. */
+  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
   return TRUE;
 }
 
@@ -935,6 +929,10 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = NULL;
     return FALSE;
   }
+  /* SDL3 renderer default texture scale mode is LINEAR — flip to
+   * NEAREST so every texture (ours, ImGui's, SDL's logical-
+   * presentation target) inherits hard-edged pixel-art sampling. */
+  SDL_SetDefaultTextureScaleMode(gRenderer, SDL_SCALEMODE_NEAREST);
 
   SDL_SetRenderVSync(gRenderer, 1);
 
@@ -1091,7 +1089,7 @@ bool sdl3DrawSetup(int zoomFactor) {
                                           SDL_TEXTUREACCESS_TARGET,
                                           gGameRTWidth, gGameRTHeight);
     if (gGameRenderTarget) {
-      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
+      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_NEAREST);
       SDL_Log("sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
@@ -1247,7 +1245,7 @@ static void sdl3DrawAdaptRenderTarget(void) {
                                         SDL_TEXTUREACCESS_TARGET,
                                         gGameRTWidth, gGameRTHeight);
   if (gGameRenderTarget) {
-    SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
+    SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_NEAREST);
     SDL_Log("sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
 #endif
@@ -1368,19 +1366,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
      * bounds stay put.  Anchor the zoom on the cursor position when
      * available (mouse-wheel zoom keeps the world point under the
      * cursor stationary) — falls back to the playfield centre. */
-    /* Override mode forces atlas NEAREST sampling for the world pass
-     * UNLESS the user picked Max Detail — they explicitly want vector-
-     * smooth upscale at high zoom.  Restore at end of the world block. */
+    /* Atlas already uses PIXELART; nothing to override here. */
     SDL_ScaleMode savedAtlasScale = SDL_SCALEMODE_NEAREST;
     bool atlasScaleOverridden = false;
-    if (overrideModeIsOn() && gTilesTex
-        && gfxSettingsGetThemeDetail() != GFX_THEME_DETAIL_MAX_DETAIL) {
-      SDL_GetTextureScaleMode(gTilesTex, &savedAtlasScale);
-      if (savedAtlasScale != SDL_SCALEMODE_NEAREST) {
-        SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
-        atlasScaleOverridden = true;
-      }
-    }
+    (void)savedAtlasScale; (void)atlasScaleOverridden;
 
     if (overrideModeIsOn()) {
       int zmul = overrideModeZoomMul();
@@ -1621,12 +1610,6 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     if (overrideModeIsOn() && overrideModeZoomMul() > 1) {
       gZoomFactor = savedZoomFactor;
     }
-    /* Restore atlas scale mode if the override-mode world pass
-     * temporarily forced NEAREST. */
-    if (atlasScaleOverridden && gTilesTex) {
-      SDL_SetTextureScaleMode(gTilesTex, savedAtlasScale);
-    }
-
     SDL_SetRenderClipRect(gRenderer, NULL);
   }
 

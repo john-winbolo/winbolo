@@ -416,15 +416,17 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
   int ss = ctx->sheetScale;
+  /* Atlas-bleed inset for LINEAR sampling (Max Detail). */
+  float inset = 0.5f;
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
     BYTE pos = screenGetPos(value, x, y);
     SDL_FRect src = {
-      (float)(mapViewPosX[pos] * ss),
-      (float)(mapViewPosY[pos] * ss),
-      (float)(TILE_SIZE_X * ss),
-      (float)(TILE_SIZE_Y * ss)
+      (float)(mapViewPosX[pos] * ss) + inset,
+      (float)(mapViewPosY[pos] * ss) + inset,
+      (float)(TILE_SIZE_X * ss) - 2.0f * inset,
+      (float)(TILE_SIZE_Y * ss) - 2.0f * inset
     };
     SDL_FRect dest = {
       (float)(originX + ((int)x - 1) * tileW - edgeX),
@@ -435,8 +437,9 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
     if (screenIsMine(mineView, x, y)) {
-      SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
-                            (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
+      SDL_FRect mineSrc = { (float)(MINE_X * ss) + inset, (float)(MINE_Y * ss) + inset,
+                            (float)(TILE_SIZE_X * ss) - 2.0f * inset,
+                            (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
 
@@ -509,7 +512,7 @@ static bool shellSubPxLookup(BYTE bufMx, BYTE bufMy, int dir,
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
-  bool smooth = gfxSettingsGetAllowSmoothShells();
+  bool smooth = gfxSettingsEffectiveSmoothShells();
 
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
@@ -577,8 +580,17 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      * redirect src to SHELL_0 and rotate at draw time.  Pivot is the
      * N-tip (1.5, 0) sprite-local; place dst so the pivot lands on
      * the un-tip-adjusted (sx, sy) world position. */
-    bool rotateLive = (tileLoaderThemeRotates()
-                       && frame >= SHELL_DIR1 && frame <= SHELL_DIR15);
+    /* Runtime rotation of _00 is Max-Detail-only.  In Pixelate
+     * modes we let the atlas slot (which falls back to the stock
+     * theme when the user's theme didn't ship shell_<NN>) render
+     * directly — no rotation, no pixel-art-rotated mush. */
+    bool rotateLive = false;
+    if (gfxSettingsThemeDetailIsMax()
+        && tileLoaderThemeRotates()
+        && frame >= SHELL_DIR1 && frame <= SHELL_DIR15) {
+      int liveDir = frame - SHELL_DIR0;
+      rotateLive = !tileLoaderThemeHasSprite("shell", liveDir);
+    }
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15 && !rotateLive) {
       int dir = frame - SHELL_DIR0;
 
@@ -600,28 +612,21 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     }
 
     int ss = ctx->sheetScale;
-    SDL_Texture *cachedRot = NULL;
-    TileLoaderRotInfo rotInfo;
+    /* Atlas-bleed inset: with SCALEMODE_LINEAR (Max Detail) SDL
+     * samples ±0.5 atlas-pixel beyond the source rect and pulls in
+     * the adjacent slot.  Push the source rect 0.5 px inward on
+     * each side. */
+    float inset = 0.5f;
     if (rotateLive) {
-      int dir = frame - SHELL_DIR0;
-      cachedRot = tileLoaderGetRotatedTexture(TLR_GROUP_SHELL, dir);
-    }
-    if (cachedRot && tileLoaderGetRotInfo(TLR_GROUP_SHELL, &rotInfo)) {
-      /* Pre-baked rotated texture: pivot inside cache lands on the
-       * shell's world coord (sx, sy un-tip-adjusted). */
-      float dx = sx - rotInfo.pivotX * (float)ctx->zoomFactor;
-      float dy = sy - rotInfo.pivotY * (float)ctx->zoomFactor;
-      SDL_FRect dstR = { dx, dy,
-                         (float)(rotInfo.cacheSize * ctx->zoomFactor),
-                         (float)(rotInfo.cacheSize * ctx->zoomFactor) };
-      SDL_RenderTexture(ctx->renderer, cachedRot, NULL, &dstR);
-    } else if (rotateLive) {
-      /* Cache miss fallback: SDL runtime rotation. */
+      /* Ingamerotate: rotate the SHELL_0 atlas slot at draw time.
+       * Dest top-left placed so the N-tip pivot (1.5, 0) lands on
+       * the shell world coord (sx, sy un-tip-adjusted). */
       int dir = frame - SHELL_DIR0;
       float dx = sx - 1.5f * (float)ctx->zoomFactor;
       float dy = sy;
-      SDL_FRect srcR = { (float)(SHELL_0_X * ss), (float)(SHELL_0_Y * ss),
-                         (float)(SHELL_0_WIDTH * ss), (float)(SHELL_0_HEIGHT * ss) };
+      SDL_FRect srcR = { (float)(SHELL_0_X * ss) + inset, (float)(SHELL_0_Y * ss) + inset,
+                         (float)(SHELL_0_WIDTH * ss) - 2.0f * inset,
+                         (float)(SHELL_0_HEIGHT * ss) - 2.0f * inset };
       SDL_FRect dstR = { dx, dy,
                          (float)(SHELL_0_WIDTH * ctx->zoomFactor),
                          (float)(SHELL_0_HEIGHT * ctx->zoomFactor) };
@@ -630,8 +635,9 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
                                angle, &pivot, SDL_FLIP_NONE);
     } else {
-      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
-                         (float)(srcW * ss), (float)(srcH * ss) };
+      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+                         (float)(srcW * ss) - 2.0f * inset,
+                         (float)(srcH * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy,
                          (float)(srcW * ctx->zoomFactor),
                          (float)(srcH * ctx->zoomFactor) };
@@ -913,61 +919,58 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
 
     {
       int ss = ctx->sheetScale;
-      float inset = 0.05f;
+      /* See shell render for why 0.5 — atlas bleed under LINEAR. */
+      float inset = 0.5f;
 
-      /* Ingamerotate: theme only ships tank_*_00 of each colour.
-       * Prefer the pre-baked rotated cache (vector-rotated, point-
-       * sampled, larger canvas → no clipping).  Fall back to runtime
-       * SDL_RenderTextureRotated if the cache miss anything.  Falls
-       * through to the classic per-direction atlas slot when not
-       * ingamerotate or dir == 0. */
-      bool wantRotate = (tileLoaderThemeRotates()
-                         && frame >= TANK_SELF_0
-                         && frame <= TANK_EVILBOAT_0 + 15);
-      int dir = frame & 0x0F;
-      SDL_Texture *cachedRot = NULL;
-      TileLoaderRotInfo rotInfo;
-      bool haveRotInfo = false;
-      if (wantRotate && dir != 0) {
-        int group = frame >> 4;  /* TLR_GROUP_TANK_SELF..EVILBOAT */
-        cachedRot = tileLoaderGetRotatedTexture((TileLoaderRotGroup)group, dir);
-        haveRotInfo = tileLoaderGetRotInfo((TileLoaderRotGroup)group, &rotInfo);
+      /* Ingamerotate: theme only ships tank_*_00.  For dir != 0
+       * redirect src to the _0 atlas slot of the colour group and
+       * rotate at draw time around the sprite centre.  Falls through
+       * to the per-direction atlas slot for non-ingamerotate themes
+       * (or dir == 0). */
+      int useSrcX = srcX, useSrcY = srcY;
+      double rotAngleDeg = 0.0;
+      bool useRotate = false;
+      /* Runtime tank rotation is Max-Detail-only.  Pixelate modes
+       * use whatever's in the per-direction atlas slot (theme's
+       * file if present, stock fallback otherwise). */
+      if (gfxSettingsThemeDetailIsMax()
+          && tileLoaderThemeRotates()
+          && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
+        int dir = frame & 0x0F;
+        if (dir != 0) {
+          int group = frame >> 4;
+          int baseFrame = group * 16;
+          int bX = 0, bY = 0;
+          const char *baseName = NULL;
+          switch (baseFrame) {
+            case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      baseName = "tank_self";     break;
+            case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  baseName = "tank_selfboat"; break;
+            case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      baseName = "tank_good";     break;
+            case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  baseName = "tank_goodboat"; break;
+            case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      baseName = "tank_evil";     break;
+            case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  baseName = "tank_evilboat"; break;
+            default: bX = srcX; bY = srcY; break;
+          }
+          /* Skip rotation when the theme ships a hand-crafted
+           * <base>_<NN>; the per-direction atlas slot already has it. */
+          if (baseName && tileLoaderThemeHasSprite(baseName, dir)) {
+            /* leave useRotate = false → atlas slot used directly */
+          } else {
+            useSrcX = bX; useSrcY = bY;
+            rotAngleDeg = (double)dir * 22.5;
+            useRotate = true;
+          }
+        }
       }
 
-      if (cachedRot && haveRotInfo) {
-        /* Tank centre in screen coords = sprite top-left + 8*zf. */
-        float tankCx = sx + 8.0f * (float)ctx->zoomFactor;
-        float tankCy = sy + 8.0f * (float)ctx->zoomFactor;
-        float dx = tankCx - rotInfo.pivotX * (float)ctx->zoomFactor;
-        float dy = tankCy - rotInfo.pivotY * (float)ctx->zoomFactor;
-        SDL_FRect dstR = { dx, dy,
-                           (float)(rotInfo.cacheSize * ctx->zoomFactor),
-                           (float)(rotInfo.cacheSize * ctx->zoomFactor) };
-        SDL_RenderTexture(ctx->renderer, cachedRot, NULL, &dstR);
-      } else if (wantRotate && dir != 0) {
-        /* Cache miss fallback: runtime rotation of the _0 atlas slot. */
-        int group = frame >> 4;
-        int baseFrame = group * 16;
-        int bX = 0, bY = 0;
-        switch (baseFrame) {
-          case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      break;
-          case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  break;
-          case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      break;
-          case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  break;
-          case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      break;
-          case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  break;
-          default: bX = srcX; bY = srcY; break;
-        }
-        SDL_FRect srcR = { (float)(bX * ss) + inset, (float)(bY * ss) + inset,
-                           (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
-        SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
+      SDL_FRect srcR = { (float)(useSrcX * ss) + inset, (float)(useSrcY * ss) + inset,
+                         (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
+      SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
+      if (useRotate) {
         SDL_FPoint pivot = { (float)tileW * 0.5f, (float)tileH * 0.5f };
         SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
-                                 (double)dir * 22.5, &pivot, SDL_FLIP_NONE);
+                                 rotAngleDeg, &pivot, SDL_FLIP_NONE);
       } else {
-        SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
-                           (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
-        SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
       }
     }
@@ -1073,7 +1076,10 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
 
     {
       int ss = ctx->sheetScale;
-      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+      float inset = 0.5f;  /* atlas-bleed inset (Max Detail LINEAR) */
+      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
+                         (float)(srcW * ss) - 2.0f * inset,
+                         (float)(srcH * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }

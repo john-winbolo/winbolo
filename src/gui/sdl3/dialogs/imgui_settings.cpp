@@ -162,10 +162,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
         NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
         if (!image) return nullptr;
         if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-        /* Ingamerotate themes always use point-sample regardless
-         * of the AllowSvg toggle. */
-        bool pointSample = (gfxSettingsGetThemeDetail() != GFX_THEME_DETAIL_MAX_DETAIL)
-                           || tileLoaderThemeRotates();
+        bool pointSample = !gfxSettingsThemeDetailIsMax();
         int w = size, h = size;
         const int kSuper = pointSample ? 4 : 1;
         int hiW = w * kSuper, hiH = h * kSuper;
@@ -203,13 +200,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
         SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
         SDL_DestroySurface(surface);
         SDL_free(pixels);
-        if (tex) {
-            bool useLinear = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL)
-                             && !tileLoaderThemeRotates();
-            SDL_SetTextureScaleMode(tex,
-                useLinear ? SDL_SCALEMODE_LINEAR
-                          : SDL_SCALEMODE_NEAREST);
-        }
+        if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
         return tex;
     }
 
@@ -225,13 +216,7 @@ static SDL_Texture *loadSpriteToTexture(SDL_Renderer *r, const char *path, int s
     SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
     SDL_DestroySurface(surface);
     stbi_image_free(data);
-    if (tex) {
-        bool useLinear = (gfxSettingsGetThemeDetail() == GFX_THEME_DETAIL_MAX_DETAIL)
-                         && !tileLoaderThemeRotates();
-        SDL_SetTextureScaleMode(tex,
-            useLinear ? SDL_SCALEMODE_LINEAR
-                      : SDL_SCALEMODE_NEAREST);
-    }
+    if (tex) SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
     return tex;
 }
 
@@ -265,6 +250,8 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     if (!ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
         return;
     }
+
+    ImGui::TextDisabled("All themes are cosmetic and do not affect game play.");
 
     /* Theme picker — scan data/theme/* once per dialog open. */
     static std::vector<std::string> themeDirs;
@@ -356,39 +343,41 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     }
 
     /* Theme Detail Allowed. */
+    int curDetail = (int)gfxSettingsGetThemeDetail();
     {
         const char *detailLabels[] = {
             "Pixelate Normal",
             "Pixelate to Zoom",
             "Max Detail",
+            "Max Detail with Smooth Animations",
         };
-        int curDetail = (int)gfxSettingsGetThemeDetail();
-        if (curDetail < 0 || curDetail > 2) curDetail = 0;
+        const int kNumDetail = 4;
+        if (curDetail < 0 || curDetail >= kNumDetail) curDetail = 0;
         ImGui::TextUnformatted("Theme Detail Allowed");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(220);
+        ImGui::SetNextItemWidth(280);
         if (ImGui::BeginCombo("##themedetail", detailLabels[curDetail])) {
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < kNumDetail; ++i) {
                 bool sel = (i == curDetail);
                 if (ImGui::Selectable(detailLabels[i], sel)) {
                     gfxSettingsSetThemeDetail((GfxThemeDetail)i);
                     sdl3DrawReloadTiles();
                     extern void gameFrontSaveThemeDetail(int);
                     gameFrontSaveThemeDetail(i);
+                    curDetail = i;
                 }
                 if (sel) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
         }
-        ImGui::TextDisabled(
-            "Pixelate Normal: SVG @ 1× (chunky pixel art).\n"
-            "Pixelate to Zoom: prefer hand-crafted N-<name>.png\n"
-            "  prefixes (32-, 48-, 64-) at the active zoom.\n"
-            "Max Detail: SVG rasterized smoothly at zoom.");
     }
 
-    /* Allow Smooth Path Shells — cosmetic shell sub-wu motion. */
-    {
+    /* Allow Smooth Path Shells — cosmetic shell sub-wu motion.
+     * Hidden when ThemeDetail is "Max Detail with Smooth Animations"
+     * (that mode forces smooth shells on regardless of this toggle;
+     * the persisted value is preserved for when the user switches
+     * back to one of the other modes). */
+    if (curDetail != GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH) {
         bool smooth = gfxSettingsGetAllowSmoothShells();
         if (ImGui::Checkbox("Allow smooth path shells", &smooth)) {
             gfxSettingsSetAllowSmoothShells(smooth);
@@ -430,10 +419,10 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     static SDL_Texture *cellTex[6] = { nullptr };
     static int cellLoadedIdx = -1;
     static int cellLoadedDetail = -1;
-    int curDetail = (int)gfxSettingsGetThemeDetail();
+    int curDetailNow = (int)gfxSettingsGetThemeDetail();
     if (cellLoadedIdx != s_previewThemeIdx
-        || cellLoadedDetail != curDetail) {
-        cellLoadedDetail = curDetail;
+        || cellLoadedDetail != curDetailNow) {
+        cellLoadedDetail = curDetailNow;
         cellLoadedIdx = s_previewThemeIdx;
         for (int i = 0; i < kNumCells; i++) {
             if (cellTex[i]) { SDL_DestroyTexture(cellTex[i]); cellTex[i] = nullptr; }

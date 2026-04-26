@@ -1677,7 +1677,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     char buf[16] = "";
     GetPrivateProfileString("GRAPHICS", "ThemeDetail", "0", buf, sizeof(buf), prefsFile);
     int v = atoi(buf);
-    if (v < 0 || v > 2) v = 0;
+    if (v < 0 || v > 3) v = 0;
     gfxSettingsSetThemeDetail((GfxThemeDetail)v);
   }
   /* Allow Smooth Path Shells — cosmetic sub-wu shell motion. */

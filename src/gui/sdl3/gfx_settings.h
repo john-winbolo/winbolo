@@ -49,13 +49,22 @@ float gfxSettingsWuToGamePixel(int wu);
  *                   aliasing.  Atlas LINEAR sampling for smooth
  *                   rotation. */
 typedef enum {
-    GFX_THEME_DETAIL_PIXELATE_NORMAL = 0,
-    GFX_THEME_DETAIL_PIXELATE_ZOOM   = 1,
-    GFX_THEME_DETAIL_MAX_DETAIL      = 2,
+    GFX_THEME_DETAIL_PIXELATE_NORMAL    = 0,
+    GFX_THEME_DETAIL_PIXELATE_ZOOM      = 1,
+    GFX_THEME_DETAIL_MAX_DETAIL         = 2,
+    /* Same atlas + sampling treatment as MAX_DETAIL but also
+     * forces smooth-path shells regardless of the user's persisted
+     * AllowSmoothShells preference. */
+    GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH  = 3,
 } GfxThemeDetail;
 
 void           gfxSettingsSetThemeDetail(GfxThemeDetail d);
 GfxThemeDetail gfxSettingsGetThemeDetail(void);
+
+/* True when the active ThemeDetail uses the Max Detail rendering
+ * path (atlas LINEAR/PIXELART, AA SVG bake, runtime _00 rotation
+ * etc.).  Both MAX_DETAIL and MAX_DETAIL_SMOOTH return true. */
+bool gfxSettingsThemeDetailIsMax(void);
 
 /* Cosmetic: when true, shells render at full sub-wu (1/256-tile)
  * precision instead of snapping to the game-pixel grid.  Makes flight
@@ -63,6 +72,11 @@ GfxThemeDetail gfxSettingsGetThemeDetail(void);
  * for the shell sprite.  Default off. */
 void gfxSettingsSetAllowSmoothShells(bool allow);
 bool gfxSettingsGetAllowSmoothShells(void);
+
+/* Effective smooth-shells flag for the renderer: returns true when
+ * AllowSmoothShells is set OR ThemeDetail is MAX_DETAIL_SMOOTH.
+ * The persisted AllowSmoothShells value is preserved either way. */
+bool gfxSettingsEffectiveSmoothShells(void);
 
 #ifdef __cplusplus
 }

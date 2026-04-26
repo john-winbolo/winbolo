@@ -16,6 +16,16 @@ GfxThemeDetail gfxSettingsGetThemeDetail(void)             { return s_themeDetai
 void gfxSettingsSetAllowSmoothShells(bool allow) { s_allowSmoothShells = allow; }
 bool gfxSettingsGetAllowSmoothShells(void)       { return s_allowSmoothShells; }
 
+bool gfxSettingsThemeDetailIsMax(void) {
+    return s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL
+        || s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH;
+}
+
+bool gfxSettingsEffectiveSmoothShells(void) {
+    if (s_themeDetail == GFX_THEME_DETAIL_MAX_DETAIL_SMOOTH) return true;
+    return s_allowSmoothShells;
+}
+
 void gfxSettingsSetAnimStyle(GfxAnimStyle s) {
     s_animStyle = s;
 }
