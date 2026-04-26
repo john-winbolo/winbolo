@@ -221,9 +221,15 @@ static SDL_TimerID hostedServerTimerID = 0;
 
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
   (void)userdata; (void)id;
+  /* Read spServerSim under the mutex so a concurrent shutdown can NULL
+   * it out without us racing with a freed pointer cached on this stack
+   * frame.  serverInstanceTick re-takes the mutex internally; the
+   * threading mutex is recursive on both Windows and SDL3. */
+  threadsWaitForMutex();
   if (spServerHosted && spServerSim != NULL) {
     serverInstanceTick(spServerSim);
   }
+  threadsReleaseMutex();
   return interval;
 }
 
@@ -1450,23 +1456,27 @@ void gameFrontReloadSkins(void) {
 }
 
 void gameFrontShutdownServer(void) {
+  ServerSim *toFree;
   if (!spServerSimActive) return;
   if (hostedServerTimerID != 0) {
     SDL_RemoveTimer(hostedServerTimerID);
     hostedServerTimerID = 0;
   }
-  /* SDL_RemoveTimer does not block on an in-flight callback (SDL3 only
-   * sets an atomic "canceled" flag). Acquire/release the threading
-   * mutex to wait for any serverInstanceTick currently mid-execution
-   * to release it before we destroy state it may still be reading. */
+  /* Hold the mutex while we transfer ownership of spServerSim into a
+   * local.  SDL_RemoveTimer above stops new fires; this block stops
+   * in-flight ones from racing the destruction below.  A callback
+   * waiting on the mutex will see spServerSim == NULL when it runs and
+   * bail without dereferencing a freed pointer. */
   threadsWaitForMutex();
-  threadsReleaseMutex();
-  serverInstanceShutdown(spServerSim);
-  serverSimDestroy(spServerSim);
-  free(spServerSim);
+  toFree = spServerSim;
   spServerSim = NULL;
-  spServerSimActive = FALSE;
   spServerHosted = FALSE;
+  spServerSimActive = FALSE;
+  threadsReleaseMutex();
+
+  serverInstanceShutdown(toFree);
+  serverSimDestroy(toFree);
+  free(toFree);
 }
 
 bool gameFrontPreferencesExist(void) {
