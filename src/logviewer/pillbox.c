@@ -31,8 +31,8 @@
 #include "pillbox.h"
 #include "backend.h"
 #include "players.h"
-
-void lv_messageAdd(char *messageStr);
+#include "messages.h"
+#include "../gui/lang.h"
 
 /*********************************************************
 *NAME:          lv_pillsCreate
@@ -386,32 +386,36 @@ void lv_pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
 *  migrate - TRUE if it is migrating.
 *********************************************************/
 BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migrate) {
-  /* Message stuff */
+  char ownerName[FILENAME_MAX];
   char oldOwner[FILENAME_MAX];
-  char messageStr[FILENAME_MAX];
   BYTE returnValue; /* Value to return */
-  
+
+  ownerName[0] = '\0';
   oldOwner[0] = '\0';
-  messageStr[0] = '\0';
 
   returnValue = NEUTRAL;
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
   /* Make the message if required */
   if (returnValue == NEUTRAL && migrate == FALSE) {
-    /* Neutral pill */
-    lv_playersMakeMessageName(owner, messageStr);
-    strncat(messageStr, " just captured a neutral pillbox", sizeof(messageStr) - strlen(messageStr) - 1);
-    lv_messageAdd(messageStr);
+    /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
+    MessageArgs args = {0};
+    lv_playersMakeMessageName(owner, ownerName);
+    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
+    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
   } else if (lv_playersIsAllie(returnValue, owner) == FALSE && migrate == FALSE) {
     /* Stole pill */
-    lv_playersMakeMessageName(owner, messageStr);
-    strncat(messageStr, " just stole pillbox from ", sizeof(messageStr) - strlen(messageStr) - 1);
+    MessageArgs args = {0};
+    lv_playersMakeMessageName(owner, ownerName);
+    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
+    args.playerName[sizeof(args.playerName) - 1] = '\0';
     lv_playersGetPlayerName(returnValue, oldOwner);
-    strncat(messageStr, oldOwner, sizeof(messageStr) - strlen(messageStr) - 1);
-    lv_messageAdd(messageStr);
+    strncpy(args.otherName, oldOwner, sizeof(args.otherName) - 1);
+    args.otherName[sizeof(args.otherName) - 1] = '\0';
+    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }
   (*value)->item[pillNum].owner = owner;
 //    frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(value, pillNum)));

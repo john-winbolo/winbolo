@@ -12,6 +12,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_context.h"
 #include "imgui.h"
+#include "../../gui/lang.h"
 
 #include <cstdio>
 #include <cstring>
@@ -72,15 +73,24 @@ void lv_imgui_item_info_update(unsigned char itemType, unsigned char itemNumber,
     } else {
         /* Owner text */
         if (owner == 0xFF) { /* NEUTRAL */
-            snprintf(s_owner_text, sizeof(s_owner_text), "Neutral");
+            snprintf(s_owner_text, sizeof(s_owner_text), "%s",
+                     langGetText(STR_MAPEDIT_OWNER_NEUTRAL));
         } else {
             char player_name[64];
             lv_screenGetPlayerName(player_name, owner);
-            snprintf(s_owner_text, sizeof(s_owner_text), "%s (%d)", player_name, owner);
+            MessageArgs args = {};
+            strncpy(args.string1, player_name, sizeof(args.string1) - 1);
+            args.number = owner;
+            snprintf(s_owner_text, sizeof(s_owner_text), "%s",
+                     langGetTextFmt(STR_LV_OWNER_FMT, &args));
         }
-        
+
         /* Location text */
-        snprintf(s_location_text, sizeof(s_location_text), "X: %d, Y: %d", x, y);
+        MessageArgs args = {};
+        args.number = x;
+        args.number2 = y;
+        snprintf(s_location_text, sizeof(s_location_text), "%s",
+                 langGetTextFmt(STR_LV_POSITION_XY, &args));
     }
 }
 
@@ -96,7 +106,9 @@ void lv_imgui_item_info_window(void) {
         ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10, 30 + 180 + 5), cond);
     }
 
-    if (ImGui::Begin("Item Information", &lv_g_show_item_info_window, ImGuiWindowFlags_NoCollapse)) {
+    char ii_title[128];
+    snprintf(ii_title, sizeof(ii_title), "%s###iteminfo", langGetText(STR_LV_WIN_ITEMINFO));
+    if (ImGui::Begin(ii_title, &lv_g_show_item_info_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
         if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
@@ -122,41 +134,64 @@ void lv_imgui_item_info_window(void) {
 
         if (s_item_type == 0) {
             /* No item selected */
-            ImGui::Text("No item selected");
+            ImGui::TextUnformatted(langGetText(STR_LV_NO_ITEM_SELECTED));
         } else {
             /* Item type header */
-            if (s_item_type == 1) {
-                ImGui::Text("Base #%d", s_item_number);
-            } else {
-                ImGui::Text("Pillbox #%d", s_item_number);
+            {
+                MessageArgs args = {};
+                args.number = s_item_number;
+                ImGui::TextUnformatted(langGetTextFmt(
+                    s_item_type == 1 ? STR_MAPEDIT_INSP_BASE_HASH
+                                     : STR_MAPEDIT_INSP_PILL_HASH,
+                    &args));
             }
-            
+
             ImGui::Separator();
-            
+
             /* Location */
-            ImGui::Text("Location: %s", s_location_text);
-            
+            {
+                MessageArgs args = {};
+                strncpy(args.string1, s_location_text, sizeof(args.string1) - 1);
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_LOCATION_FMT, &args));
+            }
+
             /* Owner */
-            ImGui::Text("Owner: %s", s_owner_text);
-            
+            {
+                MessageArgs args = {};
+                strncpy(args.string1, s_owner_text, sizeof(args.string1) - 1);
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_OWNER_LBL, &args));
+            }
+
             /* Armour */
-            ImGui::Text("Armour: %d", s_armour);
-            
+            {
+                MessageArgs args = {};
+                args.number = s_armour;
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_ARMOUR_FMT, &args));
+            }
+
             /* Shells (bases only) */
             if (s_item_type == 1) {
-                ImGui::Text("Shells: %d", s_shells);
-                ImGui::Text("Mines: %d", s_mines);
+                MessageArgs args = {};
+                args.number = s_shells;
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_SHELLS_FMT, &args));
+                args.number = s_mines;
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_MINES_FMT, &args));
             }
-            
+
             /* In tank status */
-            ImGui::Text("In Tank: %s", s_in_tank ? "Yes" : "No");
-            
+            {
+                MessageArgs args = {};
+                strncpy(args.string1, langGetText(s_in_tank ? STR_YES : STR_NO),
+                        sizeof(args.string1) - 1);
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_IN_TANK_FMT, &args));
+            }
+
             /* Center on map button */
             ImGui::Spacing();
             if (s_in_tank) {
                 ImGui::BeginDisabled();
             }
-            if (ImGui::Button("Center on Map", ImVec2(-1, 0))) {
+            if (ImGui::Button(langGetText(STR_LV_CENTER_ON_MAP), ImVec2(-1, 0))) {
                 lv_screenCentreOnSelectedItem();
             }
             if (s_in_tank) {

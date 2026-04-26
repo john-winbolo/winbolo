@@ -1080,6 +1080,122 @@
 #define STR_MAPGEN_RIVERS                   1083
 #define STR_MAPGEN_LAKES                    1084
 
+/* Log viewer sim-replay messages */
+#define STR_LV_PLAYER_JOINED                1085
+#define STR_LV_HAS_JOINED                   1086
+#define STR_LV_ALLY_REQUEST                 1087
+#define STR_LV_ALLY_ACCEPT                  1088
+#define STR_LV_ALLY_LEAVE                   1089
+#define STR_LV_MSG_ALL                      1090
+#define STR_LV_MSG_PLAYERS                  1091
+#define STR_LV_MSG_SERVER                   1092
+#define STR_LV_PLAYER_DIED                  1093
+#define STR_LV_PLAYER_KILLED                1094
+#define STR_LV_PLAYER_REJOINED              1095
+#define STR_LV_PLAYER_LEAVING               1096
+#define STR_LV_LOBBY_OPENED                 1097
+#define STR_LV_GAME_STARTED                 1098
+#define STR_LV_PLAYER_READY                 1099
+#define STR_LV_PLAYER_UNREADY               1100
+#define STR_LV_PLAYER_LEFT_TEAM             1101
+#define STR_LV_PLAYER_JOINED_TEAM           1102
+#define STR_LV_COUNTDOWN_START              1103
+#define STR_LV_COUNTDOWN_CANCEL             1104
+#define STR_LV_MAP_SKIP_VOTE                1105
+#define STR_LV_MAP_SKIPPED                  1106
+#define STR_LV_TEAM_BALANCE                 1107
+
+/* Log viewer main menu */
+#define STR_LV_MENU_OPEN                    1108
+#define STR_LV_MENU_ACTION                  1109
+#define STR_LV_PLAY                         1110
+#define STR_LV_PAUSE                        1111
+#define STR_LV_STOP                         1112
+#define STR_LV_FAST_FORWARD                 1113
+#define STR_LV_REWIND                       1114
+#define STR_LV_MODE                         1115
+#define STR_LV_MODE_INFO                    1116
+#define STR_LV_SELECT_TEAM                  1117
+#define STR_LV_USE_TEAM_COLOURS             1118
+#define STR_LV_TANK_CENTRED                 1119
+#define STR_LV_DNS_LOOKUPS                  1120
+#define STR_LV_TEAM_COLOURS                 1121
+#define STR_LV_MENU_WINDOWS                 1122
+#define STR_LV_WIN_CONTROLS                 1123
+#define STR_LV_WIN_EVENTS                   1124
+#define STR_LV_WIN_GAMEINFO                 1125
+#define STR_LV_WIN_ITEMINFO                 1126
+#define STR_LV_RESET_WINDOWS                1127
+
+/* Log viewer dialogs */
+#define STR_LV_ASSIGN_COLOURS_HINT          1128
+#define STR_LV_PLAYER_LBL                   1129
+#define STR_LV_NEUTRAL_LBL                  1130
+#define STR_LV_ABOUT_TITLE                  1131
+#define STR_LV_VERSION_FMT                  1132
+#define STR_LV_LICENSE                      1133
+#define STR_LV_WEBSITE_LBL                  1134
+
+/* Log viewer team colour names */
+#define STR_LV_COL_GREY                     1135
+#define STR_LV_COL_KHAKI                    1136
+#define STR_LV_COL_GREEN                    1137
+#define STR_LV_COL_PINK                     1138
+#define STR_LV_COL_YELLOW                   1139
+#define STR_LV_COL_LIGHTBLUE                1140
+#define STR_LV_COL_ORANGE                   1141
+#define STR_LV_COL_LIGHTPURPLE              1142
+#define STR_LV_COL_AQUA                     1143
+#define STR_LV_COL_LIGHTGREEN               1144
+#define STR_LV_COL_LIGHTGREY                1145
+#define STR_LV_COL_RED                      1146
+#define STR_LV_COL_BLUE                     1147
+#define STR_LV_COL_BROWN                    1148
+#define STR_LV_COL_LIGHTPINK                1149
+#define STR_LV_COL_PALEGREEN                1150
+#define STR_LV_COL_PURPLE                   1151
+
+/* Log viewer game info panel */
+#define STR_LV_SECONDS                      1152
+#define STR_LV_INFO_MAP                     1153
+#define STR_LV_INFO_GAMETYPE                1154
+#define STR_LV_INFO_HIDDENMINES             1155
+#define STR_LV_INFO_COMPUTER_TANKS          1156
+#define STR_LV_INFO_TIME_LIMIT              1157
+#define STR_LV_INFO_START_DELAY             1158
+#define STR_LV_INFO_WBN_KEY                 1159
+#define STR_LV_INFO_START_TIME              1160
+
+/* Log viewer item info panel */
+#define STR_LV_OWNER_FMT                    1161
+#define STR_LV_POSITION_XY                  1162
+#define STR_LV_NO_ITEM_SELECTED             1163
+#define STR_LV_LOCATION_FMT                 1164
+#define STR_LV_OWNER_LBL                    1165
+#define STR_LV_ARMOUR_FMT                   1166
+#define STR_LV_SHELLS_FMT                   1167
+#define STR_LV_MINES_FMT                    1168
+#define STR_LV_IN_TANK_FMT                  1169
+#define STR_LV_CENTER_ON_MAP                1170
+
+/* Log viewer playback controls */
+#define STR_LV_REW_BTN                      1171
+#define STR_LV_PLAY_BTN                     1172
+#define STR_LV_FWD_BTN                      1173
+#define STR_LV_SPEED_LBL                    1174
+#define STR_LV_TIME_FMT                     1175
+#define STR_LV_TIME_REMAINING               1176
+#define STR_LV_NO_LOG_LOADED                1177
+
+/* Log viewer events panel */
+#define STR_LV_COPY                         1178
+#define STR_LV_COPY_ALL                     1179
+#define STR_LV_CLEAR_ALL                    1180
+#define STR_LV_AUTO_SCROLL                  1181
+
+/* Log viewer end-of-log marker */
+#define STR_LV_END_OF_LOG                   1182
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

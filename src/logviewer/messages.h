@@ -29,6 +29,7 @@
 #define MESSAGE_H
 
 #include "global.h"
+#include "../gui/lang.h"
 
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -154,20 +155,23 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom);
 
 /*********************************************************
 *NAME:          lv_messageAdd
-*AUTHOR:        John Morrison
-*CREATION DATE:  3/1/99
-*LAST MODIFIED:  3/1/99
 *PURPOSE:
-*  Functions call this to display a message. They must
-*  pass the message type so that it can be determined
-*  whether the header should be printed etc.
+*  Sim-replay sites call this to log a localized message.
+*  Mirrors the bolo csCallbackMessageAdd signature: the
+*  caller passes the lang IDs and substitution args; this
+*  renders via langGetText/langGetTextFmt and forwards the
+*  rendered body to the events panel via lv_windowAddEvent.
 *
 *ARGUMENTS:
-*  msgType - The type of the message
-*  top     - The message to print in the top line
-*  bottom  - The message to print in the bottom line
+*  msgType - The type of the message (newswire, assistant, ...)
+*  topId   - Lang ID for the "channel" header (currently unused
+*            by the events panel; reserved for parity with
+*            the bolo callback)
+*  bodyId  - Lang ID for the message body
+*  args    - Substitution args, or NULL
 *********************************************************/
-void lv_messageAdd(messageType msgType, char *top, char *bottom);
+void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
+                   const MessageArgs *args);
 
 /*********************************************************
 *NAME:          lv_messageAddItem
