@@ -219,6 +219,13 @@ static struct {
     bool clientLocked[MAX_TANKS]; /* Per-player lock votes */
 } udpServer;
 
+/* Public-address override populated by transportUdpServerSetPublicAddress
+ * once libplum negotiates a UPnP/NAT-PMP/PCP mapping.  When non-empty the
+ * INFO_PACKET build sites advertise these instead of the internal port
+ * and a zero address. */
+static char           udpServerPublicIp[64];
+static unsigned short udpServerPublicPort;
+
 /* Forward declaration */
 static bool serverClientsAllLocked(void);
 
@@ -1138,6 +1145,9 @@ void transportUdpServerDestroy(void) {
         serverCleanupMapDownload(i);
     }
     udpServer.running = false;
+
+    udpServerPublicIp[0] = '\0';
+    udpServerPublicPort  = 0;
 }
 
 /* Handle an old-protocol info request (server browser compatibility).
@@ -1161,8 +1171,13 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     /* Game ID — address zeroed (browser uses UDP source), port and timestamp set.
      * Tracker reads port raw for v1.1.8 (only ntohs for v1.1.1-3).
      * start_time is the only field the tracker byte-swaps on read. */
-    pkt.gameid.serveraddress.s_addr = 0;
-    pkt.gameid.serverport = sim->serverPort;
+    if (udpServerPublicPort != 0) {
+        pkt.gameid.serveraddress.s_addr = inet_addr(udpServerPublicIp);
+        pkt.gameid.serverport = udpServerPublicPort;
+    } else {
+        pkt.gameid.serveraddress.s_addr = 0;
+        pkt.gameid.serverport = sim->serverPort;
+    }
     pkt.gameid.start_time = htonl(sim->timeCreated);
 
     /* Map name as Pascal string */
@@ -1469,8 +1484,13 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.h.versionRevision = BOLO_VERSION_REVISION;
     pkt.h.type = BOLOPACKET_INFORESPONSE;
 
-    pkt.gameid.serveraddress.s_addr = 0;
-    pkt.gameid.serverport = sim->serverPort;
+    if (udpServerPublicPort != 0) {
+        pkt.gameid.serveraddress.s_addr = inet_addr(udpServerPublicIp);
+        pkt.gameid.serverport = udpServerPublicPort;
+    } else {
+        pkt.gameid.serveraddress.s_addr = 0;
+        pkt.gameid.serverport = sim->serverPort;
+    }
     pkt.gameid.start_time = htonl(sim->timeCreated);
 
     utilCtoPString(sim->mapName, pkt.mapname);
@@ -1493,6 +1513,18 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
 
     sendto(udpServer.sock, (const char *)&pkt, sizeof(pkt), 0,
            (const struct sockaddr *)&dest, sizeof(dest));
+}
+
+void transportUdpServerSetPublicAddress(const char *externalIp,
+                                        unsigned short externalPort) {
+    if (externalPort == 0 || externalIp == NULL || externalIp[0] == '\0') {
+        udpServerPublicIp[0] = '\0';
+        udpServerPublicPort  = 0;
+        return;
+    }
+    strncpy(udpServerPublicIp, externalIp, sizeof(udpServerPublicIp) - 1);
+    udpServerPublicIp[sizeof(udpServerPublicIp) - 1] = '\0';
+    udpServerPublicPort = externalPort;
 }
 
 void transportUdpServerSendNatKeepalive(const char *trackerAddr,

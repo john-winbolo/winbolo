@@ -348,6 +348,18 @@ void transportUdpServerSendTrackerUpdate(struct ServerSim *sim,
                                          const char *trackerAddr,
                                          unsigned short trackerPort);
 
+/* Override the public address advertised in INFO_PACKET responses
+ * (broadcast info requests + tracker updates).  Pass externalPort=0 (or
+ * a NULL/empty externalIp) to revert to the internal port and zero
+ * address.
+ *
+ * Used by the GUI host's UPnP/NAT-PMP path: once libplum reports the
+ * external mapping, future INFO_PACKETs advertise the gateway's
+ * external IP:port rather than the host's internal port (which
+ * joiners on the public Internet can't reach). */
+void transportUdpServerSetPublicAddress(const char *externalIp,
+                                        unsigned short externalPort);
+
 /* Send a 4-byte sentinel to the tracker over the same socket the
  * server is bound to, so the host's NAT mapping for that source
  * port stays alive between heavier tracker updates. */
