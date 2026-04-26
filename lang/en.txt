@@ -1168,6 +1168,12 @@ STR_LV_AUTO_SCROLL=Auto Scroll
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=End of Log File Reached
 
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Zoom
+STR_DLGSETTINGS_PERFORMANCE=Performance
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=You have lost your connection to the server.\nReturning to menu.
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

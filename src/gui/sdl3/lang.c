@@ -1113,6 +1113,14 @@ static const LangEntry langTable[] = {
     /* Log viewer end-of-log marker */
     {1182, "End of Log File Reached"},
 
+    /* iOS Settings panel */
+    {1183, "Zoom"},
+    {1184, "Performance"},
+    {1185, "FPS: {number}"},
+
+    /* iOS disconnect-to-menu */
+    {1186, "You have lost your connection to the server.\nReturning to menu."},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

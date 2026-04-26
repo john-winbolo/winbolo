@@ -1196,6 +1196,15 @@
 /* Log viewer end-of-log marker */
 #define STR_LV_END_OF_LOG                   1182
 
+/* iOS Settings panel additions */
+#define STR_DLGSETTINGS_ZOOM                1183
+#define STR_DLGSETTINGS_PERFORMANCE         1184
+#define STR_DLGSETTINGS_FPS_FMT             1185
+
+/* iOS disconnect-to-menu (distinct from NETERR_LOSTCONNECTION which
+ * mentions dropping to single-player mode) */
+#define NETERR_LOSTCONNECTION_RETURN_MENU   1186
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
