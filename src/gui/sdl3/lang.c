@@ -1702,10 +1702,6 @@ char *langGetText(langid id) {
     return (char *)lookupString(id);
 }
 
-char *langGetText2(langid id) {
-    return langGetText(id);
-}
-
 /* -------------------------------------------------------
  * langGetTextFmt — single-pass named-placeholder substitution.
  *
@@ -1719,17 +1715,23 @@ char *langGetText2(langid id) {
  * past the cap is truncated cleanly.
  * ------------------------------------------------------- */
 
-#define LANG_FMT_BUFFER_SIZE   512
+#define LANG_FMT_BUFFER_SIZE   1024
 #define LANG_FMT_RING_BUFFERS  4
 
 static THREAD_LOCAL char    g_fmtBuffers[LANG_FMT_RING_BUFFERS][LANG_FMT_BUFFER_SIZE];
 static THREAD_LOCAL unsigned g_fmtBufferIdx = 0;
 
 static void appendBounded(char *dst, size_t cap, size_t *used, const char *src,
-                          size_t srcLen) {
-    if (*used >= cap - 1) return;
+                          size_t srcLen, bool *truncated) {
+    if (*used >= cap - 1) {
+        if (srcLen > 0 && truncated) *truncated = true;
+        return;
+    }
     size_t room = cap - 1 - *used;
-    if (srcLen > room) srcLen = room;
+    if (srcLen > room) {
+        if (truncated) *truncated = true;
+        srcLen = room;
+    }
     memcpy(dst + *used, src, srcLen);
     *used += srcLen;
     dst[*used] = '\0';
@@ -1743,6 +1745,7 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
     g_fmtBufferIdx = (g_fmtBufferIdx + 1) % LANG_FMT_RING_BUFFERS;
 
     size_t used = 0;
+    bool   truncated = false;
     dst[0] = '\0';
 
     char numberBuf[4][32];
@@ -1807,14 +1810,20 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
 
                 if (replacement) {
                     appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used,
-                                  replacement, replLen);
+                                  replacement, replLen, &truncated);
                     p = end + 1;
                     continue;
                 }
             }
         }
-        appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used, p, 1);
+        appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used, p, 1, &truncated);
         p++;
+    }
+
+    if (truncated) {
+        SDL_Log("langGetTextFmt: id=%u rendered output exceeded "
+                "LANG_FMT_BUFFER_SIZE=%d; result was clipped",
+                (unsigned)id, LANG_FMT_BUFFER_SIZE);
     }
 
     return dst;
