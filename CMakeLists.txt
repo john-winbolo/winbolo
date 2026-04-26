@@ -1272,6 +1272,7 @@ add_executable(LogViewer
     ${LOGVIEWER_IMGUI_SOURCES}
     ${LOGVIEWER_PLATFORM_SOURCES}
     src/gui/sdl3/lang.c
+    src/gui/sdl3/gamefront_stubs.c
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -1702,6 +1703,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
