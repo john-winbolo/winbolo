@@ -1275,6 +1275,7 @@ add_executable(LogViewer
     ${LOGVIEWER_SOURCES}
     ${LOGVIEWER_IMGUI_SOURCES}
     ${LOGVIEWER_PLATFORM_SOURCES}
+    src/gui/sdl3/lang.c
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
