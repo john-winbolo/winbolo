@@ -81,4 +81,23 @@ void serverInstanceTick(ServerSim *sim);
  * botManagerDestroy(sim). Does NOT destroy or free sim — caller owns. */
 void serverInstanceShutdown(ServerSim *sim);
 
+typedef enum {
+  SERVER_PORTMAP_DISABLED,    /* not requested (dedicated default,
+                                 joiners, or BOLO_PORTMAP=OFF builds) */
+  SERVER_PORTMAP_PENDING,     /* requested, libplum still working      */
+  SERVER_PORTMAP_SUCCEEDED,   /* gateway accepted; externalIp/Port set */
+  SERVER_PORTMAP_FAILED       /* deadline elapsed without a mapping    */
+} ServerPortmapStatus;
+
+typedef struct {
+  ServerPortmapStatus status;
+  char           externalIp[64];   /* "" unless SUCCEEDED */
+  unsigned short externalPort;     /* 0  unless SUCCEEDED */
+} ServerPortmapInfo;
+
+/* Snapshot the current port-mapping status.  Takes the threading mutex
+ * briefly so the caller never sees a half-written externalIp from
+ * libplum's worker thread. */
+void serverInstanceGetPortmapInfo(ServerPortmapInfo *out);
+
 #endif /* SERVER_LIFECYCLE_H */

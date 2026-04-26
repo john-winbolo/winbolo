@@ -369,3 +369,29 @@ void serverInstanceShutdown(ServerSim *sim) {
   natPortmapNotified  = FALSE;
   natPortmapTimedOut  = FALSE;
 }
+
+void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
+  if (out == NULL) {
+    return;
+  }
+  threadsWaitForMutex();
+  if (!instanceUseNatPortmap) {
+    out->status = SERVER_PORTMAP_DISABLED;
+  } else if (instancePortMap.mapped) {
+    out->status = SERVER_PORTMAP_SUCCEEDED;
+  } else if (natPortmapTimedOut) {
+    out->status = SERVER_PORTMAP_FAILED;
+  } else {
+    out->status = SERVER_PORTMAP_PENDING;
+  }
+  if (out->status == SERVER_PORTMAP_SUCCEEDED) {
+    strncpy(out->externalIp, instancePortMap.externalIp,
+            sizeof(out->externalIp) - 1);
+    out->externalIp[sizeof(out->externalIp) - 1] = '\0';
+    out->externalPort = instancePortMap.externalPort;
+  } else {
+    out->externalIp[0] = '\0';
+    out->externalPort = 0;
+  }
+  threadsReleaseMutex();
+}

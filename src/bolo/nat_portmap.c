@@ -34,7 +34,7 @@ static void plumInitOnce(void) {
   }
   plum_config_t cfg;
   memset(&cfg, 0, sizeof(cfg));
-  cfg.log_level    = PLUM_LOG_LEVEL_WARN;
+  cfg.log_level    = PLUM_LOG_LEVEL_INFO;
   cfg.log_callback = plumLogCb;
   if (plum_init(&cfg) == 0) {
     plumInited = true;
@@ -42,8 +42,7 @@ static void plumInitOnce(void) {
 }
 
 static void plumLogCb(plum_log_level_t level, const char *message) {
-  (void)level;
-  (void)message;
+  SDL_Log("[libplum:%d] %s", (int)level, message ? message : "(null)");
 }
 
 static PortMapSlot *findSlotByMappingId(int id) {

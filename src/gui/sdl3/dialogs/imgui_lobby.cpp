@@ -38,6 +38,7 @@ extern "C" {
 #include "../../../bolo/client_sim.h"
 #include "../../../bolo/transport.h"
 #include "../../../bolo/transport_udp.h"
+#include "../../../server/server_lifecycle.h"
 #include "../../../bolo/bolo_map.h"
 #include "../../../bolo/pillbox.h"
 #include "../../../bolo/bases.h"
@@ -350,6 +351,35 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
+
+        /* --- Hosted-MP port-mapping status --- */
+        {
+            ServerPortmapInfo pm;
+            serverInstanceGetPortmapInfo(&pm);
+            switch (pm.status) {
+                case SERVER_PORTMAP_PENDING:
+                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f),
+                                       "Opening firewall port...");
+                    ImGui::Spacing();
+                    break;
+                case SERVER_PORTMAP_SUCCEEDED:
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                                       "Port forwarded automatically (%s:%u)",
+                                       pm.externalIp, (unsigned)pm.externalPort);
+                    ImGui::Spacing();
+                    break;
+                case SERVER_PORTMAP_FAILED:
+                    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.4f, 1.0f),
+                                       "Could not open port automatically — "
+                                       "only LAN players can join unless you "
+                                       "manually port-forward UDP %u.",
+                                       (unsigned)27500);
+                    ImGui::Spacing();
+                    break;
+                case SERVER_PORTMAP_DISABLED:
+                    break;
+            }
+        }
 
         /* --- Main content --- */
 #if BOLO_MOBILE
