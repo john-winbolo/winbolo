@@ -35,9 +35,6 @@
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 
-/* String resource IDs — integer IDs for langGetText() */
-#include "../gui/aresource.h"
-
 #include <sys/stat.h>
 
 extern ClientSim *humanSim;

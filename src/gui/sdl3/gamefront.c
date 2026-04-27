@@ -70,13 +70,11 @@
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 
-/* String resource IDs — integer IDs into the lang.c lookup table */
-#include "../aresource.h"
-
 #include "../../bolo/everard_map.h"
 #include "../../bolo/bolo_map.h"
 #include "../../bolo/platform_net.h"
 #include "../../bolo/transport_udp.h"
+#include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
@@ -177,10 +175,18 @@ char gameFrontTrackerAddr[FILENAME_MAX];
 unsigned short gameFrontTrackerPort;
 bool gameFrontTrackerEnabled;
 
+bool gameFrontUseUpnp         = TRUE;
+bool gameFrontUseNatTraversal = TRUE;
+
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
 static bool gameFrontShowTutorialButton = TRUE;
+
+/* Persisted BCP-47 language code (e.g. "en", "de", "pt-br"). Empty
+ * string means the user has not picked one yet — Phase 5 startup runs
+ * langAutoDetect() in that case. */
+static char gameFrontLanguageCode[32] = "";
 
 /* One-shot flag set by the Settings dialog's "Play Tutorial" button.
  * Consumed by the openSettings handler in gameFrontDialogs() so that
@@ -214,6 +220,23 @@ ClientSim *humanSim = NULL;
 static ServerSim *spServerSim = NULL;
 static Transport spTransport;
 static bool spServerSimActive = FALSE;
+static bool spTransportLocalUsed = FALSE;
+static bool spServerHosted = FALSE;
+static SDL_TimerID hostedServerTimerID = 0;
+
+static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
+  (void)userdata; (void)id;
+  /* Read spServerSim under the mutex so a concurrent shutdown can NULL
+   * it out without us racing with a freed pointer cached on this stack
+   * frame.  serverInstanceTick re-takes the mutex internally; the
+   * threading mutex is recursive on both Windows and SDL3. */
+  threadsWaitForMutex();
+  if (spServerHosted && spServerSim != NULL) {
+    serverInstanceTick(spServerSim);
+  }
+  threadsReleaseMutex();
+  return interval;
+}
 
 /* UDP multiplayer transport state */
 static Transport udpTransport;
@@ -294,6 +317,7 @@ extern bool showAIMessages;
 extern bool showNetworkStatusMessages;
 extern bool showNetworkDebugMessages;
 extern bool autoScrollingEnabled;
+extern bool smoothScrollingEnabled;
 extern BYTE zoomFactor;
 extern bool showPillLabels;
 extern bool showBaseLabels;
@@ -325,6 +349,32 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
+
+  /* Apply persisted language, or auto-detect if this is a fresh
+   * install (empty Language slot in the INI). Either way, this runs
+   * before any dialog draws so langGetText() returns the right text
+   * on the very first frame. */
+  if (gameFrontLanguageCode[0] != '\0') {
+    /* Try to load the file matching the saved code. If it's gone
+     * (deleted, renamed) silently fall back to English. */
+    if (strcmp(gameFrontLanguageCode, "en") != 0) {
+      char langPath[FILENAME_MAX];
+      snprintf(langPath, sizeof(langPath), "data/lang/%s.txt",
+               gameFrontLanguageCode);
+      if (!langLoadFile(langPath)) {
+        SDL_Log("gameFrontStart: persisted language '%s' not found — "
+                "falling back to English",
+                gameFrontLanguageCode);
+      }
+    }
+  } else {
+    char detected[32];
+    detected[0] = '\0';
+    langAutoDetect(detected, (int)sizeof(detected));
+    if (detected[0] != '\0') {
+      gameFrontSetLanguageCode(detected);
+    }
+  }
 
   /* Process the command line argument.
      If fileName already contains a pending winbolo:// URL (set by
@@ -437,7 +487,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
    * since Phase 4 prediction, so we must free them here before screenDestroy
    * invalidates the shared map/bases/pills pointers.
    * We still must NOT call serverSimDestroy (would double-free map etc.). */
-  if (spServerSimActive) {
+  if (spServerSimActive && !spServerHosted) {
     /* Destroy bot brains before cleaning up tanks */
     botManagerDestroy(spServerSim);
     /* Free server's tanks — they're separate from the client's predicted
@@ -451,7 +501,10 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
         }
       }
     }
-    transportLocalDestroy(&spTransport);
+    if (spTransportLocalUsed) {
+      transportLocalDestroy(&spTransport);
+      spTransportLocalUsed = FALSE;
+    }
     serverSimClearActive(spServerSim);
     free(spServerSim);
     spServerSim = NULL;
@@ -813,7 +866,9 @@ bool gameFrontSetDlgState(openingStates newState) {
                                              gameFrontTargetUdp,
                                              gameFrontName, password,
                                              gameFrontWbnUse ? gameFrontWbnToken : "",
-                                             wantRejoin);
+                                             wantRejoin,
+                                             gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
+                                             gameFrontTrackerPort);
     if (transportUdpClientGetJoinState(&udpTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&udpTransport);
       imguiMessageBoxEx(DIALOG_BOX_TITLE,
@@ -918,7 +973,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
 
           if (!mapLoadOk) {
-            imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
+            imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_MAPLOAD),
                               IMGUI_MSG_ERROR, IMGUI_MSG_OK);
             clientSimSetChatSendFunc(humanSim, NULL);
             clientSimSetNameChangeSendFunc(humanSim, NULL);
@@ -956,29 +1011,20 @@ bool gameFrontSetDlgState(openingStates newState) {
     dlgState = openLan;
   } else if ((dlgState == openUdpSetup || dlgState == openInternetSetup ||
               dlgState == openLanSetup) && newState == openFinished) {
-    /* Start network game as host */
+    /* Host joins its own server via loopback UDP — same JOIN_REQUEST
+     * handshake every joiner uses, so the server's join handler owns
+     * slot 0 registration and the lobby/name-collision checks behave
+     * identically for host and joiners. */
     gameFrontValidateWbnBeforeJoin();
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
-      humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
-      if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
-      if (netSetup(humanSim, netUdp, gameFrontMyUdp, "127.0.0.1", gameFrontTargetUdp,
-                   password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
-                   gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                   gameFrontWbnToken) == FALSE) {
-        wantRejoin = FALSE;
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Unable to start server",
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        netDestroy(humanSim);
-        clientSimDestroy(humanSim);
-        gameFrontShutdownServer();
-        returnValue = FALSE;
-        dlgState = openStart;
-      } else {
-        dlgState = openFinished;
-      }
+      strncpy(gameFrontUdpAddress, "127.0.0.1", sizeof(gameFrontUdpAddress) - 1);
+      gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
+      gameFrontTargetUdp = gameFrontMyUdp;
+      dlgState = (prevState == openInternetSetup) ? openInternet : openLan;
+      gameFrontSetDlgState(openUdpJoin);
     } else {
-      imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error starting server",
+      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
                         IMGUI_MSG_ERROR, IMGUI_MSG_OK);
       dlgState = openStart;
     }
@@ -1015,6 +1061,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
           spServerSim->sim.viewPlayer = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
+          spTransportLocalUsed = TRUE;
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */
           humanSim = &humanSimStorage;
@@ -1269,6 +1316,26 @@ void gameFrontSetShowTutorialButton(bool show) {
                             getPreferenceFilePath());
 }
 
+void gameFrontGetLanguageCode(char *out, int outSize) {
+  if (!out || outSize <= 0) return;
+  size_t n = strlen(gameFrontLanguageCode);
+  if (n >= (size_t)outSize) n = (size_t)outSize - 1;
+  memcpy(out, gameFrontLanguageCode, n);
+  out[n] = '\0';
+}
+
+void gameFrontSetLanguageCode(const char *code) {
+  if (!code) code = "";
+  size_t n = strlen(code);
+  if (n >= sizeof(gameFrontLanguageCode)) n = sizeof(gameFrontLanguageCode) - 1;
+  memcpy(gameFrontLanguageCode, code, n);
+  gameFrontLanguageCode[n] = '\0';
+  /* Persist immediately so the picked language survives a hard quit
+   * even if the user never reaches gameFrontPutPrefs. */
+  WritePrivateProfileString("SETTINGS", "Language",
+                            gameFrontLanguageCode, getPreferenceFilePath());
+}
+
 void gameFrontRequestPlayTutorial(void) {
   gameFrontPlayTutorialRequested = TRUE;
 }
@@ -1396,7 +1463,27 @@ void gameFrontReloadSkins(void) {
 }
 
 void gameFrontShutdownServer(void) {
-  /* TODO: implement server shutdown for hosted games */
+  ServerSim *toFree;
+  if (!spServerSimActive) return;
+  if (hostedServerTimerID != 0) {
+    SDL_RemoveTimer(hostedServerTimerID);
+    hostedServerTimerID = 0;
+  }
+  /* Hold the mutex while we transfer ownership of spServerSim into a
+   * local.  SDL_RemoveTimer above stops new fires; this block stops
+   * in-flight ones from racing the destruction below.  A callback
+   * waiting on the mutex will see spServerSim == NULL when it runs and
+   * bail without dereferencing a freed pointer. */
+  threadsWaitForMutex();
+  toFree = spServerSim;
+  spServerSim = NULL;
+  spServerHosted = FALSE;
+  spServerSimActive = FALSE;
+  threadsReleaseMutex();
+
+  serverInstanceShutdown(toFree);
+  serverSimDestroy(toFree);
+  free(toFree);
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -1412,8 +1499,85 @@ bool gameFrontPreferencesExist(void) {
 }
 
 bool gameFrontSetupServer(void) {
-  /* TODO: implement in-process or external server start */
-  return FALSE;
+  bool simOk = FALSE;
+  ServerInstanceConfig cfg;
+
+  /* Welcome-screen BgGame leaves the global botManager state populated
+   * with its eye-candy bots; without clearing it here, serverFindFreeSlot
+   * skips those slots and the host's loopback JOIN_REQUEST gets a
+   * non-zero player number. Mirrors the SP path. */
+  {
+    BgGame *sharedBg = bgGameGetShared();
+    if (sharedBg != NULL) {
+      bgGameDestroy(sharedBg);
+      bgGameSetShared(NULL);
+    }
+  }
+
+  spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
+  if (spServerSim == NULL) {
+    return FALSE;
+  }
+
+  if (strncmp(fileName, "randommap:", 10) == 0) {
+    MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+    const char *seedStr = fileName + 10;
+    if (!mapGenSeedToConfig(seedStr, &mcfg)) {
+      SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+    }
+    mcfg.x1 = MAP_MINE_EDGE_LEFT + 1; mcfg.y1 = MAP_MINE_EDGE_TOP + 1;
+    mcfg.x2 = MAP_MINE_EDGE_RIGHT - 1; mcfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+    simOk = serverSimCreateRandomMap(spServerSim, &mcfg, gametype, hiddenMines, startDelay, timeLen);
+  } else if (fileName[0] != '\0') {
+    simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
+  } else {
+    BYTE emap[6000] = E_MAP;
+    simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+  }
+  if (!simOk) {
+    free(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
+  }
+
+  spServerSim->lobbyEnabled = true;
+  spServerSim->emptyResetEnabled = true;
+  spServerSim->state = serverStateLobby;
+  spServerSim->hasPassword = (password[0] != '\0');
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.udpPort         = gameFrontMyUdp;
+  cfg.bindAddr        = "";
+  cfg.password        = password;
+  cfg.maxPlayers      = MAX_TANKS;
+  cfg.useWbn          = gameFrontWbnUse;
+  cfg.compTanks       = (BYTE)compTanks;
+  cfg.useTracker      = gameFrontTrackerEnabled;
+  cfg.trackerAddr     = gameFrontTrackerAddr;
+  cfg.trackerPort     = gameFrontTrackerPort;
+  cfg.useNatKeepalive = gameFrontUseNatTraversal;
+  cfg.useNatPortmap   = gameFrontUseUpnp;
+
+  if (!serverInstanceStartup(spServerSim, &cfg)) {
+    serverSimDestroy(spServerSim);
+    free(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
+  }
+
+  hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
+  if (hostedServerTimerID == 0) {
+    serverInstanceShutdown(spServerSim);
+    serverSimDestroy(spServerSim);
+    free(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
+  }
+
+  spServerSimActive = TRUE;
+  spServerHosted = TRUE;
+  isServer = TRUE;
+  return TRUE;
 }
 
 bool gameFrontLoadInBuiltMap(void) {
@@ -1567,6 +1731,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
+   * fresh install — startup walks SDL_GetPreferredLocales() in that
+   * case (see gameFrontStart). */
+  GetPrivateProfileString("SETTINGS", "Language", "",
+                          gameFrontLanguageCode,
+                          (DWORD)sizeof(gameFrontLanguageCode), prefsFile);
+
   /* Game Options */
   GetPrivateProfileString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX, prefsFile);
   hiddenMines = YESNO_TO_TRUEFALSE(buff[0]);
@@ -1587,6 +1758,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", "No", buff, FILENAME_MAX, prefsFile);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
+
+  GetPrivateProfileString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontUseUpnp = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("SETTINGS", "Use NAT Traversal", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontUseNatTraversal = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Tracker options */
   GetPrivateProfileString("TRACKER", "Address", TRACKER_ADDRESS, gameFrontTrackerAddr, FILENAME_MAX, prefsFile);
@@ -1628,6 +1804,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("MENU", "Autoscroll Enabled", "No", buff, FILENAME_MAX, prefsFile);
 #endif
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX, prefsFile);
+  smoothScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX, prefsFile);
   showPillLabels = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Base Labels", "No", buff, FILENAME_MAX, prefsFile);
@@ -1763,9 +1941,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontMyUdp, buff, sizeof(buff));
   WritePrivateProfileString("SETTINGS", "UDP Port", buff, prefsFile);
 
-  /* Languages */
-  langGetFileName(buff);
-  WritePrivateProfileString("SETTINGS", "Language", buff, prefsFile);
+  /* Language — persist the BCP-47 code, not a file path. */
+  WritePrivateProfileString("SETTINGS", "Language",
+                            gameFrontLanguageCode, prefsFile);
 
   /* Keys — driving */
   intToStr(keys->kiForward, buff, sizeof(buff));
@@ -1837,6 +2015,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow), prefsFile);
   WritePrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide), prefsFile);
 
+  WritePrivateProfileString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp), prefsFile);
+  WritePrivateProfileString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal), prefsFile);
+
   /* Tracker */
   WritePrivateProfileString("TRACKER", "Address", gameFrontTrackerAddr, prefsFile);
   intToStr(gameFrontTrackerPort, buff, sizeof(buff));
@@ -1856,6 +2037,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Show Network Status Messages", TRUEFALSE_TO_STR(showNetworkStatusMessages), prefsFile);
   WritePrivateProfileString("MENU", "Show Network Debug Messages", TRUEFALSE_TO_STR(showNetworkDebugMessages), prefsFile);
   WritePrivateProfileString("MENU", "Autoscroll Enabled", TRUEFALSE_TO_STR(autoScrollingEnabled), prefsFile);
+  WritePrivateProfileString("MENU", "Smooth Scrolling", TRUEFALSE_TO_STR(smoothScrollingEnabled), prefsFile);
   WritePrivateProfileString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels), prefsFile);
   WritePrivateProfileString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels), prefsFile);
   WritePrivateProfileString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf), prefsFile);
@@ -1931,13 +2113,13 @@ ServerSim *gameFrontGetServerSim(void) {
 }
 
 Transport *gameFrontGetTransport(void) {
-  if (spServerSimActive) return &spTransport;
+  if (spServerSimActive && !spServerHosted) return &spTransport;
   if (udpTransportActive) return &udpTransport;
   return NULL;
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  if (spServerSimActive) return 0;
+  if (spServerSimActive && !spServerHosted) return 0;
   if (udpTransportActive) return udpPlayerNum;
   return 0;
 }

@@ -1,0 +1,28 @@
+commit what we have now
+  
+make a new branch based off main.
+
+you may commit as you go
+
+I will be heading to bed soon so do your best to make reasonable decisions and document your decisions and progress for me in a text file.
+
+pull in all the sub-pixel fixes, for shells, LGMs, and tanks from optimize-performance-andrew-no-overrides -- you can do a git diff and implement it as one commit, or however you think best. This includes the new sub-pixel shell "tips". the lgm hit point (or rather, the offset of the LGM sprite as well should be offset, as per that branch. The location the LGM has to run to harvest should be centered on a tile (this is a new fix the branch doesn't have)
+
+This will be the starting point.
+
+build a new mode for WinBolo.exe where you can hit Ctrl-O and it goes into override mode. The HUD remains untouched but the screen becomes unlocked to the tank and auto scroll. using arrows scrolls. mouse wheel zooms in and out. zoom can go to 6x. overlays are present during this time: the entire world gets a grid down to 16x16. Each tile divider is thicker, and each 4 1/16th segment gets a slightly thicker wall but not as thick as the tile divider. this will make it easier to see at a glance where things are. The game still functions as normal, but gives me better viewing control on the screen to see hitboxes work well. Note it should keep using the usual game world rendering stack, as that's exactly what I want to test. Hitting ctrl-o again will toggle out of this mode, and put speed back to normal and game world view behavior back to normal.
+
+Add support for Ctrl-[ and Ctrl-] to slow down ([) and speed up (]) the gameplay (up to regular speed only, don't go faster). This will help me see that the hitboxes are functioning correctly.
+
+Bases, Tanks, and Pillboxes should a hitbox in yellow in override mode. Each shell also shows its exact exact sub-pixel location in orange an pixel. Each LGM has a sub-pixel orange location as well. This will help me know where the exact "hit points" are.
+
+Add more support for SVGs. SVG loading is already in, but we need to make new SVG assets. We will support themes now. Build support for data/theme/<dirname> which will override data/*.png files. First, use python to make svg versions of all data/*.png in to data/theme/stock_svg/. Make it build SVGs exactly pixel by pixel as the original. Each pixel should be one SVG "object". Then, make data/theme/stock_svg_pixelgrouped/ where the svg conversion is smarter and merges pixels that are the same and neighbouring into one svg "shape" in the svg. Then, make data/theme/stock_svg_ingamerotate where we only use the NORTH facing tank and tank boat and tank evil pngs and shells to make svgs. Make the game engine support rotating the SVG in-game around its center to support the tank turning. In this mode, there's true 256 "bolo degrees" of turning rendering, achieved by rotating the SVGs. It should detect there are no tank01 and so on png or svgs in this mode and then rotate the 00. Any other rotating stuff I missed can be done similarly, but I think it's just tanks boats. Oh! Shells also should work and follow this pattern (north only converted to svg then rotated ingame). It will be interesting to see shells in stock_svg_ingamerotate and how they appear at all the various angles.
+
+Add a Graphic Settings and put it in an appropriate menu item.
+
+Add a graphic setting: Animation style: "Pixel Floor", "Pixel Nearest" and "Smooth" and make smooth render the sprites (and SVGs as appropriate; SVGs take priority if they're present) such that the sprites are rendered at sub-pixel accuracy (world units) on the screen. They won't have to jump to the game world pixels in that mode. Pixel floor simply uses the existing floor method to put the sprite from world unit to game unit, and Pixel Nearest will use rounding to have the sprite jump smartly to the nearst game world grid location as appropriate.
+
+Add a graphic setting: "Theme" and make a list of data/theme/* directories. Cliking one should preview it by having a tank turning 256 degrees in the style of that theme's images. If a theme is missing any images, default to the stock theme. If a theme directory doesn't have a single image overridden, don't list it. Make it clear in the list which one is currently chosen. Make an Apply button that appears when previewing a theme. If apply is pressed, the theme is marked as the active one, and the game world graphics should change accordingly.
+
+For LGMs, they should be stopped from going in to a neighboring tile that has a blocking hitbox like a wall or enemy pillbox or water by ONE world unit. This will let them appear effectively at the edge, but give bots the best understanding of which tile they're on.
+

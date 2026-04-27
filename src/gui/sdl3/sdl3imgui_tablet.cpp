@@ -37,6 +37,7 @@
 #include "imgui_internal.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "../../bolo/global.h"
@@ -46,6 +47,7 @@ extern "C" {
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
+#include "../lang.h"
 #include "input_touch.h"
 #include "sdl3draw.h"
 }
@@ -86,36 +88,13 @@ static SDL_Texture *s_iconMessages = nullptr;
 static SDL_Texture *s_iconSettings = nullptr;
 static bool s_iconsLoaded = false;
 
-static SDL_Texture *loadSvgIcon(const char *path, int size) {
-  NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-  if (!image) return nullptr;
-  if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-  float scale = (float)size / image->height;
-  if (image->width * scale > (float)size) scale = (float)size / image->width;
-  int w = size, h = size;
-  unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-  if (!pixels) { nsvgDelete(image); return nullptr; }
-  memset(pixels, 0, (size_t)(w * h * 4));
-  float offX = ((float)w - image->width * scale) * 0.5f;
-  float offY = ((float)h - image->height * scale) * 0.5f;
-  NSVGrasterizer *rast = nsvgCreateRasterizer();
-  nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-  nsvgDeleteRasterizer(rast);
-  nsvgDelete(image);
-  SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-  if (!surface) { SDL_free(pixels); return nullptr; }
-  SDL_Texture *tex = SDL_CreateTextureFromSurface(sdl3DrawGetRenderer(), surface);
-  SDL_DestroySurface(surface);
-  SDL_free(pixels);
-  return tex;
-}
-
 static void ensureIconsLoaded(int size) {
   if (s_iconsLoaded) return;
   s_iconsLoaded = true;
-  s_iconPlayers  = loadSvgIcon("data/ui/players.svg", size);
-  s_iconMessages = loadSvgIcon("data/ui/messages.svg", size);
-  s_iconSettings = loadSvgIcon("data/ui/settings.svg", size);
+  SDL_Renderer *r = sdl3DrawGetRenderer();
+  s_iconPlayers  = imguiLoadSvgIcon(r, "data/ui/players.svg", size);
+  s_iconMessages = imguiLoadSvgIcon(r, "data/ui/messages.svg", size);
+  s_iconSettings = imguiLoadSvgIcon(r, "data/ui/settings.svg", size);
 }
 
 /* Tile sheet dimensions */
@@ -305,6 +284,166 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   if (cfg->scrollJoyOuterRadius > gutterW * 0.30f) cfg->scrollJoyOuterRadius = gutterW * 0.30f;
   if (cfg->scrollJoyOuterRadius < 20.0f * pixelScale) cfg->scrollJoyOuterRadius = 20.0f * pixelScale;
   cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
+}
+
+/* -------------------------------------------------------
+ * Beveled chrome background (matches desktop background.bmp style)
+ * ------------------------------------------------------- */
+
+/* Draw a recessed (inset) beveled rectangle — dark top/left, light bottom/right,
+   black fill inside.  border is the bevel thickness in pixels. */
+static void drawInsetRect(ImDrawList *dl, float x, float y, float w, float h,
+                          float border, ImU32 colLight, ImU32 colDark, ImU32 colFill) {
+  /* Dark edge on top and left */
+  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + border), colDark);              /* top */
+  dl->AddRectFilled(ImVec2(x, y + border), ImVec2(x + border, y + h), colDark);     /* left */
+  /* Light edge on bottom and right */
+  dl->AddRectFilled(ImVec2(x, y + h - border), ImVec2(x + w, y + h), colLight);     /* bottom */
+  dl->AddRectFilled(ImVec2(x + w - border, y), ImVec2(x + w, y + h - border), colLight); /* right */
+  /* Black fill */
+  dl->AddRectFilled(ImVec2(x + border, y + border),
+                    ImVec2(x + w - border, y + h - border), colFill);
+}
+
+/* Draw a raised (outset) beveled rectangle — light top/left, dark bottom/right,
+   medium gray fill inside. */
+static void drawRaisedRect(ImDrawList *dl, float x, float y, float w, float h,
+                           float border, ImU32 colLight, ImU32 colDark, ImU32 colFill) {
+  /* Light edge on top and left */
+  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + border), colLight);             /* top */
+  dl->AddRectFilled(ImVec2(x, y + border), ImVec2(x + border, y + h), colLight);    /* left */
+  /* Dark edge on bottom and right */
+  dl->AddRectFilled(ImVec2(x, y + h - border), ImVec2(x + w, y + h), colDark);      /* bottom */
+  dl->AddRectFilled(ImVec2(x + w - border, y), ImVec2(x + w, y + h - border), colDark); /* right */
+  /* Fill */
+  dl->AddRectFilled(ImVec2(x + border, y + border),
+                    ImVec2(x + w - border, y + h - border), colFill);
+}
+
+static void renderTabletBackground(void) {
+  /* Panel borders for the gutter UI elements.  The chrome gray fill and
+     viewport bevel are drawn earlier via SDL in sdl3DrawMainScreen()
+     (sdl3draw.c) so they appear behind the game tiles.  These borders
+     use ImGui's BackgroundDrawList which renders behind ImGui windows
+     but on top of SDL content — correct for the gutter panels which
+     are all ImGui-drawn. */
+  const TabletLayoutConfig &c = s_cfg;
+  float ps = (float)c.screenH / 480.0f;
+  if (ps < 0.7f) ps = 0.7f;
+  float border = 2.0f * ps;  /* bevel thickness — 2px at reference 480p */
+
+  ImU32 colLight  = IM_COL32(160, 160, 160, 255);  /* highlight edge */
+  ImU32 colDark   = IM_COL32(64,  64,  64,  255);  /* shadow edge */
+  ImU32 colBlack  = IM_COL32(0,   0,   0,   255);  /* recessed fill */
+
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
+
+  /* --- Left gutter: status grids (tanks, pills, bases) --- */
+  if (c.showStatusGrids) {
+    float gridW = 90.0f * ps * c.statusGridScale;
+    float gridH = 66.0f * ps * c.statusGridScale;
+    float gridPad = 2.0f * ps;
+
+    drawInsetRect(dl,
+      c.tanksGridX - gridPad - border, c.tanksGridY - gridPad - border,
+      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
+      border, colLight, colDark, colBlack);
+
+    drawInsetRect(dl,
+      c.pillsGridX - gridPad - border, c.pillsGridY - gridPad - border,
+      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
+      border, colLight, colDark, colBlack);
+
+    drawInsetRect(dl,
+      c.basesGridX - gridPad - border, c.basesGridY - gridPad - border,
+      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: top buttons row --- */
+  {
+    float rowX = c.playersBtnX - 3.0f * ps;
+    float rowY = c.topBtnY - 3.0f * ps;
+    float rowW = (c.cogBtnX + c.topBtnSize) - c.playersBtnX + 6.0f * ps;
+    float rowH = c.topBtnSize + 6.0f * ps;
+    drawInsetRect(dl, rowX - border, rowY - border,
+      rowW + border * 2, rowH + border * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: resource bars area --- */
+  {
+    float pad = 3.0f * ps;
+    drawInsetRect(dl,
+      c.tankBarsX - pad - border, c.tankBarsY - pad - border,
+      c.topBtnSize + (pad + border) * 2, c.barsH + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+
+    float baseH = c.barsH - 16.0f;
+    drawInsetRect(dl,
+      c.baseBarsX - pad - border, c.baseBarsY - pad - border,
+      c.topBtnSize + (pad + border) * 2, baseH + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: build bar area --- */
+  {
+    float iconSize = c.buildIconSize;
+    float btnPad = 8.0f;
+    float btnSize = iconSize + btnPad * 2;
+    float spacing = c.buildSpacing;
+    int cols = 2, rows = 3;
+    float gridW = btnSize * cols + spacing * (cols - 1);
+    float gridH = btnSize * rows + spacing * (rows - 1);
+    float pad = 3.0f * ps;
+    /* Account for ImGui window padding (6px) */
+    float winPadX = 6.0f;
+    float winPadY = 6.0f;
+    drawInsetRect(dl,
+      c.buildBarX - pad - border, c.buildBarY - pad - border,
+      gridW + winPadX * 2 + (pad + border) * 2,
+      gridH + winPadY * 2 + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: fire/mine button area --- */
+  {
+    float pad = 3.0f * ps;
+    /* Encompass fire, mine, pill view, and tank view buttons */
+    float leftEdge = c.pillViewCenterX - c.pillViewRadius;
+    float topEdge = c.tankViewCenterY - c.tankViewRadius;
+    float rightEdge = c.fireCenterX + c.fireRadius;
+    float bottomEdge = c.fireCenterY + c.fireRadius;
+    drawInsetRect(dl,
+      leftEdge - pad - border, topEdge - pad - border,
+      (rightEdge - leftEdge) + (pad + border) * 2,
+      (bottomEdge - topEdge) + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Right gutter: gunsight +/- buttons --- */
+  {
+    float pad = 3.0f * ps;
+    float leftEdge = c.gsDecCenterX - c.gsDecRadius;
+    float topEdge = c.gsDecCenterY - c.gsDecRadius;
+    float rightEdge = c.gsIncCenterX + c.gsIncRadius;
+    float bottomEdge = c.gsIncCenterY + c.gsIncRadius;
+    drawInsetRect(dl,
+      leftEdge - pad - border, topEdge - pad - border,
+      (rightEdge - leftEdge) + (pad + border) * 2,
+      (bottomEdge - topEdge) + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
+
+  /* --- Bottom: messages overlay area --- */
+  {
+    float pad = 3.0f * ps;
+    float msgH = 76.0f * ps;  /* matches renderMessagesOverlay height */
+    drawInsetRect(dl,
+      c.msgOverlayX - pad - border, c.msgOverlayY - pad - border,
+      c.msgOverlayW + (pad + border) * 2, msgH + (pad + border) * 2,
+      border, colLight, colDark, colBlack);
+  }
 }
 
 /* -------------------------------------------------------
@@ -792,9 +931,9 @@ static void renderTopBarButtons(ClientSim *cs) {
     SDL_Texture *icon;
     const char *fallback;
   } btns[] = {
-    { s_cfg.playersBtnX + radius, btnY + radius, s_iconMessages, "Msg" },
-    { s_cfg.msgBtnX     + radius, btnY + radius, s_iconPlayers,  "Ply" },
-    { s_cfg.cogBtnX     + radius, btnY + radius, s_iconSettings, "Set" },
+    { s_cfg.playersBtnX + radius, btnY + radius, s_iconMessages, langGetText(STR_TABLET_BTN_MSG) },
+    { s_cfg.msgBtnX     + radius, btnY + radius, s_iconPlayers,  langGetText(STR_TABLET_BTN_PLY) },
+    { s_cfg.cogBtnX     + radius, btnY + radius, s_iconSettings, langGetText(STR_TABLET_BTN_SET) },
   };
 
   for (int i = 0; i < 3; i++) {
@@ -973,7 +1112,9 @@ static void renderStatusDrawer(ClientSim *cs) {
   ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - panelW, 0));
   ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
 
-  if (ImGui::Begin("Status", &s_statusDrawerOpen,
+  char statusTitle[128];
+  snprintf(statusTitle, sizeof(statusTitle), "%s###tabletstatus", langGetText(STR_TABLET_STATUS_TITLE));
+  if (ImGui::Begin(statusTitle, &s_statusDrawerOpen,
                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                     ImGuiWindowFlags_NoCollapse)) {
 
@@ -981,22 +1122,25 @@ static void renderStatusDrawer(ClientSim *cs) {
     {
       int kills, deaths;
       screenGetKillsDeathsCS(cs, &kills, &deaths);
-      ImGui::Text("Kills: %d  Deaths: %d", kills, deaths);
+      MessageArgs args = {0};
+      args.number = kills;
+      args.number2 = deaths;
+      ImGui::TextUnformatted(langGetTextFmt(STR_TABLET_KILLS_DEATHS, &args));
     }
     ImGui::Separator();
 
     /* Tank resource bars */
-    if (ImGui::CollapsingHeader("Tank Resources", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANK_RESOURCES), ImGuiTreeNodeFlags_DefaultOpen)) {
       BYTE shells, mines, armour, trees;
       screenGetTankStatsCS(cs, &shells, &mines, &armour, &trees);
-      ImGui::ProgressBar((float)shells / 40.0f, ImVec2(-1, 0), "Shells");
-      ImGui::ProgressBar((float)mines  / 40.0f, ImVec2(-1, 0), "Mines");
-      ImGui::ProgressBar((float)armour / 40.0f, ImVec2(-1, 0), "Armour");
-      ImGui::ProgressBar((float)trees  / 40.0f, ImVec2(-1, 0), "Trees");
+      ImGui::ProgressBar((float)shells / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_SHELLS));
+      ImGui::ProgressBar((float)mines  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_MINES));
+      ImGui::ProgressBar((float)armour / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_ARMOUR));
+      ImGui::ProgressBar((float)trees  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_TREES));
     }
 
     /* Pillbox status */
-    if (ImGui::CollapsingHeader("Pillboxes")) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
       BYTE total = pillsGetNumPills(&cs->sim.pb);
       for (BYTE i = 1; i <= total; i++) {
         pillAlliance pa = screenPillAllianceCS(cs, i);
@@ -1008,13 +1152,15 @@ static void renderStatusDrawer(ClientSim *cs) {
           case pillEvil:    col = ImVec4(0.8f, 0.0f, 0.0f, 1.0f); break;
           default:          col = ImVec4(0.3f, 0.3f, 0.3f, 1.0f); break;
         }
-        ImGui::TextColored(col, "Pill %d", i);
+        MessageArgs args = {};
+        args.number = i;
+        ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_PILL_FMT, &args));
         if (i % 4 != 0 && i < total) ImGui::SameLine(0, 20);
       }
     }
 
     /* Base status */
-    if (ImGui::CollapsingHeader("Bases")) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
       BYTE total = basesGetNumBases(&cs->sim.bs);
       for (BYTE i = 1; i <= total; i++) {
         baseAlliance ba = screenBaseAllianceCS(cs, i);
@@ -1026,13 +1172,15 @@ static void renderStatusDrawer(ClientSim *cs) {
           case baseEvil:    col = ImVec4(0.8f, 0.0f, 0.0f, 1.0f); break;
           default:          col = ImVec4(0.3f, 0.3f, 0.3f, 1.0f); break;
         }
-        ImGui::TextColored(col, "Base %d", i);
+        MessageArgs args = {};
+        args.number = i;
+        ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_BASE_FMT, &args));
         if (i % 4 != 0 && i < total) ImGui::SameLine(0, 20);
       }
     }
 
     /* Tanks status */
-    if (ImGui::CollapsingHeader("Tanks")) {
+    if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANKS))) {
       for (BYTE i = 1; i <= MAX_TANKS; i++) {
         tankAlliance ta = screenTankAllianceCS(cs, i);
         ImVec4 col;
@@ -1043,7 +1191,9 @@ static void renderStatusDrawer(ClientSim *cs) {
           default:          col = ImVec4(0.3f, 0.3f, 0.3f, 1.0f); break;
         }
         if (ta != tankNone) {
-          ImGui::TextColored(col, "Tank %d", i);
+          MessageArgs args = {};
+          args.number = i;
+          ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_TANK_FMT, &args));
           if (i % 4 != 0) ImGui::SameLine(0, 20);
         }
       }
@@ -1219,6 +1369,9 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
 
   /* Reconfigure layout each frame */
   tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
+
+  /* Draw beveled chrome background behind everything */
+  renderTabletBackground();
 
   /* Register button positions for touch hit-testing */
   registerTouchButtons();

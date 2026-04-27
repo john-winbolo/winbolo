@@ -50,6 +50,7 @@ extern "C" {
 #include "../../../bolo/netpacks.h"
 #include "../../../bolo/bolo_packets.h"
 #include "../../../server/geolookup.h"
+#include "../../lang.h"
 #include "imgui_gamebrowser.h"
 }
 
@@ -87,20 +88,20 @@ struct ServerEntry {
 
 static const char *gameTypeStr(gameType g) {
     switch (g) {
-    case gameOpen:           return "Open";
-    case gameTournament:     return "Tournament";
+    case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
+    case gameTournament:     return langGetText(STR_DLGGAMEINFO_TOURN);
     case gameStrictTournament:
-    default:                 return "Strict";
+    default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }
 }
 
 static const char *aiTypeStr(aiType a) {
     switch (a) {
-    case aiNone:         return "No";
-    case aiYes:          return "Yes";
-    case aiYesAdvantage: return "Adv";
+    case aiNone:         return langGetText(STR_NO);
+    case aiYes:          return langGetText(STR_YES);
+    case aiYesAdvantage: return langGetText(STR_DLGBROWSER_AI_ADV);
     case aiFull:
-    default:             return "Full";
+    default:             return langGetText(STR_DLGBROWSER_AI_FULL);
     }
 }
 
@@ -301,30 +302,6 @@ extern "C" void broadcastServerCallback(INFO_PACKET *info, struct in_addr *addr,
 static SDL_Texture *s_refreshIcon = nullptr;
 static bool s_refreshIconAttempted = false;
 
-static SDL_Texture *loadSvgIcon(SDL_Renderer *rend, const char *path, int size) {
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-    float scale = (float)size / image->height;
-    if (image->width * scale > (float)size) scale = (float)size / image->width;
-    int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-    float offX = ((float)w - image->width * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Copy title — the caller passes langGetText() which returns a shared
      * static buffer that gets overwritten by any later langGetText() call
@@ -352,9 +329,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* On desktop, resize window */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
     {
-      char prefixedTitle[192];
-      SDL_snprintf(prefixedTitle, sizeof(prefixedTitle), "WinBolo - %s", title);
-      dialogSetWindowTitle(window, prefixedTitle);
+      MessageArgs args = {};
+      SDL_strlcpy(args.string1, title, sizeof(args.string1));
+      dialogSetWindowTitle(window, langGetTextFmt(STR_DLGBROWSER_WINTITLE, &args));
     }
     SDL_SetWindowResizable(window, true);
 #endif
@@ -467,7 +444,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Status */
     bool loadingGames = false;
-    const char *statusText = useTracker ? "Click Refresh to load games..." : "Click Refresh to scan...";
+    const char *statusText = useTracker ? langGetText(STR_DLGBROWSER_TRACKER_INSTRUCTION) : langGetText(STR_DLGBROWSER_LAN_INSTRUCTION);
 
     /* Error popup */
     const char *errorMsg = nullptr;
@@ -546,7 +523,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (searchResultOk) {
                     int total = (int)servers.size();
                     if (total > 0) {
-                        statusText = "Games loaded.";
+                        statusText = langGetText(STR_DLGBROWSER_GAMES_LOADED);
                         loadingGames = false;
 
                         /* Fire-and-forget async pings to each server */
@@ -563,11 +540,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             }).detach();
                         }
                     } else {
-                        statusText = "No games found. Start one!";
+                        statusText = langGetText(STR_DLGBROWSER_NO_GAMES);
                         loadingGames = false;
                     }
                 } else {
-                    statusText = "Search failed.";
+                    statusText = langGetText(STR_DLGBROWSER_SEARCH_FAILED);
                     loadingGames = false;
                 }
             } else {
@@ -586,11 +563,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
 
                 if (searchResultOk && total > 0) {
-                    statusText = "Games loaded.";
+                    statusText = langGetText(STR_DLGBROWSER_GAMES_LOADED);
                 } else if (searchResultOk) {
-                    statusText = "No games found. Start one!";
+                    statusText = langGetText(STR_DLGBROWSER_NO_GAMES);
                 } else {
-                    statusText = "Search failed.";
+                    statusText = langGetText(STR_DLGBROWSER_SEARCH_FAILED);
                 }
                 loadingGames = false;
             }
@@ -688,7 +665,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 for (int i = 0; i < 2 && !s_refreshIcon; i++) {
                     if (candidates[i]) {
                         SDL_Log("[GameBrowser] Trying refresh icon: %s", candidates[i]);
-                        s_refreshIcon = loadSvgIcon(renderer, candidates[i], iconSize);
+                        s_refreshIcon = imguiLoadSvgIcon(renderer, candidates[i], iconSize);
                     }
                 }
                 SDL_Log("[GameBrowser] Refresh icon loaded: %s", s_refreshIcon ? "yes" : "no");
@@ -720,14 +697,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 ImGui::SameLine(panelW - btnW - 16.0f * s);
                 bool wasSearching = searching;
                 if (wasSearching) ImGui::BeginDisabled();
-                if (ImGui::SmallButton("Refresh")) {
+                if (ImGui::SmallButton(langGetText(STR_DLGBROWSER_REFRESH))) {
                     doRefresh = true;
                 }
                 if (wasSearching) ImGui::EndDisabled();
             }
             if (doRefresh) {
                 autoRefresh = false;
-                statusText = "Searching...";
+                statusText = langGetText(STR_DLGBROWSER_SEARCHING);
                 loadingGames = true;
                 selectedItem = -1;
 
@@ -788,7 +765,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             float time = (float)SDL_GetTicks() / 1000.0f;
             const char *dots[] = { "", ".", "..", "..." };
             int dotIdx = ((int)(time * 2.0f)) % 4;
-            ImGui::Text("Loading games list%s", dots[dotIdx]);
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, dots[dotIdx], sizeof(args.string1));
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_LOADING, &args));
             ImGui::PopStyleColor();
         }
 
@@ -821,14 +800,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::TableSetupScrollFreeze(0, 1); /* freeze header row */
             ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 24.0f);  /* flag */
             ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 20.0f);  /* lock */
-            ImGui::TableSetupColumn("Server",    ImGuiTableColumnFlags_WidthStretch, 0.0f);
-            ImGui::TableSetupColumn("Map",       ImGuiTableColumnFlags_WidthStretch, 0.0f);
-            ImGui::TableSetupColumn("Players",   ImGuiTableColumnFlags_WidthFixed, 55.0f);
-            ImGui::TableSetupColumn("Type",      ImGuiTableColumnFlags_WidthFixed, 80.0f);
-            ImGui::TableSetupColumn("AI",        ImGuiTableColumnFlags_WidthFixed, 45.0f);
-            ImGui::TableSetupColumn("Bases",     ImGuiTableColumnFlags_WidthFixed, 55.0f);
-            ImGui::TableSetupColumn("Pills",     ImGuiTableColumnFlags_WidthFixed, 55.0f);
-            ImGui::TableSetupColumn("Ping",      ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_SERVER),  ImGuiTableColumnFlags_WidthStretch, 0.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_MAP),     ImGuiTableColumnFlags_WidthStretch, 0.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PLAYERS), ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_TYPE),    ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_AI),      ImGuiTableColumnFlags_WidthFixed, 45.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_BASES),   ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PILLS),   ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PING),    ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);
             ImGui::TableHeadersRow();
 
             /* Sort */
@@ -978,22 +957,32 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* ---- Filters row ---- */
         {
             ImGui::AlignTextToFramePadding();
-            ImGui::Text("Filter:");
+            ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_FILTER));
             ImGui::SameLine();
 
             ImGui::SetNextItemWidth(130.0f * s);
-            const char *gameTypes[] = { "All Types", "Open", "Tournament", "Strict" };
+            const char *gameTypes[] = {
+                langGetText(STR_DLGBROWSER_FILTER_ALLTYPES),
+                langGetText(STR_DLGGAMEINFO_OPEN),
+                langGetText(STR_DLGGAMEINFO_TOURN),
+                langGetText(STR_DLGGAMESETUP_STRICT_SHORT),
+            };
             int gtIdx = (filterGameType < 0) ? 0 : filterGameType;
             if (ImGui::Combo("##filterType", &gtIdx, gameTypes, 4)) {
                 filterGameType = (gtIdx == 0) ? -1 : gtIdx;
             }
 
             ImGui::SameLine();
-            ImGui::Checkbox("Unlocked Only", &filterLocked);
+            ImGui::Checkbox(langGetText(STR_DLGBROWSER_FILTER_UNLOCKED), &filterLocked);
 
             ImGui::SameLine();
             ImGui::SetNextItemWidth(130.0f * s);
-            const char *lobbyOpts[] = { "All Lobby", "None", "In Lobby", "Starting" };
+            const char *lobbyOpts[] = {
+                langGetText(STR_DLGBROWSER_FILTER_ALLLOBBY),
+                langGetText(STR_NONE),
+                langGetText(STR_DLGBROWSER_FILTER_INLOBBY),
+                langGetText(STR_DLGBROWSER_FILTER_STARTING),
+            };
             int lobbyIdx = (filterLobby < 0) ? 0 : filterLobby + 1;
             if (ImGui::Combo("##filterLobby", &lobbyIdx, lobbyOpts, 4)) {
                 filterLobby = (lobbyIdx == 0) ? -1 : lobbyIdx - 1;
@@ -1014,14 +1003,24 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     if (s.pingMs == -1) pendingPings++;
                 }
             }
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, statusText, sizeof(args.string1));
+            args.number = total;
             if (pendingPings > 0) {
-                ImGui::Text("Status: %s  |  %d servers  |  Pinging %d...", statusText, total, pendingPings);
+                args.number2 = pendingPings;
+                ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS_PINGING, &args));
             } else {
-                ImGui::Text("Status: %s  |  %d servers", statusText, total);
+                ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS, &args));
             }
         }
 
         ImGui::Spacing();
+
+        /* Modal popup IDs (built once per frame, used by both Open and Begin) */
+        char errPopupId[64];
+        SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##gb", langGetText(STR_ERR_TITLE));
+        char setNamePopupId[64];
+        SDL_snprintf(setNamePopupId, sizeof(setNamePopupId), "%s##gb", langGetText(STR_DLGSETPLAYERNAME_TITLE));
 
         /* ---- Button row ---- */
         float btnW = 110.0f * s;
@@ -1031,18 +1030,19 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Join */
             if (!hasSelection) ImGui::BeginDisabled();
-            if (ImGui::Button("Join", ImVec2(btnW, btnH))) {
+
+            if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
                 if (strlen(e.version) < STRVER_LEN ||
                     strncmp(e.version, STRVER, STRVER_LEN) != 0) {
-                    errorMsg = "Server is running a different version of WinBolo.";
-                    ImGui::OpenPopup("Error##gb");
+                    errorMsg = langGetText(STR_DLGBROWSER_ERR_VERSION);
+                    ImGui::OpenPopup(errPopupId);
                 } else {
                     char playerName[PLAYER_NAME_LEN];
                     gameFrontGetPlayerName(playerName);
                     if (strlen(playerName) == 0) {
-                        errorMsg = "You must set a player name first.";
-                        ImGui::OpenPopup("Error##gb");
+                        errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
+                        ImGui::OpenPopup(errPopupId);
                     } else {
                         gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
                         gameFrontSetAIType(e.ai);
@@ -1057,18 +1057,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* Rejoin */
             ImGui::SameLine();
             if (!hasSelection) ImGui::BeginDisabled();
-            if (ImGui::Button("Rejoin", ImVec2(btnW, btnH))) {
+            if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
                 if (strlen(e.version) < STRVER_LEN ||
                     strncmp(e.version, STRVER, STRVER_LEN) != 0) {
-                    errorMsg = "Server is running a different version of WinBolo.";
-                    ImGui::OpenPopup("Error##gb");
+                    errorMsg = langGetText(STR_DLGBROWSER_ERR_VERSION);
+                    ImGui::OpenPopup(errPopupId);
                 } else {
                     char playerName[PLAYER_NAME_LEN];
                     gameFrontGetPlayerName(playerName);
                     if (strlen(playerName) == 0) {
-                        errorMsg = "You must set a player name first.";
-                        ImGui::OpenPopup("Error##gb");
+                        errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
+                        ImGui::OpenPopup(errPopupId);
                     } else {
                         gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
                         gameFrontSetAIType(e.ai);
@@ -1083,26 +1083,29 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* New Game */
             ImGui::SameLine();
-            if (ImGui::Button("New Game", ImVec2(btnW, btnH))) {
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(btnW, btnH))) {
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
-                gameFrontSetUdpOptions(playerName, (char *)"", 27500, 0);
+                gameFrontSetUdpOptions(playerName, (char *)"", 27500, 27500);
                 openingStates setupState = useTracker ? openInternetSetup : openLanSetup;
                 gameFrontSetDlgState(setupState);
                 result = (int)setupState;
                 running = false;
             }
+            if (useTracker && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
+            }
 
             /* Player Name */
             ImGui::SameLine(0.0f, 20.0f);
-            if (ImGui::Button("Player Name", ImVec2(btnW + 30.0f * s, btnH))) {
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN), ImVec2(btnW + 30.0f * s, btnH))) {
                 gameFrontGetPlayerName(nameEditBuf);
-                ImGui::OpenPopup("Set Player Name##gb");
+                ImGui::OpenPopup(setNamePopupId);
             }
 
             /* Manual Connect */
             ImGui::SameLine();
-            if (ImGui::Button("Manual", ImVec2(btnW, btnH))) {
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL), ImVec2(btnW, btnH))) {
                 /* Open the existing UDP setup dialog */
                 gameFrontSetDlgState(useTracker ? openInternetManual : openLanManual);
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
@@ -1113,38 +1116,47 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::SameLine(panelW - btnW - 16.0f * s);
             bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                               !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
-            if (ImGui::Button("Cancel", ImVec2(btnW, btnH)) || escPressed) {
+            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH)) || escPressed) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
         }
 
         /* ---- Error popup ---- */
-        if (ImGui::BeginPopupModal("Error##gb", nullptr,
+        if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button("OK##err", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
+            {
+                char okBuf[64];
+                snprintf(okBuf, sizeof(okBuf), "%s##err", langGetText(STR_OK));
+                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }
 
         /* ---- Set Player Name popup ---- */
-        if (ImGui::BeginPopupModal("Set Player Name##gb", nullptr,
+        if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Player Name:");
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(200 * s);
             ImGui::InputText("##nameEdit", nameEditBuf, PLAYER_NAME_LEN);
             ImGui::Spacing();
-            if (ImGui::Button("OK##name", ImVec2(80 * s, 0))) {
-                gameFrontSetPlayerName(nameEditBuf);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("Cancel##name", ImVec2(80 * s, 0))) {
-                ImGui::CloseCurrentPopup();
+            {
+                char okBuf[64], cancelBuf[64];
+                snprintf(okBuf,     sizeof(okBuf),     "%s##name", langGetText(STR_OK));
+                snprintf(cancelBuf, sizeof(cancelBuf), "%s##name", langGetText(STR_CANCEL));
+                if (ImGui::Button(okBuf, ImVec2(80 * s, 0))) {
+                    gameFrontSetPlayerName(nameEditBuf);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(0.0f, 8.0f);
+                if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }

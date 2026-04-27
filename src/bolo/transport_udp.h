@@ -110,14 +110,18 @@ typedef enum {
  * Returns a Transport struct with sendInput and tick callbacks.
  * serverAddr/serverPort: the server to connect to.
  * playerName: name to use in join request.
- * password: game password (empty string if none). */
+ * password: game password (empty string if none).
+ * trackerAddr: "" or NULL = no punch fallback (LAN/manual-connect).
+ * trackerPort: ignored if trackerAddr empty. */
 Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
                                    const char *wbnToken,
-                                   bool wantRejoin);
+                                   bool wantRejoin,
+                                   const char *trackerAddr,
+                                   unsigned short trackerPort);
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);
@@ -347,5 +351,40 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum);
 void transportUdpServerSendTrackerUpdate(struct ServerSim *sim,
                                          const char *trackerAddr,
                                          unsigned short trackerPort);
+
+/* Override the public address advertised in INFO_PACKET responses
+ * (broadcast info requests + tracker updates).  Pass externalPort=0 (or
+ * a NULL/empty externalIp) to revert to the internal port and zero
+ * address.
+ *
+ * Used by the GUI host's UPnP/NAT-PMP path: once libplum reports the
+ * external mapping, future INFO_PACKETs advertise the gateway's
+ * external IP:port rather than the host's internal port (which
+ * joiners on the public Internet can't reach). */
+void transportUdpServerSetPublicAddress(const char *externalIp,
+                                        unsigned short externalPort);
+
+/* Send an 8-byte WBKA + game-token sentinel to the tracker over the
+ * same socket the server is bound to, so the host's NAT mapping for
+ * that source port stays alive between heavier tracker updates and
+ * the tracker can disambiguate multiple games behind one NAT via the
+ * (sourceIp, starttime) tuple. */
+void transportUdpServerSendNatKeepalive(struct ServerSim *sim,
+                                        const char *trackerAddr,
+                                        unsigned short trackerPort);
+
+/* Send an 8-byte PACKET_PUNCH_PROBE_REQUEST to the tracker on the
+ * server's socket. The tracker replies (PACKET_PUNCH_PROBE_REPLY)
+ * with the source IP:port it sees us as, so we can detect symmetric
+ * NAT (libplum's external address vs the tracker's reflexive view)
+ * and confirm bidirectional reachability before joiners attempt to
+ * connect. */
+void transportUdpServerSendPunchProbe(const char *trackerAddr,
+                                      unsigned short trackerPort);
+
+/* Send one punch packet per queued entry, throttled to roughly
+ * PUNCH_BURST_INTERVAL ticks between sends. Called from the server
+ * lifecycle tick. */
+void transportUdpServerDrainPunchQueue(void);
 
 #endif /* TRANSPORT_UDP_H */

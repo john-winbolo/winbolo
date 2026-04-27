@@ -22,6 +22,7 @@
 #include "mapeditor_generate.h"
 #include "mapeditor_maze.h"
 #include "mapeditor_imgui.h"
+#include "../gui/lang.h"
 
 /* --- Renderer for lock icon loading --- */
 
@@ -40,29 +41,21 @@ void mapEditorImguiSetRenderer(SDL_Renderer *renderer) {
 }
 
 /* --- String tables --- */
-
-static const char *s_genTypeNames[]   = { "Tournament", "Natural", "Maze", "Fractal" };
-static const char *s_mazeAlgoNames[]  = { "Labyrinth", "Open" };
-static const char *s_symModeNames[]   = { "4-Corner Mirror", "Mirror Horizontal",
-                                          "Mirror Vertical", "Rotate 180\xC2\xB0",
-                                          "Rotate 90\xC2\xB0" };
-static const char *s_roughnessNames[] = { "Low", "Medium", "High" };
-static const char *s_mapStyleNames[]  = { "Ocean", "Continent", "Islands",
-                                          "Archipelago", "Inland" };
+/* Lang IDs are resolved at use time so language switches take effect immediately. */
 
 /* Terrain types for maze wall/corridor combo (non-mined only) */
-static const struct { const char *name; int value; } s_terrainTypes[] = {
-    { "Building",      BUILDING },
-    { "Half Building", HALFBUILDING },
-    { "Road",          ROAD },
-    { "Grass",         GRASS },
-    { "Forest",        FOREST },
-    { "River",         RIVER },
-    { "Swamp",         SWAMP },
-    { "Crater",        CRATER },
-    { "Rubble",        RUBBLE },
-    { "Boat",          BOAT },
-    { "Deep Sea",      DEEP_SEA },
+static const struct { langid nameId; int value; } s_terrainTypes[] = {
+    { STR_MAPEDIT_TERR_BUILDING,     BUILDING },
+    { STR_MAPEDIT_TERR_HALFBUILDING, HALFBUILDING },
+    { STR_MAPEDIT_TERR_ROAD,         ROAD },
+    { STR_MAPEDIT_TERR_GRASS,        GRASS },
+    { STR_MAPEDIT_TERR_FOREST,       FOREST },
+    { STR_MAPEDIT_TERR_RIVER,        RIVER },
+    { STR_MAPEDIT_TERR_SWAMP,        SWAMP },
+    { STR_MAPEDIT_TERR_CRATER,       CRATER },
+    { STR_MAPEDIT_TERR_RUBBLE,       RUBBLE },
+    { STR_MAPEDIT_TERR_BOAT,         BOAT },
+    { STR_MAPEDIT_TERR_DEEPSEA,      DEEP_SEA },
 };
 #define NUM_TERRAIN_TYPES 11
 
@@ -70,7 +63,7 @@ static bool terrainCombo(const char *label, int *terrain) {
     const char *preview = "?";
     for (int i = 0; i < NUM_TERRAIN_TYPES; i++) {
         if (s_terrainTypes[i].value == *terrain) {
-            preview = s_terrainTypes[i].name;
+            preview = langGetText(s_terrainTypes[i].nameId);
             break;
         }
     }
@@ -78,7 +71,7 @@ static bool terrainCombo(const char *label, int *terrain) {
     if (ImGui::BeginCombo(label, preview)) {
         for (int i = 0; i < NUM_TERRAIN_TYPES; i++) {
             bool selected = (s_terrainTypes[i].value == *terrain);
-            if (ImGui::Selectable(s_terrainTypes[i].name, selected)) {
+            if (ImGui::Selectable(langGetText(s_terrainTypes[i].nameId), selected)) {
                 *terrain = s_terrainTypes[i].value;
                 changed = true;
             }
@@ -159,7 +152,7 @@ static void lockButton(const char *id, uint64_t *locks, uint64_t bit) {
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(locked ? "Locked: won't change on Randomize" : "Unlocked: will change on Randomize");
+        ImGui::SetTooltip("%s", langGetText(locked ? STR_MAPGEN_LOCKED_TIP : STR_MAPGEN_UNLOCKED_TIP));
     }
     ImGui::PopID();
 }
@@ -257,7 +250,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
 
     /* Generator type */
     int prevGenType = cfg->genType;
-    ImGui::Combo("Generator", &cfg->genType, s_genTypeNames, MAPGEN_TYPE_COUNT);
+    const char *s_genTypeNames[MAPGEN_TYPE_COUNT] = {
+        langGetText(STR_MAPGEN_TYPE_TOURNAMENT),
+        langGetText(STR_MAPGEN_TYPE_NATURAL),
+        langGetText(STR_MAPGEN_TYPE_MAZE),
+        langGetText(STR_MAPGEN_TYPE_FRACTAL),
+    };
+    ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &cfg->genType, s_genTypeNames, MAPGEN_TYPE_COUNT);
     lockButton("lk_gentype", &cfg->locks, MAPGEN_LOCK_GENTYPE);
     if (cfg->genType != prevGenType) {
         static MapGenConfig savedConfigs[MAPGEN_TYPE_COUNT];
@@ -291,7 +290,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     /* Seed */
     ImGui::Separator();
     ImGui::SetNextItemWidth(200);
-    if (ImGui::InputText("Seed", seedBuf, sizeof(seedBuf),
+    if (ImGui::InputText(langGetText(STR_MAPGEN_SEED), seedBuf, sizeof(seedBuf),
                          ImGuiInputTextFlags_EnterReturnsTrue)) {
         if (mapGenSeedToConfig(seedBuf, cfg)) {
             mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
@@ -300,7 +299,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     seedFieldActive = ImGui::IsItemActive();
     lockButton("lk_seed", &cfg->locks, MAPGEN_LOCK_SEED);
     ImGui::SameLine();
-    if (ImGui::Button("Randomize")) {
+    if (ImGui::Button(langGetText(STR_MAPGEN_RANDOMIZE))) {
         uint32_t rng = (uint32_t)SDL_GetTicksNS();
         uint64_t lk = cfg->locks;
         if (!(lk & MAPGEN_LOCK_SEED))    cfg->seed = rng;
@@ -369,7 +368,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         generated = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Copy Seed")) {
+    if (ImGui::Button(langGetText(STR_DLGGAMEINFO_COPYSEED))) {
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
         SDL_SetClipboardText(seedBuf);
     }
@@ -378,20 +377,39 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     if (cfg->genType == MAPGEN_TOURNAMENT) {
         auto &t = cfg->params.tournament;
 
-        ImGui::Combo("Symmetry", &t.symmetryMode, s_symModeNames, MAPGEN_SYM_COUNT);
+        const char *s_symModeNames[MAPGEN_SYM_COUNT] = {
+            langGetText(STR_MAPGEN_SYM_4CORNER),
+            langGetText(STR_MAPGEN_SYM_MIRROR_H),
+            langGetText(STR_MAPGEN_SYM_MIRROR_V),
+            langGetText(STR_MAPGEN_SYM_ROT180),
+            langGetText(STR_MAPGEN_SYM_ROT90),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_SYMMETRY), &t.symmetryMode, s_symModeNames, MAPGEN_SYM_COUNT);
         lockButton("lk_sym", &cfg->locks, MAPGEN_LOCK_T_SYMMETRY);
-        ImGui::SliderInt("Land Mass %", &t.landMassPct, 1, 25);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_LANDMASS_PCT), &t.landMassPct, 1, 25);
         lockButton("lk_land", &cfg->locks, MAPGEN_LOCK_T_LANDMASS);
-        ImGui::Combo("Roughness", &t.roughness, s_roughnessNames, MAPGEN_ROUGH_COUNT);
+        const char *s_roughnessNames[MAPGEN_ROUGH_COUNT] = {
+            langGetText(STR_MAPGEN_ROUGH_LOW),
+            langGetText(STR_MAPGEN_ROUGH_MED),
+            langGetText(STR_MAPGEN_ROUGH_HIGH),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_ROUGHNESS), &t.roughness, s_roughnessNames, MAPGEN_ROUGH_COUNT);
         lockButton("lk_rough", &cfg->locks, MAPGEN_LOCK_T_ROUGHNESS);
-        ImGui::Checkbox("Include Roads", &t.includeRoads);
+        ImGui::Checkbox(langGetText(STR_MAPGEN_INCLUDE_ROADS), &t.includeRoads);
         lockButton("lk_roads", &cfg->locks, MAPGEN_LOCK_T_ROADS);
 
     } else if (cfg->genType == MAPGEN_NATURAL) {
         auto &n = cfg->params.natural;
 
         int prevStyle = n.mapStyle;
-        ImGui::Combo("Map Style", &n.mapStyle, s_mapStyleNames, MAPGEN_STYLE_COUNT);
+        const char *s_mapStyleNames[MAPGEN_STYLE_COUNT] = {
+            langGetText(STR_MAPGEN_STYLE_OCEAN),
+            langGetText(STR_MAPGEN_STYLE_CONTINENT),
+            langGetText(STR_MAPGEN_STYLE_ISLANDS),
+            langGetText(STR_MAPGEN_STYLE_ARCHIPELAGO),
+            langGetText(STR_MAPGEN_STYLE_INLAND),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_MAP_STYLE), &n.mapStyle, s_mapStyleNames, MAPGEN_STYLE_COUNT);
         lockButton("lk_style", &cfg->locks, MAPGEN_LOCK_N_STYLE);
         if (n.mapStyle != prevStyle) {
             MapGenConfig saved = *cfg;
@@ -400,15 +418,20 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         }
 
         ImGui::Spacing();
-        ImGui::Text("Terrain Mix (%%  of land):");
+        ImGui::TextUnformatted(langGetText(STR_MAPGEN_TERRAIN_MIX));
 
         int *terrainPcts[] = { &n.grassPct, &n.forestPct, &n.buildingPct,
                                &n.swampPct, &n.riverPct };
         const uint32_t terrainLocks[] = {
             MAPGEN_LOCK_N_GRASS, MAPGEN_LOCK_N_FOREST, MAPGEN_LOCK_N_BUILDING,
             MAPGEN_LOCK_N_SWAMP, MAPGEN_LOCK_N_RIVER };
-        const char *terrainLabels[] = { "Grass %", "Forest %", "Building %",
-                                        "Swamp %", "River %" };
+        const char *terrainLabels[] = {
+            langGetText(STR_MAPGEN_GRASS_PCT),
+            langGetText(STR_MAPGEN_FOREST_PCT),
+            langGetText(STR_MAPGEN_BUILDING_PCT),
+            langGetText(STR_MAPGEN_SWAMP_PCT),
+            langGetText(STR_MAPGEN_RIVER_PCT),
+        };
         const char *terrainLockIds[] = { "lk_grass", "lk_forest", "lk_bldg",
                                          "lk_swamp", "lk_river" };
         const int numTerrainSliders = 5;
@@ -453,88 +476,96 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             }
         }
 
-        ImGui::SliderInt("Boat %", &n.boatPct, 0, 100);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_BOAT_PCT), &n.boatPct, 0, 100);
         lockButton("lk_boat", &cfg->locks, MAPGEN_LOCK_N_BOAT);
 
         int total = n.grassPct + n.forestPct + n.buildingPct + n.swampPct + n.riverPct;
         int remaining = 100 - total;
         if (remaining < 0) remaining = 0;
-        ImGui::Text("Remaining grass: %d%%", remaining);
+        {
+            MessageArgs args = {};
+            args.number = remaining;
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPGEN_REMAINING_GRASS, &args));
+        }
 
         ImGui::Spacing();
-        ImGui::SliderInt("Mine Density %", &n.mineDensityPct, 0, 5);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_MINE_DENSITY), &n.mineDensityPct, 0, 5);
         lockButton("lk_mines", &cfg->locks, MAPGEN_LOCK_N_MINES);
-        ImGui::SliderInt("River Count", &n.riverCount, 0, 5);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_RIVER_COUNT), &n.riverCount, 0, 5);
         lockButton("lk_rcount", &cfg->locks, MAPGEN_LOCK_N_RIVERCOUNT);
-        ImGui::SliderInt("City Count", &n.cityCount, 0, 10);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_CITY_COUNT), &n.cityCount, 0, 10);
         lockButton("lk_ccount", &cfg->locks, MAPGEN_LOCK_N_CITYCOUNT);
-        ImGui::SliderInt("Maze Count", &n.mazeCount, 0, 5);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_MAZE_COUNT), &n.mazeCount, 0, 5);
         lockButton("lk_mzcount", &cfg->locks, MAPGEN_LOCK_N_MAZECOUNT);
 
     } else if (cfg->genType == MAPGEN_MAZE) {
         auto &m = cfg->params.maze;
 
-        ImGui::Combo("Algorithm", &m.algo, s_mazeAlgoNames, MAZE_ALGO_COUNT);
+        const char *s_mazeAlgoNames[MAZE_ALGO_COUNT] = {
+            langGetText(STR_MAPEDIT_ALGO_LABYRINTH),
+            langGetText(STR_MAPEDIT_ALGO_OPEN),
+        };
+        ImGui::Combo(langGetText(STR_MAPEDIT_ALGORITHM), &m.algo, s_mazeAlgoNames, MAZE_ALGO_COUNT);
         lockButton("lk_malgo", &cfg->locks, MAPGEN_LOCK_M_ALGO);
 
         int wallIdx = m.wallThick - 1;
-        ImGui::SliderInt("Wall Thickness", &wallIdx, 0, 1, wallIdx == 0 ? "1" : "2");
+        ImGui::SliderInt(langGetText(STR_MAPGEN_WALL_THICKNESS), &wallIdx, 0, 1, wallIdx == 0 ? "1" : "2");
         m.wallThick = wallIdx + 1;
         lockButton("lk_mwall", &cfg->locks, MAPGEN_LOCK_M_WALLTHICK);
 
         int corrIdx = m.corridorWidth - 1;
-        ImGui::SliderInt("Corridor Width", &corrIdx, 0, 1, corrIdx == 0 ? "1" : "2");
+        ImGui::SliderInt(langGetText(STR_MAPGEN_CORRIDOR_WIDTH), &corrIdx, 0, 1, corrIdx == 0 ? "1" : "2");
         m.corridorWidth = corrIdx + 1;
         lockButton("lk_mcorr", &cfg->locks, MAPGEN_LOCK_M_CORRIDOR);
 
-        ImGui::SliderInt("Entries", &m.entries, 1, 8);
+        ImGui::SliderInt(langGetText(STR_MAPEDIT_ENTRIES), &m.entries, 1, 8);
         lockButton("lk_mentries", &cfg->locks, MAPGEN_LOCK_M_ENTRIES);
 
-        ImGui::SliderInt("City Rooms", &m.cityRooms, 0, 5);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_CITY_ROOMS), &m.cityRooms, 0, 5);
         lockButton("lk_mrooms", &cfg->locks, MAPGEN_LOCK_M_CITYROOMS);
 
         ImGui::Spacing();
-        terrainCombo("Wall Terrain", &m.wallTerrain);
+        terrainCombo(langGetText(STR_MAPEDIT_WALLTERRAIN), &m.wallTerrain);
         lockButton("lk_mwterr", &cfg->locks, MAPGEN_LOCK_M_WALLTERR);
-        terrainCombo("Corridor Terrain", &m.corridorTerrain);
+        terrainCombo(langGetText(STR_MAPEDIT_CORRIDORTERRAIN), &m.corridorTerrain);
         lockButton("lk_mcterr", &cfg->locks, MAPGEN_LOCK_M_CORRTERR);
 
     } else if (cfg->genType == MAPGEN_FRACTAL) {
         auto &f = cfg->params.fractal;
 
-        ImGui::SliderInt("Land Coverage %", &f.landPct, 5, 80);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_LAND_COVERAGE), &f.landPct, 5, 80);
         lockButton("lk_fland", &cfg->locks, MAPGEN_LOCK_F_LAND);
-        ImGui::SliderInt("Roughness", &f.roughness, 1, 10);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_ROUGHNESS), &f.roughness, 1, 10);
         lockButton("lk_frough", &cfg->locks, MAPGEN_LOCK_F_ROUGHNESS);
-        ImGui::SliderInt("Detail Passes", &f.detail, 1, 5);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_DETAIL_PASSES), &f.detail, 1, 5);
         lockButton("lk_fdetail", &cfg->locks, MAPGEN_LOCK_F_DETAIL);
-        ImGui::SliderInt("Coast Jaggedness", &f.coastJaggedness, 0, 10);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_COAST_JAG), &f.coastJaggedness, 0, 10);
         lockButton("lk_fcoast", &cfg->locks, MAPGEN_LOCK_F_COAST);
-        ImGui::SliderInt("Terrain Layers", &f.terrainLayers, 2, 6);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_TERRAIN_LAYERS), &f.terrainLayers, 2, 6);
         lockButton("lk_flayers", &cfg->locks, MAPGEN_LOCK_F_LAYERS);
 
-        ImGui::Checkbox("Rivers", &f.rivers);
+        ImGui::Checkbox(langGetText(STR_MAPGEN_RIVERS), &f.rivers);
         lockButton("lk_frivers", &cfg->locks, MAPGEN_LOCK_F_RIVERS);
         if (!f.rivers) ImGui::BeginDisabled();
-        ImGui::Checkbox("Lakes", &f.lakes);
+        ImGui::Checkbox(langGetText(STR_MAPGEN_LAKES), &f.lakes);
         if (!f.rivers) {
             f.lakes = false;
             ImGui::EndDisabled();
         }
 
         ImGui::Spacing();
-        ImGui::SliderInt("Mine Density %", &f.mineDensityPct, 0, 5);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_MINE_DENSITY), &f.mineDensityPct, 0, 5);
         lockButton("lk_fmines", &cfg->locks, MAPGEN_LOCK_F_MINES);
     }
 
     /* Shared bases/pills/starts */
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::SliderInt("Bases", &cfg->bases, 0, 16);
+    ImGui::SliderInt(langGetText(STR_TABLET_BASES), &cfg->bases, 0, 16);
     lockButton("lk_bases", &cfg->locks, MAPGEN_LOCK_BASES);
-    ImGui::SliderInt("Pillboxes", &cfg->pills, 0, 16);
+    ImGui::SliderInt(langGetText(STR_TABLET_PILLBOXES), &cfg->pills, 0, 16);
     lockButton("lk_pills", &cfg->locks, MAPGEN_LOCK_PILLS);
-    ImGui::SliderInt("Starts", &cfg->starts, 0, 16);
+    ImGui::SliderInt(langGetText(STR_MAPEDIT_STATS_STARTS), &cfg->starts, 0, 16);
     lockButton("lk_starts", &cfg->locks, MAPGEN_LOCK_STARTS);
 
     /* Detect parameter changes (ignore lock-only changes) */

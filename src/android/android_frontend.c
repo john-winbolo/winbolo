@@ -27,7 +27,6 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
-#include "../gui/aresource.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "players_panel.h"
 

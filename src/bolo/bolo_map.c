@@ -52,9 +52,6 @@ void mapSetChangeCallback(MapChangeCallback cb) {
     mapChangeCb = cb;
 }
 
-#undef MAP_MAX_SERVER_WAIT
-#define MAP_MAX_SERVER_WAIT 200
-
 int lzwdecoding(unsigned char *src, unsigned char *dest, int len);
 int lzwencoding(unsigned char *src, unsigned char *dest, int len);
 
@@ -80,8 +77,6 @@ void mapCreate(map *value) {
       ((*value)->mapItem[count][count2]) = DEEP_SEA;
     }
   }
-  (*value)->mn = NULL;
-  (*value)->mninc = NULL;
 }
 
 /*********************************************************
@@ -96,24 +91,7 @@ void mapCreate(map *value) {
 *  value - Pointer to the map file
 *********************************************************/
 void mapDestroy(map *value) {
-  mapNet q;
-  
   if (*value != NULL) {
-    q = (*value)->mn;
-    while (NonEmpty((*value)->mn)) {
-      (*value)->mn = MapNetTail(q);
-      Dispose(q);
-      q = (*value)->mn;
-    }
-
-    q = (*value)->mninc;
-    while (NonEmpty((*value)->mninc)) {
-      (*value)->mninc = MapNetTail(q);
-      Dispose(q);
-      q = (*value)->mninc;
-    }
-    (*value)->mn = NULL;
-    (*value)->mninc = NULL;
     Dispose(*value);
   }
   *value = NULL;
@@ -885,6 +863,7 @@ bool mapIsPassable(map *value, BYTE xValue, BYTE yValue, bool onBoat) {
 *             from under bases on start up
 *********************************************************/
 void mapSetPos(GameSim *sim, map *value, BYTE xValue, BYTE yValue, BYTE terrain, bool needSend, bool mineClear) {
+  (void)needSend;
   if (sim->isServer == TRUE || mineClear == TRUE) {
     /* Server-authoritative: directly set terrain.  This covers both
      * single-player (netSingle) and the server sim. */
@@ -893,10 +872,11 @@ void mapSetPos(GameSim *sim, map *value, BYTE xValue, BYTE yValue, BYTE terrain,
         mapChangeCb(xValue, yValue, terrain);
       }
       screenBrainMapSetPos(sim->brainMap, xValue, yValue, terrain, minesExistPos(&sim->mns, &sim->mp, xValue, yValue));
-  } else {
-    /* Client in a networked game — queue for network sync */
-    mapNetAdd(sim, value, xValue, yValue, terrain, needSend);
   }
+  /* Client-side path: terrain mutations are server-authoritative under
+   * the ServerSim model — the client receives the change via
+   * EVENT_MAP_CHANGE rather than queueing a request, so there is
+   * nothing to do here. */
   logAddEvent(log_MapChange, xValue, yValue, terrain, 0, 0, NULL);
 }
 
@@ -1343,398 +1323,6 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 }
 
 /*********************************************************
-*NAME:          mapNetAdd
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 27/11/99
-*PURPOSE:
-* Adds a item to the mapNet structure. If an item already
-* exists at that position it repaces it with the new
-* terrain.
-*
-*ARGUMENTS:
-*  value    - Pointer to the map structure
-*  mx       - Current X position
-*  my       - Current Y position
-*  terrain  - Terrain to place
-*  needSend - Should we send this update?
-*********************************************************/
-void mapNetAdd(GameSim *sim, map *value, BYTE mx, BYTE my, BYTE terrain, bool needSend) {
-  mapNet q;
-  bool done;
-
-
-  done = FALSE;
-  /* Check to see it is in the incoming buffer */
-  if (sim->isServer == FALSE) {
-    q = (*value)->mninc;
-    while (NonEmpty(q) && done == FALSE) {
-      if (q->mx == mx && q->my == my && q->terrain == terrain) {
-        /* Exists */
-        (*value)->mapItem[mx][my] = terrain;
-        screenBrainMapSetPos(sim->brainMap, mx, my, terrain, minesExistPos(&sim->mns, &sim->mp, mx, my));
-        if (q->prev != NULL) {
-          q->prev->next = q->next;
-        } else {
-          (*value)->mninc = MapNetTail((*value)->mninc);
-          if (NonEmpty((*value)->mninc)) {
-            (*value)->mninc->prev = NULL;
-          }
-        }
-        if (q->next != NULL) {
-          q->next->prev = q->prev;
-        }
-        Dispose(q);
-        done = TRUE;
-      } else {
-        q = MapNetTail(q);
-      }
-    }
-  } /*else if (terrain == RIVER || terrain == CRATER) {
-      floodAddItem(mx, my);
-  } */
-
-  if (done == FALSE && (*value)->mapItem[mx][my] == RIVER && (terrain == CRATER || terrain == MINE_CRATER)) {
-    return;
-  }
-
-
-  if ((*value)->mapItem[mx][my] != terrain) {
-    q = (*value)->mn;
-    while (NonEmpty(q) && done == FALSE) {
-      if (q->mx == mx && q->my == my) {
-        q->terrain = terrain;
-        q->length = 0;
-        q->needSend = needSend;
-        done = TRUE;
-      }
-      q = MapNetTail(q);
-    }
-    /* If not found then add it */
-    if (done == FALSE) {
-      New(q);
-      q->mx = mx;
-      q->my = my;
-      q->terrain = terrain;
-      q->oldTerrain = (*value)->mapItem[mx][my];
-      q->length = 0;
-      q->needSend = needSend;
-      q->next = (*value)->mn;
-      q->prev = NULL;
-      if (NonEmpty((*value)->mn)) {
-        (*value)->mn->prev = q;
-      }
-      (*value)->mn = q;
-    }
-    (*value)->mapItem[mx][my] = terrain;
-    screenBrainMapSetPos(sim->brainMap, mx, my, terrain, minesExistPos(&sim->mns, &sim->mp, mx, my));
-  }
-
-}
-
-/*********************************************************
-*NAME:          mapNetUpdate
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 30/10/99
-*PURPOSE:
-* Updates the time the items have been waiting for the 
-* server to authenticate them. If it reaches the expiry
-* date then it is restored.
-*
-*ARGUMENTS:
-*  value   - Pointer to map structure
-*  pb      - Pointer to the pillboxes strucuture
-*  bs      - Pointer to the bases strucuture
-*********************************************************/
-void mapNetUpdate(GameSim *sim) {
-  map *value = &sim->mp;
-  pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
-  mapNet q;        /* Used in looping */
-  bool needRedraw; /* Do we need a redraw */
-  mapNet del;
-
-  needRedraw = FALSE;
-
-  q = (*value)->mn;
-  while (NonEmpty(q)) {
-    q->length = q->length +1;
-    if (q->length > MAP_MAX_SERVER_WAIT && q->needSend == FALSE) {
-      sim->callbacks.messageAdd(sim->callbacks.ctx, networkMessage, (char *) "\0", (char *) "at");
-      if (q->oldTerrain >= MINE_START && q->oldTerrain <= MINE_END) {
-        q->oldTerrain -= MINE_SUBTRACT;
-      }
-      (*value)->mapItem[q->mx][q->my] = q->oldTerrain;
-      mapNetCheckWater(sim, value, pb, bs, q->mx, q->my);
-      screenBrainMapSetPos(sim->brainMap, q->mx, q->my, (*value)->mapItem[q->mx][q->my], minesExistPos(&sim->mns, &sim->mp, q->mx, q->my));
-//        if (q->oldTerrain == CRATER) {
-//          floodAddItem(q->mx, q->my);
-//        }
-      needRedraw = TRUE;
-      if (q->prev != NULL) {
-        q->prev->next = q->next;
-      } else {
-        (*value)->mn = MapNetTail((*value)->mn);
-        if (NonEmpty((*value)->mn)) {
-          (*value)->mn->prev = NULL;
-        }
-      }
-      if (q->next != NULL) {
-        q->next->prev = q->prev;
-      }
-      del = q;
-      q = MapNetTail(q);
-      Dispose(del);
-    } else {
-      q = MapNetTail(q);
-    }
-  }
-
-  q = (*value)->mninc;
-  while (NonEmpty(q)) {
-    q->length++;
-    if (q->length > MAP_MAX_SERVER_WAIT) { /* Was 25 */
-      sim->callbacks.messageAdd(sim->callbacks.ctx, networkMessage, (char *) "\0", (char *) "pt");
-      (*value)->mapItem[q->mx][q->my] = q->terrain;
-      mapNetCheckWater(sim, value, pb, bs, q->mx, q->my);
-      screenBrainMapSetPos(sim->brainMap, q->mx, q->my, (*value)->mapItem[q->mx][q->my], minesExistPos(&sim->mns, &sim->mp, q->mx, q->my));
-      needRedraw = TRUE;
-      if (q->prev != NULL) {
-        q->prev->next = q->next;
-      } else {
-        (*value)->mninc = MapNetTail((*value)->mninc);
-        if (NonEmpty((*value)->mninc)) {
-          (*value)->mninc->prev = NULL;
-        }
-      }
-      if (q->next != NULL) {
-        q->next->prev = q->prev;
-      }
-      del = q;
-      q = MapNetTail(q);
-      Dispose(del);
-    } else {
-      q = MapNetTail(q);
-    }
-
-  }
-
-  if (needRedraw == TRUE && !sim->isServer) {
-    screenReCalcCS((struct ClientSim *)sim);
-  }
-}
-
-/*********************************************************
-*NAME:          mapNetIncomingItem
-*AUTHOR:        John Morrison
-*CREATION DATE: 3/11/99
-*LAST MODIFIED: 9/11/99
-*PURPOSE:
-* A incoming map item has come from the server. If it is
-* in the waitinf for confirmation buffer remove it, else
-* if it exists in the incoming buffer replace it with the
-* new value otherwise add it to the incoming buffer
-*
-*ARGUMENTS:
-*  value   - Pointer to the map structure
-*  mx      - X position to add
-*  my      - Y position
-*  terrain - Terrain to place
-*********************************************************/
-void mapNetIncomingItem(GameSim *sim, map *value, BYTE mx, BYTE my, BYTE terrain) {
-  mapNet q, del;
-  bool done; /* Finished looping */
-
-  /* Check for exists in waiting for confirmation buffer */
-  q = (*value)->mn;
-  done = FALSE;
-
-  while (NonEmpty(q) && done == FALSE) {
-    if (q->mx == mx && q->my == my) { /* && q->terrain == terrain */
-      /* Its in our structure */
-      if (q->prev != NULL) {
-        q->prev->next = q->next;
-      } else {
-        (*value)->mn = MapNetTail((*value)->mn);
-        if (NonEmpty((*value)->mn)) {
-          (*value)->mn->prev = NULL;
-        }
-      }
-      if (q->next != NULL) {
-        q->next->prev = q->prev;
-      }
-      done = TRUE;
-      if ((*value)->mapItem[mx][my] == RIVER || (*value)->mapItem[mx][my] == BOAT) {
-        minesRemoveItem(&sim->mns, mx, my);
-        screenBrainMapSetPos(sim->brainMap, q->mx, q->my, (*value)->mapItem[mx][my], FALSE);
-      }
-      del = q;
-      q = MapNetTail(q);
-      Dispose(del);
-    } else {
-      q = MapNetTail(q);
-    }
-  }
-
-
-  /* Check for exists in the incoming buffer packet */
-  q = (*value)->mninc;
-
-  while (NonEmpty(q) && done == FALSE) {
-    if (q->mx == mx && q->my == my && q->terrain == terrain) {
-      done = TRUE;
-    } else {
-      q = MapNetTail(q);
-    }
-  }
-
-  /* If it isn't added */
-  if (done == FALSE) {
-//      if (terrain != BUILDING && terrain != BOAT && terrain != ROAD && terrain < MINE_START) {
-      New(q);
-      q->mx = mx;
-      q->my = my;
-      q->terrain = terrain;
-      q->length = 0;
-      q->next = (*value)->mninc;
-      q->prev = NULL;
-      if (NonEmpty((*value)->mninc)) {
-        (*value)->mninc->prev = q;
-      }
-      (*value)->mninc = q;
-//    } else {
-  //    (*value)->mapItem[mx][my] = terrain;
-    //}
-  }
-}
-
-
-/*********************************************************
-*NAME:          mapNetPacket
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-* A packet has arrived. Here is a peice of map info in it.
-*
-*ARGUMENTS:
-*  value   - Pointer to map structure
-*  mx      - X position to add
-*  my      - Y position
-*  terrain - Terrain to place
-*********************************************************/
-void mapNetPacket(GameSim *sim, map *value, BYTE mx, BYTE my, BYTE terrain) {
-  mapNet q, del;
-  bool done; /* Finished looping */
-
-  q = (*value)->mn;
-  done = FALSE;
-
-  while (NonEmpty(q) && done == FALSE) {
-    if (q->mx == mx && q->my == my && q->terrain == terrain) {
-      (*value)->mapItem[mx][my] = terrain;
-      screenBrainMapSetPos(sim->brainMap, mx, my, (*value)->mapItem[mx][my], minesExistPos(&sim->mns, &sim->mp, mx, my));
-      if (q->prev != NULL) {
-        q->prev->next = q->next;
-      } else {
-        (*value)->mn = MapNetTail((*value)->mn);
-        if (NonEmpty((*value)->mn)) {
-          (*value)->mn->prev = NULL;
-        }
-      }
-      if (q->next != NULL) {
-        q->next->prev = q->prev;
-      }
-      del = q;
-      q = MapNetTail(q);
-      Dispose(del);
-      done = TRUE;
-    } else {
-      q = MapNetTail(q);
-    }
-  }
-
-  if (done == FALSE) {
-    (*value)->mapItem[mx][my] = terrain;
-    screenBrainMapSetPos(sim->brainMap, mx, my, (*value)->mapItem[mx][my], minesExistPos(&sim->mns, &sim->mp, mx, my));
-    if (terrain == BUILDING || terrain == ROAD) {
-      /* Play the building sound */
-      sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, mx, my);
-    } else if (terrain == CRATER) {
-      floodAddItem(&sim->ff, mx, my);
-    }
-  }
-}
-
-/*********************************************************
-*NAME:          mapNetMakePacket
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-* Make the map part of the packet. Returns the data length.
-* Is destructive on the data
-*
-*ARGUMENTS:
-*  map  - Pointer to the map structure
-*  buff - Buffer to hold data
-*********************************************************/
-BYTE mapNetMakePacket(map *value, BYTE *buff) {
-  BYTE returnValue; /* Value to return */
-  mapNet q;
-
-  returnValue = 0;
-  while (NonEmpty((*value)->mn)) {
-    buff[returnValue] = (*value)->mn->mx;
-    returnValue++;
-    buff[returnValue] = (*value)->mn->my;
-    returnValue++;
-    buff[returnValue] = (*value)->mn->terrain;
-    returnValue++;
-    q = (*value)->mn;
-    (*value)->mn = MapNetTail((*value)->mn);
-    Dispose(q);
-  }
-  return returnValue;
-}
-
-/*********************************************************
-*NAME:          mapNetClientPacket
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-* Make the client map part of the packet. Returns the 
-* data length.
-*
-*ARGUMENTS:
-*  map  - Pointer to the map structure
-*  buff - Buffer to hold data
-*********************************************************/
-BYTE mapNetClientPacket(map *value, BYTE *buff) {
-  BYTE returnValue; /* Value to return */
-  mapNet q;
-
-  returnValue = 0;
-  q = (*value)->mn;
-  while (NonEmpty(q)) {
-   if (q->needSend == TRUE) {
-      q->needSend = FALSE;
-      q->length = 0;
-      buff[returnValue] = (*value)->mn->mx;
-      returnValue++;
-      buff[returnValue] = (*value)->mn->my;
-      returnValue++;
-      buff[returnValue] = (*value)->mn->terrain;
-      returnValue++;
-    }
-    q = MapNetTail(q);
-  }
-  return returnValue;
-}
-
-/*********************************************************
 *NAME:          mapMakeNetRun
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/2/99
@@ -1805,70 +1393,6 @@ void mapSetNetRun(map *value, BYTE *buff, BYTE yPos, int dataLen) {
     count++;
   }
 }
-
-/*********************************************************
-*NAME:          mapNetCheckWater
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/11/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-* Checks an square updated through mapNetUpdate to see if
-* it should be filled to overcome the mines problem.
-*
-*ARGUMENTS:
-*  value  - Pointer to map structure
-*  pb     - Pointer to the pillboxes strucuture
-*  bs     - Pointer to the bases strucuture
-*  xValue - X Value to check
-*  yValue - Y Value to check
-*********************************************************/
-void mapNetCheckWater(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue, BYTE yValue) {
-  BYTE above;       /* Squares around */
-  BYTE below;
-  BYTE leftPos;
-  BYTE rightPos;
-
-  if ((*value)->mapItem[xValue][yValue] == CRATER || (*value)->mapItem[xValue][yValue] == MINE_CRATER) {
-    above = (*value)->mapItem[xValue][(BYTE) (yValue-1)];
-    below = (*value)->mapItem[xValue][(BYTE) (yValue+1)];
-    leftPos = (*value)->mapItem[(BYTE) (xValue-1)][yValue];
-    rightPos = (*value)->mapItem[(BYTE) (xValue+1)][yValue];
-
-    /* Check for pills, bases etc. If found change to non crater / water */
-    if (pillsExistPos(pb, xValue, (BYTE) (yValue-1)) == TRUE) {
-      above = ROAD;
-    } else if (basesExistPos(bs, xValue, (BYTE) (yValue-1)) == TRUE) {
-      above = ROAD;
-    }
-
-    if (pillsExistPos(pb, xValue, (BYTE) (yValue+1)) == TRUE) {
-      below  = ROAD;
-    } else if (basesExistPos(bs, xValue, (BYTE) (yValue+1)) == TRUE) {
-      below = ROAD;
-    }
-
-    if (pillsExistPos(pb, (BYTE) (xValue-1), yValue) == TRUE) {
-      leftPos = ROAD;
-    } else if (basesExistPos(bs, (BYTE) (xValue-1),  yValue) == TRUE) {
-      leftPos = ROAD;
-    }
-
-    if (pillsExistPos(pb, (BYTE) (xValue+1), yValue) == TRUE) {
-      rightPos = ROAD;
-    } else if (basesExistPos(bs, (BYTE) (xValue-1),  yValue) == TRUE) {
-      rightPos = ROAD;
-    }
-
-    if (leftPos == DEEP_SEA || leftPos == BOAT || leftPos == RIVER || rightPos == DEEP_SEA || rightPos == BOAT || rightPos == RIVER || above == DEEP_SEA || above == RIVER || above == BOAT || below == DEEP_SEA || below == BOAT || below == RIVER) {
-      /* Do fill */
-      (*value)->mapItem[xValue][yValue] = RIVER;
-      minesRemoveItem(&sim->mns, xValue, yValue);
-    }
-  }
-}
-
-int lzwdecoding(unsigned char *src, unsigned char *dest, int len);
-int lzwencoding(unsigned char *src, unsigned char *dest, int len);
 
 /*********************************************************
 *NAME:          mapSaveCompressedMap
@@ -1960,7 +1484,7 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   /* Map */
   ptr2 = (BYTE *) (*value)->mapItem;
   mapSize = lzwdecoding(ptr, ptr2, inputLen);
-  if (mapSize != sizeof(**value) - 2 * sizeof(mapNet)) {
+  if (mapSize != sizeof((*value)->mapItem)) {
     returnValue = FALSE;
   }
 

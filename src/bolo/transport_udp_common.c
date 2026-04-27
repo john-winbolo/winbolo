@@ -294,11 +294,21 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps) {
 SOCKET createUdpSocket(void) {
     SOCKET sock;
     unsigned long nonBlock = 1;
+    int reuse = 1;
 
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
     }
+    /* Allow rebinding immediately after a previous process exits without
+     * a clean close — the OS may not have reaped the port descriptor yet
+     * (most visible on Windows after a force-quit). */
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+               (const char *)&reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
+               (const char *)&reuse, sizeof(reuse));
+#endif
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }

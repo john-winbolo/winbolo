@@ -938,13 +938,7 @@ BYTE pillsGetPillOwner(pillboxes *value, BYTE pillNum) {
 *  migrate - TRUE if it is migrating.
 *********************************************************/
 BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner, bool migrate) {
-  /* Message stuff */
-  char oldOwner[FILENAME_MAX];
-  char messageStr[FILENAME_MAX];
   BYTE returnValue; /* Value to return */
-  
-  oldOwner[0] = '\0';
-  messageStr[0] = '\0';
 
   returnValue = NEUTRAL;
   if (pillNum > 0 && pillNum<= (*value)->numPills) {
@@ -954,18 +948,19 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
     /* Make the message if required */
     if (returnValue == NEUTRAL && migrate == FALSE && owner != NEUTRAL) {
       /* Neutral pill */
-      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
-      strcat(messageStr, langGetText(MESSAGE_CAPTURE_PILL));
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
+      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
     } else if (owner == NEUTRAL) {
       /* Do nothing */
     } else if (playersIsAllie(&sim->plyrs, returnValue, owner) == FALSE && migrate == FALSE) {
       /* Stole pill */
-      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, messageStr);
-      strcat(messageStr, langGetText(MESSAGE_STOLE_PILL));
-      playersGetPlayerName(&sim->plyrs, returnValue, oldOwner, sim->isServer);
-      strcat(messageStr, oldOwner);
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
+      playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
     }
     /* Emit event so networked clients receive the capture message */
     if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {

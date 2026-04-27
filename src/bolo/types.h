@@ -53,19 +53,6 @@ struct basesObj {
 
 #define MAP_ARRAY_SIZE 256 /* maps are 256x256 units square */
 
-typedef struct mapNetObj *mapNet;
-struct mapNetObj {
-  mapNet next;     /* Next item */
-  mapNet prev;     /* Next item */
-  BYTE mx;         /* X Map position */
-  BYTE my;         /* Y Map position */
-  BYTE terrain;    /* New terrain at that position */
-  BYTE oldTerrain; /* The old terrain at that position */
-  bool needSend;   /* Do we need to send this?         */
-  BYTE length;     /* How long have we been waiting for the server? */
-};
-
-
 #ifndef _MAP_TYPEDEF
 #define _MAP_TYPEDEF
 typedef struct mapObj *map;
@@ -73,8 +60,6 @@ typedef struct mapObj *map;
 
 struct mapObj {
 	BYTE mapItem[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]; /* The actual map */
-  mapNet mn;
-  mapNet mninc;
 };
 
 
@@ -191,6 +176,7 @@ struct tankObj {
   int16_t bumpY;            /* Y bump effect from collisions/shells (>>9 applied per tick) */
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
+  BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */
 };
 
 #pragma pack(pop)

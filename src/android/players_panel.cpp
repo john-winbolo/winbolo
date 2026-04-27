@@ -16,6 +16,7 @@ extern "C" {
 #include "../bolo/players.h"
 #include "../bolo/client_sim.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "../gui/lang.h"
 }
 
 #define MAX_PLAYERS 16
@@ -74,7 +75,7 @@ extern "C" void playersPanelRender(ClientSim *cs) {
     ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.85f);
 
-    if (!ImGui::Begin("Players", &sOpen,
+    if (!ImGui::Begin(langGetText(STR_DLGPLAYERS_TITLE), &sOpen,
                       ImGuiWindowFlags_NoCollapse |
                       ImGuiWindowFlags_NoFocusOnAppearing)) {
         ImGui::End();
@@ -83,19 +84,19 @@ extern "C" void playersPanelRender(ClientSim *cs) {
 
     /* Selection shortcuts */
     float btnW = 55.0f;
-    if (ImGui::Button("All", ImVec2(btnW, 0))) {
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL), ImVec2(btnW, 0))) {
         screenCheckAllNonePlayersCS(cs, true);
     }
     ImGui::SameLine();
-    if (ImGui::Button("None", ImVec2(btnW, 0))) {
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE), ImVec2(btnW, 0))) {
         screenCheckAllNonePlayersCS(cs, false);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Allies", ImVec2(btnW, 0))) {
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES), ImVec2(btnW, 0))) {
         screenCheckAlliedPlayersCS(cs);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Near", ImVec2(btnW, 0))) {
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY), ImVec2(btnW, 0))) {
         screenCheckNearbyPlayersCS(cs);
     }
 

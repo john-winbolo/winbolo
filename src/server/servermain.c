@@ -48,6 +48,7 @@
 #include "../bolo/log.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/bot_manager.h"
+#include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 
 /* Constants previously from backend.h */
@@ -103,10 +104,7 @@ static char  sTrackerAddr[FILENAME_MAX] = "";
 static unsigned short sTrackerPort = 0;
 static bool  sTrackerUse = FALSE;
 
-/* Game Tick */
-#define SERVER_TICK_LENGTH (GAME_TICK_LENGTH*2)
-
-#define WIND_CLASSNAME "WinBoloServ" 
+#define WIND_CLASSNAME "WinBoloServ"
 #define WIND_TITLE "WinBoloServ"
 
 /* There are 60 seconds in a minute */
@@ -428,250 +426,23 @@ void processKeys(bool isQuiet) {
 *********************************************************/
 #ifdef _WIN32
 void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) {
-  DWORD tick;     /* Number of ticks passed */
-  static int trackerTime = 5500;   /* When we should update the tracker */
-  static int wbnTime = 0;
-
+  DWORD tick;
   tick = winboloTimer();
 #else
   Uint32 SDLCALL serverGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
   (void)userdata; (void)timerID;
-  DWORD tick;     /* Number of ticks passed */
-  static int wbnTime = 0;
-  static int trackerTime = 5500;   /* When we should update the tracker */
+  DWORD tick;
   tick = winboloTimer();
 #endif
 
   if ((tick - oldTick) > SERVER_TICK_LENGTH) {
-    /* Get the keyboard state */
     while ((tick - oldTick) > SERVER_TICK_LENGTH) {
-      trackerTime++;
-      wbnTime++;
-
-      threadsWaitForMutex();
-      /* Receive packets — queues inputs for both ticks */
-      if (transportUdpServerHasRecvThread()) {
-        transportUdpServerDrainRecvQueue(&serverSim);
-      } else {
-        transportUdpServerRecv(&serverSim);
-      }
-
-      if (serverSim.state == serverStateRunning) {
-        /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
-        if (botManagerGetNumBots() > 0) {
-          botManagerTick(&serverSim, serverSim.botAiType);
-        }
-        /* Run two sim ticks per 20ms callback to match the client's
-         * 100Hz rate (alternating keys tick + game tick).
-         * Drain events after each tick so they're captured before
-         * the next tick clears the event buffer. */
-        {
-          ServerState preTickState = serverSim.state;
-          serverSimTick(&serverSim);
-          /* If game ended during this tick, broadcast game-over */
-          if (preTickState == serverStateRunning && serverSim.state == serverStateGameOver) {
-            if (serverSim.lobbyEnabled) {
-              /* Capture win message now while game state is intact;
-               * it will be sent after players return to the lobby. */
-              serverSimBuildWinMessage(&serverSim,
-                                       serverSim.pendingWinMessage,
-                                       sizeof(serverSim.pendingWinMessage));
-              serverSimSendWbnWinEvents(&serverSim);
-              transportUdpServerBroadcastGameOver(&serverSim);
-            }
-          }
-          if (serverSim.state == serverStateRunning) {
-            transportUdpServerDrainEvents(&serverSim);
-          }
-        }
-        if (serverSim.state == serverStateRunning) {
-          /* Save tick 1's events so bots can see them next frame.
-           * transportUdpServerDrainEvents already captured them for
-           * UDP clients, but bots read directly from the event buffer
-           * via serverSimBuildSnapshot — tick 2 would clear these. */
-          GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-          uint8_t savedCount = serverSim.eventCount;
-          ServerState preTickState;
-          if (savedCount > 0) {
-            memcpy(savedEvents, serverSim.events,
-                   savedCount * sizeof(GameEvent));
-          }
-          preTickState = serverSim.state;
-          serverSimTick(&serverSim);
-          /* If game ended during this tick, broadcast game-over */
-          if (preTickState == serverStateRunning && serverSim.state == serverStateGameOver) {
-            if (serverSim.lobbyEnabled) {
-              serverSimBuildWinMessage(&serverSim,
-                                       serverSim.pendingWinMessage,
-                                       sizeof(serverSim.pendingWinMessage));
-              serverSimSendWbnWinEvents(&serverSim);
-              transportUdpServerBroadcastGameOver(&serverSim);
-            }
-          }
-          if (serverSim.state == serverStateRunning) {
-            transportUdpServerDrainEvents(&serverSim);
-            /* Prepend tick 1's events before tick 2's events */
-            if (savedCount > 0 && savedCount + serverSim.eventCount <= MAX_SNAPSHOT_EVENTS) {
-              memmove(serverSim.events + savedCount, serverSim.events,
-                      serverSim.eventCount * sizeof(GameEvent));
-              memcpy(serverSim.events, savedEvents,
-                     savedCount * sizeof(GameEvent));
-              serverSim.eventCount += savedCount;
-            }
-          }
-        }
-        /* Send snapshots only if still running */
-        if (serverSim.state == serverStateRunning) {
-          transportUdpServerSend(&serverSim);
-        }
-      } else {
-        /* Lobby/countdown/gameover: single tick for state machine processing */
-        ServerState preTickState = serverSim.state;
-        serverSimTick(&serverSim);
-
-        /* Check if a balance proposal just completed */
-        if (serverSim.balanceProposal.broadcastNeeded) {
-          transportUdpServerBroadcastBalanceProposal(&serverSim, serverSim.balanceProposal.teamForSlot);
-          serverSim.balanceProposal.broadcastNeeded = false;
-        }
-
-        /* Handle state transitions */
-        if (preTickState == serverStateCountdown) {
-          if (serverSim.state == serverStateRunning) {
-            /* Countdown finished — game started */
-            transportUdpServerBroadcastGameStart(&serverSim);
-            if (botManagerGetNumBots() > 0) {
-              botManagerOnGameStart(&serverSim);
-            }
-            /* Notify WBN that we are now in-game */
-            winbolonetSendLobbyStatus(FALSE);
-            /* Send EVENT_PLAYER_JOIN for each connected WBN player */
-            {
-              BYTE pi;
-              for (pi = 0; pi < MAX_TANKS; pi++) {
-                if (serverSim.playerConnected[pi] &&
-                    winboloNetIsPlayerParticipant(pi)) {
-                  winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                     pi, WINBOLO_NET_NO_PLAYER);
-                }
-              }
-            }
-          } else if (serverSim.state == serverStateCountdown &&
-                     serverSim.countdownTicks > 0 &&
-                     serverSim.countdownTicks % 50 == 0) {
-            /* Broadcast countdown tick (once per second) */
-            uint8_t secs = (uint8_t)(serverSim.countdownTicks / 50);
-            transportUdpServerBroadcastCountdown(&serverSim, secs);
-          }
-        }
-        if (preTickState == serverStateGameOver &&
-            serverSim.state == serverStateLobby) {
-          /* Flush remaining WBN events (win, final kills, etc.) */
-          winbolonetServerUpdate(serverSimGetNumPlayers(&serverSim),
-                                 serverSimGetNumNeutralBases(&serverSim),
-                                 serverSimGetNumNeutralPills(&serverSim), TRUE);
-          /* Pick next map from rotation if mapdir is configured */
-          if (serverSim.mapDirFiles != NULL) {
-            serverSimMapDirPickRandom(&serverSim);
-            transportUdpServerNotifyMapChange(&serverSim);
-          }
-          /* Re-register with WBN for the new round */
-          if (winbolonetIsRunning()) {
-            winbolonetReturnToLobby(
-              serverSim.mapName, serverSim.serverPort,
-              (BYTE)gameTypeGet(&serverSim.sim.game),
-              (BYTE)serverSim.botAiType,
-              (BYTE)serverSim.sim.hiddenMines,
-              serverSim.hasPassword,
-              basesGetNumBases(&serverSim.sim.bs),
-              pillsGetNumPills(&serverSim.sim.pb),
-              serverSimGetNumNeutralBases(&serverSim),
-              serverSimGetNumNeutralPills(&serverSim),
-              serverSimGetNumPlayers(&serverSim));
-          }
-          /* Returned to lobby — broadcast full lobby state */
-          transportUdpServerBroadcastLobbyState(&serverSim);
-          /* Send the win message now that players are back in the lobby */
-          if (serverSim.pendingWinMessage[0] != '\0') {
-            transportUdpServerSendServerMessage(serverSim.pendingWinMessage);
-            serverSim.pendingWinMessage[0] = '\0';
-          }
-        }
-
-        /* Periodic lobby snapshot — twice per second (every 25 ticks)
-         * for ping/country updates and state consistency */
-        if ((serverSim.state == serverStateLobby || serverSim.state == serverStateCountdown) &&
-            serverSim.tick % 25 == 0) {
-          transportUdpServerBroadcastLobbyState(&serverSim);
-        }
-
-        /* Timeout check — not called via transportUdpServerSend() during lobby */
-        transportUdpServerCheckTimeouts(&serverSim);
-      }
-
-      /* Auto-close check — works in any state.
-       * When auto-close triggers, force a no-lobby shutdown regardless
-       * of lobby mode, since there are no players to return to lobby for. */
-      if (serverSim.autoCloseOnEmpty && serverSimCheckAutoClose(&serverSim)) {
-        serverSim.lobbyEnabled = FALSE;
-        serverSimEnterGameOver(&serverSim);
-      }
-
-      /* Empty reset check — when enabled and no players are connected,
-       * count down and reset to lobby with map reload after the timeout.
-       * Skipped if autoCloseOnEmpty is active (it takes priority). */
-      if (serverSim.emptyResetEnabled && !serverSim.autoCloseOnEmpty &&
-          serverSim.lobbyEnabled &&
-          serverSim.state != serverStateGameOver &&
-          serverSim.state != serverStateLobby &&
-          serverSim.state != serverStateCountdown &&
-          serverSimCheckEmptyReset(&serverSim)) {
-        serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
-        serverSimResetGameWorld(&serverSim);
-        serverSim.state = serverStateLobby;
-        serverSim.gameLength = serverSim.originalGameLength;
-        serverSim.hadPlayersEver = FALSE;
-        serverSim.emptyResetTicks = -1;
-        /* Pick next map from rotation if mapdir is configured */
-        if (serverSim.mapDirFiles != NULL) {
-          serverSimMapDirPickRandom(&serverSim);
-          transportUdpServerNotifyMapChange(&serverSim);
-        }
-        /* Re-register with WBN for the new round */
-        if (winbolonetIsRunning()) {
-          winbolonetReturnToLobby(
-            serverSim.mapName, serverSim.serverPort,
-            (BYTE)gameTypeGet(&serverSim.sim.game),
-            (BYTE)serverSim.botAiType,
-            (BYTE)serverSim.sim.hiddenMines,
-            serverSim.hasPassword,
-            basesGetNumBases(&serverSim.sim.bs),
-            pillsGetNumPills(&serverSim.sim.pb),
-            serverSimGetNumNeutralBases(&serverSim),
-            serverSimGetNumNeutralPills(&serverSim),
-            serverSimGetNumPlayers(&serverSim));
-        }
-        transportUdpServerBroadcastLobbyState(&serverSim);
-      }
-
-      threadsReleaseMutex();
+      serverInstanceTick(&serverSim);
       ticks++;
       oldTick += SERVER_TICK_LENGTH;
     }
   }
-
-  if (wbnTime > 100) {
-    threadsWaitForMutex();
-    winbolonetServerUpdate(serverSimGetNumPlayers(&serverSim), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), FALSE);
-    threadsReleaseMutex();
-    wbnTime = 0;
-  }
-
-  if (trackerTime >= 6000 && sTrackerUse) {
-    transportUdpServerSendTrackerUpdate(&serverSim, sTrackerAddr, sTrackerPort);
-    trackerTime = 0;
-  }
-#ifdef USING_SDL 
+#ifdef USING_SDL
   return interval;
 #endif
 }
@@ -729,6 +500,8 @@ void printArgs() {
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
+  fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
+  fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-randommap        - Generate a random procedural map instead of loading a file.\n");
   fprintf(stderr, "                    -randommap alone generates a fully random map each round.\n");
   fprintf(stderr, "                    -randommap tournament|natural|maze|fractal — specific generator type.\n");
@@ -1285,17 +1058,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* Create UDP transport */
-  if (transportUdpServerCreate(port, useAddr, &serverSim, pass, (BYTE)maxPlayers) == FALSE) {
-    fprintf(stderr, "Error creating network transport\n");
-    serverSimDestroy(&serverSim);
-#ifdef USING_SDL
-    SDL_Quit();
-#endif
-    return 0;
-  }
-
-  /* WinBolo.net host override */
+  /* WinBolo.net host override — must run before serverInstanceStartup
+   * so winbolonetCreateServer hits the override host. */
   {
     int argNum = findArg(argc, argv, "wbnhost");
     if (argNum != ARG_NOT_FOUND) {
@@ -1304,11 +1068,29 @@ int main(int argc, char **argv) {
   }
 
   serverSim.hasPassword = (pass[0] != '\0');
-  if (argExist(argc, argv, "nowinbolonet") == FALSE) {
-    winbolonetCreateServer(serverSim.mapName, port, (BYTE) game, (BYTE) ai, (BYTE) hiddenMines, (BYTE) serverSim.hasPassword, basesGetNumBases(&serverSim.sim.bs), pillsGetNumPills(&serverSim.sim.pb), serverSimGetNumNeutralBases(&serverSim), serverSimGetNumNeutralPills(&serverSim), serverSimGetNumPlayers(&serverSim));
-    /* If no lobby, immediately mark as in-game on WBN */
-    if (!serverSim.lobbyEnabled) {
-      winbolonetSendLobbyStatus(FALSE);
+  {
+    ServerInstanceConfig instCfg;
+    instCfg.udpPort      = port;
+    instCfg.bindAddr     = useAddr;
+    instCfg.password     = pass;
+    instCfg.maxPlayers   = (BYTE)maxPlayers;
+    instCfg.useWbn       = (argExist(argc, argv, "nowinbolonet") == FALSE);
+    instCfg.compTanks    = (BYTE)ai;
+    instCfg.useTracker   = sTrackerUse;
+    instCfg.trackerAddr  = sTrackerAddr;
+    instCfg.trackerPort  = sTrackerPort;
+    {
+      bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
+      instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
+      instCfg.useNatKeepalive = sTrackerUse && !natPunchOptOut;
+    }
+    if (serverInstanceStartup(&serverSim, &instCfg) == FALSE) {
+      fprintf(stderr, "Error creating network transport\n");
+      serverSimDestroy(&serverSim);
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
     }
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
@@ -1430,8 +1212,7 @@ int main(int argc, char **argv) {
   if (threadsCreate(TRUE) == FALSE) {
     fprintf(stderr, "Error starting Thread Manager\n");
     threadsDestroy();
-    transportUdpServerDestroy();
-    botManagerDestroy(&serverSim);
+    serverInstanceShutdown(&serverSim);
     serverSimDestroy(&serverSim);
 #ifdef USING_SDL
     SDL_Quit();
@@ -1462,7 +1243,7 @@ int main(int argc, char **argv) {
     key[0] = EMPTY_CHAR;
   }
 
-  winbolonetDestroy(TRUE);
+  serverInstanceShutdown(&serverSim);
 
   if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
     logStop(); /* Flush and close the zip so the file has content before upload */
@@ -1473,8 +1254,6 @@ int main(int argc, char **argv) {
   }
   endWinboloTimer();
   geoLookupDestroy();
-  transportUdpServerDestroy();
-  botManagerDestroy(&serverSim);
   serverSimMapDirDestroy(&serverSim);
   serverSimDestroy(&serverSim);
 #ifdef _WIN32

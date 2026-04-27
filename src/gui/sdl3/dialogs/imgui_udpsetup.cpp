@@ -36,6 +36,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
 #include "../../../bolo/util.h"
+#include "../../lang.h"
 #include "imgui_udpsetup.h"
 }
 
@@ -100,7 +101,7 @@ extern "C" int imguiUdpSetupShow(void) {
 #if !BOLO_MOBILE
     /* Resize and show window for the dialog */
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - UDP (Internet) Setup");
+    dialogSetWindowTitle(window, langGetText(STR_DLGTCP_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -224,10 +225,7 @@ extern "C" int imguiUdpSetupShow(void) {
                      ImGuiWindowFlags_NoCollapse);
 
         /* --- Blurb --- */
-        ImGui::TextWrapped(
-            "To join an internet Bolo game, you must give the name (or IP address) "
-            "of a host machine running Bolo, and the UDP port number of the Bolo "
-            "process on that machine.");
+        ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_BLURB));
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -238,24 +236,24 @@ extern "C" int imguiUdpSetupShow(void) {
         float inputW = panelW * 0.225f;
         float labelW = panelW - inputW - 32.0f * s;
 
-        ImGui::Text("Machine Name (or IP address):");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##address", address, FILENAME_MAX);
 
-        ImGui::Text("UDP port of Bolo on that machine:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
                          ImGuiInputTextFlags_CharsDecimal);
 
-        ImGui::Text("UDP port for Bolo on this machine:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_USUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
                          ImGuiInputTextFlags_CharsDecimal);
 
-        ImGui::Text("Your player name for the game:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_NAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN);
@@ -263,24 +261,24 @@ extern "C" int imguiUdpSetupShow(void) {
         float labelW = 250.0f * s;
         float inputW = panelW - labelW - 60.0f * s;
 
-        ImGui::Text("Machine Name (or IP address):");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##address", address, FILENAME_MAX);
 
-        ImGui::Text("UDP port of Bolo on that machine:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
                          ImGuiInputTextFlags_CharsDecimal);
 
-        ImGui::Text("UDP port for Bolo on this machine:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_USUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
                          ImGuiInputTextFlags_CharsDecimal);
 
-        ImGui::Text("Your player name for the game:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_NAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN);
@@ -288,15 +286,18 @@ extern "C" int imguiUdpSetupShow(void) {
 
         ImGui::Spacing();
 
+        char errPopupId[64];
+        SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##udp", langGetText(STR_ERR_TITLE));
+
         /* --- Remember + Tracker Setup --- */
-        ImGui::Checkbox("Remember player name", &rememberName);
+        ImGui::Checkbox(langGetText(STR_DLGTCP_REMEMBER), &rememberName);
         ImGui::SameLine(panelW - 140.0f * s);
-        if (ImGui::Button("Tracker Setup", ImVec2(120 * s, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGTCP_TRACKERSETUP), ImVec2(120 * s, 0))) {
             /* Reload tracker options in case they changed */
             gameFrontGetTrackerOptions(trackerAddr, &trackerPort, &trackerEnabled);
             SDL_snprintf(trackerPortBuf, sizeof(trackerPortBuf), "%u", trackerPort);
             showTracker = true;
-            ImGui::OpenPopup("Tracker Config");
+            ImGui::OpenPopup(langGetText(STR_DLGTRACKER_TITLE));
         }
 
         ImGui::Spacing();
@@ -306,43 +307,43 @@ extern "C" int imguiUdpSetupShow(void) {
         /* --- Action buttons --- */
         float btnW = 80.0f * s;
 
-        ImGui::Text("Click \"New\" to begin a game");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
-        if (ImGui::Button("New", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGTCP_NEW), ImVec2(btnW, 0))) {
             /* Check ports aren't equal */
             unsigned long v1 = strtoul(targetPortBuf, nullptr, 10);
             unsigned long v2 = strtoul(myPortBuf, nullptr, 10);
             if (v1 == v2) {
-                errorMsg = "Server and own ports are the same!";
-                ImGui::OpenPopup("Error##udp");
+                errorMsg = langGetText(STR_ERR_DLGTCP_PORTS);
+                ImGui::OpenPopup(errPopupId);
             } else if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
                                    rememberName, false)) {
                 gameFrontSetDlgState(openUdpSetup);
                 result = 1;
                 running = false;
             } else {
-                errorMsg = "Something isn't correct here...";
-                ImGui::OpenPopup("Error##udp");
+                errorMsg = langGetText(STR_ERR_DLGTCP_NOTRIGHT);
+                ImGui::OpenPopup(errPopupId);
             }
         }
 
-        ImGui::Text("Click \"Join\" to join an existing game");
+        ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
-        if (ImGui::Button("Join", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, 0))) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
                             rememberName, true)) {
                 gameFrontSetDlgState(openUdpJoin);
                 result = 1;
                 running = false;
             } else {
-                errorMsg = "Something isn't correct here...";
-                ImGui::OpenPopup("Error##udp");
+                errorMsg = langGetText(STR_ERR_DLGTCP_NOTRIGHT);
+                ImGui::OpenPopup(errPopupId);
             }
         }
 
-        ImGui::TextWrapped("Click \"Rejoin\" to rejoin a game and reclaim your old possessions");
+        ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
-        if (ImGui::Button("Rejoin", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, 0))) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
                             rememberName, true)) {
                 gameFrontEnableRejoin();
@@ -350,8 +351,8 @@ extern "C" int imguiUdpSetupShow(void) {
                 result = 1;
                 running = false;
             } else {
-                errorMsg = "Something isn't correct here...";
-                ImGui::OpenPopup("Error##udp");
+                errorMsg = langGetText(STR_ERR_DLGTCP_NOTRIGHT);
+                ImGui::OpenPopup(errPopupId);
             }
         }
 
@@ -361,7 +362,7 @@ extern "C" int imguiUdpSetupShow(void) {
         {
             float cancelX = panelW - btnW - 16.0f * s;
             ImGui::SetCursorPosX(cancelX);
-            if (ImGui::Button("Cancel", ImVec2(btnW, 0)) ||
+            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
                 (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                 gameFrontSetDlgState(openWelcome);
@@ -370,27 +371,27 @@ extern "C" int imguiUdpSetupShow(void) {
         }
 
         /* --- Error popup --- */
-        if (ImGui::BeginPopupModal("Error##udp", nullptr,
+        if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button("OK", ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
 
         /* --- Tracker Config popup --- */
-        if (ImGui::BeginPopupModal("Tracker Config", nullptr,
+        if (ImGui::BeginPopupModal(langGetText(STR_DLGTRACKER_TITLE), nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Tracker Address:");
+            ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERADDRESS));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(160 * s);
             if (!trackerEnabled) ImGui::BeginDisabled();
             ImGui::InputText("##trackerAddr", trackerAddr, FILENAME_MAX);
             if (!trackerEnabled) ImGui::EndDisabled();
 
-            ImGui::Text("Tracker Port:");
+            ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERPORT));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(160 * s);
             if (!trackerEnabled) ImGui::BeginDisabled();
@@ -398,20 +399,25 @@ extern "C" int imguiUdpSetupShow(void) {
                              ImGuiInputTextFlags_CharsDecimal);
             if (!trackerEnabled) ImGui::EndDisabled();
 
-            ImGui::Checkbox("Use Tracker", &trackerEnabled);
+            ImGui::Checkbox(langGetText(STR_DLGTRACKER_USETRACKER), &trackerEnabled);
 
             ImGui::Spacing();
-            if (ImGui::Button("OK##tracker", ImVec2(80, 0))) {
-                char *end;
-                unsigned long pval = strtoul(trackerPortBuf, &end, 10);
-                if (pval > 65535) pval = 65535;
-                gameFrontSetTrackerOptions(trackerAddr, (unsigned short)pval,
-                                           trackerEnabled);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("Cancel##tracker", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
+            {
+                char okBuf[64], cancelBuf[64];
+                snprintf(okBuf,     sizeof(okBuf),     "%s##tracker", langGetText(STR_OK));
+                snprintf(cancelBuf, sizeof(cancelBuf), "%s##tracker", langGetText(STR_CANCEL));
+                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                    char *end;
+                    unsigned long pval = strtoul(trackerPortBuf, &end, 10);
+                    if (pval > 65535) pval = 65535;
+                    gameFrontSetTrackerOptions(trackerAddr, (unsigned short)pval,
+                                               trackerEnabled);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(0.0f, 8.0f);
+                if (ImGui::Button(cancelBuf, ImVec2(80, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }

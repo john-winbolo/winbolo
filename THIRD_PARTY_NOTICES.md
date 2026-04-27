@@ -81,10 +81,22 @@ WinBolo uses the following third-party libraries and code.
 - Author: Rasmus Andersson
 
 ### Courier Prime
-- Location: data/CourierPrime-Regular.ttf
+- Location: data/fonts/CourierPrime-Regular.ttf
 - License: SIL Open Font License 1.1
 - https://github.com/quoteunquoteapps/CourierPrime
 - Author: Alan Dague-Greene, Quote-Unquote Apps
+
+### Noto Sans CJK
+- Location: data/fonts/NotoSansCJK{jp,kr,sc,tc}-Regular.otf
+- License: SIL Open Font License 1.1 (data/fonts/LICENSE)
+- https://github.com/notofonts/noto-cjk
+- Author: Google LLC, Adobe Inc.
+
+### Sarasa Mono
+- Location: data/fonts/SarasaMono{J,K,SC,TC}-Regular.ttf
+- License: SIL Open Font License 1.1 (data/fonts/LICENSE)
+- https://github.com/be5invis/Sarasa-Gothic
+- Author: belleve invis (Renzhi Li)
 
 ### LZW/RLE Compression
 - Location: src/lzw/

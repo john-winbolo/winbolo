@@ -84,6 +84,7 @@ bool showNetworkStatusMessages = TRUE;
 bool showNetworkDebugMessages = FALSE;
 
 bool autoScrollingEnabled = FALSE;
+bool smoothScrollingEnabled = FALSE;  /* Touch platform: arrow-key smooth scroll inactive */
 BYTE zoomFactor = ZOOM_FACTOR_NORMAL;
 
 bool showPillLabels = FALSE;
@@ -520,8 +521,7 @@ static void windowRunGameTick(ClientSim *cs) {
         transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
         screenConnectionLostCS(cs);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          "You have lost your connection to the server.\n"
-                          "Returning to menu.",
+                          langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         finishedLoop = TRUE;
         winboloQuit = FALSE;

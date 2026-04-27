@@ -1,0 +1,1086 @@
+# WinBolo Turkish language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=Türkçe
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_OK=Tamam
+STR_DLGOPENING_BUTTON2=Çıkış
+
+# Language dialog
+STR_DLGLANG_NAME=Türkçe
+STR_DLGLANG_AUTHOR_CAPTION=Yazar: 
+STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
+STR_DLGLANG_NOTES_CAPTION=Notlar: 
+STR_DLGLANG_NOTES=Yok.
+STR_DLGLANG_DEFAULTNOTE=Not: Eksik çevirilerde bu öğeler İngilizce olarak gösterilir.
+
+# About dialog
+STR_DLGABOUT_TITLE=WinBolo Hakkında
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=İttifak İsteği
+STR_DLGALLIANCE_ACCEPT=Kabul et
+STR_DLGALLIANCE_DECLINE=Reddet
+STR_DLGALLIANCE_BLURB={player} ittifak istiyor. Kabul edilsin mi?
+
+# Game finder dialog
+STR_YES=Evet
+STR_NO=Hayır
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=Oyun Bilgisi
+STR_DLGGAMEINFO_MAPNAME=Harita: 
+STR_DLGGAMEINFO_NUMPLAYERS=Oyuncular: {number}
+STR_DLGGAMEINFO_GAMETYPE=Oyun Türü: 
+STR_DLGGAMEINFO_HIDDENMINES=Gizli Mayınlar: 
+STR_DLGGAMEINFO_TIMELIMIT=Zaman Sınırı:
+
+# Game setup dialog
+STR_CANCEL=İptal
+STR_DLGGAMESETUP_TITLE=Oyun Ayarları
+STR_DLGGAMESETUP_CHOOSEMAP=Harita seç
+STR_DLGGAMESETUP_RADIO1=Açık Oyun (önceden silahlı)
+STR_DLGGAMESETUP_RADIO2=Turnuva (başta ücretsiz mermi)
+STR_DLGGAMESETUP_RADIO3=Sıkı Turnuva (ücretsiz mermi yok)
+STR_DLGGAMESETUP_HIDDENMINES=Gizli Mayınlara İzin Ver
+STR_DLGGAMESETUP_PASSWORD=Oyun Şifresi
+STR_DLGGAMESETUP_MINUTES=dakika
+STR_DLGGAMESETUP_SECONDS=saniye
+STR_DLGGAMESETUP_STARTDELAY=Oyun başlangıç gecikmesi
+STR_DLGGAMESETUP_TIMELIMIT=Oyun zaman sınırı
+STR_DLGGAMEINFO_TIMEREMAINING=Yaklaşık {number} dakika
+STR_DLGGAMEINFO_OPEN=Açık
+STR_DLGGAMEINFO_TOURN=Turnuva
+STR_DLGGAMEINFO_STRICT=Sıkı Turnuva
+STR_DLGGAMEINFO_AIADV=Evet (Avantajlı)
+STR_DLGGAMESETUP_DEFAULTNAME=Ben
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=Tuş Ayarları
+STR_DLGKEYSETUP_DRIVETANK=Tankı Sürmek
+STR_DLGKEYSETUP_GUNRANGE=Silah Menzili
+STR_DLGKEYSETUP_WEAPONS=Silahlar
+STR_DLGKEYSETUP_VIEW=Görünümler
+STR_DLGKEYSETUP_SCROLL=Kaydırma
+STR_DLGKEYSETUP_AUTOSLOWDOWN=Otomatik Yavaşlama
+STR_DLGKEYSETUP_AUTOGUNSIGHT=Nişanı Otomatik Gizle
+STR_DLGKEYSETUP_FASTER=Daha Hızlı
+STR_DLGKEYSETUP_SLOWER=Daha Yavaş
+STR_DLGKEYSETUP_TURNLEFT=Sola Dön
+STR_DLGKEYSETUP_TURNRIGHT=Sağa Dön
+STR_DLGKEYSETUP_INCREASE=Artır
+STR_DLGKEYSETUP_DECREASE=Azalt
+STR_DLGKEYSETUP_SHOOT=Ateş Et
+STR_DLGKEYSETUP_LAYMINE=Mayın Döşe
+STR_DLGKEYSETUP_TANKVIEW=Tank Görünümü
+STR_DLGKEYSETUP_PILLVIEW=Bunker Görünümü
+STR_DLGKEYSETUP_SCROLLUP=Yukarı
+STR_DLGKEYSETUP_SCROLLDOWN=Aşağı
+STR_DLGKEYSETUP_SCROLLLEFT=Sol
+STR_DLGKEYSETUP_SCROLLRIGHT=Sağ
+
+# Messages dialog
+STR_DLGMSG_BUTTON=Gönder
+STR_DLGMSG_ALLPLAYERS=Tüm Oyuncular
+STR_DLGMSG_ALLALLIES=Tüm Müttefikler
+STR_DLGMSG_NEARBY=Yakındaki Herkes
+STR_DLGMSG_SELECTION=Seçili Oyuncular
+STR_DLGMSG_SENDPLAYER={number} oyuncuya mesaj gönderiliyor
+STR_DLGMSG_SENDPLAYERS={number} oyuncuya mesaj gönderiliyor
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=Ağ Bilgisi
+STR_DLGNETINFO_SERVERPING=Sunucu gecikmesi: {number} ms
+STR_DLGNETINFO_STATUS=Durum:
+STR_DLGNETINFO_ERRORS=Ağ hataları: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=Şifre Gerekli
+STR_DLGPASSWORD_BLURB=Bu oyun için şifre gerekiyor:
+
+# Set name dialog
+STR_DLGSETNAME_BLURB=Tankınız için yeni oyuncu adını girin:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=İzleyici Yapılandırması
+STR_DLGTRACKER_USETRACKER=İzleyici Kullan
+STR_DLGTRACKER_TRACKERADDRESS=İzleyici Adresi:
+STR_DLGTRACKER_TRACKERPORT=İzleyici Portu:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=Sistem Bilgisi
+STR_DLGSYSINFO_CPUUSAGE=İşlemci Kullanımı:
+STR_DLGSYSINFO_SIMMODELING=Simülasyon Modelleme:
+STR_DLGSYSINFO_COMPROCESSING=İletişim İşleme:
+STR_DLGSYSINFO_TOTAL=Toplam:
+
+# TCP/IP setup dialog
+STR_DLGTCP_BLURB=Bir internet Bolo oyununa katılmak için Bolo çalıştıran bir sunucu makinesinin adını (veya IP adresini) ve o makinedeki Bolo işleminin UDP port numarasını girmelisiniz.
+STR_DLGTCP_JOIN=Katıl
+STR_DLGTCP_REJOIN=Yeniden Katıl
+STR_DLGTCP_NEW=Yeni
+STR_DLGTCP_TRACKERSETUP=İzleyici Kurulumu
+STR_DLGTCP_REMEMBER=Oyuncu adını hatırla
+STR_DLGTCP_MACHINENAME=Makine Adı (veya IP adresi):
+STR_DLGTCP_THEREUDP=O makinedeki Bolo'nun UDP portu:
+STR_DLGTCP_USUDP=Bu makinedeki Bolo'nun UDP portu:
+STR_DLGTCP_NAME=Oyun için oyuncu adın:
+STR_DLGTCP_NEWBLURB=Oyun başlatmak için "Yeni"ye tıklayın
+STR_DLGTCP_JOINBLURB=Mevcut bir oyuna katılmak için "Katıl"a tıklayın
+STR_DLGTCP_REJOINBLURB=Bir oyuna yeniden katılıp eski sahipliklerini geri almak için "Yeniden Katıl"a tıklayın
+STR_ERR_DLGTCP_PORTS=Sunucu ve kendi portları aynı!
+STR_ERR_DLGTCP_NOTRIGHT=Burada bir şeyler doğru değil...
+
+# Game finder extra
+
+# Brain errors
+
+# Draw errors
+
+# Font errors
+
+# Game front errors
+STR_GAMEFRONT_LANFINDER_TITLE=LAN Oyun Bulucu
+STR_GAMEFRONT_TRACKERFINDER_TITLE=İzleyici Oyun Bulucu
+STR_GAMEFRONTERR_JOINGAME=Oyuna katılınmaya çalışılırken hata oluştu
+
+# Network client errors
+
+# Sound errors
+
+# General WinBolo errors
+STR_WBTIMELIMIT_END=Zaman sınırı doldu. Oyun sona erdi.
+STR_WBERR_SAVEMAP=Harita Kaydetme Hatası (Disk dolu mu?)
+
+# Tutorial strings
+STR_TUTORIAL01=Önünüzde kıyıya uzanan kısa bir nehir var. Teknenizi\nnehrin sonuna kadar sürmek için {ACCEL} tuşunu basılı\ntutun.\n\nOraya ulaştığınızda {ACCEL}'ı basmaya devam edin. Tank\ntekneyi terk edecek ve tekne nehrin sonunda\nbağlı kalacak
+STR_TUTORIAL02=Artık çimendeysiniz. Tank çimende oldukça\nhızlı hareket eder.\n\n\nOrmana doğru ilerlemek için {ACCEL}'a basmaya devam edin.
+STR_TUTORIAL03=Artık ormandayısınız. Tank ormanda çimenden\ndaha yavaş hareket eder.\n\n\nBataklığa doğru ilerlemek için {ACCEL}'a basmaya devam edin.
+STR_TUTORIAL04=Artık bataklıktasınız. Tank bataklıkta çok\nyavaş hareket eder. Neyse ki ileride bir yol var.\n\n\nYola doğru ilerlemek için {ACCEL}'a basmaya devam edin.
+STR_TUTORIAL05=Artık yoldasınız. Tank yolda çok hızlı\nhareket edebilir ve {ACCEL}'a basarsanız hız kazanır.\n\n\nÇok hızlandığınızı fark ederseniz {BRAKE}'e basabilirsiniz
+STR_TUTORIAL06=İleride bazı binalar var. Binalar sürüş yapamayacağınız\nkatı engellerdir; labirentten geçerek\nkarşı tarafa geçmeniz gerekecek.\n\nTankı sola döndürmek için {LEFT}'e basın\nTankı sağa döndürmek için {RIGHT}'a basın
+STR_TUTORIAL07=Kırmızı silahları dışarı uzanan bu yuvarlak nesneler\notomatik bunkerlardır. Menzillerine giren herhangi\nbir tanka ateş ederler.\n\n\nNeyse ki binalar atışlardan koruma sağlar; bu yüzden\nbunkerlar çok uzun beklemediğiniz sürece sizi\nvuramaz.
+STR_TUTORIAL08=Orman da bunkerlardan koruma sağlar, ancak farklı\nbir şekilde. Tankı önemli ölçüde yavaşlatmanın yanı\nsıra ormandan geçmek görüş mesafesini de kısıtlar.\n\n\nOrman içindeyken dışarısını net görebilirsiniz, ancak\nbunkerlar (ve diğer oyuncular) çok yaklaşmadıkça\ntankınızı göremez.
+STR_TUTORIAL09=Tankınızı orman şeridinin ortasıyla hizalayıp tam\nKuzeye doğru sürün. Düzgün gidip ormanın kenarlarına\nyaklaşmazsanız bunkerlar sizi görmez ve ateş etmez.\n\n\nOrmanın dışına çıkmayın, yoksa paramparça olursunuz.\n
+STR_TUTORIAL10=Bunkerlardan kaçmanın başka bir yolu daha var:\nhız.\n\n\nYolun merkezine düzgünce hizalandığınızdan emin olun\nve bunkerların yanından tam hızla geçmek için\n{ACCEL}'ı basılı tutun.
+STR_TUTORIAL11=Sizi fark ettiklerinde ateş etmeye başlayacaklar; ancak\ndüz gitmeye devam edip cesaretinizi yitirmezseniz\natışlar size ulaşmadan menzil dışına çıkarsınız.\n\n\nYoldan çıkıp bataklığa gitmeyin, yoksa bunkerlar için\nkolay hedef olursunuz ve kaçacak kadar hızlanamassınız.
+STR_TUTORIAL12=Önünüzde bir ikmal üssü var. İkmal üsleri ateş etmeniz\niçin mermiler, gizli tuzaklar kurmak için mayınlar sağlar\nve hasar görmüş tankınızın zırhını da tamamen onarır.\n\n\nİkmal üssüne durun ve tankınızı\nmermiyle doldurun.
+STR_TUTORIAL13=İkmal üssündesiniz. Tankınız şimdi sağdaki\ngöstergelerden görebileceğiniz gibi mermiler ve mayınlarla\ndolacak. Önünüzde, binaların ötesinde\nbir mayın tarlası var.
+STR_TUTORIAL14=Tankınızı mayın tarlasına sürerseniz tahrip\nolur. Neyse ki ateş ederek mayın tarlasını temizleyebilirsiniz. Ateş etmek için {FIRE}'e basın.\n\nBinada delik açın, ardından mayın tarlasının ortasına\nbir mermi düşürerek patlatın.\nMayınları patlatınca yerde büyük bir krater oluşur;\nbataklıkta sürmek kadar yavaş da olsa tankla\ngeçebilirsiniz.
+STR_TUTORIAL15=İleride başka bir mayın tarlası var. Aynı taktiği\nuygulayın: İkmal üssüne sürün, duvardan geçerek\nateş edin ve mayın tarlasının ortasına mermi\ndüşürerek patlatın.\n\nAncak bu sefer mayın tarlası geniş bir nehrin yanında\nve su kraterlere dolacak. Krater ve bataklıktan\ngeçer gibi tankla su içinden de geçebilirsiniz.
+STR_TUTORIAL16=WinBolo pencereyi tankınızın çevresini göstermek için\notomatik kaydırır, ancak görünümü kendiniz\nayarlamak için\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\ntuşlarını kullanabilirsiniz.\n\nÖnünüzdeki nehri daha iyi görmek için şimdi {SCROLL_UP}'a basın.
+STR_TUTORIAL17=Suda sürmenin çok yavaş olmasının yanı sıra\nbaşka bir dezavantajı daha var: Tank mermi ve\nmayın stoklarınızı da tüketir.\n\n\nKarşı tarafa geçtiğinizde tankınız çalışır durumda\nolacak ama tüm saldırı kapasitesini yitirmiş olacaksınız.
+STR_TUTORIAL18=Bu sefer nehri geçmekte daha ince davranacağız.\nSudan direkt geçmek yerine köprü inşa edeceğiz.\n\n\nOrman simgesine tıklayarak (pencerenin sol üstü) ağaç\nçiftçiliği modunu seçin ve ormana tıklayın.\nİnşaatçınız tanktan çıkıp bir ağaç toplayacak.
+STR_TUTORIAL19=Birkaç ağaç topladıktan sonra yol/köprü aracını\n(üstten ikinci düğme) seçin ve yolun sonundaki\nnehre tıklayın.\n\n\nİnşaatçınız tanktan çıkıp bir köprü bölümü inşa edecek.\nKöprüyü tamamlamak için tekrar tıklayın ve\nkarşı tarafa geçin.
+STR_TUTORIAL20=Bu nehir sonuncusundan daha geniş ve ortasında\nköprü inşa etmek için çok derin. Doğrudan geçmeye\nçalışırsanız tank dibe batacak ve tahrip olacak.
+STR_TUTORIAL21=Bu nehri geçmek için tekne yapmanız gerekecek. Tekneler\nbeş ağaç gerektirir; beş ağaca tıklayarak toplayın.\nArdından duvar/tekne aracını (üstten üçüncü düğme)\nseçin ve tekne yapmak için suya tıklayın.\n\nKaraya tıklarsanız tekne yerine duvar yaparsınız\nve tekne için daha fazla ağaç toplamanız gerekir.\nTekneye binip nehrin karşı tarafına geçin.
+STR_TUTORIAL22=İleride bir bunker ve cephane sağlayan ikmal üsleri var.\nİkmal üssünden mermileri toplayın ve bunkera saldırın.\n\n\nBunker ateş edecek, ama tankınız vurulursa ikmal üssüne\nkolayca dönüp zırhınızı tekrar tam kapasiteye\ntamirletebilirsiniz.
+STR_TUTORIAL23=Sabır ve dikkatle bu bunkeri yok edebilirsiniz.\nİşi kolaylaştırmak için öğrendiklerinizi kullanın:\n\n\nBunker sizi göremesin diye ormana saklanın,\nağaç toplayın, tankın daha hızlı hareket etmesi için\nyollar inşa edin ve bunker atışlarına karşı siper\nolması için binalar yapın.
+STR_TUTORIAL24=Bu bunkeri yenmeyi başardıktan sonra eğitimin\nson görevi: çıkışı koruyan iki bunkeri temizlemek,\nbir tekne inşa etmek ve kaçmak.\n\n\nTankınızın zırh seviyesine özellikle dikkat edin;\ntankınız tahrip olursa açık denizde yeni bir tekneyle\nyeni bir tankla başlamak zorunda kalırsınız.
+STR_TUTORIAL25=Tebrikler. WinBolo\neğitimini tamamladınız.\n\n\n\nŞimdi birlikte oynayacak arkadaşlar bulun ve\nhareketsiz düşünemeyen hedefler yerine zeki insan\nrakipler karşısında oynamanın nasıl bir şey olduğunu\nkeşfedin.\n\nEğitimi daha sonra tekrar oynamak isterseniz\nAyarlar menüsünden başlatabilirsiniz.
+STR_TUTORIAL_START01=WinBolo eğitimine hoş geldiniz. Bu ada WinBolo'nun\ntemel ilkelerini tanıtıyor ve bunları teker teker\nöğretiyor. Her yeni ilke bu pencere gibi\nbir pencerede açıklanacak.\n\nHer mesajı okuduktan sonra farenin "Tamam" düğmesine\ntıklayarak ya da klavyedeki <Enter> tuşuna basarak\ndevam edebilirsiniz
+STR_TUTORIAL_START02=WinBolo, Stuart Cheshire'in klasik Macintosh ağ oyunu Bolo'nun tek yetkili klonudur.\nStrateji ipuçlarını ve diğer bilgileri resmi web sitesinde bulabilirsiniz:\n\nhttps://www.winbolo.com\n\nReddit ve Discord'da bize katılabilirsiniz\n
+STR_TUTORIAL_START03=İnternet oyunu hakkında kısa bir not.\n\nÇevrimiçi bir oyuna katılırsanız ve çok fazla ağ hatası varsa\ndiğer oyuncuların oyununu bozmamak için\nhemen oyundan çıkın.
+STR_TUTORIAL_START04=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Tankı (ve tekneyi) ileri götürmek\niçin {ACCEL}'a, yavaşlatmak ve durdurmak için\n{BRAKE}'e basın.\n\nTuşlara harf yazar gibi vurmayın;\ntank istediğiniz hızda olana kadar\nbasılı tutun, sonra bırakın. Tekneyi karaya doğru sürmek\niçin şimdi {ACCEL}'a basın.\n(Pencereyi kapatmak için önce <Enter>'a basın)
+STR_TUTORIAL01_TOUCH=Önünüzde kıyıya uzanan kısa bir nehir var. Tekneyi\nnehrin sonuna kadar sürmek için joystick'i ileri itin.\n\nOraya ulaştığınızda joystick'i ileri itmeye\ndevam edin. Tank tekneyi terk edecek ve tekne\nnehrin sonunda bağlı kalacak
+STR_TUTORIAL02_TOUCH=Artık çimendeysiniz. Tank çimende oldukça\nhızlı hareket eder.\n\n\nOrmana doğru ilerlemek için joystick'i ileri itmeye devam edin.
+STR_TUTORIAL03_TOUCH=Artık ormandayısınız. Tank ormanda çimenden\ndaha yavaş hareket eder.\n\n\nBataklığa doğru ilerlemek için joystick'i ileri itmeye devam edin.
+STR_TUTORIAL04_TOUCH=Artık bataklıktasınız. Tank bataklıkta çok\nyavaş hareket eder. Neyse ki ileride bir yol var.\n\n\nYola doğru ilerlemek için joystick'i ileri itmeye devam edin.
+STR_TUTORIAL05_TOUCH=Artık yoldasınız. Tank yolda çok hızlı\nhareket edebilir; joystick'i sonuna kadar ileri itmek\nhızı artırır.\n\n\nÇok hızlandığınızı fark ederseniz\nyavaşlamak için joystick'i geri çekin.
+STR_TUTORIAL06_TOUCH=İleride bazı binalar var. Binalar sürüş yapamayacağınız\nkatı engellerdir; labirentten geçerek\nkarşı tarafa geçmeniz gerekecek.\n\nTankı o yöne döndürmek için joystick'i sola\nveya sağa itin.
+STR_TUTORIAL10_TOUCH=Bunkerlardan kaçmanın başka bir yolu daha var:\nhız.\n\n\nYolun merkezine düzgünce hizalandığınızdan emin olun\nve bunkerların yanından tam hızla geçmek için\njoystick'i sonuna kadar ileri itin.
+STR_TUTORIAL14_TOUCH=Tankınızı mayın tarlasına sürerseniz tahrip\nolur. Neyse ki ateş ederek mayın tarlasını temizleyebilirsiniz. Ateş etmek için ateş düğmesine dokunun.\n\nBinada delik açın, ardından mayın tarlasının ortasına\nbir mermi düşürerek patlatın.\nMayınları patlatınca yerde büyük bir krater oluşur;\nbataklıkta sürmek kadar yavaş da olsa tankla\ngeçebilirsiniz.
+STR_TUTORIAL16_TOUCH=WinBolo pencereyi tankınızın çevresini göstermek için\notomatik kaydırır, ancak görünümü kendiniz ayarlamak\niçin haritayı parmağınızla sürükleyebilirsiniz.\n\nÖnünüzdeki nehri görünüme almak için\nharitayı aşağı sürükleyin.
+STR_TUTORIAL18_TOUCH=Bu sefer nehri geçmekte daha ince davranacağız.\nSudan direkt geçmek yerine köprü inşa edeceğiz.\n\n\nOrman simgesine dokunarak (pencerenin sol üstü)\nağaç çiftçiliği modunu seçin ve ormana dokunun.\nİnşaatçınız tanktan çıkıp bir ağaç toplayacak.
+STR_TUTORIAL19_TOUCH=Birkaç ağaç topladıktan sonra yol/köprü aracını\n(üstten ikinci düğme) seçin ve yolun sonundaki\nnehre dokunun.\n\n\nİnşaatçınız tanktan çıkıp bir köprü bölümü inşa edecek.\nKöprüyü tamamlamak için tekrar dokunun ve\nkarşı tarafa geçin.
+STR_TUTORIAL21_TOUCH=Bu nehri geçmek için tekne yapmanız gerekecek. Tekneler\nbeş ağaç gerektirir; beş ağaca dokunarak toplayın.\nArdından duvar/tekne aracını (üstten üçüncü düğme)\nseçin ve tekne yapmak için suya dokunun.\n\nKaraya dokunursanız tekne yerine duvar yaparsınız\nve tekne için daha fazla ağaç toplamanız gerekir.\nTekneye binip nehrin karşı tarafına geçin.
+STR_TUTORIAL_START01_TOUCH=WinBolo eğitimine hoş geldiniz. Bu ada WinBolo'nun\ntemel ilkelerini tanıtıyor ve bunları teker teker\nöğretiyor. Her yeni ilke bu pencere gibi\nbir pencerede açıklanacak.\n\nHer mesajı okuduktan sonra "Tamam" düğmesine\ndokunarak devam edebilirsiniz.
+STR_TUTORIAL_START04_TOUCH=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Ekranın sol tarafındaki joystick\nile sürün: ileri itmek hızlandırır, geri çekmek\nyavaşlatır ve durdurur.\n\nJoystick'i ne kadar ileri iterseniz tank o kadar hızlanır.\nTekneyi karaya doğru sürmek için şimdi joystick'i\nileri itin.\n(Bu pencereyi kapatmak için önce Tamam'a dokunun)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=Yeni inşaatçı paraşütle inene kadar inşaat yapamazsınız
+LGM_NO_BUILD=Oraya inşaat yapamazsınız
+LGM_INSUFFICIENT_TREES=O inşaatı yapmak için yeterli ağacınız yok
+LGM_NO_PILLS=Yerleştirilecek bunker yok
+LGM_INSUFFICIENT_MINES=Yerleştirilecek mayın yok
+LGM_BUILDTANK=İnşaatçı tank üstüne inşaat yapamaz
+LGM_NO_TREE=Orada toplanacak ağaç yok
+LGM_PILL_NO_NEED_REPAIR=O bunkerin tamire ihtiyacı yok
+LGM_PILL_NO_BUILD_ON_MINE=İnşaatçı mayın üstüne inşaat yapamaz. Bu onu öldürür.
+LGM_NO_BUILD_UNDER_BOAT=İnşaatçı teknenizin altına inşaat yapamaz
+
+# In-game messages
+MESSAGE_ASSISTANT=Online Assistant
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}" kontrolü "{player}"ye devretti
+MESSAGE_NETSERVER=Ağ Sunucusu
+MESSAGE_THIS_COMPUTER=Bu Bilgisayar
+MESSAGE_CAPTURE_BASE={player} tarafsız bir üs ele geçirdi
+MESSAGE_CAPTURE_PILL={player} tarafsız bir bunker ele geçirdi
+MESSAGE_STOLE_PILL={player} {other}'ın bunkerini çaldı
+MESSAGE_STOLE_BASE={player} {other}'ın üssünü çaldı
+MESSAGE_LGM_DEAD={player} inşaatçısını kaybetti
+MESSAGE_SAVED_MAP={player} harita dosyasını kaydetti
+MESSAGE_QUIT_GAME={player} oyundan çıktı
+MESSAGE_TIME_LIMIT_EXPIRED=Zaman sınırı doldu. Oyun bitti. Güvenle gidin
+MESSAGE_TANKSUNK=Tank Derin Denizde Battı
+
+# Network errors
+NETERR_TRACKERDNS=İzleyici ana bilgisayar adı sorgusu başarısız. İzleyici bildirimi devre dışı
+NETERR_JOININIT=Bağlanmaya çalıştığınız oyundan yanıt gelmedi.\nBunun genellikle 3 nedeni vardır:\n1. Adres ve port alanları hatalı.\n2. UDP erişimini engelleyen bir güvenlik duvarının arkındasınız.\n3. WinBolo sürümünüzün oyunla aynı olduğunu kontrol edin
+NETERR_GAMEFULL=Bu oyun şu anda dolu
+NETERR_SERVERCONNECT=Sunucuyla bağlantı kurulamadı. Farklı bir makine deneyin veya birkaç saniye bekleyip tekrar deneyin.
+NETERR_PASSWORDWRONG=Şifre yanlış
+NETERR_PLAYERNAMEINUSE=Oyuncu adınız kullanımda. Başka bir ad seçip tekrar deneyin
+NETERR_NONEWPLAYERS=Üzgünüz, bu oyun şu anda yeni oyuncu kabul etmiyor
+NETERR_CONNECTNOJOIN=Oyuna bağlanabildiniz ancak katılma izni verilmedi. Büyük olasılıkla oyuncu adınız alınmış durumda. Lütfen yeni bir adla tekrar deneyin
+
+# Network status
+NET_STATUS_JOINING=Katılıyor
+NET_STATUS_OK=Tamam
+NET_STATUS_FAILED=Başarısız
+NETERR_LOSTCONNECTION=Sunucuyla bağlantınız kesildi.\nTek oyunculu moda geçiş yapılıyor
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=Mesaj Gönder
+STRERR_HELPFILE=Yardım dosyası açılırken hata oluştu.
+STR_DLGSKIN_BLURB=Tüm görünüm öğeleri mevcut değilse varsayılan yerleşik görünüm/sesler kullanılır.
+
+# Player name error
+NETERR_MAPSERIALIZE=Sunucu harita verisini hazırlayamadı. Lütfen tekrar deneyin
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=Kare Hızı:
+STR_DLGSYSINFO_GRAPHICS=Grafik:
+STR_DLGSYSINFO_AITANKS=YZ Tankları:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=Sunucu:
+STR_DLGNETINFO_THISGAME=Bu oyun:
+STR_DLGNETINFO_PINGGRAPH=Gecikme: min {number} / ort {number2} / maks {number3} ms
+STR_DLGNETINFO_KBIN=KB/s Gelen:
+STR_DLGNETINFO_KBOUT=KB/s Giden:
+STR_DLGNETINFO_PACKETS_RATE=Paket/sn: {number} gelen / {number2} giden
+STR_DLGNETINFO_KB_RATE=KB/sn: {string1} gelen / {string2} giden
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=Tohumu Kopyala
+STR_DLGGAMEINFO_AILABEL=YZ Tankları:
+STR_DLGGAMEINFO_FULLADV=Tam Avantaj
+STR_DLGGAMEINFO_UNLIMITED=Sınırsız
+
+# Players panel
+STR_DLGPLAYERS_TITLE=Oyuncular
+STR_DLGPLAYERS_ALL=Tümü
+STR_DLGPLAYERS_NONE=Hiçbiri
+STR_DLGPLAYERS_ALLIES=Müttefikler
+STR_DLGPLAYERS_NEARBY=Yakındakiler
+STR_LEAVE_ALLIANCE=İttifaktan Ayrıl
+STR_REQUEST_ALLIANCE=İttifak İste
+STR_ALLOW_NEW_PLAYERS=Yeni Oyunculara İzin Ver
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Telif hakkı 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Telif hakkı 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=Oyuna Katılınsın mı?
+STR_DLGJOIN_BLURB=Mevcut oyundan ayrılıp sunucuya katılınsın mı?
+STR_DLGJOIN_BUTTON=Katıl
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=Oyuncu Adını Değiştir
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(yok)
+STR_DLGKEYSETUP_PRESSAKEY=Bir tuşa basın...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=Atamak için bir tuşa basın veya İptal'e tıklayın.
+STR_DLGKEYSETUP_CHANGE=Değiştir
+STR_DLGKEYSETUP_COL_ACTION=Eylem
+STR_DLGKEYSETUP_COL_KEY=Tuş
+STR_DLGKEYSETUP_QUICKKEYS=Hızlı Tuşlar
+STR_DLGKEYSETUP_TREE=Ağaç
+STR_DLGKEYSETUP_ROAD=Yol
+STR_DLGKEYSETUP_WALL=Duvar
+STR_DLGKEYSETUP_QUICKPILLBOX=Bunker
+STR_DLGKEYSETUP_QUICKMINE=Mayın
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=Ayarlar
+STR_DLGSETTINGS_PLAYER=Oyuncu
+STR_DLGSETTINGS_PLAYERNAME=Oyuncu Adı:
+STR_DLGSETTINGS_APPLY=Uygula
+STR_DLGSETTINGS_SETKEYS=Tuşları Ayarla...
+STR_DLGSETTINGS_DISPLAY=Ekran
+STR_DLGSETTINGS_WINDOWSIZE=Pencere Boyutu:
+STR_DLGSETTINGS_RELSTEER=Göreceli Direksiyon
+STR_DLGSETTINGS_RELSTEER_TIP=Kapalıyken joystick tankı doğrudan yönlendirir.\nAçıkken joystick tanka göre sola/sağa döndürür.
+STR_DLGSETTINGS_TABLETMODE=Tablet Arayüz Modu
+STR_DLGSETTINGS_LABELS=Etiketler
+STR_DLGSETTINGS_MSGNAMES=Mesaj Adları:
+STR_DLGSETTINGS_TANKLABELS=Tank Etiketleri:
+STR_DLGSETTINGS_SOUND=Ses
+STR_DLGSETTINGS_MESSAGES=Mesajlar
+STR_DLGSETTINGS_GAME=Oyun
+
+# Menu bar
+STR_MENU_FILE=Dosya
+STR_MENU_NEW=Yeni
+STR_MENU_SAVE_MAP=Haritayı Kaydet
+STR_MENU_EXIT=Çıkış
+STR_MENU_EDIT=Düzenle
+STR_MENU_FRAME_RATE=Kare Hızı
+STR_MENU_WINDOW_SIZE=Pencere Boyutu
+STR_MENU_NORMAL=Normal
+STR_MENU_DOUBLE=Çift
+STR_MENU_TRIPLE=Üç Kat
+STR_MENU_QUAD=Dört Kat
+STR_MENU_CUSTOM_RESIZABLE=Özel (Yeniden Boyutlandırılabilir)
+STR_MENU_REQUIRES={number}x{number2} gerektirir - ekranı aşıyor
+STR_MENU_SMOOTH_SCROLLING=Yumuşak Kaydırma
+STR_MENU_AUTO_SCROLLING=Otomatik Kaydırma
+STR_MENU_SHOW_GUNSIGHT=Nişanı Göster
+STR_MENU_MSG_NAMES_SUB=Mesaj Gönderici Adları
+STR_MENU_TANK_LABELS_SUB=Tank Etiketleri
+STR_NONE=Hiçbiri
+STR_SHORT=Kısa
+STR_LONG=Uzun
+STR_MENU_NO_OWN_LABEL=Kendi tankını etiketleme
+STR_MENU_PILLBOX_LABELS=Bunker Etiketleri
+STR_MENU_BASE_LABELS=İkmal Üssü Etiketleri
+STR_MENU_HIDE_MAIN=Ana Görünümü Gizle
+STR_MENU_DEVICE=Aygıt:
+STR_MENU_DESKTOP=Masaüstü
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=Tuşları Ayarla
+STR_MENU_SOUND_EFFECTS=Ses Efektleri
+STR_MENU_BACKGROUND_SOUND=Arka Plan Sesi
+STR_MENU_SOUND_KEEPALIVE=Ses Canlı Tutma
+STR_MENU_NEWSWIRE_MSGS=Newswire Mesajları
+STR_MENU_ASSISTANT_MSGS=Asistan Mesajları
+STR_MENU_AI_MSGS=YZ Brain Mesajları
+STR_MENU_NETSTATUS_MSGS=Ağ Durum Mesajları
+STR_MENU_NETDEBUG_MSGS=Ağ Hata Ayıklama Mesajları
+STR_MENU_SETTINGS=Ayarlar...
+STR_MENU_PLAYERS=Oyuncular
+STR_MENU_SEND_MESSAGE=Mesaj Gönder
+STR_MENU_SELECT_ALL=Tümünü Seç
+STR_MENU_SELECT_NONE=Hiçbirini Seçme
+STR_MENU_SELECT_ALLIES=Müttefikleri Seç
+STR_MENU_SELECT_NEARBY=Yakındaki Tankları Seç
+STR_MENU_BRAINS=Brainler
+STR_MENU_MANUAL=Kılavuz
+STR_MENU_HELP=Yardım
+STR_MENU_ABOUT=Hakkında
+STR_MENU_LEAVE_GAME=Oyundan Ayrıl
+STR_BRAINSETTINGS_NONE=(ayar yok)
+STR_BRAINSETTINGS_TITLE=Brain Ayarları
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=Eğitim
+STR_DLGSETTINGS_PLAY_TUTORIAL=Eğitimi Oyna
+STR_DLGSETTINGS_SHOW_ON_MAIN=Ana menüde göster
+STR_DLGSETTINGS_CRASH_REPORTING=Çökme Raporlama
+STR_DLGSETTINGS_ENABLE_CRASH=Çökme Raporlamayı Etkinleştir
+STR_DLGSETTINGS_CRASH_HELP=Çökme raporları göndererek WinBolo'yu geliştirmeye yardım edin
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=Değişiklikler bir sonraki başlatmada geçerli olur.
+STR_CLOSE=Kapat
+STR_DLGSETTINGS_WINTITLE=WinBolo - Ayarlar
+STR_DLGKEYSETUP_WINTITLE=WinBolo - Tuş Ayarları
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo - Oyun Lobisi
+STR_UNKNOWN=Bilinmiyor
+STR_DLGGAMEINFO_AIFULL=Evet (Tam)
+STR_DLGLOBBY_HIDDEN=Gizli
+STR_DLGLOBBY_VISIBLE=Görünür
+STR_DLGLOBBY_DOWNLOADING=Harita indiriliyor...
+STR_DLGLOBBY_MAP_UNAVAILABLE=Harita önizlemesi mevcut değil
+STR_DLGLOBBY_PILLBOXES=Bunkerlar:
+STR_DLGLOBBY_BASES=Üsler:
+STR_DLGLOBBY_STARTS=Başlangıçlar:
+STR_DLGLOBBY_SKIPMAP=Haritayı Atla
+STR_DLGLOBBY_CANCELSKIP=Atlamayı İptal Et
+STR_DLGLOBBY_VOTES={number}/{number2} oy haritayı atlamak için
+STR_DLGLOBBY_CHAT=Sohbet
+STR_DLGLOBBY_READY=Hazır
+STR_DLGLOBBY_UNREADY=Hazır Değil
+STR_DLGLOBBY_BALANCE_TEAMS=Takımları Dengele
+STR_DLGLOBBY_APPLY_BALANCE=Dengelemeyi Uygula
+STR_DLGLOBBY_DISMISS=Kapat
+STR_DLGLOBBY_LEAVE=Ayrıl
+STR_DLGLOBBY_LEAVE_TITLE=Oyundan Ayrılınsın mı?
+STR_DLGLOBBY_LEAVE_BLURB=Bu oyundan ayrılmak istediğinizden emin misiniz?
+STR_DLGLOBBY_BOT_FMT={player} [Bot]
+STR_DLGLOBBY_YOU_FMT={player} (Sen)
+STR_DLGLOBBY_STARTING_FMT={number} saniye içinde başlıyor...
+STR_DLGLOBBY_LOSTCONNECTION=Sunucuyla bağlantınız kesildi.
+STR_DLGLOBBY_ME=Ben
+STR_DLGLOBBY_PLAYER_COL=Oyuncu
+STR_DLGLOBBY_PING_COL=Gecikme
+STR_DLGLOBBY_TEAM_COL=Takım
+STR_DLGLOBBY_READY_COL=Hazır
+STR_DLGLOBBY_SLOT_COL=Slot
+STR_DLGLOBBY_NAME_COL=Oyuncu Adı
+STR_DLGLOBBY_ACTION_COL=Eylem
+STR_DLGLOBBY_ADDBOT=Bot Ekle
+STR_DLGLOBBY_REMOVE=Kaldır
+STR_DLGLOBBY_MAP_TAB=Harita
+STR_DLGLOBBY_GAME_LBL=Oyun:
+STR_DLGLOBBY_MINES_LBL=Mayınlar:
+STR_DLGLOBBY_AI_LBL=YZ:
+STR_DLGLOBBY_TIME_LBL=Süre:
+STR_DLGLOBBY_TIME_HMS={number}s {string1}d {string2}sn
+STR_DLGLOBBY_TIME_MS={number}d {string1}sn
+STR_DLGLOBBY_TIME_S={number}sn
+STR_DLGLOBBY_MAP_LBL=Harita:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo - Oyun Ayarları
+STR_DLGGAMESETUP_SELECTAMAP=Bir harita seçin:
+STR_BACK=Geri
+STR_DLGGAMESETUP_BASES_STARTS=Üsler: {number}  Başlangıçlar: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=Bunkerlar: {number}
+STR_DLGGAMESETUP_CHANGEMAP=Haritayı Değiştir
+STR_DLGGAMESETUP_GAMETYPE_LBL=Oyun Türü
+STR_DLGGAMESETUP_OPENGAME_SHORT=Açık Oyun
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=Gizli Mayınlar
+STR_DLGGAMESETUP_AICOMPPLAYERS=YZ Bilgisayar Oyuncuları
+STR_DLGGAMESETUP_ALLOW=İzin Ver
+STR_DLGGAMESETUP_ADVANTAGE=Avantaj
+STR_DLGGAMESETUP_FULLMAP=Tam Harita
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=Zaman Sınırı
+STR_DLGGAMESETUP_TEAMSETUP=Takım Kurulumu
+STR_DLGGAMESETUP_AINUM=YZ oyuncu sayısı:
+STR_DLGGAMESETUP_NOBRAINS=Brain bulunamadı
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=Sen
+STR_DLGGAMESETUP_BOT_FMT=Bot {number}
+STR_DLGGAMESETUP_NOAI=Bilgisayar tankı yok
+STR_DLGGAMESETUP_ALLOWAI=Bilgisayar tanklarına izin ver
+STR_DLGGAMESETUP_ALLOWADV=Avantajlı olarak izin ver
+STR_DLGGAMESETUP_ALLOWFULL=Tam haritayla izin ver
+STR_DLGGAMESETUP_NOPREVIEW=Önizleme yok
+STR_DLGGAMESETUP_STARTGAME=Oyunu Başlat
+STR_DLGGAMESETUP_STRICT_SHORT=Sıkı
+STR_DLGTCP_WINTITLE=WinBolo - UDP (İnternet) Kurulumu
+STR_ERR_TITLE=Hata
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
+STR_DLGBROWSER_REFRESH=Yenile
+STR_DLGBROWSER_LOADING=Oyun listesi yükleniyor{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=Oyunları yüklemek için Yenile'ye tıklayın...
+STR_DLGBROWSER_LAN_INSTRUCTION=Taramak için Yenile'ye tıklayın...
+STR_DLGBROWSER_GAMES_LOADED=Oyunlar yüklendi.
+STR_DLGBROWSER_NO_GAMES=Oyun bulunamadı. Bir tane başlatın!
+STR_DLGBROWSER_SEARCH_FAILED=Arama başarısız.
+STR_DLGBROWSER_SEARCHING=Aranıyor...
+STR_DLGBROWSER_COL_SERVER=Sunucu
+STR_DLGBROWSER_COL_MAP=Harita
+STR_DLGBROWSER_COL_PLAYERS=Oyuncular
+STR_DLGBROWSER_COL_TYPE=Tür
+STR_DLGBROWSER_COL_AI=YZ
+STR_DLGBROWSER_COL_BASES=Üsler
+STR_DLGBROWSER_COL_PILLS=Bunkerlar
+STR_DLGBROWSER_COL_PING=Gecikme
+STR_DLGBROWSER_FILTER=Filtre:
+STR_DLGBROWSER_FILTER_ALLTYPES=Tüm Türler
+STR_DLGBROWSER_FILTER_UNLOCKED=Yalnızca Kilitsiz
+STR_DLGBROWSER_FILTER_ALLLOBBY=Tüm Lobile
+STR_DLGBROWSER_FILTER_INLOBBY=Lobide
+STR_DLGBROWSER_FILTER_STARTING=Başlıyor
+STR_DLGBROWSER_STATUS_PINGING=Durum: {string1}  |  {number} sunucu  |  Ping ölçülüyor {number2}...
+STR_DLGBROWSER_STATUS=Durum: {string1}  |  {number} sunucu
+STR_DLGBROWSER_NEWGAME=Yeni Oyun
+STR_DLGBROWSER_PLAYER_NAME_BTN=Oyuncu Adı
+STR_DLGBROWSER_MANUAL=Kılavuz
+STR_DLGBROWSER_ERR_VERSION=Sunucu farklı bir WinBolo sürümü çalıştırıyor.
+STR_DLGBROWSER_ERR_NEEDNAME=Önce bir oyuncu adı belirlemelisiniz.
+STR_DLGBROWSER_AI_ADV=Üst.
+STR_DLGBROWSER_AI_FULL=Tam
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo - Günlük Tarayıcı
+STR_DLGWBN_TITLE=WinBolo.net Günlük Tarayıcı
+STR_DLGWBN_TAB_RECENT=Son
+STR_DLGWBN_TAB_TOPRATED=En Çok Beğenilen
+STR_DLGWBN_TAB_MOSTDOWNLOADED=En Çok İndirilen
+STR_DLGWBN_TAB_SEARCH=Ara
+STR_DLGWBN_LOADING=Yükleniyor...
+STR_DLGWBN_NOCONNECT=WinBolo.net'e bağlanılamadı
+STR_DLGWBN_MINPLAYERS=Min Oyuncu
+STR_DLGWBN_SEARCHFILTERS=Arama Filtreleri:
+STR_DLGWBN_HINT_PLAYER=Oyuncu
+STR_DLGWBN_HINT_MAP=Harita
+STR_DLGWBN_SEARCH_BTN=Ara
+STR_DLGWBN_ERROR=Hata: {string1}
+STR_DLGWBN_COL_MAP=Harita
+STR_DLGWBN_COL_TYPE=Tür
+STR_DLGWBN_COL_PLAYERS=Oyuncular
+STR_DLGWBN_COL_RATING=Puan
+STR_DLGWBN_COL_SIZE=Boyut
+STR_DLGWBN_COL_DATE=Tarih
+STR_DLGWBN_PLAYERS_LBL=Oyuncular: 
+STR_DLGWBN_NUMPLAYERS_FMT={number} oyuncu
+STR_DLGWBN_DURATION=Süre: {string1}
+STR_DLGWBN_RATING=Puan: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=İndirme: {number}
+STR_DLGWBN_SIZE=Boyut: {string1}
+STR_DLGWBN_COMMENTS_FMT=Yorumlar ({number}):
+STR_DLGWBN_NOCOMMENTS=Henüz yorum yok.
+STR_DLGWBN_ADDCOMMENT=Yorum Ekle:
+STR_DLGWBN_HINT_COMMENT=Bir yorum yazın...
+STR_DLGWBN_POST=Gönder
+STR_DLGWBN_POSTED=Yorum gönderildi!
+STR_DLGWBN_LOADINGDETAIL=Ayrıntılar yükleniyor...
+STR_DLGWBN_DOWNLOADING=İndiriliyor...
+STR_DLGWBN_VIEWLOG=Günlüğü Görüntüle
+STR_DLGWBN_NOLOG=Bu oyun için günlük dosyası mevcut değil.
+STR_DLGWBN_PREV=< Önceki
+STR_DLGWBN_NEXT=Sonraki >
+STR_DLGWBN_PAGE=Sayfa {number} / {number2}  (toplam {number3})
+STR_DLGWBN_OPENFILE=Dosya Aç...
+STR_DLGWBN_PARSERR=Yanıt ayrıştırılamadı
+STR_DLGWBN_NETERR=Ağ hatası
+STR_DLGWBN_LOADERR=Ayrıntılar yüklenemedi
+STR_DLGWBN_DOWNLOAD_FAILED=İndirme başarısız
+STR_DLGWBN_NOSAVEPATH=Kaydetme yolu belirlenemedi
+STR_DLGWBN_FETCHERR=Getirme başarısız
+STR_DLGWBN_UNKNOWN_ERR=Bilinmeyen hata
+STR_DLGWBN_FILEFILTER=WinBolo Günlük Dosyaları
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo - Oyuncu Adı Belirle
+STR_DLGSETNAME_WBN_LOCKED=Oyuncu adınız WinBolo.net tarafından belirleniyor.
+STR_DLGSETNAME_PLEASE_ENTER=Lütfen oyuncu adınızı girin.
+STR_DLGSETNAME_BLANK_ERR=Üzgünüz, bu alan boş bırakılamaz
+STR_DLGSETNAME_STAR_ERR=Üzgünüz, adlar '*' ile başlayamaz
+STR_DLGSETNAME_INUSE_ERR=Bu ad başka bir oyuncu tarafından kullanılıyor.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo - Görünüm Seçimi
+STR_DLGSKIN_NOSKIN=Görünüm Yok (Varsayılan)
+STR_DLGSKIN_NA=Yok
+STR_DLGSKIN_SELECT=Bir görünüm seçin:
+STR_DLGSKIN_NAME_LBL=Ad:
+STR_DLGSKIN_AUTHOR_LBL=Yazar:
+STR_DLGSKIN_NOTES_LBL=Notlar:
+STR_DLGSKIN_LOADERR=Görünüm Dosyası yüklenemiyor
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo - İzleyici Yapılandırması
+STR_DLGTRACKER_INVALIDPORT=Geçersiz port numarası.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=WinBolo.net kontrol ediliyor...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=Oturum açık
+STR_DLGWBN_EXPIRES=(sona eriyor {string1})
+STR_DLGWBN_SIGN_OUT=WBN'den çıkış yap
+STR_DLGWBN_NOT_SIGNED_IN=Oturum açık değil
+STR_DLGWBN_SIGN_IN_BTN=WBN'de oturum aç...
+STR_DLGWBN_SIGNIN_TITLE=WinBolo.net'te Oturum Aç
+STR_DLGWBN_SIGNIN_BLURB=WinBolo.net kullanıcı adı ve şifrenizle oturum açın. Bir token kaydedileceğinden şifrenizi tekrar girmeniz gerekmez.
+STR_DLGWBN_USERNAME=Kullanıcı adı:
+STR_DLGWBN_PASSWORD=Şifre:
+STR_DLGWBN_SIGNINGIN=Oturum açılıyor...
+STR_DLGWBN_SIGNIN_OK=Oturum aç
+STR_DLGWBN_NEEDCREDS=Lütfen kullanıcı adı ve şifrenizi girin.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo - Oyun Seçimi
+STR_DLGWELCOME_SINGLE=Tek Oyuncu
+STR_DLGWELCOME_LOCAL=Yerel
+STR_DLGWELCOME_MAPEDITOR=Harita Düzenleyici
+STR_DLGWELCOME_LOGVIEWER=Günlük Görüntüleyici
+STR_DLGWELCOME_INTERNET=İnternet
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (Yerleşik)
+STR_MAPCHOOSER_LOADMAP=Harita Yükle
+STR_MAPCHOOSER_LOADDEVICE=Aygıttan Yükle...
+STR_MAPCHOOSER_GENRANDOM=Rastgele Harita Oluştur
+STR_MAPCHOOSER_RANDOMMAP=Rastgele Harita
+STR_MAPCHOOSER_CLICKGEN=Önizleme için Oluştur'a tıklayın
+STR_MAPCHOOSER_NOPREVIEW=Önizleme mevcut değil
+STR_MAPCHOOSER_STATS=Bunkerlar: {number}  Üsler: {number2}  Başlangıçlar: {number3}
+STR_MAPCHOOSER_MAPFILES=Harita Dosyaları
+STR_MAPCHOOSER_ALLFILES=Tüm Dosyalar
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=Durum
+STR_TABLET_KILLS_DEATHS=Öldürmeler: {number}  Ölümler: {number2}
+STR_TABLET_TANK_RESOURCES=Tank Kaynakları
+STR_TABLET_SHELLS=Mermiler
+STR_TABLET_MINES=Mayınlar
+STR_TABLET_ARMOUR=Zırh
+STR_TABLET_TREES=Ağaçlar
+STR_TABLET_PILLBOXES=Bunkerlar
+STR_TABLET_BASES=Üsler
+STR_TABLET_TANKS=Tanklar
+STR_TABLET_PILL_FMT=Bunker {number}
+STR_TABLET_BASE_FMT=Üs {number}
+STR_TABLET_TANK_FMT=Tank {number}
+STR_TABLET_BTN_MSG=Msj
+STR_TABLET_BTN_PLY=Oyn
+STR_TABLET_BTN_SET=Ayr
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=Oyuncu Adı Belirle
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Aç...
+STR_MAPEDIT_MENU_RECENT=Son Dosyalar
+STR_MAPEDIT_MENU_SAVE=Kaydet
+STR_MAPEDIT_MENU_SAVEAS=Farklı Kaydet...
+STR_MAPEDIT_MENU_EXPORT=PNG Olarak Dışa Aktar...
+STR_MAPEDIT_MENU_RETURN=Menüye Dön
+STR_MAPEDIT_MENU_UNDO=Geri Al
+STR_MAPEDIT_MENU_REDO=Yeniden Yap
+STR_MAPEDIT_MENU_CUT=Kes
+STR_MAPEDIT_MENU_COPY=Kopyala
+STR_MAPEDIT_MENU_PASTE=Yapıştır
+STR_MAPEDIT_MENU_MAP=Harita
+STR_MAPEDIT_MENU_RANDOMMAP=Rastgele Harita...
+STR_MAPEDIT_MENU_TEXT=Metin...
+STR_MAPEDIT_MENU_IMPORTIMG=Resim İçe Aktar...
+STR_MAPEDIT_MENU_VALIDATE=Doğrula
+STR_MAPEDIT_MENU_MIRROR_H=Yatay Ayna {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Dikey Ayna {string1}
+STR_MAPEDIT_MENU_ROTATE_90=90° Saat Yönünde Döndür {string1}
+STR_MAPEDIT_MENU_ROTATE_180=180° Döndür {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(seçim)
+STR_MAPEDIT_SCOPE_FULLMAP=(tam harita)
+STR_MAPEDIT_MENU_OPTIONS=Seçenekler
+STR_MAPEDIT_MENU_CENTER=Haritayı Ortala
+STR_MAPEDIT_MENU_POINT_STARTS=Başlangıç Noktalarını Göster
+STR_MAPEDIT_MENU_SHOWGRID=Izgarayı Göster
+STR_MAPEDIT_MENU_SHOWMINES=Mayınları Göster
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Bunker Menzillerini Göster
+STR_MAPEDIT_MENU_WINDOW=Pencere
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Arazi
+STR_MAPEDIT_WIN_TOOLS=Araçlar
+STR_MAPEDIT_WIN_INSPECTOR=Denetçi
+STR_MAPEDIT_WIN_OBJECTS=Nesneler
+STR_MAPEDIT_WIN_OVERVIEW=Genel Bakış
+STR_MAPEDIT_WIN_STATS=İstatistikler
+STR_MAPEDIT_WIN_STAMP_LIB=Damga Kitaplığı
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Derin Deniz
+STR_MAPEDIT_TERR_GRASS=Çimen
+STR_MAPEDIT_TERR_FOREST=Orman
+STR_MAPEDIT_TERR_ROAD=Yol
+STR_MAPEDIT_TERR_BUILDING=Bina
+STR_MAPEDIT_TERR_HALFBUILDING=Yarım Bina
+STR_MAPEDIT_TERR_RIVER=Nehir
+STR_MAPEDIT_TERR_SWAMP=Bataklık
+STR_MAPEDIT_TERR_CRATER=Krater
+STR_MAPEDIT_TERR_RUBBLE=Moloz
+STR_MAPEDIT_TERR_BOAT=Tekne
+STR_MAPEDIT_TERR_MINETOOL=Mayın Aracı
+STR_MAPEDIT_MINE_CHECKERED=Damalı
+STR_MAPEDIT_MINE_FULL=Tam
+STR_MAPEDIT_MINE_RANDOM=Rastgele
+STR_MAPEDIT_MINE_CLEAR=Mayınları Temizle
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Kalem
+STR_MAPEDIT_TOOL_LINE=Çizgi
+STR_MAPEDIT_TOOL_RECT=Dikdörtgen
+STR_MAPEDIT_TOOL_RECTFILL=Dolu Dikdörtgen
+STR_MAPEDIT_TOOL_OVAL=Oval
+STR_MAPEDIT_TOOL_OVALFILL=Dolu Oval
+STR_MAPEDIT_TOOL_SELECT=Seçim
+STR_MAPEDIT_TOOL_FILL=Doldur
+STR_MAPEDIT_TOOL_MAZE=Labirent
+STR_MAPEDIT_TOOL_GENERATE=Oluştur
+STR_MAPEDIT_TOOL_WAND=Sihirli Değnek
+STR_MAPEDIT_TOOL_TEXT=Metin
+STR_MAPEDIT_TOOL_TEXT_TIP=Metin (haritaya metin damgala)
+STR_MAPEDIT_BRUSH=Fırça
+STR_MAPEDIT_BRUSH_SQUARE=Kare
+STR_MAPEDIT_BRUSH_CIRCLE=Daire
+STR_MAPEDIT_OBJTOOL_BASE=Üs
+STR_MAPEDIT_OBJTOOL_PILL=Bunker
+STR_MAPEDIT_OBJTOOL_START=Başlangıç
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Karo: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Karo: --
+STR_MAPEDIT_STATUS_ZOOM=Yakınlaştırma: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Değiştirildi
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Kaydedilmemiş Değişiklikler
+STR_MAPEDIT_UNSAVED_BLURB=Haritada kaydedilmemiş değişiklikler var.\nDevam etmeden önce kaydetmek istiyor musunuz?
+STR_MAPEDIT_GOTO_TITLE=Koordinata Git
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=Nesne seçilmedi
+STR_MAPEDIT_INSP_BASE_HASH=Üs #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Bunker #{number}
+STR_MAPEDIT_INSP_START_HASH=Başlangıç #{number}
+STR_MAPEDIT_INSP_POSITION=Konum: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Sahip
+STR_MAPEDIT_INSP_ARMOUR=Zırh
+STR_MAPEDIT_INSP_SPEED=Hız
+STR_MAPEDIT_INSP_DIR=Yön
+STR_MAPEDIT_OWNER_NEUTRAL=Tarafsız
+STR_MAPEDIT_OWNER_PLAYER=Oyuncu {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Üsler ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Bunkerlar ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Başlangıçlar ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Zırh: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Yön: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Doğrulama
+STR_MAPEDIT_VAL_NOISSUES=Sorun yok
+STR_MAPEDIT_VAL_ERRORS={number} hata
+STR_MAPEDIT_VAL_NOERRORS=0 hata
+STR_MAPEDIT_VAL_WARNINGS={number} uyarı
+STR_MAPEDIT_VAL_NOWARNINGS=0 uyarı
+STR_MAPEDIT_VAL_ERRORS_TITLE=Doğrulama Hataları
+STR_MAPEDIT_VAL_HASERRORS=Haritada {number} hata var. Kaydetmeden önce düzeltin.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Rastgele Harita Oluştur
+STR_MAPEDIT_GENRANDAREA_TITLE=Rastgele Alan Oluştur
+STR_MAPEDIT_GENSCOPE_SELECTION=Kapsam: Seçim ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Kapsam: Tam harita ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Metin Aracı
+STR_MAPEDIT_TEXT_LABEL=Metin:
+STR_MAPEDIT_TEXT_BUILTIN=Yerleşik
+STR_MAPEDIT_TEXT_SYSTEM=Sistem Yazı Tipi
+STR_MAPEDIT_TEXT_FONTSIZE=Yazı Tipi Boyutu
+STR_MAPEDIT_TEXT_STYLE=Stil
+STR_MAPEDIT_TEXT_FONTSIZE_S=Küçük (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Orta (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Büyük (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=ÇB (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Normal
+STR_MAPEDIT_TEXT_STYLE_BOLD=Kalın
+STR_MAPEDIT_TEXT_STYLE_ITALIC=İtalik
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Kalın İtalik
+STR_MAPEDIT_TEXT_FONTFAMILY=Yazı Tipi Ailesi
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (paket)
+STR_MAPEDIT_TEXT_SIZEPX=Boyut (px)
+STR_MAPEDIT_TEXT_NOFONTS=Yazı tipi bulunamadı. data/fonts/ dizinine .ttf dosyaları ekleyin
+STR_MAPEDIT_TEXT_TERR_TEXT=Metin Arazisi
+STR_MAPEDIT_TEXT_TERR_EDGE=Kenar Arazisi
+STR_MAPEDIT_TEXT_TERR_BG=Arka Plan
+STR_MAPEDIT_TEXT_PREVIEW=Önizleme ({number}x{number2} karo):
+STR_MAPEDIT_TEXT_TOOLARGE=Metin çok büyük (maks 256x256 karo) veya yazı tipi hatası
+STR_MAPEDIT_GENERATE_BTN=Oluştur
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Labirent Ayarları
+STR_MAPEDIT_MAZE_REGION=Bölge: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Oluşturmak için haritada sürükleyin
+STR_MAPEDIT_ALGORITHM=Algoritma
+STR_MAPEDIT_ALGO_LABYRINTH=Labirent
+STR_MAPEDIT_ALGO_OPEN=Açık
+STR_MAPEDIT_WALL=Duvar
+STR_MAPEDIT_CORRIDOR=Koridor
+STR_MAPEDIT_ENTRIES=Girişler
+STR_MAPEDIT_ROOMS=Odalar
+STR_MAPEDIT_WALLTERRAIN=Duvar Arazisi
+STR_MAPEDIT_CORRIDORTERRAIN=Koridor Arazisi
+STR_MAPEDIT_GENSETTINGS_TITLE=Oluşturma Ayarları
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Arazi Dağılımı
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Mayınlar: {number} (%{string1} kara)
+STR_MAPEDIT_STATS_SPATIAL=Uzamsal Analiz
+STR_MAPEDIT_STATS_LAND_COVERAGE=Kara kapsama: %{string1}
+STR_MAPEDIT_STATS_LARGEST=En büyük kara kütlesi: %{string1}
+STR_MAPEDIT_STATS_BASE_SPACING=Üs aralığı: {string1} karo
+STR_MAPEDIT_STATS_PILL_SPACING=Bunker aralığı: {string1} karo
+STR_MAPEDIT_STATS_SYMMETRY=Simetri: {string1} (%{string2})
+STR_MAPEDIT_STATS_MIRROR_H=Yatay Ayna:   %{string1}
+STR_MAPEDIT_STATS_MIRROR_V=Dikey Ayna:   %{string1}
+STR_MAPEDIT_STATS_4CORNER=4-köşe:   %{string1}
+STR_MAPEDIT_STATS_ROTATE180=180° Dön: %{string1}
+STR_MAPEDIT_STATS_STALE=(eski — Yenile'ye tıklayın)
+STR_MAPEDIT_STATS_REFRESH=Uzamsal Yenile
+STR_MAPEDIT_STATS_STARTS=Başlangıçlar
+STR_MAPEDIT_TERRNAME_HALFBLD=Yarım Bina
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Resim İçe Aktar
+STR_MAPEDIT_IMG_FILE=Dosya:
+STR_MAPEDIT_IMG_NONE=(yok)
+STR_MAPEDIT_BROWSE=Gözat...
+STR_MAPEDIT_IMG_SOURCE=Kaynak: {number}x{number2} piksel
+STR_MAPEDIT_IMG_PREVIEW_LBL=Önizleme:
+STR_MAPEDIT_IMG_SCALEMODE=Ölçekleme Modu:
+STR_MAPEDIT_IMG_FIT_SEL=Seçime sığdır
+STR_MAPEDIT_IMG_FIT_PLAY=Oynanabilir alana sığdır
+STR_MAPEDIT_IMG_OUTPUT=Çıktı: {number} x {number2} karo
+STR_MAPEDIT_IMG_COLORS=Renkler:
+STR_MAPEDIT_IMG_REDETECT=Yeniden Algıla
+STR_MAPEDIT_IMG_COLORMAP=Renk Eşleme
+STR_MAPEDIT_IMPORT_BTN=İçe Aktar
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Paket Damgaları
+STR_MAPEDIT_STAMP_USER=Kullanıcı Damgaları
+STR_MAPEDIT_STAMP_NOUSER=Henüz kullanıcı damgası yok.
+STR_MAPEDIT_STAMP_HINT="Panoyu Kaydet..." kullanarak bir tane oluşturun.
+STR_MAPEDIT_DELETE=Sil
+STR_MAPEDIT_STAMP_SAVECLIP=Panoyu Kaydet...
+STR_MAPEDIT_STAMP_TIP_COPY=Önce bir seçim kopyalayın (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=İçe Aktar...
+STR_MAPEDIT_STAMP_UNTITLED=Adsız
+STR_MAPEDIT_STAMP_SAVE_TITLE=Damgayı Kaydet
+STR_MAPEDIT_STAMP_SAVE_BLURB=Bu damga için bir ad girin:
+STR_MAPEDIT_STAMP_SAVE_NAME=Ad
+STR_MAPEDIT_SAVE_BTN=Kaydet
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=PNG Olarak Dışa Aktar
+STR_MAPEDIT_PREVIEW=Önizleme
+STR_MAPEDIT_EXPORT_MODE=Mod:
+STR_MAPEDIT_EXPORT_FULL=Tam çözünürlük (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Önizleme boyutu:
+STR_MAPEDIT_EXPORT_OPTIONS=Seçenekler:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Nesneleri göster
+STR_MAPEDIT_EXPORT_SHOWMINES=Mayınları göster
+STR_MAPEDIT_EXPORT_SHOWGRID=Izgarayı göster (yalnızca tam mod)
+STR_MAPEDIT_EXPORT_BTN=Dışa Aktar...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Kilitli: Rastgele Oluşturma'da değişmez
+STR_MAPGEN_UNLOCKED_TIP=Kilitsiz: Rastgele Oluşturma'da değişir
+STR_MAPGEN_GENERATOR=Oluşturucu
+STR_MAPGEN_TYPE_TOURNAMENT=Turnuva
+STR_MAPGEN_TYPE_NATURAL=Doğal
+STR_MAPGEN_TYPE_MAZE=Labirent
+STR_MAPGEN_TYPE_FRACTAL=Fraktal
+STR_MAPGEN_SEED=Tohum
+STR_MAPGEN_RANDOMIZE=Rastgele Oluştur
+STR_MAPGEN_SYMMETRY=Simetri
+STR_MAPGEN_SYM_4CORNER=4-Köşe Ayna
+STR_MAPGEN_SYM_MIRROR_H=Yatay Ayna
+STR_MAPGEN_SYM_MIRROR_V=Dikey Ayna
+STR_MAPGEN_SYM_ROT180=180° Döndür
+STR_MAPGEN_SYM_ROT90=90° Döndür
+STR_MAPGEN_LANDMASS_PCT=Kara Kütlesi %
+STR_MAPGEN_ROUGHNESS=Pürüzlülük
+STR_MAPGEN_ROUGH_LOW=Düşük
+STR_MAPGEN_ROUGH_MED=Orta
+STR_MAPGEN_ROUGH_HIGH=Yüksek
+STR_MAPGEN_INCLUDE_ROADS=Yolları Dahil Et
+STR_MAPGEN_MAP_STYLE=Harita Stili
+STR_MAPGEN_STYLE_OCEAN=Okyanus
+STR_MAPGEN_STYLE_CONTINENT=Kıta
+STR_MAPGEN_STYLE_ISLANDS=Adalar
+STR_MAPGEN_STYLE_ARCHIPELAGO=Takımada
+STR_MAPGEN_STYLE_INLAND=İç Bölge
+STR_MAPGEN_TERRAIN_MIX=Arazi Karışımı (% kara payı):
+STR_MAPGEN_GRASS_PCT=Çimen %
+STR_MAPGEN_FOREST_PCT=Orman %
+STR_MAPGEN_BUILDING_PCT=Bina %
+STR_MAPGEN_SWAMP_PCT=Bataklık %
+STR_MAPGEN_RIVER_PCT=Nehir %
+STR_MAPGEN_BOAT_PCT=Tekne %
+STR_MAPGEN_REMAINING_GRASS=Kalan çimen: %{number}
+STR_MAPGEN_MINE_DENSITY=Mayın Yoğunluğu %
+STR_MAPGEN_RIVER_COUNT=Nehir Sayısı
+STR_MAPGEN_CITY_COUNT=Şehir Sayısı
+STR_MAPGEN_MAZE_COUNT=Labirent Sayısı
+STR_MAPGEN_WALL_THICKNESS=Duvar Kalınlığı
+STR_MAPGEN_CORRIDOR_WIDTH=Koridor Genişliği
+STR_MAPGEN_CITY_ROOMS=Şehir Odaları
+STR_MAPGEN_LAND_COVERAGE=Kara Kapsama %
+STR_MAPGEN_DETAIL_PASSES=Detay Geçişleri
+STR_MAPGEN_COAST_JAG=Kıyı Girintili Çıkıntılı Yapısı
+STR_MAPGEN_TERRAIN_LAYERS=Arazi Katmanları
+STR_MAPGEN_RIVERS=Nehirler
+STR_MAPGEN_LAKES=Göller
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} oyuna katıldı.
+STR_LV_HAS_JOINED={string1} oyuna katıldı
+STR_LV_ALLY_REQUEST={player} {other} ile ittifak istedi
+STR_LV_ALLY_ACCEPT={player} {other} ile ittifakı kabul etti
+STR_LV_ALLY_LEAVE={player} ittifaktan ayrıldı
+STR_LV_MSG_ALL={player}'den herkese mesaj: {string1}
+STR_LV_MSG_PLAYERS={player}'den {other}'a mesaj: {string1}
+STR_LV_MSG_SERVER=Sunucu Mesajı: {string1}
+STR_LV_PLAYER_DIED={player} öldü
+STR_LV_PLAYER_KILLED={player} {other} oyuncusunu öldürdü
+STR_LV_PLAYER_REJOINED={player} oyuna yeniden katıldı.
+STR_LV_PLAYER_LEAVING={player} oyundan ayrılıyor.
+STR_LV_LOBBY_OPENED=Lobi açıldı.
+STR_LV_GAME_STARTED=Oyun başladı.
+STR_LV_PLAYER_READY={player} hazır.
+STR_LV_PLAYER_UNREADY={player} artık hazır değil.
+STR_LV_PLAYER_LEFT_TEAM={player} takımından ayrıldı.
+STR_LV_PLAYER_JOINED_TEAM={player} {number}. takıma katıldı.
+STR_LV_COUNTDOWN_START=Geri sayım başladı.
+STR_LV_COUNTDOWN_CANCEL=Geri sayım iptal edildi.
+STR_LV_MAP_SKIP_VOTE={player} haritayı atlamak için oy kullandı.
+STR_LV_MAP_SKIPPED=Harita atlandı. Yeni harita: {string1}
+STR_LV_TEAM_BALANCE=Takım dengesi uygulandı.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Aç
+STR_LV_MENU_ACTION=Eylem
+STR_LV_PLAY=Oynat
+STR_LV_PAUSE=Duraklat
+STR_LV_STOP=Durdur
+STR_LV_FAST_FORWARD=Hızlı İleri
+STR_LV_REWIND=Geri Sar
+STR_LV_MODE=Mod
+STR_LV_MODE_INFO=Bilgi
+STR_LV_SELECT_TEAM=Takım Seç
+STR_LV_USE_TEAM_COLOURS=Takım Renklerini Kullan
+STR_LV_TANK_CENTRED=Tanka Odakla
+STR_LV_DNS_LOOKUPS=DNS Sorguları
+STR_LV_TEAM_COLOURS=Takım Renkleri
+STR_LV_MENU_WINDOWS=Pencereler
+STR_LV_WIN_CONTROLS=Kontroller
+STR_LV_WIN_EVENTS=Olaylar
+STR_LV_WIN_GAMEINFO=Oyun Bilgisi
+STR_LV_WIN_ITEMINFO=Öğe Bilgisi
+STR_LV_RESET_WINDOWS=Pencere Konumlarını Sıfırla
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Her oyuncu takımına renk atayın:
+STR_LV_PLAYER_LBL=Oyuncu {number}:
+STR_LV_NEUTRAL_LBL=Tarafsız:
+STR_LV_ABOUT_TITLE=WinBolo Günlük Görüntüleyici
+STR_LV_VERSION_FMT=Sürüm: {string1}
+STR_LV_LICENSE=Bu program özgür yazılımdır; GNU Genel Kamu\nLisansı'nın koşulları altında Özgür Yazılım\nVakfı tarafından yayımlanan sürüme göre\nyeniden dağıtabilir ve/veya değiştirebilirsiniz.
+STR_LV_WEBSITE_LBL=Web sitesi:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Gri
+STR_LV_COL_KHAKI=Haki
+STR_LV_COL_GREEN=Yeşil
+STR_LV_COL_PINK=Pembe
+STR_LV_COL_YELLOW=Sarı
+STR_LV_COL_LIGHTBLUE=Açık Mavi
+STR_LV_COL_ORANGE=Turuncu
+STR_LV_COL_LIGHTPURPLE=Açık Mor
+STR_LV_COL_AQUA=Aqua
+STR_LV_COL_LIGHTGREEN=Açık Yeşil
+STR_LV_COL_LIGHTGREY=Açık Gri
+STR_LV_COL_RED=Kırmızı
+STR_LV_COL_BLUE=Mavi
+STR_LV_COL_BROWN=Kahverengi
+STR_LV_COL_LIGHTPINK=Açık Pembe
+STR_LV_COL_PALEGREEN=Soluk Yeşil
+STR_LV_COL_PURPLE=Mor
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} saniye
+STR_LV_INFO_MAP=Harita Adı: {string1}
+STR_LV_INFO_GAMETYPE=Oyun Türü: {string1}
+STR_LV_INFO_HIDDENMINES=Gizli Mayınlar: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Bilgisayar Tankları: {string1}
+STR_LV_INFO_TIME_LIMIT=Zaman Sınırı: {string1}
+STR_LV_INFO_START_DELAY=Başlangıç Gecikmesi: {string1}
+STR_LV_INFO_WBN_KEY=WBN Anahtarı:
+STR_LV_INFO_START_TIME=Başlangıç Saati: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=Öğe seçilmedi
+STR_LV_LOCATION_FMT=Konum: {string1}
+STR_LV_OWNER_LBL=Sahip: {string1}
+STR_LV_ARMOUR_FMT=Zırh: {number}
+STR_LV_SHELLS_FMT=Mermi: {number}
+STR_LV_MINES_FMT=Mayın: {number}
+STR_LV_IN_TANK_FMT=Tank İçinde: {string1}
+STR_LV_CENTER_ON_MAP=Haritada Ortala
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Geri Sar
+STR_LV_PLAY_BTN=Oynat >
+STR_LV_FWD_BTN=İleri >>
+STR_LV_SPEED_LBL=Hız:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} kaldı
+STR_LV_NO_LOG_LOADED=Günlük yüklenmedi
+
+# Log viewer events panel
+STR_LV_COPY=Kopyala
+STR_LV_COPY_ALL=Tümünü Kopyala
+STR_LV_CLEAR_ALL=Tümünü Temizle
+STR_LV_AUTO_SCROLL=Otomatik Kaydır
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=Günlük Dosyasının Sonuna Ulaşıldı
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Yakınlaştırma
+STR_DLGSETTINGS_PERFORMANCE=Performans
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=Sunucuyla bağlantınız kesildi.\nMenüye dönülüyor.
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Dil:
+STR_DLGLANG_MIDGAME_NOTE=Mevcut mesaj günlüğü girişleri yeniden oluşturulana kadar dil değişmez.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=Çok fazla üs: {number} (maks {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=Çok fazla bunker: {number} (maks {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=Çok fazla başlangıç: {number} (maks {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=Üs #{number} ({number2},{number3}) konumunda: geçilemeyen arazi üzerinde
+STR_MAPVALIDATE_BASE_BORDER_ZONE=Üs #{number} ({number2},{number3}) konumunda: mayın sınır bölgesinde
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Bunker #{number} ({number2},{number3}) konumunda: geçilemeyen arazi üzerinde
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Bunker #{number} ({number2},{number3}) konumunda: mayın sınır bölgesinde
+STR_MAPVALIDATE_START_NOT_DEEP=Başlangıç #{number} ({number2},{number3}) konumunda: derin denizde olmalı
+STR_MAPVALIDATE_START_BORDER_ZONE=Başlangıç #{number} ({number2},{number3}) konumunda: mayın sınır bölgesinde
+STR_MAPVALIDATE_NO_STARTS=Başlangıç konumu yerleştirilmemiş — harita oynanabilir değil
+STR_MAPVALIDATE_ONE_START=Yalnızca 1 başlangıç konumu — yalnızca tek oyuncu
+STR_MAPVALIDATE_BASE_OVERLAP=Üs #{number} ve Üs #{number2} ({number3},{number4}) konumunda örtüşüyor
+STR_MAPVALIDATE_PILL_OVERLAP=Bunker #{number} ve Bunker #{number2} ({number3},{number4}) konumunda örtüşüyor
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=Üs #{number} ve Bunker #{number2} ({number3},{number4}) konumunda örtüşüyor
+STR_MAPVALIDATE_START_OVERLAP=Başlangıç #{number} ve Başlangıç #{number2} ({number3},{number4}) konumunda örtüşüyor
+STR_MAPVALIDATE_START_BASE_OVERLAP=Başlangıç #{number} ve Üs #{number2} ({number3},{number4}) konumunda örtüşüyor
+STR_MAPVALIDATE_START_PILL_OVERLAP=Başlangıç #{number} ve Bunker #{number2} ({number3},{number4}) konumunda örtüşüyor
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=LAN dışındaki oyuncuların katılabilmesi için port yönlendirmesi gerekir. (Yakında: otomatik NAT kurulumu.)
+STR_GAMEFRONTERR_MAPLOAD=Sunucudan harita yüklenemedi
+STR_GAMEFRONTERR_STARTSERVER=Sunucu başlatılırken hata oluştu
+STR_DLGLOBBY_PORTMAP_CHECKING=Sunucu erişilebilirliği kontrol ediliyor…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Sunucu erişilebilir
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Sunucuya erişilemiyor
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP ile bir güvenlik duvarı portu açılmaya ve tracker'ın ağınız üzerinden size ulaşabildiği doğrulanmaya çalışılıyor. Bu işlem genellikle 30 saniye içinde tamamlanır.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP aracılığıyla %s:%u adresinde port otomatik olarak yönlendirildi. Katılanlar ek bir adım gerekmeden doğrudan bağlanır.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Doğrudan port yönlendirmesi kurulamadı, ancak NAT traversal aktif. Katılanlar, ağınızın güvenlik duvarını delmek için tracker üzerinden koordine olur. Çoğu ev ağında çalışır; simetrik NAT veya operatör seviyesi NAT (CGN) arkasındaki oyuncular yine de bağlanamayabilir.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Simetrik NAT tespit edildi — ağınız her hedef için kaynak portunu yeniden yazıyor, bu da NAT traversal kullanılsa bile katılanların size ulaşmasını engelliyor. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP %u portunu bu makineye manuel olarak yönlendirin.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Bir güvenlik duvarı portu otomatik olarak açılamadı (UPnP/NAT-PMP reddedildi veya kullanılamıyor) ve tracker çift yönlü erişilebilirliği doğrulayamadı. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP %u portunu bu makineye manuel olarak yönlendirin.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Sunucu Erişilebilirliği
+STR_DLGLOBBY_TEST_CONNECTIVITY=Bağlantıyı test et
+STR_DLGLOBBY_TEST_TESTING=Test ediliyor…
+STR_DLGLOBBY_TEST_REACHABLE=İnternetten erişilebilir
+STR_DLGLOBBY_TEST_NO_REPLY=Tracker'dan yanıt yok
+STR_DLGSETTINGS_NETWORK=Ağ
+STR_DLGSETTINGS_NET_HELP=Ayarlar bir sonraki sunulan oyunda etkili olur.
+STR_DLGSETTINGS_USE_UPNP=Otomatik port yönlendirmesi için UPnP / NAT-PMP kullan
+STR_DLGSETTINGS_USE_NATTRAV=Tracker üzerinden NAT traversal (hole-punching) kullan

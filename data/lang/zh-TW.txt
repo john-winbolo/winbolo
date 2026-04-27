@@ -1,0 +1,1086 @@
+# WinBolo Traditional Chinese (Taiwan) language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=繁體中文
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_OK=確定
+STR_DLGOPENING_BUTTON2=離開
+
+# Language dialog
+STR_DLGLANG_NAME=繁體中文
+STR_DLGLANG_AUTHOR_CAPTION=作者: 
+STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
+STR_DLGLANG_NOTES_CAPTION=備註: 
+STR_DLGLANG_NOTES=無。
+STR_DLGLANG_DEFAULTNOTE=注意：翻譯不完整時，缺少的項目將以英文顯示。
+
+# About dialog
+STR_DLGABOUT_TITLE=關於 WinBolo
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=聯盟請求
+STR_DLGALLIANCE_ACCEPT=接受
+STR_DLGALLIANCE_DECLINE=拒絕
+STR_DLGALLIANCE_BLURB={player} 請求建立聯盟。是否接受？
+
+# Game finder dialog
+STR_YES=是
+STR_NO=否
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=遊戲資訊
+STR_DLGGAMEINFO_MAPNAME=地圖: 
+STR_DLGGAMEINFO_NUMPLAYERS=玩家：{number}
+STR_DLGGAMEINFO_GAMETYPE=遊戲類型: 
+STR_DLGGAMEINFO_HIDDENMINES=隱藏地雷: 
+STR_DLGGAMEINFO_TIMELIMIT=時間限制：
+
+# Game setup dialog
+STR_CANCEL=取消
+STR_DLGGAMESETUP_TITLE=遊戲設定
+STR_DLGGAMESETUP_CHOOSEMAP=選擇地圖
+STR_DLGGAMESETUP_RADIO1=開放遊戲（預先武裝）
+STR_DLGGAMESETUP_RADIO2=錦標賽（早期免費彈藥）
+STR_DLGGAMESETUP_RADIO3=嚴格錦標賽（無免費彈藥）
+STR_DLGGAMESETUP_HIDDENMINES=允許隱藏地雷
+STR_DLGGAMESETUP_PASSWORD=遊戲密碼
+STR_DLGGAMESETUP_MINUTES=分鐘
+STR_DLGGAMESETUP_SECONDS=秒
+STR_DLGGAMESETUP_STARTDELAY=遊戲開始延遲
+STR_DLGGAMESETUP_TIMELIMIT=遊戲時間限制
+STR_DLGGAMEINFO_TIMEREMAINING=約 {number} 分鐘
+STR_DLGGAMEINFO_OPEN=開放
+STR_DLGGAMEINFO_TOURN=錦標賽
+STR_DLGGAMEINFO_STRICT=嚴格錦標賽
+STR_DLGGAMEINFO_AIADV=是（優勢）
+STR_DLGGAMESETUP_DEFAULTNAME=我
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=按鍵設定
+STR_DLGKEYSETUP_DRIVETANK=駕駛坦克
+STR_DLGKEYSETUP_GUNRANGE=射程
+STR_DLGKEYSETUP_WEAPONS=武器
+STR_DLGKEYSETUP_VIEW=視角
+STR_DLGKEYSETUP_SCROLL=捲動
+STR_DLGKEYSETUP_AUTOSLOWDOWN=自動減速
+STR_DLGKEYSETUP_AUTOGUNSIGHT=自動隱藏瞄準器
+STR_DLGKEYSETUP_FASTER=加速
+STR_DLGKEYSETUP_SLOWER=減速
+STR_DLGKEYSETUP_TURNLEFT=左轉
+STR_DLGKEYSETUP_TURNRIGHT=右轉
+STR_DLGKEYSETUP_INCREASE=增加
+STR_DLGKEYSETUP_DECREASE=減少
+STR_DLGKEYSETUP_SHOOT=射擊
+STR_DLGKEYSETUP_LAYMINE=佈雷
+STR_DLGKEYSETUP_TANKVIEW=坦克視角
+STR_DLGKEYSETUP_PILLVIEW=碉堡視角
+STR_DLGKEYSETUP_SCROLLUP=上
+STR_DLGKEYSETUP_SCROLLDOWN=下
+STR_DLGKEYSETUP_SCROLLLEFT=左
+STR_DLGKEYSETUP_SCROLLRIGHT=右
+
+# Messages dialog
+STR_DLGMSG_BUTTON=傳送
+STR_DLGMSG_ALLPLAYERS=所有玩家
+STR_DLGMSG_ALLALLIES=所有盟友
+STR_DLGMSG_NEARBY=附近所有人
+STR_DLGMSG_SELECTION=已選玩家
+STR_DLGMSG_SENDPLAYER=傳送訊息給 {number} 名玩家
+STR_DLGMSG_SENDPLAYERS=傳送訊息給 {number} 名玩家
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=網路資訊
+STR_DLGNETINFO_SERVERPING=伺服器延遲：{number} ms
+STR_DLGNETINFO_STATUS=狀態：
+STR_DLGNETINFO_ERRORS=網路錯誤：{number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=需要密碼
+STR_DLGPASSWORD_BLURB=此遊戲需要密碼：
+
+# Set name dialog
+STR_DLGSETNAME_BLURB=輸入您的坦克玩家名稱：
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=追蹤器設定
+STR_DLGTRACKER_USETRACKER=使用追蹤器
+STR_DLGTRACKER_TRACKERADDRESS=追蹤器位址：
+STR_DLGTRACKER_TRACKERPORT=追蹤器連接埠：
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=系統資訊
+STR_DLGSYSINFO_CPUUSAGE=CPU 使用率：
+STR_DLGSYSINFO_SIMMODELING=模擬運算：
+STR_DLGSYSINFO_COMPROCESSING=通訊處理：
+STR_DLGSYSINFO_TOTAL=總計：
+
+# TCP/IP setup dialog
+STR_DLGTCP_BLURB=要加入網際網路 Bolo 遊戲，您必須提供執行 Bolo 之主機的名稱（或 IP 位址），以及該機器上 Bolo 程序的 UDP 連接埠號碼。
+STR_DLGTCP_JOIN=加入
+STR_DLGTCP_REJOIN=重新加入
+STR_DLGTCP_NEW=新增
+STR_DLGTCP_TRACKERSETUP=追蹤器設定
+STR_DLGTCP_REMEMBER=記住玩家名稱
+STR_DLGTCP_MACHINENAME=機器名稱（或 IP 位址）：
+STR_DLGTCP_THEREUDP=該機器上 Bolo 的 UDP 連接埠：
+STR_DLGTCP_USUDP=本機 Bolo 的 UDP 連接埠：
+STR_DLGTCP_NAME=遊戲中的玩家名稱：
+STR_DLGTCP_NEWBLURB=點擊「新增」以開始遊戲
+STR_DLGTCP_JOINBLURB=點擊「加入」以加入現有遊戲
+STR_DLGTCP_REJOINBLURB=點擊「重新加入」以重新加入遊戲並取回您的原有資產
+STR_ERR_DLGTCP_PORTS=伺服器連接埠與本機連接埠相同！
+STR_ERR_DLGTCP_NOTRIGHT=這裡有些不對勁…
+
+# Game finder extra
+
+# Brain errors
+
+# Draw errors
+
+# Font errors
+
+# Game front errors
+STR_GAMEFRONT_LANFINDER_TITLE=區域網路遊戲搜尋器
+STR_GAMEFRONT_TRACKERFINDER_TITLE=追蹤器遊戲搜尋器
+STR_GAMEFRONTERR_JOINGAME=嘗試加入遊戲時發生錯誤
+
+# Network client errors
+
+# Sound errors
+
+# General WinBolo errors
+STR_WBTIMELIMIT_END=時間限制已到期，遊戲已結束。
+STR_WBERR_SAVEMAP=儲存地圖時發生錯誤（磁碟已滿？）
+
+# Tutorial strings
+STR_TUTORIAL01=前方有一條通往內陸的短河。按住 {ACCEL} 鍵\n將您的船駛到河的盡頭。\n\n到達後，繼續按住 {ACCEL}。坦克將從船上\n下船，船將停泊在河的盡頭。
+STR_TUTORIAL02=您現在在草地上。坦克在草地上移動\n速度相當快。\n\n\n繼續按 {ACCEL} 前進到森林。
+STR_TUTORIAL03=您現在在森林中。坦克在森林中的移動速度\n比在草地上慢。\n\n\n繼續按 {ACCEL} 前進到沼澤。
+STR_TUTORIAL04=您現在在沼澤中。坦克在沼澤中移動\n非常緩慢。幸好前方有一條道路。\n\n\n繼續按 {ACCEL} 前進到道路。
+STR_TUTORIAL05=您現在在道路上。坦克在道路上可以移動\n非常快，按 {ACCEL} 可以加速。\n\n\n如果速度過快，可以按 {BRAKE} 減速。
+STR_TUTORIAL06=前方有一些建築。建築是不可穿越的\n固體障礙物，您必須找到穿越迷宮的\n路線到達另一側。\n\n按 {LEFT} 使坦克左轉\n按 {RIGHT} 使坦克右轉
+STR_TUTORIAL07=這些圓形物體紅色砲管突出的是\n自動碉堡。它們會射擊任何進入射程內的坦克。\n\n\n幸好建築物可以提供保護，\n碉堡將無法擊中您，\n除非您等待太久使它們成功\n完全射穿建築物。
+STR_TUTORIAL08=森林也提供碉堡防護，但方式不同。\n除了大幅減慢坦克速度外，\n穿越森林也會限制視野。\n\n\n當您在森林內時，仍然可以清楚看到\n森林外的一切，但碉堡（和其他玩家）\n無法看到您的坦克，除非非常靠近。
+STR_TUTORIAL09=將坦克對準林帶中央，\n向正北方行駛。若您筆直前進，\n不要太靠近森林邊緣，\n碉堡將看不見您，也不會射擊。\n\n不要駛出森林，否則您會被炸得粉碎。\n
+STR_TUTORIAL10=還有一種簡單的逃脫碉堡方式 —\n速度。\n\n\n確保您正確對準道路中央，\n按住 {ACCEL} 以全速通過碉堡。
+STR_TUTORIAL11=當它們發現您時會開始射擊，\n但如果您繼續直行且不失去勇氣，\n砲彈打中您之前您就已離開射程。\n\n\n不要跑出道路進入沼澤，否則您將成為\n碉堡的固定靶，無法快速移動以逃脫。
+STR_TUTORIAL12=前方有一個補給基地。補給基地提供\n砲彈供您射擊，地雷供您佈置秘密陷阱，\n並在坦克裝甲受損時將其修復至滿格。\n\n\n停在補給基地上為您的坦克補充砲彈。
+STR_TUTORIAL13=您在補給基地上。您的坦克現在將\n補充砲彈和地雷，如右側指示器所示。\n前方，建築物後方，是一片地雷區。
+STR_TUTORIAL14=如果將坦克開進地雷區，坦克將被\n摧毀。幸好您可以透過射擊來清除地雷區。\n按 {FIRE} 射擊。\n\n射穿建築物，然後在地雷區中央\n落下一枚砲彈使其引爆。\n炸掉地雷後會在地面留下大彈坑，\n您可以駛過彈坑，雖然速度和穿越沼澤一樣慢。
+STR_TUTORIAL15=前方還有一個地雷區。再用同樣的方法：\n駛上補給基地，射穿牆壁，\n在地雷區中央落下一枚砲彈使其引爆。\n\n不過這次地雷區緊鄰一條大河，\n水會淹入彈坑。您可以像穿越\n彈坑和沼澤一樣駕駛坦克穿越水中。
+STR_TUTORIAL16=WinBolo 會自動捲動視窗以顯示\n您坦克周圍的區域，但您可以使用\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\n鍵手動覆蓋 WinBolo 選擇的視角。\n\n現在按 {SCROLL_UP} 以更好地查看\n前方的河流。
+STR_TUTORIAL17=除了速度非常慢之外，穿越水中還有\n另一個缺點：會耗盡坦克的砲彈和地雷存量。\n\n\n到達另一側後，坦克仍可正常運作，\n但您將失去所有攻擊能力。
+STR_TUTORIAL18=這次我們要用更巧妙的方式\n渡河。不是直接穿越水中，\n而是建造一座橋。\n\n\n點擊左上角的森林圖示選擇樹木採伐模式，\n然後點擊森林。您的建造者將從坦克\n跑出來採集一棵樹作為建材。
+STR_TUTORIAL19=採集一些樹木後，選擇道路/橋梁工具\n（從頂部算第二個按鈕），然後點擊\n道路末端的河流。\n\n\n您的建造者將從坦克跑出來建造\n一段橋梁。再點擊一次完成橋梁，\n然後駛過橋到另一側。
+STR_TUTORIAL20=這條河比上一條更寬，在中央\n太深，無法建造橋梁。如果您嘗試\n直接駛過，坦克會沉入河底被摧毀。
+STR_TUTORIAL21=要渡過這條河，您需要建造一艘船。船\n需要五棵樹，所以點擊五棵樹來採集它們。\n然後選擇牆壁/船隻工具（從頂部算第三個按鈕），\n點擊水面來建造船隻。\n\n如果點擊陸地，您將建造牆壁，\n需要再採集樹木才能建造船隻。\n駛上船隻並渡河到另一側。
+STR_TUTORIAL22=前方有一個碉堡，還有幾個補給基地\n為您提供彈藥。從補給基地補充砲彈，\n然後攻擊碉堡。\n\n\n它會反擊，但如果您的坦克被擊中，\n您可以輕鬆返回補給基地修復裝甲至滿格。
+STR_TUTORIAL23=憑藉耐心和謹慎，您應該能夠摧毀這個\n碉堡。使用您學到的技能讓任務更容易：\n\n\n躲在森林中使碉堡看不見您，\n採集樹木，建造道路讓坦克移動更快，\n建造建築物作為碉堡砲彈的掩護。
+STR_TUTORIAL24=成功摧毀這個碉堡後，您的最終\n教學挑戰是消滅守衛出口的兩個\n碉堡，建造船隻並逃脫。\n\n\n特別注意您坦克的裝甲等級 —\n如果坦克被摧毀，您將不得不從\n海上的新船開始，搭乘新坦克重新開始。
+STR_TUTORIAL25=恭喜！您已完成 WinBolo\n教學。\n\n\n\n現在召集一些朋友一起玩，體驗\n與聰明的人類對手對戰的感覺，\n而不是面對靜止不動的目標。\n\n若您日後想重新進行教學，\n可從設定選單中再次啟動。
+STR_TUTORIAL_START01=歡迎來到 WinBolo 教學。這座小島介紹\nWinBolo 的基本原則，並逐一引導您\n了解它們。每個新原則將在\n像這樣的視窗中說明。\n\n閱讀每條訊息後，您可以透過\n點擊滑鼠上的「確定」按鈕\n或直接按鍵盤上的 <Return> 鍵來繼續。
+STR_TUTORIAL_START02=WinBolo 是 Stuart Cheshire 經典 Macintosh 網路遊戲 Bolo 的唯一授權重製版。\n您可以在官方網站找到策略提示和其他資訊：\n\nhttps://www.winbolo.com\n\n歡迎加入我們的 Reddit 和 Discord\n
+STR_TUTORIAL_START03=關於網際網路遊戲的一點說明。\n\n如果您加入線上遊戲時遇到大量網路錯誤，\n請立即離開遊戲，\n以免影響其他玩家的體驗。
+STR_TUTORIAL_START04=您正在控制一輛坦克，目前在\n海上的船隻上。按 {ACCEL} 使坦克（和船隻）\n向前行駛，按 {BRAKE} 減速並停止。\n\n不要像打字一樣輕點按鍵 —\n按住按鍵直到坦克達到您想要的速度\n再放開。現在按 {ACCEL} 讓\n船隻向前駛向陸地。\n（先按 <Return> 關閉視窗）
+STR_TUTORIAL01_TOUCH=前方有一條通往內陸的短河。\n向前推動搖桿將您的船駛到\n河的盡頭。\n\n到達後，繼續向前推動搖桿。\n坦克將從船上下船，\n船將停泊在河的盡頭。
+STR_TUTORIAL02_TOUCH=您現在在草地上。坦克在草地上\n移動速度相當快。\n\n\n繼續向前推動搖桿前進到森林。
+STR_TUTORIAL03_TOUCH=您現在在森林中。坦克在森林中的移動速度\n比在草地上慢。\n\n\n繼續向前推動搖桿前進到沼澤。
+STR_TUTORIAL04_TOUCH=您現在在沼澤中。坦克在沼澤中移動\n非常緩慢。幸好前方有一條道路。\n\n\n繼續向前推動搖桿前進到道路。
+STR_TUTORIAL05_TOUCH=您現在在道路上。坦克在道路上可以移動\n非常快，將搖桿完全向前推動\n可以加速。\n\n\n如果速度過快，向後拉動\n搖桿以減速。
+STR_TUTORIAL06_TOUCH=前方有一些建築。建築是不可穿越的\n固體障礙物，您必須找到穿越迷宮的\n路線到達另一側。\n\n向左或向右推動搖桿\n使坦克轉向該方向。
+STR_TUTORIAL10_TOUCH=還有一種簡單的逃脫碉堡方式 —\n速度。\n\n\n確保您正確對準道路中央，\n將搖桿完全向前推動以\n全速通過碉堡。
+STR_TUTORIAL14_TOUCH=如果將坦克開進地雷區，坦克將被\n摧毀。幸好您可以透過射擊來清除地雷區。\n點擊射擊按鈕進行射擊。\n\n射穿建築物，然後在地雷區中央\n落下一枚砲彈使其引爆。\n炸掉地雷後會在地面留下大彈坑，\n您可以駛過彈坑，雖然速度和穿越沼澤一樣慢。
+STR_TUTORIAL16_TOUCH=WinBolo 會自動捲動視窗以顯示\n您坦克周圍的區域，但您可以用手指\n拖動地圖來手動覆蓋視角。\n\n現在向下拖動地圖，將前方的河流\n帶入視野。
+STR_TUTORIAL18_TOUCH=這次我們要用更巧妙的方式\n渡河。不是直接穿越水中，\n而是建造一座橋。\n\n\n點擊左上角的森林圖示選擇樹木採伐模式，\n然後點擊森林。您的建造者將從坦克\n跑出來採集一棵樹作為建材。
+STR_TUTORIAL19_TOUCH=採集一些樹木後，選擇道路/橋梁工具\n（從頂部算第二個按鈕），然後點擊\n道路末端的河流。\n\n\n您的建造者將從坦克跑出來建造\n一段橋梁。再點擊一次完成橋梁，\n然後駛過橋到另一側。
+STR_TUTORIAL21_TOUCH=要渡過這條河，您需要建造一艘船。船\n需要五棵樹，所以點擊五棵樹來採集它們。\n然後選擇牆壁/船隻工具（從頂部算第三個按鈕），\n點擊水面來建造船隻。\n\n如果點擊陸地，您將建造牆壁，\n需要再採集樹木才能建造船隻。\n駛上船隻並渡河到另一側。
+STR_TUTORIAL_START01_TOUCH=歡迎來到 WinBolo 教學。這座小島介紹\nWinBolo 的基本原則，並逐一引導您\n了解它們。每個新原則將在\n像這樣的視窗中說明。\n\n閱讀每條訊息後，您可以透過\n點擊「確定」按鈕來繼續。
+STR_TUTORIAL_START04_TOUCH=您正在控制一輛坦克，目前在\n海上的船隻上。使用畫面左側的搖桿\n來駕駛：向前推動加速，\n向後拉動減速並停止。\n\n搖桿推動越遠，坦克速度越快。\n現在向前推動搖桿，讓\n船隻向前駛向陸地。\n（先點擊確定關閉此視窗）
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=您的新建造者降落前無法建造
+LGM_NO_BUILD=無法在此處建造
+LGM_INSUFFICIENT_TREES=您沒有足夠的樹木來建造
+LGM_NO_PILLS=您沒有碉堡可以放置
+LGM_INSUFFICIENT_MINES=您沒有地雷可以放置
+LGM_BUILDTANK=建造者無法在坦克上建造
+LGM_NO_TREE=此處沒有樹木可採集
+LGM_PILL_NO_NEED_REPAIR=該碉堡不需要修復
+LGM_PILL_NO_BUILD_ON_MINE=建造者無法在地雷上建造，那會殺死他。
+LGM_NO_BUILD_UNDER_BOAT=建造者無法在您的船底下建造
+
+# In-game messages
+MESSAGE_ASSISTANT=線上助手
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME=「{other}」已將控制權交給「{player}」
+MESSAGE_NETSERVER=網路伺服器
+MESSAGE_THIS_COMPUTER=這台電腦
+MESSAGE_CAPTURE_BASE={player} 佔領了一個中立基地
+MESSAGE_CAPTURE_PILL={player} 佔領了一個中立碉堡
+MESSAGE_STOLE_PILL={player} 剛從 {other} 手中奪取了碉堡
+MESSAGE_STOLE_BASE={player} 剛從 {other} 手中奪取了基地
+MESSAGE_LGM_DEAD={player} 的建造者陣亡了
+MESSAGE_SAVED_MAP={player} 剛儲存了地圖檔案
+MESSAGE_QUIT_GAME={player} 已退出遊戲
+MESSAGE_TIME_LIMIT_EXPIRED=時間限制已到期，遊戲結束。請安息
+MESSAGE_TANKSUNK=坦克沉入深海
+
+# Network errors
+NETERR_TRACKERDNS=追蹤器主機名稱查詢失敗，追蹤器通知已停用
+NETERR_JOININIT=您嘗試聯繫的遊戲沒有回應。\n這通常意味著以下三種情況之一：\n1. 位址和連接埠欄位不正確。\n2. 您在某種防火牆後面，阻止了 UDP 存取。\n3. 請確認您的 WinBolo 版本與遊戲相同
+NETERR_GAMEFULL=此遊戲目前已滿
+NETERR_SERVERCONNECT=無法與伺服器建立連線，請嘗試其他機器或等待幾秒後重試。
+NETERR_PASSWORDWRONG=密碼不正確
+NETERR_PLAYERNAMEINUSE=您的玩家名稱已被使用，請選擇其他名稱並重試
+NETERR_NONEWPLAYERS=抱歉，此遊戲目前不接受新玩家
+NETERR_CONNECTNOJOIN=您已連線至遊戲，但不被允許加入。這可能是因為您的玩家名稱已被使用，請用新名稱重試
+
+# Network status
+NET_STATUS_JOINING=正在加入
+NET_STATUS_OK=正常
+NET_STATUS_FAILED=失敗
+NETERR_LOSTCONNECTION=您已與伺服器斷線。\n正在切換至單人模式
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=傳送訊息
+STRERR_HELPFILE=開啟說明檔案時發生錯誤。
+STR_DLGSKIN_BLURB=如果外觀項目不完整，將使用預設的內建外觀/音效。
+
+# Player name error
+NETERR_MAPSERIALIZE=伺服器無法準備地圖資料，請重試
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=影格率：
+STR_DLGSYSINFO_GRAPHICS=圖形：
+STR_DLGSYSINFO_AITANKS=AI 坦克：
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=伺服器：
+STR_DLGNETINFO_THISGAME=本遊戲：
+STR_DLGNETINFO_PINGGRAPH=延遲：最小 {number} / 平均 {number2} / 最大 {number3} ms
+STR_DLGNETINFO_KBIN=KB/s 下載:
+STR_DLGNETINFO_KBOUT=KB/s 上傳:
+STR_DLGNETINFO_PACKETS_RATE=封包/秒：{number} 收 / {number2} 送
+STR_DLGNETINFO_KB_RATE=KB/秒：{string1} 收 / {string2} 送
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=複製種子
+STR_DLGGAMEINFO_AILABEL=AI 坦克：
+STR_DLGGAMEINFO_FULLADV=完全優勢
+STR_DLGGAMEINFO_UNLIMITED=無限制
+
+# Players panel
+STR_DLGPLAYERS_TITLE=玩家
+STR_DLGPLAYERS_ALL=全部
+STR_DLGPLAYERS_NONE=無
+STR_DLGPLAYERS_ALLIES=盟友
+STR_DLGPLAYERS_NEARBY=附近
+STR_LEAVE_ALLIANCE=離開聯盟
+STR_REQUEST_ALLIANCE=請求聯盟
+STR_ALLOW_NEW_PLAYERS=允許新玩家
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=加入遊戲？
+STR_DLGJOIN_BLURB=離開目前遊戲並加入伺服器？
+STR_DLGJOIN_BUTTON=加入
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=變更玩家名稱
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=（無）
+STR_DLGKEYSETUP_PRESSAKEY=按下一個按鍵…
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=按下要指定的按鍵，或點擊取消。
+STR_DLGKEYSETUP_CHANGE=變更
+STR_DLGKEYSETUP_COL_ACTION=操作
+STR_DLGKEYSETUP_COL_KEY=按鍵
+STR_DLGKEYSETUP_QUICKKEYS=快速鍵
+STR_DLGKEYSETUP_TREE=樹木
+STR_DLGKEYSETUP_ROAD=道路
+STR_DLGKEYSETUP_WALL=牆壁
+STR_DLGKEYSETUP_QUICKPILLBOX=碉堡
+STR_DLGKEYSETUP_QUICKMINE=地雷
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=設定
+STR_DLGSETTINGS_PLAYER=玩家
+STR_DLGSETTINGS_PLAYERNAME=玩家名稱：
+STR_DLGSETTINGS_APPLY=套用
+STR_DLGSETTINGS_SETKEYS=設定按鍵…
+STR_DLGSETTINGS_DISPLAY=顯示
+STR_DLGSETTINGS_WINDOWSIZE=視窗大小：
+STR_DLGSETTINGS_RELSTEER=相對操控
+STR_DLGSETTINGS_RELSTEER_TIP=關閉時，搖桿直接指向坦克方向。\n開啟時，搖桿相對於坦克左右旋轉。
+STR_DLGSETTINGS_TABLETMODE=平板 UI 模式
+STR_DLGSETTINGS_LABELS=標籤
+STR_DLGSETTINGS_MSGNAMES=訊息名稱：
+STR_DLGSETTINGS_TANKLABELS=坦克標籤：
+STR_DLGSETTINGS_SOUND=音效
+STR_DLGSETTINGS_MESSAGES=訊息
+STR_DLGSETTINGS_GAME=遊戲
+
+# Menu bar
+STR_MENU_FILE=檔案
+STR_MENU_NEW=新增
+STR_MENU_SAVE_MAP=儲存地圖
+STR_MENU_EXIT=結束
+STR_MENU_EDIT=編輯
+STR_MENU_FRAME_RATE=影格率
+STR_MENU_WINDOW_SIZE=視窗大小
+STR_MENU_NORMAL=正常
+STR_MENU_DOUBLE=雙倍
+STR_MENU_TRIPLE=三倍
+STR_MENU_QUAD=四倍
+STR_MENU_CUSTOM_RESIZABLE=自訂（可調整大小）
+STR_MENU_REQUIRES=需要 {number}x{number2} — 超出顯示範圍
+STR_MENU_SMOOTH_SCROLLING=平滑捲動
+STR_MENU_AUTO_SCROLLING=自動捲動
+STR_MENU_SHOW_GUNSIGHT=顯示瞄準器
+STR_MENU_MSG_NAMES_SUB=訊息傳送者名稱
+STR_MENU_TANK_LABELS_SUB=坦克標籤
+STR_NONE=無
+STR_SHORT=短
+STR_LONG=長
+STR_MENU_NO_OWN_LABEL=不標示自己的坦克
+STR_MENU_PILLBOX_LABELS=碉堡標籤
+STR_MENU_BASE_LABELS=補給基地標籤
+STR_MENU_HIDE_MAIN=隱藏主視角
+STR_MENU_DEVICE=裝置：
+STR_MENU_DESKTOP=桌面
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=設定按鍵
+STR_MENU_SOUND_EFFECTS=音效效果
+STR_MENU_BACKGROUND_SOUND=背景音效
+STR_MENU_SOUND_KEEPALIVE=保持音效
+STR_MENU_NEWSWIRE_MSGS=Newswire 訊息
+STR_MENU_ASSISTANT_MSGS=助手訊息
+STR_MENU_AI_MSGS=AI Brain 訊息
+STR_MENU_NETSTATUS_MSGS=網路狀態訊息
+STR_MENU_NETDEBUG_MSGS=網路除錯訊息
+STR_MENU_SETTINGS=設定…
+STR_MENU_PLAYERS=玩家
+STR_MENU_SEND_MESSAGE=傳送訊息
+STR_MENU_SELECT_ALL=全選
+STR_MENU_SELECT_NONE=取消全選
+STR_MENU_SELECT_ALLIES=選擇盟友
+STR_MENU_SELECT_NEARBY=選擇附近坦克
+STR_MENU_BRAINS=Brain
+STR_MENU_MANUAL=手動
+STR_MENU_HELP=說明
+STR_MENU_ABOUT=關於
+STR_MENU_LEAVE_GAME=離開遊戲
+STR_BRAINSETTINGS_NONE=（無設定）
+STR_BRAINSETTINGS_TITLE=Brain 設定
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=教學
+STR_DLGSETTINGS_PLAY_TUTORIAL=進行教學
+STR_DLGSETTINGS_SHOW_ON_MAIN=在主選單顯示
+STR_DLGSETTINGS_CRASH_REPORTING=當機回報
+STR_DLGSETTINGS_ENABLE_CRASH=啟用當機回報
+STR_DLGSETTINGS_CRASH_HELP=傳送當機報告以協助改善 WinBolo
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=變更將於下次啟動時生效。
+STR_CLOSE=關閉
+STR_DLGSETTINGS_WINTITLE=WinBolo — 設定
+STR_DLGKEYSETUP_WINTITLE=WinBolo — 按鍵設定
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo — 遊戲大廳
+STR_UNKNOWN=未知
+STR_DLGGAMEINFO_AIFULL=是（完全）
+STR_DLGLOBBY_HIDDEN=隱藏
+STR_DLGLOBBY_VISIBLE=可見
+STR_DLGLOBBY_DOWNLOADING=正在下載地圖…
+STR_DLGLOBBY_MAP_UNAVAILABLE=地圖預覽無法使用
+STR_DLGLOBBY_PILLBOXES=碉堡：
+STR_DLGLOBBY_BASES=基地：
+STR_DLGLOBBY_STARTS=起始點：
+STR_DLGLOBBY_SKIPMAP=跳過地圖
+STR_DLGLOBBY_CANCELSKIP=取消跳過
+STR_DLGLOBBY_VOTES={number}/{number2} 票跳過
+STR_DLGLOBBY_CHAT=聊天
+STR_DLGLOBBY_READY=準備
+STR_DLGLOBBY_UNREADY=取消準備
+STR_DLGLOBBY_BALANCE_TEAMS=平衡隊伍
+STR_DLGLOBBY_APPLY_BALANCE=套用平衡
+STR_DLGLOBBY_DISMISS=關閉
+STR_DLGLOBBY_LEAVE=離開
+STR_DLGLOBBY_LEAVE_TITLE=離開遊戲？
+STR_DLGLOBBY_LEAVE_BLURB=確定要離開此遊戲嗎？
+STR_DLGLOBBY_BOT_FMT={player} [機器人]
+STR_DLGLOBBY_YOU_FMT={player}（您）
+STR_DLGLOBBY_STARTING_FMT=即將開始 {number}…
+STR_DLGLOBBY_LOSTCONNECTION=您已與伺服器斷線。
+STR_DLGLOBBY_ME=我
+STR_DLGLOBBY_PLAYER_COL=玩家
+STR_DLGLOBBY_PING_COL=延遲
+STR_DLGLOBBY_TEAM_COL=隊伍
+STR_DLGLOBBY_READY_COL=準備
+STR_DLGLOBBY_SLOT_COL=位置
+STR_DLGLOBBY_NAME_COL=玩家名稱
+STR_DLGLOBBY_ACTION_COL=操作
+STR_DLGLOBBY_ADDBOT=新增機器人
+STR_DLGLOBBY_REMOVE=移除
+STR_DLGLOBBY_MAP_TAB=地圖
+STR_DLGLOBBY_GAME_LBL=遊戲：
+STR_DLGLOBBY_MINES_LBL=地雷：
+STR_DLGLOBBY_AI_LBL=AI：
+STR_DLGLOBBY_TIME_LBL=時間：
+STR_DLGLOBBY_TIME_HMS={number}時 {string1}分 {string2}秒
+STR_DLGLOBBY_TIME_MS={number}分 {string1}秒
+STR_DLGLOBBY_TIME_S={number}秒
+STR_DLGLOBBY_MAP_LBL=地圖：
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo — 遊戲設定
+STR_DLGGAMESETUP_SELECTAMAP=選擇地圖：
+STR_BACK=返回
+STR_DLGGAMESETUP_BASES_STARTS=基地：{number}  起始點：{number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=碉堡：{number}
+STR_DLGGAMESETUP_CHANGEMAP=變更地圖
+STR_DLGGAMESETUP_GAMETYPE_LBL=遊戲類型
+STR_DLGGAMESETUP_OPENGAME_SHORT=開放遊戲
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=隱藏地雷
+STR_DLGGAMESETUP_AICOMPPLAYERS=AI 電腦玩家
+STR_DLGGAMESETUP_ALLOW=允許
+STR_DLGGAMESETUP_ADVANTAGE=優勢
+STR_DLGGAMESETUP_FULLMAP=完整地圖
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=時間限制
+STR_DLGGAMESETUP_TEAMSETUP=隊伍設定
+STR_DLGGAMESETUP_AINUM=AI 玩家數量：
+STR_DLGGAMESETUP_NOBRAINS=找不到 Brain
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=您
+STR_DLGGAMESETUP_BOT_FMT=機器人 {number}
+STR_DLGGAMESETUP_NOAI=無電腦坦克
+STR_DLGGAMESETUP_ALLOWAI=允許電腦坦克
+STR_DLGGAMESETUP_ALLOWADV=允許（帶優勢）
+STR_DLGGAMESETUP_ALLOWFULL=允許（完整地圖）
+STR_DLGGAMESETUP_NOPREVIEW=無預覽
+STR_DLGGAMESETUP_STARTGAME=開始遊戲
+STR_DLGGAMESETUP_STRICT_SHORT=嚴格
+STR_DLGTCP_WINTITLE=WinBolo — UDP（網際網路）設定
+STR_ERR_TITLE=錯誤
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo — {string1}
+STR_DLGBROWSER_REFRESH=重新整理
+STR_DLGBROWSER_LOADING=正在載入遊戲清單{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=點擊重新整理以載入遊戲…
+STR_DLGBROWSER_LAN_INSTRUCTION=點擊重新整理以掃描…
+STR_DLGBROWSER_GAMES_LOADED=遊戲已載入。
+STR_DLGBROWSER_NO_GAMES=找不到遊戲。開一局吧！
+STR_DLGBROWSER_SEARCH_FAILED=搜尋失敗。
+STR_DLGBROWSER_SEARCHING=正在搜尋…
+STR_DLGBROWSER_COL_SERVER=伺服器
+STR_DLGBROWSER_COL_MAP=地圖
+STR_DLGBROWSER_COL_PLAYERS=玩家
+STR_DLGBROWSER_COL_TYPE=類型
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=基地
+STR_DLGBROWSER_COL_PILLS=碉堡
+STR_DLGBROWSER_COL_PING=延遲
+STR_DLGBROWSER_FILTER=篩選：
+STR_DLGBROWSER_FILTER_ALLTYPES=所有類型
+STR_DLGBROWSER_FILTER_UNLOCKED=僅未鎖定
+STR_DLGBROWSER_FILTER_ALLLOBBY=所有大廳
+STR_DLGBROWSER_FILTER_INLOBBY=大廳中
+STR_DLGBROWSER_FILTER_STARTING=即將開始
+STR_DLGBROWSER_STATUS_PINGING=狀態：{string1}  |  {number} 個伺服器  |  正在測速 {number2}…
+STR_DLGBROWSER_STATUS=狀態：{string1}  |  {number} 個伺服器
+STR_DLGBROWSER_NEWGAME=新遊戲
+STR_DLGBROWSER_PLAYER_NAME_BTN=玩家名稱
+STR_DLGBROWSER_MANUAL=手動
+STR_DLGBROWSER_ERR_VERSION=伺服器執行的是不同版本的 WinBolo。
+STR_DLGBROWSER_ERR_NEEDNAME=您必須先設定玩家名稱。
+STR_DLGBROWSER_AI_ADV=優勢
+STR_DLGBROWSER_AI_FULL=完全
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo — 日誌瀏覽器
+STR_DLGWBN_TITLE=WinBolo.net 日誌瀏覽器
+STR_DLGWBN_TAB_RECENT=最近
+STR_DLGWBN_TAB_TOPRATED=最高評分
+STR_DLGWBN_TAB_MOSTDOWNLOADED=最多下載
+STR_DLGWBN_TAB_SEARCH=搜尋
+STR_DLGWBN_LOADING=載入中…
+STR_DLGWBN_NOCONNECT=無法連線至 WinBolo.net
+STR_DLGWBN_MINPLAYERS=最少玩家
+STR_DLGWBN_SEARCHFILTERS=搜尋篩選器：
+STR_DLGWBN_HINT_PLAYER=玩家
+STR_DLGWBN_HINT_MAP=地圖
+STR_DLGWBN_SEARCH_BTN=搜尋
+STR_DLGWBN_ERROR=錯誤：{string1}
+STR_DLGWBN_COL_MAP=地圖
+STR_DLGWBN_COL_TYPE=類型
+STR_DLGWBN_COL_PLAYERS=玩家
+STR_DLGWBN_COL_RATING=評分
+STR_DLGWBN_COL_SIZE=大小
+STR_DLGWBN_COL_DATE=日期
+STR_DLGWBN_PLAYERS_LBL=玩家: 
+STR_DLGWBN_NUMPLAYERS_FMT={number} 名玩家
+STR_DLGWBN_DURATION=時長：{string1}
+STR_DLGWBN_RATING=評分：{string1}/10（{number}）
+STR_DLGWBN_DOWNLOADS_FMT=下載次數：{number}
+STR_DLGWBN_SIZE=大小：{string1}
+STR_DLGWBN_COMMENTS_FMT=留言（{number}）：
+STR_DLGWBN_NOCOMMENTS=尚無留言。
+STR_DLGWBN_ADDCOMMENT=新增留言：
+STR_DLGWBN_HINT_COMMENT=寫下您的留言…
+STR_DLGWBN_POST=發佈
+STR_DLGWBN_POSTED=留言已發佈！
+STR_DLGWBN_LOADINGDETAIL=正在載入詳細資訊…
+STR_DLGWBN_DOWNLOADING=正在下載…
+STR_DLGWBN_VIEWLOG=查看日誌
+STR_DLGWBN_NOLOG=此遊戲的日誌檔案無法使用。
+STR_DLGWBN_PREV=< 上一頁
+STR_DLGWBN_NEXT=下一頁 >
+STR_DLGWBN_PAGE=第 {number} 頁，共 {number2} 頁（共 {number3} 筆）
+STR_DLGWBN_OPENFILE=開啟檔案…
+STR_DLGWBN_PARSERR=解析回應失敗
+STR_DLGWBN_NETERR=網路錯誤
+STR_DLGWBN_LOADERR=載入詳細資訊失敗
+STR_DLGWBN_DOWNLOAD_FAILED=下載失敗
+STR_DLGWBN_NOSAVEPATH=無法確定儲存路徑
+STR_DLGWBN_FETCHERR=擷取失敗
+STR_DLGWBN_UNKNOWN_ERR=未知錯誤
+STR_DLGWBN_FILEFILTER=WinBolo 日誌檔案
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo — 設定玩家名稱
+STR_DLGSETNAME_WBN_LOCKED=您的玩家名稱由 WinBolo.net 設定。
+STR_DLGSETNAME_PLEASE_ENTER=請輸入您的玩家名稱。
+STR_DLGSETNAME_BLANK_ERR=抱歉，此欄位不能留空
+STR_DLGSETNAME_STAR_ERR=抱歉，名稱不能以「*」開頭
+STR_DLGSETNAME_INUSE_ERR=該名稱已被其他玩家使用。
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo — 外觀選擇
+STR_DLGSKIN_NOSKIN=無外觀（預設）
+STR_DLGSKIN_NA=不適用
+STR_DLGSKIN_SELECT=選擇外觀：
+STR_DLGSKIN_NAME_LBL=名稱：
+STR_DLGSKIN_AUTHOR_LBL=作者：
+STR_DLGSKIN_NOTES_LBL=備註：
+STR_DLGSKIN_LOADERR=無法載入外觀檔案
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo — 追蹤器設定
+STR_DLGTRACKER_INVALIDPORT=無效的連接埠號碼。
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=正在檢查 WinBolo.net…
+STR_DLGWBN_LABEL=WinBolo.net：
+STR_DLGWBN_SIGNED_IN=已登入
+STR_DLGWBN_EXPIRES=（到期時間：{string1}）
+STR_DLGWBN_SIGN_OUT=登出 WBN
+STR_DLGWBN_NOT_SIGNED_IN=未登入
+STR_DLGWBN_SIGN_IN_BTN=登入 WBN…
+STR_DLGWBN_SIGNIN_TITLE=登入 WinBolo.net
+STR_DLGWBN_SIGNIN_BLURB=使用您的 WinBolo.net 帳號和密碼登入。系統將儲存憑證，下次無需再次輸入密碼。
+STR_DLGWBN_USERNAME=帳號：
+STR_DLGWBN_PASSWORD=密碼：
+STR_DLGWBN_SIGNINGIN=正在登入…
+STR_DLGWBN_SIGNIN_OK=登入
+STR_DLGWBN_NEEDCREDS=請輸入您的帳號和密碼。
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo — 遊戲選擇
+STR_DLGWELCOME_SINGLE=單人遊戲
+STR_DLGWELCOME_LOCAL=本機
+STR_DLGWELCOME_MAPEDITOR=地圖編輯器
+STR_DLGWELCOME_LOGVIEWER=日誌檢視器
+STR_DLGWELCOME_INTERNET=網際網路
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island（內建）
+STR_MAPCHOOSER_LOADMAP=載入地圖
+STR_MAPCHOOSER_LOADDEVICE=從裝置載入…
+STR_MAPCHOOSER_GENRANDOM=產生隨機地圖
+STR_MAPCHOOSER_RANDOMMAP=隨機地圖
+STR_MAPCHOOSER_CLICKGEN=點擊產生以預覽
+STR_MAPCHOOSER_NOPREVIEW=無可用預覽
+STR_MAPCHOOSER_STATS=碉堡：{number}  基地：{number2}  起始點：{number3}
+STR_MAPCHOOSER_MAPFILES=地圖檔案
+STR_MAPCHOOSER_ALLFILES=所有檔案
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=狀態
+STR_TABLET_KILLS_DEATHS=擊殺：{number}  死亡：{number2}
+STR_TABLET_TANK_RESOURCES=坦克資源
+STR_TABLET_SHELLS=砲彈
+STR_TABLET_MINES=地雷
+STR_TABLET_ARMOUR=裝甲
+STR_TABLET_TREES=樹木
+STR_TABLET_PILLBOXES=碉堡
+STR_TABLET_BASES=基地
+STR_TABLET_TANKS=坦克
+STR_TABLET_PILL_FMT=碉堡 {number}
+STR_TABLET_BASE_FMT=基地 {number}
+STR_TABLET_TANK_FMT=坦克 {number}
+STR_TABLET_BTN_MSG=訊息
+STR_TABLET_BTN_PLY=玩家
+STR_TABLET_BTN_SET=設定
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=設定玩家名稱
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=開啟…
+STR_MAPEDIT_MENU_RECENT=最近檔案
+STR_MAPEDIT_MENU_SAVE=儲存
+STR_MAPEDIT_MENU_SAVEAS=另存新檔…
+STR_MAPEDIT_MENU_EXPORT=匯出為 PNG…
+STR_MAPEDIT_MENU_RETURN=返回選單
+STR_MAPEDIT_MENU_UNDO=復原
+STR_MAPEDIT_MENU_REDO=重做
+STR_MAPEDIT_MENU_CUT=剪下
+STR_MAPEDIT_MENU_COPY=複製
+STR_MAPEDIT_MENU_PASTE=貼上
+STR_MAPEDIT_MENU_MAP=地圖
+STR_MAPEDIT_MENU_RANDOMMAP=隨機地圖…
+STR_MAPEDIT_MENU_TEXT=文字…
+STR_MAPEDIT_MENU_IMPORTIMG=匯入圖片…
+STR_MAPEDIT_MENU_VALIDATE=驗證
+STR_MAPEDIT_MENU_MIRROR_H=水平鏡像 {string1}
+STR_MAPEDIT_MENU_MIRROR_V=垂直鏡像 {string1}
+STR_MAPEDIT_MENU_ROTATE_90=順時針旋轉 90° {string1}
+STR_MAPEDIT_MENU_ROTATE_180=旋轉 180° {string1}
+STR_MAPEDIT_SCOPE_SELECTION=（選取範圍）
+STR_MAPEDIT_SCOPE_FULLMAP=（完整地圖）
+STR_MAPEDIT_MENU_OPTIONS=選項
+STR_MAPEDIT_MENU_CENTER=置中地圖
+STR_MAPEDIT_MENU_POINT_STARTS=標示起始點
+STR_MAPEDIT_MENU_SHOWGRID=顯示格線
+STR_MAPEDIT_MENU_SHOWMINES=顯示地雷
+STR_MAPEDIT_MENU_SHOWPILLRANGES=顯示碉堡射程
+STR_MAPEDIT_MENU_WINDOW=視窗
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=地形
+STR_MAPEDIT_WIN_TOOLS=工具
+STR_MAPEDIT_WIN_INSPECTOR=檢查器
+STR_MAPEDIT_WIN_OBJECTS=物件
+STR_MAPEDIT_WIN_OVERVIEW=概覽
+STR_MAPEDIT_WIN_STATS=統計
+STR_MAPEDIT_WIN_STAMP_LIB=圖章庫
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=深海
+STR_MAPEDIT_TERR_GRASS=草地
+STR_MAPEDIT_TERR_FOREST=森林
+STR_MAPEDIT_TERR_ROAD=道路
+STR_MAPEDIT_TERR_BUILDING=建築
+STR_MAPEDIT_TERR_HALFBUILDING=半建築
+STR_MAPEDIT_TERR_RIVER=河流
+STR_MAPEDIT_TERR_SWAMP=沼澤
+STR_MAPEDIT_TERR_CRATER=彈坑
+STR_MAPEDIT_TERR_RUBBLE=瓦礫
+STR_MAPEDIT_TERR_BOAT=船
+STR_MAPEDIT_TERR_MINETOOL=地雷工具
+STR_MAPEDIT_MINE_CHECKERED=棋盤式
+STR_MAPEDIT_MINE_FULL=全部
+STR_MAPEDIT_MINE_RANDOM=隨機
+STR_MAPEDIT_MINE_CLEAR=清除地雷
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=鉛筆
+STR_MAPEDIT_TOOL_LINE=直線
+STR_MAPEDIT_TOOL_RECT=矩形
+STR_MAPEDIT_TOOL_RECTFILL=填充矩形
+STR_MAPEDIT_TOOL_OVAL=橢圓
+STR_MAPEDIT_TOOL_OVALFILL=填充橢圓
+STR_MAPEDIT_TOOL_SELECT=選取
+STR_MAPEDIT_TOOL_FILL=填充
+STR_MAPEDIT_TOOL_MAZE=迷宮
+STR_MAPEDIT_TOOL_GENERATE=產生
+STR_MAPEDIT_TOOL_WAND=魔術棒
+STR_MAPEDIT_TOOL_TEXT=文字
+STR_MAPEDIT_TOOL_TEXT_TIP=文字（將文字蓋印至地圖）
+STR_MAPEDIT_BRUSH=筆刷
+STR_MAPEDIT_BRUSH_SQUARE=方形
+STR_MAPEDIT_BRUSH_CIRCLE=圓形
+STR_MAPEDIT_OBJTOOL_BASE=基地
+STR_MAPEDIT_OBJTOOL_PILL=碉堡
+STR_MAPEDIT_OBJTOOL_START=起始點
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=圖格：{number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=圖格：--
+STR_MAPEDIT_STATUS_ZOOM=縮放：{string1}
+STR_MAPEDIT_STATUS_MODIFIED=已修改
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=未儲存的變更
+STR_MAPEDIT_UNSAVED_BLURB=地圖有未儲存的變更。\n是否要在繼續之前儲存？
+STR_MAPEDIT_GOTO_TITLE=前往座標
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=未選取任何物件
+STR_MAPEDIT_INSP_BASE_HASH=基地 #{number}
+STR_MAPEDIT_INSP_PILL_HASH=碉堡 #{number}
+STR_MAPEDIT_INSP_START_HASH=起始點 #{number}
+STR_MAPEDIT_INSP_POSITION=位置：({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=擁有者
+STR_MAPEDIT_INSP_ARMOUR=裝甲
+STR_MAPEDIT_INSP_SPEED=速度
+STR_MAPEDIT_INSP_DIR=方向
+STR_MAPEDIT_OWNER_NEUTRAL=中立
+STR_MAPEDIT_OWNER_PLAYER=玩家 {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=基地（{number}/{number2}）
+STR_MAPEDIT_OBJ_PILLS_COUNT=碉堡（{number}/{number2}）
+STR_MAPEDIT_OBJ_STARTS_COUNT=起始點（{number}/{number2}）
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  裝甲：{number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  方向：{string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=驗證
+STR_MAPEDIT_VAL_NOISSUES=無問題
+STR_MAPEDIT_VAL_ERRORS={number} 個錯誤
+STR_MAPEDIT_VAL_NOERRORS=0 個錯誤
+STR_MAPEDIT_VAL_WARNINGS={number} 個警告
+STR_MAPEDIT_VAL_NOWARNINGS=0 個警告
+STR_MAPEDIT_VAL_ERRORS_TITLE=驗證錯誤
+STR_MAPEDIT_VAL_HASERRORS=地圖有 {number} 個錯誤，請在儲存前修正。
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=產生隨機地圖
+STR_MAPEDIT_GENRANDAREA_TITLE=產生隨機區域
+STR_MAPEDIT_GENSCOPE_SELECTION=範圍：選取範圍 ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=範圍：完整地圖 ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=文字工具
+STR_MAPEDIT_TEXT_LABEL=文字：
+STR_MAPEDIT_TEXT_BUILTIN=內建
+STR_MAPEDIT_TEXT_SYSTEM=系統字體
+STR_MAPEDIT_TEXT_FONTSIZE=字體大小
+STR_MAPEDIT_TEXT_STYLE=樣式
+STR_MAPEDIT_TEXT_FONTSIZE_S=小（5x7）
+STR_MAPEDIT_TEXT_FONTSIZE_M=中（10x14）
+STR_MAPEDIT_TEXT_FONTSIZE_L=大（15x21）
+STR_MAPEDIT_TEXT_FONTSIZE_XL=特大（20x28）
+STR_MAPEDIT_TEXT_STYLE_REGULAR=一般
+STR_MAPEDIT_TEXT_STYLE_BOLD=粗體
+STR_MAPEDIT_TEXT_STYLE_ITALIC=斜體
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=粗斜體
+STR_MAPEDIT_TEXT_FONTFAMILY=字體家族
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1}（內建）
+STR_MAPEDIT_TEXT_SIZEPX=大小（px）
+STR_MAPEDIT_TEXT_NOFONTS=找不到字體。請將 .ttf 檔案新增至 data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=文字地形
+STR_MAPEDIT_TEXT_TERR_EDGE=邊緣地形
+STR_MAPEDIT_TEXT_TERR_BG=背景
+STR_MAPEDIT_TEXT_PREVIEW=預覽（{number}x{number2} 圖格）：
+STR_MAPEDIT_TEXT_TOOLARGE=文字過大（最大 256x256 圖格）或字體錯誤
+STR_MAPEDIT_GENERATE_BTN=產生
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=迷宮設定
+STR_MAPEDIT_MAZE_REGION=區域：({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=在地圖上拖動以產生
+STR_MAPEDIT_ALGORITHM=演算法
+STR_MAPEDIT_ALGO_LABYRINTH=迷宮
+STR_MAPEDIT_ALGO_OPEN=開放
+STR_MAPEDIT_WALL=牆壁
+STR_MAPEDIT_CORRIDOR=走廊
+STR_MAPEDIT_ENTRIES=入口
+STR_MAPEDIT_ROOMS=房間
+STR_MAPEDIT_WALLTERRAIN=牆壁地形
+STR_MAPEDIT_CORRIDORTERRAIN=走廊地形
+STR_MAPEDIT_GENSETTINGS_TITLE=產生設定
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=地形分佈
+STR_MAPEDIT_STATS_OBJ_LINE={string1}：{number} / {number2}
+STR_MAPEDIT_STATS_MINES=地雷：{number}（{string1}% 陸地）
+STR_MAPEDIT_STATS_SPATIAL=空間分析
+STR_MAPEDIT_STATS_LAND_COVERAGE=陸地覆蓋率：{string1}%
+STR_MAPEDIT_STATS_LARGEST=最大陸地面積：{string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=基地間距：{string1} 圖格
+STR_MAPEDIT_STATS_PILL_SPACING=碉堡間距：{string1} 圖格
+STR_MAPEDIT_STATS_SYMMETRY=對稱性：{string1}（{string2}%）
+STR_MAPEDIT_STATS_MIRROR_H=水平鏡像：   {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=垂直鏡像：   {string1}%
+STR_MAPEDIT_STATS_4CORNER=四角：   {string1}%
+STR_MAPEDIT_STATS_ROTATE180=旋轉 180°：{string1}%
+STR_MAPEDIT_STATS_STALE=（已過期 — 點擊重新整理）
+STR_MAPEDIT_STATS_REFRESH=重新整理空間分析
+STR_MAPEDIT_STATS_STARTS=起始點
+STR_MAPEDIT_TERRNAME_HALFBLD=半建築
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=匯入圖片
+STR_MAPEDIT_IMG_FILE=檔案：
+STR_MAPEDIT_IMG_NONE=（無）
+STR_MAPEDIT_BROWSE=瀏覽…
+STR_MAPEDIT_IMG_SOURCE=來源：{number}x{number2} 像素
+STR_MAPEDIT_IMG_PREVIEW_LBL=預覽：
+STR_MAPEDIT_IMG_SCALEMODE=縮放模式：
+STR_MAPEDIT_IMG_FIT_SEL=符合選取範圍
+STR_MAPEDIT_IMG_FIT_PLAY=符合可玩區域
+STR_MAPEDIT_IMG_OUTPUT=輸出：{number} x {number2} 圖格
+STR_MAPEDIT_IMG_COLORS=顏色：
+STR_MAPEDIT_IMG_REDETECT=重新偵測
+STR_MAPEDIT_IMG_COLORMAP=顏色對應
+STR_MAPEDIT_IMPORT_BTN=匯入
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=內建圖章
+STR_MAPEDIT_STAMP_USER=使用者圖章
+STR_MAPEDIT_STAMP_NOUSER=尚無使用者圖章。
+STR_MAPEDIT_STAMP_HINT=使用「儲存剪貼簿…」來建立一個。
+STR_MAPEDIT_DELETE=刪除
+STR_MAPEDIT_STAMP_SAVECLIP=儲存剪貼簿…
+STR_MAPEDIT_STAMP_TIP_COPY=先複製一個選取範圍（Ctrl+C）
+STR_MAPEDIT_STAMP_IMPORT=匯入…
+STR_MAPEDIT_STAMP_UNTITLED=未命名
+STR_MAPEDIT_STAMP_SAVE_TITLE=儲存圖章
+STR_MAPEDIT_STAMP_SAVE_BLURB=輸入此圖章的名稱：
+STR_MAPEDIT_STAMP_SAVE_NAME=名稱
+STR_MAPEDIT_SAVE_BTN=儲存
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=匯出為 PNG
+STR_MAPEDIT_PREVIEW=預覽
+STR_MAPEDIT_EXPORT_MODE=模式：
+STR_MAPEDIT_EXPORT_FULL=完整解析度（4096x4096）
+STR_MAPEDIT_EXPORT_PREVSIZE=預覽大小：
+STR_MAPEDIT_EXPORT_OPTIONS=選項：
+STR_MAPEDIT_EXPORT_SHOWOBJ=顯示物件
+STR_MAPEDIT_EXPORT_SHOWMINES=顯示地雷
+STR_MAPEDIT_EXPORT_SHOWGRID=顯示格線（僅完整模式）
+STR_MAPEDIT_EXPORT_BTN=匯出…
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=已鎖定：隨機化時不會變更
+STR_MAPGEN_UNLOCKED_TIP=未鎖定：隨機化時會變更
+STR_MAPGEN_GENERATOR=產生器
+STR_MAPGEN_TYPE_TOURNAMENT=錦標賽
+STR_MAPGEN_TYPE_NATURAL=自然
+STR_MAPGEN_TYPE_MAZE=迷宮
+STR_MAPGEN_TYPE_FRACTAL=碎形
+STR_MAPGEN_SEED=種子
+STR_MAPGEN_RANDOMIZE=隨機化
+STR_MAPGEN_SYMMETRY=對稱性
+STR_MAPGEN_SYM_4CORNER=四角鏡像
+STR_MAPGEN_SYM_MIRROR_H=水平鏡像
+STR_MAPGEN_SYM_MIRROR_V=垂直鏡像
+STR_MAPGEN_SYM_ROT180=旋轉 180°
+STR_MAPGEN_SYM_ROT90=旋轉 90°
+STR_MAPGEN_LANDMASS_PCT=陸地面積百分比
+STR_MAPGEN_ROUGHNESS=粗糙度
+STR_MAPGEN_ROUGH_LOW=低
+STR_MAPGEN_ROUGH_MED=中
+STR_MAPGEN_ROUGH_HIGH=高
+STR_MAPGEN_INCLUDE_ROADS=包含道路
+STR_MAPGEN_MAP_STYLE=地圖風格
+STR_MAPGEN_STYLE_OCEAN=海洋
+STR_MAPGEN_STYLE_CONTINENT=大陸
+STR_MAPGEN_STYLE_ISLANDS=島嶼
+STR_MAPGEN_STYLE_ARCHIPELAGO=群島
+STR_MAPGEN_STYLE_INLAND=內陸
+STR_MAPGEN_TERRAIN_MIX=地形混合（陸地佔比%）：
+STR_MAPGEN_GRASS_PCT=草地百分比
+STR_MAPGEN_FOREST_PCT=森林百分比
+STR_MAPGEN_BUILDING_PCT=建築百分比
+STR_MAPGEN_SWAMP_PCT=沼澤百分比
+STR_MAPGEN_RIVER_PCT=河流百分比
+STR_MAPGEN_BOAT_PCT=船隻百分比
+STR_MAPGEN_REMAINING_GRASS=剩餘草地：{number}%
+STR_MAPGEN_MINE_DENSITY=地雷密度百分比
+STR_MAPGEN_RIVER_COUNT=河流數量
+STR_MAPGEN_CITY_COUNT=城市數量
+STR_MAPGEN_MAZE_COUNT=迷宮數量
+STR_MAPGEN_WALL_THICKNESS=牆壁厚度
+STR_MAPGEN_CORRIDOR_WIDTH=走廊寬度
+STR_MAPGEN_CITY_ROOMS=城市房間
+STR_MAPGEN_LAND_COVERAGE=陸地覆蓋率百分比
+STR_MAPGEN_DETAIL_PASSES=細節處理次數
+STR_MAPGEN_COAST_JAG=海岸線鋸齒感
+STR_MAPGEN_TERRAIN_LAYERS=地形層次
+STR_MAPGEN_RIVERS=河流
+STR_MAPGEN_LAKES=湖泊
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} 加入了遊戲。
+STR_LV_HAS_JOINED={string1} 已加入遊戲
+STR_LV_ALLY_REQUEST={player} 剛向 {other} 請求建立聯盟
+STR_LV_ALLY_ACCEPT={player} 剛接受了與 {other} 的聯盟
+STR_LV_ALLY_LEAVE={player} 剛離開了聯盟
+STR_LV_MSG_ALL={player} 向所有人傳送訊息：{string1}
+STR_LV_MSG_PLAYERS={player} 向 {other} 傳送訊息：{string1}
+STR_LV_MSG_SERVER=伺服器訊息：{string1}
+STR_LV_PLAYER_DIED={player} 已陣亡
+STR_LV_PLAYER_KILLED={player} 剛擊殺了玩家 {other}
+STR_LV_PLAYER_REJOINED={player} 剛重新加入了遊戲。
+STR_LV_PLAYER_LEAVING={player} 正在離開遊戲。
+STR_LV_LOBBY_OPENED=大廳已開放。
+STR_LV_GAME_STARTED=遊戲已開始。
+STR_LV_PLAYER_READY={player} 已準備。
+STR_LV_PLAYER_UNREADY={player} 已取消準備。
+STR_LV_PLAYER_LEFT_TEAM={player} 離開了他的隊伍。
+STR_LV_PLAYER_JOINED_TEAM={player} 加入了隊伍 {number}。
+STR_LV_COUNTDOWN_START=倒數計時已開始。
+STR_LV_COUNTDOWN_CANCEL=倒數計時已取消。
+STR_LV_MAP_SKIP_VOTE={player} 投票跳過地圖。
+STR_LV_MAP_SKIPPED=地圖已跳過。新地圖：{string1}
+STR_LV_TEAM_BALANCE=隊伍平衡已套用。
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=開啟
+STR_LV_MENU_ACTION=操作
+STR_LV_PLAY=播放
+STR_LV_PAUSE=暫停
+STR_LV_STOP=停止
+STR_LV_FAST_FORWARD=快進
+STR_LV_REWIND=倒退
+STR_LV_MODE=模式
+STR_LV_MODE_INFO=資訊
+STR_LV_SELECT_TEAM=選擇隊伍
+STR_LV_USE_TEAM_COLOURS=使用隊伍顏色
+STR_LV_TANK_CENTRED=坦克置中
+STR_LV_DNS_LOOKUPS=DNS 查詢
+STR_LV_TEAM_COLOURS=隊伍顏色
+STR_LV_MENU_WINDOWS=視窗
+STR_LV_WIN_CONTROLS=控制
+STR_LV_WIN_EVENTS=事件
+STR_LV_WIN_GAMEINFO=遊戲資訊
+STR_LV_WIN_ITEMINFO=物品資訊
+STR_LV_RESET_WINDOWS=重設視窗位置
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=為每支玩家隊伍指定顏色：
+STR_LV_PLAYER_LBL=玩家 {number}：
+STR_LV_NEUTRAL_LBL=中立：
+STR_LV_ABOUT_TITLE=WinBolo 日誌檢視器
+STR_LV_VERSION_FMT=版本：{string1}
+STR_LV_LICENSE=本程式為自由軟體；您可以根據自由軟體基金會發佈的\nGNU 通用公眾授權條款重新散佈及/或修改它。
+STR_LV_WEBSITE_LBL=網站：
+
+# Log viewer team colour names
+STR_LV_COL_GREY=灰色
+STR_LV_COL_KHAKI=卡其色
+STR_LV_COL_GREEN=綠色
+STR_LV_COL_PINK=粉紅色
+STR_LV_COL_YELLOW=黃色
+STR_LV_COL_LIGHTBLUE=淡藍色
+STR_LV_COL_ORANGE=橙色
+STR_LV_COL_LIGHTPURPLE=淡紫色
+STR_LV_COL_AQUA=水藍色
+STR_LV_COL_LIGHTGREEN=淡綠色
+STR_LV_COL_LIGHTGREY=淡灰色
+STR_LV_COL_RED=紅色
+STR_LV_COL_BLUE=藍色
+STR_LV_COL_BROWN=棕色
+STR_LV_COL_LIGHTPINK=淡粉紅色
+STR_LV_COL_PALEGREEN=淡草綠色
+STR_LV_COL_PURPLE=紫色
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} 秒
+STR_LV_INFO_MAP=地圖名稱：{string1}
+STR_LV_INFO_GAMETYPE=遊戲類型：{string1}
+STR_LV_INFO_HIDDENMINES=隱藏地雷：{string1}
+STR_LV_INFO_COMPUTER_TANKS=電腦坦克：{string1}
+STR_LV_INFO_TIME_LIMIT=時間限制：{string1}
+STR_LV_INFO_START_DELAY=開始延遲：{string1}
+STR_LV_INFO_WBN_KEY=WBN 金鑰：
+STR_LV_INFO_START_TIME=開始時間：{string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1}（{number}）
+STR_LV_POSITION_XY=X：{number}，Y：{number2}
+STR_LV_NO_ITEM_SELECTED=未選取任何物品
+STR_LV_LOCATION_FMT=位置：{string1}
+STR_LV_OWNER_LBL=擁有者：{string1}
+STR_LV_ARMOUR_FMT=裝甲：{number}
+STR_LV_SHELLS_FMT=砲彈：{number}
+STR_LV_MINES_FMT=地雷：{number}
+STR_LV_IN_TANK_FMT=在坦克中：{string1}
+STR_LV_CENTER_ON_MAP=在地圖上置中
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< 倒退
+STR_LV_PLAY_BTN=播放 >
+STR_LV_FWD_BTN=快進 >>
+STR_LV_SPEED_LBL=速度：
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} 剩餘
+STR_LV_NO_LOG_LOADED=未載入日誌
+
+# Log viewer events panel
+STR_LV_COPY=複製
+STR_LV_COPY_ALL=全部複製
+STR_LV_CLEAR_ALL=全部清除
+STR_LV_AUTO_SCROLL=自動捲動
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=已到達日誌檔案結尾
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=縮放
+STR_DLGSETTINGS_PERFORMANCE=效能
+STR_DLGSETTINGS_FPS_FMT=FPS：{number}
+NETERR_LOSTCONNECTION_RETURN_MENU=您已與伺服器斷線。\n正在返回主選單。
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=語言：
+STR_DLGLANG_MIDGAME_NOTE=現有的訊息日誌條目在重新產生前不會變更語言。
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=基地過多：{number}（最多 {number2}）
+STR_MAPVALIDATE_TOO_MANY_PILLS=碉堡過多：{number}（最多 {number2}）
+STR_MAPVALIDATE_TOO_MANY_STARTS=起始點過多：{number}（最多 {number2}）
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=基地 #{number} 位於 ({number2},{number3})：在不可通行的地形上
+STR_MAPVALIDATE_BASE_BORDER_ZONE=基地 #{number} 位於 ({number2},{number3})：在地雷邊界區域內
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=碉堡 #{number} 位於 ({number2},{number3})：在不可通行的地形上
+STR_MAPVALIDATE_PILL_BORDER_ZONE=碉堡 #{number} 位於 ({number2},{number3})：在地雷邊界區域內
+STR_MAPVALIDATE_START_NOT_DEEP=起始點 #{number} 位於 ({number2},{number3})：必須在深海上
+STR_MAPVALIDATE_START_BORDER_ZONE=起始點 #{number} 位於 ({number2},{number3})：在地雷邊界區域內
+STR_MAPVALIDATE_NO_STARTS=未放置起始點 — 地圖無法遊玩
+STR_MAPVALIDATE_ONE_START=只有 1 個起始點 — 僅限單人遊戲
+STR_MAPVALIDATE_BASE_OVERLAP=基地 #{number} 和基地 #{number2} 在 ({number3},{number4}) 重疊
+STR_MAPVALIDATE_PILL_OVERLAP=碉堡 #{number} 和碉堡 #{number2} 在 ({number3},{number4}) 重疊
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=基地 #{number} 和碉堡 #{number2} 在 ({number3},{number4}) 重疊
+STR_MAPVALIDATE_START_OVERLAP=起始點 #{number} 和起始點 #{number2} 在 ({number3},{number4}) 重疊
+STR_MAPVALIDATE_START_BASE_OVERLAP=起始點 #{number} 和基地 #{number2} 在 ({number3},{number4}) 重疊
+STR_MAPVALIDATE_START_PILL_OVERLAP=起始點 #{number} 和碉堡 #{number2} 在 ({number3},{number4}) 重疊
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=需要進行連接埠轉發，區域網路外的玩家才能加入。（即將推出：自動 NAT 設定。）
+STR_GAMEFRONTERR_MAPLOAD=從伺服器載入地圖失敗
+STR_GAMEFRONTERR_STARTSERVER=啟動伺服器時發生錯誤
+STR_DLGLOBBY_PORTMAP_CHECKING=正在檢查伺服器可達性……
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=伺服器可達
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=伺服器不可達
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=正在嘗試透過 UPnP / NAT-PMP 開啟防火牆連接埠，並確認 tracker 能透過你的網路連回。通常會在 30 秒內完成。
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=連接埠已透過 UPnP/NAT-PMP 自動轉發到 %s:%u。加入者會直接連線，無需其他步驟。
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=無法建立直接連接埠轉發，但 NAT 穿透已啟用。加入者透過 tracker 協調以穿透你網路的防火牆。這在大多數家用網路中有效；在對稱型 NAT 或電信級 NAT (CGN) 後的玩家可能仍然無法連線。
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=偵測到對稱型 NAT —— 你的網路為每個目的地重寫來源連接埠，這會阻止加入者透過 NAT 穿透到達你。要成功代管，請在路由器上手動將 UDP 連接埠 %u 轉發到這台電腦。
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=無法自動開啟防火牆連接埠（UPnP/NAT-PMP 被拒絕或無法使用），且 tracker 無法確認雙向可達性。要成功代管，請在路由器上手動將 UDP 連接埠 %u 轉發到這台電腦。
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=伺服器可達性
+STR_DLGLOBBY_TEST_CONNECTIVITY=測試連線
+STR_DLGLOBBY_TEST_TESTING=測試中……
+STR_DLGLOBBY_TEST_REACHABLE=可從網際網路存取
+STR_DLGLOBBY_TEST_NO_REPLY=未收到 tracker 回應
+STR_DLGSETTINGS_NETWORK=網路
+STR_DLGSETTINGS_NET_HELP=設定將在下一局代管遊戲中生效。
+STR_DLGSETTINGS_USE_UPNP=使用 UPnP / NAT-PMP 自動轉發連接埠
+STR_DLGSETTINGS_USE_NATTRAV=透過 tracker 使用 NAT 穿透（hole-punching）

@@ -148,15 +148,10 @@ typedef struct {
 } bmapRun;
 
 
-/* Net map structure */
+/* Linked-list emptiness helpers used by message and other queue
+ * structures throughout the sim. */
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
-#define MapNetTail(list) ((list)->next);
-
-/* The maximum amount of time to wait for the server to authorise this change */
-#define MAP_MAX_SERVER_WAIT 3 
-
-
 
 /* Prototypes */
 
@@ -535,87 +530,7 @@ bool mapWriteRuns(FILE *fp, map *value);
 *********************************************************/
 int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos);
 
-/*********************************************************
-*NAME:          mapNetAdd
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 30/10/99
-*PURPOSE:
-* Adds a item to the mapNet structure. If an item already
-* exists at that position it repaces it with the new
-* terrain.
-*
-*ARGUMENTS:
-*  value    - Pointer to the map structure
-*  mx       - Current X position
-*  my       - Current Y position
-*  terrain  - Terrain to place
-*  needSend - Should we send this update?
-*********************************************************/
-void mapNetAdd(struct GameSim *sim, map *value, BYTE mx, BYTE my, BYTE terrain, bool needSend);
 
-/*********************************************************
-*NAME:          mapNetUpdate
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-* Updates the time the items have been waiting for the 
-* server to authenticate them. If it reaches the expiry
-* date then it is restored.
-*
-*ARGUMENTS:
-*  value   - Pointer to map structure
-*  pb      - Pointer to the pillboxes strucuture
-*  bs      - Pointer to the bases strucuture
-*********************************************************/
-void mapNetUpdate(struct GameSim *sim);
-
-/*********************************************************
-*NAME:          mapNetPacket
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/2/99
-*LAST MODIFIED: 23/2/99
-*PURPOSE:
-* A packet has arrived. Here is a peice of map info in it.
-*
-*ARGUMENTS:
-*  value   - Pointer to map structure
-*  mx      - X position to add
-*  my      - Y position
-*  terrain - Terrain to place
-*********************************************************/
-void mapNetPacket(struct GameSim *sim, map *value, BYTE mx, BYTE my, BYTE terrain);
-
-/*********************************************************
-*NAME:          mapNetMakePacket
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-* Make the map part of the packet. Returns the data length.
-* Is destructive on the data
-*
-*ARGUMENTS:
-*  map  - Pointer to the map structure
-*  buff - Buffer to hold data
-*********************************************************/
-BYTE mapNetMakePacket(map *value, BYTE *buff);
-
-/*********************************************************
-*NAME:          mapNetClientPacket
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-* Make the client map part of the packet. Returns the 
-* data length.
-*
-*ARGUMENTS:
-*  map  - Pointer to the map structure
-*  buff - Buffer to hold data
-*********************************************************/
-BYTE mapNetClientPacket(map *value, BYTE *buff);
 
 /*********************************************************
 *NAME:          mapMakeNetRun
@@ -652,42 +567,6 @@ int mapMakeNetRun(map *value, BYTE *buff, BYTE yPos);
 *********************************************************/
 void mapSetNetRun(map *value, BYTE *buff, BYTE yPos, int dataLen);
 
-/*********************************************************
-*NAME:          mapNetIncomingItem
-*AUTHOR:        John Morrison
-*CREATION DATE: 3/11/99
-*LAST MODIFIED: 9/11/99
-*PURPOSE:
-* A incoming map item has come from the server. If it is
-* in the waitinf for confirmation buffer remove it, else
-* if it exists in the incoming buffer replace it with the
-* new value otherwise add it to the incoming buffer
-*
-*ARGUMENTS:
-*  value   - Pointer to the map structure
-*  mx      - X position to add
-*  my      - Y position
-*  terrain - Terrain to place
-*********************************************************/
-void mapNetIncomingItem(struct GameSim *sim, map *value, BYTE mx, BYTE my, BYTE terrain);
-
-/*********************************************************
-*NAME:          mapNetCheckWater
-*AUTHOR:        John Morrison
-*CREATION DATE: 19/11/99
-*LAST MODIFIED: 19/11/99
-*PURPOSE:
-* Checks an square updated through mapNetUpdate to see if
-* it should be filled to overcome the mines problem.
-*
-*ARGUMENTS:
-*  value  - Pointer to map structure
-*  pb     - Pointer to the pillboxes strucuture
-*  bs     - Pointer to the bases strucuture
-*  xValue - X Value to check
-*  yValue - Y Value to check
-*********************************************************/
-void mapNetCheckWater(struct GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue, BYTE yValue);
 
 /*********************************************************
 *NAME:          mapLoadCompressedMap

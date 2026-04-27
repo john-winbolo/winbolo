@@ -19,6 +19,7 @@ extern "C" {
 #include "../gui/sdl3/bg_game.h"
 #include "../gui/sdl3/dialogs/imgui_welcome.h"
 #include "../gui/gamefront.h"
+#include "../gui/lang.h"
 #include "../bolo/global.h"
 }
 
@@ -109,9 +110,9 @@ extern "C" int imguiWelcomeShow(void) {
     float fontSize = 20.0f * uiScale;
     {
         int fontDataSize = 0;
-        unsigned char *fontData = loadFontFromAssets("data/CourierPrime-Regular.ttf", &fontDataSize);
+        unsigned char *fontData = loadFontFromAssets("data/fonts/CourierPrime-Regular.ttf", &fontDataSize);
         if (!fontData) {
-            fontData = loadFontFromAssets("CourierPrime-Regular.ttf", &fontDataSize);
+            fontData = loadFontFromAssets("fonts/CourierPrime-Regular.ttf", &fontDataSize);
         }
         if (fontData) {
             SDL_Log("[Welcome] Loaded font, %d bytes, size=%.0f", fontDataSize, fontSize);
@@ -179,13 +180,15 @@ extern "C" int imguiWelcomeShow(void) {
     int result = RESULT_QUIT;
     bool running = true;
 
-    /* Mode labels and codes shared between full dialog and mini buttons */
-    struct { const char *label; const char *miniLabel; int code; } modes[] = {
-        { "Tutorial",      "Tutorial##mini",      RESULT_TUTORIAL },
-        { "Practice",      "Practice##mini",      RESULT_PRACTICE },
-        { "TCP/IP",        "TCP/IP##mini",        RESULT_TCP },
-        { "Local Network", "Local Network##mini", RESULT_LAN },
-        { "Internet",      "Internet##mini",      RESULT_INTERNET },
+    /* Mode labels and codes shared between full dialog and mini buttons.
+     * IDs reused from the SDL3 welcome dialog where the action matches;
+     * STR_DLGOPENING_OPTION2 reused for TCP/IP (no SDL3 welcome equivalent). */
+    struct { langid labelId; int code; } modes[] = {
+        { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL },
+        { STR_DLGWELCOME_SINGLE,    RESULT_PRACTICE },
+        { STR_DLGOPENING_OPTION2,   RESULT_TCP },
+        { STR_DLGWELCOME_LOCAL,     RESULT_LAN },
+        { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET },
     };
 
     while (running) {
@@ -289,7 +292,10 @@ extern "C" int imguiWelcomeShow(void) {
                     hovered = true;
                     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
                 }
-                if (ImGui::Button(modes[i].miniLabel, ImVec2(miniBtnW, miniBtnH))) {
+                char miniLabel[96];
+                SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini",
+                             langGetText(modes[i].labelId));
+                if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
                     if (modes[i].code == RESULT_TUTORIAL) {
                         gameFrontSetUdpOptions((char *)"android",
                                                (char *)"192.168.42.81",
@@ -403,7 +409,7 @@ extern "C" int imguiWelcomeShow(void) {
                 /* Button on same line */
                 ImGui::SameLine(0.0f, iconGap);
                 ImGui::SetCursorPosY(rowY);
-                if (ImGui::Button(modes[i].label, ImVec2(btnW, btnH))) {
+                if (ImGui::Button(langGetText(modes[i].labelId), ImVec2(btnW, btnH))) {
                     if (modes[i].code == RESULT_TUTORIAL) {
                         /* TEMP: Join server at 192.168.42.81:28500 as "android" */
                         gameFrontSetUdpOptions((char *)"android",
@@ -428,7 +434,7 @@ extern "C" int imguiWelcomeShow(void) {
             {
                 float quitW = 180.0f * uiScale;
                 ImGui::SetCursorPosX((panelW - quitW) * 0.5f);
-                if (ImGui::Button("Quit", ImVec2(quitW, btnH))) {
+                if (ImGui::Button(langGetText(STR_DLGOPENING_BUTTON2), ImVec2(quitW, btnH))) {
                     result = RESULT_QUIT;
                     running = false;
                 }

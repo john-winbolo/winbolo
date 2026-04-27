@@ -138,7 +138,7 @@ tasks.register<Copy>("copyGameAssets") {
     from(dataDir) {
         include("*.bmp")
         include("*.png")
-        include("*.ttf")
+        include("fonts/*.ttf")
         include("sounds/*.wav")
         include("maps/*.map")
         include("flags/*.svg")
@@ -160,9 +160,21 @@ tasks.register<Copy>("copyBrainAssets") {
     into(assetsBrainsDir)
 }
 
+// Copy language files into assets/data/lang/ so the runtime picker can find them
+val langDir = file("../../data/lang")
+val assetsLangDir = file("src/main/assets/data/lang")
+
+tasks.register<Copy>("copyLangAssets") {
+    from(langDir) {
+        include("*.txt")
+    }
+    into(assetsLangDir)
+}
+
 tasks.configureEach {
     if (name == "preBuild") {
         dependsOn("copyGameAssets")
         dependsOn("copyBrainAssets")
+        dependsOn("copyLangAssets")
     }
 }

@@ -12,253 +12,129 @@
 *Filename:      lang.c
 *Author:        John Morrison
 *Purpose:
-*  Cross-platform string table (English built-in).
-*  No Win32 resource DLL loading — all strings are
-*  compiled in as a static lookup table.
+*  Cross-platform string table (English built-in) plus an
+*  optional runtime override table loaded from data/lang/<code>.txt.
+*  The static langTable[] below remains the source of truth
+*  for English; non-English builds layer overrides on top.
 *********************************************************/
 
 #include "../lang.h"
-#include <string.h>
+#include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#if defined(__IPHONEOS__)
+#include <dirent.h>
+#endif
 
 static char langFileName[FILENAME_MAX];
-static char langBuff[16 * 1024];
-static char langBuff2[16 * 1024];
 
 typedef struct { unsigned int id; const char *text; } LangEntry;
 
 static const LangEntry langTable[] = {
-    {151,  "WinBolo Game Selection"},
-    {152,  "Welcome to WinBolo, the multiplayer tank game.\nPlease choose a game type from the list below:"},
-    {153,  "Practice"},
     {154,  "TCP/IP"},
-    {155,  "Internet"},
-    {156,  "Skip this Dialog Next Time"},
     {157,  "OK"},
     {158,  "Quit"},
-    {159,  "Language Select"},
-    {160,  "Name:"},
     {161,  "English (Default)"},
     {162,  "Author: "},
     {163,  "John Morrison"},
-    {164,  "Local Network"},
-    {165,  "Tutorial"},
     {166,  "Notes: "},
     {167,  "None."},
     {168,  "Note: For incomplete translations the missing items default back to English."},
     {169,  "About WinBolo"},
-    {170,  "The WinBolo package may be freely distributed provided the neither the program nor any of the accompanying files are omitted or modified in any way.\n\nWinBolo is a shareware program. Shareware software is not free. It costs money, just like other software you buy, except that with shareware you get to try it out first to decide if you like it.\n\nWinBolo costs $25(US) If you decide to keep WinBolo you can pay for it via the following methods:\n\nRun the program register.exe in the WinBolo directory, it allow you to pay via cheque, money order, cash or credit card via email, fax or postal mediums.\n\nTo register via credit card online visit: http://order.kagi.com/?XYV and fill out the form.\n\nRead the text file Readme(Shareware) included in the distribution for more information."},
     {171,  "Alliance Request"},
-    {172,  "&Accept"},
-    {173,  "&Reject"},
-    {174,  " requests alliance. Accept?"},
-    {175,  "Try hitting refresh first."},
-    {176,  "Message of the Day"},
-    {177,  "The game you tried to join is a different version of WinBolo. Try joining a different game"},
-    {178,  "No games in progress (Start one!)"},
+    {172,  "Accept"},
+    {173,  "Reject"},
+    {174,  "{player} requests alliance. Accept?"},
     {179,  "Yes"},
     {180,  "No"},
-    {181,  "Yes (Adv)"},
-    {182,  "Open"},
-    {183,  "Tournament"},
-    {184,  "Strict"},
-    {185,  "WinBolo Game Information"},
-    {186,  "Map Name: "},
-    {187,  "Number of Players: "},
+    {185,  "Game Info"},
+    {186,  "Map: "},
+    {187,  "Players: {number}"},
     {188,  "Game Type: "},
     {189,  "Hidden Mines: "},
-    {190,  "Computer Tanks Allowed: "},
-    {191,  "Game Time Limit: "},
-    {192,  "Please select the options you want for your new game:"},
+    {191,  "Time Limit:"},
     {193,  "Cancel"},
     {194,  "Game Setup"},
     {195,  "Choose map"},
-    {196,  "Selected Map: "},
-    {197,  "Selected Map: Everard Island (Inbuilt)"},
-    {198,  "Open Game (each new tank comes pre-armed)"},
-    {199,  "Tournament (free ammunition early in the game)"},
-    {200,  "Strict Tournament (no free ammunition at all)"},
+    {198,  "Open Game (pre-armed)"},
+    {199,  "Tournament (free ammo early)"},
+    {200,  "Strict Tournament (no free ammo)"},
     {201,  "Allow Hidden Mines"},
-    {202,  "Allow Computer Tanks"},
-    {203,  "and give them an advantage"},
     {204,  "Game Password"},
     {205,  "minutes"},
     {206,  "seconds"},
     {207,  "Game start delay"},
     {208,  "Game time limit"},
-    {209,  "Error Opening Map."},
-    {210,  "About %d minute(s)"},
+    {210,  "About {number} minute(s)"},
     {211,  "Open"},
     {212,  "Tournament"},
     {213,  "Strict Tournament"},
-    {214,  "Yes (With an Advantage)"},
+    {214,  "Yes (Advantage)"},
     {215,  "Me"},
-    {216,  "Choose Key Settings"},
-    {217,  "Click on the option you wish to change then the next key pressed will be assigned to it. The key ALT, PRINT SCREEN and PAUSE can not be assigned to anything."},
-    {218,  "Drive Tank:"},
-    {219,  "Rotate Tank:"},
-    {220,  "Gun Range:"},
-    {221,  "Weapons:"},
-    {222,  "Change Views:"},
-    {223,  "Scroll:"},
-    {224,  "(left)"},
-    {225,  "(right)"},
-    {226,  "Auto slowdown"},
-    {227,  "Enable Automatic show and hide of gunsight"},
-    {228,  "Accelerate"},
-    {229,  "Decelerate"},
-    {230,  "Anti-clockwise"},
-    {231,  "Clockwise"},
+    {216,  "Key Setup"},
+    {218,  "Drive Tank"},
+    {220,  "Gun Range"},
+    {221,  "Weapons"},
+    {222,  "Views"},
+    {223,  "Scroll"},
+    {226,  "Auto Slowdown"},
+    {227,  "Auto Hide Gunsight"},
+    {228,  "Faster"},
+    {229,  "Slower"},
+    {230,  "Turn Left"},
+    {231,  "Turn Right"},
     {232,  "Increase"},
     {233,  "Decrease"},
     {234,  "Shoot"},
-    {235,  "Lay mine"},
-    {236,  "Tank view"},
-    {237,  "Pillbox"},
+    {235,  "Lay Mine"},
+    {236,  "Tank View"},
+    {237,  "Pill View"},
     {238,  "Up"},
     {240,  "Down"},
     {241,  "Left"},
     {242,  "Right"},
-    {243,  "Press new key for "},
-    {244,  "forward"},
-    {245,  "backward"},
-    {246,  "rotate left"},
-    {247,  "rotate right"},
-    {248,  "increase range"},
-    {249,  "decrease range"},
-    {250,  "shoot"},
-    {251,  "lay mine"},
-    {252,  "tank view"},
-    {253,  "pillbox view"},
-    {254,  "scroll up"},
-    {255,  "scroll down"},
-    {256,  "scroll left"},
-    {257,  "scroll right"},
-    {258,  "&Send"},
-    {259,  "All players"},
-    {260,  "All allies"},
-    {261,  "All nearby tanks"},
-    {262,  "Selection on the Players menu"},
-    {263,  "Sending message to %d player"},
-    {264,  "Sending message to %d players"},
-    {265,  "WinBolo Network Information"},
-    {266,  "Server address:"},
-    {267,  "This game address:"},
-    {268,  "Server ping (ms):"},
-    {269,  "Packets per second (per player):"},
-    {270,  "Network status:"},
-    {271,  "Network errors:"},
-    {272,  "Password"},
-    {273,  "This game is password protected. Enter the correct password to join:"},
-    {274,  "Enter Player Name"},
-    {275,  "Enter the new player name for your tank"},
+    {258,  "Send"},
+    {259,  "All Players"},
+    {260,  "All Allies"},
+    {261,  "All Nearby"},
+    {262,  "Selected Players"},
+    {263,  "Sending message to {number} player"},
+    {264,  "Sending message to {number} players"},
+    {265,  "Network Info"},
+    {268,  "Server ping: {number} ms"},
+    {270,  "Status:"},
+    {271,  "Net errors: {number}"},
+    {272,  "Password Required"},
+    {273,  "This game requires a password:"},
+    {275,  "Enter the new player name for your tank:"},
     {276,  "Tracker Config"},
     {277,  "Use Tracker"},
     {278,  "Tracker Address:"},
     {279,  "Tracker Port:"},
-    {280,  "WinBolo System Information"},
-    {281,  "CPU usage:"},
-    {282,  "Simulation Modelling:"},
-    {283,  "Communications processing:"},
-    {284,  "Graphics display:"},
-    {285,  "AI tank control processing:"},
+    {280,  "System Info"},
+    {281,  "CPU Usage:"},
+    {282,  "Sim Modeling:"},
+    {283,  "Com Processing:"},
     {286,  "Total:"},
-    {287,  "Graphics frames per second"},
-    {288,  "UDP (Internet) Setup"},
     {289,  "To join an internet Bolo game, you must give the name (or IP address) of a host machine running Bolo, and the UDP port number of the Bolo process on that machine."},
-    {290,  "&Join"},
-    {291,  "Re&join"},
-    {292,  "&New"},
-    {293,  "&Tracker Setup"},
+    {290,  "Join"},
+    {291,  "Rejoin"},
+    {292,  "New"},
+    {293,  "Tracker Setup"},
     {294,  "Remember player name"},
     {295,  "Machine Name (or IP address):"},
-    {296,  "UDP port of Bolo on the server machine:"},
-    {297,  "UDP port for the Bolo on this machine:"},
+    {296,  "UDP port of Bolo on that machine:"},
+    {297,  "UDP port for Bolo on this machine:"},
     {298,  "Your player name for the game:"},
     {299,  "Click \"New\" to begin a game"},
-    {300,  "Click to \"join\" an existing game"},
+    {300,  "Click \"Join\" to join an existing game"},
     {301,  "Click \"Rejoin\" to rejoin a game and reclaim your old possessions"},
     {302,  "Server and own ports are the same!"},
     {303,  "Something isn't correct here..."},
-    {304,  "Can't set the window subclass for copying!"},
-    {305,  "Join &By Address"},
-    {306,  "&Refresh"},
-    {307,  "Set &Player Name"},
-    {308,  "&Message of the Day"},
-    {309,  "Status: "},
-    {310,  "Selected Game Information"},
-    {311,  "Brains:"},
-    {312,  "Password:"},
-    {313,  "No of free Pillboxes:"},
-    {314,  "No of free Bases:"},
-    {315,  "Hidden Mines:"},
-    {316,  "No of Players:"},
-    {317,  "Version:"},
-    {318,  "Game Type:"},
-    {319,  "Server Port:"},
-    {320,  "Server Address:"},
-    {321,  "Brains Directory does not exist.\nNot going to load brains!"},
-    {322,  "Error Launching Brain"},
-    {323,  "Error Launching Brain - Brain Does not contain \"BrainMain\""},
-    {324,  "Error initing brain"},
-    {325,  "Could not execute brain"},
-    {326,  "Creating DD Object Failed"},
-    {327,  "Creating DD co-op level Failed"},
-    {328,  "Creating DD Primary Surface Failed"},
-    {329,  "Getting DD Pixel Format Failed"},
-    {330,  "Getting Surface Description Failed"},
-    {331,  "This Version of WinBolo does not run in palette mode.\n Please change your colour depth to greater than 256 colours"},
-    {332,  "Creating DD buffer Failed"},
-    {333,  "DD Get DC failed"},
-    {334,  "Creating DD Clipper Failed"},
-    {335,  "Error Creating Drawing Brush"},
-    {336,  "Error Creating Drawing Pen"},
-    {337,  "Game Starts in "},
-    {338,  "Error Releasing DC for drawing tank label (Thats bad)"},
-    {339,  "Pillbox View"},
-    {340,  "Cant load font Courier New"},
-    {341,  "An error occurred in reading preferences. The defaults will be used"},
-    {342,  "Error Creating Window"},
-    {343,  "Error Setting up Direct Draw"},
-    {344,  "Error Setting up Direct Sound"},
-    {345,  "Error Setting up Direct Input"},
-    {346,  "Error Loading Cursor"},
-    {347,  "Error Loading Fonts"},
     {348,  "LAN Game Finder"},
     {349,  "Tracker Game Finder"},
     {350,  "An error occurred trying to join the game"},
-    {351,  "An error occurred trying to spawn the server process.\n Is the program \"WinBoloDS\" in the same directory as WinBolo?"},
-    {352,  "Something really bizarre happened in the networking subsystems which is strange since you selected a single player game. Lucky you..."},
-    {353,  "Launching dedicated server. Type \"quit\" in its window to quit."},
-    {354,  "Creation of Direct Input Keyboard Device Failed"},
-    {355,  "Setting the Data Format for the Direct Input Keyboard Device Failed"},
-    {356,  "Setting the Co-operative Level for the Direct Input Keyboard Device Failed"},
-    {357,  "Error Starting Winsock"},
-    {358,  "Error Creating UDP Socket"},
-    {359,  "Error Creating TCP Socket"},
-    {360,  "Error Binding UDP Socket\n Some other program has this port assigned already. Try choosing another.\n\nNOTE: If you started a network game and it launched successfully then it is still running.\n You will not need to start it again"},
-    {361,  "Error adding network Events to messaging chain"},
-    {362,  "Unsupported Tracker Version"},
-    {363,  "Error finding tracker (DNS lookup failure)"},
-    {364,  "Error Connecting to tracker"},
-    {365,  "Error setting socket to be nonblocking"},
-    {366,  "Receiving game info..."},
-    {367,  "Processing tracker data..."},
-    {368,  "Error: Tracker sent no data"},
-    {369,  "Connecting: "},
-    {370,  "Idle"},
-    {371,  "Error binding socket"},
-    {372,  "Error sending broadcast"},
-    {373,  "Receiving responses..."},
-    {374,  "Can't Load WinBolo Sounds - Continuing without Sound"},
-    {375,  "Error Setting Up Direct Sound - Hardware is in use by another application.\nContinuing without sound."},
-    {376,  "Creating DS Object Failed\nContinuing without sound."},
-    {377,  "Creating DS Co-Op Level Failed"},
-    {378,  "Creating DS Primary Buffer Failed"},
-    {379,  "Loading of one or more sound files failed"},
-    {380,  "Error Creating Mutex. (Thats bad)"},
-    {381,  "Error Loading Brain List"},
-    {382,  "Error Setting up Key Setup Class"},
     {383,  "Timelimit has expired. The Game has ended."},
     {384,  "Error Saving Map (Disk full?)"},
     {385,  "Ahead of you is a short river leading inland. Hold\ndown the {ACCEL} key to drive your boat to the end of\nthe river.\n\nWhen you get there, keep holding {ACCEL}. The tank will\ndisembark from the boat and the boat will be left\nmoored at the end of the river"},
@@ -267,11 +143,11 @@ static const LangEntry langTable[] = {
     {388,  "You are now in the swamp. The tank moves very\nslowly in swamp. Fortunately there is a road ahead.\n\n\nKeep pressing {ACCEL} to move ahead to the road."},
     {389,  "You are now on the road. The tank can move very\nquickly on road and if you press {ACCEL} the tank will\nspeed up.\n\n\nIf you find yourself going too fast you can press {BRAKE}"},
     {390,  "There are some buildings ahead. Buildings are solid\nobstacles that you cannot drive through, so you will\nhave to find your way through the maze to the other\nside.\n\nTo make the tank turn left press {LEFT}\nTo make the tank turn right press {RIGHT}"},
-    {391,  "These round objects with the red guns poking out are\nautomatic pillboxes. They will shoot at any tank\ncomes with within range.\n\n\nFortunately the buildings provide protection from the\nshots, so the pillboxes will not be able to hit you\nunless you wait so long that they manage to\ncompletely shoot their way through the buildings."},
+    {391,  "These round objects with the red guns poking out are\nautomatic pillboxes. They will shoot at any tank\nthat comes within range.\n\n\nFortunately the buildings provide protection from the\nshots, so the pillboxes will not be able to hit you\nunless you wait so long that they manage to\ncompletely shoot their way through the buildings."},
     {392,  "Forest also provides protection from pillboxes, but in\na different way. As well as slowing down the tank a\nlot, driving through forest also limits visibility.\n\n\nWhen you are inside forest you can still clearly see\neverything outside the forest, but pillboxes (and\nother players) cannot see your tank unless you get\nvery close to them."},
-    {393,  "Line up your tank with the middle of the strip of\nforest and drive due North. If you go straight\nand don't stray too close to the edges of the forest,\nthe pillboxes will not see you and they will not shoot.\n\n\nDon't drive outside the forest of you'll get blown to pieces.\n"},
+    {393,  "Line up your tank with the middle of the strip of\nforest and drive due North. If you go straight\nand don't stray too close to the edges of the forest,\nthe pillboxes will not see you and they will not shoot.\n\n\nDon't drive outside the forest or you'll get blown to pieces.\n"},
     {394,  "There is one other simple way to escape pillboxes -\nspeed.\n\n\nMake sure you are correctly lined up with the centre\nof the road, and hold {ACCEL} to go full speed past the\npillboxes."},
-    {395,  "When they notice you they will start shooting, but if\nyou keep going straight ahead and don't lose your\nnerve you will be out of range before the shots can\nhit you.\n\n\nDon't run off the road into the marsh or you'll be a\nsitting duck target for the pillboxes, and you don't be\nable to move quickly enough to escape."},
+    {395,  "When they notice you they will start shooting, but if\nyou keep going straight ahead and don't lose your\nnerve you will be out of range before the shots can\nhit you.\n\n\nDon't run off the road into the marsh or you'll be a\nsitting duck target for the pillboxes, and you won't be\nable to move quickly enough to escape."},
     {396,  "Ahead of you is a refuelling base. Refuelling bases provide\nshells for you to shoot, mines for you to lay secret traps\nwith, and they also repair your tank's armour back to full\nstrength if it has been damaged.\n\n\nStop on the refuelling base and load up your tank\nwith shells."},
     {397,  "You are on the refuelling base. Your tank will now\nload up with shells and mines, as the indicators on\nthe right will show. Ahead of you, beyond the\nbuildings, is a minefield."},
     {398,  "If you drive your tank into the minefield it will be\ndestroyed. Fortunately you can clear a minefield by\nshooting. Press {FIRE} to shoot.\n\nShoot a hole through the building, and then land a\nshell in the middle of the minefield to detonate it.\nWhen you blow up the mines they will make a big\ncrater in the ground, which you can drive through,\nalthough it is as slow as driving through swamp."},
@@ -288,7 +164,7 @@ static const LangEntry langTable[] = {
     {409,  "Congratulations. You have completed the WinBolo\ntutorial.\n\n\n\nNow organise some friends to play with and find out\nwhat it is like to compete against intelligent human\nopponents instead of stationary unthinking targets.\n\nIf you'd like to replay the tutorial later, you can\nlaunch it again from the Settings menu."},
     {410,  "Welcome to the WinBolo tutorial. This island introduces\nthe basic principles of WinBolo and leads you through\nthem one at a time. Each new principle will be\ndescribed in a window like this one.\n\nAfter reading each message, you can proceed by\nclicking the \"OK\" button on the mouse or simply\nby pressing the <Return> key on the keyboard"},
     {411,  "WinBolo is the only authorized clone of Stuart Cheshire's classic Macintosh network game, Bolo.\nYou can find strategy hints and other information from the official website:\n\nhttps://www.winbolo.com\n\nOr come join us on Reddit and Discord\n"},
-    {412,  "One quick note about Internet play.\n\nIf you join a online game and are a lot of network errors\nthen leave the game straight away before\nyou ruin the game for the other players."},
+    {412,  "One quick note about Internet play.\n\nIf you join an online game and there are a lot of network errors\nthen leave the game straight away before\nyou ruin the game for the other players."},
     {413,  "You are in control of a tank, which is currently on a\nboat at sea. Press {ACCEL} to make the tank (and boat) go\nforwards, and press {BRAKE} to make it slow down and\nstop.\n\nDon't tap the keys as if you are typing a letter -\npress and hold them until the tank is going at the speed\nyou want and then let go. Press {ACCEL} now to make the\nboat drive forwards towards the land.\n(Press <Return> first to dismiss the window)"},
     {414,  "You cannot build until your new man parachutes in"},
     {415,  "You cannot build that there"},
@@ -302,16 +178,16 @@ static const LangEntry langTable[] = {
     {432,  "Online Assistant"},
     {433,  "Newswire"},
     {434,  "Brain"},
-    {435,  " has handed control over to \""},
+    {435,  "\"{other}\" has handed control over to \"{player}\""},
     {436,  "Network Server"},
     {437,  "This Computer"},
-    {438,  " captured a Neutral Base"},
-    {439,  " captured a Neutral Pillbox"},
-    {440,  " just stole pillbox from "},
-    {441,  " just stole base from "},
-    {442,  " just lost his builder"},
-    {443,  " just saved map file"},
-    {444,  " has quit game"},
+    {438,  "{player} captured a Neutral Base"},
+    {439,  "{player} captured a Neutral Pillbox"},
+    {440,  "{player} just stole pillbox from {other}"},
+    {441,  "{player} just stole base from {other}"},
+    {442,  "{player} just lost his builder"},
+    {443,  "{player} just saved map file"},
+    {444,  "{player} has quit game"},
     {445,  "Time Limit has expired. Game is over. Go in peace"},
     {446,  "Tank Sunk in Deep Sea"},
     {447,  "The tracker hostname lookup failed. Tracker notification disabled"},
@@ -326,15 +202,839 @@ static const LangEntry langTable[] = {
     {456,  "OK"},
     {457,  "Failed"},
     {458,  "You have lost your connection to the server.\nNow dropping you to single player mode"},
-    {459,  "Compose Message"},
-    {460,  "Languages"},
-    {461,  "Help"},
+    {459,  "Send Message"},
     {462,  "Error opening help file."},
-    {463,  "Skin Selection"},
     {464,  "If not all skin items are present then the default built in skin/sounds are used."},
     {465,  "The man cannot build under your boat"},
-    {466,  "Sorry, but your player name is blank, you must have a player name"},
     {467,  "The server was unable to prepare the map data. Please try again"},
+
+    /* System Info panel additions */
+    {482,  "Frame Rate:"},
+    {483,  "Graphics:"},
+    {484,  "AI Tanks:"},
+
+    /* Network Info panel additions */
+    {485,  "Server:"},
+    {486,  "This game:"},
+    {487,  "Ping: min {number} / avg {number2} / max {number3} ms"},
+    {488,  "KB/s In:"},
+    {489,  "KB/s Out:"},
+    {490,  "Packets/sec: {number} in / {number2} out"},
+    {491,  "KB/sec: {string1} in / {string2} out"},
+
+    /* Game Info panel additions */
+    {492,  "Copy Seed"},
+    {493,  "AI Tanks:"},
+    {494,  "Full Advantage"},
+    {495,  "Unlimited"},
+
+    /* Players panel */
+    {496,  "Players"},
+    {497,  "All"},
+    {498,  "None"},
+    {499,  "Allies"},
+    {500,  "Nearby"},
+    {501,  "Leave Alliance"},
+    {502,  "Request Alliance"},
+    {503,  "Allow New Players"},
+
+    /* About modal */
+    {504,  "WinBolo v1.0.1.7"},
+    {505,  "Copyright 1998-2008 John Morrison"},
+    {506,  "Bolo Copyright 1987-1995 Stuart Cheshire"},
+
+    /* Join Game confirmation modal */
+    {507,  "Join Game?"},
+    {508,  "Leave current game and join server?"},
+    {509,  "Join"},
+
+    /* Change Player Name modal */
+    {510,  "Change Player Name"},
+
+    /* Key Setup modal additions */
+    {511,  "(none)"},
+    {512,  "Press a key..."},
+    {513,  "Press a key to assign, or click Cancel."},
+    {514,  "Change"},
+    {515,  "Action"},
+    {516,  "Key"},
+    {517,  "Quick Keys"},
+    {518,  "Tree"},
+    {519,  "Road"},
+    {520,  "Wall"},
+    {521,  "Pillbox"},
+    {522,  "Mine"},
+
+    /* Settings panel */
+    {523,  "Settings"},
+    {524,  "Player"},
+    {525,  "Player Name:"},
+    {526,  "Apply"},
+    {527,  "Set Keys..."},
+    {528,  "Display"},
+    {529,  "Window Size:"},
+    {530,  "Relative Steering"},
+    {531,  "When off, joystick points the tank directly.\nWhen on, joystick turns left/right relative to tank."},
+    {532,  "Tablet UI Mode"},
+    {533,  "Labels"},
+    {534,  "Message Names:"},
+    {535,  "Tank Labels:"},
+    {536,  "Sound"},
+    {537,  "Messages"},
+    {538,  "Game"},
+
+    /* Menu bar */
+    {539,  "File"},
+    {540,  "New"},
+    {541,  "Save Map"},
+    {542,  "Exit"},
+    {543,  "Edit"},
+    {544,  "Frame Rate"},
+    {545,  "Window Size"},
+    {546,  "Normal"},
+    {547,  "Double"},
+    {548,  "Triple"},
+    {549,  "Quad"},
+    {550,  "Custom (Resizable)"},
+    {551,  "Requires {number}x{number2} - exceeds display"},
+    {552,  "Smooth Scrolling"},
+    {553,  "Automatic Scrolling"},
+    {554,  "Show Gunsight"},
+    {555,  "Message Sender Names"},
+    {556,  "Tank Labels"},
+    {557,  "None"},
+    {558,  "Short"},
+    {559,  "Long"},
+    {560,  "Don't label own tank"},
+    {561,  "Pillbox Labels"},
+    {562,  "Refuelling Base Labels"},
+    {563,  "Hide Main View"},
+    {564,  "Device:"},
+    {565,  "Desktop"},
+    {566,  "WinBolo"},
+    {567,  "Set Keys"},
+    {568,  "Sound Effects"},
+    {569,  "Background Sound"},
+    {570,  "Sound Keepalive"},
+    {571,  "Newswire Messages"},
+    {572,  "Assistant Messages"},
+    {573,  "AI Brain Messages"},
+    {574,  "Network Status Messages"},
+    {575,  "Network Debug Messages"},
+    {576,  "Settings..."},
+    {577,  "Players"},
+    {578,  "Send Message"},
+    {579,  "Select All"},
+    {580,  "Select None"},
+    {581,  "Select Allies"},
+    {582,  "Select Nearby Tanks"},
+    {583,  "Brains"},
+    {584,  "Manual"},
+    {585,  "Help"},
+    {586,  "About"},
+    {587,  "Leave Game"},
+    {588,  "(no settings)"},
+    {589,  "Brain Settings"},
+    {590,  "Tutorial"},
+    {591,  "Play Tutorial"},
+    {592,  "Show on main menu"},
+    {593,  "Crash Reporting"},
+    {594,  "Enable Crash Reporting"},
+    {595,  "Help improve WinBolo by sending crash reports"},
+    {596,  "Changes take effect on next launch."},
+    {597,  "Close"},
+    {598,  "WinBolo - Settings"},
+    {599,  "WinBolo - Key Setup"},
+    {600,  "WinBolo - Game Lobby"},
+    {601,  "Unknown"},
+    {602,  "Yes (Full)"},
+    {603,  "Hidden"},
+    {604,  "Visible"},
+    {605,  "Downloading map..."},
+    {606,  "Map preview unavailable"},
+    {607,  "Pillboxes:"},
+    {608,  "Bases:"},
+    {609,  "Starts:"},
+    {610,  "Skip Map"},
+    {611,  "Cancel Skip"},
+    {612,  "{number}/{number2} votes to skip"},
+    {613,  "Chat"},
+    {614,  "Ready"},
+    {615,  "Unready"},
+    {616,  "Balance Teams"},
+    {617,  "Apply Balance"},
+    {618,  "Dismiss"},
+    {619,  "Leave"},
+    {620,  "Leave Game?"},
+    {621,  "Are you sure you want to leave this game?"},
+    {622,  "{player} [Bot]"},
+    {623,  "{player} (You)"},
+    {624,  "Starting in {number}..."},
+    {625,  "You have lost your connection to the server."},
+    {626,  "Me"},
+    {627,  "Player"},
+    {628,  "Ping"},
+    {629,  "Team"},
+    {630,  "Ready"},
+    {631,  "Slot"},
+    {632,  "Player Name"},
+    {633,  "Action"},
+    {634,  "Add Bot"},
+    {635,  "Remove"},
+    {636,  "Map"},
+    {637,  "Game:"},
+    {638,  "Mines:"},
+    {639,  "AI:"},
+    {640,  "Time:"},
+    {642,  "{number}h {string1}m {string2}s"},
+    {643,  "{number}m {string1}s"},
+    {644,  "{number}s"},
+    {645,  "Map:"},
+    {646,  "WinBolo - Game Setup"},
+    {647,  "Select a map:"},
+    {648,  "Back"},
+    {649,  "Bases: {number}  Starts: {number2}"},
+    {650,  "Pillboxes: {number}"},
+    {651,  "Change Map"},
+    {652,  "Game Type"},
+    {653,  "Open Game"},
+    {654,  "Hidden Mines"},
+    {655,  "AI Computer Players"},
+    {656,  "Allow"},
+    {657,  "Advantage"},
+    {658,  "Full Map"},
+    {659,  "Time Limit"},
+    {660,  "Team Setup"},
+    {661,  "Number of AI players:"},
+    {662,  "No brains found"},
+    {663,  "Brain"},
+    {664,  "You"},
+    {665,  "Bot {number}"},
+    {666,  "No computer tanks"},
+    {667,  "Allow computer tanks"},
+    {668,  "Allow with advantage"},
+    {669,  "Allow with full map"},
+    {670,  "No preview"},
+    {671,  "Start Game"},
+    {672,  "Strict"},
+    {673,  "WinBolo - UDP (Internet) Setup"},
+    {674,  "Error"},
+    {675,  "WinBolo - {string1}"},
+    {676,  "Refresh"},
+    {677,  "Loading games list{string1}"},
+    {678,  "Click Refresh to load games..."},
+    {679,  "Click Refresh to scan..."},
+    {680,  "Games loaded."},
+    {681,  "No games found. Start one!"},
+    {682,  "Search failed."},
+    {683,  "Searching..."},
+    {684,  "Server"},
+    {685,  "Map"},
+    {686,  "Players"},
+    {687,  "Type"},
+    {688,  "AI"},
+    {689,  "Bases"},
+    {690,  "Pills"},
+    {691,  "Ping"},
+    {692,  "Filter:"},
+    {693,  "All Types"},
+    {694,  "Unlocked Only"},
+    {695,  "All Lobby"},
+    {696,  "In Lobby"},
+    {697,  "Starting"},
+    {698,  "Status: {string1}  |  {number} servers  |  Pinging {number2}..."},
+    {699,  "Status: {string1}  |  {number} servers"},
+    {700,  "New Game"},
+    {701,  "Player Name"},
+    {702,  "Manual"},
+    {703,  "Server is running a different version of WinBolo."},
+    {704,  "You must set a player name first."},
+    {706,  "Adv"},
+    {707,  "Full"},
+    {708,  "WinBolo - Log Browser"},
+    {709,  "WinBolo.net Log Browser"},
+    {710,  "Recent"},
+    {711,  "Top Rated"},
+    {712,  "Most Downloaded"},
+    {713,  "Search"},
+    {714,  "Loading..."},
+    {715,  "Could not connect to WinBolo.net"},
+    {716,  "Min Players"},
+    {717,  "Search Filters:"},
+    {718,  "Player"},
+    {719,  "Map"},
+    {720,  "Search"},
+    {721,  "Error: {string1}"},
+    {722,  "Map"},
+    {723,  "Type"},
+    {724,  "Players"},
+    {725,  "Rating"},
+    {726,  "Size"},
+    {727,  "Date"},
+    {728,  "Players: "},
+    {729,  "{number} player(s)"},
+    {730,  "Duration: {string1}"},
+    {731,  "Rating: {string1}/10 ({number})"},
+    {732,  "Downloads: {number}"},
+    {733,  "Size: {string1}"},
+    {734,  "Comments ({number}):"},
+    {735,  "No comments yet."},
+    {736,  "Add Comment:"},
+    {737,  "Write a comment..."},
+    {738,  "Post"},
+    {739,  "Comment posted!"},
+    {740,  "Loading details..."},
+    {741,  "Downloading..."},
+    {742,  "View Log"},
+    {743,  "Log file is not available for this game."},
+    {744,  "< Prev"},
+    {745,  "Next >"},
+    {746,  "Page {number} of {number2}  ({number3} total)"},
+    {747,  "Open File..."},
+    {748,  "Failed to parse response"},
+    {749,  "Network error"},
+    {750,  "Failed to load details"},
+    {751,  "Download failed"},
+    {752,  "Could not determine save path"},
+    {754,  "Fetch failed"},
+    {755,  "Unknown error"},
+    {756,  "WinBolo Log Files"},
+    {757,  "WinBolo - Set Player Name"},
+    {758,  "Your player name is set by WinBolo.net."},
+    {759,  "Please enter your player name."},
+    {760,  "Sorry, you can not leave this blank"},
+    {761,  "Sorry, names can not begin with a '*'"},
+    {762,  "That name is already in use by another player."},
+    {763,  "WinBolo - Skin Selection"},
+    {764,  "No Skin (Default)"},
+    {765,  "N/A"},
+    {766,  "Select a skin:"},
+    {767,  "Name:"},
+    {768,  "Author:"},
+    {769,  "Notes:"},
+    {770,  "Unable to load Skin File"},
+    {771,  "WinBolo - Tracker Config"},
+    {772,  "Invalid port number."},
+    {773,  "Checking WinBolo.net..."},
+    {774,  "WinBolo.net:"},
+    {775,  "Signed in"},
+    {776,  "(expires {string1})"},
+    {777,  "Sign out of WBN"},
+    {778,  "Not signed in"},
+    {779,  "Sign in to WBN..."},
+    {780,  "Sign in to WinBolo.net"},
+    {781,  "Sign in with your WinBolo.net username and password. A token will be saved so you don't need to enter your password again."},
+    {782,  "Username:"},
+    {783,  "Password:"},
+    {784,  "Signing in..."},
+    {785,  "Sign in"},
+    {786,  "Please enter your username and password."},
+    {787,  "WinBolo - Game Selection"},
+    {788,  "Single Player"},
+    {789,  "Local"},
+    {790,  "Map Editor"},
+    {791,  "Log Viewer"},
+    {792,  "Internet"},
+    {793,  "Everard Island (Inbuilt)"},
+    {794,  "Load a Map"},
+    {795,  "Load from Device..."},
+    {796,  "Generate Random Map"},
+    {797,  "Random Map"},
+    {798,  "Click Generate to preview"},
+    {799,  "No preview available"},
+    {800,  "Pillboxes: {number}  Bases: {number2}  Starts: {number3}"},
+    {801,  "Map Files"},
+    {802,  "All Files"},
+    {803,  "Status"},
+    {804,  "Kills: {number}  Deaths: {number2}"},
+    {805,  "Tank Resources"},
+    {806,  "Shells"},
+    {807,  "Mines"},
+    {808,  "Armour"},
+    {809,  "Trees"},
+    {810,  "Pillboxes"},
+    {811,  "Bases"},
+    {812,  "Tanks"},
+    {813,  "Pill {number}"},
+    {814,  "Base {number}"},
+    {815,  "Tank {number}"},
+    {816,  "Msg"},
+    {817,  "Ply"},
+    {818,  "Set"},
+    {819,  "Set Player Name"},
+
+    /* Map editor validation */
+    {820,  "Too many bases: {number} (max {number2})"},
+    {821,  "Too many pillboxes: {number} (max {number2})"},
+    {822,  "Too many starts: {number} (max {number2})"},
+    {823,  "Base #{number} at ({number2},{number3}): on non-traversable terrain"},
+    {824,  "Base #{number} at ({number2},{number3}): in mine border zone"},
+    {825,  "Pillbox #{number} at ({number2},{number3}): on non-traversable terrain"},
+    {826,  "Pillbox #{number} at ({number2},{number3}): in mine border zone"},
+    {827,  "Start #{number} at ({number2},{number3}): must be on deep sea"},
+    {828,  "Start #{number} at ({number2},{number3}): in mine border zone"},
+    {829,  "No start positions placed \xe2\x80\x94 map is unplayable"},
+    {830,  "Only 1 start position \xe2\x80\x94 single player only"},
+    {831,  "Base #{number} and Base #{number2} overlap at ({number3},{number4})"},
+    {832,  "Pillbox #{number} and Pillbox #{number2} overlap at ({number3},{number4})"},
+    {833,  "Base #{number} and Pillbox #{number2} overlap at ({number3},{number4})"},
+    {834,  "Start #{number} and Start #{number2} overlap at ({number3},{number4})"},
+    {835,  "Start #{number} and Base #{number2} overlap at ({number3},{number4})"},
+    {836,  "Start #{number} and Pillbox #{number2} overlap at ({number3},{number4})"},
+
+    /* Map editor menu bar */
+    {837,  "Open..."},
+    {838,  "Recent Files"},
+    {839,  "Save"},
+    {840,  "Save As..."},
+    {841,  "Export as PNG..."},
+    {842,  "Return to Menu"},
+    {843,  "Undo"},
+    {844,  "Redo"},
+    {845,  "Cut"},
+    {846,  "Copy"},
+    {847,  "Paste"},
+    {848,  "Map"},
+    {849,  "Random Map..."},
+    {850,  "Text..."},
+    {851,  "Import Image..."},
+    {852,  "Validate"},
+    {853,  "Mirror Horizontal {string1}"},
+    {854,  "Mirror Vertical {string1}"},
+    {855,  "Rotate 90\xC2\xB0 CW {string1}"},
+    {856,  "Rotate 180\xC2\xB0 {string1}"},
+    {857,  "(selection)"},
+    {858,  "(full map)"},
+    {859,  "Options"},
+    {860,  "Center Map"},
+    {861,  "Point Start Points"},
+    {862,  "Show Grid"},
+    {863,  "Show Mines"},
+    {864,  "Show Pillbox Ranges"},
+    {865,  "Window"},
+
+    /* Map editor windows */
+    {866,  "Terrain"},
+    {867,  "Tools"},
+    {868,  "Inspector"},
+    {869,  "Objects"},
+    {870,  "Overview"},
+    {871,  "Statistics"},
+    {872,  "Stamp Library"},
+
+    /* Map editor terrain palette */
+    {873,  "Deep Sea"},
+    {874,  "Grass"},
+    {875,  "Forest"},
+    {876,  "Road"},
+    {877,  "Building"},
+    {878,  "Half Building"},
+    {879,  "River"},
+    {880,  "Swamp"},
+    {881,  "Crater"},
+    {882,  "Rubble"},
+    {883,  "Boat"},
+    {884,  "Mine Tool"},
+    {885,  "Checkered"},
+    {886,  "Full"},
+    {887,  "Random"},
+    {888,  "Clear Mines"},
+
+    /* Map editor drawing tools */
+    {889,  "Pencil"},
+    {890,  "Line"},
+    {891,  "Rectangle"},
+    {892,  "Filled Rectangle"},
+    {893,  "Oval"},
+    {894,  "Filled Oval"},
+    {895,  "Selection"},
+    {896,  "Fill"},
+    {897,  "Maze"},
+    {898,  "Generate"},
+    {899,  "Wand"},
+    {900,  "Text"},
+    {901,  "Text (stamp text onto map)"},
+    {902,  "Brush"},
+    {903,  "Square"},
+    {904,  "Circle"},
+    {905,  "Base"},
+    {906,  "Pillbox"},
+    {907,  "Start"},
+
+    /* Map editor status bar */
+    {908,  "Tile: {number}, {number2}"},
+    {909,  "Tile: --"},
+    {910,  "Zoom: {string1}"},
+    {911,  "Modified"},
+
+    /* Map editor modals */
+    {912,  "Unsaved Changes"},
+    {913,  "The map has unsaved changes.\nDo you want to save before continuing?"},
+    {914,  "Go To Coordinates"},
+    {915,  "X"},
+    {916,  "Y"},
+
+    /* Map editor inspector */
+    {917,  "No object selected"},
+    {918,  "Base #{number}"},
+    {919,  "Pillbox #{number}"},
+    {920,  "Start #{number}"},
+    {921,  "Position: ({number}, {number2})"},
+    {922,  "Owner"},
+    {923,  "Armour"},
+    {924,  "Speed"},
+    {925,  "Direction"},
+    {926,  "Neutral"},
+    {927,  "Player {number}"},
+
+    /* Map editor object list */
+    {928,  "Bases ({number}/{number2})"},
+    {929,  "Pillboxes ({number}/{number2})"},
+    {930,  "Starts ({number}/{number2})"},
+    {931,  "#{number}  ({number2}, {number3})  {string1}"},
+    {932,  "#{number}  ({number2}, {number3})  {string1}  Armour: {number4}"},
+    {933,  "#{number}  ({number2}, {number3})  Dir: {string1}"},
+
+    /* Map editor validation panel */
+    {934,  "Validation"},
+    {935,  "No issues"},
+    {936,  "{number} error(s)"},
+    {937,  "0 errors"},
+    {938,  "{number} warning(s)"},
+    {939,  "0 warnings"},
+    {940,  "Validation Errors"},
+    {941,  "Map has {number} error(s). Fix them before saving."},
+
+    /* Map editor generate dialog */
+    {942,  "Generate Random Map"},
+    {943,  "Generate Random Area"},
+    {944,  "Scope: Selection ({number},{number2})-({number3},{number4})"},
+    {945,  "Scope: Full map ({number},{number2})-({number3},{number4})"},
+
+    /* Map editor text tool dialog */
+    {946,  "Text Tool"},
+    {947,  "Text:"},
+    {948,  "Built-in"},
+    {949,  "System Font"},
+    {950,  "Font Size"},
+    {951,  "Style"},
+    {952,  "Small (5x7)"},
+    {953,  "Medium (10x14)"},
+    {954,  "Large (15x21)"},
+    {955,  "XL (20x28)"},
+    {956,  "Regular"},
+    {957,  "Bold"},
+    {958,  "Italic"},
+    {959,  "Bold Italic"},
+    {960,  "Font Family"},
+    {961,  "{string1} (bundled)"},
+    {962,  "Size (px)"},
+    {963,  "No fonts found. Add .ttf files to data/fonts/"},
+    {964,  "Text Terrain"},
+    {965,  "Edge Terrain"},
+    {966,  "Background"},
+    {967,  "Preview ({number}x{number2} tiles):"},
+    {968,  "Text too large (max 256x256 tiles) or font error"},
+    {969,  "Generate"},
+
+    /* Map editor maze settings */
+    {970,  "Maze Settings"},
+    {971,  "Region: ({number},{number2})-({number3},{number4})  {string1}"},
+    {972,  "Drag on map to generate"},
+    {973,  "Algorithm"},
+    {974,  "Labyrinth"},
+    {975,  "Open"},
+    {976,  "Wall"},
+    {977,  "Corridor"},
+    {978,  "Entries"},
+    {979,  "Rooms"},
+    {980,  "Wall Terrain"},
+    {981,  "Corridor Terrain"},
+    {982,  "Generate Settings"},
+
+    /* Map editor statistics panel */
+    {983,  "Terrain Distribution"},
+    {984,  "{string1}: {number} / {number2}"},
+    {985,  "Mines: {number} ({string1}% land)"},
+    {986,  "Spatial Analysis"},
+    {987,  "Land coverage: {string1}%"},
+    {988,  "Largest landmass: {string1}%"},
+    {989,  "Base spacing: {string1} tiles"},
+    {990,  "Pill spacing: {string1} tiles"},
+    {991,  "Symmetry: {string1} ({string2}%)"},
+    {992,  "Mirror-H:   {string1}%"},
+    {993,  "Mirror-V:   {string1}%"},
+    {994,  "4-corner:   {string1}%"},
+    {995,  "Rotate-180: {string1}%"},
+    {996,  "(stale \xe2\x80\x94 click Refresh)"},
+    {997,  "Refresh Spatial"},
+    {998,  "Starts"},
+    {999,  "Half-Building"},
+
+    /* Map editor image import */
+    {1000, "Import Image"},
+    {1001, "File:"},
+    {1002, "(none)"},
+    {1003, "Browse..."},
+    {1004, "Source: {number}x{number2} pixels"},
+    {1005, "Preview:"},
+    {1006, "Scale Mode:"},
+    {1007, "Fit selection"},
+    {1008, "Fit playable"},
+    {1009, "Output: {number} x {number2} tiles"},
+    {1010, "Colors:"},
+    {1011, "Re-detect"},
+    {1012, "Color Mapping"},
+    {1013, "Import"},
+
+    /* Map editor stamp library */
+    {1014, "Bundled Stamps"},
+    {1015, "User Stamps"},
+    {1016, "No user stamps yet."},
+    {1017, "Use \"Save Clipboard...\" to create one."},
+    {1018, "Delete"},
+    {1019, "Save Clipboard..."},
+    {1020, "Copy a selection first (Ctrl+C)"},
+    {1021, "Import..."},
+    {1022, "Untitled"},
+    {1023, "Save Stamp"},
+    {1024, "Enter a name for this stamp:"},
+    {1025, "Name"},
+    {1026, "Save"},
+
+    /* Map editor export PNG */
+    {1027, "Export as PNG"},
+    {1028, "Preview"},
+    {1029, "Mode:"},
+    {1030, "Full resolution (4096x4096)"},
+    {1031, "Preview size:"},
+    {1032, "Options:"},
+    {1033, "Show objects"},
+    {1034, "Show mines"},
+    {1035, "Show grid (full mode only)"},
+    {1036, "Export..."},
+
+    /* Map generator panel */
+    {1037, "Locked: won't change on Randomize"},
+    {1038, "Unlocked: will change on Randomize"},
+    {1039, "Generator"},
+    {1040, "Tournament"},
+    {1041, "Natural"},
+    {1042, "Maze"},
+    {1043, "Fractal"},
+    {1044, "Seed"},
+    {1045, "Randomize"},
+    {1046, "Symmetry"},
+    {1047, "4-Corner Mirror"},
+    {1048, "Mirror Horizontal"},
+    {1049, "Mirror Vertical"},
+    {1050, "Rotate 180\xC2\xB0"},
+    {1051, "Rotate 90\xC2\xB0"},
+    {1052, "Land Mass %"},
+    {1053, "Roughness"},
+    {1054, "Low"},
+    {1055, "Medium"},
+    {1056, "High"},
+    {1057, "Include Roads"},
+    {1058, "Map Style"},
+    {1059, "Ocean"},
+    {1060, "Continent"},
+    {1061, "Islands"},
+    {1062, "Archipelago"},
+    {1063, "Inland"},
+    {1064, "Terrain Mix (% land share):"},
+    {1065, "Grass %"},
+    {1066, "Forest %"},
+    {1067, "Building %"},
+    {1068, "Swamp %"},
+    {1069, "River %"},
+    {1070, "Boat %"},
+    {1071, "Remaining grass: {number}%"},
+    {1072, "Mine Density %"},
+    {1073, "River Count"},
+    {1074, "City Count"},
+    {1075, "Maze Count"},
+    {1076, "Wall Thickness"},
+    {1077, "Corridor Width"},
+    {1078, "City Rooms"},
+    {1079, "Land Coverage %"},
+    {1080, "Detail Passes"},
+    {1081, "Coast Jaggedness"},
+    {1082, "Terrain Layers"},
+    {1083, "Rivers"},
+    {1084, "Lakes"},
+
+    /* Log viewer sim-replay messages */
+    {1085, "{player} joined the game."},
+    {1086, "{string1} has joined game"},
+    {1087, "{player} just requested alliance with {other}"},
+    {1088, "{player} just accepted alliance with {other}"},
+    {1089, "{player} just left alliance"},
+    {1090, "Message to all from {player}: {string1}"},
+    {1091, "Message from {player} to {other}: {string1}"},
+    {1092, "Server Message: {string1}"},
+    {1093, "{player} has died"},
+    {1094, "{player} just killed player {other}"},
+    {1095, "{player} just rejoined game."},
+    {1096, "{player} is leaving game."},
+    {1097, "Lobby opened."},
+    {1098, "Game started."},
+    {1099, "{player} is ready."},
+    {1100, "{player} is no longer ready."},
+    {1101, "{player} left their team."},
+    {1102, "{player} joined team {number}."},
+    {1103, "Countdown started."},
+    {1104, "Countdown cancelled."},
+    {1105, "{player} voted to skip map."},
+    {1106, "Map skipped. New map: {string1}"},
+    {1107, "Team balance applied."},
+
+    /* Log viewer main menu */
+    {1108, "Open"},
+    {1109, "Action"},
+    {1110, "Play"},
+    {1111, "Pause"},
+    {1112, "Stop"},
+    {1113, "Fast Forward"},
+    {1114, "Rewind"},
+    {1115, "Mode"},
+    {1116, "Information"},
+    {1117, "Select Team"},
+    {1118, "Use Team Colours"},
+    {1119, "Tank Centred"},
+    {1120, "DNS Lookups"},
+    {1121, "Team Colours"},
+    {1122, "Windows"},
+    {1123, "Controls"},
+    {1124, "Events"},
+    {1125, "Game Information"},
+    {1126, "Item Information"},
+    {1127, "Reset Window Positions"},
+
+    /* Log viewer dialogs */
+    {1128, "Assign colours to each player team:"},
+    {1129, "Player {number}:"},
+    {1130, "Neutral:"},
+    {1131, "WinBolo Log Viewer"},
+    {1132, "Version: {string1}"},
+    {1133, "This program is free software; you can redistribute it\nand/or modify it under the terms of the GNU General\nPublic License as published by the Free Software Foundation."},
+    {1134, "Website:"},
+
+    /* Log viewer team colour names */
+    {1135, "Grey"},
+    {1136, "Khaki"},
+    {1137, "Green"},
+    {1138, "Pink"},
+    {1139, "Yellow"},
+    {1140, "Light Blue"},
+    {1141, "Orange"},
+    {1142, "Light Purple"},
+    {1143, "Aqua"},
+    {1144, "Light Green"},
+    {1145, "Light Grey"},
+    {1146, "Red"},
+    {1147, "Blue"},
+    {1148, "Brown"},
+    {1149, "Light Pink"},
+    {1150, "Pale Green"},
+    {1151, "Purple"},
+
+    /* Log viewer game info panel */
+    {1152, "{number} second(s)"},
+    {1153, "Map Name: {string1}"},
+    {1154, "Game Type: {string1}"},
+    {1155, "Hidden Mines: {string1}"},
+    {1156, "Computer Tanks: {string1}"},
+    {1157, "Time Limit: {string1}"},
+    {1158, "Start Delay: {string1}"},
+    {1159, "WBN Key:"},
+    {1160, "Start Time: {string1}"},
+
+    /* Log viewer item info panel */
+    {1161, "{string1} ({number})"},
+    {1162, "X: {number}, Y: {number2}"},
+    {1163, "No item selected"},
+    {1164, "Location: {string1}"},
+    {1165, "Owner: {string1}"},
+    {1166, "Armour: {number}"},
+    {1167, "Shells: {number}"},
+    {1168, "Mines: {number}"},
+    {1169, "In Tank: {string1}"},
+    {1170, "Center on Map"},
+
+    /* Log viewer playback controls */
+    {1171, "<< Rew"},
+    {1172, "Play >"},
+    {1173, "Fwd >>"},
+    {1174, "Speed:"},
+    {1175, "{string1} / {string2}"},
+    {1176, "-{string1} remaining"},
+    {1177, "No log loaded"},
+
+    /* Log viewer events panel */
+    {1178, "Copy"},
+    {1179, "Copy All"},
+    {1180, "Clear All"},
+    {1181, "Auto Scroll"},
+
+    /* Log viewer end-of-log marker */
+    {1182, "End of Log File Reached"},
+
+    /* iOS Settings panel */
+    {1183, "Zoom"},
+    {1184, "Performance"},
+    {1185, "FPS: {number}"},
+
+    /* iOS disconnect-to-menu */
+    {1186, "You have lost your connection to the server.\nReturning to menu."},
+
+    /* Language picker (Settings → Display) */
+    {1187, "Language:"},
+    {1188, "Existing message-log entries won't change language until they're regenerated."},
+
+    /* Hosted multiplayer / NAT traversal — Phase 1-4 networking work */
+    {1189, "Requires port forwarding for non-LAN players to join. (Coming: automatic NAT setup.)"},
+    {1190, "Failed to load map from server"},
+    {1191, "Error starting server"},
+    {1192, "Checking server reachability..."},
+    {1193, "Server accessible"},
+    {1194, "Server unreachable"},
+    {1195, "Trying to open a firewall port via UPnP / NAT-PMP and confirming the tracker can reach back through your network. This usually completes within 30 seconds."},
+    {1196, "Port forwarded automatically via UPnP/NAT-PMP at %s:%u. Joiners connect directly with no further steps required."},
+    {1197, "Direct port forwarding could not be established, but NAT traversal is active. Joiners coordinate through the tracker to punch through your network's firewall. This works for most home networks; joiners on symmetric NAT or carrier-grade NAT may still fail to connect."},
+    {1198, "Symmetric NAT detected — your network rewrites the source port for every destination, which prevents joiners from reaching you even via NAT traversal. To host successfully, manually forward UDP port %u on your router to this machine."},
+    {1199, "Could not open a firewall port automatically (UPnP/NAT-PMP refused or unavailable) and the tracker could not confirm bidirectional reachability. To host successfully, manually forward UDP port %u on your router to this machine."},
+    {1200, "Server Reachability"},
+    {1201, "Test connectivity"},
+    {1202, "Testing..."},
+    {1203, "Reachable from internet"},
+    {1204, "No reply from tracker"},
+    {1205, "Network"},
+    {1206, "Settings take effect on the next hosted game."},
+    {1207, "Use UPnP / NAT-PMP for automatic port forwarding"},
+    {1208, "Use NAT traversal (hole-punching) via tracker"},
+
+    /* Graphics section: tile detail / animation smoothness / theme info */
+    {1209, "All pixelation and animation settings do not affect "
+           "gameplay. Internally, all tanks, shells and builders "
+           "are stored with max precision and pixelation affects "
+           "the visual display only."},
+    {1210, "Tile Detail Level"},
+    {1211, "Classic"},
+    {1212, "Match to zoom (if theme supports it)"},
+    {1213, "High Detail"},
+    {1214, "Match to zoom - Pixelation matches the window zoom,\n"
+           "if the theme provides that level of detail."},
+    {1215, "Animation Smoothness (Tanks, Shells, and Builders)"},
+    {1216, "Match to pixelation"},
+    {1217, "Max - smoothest, ignores pixelation"},
+    {1218, "Force smooth path shells"},
+    {1219, "Cosmetic - shells appear to fly more directly and\n"
+           "smoothly, but their position no longer snaps to the\n"
+           "pixel grid."},
+    {1220, "All themes are cosmetic and do not affect game play."},
+    {1221, "Theme"},
+    {1222, "Preview"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
@@ -367,30 +1067,674 @@ static const char *lookupString(unsigned int id) {
     return "";
 }
 
+/* -------------------------------------------------------
+ * Generated symbolic-name -> langid table.
+ * Sorted alphabetically by name; resolved with bsearch().
+ * Re-run tools/dump_lang_en.py after editing lang.h or this file.
+ * ------------------------------------------------------- */
+#include "lang_names.inc"
+
+/* -------------------------------------------------------
+ * Runtime override table for non-English translations.
+ *
+ * overrideTable is a sparse array indexed by langid. NULL means
+ * "no override; fall back to the static langTable[]". Strings
+ * are heap-allocated (strdup-style) and freed on reload/unload.
+ * ------------------------------------------------------- */
+static char        **overrideTable      = NULL;
+static unsigned int  overrideTableSize  = 0;
+static LangFileMeta  loadedMeta         = {{0}, {0}, {0}};
+static bool          loadedMetaValid    = FALSE;
+
+static int langNameCmp(const void *a, const void *b) {
+    const char          *key   = (const char *)a;
+    const LangNameEntry *entry = (const LangNameEntry *)b;
+    return strcmp(key, entry->name);
+}
+
+static langid resolveName(const char *name) {
+    const LangNameEntry *hit = (const LangNameEntry *)bsearch(
+        name, kLangNameTable, K_LANG_NAME_TABLE_SIZE,
+        sizeof(kLangNameTable[0]), langNameCmp);
+    return hit ? hit->id : 0;
+}
+
+static char *unescapeValue(const char *raw) {
+    size_t len = strlen(raw);
+    char *out = (char *)malloc(len + 1);
+    if (!out) return NULL;
+    char *w = out;
+    for (size_t i = 0; i < len; i++) {
+        char c = raw[i];
+        if (c == '\\' && i + 1 < len) {
+            char nxt = raw[i + 1];
+            switch (nxt) {
+                case 'n': *w++ = '\n'; i++; continue;
+                case 't': *w++ = '\t'; i++; continue;
+                case 'r': *w++ = '\r'; i++; continue;
+                case '\\': *w++ = '\\'; i++; continue;
+                case '"': *w++ = '"';  i++; continue;
+                default:  break;
+            }
+        }
+        *w++ = c;
+    }
+    *w = '\0';
+    return out;
+}
+
+static void clearOverrides(void) {
+    if (overrideTable) {
+        for (unsigned int i = 0; i < overrideTableSize; i++) {
+            if (overrideTable[i]) {
+                free(overrideTable[i]);
+            }
+        }
+        free(overrideTable);
+        overrideTable = NULL;
+        overrideTableSize = 0;
+    }
+    memset(&loadedMeta, 0, sizeof(loadedMeta));
+    loadedMetaValid = FALSE;
+}
+
+static bool ensureOverrideSlot(unsigned int id) {
+    if (id < overrideTableSize) return TRUE;
+    unsigned int newSize = overrideTableSize ? overrideTableSize : 64;
+    while (newSize <= id) newSize *= 2;
+    char **grown = (char **)realloc(overrideTable, newSize * sizeof(char *));
+    if (!grown) return FALSE;
+    for (unsigned int i = overrideTableSize; i < newSize; i++) {
+        grown[i] = NULL;
+    }
+    overrideTable = grown;
+    overrideTableSize = newSize;
+    return TRUE;
+}
+
+static void setOverride(langid id, char *value) {
+    if (!ensureOverrideSlot(id)) {
+        free(value);
+        return;
+    }
+    if (overrideTable[id]) {
+        free(overrideTable[id]);
+    }
+    overrideTable[id] = value;
+}
+
+/* Strip leading and trailing horizontal whitespace (and CR/LF) in
+ * place. Returns a pointer into the original buffer. Used for the
+ * KEY portion of a `key=value` line; never call it on the value side
+ * — translators must be able to encode trailing spaces in values
+ * (e.g. "Map Name: ") just by typing them. */
+static char *trim(char *s) {
+    while (*s == ' ' || *s == '\t') s++;
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' ||
+                     s[n - 1] == '\r' || s[n - 1] == '\n')) {
+        s[--n] = '\0';
+    }
+    return s;
+}
+
+static void copyMetaField(char *dst, size_t dstSize, const char *src) {
+    size_t n = strlen(src);
+    if (n >= dstSize) n = dstSize - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 bool langSetup(void) {
     langFileName[0] = '\0';
     return TRUE;
 }
 
 void langCleanup(void) {
+    clearOverrides();
     langFileName[0] = '\0';
 }
 
-bool langLoadFile(char *filename, char *langName) {
-    /* No external language files supported — always use built-in English */
-    (void)filename;
-    (void)langName;
+bool langLoadFile(const char *path) {
+    if (!path || !*path) return FALSE;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        SDL_Log("langLoadFile: could not open '%s'", path);
+        clearOverrides();
+        return FALSE;
+    }
+
+    /* Replace any previously-loaded translation. */
+    clearOverrides();
+
+    /* Header parsing remains active until the first body line is seen. */
+    bool inHeader = TRUE;
+    bool firstLine = TRUE;
+    char line[8192];
+
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+
+        /* Strip optional UTF-8 BOM on the first line. */
+        if (firstLine) {
+            firstLine = FALSE;
+            if ((unsigned char)p[0] == 0xEF &&
+                (unsigned char)p[1] == 0xBB &&
+                (unsigned char)p[2] == 0xBF) {
+                p += 3;
+            }
+        }
+
+        /* Strip ONLY CR/LF from the end. Spaces and tabs are
+         * significant in the value side (some labels end in a space,
+         * e.g. "Map Name: "). */
+        size_t lineLen = strlen(p);
+        while (lineLen > 0 && (p[lineLen - 1] == '\r' ||
+                               p[lineLen - 1] == '\n')) {
+            p[--lineLen] = '\0';
+        }
+
+        /* Skip leading horizontal whitespace before the blank/comment
+         * check so that indented "# comment" lines still count. */
+        char *t = p;
+        while (*t == ' ' || *t == '\t') t++;
+        if (*t == '\0' || *t == '#') continue;
+
+        char *eq = strchr(t, '=');
+        if (!eq) {
+            SDL_Log("langLoadFile: skipping malformed line: %s", t);
+            continue;
+        }
+        *eq = '\0';
+        char *key = trim(t);     /* whitespace not meaningful in keys */
+        char *value = eq + 1;    /* value preserved verbatim, including
+                                    any leading or trailing spaces */
+
+        if (inHeader) {
+            if (strcmp(key, "name") == 0) {
+                copyMetaField(loadedMeta.name, sizeof(loadedMeta.name), value);
+                loadedMetaValid = TRUE;
+                continue;
+            }
+            if (strcmp(key, "author") == 0) {
+                copyMetaField(loadedMeta.author, sizeof(loadedMeta.author), value);
+                loadedMetaValid = TRUE;
+                continue;
+            }
+            if (strcmp(key, "notes") == 0) {
+                copyMetaField(loadedMeta.notes, sizeof(loadedMeta.notes), value);
+                loadedMetaValid = TRUE;
+                continue;
+            }
+            /* Anything that isn't a known header key starts the body. */
+            inHeader = FALSE;
+        }
+
+        langid id = resolveName(key);
+        if (id == 0) {
+            SDL_Log("langLoadFile: unknown ID '%s' — skipping", key);
+            continue;
+        }
+
+        if (id < overrideTableSize && overrideTable && overrideTable[id]) {
+            SDL_Log("langLoadFile: duplicate ID '%s' — last one wins", key);
+        }
+
+        char *decoded = unescapeValue(value);
+        if (!decoded) {
+            SDL_Log("langLoadFile: out of memory decoding '%s'", key);
+            continue;
+        }
+        setOverride(id, decoded);
+    }
+
+    fclose(f);
+
+    /* Remember which file is loaded for the language picker. */
+    size_t n = strlen(path);
+    if (n >= sizeof(langFileName)) n = sizeof(langFileName) - 1;
+    memcpy(langFileName, path, n);
+    langFileName[n] = '\0';
+
     return TRUE;
+}
+
+void langUnloadFile(void) {
+    clearOverrides();
+    langFileName[0] = '\0';
+}
+
+const LangFileMeta *langGetLoadedMeta(void) {
+    return loadedMetaValid ? &loadedMeta : NULL;
 }
 
 void langGetFileName(char *fileName) {
     strcpy(fileName, langFileName);
 }
 
+/* -------------------------------------------------------
+ * Header-only parse of a data/lang/<code>.txt: read just the
+ * header lines (name=/author=/notes=) and stop at the first
+ * body line. Used by the language picker so it can show the
+ * translation's name without loading hundreds of override
+ * strings into memory. Does NOT touch the global override
+ * table. Returns TRUE if at least one header field was read.
+ * ------------------------------------------------------- */
+static bool readHeaderOnly(const char *path, LangFileMeta *out) {
+    if (!path || !out) return FALSE;
+    memset(out, 0, sizeof(*out));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return FALSE;
+
+    bool firstLine = TRUE;
+    bool gotAny    = FALSE;
+    char line[1024];
+
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+
+        if (firstLine) {
+            firstLine = FALSE;
+            if ((unsigned char)p[0] == 0xEF &&
+                (unsigned char)p[1] == 0xBB &&
+                (unsigned char)p[2] == 0xBF) {
+                p += 3;
+            }
+        }
+
+        size_t lineLen = strlen(p);
+        while (lineLen > 0 && (p[lineLen - 1] == '\r' ||
+                               p[lineLen - 1] == '\n')) {
+            p[--lineLen] = '\0';
+        }
+
+        char *t = p;
+        while (*t == ' ' || *t == '\t') t++;
+        if (*t == '\0' || *t == '#') continue;
+
+        char *eq = strchr(t, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *key = trim(t);
+        char *value = eq + 1;
+
+        if (strcmp(key, "name") == 0) {
+            copyMetaField(out->name, sizeof(out->name), value);
+            gotAny = TRUE;
+            continue;
+        }
+        if (strcmp(key, "author") == 0) {
+            copyMetaField(out->author, sizeof(out->author), value);
+            gotAny = TRUE;
+            continue;
+        }
+        if (strcmp(key, "notes") == 0) {
+            copyMetaField(out->notes, sizeof(out->notes), value);
+            gotAny = TRUE;
+            continue;
+        }
+        /* First non-header key — stop. */
+        break;
+    }
+
+    fclose(f);
+    return gotAny;
+}
+
+static void lowercaseAscii(char *s) {
+    for (; *s; s++) {
+        if (*s >= 'A' && *s <= 'Z') *s = (char)(*s + ('a' - 'A'));
+    }
+}
+
+/* Strip ".txt" (case-insensitive) off the end of `name`, in place. */
+static void stripTxtExt(char *name) {
+    size_t n = strlen(name);
+    if (n >= 4) {
+        char tail[5];
+        tail[0] = (char)((name[n - 4] >= 'A' && name[n - 4] <= 'Z') ? name[n - 4] + 32 : name[n - 4]);
+        tail[1] = (char)((name[n - 3] >= 'A' && name[n - 3] <= 'Z') ? name[n - 3] + 32 : name[n - 3]);
+        tail[2] = (char)((name[n - 2] >= 'A' && name[n - 2] <= 'Z') ? name[n - 2] + 32 : name[n - 2]);
+        tail[3] = (char)((name[n - 1] >= 'A' && name[n - 1] <= 'Z') ? name[n - 1] + 32 : name[n - 1]);
+        tail[4] = '\0';
+        if (strcmp(tail, ".txt") == 0) {
+            name[n - 4] = '\0';
+        }
+    }
+}
+
+LangFileEntry *langPickerScan(int *outCount) {
+    if (outCount) *outCount = 0;
+
+    /* Always start with the synthetic "English (Default)" entry. The
+     * static langTable[] is the English baseline, so selecting English
+     * is equivalent to clearing any loaded override file. */
+    int    cap   = 16;
+    int    n     = 0;
+    LangFileEntry *list = (LangFileEntry *)calloc((size_t)cap, sizeof(*list));
+    if (!list) return NULL;
+
+    strcpy(list[0].code, "en");
+    list[0].path[0] = '\0';
+    /* Use the IDs the dialog already exposes for the English defaults so
+     * the picker stays consistent if a translator re-localizes them. */
+    {
+        const char *engName   = (const char *)lookupString(STR_DLGLANG_NAME);
+        const char *engAuthor = (const char *)lookupString(STR_DLGLANG_AUTHOR);
+        const char *engNotes  = (const char *)lookupString(STR_DLGLANG_NOTES);
+        copyMetaField(list[0].meta.name,   sizeof(list[0].meta.name),   engName);
+        copyMetaField(list[0].meta.author, sizeof(list[0].meta.author), engAuthor);
+        copyMetaField(list[0].meta.notes,  sizeof(list[0].meta.notes),  engNotes);
+    }
+    n = 1;
+
+    /* Per-platform directory scan. SDL_GlobDirectory doesn't see files
+     * inside the iOS app bundle (verified via the bg_game pickRandomMap
+     * path in gamefront.c), so iOS uses opendir/readdir directly.
+     * Both branches feed the same per-entry processing below. */
+    int   fileCount = 0;
+    char **fileNames = NULL;
+#if defined(__IPHONEOS__)
+    {
+        DIR *d = opendir("data/lang");
+        if (d) {
+            int   dcap = 16;
+            char **arr = (char **)calloc((size_t)dcap, sizeof(*arr));
+            if (arr) {
+                struct dirent *ent;
+                while ((ent = readdir(d)) != NULL) {
+                    size_t nlen = strlen(ent->d_name);
+                    if (nlen <= 4) continue;
+                    if (strcasecmp(ent->d_name + nlen - 4, ".txt") != 0) continue;
+                    if (fileCount >= dcap) {
+                        int dnew = dcap * 2;
+                        char **grown = (char **)realloc(arr,
+                            (size_t)dnew * sizeof(*arr));
+                        if (!grown) break;
+                        arr = grown;
+                        dcap = dnew;
+                    }
+                    arr[fileCount++] = SDL_strdup(ent->d_name);
+                }
+                fileNames = arr;
+            }
+            closedir(d);
+        }
+    }
+#else
+    fileNames = SDL_GlobDirectory("data/lang", "*.txt",
+                                  SDL_GLOB_CASEINSENSITIVE, &fileCount);
+#endif
+
+    if (fileNames) {
+        for (int i = 0; i < fileCount; i++) {
+            const char *fname = fileNames[i];
+            if (!fname || !*fname) continue;
+
+            /* basename → code. Both SDL_GlobDirectory and our iOS readdir
+             * pass return basenames only, so copy directly. */
+            char code[32];
+            size_t fnLen = strlen(fname);
+            if (fnLen >= sizeof(code)) fnLen = sizeof(code) - 1;
+            memcpy(code, fname, fnLen);
+            code[fnLen] = '\0';
+            stripTxtExt(code);
+            lowercaseAscii(code);
+
+            /* Skip the synthetic English baseline if a generated data/lang/en.txt
+             * is present alongside it — they're functionally equivalent and
+             * we don't want a duplicate entry in the dropdown. */
+            if (strcmp(code, "en") == 0) continue;
+
+            char path[FILENAME_MAX];
+            snprintf(path, sizeof(path), "data/lang/%s", fname);
+
+            LangFileMeta meta;
+            if (!readHeaderOnly(path, &meta)) {
+                /* Header missing or unreadable; still list the file with
+                 * a fallback name derived from the code so the user has
+                 * something to click on. */
+                memset(&meta, 0, sizeof(meta));
+                copyMetaField(meta.name, sizeof(meta.name), code);
+            }
+
+            if (n >= cap) {
+                int newCap = cap * 2;
+                LangFileEntry *grown = (LangFileEntry *)realloc(
+                    list, (size_t)newCap * sizeof(*list));
+                if (!grown) break;
+                memset(grown + cap, 0,
+                       (size_t)(newCap - cap) * sizeof(*list));
+                list = grown;
+                cap  = newCap;
+            }
+
+            strcpy(list[n].code, code);
+            strcpy(list[n].path, path);
+            list[n].meta = meta;
+            n++;
+        }
+#if defined(__IPHONEOS__)
+        for (int i = 0; i < fileCount; i++) SDL_free(fileNames[i]);
+        free(fileNames);
+#else
+        SDL_free(fileNames);
+#endif
+    }
+
+    if (outCount) *outCount = n;
+    return list;
+}
+
+void langPickerFreeEntries(LangFileEntry *entries, int count) {
+    (void)count;
+    /* Entries are stored inline in one heap allocation; no per-entry
+     * cleanup needed. */
+    free(entries);
+}
+
+void langAutoDetect(char *outCode, int outSize) {
+    if (outCode && outSize > 0) outCode[0] = '\0';
+
+    int             count   = 0;
+    LangFileEntry  *entries = langPickerScan(&count);
+    if (!entries || count <= 1) {
+        /* No translation files on disk; nothing to detect. */
+        if (entries) langPickerFreeEntries(entries, count);
+        return;
+    }
+
+    int             localeCount = 0;
+    SDL_Locale    **locales     = SDL_GetPreferredLocales(&localeCount);
+    if (!locales || localeCount <= 0) {
+        if (locales) SDL_free(locales);
+        langPickerFreeEntries(entries, count);
+        return;
+    }
+
+    /* Walk preferred locales in order; for each, try language-COUNTRY
+     * first ("pt-br"), then language alone ("pt"). First match wins. */
+    for (int li = 0; li < localeCount; li++) {
+        const SDL_Locale *loc = locales[li];
+        if (!loc || !loc->language || !*loc->language) continue;
+
+        char tag[64];
+        if (loc->country && *loc->country) {
+            snprintf(tag, sizeof(tag), "%s-%s", loc->language, loc->country);
+        } else {
+            snprintf(tag, sizeof(tag), "%s", loc->language);
+        }
+        lowercaseAscii(tag);
+
+        /* Two passes: first the full BCP47-ish tag, then the language
+         * portion alone. Skip index 0 (synthetic English baseline) on
+         * matching — fresh installs whose locale is en-* fall through
+         * with no override loaded, which is the correct behaviour. */
+        for (int pass = 0; pass < 2; pass++) {
+            const char *target = tag;
+            if (pass == 1) {
+                char *dash = strchr(tag, '-');
+                if (!dash) continue; /* nothing to retry */
+                *dash = '\0';
+                target = tag;
+            }
+
+            for (int ei = 1; ei < count; ei++) {
+                if (strcmp(target, entries[ei].code) == 0) {
+                    if (langLoadFile(entries[ei].path)) {
+                        if (outCode && outSize > 0) {
+                            size_t cl = strlen(entries[ei].code);
+                            if (cl >= (size_t)outSize) cl = (size_t)outSize - 1;
+                            memcpy(outCode, entries[ei].code, cl);
+                            outCode[cl] = '\0';
+                        }
+                        SDL_free(locales);
+                        langPickerFreeEntries(entries, count);
+                        return;
+                    }
+                }
+            }
+            /* Restore tag for pass 1 if pass 0 mutated it (it didn't,
+             * so this is a no-op — but keep the structure clear). */
+        }
+    }
+
+    SDL_free(locales);
+    langPickerFreeEntries(entries, count);
+}
+
 char *langGetText(langid id) {
+    if (overrideTable && id < overrideTableSize && overrideTable[id]) {
+        return overrideTable[id];
+    }
     return (char *)lookupString(id);
 }
 
-char *langGetText2(langid id) {
-    return (char *)lookupString(id);
+/* -------------------------------------------------------
+ * langGetTextFmt — single-pass named-placeholder substitution.
+ *
+ * Substitutes the literal tokens {player}, {other}, {number} with
+ * fields from `args`. Substitution is non-recursive: braces inside a
+ * substituted value (e.g. a player name like "{ACCEL}lover") are not
+ * rescanned. Output is written into one of a small ring of thread-local
+ * buffers, so up to LANG_FMT_RING_BUFFERS overlapping calls (e.g.
+ * `printf("%s vs %s", langGetTextFmt(...), langGetTextFmt(...))`) all
+ * keep their pointers valid for the lifetime of the printf. Anything
+ * past the cap is truncated cleanly.
+ * ------------------------------------------------------- */
+
+#define LANG_FMT_BUFFER_SIZE   1024
+#define LANG_FMT_RING_BUFFERS  4
+
+static THREAD_LOCAL char    g_fmtBuffers[LANG_FMT_RING_BUFFERS][LANG_FMT_BUFFER_SIZE];
+static THREAD_LOCAL unsigned g_fmtBufferIdx = 0;
+
+static void appendBounded(char *dst, size_t cap, size_t *used, const char *src,
+                          size_t srcLen, bool *truncated) {
+    if (*used >= cap - 1) {
+        if (srcLen > 0 && truncated) *truncated = true;
+        return;
+    }
+    size_t room = cap - 1 - *used;
+    if (srcLen > room) {
+        if (truncated) *truncated = true;
+        srcLen = room;
+    }
+    memcpy(dst + *used, src, srcLen);
+    *used += srcLen;
+    dst[*used] = '\0';
+}
+
+const char *langGetTextFmt(langid id, const MessageArgs *args) {
+    const char *src = langGetText(id);
+    if (!args || !src) return src ? src : "";
+
+    char *dst = g_fmtBuffers[g_fmtBufferIdx];
+    g_fmtBufferIdx = (g_fmtBufferIdx + 1) % LANG_FMT_RING_BUFFERS;
+
+    size_t used = 0;
+    bool   truncated = false;
+    dst[0] = '\0';
+
+    char numberBuf[4][32];
+    int  numberLen[4] = {-1, -1, -1, -1};
+
+    const char *p = src;
+    while (*p) {
+        if (*p == '{') {
+            const char *end = strchr(p, '}');
+            if (end) {
+                size_t tokLen = (size_t)(end - p - 1);
+                const char *replacement = NULL;
+                size_t      replLen     = 0;
+
+                if (tokLen == 6 && memcmp(p + 1, "player", 6) == 0) {
+                    replacement = args->playerName;
+                    replLen     = 0;
+                    while (replLen < PLAYER_NAME_LEN &&
+                           args->playerName[replLen] != '\0') replLen++;
+                } else if (tokLen == 5 && memcmp(p + 1, "other", 5) == 0) {
+                    replacement = args->otherName;
+                    replLen     = 0;
+                    while (replLen < PLAYER_NAME_LEN &&
+                           args->otherName[replLen] != '\0') replLen++;
+                } else if (tokLen >= 6 && tokLen <= 7 &&
+                           memcmp(p + 1, "number", 6) == 0) {
+                    int slot = -1;
+                    if (tokLen == 6) {
+                        slot = 0;
+                    } else {
+                        char d = p[7];
+                        if (d == '2') slot = 1;
+                        else if (d == '3') slot = 2;
+                        else if (d == '4') slot = 3;
+                    }
+                    if (slot >= 0) {
+                        if (numberLen[slot] < 0) {
+                            int v = (slot == 0) ? args->number
+                                  : (slot == 1) ? args->number2
+                                  : (slot == 2) ? args->number3
+                                                : args->number4;
+                            numberLen[slot] = snprintf(numberBuf[slot],
+                                                       sizeof(numberBuf[slot]),
+                                                       "%d", v);
+                            if (numberLen[slot] < 0) numberLen[slot] = 0;
+                        }
+                        replacement = numberBuf[slot];
+                        replLen     = (size_t)numberLen[slot];
+                    }
+                } else if (tokLen == 7 && memcmp(p + 1, "string", 6) == 0) {
+                    char d = p[7];
+                    const char *s = NULL;
+                    if (d == '1') s = args->string1;
+                    else if (d == '2') s = args->string2;
+                    if (s) {
+                        replacement = s;
+                        replLen     = 0;
+                        while (replLen < LANG_MSGARG_STRING_LEN &&
+                               s[replLen] != '\0') replLen++;
+                    }
+                }
+
+                if (replacement) {
+                    appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used,
+                                  replacement, replLen, &truncated);
+                    p = end + 1;
+                    continue;
+                }
+            }
+        }
+        appendBounded(dst, LANG_FMT_BUFFER_SIZE, &used, p, 1, &truncated);
+        p++;
+    }
+
+    if (truncated) {
+        SDL_Log("langGetTextFmt: id=%u rendered output exceeded "
+                "LANG_FMT_BUFFER_SIZE=%d; result was clipped",
+                (unsigned)id, LANG_FMT_BUFFER_SIZE);
+    }
+
+    return dst;
 }

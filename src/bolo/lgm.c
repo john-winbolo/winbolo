@@ -246,7 +246,7 @@ void lgmAddRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BY
 
   if ((*lgman)->isDead == TRUE && tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
 	/* LGM is parachuting in and tank is alive */
-    sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_MAN_DEAD));
+    sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_MAN_DEAD, NULL);
   } else if ((*lgman)->action != LGM_IDLE) {
     /* Busy doing something else  Place in second request */
     (*lgman)->nextX = mapX;
@@ -353,7 +353,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   switch (*action) {
   case LGM_TREE_REQUEST:
     if (pos != FOREST || isBase == TRUE || isPill == TRUE) {
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_TREE));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_TREE, NULL);
       proceed = FALSE;
     }
     break;
@@ -364,17 +364,17 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     } else if (pos == BOAT || pos == DEEP_SEA || pos == BUILDING || pos == HALFBUILDING || isPill == TRUE || isBase == TRUE) {
 	  /* Clicked one of the following a boat, deep sea, building, half building, pill, base  */
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_BUILD));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
     } else if (pos == ROAD) {
 	  /* Clicked on a road */
       proceed = FALSE;
     } else if (pos == RIVER && mapX == tankX && mapY == tankY && tankIsOnBoat(tnk)) {
 	  /* Clicked on a square that has a tank on a boat on it */
 	  proceed = FALSE;
-	  sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_BUILD_UNDER_BOAT));
+	  sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD_UNDER_BOAT, NULL);
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_ROAD, perform) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
 	} else {
       *trees = LGM_COST_ROAD;
     }
@@ -384,28 +384,28 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       *action = LGM_TREE_REQUEST;
     } else if (pos == BOAT || pos == DEEP_SEA || isPill == TRUE || isBase == TRUE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_BUILD));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
     } else if (pos == RIVER && mapX == tankX && mapY == tankY && tankIsOnBoat(tnk)) {
 	  /* Clicked on a square that has a tank on a boat on it */
 	  proceed = FALSE;
-	  sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_BUILD_UNDER_BOAT));
+	  sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD_UNDER_BOAT, NULL);
     } else if (pos == RIVER) {
 	  /* Build a wall on a river, that means build a boat */
       *action = LGM_BOAT_REQUEST;
       if (tankGetLgmTrees(sim, tnk, LGM_COST_BOAT, perform) == FALSE) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
+        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
       } else {
         *trees = LGM_COST_BOAT;
       }
 
     } else if (tankX == mapX && tankY == mapY) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_BUILDTANK));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_BUILDTANK, NULL);
     } else if (pos == HALFBUILDING) {
       if (tankGetLgmTrees(sim, tnk, LGM_COST_REPAIRBUILDING, perform) == FALSE) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
+        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
       } else {
         *trees = LGM_COST_REPAIRBUILDING;
       }
@@ -413,7 +413,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       proceed = FALSE;
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_BUILDING, perform) == FALSE) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
+        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
     } else {
       *trees = LGM_COST_BUILDING;
     }
@@ -422,19 +422,19 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   case LGM_PILL_REQUEST:
     if (pos == BOAT || pos == DEEP_SEA || pos == BUILDING || pos == HALFBUILDING || pos == RIVER || isBase == TRUE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_BUILD));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
     } else if (pos == FOREST && isPill == FALSE) {
       *action = LGM_TREE_REQUEST;
     } else if (tankX == mapX && tankY == mapY) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_BUILDTANK));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_BUILDTANK, NULL);
     } else if (isPill == TRUE) {
       if (pillsGetArmourPos(pb, mapX, mapY) == PILLS_MAX_ARMOUR) {
         proceed= FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_PILL_NO_NEED_REPAIR));
+        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_PILL_NO_NEED_REPAIR, NULL);
       } else if (tankTrees<LGM_COST_PILLREPAIR) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
+        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
       } else {
 		pillArmour = pillsGetArmourPos(pb, mapX, mapY);
 		if(pillArmour>=11){
@@ -458,10 +458,10 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       *pillNum = LGM_NO_PILL;
     } else if ((tankGetCarriedPill(tnk, pillNum, perform)) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_PILLS));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_PILLS, NULL);
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_PILLNEW, perform) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_TREES));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
     } else {
       *trees = LGM_COST_PILLNEW;
     }
@@ -479,10 +479,10 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     /* Case LGM_REQUEST_MINE */
     if (pos == DEEP_SEA || pos == RIVER || pos == BUILDING || pos == BOAT || pos == HALFBUILDING || isPill == TRUE || isBase == TRUE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_BUILD));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
     } else if (tankGetLgmMines(sim, tnk, LGM_COST_MINE, perform) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_INSUFFICIENT_MINES));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_MINES, NULL);
     } else {
       *minesAmount = LGM_COST_MINE;
     }
@@ -490,7 +490,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   }
   if (*action == LGM_TREE_REQUEST && pos != FOREST) {
     proceed = FALSE;
-    sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_NO_TREE));
+    sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_TREE, NULL);
   }
 
   if (proceed == TRUE) {
@@ -498,7 +498,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     if ((minesExistPos(&sim->mns, &sim->mp, mapX, mapY)) == TRUE) {
       *isMine = TRUE;
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(LGM_PILL_NO_BUILD_ON_MINE));
+      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_PILL_NO_BUILD_ON_MINE, NULL);
       if ((*lgman)->nextAction == LGM_MINE_REQUEST && (*lgman)->nextX == mapX && (*lgman)->nextY == mapY) {
         (*lgman)->nextAction = LGM_IDLE;
       }
@@ -1333,8 +1333,6 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
   bases *bs = &sim->bs;
   bool isServer = sim->isServer;
   starts *sts = &sim->ss;
-  char messageStr[FILENAME_MAX];       /* Message to output */
-  char playerName[PLAYER_NAME_LEN]; /* Player name */
   BYTE lgmMapX;                     /* LGM X Map co-ordinate (from real position) */
   BYTE lgmMapY;                     /* LGM Y Map co-ordinate (from real position) */
   BYTE checkMapX;                   /* LGM X Map co-ordinate (from check position) */
@@ -1365,9 +1363,6 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
     conv >>= 8;
     checkMapX = (BYTE) conv;
     checkMapY = (BYTE) ((unsigned int) (lgmWorldY - 2) >> 8);
-    messageStr[0] = '\0';
-    playerName[0] = '\0';
-
     mx = (BYTE) (wx >> 8);
     my = (BYTE) (wy >> 8);
 
@@ -1455,10 +1450,12 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
         winbolonetAddEvent(WINBOLO_NET_EVENT_LGM_KILL, TRUE, owner, (*lgman)->playerNum);
       }
       /* Process message */
-      playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, playerName, sim->isServer);
-      labelMakeMessage(NULL, messageStr, playerName, langGetText(MESSAGE_THIS_COMPUTER));
-      strcat(messageStr, langGetText(MESSAGE_LGM_DEAD));
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
+      {
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, args.playerName, sim->isServer);
+        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
+      }
       /* Emit event so all clients see the newswire message */
       if (sim->isServer) {
         GameEvent ev;

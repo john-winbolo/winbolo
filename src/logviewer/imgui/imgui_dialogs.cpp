@@ -15,6 +15,7 @@
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
+#include "../../gui/lang.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -40,25 +41,27 @@ static LogViewerState *s_lv = nullptr;
 /* Constants */
 #define MAX_PLAYERS 16
 
-/* Colour names for team colours dialog */
-static const char* colour_names[] = {
-    "Grey",
-    "Khaki", 
-    "Green",
-    "Pink",
-    "Yellow",
-    "Light Blue",
-    "Orange",
-    "Light Purple",
-    "Aqua",
-    "Light Green",
-    "Light Grey",
-    "Red",
-    "Blue",
-    "Brown",
-    "Light Pink",
-    "Pale Green",
-    "Purple"
+/* Colour name lang IDs for team colours dialog. Resolved via
+ * langGetText() at draw time so language changes take effect on the
+ * next frame. */
+static const langid colour_name_ids[] = {
+    STR_LV_COL_GREY,
+    STR_LV_COL_KHAKI,
+    STR_LV_COL_GREEN,
+    STR_LV_COL_PINK,
+    STR_LV_COL_YELLOW,
+    STR_LV_COL_LIGHTBLUE,
+    STR_LV_COL_ORANGE,
+    STR_LV_COL_LIGHTPURPLE,
+    STR_LV_COL_AQUA,
+    STR_LV_COL_LIGHTGREEN,
+    STR_LV_COL_LIGHTGREY,
+    STR_LV_COL_RED,
+    STR_LV_COL_BLUE,
+    STR_LV_COL_BROWN,
+    STR_LV_COL_LIGHTPINK,
+    STR_LV_COL_PALEGREEN,
+    STR_LV_COL_PURPLE
 };
 
 #define NUM_COLOURS 17
@@ -124,14 +127,16 @@ void lv_imgui_dialogs_render(void) {
     static bool was_team_colours_open = false;
     static bool was_about_open = false;
 
-    /* Open popup on transition from closed to open */
+    /* Open popup on transition from closed to open. Use a stable
+     * widget id (not the localized title) so language changes don't
+     * lose the popup state. */
     if (s_show_team_colours && !was_team_colours_open) {
-        ImGui::OpenPopup("Team Colours");
+        ImGui::OpenPopup("###team_colours");
     }
     was_team_colours_open = s_show_team_colours;
 
     if (s_show_about && !was_about_open) {
-        ImGui::OpenPopup("About");
+        ImGui::OpenPopup("###about");
     }
     was_about_open = s_show_about;
 
@@ -208,25 +213,29 @@ static void render_team_colours_dialog(void) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
     
-    if (ImGui::BeginPopupModal("Team Colours", &s_show_team_colours, 0)) {
-        ImGui::Text("Assign colours to each player team:");
+    char team_title[128];
+    snprintf(team_title, sizeof(team_title), "%s###team_colours", langGetText(STR_LV_TEAM_COLOURS));
+    if (ImGui::BeginPopupModal(team_title, &s_show_team_colours, 0)) {
+        ImGui::TextUnformatted(langGetText(STR_LV_ASSIGN_COLOURS_HINT));
         ImGui::Separator();
-        
+
         /* Player team colours */
         for (int i = 0; i < MAX_PLAYERS; i++) {
-            ImGui::Text("Player %d:", i + 1);
+            MessageArgs lblArgs = {};
+            lblArgs.number = i + 1;
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_PLAYER_LBL, &lblArgs));
             ImGui::SameLine(100);
-            
+
             char combo_id[32];
             snprintf(combo_id, sizeof(combo_id), "##team%d", i);
-            
+
             /* Current selection */
-            const char* current_colour = colour_names[s_team_colours[i]];
-            
+            const char* current_colour = langGetText(colour_name_ids[s_team_colours[i]]);
+
             if (ImGui::BeginCombo(combo_id, current_colour)) {
                 for (int j = 0; j < NUM_COLOURS; j++) {
                     bool is_selected = (s_team_colours[i] == j);
-                    if (ImGui::Selectable(colour_names[j], is_selected)) {
+                    if (ImGui::Selectable(langGetText(colour_name_ids[j]), is_selected)) {
                         s_team_colours[i] = j;
                     }
                     if (is_selected) {
@@ -236,18 +245,18 @@ static void render_team_colours_dialog(void) {
                 ImGui::EndCombo();
             }
         }
-        
+
         ImGui::Separator();
-        
+
         /* Neutral colour */
-        ImGui::Text("Neutral:");
+        ImGui::TextUnformatted(langGetText(STR_LV_NEUTRAL_LBL));
         ImGui::SameLine(100);
-        
-        const char* neutral_colour = colour_names[s_team_colours[16]];
+
+        const char* neutral_colour = langGetText(colour_name_ids[s_team_colours[16]]);
         if (ImGui::BeginCombo("##neutral", neutral_colour)) {
             for (int j = 0; j < NUM_COLOURS; j++) {
                 bool is_selected = (s_team_colours[16] == j);
-                if (ImGui::Selectable(colour_names[j], is_selected)) {
+                if (ImGui::Selectable(langGetText(colour_name_ids[j]), is_selected)) {
                     s_team_colours[16] = j;
                 }
                 if (is_selected) {
@@ -256,11 +265,11 @@ static void render_team_colours_dialog(void) {
             }
             ImGui::EndCombo();
         }
-        
+
         ImGui::Separator();
-        
+
         /* Buttons */
-        if (ImGui::Button("OK", ImVec2(80, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
             /* Apply changes */
             save_team_colours_to_tc();
             
@@ -282,12 +291,12 @@ static void render_team_colours_dialog(void) {
         }
         
         ImGui::SameLine();
-        
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0))) {
             s_show_team_colours = false;
             ImGui::CloseCurrentPopup();
         }
-        
+
         ImGui::EndPopup();
     }
 }
@@ -302,27 +311,31 @@ static void render_about_dialog(void) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(350, 180), ImGuiCond_FirstUseEver);
     
-    if (ImGui::BeginPopupModal("About", &s_show_about, ImGuiWindowFlags_NoResize)) {
+    char about_title[128];
+    snprintf(about_title, sizeof(about_title), "%s###about", langGetText(STR_MENU_ABOUT));
+    if (ImGui::BeginPopupModal(about_title, &s_show_about, ImGuiWindowFlags_NoResize)) {
         /* Title */
-        ImGui::Text("WinBolo Log Viewer");
-        ImGui::Text("Version: %s", s_version);
-        
+        ImGui::TextUnformatted(langGetText(STR_LV_ABOUT_TITLE));
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_version, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_VERSION_FMT, &args));
+        }
+
         ImGui::Separator();
-        
+
         /* Copyright */
         ImGui::TextWrapped("%s", s_copyright);
-        
+
         ImGui::Separator();
-        
+
         /* License */
-        ImGui::TextWrapped("This program is free software; you can redistribute it");
-        ImGui::TextWrapped("and/or modify it under the terms of the GNU General");
-        ImGui::TextWrapped("Public License as published by the Free Software Foundation.");
-        
+        ImGui::TextWrapped("%s", langGetText(STR_LV_LICENSE));
+
         ImGui::Separator();
-        
+
         /* Website link */
-        ImGui::Text("Website:");
+        ImGui::TextUnformatted(langGetText(STR_LV_WEBSITE_LBL));
         ImGui::SameLine();
         ImGui::TextLink(s_website);
         if (ImGui::IsItemClicked()) {
@@ -333,15 +346,15 @@ static void render_about_dialog(void) {
             SDL_OpenURL(s_website);
             #endif
         }
-        
+
         ImGui::Separator();
-        
+
         /* Close button */
-        if (ImGui::Button("OK", ImVec2(80, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
             s_show_about = false;
             ImGui::CloseCurrentPopup();
         }
-        
+
         ImGui::EndPopup();
     }
 }

@@ -12,9 +12,11 @@
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#include "../imgui_fonts.h"
 
 extern "C" {
 #include "../../bolo/global.h"
+#include "../lang.h"
 }
 
 #include "imgui_ios.h"
@@ -64,11 +66,11 @@ bool imguiIosSetup(SDL_Window *window, SDL_Renderer *renderer) {
     io.IniFilename = nullptr;
 
     /* Scale font for touch — 20px in the 515x325 logical space
-       gives comfortable tap targets (~72+ physical px on iPhone). */
+       gives comfortable tap targets (~72+ physical px on iPhone).
+       Use the shared Inter loader so non-Latin glyph ranges work
+       (configured in imguiBoloGlyphRanges()). */
     io.FontGlobalScale = 1.0f;
-    ImFontConfig fontCfg;
-    fontCfg.SizePixels = 20.0f;
-    io.Fonts->AddFontDefault(&fontCfg);
+    imguiLoadBoloFontSized(20.0f);
 
     ImGui::StyleColorsDark();
 
@@ -150,14 +152,14 @@ void imguiIosRender(void) {
                                 ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(220, 0), ImGuiCond_Appearing);
 
-        ImGui::Begin("Settings", &s_showSettings,
+        ImGui::Begin(langGetText(STR_DLGSETTINGS_TITLE), &s_showSettings,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
 
         /* Update isInMenu when the X button is clicked */
         isInMenu = s_showSettings;
 
         /* --- Zoom --- */
-        ImGui::SeparatorText("Zoom");
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_ZOOM));
         {
             bool z1 = (zoomFactor == ZOOM_FACTOR_NORMAL);
             bool z2 = (zoomFactor == ZOOM_FACTOR_DOUBLE);
@@ -171,12 +173,16 @@ void imguiIosRender(void) {
         }
 
         /* --- Sound --- */
-        ImGui::SeparatorText("Sound");
-        ImGui::Checkbox("Sound Effects", &soundEffects);
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
+        ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &soundEffects);
 
         /* --- FPS --- */
-        ImGui::SeparatorText("Performance");
-        ImGui::Text("FPS: %.0f", ImGui::GetIO().Framerate);
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_PERFORMANCE));
+        {
+            MessageArgs args = {};
+            args.number = (int)(ImGui::GetIO().Framerate + 0.5f);
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGSETTINGS_FPS_FMT, &args));
+        }
 
         ImGui::End();
     }

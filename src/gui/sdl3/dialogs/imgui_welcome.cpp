@@ -113,7 +113,7 @@ extern "C" int imguiWelcomeShow(void) {
     int dlgW = (int)(1024 * (s > 1.0f ? 1.0f : 1.0f)); /* keep 1024x768 on desktop */
     int dlgH = 768;
     dialogSetWindowSize(window, dlgW, dlgH);
-    dialogSetWindowTitle(window, "WinBolo - Game Selection");
+    dialogSetWindowTitle(window, langGetText(STR_DLGWELCOME_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -299,18 +299,18 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            struct { const char *label; int code; bool show; } miniModes[] = {
-                { "Tutorial##mini",      RESULT_TUTORIAL,     showTutorial },
-                { "Single Player##mini", RESULT_SINGLEPLAYER, true },
-                { "Internet##mini",      RESULT_INTERNET,     true },
-                { "Local##mini",         RESULT_LAN,          true },
+            struct { langid labelId; int code; bool show; } miniModes[] = {
+                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
+                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
+                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
+                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { "Map Editor##mini",    RESULT_MAPEDITOR,    true },
-                { "Log Viewer##mini",    RESULT_LOGVIEWER,    true },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
+                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
 #endif
-                { "Settings##mini",      RESULT_SETTINGS,     true },
+                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
-                { "Quit##mini",          RESULT_QUIT,         true },
+                { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
 #endif
             };
             int miniCount = sizeof(miniModes) / sizeof(miniModes[0]);
@@ -325,7 +325,9 @@ extern "C" int imguiWelcomeShow(void) {
                     hovered = true;
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 }
-                if (ImGui::Button(miniModes[i].label, ImVec2(miniBtnW, miniBtnH))) {
+                char miniLabel[96];
+                SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", langGetText(miniModes[i].labelId));
+                if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
                     result = miniModes[i].code;
                     running = false;
                 }
@@ -398,7 +400,7 @@ extern "C" int imguiWelcomeShow(void) {
                 ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             } else {
                 ImGui::SetWindowFontScale(2.0f);
-                const char *title = "WinBolo";
+                const char *title = langGetText(STR_MENU_WINBOLO);
                 ImVec2 textSize = ImGui::CalcTextSize(title);
                 ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
                 ImGui::Text("%s", title);
@@ -418,16 +420,16 @@ extern "C" int imguiWelcomeShow(void) {
             const float rowStartX = (panelW - rowW) * 0.5f;
 
             const bool showTutorialMain = gameFrontGetShowTutorialButton();
-            struct { const char *label; int code; bool show; } modes[] = {
-                { "Tutorial",      RESULT_TUTORIAL,     showTutorialMain },
-                { "Single Player", RESULT_SINGLEPLAYER, true },
-                { "Internet",      RESULT_INTERNET,     true },
-                { "Local",         RESULT_LAN,          true },
+            struct { langid labelId; int code; bool show; } modes[] = {
+                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorialMain },
+                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
+                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
+                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { "Map Editor",    RESULT_MAPEDITOR,    true },
-                { "Log Viewer",    RESULT_LOGVIEWER,    true },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
+                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
 #endif
-                { "Settings",      RESULT_SETTINGS,     true },
+                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
             };
             int modeCount = sizeof(modes) / sizeof(modes[0]);
 
@@ -451,7 +453,7 @@ extern "C" int imguiWelcomeShow(void) {
 
                 ImGui::SameLine(0.0f, iconGap);
                 ImGui::SetCursorPosY(rowY);
-                if (ImGui::Button(modes[i].label, ImVec2(btnW, btnH))) {
+                if (ImGui::Button(langGetText(modes[i].labelId), ImVec2(btnW, btnH))) {
                     result = modes[i].code;
                     running = false;
                 }
@@ -468,7 +470,7 @@ extern "C" int imguiWelcomeShow(void) {
             {
                 const float quitW = 120.0f * s;
                 ImGui::SetCursorPosX(panelW - quitW - 16.0f * s);
-                if (ImGui::Button("Quit", ImVec2(quitW, btnH))) {
+                if (ImGui::Button(langGetText(STR_DLGOPENING_BUTTON2), ImVec2(quitW, btnH))) {
                     result = RESULT_QUIT;
                     running = false;
                 }

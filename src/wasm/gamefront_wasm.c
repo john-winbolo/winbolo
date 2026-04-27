@@ -36,9 +36,6 @@
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
-/* String resource IDs — integer IDs for langGetText() */
-#include "../gui/aresource.h"
-
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
 
@@ -354,7 +351,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                                               gameFrontTargetUdp,
                                               gameFrontName, password,
                                               gameFrontWbnUse ? gameFrontWbnToken : "",
-                                              wantRejoin);
+                                              wantRejoin,
+                                              "", 0);
     if (transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_ERROR) {
       const char *reason = transportUdpClientGetJoinRejectReason(&wasmTransport);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");

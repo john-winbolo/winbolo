@@ -33,6 +33,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "../input.h"
 #include "../../winbolo.h"
+#include "../../lang.h"
 #include "imgui_keysetup.h"
 
 extern bool useAutoslow;
@@ -63,7 +64,7 @@ static KeySetupField s_waiting = ksNone;
 static const char *scancodeLabel(int scancode) {
     const char *name = SDL_GetScancodeName((SDL_Scancode)scancode);
     if (name && name[0] != '\0') return name;
-    return "(none)";
+    return langGetText(STR_DLGKEYSETUP_NONE_VAL);
 }
 
 static int *fieldPtr(KeySetupField f, keyItems *ki) {
@@ -103,7 +104,8 @@ static void keyRow(const char *label, KeySetupField field) {
 
     ImGui::TableSetColumnIndex(1);
     if (waiting) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Press a key...");
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_DLGKEYSETUP_PRESSAKEY));
     } else {
         ImGui::TextUnformatted(scancodeLabel(*ptr));
     }
@@ -111,11 +113,11 @@ static void keyRow(const char *label, KeySetupField field) {
     ImGui::TableSetColumnIndex(2);
     ImGui::PushID((int)field);
     if (waiting) {
-        if (ImGui::SmallButton("Cancel")) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
             s_waiting = ksNone;
         }
     } else {
-        if (ImGui::SmallButton("Change")) {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
             s_waiting = field;
         }
     }
@@ -143,7 +145,7 @@ extern "C" int imguiKeySetupShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, 1024, 768);
-    dialogSetWindowTitle(window, "WinBolo - Key Setup");
+    dialogSetWindowTitle(window, langGetText(STR_DLGKEYSETUP_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -249,7 +251,7 @@ extern "C" int imguiKeySetupShow(void) {
         /* Title */
         {
             ImGui::SetWindowFontScale(1.4f);
-            const char *title = "Key Setup";
+            const char *title = langGetText(STR_DLGKEYSETUP_TITLE);
             ImVec2 textSize = ImGui::CalcTextSize(title);
             ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
             ImGui::Text("%s", title);
@@ -260,8 +262,8 @@ extern "C" int imguiKeySetupShow(void) {
         ImGui::Spacing();
 
         if (s_waiting != ksNone) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
-                               "Press a key to assign, or click Cancel.");
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                               langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
             ImGui::Separator();
         }
 
@@ -277,62 +279,64 @@ extern "C" int imguiKeySetupShow(void) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
             ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
-            ImGui::TableSetupColumn("Action",  ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn("Key",     ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
+                                    ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
+                                    ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
         };
         auto endSection = [&]() { ImGui::EndTable(); };
 
-        section("Drive Tank");
-        keyRow("Faster",      ksForward);
-        keyRow("Slower",      ksBackward);
-        keyRow("Turn Left",   ksTurnLeft);
-        keyRow("Turn Right",  ksTurnRight);
+        section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
+        keyRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
+        keyRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
+        keyRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
+        keyRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
         endSection();
 
-        section("Weapons");
-        keyRow("Shoot",       ksShoot);
-        keyRow("Lay Mine",    ksLayMine);
+        section(langGetText(STR_DLGKEYSETUP_WEAPONS));
+        keyRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
+        keyRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
         endSection();
 
-        section("Gun Range");
-        keyRow("Increase",    ksGunIncrease);
-        keyRow("Decrease",    ksGunDecrease);
+        section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
+        keyRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
+        keyRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
         endSection();
 
-        section("Views");
-        keyRow("Tank View",   ksTankView);
-        keyRow("Pill View",   ksPillView);
+        section(langGetText(STR_DLGKEYSETUP_VIEW));
+        keyRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
+        keyRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
         endSection();
 
-        section("Scroll");
-        keyRow("Up",          ksScrollUp);
-        keyRow("Down",        ksScrollDown);
-        keyRow("Left",        ksScrollLeft);
-        keyRow("Right",       ksScrollRight);
+        section(langGetText(STR_DLGKEYSETUP_SCROLL));
+        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
+        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
+        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
+        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
         endSection();
 
-        section("Quick Keys");
-        keyRow("Tree",        ksQuickTree);
-        keyRow("Road",        ksQuickRoad);
-        keyRow("Wall",        ksQuickWall);
-        keyRow("Pillbox",     ksQuickPillbox);
-        keyRow("Mine",        ksQuickMine);
+        section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
+        keyRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
+        keyRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
+        keyRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
+        keyRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
+        keyRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
         endSection();
 
         ImGui::EndChild();
 
         ImGui::Separator();
-        ImGui::Checkbox("Auto Slowdown",      &s_autoSlowdown);
+        ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOSLOWDOWN), &s_autoSlowdown);
         ImGui::SameLine();
-        ImGui::Checkbox("Auto Hide Gunsight", &s_autoGunsight);
+        ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_autoGunsight);
         ImGui::Spacing();
 
         /* OK / Cancel — disabled while a key-capture is pending */
         bool busy = (s_waiting != ksNone);
         if (busy) ImGui::BeginDisabled();
 
-        if (ImGui::Button("OK", ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
             windowSetKeys(&s_keys);
             useAutoslow = s_autoSlowdown;
             useAutohide = s_autoGunsight;
@@ -341,7 +345,7 @@ extern "C" int imguiKeySetupShow(void) {
             running = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
             s_waiting = ksNone;
             result = 0;
             running = false;

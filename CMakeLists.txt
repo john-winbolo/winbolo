@@ -398,12 +398,13 @@ set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
 set(IOS_DATA_FONT
-    ${CMAKE_SOURCE_DIR}/data/CourierPrime-Regular.ttf
+    ${CMAKE_SOURCE_DIR}/data/fonts/CourierPrime-Regular.ttf
 )
 file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
+file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 
 # Bolo engine sources (matching desktop CLIENT_SOURCES)
 set(IOS_BOLO_SOURCES
@@ -506,6 +507,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_SOUNDS}
     ${IOS_DATA_SVG}
     ${IOS_DATA_UI}
+    ${IOS_LANG_FILES}
     ${IOS_ASSET_CATALOG}
 )
 
@@ -535,6 +537,9 @@ set_source_files_properties(${IOS_DATA_SVG} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_UI} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/ui"
+)
+set_source_files_properties(${IOS_LANG_FILES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/lang"
 )
 set_source_files_properties(${IOS_DATA_ROOT} PROPERTIES
     MACOSX_PACKAGE_LOCATION ""
@@ -660,6 +665,10 @@ option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss 
 if(ENABLE_PILLMASSAGE_BUG)
     add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
 endif()
+
+# libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
+# When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
+option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
 
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
@@ -788,6 +797,42 @@ else()
     message(STATUS "Sentry crash reporting disabled")
 endif()
 
+# libplum — UPnP / NAT-PMP / PCP port mapping for hosted servers.
+# Skipped on iOS (mobile) and Emscripten (wasm); the wrapper compiles to
+# no-op stubs there.  Build static so we don't ship an extra shared library.
+set(HAVE_LIBPLUM FALSE)
+if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
+    FetchContent_Declare(
+        libplum
+        GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
+        GIT_TAG        v0.5.3
+        GIT_SHALLOW    TRUE
+        SYSTEM
+        EXCLUDE_FROM_ALL
+    )
+    set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
+    set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
+    set(BUILD_SHARED_LIBS_SAVE_PLUM "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(libplum)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_PLUM}" CACHE BOOL "" FORCE)
+    # PIC so the static lib can also link into shared targets (winbolo_gym).
+    if(TARGET plum)
+        set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        # Don't let our /WX (or -Werror) inheritance turn libplum's
+        # benign C warnings (e.g. C4200 zero-sized array) into errors.
+        if(MSVC)
+            target_compile_options(plum PRIVATE /WX-)
+        else()
+            target_compile_options(plum PRIVATE -Wno-error)
+        endif()
+    endif()
+    set(HAVE_LIBPLUM TRUE)
+    message(STATUS "libplum enabled — automatic NAT port mapping")
+else()
+    message(STATUS "libplum disabled — nat_portmap wrapper compiles to no-ops")
+endif()
+
 # ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
@@ -819,12 +864,14 @@ set(CLIENT_SOURCES
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/discovery.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_sim.c
+    src/server/server_lifecycle.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
@@ -968,6 +1015,12 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image cjson)
+
+# libplum NAT port mapping (optional)
+if(HAVE_LIBPLUM)
+    target_compile_definitions(WinBolo PRIVATE BOLO_PORTMAP)
+    target_link_libraries(WinBolo PRIVATE LibPlum::LibPlum)
+endif()
 
 # ONNX Runtime ML brain support (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1114,9 +1167,11 @@ set(SERVER_SOURCES
     src/bolo/udppackets.c src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/server/geolookup.c
     src/server/servermain.c src/server/servermessages.c
-    src/server/threads.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/threads.c src/server/server_sim.c
+    src/server/server_lifecycle.c
     src/server/server_frontend_stubs.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
@@ -1172,6 +1227,12 @@ endif()
 
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson)
 
+# libplum NAT port mapping (optional)
+if(HAVE_LIBPLUM)
+    target_compile_definitions(WinBoloDS PRIVATE BOLO_PORTMAP)
+    target_link_libraries(WinBoloDS PRIVATE LibPlum::LibPlum)
+endif()
+
 # ONNX Runtime ML brain support for server bots (optional)
 if(HAVE_ONNXRUNTIME)
     target_sources(WinBoloDS PRIVATE src/bolo/ml_brain.c)
@@ -1204,6 +1265,12 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloDS>"
     COMMENT "Copying SDL3 shared library to WinBoloDS output directory"
+)
+
+add_custom_command(TARGET WinBoloDS POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloDS>/data/lang"
+    COMMENT "Copying WinBoloDS lang files to output directory"
 )
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     add_custom_command(TARGET WinBoloDS POST_BUILD
@@ -1259,6 +1326,8 @@ add_executable(LogViewer
     ${LOGVIEWER_SOURCES}
     ${LOGVIEWER_IMGUI_SOURCES}
     ${LOGVIEWER_PLATFORM_SOURCES}
+    src/gui/sdl3/lang.c
+    src/gui/sdl3/gamefront_stubs.c
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -1360,12 +1429,14 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_sim.c
+    src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
@@ -1452,6 +1523,11 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
+add_custom_command(TARGET WinBoloHeadless POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloHeadless>/data/lang"
+    COMMENT "Copying WinBoloHeadless lang files to output directory"
+)
 # Copy crashpad_handler next to WinBoloHeadless executable
 if(HAVE_SENTRY AND TARGET crashpad_handler)
     add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -1483,12 +1559,14 @@ set(GYM_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_sim.c
+    src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
@@ -1560,6 +1638,11 @@ set_target_properties(winbolo_gym PROPERTIES
 add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
+)
+add_custom_command(TARGET winbolo_gym POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:winbolo_gym>/data/lang"
+    COMMENT "Copying winbolo_gym lang files to output directory"
 )
 
 # ---------------------------------------------------------------------------
@@ -1677,6 +1760,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
@@ -1811,7 +1895,7 @@ add_custom_target(dist
         -DDEST_DIR=${DIST_DIR}
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_shared_libs.cmake
 
-    # Data assets
+    # Data assets (includes data/lang)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
 
     # Brain scripts

@@ -1,0 +1,1086 @@
+# WinBolo Japanese language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=日本語
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_OK=OK
+STR_DLGOPENING_BUTTON2=終了
+
+# Language dialog
+STR_DLGLANG_NAME=日本語
+STR_DLGLANG_AUTHOR_CAPTION=作者: 
+STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
+STR_DLGLANG_NOTES_CAPTION=備考: 
+STR_DLGLANG_NOTES=なし。
+STR_DLGLANG_DEFAULTNOTE=注意：翻訳が不完全な場合、不足している項目は英語で表示されます。
+
+# About dialog
+STR_DLGABOUT_TITLE=WinBolo について
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=同盟リクエスト
+STR_DLGALLIANCE_ACCEPT=承認
+STR_DLGALLIANCE_DECLINE=拒否
+STR_DLGALLIANCE_BLURB={player} が同盟を求めています。承認しますか？
+
+# Game finder dialog
+STR_YES=はい
+STR_NO=いいえ
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=ゲーム情報
+STR_DLGGAMEINFO_MAPNAME=マップ: 
+STR_DLGGAMEINFO_NUMPLAYERS=プレイヤー数: {number}
+STR_DLGGAMEINFO_GAMETYPE=ゲームタイプ: 
+STR_DLGGAMEINFO_HIDDENMINES=隠し地雷: 
+STR_DLGGAMEINFO_TIMELIMIT=制限時間:
+
+# Game setup dialog
+STR_CANCEL=キャンセル
+STR_DLGGAMESETUP_TITLE=ゲーム設定
+STR_DLGGAMESETUP_CHOOSEMAP=マップを選択
+STR_DLGGAMESETUP_RADIO1=オープンゲーム（事前装備あり）
+STR_DLGGAMESETUP_RADIO2=トーナメント（序盤に弾薬無料）
+STR_DLGGAMESETUP_RADIO3=厳格トーナメント（弾薬無料なし）
+STR_DLGGAMESETUP_HIDDENMINES=隠し地雷を許可
+STR_DLGGAMESETUP_PASSWORD=ゲームパスワード
+STR_DLGGAMESETUP_MINUTES=分
+STR_DLGGAMESETUP_SECONDS=秒
+STR_DLGGAMESETUP_STARTDELAY=ゲーム開始遅延
+STR_DLGGAMESETUP_TIMELIMIT=ゲーム制限時間
+STR_DLGGAMEINFO_TIMEREMAINING=約 {number} 分
+STR_DLGGAMEINFO_OPEN=オープン
+STR_DLGGAMEINFO_TOURN=トーナメント
+STR_DLGGAMEINFO_STRICT=厳格トーナメント
+STR_DLGGAMEINFO_AIADV=はい（有利）
+STR_DLGGAMESETUP_DEFAULTNAME=Me
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=キー設定
+STR_DLGKEYSETUP_DRIVETANK=タンクを操縦
+STR_DLGKEYSETUP_GUNRANGE=射程距離
+STR_DLGKEYSETUP_WEAPONS=武器
+STR_DLGKEYSETUP_VIEW=視点
+STR_DLGKEYSETUP_SCROLL=スクロール
+STR_DLGKEYSETUP_AUTOSLOWDOWN=自動減速
+STR_DLGKEYSETUP_AUTOGUNSIGHT=照準を自動的に隠す
+STR_DLGKEYSETUP_FASTER=加速
+STR_DLGKEYSETUP_SLOWER=減速
+STR_DLGKEYSETUP_TURNLEFT=左折
+STR_DLGKEYSETUP_TURNRIGHT=右折
+STR_DLGKEYSETUP_INCREASE=増加
+STR_DLGKEYSETUP_DECREASE=減少
+STR_DLGKEYSETUP_SHOOT=射撃
+STR_DLGKEYSETUP_LAYMINE=地雷を敷設
+STR_DLGKEYSETUP_TANKVIEW=タンク視点
+STR_DLGKEYSETUP_PILLVIEW=トーチカ視点
+STR_DLGKEYSETUP_SCROLLUP=上
+STR_DLGKEYSETUP_SCROLLDOWN=下
+STR_DLGKEYSETUP_SCROLLLEFT=左
+STR_DLGKEYSETUP_SCROLLRIGHT=右
+
+# Messages dialog
+STR_DLGMSG_BUTTON=送信
+STR_DLGMSG_ALLPLAYERS=全プレイヤー
+STR_DLGMSG_ALLALLIES=全同盟
+STR_DLGMSG_NEARBY=近隣全員
+STR_DLGMSG_SELECTION=選択プレイヤー
+STR_DLGMSG_SENDPLAYER={number} 人のプレイヤーにメッセージを送信中
+STR_DLGMSG_SENDPLAYERS={number} 人のプレイヤーにメッセージを送信中
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=ネットワーク情報
+STR_DLGNETINFO_SERVERPING=サーバーPing: {number} ms
+STR_DLGNETINFO_STATUS=ステータス:
+STR_DLGNETINFO_ERRORS=ネットエラー: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=パスワードが必要です
+STR_DLGPASSWORD_BLURB=このゲームにはパスワードが必要です：
+
+# Set name dialog
+STR_DLGSETNAME_BLURB=タンクの新しいプレイヤー名を入力してください：
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=トラッカー設定
+STR_DLGTRACKER_USETRACKER=トラッカーを使用
+STR_DLGTRACKER_TRACKERADDRESS=トラッカーアドレス:
+STR_DLGTRACKER_TRACKERPORT=トラッカーポート:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=システム情報
+STR_DLGSYSINFO_CPUUSAGE=CPU 使用率:
+STR_DLGSYSINFO_SIMMODELING=シミュレーション処理:
+STR_DLGSYSINFO_COMPROCESSING=通信処理:
+STR_DLGSYSINFO_TOTAL=合計:
+
+# TCP/IP setup dialog
+STR_DLGTCP_BLURB=インターネット Bolo ゲームに参加するには、Bolo を実行しているホストマシンの名前（または IP アドレス）と、そのマシン上の Bolo プロセスの UDP ポート番号を指定する必要があります。
+STR_DLGTCP_JOIN=参加
+STR_DLGTCP_REJOIN=再参加
+STR_DLGTCP_NEW=新規
+STR_DLGTCP_TRACKERSETUP=トラッカー設定
+STR_DLGTCP_REMEMBER=プレイヤー名を記憶
+STR_DLGTCP_MACHINENAME=マシン名（または IP アドレス）:
+STR_DLGTCP_THEREUDP=そのマシン上の Bolo の UDP ポート:
+STR_DLGTCP_USUDP=このマシンの Bolo の UDP ポート:
+STR_DLGTCP_NAME=ゲームで使用するプレイヤー名:
+STR_DLGTCP_NEWBLURB=「新規」をクリックしてゲームを開始
+STR_DLGTCP_JOINBLURB=「参加」をクリックして既存のゲームに参加
+STR_DLGTCP_REJOINBLURB=「再参加」をクリックしてゲームに戻り、以前の所持品を取り戻す
+STR_ERR_DLGTCP_PORTS=サーバーポートと自分のポートが同じです！
+STR_ERR_DLGTCP_NOTRIGHT=何かが正しくありません...
+
+# Game finder extra
+
+# Brain errors
+
+# Draw errors
+
+# Font errors
+
+# Game front errors
+STR_GAMEFRONT_LANFINDER_TITLE=LAN ゲームファインダー
+STR_GAMEFRONT_TRACKERFINDER_TITLE=トラッカーゲームファインダー
+STR_GAMEFRONTERR_JOINGAME=ゲームへの参加中にエラーが発生しました
+
+# Network client errors
+
+# Sound errors
+
+# General WinBolo errors
+STR_WBTIMELIMIT_END=制限時間が終了しました。ゲームが終わりました。
+STR_WBERR_SAVEMAP=マップの保存エラー（ディスクが満杯ですか？）
+
+# Tutorial strings
+STR_TUTORIAL01=前方に内陸へ続く短い川があります。{ACCEL} キーを押し続けて\nボートを川の終点まで進めてください。\n\n到着したら、{ACCEL} を押し続けてください。タンクがボートから\n上陸し、ボートは川の終点に係留されます。
+STR_TUTORIAL02=草地に上陸しました。草地ではタンクはかなり\n速く動けます。\n\n\n{ACCEL} を押し続けて森に向かって進んでください。
+STR_TUTORIAL03=森の中に入りました。森の中では草地よりも\nタンクの動きが遅くなります。\n\n\n{ACCEL} を押し続けて沼地に向かって進んでください。
+STR_TUTORIAL04=沼地に入りました。沼地ではタンクの動きは非常に\n遅くなります。幸い、前方に道路があります。\n\n\n{ACCEL} を押し続けて道路に向かって進んでください。
+STR_TUTORIAL05=道路に出ました。道路ではタンクは非常に\n速く動け、{ACCEL} を押すとさらに加速します。\n\n\n速くなりすぎた場合は {BRAKE} を押してください。
+STR_TUTORIAL06=前方にいくつかの建物があります。建物は固い\n障害物で、通り抜けることはできません。迷路を\n抜けて反対側へ進んでください。\n\nタンクを左に曲げるには {LEFT} を押してください。\nタンクを右に曲げるには {RIGHT} を押してください。
+STR_TUTORIAL07=赤い砲塔が突き出た丸い物体は\n自動トーチカです。射程内に入ったタンクに\n向かって射撃してきます。\n\n\n幸い、建物は射撃から身を守ってくれます。そのため、\nトーチカが建物を完全に撃ち抜くほど\n長時間待機しない限り、当たることはありません。
+STR_TUTORIAL08=森もトーチカから身を守ってくれますが、その方法は\n異なります。タンクの速度を大幅に低下させるだけでなく、\n森を走行すると視界も制限されます。\n\n\n森の中にいる場合、外の様子は見えますが、トーチカ（や\n他のプレイヤー）はかなり近づかない限り、\nあなたのタンクを見つけることができません。
+STR_TUTORIAL09=タンクを森の帯の中央に向けて真北に進んでください。\nまっすぐ進んで森の端に近づきすぎなければ、\nトーチカはあなたを見つけられず、射撃してきません。\n\n\n森の外に出ると吹き飛ばされます。\n
+STR_TUTORIAL10=トーチカから逃れるもう一つのシンプルな方法は\nスピードです。\n\n\n道路の中央に正しく位置を合わせ、{ACCEL} を押して\n全速でトーチカの前を通り抜けてください。
+STR_TUTORIAL11=気づかれると射撃が始まりますが、まっすぐ進み続け\n焦らなければ、砲弾が当たる前に射程外に出られます。\n\n\n道路を外れて沼地に入ると格好の標的になり、\n素早く逃げることができなくなります。
+STR_TUTORIAL12=前方に補給基地があります。補給基地では\n射撃用の砲弾、罠を仕掛けるための地雷が補給でき、\nまた損傷したタンクの装甲を完全に修復できます。\n\n\n補給基地に停車してタンクに砲弾を補充してください。
+STR_TUTORIAL13=補給基地の上にいます。タンクに砲弾と地雷が\n補充されます。右側のインジケーターで確認できます。\n前方の建物の向こうに地雷原があります。
+STR_TUTORIAL14=地雷原にタンクを走らせると破壊されます。\n幸い、射撃で地雷原を安全にできます。{FIRE} を押して射撃してください。\n\n建物に穴を開けてから、地雷原の中央に砲弾を着弾させて\n爆破してください。地雷を爆発させると大きなクレーターができ、\n走行できますが、沼地と同じくらい遅くなります。
+STR_TUTORIAL15=さらに地雷原があります。同じ要領で:\n補給基地に移動し、壁を撃ち抜き、地雷原の中央に\n砲弾を当てて爆破させてください。\n\n今回は地雷原が大きな川に隣接しており、\n水がクレーターに流れ込みます。クレーターや沼地と同様に\n水の中も走行できます。
+STR_TUTORIAL16=WinBolo はタンクの周囲を自動的に表示しますが、\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\nキーを使って手動で視点を変更できます。\n\n前方の川をよく見るために今すぐ {SCROLL_UP} を押してください。
+STR_TUTORIAL17=水中の走行は非常に遅いだけでなく、\nもう一つの問題があります：タンクの砲弾と地雷の\n備蓄も減少します。\n\n\n反対側に到達してもタンクは動作しますが、\n攻撃能力はすべて失われます。
+STR_TUTORIAL18=今回は川を渡る別の方法を使います。\n水の中を直接走行する代わりに、橋を建設します。\n\n\nウィンドウ左上の森アイコンをクリックして木の伐採モードを選択し、\n森をクリックしてください。ビルダーがタンクから走り出て\n建設資材として木を 1 本収穫します。
+STR_TUTORIAL19=木を伐採したら、道路/橋ツール\n（上から 2 番目のボタン）を選択し、\n道路の終端で川の上をクリックしてください。\n\n\nビルダーが走り出て橋のセグメントを 1 つ建設します。\nもう一度クリックして橋を完成させ、反対側へ走行してください。
+STR_TUTORIAL20=この川は前の川より広く、中央は深すぎて橋を\n建設できません。タンクで直接渡ろうとすると\n川底に沈んで破壊されます。
+STR_TUTORIAL21=この川を渡るにはボートを作る必要があります。ボートには\n5 本の木が必要です。5 本の木をクリックして伐採してください。\n次に壁/ボートツール（上から 3 番目のボタン）を選択し、\n水の上をクリックしてボートを作ってください。\n\n陸をクリックすると壁が作られてしまうので、\nボートを作るためにさらに木を伐採する必要があります。\nボートに乗って川を渡ってください。
+STR_TUTORIAL22=前方にトーチカがあり、弾薬を提供する補給基地もあります。\n補給基地から砲弾を補充してトーチカを攻撃してください。\n\n\n反撃してきますが、タンクが被弾しても\n補給基地に戻れば装甲を完全に修復できます。
+STR_TUTORIAL23=忍耐と慎重さでこのトーチカを破壊できるはずです。\n以下のスキルを使って楽にしてください：\n\n\n森に隠れてトーチカから見えないようにし、\n木を伐採して道路を建設してタンクを速く動かし、\n建物を建ててトーチカの射撃から身を守ってください。
+STR_TUTORIAL24=このトーチカを倒したら、チュートリアルの最終課題は\n出口を守る 2 つのトーチカを排除し、ボートを作って\n脱出することです。\n\n\nタンクの装甲レベルに十分注意してください -\nタンクが破壊されると、海上の新しいボートで\n新しいタンクとしてスタートし直しになります。
+STR_TUTORIAL25=おめでとうございます。WinBolo の\nチュートリアルを完了しました。\n\n\n\n友達を集めて一緒にプレイし、\n考えない静止標的ではなく、知性ある人間の対戦相手と\n競い合う体験をしてみてください。\n\nチュートリアルをもう一度プレイしたい場合は、\n設定メニューから再起動できます。
+STR_TUTORIAL_START01=WinBolo チュートリアルへようこそ。この島では WinBolo の\n基本原則を紹介し、一つずつ案内します。各新しい原則は\nこのようなウィンドウで説明されます。\n\n各メッセージを読んだ後、マウスで「OK」ボタンをクリックするか、\nキーボードの <Return> キーを押して続行できます。
+STR_TUTORIAL_START02=WinBolo は Stuart Cheshire の classic Macintosh ネットワークゲーム Bolo の唯一の公認クローンです。\n公式ウェブサイトで戦略ヒントやその他の情報が見つかります：\n\nhttps://www.winbolo.com\n\nReddit や Discord にも参加してください。\n
+STR_TUTORIAL_START03=インターネットプレイについて一点注意があります。\n\nオンラインゲームに参加してネットワークエラーが多い場合は、\n他のプレイヤーのゲームを妨げる前に\nすぐにゲームを離れてください。
+STR_TUTORIAL_START04=あなたは海上のボートに乗ったタンクを操縦しています。{ACCEL} を押すと\nタンク（とボート）が前進し、{BRAKE} を押すと\n減速・停止します。\n\nキーをタイプするように素早くたたくのではなく -\nタンクが望む速度になるまで押し続け、\n達したら離してください。今すぐ {ACCEL} を押して\nボートを陸に向けて進めてください。\n（ウィンドウを閉じるにはまず <Return> を押してください）
+STR_TUTORIAL01_TOUCH=前方に内陸へ続く短い川があります。\nスティックを前に押してボートを川の終点まで\n進めてください。\n\n到着したら、スティックを前に押し続けてください。\nタンクがボートから上陸し、ボートは川の終点に係留されます。
+STR_TUTORIAL02_TOUCH=草地に上陸しました。草地ではタンクは\nかなり速く動けます。\n\n\nスティックを前に押し続けて\n森に向かって進んでください。
+STR_TUTORIAL03_TOUCH=森の中に入りました。森の中では草地より\nタンクの動きが遅くなります。\n\n\nスティックを前に押し続けて\n沼地に向かって進んでください。
+STR_TUTORIAL04_TOUCH=沼地に入りました。沼地ではタンクの動きは\n非常に遅くなります。幸い、前方に道路があります。\n\n\nスティックを前に押し続けて\n道路に向かって進んでください。
+STR_TUTORIAL05_TOUCH=道路に出ました。道路ではタンクは非常に速く動け、\nスティックを全前方に押すと加速します。\n\n\n速くなりすぎた場合は、\nスティックを引いて減速してください。
+STR_TUTORIAL06_TOUCH=前方にいくつかの建物があります。建物は固い\n障害物で、通り抜けることはできません。迷路を\n抜けて反対側へ進んでください。\n\nスティックを左右に押してタンクを\nその方向に向けてください。
+STR_TUTORIAL10_TOUCH=トーチカから逃れるもう一つのシンプルな方法は\nスピードです。\n\n\n道路の中央に正しく位置を合わせ、\nスティックを完全に前に押して\nトーチカの前を全速で通り抜けてください。
+STR_TUTORIAL14_TOUCH=地雷原にタンクを走らせると破壊されます。\n幸い、射撃で地雷原を安全にできます。射撃ボタンをタップして射撃してください。\n\n建物に穴を開けてから、地雷原の中央に砲弾を着弾させて\n爆破してください。地雷を爆発させると大きなクレーターができ、\n走行できますが、沼地と同じくらい遅くなります。
+STR_TUTORIAL16_TOUCH=WinBolo はタンクの周囲を自動的に表示しますが、\n指でマップをドラッグして手動で視点を変更できます。\n\n前方の川を視野に入れるために\n今すぐマップを下にドラッグしてください。
+STR_TUTORIAL18_TOUCH=今回は川を渡る別の方法を使います。\n水の中を直接走行する代わりに、橋を建設します。\n\n\nウィンドウ左上の森アイコンをタップして木の伐採モードを選択し、\n森をタップしてください。ビルダーがタンクから走り出て\n建設資材として木を 1 本収穫します。
+STR_TUTORIAL19_TOUCH=木を伐採したら、道路/橋ツール\n（上から 2 番目のボタン）を選択し、\n道路の終端で川の上をタップしてください。\n\n\nビルダーが走り出て橋のセグメントを 1 つ建設します。\nもう一度タップして橋を完成させ、反対側へ走行してください。
+STR_TUTORIAL21_TOUCH=この川を渡るにはボートを作る必要があります。ボートには\n5 本の木が必要です。5 本の木をタップして伐採してください。\n次に壁/ボートツール（上から 3 番目のボタン）を選択し、\n水の上をタップしてボートを作ってください。\n\n陸をタップすると壁が作られてしまうので、\nボートを作るためにさらに木を伐採する必要があります。\nボートに乗って川を渡ってください。
+STR_TUTORIAL_START01_TOUCH=WinBolo チュートリアルへようこそ。この島では WinBolo の\n基本原則を紹介し、一つずつ案内します。各新しい原則は\nこのようなウィンドウで説明されます。\n\n各メッセージを読んだ後、\n「OK」ボタンをタップして続行できます。
+STR_TUTORIAL_START04_TOUCH=あなたは海上のボートに乗ったタンクを操縦しています。画面左側の\nスティックで操縦してください：前に押すと加速し、\n引くと減速・停止します。\n\nスティックをより多く押すほどタンクが速くなります。\n今すぐスティックを前に押して\nボートを陸に向けて進めてください。\n（このウィンドウを閉じるにはまず OK をタップ）
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=新しいビルダーが降下するまで建設できません
+LGM_NO_BUILD=そこには建設できません
+LGM_INSUFFICIENT_TREES=建設に必要な木が足りません
+LGM_NO_PILLS=配置できるトーチカがありません
+LGM_INSUFFICIENT_MINES=配置できる地雷がありません
+LGM_BUILDTANK=ビルダーはタンクの上に建設できません
+LGM_NO_TREE=そこに伐採できる木はありません
+LGM_PILL_NO_NEED_REPAIR=そのトーチカは修理の必要がありません
+LGM_PILL_NO_BUILD_ON_MINE=ビルダーは地雷の上に建設できません。危険です。
+LGM_NO_BUILD_UNDER_BOAT=ビルダーはボートの下に建設できません
+
+# In-game messages
+MESSAGE_ASSISTANT=オンラインアシスタント
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME=「{other}」は「{player}」に制御権を引き渡しました
+MESSAGE_NETSERVER=ネットワークサーバー
+MESSAGE_THIS_COMPUTER=このコンピューター
+MESSAGE_CAPTURE_BASE={player} が中立基地を占領しました
+MESSAGE_CAPTURE_PILL={player} が中立トーチカを占領しました
+MESSAGE_STOLE_PILL={player} が {other} からトーチカを奪いました
+MESSAGE_STOLE_BASE={player} が {other} から基地を奪いました
+MESSAGE_LGM_DEAD={player} のビルダーが死亡しました
+MESSAGE_SAVED_MAP={player} がマップファイルを保存しました
+MESSAGE_QUIT_GAME={player} がゲームを終了しました
+MESSAGE_TIME_LIMIT_EXPIRED=制限時間が終了しました。ゲームオーバーです。お疲れ様でした。
+MESSAGE_TANKSUNK=タンクが深海に沈みました
+
+# Network errors
+NETERR_TRACKERDNS=トラッカーのホスト名検索に失敗しました。トラッカー通知は無効になります
+NETERR_JOININIT=接続しようとしたゲームから応答がありませんでした。\n通常、以下の 3 つの原因が考えられます：\n1. アドレスとポートが正しくない。\n2. UDP アクセスを妨げるファイアウォールがある。\n3. WinBolo のバージョンがゲームと一致しているか確認してください。
+NETERR_GAMEFULL=このゲームは現在満員です
+NETERR_SERVERCONNECT=サーバーとの接続に失敗しました。別のマシンを試すか、数秒待ってからもう一度試してください。
+NETERR_PASSWORDWRONG=パスワードが正しくありません
+NETERR_PLAYERNAMEINUSE=プレイヤー名が使用中です。別の名前を選択して再試行してください
+NETERR_NONEWPLAYERS=申し訳ありませんが、このゲームは現在新しいプレイヤーを受け付けていません
+NETERR_CONNECTNOJOIN=ゲームへの接続はできましたが、参加が許可されませんでした。プレイヤー名が使用中の可能性があります。新しい名前で再試行してください
+
+# Network status
+NET_STATUS_JOINING=参加中
+NET_STATUS_OK=OK
+NET_STATUS_FAILED=失敗
+NETERR_LOSTCONNECTION=サーバーへの接続が切断されました。\nシングルプレイヤーモードに移行します
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=メッセージを送信
+STRERR_HELPFILE=ヘルプファイルを開けません。
+STR_DLGSKIN_BLURB=スキン項目の一部が存在しない場合は、組み込みのデフォルトスキン/サウンドが使用されます。
+
+# Player name error
+NETERR_MAPSERIALIZE=サーバーがマップデータを準備できませんでした。もう一度試してください
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=フレームレート:
+STR_DLGSYSINFO_GRAPHICS=グラフィック:
+STR_DLGSYSINFO_AITANKS=AI タンク:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=サーバー:
+STR_DLGNETINFO_THISGAME=このゲーム:
+STR_DLGNETINFO_PINGGRAPH=Ping: 最小 {number} / 平均 {number2} / 最大 {number3} ms
+STR_DLGNETINFO_KBIN=KB/s 受信:
+STR_DLGNETINFO_KBOUT=KB/s 送信:
+STR_DLGNETINFO_PACKETS_RATE=パケット/秒: {number} 受信 / {number2} 送信
+STR_DLGNETINFO_KB_RATE=KB/秒: {string1} 受信 / {string2} 送信
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=シードをコピー
+STR_DLGGAMEINFO_AILABEL=AI タンク:
+STR_DLGGAMEINFO_FULLADV=完全有利
+STR_DLGGAMEINFO_UNLIMITED=無制限
+
+# Players panel
+STR_DLGPLAYERS_TITLE=プレイヤー
+STR_DLGPLAYERS_ALL=全員
+STR_DLGPLAYERS_NONE=なし
+STR_DLGPLAYERS_ALLIES=同盟
+STR_DLGPLAYERS_NEARBY=近隣
+STR_LEAVE_ALLIANCE=同盟を解消
+STR_REQUEST_ALLIANCE=同盟をリクエスト
+STR_ALLOW_NEW_PLAYERS=新しいプレイヤーを許可
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=ゲームに参加しますか？
+STR_DLGJOIN_BLURB=現在のゲームを離れてサーバーに参加しますか？
+STR_DLGJOIN_BUTTON=参加
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=プレイヤー名を変更
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=（なし）
+STR_DLGKEYSETUP_PRESSAKEY=キーを押してください...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=割り当てるキーを押すか、キャンセルをクリックしてください。
+STR_DLGKEYSETUP_CHANGE=変更
+STR_DLGKEYSETUP_COL_ACTION=アクション
+STR_DLGKEYSETUP_COL_KEY=キー
+STR_DLGKEYSETUP_QUICKKEYS=クイックキー
+STR_DLGKEYSETUP_TREE=木
+STR_DLGKEYSETUP_ROAD=道路
+STR_DLGKEYSETUP_WALL=壁
+STR_DLGKEYSETUP_QUICKPILLBOX=トーチカ
+STR_DLGKEYSETUP_QUICKMINE=地雷
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=設定
+STR_DLGSETTINGS_PLAYER=プレイヤー
+STR_DLGSETTINGS_PLAYERNAME=プレイヤー名:
+STR_DLGSETTINGS_APPLY=適用
+STR_DLGSETTINGS_SETKEYS=キー設定...
+STR_DLGSETTINGS_DISPLAY=表示
+STR_DLGSETTINGS_WINDOWSIZE=ウィンドウサイズ:
+STR_DLGSETTINGS_RELSTEER=相対ステアリング
+STR_DLGSETTINGS_RELSTEER_TIP=オフの場合、ジョイスティックはタンクを直接指定した方向に向けます。\nオンの場合、ジョイスティックはタンクの向きを基準に左右に回転します。
+STR_DLGSETTINGS_TABLETMODE=タブレット UI モード
+STR_DLGSETTINGS_LABELS=ラベル
+STR_DLGSETTINGS_MSGNAMES=メッセージ名:
+STR_DLGSETTINGS_TANKLABELS=タンクラベル:
+STR_DLGSETTINGS_SOUND=サウンド
+STR_DLGSETTINGS_MESSAGES=メッセージ
+STR_DLGSETTINGS_GAME=ゲーム
+
+# Menu bar
+STR_MENU_FILE=ファイル
+STR_MENU_NEW=新規
+STR_MENU_SAVE_MAP=マップを保存
+STR_MENU_EXIT=終了
+STR_MENU_EDIT=編集
+STR_MENU_FRAME_RATE=フレームレート
+STR_MENU_WINDOW_SIZE=ウィンドウサイズ
+STR_MENU_NORMAL=標準
+STR_MENU_DOUBLE=2倍
+STR_MENU_TRIPLE=3倍
+STR_MENU_QUAD=4倍
+STR_MENU_CUSTOM_RESIZABLE=カスタム（リサイズ可能）
+STR_MENU_REQUIRES={number}x{number2} が必要 - ディスプレイの範囲を超えています
+STR_MENU_SMOOTH_SCROLLING=スムーズスクロール
+STR_MENU_AUTO_SCROLLING=自動スクロール
+STR_MENU_SHOW_GUNSIGHT=照準を表示
+STR_MENU_MSG_NAMES_SUB=メッセージ送信者名
+STR_MENU_TANK_LABELS_SUB=タンクラベル
+STR_NONE=なし
+STR_SHORT=短い
+STR_LONG=長い
+STR_MENU_NO_OWN_LABEL=自分のタンクにラベルを付けない
+STR_MENU_PILLBOX_LABELS=トーチカラベル
+STR_MENU_BASE_LABELS=補給基地ラベル
+STR_MENU_HIDE_MAIN=メインビューを隠す
+STR_MENU_DEVICE=デバイス:
+STR_MENU_DESKTOP=デスクトップ
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=キー設定
+STR_MENU_SOUND_EFFECTS=サウンドエフェクト
+STR_MENU_BACKGROUND_SOUND=バックグラウンドサウンド
+STR_MENU_SOUND_KEEPALIVE=サウンドキープアライブ
+STR_MENU_NEWSWIRE_MSGS=Newswire メッセージ
+STR_MENU_ASSISTANT_MSGS=アシスタントメッセージ
+STR_MENU_AI_MSGS=AI Brain メッセージ
+STR_MENU_NETSTATUS_MSGS=ネットワークステータスメッセージ
+STR_MENU_NETDEBUG_MSGS=ネットワークデバッグメッセージ
+STR_MENU_SETTINGS=設定...
+STR_MENU_PLAYERS=プレイヤー
+STR_MENU_SEND_MESSAGE=メッセージを送信
+STR_MENU_SELECT_ALL=全選択
+STR_MENU_SELECT_NONE=選択解除
+STR_MENU_SELECT_ALLIES=同盟を選択
+STR_MENU_SELECT_NEARBY=近隣タンクを選択
+STR_MENU_BRAINS=Brain
+STR_MENU_MANUAL=手動
+STR_MENU_HELP=ヘルプ
+STR_MENU_ABOUT=WinBolo について
+STR_MENU_LEAVE_GAME=ゲームを離れる
+STR_BRAINSETTINGS_NONE=（設定なし）
+STR_BRAINSETTINGS_TITLE=Brain 設定
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=チュートリアル
+STR_DLGSETTINGS_PLAY_TUTORIAL=チュートリアルを開始
+STR_DLGSETTINGS_SHOW_ON_MAIN=メインメニューに表示
+STR_DLGSETTINGS_CRASH_REPORTING=クラッシュレポート
+STR_DLGSETTINGS_ENABLE_CRASH=クラッシュレポートを有効化
+STR_DLGSETTINGS_CRASH_HELP=クラッシュレポートを送信して WinBolo の改善に協力してください
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=変更は次回起動時に有効になります。
+STR_CLOSE=閉じる
+STR_DLGSETTINGS_WINTITLE=WinBolo - 設定
+STR_DLGKEYSETUP_WINTITLE=WinBolo - キー設定
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo - ゲームロビー
+STR_UNKNOWN=不明
+STR_DLGGAMEINFO_AIFULL=はい（全体）
+STR_DLGLOBBY_HIDDEN=非表示
+STR_DLGLOBBY_VISIBLE=表示
+STR_DLGLOBBY_DOWNLOADING=マップをダウンロード中...
+STR_DLGLOBBY_MAP_UNAVAILABLE=マッププレビュー不可
+STR_DLGLOBBY_PILLBOXES=トーチカ:
+STR_DLGLOBBY_BASES=基地:
+STR_DLGLOBBY_STARTS=スタート地点:
+STR_DLGLOBBY_SKIPMAP=マップをスキップ
+STR_DLGLOBBY_CANCELSKIP=スキップをキャンセル
+STR_DLGLOBBY_VOTES={number}/{number2} 票でスキップ
+STR_DLGLOBBY_CHAT=チャット
+STR_DLGLOBBY_READY=準備完了
+STR_DLGLOBBY_UNREADY=準備解除
+STR_DLGLOBBY_BALANCE_TEAMS=チームバランス
+STR_DLGLOBBY_APPLY_BALANCE=バランスを適用
+STR_DLGLOBBY_DISMISS=却下
+STR_DLGLOBBY_LEAVE=退出
+STR_DLGLOBBY_LEAVE_TITLE=ゲームを離れますか？
+STR_DLGLOBBY_LEAVE_BLURB=このゲームを本当に離れますか？
+STR_DLGLOBBY_BOT_FMT={player} [Bot]
+STR_DLGLOBBY_YOU_FMT={player}（あなた）
+STR_DLGLOBBY_STARTING_FMT={number} 秒後に開始...
+STR_DLGLOBBY_LOSTCONNECTION=サーバーへの接続が切断されました。
+STR_DLGLOBBY_ME=自分
+STR_DLGLOBBY_PLAYER_COL=プレイヤー
+STR_DLGLOBBY_PING_COL=Ping
+STR_DLGLOBBY_TEAM_COL=チーム
+STR_DLGLOBBY_READY_COL=準備
+STR_DLGLOBBY_SLOT_COL=スロット
+STR_DLGLOBBY_NAME_COL=プレイヤー名
+STR_DLGLOBBY_ACTION_COL=アクション
+STR_DLGLOBBY_ADDBOT=Bot を追加
+STR_DLGLOBBY_REMOVE=削除
+STR_DLGLOBBY_MAP_TAB=マップ
+STR_DLGLOBBY_GAME_LBL=ゲーム:
+STR_DLGLOBBY_MINES_LBL=地雷:
+STR_DLGLOBBY_AI_LBL=AI:
+STR_DLGLOBBY_TIME_LBL=時間:
+STR_DLGLOBBY_TIME_HMS={number}時間 {string1}分 {string2}秒
+STR_DLGLOBBY_TIME_MS={number}分 {string1}秒
+STR_DLGLOBBY_TIME_S={number}秒
+STR_DLGLOBBY_MAP_LBL=マップ:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo - ゲーム設定
+STR_DLGGAMESETUP_SELECTAMAP=マップを選択:
+STR_BACK=戻る
+STR_DLGGAMESETUP_BASES_STARTS=基地: {number}  スタート: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=トーチカ: {number}
+STR_DLGGAMESETUP_CHANGEMAP=マップを変更
+STR_DLGGAMESETUP_GAMETYPE_LBL=ゲームタイプ
+STR_DLGGAMESETUP_OPENGAME_SHORT=オープンゲーム
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=隠し地雷
+STR_DLGGAMESETUP_AICOMPPLAYERS=AI コンピュータープレイヤー
+STR_DLGGAMESETUP_ALLOW=許可
+STR_DLGGAMESETUP_ADVANTAGE=有利
+STR_DLGGAMESETUP_FULLMAP=全マップ
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=制限時間
+STR_DLGGAMESETUP_TEAMSETUP=チーム設定
+STR_DLGGAMESETUP_AINUM=AI プレイヤー数:
+STR_DLGGAMESETUP_NOBRAINS=Brain が見つかりません
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=あなた
+STR_DLGGAMESETUP_BOT_FMT=Bot {number}
+STR_DLGGAMESETUP_NOAI=コンピュータータンクなし
+STR_DLGGAMESETUP_ALLOWAI=コンピュータータンクを許可
+STR_DLGGAMESETUP_ALLOWADV=有利で許可
+STR_DLGGAMESETUP_ALLOWFULL=全マップで許可
+STR_DLGGAMESETUP_NOPREVIEW=プレビューなし
+STR_DLGGAMESETUP_STARTGAME=ゲームを開始
+STR_DLGGAMESETUP_STRICT_SHORT=厳格
+STR_DLGTCP_WINTITLE=WinBolo - UDP（インターネット）設定
+STR_ERR_TITLE=エラー
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
+STR_DLGBROWSER_REFRESH=更新
+STR_DLGBROWSER_LOADING=ゲームリストを読み込み中{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=更新をクリックしてゲームを読み込む...
+STR_DLGBROWSER_LAN_INSTRUCTION=更新をクリックしてスキャン...
+STR_DLGBROWSER_GAMES_LOADED=ゲームを読み込みました。
+STR_DLGBROWSER_NO_GAMES=ゲームが見つかりません。始めてみませんか？
+STR_DLGBROWSER_SEARCH_FAILED=検索に失敗しました。
+STR_DLGBROWSER_SEARCHING=検索中...
+STR_DLGBROWSER_COL_SERVER=サーバー
+STR_DLGBROWSER_COL_MAP=マップ
+STR_DLGBROWSER_COL_PLAYERS=プレイヤー
+STR_DLGBROWSER_COL_TYPE=タイプ
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=基地
+STR_DLGBROWSER_COL_PILLS=トーチカ
+STR_DLGBROWSER_COL_PING=Ping
+STR_DLGBROWSER_FILTER=フィルター:
+STR_DLGBROWSER_FILTER_ALLTYPES=全タイプ
+STR_DLGBROWSER_FILTER_UNLOCKED=未ロックのみ
+STR_DLGBROWSER_FILTER_ALLLOBBY=全ロビー
+STR_DLGBROWSER_FILTER_INLOBBY=ロビー中
+STR_DLGBROWSER_FILTER_STARTING=開始中
+STR_DLGBROWSER_STATUS_PINGING=ステータス: {string1}  |  サーバー {number} 台  |  Ping 中 {number2}...
+STR_DLGBROWSER_STATUS=ステータス: {string1}  |  サーバー {number} 台
+STR_DLGBROWSER_NEWGAME=新規ゲーム
+STR_DLGBROWSER_PLAYER_NAME_BTN=プレイヤー名
+STR_DLGBROWSER_MANUAL=手動
+STR_DLGBROWSER_ERR_VERSION=サーバーは異なるバージョンの WinBolo を実行しています。
+STR_DLGBROWSER_ERR_NEEDNAME=まずプレイヤー名を設定する必要があります。
+STR_DLGBROWSER_AI_ADV=有利
+STR_DLGBROWSER_AI_FULL=全体
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo - ログブラウザー
+STR_DLGWBN_TITLE=WinBolo.net ログブラウザー
+STR_DLGWBN_TAB_RECENT=最近
+STR_DLGWBN_TAB_TOPRATED=高評価
+STR_DLGWBN_TAB_MOSTDOWNLOADED=最多ダウンロード
+STR_DLGWBN_TAB_SEARCH=検索
+STR_DLGWBN_LOADING=読み込み中...
+STR_DLGWBN_NOCONNECT=WinBolo.net に接続できませんでした
+STR_DLGWBN_MINPLAYERS=最低プレイヤー数
+STR_DLGWBN_SEARCHFILTERS=検索フィルター:
+STR_DLGWBN_HINT_PLAYER=プレイヤー
+STR_DLGWBN_HINT_MAP=マップ
+STR_DLGWBN_SEARCH_BTN=検索
+STR_DLGWBN_ERROR=エラー: {string1}
+STR_DLGWBN_COL_MAP=マップ
+STR_DLGWBN_COL_TYPE=タイプ
+STR_DLGWBN_COL_PLAYERS=プレイヤー
+STR_DLGWBN_COL_RATING=評価
+STR_DLGWBN_COL_SIZE=サイズ
+STR_DLGWBN_COL_DATE=日付
+STR_DLGWBN_PLAYERS_LBL=プレイヤー: 
+STR_DLGWBN_NUMPLAYERS_FMT={number} 人のプレイヤー
+STR_DLGWBN_DURATION=プレイ時間: {string1}
+STR_DLGWBN_RATING=評価: {string1}/10（{number}）
+STR_DLGWBN_DOWNLOADS_FMT=ダウンロード: {number}
+STR_DLGWBN_SIZE=サイズ: {string1}
+STR_DLGWBN_COMMENTS_FMT=コメント（{number}）:
+STR_DLGWBN_NOCOMMENTS=コメントはまだありません。
+STR_DLGWBN_ADDCOMMENT=コメントを追加:
+STR_DLGWBN_HINT_COMMENT=コメントを入力...
+STR_DLGWBN_POST=投稿
+STR_DLGWBN_POSTED=コメントを投稿しました！
+STR_DLGWBN_LOADINGDETAIL=詳細を読み込み中...
+STR_DLGWBN_DOWNLOADING=ダウンロード中...
+STR_DLGWBN_VIEWLOG=ログを表示
+STR_DLGWBN_NOLOG=このゲームのログファイルはありません。
+STR_DLGWBN_PREV=< 前へ
+STR_DLGWBN_NEXT=次へ >
+STR_DLGWBN_PAGE=ページ {number}/{number2}（合計 {number3}）
+STR_DLGWBN_OPENFILE=ファイルを開く...
+STR_DLGWBN_PARSERR=レスポンスの解析に失敗
+STR_DLGWBN_NETERR=ネットワークエラー
+STR_DLGWBN_LOADERR=詳細の読み込みに失敗
+STR_DLGWBN_DOWNLOAD_FAILED=ダウンロードに失敗
+STR_DLGWBN_NOSAVEPATH=保存パスを確認できませんでした
+STR_DLGWBN_FETCHERR=フェッチに失敗
+STR_DLGWBN_UNKNOWN_ERR=不明なエラー
+STR_DLGWBN_FILEFILTER=WinBolo ログファイル
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo - プレイヤー名を設定
+STR_DLGSETNAME_WBN_LOCKED=プレイヤー名は WinBolo.net によって設定されています。
+STR_DLGSETNAME_PLEASE_ENTER=プレイヤー名を入力してください。
+STR_DLGSETNAME_BLANK_ERR=申し訳ありませんが、空白のままにすることはできません
+STR_DLGSETNAME_STAR_ERR=申し訳ありませんが、名前を「*」で始めることはできません
+STR_DLGSETNAME_INUSE_ERR=その名前は別のプレイヤーが使用しています。
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo - スキン選択
+STR_DLGSKIN_NOSKIN=スキンなし（デフォルト）
+STR_DLGSKIN_NA=N/A
+STR_DLGSKIN_SELECT=スキンを選択:
+STR_DLGSKIN_NAME_LBL=名前:
+STR_DLGSKIN_AUTHOR_LBL=作者:
+STR_DLGSKIN_NOTES_LBL=備考:
+STR_DLGSKIN_LOADERR=スキンファイルを読み込めません
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo - トラッカー設定
+STR_DLGTRACKER_INVALIDPORT=無効なポート番号です。
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=WinBolo.net を確認中...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=サインイン済み
+STR_DLGWBN_EXPIRES=（{string1} に期限切れ）
+STR_DLGWBN_SIGN_OUT=WBN からサインアウト
+STR_DLGWBN_NOT_SIGNED_IN=サインインしていません
+STR_DLGWBN_SIGN_IN_BTN=WBN にサインイン...
+STR_DLGWBN_SIGNIN_TITLE=WinBolo.net にサインイン
+STR_DLGWBN_SIGNIN_BLURB=WinBolo.net のユーザー名とパスワードでサインインしてください。トークンが保存されるので、次回からパスワードの入力は不要です。
+STR_DLGWBN_USERNAME=ユーザー名:
+STR_DLGWBN_PASSWORD=パスワード:
+STR_DLGWBN_SIGNINGIN=サインイン中...
+STR_DLGWBN_SIGNIN_OK=サインイン
+STR_DLGWBN_NEEDCREDS=ユーザー名とパスワードを入力してください。
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo - ゲーム選択
+STR_DLGWELCOME_SINGLE=シングルプレイヤー
+STR_DLGWELCOME_LOCAL=ローカル
+STR_DLGWELCOME_MAPEDITOR=マップエディター
+STR_DLGWELCOME_LOGVIEWER=ログビューアー
+STR_DLGWELCOME_INTERNET=インターネット
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island（内蔵）
+STR_MAPCHOOSER_LOADMAP=マップを読み込む
+STR_MAPCHOOSER_LOADDEVICE=デバイスから読み込む...
+STR_MAPCHOOSER_GENRANDOM=ランダムマップを生成
+STR_MAPCHOOSER_RANDOMMAP=ランダムマップ
+STR_MAPCHOOSER_CLICKGEN=プレビューするには生成をクリック
+STR_MAPCHOOSER_NOPREVIEW=プレビューできません
+STR_MAPCHOOSER_STATS=トーチカ: {number}  基地: {number2}  スタート: {number3}
+STR_MAPCHOOSER_MAPFILES=マップファイル
+STR_MAPCHOOSER_ALLFILES=全ファイル
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=ステータス
+STR_TABLET_KILLS_DEATHS=撃破: {number}  死亡: {number2}
+STR_TABLET_TANK_RESOURCES=タンクリソース
+STR_TABLET_SHELLS=砲弾
+STR_TABLET_MINES=地雷
+STR_TABLET_ARMOUR=装甲
+STR_TABLET_TREES=木
+STR_TABLET_PILLBOXES=トーチカ
+STR_TABLET_BASES=基地
+STR_TABLET_TANKS=タンク
+STR_TABLET_PILL_FMT=トーチカ {number}
+STR_TABLET_BASE_FMT=基地 {number}
+STR_TABLET_TANK_FMT=タンク {number}
+STR_TABLET_BTN_MSG=メッセージ
+STR_TABLET_BTN_PLY=プレイヤー
+STR_TABLET_BTN_SET=設定
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=プレイヤー名を設定
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=開く...
+STR_MAPEDIT_MENU_RECENT=最近使用したファイル
+STR_MAPEDIT_MENU_SAVE=保存
+STR_MAPEDIT_MENU_SAVEAS=名前を付けて保存...
+STR_MAPEDIT_MENU_EXPORT=PNG としてエクスポート...
+STR_MAPEDIT_MENU_RETURN=メニューに戻る
+STR_MAPEDIT_MENU_UNDO=元に戻す
+STR_MAPEDIT_MENU_REDO=やり直し
+STR_MAPEDIT_MENU_CUT=切り取り
+STR_MAPEDIT_MENU_COPY=コピー
+STR_MAPEDIT_MENU_PASTE=貼り付け
+STR_MAPEDIT_MENU_MAP=マップ
+STR_MAPEDIT_MENU_RANDOMMAP=ランダムマップ...
+STR_MAPEDIT_MENU_TEXT=テキスト...
+STR_MAPEDIT_MENU_IMPORTIMG=画像をインポート...
+STR_MAPEDIT_MENU_VALIDATE=検証
+STR_MAPEDIT_MENU_MIRROR_H=水平ミラー {string1}
+STR_MAPEDIT_MENU_MIRROR_V=垂直ミラー {string1}
+STR_MAPEDIT_MENU_ROTATE_90=90° 時計回り回転 {string1}
+STR_MAPEDIT_MENU_ROTATE_180=180° 回転 {string1}
+STR_MAPEDIT_SCOPE_SELECTION=（選択範囲）
+STR_MAPEDIT_SCOPE_FULLMAP=（全マップ）
+STR_MAPEDIT_MENU_OPTIONS=オプション
+STR_MAPEDIT_MENU_CENTER=マップを中央に表示
+STR_MAPEDIT_MENU_POINT_STARTS=スタート地点を指定
+STR_MAPEDIT_MENU_SHOWGRID=グリッドを表示
+STR_MAPEDIT_MENU_SHOWMINES=地雷を表示
+STR_MAPEDIT_MENU_SHOWPILLRANGES=トーチカの射程を表示
+STR_MAPEDIT_MENU_WINDOW=ウィンドウ
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=地形
+STR_MAPEDIT_WIN_TOOLS=ツール
+STR_MAPEDIT_WIN_INSPECTOR=インスペクター
+STR_MAPEDIT_WIN_OBJECTS=オブジェクト
+STR_MAPEDIT_WIN_OVERVIEW=概要
+STR_MAPEDIT_WIN_STATS=統計
+STR_MAPEDIT_WIN_STAMP_LIB=スタンプライブラリ
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=深海
+STR_MAPEDIT_TERR_GRASS=草
+STR_MAPEDIT_TERR_FOREST=森
+STR_MAPEDIT_TERR_ROAD=道路
+STR_MAPEDIT_TERR_BUILDING=建物
+STR_MAPEDIT_TERR_HALFBUILDING=半建築
+STR_MAPEDIT_TERR_RIVER=川
+STR_MAPEDIT_TERR_SWAMP=沼地
+STR_MAPEDIT_TERR_CRATER=クレーター
+STR_MAPEDIT_TERR_RUBBLE=瓦礫
+STR_MAPEDIT_TERR_BOAT=ボート
+STR_MAPEDIT_TERR_MINETOOL=地雷ツール
+STR_MAPEDIT_MINE_CHECKERED=市松模様
+STR_MAPEDIT_MINE_FULL=全体
+STR_MAPEDIT_MINE_RANDOM=ランダム
+STR_MAPEDIT_MINE_CLEAR=地雷をクリア
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=ペン
+STR_MAPEDIT_TOOL_LINE=直線
+STR_MAPEDIT_TOOL_RECT=四角形
+STR_MAPEDIT_TOOL_RECTFILL=塗りつぶし四角形
+STR_MAPEDIT_TOOL_OVAL=楕円
+STR_MAPEDIT_TOOL_OVALFILL=塗りつぶし楕円
+STR_MAPEDIT_TOOL_SELECT=選択
+STR_MAPEDIT_TOOL_FILL=塗りつぶし
+STR_MAPEDIT_TOOL_MAZE=迷路
+STR_MAPEDIT_TOOL_GENERATE=生成
+STR_MAPEDIT_TOOL_WAND=魔法の杖
+STR_MAPEDIT_TOOL_TEXT=テキスト
+STR_MAPEDIT_TOOL_TEXT_TIP=テキスト（マップにテキストをスタンプ）
+STR_MAPEDIT_BRUSH=ブラシ
+STR_MAPEDIT_BRUSH_SQUARE=四角
+STR_MAPEDIT_BRUSH_CIRCLE=丸
+STR_MAPEDIT_OBJTOOL_BASE=基地
+STR_MAPEDIT_OBJTOOL_PILL=トーチカ
+STR_MAPEDIT_OBJTOOL_START=スタート
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=タイル: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=タイル: --
+STR_MAPEDIT_STATUS_ZOOM=ズーム: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=変更済み
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=未保存の変更
+STR_MAPEDIT_UNSAVED_BLURB=マップに未保存の変更があります。\n続ける前に保存しますか？
+STR_MAPEDIT_GOTO_TITLE=座標に移動
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=オブジェクトが選択されていません
+STR_MAPEDIT_INSP_BASE_HASH=基地 #{number}
+STR_MAPEDIT_INSP_PILL_HASH=トーチカ #{number}
+STR_MAPEDIT_INSP_START_HASH=スタート #{number}
+STR_MAPEDIT_INSP_POSITION=位置: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=オーナー
+STR_MAPEDIT_INSP_ARMOUR=装甲
+STR_MAPEDIT_INSP_SPEED=速度
+STR_MAPEDIT_INSP_DIR=方向
+STR_MAPEDIT_OWNER_NEUTRAL=中立
+STR_MAPEDIT_OWNER_PLAYER=プレイヤー {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=基地 ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=トーチカ ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=スタート ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  装甲: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  方向: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=検証
+STR_MAPEDIT_VAL_NOISSUES=問題なし
+STR_MAPEDIT_VAL_ERRORS={number} 個のエラー
+STR_MAPEDIT_VAL_NOERRORS=エラー 0 件
+STR_MAPEDIT_VAL_WARNINGS={number} 個の警告
+STR_MAPEDIT_VAL_NOWARNINGS=警告 0 件
+STR_MAPEDIT_VAL_ERRORS_TITLE=検証エラー
+STR_MAPEDIT_VAL_HASERRORS=マップに {number} 個のエラーがあります。保存前に修正してください。
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=ランダムマップを生成
+STR_MAPEDIT_GENRANDAREA_TITLE=ランダムエリアを生成
+STR_MAPEDIT_GENSCOPE_SELECTION=スコープ: 選択範囲 ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=スコープ: 全マップ ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=テキストツール
+STR_MAPEDIT_TEXT_LABEL=テキスト:
+STR_MAPEDIT_TEXT_BUILTIN=組み込み
+STR_MAPEDIT_TEXT_SYSTEM=システムフォント
+STR_MAPEDIT_TEXT_FONTSIZE=フォントサイズ
+STR_MAPEDIT_TEXT_STYLE=スタイル
+STR_MAPEDIT_TEXT_FONTSIZE_S=小（5x7）
+STR_MAPEDIT_TEXT_FONTSIZE_M=中（10x14）
+STR_MAPEDIT_TEXT_FONTSIZE_L=大（15x21）
+STR_MAPEDIT_TEXT_FONTSIZE_XL=特大（20x28）
+STR_MAPEDIT_TEXT_STYLE_REGULAR=標準
+STR_MAPEDIT_TEXT_STYLE_BOLD=太字
+STR_MAPEDIT_TEXT_STYLE_ITALIC=斜体
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=太字斜体
+STR_MAPEDIT_TEXT_FONTFAMILY=フォントファミリー
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1}（バンドル）
+STR_MAPEDIT_TEXT_SIZEPX=サイズ（px）
+STR_MAPEDIT_TEXT_NOFONTS=フォントが見つかりません。data/fonts/ に .ttf ファイルを追加してください。
+STR_MAPEDIT_TEXT_TERR_TEXT=テキスト地形
+STR_MAPEDIT_TEXT_TERR_EDGE=エッジ地形
+STR_MAPEDIT_TEXT_TERR_BG=背景
+STR_MAPEDIT_TEXT_PREVIEW=プレビュー（{number}x{number2} タイル）:
+STR_MAPEDIT_TEXT_TOOLARGE=テキストが大きすぎます（最大 256x256 タイル）またはフォントエラー
+STR_MAPEDIT_GENERATE_BTN=生成
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=迷路設定
+STR_MAPEDIT_MAZE_REGION=リージョン: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=マップ上をドラッグして生成
+STR_MAPEDIT_ALGORITHM=アルゴリズム
+STR_MAPEDIT_ALGO_LABYRINTH=ラビリンス
+STR_MAPEDIT_ALGO_OPEN=オープン
+STR_MAPEDIT_WALL=壁
+STR_MAPEDIT_CORRIDOR=通路
+STR_MAPEDIT_ENTRIES=入口
+STR_MAPEDIT_ROOMS=部屋
+STR_MAPEDIT_WALLTERRAIN=壁の地形
+STR_MAPEDIT_CORRIDORTERRAIN=通路の地形
+STR_MAPEDIT_GENSETTINGS_TITLE=生成設定
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=地形分布
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=地雷: {number}（陸地の {string1}%）
+STR_MAPEDIT_STATS_SPATIAL=空間分析
+STR_MAPEDIT_STATS_LAND_COVERAGE=陸地カバー率: {string1}%
+STR_MAPEDIT_STATS_LARGEST=最大陸塊: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=基地間隔: {string1} タイル
+STR_MAPEDIT_STATS_PILL_SPACING=トーチカ間隔: {string1} タイル
+STR_MAPEDIT_STATS_SYMMETRY=対称性: {string1}（{string2}%）
+STR_MAPEDIT_STATS_MIRROR_H=水平ミラー: {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=垂直ミラー: {string1}%
+STR_MAPEDIT_STATS_4CORNER=4コーナー: {string1}%
+STR_MAPEDIT_STATS_ROTATE180=180°回転: {string1}%
+STR_MAPEDIT_STATS_STALE=（古いデータ — 更新をクリック）
+STR_MAPEDIT_STATS_REFRESH=空間分析を更新
+STR_MAPEDIT_STATS_STARTS=スタート
+STR_MAPEDIT_TERRNAME_HALFBLD=半建築
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=画像をインポート
+STR_MAPEDIT_IMG_FILE=ファイル:
+STR_MAPEDIT_IMG_NONE=（なし）
+STR_MAPEDIT_BROWSE=参照...
+STR_MAPEDIT_IMG_SOURCE=ソース: {number}x{number2} ピクセル
+STR_MAPEDIT_IMG_PREVIEW_LBL=プレビュー:
+STR_MAPEDIT_IMG_SCALEMODE=スケールモード:
+STR_MAPEDIT_IMG_FIT_SEL=選択範囲に合わせる
+STR_MAPEDIT_IMG_FIT_PLAY=プレイ可能領域に合わせる
+STR_MAPEDIT_IMG_OUTPUT=出力: {number} x {number2} タイル
+STR_MAPEDIT_IMG_COLORS=色:
+STR_MAPEDIT_IMG_REDETECT=再検出
+STR_MAPEDIT_IMG_COLORMAP=カラーマッピング
+STR_MAPEDIT_IMPORT_BTN=インポート
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=バンドルスタンプ
+STR_MAPEDIT_STAMP_USER=ユーザースタンプ
+STR_MAPEDIT_STAMP_NOUSER=ユーザースタンプはまだありません。
+STR_MAPEDIT_STAMP_HINT=「クリップボードを保存...」を使用して作成してください。
+STR_MAPEDIT_DELETE=削除
+STR_MAPEDIT_STAMP_SAVECLIP=クリップボードを保存...
+STR_MAPEDIT_STAMP_TIP_COPY=最初に選択をコピーしてください（Ctrl+C）
+STR_MAPEDIT_STAMP_IMPORT=インポート...
+STR_MAPEDIT_STAMP_UNTITLED=無題
+STR_MAPEDIT_STAMP_SAVE_TITLE=スタンプを保存
+STR_MAPEDIT_STAMP_SAVE_BLURB=このスタンプの名前を入力してください:
+STR_MAPEDIT_STAMP_SAVE_NAME=名前
+STR_MAPEDIT_SAVE_BTN=保存
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=PNG としてエクスポート
+STR_MAPEDIT_PREVIEW=プレビュー
+STR_MAPEDIT_EXPORT_MODE=モード:
+STR_MAPEDIT_EXPORT_FULL=フル解像度（4096x4096）
+STR_MAPEDIT_EXPORT_PREVSIZE=プレビューサイズ:
+STR_MAPEDIT_EXPORT_OPTIONS=オプション:
+STR_MAPEDIT_EXPORT_SHOWOBJ=オブジェクトを表示
+STR_MAPEDIT_EXPORT_SHOWMINES=地雷を表示
+STR_MAPEDIT_EXPORT_SHOWGRID=グリッドを表示（フルモードのみ）
+STR_MAPEDIT_EXPORT_BTN=エクスポート...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=ロック済み：ランダム化で変更されません
+STR_MAPGEN_UNLOCKED_TIP=ロック解除：ランダム化で変更されます
+STR_MAPGEN_GENERATOR=ジェネレーター
+STR_MAPGEN_TYPE_TOURNAMENT=トーナメント
+STR_MAPGEN_TYPE_NATURAL=自然
+STR_MAPGEN_TYPE_MAZE=迷路
+STR_MAPGEN_TYPE_FRACTAL=フラクタル
+STR_MAPGEN_SEED=シード
+STR_MAPGEN_RANDOMIZE=ランダム化
+STR_MAPGEN_SYMMETRY=対称性
+STR_MAPGEN_SYM_4CORNER=4コーナーミラー
+STR_MAPGEN_SYM_MIRROR_H=水平ミラー
+STR_MAPGEN_SYM_MIRROR_V=垂直ミラー
+STR_MAPGEN_SYM_ROT180=180° 回転
+STR_MAPGEN_SYM_ROT90=90° 回転
+STR_MAPGEN_LANDMASS_PCT=陸地の割合 %
+STR_MAPGEN_ROUGHNESS=粗さ
+STR_MAPGEN_ROUGH_LOW=低
+STR_MAPGEN_ROUGH_MED=中
+STR_MAPGEN_ROUGH_HIGH=高
+STR_MAPGEN_INCLUDE_ROADS=道路を含める
+STR_MAPGEN_MAP_STYLE=マップスタイル
+STR_MAPGEN_STYLE_OCEAN=海洋
+STR_MAPGEN_STYLE_CONTINENT=大陸
+STR_MAPGEN_STYLE_ISLANDS=島々
+STR_MAPGEN_STYLE_ARCHIPELAGO=群島
+STR_MAPGEN_STYLE_INLAND=内陸
+STR_MAPGEN_TERRAIN_MIX=地形の混合（陸地の割合 %）:
+STR_MAPGEN_GRASS_PCT=草 %
+STR_MAPGEN_FOREST_PCT=森 %
+STR_MAPGEN_BUILDING_PCT=建物 %
+STR_MAPGEN_SWAMP_PCT=沼地 %
+STR_MAPGEN_RIVER_PCT=川 %
+STR_MAPGEN_BOAT_PCT=ボート %
+STR_MAPGEN_REMAINING_GRASS=残りの草: {number}%
+STR_MAPGEN_MINE_DENSITY=地雷密度 %
+STR_MAPGEN_RIVER_COUNT=川の数
+STR_MAPGEN_CITY_COUNT=都市の数
+STR_MAPGEN_MAZE_COUNT=迷路の数
+STR_MAPGEN_WALL_THICKNESS=壁の厚さ
+STR_MAPGEN_CORRIDOR_WIDTH=通路の幅
+STR_MAPGEN_CITY_ROOMS=都市の部屋数
+STR_MAPGEN_LAND_COVERAGE=陸地カバー率 %
+STR_MAPGEN_DETAIL_PASSES=詳細パス数
+STR_MAPGEN_COAST_JAG=海岸の凹凸
+STR_MAPGEN_TERRAIN_LAYERS=地形レイヤー
+STR_MAPGEN_RIVERS=川
+STR_MAPGEN_LAKES=湖
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} がゲームに参加しました。
+STR_LV_HAS_JOINED={string1} がゲームに参加しました
+STR_LV_ALLY_REQUEST={player} が {other} に同盟を要請しました
+STR_LV_ALLY_ACCEPT={player} が {other} との同盟を承認しました
+STR_LV_ALLY_LEAVE={player} が同盟を離れました
+STR_LV_MSG_ALL={player} から全員へのメッセージ: {string1}
+STR_LV_MSG_PLAYERS={player} から {other} へのメッセージ: {string1}
+STR_LV_MSG_SERVER=サーバーメッセージ: {string1}
+STR_LV_PLAYER_DIED={player} が死亡しました
+STR_LV_PLAYER_KILLED={player} がプレイヤー {other} を倒しました
+STR_LV_PLAYER_REJOINED={player} がゲームに再参加しました。
+STR_LV_PLAYER_LEAVING={player} がゲームを離れています。
+STR_LV_LOBBY_OPENED=ロビーが開かれました。
+STR_LV_GAME_STARTED=ゲームが開始されました。
+STR_LV_PLAYER_READY={player} は準備完了です。
+STR_LV_PLAYER_UNREADY={player} は準備解除しました。
+STR_LV_PLAYER_LEFT_TEAM={player} がチームを離れました。
+STR_LV_PLAYER_JOINED_TEAM={player} がチーム {number} に参加しました。
+STR_LV_COUNTDOWN_START=カウントダウンが始まりました。
+STR_LV_COUNTDOWN_CANCEL=カウントダウンがキャンセルされました。
+STR_LV_MAP_SKIP_VOTE={player} がマップのスキップに投票しました。
+STR_LV_MAP_SKIPPED=マップがスキップされました。新しいマップ: {string1}
+STR_LV_TEAM_BALANCE=チームバランスが適用されました。
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=開く
+STR_LV_MENU_ACTION=アクション
+STR_LV_PLAY=再生
+STR_LV_PAUSE=一時停止
+STR_LV_STOP=停止
+STR_LV_FAST_FORWARD=早送り
+STR_LV_REWIND=巻き戻し
+STR_LV_MODE=モード
+STR_LV_MODE_INFO=情報
+STR_LV_SELECT_TEAM=チームを選択
+STR_LV_USE_TEAM_COLOURS=チームカラーを使用
+STR_LV_TANK_CENTRED=タンク中央表示
+STR_LV_DNS_LOOKUPS=DNS 検索
+STR_LV_TEAM_COLOURS=チームカラー
+STR_LV_MENU_WINDOWS=ウィンドウ
+STR_LV_WIN_CONTROLS=コントロール
+STR_LV_WIN_EVENTS=イベント
+STR_LV_WIN_GAMEINFO=ゲーム情報
+STR_LV_WIN_ITEMINFO=アイテム情報
+STR_LV_RESET_WINDOWS=ウィンドウ位置をリセット
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=各プレイヤーチームに色を割り当てる:
+STR_LV_PLAYER_LBL=プレイヤー {number}:
+STR_LV_NEUTRAL_LBL=中立:
+STR_LV_ABOUT_TITLE=WinBolo ログビューアー
+STR_LV_VERSION_FMT=バージョン: {string1}
+STR_LV_LICENSE=このプログラムはフリーソフトウェアです。Free Software Foundation が発行した\nGNU 一般公衆利用許諾書のもとで再配布または変更できます。
+STR_LV_WEBSITE_LBL=ウェブサイト:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=グレー
+STR_LV_COL_KHAKI=カーキ
+STR_LV_COL_GREEN=緑
+STR_LV_COL_PINK=ピンク
+STR_LV_COL_YELLOW=黄色
+STR_LV_COL_LIGHTBLUE=水色
+STR_LV_COL_ORANGE=オレンジ
+STR_LV_COL_LIGHTPURPLE=薄紫
+STR_LV_COL_AQUA=アクア
+STR_LV_COL_LIGHTGREEN=黄緑
+STR_LV_COL_LIGHTGREY=薄グレー
+STR_LV_COL_RED=赤
+STR_LV_COL_BLUE=青
+STR_LV_COL_BROWN=茶色
+STR_LV_COL_LIGHTPINK=薄ピンク
+STR_LV_COL_PALEGREEN=淡緑
+STR_LV_COL_PURPLE=紫
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} 秒
+STR_LV_INFO_MAP=マップ名: {string1}
+STR_LV_INFO_GAMETYPE=ゲームタイプ: {string1}
+STR_LV_INFO_HIDDENMINES=隠し地雷: {string1}
+STR_LV_INFO_COMPUTER_TANKS=コンピュータータンク: {string1}
+STR_LV_INFO_TIME_LIMIT=制限時間: {string1}
+STR_LV_INFO_START_DELAY=開始遅延: {string1}
+STR_LV_INFO_WBN_KEY=WBN キー:
+STR_LV_INFO_START_TIME=開始時刻: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1}（{number}）
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=アイテムが選択されていません
+STR_LV_LOCATION_FMT=位置: {string1}
+STR_LV_OWNER_LBL=オーナー: {string1}
+STR_LV_ARMOUR_FMT=装甲: {number}
+STR_LV_SHELLS_FMT=砲弾: {number}
+STR_LV_MINES_FMT=地雷: {number}
+STR_LV_IN_TANK_FMT=タンク内: {string1}
+STR_LV_CENTER_ON_MAP=マップで中央に表示
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< 巻き戻し
+STR_LV_PLAY_BTN=再生 >
+STR_LV_FWD_BTN=早送り >>
+STR_LV_SPEED_LBL=速度:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} 残り
+STR_LV_NO_LOG_LOADED=ログが読み込まれていません
+
+# Log viewer events panel
+STR_LV_COPY=コピー
+STR_LV_COPY_ALL=全てコピー
+STR_LV_CLEAR_ALL=全てクリア
+STR_LV_AUTO_SCROLL=自動スクロール
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=ログファイルの末尾に達しました
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=ズーム
+STR_DLGSETTINGS_PERFORMANCE=パフォーマンス
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=サーバーへの接続が切断されました。\nメニューに戻ります。
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=言語:
+STR_DLGLANG_MIDGAME_NOTE=既存のメッセージログエントリは再生成されるまで言語が変わりません。
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=基地が多すぎます: {number}（最大 {number2}）
+STR_MAPVALIDATE_TOO_MANY_PILLS=トーチカが多すぎます: {number}（最大 {number2}）
+STR_MAPVALIDATE_TOO_MANY_STARTS=スタート地点が多すぎます: {number}（最大 {number2}）
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=基地 #{number}（{number2},{number3}）: 通過できない地形の上にあります
+STR_MAPVALIDATE_BASE_BORDER_ZONE=基地 #{number}（{number2},{number3}）: 地雷ボーダーゾーン内にあります
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=トーチカ #{number}（{number2},{number3}）: 通過できない地形の上にあります
+STR_MAPVALIDATE_PILL_BORDER_ZONE=トーチカ #{number}（{number2},{number3}）: 地雷ボーダーゾーン内にあります
+STR_MAPVALIDATE_START_NOT_DEEP=スタート #{number}（{number2},{number3}）: 深海の上に配置する必要があります
+STR_MAPVALIDATE_START_BORDER_ZONE=スタート #{number}（{number2},{number3}）: 地雷ボーダーゾーン内にあります
+STR_MAPVALIDATE_NO_STARTS=スタート地点が配置されていません — マップはプレイできません
+STR_MAPVALIDATE_ONE_START=スタート地点が 1 つのみ — シングルプレイヤー専用
+STR_MAPVALIDATE_BASE_OVERLAP=基地 #{number} と基地 #{number2} が ({number3},{number4}) で重なっています
+STR_MAPVALIDATE_PILL_OVERLAP=トーチカ #{number} とトーチカ #{number2} が ({number3},{number4}) で重なっています
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=基地 #{number} とトーチカ #{number2} が ({number3},{number4}) で重なっています
+STR_MAPVALIDATE_START_OVERLAP=スタート #{number} とスタート #{number2} が ({number3},{number4}) で重なっています
+STR_MAPVALIDATE_START_BASE_OVERLAP=スタート #{number} と基地 #{number2} が ({number3},{number4}) で重なっています
+STR_MAPVALIDATE_START_PILL_OVERLAP=スタート #{number} とトーチカ #{number2} が ({number3},{number4}) で重なっています
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=LAN外のプレイヤーが参加するにはポート転送が必要です。（自動 NAT 設定は近日対応予定）
+STR_GAMEFRONTERR_MAPLOAD=サーバーからマップを読み込めませんでした
+STR_GAMEFRONTERR_STARTSERVER=サーバーの起動でエラーが発生しました
+STR_DLGLOBBY_PORTMAP_CHECKING=サーバーの到達性を確認中…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=サーバーに到達可能
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=サーバーに到達不可
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP でファイアウォールのポートを開き、トラッカーがネットワーク経由であなたに到達できるか確認しています。通常は 30 秒以内に完了します。
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP により %s:%u でポートが自動転送されました。参加者は追加の手順なしで直接接続できます。
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=ポートの直接転送は確立できませんでしたが、NAT traversal は有効です。参加者はトラッカー経由で連携し、あなたのネットワークのファイアウォールを通り抜けます。多くの家庭用ネットワークで機能しますが、対称型 NAT や CGN（キャリアグレード NAT）の参加者は接続できない場合があります。
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=対称型 NAT を検出しました — あなたのネットワークは送信先ごとに送信元ポートを書き換えるため、NAT traversal を使っても参加者があなたに到達できません。ホストを成功させるには、ルーターで UDP ポート %u をこのマシンへ手動で転送してください。
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=ファイアウォールのポートを自動的に開けず（UPnP/NAT-PMP が拒否または利用不可）、トラッカーは双方向の到達性を確認できませんでした。ホストを成功させるには、ルーターで UDP ポート %u をこのマシンへ手動で転送してください。
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=サーバー到達性
+STR_DLGLOBBY_TEST_CONNECTIVITY=接続テスト
+STR_DLGLOBBY_TEST_TESTING=テスト中…
+STR_DLGLOBBY_TEST_REACHABLE=インターネットから到達可能
+STR_DLGLOBBY_TEST_NO_REPLY=トラッカーから応答なし
+STR_DLGSETTINGS_NETWORK=ネットワーク
+STR_DLGSETTINGS_NET_HELP=設定は次回のホストゲームから反映されます。
+STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP による自動ポート転送を使用する
+STR_DLGSETTINGS_USE_NATTRAV=トラッカー経由で NAT traversal（ホールパンチング）を使用する

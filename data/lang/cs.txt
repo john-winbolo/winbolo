@@ -1,0 +1,1086 @@
+# WinBolo Czech language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=Čeština
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_OK=OK
+STR_DLGOPENING_BUTTON2=Konec
+
+# Language dialog
+STR_DLGLANG_NAME=Čeština
+STR_DLGLANG_AUTHOR_CAPTION=Autor: 
+STR_DLGLANG_AUTHOR=John Morrison
+STR_DLGLANG_NOTES_CAPTION=Poznámky: 
+STR_DLGLANG_NOTES=Žádné.
+STR_DLGLANG_DEFAULTNOTE=Poznámka: U neúplných překladů se chybějící položky zobrazují v angličtině.
+
+# About dialog
+STR_DLGABOUT_TITLE=O programu WinBolo
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=Žádost o alianci
+STR_DLGALLIANCE_ACCEPT=Přijmout
+STR_DLGALLIANCE_DECLINE=Odmítnout
+STR_DLGALLIANCE_BLURB={player} žádá o alianci. Přijmout?
+
+# Game finder dialog
+STR_YES=Ano
+STR_NO=Ne
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=Informace o hře
+STR_DLGGAMEINFO_MAPNAME=Mapa: 
+STR_DLGGAMEINFO_NUMPLAYERS=Hráčů: {number}
+STR_DLGGAMEINFO_GAMETYPE=Typ hry: 
+STR_DLGGAMEINFO_HIDDENMINES=Skryté miny: 
+STR_DLGGAMEINFO_TIMELIMIT=Časový limit:
+
+# Game setup dialog
+STR_CANCEL=Zrušit
+STR_DLGGAMESETUP_TITLE=Nastavení hry
+STR_DLGGAMESETUP_CHOOSEMAP=Vybrat mapu
+STR_DLGGAMESETUP_RADIO1=Otevřená hra (předem vyzbrojená)
+STR_DLGGAMESETUP_RADIO2=Turnaj (volná munice na začátku)
+STR_DLGGAMESETUP_RADIO3=Striktní turnaj (bez volné munice)
+STR_DLGGAMESETUP_HIDDENMINES=Povolit skryté miny
+STR_DLGGAMESETUP_PASSWORD=Heslo hry
+STR_DLGGAMESETUP_MINUTES=minut
+STR_DLGGAMESETUP_SECONDS=sekund
+STR_DLGGAMESETUP_STARTDELAY=Zpoždění startu hry
+STR_DLGGAMESETUP_TIMELIMIT=Časový limit hry
+STR_DLGGAMEINFO_TIMEREMAINING=Přibližně {number} min
+STR_DLGGAMEINFO_OPEN=Otevřená
+STR_DLGGAMEINFO_TOURN=Turnaj
+STR_DLGGAMEINFO_STRICT=Striktní turnaj
+STR_DLGGAMEINFO_AIADV=Ano (výhoda)
+STR_DLGGAMESETUP_DEFAULTNAME=Já
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=Nastavení kláves
+STR_DLGKEYSETUP_DRIVETANK=Řízení tanku
+STR_DLGKEYSETUP_GUNRANGE=Dosah děla
+STR_DLGKEYSETUP_WEAPONS=Zbraně
+STR_DLGKEYSETUP_VIEW=Pohledy
+STR_DLGKEYSETUP_SCROLL=Posouvání
+STR_DLGKEYSETUP_AUTOSLOWDOWN=Automatické zpomalení
+STR_DLGKEYSETUP_AUTOGUNSIGHT=Automaticky skrýt zaměřovač
+STR_DLGKEYSETUP_FASTER=Rychleji
+STR_DLGKEYSETUP_SLOWER=Pomaleji
+STR_DLGKEYSETUP_TURNLEFT=Otočit vlevo
+STR_DLGKEYSETUP_TURNRIGHT=Otočit vpravo
+STR_DLGKEYSETUP_INCREASE=Zvýšit
+STR_DLGKEYSETUP_DECREASE=Snížit
+STR_DLGKEYSETUP_SHOOT=Střílet
+STR_DLGKEYSETUP_LAYMINE=Položit minu
+STR_DLGKEYSETUP_TANKVIEW=Pohled na tank
+STR_DLGKEYSETUP_PILLVIEW=Pohled na bunkr
+STR_DLGKEYSETUP_SCROLLUP=Nahoru
+STR_DLGKEYSETUP_SCROLLDOWN=Dolů
+STR_DLGKEYSETUP_SCROLLLEFT=Vlevo
+STR_DLGKEYSETUP_SCROLLRIGHT=Vpravo
+
+# Messages dialog
+STR_DLGMSG_BUTTON=Odeslat
+STR_DLGMSG_ALLPLAYERS=Všichni hráči
+STR_DLGMSG_ALLALLIES=Všichni spojenci
+STR_DLGMSG_NEARBY=Všichni v okolí
+STR_DLGMSG_SELECTION=Vybraní hráči
+STR_DLGMSG_SENDPLAYER=Odesílání zprávy {number} hráči
+STR_DLGMSG_SENDPLAYERS=Odesílání zprávy {number} hráčům
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=Informace o síti
+STR_DLGNETINFO_SERVERPING=Ping serveru: {number} ms
+STR_DLGNETINFO_STATUS=Stav:
+STR_DLGNETINFO_ERRORS=Chyby sítě: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=Vyžadováno heslo
+STR_DLGPASSWORD_BLURB=Tato hra vyžaduje heslo:
+
+# Set name dialog
+STR_DLGSETNAME_BLURB=Zadej nové jméno hráče pro svůj tank:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=Nastavení trackeru
+STR_DLGTRACKER_USETRACKER=Používat tracker
+STR_DLGTRACKER_TRACKERADDRESS=Adresa trackeru:
+STR_DLGTRACKER_TRACKERPORT=Port trackeru:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=Systémové informace
+STR_DLGSYSINFO_CPUUSAGE=Využití CPU:
+STR_DLGSYSINFO_SIMMODELING=Modelování simulace:
+STR_DLGSYSINFO_COMPROCESSING=Zpracování komunikace:
+STR_DLGSYSINFO_TOTAL=Celkem:
+
+# TCP/IP setup dialog
+STR_DLGTCP_BLURB=Pro připojení k internetové hře Bolo musíš zadat název (nebo IP adresu) hostitelského počítače se spuštěným Bolo a číslo UDP portu procesu Bolo na tomto počítači.
+STR_DLGTCP_JOIN=Připojit
+STR_DLGTCP_REJOIN=Znovu připojit
+STR_DLGTCP_NEW=Nová
+STR_DLGTCP_TRACKERSETUP=Nastavení trackeru
+STR_DLGTCP_REMEMBER=Zapamatovat jméno hráče
+STR_DLGTCP_MACHINENAME=Název počítače (nebo IP adresa):
+STR_DLGTCP_THEREUDP=UDP port Bolo na tamním počítači:
+STR_DLGTCP_USUDP=UDP port pro Bolo na tomto počítači:
+STR_DLGTCP_NAME=Tvoje jméno hráče ve hře:
+STR_DLGTCP_NEWBLURB=Klikni na „Nová" pro zahájení hry
+STR_DLGTCP_JOINBLURB=Klikni na „Připojit" pro připojení k existující hře
+STR_DLGTCP_REJOINBLURB=Klikni na „Znovu připojit" pro návrat do hry a zpět ke svým věcem
+STR_ERR_DLGTCP_PORTS=Port serveru a vlastní port jsou stejné!
+STR_ERR_DLGTCP_NOTRIGHT=Tady něco nesedí...
+
+# Game finder extra
+
+# Brain errors
+
+# Draw errors
+
+# Font errors
+
+# Game front errors
+STR_GAMEFRONT_LANFINDER_TITLE=Hledač LAN her
+STR_GAMEFRONT_TRACKERFINDER_TITLE=Hledač her přes tracker
+STR_GAMEFRONTERR_JOINGAME=Při pokusu o připojení ke hře došlo k chybě
+
+# Network client errors
+
+# Sound errors
+
+# General WinBolo errors
+STR_WBTIMELIMIT_END=Časový limit vypršel. Hra skončila.
+STR_WBERR_SAVEMAP=Chyba při ukládání mapy (Plný disk?)
+
+# Tutorial strings
+STR_TUTORIAL01=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPřidrž klávesu {ACCEL} a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž {ACCEL} dál. Tank vystoupí z lodě\na loď zůstane uvázána na konci řeky
+STR_TUTORIAL02=Jsi teď na trávě. Na trávě se tank pohybuje\ndocela rychle.\n\n\nPokračuj v mačkání {ACCEL} a jeď dál do lesa.
+STR_TUTORIAL03=Jsi teď v lese. V lese se tank pohybuje pomaleji\nnež na trávě.\n\n\nPokračuj v mačkání {ACCEL} a jeď dál do bažiny.
+STR_TUTORIAL04=Jsi teď v bažině. V bažině se tank pohybuje velmi\npomalu. Naštěstí je před tebou silnice.\n\n\nPokračuj v mačkání {ACCEL} a jeď dál na silnici.
+STR_TUTORIAL05=Jsi teď na silnici. Tank se může po silnici pohybovat\nvelmí rychle a po stisknutí {ACCEL} zrychlí.\n\n\nPokud jedeš příliš rychle, můžeš stisknout {BRAKE}
+STR_TUTORIAL06=Vpředu jsou budovy. Budovy jsou pevné překážky,\nkterými nejde projet, takže si musíš najít cestu\nbludištěm na druhou stranu.\n\nPro otočení tanku vlevo stiskni {LEFT}\nPro otočení tanku vpravo stiskni {RIGHT}
+STR_TUTORIAL07=Tyto kulaté objekty s červenými děly jsou automatické\nbunkry. Budou střílet na každý tank, který se dostane\ndo jejich dosahu.\n\n\nNaštěstí budovy poskytují ochranu před výstřely,\ntakže tě bunkry nezasáhnou, pokud nebudeš čekat\ntak dlouho, že se jim podaří úplně prostřílet\nbudovy.
+STR_TUTORIAL08=Les také poskytuje ochranu před bunkry, ale jiným\nzpůsobem. Kromě výrazného zpomalení tanku jízda\nlesem také omezuje viditelnost.\n\n\nKdyž jsi uvnitř lesa, stále jasně vidíš vše vně,\nale bunkry (a ostatní hráči) tvůj tank nevidí,\npokud se k nim nepřiblížíš dostatečně blízko.
+STR_TUTORIAL09=Nastav tank doprostřed pruhu lesa a jeď přímo na\nsever. Pokud pojedeš rovně a nepřiblížíš se příliš\nk okrajům lesa, bunkry tě neuvidí a nebudou střílet.\n\n\nNejezdi mimo les, nebo tě roztrhají na kusy.\n
+STR_TUTORIAL10=Je tu ještě jeden jednoduchý způsob, jak uniknout\nbunkrům — rychlost.\n\n\nUjisti se, že jsi správně zarovnán se středem\nsilnice, a drž {ACCEL} pro plnou rychlost kolem\nbunkrů.
+STR_TUTORIAL11=Až si tě všimnou, začnou střílet, ale pokud\npůjdeš stále rovně a neztratíš nervy, budeš mimo\ndosah dřív, než tě výstřely zasáhnou.\n\n\nNejezdi ze silnice do bažiny, nebo budeš jako terč\npro bunkry a nebudeš se moci pohybovat dost rychle\nna útěk.
+STR_TUTORIAL12=Před tebou je zásobovací základna. Zásobovací\nzákladny ti dodají granáty ke střelbě, miny k kladení\ntajných pastí a opraví pancíř tvého tanku na plnou\nsilupokud byl poškozen.\n\n\nZastav na zásobovací základně a naplň tank granáty.
+STR_TUTORIAL13=Jsi na zásobovací základně. Tvůj tank se teď\nnaloží granáty a minami, jak ukáží ukazatele vpravo.\nPřed tebou, za budovami, je minové pole.
+STR_TUTORIAL14=Pokud vjedete tankem do minového pole, bude\nzničen. Naštěstí minové pole lze vyčistit střelbou.\nStiskni {FIRE} pro střelbu.\n\nProstřílej díru v budově a pak umísti granát\ndo středu minového pole, aby se detonoval.\nKdyž miny vybuchnou, v zemi vznikne velký kráter,\nkterým lze projet, i když je to stejně pomalé\njako jízda bažinou.
+STR_TUTORIAL15=Vpředu je další minové pole. Použij stejný trik:\nNajeď na zásobovací základnu, prostřílej zeď\na umísti granát do středu minového pole.\n\nTentokrát je ale minové pole u velké řeky\na voda se rozlije do kráterů. Tankem můžeš\njet vodou stejně jako krátery a bažinou.
+STR_TUTORIAL16=WinBolo automaticky posouvá okno, aby ti ukázal\nokolí tanku, ale můžeš použít klávesy\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\npro ruční ovládání pohledu WinBolo.\n\nStiskni teď {SCROLL_UP} pro lepší pohled na\nřeku před tebou.
+STR_TUTORIAL17=Kromě toho, že je velmi pomalá, má jízda vodou\nještě jednu nevýhodu: vyčerpá také zásoby\ngranátů a min tanku.\n\n\nAž se dostaneš na druhou stranu, tank bude stále\nfunkční, ale ztratíš veškerou útočnou schopnost.
+STR_TUTORIAL18=Tentokrát překročíme řeku chytřeji. Místo\npřímé jízdy vodou postavíme most.\n\n\nVyber režim těžby stromů kliknutím na ikonu lesa\n(vlevo nahoře v okně) a klikni na les. Tvůj\nstavitel vyběhne z tanku a pokácí jeden strom\nna stavební materiál.
+STR_TUTORIAL19=Po pokácení stromů vyber nástroj silnice/most\n(druhé tlačítko shora) a klikni myší na řeku\nna konci silnice.\n\n\nTvůj stavitel vyběhne z tanku a postaví jeden\núsek mostu. Klikni znovu pro dokončení mostu\na pak přejeď na druhou stranu.
+STR_TUTORIAL20=Tato řeka je širší než ta předchozí a uprostřed\nje příliš hluboká na stavbu mostu. Pokud se\npokusíš prostě projet, tank se potopí ke dnu\na bude zničen.
+STR_TUTORIAL21=Pro překročení této řeky budeš muset postavit loď.\nLodě vyžadují pět stromů, takže klikni na pět stromů\naby se pokácely. Pak vyber nástroj zeď/loď\n(třetí tlačítko shora) a klikni na vodu pro stavbu lodě.\n\nPokud klikneš na pevninu, postavíš zeď\na budeš muset pokácet více stromů pro stavbu lodě.\nNajeď na loď a přepleť na druhou stranu.
+STR_TUTORIAL22=Před tebou je bunkr a několik zásobovacích základen,\nkteré ti dodají munici. Vezmi si granáty ze zásobovací\nzákladny a zaútoč na bunkr.\n\n\nBunkr bude oplácet palbou, ale pokud tvůj tank bude\nzasažen, můžeš se snadno vrátit na zásobovací\nzákladnu a opravit pancíř na plnou sílu.
+STR_TUTORIAL23=S trpělivostí a opatrností by ses měl zvládnout\nzničit tento bunkr. Využij dovednosti, které ses\nnaučil, aby to bylo snazší:\n\n\nSkryj se v lese, aby tě bunkr neviděl, kácí stromy,\nstav silnice aby se tvůj tank pohyboval rychleji\na stav budovy jako kryt před střelami bunkru.
+STR_TUTORIAL24=Po zničení tohoto bunkru je tvou závěrečnou\nvýzvou kurzu zlikvidovat dva bunkry střežící\nvýchod, postavit loď a uniknout.\n\n\nDávej zvláštní pozor na úroveň pancíře tanku —\npokud bude tank zničen, budeš muset začít\ns novým tankem na nové lodi na moři.
+STR_TUTORIAL25=Gratulace. Dokončil jsi výukový kurz WinBolo.\n\n\n\nTeď si sezvoni přátele ke hře a zjisti, jaké to je\nzávodit s chytrými lidskými soupeři místo\nnehybných bezmyšlenkovitých cílů.\n\nPokud chceš kurz zopakovat, můžeš ho\nspustit znovu z nabídky Nastavení.
+STR_TUTORIAL_START01=Vítej ve výukovém kurzu WinBolo. Tento ostrov\ntě seznámí se základními principy WinBolo a provede\ntě jimi postupně. Každý nový princip bude popsán\nv okně jako je toto.\n\nPo přečtení každé zprávy můžeš pokračovat\nkliknutím na tlačítko „OK" myší nebo stisknutím\nklávesy <Return> na klávesnici
+STR_TUTORIAL_START02=WinBolo je jedinou autorizovanou kopií klasické macintoshové síťové hry Bolo Stuarta Cheshira.\nStrategické tipy a další informace najdeš na oficiálních webových stránkách:\n\nhttps://www.winbolo.com\n\nNebo se k nám přidej na Redditu a Discordu\n
+STR_TUTORIAL_START03=Rychlá poznámka o hraní přes internet.\n\nPokud se připojíš k online hře a vyskytne se hodně\nsíťových chyb, opusť hru ihned,\naby ses nevykazoval ostatním hráčům.
+STR_TUTORIAL_START04=Ovládáš tank, který je právě na lodi na moři.\nStiskni {ACCEL} pro pohyb tanku (a lodě) dopředu\na {BRAKE} pro zpomalení a zastavení.\n\nNemačkej klávesy jako při psaní — přidrž je,\ndokud tank nedosáhne požadované rychlosti,\na pak je pusť. Stiskni teď {ACCEL} pro pohyb\nlodě směrem k pevnině.\n(Nejdřív stiskni <Return> pro zavření okna)
+STR_TUTORIAL01_TOUCH=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPosuň páčku dopředu a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž páčku posunutou dopředu.\nTank vystoupí z lodě a loď zůstane uvázána\nna konci řeky
+STR_TUTORIAL02_TOUCH=Jsi teď na trávě. Na trávě se tank pohybuje\ndocela rychle.\n\n\nDrž páčku posunutou dopředu a jeď dál do lesa.
+STR_TUTORIAL03_TOUCH=Jsi teď v lese. V lese se tank pohybuje pomaleji\nnež na trávě.\n\n\nDrž páčku posunutou dopředu a jeď dál do bažiny.
+STR_TUTORIAL04_TOUCH=Jsi teď v bažině. V bažině se tank pohybuje\nvery pomalu. Naštěstí je před tebou silnice.\n\n\nDrž páčku posunutou dopředu a jeď dál na silnici.
+STR_TUTORIAL05_TOUCH=Jsi teď na silnici. Tank se může pohybovat po\nsilnici velmi rychle a posunutí páčky naplno\ndopředu ho zrychlí.\n\n\nPokud jedeš příliš rychle, potáhni páčku\nzpět pro zpomalení.
+STR_TUTORIAL06_TOUCH=Vpředu jsou budovy. Budovy jsou pevné překážky,\nkterými nejde projet, takže si musíš najít cestu\nbludištěm na druhou stranu.\n\nPosuň páčku vlevo nebo vpravo pro otočení\ntanku tím směrem.
+STR_TUTORIAL10_TOUCH=Je tu ještě jeden jednoduchý způsob, jak uniknout\nbunkrům — rychlost.\n\n\nUjisti se, že jsi správně zarovnán se středem\nsilnice, a posuň páčku naplno dopředu pro\nplnou rychlost kolem bunkrů.
+STR_TUTORIAL14_TOUCH=Pokud vjedete tankem do minového pole, bude\nzničen. Naštěstí minové pole lze vyčistit střelbou.\nKlepni na tlačítko střelby pro střelbu.\n\nProstřílej díru v budově a pak umísti granát\ndo středu minového pole, aby se detonoval.\nKdyž miny vybuchnou, v zemi vznikne velký kráter,\nkterým lze projet, i když je to stejně pomalé\njako jízda bažinou.
+STR_TUTORIAL16_TOUCH=WinBolo automaticky posouvá okno, aby ti ukázal\nokolí tanku, ale mapu můžeš přetáhnout prstem\npro ruční ovládání pohledu.\n\nPřetáhni mapu dolů pro zobrazení řeky\npřed tebou.
+STR_TUTORIAL18_TOUCH=Tentokrát překročíme řeku chytřeji. Místo\npřímé jízdy vodou postavíme most.\n\n\nVyber režim těžby stromů klepnutím na ikonu lesa\n(vlevo nahoře v okně) a klepni na les. Tvůj\nstavitel vyběhne z tanku a pokácí jeden strom\nna stavební materiál.
+STR_TUTORIAL19_TOUCH=Po pokácení stromů vyber nástroj silnice/most\n(druhé tlačítko shora) a klepni na řeku\nna konci silnice.\n\n\nTvůj stavitel vyběhne z tanku a postaví jeden\núsek mostu. Klepni znovu pro dokončení mostu\na pak přejeď na druhou stranu.
+STR_TUTORIAL21_TOUCH=Pro překročení této řeky budeš muset postavit loď.\nLodě vyžadují pět stromů, takže klepni na pět\nstromů aby se pokácely. Pak vyber nástroj zeď/loď\n(třetí tlačítko shora) a klepni na vodu pro stavbu lodě.\n\nPokud klepneš na pevninu, postavíš zeď\na budeš muset pokácet více stromů pro stavbu lodě.\nNajeď na loď a přepleť na druhou stranu.
+STR_TUTORIAL_START01_TOUCH=Vítej ve výukovém kurzu WinBolo. Tento ostrov\ntě seznámí se základními principy WinBolo a provede\ntě jimi postupně. Každý nový princip bude popsán\nv okně jako je toto.\n\nPo přečtení každé zprávy můžeš pokračovat\nklepnutím na tlačítko „OK".
+STR_TUTORIAL_START04_TOUCH=Ovládáš tank, který je právě na lodi na moři.\nPoužij páčku na levé straně obrazovky pro řízení:\npotlač ji dopředu pro zrychlení, potáhni zpět\npro zpomalení a zastavení.\n\nČím dál páčku posuneš, tím rychleji tank jede.\nPosuň páčku dopředu pro pohyb lodě směrem\nk pevnině.\n(Nejdřív klepni na OK pro zavření okna)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=Nemůžeš stavět, dokud tvůj nový muž neseskočí padákem
+LGM_NO_BUILD=Tady nemůžeš stavět
+LGM_INSUFFICIENT_TREES=Nemáš stromy potřebné pro stavbu
+LGM_NO_PILLS=Nemáš žádný bunkr k umístění
+LGM_INSUFFICIENT_MINES=Nemáš žádné miny k umístění
+LGM_BUILDTANK=Muž nemůže stavět na tanku
+LGM_NO_TREE=Tady není žádný strom k pokácení
+LGM_PILL_NO_NEED_REPAIR=Tento bunkr nepotřebuje opravu
+LGM_PILL_NO_BUILD_ON_MINE=Muž nemůže stavět na mině. Zabila by ho.
+LGM_NO_BUILD_UNDER_BOAT=Muž nemůže stavět pod tvou lodí
+
+# In-game messages
+MESSAGE_ASSISTANT=Online asistent
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}" předal kontrolu hráči "{player}"
+MESSAGE_NETSERVER=Síťový server
+MESSAGE_THIS_COMPUTER=Tento počítač
+MESSAGE_CAPTURE_BASE={player} dobyl neutrální základnu
+MESSAGE_CAPTURE_PILL={player} dobyl neutrální bunkr
+MESSAGE_STOLE_PILL={player} ukradl bunkr hráči {other}
+MESSAGE_STOLE_BASE={player} ukradl základnu hráči {other}
+MESSAGE_LGM_DEAD={player} přišel o svého stavitele
+MESSAGE_SAVED_MAP={player} uložil soubor mapy
+MESSAGE_QUIT_GAME={player} opustil hru
+MESSAGE_TIME_LIMIT_EXPIRED=Časový limit vypršel. Hra skončila. Jdi v pokoji
+MESSAGE_TANKSUNK=Tank se potopil v hlubokém moři
+
+# Network errors
+NETERR_TRACKERDNS=Vyhledávání hostitele trackeru selhalo. Oznámení trackeru bylo vypnuto
+NETERR_JOININIT=Na hru, se kterou jsi se pokusil spojit, nepřišla žádná odpověď.\nZvyčajně to znamená jednu z 3 věcí:\n1. Adresa a port jsou zadány špatně.\n2. Jsi za firewallem blokujícím přístup UDP.\n3. Ověř, že tvoje verze WinBolo je stejná jako ve hře
+NETERR_GAMEFULL=Tato hra je právě plná
+NETERR_SERVERCONNECT=Nepodařilo se navázat spojení se serverem. Zkus jiný počítač nebo počkej pár sekund a zkus to znovu.
+NETERR_PASSWORDWRONG=Heslo je nesprávné
+NETERR_PLAYERNAMEINUSE=Tvoje jméno hráče je již používáno. Vyber jiné a zkus to znovu
+NETERR_NONEWPLAYERS=Bohužel, tato hra momentálně nepřijímá hráče
+NETERR_CONNECTNOJOIN=Podařilo se ti připojit ke hře, ale nebylo ti dovoleno se přidat. Pravděpodobně to znamená, že tvoje jméno hráče je obsazeno. Zkus to znovu s novým jménem
+
+# Network status
+NET_STATUS_JOINING=Připojování
+NET_STATUS_OK=OK
+NET_STATUS_FAILED=Selhalo
+NETERR_LOSTCONNECTION=Ztratil jsi spojení se serverem.\nPřepínám do režimu pro jednoho hráče
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=Odeslat zprávu
+STRERR_HELPFILE=Chyba při otevírání souboru nápovědy.
+STR_DLGSKIN_BLURB=Pokud nejsou k dispozici všechny prvky vzhledu, použije se výchozí vestavěný vzhled a zvuky.
+
+# Player name error
+NETERR_MAPSERIALIZE=Server nebyl schopen připravit data mapy. Zkus to prosím znovu
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=Snímkový kmitočet:
+STR_DLGSYSINFO_GRAPHICS=Grafika:
+STR_DLGSYSINFO_AITANKS=Tanky AI:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=Server:
+STR_DLGNETINFO_THISGAME=Tato hra:
+STR_DLGNETINFO_PINGGRAPH=Ping: min {number} / prům {number2} / max {number3} ms
+STR_DLGNETINFO_KBIN=KB/s příj.:
+STR_DLGNETINFO_KBOUT=KB/s odes.:
+STR_DLGNETINFO_PACKETS_RATE=Pakety/s: {number} příj. / {number2} odes.
+STR_DLGNETINFO_KB_RATE=KB/s: {string1} příj. / {string2} odes.
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=Kopírovat seed
+STR_DLGGAMEINFO_AILABEL=Tanky AI:
+STR_DLGGAMEINFO_FULLADV=Plná výhoda
+STR_DLGGAMEINFO_UNLIMITED=Neomezené
+
+# Players panel
+STR_DLGPLAYERS_TITLE=Hráči
+STR_DLGPLAYERS_ALL=Všichni
+STR_DLGPLAYERS_NONE=Nikdo
+STR_DLGPLAYERS_ALLIES=Spojenci
+STR_DLGPLAYERS_NEARBY=V okolí
+STR_LEAVE_ALLIANCE=Opustit alianci
+STR_REQUEST_ALLIANCE=Požádat o alianci
+STR_ALLOW_NEW_PLAYERS=Povolit nové hráče
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=Připojit se ke hře?
+STR_DLGJOIN_BLURB=Opustit aktuální hru a připojit se k serveru?
+STR_DLGJOIN_BUTTON=Připojit
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=Změnit jméno hráče
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(žádná)
+STR_DLGKEYSETUP_PRESSAKEY=Stiskni klávesu...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=Stiskni klávesu pro přiřazení nebo klikni na Zrušit.
+STR_DLGKEYSETUP_CHANGE=Změnit
+STR_DLGKEYSETUP_COL_ACTION=Akce
+STR_DLGKEYSETUP_COL_KEY=Klávesa
+STR_DLGKEYSETUP_QUICKKEYS=Rychlé klávesy
+STR_DLGKEYSETUP_TREE=Strom
+STR_DLGKEYSETUP_ROAD=Silnice
+STR_DLGKEYSETUP_WALL=Zeď
+STR_DLGKEYSETUP_QUICKPILLBOX=Bunkr
+STR_DLGKEYSETUP_QUICKMINE=Mina
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=Nastavení
+STR_DLGSETTINGS_PLAYER=Hráč
+STR_DLGSETTINGS_PLAYERNAME=Jméno hráče:
+STR_DLGSETTINGS_APPLY=Použít
+STR_DLGSETTINGS_SETKEYS=Nastavit klávesy...
+STR_DLGSETTINGS_DISPLAY=Zobrazení
+STR_DLGSETTINGS_WINDOWSIZE=Velikost okna:
+STR_DLGSETTINGS_RELSTEER=Relativní řízení
+STR_DLGSETTINGS_RELSTEER_TIP=Když je vypnuto, joystick ukazuje tanku přímo směr.\nKdyž je zapnuto, joystick otáčí vlevo/vpravo relativně k tanku.
+STR_DLGSETTINGS_TABLETMODE=Režim UI tabletu
+STR_DLGSETTINGS_LABELS=Popisky
+STR_DLGSETTINGS_MSGNAMES=Jména ve zprávách:
+STR_DLGSETTINGS_TANKLABELS=Popisky tanků:
+STR_DLGSETTINGS_SOUND=Zvuk
+STR_DLGSETTINGS_MESSAGES=Zprávy
+STR_DLGSETTINGS_GAME=Hra
+
+# Menu bar
+STR_MENU_FILE=Soubor
+STR_MENU_NEW=Nová
+STR_MENU_SAVE_MAP=Uložit mapu
+STR_MENU_EXIT=Konec
+STR_MENU_EDIT=Upravit
+STR_MENU_FRAME_RATE=Snímkový kmitočet
+STR_MENU_WINDOW_SIZE=Velikost okna
+STR_MENU_NORMAL=Normální
+STR_MENU_DOUBLE=Dvojitý
+STR_MENU_TRIPLE=Trojitý
+STR_MENU_QUAD=Čtyřnásobný
+STR_MENU_CUSTOM_RESIZABLE=Vlastní (měnitelná velikost)
+STR_MENU_REQUIRES=Vyžaduje {number}x{number2} — překračuje displej
+STR_MENU_SMOOTH_SCROLLING=Plynulé posouvání
+STR_MENU_AUTO_SCROLLING=Automatické posouvání
+STR_MENU_SHOW_GUNSIGHT=Zobrazit zaměřovač
+STR_MENU_MSG_NAMES_SUB=Jména odesílatelů zpráv
+STR_MENU_TANK_LABELS_SUB=Popisky tanků
+STR_NONE=Žádné
+STR_SHORT=Krátké
+STR_LONG=Dlouhé
+STR_MENU_NO_OWN_LABEL=Neoznačovat vlastní tank
+STR_MENU_PILLBOX_LABELS=Popisky bunkrů
+STR_MENU_BASE_LABELS=Popisky zásobovacích základen
+STR_MENU_HIDE_MAIN=Skrýt hlavní pohled
+STR_MENU_DEVICE=Zařízení:
+STR_MENU_DESKTOP=Plocha
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=Nastavit klávesy
+STR_MENU_SOUND_EFFECTS=Zvukové efekty
+STR_MENU_BACKGROUND_SOUND=Zvuk na pozadí
+STR_MENU_SOUND_KEEPALIVE=Udržování zvuku
+STR_MENU_NEWSWIRE_MSGS=Zprávy Newswire
+STR_MENU_ASSISTANT_MSGS=Zprávy asistenta
+STR_MENU_AI_MSGS=Zprávy Brain AI
+STR_MENU_NETSTATUS_MSGS=Zprávy stavu sítě
+STR_MENU_NETDEBUG_MSGS=Zprávy ladění sítě
+STR_MENU_SETTINGS=Nastavení...
+STR_MENU_PLAYERS=Hráči
+STR_MENU_SEND_MESSAGE=Odeslat zprávu
+STR_MENU_SELECT_ALL=Vybrat vše
+STR_MENU_SELECT_NONE=Zrušit výběr
+STR_MENU_SELECT_ALLIES=Vybrat spojence
+STR_MENU_SELECT_NEARBY=Vybrat blízké tanky
+STR_MENU_BRAINS=Brains
+STR_MENU_MANUAL=Příručka
+STR_MENU_HELP=Nápověda
+STR_MENU_ABOUT=O programu
+STR_MENU_LEAVE_GAME=Opustit hru
+STR_BRAINSETTINGS_NONE=(žádná nastavení)
+STR_BRAINSETTINGS_TITLE=Nastavení Brain
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=Výukový kurz
+STR_DLGSETTINGS_PLAY_TUTORIAL=Spustit výukový kurz
+STR_DLGSETTINGS_SHOW_ON_MAIN=Zobrazit v hlavní nabídce
+STR_DLGSETTINGS_CRASH_REPORTING=Hlášení pádů
+STR_DLGSETTINGS_ENABLE_CRASH=Povolit hlášení pádů
+STR_DLGSETTINGS_CRASH_HELP=Pomoc s vylepšením WinBolo odesíláním hlášení o pádech
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=Změny se projeví při příštím spuštění.
+STR_CLOSE=Zavřít
+STR_DLGSETTINGS_WINTITLE=WinBolo - Nastavení
+STR_DLGKEYSETUP_WINTITLE=WinBolo - Nastavení kláves
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo - Lobby hry
+STR_UNKNOWN=Neznámé
+STR_DLGGAMEINFO_AIFULL=Ano (plné)
+STR_DLGLOBBY_HIDDEN=Skryté
+STR_DLGLOBBY_VISIBLE=Viditelné
+STR_DLGLOBBY_DOWNLOADING=Stahování mapy...
+STR_DLGLOBBY_MAP_UNAVAILABLE=Náhled mapy není k dispozici
+STR_DLGLOBBY_PILLBOXES=Bunkry:
+STR_DLGLOBBY_BASES=Základny:
+STR_DLGLOBBY_STARTS=Starty:
+STR_DLGLOBBY_SKIPMAP=Přeskočit mapu
+STR_DLGLOBBY_CANCELSKIP=Zrušit přeskočení
+STR_DLGLOBBY_VOTES={number}/{number2} hlasů pro přeskočení
+STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_READY=Připraven
+STR_DLGLOBBY_UNREADY=Nepřipraven
+STR_DLGLOBBY_BALANCE_TEAMS=Vyrovnat týmy
+STR_DLGLOBBY_APPLY_BALANCE=Použít vyrovnání
+STR_DLGLOBBY_DISMISS=Zavřít
+STR_DLGLOBBY_LEAVE=Opustit
+STR_DLGLOBBY_LEAVE_TITLE=Opustit hru?
+STR_DLGLOBBY_LEAVE_BLURB=Opravdu chceš opustit tuto hru?
+STR_DLGLOBBY_BOT_FMT={player} [Bot]
+STR_DLGLOBBY_YOU_FMT={player} (Ty)
+STR_DLGLOBBY_STARTING_FMT=Start za {number}...
+STR_DLGLOBBY_LOSTCONNECTION=Ztratil jsi spojení se serverem.
+STR_DLGLOBBY_ME=Já
+STR_DLGLOBBY_PLAYER_COL=Hráč
+STR_DLGLOBBY_PING_COL=Ping
+STR_DLGLOBBY_TEAM_COL=Tým
+STR_DLGLOBBY_READY_COL=Připraven
+STR_DLGLOBBY_SLOT_COL=Slot
+STR_DLGLOBBY_NAME_COL=Jméno hráče
+STR_DLGLOBBY_ACTION_COL=Akce
+STR_DLGLOBBY_ADDBOT=Přidat bota
+STR_DLGLOBBY_REMOVE=Odebrat
+STR_DLGLOBBY_MAP_TAB=Mapa
+STR_DLGLOBBY_GAME_LBL=Hra:
+STR_DLGLOBBY_MINES_LBL=Miny:
+STR_DLGLOBBY_AI_LBL=AI:
+STR_DLGLOBBY_TIME_LBL=Čas:
+STR_DLGLOBBY_TIME_HMS={number}h {string1}m {string2}s
+STR_DLGLOBBY_TIME_MS={number}m {string1}s
+STR_DLGLOBBY_TIME_S={number}s
+STR_DLGLOBBY_MAP_LBL=Mapa:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo - Nastavení hry
+STR_DLGGAMESETUP_SELECTAMAP=Vybrat mapu:
+STR_BACK=Zpět
+STR_DLGGAMESETUP_BASES_STARTS=Základny: {number}  Starty: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=Bunkry: {number}
+STR_DLGGAMESETUP_CHANGEMAP=Změnit mapu
+STR_DLGGAMESETUP_GAMETYPE_LBL=Typ hry
+STR_DLGGAMESETUP_OPENGAME_SHORT=Otevřená hra
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=Skryté miny
+STR_DLGGAMESETUP_AICOMPPLAYERS=Hráči AI počítače
+STR_DLGGAMESETUP_ALLOW=Povolit
+STR_DLGGAMESETUP_ADVANTAGE=Výhoda
+STR_DLGGAMESETUP_FULLMAP=Celá mapa
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=Časový limit
+STR_DLGGAMESETUP_TEAMSETUP=Nastavení týmů
+STR_DLGGAMESETUP_AINUM=Počet hráčů AI:
+STR_DLGGAMESETUP_NOBRAINS=Žádné Brains nenalezeny
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=Ty
+STR_DLGGAMESETUP_BOT_FMT=Bot {number}
+STR_DLGGAMESETUP_NOAI=Žádné počítačové tanky
+STR_DLGGAMESETUP_ALLOWAI=Povolit počítačové tanky
+STR_DLGGAMESETUP_ALLOWADV=Povolit s výhodou
+STR_DLGGAMESETUP_ALLOWFULL=Povolit s celou mapou
+STR_DLGGAMESETUP_NOPREVIEW=Žádný náhled
+STR_DLGGAMESETUP_STARTGAME=Spustit hru
+STR_DLGGAMESETUP_STRICT_SHORT=Striktní
+STR_DLGTCP_WINTITLE=WinBolo - Nastavení UDP (Internet)
+STR_ERR_TITLE=Chyba
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
+STR_DLGBROWSER_REFRESH=Obnovit
+STR_DLGBROWSER_LOADING=Načítání seznamu her{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=Klikni na Obnovit pro načtení her...
+STR_DLGBROWSER_LAN_INSTRUCTION=Klikni na Obnovit pro prohledání...
+STR_DLGBROWSER_GAMES_LOADED=Hry načteny.
+STR_DLGBROWSER_NO_GAMES=Žádné hry nenalezeny. Začni vlastní!
+STR_DLGBROWSER_SEARCH_FAILED=Hledání selhalo.
+STR_DLGBROWSER_SEARCHING=Hledám...
+STR_DLGBROWSER_COL_SERVER=Server
+STR_DLGBROWSER_COL_MAP=Mapa
+STR_DLGBROWSER_COL_PLAYERS=Hráči
+STR_DLGBROWSER_COL_TYPE=Typ
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=Základny
+STR_DLGBROWSER_COL_PILLS=Bunkry
+STR_DLGBROWSER_COL_PING=Ping
+STR_DLGBROWSER_FILTER=Filtr:
+STR_DLGBROWSER_FILTER_ALLTYPES=Všechny typy
+STR_DLGBROWSER_FILTER_UNLOCKED=Jen odemčené
+STR_DLGBROWSER_FILTER_ALLLOBBY=Celé lobby
+STR_DLGBROWSER_FILTER_INLOBBY=V lobby
+STR_DLGBROWSER_FILTER_STARTING=Spouštějící se
+STR_DLGBROWSER_STATUS_PINGING=Stav: {string1}  |  {number} serverů  |  Pingování {number2}...
+STR_DLGBROWSER_STATUS=Stav: {string1}  |  {number} serverů
+STR_DLGBROWSER_NEWGAME=Nová hra
+STR_DLGBROWSER_PLAYER_NAME_BTN=Jméno hráče
+STR_DLGBROWSER_MANUAL=Příručka
+STR_DLGBROWSER_ERR_VERSION=Server používá jinou verzi WinBolo.
+STR_DLGBROWSER_ERR_NEEDNAME=Nejdřív musíš nastavit jméno hráče.
+STR_DLGBROWSER_AI_ADV=Výh.
+STR_DLGBROWSER_AI_FULL=Plná
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo - Prohlížeč záznamů
+STR_DLGWBN_TITLE=WinBolo.net — prohlížeč záznamů
+STR_DLGWBN_TAB_RECENT=Nedávné
+STR_DLGWBN_TAB_TOPRATED=Nejlépe hodnocené
+STR_DLGWBN_TAB_MOSTDOWNLOADED=Nejčastěji stahované
+STR_DLGWBN_TAB_SEARCH=Hledat
+STR_DLGWBN_LOADING=Načítání...
+STR_DLGWBN_NOCONNECT=Nepodařilo se připojit k WinBolo.net
+STR_DLGWBN_MINPLAYERS=Min. hráčů
+STR_DLGWBN_SEARCHFILTERS=Filtry hledání:
+STR_DLGWBN_HINT_PLAYER=Hráč
+STR_DLGWBN_HINT_MAP=Mapa
+STR_DLGWBN_SEARCH_BTN=Hledat
+STR_DLGWBN_ERROR=Chyba: {string1}
+STR_DLGWBN_COL_MAP=Mapa
+STR_DLGWBN_COL_TYPE=Typ
+STR_DLGWBN_COL_PLAYERS=Hráči
+STR_DLGWBN_COL_RATING=Hodnocení
+STR_DLGWBN_COL_SIZE=Velikost
+STR_DLGWBN_COL_DATE=Datum
+STR_DLGWBN_PLAYERS_LBL=Hráčů: 
+STR_DLGWBN_NUMPLAYERS_FMT=Hráčů: {number}
+STR_DLGWBN_DURATION=Délka: {string1}
+STR_DLGWBN_RATING=Hodnocení: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=Stažení: {number}
+STR_DLGWBN_SIZE=Velikost: {string1}
+STR_DLGWBN_COMMENTS_FMT=Komentáře ({number}):
+STR_DLGWBN_NOCOMMENTS=Zatím žádné komentáře.
+STR_DLGWBN_ADDCOMMENT=Přidat komentář:
+STR_DLGWBN_HINT_COMMENT=Napište komentář...
+STR_DLGWBN_POST=Zveřejnit
+STR_DLGWBN_POSTED=Komentář zveřejněn!
+STR_DLGWBN_LOADINGDETAIL=Načítání detailů...
+STR_DLGWBN_DOWNLOADING=Stahování...
+STR_DLGWBN_VIEWLOG=Zobrazit záznam
+STR_DLGWBN_NOLOG=Soubor záznamu není pro tuto hru k dispozici.
+STR_DLGWBN_PREV=< Předch.
+STR_DLGWBN_NEXT=Další >
+STR_DLGWBN_PAGE=Stránka {number} z {number2}  ({number3} celkem)
+STR_DLGWBN_OPENFILE=Otevřít soubor...
+STR_DLGWBN_PARSERR=Nepodařilo se zpracovat odpověď
+STR_DLGWBN_NETERR=Síťová chyba
+STR_DLGWBN_LOADERR=Nepodařilo se načíst detaily
+STR_DLGWBN_DOWNLOAD_FAILED=Stahování selhalo
+STR_DLGWBN_NOSAVEPATH=Nelze určit cestu pro uložení
+STR_DLGWBN_FETCHERR=Načítání selhalo
+STR_DLGWBN_UNKNOWN_ERR=Neznámá chyba
+STR_DLGWBN_FILEFILTER=Soubory záznamů WinBolo
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo - Nastavit jméno hráče
+STR_DLGSETNAME_WBN_LOCKED=Tvoje jméno hráče je nastaveno přes WinBolo.net.
+STR_DLGSETNAME_PLEASE_ENTER=Zadej prosím své jméno hráče.
+STR_DLGSETNAME_BLANK_ERR=Omlouváme se, toto pole nesmí být prázdné
+STR_DLGSETNAME_STAR_ERR=Omlouváme se, jména nesmí začínat znakem '*'
+STR_DLGSETNAME_INUSE_ERR=Toto jméno již používá jiný hráč.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo - Výběr vzhledu
+STR_DLGSKIN_NOSKIN=Žádný vzhled (výchozí)
+STR_DLGSKIN_NA=N/A
+STR_DLGSKIN_SELECT=Vybrat vzhled:
+STR_DLGSKIN_NAME_LBL=Název:
+STR_DLGSKIN_AUTHOR_LBL=Autor:
+STR_DLGSKIN_NOTES_LBL=Poznámky:
+STR_DLGSKIN_LOADERR=Nelze načíst soubor vzhledu
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo - Nastavení trackeru
+STR_DLGTRACKER_INVALIDPORT=Neplatné číslo portu.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=Kontroluji WinBolo.net...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=Přihlášen
+STR_DLGWBN_EXPIRES=(vyprší {string1})
+STR_DLGWBN_SIGN_OUT=Odhlásit se z WBN
+STR_DLGWBN_NOT_SIGNED_IN=Nepřihlášen
+STR_DLGWBN_SIGN_IN_BTN=Přihlásit se do WBN...
+STR_DLGWBN_SIGNIN_TITLE=Přihlášení do WinBolo.net
+STR_DLGWBN_SIGNIN_BLURB=Přihlas se pomocí svého uživatelského jména a hesla WinBolo.net. Token bude uložen, takže nebudeš muset heslo zadávat znovu.
+STR_DLGWBN_USERNAME=Uživatelské jméno:
+STR_DLGWBN_PASSWORD=Heslo:
+STR_DLGWBN_SIGNINGIN=Přihlašování...
+STR_DLGWBN_SIGNIN_OK=Přihlásit
+STR_DLGWBN_NEEDCREDS=Zadej prosím uživatelské jméno a heslo.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo - Výběr hry
+STR_DLGWELCOME_SINGLE=Jeden hráč
+STR_DLGWELCOME_LOCAL=Lokální
+STR_DLGWELCOME_MAPEDITOR=Editor map
+STR_DLGWELCOME_LOGVIEWER=Prohlížeč záznamů
+STR_DLGWELCOME_INTERNET=Internet
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (vestavěná)
+STR_MAPCHOOSER_LOADMAP=Načíst mapu
+STR_MAPCHOOSER_LOADDEVICE=Načíst ze zařízení...
+STR_MAPCHOOSER_GENRANDOM=Generovat náhodnou mapu
+STR_MAPCHOOSER_RANDOMMAP=Náhodná mapa
+STR_MAPCHOOSER_CLICKGEN=Klikni na Generovat pro náhled
+STR_MAPCHOOSER_NOPREVIEW=Náhled není k dispozici
+STR_MAPCHOOSER_STATS=Bunkry: {number}  Základny: {number2}  Starty: {number3}
+STR_MAPCHOOSER_MAPFILES=Soubory map
+STR_MAPCHOOSER_ALLFILES=Všechny soubory
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=Stav
+STR_TABLET_KILLS_DEATHS=Zabití: {number}  Úmrtí: {number2}
+STR_TABLET_TANK_RESOURCES=Zásoby tanku
+STR_TABLET_SHELLS=Granáty
+STR_TABLET_MINES=Miny
+STR_TABLET_ARMOUR=Pancíř
+STR_TABLET_TREES=Stromy
+STR_TABLET_PILLBOXES=Bunkry
+STR_TABLET_BASES=Základny
+STR_TABLET_TANKS=Tanky
+STR_TABLET_PILL_FMT=Bunkr {number}
+STR_TABLET_BASE_FMT=Základna {number}
+STR_TABLET_TANK_FMT=Tank {number}
+STR_TABLET_BTN_MSG=Zpr.
+STR_TABLET_BTN_PLY=Hráč
+STR_TABLET_BTN_SET=Nast.
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=Nastavit jméno hráče
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Otevřít...
+STR_MAPEDIT_MENU_RECENT=Nedávné soubory
+STR_MAPEDIT_MENU_SAVE=Uložit
+STR_MAPEDIT_MENU_SAVEAS=Uložit jako...
+STR_MAPEDIT_MENU_EXPORT=Exportovat jako PNG...
+STR_MAPEDIT_MENU_RETURN=Vrátit se do nabídky
+STR_MAPEDIT_MENU_UNDO=Zpět
+STR_MAPEDIT_MENU_REDO=Znovu
+STR_MAPEDIT_MENU_CUT=Vyjmout
+STR_MAPEDIT_MENU_COPY=Kopírovat
+STR_MAPEDIT_MENU_PASTE=Vložit
+STR_MAPEDIT_MENU_MAP=Mapa
+STR_MAPEDIT_MENU_RANDOMMAP=Náhodná mapa...
+STR_MAPEDIT_MENU_TEXT=Text...
+STR_MAPEDIT_MENU_IMPORTIMG=Importovat obrázek...
+STR_MAPEDIT_MENU_VALIDATE=Ověřit
+STR_MAPEDIT_MENU_MIRROR_H=Zrcadlit vodorovně {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Zrcadlit svisle {string1}
+STR_MAPEDIT_MENU_ROTATE_90=Otočit 90° CW {string1}
+STR_MAPEDIT_MENU_ROTATE_180=Otočit 180° {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(výběr)
+STR_MAPEDIT_SCOPE_FULLMAP=(celá mapa)
+STR_MAPEDIT_MENU_OPTIONS=Možnosti
+STR_MAPEDIT_MENU_CENTER=Vycentrovat mapu
+STR_MAPEDIT_MENU_POINT_STARTS=Ukázat startovní pozice
+STR_MAPEDIT_MENU_SHOWGRID=Zobrazit mřížku
+STR_MAPEDIT_MENU_SHOWMINES=Zobrazit miny
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Zobrazit dosah bunkrů
+STR_MAPEDIT_MENU_WINDOW=Okno
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Terén
+STR_MAPEDIT_WIN_TOOLS=Nástroje
+STR_MAPEDIT_WIN_INSPECTOR=Inspektor
+STR_MAPEDIT_WIN_OBJECTS=Objekty
+STR_MAPEDIT_WIN_OVERVIEW=Přehled
+STR_MAPEDIT_WIN_STATS=Statistiky
+STR_MAPEDIT_WIN_STAMP_LIB=Knihovna razítek
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Širé moře
+STR_MAPEDIT_TERR_GRASS=Tráva
+STR_MAPEDIT_TERR_FOREST=Les
+STR_MAPEDIT_TERR_ROAD=Silnice
+STR_MAPEDIT_TERR_BUILDING=Budova
+STR_MAPEDIT_TERR_HALFBUILDING=Poloviční budova
+STR_MAPEDIT_TERR_RIVER=Řeka
+STR_MAPEDIT_TERR_SWAMP=Bažina
+STR_MAPEDIT_TERR_CRATER=Kráter
+STR_MAPEDIT_TERR_RUBBLE=Trosky
+STR_MAPEDIT_TERR_BOAT=Loď
+STR_MAPEDIT_TERR_MINETOOL=Nástroj min
+STR_MAPEDIT_MINE_CHECKERED=Šachovnicové
+STR_MAPEDIT_MINE_FULL=Plné
+STR_MAPEDIT_MINE_RANDOM=Náhodné
+STR_MAPEDIT_MINE_CLEAR=Vyčistit miny
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Tužka
+STR_MAPEDIT_TOOL_LINE=Čára
+STR_MAPEDIT_TOOL_RECT=Obdélník
+STR_MAPEDIT_TOOL_RECTFILL=Vyplněný obdélník
+STR_MAPEDIT_TOOL_OVAL=Ovál
+STR_MAPEDIT_TOOL_OVALFILL=Vyplněný ovál
+STR_MAPEDIT_TOOL_SELECT=Výběr
+STR_MAPEDIT_TOOL_FILL=Výplň
+STR_MAPEDIT_TOOL_MAZE=Bludiště
+STR_MAPEDIT_TOOL_GENERATE=Generovat
+STR_MAPEDIT_TOOL_WAND=Hůlka
+STR_MAPEDIT_TOOL_TEXT=Text
+STR_MAPEDIT_TOOL_TEXT_TIP=Text (vyrazit text na mapu)
+STR_MAPEDIT_BRUSH=Štětec
+STR_MAPEDIT_BRUSH_SQUARE=Čtverec
+STR_MAPEDIT_BRUSH_CIRCLE=Kruh
+STR_MAPEDIT_OBJTOOL_BASE=Základna
+STR_MAPEDIT_OBJTOOL_PILL=Bunkr
+STR_MAPEDIT_OBJTOOL_START=Start
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Dlaždice: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Dlaždice: --
+STR_MAPEDIT_STATUS_ZOOM=Zoom: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Upraveno
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Neuložené změny
+STR_MAPEDIT_UNSAVED_BLURB=Mapa má neuložené změny.\nChceš uložit před pokračováním?
+STR_MAPEDIT_GOTO_TITLE=Přejít na souřadnice
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=Žádný objekt nevybrán
+STR_MAPEDIT_INSP_BASE_HASH=Základna #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Bunkr #{number}
+STR_MAPEDIT_INSP_START_HASH=Start #{number}
+STR_MAPEDIT_INSP_POSITION=Pozice: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Vlastník
+STR_MAPEDIT_INSP_ARMOUR=Pancíř
+STR_MAPEDIT_INSP_SPEED=Rychlost
+STR_MAPEDIT_INSP_DIR=Směr
+STR_MAPEDIT_OWNER_NEUTRAL=Neutrální
+STR_MAPEDIT_OWNER_PLAYER=Hráč {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Základny ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Bunkry ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Starty ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Pancíř: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Směr: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Ověření
+STR_MAPEDIT_VAL_NOISSUES=Žádné problémy
+STR_MAPEDIT_VAL_ERRORS={number} chyb
+STR_MAPEDIT_VAL_NOERRORS=0 chyb
+STR_MAPEDIT_VAL_WARNINGS={number} varování
+STR_MAPEDIT_VAL_NOWARNINGS=0 varování
+STR_MAPEDIT_VAL_ERRORS_TITLE=Chyby ověření
+STR_MAPEDIT_VAL_HASERRORS=Mapa má {number} chyb. Oprav je před uložením.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Generovat náhodnou mapu
+STR_MAPEDIT_GENRANDAREA_TITLE=Generovat náhodnou oblast
+STR_MAPEDIT_GENSCOPE_SELECTION=Rozsah: výběr ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Rozsah: celá mapa ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Nástroj textu
+STR_MAPEDIT_TEXT_LABEL=Text:
+STR_MAPEDIT_TEXT_BUILTIN=Vestavěné
+STR_MAPEDIT_TEXT_SYSTEM=Systémové písmo
+STR_MAPEDIT_TEXT_FONTSIZE=Velikost písma
+STR_MAPEDIT_TEXT_STYLE=Styl
+STR_MAPEDIT_TEXT_FONTSIZE_S=Malé (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Střední (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Velké (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=XL (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Normální
+STR_MAPEDIT_TEXT_STYLE_BOLD=Tučné
+STR_MAPEDIT_TEXT_STYLE_ITALIC=Kurzíva
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Tučná kurzíva
+STR_MAPEDIT_TEXT_FONTFAMILY=Rodina písem
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (přiložené)
+STR_MAPEDIT_TEXT_SIZEPX=Velikost (px)
+STR_MAPEDIT_TEXT_NOFONTS=Žádná písma nenalezena. Přidej soubory .ttf do data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=Terén textu
+STR_MAPEDIT_TEXT_TERR_EDGE=Terén okraje
+STR_MAPEDIT_TEXT_TERR_BG=Pozadí
+STR_MAPEDIT_TEXT_PREVIEW=Náhled ({number}x{number2} dlaždic):
+STR_MAPEDIT_TEXT_TOOLARGE=Text je příliš velký (max. 256x256 dlaždic) nebo chyba písma
+STR_MAPEDIT_GENERATE_BTN=Generovat
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Nastavení bludiště
+STR_MAPEDIT_MAZE_REGION=Oblast: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Přetáhni na mapě pro generování
+STR_MAPEDIT_ALGORITHM=Algoritmus
+STR_MAPEDIT_ALGO_LABYRINTH=Labyrint
+STR_MAPEDIT_ALGO_OPEN=Otevřený
+STR_MAPEDIT_WALL=Zeď
+STR_MAPEDIT_CORRIDOR=Chodba
+STR_MAPEDIT_ENTRIES=Vstupy
+STR_MAPEDIT_ROOMS=Místnosti
+STR_MAPEDIT_WALLTERRAIN=Terén zdí
+STR_MAPEDIT_CORRIDORTERRAIN=Terén chodeb
+STR_MAPEDIT_GENSETTINGS_TITLE=Nastavení generování
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Rozložení terénu
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Miny: {number} ({string1}% souše)
+STR_MAPEDIT_STATS_SPATIAL=Prostorová analýza
+STR_MAPEDIT_STATS_LAND_COVERAGE=Pokrytí souší: {string1}%
+STR_MAPEDIT_STATS_LARGEST=Největší pevnina: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=Vzdálenost základen: {string1} dlaždic
+STR_MAPEDIT_STATS_PILL_SPACING=Vzdálenost bunkrů: {string1} dlaždic
+STR_MAPEDIT_STATS_SYMMETRY=Symetrie: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=Zrcadlo-H: {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=Zrcadlo-V: {string1}%
+STR_MAPEDIT_STATS_4CORNER=4-rohové: {string1}%
+STR_MAPEDIT_STATS_ROTATE180=Otočení-180: {string1}%
+STR_MAPEDIT_STATS_STALE=(neaktuální — klikni na Obnovit)
+STR_MAPEDIT_STATS_REFRESH=Obnovit analýzu
+STR_MAPEDIT_STATS_STARTS=Starty
+STR_MAPEDIT_TERRNAME_HALFBLD=Poloviční budova
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Importovat obrázek
+STR_MAPEDIT_IMG_FILE=Soubor:
+STR_MAPEDIT_IMG_NONE=(žádný)
+STR_MAPEDIT_BROWSE=Procházet...
+STR_MAPEDIT_IMG_SOURCE=Zdroj: {number}x{number2} pixelů
+STR_MAPEDIT_IMG_PREVIEW_LBL=Náhled:
+STR_MAPEDIT_IMG_SCALEMODE=Režim škálování:
+STR_MAPEDIT_IMG_FIT_SEL=Přizpůsobit výběru
+STR_MAPEDIT_IMG_FIT_PLAY=Přizpůsobit hrací ploše
+STR_MAPEDIT_IMG_OUTPUT=Výstup: {number} x {number2} dlaždic
+STR_MAPEDIT_IMG_COLORS=Barvy:
+STR_MAPEDIT_IMG_REDETECT=Znovu zjistit
+STR_MAPEDIT_IMG_COLORMAP=Mapování barev
+STR_MAPEDIT_IMPORT_BTN=Importovat
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Přiložená razítka
+STR_MAPEDIT_STAMP_USER=Uživatelská razítka
+STR_MAPEDIT_STAMP_NOUSER=Zatím žádná uživatelská razítka.
+STR_MAPEDIT_STAMP_HINT=Použij „Uložit schránku..." pro vytvoření.
+STR_MAPEDIT_DELETE=Smazat
+STR_MAPEDIT_STAMP_SAVECLIP=Uložit schránku...
+STR_MAPEDIT_STAMP_TIP_COPY=Nejdřív zkopíruj výběr (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=Importovat...
+STR_MAPEDIT_STAMP_UNTITLED=Bez názvu
+STR_MAPEDIT_STAMP_SAVE_TITLE=Uložit razítko
+STR_MAPEDIT_STAMP_SAVE_BLURB=Zadej název pro toto razítko:
+STR_MAPEDIT_STAMP_SAVE_NAME=Název
+STR_MAPEDIT_SAVE_BTN=Uložit
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=Exportovat jako PNG
+STR_MAPEDIT_PREVIEW=Náhled
+STR_MAPEDIT_EXPORT_MODE=Režim:
+STR_MAPEDIT_EXPORT_FULL=Plné rozlišení (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Velikost náhledu:
+STR_MAPEDIT_EXPORT_OPTIONS=Možnosti:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Zobrazit objekty
+STR_MAPEDIT_EXPORT_SHOWMINES=Zobrazit miny
+STR_MAPEDIT_EXPORT_SHOWGRID=Zobrazit mřížku (pouze plný režim)
+STR_MAPEDIT_EXPORT_BTN=Exportovat...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Zamčeno: při náhodném generování se nezmění
+STR_MAPGEN_UNLOCKED_TIP=Odemčeno: při náhodném generování se změní
+STR_MAPGEN_GENERATOR=Generátor
+STR_MAPGEN_TYPE_TOURNAMENT=Turnaj
+STR_MAPGEN_TYPE_NATURAL=Přírodní
+STR_MAPGEN_TYPE_MAZE=Bludiště
+STR_MAPGEN_TYPE_FRACTAL=Fraktální
+STR_MAPGEN_SEED=Seed
+STR_MAPGEN_RANDOMIZE=Náhodovat
+STR_MAPGEN_SYMMETRY=Symetrie
+STR_MAPGEN_SYM_4CORNER=Zrcadlení 4-rohové
+STR_MAPGEN_SYM_MIRROR_H=Zrcadlení vodorovné
+STR_MAPGEN_SYM_MIRROR_V=Zrcadlení svislé
+STR_MAPGEN_SYM_ROT180=Otočení 180°
+STR_MAPGEN_SYM_ROT90=Otočení 90°
+STR_MAPGEN_LANDMASS_PCT=Pevnina %
+STR_MAPGEN_ROUGHNESS=Členitost
+STR_MAPGEN_ROUGH_LOW=Nízká
+STR_MAPGEN_ROUGH_MED=Střední
+STR_MAPGEN_ROUGH_HIGH=Vysoká
+STR_MAPGEN_INCLUDE_ROADS=Zahrnout silnice
+STR_MAPGEN_MAP_STYLE=Styl mapy
+STR_MAPGEN_STYLE_OCEAN=Oceán
+STR_MAPGEN_STYLE_CONTINENT=Kontinent
+STR_MAPGEN_STYLE_ISLANDS=Ostrovy
+STR_MAPGEN_STYLE_ARCHIPELAGO=Souostroví
+STR_MAPGEN_STYLE_INLAND=Vnitrozemský
+STR_MAPGEN_TERRAIN_MIX=Složení terénu (% podíl souše):
+STR_MAPGEN_GRASS_PCT=Tráva %
+STR_MAPGEN_FOREST_PCT=Les %
+STR_MAPGEN_BUILDING_PCT=Budovy %
+STR_MAPGEN_SWAMP_PCT=Bažiny %
+STR_MAPGEN_RIVER_PCT=Řeky %
+STR_MAPGEN_BOAT_PCT=Lodě %
+STR_MAPGEN_REMAINING_GRASS=Zbývající tráva: {number}%
+STR_MAPGEN_MINE_DENSITY=Hustota min %
+STR_MAPGEN_RIVER_COUNT=Počet řek
+STR_MAPGEN_CITY_COUNT=Počet měst
+STR_MAPGEN_MAZE_COUNT=Počet bludišť
+STR_MAPGEN_WALL_THICKNESS=Tloušťka zdí
+STR_MAPGEN_CORRIDOR_WIDTH=Šířka chodeb
+STR_MAPGEN_CITY_ROOMS=Místnosti měst
+STR_MAPGEN_LAND_COVERAGE=Pokrytí souší %
+STR_MAPGEN_DETAIL_PASSES=Průchody detailů
+STR_MAPGEN_COAST_JAG=Členitost pobřeží
+STR_MAPGEN_TERRAIN_LAYERS=Vrstvy terénu
+STR_MAPGEN_RIVERS=Řeky
+STR_MAPGEN_LAKES=Jezera
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} se připojil ke hře.
+STR_LV_HAS_JOINED={string1} se připojil ke hře
+STR_LV_ALLY_REQUEST={player} požádal o alianci s {other}
+STR_LV_ALLY_ACCEPT={player} přijal alianci s {other}
+STR_LV_ALLY_LEAVE={player} opustil alianci
+STR_LV_MSG_ALL=Zpráva všem od {player}: {string1}
+STR_LV_MSG_PLAYERS=Zpráva od {player} pro {other}: {string1}
+STR_LV_MSG_SERVER=Zpráva serveru: {string1}
+STR_LV_PLAYER_DIED={player} zemřel
+STR_LV_PLAYER_KILLED={player} právě zabil hráče {other}
+STR_LV_PLAYER_REJOINED={player} se znovu připojil ke hře.
+STR_LV_PLAYER_LEAVING={player} opouští hru.
+STR_LV_LOBBY_OPENED=Lobby otevřeno.
+STR_LV_GAME_STARTED=Hra zahájena.
+STR_LV_PLAYER_READY={player} je připraven.
+STR_LV_PLAYER_UNREADY={player} již není připraven.
+STR_LV_PLAYER_LEFT_TEAM={player} opustil svůj tým.
+STR_LV_PLAYER_JOINED_TEAM={player} se připojil k týmu {number}.
+STR_LV_COUNTDOWN_START=Odpočítávání zahájeno.
+STR_LV_COUNTDOWN_CANCEL=Odpočítávání zrušeno.
+STR_LV_MAP_SKIP_VOTE={player} hlasoval pro přeskočení mapy.
+STR_LV_MAP_SKIPPED=Mapa přeskočena. Nová mapa: {string1}
+STR_LV_TEAM_BALANCE=Vyrovnání týmů použito.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Otevřít
+STR_LV_MENU_ACTION=Akce
+STR_LV_PLAY=Přehrát
+STR_LV_PAUSE=Pauza
+STR_LV_STOP=Zastavit
+STR_LV_FAST_FORWARD=Rychlý posun vpřed
+STR_LV_REWIND=Přetočit zpět
+STR_LV_MODE=Režim
+STR_LV_MODE_INFO=Informace
+STR_LV_SELECT_TEAM=Vybrat tým
+STR_LV_USE_TEAM_COLOURS=Použít barvy týmů
+STR_LV_TANK_CENTRED=Tank vycentrován
+STR_LV_DNS_LOOKUPS=DNS vyhledávání
+STR_LV_TEAM_COLOURS=Barvy týmů
+STR_LV_MENU_WINDOWS=Okna
+STR_LV_WIN_CONTROLS=Ovládání
+STR_LV_WIN_EVENTS=Události
+STR_LV_WIN_GAMEINFO=Informace o hře
+STR_LV_WIN_ITEMINFO=Informace o položce
+STR_LV_RESET_WINDOWS=Resetovat pozice oken
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Přiřaď barvy každému týmu hráčů:
+STR_LV_PLAYER_LBL=Hráč {number}:
+STR_LV_NEUTRAL_LBL=Neutrální:
+STR_LV_ABOUT_TITLE=WinBolo Log Viewer
+STR_LV_VERSION_FMT=Verze: {string1}
+STR_LV_LICENSE=Tento program je svobodný software; můžeš jej\nšířit a/nebo upravovat za podmínek GNU General\nPublic License vydané nadací Free Software Foundation.
+STR_LV_WEBSITE_LBL=Webové stránky:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Šedá
+STR_LV_COL_KHAKI=Khaki
+STR_LV_COL_GREEN=Zelená
+STR_LV_COL_PINK=Růžová
+STR_LV_COL_YELLOW=Žlutá
+STR_LV_COL_LIGHTBLUE=Světle modrá
+STR_LV_COL_ORANGE=Oranžová
+STR_LV_COL_LIGHTPURPLE=Světle fialová
+STR_LV_COL_AQUA=Azurová
+STR_LV_COL_LIGHTGREEN=Světle zelená
+STR_LV_COL_LIGHTGREY=Světle šedá
+STR_LV_COL_RED=Červená
+STR_LV_COL_BLUE=Modrá
+STR_LV_COL_BROWN=Hnědá
+STR_LV_COL_LIGHTPINK=Světle růžová
+STR_LV_COL_PALEGREEN=Bledě zelená
+STR_LV_COL_PURPLE=Fialová
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} s
+STR_LV_INFO_MAP=Název mapy: {string1}
+STR_LV_INFO_GAMETYPE=Typ hry: {string1}
+STR_LV_INFO_HIDDENMINES=Skryté miny: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Počítačové tanky: {string1}
+STR_LV_INFO_TIME_LIMIT=Časový limit: {string1}
+STR_LV_INFO_START_DELAY=Zpoždění startu: {string1}
+STR_LV_INFO_WBN_KEY=Klíč WBN:
+STR_LV_INFO_START_TIME=Čas zahájení: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=Žádná položka nevybrána
+STR_LV_LOCATION_FMT=Umístění: {string1}
+STR_LV_OWNER_LBL=Vlastník: {string1}
+STR_LV_ARMOUR_FMT=Pancíř: {number}
+STR_LV_SHELLS_FMT=Granáty: {number}
+STR_LV_MINES_FMT=Miny: {number}
+STR_LV_IN_TANK_FMT=V tanku: {string1}
+STR_LV_CENTER_ON_MAP=Vycentrovat na mapě
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Zpět
+STR_LV_PLAY_BTN=Přehrát >
+STR_LV_FWD_BTN=Vpřed >>
+STR_LV_SPEED_LBL=Rychlost:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} zbývá
+STR_LV_NO_LOG_LOADED=Žádný záznam nenačten
+
+# Log viewer events panel
+STR_LV_COPY=Kopírovat
+STR_LV_COPY_ALL=Kopírovat vše
+STR_LV_CLEAR_ALL=Vymazat vše
+STR_LV_AUTO_SCROLL=Automatické posouvání
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=Dosažen konec souboru záznamu
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Přiblížení
+STR_DLGSETTINGS_PERFORMANCE=Výkon
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=Ztratil jsi spojení se serverem.\nNávrat do nabídky.
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Jazyk:
+STR_DLGLANG_MIDGAME_NOTE=Existující záznamy v protokolu zpráv nezmění jazyk, dokud nebudou znovu vygenerovány.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=Příliš mnoho základen: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=Příliš mnoho bunkrů: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=Příliš mnoho startů: {number} (max {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=Základna #{number} na ({number2},{number3}): na neprojezdném terénu
+STR_MAPVALIDATE_BASE_BORDER_ZONE=Základna #{number} na ({number2},{number3}): v hraniční zóně min
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Bunkr #{number} na ({number2},{number3}): na neprojezdném terénu
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Bunkr #{number} na ({number2},{number3}): v hraniční zóně min
+STR_MAPVALIDATE_START_NOT_DEEP=Start #{number} na ({number2},{number3}): musí být na širém moři
+STR_MAPVALIDATE_START_BORDER_ZONE=Start #{number} na ({number2},{number3}): v hraniční zóně min
+STR_MAPVALIDATE_NO_STARTS=Žádné startovní pozice neumístěny — mapa je nehratelná
+STR_MAPVALIDATE_ONE_START=Pouze 1 startovní pozice — pouze pro jednoho hráče
+STR_MAPVALIDATE_BASE_OVERLAP=Základna #{number} a Základna #{number2} se překrývají na ({number3},{number4})
+STR_MAPVALIDATE_PILL_OVERLAP=Bunkr #{number} a Bunkr #{number2} se překrývají na ({number3},{number4})
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=Základna #{number} a Bunkr #{number2} se překrývají na ({number3},{number4})
+STR_MAPVALIDATE_START_OVERLAP=Start #{number} a Start #{number2} se překrývají na ({number3},{number4})
+STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} a Základna #{number2} se překrývají na ({number3},{number4})
+STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} a Bunkr #{number2} se překrývají na ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Vyžaduje přesměrování portu, aby se mohli připojit hráči mimo LAN. (Připravuje se: automatické nastavení NAT.)
+STR_GAMEFRONTERR_MAPLOAD=Načtení mapy ze serveru se nezdařilo
+STR_GAMEFRONTERR_STARTSERVER=Chyba při spouštění serveru
+STR_DLGLOBBY_PORTMAP_CHECKING=Kontroluji dostupnost serveru…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server je dostupný
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server je nedostupný
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Pokouším se otevřít port firewallu pomocí UPnP / NAT-PMP a ověřit, že se k tobě tracker dostane přes tvou síť. Obvykle to trvá do 30 sekund.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port byl automaticky přesměrován pomocí UPnP/NAT-PMP na %s:%u. Připojující se hráči se připojí přímo bez dalších kroků.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Přímé přesměrování portu se nepodařilo nastavit, ale NAT traversal je aktivní. Připojující se hráči se koordinují přes tracker, aby pronikli firewallem tvé sítě. Funguje to ve většině domácích sítí; hráči za symetrickým NAT nebo NAT operátora (CGN) se nemusí podařit připojit.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Zjištěn symetrický NAT — tvá síť přepisuje zdrojový port pro každý cíl, což znemožňuje, aby tě připojující se hráči dosáhli i přes NAT traversal. Pro úspěšné hostování ručně přesměruj UDP port %u na svém routeru na tento počítač.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Nepodařilo se automaticky otevřít port firewallu (UPnP/NAT-PMP odmítl nebo není dostupný) a tracker nemohl potvrdit obousměrnou dostupnost. Pro úspěšné hostování ručně přesměruj UDP port %u na svém routeru na tento počítač.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Dostupnost serveru
+STR_DLGLOBBY_TEST_CONNECTIVITY=Otestovat připojení
+STR_DLGLOBBY_TEST_TESTING=Testuji…
+STR_DLGLOBBY_TEST_REACHABLE=Dostupné z internetu
+STR_DLGLOBBY_TEST_NO_REPLY=Žádná odpověď od trackeru
+STR_DLGSETTINGS_NETWORK=Síť
+STR_DLGSETTINGS_NET_HELP=Nastavení se projeví u další hostované hry.
+STR_DLGSETTINGS_USE_UPNP=Použít UPnP / NAT-PMP pro automatické přesměrování portu
+STR_DLGSETTINGS_USE_NATTRAV=Použít NAT traversal (hole-punching) přes tracker

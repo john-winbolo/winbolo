@@ -884,6 +884,22 @@ static void sdl3DrawShowLoadingScreen(void) {
   SDL_DestroyTexture(logoTex);
 }
 
+/* Map the active BCP-47 language code to the Sarasa Mono region that
+ * carries its CJK glyphs, or NULL for non-CJK languages. Sarasa Mono
+ * is a true monospace (Iosevka Latin merged with Source Han Sans),
+ * which keeps the columnar status panels aligned when mixing Latin
+ * and CJK characters. The picker normalises codes to lowercase
+ * (lang.c langPickerScan); compare case-insensitively to also accept
+ * codes set by other paths. */
+static const char *sarasaMonoFontPath(const char *langCode) {
+  if (!langCode || !*langCode) return NULL;
+  if (SDL_strcasecmp(langCode, "ja")    == 0) return "data/fonts/SarasaMonoJ-Regular.ttf";
+  if (SDL_strcasecmp(langCode, "ko")    == 0) return "data/fonts/SarasaMonoK-Regular.ttf";
+  if (SDL_strcasecmp(langCode, "zh-CN") == 0) return "data/fonts/SarasaMonoSC-Regular.ttf";
+  if (SDL_strcasecmp(langCode, "zh-TW") == 0) return "data/fonts/SarasaMonoTC-Regular.ttf";
+  return NULL;
+}
+
 bool sdl3DrawSetup(int zoomFactor) {
   gZoomFactor = zoomFactor;
 
@@ -986,27 +1002,64 @@ bool sdl3DrawSetup(int zoomFactor) {
   /* --- Now load fonts at the correct zoom --- */
   bool ttfOk = TTF_Init();
   if (ttfOk) {
+    /* For CJK languages, prefer Sarasa Mono (Iosevka Latin merged with
+     * Source Han Sans) — true monospace with correct half-width/full-
+     * width cells, so the columnar status panels and message overlay
+     * stay aligned when mixing Latin and CJK. SDL_ttf can't merge
+     * fonts cleanly the way ImGui can, so this is a swap, not a chain.
+     * Fall back to Courier Prime if the Sarasa file is missing. */
+    char langCode[32];
+    langCode[0] = '\0';
+    gameFrontGetLanguageCode(langCode, (int)sizeof(langCode));
+    const char *sarasaRel = sarasaMonoFontPath(langCode);
+    const char *courierRel = "data/fonts/CourierPrime-Regular.ttf";
+
 #if defined(__EMSCRIPTEN__)
-    const char *fontPath = "/data/CourierPrime-Regular.ttf";
+    /* Emscripten preload uses a leading slash. */
+    static char sarasaBuf[1024];
+    const char *sarasaPath = NULL;
+    if (sarasaRel) {
+      SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "/%s", sarasaRel);
+      sarasaPath = sarasaBuf;
+    }
+    const char *courierPath = "/data/fonts/CourierPrime-Regular.ttf";
 #elif defined(__ANDROID__)
     /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
      * asset manager when given a relative path.  Don't prepend BasePath. */
-    const char *fontPath = "data/CourierPrime-Regular.ttf";
+    const char *sarasaPath  = sarasaRel;
+    const char *courierPath = courierRel;
 #else
-    const char *relPath = "data/CourierPrime-Regular.ttf";
-    /* Use SDL_GetBasePath() to resolve font path relative to the executable,
-       so it works regardless of CWD */
     const char *base = SDL_GetBasePath();
-    static char fontBuf[1024];
+    static char sarasaBuf[1024];
+    static char courierBuf[1024];
     if (base) {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
+      SDL_snprintf(courierBuf, sizeof(courierBuf), "%s%s", base, courierRel);
+      if (sarasaRel) SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s%s", base, sarasaRel);
     } else {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
+      SDL_snprintf(courierBuf, sizeof(courierBuf), "%s", courierRel);
+      if (sarasaRel) SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s", sarasaRel);
     }
-    const char *fontPath = fontBuf;
+    const char *sarasaPath  = sarasaRel ? sarasaBuf : NULL;
+    const char *courierPath = courierBuf;
 #endif
-    gFontMsg  = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
-    gFontKD   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
+
+    /* Probe Sarasa Mono once via SDL_IOFromFile so we can warn cleanly
+     * before TTF_OpenFont sees a missing file. */
+    const char *fontPath = courierPath;
+    if (sarasaPath) {
+      SDL_IOStream *probe = SDL_IOFromFile(sarasaPath, "rb");
+      if (probe) {
+        SDL_CloseIO(probe);
+        fontPath = sarasaPath;
+      } else {
+        SDL_Log("sdl3DrawSetup: Sarasa Mono font %s missing for language %s — "
+                "falling back to Courier Prime (CJK glyphs will tofu)",
+                sarasaPath, langCode);
+      }
+    }
+
+    gFontMsg   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
+    gFontKD    = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
     gFontTiny  = TTF_OpenFont(fontPath,  8 * gZoomFactor); /* pill/base status labels */
     gFontLabel = TTF_OpenFont(fontPath, 10 * gZoomFactor); /* pill/base main view labels */
   }
@@ -1217,7 +1270,7 @@ static void sdl3DrawAdaptRenderTarget(void) {
 
   /* Reload fonts at new zoom */
   {
-    const char *relPath = "data/CourierPrime-Regular.ttf";
+    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
     const char *base = SDL_GetBasePath();
     static char fontBuf[1024];
     if (base) {
@@ -1315,6 +1368,52 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                          (float)(gZoomFactor * SDL3_SCREEN_W),
                          (float)(gZoomFactor * SDL3_SCREEN_H) };
     SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
+  } else if (tabletMode) {
+    /* Tablet chrome: beveled gray background matching desktop background.bmp style.
+       Draw via SDL so it appears behind the game tiles (which draw next).
+       Panel borders in the gutters are drawn later by renderTabletBackground()
+       in sdl3imgui_tablet.cpp via ImGui's BackgroundDrawList. */
+    int scrW, scrH;
+    {
+      SDL_RendererLogicalPresentation logMode;
+      SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+      if (scrW <= 0 || scrH <= 0)
+        SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+    }
+    float ps = (float)scrH / 480.0f;
+    if (ps < 0.7f) ps = 0.7f;
+    float border = 2.0f * ps;
+    float vpPad = 3.0f * ps;
+
+    /* Fill entire screen with chrome gray */
+    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+    SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
+    SDL_RenderFillRect(gRenderer, &fullScr);
+
+    /* Inset bevel around the game viewport */
+    float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom);
+    float gamePixH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * effectiveZoom);
+    float bx = (float)tabletOriginX - vpPad - border;
+    float by = (float)tabletOriginY - vpPad - border;
+    float bw = gamePixW + (vpPad + border) * 2;
+    float bh = gamePixH + (vpPad + border) * 2;
+    /* Dark edge on top and left */
+    SDL_SetRenderDrawColor(gRenderer, 64, 64, 64, 255);
+    SDL_FRect topE  = { bx, by, bw, border };
+    SDL_FRect leftE = { bx, by + border, border, bh - border };
+    SDL_RenderFillRect(gRenderer, &topE);
+    SDL_RenderFillRect(gRenderer, &leftE);
+    /* Light edge on bottom and right */
+    SDL_SetRenderDrawColor(gRenderer, 160, 160, 160, 255);
+    SDL_FRect botE   = { bx, by + bh - border, bw, border };
+    SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
+    SDL_RenderFillRect(gRenderer, &botE);
+    SDL_RenderFillRect(gRenderer, &rightE);
+    /* Black fill inside bevel (game tiles draw over this) */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_FRect inner = { bx + border, by + border,
+                        bw - border * 2, bh - border * 2 };
+    SDL_RenderFillRect(gRenderer, &inner);
   }
 
   /* In tablet mode, temporarily override gZoomFactor so that sprite
@@ -1323,10 +1422,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   int savedZoomFactor = gZoomFactor;
   if (tabletMode) {
     gZoomFactor = effectiveZoom;
-    /* Apply drag scroll pixel offset for smooth sub-tile scrolling */
-    edgeX += gDragOffsetX;
-    edgeY += gDragOffsetY;
   }
+  /* Apply scroll pixel offset for smooth sub-tile scrolling.
+     Source is touch drag in tablet mode, or arrow-key smooth scroll
+     on desktop.  Value is 0 when neither is active. */
+  edgeX += gDragOffsetX;
+  edgeY += gDragOffsetY;
 
   /* Override-mode arrow-key pan.  Applies on top of tablet drag
    * offset.  Scroll-wheel zoom is applied later (after originX/Y +
@@ -1730,8 +1831,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
        Use BLENDMODE_NONE so that any alpha < 255 stored in the render target
        (e.g. from anti-aliased tile sprites drawn with BLENDMODE_NONE) doesn't
        cause semi-transparency when composited onto the window.
-       Use gray (107,107,107) to match chrome and hide any 1px rounding gaps. */
-    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+       Black letterbox/pillarbox fill — visible when the window aspect ratio
+       differs from the game (e.g. fullscreen on a widescreen monitor). */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
     SDL_RenderFillRect(gRenderer, NULL);
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
@@ -1850,8 +1952,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     gGameDestRect.h = destH;
     gGameScale = destW / (float)gGameRTWidth;
 
-    /* Gray background to match chrome and hide any 1px rounding gaps */
-    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+    /* Black letterbox/pillarbox fill — visible when window aspect differs
+       from the game (e.g. fullscreen on a widescreen monitor). */
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
     SDL_RenderFillRect(gRenderer, NULL);
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);

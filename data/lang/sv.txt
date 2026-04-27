@@ -1,0 +1,1086 @@
+# WinBolo Swedish language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=Svenska
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_OK=OK
+STR_DLGOPENING_BUTTON2=Avsluta
+
+# Language dialog
+STR_DLGLANG_NAME=Svenska
+STR_DLGLANG_AUTHOR_CAPTION=Författare: 
+STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
+STR_DLGLANG_NOTES_CAPTION=Kommentarer: 
+STR_DLGLANG_NOTES=Ingen.
+STR_DLGLANG_DEFAULTNOTE=Obs: För ofullständiga översättningar används engelska som reservspråk.
+
+# About dialog
+STR_DLGABOUT_TITLE=Om WinBolo
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=Alliansförfrågan
+STR_DLGALLIANCE_ACCEPT=Acceptera
+STR_DLGALLIANCE_DECLINE=Avböj
+STR_DLGALLIANCE_BLURB={player} begär allians. Acceptera?
+
+# Game finder dialog
+STR_YES=Ja
+STR_NO=Nej
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=Spelinfo
+STR_DLGGAMEINFO_MAPNAME=Karta: 
+STR_DLGGAMEINFO_NUMPLAYERS=Spelare: {number}
+STR_DLGGAMEINFO_GAMETYPE=Speltyp: 
+STR_DLGGAMEINFO_HIDDENMINES=Dolda minor: 
+STR_DLGGAMEINFO_TIMELIMIT=Tidsgräns:
+
+# Game setup dialog
+STR_CANCEL=Avbryt
+STR_DLGGAMESETUP_TITLE=Spelinställningar
+STR_DLGGAMESETUP_CHOOSEMAP=Välj karta
+STR_DLGGAMESETUP_RADIO1=Öppet spel (förbeväpnat)
+STR_DLGGAMESETUP_RADIO2=Turnering (gratis ammunition tidigt)
+STR_DLGGAMESETUP_RADIO3=Strikt turnering (ingen gratis ammunition)
+STR_DLGGAMESETUP_HIDDENMINES=Tillåt dolda minor
+STR_DLGGAMESETUP_PASSWORD=Spellösenord
+STR_DLGGAMESETUP_MINUTES=minuter
+STR_DLGGAMESETUP_SECONDS=sekunder
+STR_DLGGAMESETUP_STARTDELAY=Spelets startfördröjning
+STR_DLGGAMESETUP_TIMELIMIT=Spelets tidsgräns
+STR_DLGGAMEINFO_TIMEREMAINING=Ungefär {number} minut(er)
+STR_DLGGAMEINFO_OPEN=Öppet
+STR_DLGGAMEINFO_TOURN=Turnering
+STR_DLGGAMEINFO_STRICT=Strikt turnering
+STR_DLGGAMEINFO_AIADV=Ja (fördel)
+STR_DLGGAMESETUP_DEFAULTNAME=Jag
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=Tangentinställningar
+STR_DLGKEYSETUP_DRIVETANK=Kör tank
+STR_DLGKEYSETUP_GUNRANGE=Skottvidd
+STR_DLGKEYSETUP_WEAPONS=Vapen
+STR_DLGKEYSETUP_VIEW=Vyer
+STR_DLGKEYSETUP_SCROLL=Rulla
+STR_DLGKEYSETUP_AUTOSLOWDOWN=Automatisk inbromsning
+STR_DLGKEYSETUP_AUTOGUNSIGHT=Dölj siktet automatiskt
+STR_DLGKEYSETUP_FASTER=Snabbare
+STR_DLGKEYSETUP_SLOWER=Långsammare
+STR_DLGKEYSETUP_TURNLEFT=Sväng vänster
+STR_DLGKEYSETUP_TURNRIGHT=Sväng höger
+STR_DLGKEYSETUP_INCREASE=Öka
+STR_DLGKEYSETUP_DECREASE=Minska
+STR_DLGKEYSETUP_SHOOT=Skjut
+STR_DLGKEYSETUP_LAYMINE=Lägg ut mina
+STR_DLGKEYSETUP_TANKVIEW=Tankvy
+STR_DLGKEYSETUP_PILLVIEW=Bunkervy
+STR_DLGKEYSETUP_SCROLLUP=Upp
+STR_DLGKEYSETUP_SCROLLDOWN=Ned
+STR_DLGKEYSETUP_SCROLLLEFT=Vänster
+STR_DLGKEYSETUP_SCROLLRIGHT=Höger
+
+# Messages dialog
+STR_DLGMSG_BUTTON=Skicka
+STR_DLGMSG_ALLPLAYERS=Alla spelare
+STR_DLGMSG_ALLALLIES=Alla allierade
+STR_DLGMSG_NEARBY=Alla i närheten
+STR_DLGMSG_SELECTION=Valda spelare
+STR_DLGMSG_SENDPLAYER=Skickar meddelande till {number} spelare
+STR_DLGMSG_SENDPLAYERS=Skickar meddelande till {number} spelare
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=Nätverksinfo
+STR_DLGNETINFO_SERVERPING=Serverpingning: {number} ms
+STR_DLGNETINFO_STATUS=Status:
+STR_DLGNETINFO_ERRORS=Nätverksfel: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=Lösenord krävs
+STR_DLGPASSWORD_BLURB=Det här spelet kräver ett lösenord:
+
+# Set name dialog
+STR_DLGSETNAME_BLURB=Ange ett nytt spelarnamn för din tank:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=Tracker-konfiguration
+STR_DLGTRACKER_USETRACKER=Använd tracker
+STR_DLGTRACKER_TRACKERADDRESS=Trackeradress:
+STR_DLGTRACKER_TRACKERPORT=Trackerport:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=Systeminformation
+STR_DLGSYSINFO_CPUUSAGE=CPU-användning:
+STR_DLGSYSINFO_SIMMODELING=Simmodellering:
+STR_DLGSYSINFO_COMPROCESSING=Kommunikationsbearbetning:
+STR_DLGSYSINFO_TOTAL=Totalt:
+
+# TCP/IP setup dialog
+STR_DLGTCP_BLURB=För att gå med i ett Bolo-spel via Internet måste du ange namn (eller IP-adress) till en värdmaskin som kör Bolo samt UDP-portnumret för Bolo-processen på den maskinen.
+STR_DLGTCP_JOIN=Gå med
+STR_DLGTCP_REJOIN=Återanslut
+STR_DLGTCP_NEW=Nytt
+STR_DLGTCP_TRACKERSETUP=Tracker-inställningar
+STR_DLGTCP_REMEMBER=Kom ihåg spelarnamn
+STR_DLGTCP_MACHINENAME=Maskinnamn (eller IP-adress):
+STR_DLGTCP_THEREUDP=UDP-port för Bolo på den maskinen:
+STR_DLGTCP_USUDP=UDP-port för Bolo på den här maskinen:
+STR_DLGTCP_NAME=Ditt spelarnamn i spelet:
+STR_DLGTCP_NEWBLURB=Klicka på "Nytt" för att starta ett spel
+STR_DLGTCP_JOINBLURB=Klicka på "Gå med" för att gå med i ett befintligt spel
+STR_DLGTCP_REJOINBLURB=Klicka på "Återanslut" för att återansluta och återta dina gamla tillgångar
+STR_ERR_DLGTCP_PORTS=Server- och egna portar är desamma!
+STR_ERR_DLGTCP_NOTRIGHT=Något är fel här...
+
+# Game finder extra
+
+# Brain errors
+
+# Draw errors
+
+# Font errors
+
+# Game front errors
+STR_GAMEFRONT_LANFINDER_TITLE=LAN-spelfinnare
+STR_GAMEFRONT_TRACKERFINDER_TITLE=Tracker-spelfinnare
+STR_GAMEFRONTERR_JOINGAME=Det uppstod ett fel vid försöket att gå med i spelet
+
+# Network client errors
+
+# Sound errors
+
+# General WinBolo errors
+STR_WBTIMELIMIT_END=Tidsgränsen har löpt ut. Spelet har avslutats.
+STR_WBERR_SAVEMAP=Fel vid sparande av karta (Disk full?)
+
+# Tutorial strings
+STR_TUTORIAL01=Framför dig finns en kort flod som leder inåt land. Håll\nnedtryckt tangenten {ACCEL} för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla {ACCEL} nedtryckt. Tanken\nstiger av båten och båten lämnas förtöjd vid flodens slut
+STR_TUTORIAL02=Du befinner dig nu på gräset. Tanken rör sig ganska\nsnabbt på gräs.\n\n\nFortätt trycka på {ACCEL} för att köra framåt mot skogen.
+STR_TUTORIAL03=Du befinner dig nu i skogen. Tanken rör sig långsammare\ni skogen än på gräs.\n\n\nFortätt trycka på {ACCEL} för att köra framåt mot träsket.
+STR_TUTORIAL04=Du befinner dig nu i träsket. Tanken rör sig mycket\nlångsamt i träsk. Som tur är finns det en väg framåt.\n\n\nFortätt trycka på {ACCEL} för att köra framåt till vägen.
+STR_TUTORIAL05=Du befinner dig nu på vägen. Tanken kan röra sig mycket\nsnabbt på väg och om du trycker {ACCEL} ökar tanken farten.\n\n\nOm du tycker att du går för fort kan du trycka {BRAKE}
+STR_TUTORIAL06=Det finns några byggnader framåt. Byggnader är solida\nhinder som du inte kan köra igenom, så du måste\nhitta din väg genom labyrinten till den andra sidan.\n\nFör att svänga tanken vänster tryck {LEFT}\nFör att svänga tanken höger tryck {RIGHT}
+STR_TUTORIAL07=Dessa runda föremål med röda kanoner som sticker ut är\nautomatiska bunkrar. De skjuter mot varje tank\ninom räckvidd.\n\n\nLyckligtvis ger byggnaderna skydd mot\nskotten, så bunkrarna kan inte träffa dig\nutan att du väntar så länge att de hinner\nskjuta sig igenom byggnaderna.
+STR_TUTORIAL08=Skogen ger också skydd mot bunkrar, men på ett\nannat sätt. Förutom att bromsa tanken en\nhel del begränsar körning i skogen även sikten.\n\n\nNär du befinner dig i skogen kan du fortfarande\ntydligt se allt utanför skogen, men bunkrar (och\nandra spelare) kan inte se din tank om de inte\nkommer mycket nära.
+STR_TUTORIAL09=Rikta in din tank mot mitten av skogsremsan\noch kör rakt norrut. Om du kör rakt\noch inte avviker för nära skogskanterna\nkommer bunkrarna inte att se dig och de skjuter inte.\n\n\nKör inte utanför skogen, annars blir du sprängd.\n
+STR_TUTORIAL10=Det finns ett annat enkelt sätt att undkomma bunkrar –\nfart.\n\n\nSe till att du är rätt inriktad mot mitten\nav vägen och håll {ACCEL} för att köra i full fart förbi\nbunkrarna.
+STR_TUTORIAL11=När de märker dig börjar de skjuta, men om\ndu fortsätter rakt framåt och inte tappar\nnerven är du utom räckvidd innan skotten kan\ntreäffa dig.\n\n\nKör inte av vägen ut i träsket, annars blir du\nett stillastående mål för bunkrarna och du kan inte\nröra dig snabbt nog för att fly.
+STR_TUTORIAL12=Framför dig finns en försörjningsbas. Försörjningsbaser ger\ndig granater att skjuta, minor att lägga ut hemliga\nfällor med, och de reparerar också tankens pansar\ntill fullt om det har skadats.\n\n\nStanna på försörjningsbasen och ladda upp tanken\nmed granater.
+STR_TUTORIAL13=Du befinner dig på försörjningsbasen. Din tank\nladdar nu upp med granater och minor, vilket\nindikatorerna till höger visar. Framför dig,\nbortom byggnaderna, finns ett minfält.
+STR_TUTORIAL14=Om du kör in i minfältet förstörs tanken. Som tur är kan\ndu röja ett minfält genom att skjuta. Tryck {FIRE} för att skjuta.\n\nSkjut ett hål genom byggnaden och landa sedan ett\nskott i mitten av minfältet för att detonera det.\nNär du spränger minorna skapar de en stor\nkrater i marken som du kan köra igenom,\nom än lika långsamt som i träsk.
+STR_TUTORIAL15=Framför finns ytterligare ett minfält. Gör samma sak igen:\nKör till försörjningsbasen, skjut igenom\nmuren och landa ett skott i mitten av minfältet\nför att detonera det.\n\nDen här gången är minfältet dock intill en stor\nflod och vatten flödar in i kratrarna. Du kan\nköra tanken genom vattnet precis som genom\nkratrar och träsk.
+STR_TUTORIAL16=WinBolo rullar automatiskt fönstret för att visa\nomgivningen kring din tank, men du kan använda\ntangenterna {SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\nför att manuellt styra vad WinBolo visar.\n\nTryck {SCROLL_UP} nu för att få en bättre vy av\nfloden framför dig.
+STR_TUTORIAL17=Förutom att vara mycket långsamt har körning i vatten\nytterligare en nackdel: Det tömmer också tankens\nförråd av granater och minor.\n\n\nNär du kommer till den andra sidan är tanken\nfortfarande funktionsduglig, men du har förlorat\nall offensiv förmåga.
+STR_TUTORIAL18=Den här gången ska vi vara mer listiga vid\nflodkorsningen. I stället för att köra rakt igenom\nvattnet ska vi bygga en bro.\n\n\nVälj trädfarmningsläge genom att klicka på skogsikonen\n(uppe till vänster i fönstret) och klicka på skogen.\nDin byggare springer ut ur tanken och skördar ett\nträd som byggmaterial.
+STR_TUTORIAL19=Efter att ha samlat lite trä, välj väg/bro-verktyget\n(den andra knappen uppifrån) och klicka med musen\npå floden vid vägens slut.\n\n\nDin byggare springer ut ur tanken och bygger ett\nbrosegment. Klicka igen för att slutföra bron\noch kör sedan till den andra sidan.
+STR_TUTORIAL20=Den här floden är bredare än den förra och i mitten är\nden för djup för att bygga en bro. Om du försöker köra\nrakt igenom sjunker tanken till botten och förstörs.
+STR_TUTORIAL21=För att korsa den här floden måste du bygga en båt. Båtar\nkräver fem träd, så klicka på de fem träden för att skörda dem.\nVälj sedan mur/båt-verktyget (den tredje knappen uppifrån)\noch klicka på vattnet för att bygga en båt.\n\nOm du klickar på land bygger du en mur i stället\noch du måste skörda fler träd för att bygga en båt.\nKör upp på båten och kör till den andra sidan.
+STR_TUTORIAL22=Det finns en bunker framåt och några försörjningsbaser som\nger dig ammunition. Hämta granater från\nförsörjningsbasen och attackera bunkern.\n\n\nDen skjuter tillbaka, men om din tank träffas kan du enkelt\nåtervända till försörjningsbasen för att reparera pansaret\ntill fullt styrka igen.
+STR_TUTORIAL23=Med tålamod och försiktighet bör du kunna förstöra den\nhär bunkern. Använd de färdigheter du lärt dig för att göra\ndet lättare:\n\n\nGöm dig i skogen så att bunkern inte kan se dig,\nskörda träd, bygg vägar för att tanken ska röra sig\nsnabbare och bygg byggnader för att ge skydd mot\nbunkereld.
+STR_TUTORIAL24=Efter att du lyckats besegra den här bunkern är din sista\nutmaning i tutorialen att ta ut de två\nbunkrarna som vaktar utgången, bygga en båt och fly.\n\n\nVar noga med att hålla koll på tankens pansarnivå –\nom din tank förstörs måste du börja om\nmed en ny tank på en ny båt ute till havs.
+STR_TUTORIAL25=Grattis! Du har genomfört WinBolo-tutorialen.\n\n\n\nOrdna nu med några vänner att spela med och se\nvad det är som tävlar mot intelligenta mänskliga\nmotståndare i stället för stillastående, tanklösa mål.\n\nOm du vill spela om tutorialen senare kan du\nstarta den igen från menyn Inställningar.
+STR_TUTORIAL_START01=Välkommen till WinBolo-tutorialen. Den här ön presenterar\ngrundprinciperna i WinBolo och leder dig igenom\ndem ett i taget. Varje ny princip beskrivs\ni ett fönster som det här.\n\nEfter att ha läst varje meddelande kan du fortsätta genom\natt klicka på "OK" med musen eller helt enkelt\ntrycka på <Return>-tangenten på tangentbordet
+STR_TUTORIAL_START02=WinBolo är den enda auktoriserade klonen av Stuart Cheshires klassiska Macintosh-nätverksspel Bolo.\nDu hittar strategitips och annan information på den officiella webbplatsen:\n\nhttps://www.winbolo.com\n\nEller kom och häng med oss på Reddit och Discord\n
+STR_TUTORIAL_START03=En snabb notering om Internetspel.\n\nOm du ansluter till ett onlinespel och det är många nätverksfel\nska du lämna spelet omedelbart innan\ndu förstör spelet för de andra spelarna.
+STR_TUTORIAL_START04=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Tryck {ACCEL} för att tanken (och båten) ska\nåka framåt och tryck {BRAKE} för att sakta ned och stanna.\n\nTrycka inte på tangenterna som om du skriver – tryck\noch håll dem tills tanken håller önskad hastighet\noch släpp sedan. Tryck {ACCEL} nu för att köra\nbåten framåt mot land.\n(Tryck <Return> först för att stänga fönstret)
+STR_TUTORIAL01_TOUCH=Framför dig finns en kort flod som leder inåt land. Tryck\ntumspaken framåt för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla tumspaken\nframåttryckt. Tanken stiger av båten och\nbåten lämnas förtöjd vid flodens slut
+STR_TUTORIAL02_TOUCH=Du befinner dig nu på gräset. Tanken rör sig ganska\nsnabbt på gräs.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\nmot skogen.
+STR_TUTORIAL03_TOUCH=Du befinner dig nu i skogen. Tanken rör sig långsammare\ni skogen än på gräs.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\nmot träsket.
+STR_TUTORIAL04_TOUCH=Du befinner dig nu i träsket. Tanken rör sig mycket\nlångsamt i träsk. Som tur är finns det en väg framåt.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\ntill vägen.
+STR_TUTORIAL05_TOUCH=Du befinner dig nu på vägen. Tanken kan röra sig mycket\nsnabbt på väg och om du trycker tumspaken hela\nvägen framåt ökar farten.\n\n\nOm du tycker att du kör för fort, dra\ntumspaken bakåt för att sakta ned.
+STR_TUTORIAL06_TOUCH=Det finns några byggnader framåt. Byggnader är solida\nhinder som du inte kan köra igenom, så du måste\nhitta din väg genom labyrinten till den andra sidan.\n\nTryck tumspaken åt vänster eller höger för att svänga\ntanken i den riktningen.
+STR_TUTORIAL10_TOUCH=Det finns ett annat enkelt sätt att undkomma bunkrar –\nfart.\n\n\nSe till att du är rätt inriktad mot mitten av vägen\noch tryck tumspaken helt framåt för att\nköra i full fart förbi bunkrarna.
+STR_TUTORIAL14_TOUCH=Om du kör in i minfältet förstörs tanken. Som tur är kan\ndu röja ett minfält genom att skjuta. Tryck på eldknappen för att skjuta.\n\nSkjut ett hål genom byggnaden och landa sedan ett\nskott i mitten av minfältet för att detonera det.\nNär du spränger minorna skapar de en stor\nkrater i marken som du kan köra igenom,\nom än lika långsamt som i träsk.
+STR_TUTORIAL16_TOUCH=WinBolo rullar automatiskt fönstret för att visa\nomgivningen kring din tank, men du kan dra kartan\nmed ett finger för att manuellt styra vyn.\n\nDra kartan nedåt nu för att ta in floden\nframför dig i bild.
+STR_TUTORIAL18_TOUCH=Den här gången ska vi vara mer listiga vid\nflodkorsningen. I stället för att köra rakt igenom\nvattnet ska vi bygga en bro.\n\n\nVälj trädfarmningsläge genom att trycka på skogsikonen\n(uppe till vänster i fönstret) och tryck på skogen. Din\nbyggare springer ut ur tanken och skördar ett träd\nsom byggmaterial.
+STR_TUTORIAL19_TOUCH=Efter att ha samlat lite trä, välj väg/bro-verktyget\n(den andra knappen uppifrån) och tryck på\nfloden vid vägens slut.\n\n\nDin byggare springer ut ur tanken och bygger ett\nbrosegment. Tryck igen för att slutföra bron\noch kör sedan till den andra sidan.
+STR_TUTORIAL21_TOUCH=För att korsa den här floden måste du bygga en båt. Båtar\nkräver fem träd, så tryck på de fem träden för att skörda dem.\nVälj sedan mur/båt-verktyget (den tredje knappen uppifrån)\noch tryck på vattnet för att bygga en båt.\n\nOm du trycker på land bygger du en mur i stället\noch du måste skörda fler träd för att bygga en båt.\nKör upp på båten och kör till den andra sidan.
+STR_TUTORIAL_START01_TOUCH=Välkommen till WinBolo-tutorialen. Den här ön presenterar\ngrundprinciperna i WinBolo och leder dig igenom\ndem ett i taget. Varje ny princip beskrivs\ni ett fönster som det här.\n\nEfter att ha läst varje meddelande kan du fortsätta genom\natt trycka på "OK"-knappen.
+STR_TUTORIAL_START04_TOUCH=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Använd tumspaken på vänster sida av\nskärmen för att köra: tryck framåt för att accelerera, dra\nbakåt för att sakta ned och stanna.\n\nJu hårdare du trycker tumspaken, desto snabbare går\ntanken. Tryck tumspaken framåt nu för att köra\nbåten mot land.\n(Tryck OK först för att stänga det här fönstret)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=Du kan inte bygga förrän din nye man hoppar fallskärm ned
+LGM_NO_BUILD=Du kan inte bygga där
+LGM_INSUFFICIENT_TREES=Du har inte tillräckligt med träd för att bygga det
+LGM_NO_PILLS=Du har ingen bunker att placera
+LGM_INSUFFICIENT_MINES=Du har inga minor att placera
+LGM_BUILDTANK=Mannen kan inte bygga på en tank
+LGM_NO_TREE=Det finns inget träd att skörda där
+LGM_PILL_NO_NEED_REPAIR=Den bunkern behöver inte repareras
+LGM_PILL_NO_BUILD_ON_MINE=Mannen kan inte bygga på en mina. Det skulle döda honom.
+LGM_NO_BUILD_UNDER_BOAT=Mannen kan inte bygga under din båt
+
+# In-game messages
+MESSAGE_ASSISTANT=Online-assistent
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}" har överlämnat kontrollen till "{player}"
+MESSAGE_NETSERVER=Nätverksserver
+MESSAGE_THIS_COMPUTER=Den här datorn
+MESSAGE_CAPTURE_BASE={player} erövrade en neutral bas
+MESSAGE_CAPTURE_PILL={player} erövrade en neutral bunker
+MESSAGE_STOLE_PILL={player} stal precis en bunker från {other}
+MESSAGE_STOLE_BASE={player} stal precis en bas från {other}
+MESSAGE_LGM_DEAD={player} förlorade precis sin byggare
+MESSAGE_SAVED_MAP={player} sparade precis kartfilen
+MESSAGE_QUIT_GAME={player} har lämnat spelet
+MESSAGE_TIME_LIMIT_EXPIRED=Tidsgränsen har löpt ut. Spelet är slut. Gå i frid
+MESSAGE_TANKSUNK=Tank sjönk i djuphav
+
+# Network errors
+NETERR_TRACKERDNS=Tracker-värdnamnsökning misslyckades. Tracker-avisering inaktiverad
+NETERR_JOININIT=Det kom inget svar från spelet du försökte kontakta.\nDetta beror vanligtvis på 1 av 3 saker:\n1. Adress- och portfälten är felaktiga.\n2. Du befinner dig bakom en brandvägg som blockerar UDP-åtkomst.\n3. Kontrollera att din version av WinBolo är samma som spelets
+NETERR_GAMEFULL=Det här spelet är för tillfället fullt
+NETERR_SERVERCONNECT=Det gick inte att ansluta till servern. Prova en annan maskin eller vänta några sekunder och försök igen.
+NETERR_PASSWORDWRONG=Lösenordet är felaktigt
+NETERR_PLAYERNAMEINUSE=Ditt spelarnamn används redan. Välj ett annat och försök igen
+NETERR_NONEWPLAYERS=Det här spelet tar för tillfället inte emot nya spelare
+NETERR_CONNECTNOJOIN=Du kunde ansluta till spelet men fick inte gå med. Det beror förmodligen på att ditt spelarnamn är taget. Försök igen med ett nytt namn
+
+# Network status
+NET_STATUS_JOINING=Ansluter
+NET_STATUS_OK=OK
+NET_STATUS_FAILED=Misslyckades
+NETERR_LOSTCONNECTION=Du har förlorat anslutningen till servern.\nDu övergår nu till enspelarsläge
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=Skicka meddelande
+STRERR_HELPFILE=Fel vid öppning av hjälpfil.
+STR_DLGSKIN_BLURB=Om inte alla skinelement finns används det inbyggda standardskinnet/standardljuden.
+
+# Player name error
+NETERR_MAPSERIALIZE=Servern kunde inte förbereda kartdata. Försök igen
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=Bildfrekvens:
+STR_DLGSYSINFO_GRAPHICS=Grafik:
+STR_DLGSYSINFO_AITANKS=AI-tankar:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=Server:
+STR_DLGNETINFO_THISGAME=Det här spelet:
+STR_DLGNETINFO_PINGGRAPH=Ping: min {number} / snitt {number2} / max {number3} ms
+STR_DLGNETINFO_KBIN=KB/s in:
+STR_DLGNETINFO_KBOUT=KB/s ut:
+STR_DLGNETINFO_PACKETS_RATE=Paket/sek: {number} in / {number2} ut
+STR_DLGNETINFO_KB_RATE=KB/sek: {string1} in / {string2} ut
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=Kopiera seed
+STR_DLGGAMEINFO_AILABEL=AI-tankar:
+STR_DLGGAMEINFO_FULLADV=Full fördel
+STR_DLGGAMEINFO_UNLIMITED=Obegränsat
+
+# Players panel
+STR_DLGPLAYERS_TITLE=Spelare
+STR_DLGPLAYERS_ALL=Alla
+STR_DLGPLAYERS_NONE=Ingen
+STR_DLGPLAYERS_ALLIES=Allierade
+STR_DLGPLAYERS_NEARBY=I närheten
+STR_LEAVE_ALLIANCE=Lämna alliansen
+STR_REQUEST_ALLIANCE=Begär allians
+STR_ALLOW_NEW_PLAYERS=Tillåt nya spelare
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=Gå med i spel?
+STR_DLGJOIN_BLURB=Lämna aktuellt spel och anslut till server?
+STR_DLGJOIN_BUTTON=Gå med
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=Ändra spelarnamn
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(ingen)
+STR_DLGKEYSETUP_PRESSAKEY=Tryck en tangent...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=Tryck en tangent för att tilldela, eller klicka Avbryt.
+STR_DLGKEYSETUP_CHANGE=Ändra
+STR_DLGKEYSETUP_COL_ACTION=Åtgärd
+STR_DLGKEYSETUP_COL_KEY=Tangent
+STR_DLGKEYSETUP_QUICKKEYS=Snabbtangenter
+STR_DLGKEYSETUP_TREE=Träd
+STR_DLGKEYSETUP_ROAD=Väg
+STR_DLGKEYSETUP_WALL=Mur
+STR_DLGKEYSETUP_QUICKPILLBOX=Bunker
+STR_DLGKEYSETUP_QUICKMINE=Mina
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=Inställningar
+STR_DLGSETTINGS_PLAYER=Spelare
+STR_DLGSETTINGS_PLAYERNAME=Spelarnamn:
+STR_DLGSETTINGS_APPLY=Verkställ
+STR_DLGSETTINGS_SETKEYS=Ange tangenter...
+STR_DLGSETTINGS_DISPLAY=Skärm
+STR_DLGSETTINGS_WINDOWSIZE=Fönsterstorlek:
+STR_DLGSETTINGS_RELSTEER=Relativstyrning
+STR_DLGSETTINGS_RELSTEER_TIP=När av, pekar joystick tanken direkt.\nNär på, vrider joystick vänster/höger relativt tanken.
+STR_DLGSETTINGS_TABLETMODE=Surfplatte-UI-läge
+STR_DLGSETTINGS_LABELS=Etiketter
+STR_DLGSETTINGS_MSGNAMES=Meddelandenamn:
+STR_DLGSETTINGS_TANKLABELS=Tanketiketter:
+STR_DLGSETTINGS_SOUND=Ljud
+STR_DLGSETTINGS_MESSAGES=Meddelanden
+STR_DLGSETTINGS_GAME=Spel
+
+# Menu bar
+STR_MENU_FILE=Arkiv
+STR_MENU_NEW=Nytt
+STR_MENU_SAVE_MAP=Spara karta
+STR_MENU_EXIT=Avsluta
+STR_MENU_EDIT=Redigera
+STR_MENU_FRAME_RATE=Bildfrekvens
+STR_MENU_WINDOW_SIZE=Fönsterstorlek
+STR_MENU_NORMAL=Normal
+STR_MENU_DOUBLE=Dubbel
+STR_MENU_TRIPLE=Trippel
+STR_MENU_QUAD=Fyrdubbel
+STR_MENU_CUSTOM_RESIZABLE=Anpassad (ändra storlek)
+STR_MENU_REQUIRES=Kräver {number}x{number2} – överstiger skärm
+STR_MENU_SMOOTH_SCROLLING=Mjuk rullning
+STR_MENU_AUTO_SCROLLING=Automatisk rullning
+STR_MENU_SHOW_GUNSIGHT=Visa sikte
+STR_MENU_MSG_NAMES_SUB=Meddelandeavsändarnamn
+STR_MENU_TANK_LABELS_SUB=Tanketiketter
+STR_NONE=Ingen
+STR_SHORT=Kort
+STR_LONG=Lång
+STR_MENU_NO_OWN_LABEL=Märk inte egen tank
+STR_MENU_PILLBOX_LABELS=Bunkeretiketter
+STR_MENU_BASE_LABELS=Försörjningsbasetiketter
+STR_MENU_HIDE_MAIN=Dölj huvudvy
+STR_MENU_DEVICE=Enhet:
+STR_MENU_DESKTOP=Skrivbord
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=Ange tangenter
+STR_MENU_SOUND_EFFECTS=Ljudeffekter
+STR_MENU_BACKGROUND_SOUND=Bakgrundsljud
+STR_MENU_SOUND_KEEPALIVE=Ljud-keepalive
+STR_MENU_NEWSWIRE_MSGS=Newswire-meddelanden
+STR_MENU_ASSISTANT_MSGS=Assistentmeddelanden
+STR_MENU_AI_MSGS=AI Brain-meddelanden
+STR_MENU_NETSTATUS_MSGS=Nätverksstatusmeddelanden
+STR_MENU_NETDEBUG_MSGS=Nätverksfelsökningsmeddelanden
+STR_MENU_SETTINGS=Inställningar...
+STR_MENU_PLAYERS=Spelare
+STR_MENU_SEND_MESSAGE=Skicka meddelande
+STR_MENU_SELECT_ALL=Välj alla
+STR_MENU_SELECT_NONE=Välj ingen
+STR_MENU_SELECT_ALLIES=Välj allierade
+STR_MENU_SELECT_NEARBY=Välj tankar i närheten
+STR_MENU_BRAINS=Brains
+STR_MENU_MANUAL=Manuell
+STR_MENU_HELP=Hjälp
+STR_MENU_ABOUT=Om WinBolo
+STR_MENU_LEAVE_GAME=Lämna spelet
+STR_BRAINSETTINGS_NONE=(inga inställningar)
+STR_BRAINSETTINGS_TITLE=Brain-inställningar
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=Tutorial
+STR_DLGSETTINGS_PLAY_TUTORIAL=Spela tutorial
+STR_DLGSETTINGS_SHOW_ON_MAIN=Visa på huvudmenyn
+STR_DLGSETTINGS_CRASH_REPORTING=Kraschrapportering
+STR_DLGSETTINGS_ENABLE_CRASH=Aktivera kraschrapportering
+STR_DLGSETTINGS_CRASH_HELP=Hjälp till att förbättra WinBolo genom att skicka kraschrapporter
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=Ändringar träder i kraft vid nästa start.
+STR_CLOSE=Stäng
+STR_DLGSETTINGS_WINTITLE=WinBolo – inställningar
+STR_DLGKEYSETUP_WINTITLE=WinBolo – tangentinställningar
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo – spellobby
+STR_UNKNOWN=Okänt
+STR_DLGGAMEINFO_AIFULL=Ja (full)
+STR_DLGLOBBY_HIDDEN=Dold
+STR_DLGLOBBY_VISIBLE=Synlig
+STR_DLGLOBBY_DOWNLOADING=Laddar ned karta...
+STR_DLGLOBBY_MAP_UNAVAILABLE=Kartförhandsvisning inte tillgänglig
+STR_DLGLOBBY_PILLBOXES=Bunkrar:
+STR_DLGLOBBY_BASES=Baser:
+STR_DLGLOBBY_STARTS=Startplatser:
+STR_DLGLOBBY_SKIPMAP=Hoppa över karta
+STR_DLGLOBBY_CANCELSKIP=Avbryt hopp
+STR_DLGLOBBY_VOTES={number}/{number2} röster för att hoppa över
+STR_DLGLOBBY_CHAT=Chatt
+STR_DLGLOBBY_READY=Redo
+STR_DLGLOBBY_UNREADY=Inte redo
+STR_DLGLOBBY_BALANCE_TEAMS=Balansera lag
+STR_DLGLOBBY_APPLY_BALANCE=Tillämpa balans
+STR_DLGLOBBY_DISMISS=Avvisa
+STR_DLGLOBBY_LEAVE=Lämna
+STR_DLGLOBBY_LEAVE_TITLE=Lämna spelet?
+STR_DLGLOBBY_LEAVE_BLURB=Är du säker på att du vill lämna det här spelet?
+STR_DLGLOBBY_BOT_FMT={player} [Bot]
+STR_DLGLOBBY_YOU_FMT={player} (Du)
+STR_DLGLOBBY_STARTING_FMT=Startar om {number}...
+STR_DLGLOBBY_LOSTCONNECTION=Du har förlorat anslutningen till servern.
+STR_DLGLOBBY_ME=Jag
+STR_DLGLOBBY_PLAYER_COL=Spelare
+STR_DLGLOBBY_PING_COL=Ping
+STR_DLGLOBBY_TEAM_COL=Lag
+STR_DLGLOBBY_READY_COL=Redo
+STR_DLGLOBBY_SLOT_COL=Plats
+STR_DLGLOBBY_NAME_COL=Spelarnamn
+STR_DLGLOBBY_ACTION_COL=Åtgärd
+STR_DLGLOBBY_ADDBOT=Lägg till bot
+STR_DLGLOBBY_REMOVE=Ta bort
+STR_DLGLOBBY_MAP_TAB=Karta
+STR_DLGLOBBY_GAME_LBL=Spel:
+STR_DLGLOBBY_MINES_LBL=Minor:
+STR_DLGLOBBY_AI_LBL=AI:
+STR_DLGLOBBY_TIME_LBL=Tid:
+STR_DLGLOBBY_TIME_HMS={number}t {string1}m {string2}s
+STR_DLGLOBBY_TIME_MS={number}m {string1}s
+STR_DLGLOBBY_TIME_S={number}s
+STR_DLGLOBBY_MAP_LBL=Karta:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo – spelinställningar
+STR_DLGGAMESETUP_SELECTAMAP=Välj en karta:
+STR_BACK=Bakåt
+STR_DLGGAMESETUP_BASES_STARTS=Baser: {number}  Startplatser: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=Bunkrar: {number}
+STR_DLGGAMESETUP_CHANGEMAP=Byt karta
+STR_DLGGAMESETUP_GAMETYPE_LBL=Speltyp
+STR_DLGGAMESETUP_OPENGAME_SHORT=Öppet spel
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=Dolda minor
+STR_DLGGAMESETUP_AICOMPPLAYERS=AI-datorspelare
+STR_DLGGAMESETUP_ALLOW=Tillåt
+STR_DLGGAMESETUP_ADVANTAGE=Fördel
+STR_DLGGAMESETUP_FULLMAP=Fullständig karta
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=Tidsgräns
+STR_DLGGAMESETUP_TEAMSETUP=Laginställning
+STR_DLGGAMESETUP_AINUM=Antal AI-spelare:
+STR_DLGGAMESETUP_NOBRAINS=Inga brains hittades
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=Du
+STR_DLGGAMESETUP_BOT_FMT=Bot {number}
+STR_DLGGAMESETUP_NOAI=Inga datortankar
+STR_DLGGAMESETUP_ALLOWAI=Tillåt datortankar
+STR_DLGGAMESETUP_ALLOWADV=Tillåt med fördel
+STR_DLGGAMESETUP_ALLOWFULL=Tillåt med fullständig karta
+STR_DLGGAMESETUP_NOPREVIEW=Ingen förhandsvisning
+STR_DLGGAMESETUP_STARTGAME=Starta spel
+STR_DLGGAMESETUP_STRICT_SHORT=Strikt
+STR_DLGTCP_WINTITLE=WinBolo – UDP-inställningar (Internet)
+STR_ERR_TITLE=Fel
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo – {string1}
+STR_DLGBROWSER_REFRESH=Uppdatera
+STR_DLGBROWSER_LOADING=Laddar spellista{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=Klicka Uppdatera för att ladda spel...
+STR_DLGBROWSER_LAN_INSTRUCTION=Klicka Uppdatera för att söka...
+STR_DLGBROWSER_GAMES_LOADED=Spel inlästa.
+STR_DLGBROWSER_NO_GAMES=Inga spel hittades. Starta ett!
+STR_DLGBROWSER_SEARCH_FAILED=Sökning misslyckades.
+STR_DLGBROWSER_SEARCHING=Söker...
+STR_DLGBROWSER_COL_SERVER=Server
+STR_DLGBROWSER_COL_MAP=Karta
+STR_DLGBROWSER_COL_PLAYERS=Spelare
+STR_DLGBROWSER_COL_TYPE=Typ
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=Baser
+STR_DLGBROWSER_COL_PILLS=Bunkrar
+STR_DLGBROWSER_COL_PING=Ping
+STR_DLGBROWSER_FILTER=Filter:
+STR_DLGBROWSER_FILTER_ALLTYPES=Alla typer
+STR_DLGBROWSER_FILTER_UNLOCKED=Endast olåsta
+STR_DLGBROWSER_FILTER_ALLLOBBY=Alla lobbies
+STR_DLGBROWSER_FILTER_INLOBBY=I lobby
+STR_DLGBROWSER_FILTER_STARTING=Startar
+STR_DLGBROWSER_STATUS_PINGING=Status: {string1}  |  {number} servrar  |  Pingning {number2}...
+STR_DLGBROWSER_STATUS=Status: {string1}  |  {number} servrar
+STR_DLGBROWSER_NEWGAME=Nytt spel
+STR_DLGBROWSER_PLAYER_NAME_BTN=Spelarnamn
+STR_DLGBROWSER_MANUAL=Manuell
+STR_DLGBROWSER_ERR_VERSION=Servern kör en annan version av WinBolo.
+STR_DLGBROWSER_ERR_NEEDNAME=Du måste ange ett spelarnamn först.
+STR_DLGBROWSER_AI_ADV=Fördel
+STR_DLGBROWSER_AI_FULL=Full
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo – loggläsare
+STR_DLGWBN_TITLE=WinBolo.net-loggläsare
+STR_DLGWBN_TAB_RECENT=Senaste
+STR_DLGWBN_TAB_TOPRATED=Topprankade
+STR_DLGWBN_TAB_MOSTDOWNLOADED=Mest nedladdade
+STR_DLGWBN_TAB_SEARCH=Sök
+STR_DLGWBN_LOADING=Laddar...
+STR_DLGWBN_NOCONNECT=Det gick inte att ansluta till WinBolo.net
+STR_DLGWBN_MINPLAYERS=Minsta antal spelare
+STR_DLGWBN_SEARCHFILTERS=Sökfilter:
+STR_DLGWBN_HINT_PLAYER=Spelare
+STR_DLGWBN_HINT_MAP=Karta
+STR_DLGWBN_SEARCH_BTN=Sök
+STR_DLGWBN_ERROR=Fel: {string1}
+STR_DLGWBN_COL_MAP=Karta
+STR_DLGWBN_COL_TYPE=Typ
+STR_DLGWBN_COL_PLAYERS=Spelare
+STR_DLGWBN_COL_RATING=Betyg
+STR_DLGWBN_COL_SIZE=Storlek
+STR_DLGWBN_COL_DATE=Datum
+STR_DLGWBN_PLAYERS_LBL=Spelare: 
+STR_DLGWBN_NUMPLAYERS_FMT={number} spelare
+STR_DLGWBN_DURATION=Varaktighet: {string1}
+STR_DLGWBN_RATING=Betyg: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=Nedladdningar: {number}
+STR_DLGWBN_SIZE=Storlek: {string1}
+STR_DLGWBN_COMMENTS_FMT=Kommentarer ({number}):
+STR_DLGWBN_NOCOMMENTS=Inga kommentarer ännu.
+STR_DLGWBN_ADDCOMMENT=Lägg till kommentar:
+STR_DLGWBN_HINT_COMMENT=Skriv en kommentar...
+STR_DLGWBN_POST=Publicera
+STR_DLGWBN_POSTED=Kommentar publicerad!
+STR_DLGWBN_LOADINGDETAIL=Laddar detaljer...
+STR_DLGWBN_DOWNLOADING=Laddar ned...
+STR_DLGWBN_VIEWLOG=Visa logg
+STR_DLGWBN_NOLOG=Loggfilen är inte tillgänglig för det här spelet.
+STR_DLGWBN_PREV=< Föregående
+STR_DLGWBN_NEXT=Nästa >
+STR_DLGWBN_PAGE=Sida {number} av {number2}  ({number3} totalt)
+STR_DLGWBN_OPENFILE=Öppna fil...
+STR_DLGWBN_PARSERR=Det gick inte att tolka svaret
+STR_DLGWBN_NETERR=Nätverksfel
+STR_DLGWBN_LOADERR=Det gick inte att ladda detaljer
+STR_DLGWBN_DOWNLOAD_FAILED=Nedladdning misslyckades
+STR_DLGWBN_NOSAVEPATH=Det gick inte att fastställa sökväg för sparande
+STR_DLGWBN_FETCHERR=Hämtning misslyckades
+STR_DLGWBN_UNKNOWN_ERR=Okänt fel
+STR_DLGWBN_FILEFILTER=WinBolo-loggfiler
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo – ange spelarnamn
+STR_DLGSETNAME_WBN_LOCKED=Ditt spelarnamn bestäms av WinBolo.net.
+STR_DLGSETNAME_PLEASE_ENTER=Ange ditt spelarnamn.
+STR_DLGSETNAME_BLANK_ERR=Det går inte att lämna det här tomt
+STR_DLGSETNAME_STAR_ERR=Namn kan inte börja med ett '*'
+STR_DLGSETNAME_INUSE_ERR=Det namnet används redan av en annan spelare.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo – skinsval
+STR_DLGSKIN_NOSKIN=Inget skin (standard)
+STR_DLGSKIN_NA=Ej tillämpligt
+STR_DLGSKIN_SELECT=Välj ett skin:
+STR_DLGSKIN_NAME_LBL=Namn:
+STR_DLGSKIN_AUTHOR_LBL=Författare:
+STR_DLGSKIN_NOTES_LBL=Kommentarer:
+STR_DLGSKIN_LOADERR=Det gick inte att läsa in skin-filen
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo – tracker-konfiguration
+STR_DLGTRACKER_INVALIDPORT=Ogiltigt portnummer.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=Kontrollerar WinBolo.net...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=Inloggad
+STR_DLGWBN_EXPIRES=(upphör {string1})
+STR_DLGWBN_SIGN_OUT=Logga ut från WBN
+STR_DLGWBN_NOT_SIGNED_IN=Inte inloggad
+STR_DLGWBN_SIGN_IN_BTN=Logga in på WBN...
+STR_DLGWBN_SIGNIN_TITLE=Logga in på WinBolo.net
+STR_DLGWBN_SIGNIN_BLURB=Logga in med ditt WinBolo.net-användarnamn och lösenord. En token sparas så att du inte behöver ange lösenordet igen.
+STR_DLGWBN_USERNAME=Användarnamn:
+STR_DLGWBN_PASSWORD=Lösenord:
+STR_DLGWBN_SIGNINGIN=Loggar in...
+STR_DLGWBN_SIGNIN_OK=Logga in
+STR_DLGWBN_NEEDCREDS=Ange ditt användarnamn och lösenord.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo – välj spel
+STR_DLGWELCOME_SINGLE=Enspelarsläge
+STR_DLGWELCOME_LOCAL=Lokalt
+STR_DLGWELCOME_MAPEDITOR=Kartredigerare
+STR_DLGWELCOME_LOGVIEWER=Loggvisare
+STR_DLGWELCOME_INTERNET=Internet
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (inbyggd)
+STR_MAPCHOOSER_LOADMAP=Ladda en karta
+STR_MAPCHOOSER_LOADDEVICE=Ladda från enhet...
+STR_MAPCHOOSER_GENRANDOM=Generera slumpmässig karta
+STR_MAPCHOOSER_RANDOMMAP=Slumpmässig karta
+STR_MAPCHOOSER_CLICKGEN=Klicka Generera för förhandsvisning
+STR_MAPCHOOSER_NOPREVIEW=Ingen förhandsvisning tillgänglig
+STR_MAPCHOOSER_STATS=Bunkrar: {number}  Baser: {number2}  Startplatser: {number3}
+STR_MAPCHOOSER_MAPFILES=Kartfiler
+STR_MAPCHOOSER_ALLFILES=Alla filer
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=Status
+STR_TABLET_KILLS_DEATHS=Dödar: {number}  Dödsfall: {number2}
+STR_TABLET_TANK_RESOURCES=Tankresurser
+STR_TABLET_SHELLS=Granater
+STR_TABLET_MINES=Minor
+STR_TABLET_ARMOUR=Pansar
+STR_TABLET_TREES=Träd
+STR_TABLET_PILLBOXES=Bunkrar
+STR_TABLET_BASES=Baser
+STR_TABLET_TANKS=Tankar
+STR_TABLET_PILL_FMT=Bunker {number}
+STR_TABLET_BASE_FMT=Bas {number}
+STR_TABLET_TANK_FMT=Tank {number}
+STR_TABLET_BTN_MSG=Medd
+STR_TABLET_BTN_PLY=Spl
+STR_TABLET_BTN_SET=Inst
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=Ange spelarnamn
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Öppna...
+STR_MAPEDIT_MENU_RECENT=Senaste filer
+STR_MAPEDIT_MENU_SAVE=Spara
+STR_MAPEDIT_MENU_SAVEAS=Spara som...
+STR_MAPEDIT_MENU_EXPORT=Exportera som PNG...
+STR_MAPEDIT_MENU_RETURN=Återgå till menyn
+STR_MAPEDIT_MENU_UNDO=Ångra
+STR_MAPEDIT_MENU_REDO=Gör om
+STR_MAPEDIT_MENU_CUT=Klipp ut
+STR_MAPEDIT_MENU_COPY=Kopiera
+STR_MAPEDIT_MENU_PASTE=Klistra in
+STR_MAPEDIT_MENU_MAP=Karta
+STR_MAPEDIT_MENU_RANDOMMAP=Slumpmässig karta...
+STR_MAPEDIT_MENU_TEXT=Text...
+STR_MAPEDIT_MENU_IMPORTIMG=Importera bild...
+STR_MAPEDIT_MENU_VALIDATE=Validera
+STR_MAPEDIT_MENU_MIRROR_H=Spegla horisontellt {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Spegla vertikalt {string1}
+STR_MAPEDIT_MENU_ROTATE_90=Rotera 90° medurs {string1}
+STR_MAPEDIT_MENU_ROTATE_180=Rotera 180° {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(urval)
+STR_MAPEDIT_SCOPE_FULLMAP=(hel karta)
+STR_MAPEDIT_MENU_OPTIONS=Alternativ
+STR_MAPEDIT_MENU_CENTER=Centrera karta
+STR_MAPEDIT_MENU_POINT_STARTS=Peka på startplatser
+STR_MAPEDIT_MENU_SHOWGRID=Visa rutnät
+STR_MAPEDIT_MENU_SHOWMINES=Visa minor
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Visa bunkerräckvidd
+STR_MAPEDIT_MENU_WINDOW=Fönster
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Terräng
+STR_MAPEDIT_WIN_TOOLS=Verktyg
+STR_MAPEDIT_WIN_INSPECTOR=Inspektör
+STR_MAPEDIT_WIN_OBJECTS=Objekt
+STR_MAPEDIT_WIN_OVERVIEW=Översikt
+STR_MAPEDIT_WIN_STATS=Statistik
+STR_MAPEDIT_WIN_STAMP_LIB=Stämpelbibliotek
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Djuphav
+STR_MAPEDIT_TERR_GRASS=Gräs
+STR_MAPEDIT_TERR_FOREST=Skog
+STR_MAPEDIT_TERR_ROAD=Väg
+STR_MAPEDIT_TERR_BUILDING=Byggnad
+STR_MAPEDIT_TERR_HALFBUILDING=Halvbyggnad
+STR_MAPEDIT_TERR_RIVER=Flod
+STR_MAPEDIT_TERR_SWAMP=Träsk
+STR_MAPEDIT_TERR_CRATER=Krater
+STR_MAPEDIT_TERR_RUBBLE=Bråte
+STR_MAPEDIT_TERR_BOAT=Båt
+STR_MAPEDIT_TERR_MINETOOL=Minaverktyg
+STR_MAPEDIT_MINE_CHECKERED=Schackrutat
+STR_MAPEDIT_MINE_FULL=Fullt
+STR_MAPEDIT_MINE_RANDOM=Slumpmässigt
+STR_MAPEDIT_MINE_CLEAR=Rensa minor
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Penna
+STR_MAPEDIT_TOOL_LINE=Linje
+STR_MAPEDIT_TOOL_RECT=Rektangel
+STR_MAPEDIT_TOOL_RECTFILL=Fylld rektangel
+STR_MAPEDIT_TOOL_OVAL=Oval
+STR_MAPEDIT_TOOL_OVALFILL=Fylld oval
+STR_MAPEDIT_TOOL_SELECT=Urval
+STR_MAPEDIT_TOOL_FILL=Fyll
+STR_MAPEDIT_TOOL_MAZE=Labyrint
+STR_MAPEDIT_TOOL_GENERATE=Generera
+STR_MAPEDIT_TOOL_WAND=Trollstav
+STR_MAPEDIT_TOOL_TEXT=Text
+STR_MAPEDIT_TOOL_TEXT_TIP=Text (stämpla text på kartan)
+STR_MAPEDIT_BRUSH=Pensel
+STR_MAPEDIT_BRUSH_SQUARE=Kvadratisk
+STR_MAPEDIT_BRUSH_CIRCLE=Cirkulär
+STR_MAPEDIT_OBJTOOL_BASE=Bas
+STR_MAPEDIT_OBJTOOL_PILL=Bunker
+STR_MAPEDIT_OBJTOOL_START=Start
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Ruta: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Ruta: --
+STR_MAPEDIT_STATUS_ZOOM=Zoom: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Ändrad
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Osparade ändringar
+STR_MAPEDIT_UNSAVED_BLURB=Kartan har osparade ändringar.\nVill du spara innan du fortsätter?
+STR_MAPEDIT_GOTO_TITLE=Gå till koordinater
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=Inget objekt markerat
+STR_MAPEDIT_INSP_BASE_HASH=Bas #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Bunker #{number}
+STR_MAPEDIT_INSP_START_HASH=Start #{number}
+STR_MAPEDIT_INSP_POSITION=Position: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Ägare
+STR_MAPEDIT_INSP_ARMOUR=Pansar
+STR_MAPEDIT_INSP_SPEED=Hastighet
+STR_MAPEDIT_INSP_DIR=Riktning
+STR_MAPEDIT_OWNER_NEUTRAL=Neutral
+STR_MAPEDIT_OWNER_PLAYER=Spelare {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Baser ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Bunkrar ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Startplatser ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Pansar: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Rikt: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Validering
+STR_MAPEDIT_VAL_NOISSUES=Inga problem
+STR_MAPEDIT_VAL_ERRORS={number} fel
+STR_MAPEDIT_VAL_NOERRORS=0 fel
+STR_MAPEDIT_VAL_WARNINGS={number} varning(ar)
+STR_MAPEDIT_VAL_NOWARNINGS=0 varningar
+STR_MAPEDIT_VAL_ERRORS_TITLE=Valideringsfel
+STR_MAPEDIT_VAL_HASERRORS=Kartan har {number} fel. Rätta dem innan du sparar.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Generera slumpmässig karta
+STR_MAPEDIT_GENRANDAREA_TITLE=Generera slumpmässigt område
+STR_MAPEDIT_GENSCOPE_SELECTION=Omfång: Urval ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Omfång: Hel karta ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Textverktyg
+STR_MAPEDIT_TEXT_LABEL=Text:
+STR_MAPEDIT_TEXT_BUILTIN=Inbyggt
+STR_MAPEDIT_TEXT_SYSTEM=Systemteckensnitt
+STR_MAPEDIT_TEXT_FONTSIZE=Teckenstorlek
+STR_MAPEDIT_TEXT_STYLE=Stil
+STR_MAPEDIT_TEXT_FONTSIZE_S=Liten (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Medel (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Stor (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=XL (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Normal
+STR_MAPEDIT_TEXT_STYLE_BOLD=Fet
+STR_MAPEDIT_TEXT_STYLE_ITALIC=Kursiv
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Fet kursiv
+STR_MAPEDIT_TEXT_FONTFAMILY=Teckensnittsgrupp
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (medföljer)
+STR_MAPEDIT_TEXT_SIZEPX=Storlek (px)
+STR_MAPEDIT_TEXT_NOFONTS=Inga teckensnitt hittades. Lägg till .ttf-filer i data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=Textterräng
+STR_MAPEDIT_TEXT_TERR_EDGE=Kantterräng
+STR_MAPEDIT_TEXT_TERR_BG=Bakgrund
+STR_MAPEDIT_TEXT_PREVIEW=Förhandsvisning ({number}x{number2} rutor):
+STR_MAPEDIT_TEXT_TOOLARGE=Texten är för stor (max 256x256 rutor) eller teckensnittsfel
+STR_MAPEDIT_GENERATE_BTN=Generera
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Labyrintinställningar
+STR_MAPEDIT_MAZE_REGION=Region: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Dra på kartan för att generera
+STR_MAPEDIT_ALGORITHM=Algoritm
+STR_MAPEDIT_ALGO_LABYRINTH=Labyrint
+STR_MAPEDIT_ALGO_OPEN=Öppen
+STR_MAPEDIT_WALL=Mur
+STR_MAPEDIT_CORRIDOR=Korridor
+STR_MAPEDIT_ENTRIES=Ingångar
+STR_MAPEDIT_ROOMS=Rum
+STR_MAPEDIT_WALLTERRAIN=Murterräng
+STR_MAPEDIT_CORRIDORTERRAIN=Korridor-terräng
+STR_MAPEDIT_GENSETTINGS_TITLE=Genereringsinställningar
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Terrängfördelning
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Minor: {number} ({string1}% land)
+STR_MAPEDIT_STATS_SPATIAL=Rumslig analys
+STR_MAPEDIT_STATS_LAND_COVERAGE=Landtäckning: {string1}%
+STR_MAPEDIT_STATS_LARGEST=Största landmassa: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=Basavstånd: {string1} rutor
+STR_MAPEDIT_STATS_PILL_SPACING=Bunkeravstånd: {string1} rutor
+STR_MAPEDIT_STATS_SYMMETRY=Symmetri: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=Spegla-H:   {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=Spegla-V:   {string1}%
+STR_MAPEDIT_STATS_4CORNER=4-hörn:   {string1}%
+STR_MAPEDIT_STATS_ROTATE180=Rotera-180: {string1}%
+STR_MAPEDIT_STATS_STALE=(inaktuellt — klicka Uppdatera)
+STR_MAPEDIT_STATS_REFRESH=Uppdatera rumslig analys
+STR_MAPEDIT_STATS_STARTS=Startplatser
+STR_MAPEDIT_TERRNAME_HALFBLD=Halvbyggnad
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Importera bild
+STR_MAPEDIT_IMG_FILE=Fil:
+STR_MAPEDIT_IMG_NONE=(ingen)
+STR_MAPEDIT_BROWSE=Bläddra...
+STR_MAPEDIT_IMG_SOURCE=Källa: {number}x{number2} pixlar
+STR_MAPEDIT_IMG_PREVIEW_LBL=Förhandsvisning:
+STR_MAPEDIT_IMG_SCALEMODE=Skalläge:
+STR_MAPEDIT_IMG_FIT_SEL=Passa urval
+STR_MAPEDIT_IMG_FIT_PLAY=Passa spelbar yta
+STR_MAPEDIT_IMG_OUTPUT=Utdata: {number} x {number2} rutor
+STR_MAPEDIT_IMG_COLORS=Färger:
+STR_MAPEDIT_IMG_REDETECT=Detektera om
+STR_MAPEDIT_IMG_COLORMAP=Färgmappning
+STR_MAPEDIT_IMPORT_BTN=Importera
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Medföljande stämplar
+STR_MAPEDIT_STAMP_USER=Användarstämplar
+STR_MAPEDIT_STAMP_NOUSER=Inga användarstämplar ännu.
+STR_MAPEDIT_STAMP_HINT=Använd "Spara urklipp..." för att skapa en.
+STR_MAPEDIT_DELETE=Ta bort
+STR_MAPEDIT_STAMP_SAVECLIP=Spara urklipp...
+STR_MAPEDIT_STAMP_TIP_COPY=Kopiera ett urval först (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=Importera...
+STR_MAPEDIT_STAMP_UNTITLED=Namnlös
+STR_MAPEDIT_STAMP_SAVE_TITLE=Spara stämpel
+STR_MAPEDIT_STAMP_SAVE_BLURB=Ange ett namn för den här stämpeln:
+STR_MAPEDIT_STAMP_SAVE_NAME=Namn
+STR_MAPEDIT_SAVE_BTN=Spara
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=Exportera som PNG
+STR_MAPEDIT_PREVIEW=Förhandsvisning
+STR_MAPEDIT_EXPORT_MODE=Läge:
+STR_MAPEDIT_EXPORT_FULL=Fullständig upplösning (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Förhandsvisningsstorlek:
+STR_MAPEDIT_EXPORT_OPTIONS=Alternativ:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Visa objekt
+STR_MAPEDIT_EXPORT_SHOWMINES=Visa minor
+STR_MAPEDIT_EXPORT_SHOWGRID=Visa rutnät (endast fullständigt läge)
+STR_MAPEDIT_EXPORT_BTN=Exportera...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Låst: ändras inte vid Slumpa
+STR_MAPGEN_UNLOCKED_TIP=Olåst: ändras vid Slumpa
+STR_MAPGEN_GENERATOR=Generator
+STR_MAPGEN_TYPE_TOURNAMENT=Turnering
+STR_MAPGEN_TYPE_NATURAL=Naturlig
+STR_MAPGEN_TYPE_MAZE=Labyrint
+STR_MAPGEN_TYPE_FRACTAL=Fraktal
+STR_MAPGEN_SEED=Seed
+STR_MAPGEN_RANDOMIZE=Slumpa
+STR_MAPGEN_SYMMETRY=Symmetri
+STR_MAPGEN_SYM_4CORNER=4-hörns-spegling
+STR_MAPGEN_SYM_MIRROR_H=Spegla horisontellt
+STR_MAPGEN_SYM_MIRROR_V=Spegla vertikalt
+STR_MAPGEN_SYM_ROT180=Rotera 180°
+STR_MAPGEN_SYM_ROT90=Rotera 90°
+STR_MAPGEN_LANDMASS_PCT=Landmassa %
+STR_MAPGEN_ROUGHNESS=Ojämnhet
+STR_MAPGEN_ROUGH_LOW=Låg
+STR_MAPGEN_ROUGH_MED=Medel
+STR_MAPGEN_ROUGH_HIGH=Hög
+STR_MAPGEN_INCLUDE_ROADS=Inkludera vägar
+STR_MAPGEN_MAP_STYLE=Kartstil
+STR_MAPGEN_STYLE_OCEAN=Hav
+STR_MAPGEN_STYLE_CONTINENT=Kontinent
+STR_MAPGEN_STYLE_ISLANDS=Öar
+STR_MAPGEN_STYLE_ARCHIPELAGO=Skärgård
+STR_MAPGEN_STYLE_INLAND=Inlandsvatten
+STR_MAPGEN_TERRAIN_MIX=Terrängmix (% av land):
+STR_MAPGEN_GRASS_PCT=Gräs %
+STR_MAPGEN_FOREST_PCT=Skog %
+STR_MAPGEN_BUILDING_PCT=Byggnader %
+STR_MAPGEN_SWAMP_PCT=Träsk %
+STR_MAPGEN_RIVER_PCT=Flod %
+STR_MAPGEN_BOAT_PCT=Båt %
+STR_MAPGEN_REMAINING_GRASS=Återstående gräs: {number}%
+STR_MAPGEN_MINE_DENSITY=Minatäthet %
+STR_MAPGEN_RIVER_COUNT=Antal floder
+STR_MAPGEN_CITY_COUNT=Antal städer
+STR_MAPGEN_MAZE_COUNT=Antal labyrinter
+STR_MAPGEN_WALL_THICKNESS=Murtjocklek
+STR_MAPGEN_CORRIDOR_WIDTH=Korridorbredd
+STR_MAPGEN_CITY_ROOMS=Stadsrum
+STR_MAPGEN_LAND_COVERAGE=Landtäckning %
+STR_MAPGEN_DETAIL_PASSES=Detaljpass
+STR_MAPGEN_COAST_JAG=Kustojämnhet
+STR_MAPGEN_TERRAIN_LAYERS=Terrängskikt
+STR_MAPGEN_RIVERS=Floder
+STR_MAPGEN_LAKES=Sjöar
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} gick med i spelet.
+STR_LV_HAS_JOINED={string1} har gått med i spelet
+STR_LV_ALLY_REQUEST={player} begärde precis allians med {other}
+STR_LV_ALLY_ACCEPT={player} accepterade precis allians med {other}
+STR_LV_ALLY_LEAVE={player} lämnade precis alliansen
+STR_LV_MSG_ALL=Meddelande till alla från {player}: {string1}
+STR_LV_MSG_PLAYERS=Meddelande från {player} till {other}: {string1}
+STR_LV_MSG_SERVER=Servermeddelande: {string1}
+STR_LV_PLAYER_DIED={player} dog
+STR_LV_PLAYER_KILLED={player} dödade precis spelare {other}
+STR_LV_PLAYER_REJOINED={player} återanslöt precis till spelet.
+STR_LV_PLAYER_LEAVING={player} lämnar spelet.
+STR_LV_LOBBY_OPENED=Lobby öppnad.
+STR_LV_GAME_STARTED=Spelet startade.
+STR_LV_PLAYER_READY={player} är redo.
+STR_LV_PLAYER_UNREADY={player} är inte längre redo.
+STR_LV_PLAYER_LEFT_TEAM={player} lämnade sitt lag.
+STR_LV_PLAYER_JOINED_TEAM={player} gick med i lag {number}.
+STR_LV_COUNTDOWN_START=Nedräkning startad.
+STR_LV_COUNTDOWN_CANCEL=Nedräkning avbruten.
+STR_LV_MAP_SKIP_VOTE={player} röstade för att hoppa över kartan.
+STR_LV_MAP_SKIPPED=Karta överhoppad. Ny karta: {string1}
+STR_LV_TEAM_BALANCE=Lagbalans tillämpad.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Öppna
+STR_LV_MENU_ACTION=Åtgärd
+STR_LV_PLAY=Spela upp
+STR_LV_PAUSE=Pausa
+STR_LV_STOP=Stopp
+STR_LV_FAST_FORWARD=Snabbspola framåt
+STR_LV_REWIND=Spola tillbaka
+STR_LV_MODE=Läge
+STR_LV_MODE_INFO=Information
+STR_LV_SELECT_TEAM=Välj lag
+STR_LV_USE_TEAM_COLOURS=Använd lagfärger
+STR_LV_TANK_CENTRED=Tank i centrum
+STR_LV_DNS_LOOKUPS=DNS-uppslag
+STR_LV_TEAM_COLOURS=Lagfärger
+STR_LV_MENU_WINDOWS=Fönster
+STR_LV_WIN_CONTROLS=Kontroller
+STR_LV_WIN_EVENTS=Händelser
+STR_LV_WIN_GAMEINFO=Spelinformation
+STR_LV_WIN_ITEMINFO=Objektinformation
+STR_LV_RESET_WINDOWS=Återställ fönsterpositioner
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Tilldela färger till varje spelarlag:
+STR_LV_PLAYER_LBL=Spelare {number}:
+STR_LV_NEUTRAL_LBL=Neutral:
+STR_LV_ABOUT_TITLE=WinBolo-loggvisare
+STR_LV_VERSION_FMT=Version: {string1}
+STR_LV_LICENSE=Det här programmet är fri programvara; du kan distribuera det\noch/eller ändra det enligt villkoren i GNU General\nPublic License som publicerats av Free Software Foundation.
+STR_LV_WEBSITE_LBL=Webbplats:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Grå
+STR_LV_COL_KHAKI=Khaki
+STR_LV_COL_GREEN=Grön
+STR_LV_COL_PINK=Rosa
+STR_LV_COL_YELLOW=Gul
+STR_LV_COL_LIGHTBLUE=Ljusblå
+STR_LV_COL_ORANGE=Orange
+STR_LV_COL_LIGHTPURPLE=Ljuslila
+STR_LV_COL_AQUA=Aqua
+STR_LV_COL_LIGHTGREEN=Ljusgrön
+STR_LV_COL_LIGHTGREY=Ljusgrå
+STR_LV_COL_RED=Röd
+STR_LV_COL_BLUE=Blå
+STR_LV_COL_BROWN=Brun
+STR_LV_COL_LIGHTPINK=Ljusrosa
+STR_LV_COL_PALEGREEN=Blekgrön
+STR_LV_COL_PURPLE=Lila
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} sekund(er)
+STR_LV_INFO_MAP=Kartnamn: {string1}
+STR_LV_INFO_GAMETYPE=Speltyp: {string1}
+STR_LV_INFO_HIDDENMINES=Dolda minor: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Datortankar: {string1}
+STR_LV_INFO_TIME_LIMIT=Tidsgräns: {string1}
+STR_LV_INFO_START_DELAY=Startfördröjning: {string1}
+STR_LV_INFO_WBN_KEY=WBN-nyckel:
+STR_LV_INFO_START_TIME=Starttid: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=Inget objekt markerat
+STR_LV_LOCATION_FMT=Plats: {string1}
+STR_LV_OWNER_LBL=Ägare: {string1}
+STR_LV_ARMOUR_FMT=Pansar: {number}
+STR_LV_SHELLS_FMT=Granater: {number}
+STR_LV_MINES_FMT=Minor: {number}
+STR_LV_IN_TANK_FMT=I tank: {string1}
+STR_LV_CENTER_ON_MAP=Centrera på karta
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Spola
+STR_LV_PLAY_BTN=Spela >
+STR_LV_FWD_BTN=Fwd >>
+STR_LV_SPEED_LBL=Hastighet:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} kvar
+STR_LV_NO_LOG_LOADED=Ingen logg inläst
+
+# Log viewer events panel
+STR_LV_COPY=Kopiera
+STR_LV_COPY_ALL=Kopiera alla
+STR_LV_CLEAR_ALL=Rensa alla
+STR_LV_AUTO_SCROLL=Automatisk rullning
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=Slutet av loggfilen nått
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Zoom
+STR_DLGSETTINGS_PERFORMANCE=Prestanda
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=Du har förlorat anslutningen till servern.\nÅtergår till menyn.
+
+# Language picker (Settings -> Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Språk:
+STR_DLGLANG_MIDGAME_NOTE=Befintliga meddelandeloggsposter ändrar inte språk förrän de återskapas.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=För många baser: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=För många bunkrar: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=För många startplatser: {number} (max {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=Bas #{number} vid ({number2},{number3}): på icke-körbar terräng
+STR_MAPVALIDATE_BASE_BORDER_ZONE=Bas #{number} vid ({number2},{number3}): i minbordzon
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Bunker #{number} vid ({number2},{number3}): på icke-körbar terräng
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Bunker #{number} vid ({number2},{number3}): i minbordzon
+STR_MAPVALIDATE_START_NOT_DEEP=Start #{number} vid ({number2},{number3}): måste vara på djuphav
+STR_MAPVALIDATE_START_BORDER_ZONE=Start #{number} vid ({number2},{number3}): i minbordzon
+STR_MAPVALIDATE_NO_STARTS=Inga startplatser placerade — kartan går inte att spela
+STR_MAPVALIDATE_ONE_START=Endast 1 startplats — endast enspelarsläge
+STR_MAPVALIDATE_BASE_OVERLAP=Bas #{number} och bas #{number2} överlappar vid ({number3},{number4})
+STR_MAPVALIDATE_PILL_OVERLAP=Bunker #{number} och bunker #{number2} överlappar vid ({number3},{number4})
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=Bas #{number} och bunker #{number2} överlappar vid ({number3},{number4})
+STR_MAPVALIDATE_START_OVERLAP=Start #{number} och start #{number2} överlappar vid ({number3},{number4})
+STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} och bas #{number2} överlappar vid ({number3},{number4})
+STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} och bunker #{number2} överlappar vid ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Kräver portvidarebefordran för att spelare utanför LAN ska kunna ansluta. (Kommer: automatisk NAT-uppsättning.)
+STR_GAMEFRONTERR_MAPLOAD=Kunde inte ladda karta från servern
+STR_GAMEFRONTERR_STARTSERVER=Fel vid serverstart
+STR_DLGLOBBY_PORTMAP_CHECKING=Kontrollerar serveråtkomst…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server nåbar
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server inte nåbar
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Försöker öppna en brandväggsport via UPnP / NAT-PMP och bekräftar att trackern kan nå dig via ditt nätverk. Detta brukar slutföras inom 30 sekunder.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port vidarebefordrades automatiskt via UPnP/NAT-PMP på %s:%u. Anslutande spelare ansluter direkt utan ytterligare steg.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direkt portvidarebefordran kunde inte upprättas, men NAT-traversal är aktiv. Anslutande spelare koordinerar via trackern för att ta sig igenom ditt nätverks brandvägg. Detta fungerar för de flesta hemnätverk; spelare bakom symmetrisk NAT eller carrier-grade NAT kan ändå inte ansluta.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisk NAT upptäckt — ditt nätverk skriver om källporten för varje destination, vilket hindrar spelare från att nå dig även via NAT-traversal. För att kunna hosta måste du manuellt vidarebefordra UDP-port %u på din router till den här datorn.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kunde inte öppna en brandväggsport automatiskt (UPnP/NAT-PMP nekade eller är otillgängligt) och trackern kunde inte bekräfta dubbelriktad åtkomst. För att kunna hosta måste du manuellt vidarebefordra UDP-port %u på din router till den här datorn.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Serveråtkomst
+STR_DLGLOBBY_TEST_CONNECTIVITY=Testa anslutning
+STR_DLGLOBBY_TEST_TESTING=Testar…
+STR_DLGLOBBY_TEST_REACHABLE=Nåbar från internet
+STR_DLGLOBBY_TEST_NO_REPLY=Inget svar från trackern
+STR_DLGSETTINGS_NETWORK=Nätverk
+STR_DLGSETTINGS_NET_HELP=Inställningarna träder i kraft vid nästa hostat spel.
+STR_DLGSETTINGS_USE_UPNP=Använd UPnP / NAT-PMP för automatisk portvidarebefordran
+STR_DLGSETTINGS_USE_NATTRAV=Använd NAT-traversal (hole-punching) via tracker

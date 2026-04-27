@@ -12,6 +12,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_context.h"
 #include "imgui.h"
+#include "../../gui/lang.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -100,7 +101,9 @@ void lv_imgui_events_window(void) {
         ImGui::SetNextWindowPos(ImVec2(vp.x - 320 - 10, vp.y - 200 - 10), cond);
     }
 
-    if (ImGui::Begin("Events", &lv_g_show_events_window, ImGuiWindowFlags_NoCollapse)) {
+    char ev_title[128];
+    snprintf(ev_title, sizeof(ev_title), "%s###events", langGetText(STR_LV_WIN_EVENTS));
+    if (ImGui::Begin(ev_title, &lv_g_show_events_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
         if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
@@ -152,10 +155,10 @@ void lv_imgui_events_window(void) {
             
             /* Right-click context menu on item */
             if (ImGui::BeginPopupContextItem()) {
-                if (ImGui::MenuItem("Copy")) {
+                if (ImGui::MenuItem(langGetText(STR_LV_COPY))) {
                     copy_to_clipboard(event_text);
                 }
-                if (ImGui::MenuItem("Copy All")) {
+                if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL))) {
                     /* Build string of all events */
                     std::string all_events;
                     for (const auto& e : s_events) {
@@ -163,7 +166,7 @@ void lv_imgui_events_window(void) {
                     }
                     copy_to_clipboard(all_events.c_str());
                 }
-                if (ImGui::MenuItem("Select All")) {
+                if (ImGui::MenuItem(langGetText(STR_MENU_SELECT_ALL))) {
                     s_select_all = true;
                 }
                 ImGui::EndPopup();
@@ -180,21 +183,21 @@ void lv_imgui_events_window(void) {
         
         /* Right-click context menu in empty space */
         if (ImGui::BeginPopupContextWindow()) {
-            if (ImGui::MenuItem("Select All", NULL, s_select_all)) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_SELECT_ALL), NULL, s_select_all)) {
                 s_select_all = !s_select_all;
             }
-            if (ImGui::MenuItem("Copy All", NULL, false, !s_events.empty())) {
+            if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL), NULL, false, !s_events.empty())) {
                 std::string all_events;
                 for (const auto& e : s_events) {
                     all_events += e.text + "\r\n";
                 }
                 copy_to_clipboard(all_events.c_str());
             }
-            if (ImGui::MenuItem("Clear All", NULL, false, !s_events.empty())) {
+            if (ImGui::MenuItem(langGetText(STR_LV_CLEAR_ALL), NULL, false, !s_events.empty())) {
                 lv_imgui_events_clear();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Auto Scroll", NULL, s_auto_scroll)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_AUTO_SCROLL), NULL, s_auto_scroll)) {
                 s_auto_scroll = !s_auto_scroll;
             }
             ImGui::EndPopup();

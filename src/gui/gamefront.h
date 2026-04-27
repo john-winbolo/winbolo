@@ -455,6 +455,24 @@ bool gameFrontGetShowTutorialButton(void);
 void gameFrontSetShowTutorialButton(bool show);
 
 /*********************************************************
+*NAME:          gameFrontGetLanguageCode
+*PURPOSE:
+* Reads the persisted BCP-47 language code (e.g. "en", "de", "pt-br")
+* into out. Empty string if the user has never picked a language; the
+* caller should run langAutoDetect() in that case.
+*********************************************************/
+void gameFrontGetLanguageCode(char *out, int outSize);
+
+/*********************************************************
+*NAME:          gameFrontSetLanguageCode
+*PURPOSE:
+* Persists the BCP-47 language code in the INI file. Pass an empty
+* string to clear the saved preference (and revert auto-detect on
+* the next launch).
+*********************************************************/
+void gameFrontSetLanguageCode(const char *code);
+
+/*********************************************************
 *NAME:          gameFrontRequestPlayTutorial
 *PURPOSE:
 * Settings dialog calls this when the user clicks "Play Tutorial".
@@ -707,5 +725,8 @@ bool gameFrontLoadDeferredMap(struct ClientSim *cs);
 /* Dialog window position — used to place main window on same monitor */
 extern int gameFrontDialogX;
 extern int gameFrontDialogY;
+
+extern bool gameFrontUseUpnp;
+extern bool gameFrontUseNatTraversal;
 
 #endif

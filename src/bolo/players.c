@@ -156,30 +156,21 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
 *********************************************************/
 bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, bool isServer) {
   bool returnValue;           /* Value to return */
-  char messageStr[FILENAME_MAX]; /* Newswire Message */
-  char label[FILENAME_MAX];   /* Used to hold the string made by label */
   char temp[FILENAME_MAX];
 
-  messageStr[0] = '\0';
-  label[0] = '\0';
   returnValue = FALSE;
   if ((*plrs)->item[playerNum].inUse == TRUE) {
     if (playersNameTaken(plrs, playerName) == FALSE) {
       /* OK to change do so and then make the message */
       returnValue = TRUE;
       /* Make Message */
-      strcat(messageStr, MESSAGE_QUOTES);
-      if (playerNum == selfPlayer) {
-        labelMakeMessage(csParam, label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER));
-      } else {
-        labelMakeMessage(csParam, label, (*plrs)->item[playerNum].playerName, (*plrs)->item[playerNum].location);
+      {
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        strncpy(args.otherName, (*plrs)->item[playerNum].playerName, PLAYER_NAME_LEN - 1);
+        strncpy(args.playerName, playerName, PLAYER_NAME_LEN - 1);
+        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
       }
-      strcat(messageStr, label);
-      strcat(messageStr, MESSAGE_QUOTES);
-      strcat(messageStr, langGetText(MESSAGE_CHANGENAME));
-      strcat(messageStr, playerName);
-      strcat(messageStr, MESSAGE_QUOTES);
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), messageStr);
       /* Update the name */
       strcpy((*plrs)->item[playerNum].playerName, playerName);
       utilCtoPString(playerName, (char *) (*plrs)->playerBrainNames[playerNum]);
@@ -949,8 +940,6 @@ BYTE playersGetFirstNotUsed(players *plrs) {
 * playerNum - The number of the player that has left
 *********************************************************/
 void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
-  char name[FILENAME_MAX];   /* The Player Name */
-  char output[FILENAME_MAX]; /* The message */
   BYTE count;                /* Looping variable */
 
 
@@ -965,24 +954,22 @@ void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerN
       count++;
     }
 
-    output[0] = '\0';
-    name[0] = '\0';
-    playersMakeMessageName(NULL, plrs, selfPlayer, playerNum, name);
-    (*plrs)->item[playerNum].inUse = FALSE;
-    (*plrs)->item[playerNum].needUpdate = FALSE;
-    (*plrs)->item[playerNum].isChecked = FALSE;
-    (*plrs)->playerBrainNames[playerNum][0] = '\0';
-    if (isServer == FALSE) {
-      frontEndClearPlayer((playerNumbers) playerNum);
-      frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
-      frontEndSetPlayerCheckState((playerNumbers) playerNum, FALSE);
+    {
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(NULL, plrs, selfPlayer, playerNum, args.playerName);
+      (*plrs)->item[playerNum].inUse = FALSE;
+      (*plrs)->item[playerNum].needUpdate = FALSE;
+      (*plrs)->item[playerNum].isChecked = FALSE;
+      (*plrs)->playerBrainNames[playerNum][0] = '\0';
+      if (isServer == FALSE) {
+        frontEndClearPlayer((playerNumbers) playerNum);
+        frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
+        frontEndSetPlayerCheckState((playerNumbers) playerNum, FALSE);
+      }
+      /* Make a message about it */
+      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
-    /* Make a message about it */
-    strcat(output, MESSAGE_QUOTES);
-    strcat(output, name);
-    strcat(output, MESSAGE_QUOTES);
-    strcat(output, langGetText(MESSAGE_QUIT_GAME));
-    sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, langGetText(MESSAGE_NEWSWIRE), output);
   }
 }
 
@@ -1268,15 +1255,19 @@ void playersSendMessageAllAllies(ClientSim *cs, players *plrs, BYTE selfPlayer, 
 void playersSendMessageAllSelected(ClientSim *cs, GameSim *sim, players *plrs, BYTE selfPlayer, char *messageStr) {
   char topLine[FILENAME_MAX]; /* The message topline */
   BYTE count;                 /* Looping variable */
+  (void)sim;
 
   count = 0;
   while (count < MAX_TANKS) {
     if ((*plrs)->item[count].inUse == TRUE && (*plrs)->item[count].isChecked == TRUE) {
       if (selfPlayer == count) {
-        /* Send self */
+        /* Self-echo of an outgoing chat — both top (player label) and
+         * body (free-form chat) are dynamic strings, so they bypass the
+         * langid-based messageAdd callback and go straight into the
+         * client message log. */
         topLine[0] = '\0';
         playersMakeMessageName(cs, plrs, selfPlayer, selfPlayer, topLine);
-        sim->callbacks.messageAdd(sim->callbacks.ctx, (messageType) selfPlayer, topLine, messageStr);
+        clientMessageAdd(&cs->messages, (messageType) selfPlayer, topLine, messageStr);
       } else {
         clientSimMessageSendPlayer(cs, selfPlayer, count, messageStr);
       }
@@ -2012,6 +2003,7 @@ void playersSendAiMessage(ClientSim *cs, GameSim *sim, players *plrs, PlayerBitM
   char topLine[FILENAME_MAX]; /* The message topline */
   BYTE count; /* Looping variable */
   PlayerBitMap test;
+  (void)sim;
 
   count = 0;
   while (count < MAX_TANKS) {
@@ -2019,9 +2011,11 @@ void playersSendAiMessage(ClientSim *cs, GameSim *sim, players *plrs, PlayerBitM
     test &= 1;
     if ((*plrs)->item[count].inUse == TRUE && test) {
       if (count == cs->myPlayerNum) {
+        /* Self-echo of an AI-generated chat — same dynamic-text path as
+         * playersSendMessageAllSelected; bypass the langid callback. */
         topLine[0] = '\0';
         playersMakeMessageName(cs, plrs, cs->myPlayerNum, cs->myPlayerNum, topLine);
-        sim->callbacks.messageAdd(sim->callbacks.ctx, (messageType) cs->myPlayerNum, topLine, messageStr);
+        clientMessageAdd(&cs->messages, (messageType) cs->myPlayerNum, topLine, messageStr);
       } else {
         clientSimMessageSendPlayer(cs, cs->myPlayerNum, count, messageStr);
       }

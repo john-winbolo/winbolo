@@ -296,7 +296,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
 		  if (sim->isServer == FALSE) {
             sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, mx, my);
 		    tankSetLastTankDeath(&sim->tanks[playerNum],LAST_DEATH_BY_DEEPSEA); /* Override LAST_DEATH_BY_SHELL */
-            sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, langGetText(MESSAGE_ASSISTANT), langGetText2(MESSAGE_TANKSUNK));
+            sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
 		  }
         }
         tkExplosionDeleteItem(tke, &position);

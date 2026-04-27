@@ -68,9 +68,32 @@
 static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURNTYPE angle, tank *tk, uint32_t fireTick);
 
 /* GameSim callback wrappers for the client side */
-static void csCallbackMessageAdd(void *ctx, messageType msgType, char *top, char *bottom) {
+static void csCallbackMessageAdd(void *ctx, messageType msgType,
+                                 langid topId, langid bodyId,
+                                 const MessageArgs *args) {
   ClientSim *cs = (ClientSim *)ctx;
-  clientMessageAdd(&cs->messages, msgType, top, bottom);
+  /* Render at receive time using the client's currently-loaded language.
+   * langGetTextFmt returns a pointer into a small thread-local ring of
+   * buffers, so copy the result before any further langGet* call could
+   * recycle the slot. The message log copies the strings character by
+   * character in messageAddItem, so once clientMessageAdd returns the
+   * stack buffers are safe to drop. Switching language mid-game does
+   * not retranslate prior log entries — that's by design. */
+  char topBuf[FILENAME_MAX];
+  char bodyBuf[FILENAME_MAX];
+  const char *topRendered = langGetText(topId);
+  const char *bodyRendered = langGetTextFmt(bodyId, args);
+  topBuf[0] = '\0';
+  bodyBuf[0] = '\0';
+  if (topRendered) {
+    strncpy(topBuf, topRendered, sizeof(topBuf) - 1);
+    topBuf[sizeof(topBuf) - 1] = '\0';
+  }
+  if (bodyRendered) {
+    strncpy(bodyBuf, bodyRendered, sizeof(bodyBuf) - 1);
+    bodyBuf[sizeof(bodyBuf) - 1] = '\0';
+  }
+  clientMessageAdd(&cs->messages, msgType, topBuf, bodyBuf);
 }
 
 static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {

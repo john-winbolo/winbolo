@@ -32,6 +32,7 @@
 extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
+#include "../../lang.h"
 #include "imgui_trackersetup.h"
 }
 
@@ -56,7 +57,7 @@ extern "C" int imguiTrackerSetupShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, "WinBolo - Tracker Config");
+    dialogSetWindowTitle(window, langGetText(STR_DLGTRACKER_WINTITLE));
     SDL_SetWindowResizable(window, false);
 #endif
     dialogRestorePosition(window);
@@ -89,6 +90,9 @@ extern "C" int imguiTrackerSetupShow(void) {
     int result = 0;
     bool running = true;
 
+    char errPopupId[64];
+    SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##tracker", langGetText(STR_ERR_TITLE));
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -119,20 +123,20 @@ extern "C" int imguiTrackerSetupShow(void) {
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
 
-        ImGui::Checkbox("Use Tracker", &trackerEnabled);
+        ImGui::Checkbox(langGetText(STR_DLGTRACKER_USETRACKER), &trackerEnabled);
         ImGui::Spacing();
 
         float labelW = 130.0f;
         float inputW = (float)winW - labelW - 30.0f;
 
-        ImGui::Text("Tracker Address:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERADDRESS));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         if (!trackerEnabled) ImGui::BeginDisabled();
         ImGui::InputText("##addr", trackerAddr, FILENAME_MAX);
         if (!trackerEnabled) ImGui::EndDisabled();
 
-        ImGui::Text("Tracker Port:");
+        ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERPORT));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         if (!trackerEnabled) ImGui::BeginDisabled();
@@ -148,12 +152,12 @@ extern "C" int imguiTrackerSetupShow(void) {
         float btnX = ((float)winW - btnW * 2 - 8.0f) / 2.0f;
         ImGui::SetCursorPosX(btnX);
 
-        if (ImGui::Button("OK", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
             char *end;
             unsigned long pval = strtoul(portBuf, &end, 10);
             if (*end != '\0' || pval > 65535) {
-                errorMsg = "Invalid port number.";
-                ImGui::OpenPopup("Error##tracker");
+                errorMsg = langGetText(STR_DLGTRACKER_INVALIDPORT);
+                ImGui::OpenPopup(errPopupId);
             } else {
                 gameFrontSetTrackerOptions(trackerAddr, (unsigned short)pval,
                                            trackerEnabled);
@@ -163,17 +167,21 @@ extern "C" int imguiTrackerSetupShow(void) {
         }
 
         ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
             running = false;
         }
 
         /* Error popup */
-        if (ImGui::BeginPopupModal("Error##tracker", nullptr,
+        if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button("OK##err", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
+            {
+                char okBuf[64];
+                snprintf(okBuf, sizeof(okBuf), "%s##err", langGetText(STR_OK));
+                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }

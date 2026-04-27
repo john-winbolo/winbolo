@@ -12,6 +12,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_context.h"
 #include "imgui.h"
+#include "../../gui/lang.h"
 
 #include <cstdio>
 #include <cstring>
@@ -95,57 +96,55 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
     strncpy(s_map_name, mapName, sizeof(s_map_name) - 1);
     s_map_name[sizeof(s_map_name) - 1] = '\0';
     
-    /* Game type */
-    switch (gameType) {
-        case gameOpen:
-            snprintf(s_game_type, sizeof(s_game_type), "Open");
-            break;
-        case gameTournament:
-            snprintf(s_game_type, sizeof(s_game_type), "Tournament");
-            break;
-        case gameStrictTournament:
-            snprintf(s_game_type, sizeof(s_game_type), "Strict Tournament");
-            break;
-        default:
-            snprintf(s_game_type, sizeof(s_game_type), "Unknown");
-            break;
+    /* Game type — copy from the localized string table. */
+    {
+        langid id;
+        switch (gameType) {
+            case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
+            case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
+            case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            default:                   id = STR_UNKNOWN;            break;
+        }
+        snprintf(s_game_type, sizeof(s_game_type), "%s", langGetText(id));
     }
 
     /* Hidden mines */
-    snprintf(s_hidden_mines, sizeof(s_hidden_mines), "%s", hiddenMines ? "Yes" : "No");
+    snprintf(s_hidden_mines, sizeof(s_hidden_mines), "%s",
+             langGetText(hiddenMines ? STR_YES : STR_NO));
 
     /* Computer tanks */
-    switch (aiType) {
-        case aiNone:
-            snprintf(s_computer_tanks, sizeof(s_computer_tanks), "No");
-            break;
-        case aiYes:
-            snprintf(s_computer_tanks, sizeof(s_computer_tanks), "Yes");
-            break;
-        case aiYesAdvantage:
-            snprintf(s_computer_tanks, sizeof(s_computer_tanks), "Yes (Advantage)");
-            break;
-        case aiFull:
-            snprintf(s_computer_tanks, sizeof(s_computer_tanks), "Full Advantage");
-            break;
-        default:
-            snprintf(s_computer_tanks, sizeof(s_computer_tanks), "Unknown");
-            break;
+    {
+        langid id;
+        switch (aiType) {
+            case aiNone:         id = STR_NO;                  break;
+            case aiYes:          id = STR_YES;                 break;
+            case aiYesAdvantage: id = STR_DLGGAMEINFO_AIADV;   break;
+            case aiFull:         id = STR_DLGGAMEINFO_FULLADV; break;
+            default:             id = STR_UNKNOWN;             break;
+        }
+        snprintf(s_computer_tanks, sizeof(s_computer_tanks), "%s", langGetText(id));
     }
 
     /* Time limit */
     if (timeLimit == -1) { /* UNLIMITED_GAME_TIME */
-        snprintf(s_time_limit, sizeof(s_time_limit), "Unlimited");
+        snprintf(s_time_limit, sizeof(s_time_limit), "%s",
+                 langGetText(STR_DLGGAMEINFO_UNLIMITED));
     } else {
         /* Convert ticks to minutes */
         int32_t minutes = timeLimit / 60 / 50; /* 50 ticks per second */
-        snprintf(s_time_limit, sizeof(s_time_limit), "About %d minutes", (int)(minutes + 1));
+        MessageArgs args = {};
+        args.number = (int)(minutes + 1);
+        snprintf(s_time_limit, sizeof(s_time_limit), "%s",
+                 langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
 
     /* Start delay */
     if (startDelay > 0) {
         int32_t seconds = startDelay / 50; /* 50 ticks per second */
-        snprintf(s_start_delay, sizeof(s_start_delay), "%d second%s", (int)seconds, seconds > 1 ? "s" : "");
+        MessageArgs args = {};
+        args.number = (int)seconds;
+        snprintf(s_start_delay, sizeof(s_start_delay), "%s",
+                 langGetTextFmt(STR_LV_SECONDS, &args));
     } else {
         s_start_delay[0] = '\0';
     }
@@ -185,13 +184,19 @@ void imgui_game_info_update(void) {
     int32_t timeLeft = lv_screenGetGameTimeLeft();
     if (timeLeft != -1) { /* UNLIMITED_GAME_TIME */
         int32_t minutes = timeLeft / 60 / 50;
-        snprintf(s_time_limit, sizeof(s_time_limit), "About %d minutes", (int)(minutes + 1));
+        MessageArgs args = {};
+        args.number = (int)(minutes + 1);
+        snprintf(s_time_limit, sizeof(s_time_limit), "%s",
+                 langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
 
     int32_t startDelay = lv_screenGetGameStartDelay();
     if (startDelay > 0) {
         int32_t seconds = startDelay / 50;
-        snprintf(s_start_delay, sizeof(s_start_delay), "%d second%s", (int)seconds, seconds > 1 ? "s" : "");
+        MessageArgs args = {};
+        args.number = (int)seconds;
+        snprintf(s_start_delay, sizeof(s_start_delay), "%s",
+                 langGetTextFmt(STR_LV_SECONDS, &args));
     } else {
         s_start_delay[0] = '\0';
     }
@@ -209,7 +214,9 @@ void lv_imgui_game_info_window(void) {
         ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10, 30), cond);
     }
 
-    if (ImGui::Begin("Game Information", &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
+    char gi_title[128];
+    snprintf(gi_title, sizeof(gi_title), "%s###gameinfo", langGetText(STR_LV_WIN_GAMEINFO));
+    if (ImGui::Begin(gi_title, &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
         /* Reposition window relative to right/bottom edge when viewport is resized */
         float dx, dy;
         if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
@@ -233,23 +240,57 @@ void lv_imgui_game_info_window(void) {
             if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
         }
 
-        /* Static fields */
-        ImGui::Text("Map Name: %s", s_map_name);
-        ImGui::Text("Version: %s", s_version);
-        ImGui::Text("Game Type: %s", s_game_type);
-        ImGui::Text("Hidden Mines: %s", s_hidden_mines);
-        ImGui::Text("Computer Tanks: %s", s_computer_tanks);
-        
+        /* Static fields — use a single MessageArgs reused across rows
+         * since each ImGui::Text call consumes the rendered string
+         * before the next overwrites the format buffer. */
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_map_name, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_MAP, &args));
+        }
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_version, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_VERSION_FMT, &args));
+        }
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_game_type, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_GAMETYPE, &args));
+        }
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_hidden_mines, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_HIDDENMINES, &args));
+        }
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_computer_tanks, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_COMPUTER_TANKS, &args));
+        }
+
         /* Dynamic fields - update periodically */
         imgui_game_info_update();
-        
-        ImGui::Text("Time Limit: %s", s_time_limit);
-        ImGui::Text("Start Delay: %s", s_start_delay);
-        ImGui::Text("Players: %d", s_num_players);
-        
+
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_time_limit, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_TIME_LIMIT, &args));
+        }
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_start_delay, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_START_DELAY, &args));
+        }
+        {
+            MessageArgs args = {};
+            args.number = s_num_players;
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
+        }
+
         /* WBN key - clickable link */
         if (s_wbn_key[0] != '\0' && strlen(s_wbn_key) == 32) {
-            ImGui::Text("WBN Key:");
+            ImGui::TextUnformatted(langGetText(STR_LV_INFO_WBN_KEY));
             ImGui::SameLine();
             ImGui::TextLink(s_wbn_key);
             if (ImGui::IsItemClicked()) {
@@ -263,8 +304,12 @@ void lv_imgui_game_info_window(void) {
 #endif
             }
         }
-        
-        ImGui::Text("Start Time: %s", s_start_time);
+
+        {
+            MessageArgs args = {};
+            strncpy(args.string1, s_start_time, sizeof(args.string1) - 1);
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_START_TIME, &args));
+        }
     }
     ImGui::End();
 }

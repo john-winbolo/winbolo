@@ -1,0 +1,1086 @@
+# WinBolo Dutch language file
+# Translated by Claude (Sonnet 4.6) from lang/en.txt
+# Re-run lang/en.txt regenerator if upstream English changes.
+
+name=Nederlands
+author=Claude (Sonnet 4.6), Please help us improve this
+notes=Initial machine translation. Please help us improve this!
+
+# Opening dialog
+STR_DLGOPENING_OPTION2=TCP/IP
+STR_OK=OK
+STR_DLGOPENING_BUTTON2=Afsluiten
+
+# Language dialog
+STR_DLGLANG_NAME=Nederlands
+STR_DLGLANG_AUTHOR_CAPTION=Auteur: 
+STR_DLGLANG_AUTHOR=John Morrison
+STR_DLGLANG_NOTES_CAPTION=Notities: 
+STR_DLGLANG_NOTES=Geen.
+STR_DLGLANG_DEFAULTNOTE=Opmerking: voor onvolledige vertalingen worden ontbrekende items standaard in het Engels weergegeven.
+
+# About dialog
+STR_DLGABOUT_TITLE=Over WinBolo
+
+# Alliance dialog
+STR_DLGALLIANCE_TITLE=Alliantieverzoek
+STR_DLGALLIANCE_ACCEPT=Accepteren
+STR_DLGALLIANCE_DECLINE=Weigeren
+STR_DLGALLIANCE_BLURB={player} verzoekt om een alliantie. Accepteren?
+
+# Game finder dialog
+STR_YES=Ja
+STR_NO=Nee
+
+# Game info dialog
+STR_DLGGAMEINFO_TITLE=Spelinfo
+STR_DLGGAMEINFO_MAPNAME=Kaart: 
+STR_DLGGAMEINFO_NUMPLAYERS=Spelers: {number}
+STR_DLGGAMEINFO_GAMETYPE=Speltype: 
+STR_DLGGAMEINFO_HIDDENMINES=Verborgen mijnen: 
+STR_DLGGAMEINFO_TIMELIMIT=Tijdslimiet:
+
+# Game setup dialog
+STR_CANCEL=Annuleren
+STR_DLGGAMESETUP_TITLE=Spelinstellingen
+STR_DLGGAMESETUP_CHOOSEMAP=Kies een kaart
+STR_DLGGAMESETUP_RADIO1=Open spel (vooraf bewapend)
+STR_DLGGAMESETUP_RADIO2=Toernooi (vroeg gratis munitie)
+STR_DLGGAMESETUP_RADIO3=Strikt toernooi (geen gratis munitie)
+STR_DLGGAMESETUP_HIDDENMINES=Verborgen mijnen toestaan
+STR_DLGGAMESETUP_PASSWORD=Spelwachtwoord
+STR_DLGGAMESETUP_MINUTES=minuten
+STR_DLGGAMESETUP_SECONDS=seconden
+STR_DLGGAMESETUP_STARTDELAY=Startvertraging spel
+STR_DLGGAMESETUP_TIMELIMIT=Tijdslimiet spel
+STR_DLGGAMEINFO_TIMEREMAINING=Ongeveer {number} minuut/minuten
+STR_DLGGAMEINFO_OPEN=Open
+STR_DLGGAMEINFO_TOURN=Toernooi
+STR_DLGGAMEINFO_STRICT=Strikt toernooi
+STR_DLGGAMEINFO_AIADV=Ja (voordeel)
+STR_DLGGAMESETUP_DEFAULTNAME=Ik
+
+# Key setup dialog
+STR_DLGKEYSETUP_TITLE=Toetsinstellingen
+STR_DLGKEYSETUP_DRIVETANK=Tank besturen
+STR_DLGKEYSETUP_GUNRANGE=Vuurafstand
+STR_DLGKEYSETUP_WEAPONS=Wapens
+STR_DLGKEYSETUP_VIEW=Weergaven
+STR_DLGKEYSETUP_SCROLL=Scrollen
+STR_DLGKEYSETUP_AUTOSLOWDOWN=Automatisch vertragen
+STR_DLGKEYSETUP_AUTOGUNSIGHT=Vizier automatisch verbergen
+STR_DLGKEYSETUP_FASTER=Sneller
+STR_DLGKEYSETUP_SLOWER=Langzamer
+STR_DLGKEYSETUP_TURNLEFT=Links afslaan
+STR_DLGKEYSETUP_TURNRIGHT=Rechts afslaan
+STR_DLGKEYSETUP_INCREASE=Verhogen
+STR_DLGKEYSETUP_DECREASE=Verlagen
+STR_DLGKEYSETUP_SHOOT=Schieten
+STR_DLGKEYSETUP_LAYMINE=Mijn leggen
+STR_DLGKEYSETUP_TANKVIEW=Tankweergave
+STR_DLGKEYSETUP_PILLVIEW=Bunkerweergave
+STR_DLGKEYSETUP_SCROLLUP=Omhoog
+STR_DLGKEYSETUP_SCROLLDOWN=Omlaag
+STR_DLGKEYSETUP_SCROLLLEFT=Links
+STR_DLGKEYSETUP_SCROLLRIGHT=Rechts
+
+# Messages dialog
+STR_DLGMSG_BUTTON=Versturen
+STR_DLGMSG_ALLPLAYERS=Alle spelers
+STR_DLGMSG_ALLALLIES=Alle bondgenoten
+STR_DLGMSG_NEARBY=Alle nabijgelegen
+STR_DLGMSG_SELECTION=Geselecteerde spelers
+STR_DLGMSG_SENDPLAYER=Bericht sturen naar {number} speler
+STR_DLGMSG_SENDPLAYERS=Bericht sturen naar {number} spelers
+
+# Network info dialog
+STR_DLGNETINFO_TITLE=Netwerkinfo
+STR_DLGNETINFO_SERVERPING=Serverping: {number} ms
+STR_DLGNETINFO_STATUS=Status:
+STR_DLGNETINFO_ERRORS=Netwerkfouten: {number}
+
+# Password dialog
+STR_DLGPASSWORD_TITLE=Wachtwoord vereist
+STR_DLGPASSWORD_BLURB=Dit spel vereist een wachtwoord:
+
+# Set name dialog
+STR_DLGSETNAME_BLURB=Voer de nieuwe spelernaam in voor je tank:
+
+# Tracker setup dialog
+STR_DLGTRACKER_TITLE=Tracker configureren
+STR_DLGTRACKER_USETRACKER=Tracker gebruiken
+STR_DLGTRACKER_TRACKERADDRESS=Trackeradres:
+STR_DLGTRACKER_TRACKERPORT=Trackerpoort:
+
+# System info dialog
+STR_DLGSYSINFO_TITLE=Systeeminfo
+STR_DLGSYSINFO_CPUUSAGE=CPU-gebruik:
+STR_DLGSYSINFO_SIMMODELING=Simulatiemodellering:
+STR_DLGSYSINFO_COMPROCESSING=Communicatieverwerking:
+STR_DLGSYSINFO_TOTAL=Totaal:
+
+# TCP/IP setup dialog
+STR_DLGTCP_BLURB=Om een internet Bolo-spel te joinen, moet je de naam (of het IP-adres) opgeven van een hostcomputer waarop Bolo draait, en het UDP-poortnummer van het Bolo-proces op die computer.
+STR_DLGTCP_JOIN=Joinen
+STR_DLGTCP_REJOIN=Herjoinen
+STR_DLGTCP_NEW=Nieuw
+STR_DLGTCP_TRACKERSETUP=Tracker instellen
+STR_DLGTCP_REMEMBER=Spelernaam onthouden
+STR_DLGTCP_MACHINENAME=Computernaam (of IP-adres):
+STR_DLGTCP_THEREUDP=UDP-poort van Bolo op die computer:
+STR_DLGTCP_USUDP=UDP-poort voor Bolo op deze computer:
+STR_DLGTCP_NAME=Je spelernaam voor het spel:
+STR_DLGTCP_NEWBLURB=Klik op "Nieuw" om een spel te starten
+STR_DLGTCP_JOINBLURB=Klik op "Joinen" om een bestaand spel te joinen
+STR_DLGTCP_REJOINBLURB=Klik op "Herjoinen" om een spel te herjoinen en je bezittingen terug te claimen
+STR_ERR_DLGTCP_PORTS=Server- en eigen poort zijn hetzelfde!
+STR_ERR_DLGTCP_NOTRIGHT=Er klopt iets niet hier...
+
+# Game finder extra
+
+# Brain errors
+
+# Draw errors
+
+# Font errors
+
+# Game front errors
+STR_GAMEFRONT_LANFINDER_TITLE=LAN-spelzoeker
+STR_GAMEFRONT_TRACKERFINDER_TITLE=Tracker-spelzoeker
+STR_GAMEFRONTERR_JOINGAME=Er is een fout opgetreden bij het joinen van het spel
+
+# Network client errors
+
+# Sound errors
+
+# General WinBolo errors
+STR_WBTIMELIMIT_END=Tijdslimiet verstreken. Het spel is afgelopen.
+STR_WBERR_SAVEMAP=Fout bij opslaan kaart (Schijf vol?)
+
+# Tutorial strings
+STR_TUTORIAL01=Voor je ligt een korte rivier die landinwaarts gaat. Houd\nde {ACCEL}-toets ingedrukt om je boot naar het einde van de\nrivier te rijden.\n\nAls je er bent, blijf dan {ACCEL} ingedrukt houden. De tank\nstapt uit de boot en de boot blijft afgemeerd aan\nhet einde van de rivier
+STR_TUTORIAL02=Je staat nu op het gras. De tank beweegt vrij\nsnel op gras.\n\n\nBlijf {ACCEL} indrukken om verder te gaan naar het bos.
+STR_TUTORIAL03=Je bent nu in het bos. De tank beweegt langzamer\nin het bos dan op gras.\n\n\nBlijf {ACCEL} indrukken om verder te gaan naar het moeras.
+STR_TUTORIAL04=Je bent nu in het moeras. De tank beweegt heel\nlangzaam in moeras. Gelukkig is er een weg voor je.\n\n\nBlijf {ACCEL} indrukken om verder te gaan naar de weg.
+STR_TUTORIAL05=Je bent nu op de weg. De tank kan heel snel rijden\nop de weg en als je {ACCEL} indrukt, versnelt de tank.\n\n\nAls je te snel gaat, kun je op {BRAKE} drukken
+STR_TUTORIAL06=Er zijn wat gebouwen voor je. Gebouwen zijn vaste\nbelemmeringen waar je niet doorheen kunt rijden, dus\nmoe je je een weg door het doolhof vinden naar de\nandere kant.\n\nDruk op {LEFT} om de tank links te laten draaien\nDruk op {RIGHT} om de tank rechts te laten draaien
+STR_TUTORIAL07=Die ronde objecten met de rode kanonnen die uitsteken zijn\nautomatische bunkers. Ze schieten op elke tank\ndie binnen bereik komt.\n\n\nGelukkig bieden de gebouwen bescherming tegen de\nschoten, dus de bunkers kunnen je niet raken\ntenzij je zo lang wacht dat ze zich een weg door\nde gebouwen schieten.
+STR_TUTORIAL08=Bos biedt ook bescherming tegen bunkers, maar op\neen andere manier. Naast het sterk vertragen van de tank,\nbeperkt rijden door bos ook het zicht.\n\n\nAls je in het bos bent, kun je nog steeds duidelijk\nalles buiten het bos zien, maar bunkers (en\nandere spelers) kunnen je tank niet zien tenzij je\nerg dichtbij komt.
+STR_TUTORIAL09=Lijn je tank uit met het midden van de strook\nbos en rij recht naar het noorden. Als je recht rijdt\nen niet te dicht bij de randen van het bos komt,\nzullen de bunkers je niet zien en niet schieten.\n\n\nRijd niet buiten het bos of je wordt aan stukken geschoten.\n
+STR_TUTORIAL10=Er is nog één eenvoudige manier om aan bunkers te ontsnappen -\nsnelheid.\n\n\nZorg dat je correct op het midden van de weg staat\nen houd {ACCEL} ingedrukt om op volle snelheid langs de\nbunkers te rijden.
+STR_TUTORIAL11=Als ze je opmerken, beginnen ze te schieten, maar als\nje recht vooruit blijft rijden en je zenuwen niet verliest,\nben je buiten bereik voordat de schoten je kunnen\nraken.\n\n\nRijd niet van de weg af het moeras in, anders ben je\neen makkelijk doelwit voor de bunkers en kun je niet\nsnel genoeg bewegen om te ontsnappen.
+STR_TUTORIAL12=Voor je ligt een bevoorradingsbasis. Bevoorradingsbases leveren\ngranaten om te schieten, mijnen om geheime valstrikken mee te\nleggen, en ze repareren ook het pantser van je tank terug\nnaar volledige sterkte als het beschadigd is.\n\n\nStop op de bevoorradingsbasis en laad je tank\nmet granaten.
+STR_TUTORIAL13=Je staat op de bevoorradingsbasis. Je tank wordt nu\ngeladen met granaten en mijnen, zoals de indicatoren\nrechts aangeven. Voor je, achter de\ngebouwen, ligt een mijnenveld.
+STR_TUTORIAL14=Als je je tank het mijnenveld inrijdt, wordt hij\nvernietigd. Gelukkig kun je een mijnenveld opruimen door\nte schieten. Druk op {FIRE} om te schieten.\n\nSchiet een gat door het gebouw en laat dan een\ngranaat in het midden van het mijnenveld landen om het tot\nontploffing te brengen. Als je de mijnen opblaast, ontstaat\neen grote krater in de grond, waar je doorheen\nkunt rijden, hoewel het net zo langzaam gaat als door moeras.
+STR_TUTORIAL15=Voor je ligt een ander mijnenveld. Doe dezelfde truc:\nRij naar de bevoorradingsbasis, schiet door de\nmuur en laat een granaat in het midden van het mijnenveld\nlanden om het tot ontploffing te brengen.\n\nDeze keer grenst het mijnenveld aan een grote\nrivier en water zal de kraters instromen. Je kunt\nde tank door het water rijden, net als door\nkraters en moeras.
+STR_TUTORIAL16=WinBolo scrollt het venster automatisch om het\ngebied rond je tank te tonen, maar je kunt de\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\ntoetsen gebruiken om de weergave handmatig te sturen.\n\nDruk nu op {SCROLL_UP} voor een beter uitzicht op de\nrivier voor je.
+STR_TUTORIAL17=Naast het erg langzame rijden heeft rijden door water\nnog een nadeel: het tast ook de voorraad granaten\nen mijnen van je tank aan.\n\n\nAls je aan de andere kant aankomt, zal je tank nog\nwerken, maar je bent al je aanvalscapaciteit kwijtgeraakt.
+STR_TUTORIAL18=Deze keer gaan we subtieler te werk bij het\noversteken van de rivier. In plaats van gewoon door\nhet water te rijden, gaan we een brug bouwen.\n\n\nSelecteer de boommodus door op het bospictogram\n(linksboven in het venster) te klikken en klik op het bos.\nJe bouwer rent uit de tank en oogst één\nboom voor bouwmaterialen.
+STR_TUTORIAL19=Na het oogsten van bomen, selecteer het weg-/bruggereedschap\n(de tweede knop van boven) en klik met de muis\nop de rivier aan het einde van de weg.\n\n\nJe bouwer rent uit de tank en bouwt één\nbrugdeel. Klik nogmaals om de brug te voltooien\nen rij dan naar de andere kant.
+STR_TUTORIAL20=Deze rivier is breder dan de vorige en in het midden is\nze te diep om een brug te bouwen. Als je probeert\ndoor te rijden, zinkt de tank naar de bodem\nen wordt vernietigd.
+STR_TUTORIAL21=Om deze rivier over te steken, moet je een boot bouwen. Boten\nkosten vijf bomen, dus klik op de vijf bomen om ze te oogsten.\nSelecteer dan het muur-/bootgereedschap (de derde knop van\nboven) en klik op het water om een boot te bouwen.\n\nAls je op het land klikt, bouw je een muur\nen moet je nog meer bomen oogsten om een boot\nte bouwen. Rij op de boot en steek de rivier over.
+STR_TUTORIAL22=Er is een bunker voor je en wat bevoorradingsbases voor\nmunitie. Verzamel granaten bij de bevoorradingsbasis en\nval de bunker aan.\n\n\nHij schiet terug, maar als je tank geraakt wordt, kun je\ngemakkelijk teruggaan naar de bevoorradingsbasis om je pantser\nterug naar volle sterkte te repareren.
+STR_TUTORIAL23=Met geduld en voorzichtigheid moet je deze bunker kunnen\nvernietigen. Gebruik de vaardigheden die je hebt geleerd\nom het makkelijker te maken:\n\n\nVerschuil je in het bos zodat de bunker je niet kan zien,\noogst bomen, bouw wegen om je tank sneller te laten rijden\nen bouw gebouwen om dekking te bieden tegen\nbunkerschoten.
+STR_TUTORIAL24=Nadat je deze bunker hebt verslagen, is je einduitdaging\nvan de tutorial om de twee bunkers bij de uitgang\nte vernietigen, een boot te bouwen en te ontsnappen.\n\n\nLet goed op het pantserniveau van je tank -\nals je tank vernietigd wordt, moet je opnieuw beginnen\nmet een nieuwe tank op een nieuwe boot op zee.
+STR_TUTORIAL25=Gefeliciteerd. Je hebt de WinBolo-tutorial\nvoltooid.\n\n\n\nOrganiseer nu een paar vrienden om mee te spelen en ontdek\nhoe het is om te strijden tegen intelligente menselijke\ntegenstanders in plaats van stilstaande, gedachteloze doelen.\n\nAls je de tutorial later opnieuw wilt spelen, kun je\nhem opnieuw starten vanuit het menu Instellingen.
+STR_TUTORIAL_START01=Welkom bij de WinBolo-tutorial. Dit eiland introduceert\nde basisprincipes van WinBolo en leidt je er stap voor\nstap doorheen. Elk nieuw principe wordt beschreven\nin een venster zoals dit.\n\nNa het lezen van elk bericht kun je verdergaan door\nop de knop "OK" te klikken met de muis of simpelweg\nop de <Return>-toets op het toetsenbord te drukken
+STR_TUTORIAL_START02=WinBolo is de enige geautoriseerde kloon van Stuart Cheshire's klassieke Macintosh-netwerkspel, Bolo.\nJe kunt strategietips en andere informatie vinden op de officiële website:\n\nhttps://www.winbolo.com\n\nOf kom je bij ons voegen op Reddit en Discord\n
+STR_TUTORIAL_START03=Een korte opmerking over online spelen.\n\nAls je een online spel joinet en er zijn veel netwerkfouten,\nverlaat het spel dan meteen voordat\nje het spel voor de andere spelers verpest.
+STR_TUTORIAL_START04=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Druk op {ACCEL} om de tank (en boot) vooruit\nte laten gaan en druk op {BRAKE} om te vertragen en\nte stoppen.\n\nTik niet op de toetsen alsof je een brief typt -\nhoud ze ingedrukt totdat de tank op de gewenste snelheid\nis en laat dan los. Druk nu op {ACCEL} om de\nboot vooruit te laten rijden naar het land.\n(Druk eerst op <Return> om het venster te sluiten)
+STR_TUTORIAL01_TOUCH=Voor je ligt een korte rivier die landinwaarts gaat. Duw\nde joystick naar voren om je boot naar het einde\nvan de rivier te rijden.\n\nAls je er bent, houd de joystick dan\nnaar voren gedrukt. De tank stapt uit de boot en de\nboot blijft afgemeerd aan het einde van de rivier
+STR_TUTORIAL02_TOUCH=Je staat nu op het gras. De tank beweegt vrij\nsnel op gras.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar het bos.
+STR_TUTORIAL03_TOUCH=Je bent nu in het bos. De tank beweegt langzamer\nin het bos dan op gras.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar het moeras.
+STR_TUTORIAL04_TOUCH=Je bent nu in het moeras. De tank beweegt heel\nlangzaam in moeras. Gelukkig is er een weg voor je.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar de weg.
+STR_TUTORIAL05_TOUCH=Je bent nu op de weg. De tank kan heel snel rijden\nop de weg en de joystick helemaal naar voren duwen\nversnelt hem.\n\n\nAls je te snel gaat, trek de\njoystick naar achteren om te vertragen.
+STR_TUTORIAL06_TOUCH=Er zijn wat gebouwen voor je. Gebouwen zijn vaste\nbelemmeringen waar je niet doorheen kunt rijden, dus\nmoe je je een weg door het doolhof vinden naar de\nandere kant.\n\nDuw de joystick naar links of rechts om de\ntank in die richting te draaien.
+STR_TUTORIAL10_TOUCH=Er is nog één eenvoudige manier om aan bunkers te ontsnappen -\nsnelheid.\n\n\nZorg dat je correct op het midden van de weg staat\nen duw de joystick helemaal naar voren om op\nvolle snelheid langs de bunkers te rijden.
+STR_TUTORIAL14_TOUCH=Als je je tank het mijnenveld inrijdt, wordt hij\nvernietigd. Gelukkig kun je een mijnenveld opruimen door\nte schieten. Tik op de vuurknop om te schieten.\n\nSchiet een gat door het gebouw en laat dan een\ngranaat in het midden van het mijnenveld landen om het tot\nontploffing te brengen. Als je de mijnen opblaast, ontstaat\neen grote krater in de grond, waar je doorheen\nkunt rijden, hoewel het net zo langzaam gaat als door moeras.
+STR_TUTORIAL16_TOUCH=WinBolo scrollt het venster automatisch om het\ngebied rond je tank te tonen, maar je kunt de kaart\nmet een vinger slepen om de weergave handmatig te sturen.\n\nSleep de kaart nu naar beneden om de rivier\nvoor je in beeld te brengen.
+STR_TUTORIAL18_TOUCH=Deze keer gaan we subtieler te werk bij het\noversteken van de rivier. In plaats van gewoon door\nhet water te rijden, gaan we een brug bouwen.\n\n\nSelecteer de boommodus door op het bospictogram\n(linksboven in het venster) te tikken en tik op het bos.\nJe bouwer rent uit de tank en oogst één\nboom voor bouwmaterialen.
+STR_TUTORIAL19_TOUCH=Na het oogsten van bomen, selecteer het weg-/bruggereedschap\n(de tweede knop van boven) en tik op de\nrivier aan het einde van de weg.\n\n\nJe bouwer rent uit de tank en bouwt één\nbrugdeel. Tik nogmaals om de brug te voltooien\nen rij dan naar de andere kant.
+STR_TUTORIAL21_TOUCH=Om deze rivier over te steken, moet je een boot bouwen. Boten\nkosten vijf bomen, dus tik op de vijf bomen om ze te oogsten.\nSelecteer dan het muur-/bootgereedschap (de derde knop van\nboven) en tik op het water om een boot te bouwen.\n\nAls je op het land tikt, bouw je een muur\nen moet je nog meer bomen oogsten om een boot\nte bouwen. Rij op de boot en steek de rivier over.
+STR_TUTORIAL_START01_TOUCH=Welkom bij de WinBolo-tutorial. Dit eiland introduceert\nde basisprincipes van WinBolo en leidt je er stap voor\nstap doorheen. Elk nieuw principe wordt beschreven\nin een venster zoals dit.\n\nNa het lezen van elk bericht kun je verdergaan door\nop de knop "OK" te tikken.
+STR_TUTORIAL_START04_TOUCH=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Gebruik de joystick aan de linkerkant van\nhet scherm om te rijden: duw hem naar voren om te versnellen,\ntrek hem naar achteren om te vertragen en te stoppen.\n\nHoe verder je de joystick induwt, hoe sneller de\ntank gaat. Duw de joystick nu naar voren om de\nboot vooruit te laten rijden naar het land.\n(Tik eerst op OK om dit venster te sluiten)
+
+# LGM (little green man) messages
+LGM_MAN_DEAD=Je kunt niet bouwen totdat je nieuwe man met een parachute landt
+LGM_NO_BUILD=Je kunt daar niet bouwen
+LGM_INSUFFICIENT_TREES=Je hebt niet genoeg bomen om dat te bouwen
+LGM_NO_PILLS=Je hebt geen bunker om te plaatsen
+LGM_INSUFFICIENT_MINES=Je hebt geen mijnen om te plaatsen
+LGM_BUILDTANK=De man kan niet op een tank bouwen
+LGM_NO_TREE=Er is geen boom om daar te oogsten
+LGM_PILL_NO_NEED_REPAIR=Die bunker hoeft niet gerepareerd te worden
+LGM_PILL_NO_BUILD_ON_MINE=De man kan niet op een mijn bouwen. Dat zou hem doden.
+LGM_NO_BUILD_UNDER_BOAT=De man kan niet onder je boot bouwen
+
+# In-game messages
+MESSAGE_ASSISTANT=Online assistent
+MESSAGE_NEWSWIRE=Newswire
+MESSAGE_AI=Brain
+MESSAGE_CHANGENAME="{other}" heeft de besturing overgedragen aan "{player}"
+MESSAGE_NETSERVER=Netwerkserver
+MESSAGE_THIS_COMPUTER=Deze computer
+MESSAGE_CAPTURE_BASE={player} heeft een neutrale basis veroverd
+MESSAGE_CAPTURE_PILL={player} heeft een neutrale bunker veroverd
+MESSAGE_STOLE_PILL={player} heeft zojuist de bunker van {other} ingepikt
+MESSAGE_STOLE_BASE={player} heeft zojuist de basis van {other} ingepikt
+MESSAGE_LGM_DEAD={player} heeft zojuist zijn bouwer verloren
+MESSAGE_SAVED_MAP={player} heeft zojuist de kaart opgeslagen
+MESSAGE_QUIT_GAME={player} heeft het spel verlaten
+MESSAGE_TIME_LIMIT_EXPIRED=Tijdslimiet verstreken. Het spel is afgelopen. Ga in vrede
+MESSAGE_TANKSUNK=Tank gezonken in open zee
+
+# Network errors
+NETERR_TRACKERDNS=Het opzoeken van de trackerhostnaam is mislukt. Trackermelding uitgeschakeld
+NETERR_JOININIT=Er was geen reactie van het spel dat je probeerde te bereiken.\nDit betekent meestal een van de volgende drie dingen:\n1. Het adres en de poortvelden zijn onjuist.\n2. Je bevindt je achter een firewall die UDP-toegang verhindert.\n3. Controleer of je versie van WinBolo gelijk is aan die van het spel
+NETERR_GAMEFULL=Dit spel is momenteel vol
+NETERR_SERVERCONNECT=Verbinding met de server mislukt. Probeer een andere computer of wacht een paar seconden en probeer opnieuw.
+NETERR_PASSWORDWRONG=Het wachtwoord is onjuist
+NETERR_PLAYERNAMEINUSE=Je spelernaam is al in gebruik. Kies een andere en probeer opnieuw
+NETERR_NONEWPLAYERS=Sorry, dit spel accepteert momenteel geen nieuwe spelers
+NETERR_CONNECTNOJOIN=Je kon verbinding maken met het spel maar je mocht niet joinen. Dit betekent waarschijnlijk dat je spelernaam al bezet is. Probeer het opnieuw met een nieuwe naam
+
+# Network status
+NET_STATUS_JOINING=Joinen
+NET_STATUS_OK=OK
+NET_STATUS_FAILED=Mislukt
+NETERR_LOSTCONNECTION=Je hebt je verbinding met de server verloren.\nJe wordt nu overgezet naar singleplayermodus
+
+# Misc dialog strings
+STR_DLGMSG_TITLE=Bericht versturen
+STRERR_HELPFILE=Fout bij openen helpbestand.
+STR_DLGSKIN_BLURB=Als niet alle skin-items aanwezig zijn, worden de standaard ingebouwde skin/geluiden gebruikt.
+
+# Player name error
+NETERR_MAPSERIALIZE=De server kon de kaartgegevens niet voorbereiden. Probeer het opnieuw
+
+# System Info panel additions
+STR_DLGSYSINFO_FRAMERATE=Framerate:
+STR_DLGSYSINFO_GRAPHICS=Grafisch:
+STR_DLGSYSINFO_AITANKS=AI-tanks:
+
+# Network Info panel additions
+STR_DLGNETINFO_SERVER=Server:
+STR_DLGNETINFO_THISGAME=Dit spel:
+STR_DLGNETINFO_PINGGRAPH=Ping: min {number} / gem {number2} / max {number3} ms
+STR_DLGNETINFO_KBIN=KB/s In:
+STR_DLGNETINFO_KBOUT=KB/s Uit:
+STR_DLGNETINFO_PACKETS_RATE=Pakketten/sec: {number} in / {number2} uit
+STR_DLGNETINFO_KB_RATE=KB/sec: {string1} in / {string2} uit
+
+# Game Info panel additions
+STR_DLGGAMEINFO_COPYSEED=Seed kopiëren
+STR_DLGGAMEINFO_AILABEL=AI-tanks:
+STR_DLGGAMEINFO_FULLADV=Volledig voordeel
+STR_DLGGAMEINFO_UNLIMITED=Onbeperkt
+
+# Players panel
+STR_DLGPLAYERS_TITLE=Spelers
+STR_DLGPLAYERS_ALL=Alle
+STR_DLGPLAYERS_NONE=Geen
+STR_DLGPLAYERS_ALLIES=Bondgenoten
+STR_DLGPLAYERS_NEARBY=Nabijgelegen
+STR_LEAVE_ALLIANCE=Alliantie verlaten
+STR_REQUEST_ALLIANCE=Alliantie verzoeken
+STR_ALLOW_NEW_PLAYERS=Nieuwe spelers toestaan
+
+# About modal
+STR_DLGABOUT_VERSION=WinBolo v1.0.1.7
+STR_DLGABOUT_COPYRIGHT=Copyright 1998-2008 John Morrison
+STR_DLGABOUT_BOLOCOPYRIGHT=Bolo Copyright 1987-1995 Stuart Cheshire
+
+# Join Game confirmation modal
+STR_DLGJOIN_TITLE=Spel joinen?
+STR_DLGJOIN_BLURB=Huidig spel verlaten en bij server joinen?
+STR_DLGJOIN_BUTTON=Joinen
+
+# Change Player Name modal
+STR_DLGCHANGENAME_TITLE=Spelernaam wijzigen
+
+# Key Setup modal additions
+STR_DLGKEYSETUP_NONE_VAL=(geen)
+STR_DLGKEYSETUP_PRESSAKEY=Druk op een toets...
+STR_DLGKEYSETUP_PRESS_OR_CANCEL=Druk op een toets om toe te wijzen of klik op Annuleren.
+STR_DLGKEYSETUP_CHANGE=Wijzigen
+STR_DLGKEYSETUP_COL_ACTION=Actie
+STR_DLGKEYSETUP_COL_KEY=Toets
+STR_DLGKEYSETUP_QUICKKEYS=Sneltoetsen
+STR_DLGKEYSETUP_TREE=Boom
+STR_DLGKEYSETUP_ROAD=Weg
+STR_DLGKEYSETUP_WALL=Muur
+STR_DLGKEYSETUP_QUICKPILLBOX=Bunker
+STR_DLGKEYSETUP_QUICKMINE=Mijn
+
+# Settings panel
+STR_DLGSETTINGS_TITLE=Instellingen
+STR_DLGSETTINGS_PLAYER=Speler
+STR_DLGSETTINGS_PLAYERNAME=Spelernaam:
+STR_DLGSETTINGS_APPLY=Toepassen
+STR_DLGSETTINGS_SETKEYS=Toetsen instellen...
+STR_DLGSETTINGS_DISPLAY=Weergave
+STR_DLGSETTINGS_WINDOWSIZE=Venstergrootte:
+STR_DLGSETTINGS_RELSTEER=Relatief sturen
+STR_DLGSETTINGS_RELSTEER_TIP=Uit: joystick richt de tank direct.\nAan: joystick draait links/rechts ten opzichte van de tank.
+STR_DLGSETTINGS_TABLETMODE=Tablet-UI-modus
+STR_DLGSETTINGS_LABELS=Labels
+STR_DLGSETTINGS_MSGNAMES=Berichtnamen:
+STR_DLGSETTINGS_TANKLABELS=Tanklabels:
+STR_DLGSETTINGS_SOUND=Geluid
+STR_DLGSETTINGS_MESSAGES=Berichten
+STR_DLGSETTINGS_GAME=Spel
+
+# Menu bar
+STR_MENU_FILE=Bestand
+STR_MENU_NEW=Nieuw
+STR_MENU_SAVE_MAP=Kaart opslaan
+STR_MENU_EXIT=Afsluiten
+STR_MENU_EDIT=Bewerken
+STR_MENU_FRAME_RATE=Framerate
+STR_MENU_WINDOW_SIZE=Venstergrootte
+STR_MENU_NORMAL=Normaal
+STR_MENU_DOUBLE=Dubbel
+STR_MENU_TRIPLE=Drievoudig
+STR_MENU_QUAD=Viervoudig
+STR_MENU_CUSTOM_RESIZABLE=Aangepast (schaalbaar)
+STR_MENU_REQUIRES=Vereist {number}x{number2} - overschrijdt beeldscherm
+STR_MENU_SMOOTH_SCROLLING=Vloeiend scrollen
+STR_MENU_AUTO_SCROLLING=Automatisch scrollen
+STR_MENU_SHOW_GUNSIGHT=Vizier tonen
+STR_MENU_MSG_NAMES_SUB=Namen berichtverzenders
+STR_MENU_TANK_LABELS_SUB=Tanklabels
+STR_NONE=Geen
+STR_SHORT=Kort
+STR_LONG=Lang
+STR_MENU_NO_OWN_LABEL=Eigen tank niet labelen
+STR_MENU_PILLBOX_LABELS=Bunkerlabels
+STR_MENU_BASE_LABELS=Labels bevoorradingsbases
+STR_MENU_HIDE_MAIN=Hoofdweergave verbergen
+STR_MENU_DEVICE=Apparaat:
+STR_MENU_DESKTOP=Bureaublad
+STR_MENU_WINBOLO=WinBolo
+STR_MENU_SETKEYS=Toetsen instellen
+STR_MENU_SOUND_EFFECTS=Geluidseffecten
+STR_MENU_BACKGROUND_SOUND=Achtergrondgeluid
+STR_MENU_SOUND_KEEPALIVE=Geluid keepalive
+STR_MENU_NEWSWIRE_MSGS=Newswire-berichten
+STR_MENU_ASSISTANT_MSGS=Assistentberichten
+STR_MENU_AI_MSGS=AI Brain-berichten
+STR_MENU_NETSTATUS_MSGS=Netwerkstatusberichten
+STR_MENU_NETDEBUG_MSGS=Netwerkdebugberichten
+STR_MENU_SETTINGS=Instellingen...
+STR_MENU_PLAYERS=Spelers
+STR_MENU_SEND_MESSAGE=Bericht versturen
+STR_MENU_SELECT_ALL=Alles selecteren
+STR_MENU_SELECT_NONE=Niets selecteren
+STR_MENU_SELECT_ALLIES=Bondgenoten selecteren
+STR_MENU_SELECT_NEARBY=Nabijgelegen tanks selecteren
+STR_MENU_BRAINS=Brains
+STR_MENU_MANUAL=Handleiding
+STR_MENU_HELP=Help
+STR_MENU_ABOUT=Over
+STR_MENU_LEAVE_GAME=Spel verlaten
+STR_BRAINSETTINGS_NONE=(geen instellingen)
+STR_BRAINSETTINGS_TITLE=Brain-instellingen
+
+# Settings panel additions (pre-game)
+STR_DLGSETTINGS_TUTORIAL=Tutorial
+STR_DLGSETTINGS_PLAY_TUTORIAL=Tutorial spelen
+STR_DLGSETTINGS_SHOW_ON_MAIN=Tonen in hoofdmenu
+STR_DLGSETTINGS_CRASH_REPORTING=Crashrapportage
+STR_DLGSETTINGS_ENABLE_CRASH=Crashrapportage inschakelen
+STR_DLGSETTINGS_CRASH_HELP=Help WinBolo te verbeteren door crashrapporten te sturen
+STR_DLGSETTINGS_CRASH_NEXTLAUNCH=Wijzigingen worden van kracht bij de volgende start.
+STR_CLOSE=Sluiten
+STR_DLGSETTINGS_WINTITLE=WinBolo - Instellingen
+STR_DLGKEYSETUP_WINTITLE=WinBolo - Toetsinstellingen
+
+# Lobby dialog
+STR_DLGLOBBY_WINTITLE=WinBolo - Spellobby
+STR_UNKNOWN=Onbekend
+STR_DLGGAMEINFO_AIFULL=Ja (volledig)
+STR_DLGLOBBY_HIDDEN=Verborgen
+STR_DLGLOBBY_VISIBLE=Zichtbaar
+STR_DLGLOBBY_DOWNLOADING=Kaart downloaden...
+STR_DLGLOBBY_MAP_UNAVAILABLE=Kaartvoorbeeld niet beschikbaar
+STR_DLGLOBBY_PILLBOXES=Bunkers:
+STR_DLGLOBBY_BASES=Bases:
+STR_DLGLOBBY_STARTS=Startposities:
+STR_DLGLOBBY_SKIPMAP=Kaart overslaan
+STR_DLGLOBBY_CANCELSKIP=Overslaan annuleren
+STR_DLGLOBBY_VOTES={number}/{number2} stemmen om over te slaan
+STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_READY=Klaar
+STR_DLGLOBBY_UNREADY=Niet klaar
+STR_DLGLOBBY_BALANCE_TEAMS=Teams balanceren
+STR_DLGLOBBY_APPLY_BALANCE=Balans toepassen
+STR_DLGLOBBY_DISMISS=Sluiten
+STR_DLGLOBBY_LEAVE=Verlaten
+STR_DLGLOBBY_LEAVE_TITLE=Spel verlaten?
+STR_DLGLOBBY_LEAVE_BLURB=Weet je zeker dat je dit spel wilt verlaten?
+STR_DLGLOBBY_BOT_FMT={player} [Bot]
+STR_DLGLOBBY_YOU_FMT={player} (Jij)
+STR_DLGLOBBY_STARTING_FMT=Starten over {number}...
+STR_DLGLOBBY_LOSTCONNECTION=Je hebt je verbinding met de server verloren.
+STR_DLGLOBBY_ME=Ik
+STR_DLGLOBBY_PLAYER_COL=Speler
+STR_DLGLOBBY_PING_COL=Ping
+STR_DLGLOBBY_TEAM_COL=Team
+STR_DLGLOBBY_READY_COL=Klaar
+STR_DLGLOBBY_SLOT_COL=Positie
+STR_DLGLOBBY_NAME_COL=Spelernaam
+STR_DLGLOBBY_ACTION_COL=Actie
+STR_DLGLOBBY_ADDBOT=Bot toevoegen
+STR_DLGLOBBY_REMOVE=Verwijderen
+STR_DLGLOBBY_MAP_TAB=Kaart
+STR_DLGLOBBY_GAME_LBL=Spel:
+STR_DLGLOBBY_MINES_LBL=Mijnen:
+STR_DLGLOBBY_AI_LBL=AI:
+STR_DLGLOBBY_TIME_LBL=Tijd:
+STR_DLGLOBBY_TIME_HMS={number}u {string1}m {string2}s
+STR_DLGLOBBY_TIME_MS={number}m {string1}s
+STR_DLGLOBBY_TIME_S={number}s
+STR_DLGLOBBY_MAP_LBL=Kaart:
+
+# Game Setup dialog additions
+STR_DLGGAMESETUP_WINTITLE=WinBolo - Spelinstellingen
+STR_DLGGAMESETUP_SELECTAMAP=Selecteer een kaart:
+STR_BACK=Terug
+STR_DLGGAMESETUP_BASES_STARTS=Bases: {number}  Starts: {number2}
+STR_DLGGAMESETUP_PILLBOXES_FMT=Bunkers: {number}
+STR_DLGGAMESETUP_CHANGEMAP=Kaart wijzigen
+STR_DLGGAMESETUP_GAMETYPE_LBL=Speltype
+STR_DLGGAMESETUP_OPENGAME_SHORT=Open spel
+STR_DLGGAMESETUP_HIDDENMINES_SHORT=Verborgen mijnen
+STR_DLGGAMESETUP_AICOMPPLAYERS=AI-computerspelers
+STR_DLGGAMESETUP_ALLOW=Toestaan
+STR_DLGGAMESETUP_ADVANTAGE=Voordeel
+STR_DLGGAMESETUP_FULLMAP=Volledige kaart
+STR_DLGGAMESETUP_TIMELIMIT_SHORT=Tijdslimiet
+STR_DLGGAMESETUP_TEAMSETUP=Teamindeling
+STR_DLGGAMESETUP_AINUM=Aantal AI-spelers:
+STR_DLGGAMESETUP_NOBRAINS=Geen brains gevonden
+STR_DLGGAMESETUP_BRAIN_COL=Brain
+STR_DLGGAMESETUP_YOU=Jij
+STR_DLGGAMESETUP_BOT_FMT=Bot {number}
+STR_DLGGAMESETUP_NOAI=Geen computertanks
+STR_DLGGAMESETUP_ALLOWAI=Computertanks toestaan
+STR_DLGGAMESETUP_ALLOWADV=Toestaan met voordeel
+STR_DLGGAMESETUP_ALLOWFULL=Toestaan met volledige kaart
+STR_DLGGAMESETUP_NOPREVIEW=Geen voorbeeld
+STR_DLGGAMESETUP_STARTGAME=Spel starten
+STR_DLGGAMESETUP_STRICT_SHORT=Strikt
+STR_DLGTCP_WINTITLE=WinBolo - UDP (Internet) instellen
+STR_ERR_TITLE=Fout
+
+# Game Browser dialog
+STR_DLGBROWSER_WINTITLE=WinBolo - {string1}
+STR_DLGBROWSER_REFRESH=Vernieuwen
+STR_DLGBROWSER_LOADING=Spellenlijst laden{string1}
+STR_DLGBROWSER_TRACKER_INSTRUCTION=Klik op Vernieuwen om spellen te laden...
+STR_DLGBROWSER_LAN_INSTRUCTION=Klik op Vernieuwen om te scannen...
+STR_DLGBROWSER_GAMES_LOADED=Spellen geladen.
+STR_DLGBROWSER_NO_GAMES=Geen spellen gevonden. Start er een!
+STR_DLGBROWSER_SEARCH_FAILED=Zoeken mislukt.
+STR_DLGBROWSER_SEARCHING=Zoeken...
+STR_DLGBROWSER_COL_SERVER=Server
+STR_DLGBROWSER_COL_MAP=Kaart
+STR_DLGBROWSER_COL_PLAYERS=Spelers
+STR_DLGBROWSER_COL_TYPE=Type
+STR_DLGBROWSER_COL_AI=AI
+STR_DLGBROWSER_COL_BASES=Bases
+STR_DLGBROWSER_COL_PILLS=Bunkers
+STR_DLGBROWSER_COL_PING=Ping
+STR_DLGBROWSER_FILTER=Filter:
+STR_DLGBROWSER_FILTER_ALLTYPES=Alle typen
+STR_DLGBROWSER_FILTER_UNLOCKED=Alleen ontgrendeld
+STR_DLGBROWSER_FILTER_ALLLOBBY=Alle lobby
+STR_DLGBROWSER_FILTER_INLOBBY=In lobby
+STR_DLGBROWSER_FILTER_STARTING=Starten
+STR_DLGBROWSER_STATUS_PINGING=Status: {string1}  |  {number} servers  |  Pingen {number2}...
+STR_DLGBROWSER_STATUS=Status: {string1}  |  {number} servers
+STR_DLGBROWSER_NEWGAME=Nieuw spel
+STR_DLGBROWSER_PLAYER_NAME_BTN=Spelernaam
+STR_DLGBROWSER_MANUAL=Handleiding
+STR_DLGBROWSER_ERR_VERSION=Server draait een andere versie van WinBolo.
+STR_DLGBROWSER_ERR_NEEDNAME=Je moet eerst een spelernaam instellen.
+STR_DLGBROWSER_AI_ADV=Vrdl
+STR_DLGBROWSER_AI_FULL=Vol
+
+# WBN Log Browser dialog
+STR_DLGWBN_WINTITLE=WinBolo - Logbrowser
+STR_DLGWBN_TITLE=WinBolo.net logbrowser
+STR_DLGWBN_TAB_RECENT=Recent
+STR_DLGWBN_TAB_TOPRATED=Hoogst beoordeeld
+STR_DLGWBN_TAB_MOSTDOWNLOADED=Meest gedownload
+STR_DLGWBN_TAB_SEARCH=Zoeken
+STR_DLGWBN_LOADING=Laden...
+STR_DLGWBN_NOCONNECT=Kan geen verbinding maken met WinBolo.net
+STR_DLGWBN_MINPLAYERS=Min. spelers
+STR_DLGWBN_SEARCHFILTERS=Zoekfilters:
+STR_DLGWBN_HINT_PLAYER=Speler
+STR_DLGWBN_HINT_MAP=Kaart
+STR_DLGWBN_SEARCH_BTN=Zoeken
+STR_DLGWBN_ERROR=Fout: {string1}
+STR_DLGWBN_COL_MAP=Kaart
+STR_DLGWBN_COL_TYPE=Type
+STR_DLGWBN_COL_PLAYERS=Spelers
+STR_DLGWBN_COL_RATING=Beoordeling
+STR_DLGWBN_COL_SIZE=Grootte
+STR_DLGWBN_COL_DATE=Datum
+STR_DLGWBN_PLAYERS_LBL=Spelers: 
+STR_DLGWBN_NUMPLAYERS_FMT={number} speler(s)
+STR_DLGWBN_DURATION=Duur: {string1}
+STR_DLGWBN_RATING=Beoordeling: {string1}/10 ({number})
+STR_DLGWBN_DOWNLOADS_FMT=Downloads: {number}
+STR_DLGWBN_SIZE=Grootte: {string1}
+STR_DLGWBN_COMMENTS_FMT=Reacties ({number}):
+STR_DLGWBN_NOCOMMENTS=Nog geen reacties.
+STR_DLGWBN_ADDCOMMENT=Reactie toevoegen:
+STR_DLGWBN_HINT_COMMENT=Schrijf een reactie...
+STR_DLGWBN_POST=Plaatsen
+STR_DLGWBN_POSTED=Reactie geplaatst!
+STR_DLGWBN_LOADINGDETAIL=Details laden...
+STR_DLGWBN_DOWNLOADING=Downloaden...
+STR_DLGWBN_VIEWLOG=Log bekijken
+STR_DLGWBN_NOLOG=Logbestand is niet beschikbaar voor dit spel.
+STR_DLGWBN_PREV=< Vorige
+STR_DLGWBN_NEXT=Volgende >
+STR_DLGWBN_PAGE=Pagina {number} van {number2}  ({number3} totaal)
+STR_DLGWBN_OPENFILE=Bestand openen...
+STR_DLGWBN_PARSERR=Antwoord kon niet worden verwerkt
+STR_DLGWBN_NETERR=Netwerkfout
+STR_DLGWBN_LOADERR=Details laden mislukt
+STR_DLGWBN_DOWNLOAD_FAILED=Downloaden mislukt
+STR_DLGWBN_NOSAVEPATH=Kan opslagpad niet bepalen
+STR_DLGWBN_FETCHERR=Ophalen mislukt
+STR_DLGWBN_UNKNOWN_ERR=Onbekende fout
+STR_DLGWBN_FILEFILTER=WinBolo-logbestanden
+
+# SetName dialog additions
+STR_DLGSETNAME_WINTITLE=WinBolo - Spelernaam instellen
+STR_DLGSETNAME_WBN_LOCKED=Je spelernaam is ingesteld door WinBolo.net.
+STR_DLGSETNAME_PLEASE_ENTER=Voer je spelernaam in.
+STR_DLGSETNAME_BLANK_ERR=Sorry, je kunt dit niet leeg laten
+STR_DLGSETNAME_STAR_ERR=Sorry, namen mogen niet beginnen met een '*'
+STR_DLGSETNAME_INUSE_ERR=Die naam is al in gebruik door een andere speler.
+
+# Skin selection dialog additions
+STR_DLGSKIN_WINTITLE=WinBolo - Skinkeuze
+STR_DLGSKIN_NOSKIN=Geen skin (standaard)
+STR_DLGSKIN_NA=N.v.t.
+STR_DLGSKIN_SELECT=Selecteer een skin:
+STR_DLGSKIN_NAME_LBL=Naam:
+STR_DLGSKIN_AUTHOR_LBL=Auteur:
+STR_DLGSKIN_NOTES_LBL=Notities:
+STR_DLGSKIN_LOADERR=Kan skinbestand niet laden
+
+# Tracker Setup dialog
+STR_DLGTRACKER_WINTITLE=WinBolo - Tracker configureren
+STR_DLGTRACKER_INVALIDPORT=Ongeldig poortnummer.
+
+# WinBolo.net section
+STR_DLGWBN_CHECKING=WinBolo.net controleren...
+STR_DLGWBN_LABEL=WinBolo.net:
+STR_DLGWBN_SIGNED_IN=Aangemeld
+STR_DLGWBN_EXPIRES=(verloopt {string1})
+STR_DLGWBN_SIGN_OUT=Afmelden bij WBN
+STR_DLGWBN_NOT_SIGNED_IN=Niet aangemeld
+STR_DLGWBN_SIGN_IN_BTN=Aanmelden bij WBN...
+STR_DLGWBN_SIGNIN_TITLE=Aanmelden bij WinBolo.net
+STR_DLGWBN_SIGNIN_BLURB=Meld je aan met je WinBolo.net-gebruikersnaam en wachtwoord. Er wordt een token opgeslagen zodat je je wachtwoord niet opnieuw hoeft in te voeren.
+STR_DLGWBN_USERNAME=Gebruikersnaam:
+STR_DLGWBN_PASSWORD=Wachtwoord:
+STR_DLGWBN_SIGNINGIN=Aanmelden...
+STR_DLGWBN_SIGNIN_OK=Aanmelden
+STR_DLGWBN_NEEDCREDS=Voer je gebruikersnaam en wachtwoord in.
+
+# Welcome dialog
+STR_DLGWELCOME_WINTITLE=WinBolo - Spelkeuze
+STR_DLGWELCOME_SINGLE=Singleplayer
+STR_DLGWELCOME_LOCAL=Lokaal
+STR_DLGWELCOME_MAPEDITOR=Kaarteditor
+STR_DLGWELCOME_LOGVIEWER=Logviewer
+STR_DLGWELCOME_INTERNET=Internet
+
+# Map Chooser dialog
+STR_MAPCHOOSER_EVERARD=Everard Island (ingebouwd)
+STR_MAPCHOOSER_LOADMAP=Een kaart laden
+STR_MAPCHOOSER_LOADDEVICE=Laden van apparaat...
+STR_MAPCHOOSER_GENRANDOM=Willekeurige kaart genereren
+STR_MAPCHOOSER_RANDOMMAP=Willekeurige kaart
+STR_MAPCHOOSER_CLICKGEN=Klik op Genereren voor een voorbeeld
+STR_MAPCHOOSER_NOPREVIEW=Geen voorbeeld beschikbaar
+STR_MAPCHOOSER_STATS=Bunkers: {number}  Bases: {number2}  Starts: {number3}
+STR_MAPCHOOSER_MAPFILES=Kaartbestanden
+STR_MAPCHOOSER_ALLFILES=Alle bestanden
+
+# Tablet HUD
+STR_TABLET_STATUS_TITLE=Status
+STR_TABLET_KILLS_DEATHS=Kills: {number}  Doden: {number2}
+STR_TABLET_TANK_RESOURCES=Tankresources
+STR_TABLET_SHELLS=Granaten
+STR_TABLET_MINES=Mijnen
+STR_TABLET_ARMOUR=Pantser
+STR_TABLET_TREES=Bomen
+STR_TABLET_PILLBOXES=Bunkers
+STR_TABLET_BASES=Bases
+STR_TABLET_TANKS=Tanks
+STR_TABLET_PILL_FMT=Bunker {number}
+STR_TABLET_BASE_FMT=Basis {number}
+STR_TABLET_TANK_FMT=Tank {number}
+STR_TABLET_BTN_MSG=Bericht
+STR_TABLET_BTN_PLY=Spelers
+STR_TABLET_BTN_SET=Inst
+
+# Generic dialog titles (cross-dialog)
+STR_DLGSETPLAYERNAME_TITLE=Spelernaam instellen
+
+# Map editor menu bar
+STR_MAPEDIT_MENU_OPEN=Openen...
+STR_MAPEDIT_MENU_RECENT=Recente bestanden
+STR_MAPEDIT_MENU_SAVE=Opslaan
+STR_MAPEDIT_MENU_SAVEAS=Opslaan als...
+STR_MAPEDIT_MENU_EXPORT=Exporteren als PNG...
+STR_MAPEDIT_MENU_RETURN=Terug naar menu
+STR_MAPEDIT_MENU_UNDO=Ongedaan maken
+STR_MAPEDIT_MENU_REDO=Opnieuw uitvoeren
+STR_MAPEDIT_MENU_CUT=Knippen
+STR_MAPEDIT_MENU_COPY=Kopiëren
+STR_MAPEDIT_MENU_PASTE=Plakken
+STR_MAPEDIT_MENU_MAP=Kaart
+STR_MAPEDIT_MENU_RANDOMMAP=Willekeurige kaart...
+STR_MAPEDIT_MENU_TEXT=Tekst...
+STR_MAPEDIT_MENU_IMPORTIMG=Afbeelding importeren...
+STR_MAPEDIT_MENU_VALIDATE=Valideren
+STR_MAPEDIT_MENU_MIRROR_H=Horizontaal spiegelen {string1}
+STR_MAPEDIT_MENU_MIRROR_V=Verticaal spiegelen {string1}
+STR_MAPEDIT_MENU_ROTATE_90=90° rechtsom draaien {string1}
+STR_MAPEDIT_MENU_ROTATE_180=180° draaien {string1}
+STR_MAPEDIT_SCOPE_SELECTION=(selectie)
+STR_MAPEDIT_SCOPE_FULLMAP=(volledige kaart)
+STR_MAPEDIT_MENU_OPTIONS=Opties
+STR_MAPEDIT_MENU_CENTER=Kaart centreren
+STR_MAPEDIT_MENU_POINT_STARTS=Startposities aanwijzen
+STR_MAPEDIT_MENU_SHOWGRID=Raster tonen
+STR_MAPEDIT_MENU_SHOWMINES=Mijnen tonen
+STR_MAPEDIT_MENU_SHOWPILLRANGES=Bunkerbereiken tonen
+STR_MAPEDIT_MENU_WINDOW=Venster
+
+# Map editor windows
+STR_MAPEDIT_WIN_TERRAIN=Terrein
+STR_MAPEDIT_WIN_TOOLS=Gereedschappen
+STR_MAPEDIT_WIN_INSPECTOR=Inspector
+STR_MAPEDIT_WIN_OBJECTS=Objecten
+STR_MAPEDIT_WIN_OVERVIEW=Overzicht
+STR_MAPEDIT_WIN_STATS=Statistieken
+STR_MAPEDIT_WIN_STAMP_LIB=Stempelbibliotheek
+
+# Map editor terrain palette
+STR_MAPEDIT_TERR_DEEPSEA=Open zee
+STR_MAPEDIT_TERR_GRASS=Gras
+STR_MAPEDIT_TERR_FOREST=Bos
+STR_MAPEDIT_TERR_ROAD=Weg
+STR_MAPEDIT_TERR_BUILDING=Gebouw
+STR_MAPEDIT_TERR_HALFBUILDING=Half gebouw
+STR_MAPEDIT_TERR_RIVER=Rivier
+STR_MAPEDIT_TERR_SWAMP=Moeras
+STR_MAPEDIT_TERR_CRATER=Krater
+STR_MAPEDIT_TERR_RUBBLE=Puin
+STR_MAPEDIT_TERR_BOAT=Boot
+STR_MAPEDIT_TERR_MINETOOL=Mijngereedschap
+STR_MAPEDIT_MINE_CHECKERED=Geblokt
+STR_MAPEDIT_MINE_FULL=Vol
+STR_MAPEDIT_MINE_RANDOM=Willekeurig
+STR_MAPEDIT_MINE_CLEAR=Mijnen wissen
+
+# Map editor drawing tools
+STR_MAPEDIT_TOOL_PENCIL=Potlood
+STR_MAPEDIT_TOOL_LINE=Lijn
+STR_MAPEDIT_TOOL_RECT=Rechthoek
+STR_MAPEDIT_TOOL_RECTFILL=Gevulde rechthoek
+STR_MAPEDIT_TOOL_OVAL=Ovaal
+STR_MAPEDIT_TOOL_OVALFILL=Gevuld ovaal
+STR_MAPEDIT_TOOL_SELECT=Selectie
+STR_MAPEDIT_TOOL_FILL=Vullen
+STR_MAPEDIT_TOOL_MAZE=Doolhof
+STR_MAPEDIT_TOOL_GENERATE=Genereren
+STR_MAPEDIT_TOOL_WAND=Toverstaf
+STR_MAPEDIT_TOOL_TEXT=Tekst
+STR_MAPEDIT_TOOL_TEXT_TIP=Tekst (stempel tekst op kaart)
+STR_MAPEDIT_BRUSH=Penseel
+STR_MAPEDIT_BRUSH_SQUARE=Vierkant
+STR_MAPEDIT_BRUSH_CIRCLE=Cirkel
+STR_MAPEDIT_OBJTOOL_BASE=Basis
+STR_MAPEDIT_OBJTOOL_PILL=Bunker
+STR_MAPEDIT_OBJTOOL_START=Start
+
+# Map editor status bar
+STR_MAPEDIT_STATUS_TILE=Tegel: {number}, {number2}
+STR_MAPEDIT_STATUS_TILE_NONE=Tegel: --
+STR_MAPEDIT_STATUS_ZOOM=Zoom: {string1}
+STR_MAPEDIT_STATUS_MODIFIED=Gewijzigd
+
+# Map editor modals
+STR_MAPEDIT_UNSAVED_TITLE=Niet-opgeslagen wijzigingen
+STR_MAPEDIT_UNSAVED_BLURB=De kaart heeft niet-opgeslagen wijzigingen.\nWil je opslaan voordat je verdergaat?
+STR_MAPEDIT_GOTO_TITLE=Ga naar coördinaten
+STR_MAPEDIT_GOTO_X=X
+STR_MAPEDIT_GOTO_Y=Y
+
+# Map editor inspector
+STR_MAPEDIT_INSP_NOSEL=Geen object geselecteerd
+STR_MAPEDIT_INSP_BASE_HASH=Basis #{number}
+STR_MAPEDIT_INSP_PILL_HASH=Bunker #{number}
+STR_MAPEDIT_INSP_START_HASH=Start #{number}
+STR_MAPEDIT_INSP_POSITION=Positie: ({number}, {number2})
+STR_MAPEDIT_INSP_OWNER=Eigenaar
+STR_MAPEDIT_INSP_ARMOUR=Pantser
+STR_MAPEDIT_INSP_SPEED=Snelheid
+STR_MAPEDIT_INSP_DIR=Richting
+STR_MAPEDIT_OWNER_NEUTRAL=Neutraal
+STR_MAPEDIT_OWNER_PLAYER=Speler {number}
+
+# Map editor object list
+STR_MAPEDIT_OBJ_BASES_COUNT=Bases ({number}/{number2})
+STR_MAPEDIT_OBJ_PILLS_COUNT=Bunkers ({number}/{number2})
+STR_MAPEDIT_OBJ_STARTS_COUNT=Starts ({number}/{number2})
+STR_MAPEDIT_OBJ_BASE_ROW=#{number}  ({number2}, {number3})  {string1}
+STR_MAPEDIT_OBJ_PILL_ROW=#{number}  ({number2}, {number3})  {string1}  Pantser: {number4}
+STR_MAPEDIT_OBJ_START_ROW=#{number}  ({number2}, {number3})  Richting: {string1}
+
+# Map editor validation panel
+STR_MAPEDIT_VALIDATION=Validatie
+STR_MAPEDIT_VAL_NOISSUES=Geen problemen
+STR_MAPEDIT_VAL_ERRORS={number} fout(en)
+STR_MAPEDIT_VAL_NOERRORS=0 fouten
+STR_MAPEDIT_VAL_WARNINGS={number} waarschuwing(en)
+STR_MAPEDIT_VAL_NOWARNINGS=0 waarschuwingen
+STR_MAPEDIT_VAL_ERRORS_TITLE=Validatiefouten
+STR_MAPEDIT_VAL_HASERRORS=Kaart heeft {number} fout(en). Los ze op voor het opslaan.
+
+# Map editor generate dialog
+STR_MAPEDIT_GENRANDMAP_TITLE=Willekeurige kaart genereren
+STR_MAPEDIT_GENRANDAREA_TITLE=Willekeurig gebied genereren
+STR_MAPEDIT_GENSCOPE_SELECTION=Bereik: selectie ({number},{number2})-({number3},{number4})
+STR_MAPEDIT_GENSCOPE_FULLMAP=Bereik: volledige kaart ({number},{number2})-({number3},{number4})
+
+# Map editor text tool dialog
+STR_MAPEDIT_TEXT_TITLE=Tekstgereedschap
+STR_MAPEDIT_TEXT_LABEL=Tekst:
+STR_MAPEDIT_TEXT_BUILTIN=Ingebouwd
+STR_MAPEDIT_TEXT_SYSTEM=Systeemlettertype
+STR_MAPEDIT_TEXT_FONTSIZE=Lettergrootte
+STR_MAPEDIT_TEXT_STYLE=Stijl
+STR_MAPEDIT_TEXT_FONTSIZE_S=Klein (5x7)
+STR_MAPEDIT_TEXT_FONTSIZE_M=Middel (10x14)
+STR_MAPEDIT_TEXT_FONTSIZE_L=Groot (15x21)
+STR_MAPEDIT_TEXT_FONTSIZE_XL=XL (20x28)
+STR_MAPEDIT_TEXT_STYLE_REGULAR=Normaal
+STR_MAPEDIT_TEXT_STYLE_BOLD=Vet
+STR_MAPEDIT_TEXT_STYLE_ITALIC=Cursief
+STR_MAPEDIT_TEXT_STYLE_BOLDITALIC=Vet cursief
+STR_MAPEDIT_TEXT_FONTFAMILY=Letterfamilie
+STR_MAPEDIT_TEXT_FONTBUNDLED={string1} (meegeleverd)
+STR_MAPEDIT_TEXT_SIZEPX=Grootte (px)
+STR_MAPEDIT_TEXT_NOFONTS=Geen lettertypen gevonden. Voeg .ttf-bestanden toe aan data/fonts/
+STR_MAPEDIT_TEXT_TERR_TEXT=Tekstterrein
+STR_MAPEDIT_TEXT_TERR_EDGE=Randterrein
+STR_MAPEDIT_TEXT_TERR_BG=Achtergrond
+STR_MAPEDIT_TEXT_PREVIEW=Voorbeeld ({number}x{number2} tegels):
+STR_MAPEDIT_TEXT_TOOLARGE=Tekst te groot (max 256x256 tegels) of lettertypefout
+STR_MAPEDIT_GENERATE_BTN=Genereren
+
+# Map editor maze settings
+STR_MAPEDIT_MAZE_TITLE=Doolhofinstellingen
+STR_MAPEDIT_MAZE_REGION=Regio: ({number},{number2})-({number3},{number4})  {string1}
+STR_MAPEDIT_DRAG_HINT=Sleep op kaart om te genereren
+STR_MAPEDIT_ALGORITHM=Algoritme
+STR_MAPEDIT_ALGO_LABYRINTH=Labyrint
+STR_MAPEDIT_ALGO_OPEN=Open
+STR_MAPEDIT_WALL=Muur
+STR_MAPEDIT_CORRIDOR=Gang
+STR_MAPEDIT_ENTRIES=Ingangen
+STR_MAPEDIT_ROOMS=Kamers
+STR_MAPEDIT_WALLTERRAIN=Muurterrein
+STR_MAPEDIT_CORRIDORTERRAIN=Gangterrein
+STR_MAPEDIT_GENSETTINGS_TITLE=Genereerinstellingen
+
+# Map editor statistics panel
+STR_MAPEDIT_STATS_TERRAIN=Terreinverdeling
+STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
+STR_MAPEDIT_STATS_MINES=Mijnen: {number} ({string1}% land)
+STR_MAPEDIT_STATS_SPATIAL=Ruimtelijke analyse
+STR_MAPEDIT_STATS_LAND_COVERAGE=Landdekking: {string1}%
+STR_MAPEDIT_STATS_LARGEST=Grootste landmassa: {string1}%
+STR_MAPEDIT_STATS_BASE_SPACING=Basisafstand: {string1} tegels
+STR_MAPEDIT_STATS_PILL_SPACING=Bunkerafstand: {string1} tegels
+STR_MAPEDIT_STATS_SYMMETRY=Symmetrie: {string1} ({string2}%)
+STR_MAPEDIT_STATS_MIRROR_H=Spiegel-H:   {string1}%
+STR_MAPEDIT_STATS_MIRROR_V=Spiegel-V:   {string1}%
+STR_MAPEDIT_STATS_4CORNER=4-hoek:   {string1}%
+STR_MAPEDIT_STATS_ROTATE180=Roteer-180: {string1}%
+STR_MAPEDIT_STATS_STALE=(verouderd — klik op Vernieuwen)
+STR_MAPEDIT_STATS_REFRESH=Ruimtelijk vernieuwen
+STR_MAPEDIT_STATS_STARTS=Starts
+STR_MAPEDIT_TERRNAME_HALFBLD=Half gebouw
+
+# Map editor image import
+STR_MAPEDIT_IMG_TITLE=Afbeelding importeren
+STR_MAPEDIT_IMG_FILE=Bestand:
+STR_MAPEDIT_IMG_NONE=(geen)
+STR_MAPEDIT_BROWSE=Bladeren...
+STR_MAPEDIT_IMG_SOURCE=Bron: {number}x{number2} pixels
+STR_MAPEDIT_IMG_PREVIEW_LBL=Voorbeeld:
+STR_MAPEDIT_IMG_SCALEMODE=Schaalmodus:
+STR_MAPEDIT_IMG_FIT_SEL=Selectie passend maken
+STR_MAPEDIT_IMG_FIT_PLAY=Speelbaar passend maken
+STR_MAPEDIT_IMG_OUTPUT=Uitvoer: {number} x {number2} tegels
+STR_MAPEDIT_IMG_COLORS=Kleuren:
+STR_MAPEDIT_IMG_REDETECT=Opnieuw detecteren
+STR_MAPEDIT_IMG_COLORMAP=Kleurmapping
+STR_MAPEDIT_IMPORT_BTN=Importeren
+
+# Map editor stamp library
+STR_MAPEDIT_STAMP_BUNDLED=Meegeleverde stempels
+STR_MAPEDIT_STAMP_USER=Gebruikersstempels
+STR_MAPEDIT_STAMP_NOUSER=Nog geen gebruikersstempels.
+STR_MAPEDIT_STAMP_HINT=Gebruik "Klembord opslaan..." om er een te maken.
+STR_MAPEDIT_DELETE=Verwijderen
+STR_MAPEDIT_STAMP_SAVECLIP=Klembord opslaan...
+STR_MAPEDIT_STAMP_TIP_COPY=Maak eerst een selectie (Ctrl+C)
+STR_MAPEDIT_STAMP_IMPORT=Importeren...
+STR_MAPEDIT_STAMP_UNTITLED=Zonder titel
+STR_MAPEDIT_STAMP_SAVE_TITLE=Stempel opslaan
+STR_MAPEDIT_STAMP_SAVE_BLURB=Voer een naam in voor deze stempel:
+STR_MAPEDIT_STAMP_SAVE_NAME=Naam
+STR_MAPEDIT_SAVE_BTN=Opslaan
+
+# Map editor export PNG
+STR_MAPEDIT_EXPORT_TITLE=Exporteren als PNG
+STR_MAPEDIT_PREVIEW=Voorbeeld
+STR_MAPEDIT_EXPORT_MODE=Modus:
+STR_MAPEDIT_EXPORT_FULL=Volledige resolutie (4096x4096)
+STR_MAPEDIT_EXPORT_PREVSIZE=Voorbeeldgrootte:
+STR_MAPEDIT_EXPORT_OPTIONS=Opties:
+STR_MAPEDIT_EXPORT_SHOWOBJ=Objecten tonen
+STR_MAPEDIT_EXPORT_SHOWMINES=Mijnen tonen
+STR_MAPEDIT_EXPORT_SHOWGRID=Raster tonen (alleen volledige modus)
+STR_MAPEDIT_EXPORT_BTN=Exporteren...
+
+# Map generator panel (mapgen_imgui.cpp)
+STR_MAPGEN_LOCKED_TIP=Vergrendeld: verandert niet bij willekeurig genereren
+STR_MAPGEN_UNLOCKED_TIP=Ontgrendeld: verandert bij willekeurig genereren
+STR_MAPGEN_GENERATOR=Generator
+STR_MAPGEN_TYPE_TOURNAMENT=Toernooi
+STR_MAPGEN_TYPE_NATURAL=Natuurlijk
+STR_MAPGEN_TYPE_MAZE=Doolhof
+STR_MAPGEN_TYPE_FRACTAL=Fractaal
+STR_MAPGEN_SEED=Seed
+STR_MAPGEN_RANDOMIZE=Willekeurig genereren
+STR_MAPGEN_SYMMETRY=Symmetrie
+STR_MAPGEN_SYM_4CORNER=4-hoekspiegel
+STR_MAPGEN_SYM_MIRROR_H=Horizontaal spiegelen
+STR_MAPGEN_SYM_MIRROR_V=Verticaal spiegelen
+STR_MAPGEN_SYM_ROT180=180° draaien
+STR_MAPGEN_SYM_ROT90=90° draaien
+STR_MAPGEN_LANDMASS_PCT=Landmassa %
+STR_MAPGEN_ROUGHNESS=Ruwheid
+STR_MAPGEN_ROUGH_LOW=Laag
+STR_MAPGEN_ROUGH_MED=Middel
+STR_MAPGEN_ROUGH_HIGH=Hoog
+STR_MAPGEN_INCLUDE_ROADS=Wegen opnemen
+STR_MAPGEN_MAP_STYLE=Kaartstijl
+STR_MAPGEN_STYLE_OCEAN=Oceaan
+STR_MAPGEN_STYLE_CONTINENT=Continent
+STR_MAPGEN_STYLE_ISLANDS=Eilanden
+STR_MAPGEN_STYLE_ARCHIPELAGO=Archipel
+STR_MAPGEN_STYLE_INLAND=Binnenland
+STR_MAPGEN_TERRAIN_MIX=Terreinmix (% landaandeel):
+STR_MAPGEN_GRASS_PCT=Gras %
+STR_MAPGEN_FOREST_PCT=Bos %
+STR_MAPGEN_BUILDING_PCT=Gebouw %
+STR_MAPGEN_SWAMP_PCT=Moeras %
+STR_MAPGEN_RIVER_PCT=Rivier %
+STR_MAPGEN_BOAT_PCT=Boot %
+STR_MAPGEN_REMAINING_GRASS=Resterend gras: {number}%
+STR_MAPGEN_MINE_DENSITY=Mijnendichtheid %
+STR_MAPGEN_RIVER_COUNT=Aantal rivieren
+STR_MAPGEN_CITY_COUNT=Aantal steden
+STR_MAPGEN_MAZE_COUNT=Aantal doolhoven
+STR_MAPGEN_WALL_THICKNESS=Muurdikte
+STR_MAPGEN_CORRIDOR_WIDTH=Gangbreedte
+STR_MAPGEN_CITY_ROOMS=Stadskamers
+STR_MAPGEN_LAND_COVERAGE=Landdekking %
+STR_MAPGEN_DETAIL_PASSES=Detailslagen
+STR_MAPGEN_COAST_JAG=Kustgrilligheid
+STR_MAPGEN_TERRAIN_LAYERS=Terreinlagen
+STR_MAPGEN_RIVERS=Rivieren
+STR_MAPGEN_LAKES=Meren
+
+# Log viewer sim-replay messages
+STR_LV_PLAYER_JOINED={player} heeft het spel gejoined.
+STR_LV_HAS_JOINED={string1} heeft het spel gejoined
+STR_LV_ALLY_REQUEST={player} heeft zojuist om een alliantie met {other} verzocht
+STR_LV_ALLY_ACCEPT={player} heeft zojuist een alliantie met {other} geaccepteerd
+STR_LV_ALLY_LEAVE={player} heeft zojuist de alliantie verlaten
+STR_LV_MSG_ALL=Bericht aan allen van {player}: {string1}
+STR_LV_MSG_PLAYERS=Bericht van {player} aan {other}: {string1}
+STR_LV_MSG_SERVER=Serverbericht: {string1}
+STR_LV_PLAYER_DIED={player} is gestorven
+STR_LV_PLAYER_KILLED={player} heeft zojuist speler {other} gedood
+STR_LV_PLAYER_REJOINED={player} heeft zojuist het spel hergejoined.
+STR_LV_PLAYER_LEAVING={player} verlaat het spel.
+STR_LV_LOBBY_OPENED=Lobby geopend.
+STR_LV_GAME_STARTED=Spel gestart.
+STR_LV_PLAYER_READY={player} is klaar.
+STR_LV_PLAYER_UNREADY={player} is niet langer klaar.
+STR_LV_PLAYER_LEFT_TEAM={player} heeft zijn team verlaten.
+STR_LV_PLAYER_JOINED_TEAM={player} heeft team {number} gejoined.
+STR_LV_COUNTDOWN_START=Aftellen gestart.
+STR_LV_COUNTDOWN_CANCEL=Aftellen geannuleerd.
+STR_LV_MAP_SKIP_VOTE={player} heeft gestemd om de kaart over te slaan.
+STR_LV_MAP_SKIPPED=Kaart overgeslagen. Nieuwe kaart: {string1}
+STR_LV_TEAM_BALANCE=Teambalans toegepast.
+
+# Log viewer main menu
+STR_LV_MENU_OPEN=Openen
+STR_LV_MENU_ACTION=Actie
+STR_LV_PLAY=Afspelen
+STR_LV_PAUSE=Pauzeren
+STR_LV_STOP=Stoppen
+STR_LV_FAST_FORWARD=Snel vooruit
+STR_LV_REWIND=Terugspoelen
+STR_LV_MODE=Modus
+STR_LV_MODE_INFO=Informatie
+STR_LV_SELECT_TEAM=Team selecteren
+STR_LV_USE_TEAM_COLOURS=Teamkleuren gebruiken
+STR_LV_TANK_CENTRED=Tank gecentreerd
+STR_LV_DNS_LOOKUPS=DNS-opzoekingen
+STR_LV_TEAM_COLOURS=Teamkleuren
+STR_LV_MENU_WINDOWS=Vensters
+STR_LV_WIN_CONTROLS=Besturing
+STR_LV_WIN_EVENTS=Gebeurtenissen
+STR_LV_WIN_GAMEINFO=Spelinformatie
+STR_LV_WIN_ITEMINFO=Iteminformatie
+STR_LV_RESET_WINDOWS=Vensterposities herstellen
+
+# Log viewer dialogs
+STR_LV_ASSIGN_COLOURS_HINT=Wijs kleuren toe aan elk spelteam:
+STR_LV_PLAYER_LBL=Speler {number}:
+STR_LV_NEUTRAL_LBL=Neutraal:
+STR_LV_ABOUT_TITLE=WinBolo Log Viewer
+STR_LV_VERSION_FMT=Versie: {string1}
+STR_LV_LICENSE=Dit programma is vrije software; je mag het verspreiden\nen/of aanpassen onder de voorwaarden van de GNU General\nPublic License zoals gepubliceerd door de Free Software Foundation.
+STR_LV_WEBSITE_LBL=Website:
+
+# Log viewer team colour names
+STR_LV_COL_GREY=Grijs
+STR_LV_COL_KHAKI=Khaki
+STR_LV_COL_GREEN=Groen
+STR_LV_COL_PINK=Roze
+STR_LV_COL_YELLOW=Geel
+STR_LV_COL_LIGHTBLUE=Lichtblauw
+STR_LV_COL_ORANGE=Oranje
+STR_LV_COL_LIGHTPURPLE=Lichtpaars
+STR_LV_COL_AQUA=Aqua
+STR_LV_COL_LIGHTGREEN=Lichtgroen
+STR_LV_COL_LIGHTGREY=Lichtgrijs
+STR_LV_COL_RED=Rood
+STR_LV_COL_BLUE=Blauw
+STR_LV_COL_BROWN=Bruin
+STR_LV_COL_LIGHTPINK=Lichtroze
+STR_LV_COL_PALEGREEN=Bleekgroen
+STR_LV_COL_PURPLE=Paars
+
+# Log viewer game info panel
+STR_LV_SECONDS={number} seconde(n)
+STR_LV_INFO_MAP=Kaartnaam: {string1}
+STR_LV_INFO_GAMETYPE=Speltype: {string1}
+STR_LV_INFO_HIDDENMINES=Verborgen mijnen: {string1}
+STR_LV_INFO_COMPUTER_TANKS=Computertanks: {string1}
+STR_LV_INFO_TIME_LIMIT=Tijdslimiet: {string1}
+STR_LV_INFO_START_DELAY=Startvertraging: {string1}
+STR_LV_INFO_WBN_KEY=WBN-sleutel:
+STR_LV_INFO_START_TIME=Starttijd: {string1}
+
+# Log viewer item info panel
+STR_LV_OWNER_FMT={string1} ({number})
+STR_LV_POSITION_XY=X: {number}, Y: {number2}
+STR_LV_NO_ITEM_SELECTED=Geen item geselecteerd
+STR_LV_LOCATION_FMT=Locatie: {string1}
+STR_LV_OWNER_LBL=Eigenaar: {string1}
+STR_LV_ARMOUR_FMT=Pantser: {number}
+STR_LV_SHELLS_FMT=Granaten: {number}
+STR_LV_MINES_FMT=Mijnen: {number}
+STR_LV_IN_TANK_FMT=In tank: {string1}
+STR_LV_CENTER_ON_MAP=Centreren op kaart
+
+# Log viewer playback controls
+STR_LV_REW_BTN=<< Terug
+STR_LV_PLAY_BTN=Afspelen >
+STR_LV_FWD_BTN=Vooruit >>
+STR_LV_SPEED_LBL=Snelheid:
+STR_LV_TIME_FMT={string1} / {string2}
+STR_LV_TIME_REMAINING=-{string1} resterend
+STR_LV_NO_LOG_LOADED=Geen log geladen
+
+# Log viewer events panel
+STR_LV_COPY=Kopiëren
+STR_LV_COPY_ALL=Alles kopiëren
+STR_LV_CLEAR_ALL=Alles wissen
+STR_LV_AUTO_SCROLL=Automatisch scrollen
+
+# Log viewer end-of-log marker
+STR_LV_END_OF_LOG=Einde van logbestand bereikt
+
+# iOS Settings panel additions
+STR_DLGSETTINGS_ZOOM=Zoom
+STR_DLGSETTINGS_PERFORMANCE=Prestaties
+STR_DLGSETTINGS_FPS_FMT=FPS: {number}
+NETERR_LOSTCONNECTION_RETURN_MENU=Je hebt je verbinding met de server verloren.\nTerug naar menu.
+
+# Language picker (Settings → Display)
+STR_DLGSETTINGS_LANGUAGE_LBL=Taal:
+STR_DLGLANG_MIDGAME_NOTE=Bestaande berichtlogitems veranderen van taal pas wanneer ze opnieuw worden gegenereerd.
+
+# Map editor validation
+STR_MAPVALIDATE_TOO_MANY_BASES=Te veel bases: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_PILLS=Te veel bunkers: {number} (max {number2})
+STR_MAPVALIDATE_TOO_MANY_STARTS=Te veel starts: {number} (max {number2})
+STR_MAPVALIDATE_BASE_BAD_TERRAIN=Basis #{number} op ({number2},{number3}): op niet-berijdbaar terrein
+STR_MAPVALIDATE_BASE_BORDER_ZONE=Basis #{number} op ({number2},{number3}): in mijngrenszone
+STR_MAPVALIDATE_PILL_BAD_TERRAIN=Bunker #{number} op ({number2},{number3}): op niet-berijdbaar terrein
+STR_MAPVALIDATE_PILL_BORDER_ZONE=Bunker #{number} op ({number2},{number3}): in mijngrenszone
+STR_MAPVALIDATE_START_NOT_DEEP=Start #{number} op ({number2},{number3}): moet op open zee zijn
+STR_MAPVALIDATE_START_BORDER_ZONE=Start #{number} op ({number2},{number3}): in mijngrenszone
+STR_MAPVALIDATE_NO_STARTS=Geen startposities geplaatst — kaart is onspeelbaar
+STR_MAPVALIDATE_ONE_START=Slechts 1 startpositie — alleen singleplayer
+STR_MAPVALIDATE_BASE_OVERLAP=Basis #{number} en basis #{number2} overlappen op ({number3},{number4})
+STR_MAPVALIDATE_PILL_OVERLAP=Bunker #{number} en bunker #{number2} overlappen op ({number3},{number4})
+STR_MAPVALIDATE_BASE_PILL_OVERLAP=Basis #{number} en bunker #{number2} overlappen op ({number3},{number4})
+STR_MAPVALIDATE_START_OVERLAP=Start #{number} en start #{number2} overlappen op ({number3},{number4})
+STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} en basis #{number2} overlappen op ({number3},{number4})
+STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} en bunker #{number2} overlappen op ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Vereist port forwarding zodat spelers buiten het LAN kunnen meedoen. (Komt eraan: automatische NAT-instelling.)
+STR_GAMEFRONTERR_MAPLOAD=Kan kaart niet laden vanaf server
+STR_GAMEFRONTERR_STARTSERVER=Fout bij het starten van de server
+STR_DLGLOBBY_PORTMAP_CHECKING=Bereikbaarheid van server controleren…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server bereikbaar
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server onbereikbaar
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Probeert een firewallpoort te openen via UPnP / NAT-PMP en bevestigt dat de tracker je via je netwerk kan terugbereiken. Dit duurt meestal minder dan 30 seconden.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Poort automatisch doorgestuurd via UPnP/NAT-PMP op %s:%u. Deelnemers verbinden direct zonder verdere stappen.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Directe portforwarding kon niet worden ingesteld, maar NAT-traversal is actief. Deelnemers coördineren via de tracker om door de firewall van je netwerk te breken. Dit werkt voor de meeste thuisnetwerken; deelnemers met symmetrische NAT of carrier-grade NAT kunnen alsnog geen verbinding maken.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrische NAT gedetecteerd — je netwerk herschrijft de bronpoort voor elke bestemming, waardoor deelnemers je zelfs via NAT-traversal niet kunnen bereiken. Stuur UDP-poort %u handmatig door op je router naar deze machine om succesvol te kunnen hosten.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kon niet automatisch een firewallpoort openen (UPnP/NAT-PMP geweigerd of niet beschikbaar) en de tracker kon de bidirectionele bereikbaarheid niet bevestigen. Stuur UDP-poort %u handmatig door op je router naar deze machine om succesvol te kunnen hosten.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server bereikbaarheid
+STR_DLGLOBBY_TEST_CONNECTIVITY=Verbinding testen
+STR_DLGLOBBY_TEST_TESTING=Testen…
+STR_DLGLOBBY_TEST_REACHABLE=Bereikbaar vanaf internet
+STR_DLGLOBBY_TEST_NO_REPLY=Geen antwoord van tracker
+STR_DLGSETTINGS_NETWORK=Netwerk
+STR_DLGSETTINGS_NET_HELP=Instellingen worden bij het volgende gehoste spel actief.
+STR_DLGSETTINGS_USE_UPNP=Gebruik UPnP / NAT-PMP voor automatische port forwarding
+STR_DLGSETTINGS_USE_NATTRAV=Gebruik NAT-traversal (hole-punching) via tracker
