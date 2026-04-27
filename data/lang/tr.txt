@@ -7,30 +7,20 @@ author=Claude (Sonnet 4.6), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=WinBolo Oyun Seçimi
-STR_DLGOPENING_TEXT=WinBolo'ya hoş geldiniz, çok oyunculu tank oyunu.\nLütfen aşağıdaki listeden bir oyun türü seçin:
-STR_DLGOPENING_OPTION1=Alıştırma
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=İnternet
-STR_DLGOPENING_SKIP=Bu iletişim kutusunu bir daha gösterme
 STR_OK=Tamam
 STR_DLGOPENING_BUTTON2=Çıkış
 
 # Language dialog
-STR_DLGLANG_TITLE=Dil Seçimi
-STR_DLGLANG_NAME_CAPTION=Ad:
 STR_DLGLANG_NAME=Türkçe
 STR_DLGLANG_AUTHOR_CAPTION=Yazar: 
 STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
-STR_DLGOPENING_OPTION4=Yerel Ağ
-STR_DLGOPENING_OPTION0=Eğitim
 STR_DLGLANG_NOTES_CAPTION=Notlar: 
 STR_DLGLANG_NOTES=Yok.
 STR_DLGLANG_DEFAULTNOTE=Not: Eksik çevirilerde bu öğeler İngilizce olarak gösterilir.
 
 # About dialog
 STR_DLGABOUT_TITLE=WinBolo Hakkında
-STR_DLGABOUT_BLURB=WinBolo paketi, programın veya beraberindeki dosyaların hiçbirinin atlanmaması ya da değiştirilmemesi koşuluyla serbestçe dağıtılabilir.\n\nWinBolo bir paylaşımlı yazılım programıdır. Paylaşımlı yazılım ücretsiz değildir. Satın aldığınız diğer yazılımlar gibi para gerektirir; ancak paylaşımlı yazılımda önce deneyip beğenip beğenmediğinize karar verebilirsiniz.\n\nWinBolo 25 ABD doları tutmaktadır. WinBolo'yu kullanmaya devam etmek istiyorsanız şu yöntemlerle ödeme yapabilirsiniz:\n\nWinBolo dizinindeki register.exe programını çalıştırın; çek, para havalesi, nakit veya kredi kartıyla e-posta, faks ya da posta yoluyla ödeme yapmanızı sağlar.\n\nKredi kartıyla çevrimiçi kayıt yaptırmak için şu adresi ziyaret edin: http://order.kagi.com/?XYV ve formu doldurun.\n\nDaha fazla bilgi için dağıtıma dahil edilen Readme(Shareware) metin dosyasını okuyun.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=İttifak İsteği
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Reddet
 STR_DLGALLIANCE_BLURB={player} ittifak istiyor. Kabul edilsin mi?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Önce yenile düğmesine basmayı deneyin.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Günün Mesajı
-STR_DLGGAMEFINDER_WRONGVERSION=Katılmaya çalıştığınız oyun farklı bir WinBolo sürümü kullanıyor. Farklı bir oyuna katılmayı deneyin
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Devam eden oyun yok (Bir tane başlatın!)
 STR_YES=Evet
 STR_NO=Hayır
-STR_DLGGAMEFINDER_YESADV=Evet (Üst.)
-STR_DLGGAMEFINDER_OPEN=Açık
-STR_DLGGAMEFINDER_TOURNAMENT=Turnuva
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Sıkı
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Oyun Bilgisi
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Harita:
 STR_DLGGAMEINFO_NUMPLAYERS=Oyuncular: {number}
 STR_DLGGAMEINFO_GAMETYPE=Oyun Türü: 
 STR_DLGGAMEINFO_HIDDENMINES=Gizli Mayınlar: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Bilgisayar Tanklarına İzin Var: 
 STR_DLGGAMEINFO_TIMELIMIT=Zaman Sınırı:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Yeni oyununuz için istediğiniz seçenekleri belirleyin:
 STR_CANCEL=İptal
 STR_DLGGAMESETUP_TITLE=Oyun Ayarları
 STR_DLGGAMESETUP_CHOOSEMAP=Harita seç
-STR_DLGGAMESETUP_SELECTEDMAP=Seçilen Harita: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Seçilen Harita: Everard Island (Yerleşik)
 STR_DLGGAMESETUP_RADIO1=Açık Oyun (önceden silahlı)
 STR_DLGGAMESETUP_RADIO2=Turnuva (başta ücretsiz mermi)
 STR_DLGGAMESETUP_RADIO3=Sıkı Turnuva (ücretsiz mermi yok)
 STR_DLGGAMESETUP_HIDDENMINES=Gizli Mayınlara İzin Ver
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Bilgisayar Tanklarına İzin Ver
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=ve onlara avantaj ver
 STR_DLGGAMESETUP_PASSWORD=Oyun Şifresi
 STR_DLGGAMESETUP_MINUTES=dakika
 STR_DLGGAMESETUP_SECONDS=saniye
 STR_DLGGAMESETUP_STARTDELAY=Oyun başlangıç gecikmesi
 STR_DLGGAMESETUP_TIMELIMIT=Oyun zaman sınırı
-STR_DLGGAMESETUP_ERROROPENINGMAP=Harita Açılırken Hata Oluştu.
 STR_DLGGAMEINFO_TIMEREMAINING=Yaklaşık {number} dakika
 STR_DLGGAMEINFO_OPEN=Açık
 STR_DLGGAMEINFO_TOURN=Turnuva
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Ben
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Tuş Ayarları
-STR_DLGKEYSETUP_BLURB=Değiştirmek istediğiniz seçeneğe tıklayın; ardından basılan sonraki tuş ona atanacak. ALT, PRINT SCREEN ve PAUSE tuşları atanamaz.
 STR_DLGKEYSETUP_DRIVETANK=Tankı Sürmek
-STR_DLGKEYSETUP_TURNTANK=Tankı Döndür:
 STR_DLGKEYSETUP_GUNRANGE=Silah Menzili
 STR_DLGKEYSETUP_WEAPONS=Silahlar
 STR_DLGKEYSETUP_VIEW=Görünümler
 STR_DLGKEYSETUP_SCROLL=Kaydırma
-STR_DLGKEYSETUP_LEFT=(sol)
-STR_DLGKEYSETUP_RIGHT=(sağ)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Otomatik Yavaşlama
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Nişanı Otomatik Gizle
 STR_DLGKEYSETUP_FASTER=Daha Hızlı
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Yukarı
 STR_DLGKEYSETUP_SCROLLDOWN=Aşağı
 STR_DLGKEYSETUP_SCROLLLEFT=Sol
 STR_DLGKEYSETUP_SCROLLRIGHT=Sağ
-STR_DLGKEYSETUP_NEWKEYFOR=Şu işlev için yeni tuşa basın: 
-STR_DLGKEYSETUP_FORWARD=ileri
-STR_DLGKEYSETUP_BACKWARD=geri
-STR_DLGKEYSETUP_ROTATELEFT=sola döndür
-STR_DLGKEYSETUP_ROTATERIGHT=sağa döndür
-STR_DLGKEYSETUP_INCREASERANGE=menzili artır
-STR_DLGKEYSETUP_DECREASERANGE=menzili azalt
-STR_DLGKEYSETUP_SETSHOOT=ateş et
-STR_DLGKEYSETUP_SETLAYMINE=mayın döşe
-STR_DLGKEYSETUP_SETTANKVIEW=tank görünümü
-STR_DLGKEYSETUP_SETPILLVIEW=bunker görünümü
-STR_DLGKEYSETUP_SETSCROLLUP=yukarı kaydır
-STR_DLGKEYSETUP_SETSCROLLDOWN=aşağı kaydır
-STR_DLGKEYSETUP_SETSCROLLLEFT=sola kaydır
-STR_DLGKEYSETUP_SETSCROLLRIGHT=sağa kaydır
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Gönder
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS={number} oyuncuya mesaj gönderiliyor
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Ağ Bilgisi
-STR_DLGNETINFO_SERVERADDRESS=Sunucu adresi:
-STR_DLGNETINFO_THISGAMEADDRESS=Bu oyunun adresi:
 STR_DLGNETINFO_SERVERPING=Sunucu gecikmesi: {number} ms
-STR_DLGNETINFO_PACKETS=Saniyedeki paket sayısı (oyuncu başına):
 STR_DLGNETINFO_STATUS=Durum:
 STR_DLGNETINFO_ERRORS=Ağ hataları: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Şifre Gerekli
 STR_DLGPASSWORD_BLURB=Bu oyun için şifre gerekiyor:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Oyuncu Adı Girin
 STR_DLGSETNAME_BLURB=Tankınız için yeni oyuncu adını girin:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=Sistem Bilgisi
 STR_DLGSYSINFO_CPUUSAGE=İşlemci Kullanımı:
 STR_DLGSYSINFO_SIMMODELING=Simülasyon Modelleme:
 STR_DLGSYSINFO_COMPROCESSING=İletişim İşleme:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Grafik gösterimi:
-STR_DLGSYSINFO_AICONTROLPROCESSING=YZ tank kontrol işleme:
 STR_DLGSYSINFO_TOTAL=Toplam:
-STR_DLGSYSINFO_GRAPHICSFPS=Saniyedeki grafik karesi
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=UDP (İnternet) Kurulumu
 STR_DLGTCP_BLURB=Bir internet Bolo oyununa katılmak için Bolo çalıştıran bir sunucu makinesinin adını (veya IP adresini) ve o makinedeki Bolo işleminin UDP port numarasını girmelisiniz.
 STR_DLGTCP_JOIN=Katıl
 STR_DLGTCP_REJOIN=Yeniden Katıl
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Mevcut bir oyuna katılmak için "Katıl"a tıklayın
 STR_DLGTCP_REJOINBLURB=Bir oyuna yeniden katılıp eski sahipliklerini geri almak için "Yeniden Katıl"a tıklayın
 STR_ERR_DLGTCP_PORTS=Sunucu ve kendi portları aynı!
 STR_ERR_DLGTCP_NOTRIGHT=Burada bir şeyler doğru değil...
-STR_ERR_DLGTCP_SUBCLASS=Kopyalama için pencere alt sınıfı ayarlanamıyor!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=&Adresle Katıl
-STR_DLGGAMEFINDER_REFRESH=&Yenile
-STR_DLGGAMEFINDER_PLAYERNAME=&Oyuncu Adı Belirle
-STR_DLGGAMEFINDER_MOTD=&Günün Mesajı
-STR_DLGGAMEFINDER_STATUSBLURB=Durum: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Seçili Oyun Bilgisi
-STR_DLGGAMEFINDER_BRAINS=Brainler:
-STR_DLGGAMEFINDER_PASSWORD=Şifre:
-STR_DLGGAMEFINDER_PILLS=Serbest Bunker Sayısı:
-STR_DLGGAMEFINDER_BASES=Serbest Üs Sayısı:
-STR_DLGGAMEFINDER_HIDDENMINES=Gizli Mayınlar:
-STR_DLGGAMEFINDER_NUMPLAYERS=Oyuncu Sayısı:
-STR_DLGGAMEFINDER_VERSION=Sürüm:
-STR_DLGGAMEFINDER_GAMETYPE=Oyun Türü:
-STR_DLGGAMEFINDER_PORT=Sunucu Portu:
-STR_DLGGAMEFINDER_ADDRESS=Sunucu Adresi:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=Brain dizini mevcut değil.\nBrainler yüklenmeyecek!
-STR_BRAINERR_LAUNCH=Brain Başlatılırken Hata
-STR_BRAINERR_LAUNCHMAIN=Brain Başlatılırken Hata - Brain "BrainMain" içermiyor
-STR_BRAINERR_INIT=Brain başlatma hatası
-STR_BRAINERR_EXEC=Brain çalıştırılamadı
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=DD Nesnesi Oluşturma Başarısız
-STR_DRAWERROR_SETCOOPLEVEL=DD İş Birliği Düzeyi Oluşturma Başarısız
-STR_DRAWERROR_CREATEPRIMARY=DD Birincil Yüzey Oluşturma Başarısız
-STR_DRAWERROR_GETPIXELFORMAT=DD Piksel Formatı Alma Başarısız
-STR_DRAWERROR_GETDESC=Yüzey Açıklaması Alma Başarısız
-STR_DRAWERROR_TOOFEWCOLOURS=WinBolo'nun bu sürümü palet modunda çalışmıyor.\n Lütfen renk derinliğini 256 rengin üzerine çıkarın
-STR_DRAWERROR_BUFFERCREATE=DD Arabelleği Oluşturma Başarısız
-STR_DRAWERROR_GETDCFAILED=DD DC Alma Başarısız
-STR_DRAWERROR_CLIPPERFAILED=DD Kırpıcı Oluşturma Başarısız
-STR_DRAWERROR_BRUSH=Çizim Fırçası Oluşturma Hatası
-STR_DRAWERROR_PEN=Çizim Kalemi Oluşturma Hatası
-STR_DRAW_GAMESTARTSIN=Oyun Başlıyor: 
-STR_DRAWERROR_RELEASEDC=Tank etiketi çizmek için DC serbest bırakılırken hata (Bu kötü)
-STR_DRAW_PILLBOXVIEW=Bunker Görünümü
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=Courier New yazı tipi yüklenemiyor
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=Tercihler okunurken hata oluştu. Varsayılan değerler kullanılacak
-STR_GAMEFRONTERR_WINDOW=Pencere Oluşturma Hatası
-STR_GAMEFRONTERR_DDRAW=Direct Draw Kurulum Hatası
-STR_GAMEFRONTERR_DSOUND=Direct Sound Kurulum Hatası
-STR_GAMEFRONTERR_DINPUT=Direct Input Kurulum Hatası
-STR_GAMEFRONTERR_CURSOR=İmleç Yükleme Hatası
-STR_GAMEFRONTERR_FONTS=Yazı Tipi Yükleme Hatası
 STR_GAMEFRONT_LANFINDER_TITLE=LAN Oyun Bulucu
 STR_GAMEFRONT_TRACKERFINDER_TITLE=İzleyici Oyun Bulucu
 STR_GAMEFRONTERR_JOINGAME=Oyuna katılınmaya çalışılırken hata oluştu
-STR_GAMEFRONTERR_SPAWNSERVER=Sunucu işlemi başlatılmaya çalışılırken hata oluştu.\n "WinBoloDS" programı WinBolo ile aynı dizinde mi?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=Tek oyunculu bir oyun seçtiğiniz için garip olan ağ alt sistemlerinde çok tuhaf bir şey gerçekleşti. Şanslısınız...
-STR_GAMEFRONT_SERVERSTARTMSG=Özel sunucu başlatılıyor. Kapatmak için penceresine "quit" yazın.
-STR_GAMEFRONT_INPUTERR_CREATE=Direct Input Klavye Aygıtı Oluşturma Başarısız
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Direct Input Klavye Aygıtı için Veri Formatı Ayarlama Başarısız
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Direct Input Klavye Aygıtı için İş Birliği Düzeyi Ayarlama Başarısız
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Winsock Başlatma Hatası
-STR_NETCLIENTERR_CREATEUDPFAIL=UDP Soketi Oluşturma Hatası
-STR_NETCLIENTERR_CREATETCPFAIL=TCP Soketi Oluşturma Hatası
-STR_NETCLIENTERR_BINDUDPFAIL=UDP Soketi Bağlama Hatası\n Bu port başka bir program tarafından kullanılıyor. Başka bir port seçin.\n\nNOT: Bir ağ oyunu başlattıysanız ve başarıyla açıldıysa hâlâ çalışıyor.\n Tekrar başlatmanıza gerek yok
-STR_NETCLIENTERR_CHAINFAIL=Mesajlaşma zincirine ağ olayları eklenirken hata
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Desteklenmeyen İzleyici Sürümü
-STR_NETCLIENTERR_TRACKERDNSFAIL=İzleyici bulunamadı (DNS sorgu hatası)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=İzleyiciye bağlanma hatası
-STR_NETCLIENTERR_TRACKERNOBLOCK=Soket bloklamasız olarak ayarlanırken hata
-STR_NETCLIENT_TRACKERGETRESPONSE=Oyun bilgisi alınıyor...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=İzleyici verisi işleniyor...
-STR_NETCLIENTERR_TRACKERNODATA=Hata: İzleyici veri göndermedi
-STR_NETCLIENT_TRACKERCONNECT=Bağlanıyor: 
-STR_NETCLIENT_IDLE=Boşta
-STR_NETCLIENTERR_BIND=Soket bağlama hatası
-STR_NETCLIENTERR_BROADCAST=Yayın gönderme hatası
-STR_NETCLIENT_GETRESPONSES=Yanıtlar alınıyor...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=WinBolo Sesleri Yüklenemiyor - Ses olmadan devam ediliyor
-STR_SOUNDERR_HARDWAREINUSE=Direct Sound Kurulum Hatası - Donanım başka bir uygulama tarafından kullanılıyor.\nSes olmadan devam ediliyor.
-STR_SOUNDERR_CREATEFAILED=DS Nesnesi Oluşturma Başarısız\nSes olmadan devam ediliyor.
-STR_SOUNDERR_COOPFAILED=DS İş Birliği Düzeyi Oluşturma Başarısız
-STR_SOUNDERR_PRIMARYBUFFFAIL=DS Birincil Arabellek Oluşturma Başarısız
-STR_SOUNDERR_LOADSOUNDFAILED=Bir veya daha fazla ses dosyası yüklenemedi
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Mutex Oluşturma Hatası. (Bu kötü)
-STR_WBERR_BRAINLISTLOAD=Brain Listesi Yükleme Hatası
-STR_WBERR_KEYCLASSSETUP=Tuş Ayarı Sınıfı Kurulum Hatası
 STR_WBTIMELIMIT_END=Zaman sınırı doldu. Oyun sona erdi.
 STR_WBERR_SAVEMAP=Harita Kaydetme Hatası (Disk dolu mu?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=Sunucuyla bağlantınız kesildi.\nTek oyunculu moda geçi
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Mesaj Gönder
-STR_DLGOPENING_BUTTON3=Diller
-STR_DLGOPENING_BUTTON4=Yardım
 STRERR_HELPFILE=Yardım dosyası açılırken hata oluştu.
-STR_DLGSKIN_TITLE=Görünüm Seçimi
 STR_DLGSKIN_BLURB=Tüm görünüm öğeleri mevcut değilse varsayılan yerleşik görünüm/sesler kullanılır.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Üzgünüz, oyuncu adınız boş; bir oyuncu adı girmelisiniz
 NETERR_MAPSERIALIZE=Sunucu harita verisini hazırlayamadı. Lütfen tekrar deneyin
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Oyuncu Adı
 STR_DLGBROWSER_MANUAL=Kılavuz
 STR_DLGBROWSER_ERR_VERSION=Sunucu farklı bir WinBolo sürümü çalıştırıyor.
 STR_DLGBROWSER_ERR_NEEDNAME=Önce bir oyuncu adı belirlemelisiniz.
-STR_DLGBROWSER_SETNAME_TITLE=Oyuncu Adı Belirle
 STR_DLGBROWSER_AI_ADV=Üst.
 STR_DLGBROWSER_AI_FULL=Tam
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Ağ hatası
 STR_DLGWBN_LOADERR=Ayrıntılar yüklenemedi
 STR_DLGWBN_DOWNLOAD_FAILED=İndirme başarısız
 STR_DLGWBN_NOSAVEPATH=Kaydetme yolu belirlenemedi
-STR_DLGWBN_POSTERR=Yorum gönderilemedi
 STR_DLGWBN_FETCHERR=Getirme başarısız
 STR_DLGWBN_UNKNOWN_ERR=Bilinmeyen hata
 STR_DLGWBN_FILEFILTER=WinBolo Günlük Dosyaları

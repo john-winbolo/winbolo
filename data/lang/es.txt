@@ -7,30 +7,20 @@ author=Claude (Opus 4.7), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=Selección de juego de WinBolo
-STR_DLGOPENING_TEXT=Bienvenido a WinBolo, el juego de tanques multijugador.\nElige un tipo de partida en la lista siguiente:
-STR_DLGOPENING_OPTION1=Práctica
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=Internet
-STR_DLGOPENING_SKIP=Omitir este diálogo la próxima vez
 STR_OK=Aceptar
 STR_DLGOPENING_BUTTON2=Salir
 
 # Language dialog
-STR_DLGLANG_TITLE=Selección de idioma
-STR_DLGLANG_NAME_CAPTION=Nombre:
 STR_DLGLANG_NAME=Español
 STR_DLGLANG_AUTHOR_CAPTION=Autor: 
 STR_DLGLANG_AUTHOR=Claude (Opus 4.7)
-STR_DLGOPENING_OPTION4=Red local
-STR_DLGOPENING_OPTION0=Tutorial
 STR_DLGLANG_NOTES_CAPTION=Notas: 
 STR_DLGLANG_NOTES=Ninguna.
 STR_DLGLANG_DEFAULTNOTE=Nota: en las traducciones incompletas, los elementos que faltan vuelven al inglés.
 
 # About dialog
 STR_DLGABOUT_TITLE=Acerca de WinBolo
-STR_DLGABOUT_BLURB=El paquete WinBolo puede distribuirse libremente siempre que ni el programa ni ninguno de los archivos que lo acompañan se omitan o modifiquen de ningún modo.\n\nWinBolo es un programa shareware. El software shareware no es gratuito. Cuesta dinero, igual que cualquier otro software que compras, salvo que con el shareware puedes probarlo primero para decidir si te gusta.\n\nWinBolo cuesta 25 $ (EE. UU.). Si decides quedarte con WinBolo, puedes pagarlo por los siguientes métodos:\n\nEjecuta el programa register.exe en el directorio de WinBolo. Te permite pagar con cheque, giro postal, efectivo o tarjeta de crédito por correo electrónico, fax o correo postal.\n\nPara registrarte por tarjeta de crédito en línea, visita: http://order.kagi.com/?XYV y rellena el formulario.\n\nLee el archivo de texto Readme(Shareware) incluido en la distribución para más información.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=Solicitud de alianza
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Rechazar
 STR_DLGALLIANCE_BLURB={player} solicita una alianza. ¿Aceptar?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Prueba a actualizar primero.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Mensaje del día
-STR_DLGGAMEFINDER_WRONGVERSION=La partida a la que has intentado unirte es de una versión distinta de WinBolo. Prueba a unirte a otra partida
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Sin partidas en curso (¡Inicia una!)
 STR_YES=Sí
 STR_NO=No
-STR_DLGGAMEFINDER_YESADV=Sí (Vent.)
-STR_DLGGAMEFINDER_OPEN=Abierta
-STR_DLGGAMEFINDER_TOURNAMENT=Torneo
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Estricto
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Información de la partida
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Mapa:
 STR_DLGGAMEINFO_NUMPLAYERS=Jugadores: {number}
 STR_DLGGAMEINFO_GAMETYPE=Tipo de partida: 
 STR_DLGGAMEINFO_HIDDENMINES=Minas ocultas: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Tanques de ordenador permitidos: 
 STR_DLGGAMEINFO_TIMELIMIT=Tiempo límite:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Selecciona las opciones que quieras para tu nueva partida:
 STR_CANCEL=Cancelar
 STR_DLGGAMESETUP_TITLE=Configuración de partida
 STR_DLGGAMESETUP_CHOOSEMAP=Elegir mapa
-STR_DLGGAMESETUP_SELECTEDMAP=Mapa seleccionado: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Mapa seleccionado: Everard Island (integrado)
 STR_DLGGAMESETUP_RADIO1=Partida abierta (preequipada)
 STR_DLGGAMESETUP_RADIO2=Torneo (munición gratuita al inicio)
 STR_DLGGAMESETUP_RADIO3=Torneo estricto (sin munición gratuita)
 STR_DLGGAMESETUP_HIDDENMINES=Permitir minas ocultas
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Permitir tanques de ordenador
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=y darles ventaja
 STR_DLGGAMESETUP_PASSWORD=Contraseña de la partida
 STR_DLGGAMESETUP_MINUTES=minutos
 STR_DLGGAMESETUP_SECONDS=segundos
 STR_DLGGAMESETUP_STARTDELAY=Retraso al inicio de la partida
 STR_DLGGAMESETUP_TIMELIMIT=Tiempo límite de la partida
-STR_DLGGAMESETUP_ERROROPENINGMAP=Error al abrir el mapa.
 STR_DLGGAMEINFO_TIMEREMAINING=Aproximadamente {number} minuto(s)
 STR_DLGGAMEINFO_OPEN=Abierta
 STR_DLGGAMEINFO_TOURN=Torneo
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Yo
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Configuración de teclas
-STR_DLGKEYSETUP_BLURB=Haz clic en la opción que quieres cambiar y la siguiente tecla que pulses se le asignará. Las teclas ALT, IMPR PANT y PAUSA no se pueden asignar a nada.
 STR_DLGKEYSETUP_DRIVETANK=Conducir tanque
-STR_DLGKEYSETUP_TURNTANK=Girar tanque:
 STR_DLGKEYSETUP_GUNRANGE=Alcance del cañón
 STR_DLGKEYSETUP_WEAPONS=Armas
 STR_DLGKEYSETUP_VIEW=Vistas
 STR_DLGKEYSETUP_SCROLL=Desplazamiento
-STR_DLGKEYSETUP_LEFT=(izquierda)
-STR_DLGKEYSETUP_RIGHT=(derecha)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Frenado automático
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Ocultar mira automáticamente
 STR_DLGKEYSETUP_FASTER=Más rápido
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Arriba
 STR_DLGKEYSETUP_SCROLLDOWN=Abajo
 STR_DLGKEYSETUP_SCROLLLEFT=Izquierda
 STR_DLGKEYSETUP_SCROLLRIGHT=Derecha
-STR_DLGKEYSETUP_NEWKEYFOR=Pulsa una nueva tecla para 
-STR_DLGKEYSETUP_FORWARD=avanzar
-STR_DLGKEYSETUP_BACKWARD=retroceder
-STR_DLGKEYSETUP_ROTATELEFT=girar a la izquierda
-STR_DLGKEYSETUP_ROTATERIGHT=girar a la derecha
-STR_DLGKEYSETUP_INCREASERANGE=aumentar alcance
-STR_DLGKEYSETUP_DECREASERANGE=disminuir alcance
-STR_DLGKEYSETUP_SETSHOOT=disparar
-STR_DLGKEYSETUP_SETLAYMINE=colocar mina
-STR_DLGKEYSETUP_SETTANKVIEW=vista de tanque
-STR_DLGKEYSETUP_SETPILLVIEW=vista de búnker
-STR_DLGKEYSETUP_SETSCROLLUP=desplazar arriba
-STR_DLGKEYSETUP_SETSCROLLDOWN=desplazar abajo
-STR_DLGKEYSETUP_SETSCROLLLEFT=desplazar a la izquierda
-STR_DLGKEYSETUP_SETSCROLLRIGHT=desplazar a la derecha
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Enviar
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS=Enviando mensaje a {number} jugadores
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Información de red
-STR_DLGNETINFO_SERVERADDRESS=Dirección del servidor:
-STR_DLGNETINFO_THISGAMEADDRESS=Dirección de esta partida:
 STR_DLGNETINFO_SERVERPING=Ping del servidor: {number} ms
-STR_DLGNETINFO_PACKETS=Paquetes por segundo (por jugador):
 STR_DLGNETINFO_STATUS=Estado:
 STR_DLGNETINFO_ERRORS=Errores de red: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Contraseña requerida
 STR_DLGPASSWORD_BLURB=Esta partida requiere una contraseña:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Introducir nombre de jugador
 STR_DLGSETNAME_BLURB=Introduce el nuevo nombre de jugador para tu tanque:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=Información del sistema
 STR_DLGSYSINFO_CPUUSAGE=Uso de CPU:
 STR_DLGSYSINFO_SIMMODELING=Modelado de simulación:
 STR_DLGSYSINFO_COMPROCESSING=Procesamiento de comunicación:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Visualización de gráficos:
-STR_DLGSYSINFO_AICONTROLPROCESSING=Procesamiento de control de tanques IA:
 STR_DLGSYSINFO_TOTAL=Total:
-STR_DLGSYSINFO_GRAPHICSFPS=Fotogramas por segundo de gráficos
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=Configuración UDP (Internet)
 STR_DLGTCP_BLURB=Para unirte a una partida de Bolo por Internet, debes indicar el nombre (o dirección IP) de una máquina anfitriona que ejecute Bolo, y el número de puerto UDP del proceso de Bolo en esa máquina.
 STR_DLGTCP_JOIN=Unirse
 STR_DLGTCP_REJOIN=Reincorporarse
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Haz clic en "Unirse" para unirte a una partida existente
 STR_DLGTCP_REJOINBLURB=Haz clic en "Reincorporarse" para volver a una partida y recuperar tus posesiones anteriores
 STR_ERR_DLGTCP_PORTS=¡El puerto del servidor y el propio son el mismo!
 STR_ERR_DLGTCP_NOTRIGHT=Algo no está bien aquí...
-STR_ERR_DLGTCP_SUBCLASS=¡No se puede establecer la subclase de ventana para copiar!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=Unirse &por dirección
-STR_DLGGAMEFINDER_REFRESH=&Actualizar
-STR_DLGGAMEFINDER_PLAYERNAME=Definir nombre de &jugador
-STR_DLGGAMEFINDER_MOTD=&Mensaje del día
-STR_DLGGAMEFINDER_STATUSBLURB=Estado: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Información de la partida seleccionada
-STR_DLGGAMEFINDER_BRAINS=Brains:
-STR_DLGGAMEFINDER_PASSWORD=Contraseña:
-STR_DLGGAMEFINDER_PILLS=N.º de búnkeres libres:
-STR_DLGGAMEFINDER_BASES=N.º de bases libres:
-STR_DLGGAMEFINDER_HIDDENMINES=Minas ocultas:
-STR_DLGGAMEFINDER_NUMPLAYERS=N.º de jugadores:
-STR_DLGGAMEFINDER_VERSION=Versión:
-STR_DLGGAMEFINDER_GAMETYPE=Tipo de partida:
-STR_DLGGAMEFINDER_PORT=Puerto del servidor:
-STR_DLGGAMEFINDER_ADDRESS=Dirección del servidor:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=El directorio de Brains no existe.\n¡No se cargarán los Brains!
-STR_BRAINERR_LAUNCH=Error al lanzar el Brain
-STR_BRAINERR_LAUNCHMAIN=Error al lanzar el Brain - El Brain no contiene "BrainMain"
-STR_BRAINERR_INIT=Error al inicializar el Brain
-STR_BRAINERR_EXEC=No se pudo ejecutar el Brain
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=Error al crear el objeto DD
-STR_DRAWERROR_SETCOOPLEVEL=Error al crear el nivel cooperativo de DD
-STR_DRAWERROR_CREATEPRIMARY=Error al crear la superficie primaria de DD
-STR_DRAWERROR_GETPIXELFORMAT=Error al obtener el formato de píxel de DD
-STR_DRAWERROR_GETDESC=Error al obtener la descripción de la superficie
-STR_DRAWERROR_TOOFEWCOLOURS=Esta versión de WinBolo no funciona en modo paleta.\n Cambia la profundidad de color a más de 256 colores
-STR_DRAWERROR_BUFFERCREATE=Error al crear el búfer DD
-STR_DRAWERROR_GETDCFAILED=Error al obtener el DC de DD
-STR_DRAWERROR_CLIPPERFAILED=Error al crear el clipper de DD
-STR_DRAWERROR_BRUSH=Error al crear el pincel de dibujo
-STR_DRAWERROR_PEN=Error al crear el lápiz de dibujo
-STR_DRAW_GAMESTARTSIN=La partida empieza en 
-STR_DRAWERROR_RELEASEDC=Error al liberar el DC para dibujar la etiqueta del tanque (eso es malo)
-STR_DRAW_PILLBOXVIEW=Vista de búnker
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=No se puede cargar la fuente Courier New
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=Se produjo un error al leer las preferencias. Se usarán los valores predeterminados
-STR_GAMEFRONTERR_WINDOW=Error al crear la ventana
-STR_GAMEFRONTERR_DDRAW=Error al configurar Direct Draw
-STR_GAMEFRONTERR_DSOUND=Error al configurar Direct Sound
-STR_GAMEFRONTERR_DINPUT=Error al configurar Direct Input
-STR_GAMEFRONTERR_CURSOR=Error al cargar el cursor
-STR_GAMEFRONTERR_FONTS=Error al cargar las fuentes
 STR_GAMEFRONT_LANFINDER_TITLE=Buscador de partidas LAN
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Buscador de partidas por tracker
 STR_GAMEFRONTERR_JOINGAME=Se produjo un error al intentar unirse a la partida
-STR_GAMEFRONTERR_SPAWNSERVER=Se produjo un error al intentar lanzar el proceso del servidor.\n ¿Está el programa "WinBoloDS" en el mismo directorio que WinBolo?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=Algo realmente extraño sucedió en los subsistemas de red, lo cual es raro porque has elegido una partida de un solo jugador. Qué suerte tienes...
-STR_GAMEFRONT_SERVERSTARTMSG=Lanzando el servidor dedicado. Escribe "quit" en su ventana para salir.
-STR_GAMEFRONT_INPUTERR_CREATE=Error al crear el dispositivo de teclado de Direct Input
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Error al configurar el formato de datos del dispositivo de teclado de Direct Input
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Error al configurar el nivel cooperativo del dispositivo de teclado de Direct Input
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Error al iniciar Winsock
-STR_NETCLIENTERR_CREATEUDPFAIL=Error al crear el socket UDP
-STR_NETCLIENTERR_CREATETCPFAIL=Error al crear el socket TCP
-STR_NETCLIENTERR_BINDUDPFAIL=Error al enlazar el socket UDP\n Otro programa ya tiene asignado este puerto. Prueba a elegir otro.\n\nNOTA: Si has iniciado una partida en red y se lanzó correctamente, sigue en marcha.\n No tendrás que iniciarla de nuevo
-STR_NETCLIENTERR_CHAINFAIL=Error al añadir eventos de red a la cadena de mensajería
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Versión del tracker no admitida
-STR_NETCLIENTERR_TRACKERDNSFAIL=Error al encontrar el tracker (fallo de búsqueda DNS)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=Error al conectar con el tracker
-STR_NETCLIENTERR_TRACKERNOBLOCK=Error al configurar el socket como no bloqueante
-STR_NETCLIENT_TRACKERGETRESPONSE=Recibiendo información de partidas...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=Procesando datos del tracker...
-STR_NETCLIENTERR_TRACKERNODATA=Error: el tracker no envió datos
-STR_NETCLIENT_TRACKERCONNECT=Conectando: 
-STR_NETCLIENT_IDLE=Inactivo
-STR_NETCLIENTERR_BIND=Error al enlazar el socket
-STR_NETCLIENTERR_BROADCAST=Error al enviar la difusión
-STR_NETCLIENT_GETRESPONSES=Recibiendo respuestas...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=No se pueden cargar los sonidos de WinBolo - Continuando sin sonido
-STR_SOUNDERR_HARDWAREINUSE=Error al configurar Direct Sound - El hardware está siendo usado por otra aplicación.\nContinuando sin sonido.
-STR_SOUNDERR_CREATEFAILED=Error al crear el objeto DS\nContinuando sin sonido.
-STR_SOUNDERR_COOPFAILED=Error al crear el nivel cooperativo de DS
-STR_SOUNDERR_PRIMARYBUFFFAIL=Error al crear el búfer primario de DS
-STR_SOUNDERR_LOADSOUNDFAILED=Error al cargar uno o más archivos de sonido
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Error al crear el mutex. (Eso es malo)
-STR_WBERR_BRAINLISTLOAD=Error al cargar la lista de Brains
-STR_WBERR_KEYCLASSSETUP=Error al configurar la clase de teclas
 STR_WBTIMELIMIT_END=El tiempo límite ha expirado. La partida ha terminado.
 STR_WBERR_SAVEMAP=Error al guardar el mapa (¿disco lleno?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=Has perdido la conexión con el servidor.\nPasando ahora a
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Enviar mensaje
-STR_DLGOPENING_BUTTON3=Idiomas
-STR_DLGOPENING_BUTTON4=Ayuda
 STRERR_HELPFILE=Error al abrir el archivo de ayuda.
-STR_DLGSKIN_TITLE=Selección de skin
 STR_DLGSKIN_BLURB=Si no están todos los elementos del skin, se usan los sonidos/skin integrados predeterminados.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Lo siento, pero tu nombre de jugador está en blanco; debes tener un nombre de jugador
 NETERR_MAPSERIALIZE=El servidor no ha podido preparar los datos del mapa. Inténtalo de nuevo
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Nombre de jugador
 STR_DLGBROWSER_MANUAL=Manual
 STR_DLGBROWSER_ERR_VERSION=El servidor está ejecutando una versión distinta de WinBolo.
 STR_DLGBROWSER_ERR_NEEDNAME=Primero debes definir un nombre de jugador.
-STR_DLGBROWSER_SETNAME_TITLE=Definir nombre de jugador
 STR_DLGBROWSER_AI_ADV=Vent.
 STR_DLGBROWSER_AI_FULL=Comp.
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Error de red
 STR_DLGWBN_LOADERR=Error al cargar los detalles
 STR_DLGWBN_DOWNLOAD_FAILED=Descarga fallida
 STR_DLGWBN_NOSAVEPATH=No se pudo determinar la ruta de guardado
-STR_DLGWBN_POSTERR=Error al publicar el comentario
 STR_DLGWBN_FETCHERR=Error al obtener
 STR_DLGWBN_UNKNOWN_ERR=Error desconocido
 STR_DLGWBN_FILEFILTER=Archivos de registro de WinBolo

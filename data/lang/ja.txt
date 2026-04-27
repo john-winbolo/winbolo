@@ -7,30 +7,20 @@ author=Claude (Sonnet 4.6), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=WinBolo ゲーム選択
-STR_DLGOPENING_TEXT=WinBolo へようこそ。マルチプレイヤー戦車ゲームです。\n以下のリストからゲームの種類を選択してください。
-STR_DLGOPENING_OPTION1=練習
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=インターネット
-STR_DLGOPENING_SKIP=次回からこのダイアログを表示しない
 STR_OK=OK
 STR_DLGOPENING_BUTTON2=終了
 
 # Language dialog
-STR_DLGLANG_TITLE=言語選択
-STR_DLGLANG_NAME_CAPTION=名前:
 STR_DLGLANG_NAME=日本語
 STR_DLGLANG_AUTHOR_CAPTION=作者: 
 STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
-STR_DLGOPENING_OPTION4=ローカルネットワーク
-STR_DLGOPENING_OPTION0=チュートリアル
 STR_DLGLANG_NOTES_CAPTION=備考: 
 STR_DLGLANG_NOTES=なし。
 STR_DLGLANG_DEFAULTNOTE=注意：翻訳が不完全な場合、不足している項目は英語で表示されます。
 
 # About dialog
 STR_DLGABOUT_TITLE=WinBolo について
-STR_DLGABOUT_BLURB=WinBolo パッケージは、プログラムおよび付属ファイルのいずれも省略・改変しない場合に限り、自由に配布できます。\n\nWinBolo はシェアウェアプログラムです。シェアウェアは無料ではありません。購入するソフトウェアと同様に費用がかかりますが、シェアウェアでは気に入るかどうか試用してから購入を決めることができます。\n\nWinBolo の価格は 25 米ドルです。WinBolo を継続利用する場合は、以下の方法でお支払いいただけます。\n\nWinBolo ディレクトリ内の register.exe を実行してください。小切手、郵便為替、現金、またはクレジットカードによるメール・FAX・郵便での支払いが可能です。\n\nオンラインでクレジットカード登録するには、http://order.kagi.com/?XYV にアクセスしてフォームに記入してください。\n\n詳細については、配布パッケージに含まれる Readme(Shareware) テキストファイルをお読みください。
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=同盟リクエスト
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=拒否
 STR_DLGALLIANCE_BLURB={player} が同盟を求めています。承認しますか？
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=まず更新を試してみてください。
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=今日のメッセージ
-STR_DLGGAMEFINDER_WRONGVERSION=参加しようとしたゲームは異なるバージョンの WinBolo です。別のゲームへの参加をお試しください。
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=進行中のゲームはありません（始めませんか？）
 STR_YES=はい
 STR_NO=いいえ
-STR_DLGGAMEFINDER_YESADV=はい（有利）
-STR_DLGGAMEFINDER_OPEN=オープン
-STR_DLGGAMEFINDER_TOURNAMENT=トーナメント
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=厳格
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=ゲーム情報
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=マップ:
 STR_DLGGAMEINFO_NUMPLAYERS=プレイヤー数: {number}
 STR_DLGGAMEINFO_GAMETYPE=ゲームタイプ: 
 STR_DLGGAMEINFO_HIDDENMINES=隠し地雷: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=コンピュータータンク許可: 
 STR_DLGGAMEINFO_TIMELIMIT=制限時間:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=新しいゲームのオプションを選択してください：
 STR_CANCEL=キャンセル
 STR_DLGGAMESETUP_TITLE=ゲーム設定
 STR_DLGGAMESETUP_CHOOSEMAP=マップを選択
-STR_DLGGAMESETUP_SELECTEDMAP=選択中のマップ: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=選択中のマップ：Everard Island（内蔵）
 STR_DLGGAMESETUP_RADIO1=オープンゲーム（事前装備あり）
 STR_DLGGAMESETUP_RADIO2=トーナメント（序盤に弾薬無料）
 STR_DLGGAMESETUP_RADIO3=厳格トーナメント（弾薬無料なし）
 STR_DLGGAMESETUP_HIDDENMINES=隠し地雷を許可
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=コンピュータータンクを許可
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=かつ有利に設定する
 STR_DLGGAMESETUP_PASSWORD=ゲームパスワード
 STR_DLGGAMESETUP_MINUTES=分
 STR_DLGGAMESETUP_SECONDS=秒
 STR_DLGGAMESETUP_STARTDELAY=ゲーム開始遅延
 STR_DLGGAMESETUP_TIMELIMIT=ゲーム制限時間
-STR_DLGGAMESETUP_ERROROPENINGMAP=マップを開く際にエラーが発生しました。
 STR_DLGGAMEINFO_TIMEREMAINING=約 {number} 分
 STR_DLGGAMEINFO_OPEN=オープン
 STR_DLGGAMEINFO_TOURN=トーナメント
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Me
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=キー設定
-STR_DLGKEYSETUP_BLURB=変更したい項目をクリックし、次に押したキーが割り当てられます。ALT、PRINT SCREEN、PAUSE キーは割り当てできません。
 STR_DLGKEYSETUP_DRIVETANK=タンクを操縦
-STR_DLGKEYSETUP_TURNTANK=タンクを回転:
 STR_DLGKEYSETUP_GUNRANGE=射程距離
 STR_DLGKEYSETUP_WEAPONS=武器
 STR_DLGKEYSETUP_VIEW=視点
 STR_DLGKEYSETUP_SCROLL=スクロール
-STR_DLGKEYSETUP_LEFT=（左）
-STR_DLGKEYSETUP_RIGHT=（右）
 STR_DLGKEYSETUP_AUTOSLOWDOWN=自動減速
 STR_DLGKEYSETUP_AUTOGUNSIGHT=照準を自動的に隠す
 STR_DLGKEYSETUP_FASTER=加速
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=上
 STR_DLGKEYSETUP_SCROLLDOWN=下
 STR_DLGKEYSETUP_SCROLLLEFT=左
 STR_DLGKEYSETUP_SCROLLRIGHT=右
-STR_DLGKEYSETUP_NEWKEYFOR=新しいキーを押してください: 
-STR_DLGKEYSETUP_FORWARD=前進
-STR_DLGKEYSETUP_BACKWARD=後退
-STR_DLGKEYSETUP_ROTATELEFT=左回転
-STR_DLGKEYSETUP_ROTATERIGHT=右回転
-STR_DLGKEYSETUP_INCREASERANGE=射程を延長
-STR_DLGKEYSETUP_DECREASERANGE=射程を短縮
-STR_DLGKEYSETUP_SETSHOOT=射撃
-STR_DLGKEYSETUP_SETLAYMINE=地雷を敷設
-STR_DLGKEYSETUP_SETTANKVIEW=タンク視点
-STR_DLGKEYSETUP_SETPILLVIEW=トーチカ視点
-STR_DLGKEYSETUP_SETSCROLLUP=上にスクロール
-STR_DLGKEYSETUP_SETSCROLLDOWN=下にスクロール
-STR_DLGKEYSETUP_SETSCROLLLEFT=左にスクロール
-STR_DLGKEYSETUP_SETSCROLLRIGHT=右にスクロール
 
 # Messages dialog
 STR_DLGMSG_BUTTON=送信
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS={number} 人のプレイヤーにメッセージを送信
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=ネットワーク情報
-STR_DLGNETINFO_SERVERADDRESS=サーバーアドレス:
-STR_DLGNETINFO_THISGAMEADDRESS=このゲームのアドレス:
 STR_DLGNETINFO_SERVERPING=サーバーPing: {number} ms
-STR_DLGNETINFO_PACKETS=1秒あたりのパケット数（プレイヤーあたり）:
 STR_DLGNETINFO_STATUS=ステータス:
 STR_DLGNETINFO_ERRORS=ネットエラー: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=パスワードが必要です
 STR_DLGPASSWORD_BLURB=このゲームにはパスワードが必要です：
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=プレイヤー名を入力
 STR_DLGSETNAME_BLURB=タンクの新しいプレイヤー名を入力してください：
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=システム情報
 STR_DLGSYSINFO_CPUUSAGE=CPU 使用率:
 STR_DLGSYSINFO_SIMMODELING=シミュレーション処理:
 STR_DLGSYSINFO_COMPROCESSING=通信処理:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=グラフィック表示:
-STR_DLGSYSINFO_AICONTROLPROCESSING=AI タンク制御処理:
 STR_DLGSYSINFO_TOTAL=合計:
-STR_DLGSYSINFO_GRAPHICSFPS=グラフィックのフレームレート
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=UDP（インターネット）設定
 STR_DLGTCP_BLURB=インターネット Bolo ゲームに参加するには、Bolo を実行しているホストマシンの名前（または IP アドレス）と、そのマシン上の Bolo プロセスの UDP ポート番号を指定する必要があります。
 STR_DLGTCP_JOIN=参加
 STR_DLGTCP_REJOIN=再参加
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=「参加」をクリックして既存のゲームに参�
 STR_DLGTCP_REJOINBLURB=「再参加」をクリックしてゲームに戻り、以前の所持品を取り戻す
 STR_ERR_DLGTCP_PORTS=サーバーポートと自分のポートが同じです！
 STR_ERR_DLGTCP_NOTRIGHT=何かが正しくありません...
-STR_ERR_DLGTCP_SUBCLASS=コピー用のウィンドウサブクラスを設定できません！
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=アドレスで参加(&B)
-STR_DLGGAMEFINDER_REFRESH=更新(&R)
-STR_DLGGAMEFINDER_PLAYERNAME=プレイヤー名を設定(&P)
-STR_DLGGAMEFINDER_MOTD=今日のメッセージ(&M)
-STR_DLGGAMEFINDER_STATUSBLURB=ステータス: 
-STR_DLGGAMEFINDER_SELECTEDGAME=選択中のゲーム情報
-STR_DLGGAMEFINDER_BRAINS=Brain:
-STR_DLGGAMEFINDER_PASSWORD=パスワード:
-STR_DLGGAMEFINDER_PILLS=空きトーチカ数:
-STR_DLGGAMEFINDER_BASES=空き基地数:
-STR_DLGGAMEFINDER_HIDDENMINES=隠し地雷:
-STR_DLGGAMEFINDER_NUMPLAYERS=プレイヤー数:
-STR_DLGGAMEFINDER_VERSION=バージョン:
-STR_DLGGAMEFINDER_GAMETYPE=ゲームタイプ:
-STR_DLGGAMEFINDER_PORT=サーバーポート:
-STR_DLGGAMEFINDER_ADDRESS=サーバーアドレス:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=Brain ディレクトリが存在しません。\nBrain の読み込みをスキップします！
-STR_BRAINERR_LAUNCH=Brain の起動エラー
-STR_BRAINERR_LAUNCHMAIN=Brain の起動エラー - Brain に「BrainMain」が含まれていません
-STR_BRAINERR_INIT=Brain の初期化エラー
-STR_BRAINERR_EXEC=Brain を実行できませんでした
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=DD オブジェクトの作成に失敗
-STR_DRAWERROR_SETCOOPLEVEL=DD 協調レベルの作成に失敗
-STR_DRAWERROR_CREATEPRIMARY=DD プライマリサーフェスの作成に失敗
-STR_DRAWERROR_GETPIXELFORMAT=DD ピクセルフォーマットの取得に失敗
-STR_DRAWERROR_GETDESC=サーフェスの説明の取得に失敗
-STR_DRAWERROR_TOOFEWCOLOURS=このバージョンの WinBolo はパレットモードでは動作しません。\n 色の深度を 256 色以上に変更してください。
-STR_DRAWERROR_BUFFERCREATE=DD バッファの作成に失敗
-STR_DRAWERROR_GETDCFAILED=DD Get DC に失敗
-STR_DRAWERROR_CLIPPERFAILED=DD クリッパーの作成に失敗
-STR_DRAWERROR_BRUSH=描画ブラシの作成エラー
-STR_DRAWERROR_PEN=描画ペンの作成エラー
-STR_DRAW_GAMESTARTSIN=ゲーム開始まで 
-STR_DRAWERROR_RELEASEDC=タンクラベル描画用 DC のリリースエラー（問題があります）
-STR_DRAW_PILLBOXVIEW=トーチカ視点
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=フォント Courier New を読み込めません
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=設定の読み込み中にエラーが発生しました。デフォルト値を使用します。
-STR_GAMEFRONTERR_WINDOW=ウィンドウの作成エラー
-STR_GAMEFRONTERR_DDRAW=Direct Draw の設定エラー
-STR_GAMEFRONTERR_DSOUND=Direct Sound の設定エラー
-STR_GAMEFRONTERR_DINPUT=Direct Input の設定エラー
-STR_GAMEFRONTERR_CURSOR=カーソルの読み込みエラー
-STR_GAMEFRONTERR_FONTS=フォントの読み込みエラー
 STR_GAMEFRONT_LANFINDER_TITLE=LAN ゲームファインダー
 STR_GAMEFRONT_TRACKERFINDER_TITLE=トラッカーゲームファインダー
 STR_GAMEFRONTERR_JOINGAME=ゲームへの参加中にエラーが発生しました
-STR_GAMEFRONTERR_SPAWNSERVER=サーバープロセスの起動中にエラーが発生しました。\n「WinBoloDS」は WinBolo と同じディレクトリにありますか？
-STR_GAMEFRONTERR_NETSINGLEPLAYER=シングルプレイヤーゲームを選択したにもかかわらず、ネットワークサブシステムで非常に奇妙なことが起きました。運がよかったですね...
-STR_GAMEFRONT_SERVERSTARTMSG=専用サーバーを起動しています。終了するにはそのウィンドウで「quit」と入力してください。
-STR_GAMEFRONT_INPUTERR_CREATE=Direct Input キーボードデバイスの作成に失敗
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Direct Input キーボードデバイスのデータフォーマット設定に失敗
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Direct Input キーボードデバイスの協調レベル設定に失敗
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Winsock の起動エラー
-STR_NETCLIENTERR_CREATEUDPFAIL=UDP ソケットの作成エラー
-STR_NETCLIENTERR_CREATETCPFAIL=TCP ソケットの作成エラー
-STR_NETCLIENTERR_BINDUDPFAIL=UDP ソケットのバインドエラー\n このポートは別のプログラムが使用しています。別のポートを選択してください。\n\n注意：ネットワークゲームを開始して成功した場合、それはまだ実行中です。\n 再起動する必要はありません。
-STR_NETCLIENTERR_CHAINFAIL=ネットワークイベントのメッセージチェーンへの追加エラー
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=サポートされていないトラッカーバージョンです
-STR_NETCLIENTERR_TRACKERDNSFAIL=トラッカーが見つかりません（DNS 検索失敗）
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=トラッカーへの接続エラー
-STR_NETCLIENTERR_TRACKERNOBLOCK=ソケットをノンブロッキングに設定できません
-STR_NETCLIENT_TRACKERGETRESPONSE=ゲーム情報を受信中...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=トラッカーデータを処理中...
-STR_NETCLIENTERR_TRACKERNODATA=エラー：トラッカーからデータが送られませんでした
-STR_NETCLIENT_TRACKERCONNECT=接続中: 
-STR_NETCLIENT_IDLE=アイドル
-STR_NETCLIENTERR_BIND=ソケットのバインドエラー
-STR_NETCLIENTERR_BROADCAST=ブロードキャスト送信エラー
-STR_NETCLIENT_GETRESPONSES=応答を受信中...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=WinBolo サウンドを読み込めません - サウンドなしで続行します
-STR_SOUNDERR_HARDWAREINUSE=Direct Sound の設定エラー - ハードウェアが別のアプリケーションによって使用されています。\nサウンドなしで続行します。
-STR_SOUNDERR_CREATEFAILED=DS オブジェクトの作成に失敗\nサウンドなしで続行します。
-STR_SOUNDERR_COOPFAILED=DS 協調レベルの作成に失敗
-STR_SOUNDERR_PRIMARYBUFFFAIL=DS プライマリバッファの作成に失敗
-STR_SOUNDERR_LOADSOUNDFAILED=1 つ以上のサウンドファイルの読み込みに失敗
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Mutex の作成エラー（問題があります）
-STR_WBERR_BRAINLISTLOAD=Brain リストの読み込みエラー
-STR_WBERR_KEYCLASSSETUP=キー設定クラスの設定エラー
 STR_WBTIMELIMIT_END=制限時間が終了しました。ゲームが終わりました。
 STR_WBERR_SAVEMAP=マップの保存エラー（ディスクが満杯ですか？）
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=サーバーへの接続が切断されました。\nシ�
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=メッセージを送信
-STR_DLGOPENING_BUTTON3=言語
-STR_DLGOPENING_BUTTON4=ヘルプ
 STRERR_HELPFILE=ヘルプファイルを開けません。
-STR_DLGSKIN_TITLE=スキン選択
 STR_DLGSKIN_BLURB=スキン項目の一部が存在しない場合は、組み込みのデフォルトスキン/サウンドが使用されます。
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=申し訳ありませんが、プレイヤー名が空白です。プレイヤー名を入力してください
 NETERR_MAPSERIALIZE=サーバーがマップデータを準備できませんでした。もう一度試してください
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=プレイヤー名
 STR_DLGBROWSER_MANUAL=手動
 STR_DLGBROWSER_ERR_VERSION=サーバーは異なるバージョンの WinBolo を実行しています。
 STR_DLGBROWSER_ERR_NEEDNAME=まずプレイヤー名を設定する必要があります。
-STR_DLGBROWSER_SETNAME_TITLE=プレイヤー名を設定
 STR_DLGBROWSER_AI_ADV=有利
 STR_DLGBROWSER_AI_FULL=全体
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=ネットワークエラー
 STR_DLGWBN_LOADERR=詳細の読み込みに失敗
 STR_DLGWBN_DOWNLOAD_FAILED=ダウンロードに失敗
 STR_DLGWBN_NOSAVEPATH=保存パスを確認できませんでした
-STR_DLGWBN_POSTERR=コメントの投稿に失敗
 STR_DLGWBN_FETCHERR=フェッチに失敗
 STR_DLGWBN_UNKNOWN_ERR=不明なエラー
 STR_DLGWBN_FILEFILTER=WinBolo ログファイル
