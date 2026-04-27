@@ -1287,16 +1287,22 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             SDL_snprintf(countdownText, sizeof(countdownText), "%s",
                          langGetTextFmt(STR_DLGLOBBY_STARTING_FMT, &args));
             ImGui::PushFont(countdownFont);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
             ImVec2 textSize = ImGui::CalcTextSize(countdownText);
-            ImVec2 winSize = ImGui::GetWindowSize();
-            ImGui::SetCursorPos(ImVec2(
-                (winSize.x - textSize.x) * 0.5f,
-                (winSize.y - textSize.y) * 0.5f
-            ));
-            ImGui::Text("%s", countdownText);
-            ImGui::PopStyleColor();
             ImGui::PopFont();
+            ImVec2 winPos = ImGui::GetWindowPos();
+            ImVec2 winSize = ImGui::GetWindowSize();
+            ImVec2 textPos = ImVec2(
+                winPos.x + (winSize.x - textSize.x) * 0.5f,
+                winPos.y + (winSize.y - textSize.y) * 0.5f
+            );
+            ImDrawList *fg = ImGui::GetForegroundDrawList();
+            float pad = 12.0f * s;
+            fg->AddRectFilled(
+                ImVec2(textPos.x - pad, textPos.y - pad * 0.5f),
+                ImVec2(textPos.x + textSize.x + pad, textPos.y + textSize.y + pad * 0.5f),
+                IM_COL32(0, 0, 0, 180), 6.0f * s);
+            fg->AddText(countdownFont, countdownFontSize, textPos,
+                        IM_COL32(255, 255, 0, 255), countdownText);
         }
 
         ImGui::End(); /* ##LobbyBg */
