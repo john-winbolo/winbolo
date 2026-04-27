@@ -176,6 +176,7 @@ struct tankObj {
   int16_t bumpY;            /* Y bump effect from collisions/shells (>>9 applied per tick) */
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
+  BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */
 };
 
 #pragma pack(pop)

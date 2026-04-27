@@ -157,7 +157,7 @@ based on my testing.
 /* Ticks before LeavingBoat gives up and returns to InBoat */
 #define BOAT_LEAVING_TIMEOUT 8
 /* Entry speed above which we exit the boat immediately (skip grace zone) */
-#define BOAT_FAST_EXIT_SPEED 10
+#define BOAT_FAST_EXIT_SPEED 16
 
 /* Minimum distance for seeing tank in trees = 3 map squares or 768 world co-ords */
 #define MIN_TREEHIDE_DIST 768

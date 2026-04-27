@@ -304,6 +304,7 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->lastBoatRiverX = 0;
   (*value)->lastBoatRiverY = 0;
   (*value)->leavingBoatTimer = 0;
+  (*value)->leavingBoatAxis = 0;
   (*value)->showSight = FALSE;
   (*value)->sightLen = GUNSIGHT_MAX;
   (*value)->numKills = 0;
@@ -1477,76 +1478,6 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     (*value)->obstructed = tankObstructed;
   }
 
-  /* Step 5b — LeavingBoat position constraint */
-  if (!sim->isPredicting && (*value)->boatState == BoatState_LeavingBoat) {
-    (*value)->leavingBoatTimer--;
-    if ((*value)->leavingBoatTimer == 0) {
-      /* Timed out — clamp back to river tile edge, kill speed */
-      (*value)->boatState = BoatState_InBoat;
-      {
-        WORLD rMinX = ((WORLD)(*value)->lastBoatRiverX) << 8;
-        WORLD rMaxX = (((WORLD)(*value)->lastBoatRiverX + 1) << 8) - 1;
-        WORLD rMinY = ((WORLD)(*value)->lastBoatRiverY) << 8;
-        WORLD rMaxY = (((WORLD)(*value)->lastBoatRiverY + 1) << 8) - 1;
-        if ((*value)->x < rMinX) (*value)->x = rMinX;
-        if ((*value)->x > rMaxX) (*value)->x = rMaxX;
-        if ((*value)->y < rMinY) (*value)->y = rMinY;
-        if ((*value)->y > rMaxY) (*value)->y = rMaxY;
-      }
-      (*value)->speed = 0;
-    } else {
-      WORLD riverTileMinX = ((WORLD)(*value)->lastBoatRiverX) << 8;
-      WORLD riverTileMaxX = (((WORLD)(*value)->lastBoatRiverX + 1) << 8) - 1;
-      WORLD riverTileMinY = ((WORLD)(*value)->lastBoatRiverY) << 8;
-      WORLD riverTileMaxY = (((WORLD)(*value)->lastBoatRiverY + 1) << 8) - 1;
-      WORLD minX = riverTileMinX - BOAT_GRACE_WORLD;
-      WORLD maxX = riverTileMaxX + BOAT_GRACE_WORLD;
-      WORLD minY = riverTileMinY - BOAT_GRACE_WORLD;
-      WORLD maxY = riverTileMaxY + BOAT_GRACE_WORLD;
-
-      bool pastRiver = (*value)->x < riverTileMinX || (*value)->x > riverTileMaxX ||
-                       (*value)->y < riverTileMinY || (*value)->y > riverTileMaxY;
-      bool pastGrace = (*value)->x < minX || (*value)->x > maxX ||
-                       (*value)->y < minY || (*value)->y > maxY;
-
-      bool accelPressed = (tb == TACCEL || tb == TLEFTACCEL || tb == TRIGHTACCEL);
-      if (pastGrace || (pastRiver && accelPressed)) {
-        /* Exit boat: either past grace zone, or past river tile while accelerating.
-         * Only drop boat if last river tile is nearby (deep sea→land skip) */
-        BYTE exitbmx = (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE);
-        BYTE exitbmy = (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE);
-        if (abs(exitbmx - (*value)->lastBoatRiverX) + abs(exitbmy - (*value)->lastBoatRiverY) <= 2) {
-          if (mapGetPos(mp, (*value)->lastBoatRiverX, (*value)->lastBoatRiverY) == RIVER) {
-            mapSetPos(sim, mp, (*value)->lastBoatRiverX, (*value)->lastBoatRiverY, BOAT, TRUE, FALSE);
-          }
-        }
-        (*value)->boatState = BoatState_NotOnBoat;
-        (*value)->onBoat = FALSE;
-        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
-        BYTE newnearx = (BYTE)(((*value)->x + 0x80) >> 8);
-        BYTE newneary = (BYTE)(((*value)->y + 0x80) >> 8);
-        if (mapIsMine(mp, newnearx, newneary) == TRUE) {
-          minesExpAddItem(&sim->minesExplosions, mp, newnearx, newneary);
-        }
-      } else if (pastRiver) {
-        /* Past river tile but not accelerating (coasting/stopped) — push back */
-        WORLD overX = 0, overY = 0;
-        if ((*value)->x < riverTileMinX)      overX = riverTileMinX - (*value)->x;
-        else if ((*value)->x > riverTileMaxX)  overX = (*value)->x - riverTileMaxX;
-        if ((*value)->y < riverTileMinY)       overY = riverTileMinY - (*value)->y;
-        else if ((*value)->y > riverTileMaxY)  overY = (*value)->y - riverTileMaxY;
-
-        if (overX >= overY) {
-          if ((*value)->x < riverTileMinX)      (*value)->x += (overX + 3) >> 2;
-          else if ((*value)->x > riverTileMaxX)  (*value)->x -= (overX + 3) >> 2;
-        } else {
-          if ((*value)->y < riverTileMinY)       (*value)->y += (overY + 3) >> 2;
-          else if ((*value)->y > riverTileMaxY)  (*value)->y -= (overY + 3) >> 2;
-        }
-      }
-    }
-  }
-
   /* Step 6 — Terrain constraints */
   {
     WORLD newmx = (*value)->x;
@@ -1638,9 +1569,28 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
             minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
           }
         } else {
-          /* Soft terrain, slow approach — spongey grace zone */
-          (*value)->boatState = BoatState_LeavingBoat;
-          (*value)->leavingBoatTimer = BOAT_LEAVING_TIMEOUT;
+          /* Soft terrain, slow approach — per-axis position revert.
+           * Tank stays on the starting river tile until speed reaches
+           * BOAT_FAST_EXIT_SPEED. Sliding along the bank works because
+           * the parallel axis isn't blocked. Mirrors original WinBolo
+           * boat-exit behavior. */
+          WORLD rMinX = ((WORLD)bmx) << TANK_SHIFT_MAPSIZE;
+          WORLD rMaxX = (((WORLD)bmx + 1) << TANK_SHIFT_MAPSIZE) - 1;
+          WORLD rMinY = ((WORLD)bmy) << TANK_SHIFT_MAPSIZE;
+          WORLD rMaxY = (((WORLD)bmy + 1) << TANK_SHIFT_MAPSIZE) - 1;
+          bool xCrossed = (newbmx != bmx) && mapIsLand(mp, pb, bs, newbmx, bmy);
+          bool yCrossed = (newbmy != bmy) && mapIsLand(mp, pb, bs, bmx, newbmy);
+          /* Diagonal corner-cross fallback: if neither single-axis path
+           * explains the land tile, revert both. */
+          if (!xCrossed && !yCrossed) { xCrossed = TRUE; yCrossed = TRUE; }
+          if (xCrossed) {
+            if ((*value)->x < rMinX) (*value)->x = rMinX;
+            else if ((*value)->x > rMaxX) (*value)->x = rMaxX;
+          }
+          if (yCrossed) {
+            if ((*value)->y < rMinY) (*value)->y = rMinY;
+            else if ((*value)->y > rMaxY) (*value)->y = rMaxY;
+          }
         }
       }
 
@@ -3198,6 +3148,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
+			(*value)->boatState = BoatState_NotOnBoat;
 			(*value)->speed = 0;
 			if (!isServer) {
 				screenReCalcCS((struct ClientSim *)sim);
