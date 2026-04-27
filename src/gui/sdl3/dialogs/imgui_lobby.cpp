@@ -475,6 +475,36 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::IsItemClicked()) {
                     ImGui::OpenPopup("portmap_details");
                 }
+
+                ImGui::SameLine();
+                bool canTest = (pm.status != SERVER_PORTMAP_DISABLED &&
+                                pm.status != SERVER_PORTMAP_PENDING);
+                if (!canTest) ImGui::BeginDisabled();
+                if (ImGui::SmallButton("Test connectivity")) {
+                    serverInstanceTriggerManualProbe();
+                }
+                if (!canTest) ImGui::EndDisabled();
+
+                ManualProbeState mps = serverInstanceGetManualProbeState();
+                if (mps != MANUAL_PROBE_IDLE) {
+                    ImGui::SameLine();
+                    switch (mps) {
+                        case MANUAL_PROBE_IN_PROGRESS:
+                            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                                               "Testing...");
+                            break;
+                        case MANUAL_PROBE_SUCCESS:
+                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                                               "Reachable from internet");
+                            break;
+                        case MANUAL_PROBE_TIMEOUT:
+                            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
+                                               "No reply from tracker");
+                            break;
+                        case MANUAL_PROBE_IDLE:
+                            break;
+                    }
+                }
                 ImGui::Spacing();
 
                 if (ImGui::BeginPopupModal("portmap_details", nullptr,

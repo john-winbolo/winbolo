@@ -47,6 +47,11 @@ static unsigned short probeReflexivePort = 0;
 #define PROBE_SEND_INTERVAL_TICKS  500   /* 10 s @ 50 Hz */
 #define PROBE_TIMEOUT_TICKS       1500   /* 30 s @ 50 Hz */
 
+static ManualProbeState manualProbeState = MANUAL_PROBE_IDLE;
+static int              manualProbeWaitTicks = 0;
+
+#define MANUAL_PROBE_TIMEOUT_TICKS 100   /* 2 s @ 50 Hz */
+
 /* 1500 slices @ ~50Hz (SERVER_TICK_LENGTH = 20ms) ≈ 30s.  After this many
  * ticks without a successful libplum mapping, give up and let Phase 2d's
  * lobby UI surface the "could not open port automatically" state. */
@@ -108,6 +113,8 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   probeTimedOut        = FALSE;
   probeReflexiveIp[0]  = '\0';
   probeReflexivePort   = 0;
+  manualProbeState     = MANUAL_PROBE_IDLE;
+  manualProbeWaitTicks = 0;
   if (cfg->useNatPortmap) {
     natPortMapRequest(cfg->udpPort, &instancePortMap);
   }
@@ -384,6 +391,12 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
   }
+
+  if (manualProbeState == MANUAL_PROBE_IN_PROGRESS) {
+    if (++manualProbeWaitTicks >= MANUAL_PROBE_TIMEOUT_TICKS) {
+      manualProbeState = MANUAL_PROBE_TIMEOUT;
+    }
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
@@ -409,6 +422,8 @@ void serverInstanceShutdown(ServerSim *sim) {
   probeTimedOut        = FALSE;
   probeReflexiveIp[0]  = '\0';
   probeReflexivePort   = 0;
+  manualProbeState     = MANUAL_PROBE_IDLE;
+  manualProbeWaitTicks = 0;
 }
 
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
@@ -471,5 +486,27 @@ void serverInstanceRecordProbeReply(const char *reflexiveIp,
   probeReceived       = TRUE;
   probeTimedOut       = FALSE;       /* mapping is alive; reset deadline */
   probeReplyWaitTicks = 0;
+  if (manualProbeState == MANUAL_PROBE_IN_PROGRESS) {
+    manualProbeState = MANUAL_PROBE_SUCCESS;
+  }
   threadsReleaseMutex();
+}
+
+void serverInstanceTriggerManualProbe(void) {
+  threadsWaitForMutex();
+  manualProbeState     = MANUAL_PROBE_IN_PROGRESS;
+  manualProbeWaitTicks = 0;
+  /* Force the periodic-probe block to fire on the next tick. The block
+   * tests `++probeWaitTicks >= PROBE_SEND_INTERVAL_TICKS`, so setting
+   * the counter to the threshold causes an immediate send. */
+  probeWaitTicks = PROBE_SEND_INTERVAL_TICKS;
+  threadsReleaseMutex();
+}
+
+ManualProbeState serverInstanceGetManualProbeState(void) {
+  ManualProbeState s;
+  threadsWaitForMutex();
+  s = manualProbeState;
+  threadsReleaseMutex();
+  return s;
 }
