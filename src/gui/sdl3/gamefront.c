@@ -173,6 +173,9 @@ char gameFrontTrackerAddr[FILENAME_MAX];
 unsigned short gameFrontTrackerPort;
 bool gameFrontTrackerEnabled;
 
+bool gameFrontUseUpnp         = TRUE;
+bool gameFrontUseNatTraversal = TRUE;
+
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
@@ -1550,8 +1553,8 @@ bool gameFrontSetupServer(void) {
   cfg.useTracker      = gameFrontTrackerEnabled;
   cfg.trackerAddr     = gameFrontTrackerAddr;
   cfg.trackerPort     = gameFrontTrackerPort;
-  cfg.useNatKeepalive = TRUE;
-  cfg.useNatPortmap   = TRUE;
+  cfg.useNatKeepalive = gameFrontUseNatTraversal;
+  cfg.useNatPortmap   = gameFrontUseUpnp;
 
   if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);
@@ -1754,6 +1757,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", "No", buff, FILENAME_MAX, prefsFile);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
+  GetPrivateProfileString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontUseUpnp = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("SETTINGS", "Use NAT Traversal", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontUseNatTraversal = YESNO_TO_TRUEFALSE(buff[0]);
+
   /* Tracker options */
   GetPrivateProfileString("TRACKER", "Address", TRACKER_ADDRESS, gameFrontTrackerAddr, FILENAME_MAX, prefsFile);
   intToStr(TRACKER_PORT, def, sizeof(def));
@@ -1943,6 +1951,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("GAME OPTIONS", "Time Length", buff, prefsFile);
   WritePrivateProfileString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow), prefsFile);
   WritePrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide), prefsFile);
+
+  WritePrivateProfileString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp), prefsFile);
+  WritePrivateProfileString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal), prefsFile);
 
   /* Tracker */
   WritePrivateProfileString("TRACKER", "Address", gameFrontTrackerAddr, prefsFile);

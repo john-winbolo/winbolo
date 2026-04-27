@@ -726,4 +726,7 @@ bool gameFrontLoadDeferredMap(struct ClientSim *cs);
 extern int gameFrontDialogX;
 extern int gameFrontDialogY;
 
+extern bool gameFrontUseUpnp;
+extern bool gameFrontUseNatTraversal;
+
 #endif

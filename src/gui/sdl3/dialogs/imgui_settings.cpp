@@ -665,6 +665,27 @@ extern "C" void imguiSettingsShow(void) {
             }
         }
 
+#if !BOLO_MOBILE
+        /* ---- Network ---- */
+
+        if (ImGui::CollapsingHeader("Network", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted("Settings take effect on the next hosted game.");
+            ImGui::Spacing();
+            {
+                bool b = gameFrontUseUpnp;
+                if (ImGui::Checkbox("Use UPnP / NAT-PMP for automatic port forwarding", &b)) {
+                    gameFrontUseUpnp = b;
+                }
+            }
+            {
+                bool b = gameFrontUseNatTraversal;
+                if (ImGui::Checkbox("Use NAT traversal (hole-punching) via tracker", &b)) {
+                    gameFrontUseNatTraversal = b;
+                }
+            }
+        }
+#endif
+
 #if defined(__IPHONEOS__)
         /* ---- Crash Reporting ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_CRASH_REPORTING), ImGuiTreeNodeFlags_DefaultOpen)) {
