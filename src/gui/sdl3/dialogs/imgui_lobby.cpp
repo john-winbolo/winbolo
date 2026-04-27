@@ -406,52 +406,33 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     break;
                 case SERVER_PORTMAP_PENDING:
                     icon      = s_iconInfo;
-                    shortText = "Checking server reachability...";
+                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
                     color     = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-                    detailFmt = "Trying to open a firewall port via UPnP / NAT-PMP "
-                                "and confirming the tracker can reach back through "
-                                "your network. This usually completes within 30 "
-                                "seconds.";
+                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_PENDING);
                     break;
                 case SERVER_PORTMAP_SUCCEEDED:
                     icon      = s_iconSuccess;
-                    shortText = "Server accessible";
+                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
                     color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
-                    detailFmt = "Port forwarded automatically via UPnP/NAT-PMP at "
-                                "%s:%u. Joiners connect directly with no further "
-                                "steps required.";
+                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED);
                     break;
                 case SERVER_PORTMAP_HOLE_PUNCH_OK:
                     icon      = s_iconSuccess;
-                    shortText = "Server accessible";
+                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
                     color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
-                    detailFmt = "Direct port forwarding could not be established, "
-                                "but NAT traversal is active. Joiners coordinate "
-                                "through the tracker to punch through your "
-                                "network's firewall. This works for most home "
-                                "networks; joiners on symmetric NAT or "
-                                "carrier-grade NAT may still fail to connect.";
+                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH);
                     break;
                 case SERVER_PORTMAP_SYMMETRIC_NAT:
                     icon      = s_iconError;
-                    shortText = "Server unreachable";
+                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
                     color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
-                    detailFmt = "Symmetric NAT detected — your network rewrites the "
-                                "source port for every destination, which prevents "
-                                "joiners from reaching you even via NAT traversal. "
-                                "To host successfully, manually forward UDP port "
-                                "%u on your router to this machine.";
+                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC);
                     break;
                 case SERVER_PORTMAP_FAILED:
                     icon      = s_iconError;
-                    shortText = "Server unreachable";
+                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
                     color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
-                    detailFmt = "Could not open a firewall port automatically "
-                                "(UPnP/NAT-PMP refused or unavailable) and the "
-                                "tracker could not confirm bidirectional "
-                                "reachability. To host successfully, manually "
-                                "forward UDP port %u on your router to this "
-                                "machine.";
+                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_FAILED);
                     break;
             }
 
@@ -472,15 +453,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 }
+                char popupTitle[128];
+                SDL_snprintf(popupTitle, sizeof(popupTitle), "%s##portmap_details",
+                             langGetText(STR_DLGLOBBY_PORTMAP_POPUP_TITLE));
+
                 if (ImGui::IsItemClicked()) {
-                    ImGui::OpenPopup("portmap_details");
+                    ImGui::OpenPopup(popupTitle);
                 }
 
                 ImGui::SameLine();
                 bool canTest = (pm.status != SERVER_PORTMAP_DISABLED &&
                                 pm.status != SERVER_PORTMAP_PENDING);
                 if (!canTest) ImGui::BeginDisabled();
-                if (ImGui::SmallButton("Test connectivity")) {
+                if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_TEST_CONNECTIVITY))) {
                     serverInstanceTriggerManualProbe();
                 }
                 if (!canTest) ImGui::EndDisabled();
@@ -491,15 +476,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     switch (mps) {
                         case MANUAL_PROBE_IN_PROGRESS:
                             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                                               "Testing...");
+                                               "%s", langGetText(STR_DLGLOBBY_TEST_TESTING));
                             break;
                         case MANUAL_PROBE_SUCCESS:
                             ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
-                                               "Reachable from internet");
+                                               "%s", langGetText(STR_DLGLOBBY_TEST_REACHABLE));
                             break;
                         case MANUAL_PROBE_TIMEOUT:
                             ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
-                                               "No reply from tracker");
+                                               "%s", langGetText(STR_DLGLOBBY_TEST_NO_REPLY));
                             break;
                         case MANUAL_PROBE_IDLE:
                             break;
@@ -507,7 +492,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 ImGui::Spacing();
 
-                if (ImGui::BeginPopupModal("portmap_details", nullptr,
+                if (ImGui::BeginPopupModal(popupTitle, nullptr,
                                            ImGuiWindowFlags_AlwaysAutoResize)) {
                     ServerPortmapInfo pm2;
                     serverInstanceGetPortmapInfo(&pm2);
@@ -530,7 +515,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     }
                     ImGui::PopTextWrapPos();
                     ImGui::Spacing();
-                    if (ImGui::Button("Close") ||
+                    if (ImGui::Button(langGetText(STR_CLOSE)) ||
                         ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                         ImGui::CloseCurrentPopup();
                     }

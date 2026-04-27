@@ -1063,3 +1063,24 @@ STR_MAPVALIDATE_START_OVERLAP=Start #{number} i Start #{number2} nakładają si�
 STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} i Baza #{number2} nakładają się w ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} i Bunkier #{number2} nakładają się w ({number3},{number4})
 
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Wymaga przekierowania portu, aby gracze spoza LAN mogli dołączyć. (Wkrótce: automatyczna konfiguracja NAT.)
+STR_GAMEFRONTERR_MAPLOAD=Nie udało się załadować mapy z serwera
+STR_GAMEFRONTERR_STARTSERVER=Błąd podczas uruchamiania serwera
+STR_DLGLOBBY_PORTMAP_CHECKING=Sprawdzanie dostępności serwera…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Serwer dostępny
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Serwer niedostępny
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Próba otwarcia portu zapory przez UPnP / NAT-PMP i potwierdzenie, że tracker może cię osiągnąć przez twoją sieć. Zwykle trwa to do 30 sekund.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port automatycznie przekierowany przez UPnP/NAT-PMP na %s:%u. Dołączający łączą się bezpośrednio bez dodatkowych kroków.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Nie udało się ustanowić bezpośredniego przekierowania portu, ale NAT traversal jest aktywny. Dołączający koordynują się przez tracker, aby przebić zaporę twojej sieci. Działa to w większości sieci domowych; gracze za symetrycznym NAT lub NAT operatora (CGN) mogą nadal nie być w stanie się połączyć.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Wykryto symetryczny NAT — twoja sieć przepisuje port źródłowy dla każdego celu, co uniemożliwia graczom dotarcie do ciebie nawet przez NAT traversal. Aby pomyślnie hostować, przekieruj ręcznie port UDP %u na swoim routerze do tej maszyny.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Nie udało się automatycznie otworzyć portu zapory (UPnP/NAT-PMP odrzucony lub niedostępny), a tracker nie mógł potwierdzić dwukierunkowej dostępności. Aby pomyślnie hostować, przekieruj ręcznie port UDP %u na swoim routerze do tej maszyny.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Dostępność serwera
+STR_DLGLOBBY_TEST_CONNECTIVITY=Testuj łączność
+STR_DLGLOBBY_TEST_TESTING=Testowanie…
+STR_DLGLOBBY_TEST_REACHABLE=Dostępny z internetu
+STR_DLGLOBBY_TEST_NO_REPLY=Brak odpowiedzi od trackera
+STR_DLGSETTINGS_NETWORK=Sieć
+STR_DLGSETTINGS_NET_HELP=Ustawienia zaczną obowiązywać przy następnej hostowanej grze.
+STR_DLGSETTINGS_USE_UPNP=Użyj UPnP / NAT-PMP do automatycznego przekierowania portu
+STR_DLGSETTINGS_USE_NATTRAV=Użyj NAT traversal (hole-punching) przez tracker

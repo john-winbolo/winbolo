@@ -971,7 +971,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
 
           if (!mapLoadOk) {
-            imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
+            imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_MAPLOAD),
                               IMGUI_MSG_ERROR, IMGUI_MSG_OK);
             clientSimSetChatSendFunc(humanSim, NULL);
             clientSimSetNameChangeSendFunc(humanSim, NULL);
@@ -1022,7 +1022,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       dlgState = (prevState == openInternetSetup) ? openInternet : openLan;
       gameFrontSetDlgState(openUdpJoin);
     } else {
-      imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error starting server",
+      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
                         IMGUI_MSG_ERROR, IMGUI_MSG_OK);
       dlgState = openStart;
     }

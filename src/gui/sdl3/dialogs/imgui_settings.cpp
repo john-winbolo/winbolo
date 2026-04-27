@@ -668,18 +668,18 @@ extern "C" void imguiSettingsShow(void) {
 #if !BOLO_MOBILE
         /* ---- Network ---- */
 
-        if (ImGui::CollapsingHeader("Network", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextUnformatted("Settings take effect on the next hosted game.");
+        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_NETWORK), ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
             ImGui::Spacing();
             {
                 bool b = gameFrontUseUpnp;
-                if (ImGui::Checkbox("Use UPnP / NAT-PMP for automatic port forwarding", &b)) {
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_UPNP), &b)) {
                     gameFrontUseUpnp = b;
                 }
             }
             {
                 bool b = gameFrontUseNatTraversal;
-                if (ImGui::Checkbox("Use NAT traversal (hole-punching) via tracker", &b)) {
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_NATTRAV), &b)) {
                     gameFrontUseNatTraversal = b;
                 }
             }

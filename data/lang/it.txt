@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Base #{number} e Bunker #{number2} si sovrappo
 STR_MAPVALIDATE_START_OVERLAP=Partenza #{number} e Partenza #{number2} si sovrappongono in ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Partenza #{number} e Base #{number2} si sovrappongono in ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Partenza #{number} e Bunker #{number2} si sovrappongono in ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Richiede l'inoltro porta affinché i giocatori fuori dalla LAN possano unirsi. (In arrivo: configurazione NAT automatica.)
+STR_GAMEFRONTERR_MAPLOAD=Impossibile caricare la mappa dal server
+STR_GAMEFRONTERR_STARTSERVER=Errore nell'avvio del server
+STR_DLGLOBBY_PORTMAP_CHECKING=Verifica raggiungibilità del server…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server raggiungibile
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server irraggiungibile
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Tentativo di aprire una porta del firewall tramite UPnP / NAT-PMP e verifica che il tracker possa raggiungerti attraverso la tua rete. Solitamente si completa entro 30 secondi.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Porta inoltrata automaticamente tramite UPnP/NAT-PMP su %s:%u. I giocatori si collegano direttamente senza ulteriori passaggi.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Non è stato possibile stabilire l'inoltro diretto della porta, ma il NAT traversal è attivo. I giocatori si coordinano tramite il tracker per attraversare il firewall della tua rete. Funziona per la maggior parte delle reti domestiche; i giocatori con NAT simmetrico o CGN potrebbero comunque non riuscire a connettersi.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Rilevato NAT simmetrico — la tua rete riscrive la porta di origine per ogni destinazione, impedendo ai giocatori di raggiungerti anche tramite NAT traversal. Per ospitare correttamente, inoltra manualmente la porta UDP %u del tuo router verso questa macchina.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Impossibile aprire automaticamente una porta del firewall (UPnP/NAT-PMP rifiutato o non disponibile) e il tracker non ha potuto confermare la raggiungibilità bidirezionale. Per ospitare correttamente, inoltra manualmente la porta UDP %u del tuo router verso questa macchina.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Raggiungibilità del server
+STR_DLGLOBBY_TEST_CONNECTIVITY=Verifica connettività
+STR_DLGLOBBY_TEST_TESTING=Verifica in corso…
+STR_DLGLOBBY_TEST_REACHABLE=Raggiungibile da Internet
+STR_DLGLOBBY_TEST_NO_REPLY=Nessuna risposta dal tracker
+STR_DLGSETTINGS_NETWORK=Rete
+STR_DLGSETTINGS_NET_HELP=Le impostazioni hanno effetto alla prossima partita ospitata.
+STR_DLGSETTINGS_USE_UPNP=Usa UPnP / NAT-PMP per l'inoltro porta automatico
+STR_DLGSETTINGS_USE_NATTRAV=Usa NAT traversal (hole-punching) tramite tracker

@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Basis #{number} und Bunker #{number2} überlap
 STR_MAPVALIDATE_START_OVERLAP=Startpunkt #{number} und Startpunkt #{number2} überlappen bei ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Startpunkt #{number} und Basis #{number2} überlappen bei ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Startpunkt #{number} und Bunker #{number2} überlappen bei ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Erfordert Portweiterleitung, damit Spieler außerhalb des LAN beitreten können. (Demnächst: automatische NAT-Einrichtung.)
+STR_GAMEFRONTERR_MAPLOAD=Karte konnte nicht vom Server geladen werden
+STR_GAMEFRONTERR_STARTSERVER=Fehler beim Starten des Servers
+STR_DLGLOBBY_PORTMAP_CHECKING=Erreichbarkeit des Servers wird geprüft…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server erreichbar
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server nicht erreichbar
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Versuche, einen Firewall-Port über UPnP / NAT-PMP zu öffnen und zu bestätigen, dass der Tracker dich durch dein Netzwerk erreichen kann. Dies dauert normalerweise weniger als 30 Sekunden.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port automatisch per UPnP/NAT-PMP auf %s:%u weitergeleitet. Beitretende Spieler verbinden sich direkt, ohne weitere Schritte.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direkte Portweiterleitung konnte nicht eingerichtet werden, aber NAT-Traversal ist aktiv. Beitretende Spieler koordinieren sich über den Tracker, um die Firewall deines Netzwerks zu durchbrechen. Dies funktioniert in den meisten Heimnetzwerken; Spieler hinter symmetrischem NAT oder Carrier-Grade-NAT können sich möglicherweise trotzdem nicht verbinden.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisches NAT erkannt — dein Netzwerk schreibt den Quellport für jedes Ziel um, was verhindert, dass beitretende Spieler dich selbst per NAT-Traversal erreichen können. Um erfolgreich zu hosten, leite den UDP-Port %u manuell auf deinem Router an diesen Rechner weiter.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Es konnte kein Firewall-Port automatisch geöffnet werden (UPnP/NAT-PMP verweigert oder nicht verfügbar) und der Tracker konnte die bidirektionale Erreichbarkeit nicht bestätigen. Um erfolgreich zu hosten, leite den UDP-Port %u manuell auf deinem Router an diesen Rechner weiter.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server-Erreichbarkeit
+STR_DLGLOBBY_TEST_CONNECTIVITY=Verbindung testen
+STR_DLGLOBBY_TEST_TESTING=Teste…
+STR_DLGLOBBY_TEST_REACHABLE=Aus dem Internet erreichbar
+STR_DLGLOBBY_TEST_NO_REPLY=Keine Antwort vom Tracker
+STR_DLGSETTINGS_NETWORK=Netzwerk
+STR_DLGSETTINGS_NET_HELP=Die Einstellungen werden beim nächsten gehosteten Spiel wirksam.
+STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP für automatische Portweiterleitung verwenden
+STR_DLGSETTINGS_USE_NATTRAV=NAT-Traversal (Hole-Punching) über Tracker verwenden

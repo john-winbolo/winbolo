@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Basis #{number} en bunker #{number2} overlappe
 STR_MAPVALIDATE_START_OVERLAP=Start #{number} en start #{number2} overlappen op ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} en basis #{number2} overlappen op ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} en bunker #{number2} overlappen op ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Vereist port forwarding zodat spelers buiten het LAN kunnen meedoen. (Komt eraan: automatische NAT-instelling.)
+STR_GAMEFRONTERR_MAPLOAD=Kan kaart niet laden vanaf server
+STR_GAMEFRONTERR_STARTSERVER=Fout bij het starten van de server
+STR_DLGLOBBY_PORTMAP_CHECKING=Bereikbaarheid van server controleren…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server bereikbaar
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server onbereikbaar
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Probeert een firewallpoort te openen via UPnP / NAT-PMP en bevestigt dat de tracker je via je netwerk kan terugbereiken. Dit duurt meestal minder dan 30 seconden.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Poort automatisch doorgestuurd via UPnP/NAT-PMP op %s:%u. Deelnemers verbinden direct zonder verdere stappen.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Directe portforwarding kon niet worden ingesteld, maar NAT-traversal is actief. Deelnemers coördineren via de tracker om door de firewall van je netwerk te breken. Dit werkt voor de meeste thuisnetwerken; deelnemers met symmetrische NAT of carrier-grade NAT kunnen alsnog geen verbinding maken.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrische NAT gedetecteerd — je netwerk herschrijft de bronpoort voor elke bestemming, waardoor deelnemers je zelfs via NAT-traversal niet kunnen bereiken. Stuur UDP-poort %u handmatig door op je router naar deze machine om succesvol te kunnen hosten.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kon niet automatisch een firewallpoort openen (UPnP/NAT-PMP geweigerd of niet beschikbaar) en de tracker kon de bidirectionele bereikbaarheid niet bevestigen. Stuur UDP-poort %u handmatig door op je router naar deze machine om succesvol te kunnen hosten.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server bereikbaarheid
+STR_DLGLOBBY_TEST_CONNECTIVITY=Verbinding testen
+STR_DLGLOBBY_TEST_TESTING=Testen…
+STR_DLGLOBBY_TEST_REACHABLE=Bereikbaar vanaf internet
+STR_DLGLOBBY_TEST_NO_REPLY=Geen antwoord van tracker
+STR_DLGSETTINGS_NETWORK=Netwerk
+STR_DLGSETTINGS_NET_HELP=Instellingen worden bij het volgende gehoste spel actief.
+STR_DLGSETTINGS_USE_UPNP=Gebruik UPnP / NAT-PMP voor automatische port forwarding
+STR_DLGSETTINGS_USE_NATTRAV=Gebruik NAT-traversal (hole-punching) via tracker

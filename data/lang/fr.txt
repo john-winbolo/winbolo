@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Base n°{number} et Pillbox n°{number2} se ch
 STR_MAPVALIDATE_START_OVERLAP=Départ n°{number} et Départ n°{number2} se chevauchent en ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Départ n°{number} et Base n°{number2} se chevauchent en ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Départ n°{number} et Pillbox n°{number2} se chevauchent en ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Nécessite la redirection de port pour permettre aux joueurs hors LAN de rejoindre. (Bientôt : configuration NAT automatique.)
+STR_GAMEFRONTERR_MAPLOAD=Échec du chargement de la carte depuis le serveur
+STR_GAMEFRONTERR_STARTSERVER=Erreur lors du démarrage du serveur
+STR_DLGLOBBY_PORTMAP_CHECKING=Vérification de l'accessibilité du serveur…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Serveur accessible
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Serveur inaccessible
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Tentative d'ouverture d'un port du pare-feu via UPnP / NAT-PMP et de confirmation que le tracker peut vous atteindre à travers votre réseau. Cela prend généralement moins de 30 secondes.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port redirigé automatiquement via UPnP/NAT-PMP sur %s:%u. Les joueurs se connectent directement sans étape supplémentaire.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=La redirection de port directe n'a pas pu être établie, mais la traversée NAT est active. Les joueurs se coordonnent via le tracker pour percer le pare-feu de votre réseau. Cela fonctionne pour la plupart des réseaux domestiques ; les joueurs derrière un NAT symétrique ou un CGN peuvent ne toujours pas pouvoir se connecter.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=NAT symétrique détecté — votre réseau réécrit le port source pour chaque destination, ce qui empêche les joueurs de vous atteindre même via la traversée NAT. Pour héberger avec succès, redirigez manuellement le port UDP %u sur votre routeur vers cette machine.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Impossible d'ouvrir automatiquement un port du pare-feu (UPnP/NAT-PMP refusé ou indisponible) et le tracker n'a pas pu confirmer l'accessibilité bidirectionnelle. Pour héberger avec succès, redirigez manuellement le port UDP %u sur votre routeur vers cette machine.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Accessibilité du serveur
+STR_DLGLOBBY_TEST_CONNECTIVITY=Tester la connectivité
+STR_DLGLOBBY_TEST_TESTING=Test en cours…
+STR_DLGLOBBY_TEST_REACHABLE=Accessible depuis Internet
+STR_DLGLOBBY_TEST_NO_REPLY=Aucune réponse du tracker
+STR_DLGSETTINGS_NETWORK=Réseau
+STR_DLGSETTINGS_NET_HELP=Les paramètres prennent effet lors de la prochaine partie hébergée.
+STR_DLGSETTINGS_USE_UPNP=Utiliser UPnP / NAT-PMP pour la redirection de port automatique
+STR_DLGSETTINGS_USE_NATTRAV=Utiliser la traversée NAT (hole-punching) via le tracker

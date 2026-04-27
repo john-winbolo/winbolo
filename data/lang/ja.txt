@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=基地 #{number} とトーチカ #{number2} �
 STR_MAPVALIDATE_START_OVERLAP=スタート #{number} とスタート #{number2} が ({number3},{number4}) で重なっています
 STR_MAPVALIDATE_START_BASE_OVERLAP=スタート #{number} と基地 #{number2} が ({number3},{number4}) で重なっています
 STR_MAPVALIDATE_START_PILL_OVERLAP=スタート #{number} とトーチカ #{number2} が ({number3},{number4}) で重なっています
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=LAN外のプレイヤーが参加するにはポート転送が必要です。（自動 NAT 設定は近日対応予定）
+STR_GAMEFRONTERR_MAPLOAD=サーバーからマップを読み込めませんでした
+STR_GAMEFRONTERR_STARTSERVER=サーバーの起動でエラーが発生しました
+STR_DLGLOBBY_PORTMAP_CHECKING=サーバーの到達性を確認中…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=サーバーに到達可能
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=サーバーに到達不可
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP でファイアウォールのポートを開き、トラッカーがネットワーク経由であなたに到達できるか確認しています。通常は 30 秒以内に完了します。
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP により %s:%u でポートが自動転送されました。参加者は追加の手順なしで直接接続できます。
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=ポートの直接転送は確立できませんでしたが、NAT traversal は有効です。参加者はトラッカー経由で連携し、あなたのネットワークのファイアウォールを通り抜けます。多くの家庭用ネットワークで機能しますが、対称型 NAT や CGN（キャリアグレード NAT）の参加者は接続できない場合があります。
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=対称型 NAT を検出しました — あなたのネットワークは送信先ごとに送信元ポートを書き換えるため、NAT traversal を使っても参加者があなたに到達できません。ホストを成功させるには、ルーターで UDP ポート %u をこのマシンへ手動で転送してください。
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=ファイアウォールのポートを自動的に開けず（UPnP/NAT-PMP が拒否または利用不可）、トラッカーは双方向の到達性を確認できませんでした。ホストを成功させるには、ルーターで UDP ポート %u をこのマシンへ手動で転送してください。
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=サーバー到達性
+STR_DLGLOBBY_TEST_CONNECTIVITY=接続テスト
+STR_DLGLOBBY_TEST_TESTING=テスト中…
+STR_DLGLOBBY_TEST_REACHABLE=インターネットから到達可能
+STR_DLGLOBBY_TEST_NO_REPLY=トラッカーから応答なし
+STR_DLGSETTINGS_NETWORK=ネットワーク
+STR_DLGSETTINGS_NET_HELP=設定は次回のホストゲームから反映されます。
+STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP による自動ポート転送を使用する
+STR_DLGSETTINGS_USE_NATTRAV=トラッカー経由で NAT traversal（ホールパンチング）を使用する

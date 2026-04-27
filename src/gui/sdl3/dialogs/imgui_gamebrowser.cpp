@@ -1093,7 +1093,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
             if (useTracker && ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Requires port forwarding for non-LAN players to join. (Coming: automatic NAT setup.)");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
             }
 
             /* Player Name */

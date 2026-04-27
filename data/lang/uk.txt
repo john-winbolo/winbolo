@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=База #{number} і Бункер #{number2} 
 STR_MAPVALIDATE_START_OVERLAP=Старт #{number} і Старт #{number2} перекриваються на ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Старт #{number} і База #{number2} перекриваються на ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Старт #{number} і Бункер #{number2} перекриваються на ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Потрібне перенаправлення порту, щоб гравці поза LAN могли приєднатися. (Скоро: автоматичне налаштування NAT.)
+STR_GAMEFRONTERR_MAPLOAD=Не вдалося завантажити карту з сервера
+STR_GAMEFRONTERR_STARTSERVER=Помилка запуску сервера
+STR_DLGLOBBY_PORTMAP_CHECKING=Перевірка доступності сервера…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Сервер доступний
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Сервер недоступний
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Намагаюся відкрити порт у фаєрволі через UPnP / NAT-PMP і підтвердити, що трекер може дістатися до тебе через твою мережу. Зазвичай це займає до 30 секунд.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Порт автоматично перенаправлено через UPnP/NAT-PMP на %s:%u. Підключені з'єднуються безпосередньо без додаткових кроків.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Не вдалося встановити пряме перенаправлення порту, але NAT traversal активний. Підключені координуються через трекер, щоб пробити фаєрвол твоєї мережі. Це працює в більшості домашніх мереж; гравці за симетричним NAT або CGN можуть все одно не підключитися.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Виявлено симетричний NAT — твоя мережа переписує вихідний порт для кожного призначення, через що гравці не можуть дістатися до тебе навіть через NAT traversal. Для успішного хостингу вручну перенаправ UDP-порт %u на роутері на цю машину.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Не вдалося автоматично відкрити порт у фаєрволі (UPnP/NAT-PMP відмовив або недоступний), і трекер не зміг підтвердити двосторонню доступність. Для успішного хостингу вручну перенаправ UDP-порт %u на роутері на цю машину.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Доступність сервера
+STR_DLGLOBBY_TEST_CONNECTIVITY=Перевірити з'єднання
+STR_DLGLOBBY_TEST_TESTING=Перевірка…
+STR_DLGLOBBY_TEST_REACHABLE=Доступний з інтернету
+STR_DLGLOBBY_TEST_NO_REPLY=Немає відповіді від трекера
+STR_DLGSETTINGS_NETWORK=Мережа
+STR_DLGSETTINGS_NET_HELP=Налаштування набудуть чинності в наступній хостинговій грі.
+STR_DLGSETTINGS_USE_UPNP=Використовувати UPnP / NAT-PMP для автоматичного перенаправлення порту
+STR_DLGSETTINGS_USE_NATTRAV=Використовувати NAT traversal (hole-punching) через трекер

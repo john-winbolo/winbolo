@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Bas #{number} och bunker #{number2} överlappa
 STR_MAPVALIDATE_START_OVERLAP=Start #{number} och start #{number2} överlappar vid ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} och bas #{number2} överlappar vid ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} och bunker #{number2} överlappar vid ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Kräver portvidarebefordran för att spelare utanför LAN ska kunna ansluta. (Kommer: automatisk NAT-uppsättning.)
+STR_GAMEFRONTERR_MAPLOAD=Kunde inte ladda karta från servern
+STR_GAMEFRONTERR_STARTSERVER=Fel vid serverstart
+STR_DLGLOBBY_PORTMAP_CHECKING=Kontrollerar serveråtkomst…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server nåbar
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server inte nåbar
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Försöker öppna en brandväggsport via UPnP / NAT-PMP och bekräftar att trackern kan nå dig via ditt nätverk. Detta brukar slutföras inom 30 sekunder.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port vidarebefordrades automatiskt via UPnP/NAT-PMP på %s:%u. Anslutande spelare ansluter direkt utan ytterligare steg.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direkt portvidarebefordran kunde inte upprättas, men NAT-traversal är aktiv. Anslutande spelare koordinerar via trackern för att ta sig igenom ditt nätverks brandvägg. Detta fungerar för de flesta hemnätverk; spelare bakom symmetrisk NAT eller carrier-grade NAT kan ändå inte ansluta.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisk NAT upptäckt — ditt nätverk skriver om källporten för varje destination, vilket hindrar spelare från att nå dig även via NAT-traversal. För att kunna hosta måste du manuellt vidarebefordra UDP-port %u på din router till den här datorn.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kunde inte öppna en brandväggsport automatiskt (UPnP/NAT-PMP nekade eller är otillgängligt) och trackern kunde inte bekräfta dubbelriktad åtkomst. För att kunna hosta måste du manuellt vidarebefordra UDP-port %u på din router till den här datorn.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Serveråtkomst
+STR_DLGLOBBY_TEST_CONNECTIVITY=Testa anslutning
+STR_DLGLOBBY_TEST_TESTING=Testar…
+STR_DLGLOBBY_TEST_REACHABLE=Nåbar från internet
+STR_DLGLOBBY_TEST_NO_REPLY=Inget svar från trackern
+STR_DLGSETTINGS_NETWORK=Nätverk
+STR_DLGSETTINGS_NET_HELP=Inställningarna träder i kraft vid nästa hostat spel.
+STR_DLGSETTINGS_USE_UPNP=Använd UPnP / NAT-PMP för automatisk portvidarebefordran
+STR_DLGSETTINGS_USE_NATTRAV=Använd NAT-traversal (hole-punching) via tracker

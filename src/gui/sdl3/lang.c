@@ -992,6 +992,28 @@ static const LangEntry langTable[] = {
     {1187, "Language:"},
     {1188, "Existing message-log entries won't change language until they're regenerated."},
 
+    /* Hosted multiplayer / NAT traversal — Phase 1-4 networking work */
+    {1189, "Requires port forwarding for non-LAN players to join. (Coming: automatic NAT setup.)"},
+    {1190, "Failed to load map from server"},
+    {1191, "Error starting server"},
+    {1192, "Checking server reachability..."},
+    {1193, "Server accessible"},
+    {1194, "Server unreachable"},
+    {1195, "Trying to open a firewall port via UPnP / NAT-PMP and confirming the tracker can reach back through your network. This usually completes within 30 seconds."},
+    {1196, "Port forwarded automatically via UPnP/NAT-PMP at %s:%u. Joiners connect directly with no further steps required."},
+    {1197, "Direct port forwarding could not be established, but NAT traversal is active. Joiners coordinate through the tracker to punch through your network's firewall. This works for most home networks; joiners on symmetric NAT or carrier-grade NAT may still fail to connect."},
+    {1198, "Symmetric NAT detected — your network rewrites the source port for every destination, which prevents joiners from reaching you even via NAT traversal. To host successfully, manually forward UDP port %u on your router to this machine."},
+    {1199, "Could not open a firewall port automatically (UPnP/NAT-PMP refused or unavailable) and the tracker could not confirm bidirectional reachability. To host successfully, manually forward UDP port %u on your router to this machine."},
+    {1200, "Server Reachability"},
+    {1201, "Test connectivity"},
+    {1202, "Testing..."},
+    {1203, "Reachable from internet"},
+    {1204, "No reply from tracker"},
+    {1205, "Network"},
+    {1206, "Settings take effect on the next hosted game."},
+    {1207, "Use UPnP / NAT-PMP for automatic port forwarding"},
+    {1208, "Use NAT traversal (hole-punching) via tracker"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */
