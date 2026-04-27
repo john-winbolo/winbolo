@@ -118,4 +118,20 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out);
 void serverInstanceRecordProbeReply(const char *reflexiveIp,
                                     unsigned short reflexivePort);
 
+typedef enum {
+  MANUAL_PROBE_IDLE,         /* never run, or reset on shutdown */
+  MANUAL_PROBE_IN_PROGRESS,  /* probe sent, waiting for reply */
+  MANUAL_PROBE_SUCCESS,      /* reply arrived within timeout */
+  MANUAL_PROBE_TIMEOUT       /* no reply within ~2 s */
+} ManualProbeState;
+
+/* Trigger a fresh punch probe to the tracker on the next tick. The
+ * lobby's "Test connectivity" button uses this to force an immediate
+ * reachability check rather than waiting for the periodic probe. */
+void serverInstanceTriggerManualProbe(void);
+
+/* Snapshot the manual probe's current state. Returns IDLE when no
+ * manual test has run since startup or shutdown. */
+ManualProbeState serverInstanceGetManualProbeState(void);
+
 #endif /* SERVER_LIFECYCLE_H */
