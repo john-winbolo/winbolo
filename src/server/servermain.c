@@ -500,6 +500,8 @@ void printArgs() {
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
+  fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
+  fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-randommap        - Generate a random procedural map instead of loading a file.\n");
   fprintf(stderr, "                    -randommap alone generates a fully random map each round.\n");
   fprintf(stderr, "                    -randommap tournament|natural|maze|fractal — specific generator type.\n");
@@ -1077,8 +1079,11 @@ int main(int argc, char **argv) {
     instCfg.useTracker   = sTrackerUse;
     instCfg.trackerAddr  = sTrackerAddr;
     instCfg.trackerPort  = sTrackerPort;
-    instCfg.useNatKeepalive = FALSE;
-    instCfg.useNatPortmap = FALSE;
+    {
+      bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
+      instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
+      instCfg.useNatKeepalive = sTrackerUse && !natPunchOptOut;
+    }
     if (serverInstanceStartup(&serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(&serverSim);

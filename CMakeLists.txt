@@ -862,7 +862,7 @@ set(CLIENT_SOURCES
     src/bolo/obs_builder.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_sim.c
     src/server/server_lifecycle.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
@@ -1159,7 +1159,7 @@ set(SERVER_SOURCES
     src/bolo/udppackets.c src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/server/geolookup.c
     src/server/servermain.c src/server/servermessages.c
-    src/server/threads.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/threads.c src/server/server_sim.c
     src/server/server_lifecycle.c
     src/server/server_frontend_stubs.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
@@ -1427,7 +1427,7 @@ set(HEADLESS_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_sim.c
     src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
@@ -1557,7 +1557,7 @@ set(GYM_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_sim.c
     src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c
