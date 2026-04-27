@@ -489,7 +489,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             break;
                         case SERVER_PORTMAP_SYMMETRIC_NAT:
                         case SERVER_PORTMAP_FAILED:
-                            ImGui::Text(detailFmt, (unsigned)27500);
+                            ImGui::Text(detailFmt,
+                                        (unsigned)(pm2.internalPort != 0
+                                                       ? pm2.internalPort
+                                                       : 27500));
                             break;
                         default:
                             ImGui::TextUnformatted(detailFmt);

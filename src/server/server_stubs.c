@@ -13,3 +13,10 @@
  */
 
 #include "../bolo/global.h"
+#include "server_lifecycle.h"
+
+void serverInstanceRecordProbeReply(const char *reflexiveIp,
+                                    unsigned short reflexivePort) {
+  (void)reflexiveIp;
+  (void)reflexivePort;
+}

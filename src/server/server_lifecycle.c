@@ -27,6 +27,7 @@
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
+static unsigned short instanceUdpPort = 0;
 static bool  instanceUseTracker = FALSE;
 static bool  instanceUseWbn = FALSE;
 static bool  instanceUseNatKeepalive = FALSE;
@@ -90,6 +91,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   }
   instanceTrackerPort = cfg->trackerPort;
   instanceUseNatKeepalive = cfg->useNatKeepalive;
+  instanceUdpPort = cfg->udpPort;
 
   trackerTime = 5500;
   wbnTime = 0;
@@ -397,6 +399,7 @@ void serverInstanceShutdown(ServerSim *sim) {
   instanceUseTracker = FALSE;
   instanceUseNatKeepalive = FALSE;
   instanceUseNatPortmap = FALSE;
+  instanceUdpPort = 0;
   natPortmapWaitTicks = 0;
   natPortmapNotified  = FALSE;
   natPortmapTimedOut  = FALSE;
@@ -441,6 +444,7 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
   } else {
     out->status = SERVER_PORTMAP_PENDING;
   }
+  out->internalPort   = instanceUdpPort;
   out->externalIp[0]  = '\0';
   out->externalPort   = 0;
   if (out->status == SERVER_PORTMAP_SUCCEEDED) {

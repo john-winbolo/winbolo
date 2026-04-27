@@ -102,6 +102,7 @@ typedef struct {
   ServerPortmapStatus status;
   char           externalIp[64];   /* "" unless SUCCEEDED */
   unsigned short externalPort;     /* 0  unless SUCCEEDED */
+  unsigned short internalPort;     /* the host's bound UDP port (for UI) */
 } ServerPortmapInfo;
 
 /* Snapshot the current port-mapping status.  Takes the threading mutex
