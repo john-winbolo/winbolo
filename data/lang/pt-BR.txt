@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=A Base #{number} e o Bunker #{number2} se sobr
 STR_MAPVALIDATE_START_OVERLAP=O Início #{number} e o Início #{number2} se sobrepõem em ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=O Início #{number} e a Base #{number2} se sobrepõem em ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=O Início #{number} e o Bunker #{number2} se sobrepõem em ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Requer redirecionamento de porta para que jogadores fora da LAN possam entrar. (Em breve: configuração automática de NAT.)
+STR_GAMEFRONTERR_MAPLOAD=Falha ao carregar mapa do servidor
+STR_GAMEFRONTERR_STARTSERVER=Erro ao iniciar o servidor
+STR_DLGLOBBY_PORTMAP_CHECKING=Verificando acessibilidade do servidor…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Servidor acessível
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Servidor inacessível
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Tentando abrir uma porta do firewall via UPnP / NAT-PMP e confirmando que o tracker consegue te alcançar pela sua rede. Isso geralmente é concluído em menos de 30 segundos.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Porta encaminhada automaticamente via UPnP/NAT-PMP em %s:%u. Quem entrar se conecta diretamente, sem passos adicionais.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Não foi possível estabelecer o encaminhamento direto de porta, mas a travessia de NAT está ativa. Quem entrar coordena pelo tracker para atravessar o firewall da sua rede. Isso funciona para a maioria das redes domésticas; jogadores com NAT simétrico ou NAT de operadora (CGN) ainda podem não conseguir conectar.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=NAT simétrico detectado — sua rede reescreve a porta de origem para cada destino, o que impede que jogadores te alcancem mesmo via travessia de NAT. Para hospedar com sucesso, encaminhe manualmente a porta UDP %u no seu roteador para esta máquina.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Não foi possível abrir uma porta do firewall automaticamente (UPnP/NAT-PMP recusado ou indisponível) e o tracker não conseguiu confirmar a acessibilidade bidirecional. Para hospedar com sucesso, encaminhe manualmente a porta UDP %u no seu roteador para esta máquina.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Acessibilidade do servidor
+STR_DLGLOBBY_TEST_CONNECTIVITY=Testar conectividade
+STR_DLGLOBBY_TEST_TESTING=Testando…
+STR_DLGLOBBY_TEST_REACHABLE=Acessível pela internet
+STR_DLGLOBBY_TEST_NO_REPLY=Sem resposta do tracker
+STR_DLGSETTINGS_NETWORK=Rede
+STR_DLGSETTINGS_NET_HELP=As configurações entram em vigor na próxima partida hospedada.
+STR_DLGSETTINGS_USE_UPNP=Usar UPnP / NAT-PMP para redirecionamento automático de porta
+STR_DLGSETTINGS_USE_NATTRAV=Usar travessia de NAT (hole-punching) via tracker

@@ -1063,3 +1063,24 @@ STR_MAPVALIDATE_START_OVERLAP=Başlangıç #{number} ve Başlangıç #{number2} 
 STR_MAPVALIDATE_START_BASE_OVERLAP=Başlangıç #{number} ve Üs #{number2} ({number3},{number4}) konumunda örtüşüyor
 STR_MAPVALIDATE_START_PILL_OVERLAP=Başlangıç #{number} ve Bunker #{number2} ({number3},{number4}) konumunda örtüşüyor
 
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=LAN dışındaki oyuncuların katılabilmesi için port yönlendirmesi gerekir. (Yakında: otomatik NAT kurulumu.)
+STR_GAMEFRONTERR_MAPLOAD=Sunucudan harita yüklenemedi
+STR_GAMEFRONTERR_STARTSERVER=Sunucu başlatılırken hata oluştu
+STR_DLGLOBBY_PORTMAP_CHECKING=Sunucu erişilebilirliği kontrol ediliyor…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Sunucu erişilebilir
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Sunucuya erişilemiyor
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP ile bir güvenlik duvarı portu açılmaya ve tracker'ın ağınız üzerinden size ulaşabildiği doğrulanmaya çalışılıyor. Bu işlem genellikle 30 saniye içinde tamamlanır.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP aracılığıyla %s:%u adresinde port otomatik olarak yönlendirildi. Katılanlar ek bir adım gerekmeden doğrudan bağlanır.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Doğrudan port yönlendirmesi kurulamadı, ancak NAT traversal aktif. Katılanlar, ağınızın güvenlik duvarını delmek için tracker üzerinden koordine olur. Çoğu ev ağında çalışır; simetrik NAT veya operatör seviyesi NAT (CGN) arkasındaki oyuncular yine de bağlanamayabilir.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Simetrik NAT tespit edildi — ağınız her hedef için kaynak portunu yeniden yazıyor, bu da NAT traversal kullanılsa bile katılanların size ulaşmasını engelliyor. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP %u portunu bu makineye manuel olarak yönlendirin.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Bir güvenlik duvarı portu otomatik olarak açılamadı (UPnP/NAT-PMP reddedildi veya kullanılamıyor) ve tracker çift yönlü erişilebilirliği doğrulayamadı. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP %u portunu bu makineye manuel olarak yönlendirin.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Sunucu Erişilebilirliği
+STR_DLGLOBBY_TEST_CONNECTIVITY=Bağlantıyı test et
+STR_DLGLOBBY_TEST_TESTING=Test ediliyor…
+STR_DLGLOBBY_TEST_REACHABLE=İnternetten erişilebilir
+STR_DLGLOBBY_TEST_NO_REPLY=Tracker'dan yanıt yok
+STR_DLGSETTINGS_NETWORK=Ağ
+STR_DLGSETTINGS_NET_HELP=Ayarlar bir sonraki sunulan oyunda etkili olur.
+STR_DLGSETTINGS_USE_UPNP=Otomatik port yönlendirmesi için UPnP / NAT-PMP kullan
+STR_DLGSETTINGS_USE_NATTRAV=Tracker üzerinden NAT traversal (hole-punching) kullan

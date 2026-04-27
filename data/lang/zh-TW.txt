@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=基地 #{number} 和碉堡 #{number2} 在 ({nu
 STR_MAPVALIDATE_START_OVERLAP=起始點 #{number} 和起始點 #{number2} 在 ({number3},{number4}) 重疊
 STR_MAPVALIDATE_START_BASE_OVERLAP=起始點 #{number} 和基地 #{number2} 在 ({number3},{number4}) 重疊
 STR_MAPVALIDATE_START_PILL_OVERLAP=起始點 #{number} 和碉堡 #{number2} 在 ({number3},{number4}) 重疊
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=需要進行連接埠轉發，區域網路外的玩家才能加入。（即將推出：自動 NAT 設定。）
+STR_GAMEFRONTERR_MAPLOAD=從伺服器載入地圖失敗
+STR_GAMEFRONTERR_STARTSERVER=啟動伺服器時發生錯誤
+STR_DLGLOBBY_PORTMAP_CHECKING=正在檢查伺服器可達性……
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=伺服器可達
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=伺服器不可達
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=正在嘗試透過 UPnP / NAT-PMP 開啟防火牆連接埠，並確認 tracker 能透過你的網路連回。通常會在 30 秒內完成。
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=連接埠已透過 UPnP/NAT-PMP 自動轉發到 %s:%u。加入者會直接連線，無需其他步驟。
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=無法建立直接連接埠轉發，但 NAT 穿透已啟用。加入者透過 tracker 協調以穿透你網路的防火牆。這在大多數家用網路中有效；在對稱型 NAT 或電信級 NAT (CGN) 後的玩家可能仍然無法連線。
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=偵測到對稱型 NAT —— 你的網路為每個目的地重寫來源連接埠，這會阻止加入者透過 NAT 穿透到達你。要成功代管，請在路由器上手動將 UDP 連接埠 %u 轉發到這台電腦。
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=無法自動開啟防火牆連接埠（UPnP/NAT-PMP 被拒絕或無法使用），且 tracker 無法確認雙向可達性。要成功代管，請在路由器上手動將 UDP 連接埠 %u 轉發到這台電腦。
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=伺服器可達性
+STR_DLGLOBBY_TEST_CONNECTIVITY=測試連線
+STR_DLGLOBBY_TEST_TESTING=測試中……
+STR_DLGLOBBY_TEST_REACHABLE=可從網際網路存取
+STR_DLGLOBBY_TEST_NO_REPLY=未收到 tracker 回應
+STR_DLGSETTINGS_NETWORK=網路
+STR_DLGSETTINGS_NET_HELP=設定將在下一局代管遊戲中生效。
+STR_DLGSETTINGS_USE_UPNP=使用 UPnP / NAT-PMP 自動轉發連接埠
+STR_DLGSETTINGS_USE_NATTRAV=透過 tracker 使用 NAT 穿透（hole-punching）

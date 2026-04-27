@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Základna #{number} a Bunkr #{number2} se pře
 STR_MAPVALIDATE_START_OVERLAP=Start #{number} a Start #{number2} se překrývají na ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} a Základna #{number2} se překrývají na ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} a Bunkr #{number2} se překrývají na ({number3},{number4})
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Vyžaduje přesměrování portu, aby se mohli připojit hráči mimo LAN. (Připravuje se: automatické nastavení NAT.)
+STR_GAMEFRONTERR_MAPLOAD=Načtení mapy ze serveru se nezdařilo
+STR_GAMEFRONTERR_STARTSERVER=Chyba při spouštění serveru
+STR_DLGLOBBY_PORTMAP_CHECKING=Kontroluji dostupnost serveru…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server je dostupný
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server je nedostupný
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Pokouším se otevřít port firewallu pomocí UPnP / NAT-PMP a ověřit, že se k tobě tracker dostane přes tvou síť. Obvykle to trvá do 30 sekund.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port byl automaticky přesměrován pomocí UPnP/NAT-PMP na %s:%u. Připojující se hráči se připojí přímo bez dalších kroků.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Přímé přesměrování portu se nepodařilo nastavit, ale NAT traversal je aktivní. Připojující se hráči se koordinují přes tracker, aby pronikli firewallem tvé sítě. Funguje to ve většině domácích sítí; hráči za symetrickým NAT nebo NAT operátora (CGN) se nemusí podařit připojit.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Zjištěn symetrický NAT — tvá síť přepisuje zdrojový port pro každý cíl, což znemožňuje, aby tě připojující se hráči dosáhli i přes NAT traversal. Pro úspěšné hostování ručně přesměruj UDP port %u na svém routeru na tento počítač.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Nepodařilo se automaticky otevřít port firewallu (UPnP/NAT-PMP odmítl nebo není dostupný) a tracker nemohl potvrdit obousměrnou dostupnost. Pro úspěšné hostování ručně přesměruj UDP port %u na svém routeru na tento počítač.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Dostupnost serveru
+STR_DLGLOBBY_TEST_CONNECTIVITY=Otestovat připojení
+STR_DLGLOBBY_TEST_TESTING=Testuji…
+STR_DLGLOBBY_TEST_REACHABLE=Dostupné z internetu
+STR_DLGLOBBY_TEST_NO_REPLY=Žádná odpověď od trackeru
+STR_DLGSETTINGS_NETWORK=Síť
+STR_DLGSETTINGS_NET_HELP=Nastavení se projeví u další hostované hry.
+STR_DLGSETTINGS_USE_UPNP=Použít UPnP / NAT-PMP pro automatické přesměrování portu
+STR_DLGSETTINGS_USE_NATTRAV=Použít NAT traversal (hole-punching) přes tracker

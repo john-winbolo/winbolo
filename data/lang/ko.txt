@@ -1062,3 +1062,25 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=기지 #{number}와 토치카 #{number2}가 ({
 STR_MAPVALIDATE_START_OVERLAP=시작점 #{number}와 시작점 #{number2}가 ({number3},{number4})에서 겹쳐요
 STR_MAPVALIDATE_START_BASE_OVERLAP=시작점 #{number}와 기지 #{number2}가 ({number3},{number4})에서 겹쳐요
 STR_MAPVALIDATE_START_PILL_OVERLAP=시작점 #{number}와 토치카 #{number2}가 ({number3},{number4})에서 겹쳐요
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=LAN 외부 플레이어가 참가하려면 포트 포워딩이 필요해요. (곧 자동 NAT 설정이 추가될 예정이에요.)
+STR_GAMEFRONTERR_MAPLOAD=서버에서 맵을 불러오지 못했어요
+STR_GAMEFRONTERR_STARTSERVER=서버 시작 중 오류가 발생했어요
+STR_DLGLOBBY_PORTMAP_CHECKING=서버 도달 가능 여부를 확인 중…
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=서버에 도달 가능해요
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=서버에 도달할 수 없어요
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP로 방화벽 포트를 열고 트래커가 네트워크를 통해 당신에게 도달할 수 있는지 확인 중이에요. 보통 30초 이내에 완료돼요.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP를 통해 %s:%u에서 포트가 자동으로 전달되었어요. 참가자는 추가 단계 없이 바로 연결돼요.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=직접 포트 포워딩은 설정되지 않았지만 NAT traversal이 활성화되어 있어요. 참가자는 트래커를 통해 협상하여 네트워크 방화벽을 뚫어요. 대부분의 가정용 네트워크에서 작동하지만, 대칭형 NAT나 통신사급 NAT(CGN) 사용자는 여전히 연결되지 않을 수 있어요.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=대칭형 NAT가 감지되었어요 — 네트워크가 목적지마다 소스 포트를 다시 쓰기 때문에 NAT traversal로도 참가자가 도달할 수 없어요. 호스팅에 성공하려면 라우터에서 UDP 포트 %u를 이 컴퓨터로 수동으로 포워딩하세요.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=방화벽 포트를 자동으로 열 수 없었고(UPnP/NAT-PMP가 거부되었거나 사용할 수 없음) 트래커가 양방향 도달성을 확인할 수 없었어요. 호스팅에 성공하려면 라우터에서 UDP 포트 %u를 이 컴퓨터로 수동으로 포워딩하세요.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=서버 도달성
+STR_DLGLOBBY_TEST_CONNECTIVITY=연결 테스트
+STR_DLGLOBBY_TEST_TESTING=테스트 중…
+STR_DLGLOBBY_TEST_REACHABLE=인터넷에서 도달 가능
+STR_DLGLOBBY_TEST_NO_REPLY=트래커로부터 응답 없음
+STR_DLGSETTINGS_NETWORK=네트워크
+STR_DLGSETTINGS_NET_HELP=설정은 다음 호스팅 게임부터 적용돼요.
+STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP로 자동 포트 포워딩 사용
+STR_DLGSETTINGS_USE_NATTRAV=트래커를 통한 NAT traversal(홀 펀칭) 사용

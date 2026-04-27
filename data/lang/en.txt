@@ -136,22 +136,10 @@ STR_DLGTCP_REJOINBLURB=Click "Rejoin" to rejoin a game and reclaim your old poss
 STR_ERR_DLGTCP_PORTS=Server and own ports are the same!
 STR_ERR_DLGTCP_NOTRIGHT=Something isn't correct here...
 
-# Game finder extra
-
-# Brain errors
-
-# Draw errors
-
-# Font errors
-
 # Game front errors
 STR_GAMEFRONT_LANFINDER_TITLE=LAN Game Finder
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Tracker Game Finder
 STR_GAMEFRONTERR_JOINGAME=An error occurred trying to join the game
-
-# Network client errors
-
-# Sound errors
 
 # General WinBolo errors
 STR_WBTIMELIMIT_END=Timelimit has expired. The Game has ended.
@@ -1043,6 +1031,28 @@ NETERR_LOSTCONNECTION_RETURN_MENU=You have lost your connection to the server.\n
 # Language picker (Settings → Display)
 STR_DLGSETTINGS_LANGUAGE_LBL=Language:
 STR_DLGLANG_MIDGAME_NOTE=Existing message-log entries won't change language until they're regenerated.
+
+# Hosted multiplayer / NAT traversal — Phase 1-4 networking work
+STR_DLGBROWSER_NEWGAME_PORTFWD_TIP=Requires port forwarding for non-LAN players to join. (Coming: automatic NAT setup.)
+STR_GAMEFRONTERR_MAPLOAD=Failed to load map from server
+STR_GAMEFRONTERR_STARTSERVER=Error starting server
+STR_DLGLOBBY_PORTMAP_CHECKING=Checking server reachability...
+STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server accessible
+STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server unreachable
+STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Trying to open a firewall port via UPnP / NAT-PMP and confirming the tracker can reach back through your network. This usually completes within 30 seconds.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port forwarded automatically via UPnP/NAT-PMP at %s:%u. Joiners connect directly with no further steps required.
+STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direct port forwarding could not be established, but NAT traversal is active. Joiners coordinate through the tracker to punch through your network's firewall. This works for most home networks; joiners on symmetric NAT or carrier-grade NAT may still fail to connect.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetric NAT detected — your network rewrites the source port for every destination, which prevents joiners from reaching you even via NAT traversal. To host successfully, manually forward UDP port %u on your router to this machine.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Could not open a firewall port automatically (UPnP/NAT-PMP refused or unavailable) and the tracker could not confirm bidirectional reachability. To host successfully, manually forward UDP port %u on your router to this machine.
+STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server Reachability
+STR_DLGLOBBY_TEST_CONNECTIVITY=Test connectivity
+STR_DLGLOBBY_TEST_TESTING=Testing...
+STR_DLGLOBBY_TEST_REACHABLE=Reachable from internet
+STR_DLGLOBBY_TEST_NO_REPLY=No reply from tracker
+STR_DLGSETTINGS_NETWORK=Network
+STR_DLGSETTINGS_NET_HELP=Settings take effect on the next hosted game.
+STR_DLGSETTINGS_USE_UPNP=Use UPnP / NAT-PMP for automatic port forwarding
+STR_DLGSETTINGS_USE_NATTRAV=Use NAT traversal (hole-punching) via tracker
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
