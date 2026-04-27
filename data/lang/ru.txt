@@ -7,30 +7,20 @@ author=Claude (Opus 4.7), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=WinBolo — выбор игры
-STR_DLGOPENING_TEXT=Добро пожаловать в WinBolo, многопользовательскую танковую игру.\nВыберите тип игры из списка ниже:
-STR_DLGOPENING_OPTION1=Тренировка
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=Интернет
-STR_DLGOPENING_SKIP=Не показывать это окно в следующий раз
 STR_OK=ОК
 STR_DLGOPENING_BUTTON2=Выход
 
 # Language dialog
-STR_DLGLANG_TITLE=Выбор языка
-STR_DLGLANG_NAME_CAPTION=Название:
 STR_DLGLANG_NAME=Русский
 STR_DLGLANG_AUTHOR_CAPTION=Автор: 
 STR_DLGLANG_AUTHOR=John Morrison
-STR_DLGOPENING_OPTION4=Локальная сеть
-STR_DLGOPENING_OPTION0=Обучение
 STR_DLGLANG_NOTES_CAPTION=Заметки: 
 STR_DLGLANG_NOTES=Нет.
 STR_DLGLANG_DEFAULTNOTE=Примечание: для незавершённых переводов отсутствующие строки заменяются английскими.
 
 # About dialog
 STR_DLGABOUT_TITLE=О программе WinBolo
-STR_DLGABOUT_BLURB=Пакет WinBolo разрешается свободно распространять при условии, что ни сама программа, ни сопровождающие её файлы не удаляются и не изменяются никаким образом.\n\nWinBolo — это shareware-программа. Shareware-программы не бесплатны. Они стоят денег, как и другие программы, которые вы покупаете, но shareware позволяет сначала попробовать программу и решить, нравится ли она вам.\n\nWinBolo стоит 25 долларов США. Если вы решите оставить WinBolo, вы можете оплатить его одним из следующих способов:\n\nЗапустите программу register.exe в каталоге WinBolo: она позволяет оплатить чеком, денежным переводом, наличными или кредитной картой по электронной почте, факсу или обычной почте.\n\nЧтобы оплатить кредитной картой через интернет, посетите http://order.kagi.com/?XYV и заполните форму.\n\nДополнительные сведения см. в текстовом файле Readme(Shareware), включённом в дистрибутив.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=Запрос альянса
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Отклонить
 STR_DLGALLIANCE_BLURB={player} запрашивает альянс. Принять?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Сначала попробуйте обновить.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Сообщение дня
-STR_DLGGAMEFINDER_WRONGVERSION=Игра, к которой вы пытались присоединиться, использует другую версию WinBolo. Попробуйте другую игру
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Нет идущих игр (создайте свою!)
 STR_YES=Да
 STR_NO=Нет
-STR_DLGGAMEFINDER_YESADV=Да (с преим.)
-STR_DLGGAMEFINDER_OPEN=Открытая
-STR_DLGGAMEFINDER_TOURNAMENT=Турнир
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Строгий
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Сведения об игре
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Карта:
 STR_DLGGAMEINFO_NUMPLAYERS=Игроков: {number}
 STR_DLGGAMEINFO_GAMETYPE=Тип игры: 
 STR_DLGGAMEINFO_HIDDENMINES=Скрытые мины: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Компьютерные танки разрешены: 
 STR_DLGGAMEINFO_TIMELIMIT=Лимит времени:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Выберите параметры для новой игры:
 STR_CANCEL=Отмена
 STR_DLGGAMESETUP_TITLE=Настройка игры
 STR_DLGGAMESETUP_CHOOSEMAP=Выбрать карту
-STR_DLGGAMESETUP_SELECTEDMAP=Выбранная карта: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Выбранная карта: Everard Island (встроенная)
 STR_DLGGAMESETUP_RADIO1=Открытая игра (с готовым вооружением)
 STR_DLGGAMESETUP_RADIO2=Турнир (бесплатные снаряды в начале)
 STR_DLGGAMESETUP_RADIO3=Строгий турнир (без бесплатных снарядов)
 STR_DLGGAMESETUP_HIDDENMINES=Разрешить скрытые мины
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Разрешить компьютерные танки
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=и дать им преимущество
 STR_DLGGAMESETUP_PASSWORD=Пароль игры
 STR_DLGGAMESETUP_MINUTES=минут
 STR_DLGGAMESETUP_SECONDS=секунд
 STR_DLGGAMESETUP_STARTDELAY=Задержка начала игры
 STR_DLGGAMESETUP_TIMELIMIT=Лимит времени игры
-STR_DLGGAMESETUP_ERROROPENINGMAP=Ошибка при открытии карты.
 STR_DLGGAMEINFO_TIMEREMAINING=Около {number} мин.
 STR_DLGGAMEINFO_OPEN=Открытая
 STR_DLGGAMEINFO_TOURN=Турнир
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Я
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Настройка клавиш
-STR_DLGKEYSETUP_BLURB=Щёлкните по параметру, который хотите изменить, и следующая нажатая клавиша будет назначена ему. Клавиши ALT, PRINT SCREEN и PAUSE назначить нельзя.
 STR_DLGKEYSETUP_DRIVETANK=Управление танком
-STR_DLGKEYSETUP_TURNTANK=Поворот танка:
 STR_DLGKEYSETUP_GUNRANGE=Дальность пушки
 STR_DLGKEYSETUP_WEAPONS=Оружие
 STR_DLGKEYSETUP_VIEW=Виды
 STR_DLGKEYSETUP_SCROLL=Прокрутка
-STR_DLGKEYSETUP_LEFT=(влево)
-STR_DLGKEYSETUP_RIGHT=(вправо)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Авто-замедление
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Авто-скрытие прицела
 STR_DLGKEYSETUP_FASTER=Быстрее
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Вверх
 STR_DLGKEYSETUP_SCROLLDOWN=Вниз
 STR_DLGKEYSETUP_SCROLLLEFT=Влево
 STR_DLGKEYSETUP_SCROLLRIGHT=Вправо
-STR_DLGKEYSETUP_NEWKEYFOR=Нажмите новую клавишу для 
-STR_DLGKEYSETUP_FORWARD=движение вперёд
-STR_DLGKEYSETUP_BACKWARD=движение назад
-STR_DLGKEYSETUP_ROTATELEFT=поворот налево
-STR_DLGKEYSETUP_ROTATERIGHT=поворот направо
-STR_DLGKEYSETUP_INCREASERANGE=увеличить дальность
-STR_DLGKEYSETUP_DECREASERANGE=уменьшить дальность
-STR_DLGKEYSETUP_SETSHOOT=выстрел
-STR_DLGKEYSETUP_SETLAYMINE=поставить мину
-STR_DLGKEYSETUP_SETTANKVIEW=вид танка
-STR_DLGKEYSETUP_SETPILLVIEW=вид бункера
-STR_DLGKEYSETUP_SETSCROLLUP=прокрутка вверх
-STR_DLGKEYSETUP_SETSCROLLDOWN=прокрутка вниз
-STR_DLGKEYSETUP_SETSCROLLLEFT=прокрутка влево
-STR_DLGKEYSETUP_SETSCROLLRIGHT=прокрутка вправо
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Отправить
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS=Отправка сообщения {number} игрока
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Сведения о сети
-STR_DLGNETINFO_SERVERADDRESS=Адрес сервера:
-STR_DLGNETINFO_THISGAMEADDRESS=Адрес этой игры:
 STR_DLGNETINFO_SERVERPING=Пинг сервера: {number} ms
-STR_DLGNETINFO_PACKETS=Пакетов в секунду (на игрока):
 STR_DLGNETINFO_STATUS=Статус:
 STR_DLGNETINFO_ERRORS=Сетевых ошибок: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Требуется пароль
 STR_DLGPASSWORD_BLURB=Для этой игры требуется пароль:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Введите имя игрока
 STR_DLGSETNAME_BLURB=Введите новое имя игрока для вашего танка:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=Сведения о системе
 STR_DLGSYSINFO_CPUUSAGE=Загрузка ЦП:
 STR_DLGSYSINFO_SIMMODELING=Моделирование симуляции:
 STR_DLGSYSINFO_COMPROCESSING=Обработка связи:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Отображение графики:
-STR_DLGSYSINFO_AICONTROLPROCESSING=Управление ИИ-танками:
 STR_DLGSYSINFO_TOTAL=Всего:
-STR_DLGSYSINFO_GRAPHICSFPS=Кадров в секунду
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=Настройка UDP (Интернет)
 STR_DLGTCP_BLURB=Чтобы присоединиться к интернет-игре Bolo, укажите имя (или IP-адрес) машины, на которой запущен Bolo, и UDP-порт процесса Bolo на этой машине.
 STR_DLGTCP_JOIN=Присоединиться
 STR_DLGTCP_REJOIN=Переподключиться
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Нажмите «Присоединиться», чтобы
 STR_DLGTCP_REJOINBLURB=Нажмите «Переподключиться», чтобы вернуться в игру и забрать прежние владения
 STR_ERR_DLGTCP_PORTS=Серверный и собственный порты совпадают!
 STR_ERR_DLGTCP_NOTRIGHT=Что-то здесь не так...
-STR_ERR_DLGTCP_SUBCLASS=Не удалось задать подкласс окна для копирования!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=Присоединиться по &адресу
-STR_DLGGAMEFINDER_REFRESH=&Обновить
-STR_DLGGAMEFINDER_PLAYERNAME=Задать &имя игрока
-STR_DLGGAMEFINDER_MOTD=&Сообщение дня
-STR_DLGGAMEFINDER_STATUSBLURB=Статус: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Сведения о выбранной игре
-STR_DLGGAMEFINDER_BRAINS=Brains:
-STR_DLGGAMEFINDER_PASSWORD=Пароль:
-STR_DLGGAMEFINDER_PILLS=Свободных бункеров:
-STR_DLGGAMEFINDER_BASES=Свободных баз:
-STR_DLGGAMEFINDER_HIDDENMINES=Скрытые мины:
-STR_DLGGAMEFINDER_NUMPLAYERS=Количество игроков:
-STR_DLGGAMEFINDER_VERSION=Версия:
-STR_DLGGAMEFINDER_GAMETYPE=Тип игры:
-STR_DLGGAMEFINDER_PORT=Порт сервера:
-STR_DLGGAMEFINDER_ADDRESS=Адрес сервера:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=Каталог Brains не существует.\nBrains загружаться не будут!
-STR_BRAINERR_LAUNCH=Ошибка запуска Brain
-STR_BRAINERR_LAUNCHMAIN=Ошибка запуска Brain — Brain не содержит "BrainMain"
-STR_BRAINERR_INIT=Ошибка инициализации Brain
-STR_BRAINERR_EXEC=Не удалось выполнить Brain
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=Не удалось создать DD-объект
-STR_DRAWERROR_SETCOOPLEVEL=Не удалось задать DD coop-уровень
-STR_DRAWERROR_CREATEPRIMARY=Не удалось создать первичную DD-поверхность
-STR_DRAWERROR_GETPIXELFORMAT=Не удалось получить формат пикселей DD
-STR_DRAWERROR_GETDESC=Не удалось получить описание поверхности
-STR_DRAWERROR_TOOFEWCOLOURS=Эта версия WinBolo не работает в палитровом режиме.\n Установите глубину цвета больше 256 цветов
-STR_DRAWERROR_BUFFERCREATE=Не удалось создать DD-буфер
-STR_DRAWERROR_GETDCFAILED=Не удалось получить DD DC
-STR_DRAWERROR_CLIPPERFAILED=Не удалось создать DD-клиппер
-STR_DRAWERROR_BRUSH=Ошибка создания кисти
-STR_DRAWERROR_PEN=Ошибка создания пера
-STR_DRAW_GAMESTARTSIN=Игра начнётся через 
-STR_DRAWERROR_RELEASEDC=Ошибка освобождения DC при отрисовке надписи на танке (это плохо)
-STR_DRAW_PILLBOXVIEW=Вид бункера
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=Не удалось загрузить шрифт Courier New
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=Ошибка при чтении настроек. Будут использованы значения по умолчанию
-STR_GAMEFRONTERR_WINDOW=Ошибка создания окна
-STR_GAMEFRONTERR_DDRAW=Ошибка инициализации Direct Draw
-STR_GAMEFRONTERR_DSOUND=Ошибка инициализации Direct Sound
-STR_GAMEFRONTERR_DINPUT=Ошибка инициализации Direct Input
-STR_GAMEFRONTERR_CURSOR=Ошибка загрузки курсора
-STR_GAMEFRONTERR_FONTS=Ошибка загрузки шрифтов
 STR_GAMEFRONT_LANFINDER_TITLE=Поиск игр в LAN
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Поиск игр через трекер
 STR_GAMEFRONTERR_JOINGAME=Произошла ошибка при попытке присоединиться к игре
-STR_GAMEFRONTERR_SPAWNSERVER=Не удалось запустить процесс сервера.\n Находится ли программа "WinBoloDS" в том же каталоге, что и WinBolo?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=Произошло нечто очень странное в сетевой подсистеме, что особенно странно, поскольку вы выбрали одиночную игру. Везунчик...
-STR_GAMEFRONT_SERVERSTARTMSG=Запуск выделенного сервера. Введите "quit" в его окне для выхода.
-STR_GAMEFRONT_INPUTERR_CREATE=Не удалось создать клавиатурное устройство Direct Input
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Не удалось задать формат данных для клавиатурного устройства Direct Input
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Не удалось задать кооперативный уровень для клавиатурного устройства Direct Input
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Ошибка запуска Winsock
-STR_NETCLIENTERR_CREATEUDPFAIL=Ошибка создания UDP-сокета
-STR_NETCLIENTERR_CREATETCPFAIL=Ошибка создания TCP-сокета
-STR_NETCLIENTERR_BINDUDPFAIL=Ошибка привязки UDP-сокета.\n Другая программа уже использует этот порт. Попробуйте выбрать другой.\n\nПРИМЕЧАНИЕ: если вы запустили сетевую игру и она успешно стартовала, она всё ещё работает.\n Перезапускать её не нужно
-STR_NETCLIENTERR_CHAINFAIL=Ошибка добавления сетевых событий в цепочку обмена сообщениями
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Неподдерживаемая версия трекера
-STR_NETCLIENTERR_TRACKERDNSFAIL=Не удалось найти трекер (ошибка DNS)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=Не удалось подключиться к трекеру
-STR_NETCLIENTERR_TRACKERNOBLOCK=Не удалось перевести сокет в неблокирующий режим
-STR_NETCLIENT_TRACKERGETRESPONSE=Получение сведений об играх...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=Обработка данных трекера...
-STR_NETCLIENTERR_TRACKERNODATA=Ошибка: трекер не прислал данных
-STR_NETCLIENT_TRACKERCONNECT=Подключение: 
-STR_NETCLIENT_IDLE=Ожидание
-STR_NETCLIENTERR_BIND=Ошибка привязки сокета
-STR_NETCLIENTERR_BROADCAST=Ошибка отправки широковещательного запроса
-STR_NETCLIENT_GETRESPONSES=Получение ответов...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=Не удалось загрузить звуки WinBolo — продолжаем без звука
-STR_SOUNDERR_HARDWAREINUSE=Ошибка инициализации Direct Sound — оборудование используется другим приложением.\nПродолжаем без звука.
-STR_SOUNDERR_CREATEFAILED=Не удалось создать DS-объект.\nПродолжаем без звука.
-STR_SOUNDERR_COOPFAILED=Не удалось задать DS coop-уровень
-STR_SOUNDERR_PRIMARYBUFFFAIL=Не удалось создать первичный DS-буфер
-STR_SOUNDERR_LOADSOUNDFAILED=Не удалось загрузить один или несколько звуковых файлов
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Ошибка создания мьютекса. (Это плохо)
-STR_WBERR_BRAINLISTLOAD=Ошибка загрузки списка Brains
-STR_WBERR_KEYCLASSSETUP=Ошибка настройки класса Key Setup
 STR_WBTIMELIMIT_END=Лимит времени истёк. Игра завершена.
 STR_WBERR_SAVEMAP=Ошибка сохранения карты (диск заполнен?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=Соединение с сервером потеряно.
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Отправить сообщение
-STR_DLGOPENING_BUTTON3=Языки
-STR_DLGOPENING_BUTTON4=Справка
 STRERR_HELPFILE=Ошибка открытия файла справки.
-STR_DLGSKIN_TITLE=Выбор скина
 STR_DLGSKIN_BLURB=Если в скине отсутствуют какие-либо элементы, используется встроенный скин/звуки по умолчанию.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Извините, ваше имя игрока пустое — необходимо указать имя
 NETERR_MAPSERIALIZE=Серверу не удалось подготовить данные карты. Попробуйте ещё раз
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Имя игрока
 STR_DLGBROWSER_MANUAL=Руководство
 STR_DLGBROWSER_ERR_VERSION=Сервер использует другую версию WinBolo.
 STR_DLGBROWSER_ERR_NEEDNAME=Сначала необходимо задать имя игрока.
-STR_DLGBROWSER_SETNAME_TITLE=Задать имя игрока
 STR_DLGBROWSER_AI_ADV=Преим.
 STR_DLGBROWSER_AI_FULL=Полн.
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Сетевая ошибка
 STR_DLGWBN_LOADERR=Не удалось загрузить сведения
 STR_DLGWBN_DOWNLOAD_FAILED=Загрузка не удалась
 STR_DLGWBN_NOSAVEPATH=Не удалось определить путь сохранения
-STR_DLGWBN_POSTERR=Не удалось опубликовать комментарий
 STR_DLGWBN_FETCHERR=Получение не удалось
 STR_DLGWBN_UNKNOWN_ERR=Неизвестная ошибка
 STR_DLGWBN_FILEFILTER=Файлы логов WinBolo

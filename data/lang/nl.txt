@@ -7,30 +7,20 @@ author=Claude (Sonnet 4.6), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=WinBolo spelkeuze
-STR_DLGOPENING_TEXT=Welkom bij WinBolo, het multiplayer tankspel.\nKies hieronder een speltype:
-STR_DLGOPENING_OPTION1=Oefenen
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=Internet
-STR_DLGOPENING_SKIP=Dit venster de volgende keer overslaan
 STR_OK=OK
 STR_DLGOPENING_BUTTON2=Afsluiten
 
 # Language dialog
-STR_DLGLANG_TITLE=Taalkeuze
-STR_DLGLANG_NAME_CAPTION=Naam:
 STR_DLGLANG_NAME=Nederlands
 STR_DLGLANG_AUTHOR_CAPTION=Auteur: 
 STR_DLGLANG_AUTHOR=John Morrison
-STR_DLGOPENING_OPTION4=Lokaal netwerk
-STR_DLGOPENING_OPTION0=Tutorial
 STR_DLGLANG_NOTES_CAPTION=Notities: 
 STR_DLGLANG_NOTES=Geen.
 STR_DLGLANG_DEFAULTNOTE=Opmerking: voor onvolledige vertalingen worden ontbrekende items standaard in het Engels weergegeven.
 
 # About dialog
 STR_DLGABOUT_TITLE=Over WinBolo
-STR_DLGABOUT_BLURB=Het WinBolo-pakket mag vrij worden verspreid, mits noch het programma noch een van de bijgeleverde bestanden wordt weggelaten of op enigerlei wijze wordt gewijzigd.\n\nWinBolo is een sharewareprogramma. Shareware is niet gratis. Het kost geld, net als andere software die je koopt, maar bij shareware mag je het eerst uitproberen om te beslissen of je het wilt houden.\n\nWinBolo kost 25 dollar (VS). Als je besluit WinBolo te houden, kun je het betalen via de volgende methoden:\n\nStart het programma register.exe in de WinBolo-map; daarmee kun je betalen per cheque, postwissel, contant geld of creditcard via e-mail, fax of post.\n\nOm online met creditcard te registreren, bezoek: http://order.kagi.com/?XYV en vul het formulier in.\n\nLees het tekstbestand Readme(Shareware) in de distributie voor meer informatie.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=Alliantieverzoek
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Weigeren
 STR_DLGALLIANCE_BLURB={player} verzoekt om een alliantie. Accepteren?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Probeer eerst op vernieuwen te drukken.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Bericht van de dag
-STR_DLGGAMEFINDER_WRONGVERSION=Het spel dat je probeerde te joinen heeft een andere versie van WinBolo. Probeer een ander spel te joinen
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Geen spellen bezig (Start er een!)
 STR_YES=Ja
 STR_NO=Nee
-STR_DLGGAMEFINDER_YESADV=Ja (Vrdl)
-STR_DLGGAMEFINDER_OPEN=Open
-STR_DLGGAMEFINDER_TOURNAMENT=Toernooi
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Strikt
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Spelinfo
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Kaart:
 STR_DLGGAMEINFO_NUMPLAYERS=Spelers: {number}
 STR_DLGGAMEINFO_GAMETYPE=Speltype: 
 STR_DLGGAMEINFO_HIDDENMINES=Verborgen mijnen: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Computertanks toegestaan: 
 STR_DLGGAMEINFO_TIMELIMIT=Tijdslimiet:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Selecteer de gewenste opties voor je nieuwe spel:
 STR_CANCEL=Annuleren
 STR_DLGGAMESETUP_TITLE=Spelinstellingen
 STR_DLGGAMESETUP_CHOOSEMAP=Kies een kaart
-STR_DLGGAMESETUP_SELECTEDMAP=Geselecteerde kaart: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Geselecteerde kaart: Everard Island (ingebouwd)
 STR_DLGGAMESETUP_RADIO1=Open spel (vooraf bewapend)
 STR_DLGGAMESETUP_RADIO2=Toernooi (vroeg gratis munitie)
 STR_DLGGAMESETUP_RADIO3=Strikt toernooi (geen gratis munitie)
 STR_DLGGAMESETUP_HIDDENMINES=Verborgen mijnen toestaan
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Computertanks toestaan
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=en geef ze een voordeel
 STR_DLGGAMESETUP_PASSWORD=Spelwachtwoord
 STR_DLGGAMESETUP_MINUTES=minuten
 STR_DLGGAMESETUP_SECONDS=seconden
 STR_DLGGAMESETUP_STARTDELAY=Startvertraging spel
 STR_DLGGAMESETUP_TIMELIMIT=Tijdslimiet spel
-STR_DLGGAMESETUP_ERROROPENINGMAP=Fout bij openen kaart.
 STR_DLGGAMEINFO_TIMEREMAINING=Ongeveer {number} minuut/minuten
 STR_DLGGAMEINFO_OPEN=Open
 STR_DLGGAMEINFO_TOURN=Toernooi
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Ik
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Toetsinstellingen
-STR_DLGKEYSETUP_BLURB=Klik op de optie die je wilt wijzigen; de volgende ingedrukte toets wordt daaraan toegewezen. De toetsen ALT, PRINT SCREEN en PAUSE kunnen niet worden toegewezen.
 STR_DLGKEYSETUP_DRIVETANK=Tank besturen
-STR_DLGKEYSETUP_TURNTANK=Tank draaien:
 STR_DLGKEYSETUP_GUNRANGE=Vuurafstand
 STR_DLGKEYSETUP_WEAPONS=Wapens
 STR_DLGKEYSETUP_VIEW=Weergaven
 STR_DLGKEYSETUP_SCROLL=Scrollen
-STR_DLGKEYSETUP_LEFT=(links)
-STR_DLGKEYSETUP_RIGHT=(rechts)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Automatisch vertragen
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Vizier automatisch verbergen
 STR_DLGKEYSETUP_FASTER=Sneller
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Omhoog
 STR_DLGKEYSETUP_SCROLLDOWN=Omlaag
 STR_DLGKEYSETUP_SCROLLLEFT=Links
 STR_DLGKEYSETUP_SCROLLRIGHT=Rechts
-STR_DLGKEYSETUP_NEWKEYFOR=Druk nieuwe toets voor 
-STR_DLGKEYSETUP_FORWARD=vooruit
-STR_DLGKEYSETUP_BACKWARD=achteruit
-STR_DLGKEYSETUP_ROTATELEFT=links draaien
-STR_DLGKEYSETUP_ROTATERIGHT=rechts draaien
-STR_DLGKEYSETUP_INCREASERANGE=afstand verhogen
-STR_DLGKEYSETUP_DECREASERANGE=afstand verlagen
-STR_DLGKEYSETUP_SETSHOOT=schieten
-STR_DLGKEYSETUP_SETLAYMINE=mijn leggen
-STR_DLGKEYSETUP_SETTANKVIEW=tankweergave
-STR_DLGKEYSETUP_SETPILLVIEW=bunkerweergave
-STR_DLGKEYSETUP_SETSCROLLUP=omhoog scrollen
-STR_DLGKEYSETUP_SETSCROLLDOWN=omlaag scrollen
-STR_DLGKEYSETUP_SETSCROLLLEFT=links scrollen
-STR_DLGKEYSETUP_SETSCROLLRIGHT=rechts scrollen
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Versturen
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS=Bericht sturen naar {number} spelers
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Netwerkinfo
-STR_DLGNETINFO_SERVERADDRESS=Serveradres:
-STR_DLGNETINFO_THISGAMEADDRESS=Adres van dit spel:
 STR_DLGNETINFO_SERVERPING=Serverping: {number} ms
-STR_DLGNETINFO_PACKETS=Pakketten per seconde (per speler):
 STR_DLGNETINFO_STATUS=Status:
 STR_DLGNETINFO_ERRORS=Netwerkfouten: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Wachtwoord vereist
 STR_DLGPASSWORD_BLURB=Dit spel vereist een wachtwoord:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Spelernaam invoeren
 STR_DLGSETNAME_BLURB=Voer de nieuwe spelernaam in voor je tank:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=Systeeminfo
 STR_DLGSYSINFO_CPUUSAGE=CPU-gebruik:
 STR_DLGSYSINFO_SIMMODELING=Simulatiemodellering:
 STR_DLGSYSINFO_COMPROCESSING=Communicatieverwerking:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Grafische weergave:
-STR_DLGSYSINFO_AICONTROLPROCESSING=Verwerking AI-tankbesturing:
 STR_DLGSYSINFO_TOTAL=Totaal:
-STR_DLGSYSINFO_GRAPHICSFPS=Grafische frames per seconde
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=UDP (Internet) instellen
 STR_DLGTCP_BLURB=Om een internet Bolo-spel te joinen, moet je de naam (of het IP-adres) opgeven van een hostcomputer waarop Bolo draait, en het UDP-poortnummer van het Bolo-proces op die computer.
 STR_DLGTCP_JOIN=Joinen
 STR_DLGTCP_REJOIN=Herjoinen
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Klik op "Joinen" om een bestaand spel te joinen
 STR_DLGTCP_REJOINBLURB=Klik op "Herjoinen" om een spel te herjoinen en je bezittingen terug te claimen
 STR_ERR_DLGTCP_PORTS=Server- en eigen poort zijn hetzelfde!
 STR_ERR_DLGTCP_NOTRIGHT=Er klopt iets niet hier...
-STR_ERR_DLGTCP_SUBCLASS=Kan de venstersubklasse niet instellen voor kopiëren!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=Joinen &op adres
-STR_DLGGAMEFINDER_REFRESH=&Vernieuwen
-STR_DLGGAMEFINDER_PLAYERNAME=&Spelernaam instellen
-STR_DLGGAMEFINDER_MOTD=&Bericht van de dag
-STR_DLGGAMEFINDER_STATUSBLURB=Status: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Geselecteerde spelinformatie
-STR_DLGGAMEFINDER_BRAINS=Brains:
-STR_DLGGAMEFINDER_PASSWORD=Wachtwoord:
-STR_DLGGAMEFINDER_PILLS=Aantal vrije bunkers:
-STR_DLGGAMEFINDER_BASES=Aantal vrije bases:
-STR_DLGGAMEFINDER_HIDDENMINES=Verborgen mijnen:
-STR_DLGGAMEFINDER_NUMPLAYERS=Aantal spelers:
-STR_DLGGAMEFINDER_VERSION=Versie:
-STR_DLGGAMEFINDER_GAMETYPE=Speltype:
-STR_DLGGAMEFINDER_PORT=Serverpoort:
-STR_DLGGAMEFINDER_ADDRESS=Serveradres:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=De map Brains bestaat niet.\nBrains worden niet geladen!
-STR_BRAINERR_LAUNCH=Fout bij starten Brain
-STR_BRAINERR_LAUNCHMAIN=Fout bij starten Brain - Brain bevat geen "BrainMain"
-STR_BRAINERR_INIT=Fout bij initialiseren brain
-STR_BRAINERR_EXEC=Kon brain niet uitvoeren
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=Maken DD-object mislukt
-STR_DRAWERROR_SETCOOPLEVEL=Maken DD co-op-niveau mislukt
-STR_DRAWERROR_CREATEPRIMARY=Maken DD primair oppervlak mislukt
-STR_DRAWERROR_GETPIXELFORMAT=Ophalen DD-pixelformaat mislukt
-STR_DRAWERROR_GETDESC=Ophalen oppervlakbeschrijving mislukt
-STR_DRAWERROR_TOOFEWCOLOURS=Deze versie van WinBolo werkt niet in palettemodus.\n Wijzig de kleurdiepte naar meer dan 256 kleuren
-STR_DRAWERROR_BUFFERCREATE=Maken DD-buffer mislukt
-STR_DRAWERROR_GETDCFAILED=DD Get DC mislukt
-STR_DRAWERROR_CLIPPERFAILED=Maken DD-clipper mislukt
-STR_DRAWERROR_BRUSH=Fout bij maken tekenpenseel
-STR_DRAWERROR_PEN=Fout bij maken tekenpen
-STR_DRAW_GAMESTARTSIN=Spel begint over 
-STR_DRAWERROR_RELEASEDC=Fout bij vrijgeven DC voor tekenen tanklabel (Dat is slecht)
-STR_DRAW_PILLBOXVIEW=Bunkerweergave
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=Kan lettertype Courier New niet laden
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=Er is een fout opgetreden bij het lezen van voorkeuren. De standaardinstellingen worden gebruikt
-STR_GAMEFRONTERR_WINDOW=Fout bij maken venster
-STR_GAMEFRONTERR_DDRAW=Fout bij instellen Direct Draw
-STR_GAMEFRONTERR_DSOUND=Fout bij instellen Direct Sound
-STR_GAMEFRONTERR_DINPUT=Fout bij instellen Direct Input
-STR_GAMEFRONTERR_CURSOR=Fout bij laden cursor
-STR_GAMEFRONTERR_FONTS=Fout bij laden lettertypen
 STR_GAMEFRONT_LANFINDER_TITLE=LAN-spelzoeker
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Tracker-spelzoeker
 STR_GAMEFRONTERR_JOINGAME=Er is een fout opgetreden bij het joinen van het spel
-STR_GAMEFRONTERR_SPAWNSERVER=Er is een fout opgetreden bij het starten van het serverproces.\n Is het programma "WinBoloDS" in dezelfde map als WinBolo?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=Er is iets heel vreemds gebeurd in de netwerksubsystemen, wat vreemd is omdat je een singleplayerspel hebt geselecteerd. Gelukkig maar...
-STR_GAMEFRONT_SERVERSTARTMSG=Toegewijde server starten. Typ "quit" in het venster om af te sluiten.
-STR_GAMEFRONT_INPUTERR_CREATE=Maken Direct Input-toetsenbordapparaat mislukt
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Instellen gegevensformaat voor Direct Input-toetsenbordapparaat mislukt
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Instellen coöperatief niveau voor Direct Input-toetsenbordapparaat mislukt
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Fout bij starten Winsock
-STR_NETCLIENTERR_CREATEUDPFAIL=Fout bij maken UDP-socket
-STR_NETCLIENTERR_CREATETCPFAIL=Fout bij maken TCP-socket
-STR_NETCLIENTERR_BINDUDPFAIL=Fout bij binden UDP-socket\n Een ander programma gebruikt deze poort al. Probeer een andere te kiezen.\n\nOPMERKING: Als je een netwerkspel hebt gestart en het is gelukt, dan is het nog steeds actief.\n Je hoeft het niet opnieuw te starten
-STR_NETCLIENTERR_CHAINFAIL=Fout bij toevoegen netwerkgebeurtenissen aan berichtenketen
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Niet-ondersteunde trackerversie
-STR_NETCLIENTERR_TRACKERDNSFAIL=Fout bij vinden tracker (DNS-opzoekfout)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=Fout bij verbinden met tracker
-STR_NETCLIENTERR_TRACKERNOBLOCK=Fout bij instellen socket op niet-blokkerend
-STR_NETCLIENT_TRACKERGETRESPONSE=Spelinfo ontvangen...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=Trackergegevens verwerken...
-STR_NETCLIENTERR_TRACKERNODATA=Fout: tracker heeft geen gegevens gestuurd
-STR_NETCLIENT_TRACKERCONNECT=Verbinden: 
-STR_NETCLIENT_IDLE=Inactief
-STR_NETCLIENTERR_BIND=Fout bij binden socket
-STR_NETCLIENTERR_BROADCAST=Fout bij verzenden broadcast
-STR_NETCLIENT_GETRESPONSES=Antwoorden ontvangen...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=Kan WinBolo-geluiden niet laden - Verder zonder geluid
-STR_SOUNDERR_HARDWAREINUSE=Fout bij instellen Direct Sound - Hardware wordt gebruikt door een andere toepassing.\nVerder zonder geluid.
-STR_SOUNDERR_CREATEFAILED=Maken DS-object mislukt\nVerder zonder geluid.
-STR_SOUNDERR_COOPFAILED=Maken DS co-op-niveau mislukt
-STR_SOUNDERR_PRIMARYBUFFFAIL=Maken DS primaire buffer mislukt
-STR_SOUNDERR_LOADSOUNDFAILED=Laden van een of meer geluidsbestanden mislukt
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Fout bij maken mutex. (Dat is slecht)
-STR_WBERR_BRAINLISTLOAD=Fout bij laden brainlijst
-STR_WBERR_KEYCLASSSETUP=Fout bij instellen toetsklasse
 STR_WBTIMELIMIT_END=Tijdslimiet verstreken. Het spel is afgelopen.
 STR_WBERR_SAVEMAP=Fout bij opslaan kaart (Schijf vol?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=Je hebt je verbinding met de server verloren.\nJe wordt nu
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Bericht versturen
-STR_DLGOPENING_BUTTON3=Talen
-STR_DLGOPENING_BUTTON4=Help
 STRERR_HELPFILE=Fout bij openen helpbestand.
-STR_DLGSKIN_TITLE=Skinkeuze
 STR_DLGSKIN_BLURB=Als niet alle skin-items aanwezig zijn, worden de standaard ingebouwde skin/geluiden gebruikt.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Sorry, maar je spelernaam is leeg. Je moet een spelernaam hebben
 NETERR_MAPSERIALIZE=De server kon de kaartgegevens niet voorbereiden. Probeer het opnieuw
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Spelernaam
 STR_DLGBROWSER_MANUAL=Handleiding
 STR_DLGBROWSER_ERR_VERSION=Server draait een andere versie van WinBolo.
 STR_DLGBROWSER_ERR_NEEDNAME=Je moet eerst een spelernaam instellen.
-STR_DLGBROWSER_SETNAME_TITLE=Spelernaam instellen
 STR_DLGBROWSER_AI_ADV=Vrdl
 STR_DLGBROWSER_AI_FULL=Vol
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Netwerkfout
 STR_DLGWBN_LOADERR=Details laden mislukt
 STR_DLGWBN_DOWNLOAD_FAILED=Downloaden mislukt
 STR_DLGWBN_NOSAVEPATH=Kan opslagpad niet bepalen
-STR_DLGWBN_POSTERR=Plaatsen van reactie mislukt
 STR_DLGWBN_FETCHERR=Ophalen mislukt
 STR_DLGWBN_UNKNOWN_ERR=Onbekende fout
 STR_DLGWBN_FILEFILTER=WinBolo-logbestanden

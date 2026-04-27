@@ -7,30 +7,20 @@ author=Claude (Sonnet 4.6), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=Výběr hry WinBolo
-STR_DLGOPENING_TEXT=Vítej ve WinBolo, multiplayerové tankové hře.\nVyber typ hry ze seznamu níže:
-STR_DLGOPENING_OPTION1=Cvičení
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=Internet
-STR_DLGOPENING_SKIP=Příště toto okno nezobrazovat
 STR_OK=OK
 STR_DLGOPENING_BUTTON2=Konec
 
 # Language dialog
-STR_DLGLANG_TITLE=Výběr jazyka
-STR_DLGLANG_NAME_CAPTION=Název:
 STR_DLGLANG_NAME=Čeština
 STR_DLGLANG_AUTHOR_CAPTION=Autor: 
 STR_DLGLANG_AUTHOR=John Morrison
-STR_DLGOPENING_OPTION4=Lokální síť
-STR_DLGOPENING_OPTION0=Výukový kurz
 STR_DLGLANG_NOTES_CAPTION=Poznámky: 
 STR_DLGLANG_NOTES=Žádné.
 STR_DLGLANG_DEFAULTNOTE=Poznámka: U neúplných překladů se chybějící položky zobrazují v angličtině.
 
 # About dialog
 STR_DLGABOUT_TITLE=O programu WinBolo
-STR_DLGABOUT_BLURB=Balíček WinBolo lze volně šířit za podmínky, že ani program, ani žádný z přiložených souborů nebude vynechán nebo jakkoliv upraven.\n\nWinBolo je sharewarový program. Sharewarový software není zdarma. Stojí peníze, stejně jako jiný software, který kupuješ — s tím rozdílem, že u sharowaru si ho nejdřív můžeš vyzkoušet a rozhodnout, jestli se ti líbí.\n\nWinBolo stojí 25 amerických dolarů. Pokud se rozhodneš WinBolo ponechat, můžeš zaplatit jedním z těchto způsobů:\n\nSpusť program register.exe v adresáři WinBolo — umožňuje platbu šekem, poštovní poukázkou, hotovostí nebo kreditní kartou e-mailem, faxem nebo poštou.\n\nPro platbu kreditní kartou online navštiv: http://order.kagi.com/?XYV a vyplň formulář.\n\nDalší informace najdeš v textovém souboru Readme(Shareware) přiloženém k distribuci.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=Žádost o alianci
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Odmítnout
 STR_DLGALLIANCE_BLURB={player} žádá o alianci. Přijmout?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Zkus nejdřív obnovit seznam.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Zpráva dne
-STR_DLGGAMEFINDER_WRONGVERSION=Hra, ke které se chceš připojit, používá jinou verzi WinBolo. Zkus se připojit k jiné hře
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Žádné probíhající hry (začni vlastní!)
 STR_YES=Ano
 STR_NO=Ne
-STR_DLGGAMEFINDER_YESADV=Ano (výhoda)
-STR_DLGGAMEFINDER_OPEN=Otevřená
-STR_DLGGAMEFINDER_TOURNAMENT=Turnaj
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Striktní
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Informace o hře
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Mapa:
 STR_DLGGAMEINFO_NUMPLAYERS=Hráčů: {number}
 STR_DLGGAMEINFO_GAMETYPE=Typ hry: 
 STR_DLGGAMEINFO_HIDDENMINES=Skryté miny: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Počítačové tanky povoleny: 
 STR_DLGGAMEINFO_TIMELIMIT=Časový limit:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Vyber možnosti pro novou hru:
 STR_CANCEL=Zrušit
 STR_DLGGAMESETUP_TITLE=Nastavení hry
 STR_DLGGAMESETUP_CHOOSEMAP=Vybrat mapu
-STR_DLGGAMESETUP_SELECTEDMAP=Vybraná mapa: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Vybraná mapa: Everard Island (vestavěná)
 STR_DLGGAMESETUP_RADIO1=Otevřená hra (předem vyzbrojená)
 STR_DLGGAMESETUP_RADIO2=Turnaj (volná munice na začátku)
 STR_DLGGAMESETUP_RADIO3=Striktní turnaj (bez volné munice)
 STR_DLGGAMESETUP_HIDDENMINES=Povolit skryté miny
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Povolit počítačové tanky
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=a dát jim výhodu
 STR_DLGGAMESETUP_PASSWORD=Heslo hry
 STR_DLGGAMESETUP_MINUTES=minut
 STR_DLGGAMESETUP_SECONDS=sekund
 STR_DLGGAMESETUP_STARTDELAY=Zpoždění startu hry
 STR_DLGGAMESETUP_TIMELIMIT=Časový limit hry
-STR_DLGGAMESETUP_ERROROPENINGMAP=Chyba při otevírání mapy.
 STR_DLGGAMEINFO_TIMEREMAINING=Přibližně {number} min
 STR_DLGGAMEINFO_OPEN=Otevřená
 STR_DLGGAMEINFO_TOURN=Turnaj
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Já
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Nastavení kláves
-STR_DLGKEYSETUP_BLURB=Klikni na možnost, kterou chceš změnit, a pak stiskni klávesu, která jí bude přiřazena. Klávesy ALT, PRINT SCREEN a PAUSE nelze přiřadit.
 STR_DLGKEYSETUP_DRIVETANK=Řízení tanku
-STR_DLGKEYSETUP_TURNTANK=Otáčení tanku:
 STR_DLGKEYSETUP_GUNRANGE=Dosah děla
 STR_DLGKEYSETUP_WEAPONS=Zbraně
 STR_DLGKEYSETUP_VIEW=Pohledy
 STR_DLGKEYSETUP_SCROLL=Posouvání
-STR_DLGKEYSETUP_LEFT=(vlevo)
-STR_DLGKEYSETUP_RIGHT=(vpravo)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Automatické zpomalení
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Automaticky skrýt zaměřovač
 STR_DLGKEYSETUP_FASTER=Rychleji
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Nahoru
 STR_DLGKEYSETUP_SCROLLDOWN=Dolů
 STR_DLGKEYSETUP_SCROLLLEFT=Vlevo
 STR_DLGKEYSETUP_SCROLLRIGHT=Vpravo
-STR_DLGKEYSETUP_NEWKEYFOR=Stiskni novou klávesu pro 
-STR_DLGKEYSETUP_FORWARD=dopředu
-STR_DLGKEYSETUP_BACKWARD=dozadu
-STR_DLGKEYSETUP_ROTATELEFT=otočit vlevo
-STR_DLGKEYSETUP_ROTATERIGHT=otočit vpravo
-STR_DLGKEYSETUP_INCREASERANGE=zvýšit dosah
-STR_DLGKEYSETUP_DECREASERANGE=snížit dosah
-STR_DLGKEYSETUP_SETSHOOT=střílet
-STR_DLGKEYSETUP_SETLAYMINE=položit minu
-STR_DLGKEYSETUP_SETTANKVIEW=pohled na tank
-STR_DLGKEYSETUP_SETPILLVIEW=pohled na bunkr
-STR_DLGKEYSETUP_SETSCROLLUP=posunout nahoru
-STR_DLGKEYSETUP_SETSCROLLDOWN=posunout dolů
-STR_DLGKEYSETUP_SETSCROLLLEFT=posunout vlevo
-STR_DLGKEYSETUP_SETSCROLLRIGHT=posunout vpravo
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Odeslat
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS=Odesílání zprávy {number} hráčům
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Informace o síti
-STR_DLGNETINFO_SERVERADDRESS=Adresa serveru:
-STR_DLGNETINFO_THISGAMEADDRESS=Adresa této hry:
 STR_DLGNETINFO_SERVERPING=Ping serveru: {number} ms
-STR_DLGNETINFO_PACKETS=Pakety za sekundu (na hráče):
 STR_DLGNETINFO_STATUS=Stav:
 STR_DLGNETINFO_ERRORS=Chyby sítě: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Vyžadováno heslo
 STR_DLGPASSWORD_BLURB=Tato hra vyžaduje heslo:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Zadat jméno hráče
 STR_DLGSETNAME_BLURB=Zadej nové jméno hráče pro svůj tank:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=Systémové informace
 STR_DLGSYSINFO_CPUUSAGE=Využití CPU:
 STR_DLGSYSINFO_SIMMODELING=Modelování simulace:
 STR_DLGSYSINFO_COMPROCESSING=Zpracování komunikace:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Zobrazení grafiky:
-STR_DLGSYSINFO_AICONTROLPROCESSING=Řízení tanků AI:
 STR_DLGSYSINFO_TOTAL=Celkem:
-STR_DLGSYSINFO_GRAPHICSFPS=Snímků za sekundu
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=Nastavení UDP (Internet)
 STR_DLGTCP_BLURB=Pro připojení k internetové hře Bolo musíš zadat název (nebo IP adresu) hostitelského počítače se spuštěným Bolo a číslo UDP portu procesu Bolo na tomto počítači.
 STR_DLGTCP_JOIN=Připojit
 STR_DLGTCP_REJOIN=Znovu připojit
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Klikni na „Připojit" pro připojení k existující hře
 STR_DLGTCP_REJOINBLURB=Klikni na „Znovu připojit" pro návrat do hry a zpět ke svým věcem
 STR_ERR_DLGTCP_PORTS=Port serveru a vlastní port jsou stejné!
 STR_ERR_DLGTCP_NOTRIGHT=Tady něco nesedí...
-STR_ERR_DLGTCP_SUBCLASS=Nelze nastavit podtřídu okna pro kopírování!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=Připojit &podle adresy
-STR_DLGGAMEFINDER_REFRESH=&Obnovit
-STR_DLGGAMEFINDER_PLAYERNAME=Nastavit jméno &hráče
-STR_DLGGAMEFINDER_MOTD=&Zpráva dne
-STR_DLGGAMEFINDER_STATUSBLURB=Stav: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Informace o vybrané hře
-STR_DLGGAMEFINDER_BRAINS=Brains:
-STR_DLGGAMEFINDER_PASSWORD=Heslo:
-STR_DLGGAMEFINDER_PILLS=Počet volných bunkrů:
-STR_DLGGAMEFINDER_BASES=Počet volných základen:
-STR_DLGGAMEFINDER_HIDDENMINES=Skryté miny:
-STR_DLGGAMEFINDER_NUMPLAYERS=Počet hráčů:
-STR_DLGGAMEFINDER_VERSION=Verze:
-STR_DLGGAMEFINDER_GAMETYPE=Typ hry:
-STR_DLGGAMEFINDER_PORT=Port serveru:
-STR_DLGGAMEFINDER_ADDRESS=Adresa serveru:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=Adresář Brains neexistuje.\nBrains nebudou načteny!
-STR_BRAINERR_LAUNCH=Chyba při spouštění Brain
-STR_BRAINERR_LAUNCHMAIN=Chyba při spouštění Brain — Brain neobsahuje „BrainMain"
-STR_BRAINERR_INIT=Chyba při inicializaci Brain
-STR_BRAINERR_EXEC=Nepodařilo se spustit Brain
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=Vytvoření objektu DD se nezdařilo
-STR_DRAWERROR_SETCOOPLEVEL=Nastavení úrovně spolupráce DD se nezdařilo
-STR_DRAWERROR_CREATEPRIMARY=Vytvoření primárního povrchu DD se nezdařilo
-STR_DRAWERROR_GETPIXELFORMAT=Získání formátu pixelů DD se nezdařilo
-STR_DRAWERROR_GETDESC=Získání popisu povrchu se nezdařilo
-STR_DRAWERROR_TOOFEWCOLOURS=Tato verze WinBolo nepodporuje paletový režim.\n Změň barevnou hloubku na více než 256 barev
-STR_DRAWERROR_BUFFERCREATE=Vytvoření bufferu DD se nezdařilo
-STR_DRAWERROR_GETDCFAILED=DD Get DC se nezdařilo
-STR_DRAWERROR_CLIPPERFAILED=Vytvoření clipperu DD se nezdařilo
-STR_DRAWERROR_BRUSH=Chyba při vytváření kreslicího štětce
-STR_DRAWERROR_PEN=Chyba při vytváření kreslicího pera
-STR_DRAW_GAMESTARTSIN=Hra začíná za 
-STR_DRAWERROR_RELEASEDC=Chyba při uvolňování DC pro vykreslení popisku tanku (to je špatné)
-STR_DRAW_PILLBOXVIEW=Pohled na bunkr
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=Nelze načíst písmo Courier New
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=Při čtení předvoleb došlo k chybě. Budou použity výchozí hodnoty
-STR_GAMEFRONTERR_WINDOW=Chyba při vytváření okna
-STR_GAMEFRONTERR_DDRAW=Chyba při nastavení Direct Draw
-STR_GAMEFRONTERR_DSOUND=Chyba při nastavení Direct Sound
-STR_GAMEFRONTERR_DINPUT=Chyba při nastavení Direct Input
-STR_GAMEFRONTERR_CURSOR=Chyba při načítání kurzoru
-STR_GAMEFRONTERR_FONTS=Chyba při načítání písem
 STR_GAMEFRONT_LANFINDER_TITLE=Hledač LAN her
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Hledač her přes tracker
 STR_GAMEFRONTERR_JOINGAME=Při pokusu o připojení ke hře došlo k chybě
-STR_GAMEFRONTERR_SPAWNSERVER=Při pokusu o spuštění serverového procesu došlo k chybě.\n Je program „WinBoloDS" ve stejném adresáři jako WinBolo?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=V síťových subsystémech se stalo něco opravdu podivného — což je zvláštní, protože sis zvolil hru pro jednoho hráče. Máš štěstí...
-STR_GAMEFRONT_SERVERSTARTMSG=Spouštění dedikovaného serveru. Do jeho okna zadej „quit" pro ukončení.
-STR_GAMEFRONT_INPUTERR_CREATE=Vytvoření zařízení klávesnice Direct Input se nezdařilo
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Nastavení formátu dat pro zařízení klávesnice Direct Input se nezdařilo
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Nastavení úrovně spolupráce pro zařízení klávesnice Direct Input se nezdařilo
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Chyba při spouštění Winsock
-STR_NETCLIENTERR_CREATEUDPFAIL=Chyba při vytváření UDP socketu
-STR_NETCLIENTERR_CREATETCPFAIL=Chyba při vytváření TCP socketu
-STR_NETCLIENTERR_BINDUDPFAIL=Chyba při přiřazování UDP socketu\n Jiný program už má tento port přiřazen. Zkus zvolit jiný.\n\nPOZNÁMKA: Pokud jsi spustil síťovou hru a ta se úspěšně spustila, stále běží.\n Nemusíš ji znovu spouštět
-STR_NETCLIENTERR_CHAINFAIL=Chyba při přidávání síťových událostí do řetězce zpráv
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Nepodporovaná verze trackeru
-STR_NETCLIENTERR_TRACKERDNSFAIL=Chyba při hledání trackeru (selhání DNS vyhledávání)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=Chyba při připojování k trackeru
-STR_NETCLIENTERR_TRACKERNOBLOCK=Chyba při nastavení socketu jako neblokující
-STR_NETCLIENT_TRACKERGETRESPONSE=Přijímání informací o hře...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=Zpracování dat trackeru...
-STR_NETCLIENTERR_TRACKERNODATA=Chyba: tracker neposlal žádná data
-STR_NETCLIENT_TRACKERCONNECT=Připojování: 
-STR_NETCLIENT_IDLE=Nečinný
-STR_NETCLIENTERR_BIND=Chyba při přiřazování socketu
-STR_NETCLIENTERR_BROADCAST=Chyba při odesílání broadcastu
-STR_NETCLIENT_GETRESPONSES=Přijímání odpovědí...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=Nelze načíst zvuky WinBolo — pokračuji bez zvuku
-STR_SOUNDERR_HARDWAREINUSE=Chyba při nastavení Direct Sound — hardware je používán jinou aplikací.\nPokračuji bez zvuku.
-STR_SOUNDERR_CREATEFAILED=Vytvoření objektu DS se nezdařilo\nPokračuji bez zvuku.
-STR_SOUNDERR_COOPFAILED=Vytvoření úrovně spolupráce DS se nezdařilo
-STR_SOUNDERR_PRIMARYBUFFFAIL=Vytvoření primárního bufferu DS se nezdařilo
-STR_SOUNDERR_LOADSOUNDFAILED=Načtení jednoho nebo více zvukových souborů se nezdařilo
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Chyba při vytváření mutexu. (to je špatné)
-STR_WBERR_BRAINLISTLOAD=Chyba při načítání seznamu Brain
-STR_WBERR_KEYCLASSSETUP=Chyba při nastavení třídy pro nastavení kláves
 STR_WBTIMELIMIT_END=Časový limit vypršel. Hra skončila.
 STR_WBERR_SAVEMAP=Chyba při ukládání mapy (Plný disk?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=Ztratil jsi spojení se serverem.\nPřepínám do režimu 
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Odeslat zprávu
-STR_DLGOPENING_BUTTON3=Jazyky
-STR_DLGOPENING_BUTTON4=Nápověda
 STRERR_HELPFILE=Chyba při otevírání souboru nápovědy.
-STR_DLGSKIN_TITLE=Výběr vzhledu
 STR_DLGSKIN_BLURB=Pokud nejsou k dispozici všechny prvky vzhledu, použije se výchozí vestavěný vzhled a zvuky.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Bohužel, tvoje jméno hráče je prázdné — musíš mít jméno hráče
 NETERR_MAPSERIALIZE=Server nebyl schopen připravit data mapy. Zkus to prosím znovu
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Jméno hráče
 STR_DLGBROWSER_MANUAL=Příručka
 STR_DLGBROWSER_ERR_VERSION=Server používá jinou verzi WinBolo.
 STR_DLGBROWSER_ERR_NEEDNAME=Nejdřív musíš nastavit jméno hráče.
-STR_DLGBROWSER_SETNAME_TITLE=Nastavit jméno hráče
 STR_DLGBROWSER_AI_ADV=Výh.
 STR_DLGBROWSER_AI_FULL=Plná
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Síťová chyba
 STR_DLGWBN_LOADERR=Nepodařilo se načíst detaily
 STR_DLGWBN_DOWNLOAD_FAILED=Stahování selhalo
 STR_DLGWBN_NOSAVEPATH=Nelze určit cestu pro uložení
-STR_DLGWBN_POSTERR=Nepodařilo se zveřejnit komentář
 STR_DLGWBN_FETCHERR=Načítání selhalo
 STR_DLGWBN_UNKNOWN_ERR=Neznámá chyba
 STR_DLGWBN_FILEFILTER=Soubory záznamů WinBolo

@@ -7,30 +7,20 @@ author=WinBolo
 notes=Generated from src/gui/sdl3/lang.c — do not hand-edit.
 
 # Opening dialog
-STR_DLGOPENING_TITLE=WinBolo Game Selection
-STR_DLGOPENING_TEXT=Welcome to WinBolo, the multiplayer tank game.\nPlease choose a game type from the list below:
-STR_DLGOPENING_OPTION1=Practice
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=Internet
-STR_DLGOPENING_SKIP=Skip this Dialog Next Time
 STR_OK=OK
 STR_DLGOPENING_BUTTON2=Quit
 
 # Language dialog
-STR_DLGLANG_TITLE=Language Select
-STR_DLGLANG_NAME_CAPTION=Name:
 STR_DLGLANG_NAME=English (Default)
 STR_DLGLANG_AUTHOR_CAPTION=Author: 
 STR_DLGLANG_AUTHOR=John Morrison
-STR_DLGOPENING_OPTION4=Local Network
-STR_DLGOPENING_OPTION0=Tutorial
 STR_DLGLANG_NOTES_CAPTION=Notes: 
 STR_DLGLANG_NOTES=None.
 STR_DLGLANG_DEFAULTNOTE=Note: For incomplete translations the missing items default back to English.
 
 # About dialog
 STR_DLGABOUT_TITLE=About WinBolo
-STR_DLGABOUT_BLURB=The WinBolo package may be freely distributed provided the neither the program nor any of the accompanying files are omitted or modified in any way.\n\nWinBolo is a shareware program. Shareware software is not free. It costs money, just like other software you buy, except that with shareware you get to try it out first to decide if you like it.\n\nWinBolo costs $25(US) If you decide to keep WinBolo you can pay for it via the following methods:\n\nRun the program register.exe in the WinBolo directory, it allow you to pay via cheque, money order, cash or credit card via email, fax or postal mediums.\n\nTo register via credit card online visit: http://order.kagi.com/?XYV and fill out the form.\n\nRead the text file Readme(Shareware) included in the distribution for more information.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=Alliance Request
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Reject
 STR_DLGALLIANCE_BLURB={player} requests alliance. Accept?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Try hitting refresh first.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Message of the Day
-STR_DLGGAMEFINDER_WRONGVERSION=The game you tried to join is a different version of WinBolo. Try joining a different game
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=No games in progress (Start one!)
 STR_YES=Yes
 STR_NO=No
-STR_DLGGAMEFINDER_YESADV=Yes (Adv)
-STR_DLGGAMEFINDER_OPEN=Open
-STR_DLGGAMEFINDER_TOURNAMENT=Tournament
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Strict
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Game Info
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Map:
 STR_DLGGAMEINFO_NUMPLAYERS=Players: {number}
 STR_DLGGAMEINFO_GAMETYPE=Game Type: 
 STR_DLGGAMEINFO_HIDDENMINES=Hidden Mines: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Computer Tanks Allowed: 
 STR_DLGGAMEINFO_TIMELIMIT=Time Limit:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Please select the options you want for your new game:
 STR_CANCEL=Cancel
 STR_DLGGAMESETUP_TITLE=Game Setup
 STR_DLGGAMESETUP_CHOOSEMAP=Choose map
-STR_DLGGAMESETUP_SELECTEDMAP=Selected Map: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Selected Map: Everard Island (Inbuilt)
 STR_DLGGAMESETUP_RADIO1=Open Game (pre-armed)
 STR_DLGGAMESETUP_RADIO2=Tournament (free ammo early)
 STR_DLGGAMESETUP_RADIO3=Strict Tournament (no free ammo)
 STR_DLGGAMESETUP_HIDDENMINES=Allow Hidden Mines
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Allow Computer Tanks
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=and give them an advantage
 STR_DLGGAMESETUP_PASSWORD=Game Password
 STR_DLGGAMESETUP_MINUTES=minutes
 STR_DLGGAMESETUP_SECONDS=seconds
 STR_DLGGAMESETUP_STARTDELAY=Game start delay
 STR_DLGGAMESETUP_TIMELIMIT=Game time limit
-STR_DLGGAMESETUP_ERROROPENINGMAP=Error Opening Map.
 STR_DLGGAMEINFO_TIMEREMAINING=About {number} minute(s)
 STR_DLGGAMEINFO_OPEN=Open
 STR_DLGGAMEINFO_TOURN=Tournament
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Me
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Key Setup
-STR_DLGKEYSETUP_BLURB=Click on the option you wish to change then the next key pressed will be assigned to it. The key ALT, PRINT SCREEN and PAUSE can not be assigned to anything.
 STR_DLGKEYSETUP_DRIVETANK=Drive Tank
-STR_DLGKEYSETUP_TURNTANK=Rotate Tank:
 STR_DLGKEYSETUP_GUNRANGE=Gun Range
 STR_DLGKEYSETUP_WEAPONS=Weapons
 STR_DLGKEYSETUP_VIEW=Views
 STR_DLGKEYSETUP_SCROLL=Scroll
-STR_DLGKEYSETUP_LEFT=(left)
-STR_DLGKEYSETUP_RIGHT=(right)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Auto Slowdown
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Auto Hide Gunsight
 STR_DLGKEYSETUP_FASTER=Faster
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Up
 STR_DLGKEYSETUP_SCROLLDOWN=Down
 STR_DLGKEYSETUP_SCROLLLEFT=Left
 STR_DLGKEYSETUP_SCROLLRIGHT=Right
-STR_DLGKEYSETUP_NEWKEYFOR=Press new key for 
-STR_DLGKEYSETUP_FORWARD=forward
-STR_DLGKEYSETUP_BACKWARD=backward
-STR_DLGKEYSETUP_ROTATELEFT=rotate left
-STR_DLGKEYSETUP_ROTATERIGHT=rotate right
-STR_DLGKEYSETUP_INCREASERANGE=increase range
-STR_DLGKEYSETUP_DECREASERANGE=decrease range
-STR_DLGKEYSETUP_SETSHOOT=shoot
-STR_DLGKEYSETUP_SETLAYMINE=lay mine
-STR_DLGKEYSETUP_SETTANKVIEW=tank view
-STR_DLGKEYSETUP_SETPILLVIEW=pillbox view
-STR_DLGKEYSETUP_SETSCROLLUP=scroll up
-STR_DLGKEYSETUP_SETSCROLLDOWN=scroll down
-STR_DLGKEYSETUP_SETSCROLLLEFT=scroll left
-STR_DLGKEYSETUP_SETSCROLLRIGHT=scroll right
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Send
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS=Sending message to {number} players
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Network Info
-STR_DLGNETINFO_SERVERADDRESS=Server address:
-STR_DLGNETINFO_THISGAMEADDRESS=This game address:
 STR_DLGNETINFO_SERVERPING=Server ping: {number} ms
-STR_DLGNETINFO_PACKETS=Packets per second (per player):
 STR_DLGNETINFO_STATUS=Status:
 STR_DLGNETINFO_ERRORS=Net errors: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Password Required
 STR_DLGPASSWORD_BLURB=This game requires a password:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Enter Player Name
 STR_DLGSETNAME_BLURB=Enter the new player name for your tank:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=System Info
 STR_DLGSYSINFO_CPUUSAGE=CPU Usage:
 STR_DLGSYSINFO_SIMMODELING=Sim Modeling:
 STR_DLGSYSINFO_COMPROCESSING=Com Processing:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Graphics display:
-STR_DLGSYSINFO_AICONTROLPROCESSING=AI tank control processing:
 STR_DLGSYSINFO_TOTAL=Total:
-STR_DLGSYSINFO_GRAPHICSFPS=Graphics frames per second
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=UDP (Internet) Setup
 STR_DLGTCP_BLURB=To join an internet Bolo game, you must give the name (or IP address) of a host machine running Bolo, and the UDP port number of the Bolo process on that machine.
 STR_DLGTCP_JOIN=Join
 STR_DLGTCP_REJOIN=Rejoin
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Click "Join" to join an existing game
 STR_DLGTCP_REJOINBLURB=Click "Rejoin" to rejoin a game and reclaim your old possessions
 STR_ERR_DLGTCP_PORTS=Server and own ports are the same!
 STR_ERR_DLGTCP_NOTRIGHT=Something isn't correct here...
-STR_ERR_DLGTCP_SUBCLASS=Can't set the window subclass for copying!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=Join &By Address
-STR_DLGGAMEFINDER_REFRESH=&Refresh
-STR_DLGGAMEFINDER_PLAYERNAME=Set &Player Name
-STR_DLGGAMEFINDER_MOTD=&Message of the Day
-STR_DLGGAMEFINDER_STATUSBLURB=Status: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Selected Game Information
-STR_DLGGAMEFINDER_BRAINS=Brains:
-STR_DLGGAMEFINDER_PASSWORD=Password:
-STR_DLGGAMEFINDER_PILLS=No of free Pillboxes:
-STR_DLGGAMEFINDER_BASES=No of free Bases:
-STR_DLGGAMEFINDER_HIDDENMINES=Hidden Mines:
-STR_DLGGAMEFINDER_NUMPLAYERS=No of Players:
-STR_DLGGAMEFINDER_VERSION=Version:
-STR_DLGGAMEFINDER_GAMETYPE=Game Type:
-STR_DLGGAMEFINDER_PORT=Server Port:
-STR_DLGGAMEFINDER_ADDRESS=Server Address:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=Brains Directory does not exist.\nNot going to load brains!
-STR_BRAINERR_LAUNCH=Error Launching Brain
-STR_BRAINERR_LAUNCHMAIN=Error Launching Brain - Brain does not contain "BrainMain"
-STR_BRAINERR_INIT=Error initing brain
-STR_BRAINERR_EXEC=Could not execute brain
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=Creating DD Object Failed
-STR_DRAWERROR_SETCOOPLEVEL=Creating DD co-op level Failed
-STR_DRAWERROR_CREATEPRIMARY=Creating DD Primary Surface Failed
-STR_DRAWERROR_GETPIXELFORMAT=Getting DD Pixel Format Failed
-STR_DRAWERROR_GETDESC=Getting Surface Description Failed
-STR_DRAWERROR_TOOFEWCOLOURS=This Version of WinBolo does not run in palette mode.\n Please change your colour depth to greater than 256 colours
-STR_DRAWERROR_BUFFERCREATE=Creating DD buffer Failed
-STR_DRAWERROR_GETDCFAILED=DD Get DC failed
-STR_DRAWERROR_CLIPPERFAILED=Creating DD Clipper Failed
-STR_DRAWERROR_BRUSH=Error Creating Drawing Brush
-STR_DRAWERROR_PEN=Error Creating Drawing Pen
-STR_DRAW_GAMESTARTSIN=Game Starts in 
-STR_DRAWERROR_RELEASEDC=Error Releasing DC for drawing tank label (Thats bad)
-STR_DRAW_PILLBOXVIEW=Pillbox View
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=Cant load font Courier New
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=An error occurred in reading preferences. The defaults will be used
-STR_GAMEFRONTERR_WINDOW=Error Creating Window
-STR_GAMEFRONTERR_DDRAW=Error Setting up Direct Draw
-STR_GAMEFRONTERR_DSOUND=Error Setting up Direct Sound
-STR_GAMEFRONTERR_DINPUT=Error Setting up Direct Input
-STR_GAMEFRONTERR_CURSOR=Error Loading Cursor
-STR_GAMEFRONTERR_FONTS=Error Loading Fonts
 STR_GAMEFRONT_LANFINDER_TITLE=LAN Game Finder
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Tracker Game Finder
 STR_GAMEFRONTERR_JOINGAME=An error occurred trying to join the game
-STR_GAMEFRONTERR_SPAWNSERVER=An error occurred trying to spawn the server process.\n Is the program "WinBoloDS" in the same directory as WinBolo?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=Something really bizarre happened in the networking subsystems which is strange since you selected a single player game. Lucky you...
-STR_GAMEFRONT_SERVERSTARTMSG=Launching dedicated server. Type "quit" in its window to quit.
-STR_GAMEFRONT_INPUTERR_CREATE=Creation of Direct Input Keyboard Device Failed
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Setting the Data Format for the Direct Input Keyboard Device Failed
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Setting the Co-operative Level for the Direct Input Keyboard Device Failed
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Error Starting Winsock
-STR_NETCLIENTERR_CREATEUDPFAIL=Error Creating UDP Socket
-STR_NETCLIENTERR_CREATETCPFAIL=Error Creating TCP Socket
-STR_NETCLIENTERR_BINDUDPFAIL=Error Binding UDP Socket\n Some other program has this port assigned already. Try choosing another.\n\nNOTE: If you started a network game and it launched successfully then it is still running.\n You will not need to start it again
-STR_NETCLIENTERR_CHAINFAIL=Error adding network Events to messaging chain
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Unsupported Tracker Version
-STR_NETCLIENTERR_TRACKERDNSFAIL=Error finding tracker (DNS lookup failure)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=Error Connecting to tracker
-STR_NETCLIENTERR_TRACKERNOBLOCK=Error setting socket to be nonblocking
-STR_NETCLIENT_TRACKERGETRESPONSE=Receiving game info...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=Processing tracker data...
-STR_NETCLIENTERR_TRACKERNODATA=Error: Tracker sent no data
-STR_NETCLIENT_TRACKERCONNECT=Connecting: 
-STR_NETCLIENT_IDLE=Idle
-STR_NETCLIENTERR_BIND=Error binding socket
-STR_NETCLIENTERR_BROADCAST=Error sending broadcast
-STR_NETCLIENT_GETRESPONSES=Receiving responses...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=Can't Load WinBolo Sounds - Continuing without Sound
-STR_SOUNDERR_HARDWAREINUSE=Error Setting Up Direct Sound - Hardware is in use by another application.\nContinuing without sound.
-STR_SOUNDERR_CREATEFAILED=Creating DS Object Failed\nContinuing without sound.
-STR_SOUNDERR_COOPFAILED=Creating DS Co-Op Level Failed
-STR_SOUNDERR_PRIMARYBUFFFAIL=Creating DS Primary Buffer Failed
-STR_SOUNDERR_LOADSOUNDFAILED=Loading of one or more sound files failed
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Error Creating Mutex. (Thats bad)
-STR_WBERR_BRAINLISTLOAD=Error Loading Brain List
-STR_WBERR_KEYCLASSSETUP=Error Setting up Key Setup Class
 STR_WBTIMELIMIT_END=Timelimit has expired. The Game has ended.
 STR_WBERR_SAVEMAP=Error Saving Map (Disk full?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=You have lost your connection to the server.\nNow dropping
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Send Message
-STR_DLGOPENING_BUTTON3=Languages
-STR_DLGOPENING_BUTTON4=Help
 STRERR_HELPFILE=Error opening help file.
-STR_DLGSKIN_TITLE=Skin Selection
 STR_DLGSKIN_BLURB=If not all skin items are present then the default built in skin/sounds are used.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Sorry, but your player name is blank, you must have a player name
 NETERR_MAPSERIALIZE=The server was unable to prepare the map data. Please try again
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Player Name
 STR_DLGBROWSER_MANUAL=Manual
 STR_DLGBROWSER_ERR_VERSION=Server is running a different version of WinBolo.
 STR_DLGBROWSER_ERR_NEEDNAME=You must set a player name first.
-STR_DLGBROWSER_SETNAME_TITLE=Set Player Name
 STR_DLGBROWSER_AI_ADV=Adv
 STR_DLGBROWSER_AI_FULL=Full
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Network error
 STR_DLGWBN_LOADERR=Failed to load details
 STR_DLGWBN_DOWNLOAD_FAILED=Download failed
 STR_DLGWBN_NOSAVEPATH=Could not determine save path
-STR_DLGWBN_POSTERR=Failed to post comment
 STR_DLGWBN_FETCHERR=Fetch failed
 STR_DLGWBN_UNKNOWN_ERR=Unknown error
 STR_DLGWBN_FILEFILTER=WinBolo Log Files

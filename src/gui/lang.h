@@ -29,30 +29,20 @@
  * ------------------------------------------------------- */
 
 /* Opening dialog */
-#define STR_DLGOPENING_TITLE                151
-#define STR_DLGOPENING_TEXT                 152
-#define STR_DLGOPENING_OPTION1              153
 #define STR_DLGOPENING_OPTION2              154
-#define STR_DLGOPENING_OPTION3              155
-#define STR_DLGOPENING_SKIP                 156
 #define STR_OK                              157
 #define STR_DLGOPENING_BUTTON2              158
 
 /* Language dialog */
-#define STR_DLGLANG_TITLE                   159
-#define STR_DLGLANG_NAME_CAPTION            160
 #define STR_DLGLANG_NAME                    161
 #define STR_DLGLANG_AUTHOR_CAPTION          162
 #define STR_DLGLANG_AUTHOR                  163
-#define STR_DLGOPENING_OPTION4              164
-#define STR_DLGOPENING_OPTION0              165
 #define STR_DLGLANG_NOTES_CAPTION           166
 #define STR_DLGLANG_NOTES                   167
 #define STR_DLGLANG_DEFAULTNOTE             168
 
 /* About dialog */
 #define STR_DLGABOUT_TITLE                  169
-#define STR_DLGABOUT_BLURB                  170
 
 /* Alliance dialog */
 #define STR_DLGALLIANCE_TITLE               171
@@ -61,16 +51,8 @@
 #define STR_DLGALLIANCE_BLURB               174
 
 /* Game finder dialog */
-#define STR_DLGGAMEFINDER_REFRESHFIRST      175
-#define STR_DLGGAMEFINDER_MESSAGEOFTHEDAY   176
-#define STR_DLGGAMEFINDER_WRONGVERSION      177
-#define STR_DLGGAMEFINDER_NOGAMESINPROGRESS 178
 #define STR_YES                             179
 #define STR_NO                              180
-#define STR_DLGGAMEFINDER_YESADV            181
-#define STR_DLGGAMEFINDER_OPEN              182
-#define STR_DLGGAMEFINDER_TOURNAMENT        183
-#define STR_DLGGAMEFINDER_STRICTTOURNAMENT  184
 
 /* Game info dialog */
 #define STR_DLGGAMEINFO_TITLE               185
@@ -78,28 +60,21 @@
 #define STR_DLGGAMEINFO_NUMPLAYERS          187
 #define STR_DLGGAMEINFO_GAMETYPE            188
 #define STR_DLGGAMEINFO_HIDDENMINES         189
-#define STR_DLGGAMEINFO_ALLOWCOMPTANKS      190
 #define STR_DLGGAMEINFO_TIMELIMIT           191
 
 /* Game setup dialog */
-#define STR_DLGGAMESETUP_BLURB              192
 #define STR_CANCEL                          193
 #define STR_DLGGAMESETUP_TITLE              194
 #define STR_DLGGAMESETUP_CHOOSEMAP          195
-#define STR_DLGGAMESETUP_SELECTEDMAP        196
-#define STR_DLGGAMESETUP_SELECTEDMAPINBUILT 197
 #define STR_DLGGAMESETUP_RADIO1             198
 #define STR_DLGGAMESETUP_RADIO2             199
 #define STR_DLGGAMESETUP_RADIO3             200
 #define STR_DLGGAMESETUP_HIDDENMINES        201
-#define STR_DLGGAMESETUP_ALLOWCOMPTANKS     202
-#define STR_DLGGAMESETUP_ALLOWCOMPTANKSADV  203
 #define STR_DLGGAMESETUP_PASSWORD           204
 #define STR_DLGGAMESETUP_MINUTES            205
 #define STR_DLGGAMESETUP_SECONDS            206
 #define STR_DLGGAMESETUP_STARTDELAY         207
 #define STR_DLGGAMESETUP_TIMELIMIT          208
-#define STR_DLGGAMESETUP_ERROROPENINGMAP    209
 #define STR_DLGGAMEINFO_TIMEREMAINING       210
 #define STR_DLGGAMEINFO_OPEN                211
 #define STR_DLGGAMEINFO_TOURN               212
@@ -109,15 +84,11 @@
 
 /* Key setup dialog */
 #define STR_DLGKEYSETUP_TITLE               216
-#define STR_DLGKEYSETUP_BLURB               217
 #define STR_DLGKEYSETUP_DRIVETANK           218
-#define STR_DLGKEYSETUP_TURNTANK            219
 #define STR_DLGKEYSETUP_GUNRANGE            220
 #define STR_DLGKEYSETUP_WEAPONS             221
 #define STR_DLGKEYSETUP_VIEW                222
 #define STR_DLGKEYSETUP_SCROLL              223
-#define STR_DLGKEYSETUP_LEFT                224
-#define STR_DLGKEYSETUP_RIGHT               225
 #define STR_DLGKEYSETUP_AUTOSLOWDOWN        226
 #define STR_DLGKEYSETUP_AUTOGUNSIGHT        227
 #define STR_DLGKEYSETUP_FASTER              228
@@ -134,21 +105,6 @@
 #define STR_DLGKEYSETUP_SCROLLDOWN          240
 #define STR_DLGKEYSETUP_SCROLLLEFT          241
 #define STR_DLGKEYSETUP_SCROLLRIGHT         242
-#define STR_DLGKEYSETUP_NEWKEYFOR           243
-#define STR_DLGKEYSETUP_FORWARD             244
-#define STR_DLGKEYSETUP_BACKWARD            245
-#define STR_DLGKEYSETUP_ROTATELEFT          246
-#define STR_DLGKEYSETUP_ROTATERIGHT         247
-#define STR_DLGKEYSETUP_INCREASERANGE       248
-#define STR_DLGKEYSETUP_DECREASERANGE       249
-#define STR_DLGKEYSETUP_SETSHOOT            250
-#define STR_DLGKEYSETUP_SETLAYMINE          251
-#define STR_DLGKEYSETUP_SETTANKVIEW         252
-#define STR_DLGKEYSETUP_SETPILLVIEW         253
-#define STR_DLGKEYSETUP_SETSCROLLUP         254
-#define STR_DLGKEYSETUP_SETSCROLLDOWN       255
-#define STR_DLGKEYSETUP_SETSCROLLLEFT       256
-#define STR_DLGKEYSETUP_SETSCROLLRIGHT      257
 
 /* Messages dialog */
 #define STR_DLGMSG_BUTTON                   258
@@ -161,10 +117,7 @@
 
 /* Network info dialog */
 #define STR_DLGNETINFO_TITLE                265
-#define STR_DLGNETINFO_SERVERADDRESS        266
-#define STR_DLGNETINFO_THISGAMEADDRESS      267
 #define STR_DLGNETINFO_SERVERPING           268
-#define STR_DLGNETINFO_PACKETS              269
 #define STR_DLGNETINFO_STATUS               270
 #define STR_DLGNETINFO_ERRORS               271
 
@@ -173,7 +126,6 @@
 #define STR_DLGPASSWORD_BLURB               273
 
 /* Set name dialog */
-#define STR_DLGSETNAME_TITLE                274
 #define STR_DLGSETNAME_BLURB                275
 
 /* Tracker setup dialog */
@@ -187,13 +139,9 @@
 #define STR_DLGSYSINFO_CPUUSAGE             281
 #define STR_DLGSYSINFO_SIMMODELING          282
 #define STR_DLGSYSINFO_COMPROCESSING        283
-#define STR_DLGSYSINFO_GRAHPICSDISPLAY      284
-#define STR_DLGSYSINFO_AICONTROLPROCESSING  285
 #define STR_DLGSYSINFO_TOTAL                286
-#define STR_DLGSYSINFO_GRAPHICSFPS          287
 
 /* TCP/IP setup dialog */
-#define STR_DLGTCP_TITLE                    288
 #define STR_DLGTCP_BLURB                    289
 #define STR_DLGTCP_JOIN                     290
 #define STR_DLGTCP_REJOIN                   291
@@ -209,101 +157,25 @@
 #define STR_DLGTCP_REJOINBLURB              301
 #define STR_ERR_DLGTCP_PORTS                302
 #define STR_ERR_DLGTCP_NOTRIGHT             303
-#define STR_ERR_DLGTCP_SUBCLASS             304
 
 /* Game finder extra */
-#define STR_DLGGAMEFINDER_JOINADDRESS       305
-#define STR_DLGGAMEFINDER_REFRESH           306
-#define STR_DLGGAMEFINDER_PLAYERNAME        307
-#define STR_DLGGAMEFINDER_MOTD              308
-#define STR_DLGGAMEFINDER_STATUSBLURB       309
-#define STR_DLGGAMEFINDER_SELECTEDGAME      310
-#define STR_DLGGAMEFINDER_BRAINS            311
-#define STR_DLGGAMEFINDER_PASSWORD          312
-#define STR_DLGGAMEFINDER_PILLS             313
-#define STR_DLGGAMEFINDER_BASES             314
-#define STR_DLGGAMEFINDER_HIDDENMINES       315
-#define STR_DLGGAMEFINDER_NUMPLAYERS        316
-#define STR_DLGGAMEFINDER_VERSION           317
-#define STR_DLGGAMEFINDER_GAMETYPE          318
-#define STR_DLGGAMEFINDER_PORT              319
-#define STR_DLGGAMEFINDER_ADDRESS           320
 
 /* Brain errors */
-#define STR_BRAINERR_BRAINDIR               321
-#define STR_BRAINERR_LAUNCH                 322
-#define STR_BRAINERR_LAUNCHMAIN             323
-#define STR_BRAINERR_INIT                   324
-#define STR_BRAINERR_EXEC                   325
 
 /* Draw errors */
-#define STR_DRAWERROR_CREATEOBJECT          326
-#define STR_DRAWERROR_SETCOOPLEVEL          327
-#define STR_DRAWERROR_CREATEPRIMARY         328
-#define STR_DRAWERROR_GETPIXELFORMAT        329
-#define STR_DRAWERROR_GETDESC               330
-#define STR_DRAWERROR_TOOFEWCOLOURS         331
-#define STR_DRAWERROR_BUFFERCREATE          332
-#define STR_DRAWERROR_GETDCFAILED           333
-#define STR_DRAWERROR_CLIPPERFAILED         334
-#define STR_DRAWERROR_BRUSH                 335
-#define STR_DRAWERROR_PEN                   336
-#define STR_DRAW_GAMESTARTSIN               337
-#define STR_DRAWERROR_RELEASEDC             338
-#define STR_DRAW_PILLBOXVIEW                339
 
 /* Font errors */
-#define STR_FONTERR_NOCOURIERFONT           340
 
 /* Game front errors */
-#define STR_GAMEFRONTERR_CORRUPTPREFS       341
-#define STR_GAMEFRONTERR_WINDOW             342
-#define STR_GAMEFRONTERR_DDRAW              343
-#define STR_GAMEFRONTERR_DSOUND             344
-#define STR_GAMEFRONTERR_DINPUT             345
-#define STR_GAMEFRONTERR_CURSOR             346
-#define STR_GAMEFRONTERR_FONTS              347
 #define STR_GAMEFRONT_LANFINDER_TITLE       348
 #define STR_GAMEFRONT_TRACKERFINDER_TITLE   349
 #define STR_GAMEFRONTERR_JOINGAME           350
-#define STR_GAMEFRONTERR_SPAWNSERVER        351
-#define STR_GAMEFRONTERR_NETSINGLEPLAYER    352
-#define STR_GAMEFRONT_SERVERSTARTMSG        353
-#define STR_GAMEFRONT_INPUTERR_CREATE       354
-#define STR_GAMEFRONT_INPUTERR_DATAFORMAT   355
-#define STR_GAMEFRONT_INPUTERR_COOPLEVEL    356
 
 /* Network client errors */
-#define STR_NETCLIENTERR_WINSOCKFAILSTARTUP 357
-#define STR_NETCLIENTERR_CREATEUDPFAIL      358
-#define STR_NETCLIENTERR_CREATETCPFAIL      359
-#define STR_NETCLIENTERR_BINDUDPFAIL        360
-#define STR_NETCLIENTERR_CHAINFAIL          361
-#define STR_NETCLIENTERR_TRACKERVERSIONFAIL 362
-#define STR_NETCLIENTERR_TRACKERDNSFAIL     363
-#define STR_NETCLIENTERR_TRACKERCONNECTFAIL 364
-#define STR_NETCLIENTERR_TRACKERNOBLOCK     365
-#define STR_NETCLIENT_TRACKERGETRESPONSE    366
-#define STR_NETCLIENT_TRACKERPROCESSRESPONSE 367
-#define STR_NETCLIENTERR_TRACKERNODATA      368
-#define STR_NETCLIENT_TRACKERCONNECT        369
-#define STR_NETCLIENT_IDLE                  370
-#define STR_NETCLIENTERR_BIND               371
-#define STR_NETCLIENTERR_BROADCAST          372
-#define STR_NETCLIENT_GETRESPONSES          373
 
 /* Sound errors */
-#define STR_SOUNDERR_FILENOTFOUND           374
-#define STR_SOUNDERR_HARDWAREINUSE          375
-#define STR_SOUNDERR_CREATEFAILED           376
-#define STR_SOUNDERR_COOPFAILED             377
-#define STR_SOUNDERR_PRIMARYBUFFFAIL        378
-#define STR_SOUNDERR_LOADSOUNDFAILED        379
 
 /* General WinBolo errors */
-#define STR_WBERR_MUTEXCREATE               380
-#define STR_WBERR_BRAINLISTLOAD             381
-#define STR_WBERR_KEYCLASSSETUP             382
 #define STR_WBTIMELIMIT_END                 383
 #define STR_WBERR_SAVEMAP                   384
 
@@ -405,14 +277,10 @@
 
 /* Misc dialog strings */
 #define STR_DLGMSG_TITLE                    459
-#define STR_DLGOPENING_BUTTON3              460
-#define STR_DLGOPENING_BUTTON4              461
 #define STRERR_HELPFILE                     462
-#define STR_DLGSKIN_TITLE                   463
 #define STR_DLGSKIN_BLURB                   464
 
 /* Player name error */
-#define STR_DLGGAMEFINDER_PLAYERWRONG       466
 #define NETERR_MAPSERIALIZE                 467
 
 /* System Info panel additions */
@@ -664,7 +532,6 @@
 #define STR_DLGBROWSER_MANUAL               702
 #define STR_DLGBROWSER_ERR_VERSION          703
 #define STR_DLGBROWSER_ERR_NEEDNAME         704
-#define STR_DLGBROWSER_SETNAME_TITLE        705
 #define STR_DLGBROWSER_AI_ADV               706
 #define STR_DLGBROWSER_AI_FULL              707
 
@@ -714,7 +581,6 @@
 #define STR_DLGWBN_LOADERR                  750
 #define STR_DLGWBN_DOWNLOAD_FAILED          751
 #define STR_DLGWBN_NOSAVEPATH               752
-#define STR_DLGWBN_POSTERR                  753
 #define STR_DLGWBN_FETCHERR                 754
 #define STR_DLGWBN_UNKNOWN_ERR              755
 #define STR_DLGWBN_FILEFILTER               756

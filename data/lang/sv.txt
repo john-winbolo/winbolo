@@ -7,30 +7,20 @@ author=Claude (Sonnet 4.6), Please help us improve this
 notes=Initial machine translation. Please help us improve this!
 
 # Opening dialog
-STR_DLGOPENING_TITLE=WinBolo – välj speltyp
-STR_DLGOPENING_TEXT=Välkommen till WinBolo, det flerspelar-spel med tankar.\nVälj en speltyp från listan nedan:
-STR_DLGOPENING_OPTION1=Övning
 STR_DLGOPENING_OPTION2=TCP/IP
-STR_DLGOPENING_OPTION3=Internet
-STR_DLGOPENING_SKIP=Hoppa över den här dialogrutan nästa gång
 STR_OK=OK
 STR_DLGOPENING_BUTTON2=Avsluta
 
 # Language dialog
-STR_DLGLANG_TITLE=Välj språk
-STR_DLGLANG_NAME_CAPTION=Namn:
 STR_DLGLANG_NAME=Svenska
 STR_DLGLANG_AUTHOR_CAPTION=Författare: 
 STR_DLGLANG_AUTHOR=Claude (Sonnet 4.6)
-STR_DLGOPENING_OPTION4=Lokalt nätverk
-STR_DLGOPENING_OPTION0=Tutorial
 STR_DLGLANG_NOTES_CAPTION=Kommentarer: 
 STR_DLGLANG_NOTES=Ingen.
 STR_DLGLANG_DEFAULTNOTE=Obs: För ofullständiga översättningar används engelska som reservspråk.
 
 # About dialog
 STR_DLGABOUT_TITLE=Om WinBolo
-STR_DLGABOUT_BLURB=WinBolo-paketet får spridas fritt under förutsättning att varken programmet eller någon av de medföljande filerna utelämnas eller ändras på något sätt.\n\nWinBolo är ett shareware-program. Shareware är inte gratis. Det kostar pengar, precis som annan mjukvara du köper, förutom att du med shareware får prova det först för att avgöra om du gillar det.\n\nWinBolo kostar 25 dollar (USA). Om du bestämmer dig för att behålla WinBolo kan du betala via följande metoder:\n\nKör programmet register.exe i WinBolo-mappen – det låter dig betala med check, postanvisning, kontanter eller kreditkort via e-post, fax eller post.\n\nFör att registrera med kreditkort online, besök: http://order.kagi.com/?XYV och fyll i formuläret.\n\nLäs textfilen Readme(Shareware) som ingår i distributionen för mer information.
 
 # Alliance dialog
 STR_DLGALLIANCE_TITLE=Alliansförfrågan
@@ -39,16 +29,8 @@ STR_DLGALLIANCE_DECLINE=Avböj
 STR_DLGALLIANCE_BLURB={player} begär allians. Acceptera?
 
 # Game finder dialog
-STR_DLGGAMEFINDER_REFRESHFIRST=Prova att trycka på Uppdatera först.
-STR_DLGGAMEFINDER_MESSAGEOFTHEDAY=Dagens meddelande
-STR_DLGGAMEFINDER_WRONGVERSION=Spelet du försökte gå med i använder en annan version av WinBolo. Prova ett annat spel
-STR_DLGGAMEFINDER_NOGAMESINPROGRESS=Inga pågående spel (Starta ett!)
 STR_YES=Ja
 STR_NO=Nej
-STR_DLGGAMEFINDER_YESADV=Ja (fördel)
-STR_DLGGAMEFINDER_OPEN=Öppet
-STR_DLGGAMEFINDER_TOURNAMENT=Turnering
-STR_DLGGAMEFINDER_STRICTTOURNAMENT=Strikt
 
 # Game info dialog
 STR_DLGGAMEINFO_TITLE=Spelinfo
@@ -56,28 +38,21 @@ STR_DLGGAMEINFO_MAPNAME=Karta:
 STR_DLGGAMEINFO_NUMPLAYERS=Spelare: {number}
 STR_DLGGAMEINFO_GAMETYPE=Speltyp: 
 STR_DLGGAMEINFO_HIDDENMINES=Dolda minor: 
-STR_DLGGAMEINFO_ALLOWCOMPTANKS=Datortankar tillåtna: 
 STR_DLGGAMEINFO_TIMELIMIT=Tidsgräns:
 
 # Game setup dialog
-STR_DLGGAMESETUP_BLURB=Välj de alternativ du vill ha för ditt nya spel:
 STR_CANCEL=Avbryt
 STR_DLGGAMESETUP_TITLE=Spelinställningar
 STR_DLGGAMESETUP_CHOOSEMAP=Välj karta
-STR_DLGGAMESETUP_SELECTEDMAP=Vald karta: 
-STR_DLGGAMESETUP_SELECTEDMAPINBUILT=Vald karta: Everard Island (inbyggd)
 STR_DLGGAMESETUP_RADIO1=Öppet spel (förbeväpnat)
 STR_DLGGAMESETUP_RADIO2=Turnering (gratis ammunition tidigt)
 STR_DLGGAMESETUP_RADIO3=Strikt turnering (ingen gratis ammunition)
 STR_DLGGAMESETUP_HIDDENMINES=Tillåt dolda minor
-STR_DLGGAMESETUP_ALLOWCOMPTANKS=Tillåt datortankar
-STR_DLGGAMESETUP_ALLOWCOMPTANKSADV=och ge dem en fördel
 STR_DLGGAMESETUP_PASSWORD=Spellösenord
 STR_DLGGAMESETUP_MINUTES=minuter
 STR_DLGGAMESETUP_SECONDS=sekunder
 STR_DLGGAMESETUP_STARTDELAY=Spelets startfördröjning
 STR_DLGGAMESETUP_TIMELIMIT=Spelets tidsgräns
-STR_DLGGAMESETUP_ERROROPENINGMAP=Fel vid öppning av karta.
 STR_DLGGAMEINFO_TIMEREMAINING=Ungefär {number} minut(er)
 STR_DLGGAMEINFO_OPEN=Öppet
 STR_DLGGAMEINFO_TOURN=Turnering
@@ -87,15 +62,11 @@ STR_DLGGAMESETUP_DEFAULTNAME=Jag
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Tangentinställningar
-STR_DLGKEYSETUP_BLURB=Klicka på det alternativ du vill ändra och tryck sedan på den tangent du vill tilldela. Tangenterna ALT, PRINT SCREEN och PAUSE kan inte tilldelas.
 STR_DLGKEYSETUP_DRIVETANK=Kör tank
-STR_DLGKEYSETUP_TURNTANK=Rotera tank:
 STR_DLGKEYSETUP_GUNRANGE=Skottvidd
 STR_DLGKEYSETUP_WEAPONS=Vapen
 STR_DLGKEYSETUP_VIEW=Vyer
 STR_DLGKEYSETUP_SCROLL=Rulla
-STR_DLGKEYSETUP_LEFT=(vänster)
-STR_DLGKEYSETUP_RIGHT=(höger)
 STR_DLGKEYSETUP_AUTOSLOWDOWN=Automatisk inbromsning
 STR_DLGKEYSETUP_AUTOGUNSIGHT=Dölj siktet automatiskt
 STR_DLGKEYSETUP_FASTER=Snabbare
@@ -112,21 +83,6 @@ STR_DLGKEYSETUP_SCROLLUP=Upp
 STR_DLGKEYSETUP_SCROLLDOWN=Ned
 STR_DLGKEYSETUP_SCROLLLEFT=Vänster
 STR_DLGKEYSETUP_SCROLLRIGHT=Höger
-STR_DLGKEYSETUP_NEWKEYFOR=Tryck ny tangent för 
-STR_DLGKEYSETUP_FORWARD=framåt
-STR_DLGKEYSETUP_BACKWARD=bakåt
-STR_DLGKEYSETUP_ROTATELEFT=rotera vänster
-STR_DLGKEYSETUP_ROTATERIGHT=rotera höger
-STR_DLGKEYSETUP_INCREASERANGE=öka räckvidd
-STR_DLGKEYSETUP_DECREASERANGE=minska räckvidd
-STR_DLGKEYSETUP_SETSHOOT=skjut
-STR_DLGKEYSETUP_SETLAYMINE=lägg ut mina
-STR_DLGKEYSETUP_SETTANKVIEW=tankvy
-STR_DLGKEYSETUP_SETPILLVIEW=bunkervy
-STR_DLGKEYSETUP_SETSCROLLUP=rulla upp
-STR_DLGKEYSETUP_SETSCROLLDOWN=rulla ned
-STR_DLGKEYSETUP_SETSCROLLLEFT=rulla vänster
-STR_DLGKEYSETUP_SETSCROLLRIGHT=rulla höger
 
 # Messages dialog
 STR_DLGMSG_BUTTON=Skicka
@@ -139,10 +95,7 @@ STR_DLGMSG_SENDPLAYERS=Skickar meddelande till {number} spelare
 
 # Network info dialog
 STR_DLGNETINFO_TITLE=Nätverksinfo
-STR_DLGNETINFO_SERVERADDRESS=Serveradress:
-STR_DLGNETINFO_THISGAMEADDRESS=Aktuellt spels adress:
 STR_DLGNETINFO_SERVERPING=Serverpingning: {number} ms
-STR_DLGNETINFO_PACKETS=Paket per sekund (per spelare):
 STR_DLGNETINFO_STATUS=Status:
 STR_DLGNETINFO_ERRORS=Nätverksfel: {number}
 
@@ -151,7 +104,6 @@ STR_DLGPASSWORD_TITLE=Lösenord krävs
 STR_DLGPASSWORD_BLURB=Det här spelet kräver ett lösenord:
 
 # Set name dialog
-STR_DLGSETNAME_TITLE=Ange spelarnamn
 STR_DLGSETNAME_BLURB=Ange ett nytt spelarnamn för din tank:
 
 # Tracker setup dialog
@@ -165,13 +117,9 @@ STR_DLGSYSINFO_TITLE=Systeminformation
 STR_DLGSYSINFO_CPUUSAGE=CPU-användning:
 STR_DLGSYSINFO_SIMMODELING=Simmodellering:
 STR_DLGSYSINFO_COMPROCESSING=Kommunikationsbearbetning:
-STR_DLGSYSINFO_GRAHPICSDISPLAY=Grafikvisning:
-STR_DLGSYSINFO_AICONTROLPROCESSING=AI-tankstyrning:
 STR_DLGSYSINFO_TOTAL=Totalt:
-STR_DLGSYSINFO_GRAPHICSFPS=Grafikbilder per sekund
 
 # TCP/IP setup dialog
-STR_DLGTCP_TITLE=UDP-inställningar (Internet)
 STR_DLGTCP_BLURB=För att gå med i ett Bolo-spel via Internet måste du ange namn (eller IP-adress) till en värdmaskin som kör Bolo samt UDP-portnumret för Bolo-processen på den maskinen.
 STR_DLGTCP_JOIN=Gå med
 STR_DLGTCP_REJOIN=Återanslut
@@ -187,101 +135,25 @@ STR_DLGTCP_JOINBLURB=Klicka på "Gå med" för att gå med i ett befintligt spel
 STR_DLGTCP_REJOINBLURB=Klicka på "Återanslut" för att återansluta och återta dina gamla tillgångar
 STR_ERR_DLGTCP_PORTS=Server- och egna portar är desamma!
 STR_ERR_DLGTCP_NOTRIGHT=Något är fel här...
-STR_ERR_DLGTCP_SUBCLASS=Det går inte att ange fönsterunderklass för kopiering!
 
 # Game finder extra
-STR_DLGGAMEFINDER_JOINADDRESS=Gå med via &adress
-STR_DLGGAMEFINDER_REFRESH=&Uppdatera
-STR_DLGGAMEFINDER_PLAYERNAME=Ange &spelarnamn
-STR_DLGGAMEFINDER_MOTD=&Dagens meddelande
-STR_DLGGAMEFINDER_STATUSBLURB=Status: 
-STR_DLGGAMEFINDER_SELECTEDGAME=Info om valt spel
-STR_DLGGAMEFINDER_BRAINS=Brains:
-STR_DLGGAMEFINDER_PASSWORD=Lösenord:
-STR_DLGGAMEFINDER_PILLS=Antal fria bunkrar:
-STR_DLGGAMEFINDER_BASES=Antal fria baser:
-STR_DLGGAMEFINDER_HIDDENMINES=Dolda minor:
-STR_DLGGAMEFINDER_NUMPLAYERS=Antal spelare:
-STR_DLGGAMEFINDER_VERSION=Version:
-STR_DLGGAMEFINDER_GAMETYPE=Speltyp:
-STR_DLGGAMEFINDER_PORT=Serverport:
-STR_DLGGAMEFINDER_ADDRESS=Serveradress:
 
 # Brain errors
-STR_BRAINERR_BRAINDIR=Brains-katalogen finns inte.\nLaddar inga brains!
-STR_BRAINERR_LAUNCH=Fel vid start av Brain
-STR_BRAINERR_LAUNCHMAIN=Fel vid start av Brain – Brain saknar "BrainMain"
-STR_BRAINERR_INIT=Fel vid initiering av Brain
-STR_BRAINERR_EXEC=Det gick inte att köra Brain
 
 # Draw errors
-STR_DRAWERROR_CREATEOBJECT=Det gick inte att skapa DD-objekt
-STR_DRAWERROR_SETCOOPLEVEL=Det gick inte att skapa DD co-op-nivå
-STR_DRAWERROR_CREATEPRIMARY=Det gick inte att skapa DD-primäryta
-STR_DRAWERROR_GETPIXELFORMAT=Det gick inte att hämta DD-pixelformat
-STR_DRAWERROR_GETDESC=Det gick inte att hämta ytbeskrivning
-STR_DRAWERROR_TOOFEWCOLOURS=Den här versionen av WinBolo fungerar inte i palettläge.\n Ändra färgdjupet till mer än 256 färger
-STR_DRAWERROR_BUFFERCREATE=Det gick inte att skapa DD-buffert
-STR_DRAWERROR_GETDCFAILED=DD Get DC misslyckades
-STR_DRAWERROR_CLIPPERFAILED=Det gick inte att skapa DD Clipper
-STR_DRAWERROR_BRUSH=Fel vid skapande av ritpensel
-STR_DRAWERROR_PEN=Fel vid skapande av ritpenna
-STR_DRAW_GAMESTARTSIN=Spelet startar om 
-STR_DRAWERROR_RELEASEDC=Fel vid frigörande av DC för ritning av tanketikett (det är allvarligt)
-STR_DRAW_PILLBOXVIEW=Bunkervy
 
 # Font errors
-STR_FONTERR_NOCOURIERFONT=Det gick inte att läsa in teckensnittet Courier New
 
 # Game front errors
-STR_GAMEFRONTERR_CORRUPTPREFS=Det uppstod ett fel vid läsning av inställningar. Standardvärdena används
-STR_GAMEFRONTERR_WINDOW=Fel vid skapande av fönster
-STR_GAMEFRONTERR_DDRAW=Fel vid konfiguration av Direct Draw
-STR_GAMEFRONTERR_DSOUND=Fel vid konfiguration av Direct Sound
-STR_GAMEFRONTERR_DINPUT=Fel vid konfiguration av Direct Input
-STR_GAMEFRONTERR_CURSOR=Fel vid inläsning av muspekare
-STR_GAMEFRONTERR_FONTS=Fel vid inläsning av teckensnitt
 STR_GAMEFRONT_LANFINDER_TITLE=LAN-spelfinnare
 STR_GAMEFRONT_TRACKERFINDER_TITLE=Tracker-spelfinnare
 STR_GAMEFRONTERR_JOINGAME=Det uppstod ett fel vid försöket att gå med i spelet
-STR_GAMEFRONTERR_SPAWNSERVER=Det uppstod ett fel vid försöket att starta serverprocessen.\n Finns programmet "WinBoloDS" i samma katalog som WinBolo?
-STR_GAMEFRONTERR_NETSINGLEPLAYER=Något mycket märkligt inträffade i nätverksundersystemet, vilket är konstigt eftersom du valde ett enspelarspel. Tur för dig...
-STR_GAMEFRONT_SERVERSTARTMSG=Startar dedikerad server. Skriv "quit" i dess fönster för att avsluta.
-STR_GAMEFRONT_INPUTERR_CREATE=Det gick inte att skapa Direct Input-tangentbordsenheten
-STR_GAMEFRONT_INPUTERR_DATAFORMAT=Det gick inte att ange dataformat för Direct Input-tangentbordsenheten
-STR_GAMEFRONT_INPUTERR_COOPLEVEL=Det gick inte att ange co-op-nivå för Direct Input-tangentbordsenheten
 
 # Network client errors
-STR_NETCLIENTERR_WINSOCKFAILSTARTUP=Fel vid start av Winsock
-STR_NETCLIENTERR_CREATEUDPFAIL=Fel vid skapande av UDP-uttag
-STR_NETCLIENTERR_CREATETCPFAIL=Fel vid skapande av TCP-uttag
-STR_NETCLIENTERR_BINDUDPFAIL=Fel vid bindning av UDP-uttag\n Något annat program använder redan den här porten. Prova att välja en annan.\n\nOBS: Om du startade ett nätverksspel och det lyckades är det fortfarande igång.\n Du behöver inte starta det igen
-STR_NETCLIENTERR_CHAINFAIL=Fel vid tillägg av nätverkshändelser till meddelandekedjan
-STR_NETCLIENTERR_TRACKERVERSIONFAIL=Tracker-versionen stöds inte
-STR_NETCLIENTERR_TRACKERDNSFAIL=Det gick inte att hitta trackern (DNS-slagfel)
-STR_NETCLIENTERR_TRACKERCONNECTFAIL=Fel vid anslutning till trackern
-STR_NETCLIENTERR_TRACKERNOBLOCK=Fel vid konfiguration av uttag som icke-blockerande
-STR_NETCLIENT_TRACKERGETRESPONSE=Tar emot spelinfo...
-STR_NETCLIENT_TRACKERPROCESSRESPONSE=Bearbetar tracker-data...
-STR_NETCLIENTERR_TRACKERNODATA=Fel: Trackern skickade inga data
-STR_NETCLIENT_TRACKERCONNECT=Ansluter: 
-STR_NETCLIENT_IDLE=Inaktiv
-STR_NETCLIENTERR_BIND=Fel vid bindning av uttag
-STR_NETCLIENTERR_BROADCAST=Fel vid sändning av broadcast
-STR_NETCLIENT_GETRESPONSES=Tar emot svar...
 
 # Sound errors
-STR_SOUNDERR_FILENOTFOUND=Det gick inte att läsa in WinBolo-ljud – fortsätter utan ljud
-STR_SOUNDERR_HARDWAREINUSE=Fel vid konfiguration av Direct Sound – hårdvaran används av ett annat program.\nFortätter utan ljud.
-STR_SOUNDERR_CREATEFAILED=Det gick inte att skapa DS-objekt\nFortätter utan ljud.
-STR_SOUNDERR_COOPFAILED=Det gick inte att skapa DS co-op-nivå
-STR_SOUNDERR_PRIMARYBUFFFAIL=Det gick inte att skapa DS-primärbuffert
-STR_SOUNDERR_LOADSOUNDFAILED=Inläsning av en eller flera ljudfiler misslyckades
 
 # General WinBolo errors
-STR_WBERR_MUTEXCREATE=Fel vid skapande av Mutex. (det är allvarligt)
-STR_WBERR_BRAINLISTLOAD=Fel vid inläsning av Brain-listan
-STR_WBERR_KEYCLASSSETUP=Fel vid konfiguration av tangentinställningsklass
 STR_WBTIMELIMIT_END=Tidsgränsen har löpt ut. Spelet har avslutats.
 STR_WBERR_SAVEMAP=Fel vid sparande av karta (Disk full?)
 
@@ -377,14 +249,10 @@ NETERR_LOSTCONNECTION=Du har förlorat anslutningen till servern.\nDu övergår 
 
 # Misc dialog strings
 STR_DLGMSG_TITLE=Skicka meddelande
-STR_DLGOPENING_BUTTON3=Språk
-STR_DLGOPENING_BUTTON4=Hjälp
 STRERR_HELPFILE=Fel vid öppning av hjälpfil.
-STR_DLGSKIN_TITLE=Skinsval
 STR_DLGSKIN_BLURB=Om inte alla skinelement finns används det inbyggda standardskinnet/standardljuden.
 
 # Player name error
-STR_DLGGAMEFINDER_PLAYERWRONG=Ursäkta, men ditt spelarnamn är tomt – du måste ha ett spelarnamn
 NETERR_MAPSERIALIZE=Servern kunde inte förbereda kartdata. Försök igen
 
 # System Info panel additions
@@ -636,7 +504,6 @@ STR_DLGBROWSER_PLAYER_NAME_BTN=Spelarnamn
 STR_DLGBROWSER_MANUAL=Manuell
 STR_DLGBROWSER_ERR_VERSION=Servern kör en annan version av WinBolo.
 STR_DLGBROWSER_ERR_NEEDNAME=Du måste ange ett spelarnamn först.
-STR_DLGBROWSER_SETNAME_TITLE=Ange spelarnamn
 STR_DLGBROWSER_AI_ADV=Fördel
 STR_DLGBROWSER_AI_FULL=Full
 
@@ -686,7 +553,6 @@ STR_DLGWBN_NETERR=Nätverksfel
 STR_DLGWBN_LOADERR=Det gick inte att ladda detaljer
 STR_DLGWBN_DOWNLOAD_FAILED=Nedladdning misslyckades
 STR_DLGWBN_NOSAVEPATH=Det gick inte att fastställa sökväg för sparande
-STR_DLGWBN_POSTERR=Det gick inte att publicera kommentar
 STR_DLGWBN_FETCHERR=Hämtning misslyckades
 STR_DLGWBN_UNKNOWN_ERR=Okänt fel
 STR_DLGWBN_FILEFILTER=WinBolo-loggfiler
