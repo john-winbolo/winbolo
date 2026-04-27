@@ -50,36 +50,6 @@ static const float DIALOG_WIDTH_FRACTION = 0.5f;
 static const float DIALOG_MIN_W = 420.0f;
 static const float DIALOG_MAX_W = 700.0f;
 
-/* Load an SVG file and rasterize it to an SDL_Texture at the given size.
- * Returns NULL on failure. Caller must SDL_DestroyTexture(). */
-static SDL_Texture *loadIconTexture(SDL_Renderer *renderer, const char *path, int size) {
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-
-    float scale = (float)size / image->height;
-    if (image->width * scale > (float)size) scale = (float)size / image->width;
-    int w = size, h = size;
-
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-
-    float offX = ((float)w - image->width * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 static const char *iconPathForType(ImguiMsgType type) {
     switch (type) {
         case IMGUI_MSG_WARNING: return "data/ui/dialog-warning.svg";
@@ -224,7 +194,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     ImGui_ImplSDLRenderer3_Init(renderer);
     dialogApplyScaling(s);
 
-    SDL_Texture *iconTex = loadIconTexture(renderer, iconPathForType(type), ICON_SIZE);
+    SDL_Texture *iconTex = imguiLoadSvgIcon(renderer, iconPathForType(type), ICON_SIZE);
 
     /* Compute dialog width: 50% of window, clamped to [420, 700] */
     float dialogW = (float)screenW * DIALOG_WIDTH_FRACTION;

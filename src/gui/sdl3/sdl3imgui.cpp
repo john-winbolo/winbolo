@@ -77,6 +77,7 @@ extern "C" {
 #include "sdl3imgui_tablet.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "dialogs/imgui_dialog_utils.h"
 
 extern "C" void windowSetQuitting(void);
 
@@ -265,36 +266,12 @@ static SDL_Texture *s_iconSteam = nullptr;
 static bool s_wbnIconsLoaded = false;
 #define WBN_ICON_SIZE 14
 
-static SDL_Texture *loadSvgIconSmall(const char *path, int size) {
-    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-    if (!image) return nullptr;
-    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-    float scale = (float)size / image->height;
-    if (image->width * scale > (float)size) scale = (float)size / image->width;
-    int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
-    float offX = ((float)w - image->width * scale) * 0.5f;
-    float offY = ((float)h - image->height * scale) * 0.5f;
-    NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
-    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-    return tex;
-}
-
 static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
-    s_iconGlobe = loadSvgIconSmall("data/ui/globe.svg", WBN_ICON_SIZE);
-    s_iconSteam = loadSvgIconSmall("data/ui/steam.svg", WBN_ICON_SIZE);
+    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    s_iconGlobe = imguiLoadSvgIcon(r, "data/ui/globe.svg", WBN_ICON_SIZE);
+    s_iconSteam = imguiLoadSvgIcon(r, "data/ui/steam.svg", WBN_ICON_SIZE);
     SDL_Log("[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
