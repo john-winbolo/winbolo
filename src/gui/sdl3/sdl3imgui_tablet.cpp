@@ -37,6 +37,7 @@
 #include "imgui_internal.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "../../bolo/global.h"
@@ -87,36 +88,13 @@ static SDL_Texture *s_iconMessages = nullptr;
 static SDL_Texture *s_iconSettings = nullptr;
 static bool s_iconsLoaded = false;
 
-static SDL_Texture *loadSvgIcon(const char *path, int size) {
-  NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
-  if (!image) return nullptr;
-  if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
-  float scale = (float)size / image->height;
-  if (image->width * scale > (float)size) scale = (float)size / image->width;
-  int w = size, h = size;
-  unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-  if (!pixels) { nsvgDelete(image); return nullptr; }
-  memset(pixels, 0, (size_t)(w * h * 4));
-  float offX = ((float)w - image->width * scale) * 0.5f;
-  float offY = ((float)h - image->height * scale) * 0.5f;
-  NSVGrasterizer *rast = nsvgCreateRasterizer();
-  nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
-  nsvgDeleteRasterizer(rast);
-  nsvgDelete(image);
-  SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-  if (!surface) { SDL_free(pixels); return nullptr; }
-  SDL_Texture *tex = SDL_CreateTextureFromSurface(sdl3DrawGetRenderer(), surface);
-  SDL_DestroySurface(surface);
-  SDL_free(pixels);
-  return tex;
-}
-
 static void ensureIconsLoaded(int size) {
   if (s_iconsLoaded) return;
   s_iconsLoaded = true;
-  s_iconPlayers  = loadSvgIcon("data/ui/players.svg", size);
-  s_iconMessages = loadSvgIcon("data/ui/messages.svg", size);
-  s_iconSettings = loadSvgIcon("data/ui/settings.svg", size);
+  SDL_Renderer *r = sdl3DrawGetRenderer();
+  s_iconPlayers  = imguiLoadSvgIcon(r, "data/ui/players.svg", size);
+  s_iconMessages = imguiLoadSvgIcon(r, "data/ui/messages.svg", size);
+  s_iconSettings = imguiLoadSvgIcon(r, "data/ui/settings.svg", size);
 }
 
 /* Tile sheet dimensions */
