@@ -431,6 +431,28 @@ int tileLoaderGetMissingSprites(int density, char *outBuf, int outBufSize) {
     return tileLoaderQueryMissingSprites(s_themeName, density, outBuf, outBufSize);
 }
 
+/* HUD/chrome sprite names that don't count toward "full tile coverage" —
+ * a theme that ships only world tiles is still considered fully covering
+ * the world. */
+static bool isNonWorldSprite(const char *name) {
+    static const char *kSkipPrefixes[] = {
+        "indent_",     /* HUD builder-status slot backgrounds and dots */
+        "status_",     /* HUD status icons (base/pill/dead) */
+    };
+    for (size_t i = 0; i < sizeof(kSkipPrefixes) / sizeof(kSkipPrefixes[0]); i++) {
+        size_t plen = SDL_strlen(kSkipPrefixes[i]);
+        if (SDL_strncmp(name, kSkipPrefixes[i], plen) == 0) return true;
+    }
+    static const char *kSkipExact[] = {
+        "gunsight", "mouse_square", "tank_icon", "tank_transparent",
+        "static",
+    };
+    for (size_t i = 0; i < sizeof(kSkipExact) / sizeof(kSkipExact[0]); i++) {
+        if (SDL_strcmp(name, kSkipExact[i]) == 0) return true;
+    }
+    return false;
+}
+
 int tileLoaderQueryMissingSprites(const char *themeName, int density,
                                    char *outBuf, int outBufSize) {
     if (outBuf && outBufSize > 0) outBuf[0] = '\0';
@@ -443,6 +465,7 @@ int tileLoaderQueryMissingSprites(const char *themeName, int density,
     int writePos = 0;
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const char *name = gTileMap[i].name;
+        if (isNonWorldSprite(name)) continue;
         if (spriteAtDensityFor(themeName, info.max_pixel_density, name, density)) continue;
         count++;
         if (outBuf && outBufSize > 0) {
