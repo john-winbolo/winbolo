@@ -38,6 +38,7 @@
 #include "draw_setup_arrays.h"
 #include "logviewer.h"
 #include "imgui/imgui_main_menu.h"
+#include "../gui/sdl3/sdl_bmp.h"
 
 /* Must be included after global.h to avoid bool type conflict */
 #include <SDL3/SDL.h>
@@ -47,11 +48,6 @@
 #define TEAM_IMAGE_SIZE_Y (17 * 16)
 #define ITEM_IMAGE_SIZE_X (17 * 16)
 #define ITEM_IMAGE_SIZE_Y (17 * 16)
-
-/* Color key for transparency (green) */
-#define COLOR_KEY_R 0
-#define COLOR_KEY_G 255
-#define COLOR_KEY_B 0
 
 /* SDL3 Renderer and Window */
 static SDL_Window *sdlWindow = NULL;
@@ -234,41 +230,6 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY) {
     lv_drawApplyZoomStep(g_zoomStepIndex - 1, mouseScreenX, mouseScreenY);
 }
 
-/* Load a BMP file from the filesystem and create an SDL texture.
- * Applies green (0,255,0) color key for sprite transparency. */
-static SDL_Texture *loadTextureFromFile(const char *filename, SDL_Renderer *renderer) {
-    SDL_Surface *surface;
-    SDL_Surface *converted;
-    SDL_Texture *texture;
-    const SDL_PixelFormatDetails *fmt;
-    Uint32 colorKey;
-
-    surface = SDL_LoadBMP(filename);
-    if (!surface) {
-
-        return NULL;
-    }
-
-    /* Convert to ARGB8888 so color key transparency works with alpha blending */
-    converted = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_ARGB8888);
-    SDL_DestroySurface(surface);
-    if (!converted) {
-        return NULL;
-    }
-
-    fmt = SDL_GetPixelFormatDetails(converted->format);
-    colorKey = SDL_MapRGB(fmt, NULL, COLOR_KEY_R, COLOR_KEY_G, COLOR_KEY_B);
-    SDL_SetSurfaceColorKey(converted, true, colorKey);
-
-    texture = SDL_CreateTextureFromSurface(renderer, converted);
-    SDL_DestroySurface(converted);
-    if (!texture) {
-        return NULL;
-    }
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    return texture;
-}
-
 /*********************************************************
 *NAME:          lv_drawSetupWithHandles
 *PURPOSE:
@@ -298,16 +259,16 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
         char bmpPath[1024];
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
-        textureTiles = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureTiles = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureBoats = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureItems = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
     }
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
@@ -394,16 +355,16 @@ BYTE lv_drawSetup(void) {
         char bmpPath[1024];
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
-        textureTiles = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureTiles = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureBoats = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureItems = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
     }
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
@@ -522,11 +483,7 @@ void lv_drawSplashForImGui(void) {
         if (!basePath) basePath = "./";
         char splashPath[1024];
         SDL_snprintf(splashPath, sizeof(splashPath), "%sdata/splash.bmp", basePath);
-        SDL_Surface *surface = SDL_LoadBMP(splashPath);
-        if (surface) {
-            textureSplash = SDL_CreateTextureFromSurface(sdlRenderer, surface);
-            SDL_DestroySurface(surface);
-        }
+        textureSplash = sdlLoadBmpAsTexture(sdlRenderer, splashPath, false);
     }
     
     if (textureSplash) {
