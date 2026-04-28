@@ -487,6 +487,16 @@ void lv_screenGetOffsets(BYTE *x, BYTE *y);
 void lv_screenSetOffset(BYTE x, BYTE y);
 void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset);
 
+/* Sub-tile pan, in zoom-1 native pixels within the (xOffset,yOffset) tile.
+ * Used by mouse-drag panning to give smooth scrolling between tiles. */
+void lv_screenGetSubOffset(int *x, int *y);
+void lv_screenSetSubOffset(int x, int y);
+
+/* Pan to an absolute view position measured in zoom-1 native pixels.
+ * Decomposes into (xOffset,yOffset)+(subPxX,subPxY), clamps to the map
+ * bounds, and triggers a redraw if the whole-tile component changed. */
+void lv_screenPanToTotalPixels(int totalPxX, int totalPxY);
+
 void lv_windowAddEvent(int eventType, char *msg);
 void lv_windowStop(int corruptLog);
 void lv_finished();

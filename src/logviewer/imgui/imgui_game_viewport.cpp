@@ -30,6 +30,8 @@ extern "C" {
     float lv_drawGetZoomLevel(void);
     void lv_windowPlay(void);
     void lv_windowPause(void);
+    void lv_screenGetSubOffset(int *x, int *y);
+    void lv_screenPanToTotalPixels(int totalPxX, int totalPxY);
 }
 
 static LogViewerState *s_lv = nullptr;
@@ -43,13 +45,15 @@ static LogViewerState *s_lv = nullptr;
 /* Drag threshold in pixels - must match main.c */
 #define DRAG_THRESHOLD 4
 
-/* Drag state */
+/* Drag state. Pan position is tracked as a total in zoom-1 native pixels
+ * so the drag handler can pan smoothly at sub-tile granularity instead of
+ * snapping to whole tiles. */
 static bool s_is_dragging = false;
 static bool s_is_mouse_down = false;
 static float s_drag_start_x = 0.0f;
 static float s_drag_start_y = 0.0f;
-static unsigned char s_drag_start_offset_x = 0;
-static unsigned char s_drag_start_offset_y = 0;
+static int s_drag_start_total_px_x = 0;
+static int s_drag_start_total_px_y = 0;
 
 
 void lv_imgui_game_viewport_init(struct LogViewerState *lv) {
@@ -58,8 +62,18 @@ void lv_imgui_game_viewport_init(struct LogViewerState *lv) {
     s_is_mouse_down = false;
     s_drag_start_x = 0.0f;
     s_drag_start_y = 0.0f;
-    s_drag_start_offset_x = 0;
-    s_drag_start_offset_y = 0;
+    s_drag_start_total_px_x = 0;
+    s_drag_start_total_px_y = 0;
+}
+
+/* Read the current pan position as a single total in zoom-1 native pixels. */
+static void get_total_pan_pixels(int *outX, int *outY) {
+    unsigned char ox = 0, oy = 0;
+    int sx = 0, sy = 0;
+    lv_screenGetOffsets(&ox, &oy);
+    lv_screenGetSubOffset(&sx, &sy);
+    *outX = (int)ox * TILE_SIZE_X + sx;
+    *outY = (int)oy * TILE_SIZE_Y + sy;
 }
 
 void lv_imgui_game_viewport_render_background(void) {
@@ -138,12 +152,13 @@ int lv_imgui_game_viewport_process_input(void) {
             s_is_dragging = false;
             s_drag_start_x = io.MousePos.x;
             s_drag_start_y = io.MousePos.y;
-            lv_screenGetOffsets(&s_drag_start_offset_x, &s_drag_start_offset_y);
+            get_total_pan_pixels(&s_drag_start_total_px_x,
+                                 &s_drag_start_total_px_y);
         } else {
             /* Mouse is still down - check for drag */
             float dx = io.MousePos.x - s_drag_start_x;
             float dy = io.MousePos.y - s_drag_start_y;
-            
+
             /* Check if we've exceeded the drag threshold */
             if (!s_is_dragging) {
                 if (dx >= DRAG_THRESHOLD || dx <= -DRAG_THRESHOLD ||
@@ -151,45 +166,40 @@ int lv_imgui_game_viewport_process_input(void) {
                     s_is_dragging = true;
                 }
             }
-            
-            /* If dragging, pan the map. Pixel deltas are in screen space;
-             * each on-screen tile spans TILE_SIZE * zoom screen pixels. */
+
+            /* Pan in zoom-1 native pixel units: each on-screen pixel maps
+             * to 1/zoom texture pixels. Drag right => see further left of
+             * map, so subtract the delta. */
             if (s_is_dragging) {
                 float zoom = lv_drawGetZoomLevel();
                 if (zoom <= 0.0f) zoom = 1.0f;
-                float tile_pixels_x = (float)TILE_SIZE_X * zoom;
-                float tile_pixels_y = (float)TILE_SIZE_Y * zoom;
-                int tile_delta_x = (int)(dx / tile_pixels_x);
-                int tile_delta_y = (int)(dy / tile_pixels_y);
-
-                unsigned char new_x = (unsigned char)(s_drag_start_offset_x - tile_delta_x);
-                unsigned char new_y = (unsigned char)(s_drag_start_offset_y - tile_delta_y);
+                int delta_px_x = (int)(dx / zoom);
+                int delta_px_y = (int)(dy / zoom);
+                int new_total_x = s_drag_start_total_px_x - delta_px_x;
+                int new_total_y = s_drag_start_total_px_y - delta_px_y;
 
                 lv_drawDirtyScreen();  /* Invalidate cache when view scrolls */
-                lv_screenPanToOffsets(new_x, new_y);
+                lv_screenPanToTotalPixels(new_total_x, new_total_y);
                 input_processed = 1;
             }
         }
     }
-    
+
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         if (s_is_mouse_down) {
             if (s_is_dragging) {
-                /* End of drag - finalize position (zoom-aware, see above) */
+                /* End of drag - finalize position (sub-pixel-aware, see above) */
                 float dx = io.MousePos.x - s_drag_start_x;
                 float dy = io.MousePos.y - s_drag_start_y;
                 float zoom = lv_drawGetZoomLevel();
                 if (zoom <= 0.0f) zoom = 1.0f;
-                float tile_pixels_x = (float)TILE_SIZE_X * zoom;
-                float tile_pixels_y = (float)TILE_SIZE_Y * zoom;
-                int tile_delta_x = (int)(dx / tile_pixels_x);
-                int tile_delta_y = (int)(dy / tile_pixels_y);
-
-                unsigned char new_x = (unsigned char)(s_drag_start_offset_x - tile_delta_x);
-                unsigned char new_y = (unsigned char)(s_drag_start_offset_y - tile_delta_y);
+                int delta_px_x = (int)(dx / zoom);
+                int delta_px_y = (int)(dy / zoom);
+                int new_total_x = s_drag_start_total_px_x - delta_px_x;
+                int new_total_y = s_drag_start_total_px_y - delta_px_y;
 
                 lv_drawDirtyScreen();  /* Invalidate cache when view scrolls */
-                lv_screenPanToOffsets(new_x, new_y);
+                lv_screenPanToTotalPixels(new_total_x, new_total_y);
             } else {
                 /* Click without drag - handle as selection */
                 int game_x, game_y;

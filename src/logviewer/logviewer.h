@@ -74,6 +74,9 @@ typedef struct LogViewerState {
   snapshot     snap;
   BYTE         xOffset;
   BYTE         yOffset;
+  int          subPxX;     /* sub-tile pan offset within (xOffset,yOffset) tile,
+                            * in zoom-1 native pixels. Range: [0, TILE_SIZE_X). */
+  int          subPxY;
   BYTE         screenSizeX;
   BYTE         screenSizeY;
   bool         isPlaying;

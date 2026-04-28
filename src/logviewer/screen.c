@@ -35,6 +35,7 @@
 #include "global.h"
 #include "backend.h"
 #include "bolo_map.h"
+#include "tiles.h"
 #include "pillbox.h"
 #include "bases.h"
 #include "screencalc.h"
@@ -311,6 +312,8 @@ void lv_screenSetup() {
   g_lv->logLoaded = FALSE;
   g_lv->xOffset = 127;
   g_lv->yOffset = 127;
+  g_lv->subPxX  = 0;
+  g_lv->subPxY  = 0;
   lv_mapCreate(&g_lv->mp);
   lv_pillsCreate(&g_lv->pb);
   lv_startsCreate(&g_lv->ss);
@@ -1608,6 +1611,57 @@ void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
   g_lv->xOffset = newXOffset;
   g_lv->yOffset = newYOffset;
   lv_screenUpdate(redraw);
+}
+
+void lv_screenGetSubOffset(int *x, int *y) {
+  if (x != NULL) *x = g_lv->subPxX;
+  if (y != NULL) *y = g_lv->subPxY;
+}
+
+void lv_screenSetSubOffset(int x, int y) {
+  g_lv->subPxX = x;
+  g_lv->subPxY = y;
+}
+
+/* Decompose a total pan position (in zoom-1 native pixels) into
+ * (xOffset,yOffset) tile + (subPxX,subPxY) pixel components, clamping
+ * to the map. The whole-tile range matches the existing resize-time
+ * clamp ([0, 255 - screenSize]); when the viewport reaches that edge
+ * we force sub-pixel to zero so the trailing edge has no bleed past
+ * the rendered tiles. */
+void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
+  if (g_lv->logLoaded == FALSE) {
+    return;
+  }
+
+  int sizeX = lv_screenGetSizeX();
+  int sizeY = lv_screenGetSizeY();
+  int maxOffX = 255 - sizeX; if (maxOffX < 0) maxOffX = 0;
+  int maxOffY = 255 - sizeY; if (maxOffY < 0) maxOffY = 0;
+  int maxPxX = maxOffX * TILE_SIZE_X;
+  int maxPxY = maxOffY * TILE_SIZE_Y;
+
+  if (totalPxX < 0) totalPxX = 0;
+  if (totalPxY < 0) totalPxY = 0;
+  if (totalPxX > maxPxX) totalPxX = maxPxX;
+  if (totalPxY > maxPxY) totalPxY = maxPxY;
+
+  int newOffX = totalPxX / TILE_SIZE_X;
+  int newOffY = totalPxY / TILE_SIZE_Y;
+  int newSubX = totalPxX - newOffX * TILE_SIZE_X;
+  int newSubY = totalPxY - newOffY * TILE_SIZE_Y;
+
+  bool wholeChanged = ((BYTE)newOffX != g_lv->xOffset) ||
+                      ((BYTE)newOffY != g_lv->yOffset);
+
+  g_lv->subPxX = newSubX;
+  g_lv->subPxY = newSubY;
+
+  if (wholeChanged) {
+    g_lv->xOffset = (BYTE)newOffX;
+    g_lv->yOffset = (BYTE)newOffY;
+    lv_screenUpdate(redraw);
+  }
 }
 
 void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
