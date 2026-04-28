@@ -32,6 +32,7 @@
 #include "../../bolo/screentank.h"
 #include "../../bolo/screenlgm.h"
 #include "../../bolo/game_sim.h"
+#include "sprite_positions.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,13 +44,6 @@ typedef struct {
     int           zoomFactor;
     int           sheetScale;  /* atlas scale: source coords *= sheetScale */
 } MapViewCtx;
-
-/* Tile-number -> atlas-coordinate lookup tables (populated by mapViewInit). */
-extern int mapViewPosX[256];
-extern int mapViewPosY[256];
-
-/* Initialize lookup tables. Called once at startup. */
-void mapViewInit(void);
 
 /* Draw pre-built tile buffer. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,

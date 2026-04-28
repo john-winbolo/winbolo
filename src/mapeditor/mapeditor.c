@@ -46,11 +46,7 @@
 #include "../gui/tiles.h"
 #include "../gui/lang.h"
 #include "../gui/sdl3/minimap_render.h"
-
-/* From mapview.h — declared directly to avoid pulling in game_sim.h */
-extern int mapViewPosX[256];
-extern int mapViewPosY[256];
-extern void mapViewInit(void);
+#include "../gui/sdl3/sprite_positions.h"
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);

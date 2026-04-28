@@ -24,9 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* From mapview.h — declared directly to avoid pulling in game_sim.h */
-extern int mapViewPosX[256];
-extern int mapViewPosY[256];
+#include "../gui/sdl3/sprite_positions.h"
 
 /* From starts.h */
 extern BYTE startsConvertDir(BYTE dir);
