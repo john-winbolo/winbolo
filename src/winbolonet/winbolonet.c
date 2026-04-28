@@ -912,7 +912,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
         strcpy(tokenOut, tokenObj->valuestring);
         strcpy(expiryOut, expiryObj->valuestring);
         playerNameOut[0] = '\0';
-        cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+        cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
         if (nameObj && cJSON_IsString(nameObj)) {
           strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
@@ -973,7 +973,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
         strcpy(tokenOut, tokenObj->valuestring);
         strcpy(expiryOut, expiryObj->valuestring);
         playerNameOut[0] = '\0';
-        cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+        cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
         if (nameObj && cJSON_IsString(nameObj)) {
           strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
@@ -1027,7 +1027,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
     if (validObj && cJSON_IsTrue(validObj)) {
       if (playerNameOut) {
         playerNameOut[0] = '\0';
-        cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+        cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
         if (nameObj && cJSON_IsString(nameObj)) {
           strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
