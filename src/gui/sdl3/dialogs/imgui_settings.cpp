@@ -897,24 +897,25 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
         ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
         ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::Begin("##SettingsPanel", nullptr,
-                     ImGuiWindowFlags_NoTitleBar |
+        /* Real title bar with the X close button — same UX as the
+         * in-game settings panel.  Title text comes from the localized
+         * STR_DLGSETTINGS_TITLE; ## hides the unique-id suffix. */
+        char panelTitle[128];
+        snprintf(panelTitle, sizeof(panelTitle),
+                 "%s##SettingsPanel", langGetText(STR_DLGSETTINGS_TITLE));
+        bool panelOpen = true;
+        ImGui::Begin(panelTitle, &panelOpen,
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
-
-        /* Title */
-        {
-            ImGui::SetWindowFontScale(1.4f);
-            const char *title = langGetText(STR_DLGSETTINGS_TITLE);
-            ImVec2 textSize = ImGui::CalcTextSize(title);
-            ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
-            ImGui::Text("%s", title);
-            ImGui::SetWindowFontScale(1.0f);
+        if (!panelOpen) {
+            /* User clicked the X — same path as the bottom Close. */
+            if (imguiSettingsHasUnappliedSkinPreview()) {
+                ImGui::OpenPopup("##applySkin");
+            } else {
+                running = false;
+            }
         }
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
 
         /* ---- Player ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
