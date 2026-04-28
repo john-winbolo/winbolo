@@ -265,4 +265,23 @@ BYTE lv_drawSetupWithHandles(struct SDL_Window *window, struct SDL_Renderer *ren
 int lv_drawGetTargetWidth(void);
 int lv_drawGetTargetHeight(void);
 
+/*********************************************************
+*NAME:          lv_drawZoomIn / lv_drawZoomOut
+*PURPOSE:
+*  Step the user zoom level up/down by one entry in the
+*  stepped zoom table (0.5x .. 16x). The map tile under
+*  (mouseScreenX, mouseScreenY) — window-pixel coordinates,
+*  same space SDL events report — stays anchored under the
+*  cursor across the change.
+*********************************************************/
+void lv_drawZoomIn(int mouseScreenX, int mouseScreenY);
+void lv_drawZoomOut(int mouseScreenX, int mouseScreenY);
+
+/*********************************************************
+*NAME:          lv_drawGetZoomLevel
+*PURPOSE:
+*  Returns the current zoom multiplier (1.0 == native).
+*********************************************************/
+float lv_drawGetZoomLevel(void);
+
 #endif

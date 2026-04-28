@@ -76,6 +76,21 @@ static TTF_Font *labelFont = NULL;
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
 
+/* Stepped zoom table — same values as the map editor (mapeditor.c).
+ * Below 1.0 the texture target grows so we can show more tiles, then
+ * the blit scales it down; at and above 1.0 the texture target stays
+ * sized to the visible tile count and the blit scales it up. */
+static const float g_zoomSteps[] = {
+    0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+    1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f
+};
+#define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
+#define ZOOM_STEP_1X    5
+
+static int   g_zoomStepIndex = ZOOM_STEP_1X;
+static float g_zoomLevel     = 1.0f;
+
 
 /* Last drawn map positions for dirty rect optimization.
  * Sized for the maximum map size (255 tiles in each direction). */
@@ -86,6 +101,7 @@ int lv_drawLast[256][256];
 /* Function prototypes */
 BYTE lv_screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth);
 BYTE lv_screenGetBaseTeam(BYTE x, BYTE y);
+extern void lv_windowNeedRedraw(void);
 
 BYTE lv_windowGetZoomFactor(void) { return 1; }
 
@@ -96,6 +112,126 @@ void lv_drawDirtyScreen(void) {
             lv_drawLast[count][count2] = 10000;
         }
     }
+}
+
+float lv_drawGetZoomLevel(void) {
+    return g_zoomLevel;
+}
+
+/* Apply a stepped zoom change with the map tile under (mouseScreenX,
+ * mouseScreenY) anchored — that tile stays under the cursor. The screen
+ * coordinates are in window pixels (the same space SDL events report),
+ * so we subtract the ImGui menu bar height to reach the game area. */
+static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseScreenY) {
+    float oldZoom, newZoom;
+    int   windowW = 0, windowH = 0, gameH;
+    int   menuH;
+    BYTE  oldOffX = 0, oldOffY = 0;
+    int   curTilesX, curTilesY;
+    float gx, gy;
+    float oldEffective, newEffective;
+    float anchorTileX, anchorTileY;
+    int   newTilesX, newTilesY;
+    int   maxOffX, maxOffY, newOffX, newOffY;
+    float newOffXf, newOffYf;
+    BYTE  zf;
+    float maxGx, maxGy;
+    int   curTexW, curTexH;
+    int   gameW;
+
+    if (newStepIndex < 0) newStepIndex = 0;
+    if (newStepIndex >= ZOOM_STEP_COUNT) newStepIndex = ZOOM_STEP_COUNT - 1;
+    if (newStepIndex == g_zoomStepIndex) return;
+
+    oldZoom = g_zoomLevel;
+    newZoom = g_zoomSteps[newStepIndex];
+
+    if (sdlWindow != NULL) SDL_GetWindowSize(sdlWindow, &windowW, &windowH);
+    if (windowW < 1) windowW = TILE_SIZE_X;
+    if (windowH < 1) windowH = TILE_SIZE_Y;
+    menuH = (int)lv_imgui_get_menu_bar_height();
+    gameH = windowH - menuH;
+    if (gameH < 1) gameH = 1;
+
+    /* Compute map tile under cursor at the OLD zoom. The blit width is
+     * curTilesX * TILE_SIZE_X * oldZoom, and the cursor screen X covers
+     * that same range, so each on-screen pixel == 1/oldZoom texture
+     * pixels. We clamp to the rendered game extents so the anchor stays
+     * within the loaded map even when the cursor sits outside it. */
+    zf = lv_windowGetZoomFactor();
+    curTilesX = lv_screenGetSizeX();
+    curTilesY = lv_screenGetSizeY();
+    lv_screenGetOffsets(&oldOffX, &oldOffY);
+
+    oldEffective = (float)(zf * TILE_SIZE_X) * oldZoom;
+    if (oldEffective <= 0.0f) oldEffective = (float)TILE_SIZE_X;
+
+    gx = (float)mouseScreenX;
+    gy = (float)mouseScreenY - (float)menuH;
+    if (gx < 0.0f) gx = 0.0f;
+    if (gy < 0.0f) gy = 0.0f;
+
+    /* Use the actual rendered area (texture target * oldZoom) to clamp. */
+    curTexW = targetWidth;
+    curTexH = targetHeight;
+    if (curTexW < 1) curTexW = curTilesX * TILE_SIZE_X;
+    if (curTexH < 1) curTexH = curTilesY * TILE_SIZE_Y;
+    maxGx = (float)curTexW * oldZoom;
+    maxGy = (float)curTexH * oldZoom;
+    if (gx > maxGx) gx = maxGx;
+    if (gy > maxGy) gy = maxGy;
+
+    anchorTileX = (float)oldOffX + gx / oldEffective;
+    anchorTileY = (float)oldOffY + gy / oldEffective;
+
+    /* Compute new viewport tile count so the blit fills (approximately)
+     * the available window area at the new zoom. Use the same nearest-
+     * tile rounding the resize handler uses, just in zoomed pixel space. */
+    gameW = windowW;
+    newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
+    if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
+    newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
+    newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
+    if (newTilesX < 1) newTilesX = 1;
+    if (newTilesY < 1) newTilesY = 1;
+    if (newTilesX > 255) newTilesX = 255;
+    if (newTilesY > 255) newTilesY = 255;
+
+    /* Place the anchor tile back under the cursor at the new zoom. */
+    newOffXf = anchorTileX - gx / newEffective;
+    newOffYf = anchorTileY - gy / newEffective;
+
+    maxOffX = 255 - newTilesX;
+    maxOffY = 255 - newTilesY;
+    if (maxOffX < 0) maxOffX = 0;
+    if (maxOffY < 0) maxOffY = 0;
+    newOffX = (int)(newOffXf + 0.5f);
+    newOffY = (int)(newOffYf + 0.5f);
+    if (newOffX < 0) newOffX = 0;
+    if (newOffY < 0) newOffY = 0;
+    if (newOffX > maxOffX) newOffX = maxOffX;
+    if (newOffY > maxOffY) newOffY = maxOffY;
+
+    /* Commit. lv_screenSetSizeX/Y reallocate the screen buffer and call
+     * lv_drawResizeRenderTarget(); after that we set the new offset and
+     * request a full redraw so the texture target gets repopulated. */
+    g_zoomStepIndex = newStepIndex;
+    g_zoomLevel = newZoom;
+
+    if (newTilesX != curTilesX) lv_screenSetSizeX((BYTE)newTilesX);
+    if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
+
+    lv_screenSetOffset((BYTE)newOffX, (BYTE)newOffY);
+    lv_drawDirtyScreen();
+    lv_windowNeedRedraw();
+}
+
+void lv_drawZoomIn(int mouseScreenX, int mouseScreenY) {
+    lv_drawApplyZoomStep(g_zoomStepIndex + 1, mouseScreenX, mouseScreenY);
+}
+
+void lv_drawZoomOut(int mouseScreenX, int mouseScreenY) {
+    lv_drawApplyZoomStep(g_zoomStepIndex - 1, mouseScreenX, mouseScreenY);
 }
 
 /* Load a BMP file from the filesystem and create an SDL texture.
@@ -499,11 +635,13 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     /* SDL expects client-area coordinates (0,0), not screen coordinates.
      * The rcWindow passed in contains screen coordinates which would offset
      * the drawing by the window position + title bar + menu bar.
-     * We offset by menuBarHeight to leave space for ImGui's menu bar. */
+     * We offset by menuBarHeight to leave space for ImGui's menu bar.
+     * Width/height are scaled by g_zoomLevel; texture target stays at
+     * native (1x) tile resolution. */
     dstRect.x = 0.0f;
     dstRect.y = menuBarHeight;  /* Offset below ImGui menu bar */
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X);
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y);
+    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
+    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
     SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
     
     /* NOTE: Don't call SDL_RenderPresent here - ImGui needs to render after the game
@@ -675,11 +813,11 @@ void lv_drawBlitGameTexture(void) {
     /* Get ImGui menu bar height to offset game rendering below it */
     menuBarHeight = lv_imgui_get_menu_bar_height();
     
-    /* Blit the game texture to the screen */
+    /* Blit the game texture to the screen, scaled by the user zoom level. */
     dstRect.x = 0.0f;
     dstRect.y = menuBarHeight;
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X);
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y);
+    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
+    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
     SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
 }
 
