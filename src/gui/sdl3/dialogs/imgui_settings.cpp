@@ -121,11 +121,11 @@ extern "C" {
 #endif
 }
 
-/* Try to find a theme's tank sprite file.  Returns true on success and
- * fills outPath with the resolved path (.svg or .png).  themeName ==
+/* Try to find a skin's tank sprite file.  Returns true on success and
+ * fills outPath with the resolved path (.svg or .png).  skinName ==
  * NULL or "" means the default (data/svg/<base>).  Falls through to
- * data/svg/ if the theme is missing the asset. */
-static bool findThemeAsset(const char *themeName, const char *base,
+ * data/svg/ if the skin is missing the asset. */
+static bool findSkinAsset(const char *skinName, const char *base,
                            char *outPath, size_t outSize) {
     auto tryPath = [&](const char *fmt, const char *a, const char *b,
                        const char *ext) -> bool {
@@ -133,12 +133,12 @@ static bool findThemeAsset(const char *themeName, const char *base,
         SDL_PathInfo info;
         return SDL_GetPathInfo(outPath, &info);
     };
-    /* SVG is always tried first (themes like stock_svg_ingamerotate
+    /* SVG is always tried first (skins like stock_svg_ingamerotate
      * only ship SVG; the AllowSvg toggle only changes the texture
      * scale mode, not which sources we attempt). */
-    if (themeName && themeName[0]) {
-        if (tryPath("data/theme/%s/%s.%s", themeName, base, "svg")) return true;
-        if (tryPath("data/theme/%s/%s.%s", themeName, base, "png")) return true;
+    if (skinName && skinName[0]) {
+        if (tryPath("data/skin/%s/%s.%s", skinName, base, "svg")) return true;
+        if (tryPath("data/skin/%s/%s.%s", skinName, base, "png")) return true;
     }
     snprintf(outPath, outSize, "data/svg/%s.svg", base);
     SDL_PathInfo info;
@@ -223,62 +223,62 @@ static SDL_Texture *loadSvgToTexture(SDL_Renderer *r, const char *path, int size
     return loadSpriteToTexture(r, path, size);
 }
 
-/* True when the theme dir has only the _00 sprite for tanks (i.e. an
- * "_ingamerotate" theme), so previews must rotate the single sprite
+/* True when the skin dir has only the _00 sprite for tanks (i.e. an
+ * "_ingamerotate" skin), so previews must rotate the single sprite
  * to show all directions. */
-static bool themeIsIngamerotate(const char *themeName) {
-    if (!themeName || !themeName[0]) return false;
-    /* Same convention as tileLoaderThemeRotates. */
+static bool skinIsIngamerotate(const char *skinName) {
+    if (!skinName || !skinName[0]) return false;
+    /* Same convention as tileLoaderSkinRotates. */
     const char *suffix = "_ingamerotate";
-    size_t n = strlen(themeName), s = strlen(suffix);
-    return n >= s && strcmp(themeName + n - s, suffix) == 0;
+    size_t n = strlen(skinName), s = strlen(suffix);
+    return n >= s && strcmp(skinName + n - s, suffix) == 0;
 }
 
 /* Set by imguiSettingsResetGraphicsSelection to make the next draw of
  * the Graphics section snap the preview index back to the active
- * theme (curThemeIdx). */
+ * skin (curSkinIdx). */
 static bool s_resetPreviewOnNextDraw = false;
 
 /* File-scope so the close-time confirm popup can read whether the
- * dropdown is on a different theme than the active one.  Populated
+ * dropdown is on a different skin than the active one.  Populated
  * by imguiSettingsDrawGraphicsSection on every draw. */
-static std::vector<std::string> g_themeDirs;
-static int                      g_previewThemeIdx = -1;
-static int                      g_curThemeIdx     = 0;
+static std::vector<std::string> g_skinDirs;
+static int                      g_previewSkinIdx = -1;
+static int                      g_curSkinIdx     = 0;
 
-/* Debounce: short cooldown after a theme is applied so back-to-back
+/* Debounce: short cooldown after a skin is applied so back-to-back
  * Apply clicks (or Apply + the close-confirm Yes) can't queue two
  * atlas rebuilds. Counts down per call to the graphics section. */
-static int                      g_themeApplyCooldown = 0;
+static int                      g_skinApplyCooldown = 0;
 
 extern "C" void imguiSettingsResetGraphicsSelection(void) {
     s_resetPreviewOnNextDraw = true;
 }
 
-extern "C" bool imguiSettingsHasUnappliedThemePreview(void) {
-    if (g_previewThemeIdx < 0) return false;
-    if (g_previewThemeIdx >= (int)g_themeDirs.size()) return false;
-    return g_previewThemeIdx != g_curThemeIdx;
+extern "C" bool imguiSettingsHasUnappliedSkinPreview(void) {
+    if (g_previewSkinIdx < 0) return false;
+    if (g_previewSkinIdx >= (int)g_skinDirs.size()) return false;
+    return g_previewSkinIdx != g_curSkinIdx;
 }
 
-extern "C" const char *imguiSettingsGetPreviewedThemeName(void) {
-    if (g_previewThemeIdx < 0
-        || g_previewThemeIdx >= (int)g_themeDirs.size()) {
+extern "C" const char *imguiSettingsGetPreviewedSkinName(void) {
+    if (g_previewSkinIdx < 0
+        || g_previewSkinIdx >= (int)g_skinDirs.size()) {
         return "(default)";
     }
-    return g_themeDirs[g_previewThemeIdx].c_str();
+    return g_skinDirs[g_previewSkinIdx].c_str();
 }
 
-extern "C" void imguiSettingsApplyPreviewedTheme(void) {
-    if (!imguiSettingsHasUnappliedThemePreview()) return;
-    if (g_themeApplyCooldown > 0) return;
-    const char *newTheme = (g_previewThemeIdx == 0)
-                             ? "" : g_themeDirs[g_previewThemeIdx].c_str();
-    tileLoaderSetTheme(newTheme);
+extern "C" void imguiSettingsApplyPreviewedSkin(void) {
+    if (!imguiSettingsHasUnappliedSkinPreview()) return;
+    if (g_skinApplyCooldown > 0) return;
+    const char *newSkin = (g_previewSkinIdx == 0)
+                             ? "" : g_skinDirs[g_previewSkinIdx].c_str();
+    tileLoaderSetSkin(newSkin);
     sdl3DrawReloadTiles();
-    extern void gameFrontSaveThemeChoice(const char *);
-    gameFrontSaveThemeChoice(newTheme);
-    g_themeApplyCooldown = 6;  /* a few frames so a held Enter / spam
+    extern void gameFrontSaveSkinChoice(const char *);
+    gameFrontSaveSkinChoice(newSkin);
+    g_skinApplyCooldown = 6;  /* a few frames so a held Enter / spam
                                 * click can't requeue an atlas rebuild */
 }
 
@@ -293,40 +293,40 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
 
     /* Tick the apply cooldown down to zero so the Apply button (and
      * close-confirm Yes) re-enables on the next frame after a click. */
-    if (g_themeApplyCooldown > 0) g_themeApplyCooldown--;
+    if (g_skinApplyCooldown > 0) g_skinApplyCooldown--;
 
-    /* Theme picker — scan data/theme/* once per dialog open.
-     * (Stored at file scope as g_themeDirs so the close-time confirm
+    /* Skin picker — scan data/skin/* once per dialog open.
+     * (Stored at file scope as g_skinDirs so the close-time confirm
      * popup in imguiSettingsShow can read it too.) */
-    std::vector<std::string> &themeDirs = g_themeDirs;
-    static bool themesScanned = false;
-    if (!themesScanned) {
-        themesScanned = true;
-        themeDirs.push_back("(default)");
+    std::vector<std::string> &skinDirs = g_skinDirs;
+    static bool skinsScanned = false;
+    if (!skinsScanned) {
+        skinsScanned = true;
+        skinDirs.push_back("(default)");
 #ifdef _WIN32
         WIN32_FIND_DATAA findData;
-        HANDLE h = FindFirstFileA("data\\theme\\*", &findData);
+        HANDLE h = FindFirstFileA("data\\skin\\*", &findData);
         if (h != INVALID_HANDLE_VALUE) {
             do {
                 if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
                     && strcmp(findData.cFileName, ".") != 0
                     && strcmp(findData.cFileName, "..") != 0) {
-                    themeDirs.push_back(findData.cFileName);
+                    skinDirs.push_back(findData.cFileName);
                 }
             } while (FindNextFileA(h, &findData));
             FindClose(h);
         }
 #else
-        DIR *d = opendir("data/theme");
+        DIR *d = opendir("data/skin");
         if (d) {
             struct dirent *de;
             while ((de = readdir(d))) {
                 if (de->d_name[0] == '.') continue;
                 char path[1024];
-                snprintf(path, sizeof(path), "data/theme/%s", de->d_name);
+                snprintf(path, sizeof(path), "data/skin/%s", de->d_name);
                 struct stat st;
                 if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-                    themeDirs.push_back(de->d_name);
+                    skinDirs.push_back(de->d_name);
                 }
             }
             closedir(d);
@@ -334,30 +334,30 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
 #endif
     }
 
-    /* Current selection — match active theme name to list. */
-    const char *currentTheme = tileLoaderGetTheme();
-    int curThemeIdx = 0;
-    for (int i = 0; i < (int)themeDirs.size(); ++i) {
-        if (i == 0 && (!currentTheme || !currentTheme[0])) {
-            curThemeIdx = 0; break;
+    /* Current selection — match active skin name to list. */
+    const char *currentSkin = tileLoaderGetSkin();
+    int curSkinIdx = 0;
+    for (int i = 0; i < (int)skinDirs.size(); ++i) {
+        if (i == 0 && (!currentSkin || !currentSkin[0])) {
+            curSkinIdx = 0; break;
         }
-        if (currentTheme && currentTheme[0]
-            && strcmp(themeDirs[i].c_str(), currentTheme) == 0) {
-            curThemeIdx = i; break;
+        if (currentSkin && currentSkin[0]
+            && strcmp(skinDirs[i].c_str(), currentSkin) == 0) {
+            curSkinIdx = i; break;
         }
     }
 
     /* Pending preview selection (Apply commits it).  Mirrored to
-     * file-scope g_previewThemeIdx so the close-confirm popup can
+     * file-scope g_previewSkinIdx so the close-confirm popup can
      * detect "user picked but didn't Apply". */
-    g_curThemeIdx = curThemeIdx;
-    int &s_previewThemeIdx = g_previewThemeIdx;
+    g_curSkinIdx = curSkinIdx;
+    int &s_previewSkinIdx = g_previewSkinIdx;
     if (s_resetPreviewOnNextDraw) {
-        s_previewThemeIdx = curThemeIdx;
+        s_previewSkinIdx = curSkinIdx;
         s_resetPreviewOnNextDraw = false;
     }
-    if (s_previewThemeIdx < 0) s_previewThemeIdx = curThemeIdx;
-    if (s_previewThemeIdx >= (int)themeDirs.size()) s_previewThemeIdx = curThemeIdx;
+    if (s_previewSkinIdx < 0) s_previewSkinIdx = curSkinIdx;
+    if (s_previewSkinIdx >= (int)skinDirs.size()) s_previewSkinIdx = curSkinIdx;
 
     /* Tile Detail Level. */
     int curTileDetail = (int)gfxSettingsGetTileDetail();
@@ -462,59 +462,59 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     }
 
     ImGui::Spacing();
-    if (!ImGui::CollapsingHeader("Themes", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!ImGui::CollapsingHeader("Skins", ImGuiTreeNodeFlags_DefaultOpen)) {
         return;
     }
-    ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_THEMES_DISCLAIMER));
-    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_THEME));
+    ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_SKINS_DISCLAIMER));
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_SKIN));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220);
-    if (ImGui::BeginCombo("##theme", themeDirs[s_previewThemeIdx].c_str())) {
-        for (int i = 0; i < (int)themeDirs.size(); ++i) {
-            bool selected = (i == s_previewThemeIdx);
-            bool active = (i == curThemeIdx);
+    if (ImGui::BeginCombo("##skin", skinDirs[s_previewSkinIdx].c_str())) {
+        for (int i = 0; i < (int)skinDirs.size(); ++i) {
+            bool selected = (i == s_previewSkinIdx);
+            bool active = (i == curSkinIdx);
             char label[256];
             snprintf(label, sizeof(label), "%s%s",
-                     active ? "\xE2\x97\x8F " : "  ", themeDirs[i].c_str());
+                     active ? "\xE2\x97\x8F " : "  ", skinDirs[i].c_str());
             if (ImGui::Selectable(label, selected)) {
-                s_previewThemeIdx = i;
+                s_previewSkinIdx = i;
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
-    if (s_previewThemeIdx != curThemeIdx) {
+    if (s_previewSkinIdx != curSkinIdx) {
         ImGui::SameLine();
-        ImGui::BeginDisabled(g_themeApplyCooldown > 0);
-        if (ImGui::Button("Apply##theme")) {
-            const char *newTheme = (s_previewThemeIdx == 0)
-                                     ? "" : themeDirs[s_previewThemeIdx].c_str();
-            tileLoaderSetTheme(newTheme);
+        ImGui::BeginDisabled(g_skinApplyCooldown > 0);
+        if (ImGui::Button("Apply##skin")) {
+            const char *newSkin = (s_previewSkinIdx == 0)
+                                     ? "" : skinDirs[s_previewSkinIdx].c_str();
+            tileLoaderSetSkin(newSkin);
             sdl3DrawReloadTiles();
             /* Persist to INI so the choice survives restart. */
-            extern void gameFrontSaveThemeChoice(const char *);
-            gameFrontSaveThemeChoice(newTheme);
-            g_themeApplyCooldown = 6;
+            extern void gameFrontSaveSkinChoice(const char *);
+            gameFrontSaveSkinChoice(newSkin);
+            g_skinApplyCooldown = 6;
         }
         ImGui::EndDisabled();
     }
 
-    /* Theme info display from theme.ini for the *previewed* theme
+    /* Skin info display from skin.ini for the *previewed* skin
      * (so the card updates as soon as the user changes the dropdown,
      * before Apply).  Wrapped in a tinted child panel to read as an
      * info card. */
     {
-        const char *previewName = (s_previewThemeIdx == 0)
-                                    ? "" : themeDirs[s_previewThemeIdx].c_str();
-        TileLoaderThemeInfo info;
-        tileLoaderQueryThemeInfo(previewName, &info);
+        const char *previewName = (s_previewSkinIdx == 0)
+                                    ? "" : skinDirs[s_previewSkinIdx].c_str();
+        TileLoaderSkinInfo info;
+        tileLoaderQuerySkinInfo(previewName, &info);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
-        ImGui::BeginChild("##themeinfo",
+        ImGui::BeginChild("##skininfo",
                           ImVec2(0, 0),
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         if (info.has_ini) {
             if (info.name[0])
-                ImGui::Text("Theme name: %s", info.name);
+                ImGui::Text("Skin name: %s", info.name);
             if (info.author[0])
                 ImGui::Text("Author: %s", info.author);
             if (info.email[0])
@@ -527,15 +527,15 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
                         info.max_pixel_density * TILE_SIZE_X,
                         info.max_pixel_density);
         } else {
-            ImGui::TextDisabled("(no theme.ini metadata - assuming a 16px tile)");
+            ImGui::TextDisabled("(no skin.ini metadata - assuming a 16px tile)");
         }
 
-        /* Coverage check at theme's declared max density. */
+        /* Coverage check at skin's declared max density. */
         if (info.has_ini && info.max_pixel_density > 1) {
             int density = info.max_pixel_density;
             int missing = tileLoaderQueryMissingSprites(previewName, density, NULL, 0);
             if (missing > 0) {
-                ImGui::Text("Theme is missing %d tile%s short of full tile "
+                ImGui::Text("Skin is missing %d tile%s short of full tile "
                             "coverage at %dx",
                             missing, missing == 1 ? "" : "s", density);
                 ImGui::SameLine();
@@ -546,14 +546,14 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
                         ImGuiWindowFlags_AlwaysAutoResize)) {
                     static char s_missingBuf[16384];
                     static int  s_missingDensity = -1;
-                    static int  s_missingThemeIdx = -1;
+                    static int  s_missingSkinIdx = -1;
                     if (s_missingDensity != density
-                        || s_missingThemeIdx != s_previewThemeIdx) {
+                        || s_missingSkinIdx != s_previewSkinIdx) {
                         tileLoaderQueryMissingSprites(previewName, density,
                                                       s_missingBuf,
                                                       sizeof(s_missingBuf));
                         s_missingDensity = density;
-                        s_missingThemeIdx = s_previewThemeIdx;
+                        s_missingSkinIdx = s_previewSkinIdx;
                     }
                     ImGui::Text("%d sprite%s missing at %dx:",
                                 missing, missing == 1 ? "" : "s", density);
@@ -572,8 +572,8 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         ImGui::PopStyleColor();
     }
 
-    /* Theme preview — fixed-content tile grid at densities 1x, 2x, 4x.
-     * Rows above the theme's max_pixel_density are skipped. */
+    /* Skin preview — fixed-content tile grid at densities 1x, 2x, 4x.
+     * Rows above the skin's max_pixel_density are skipped. */
     ImGui::Spacing();
     ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PREVIEW));
 
@@ -596,24 +596,24 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     const int kNumDensities = (int)(sizeof(kDensities)/sizeof(kDensities[0]));
 
     /* density-aware asset lookup: try N-<base>.png first for N>1. */
-    auto findCellAsset = [](const char *themeName, const char *base, int density,
+    auto findCellAsset = [](const char *skinName, const char *base, int density,
                             char *outPath, size_t outSize) -> bool {
         SDL_PathInfo info;
-        if (density > 1 && themeName && themeName[0]) {
+        if (density > 1 && skinName && skinName[0]) {
             int sizePx = density * TILE_SIZE_X;
             /* Suffix form first (Inkscape-friendly). */
-            snprintf(outPath, outSize, "data/theme/%s/%s_%d.png",
-                     themeName, base, sizePx);
+            snprintf(outPath, outSize, "data/skin/%s/%s_%d.png",
+                     skinName, base, sizePx);
             if (SDL_GetPathInfo(outPath, &info)) return true;
             /* Legacy prefix form. */
-            snprintf(outPath, outSize, "data/theme/%s/%d-%s.png",
-                     themeName, sizePx, base);
+            snprintf(outPath, outSize, "data/skin/%s/%d-%s.png",
+                     skinName, sizePx, base);
             if (SDL_GetPathInfo(outPath, &info)) return true;
         }
-        if (themeName && themeName[0]) {
-            snprintf(outPath, outSize, "data/theme/%s/%s.svg", themeName, base);
+        if (skinName && skinName[0]) {
+            snprintf(outPath, outSize, "data/skin/%s/%s.svg", skinName, base);
             if (SDL_GetPathInfo(outPath, &info)) return true;
-            snprintf(outPath, outSize, "data/theme/%s/%s.png", themeName, base);
+            snprintf(outPath, outSize, "data/skin/%s/%s.png", skinName, base);
             if (SDL_GetPathInfo(outPath, &info)) return true;
         }
         snprintf(outPath, outSize, "data/svg/%s.svg", base);
@@ -626,12 +626,12 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     static int previewLoadedIdx = -1;
     static int previewLoadedDetail = -1;
     int curDetailNow = (int)gfxSettingsGetTileDetail();
-    if (previewLoadedIdx != s_previewThemeIdx
+    if (previewLoadedIdx != s_previewSkinIdx
         || previewLoadedDetail != curDetailNow) {
-        previewLoadedIdx = s_previewThemeIdx;
+        previewLoadedIdx = s_previewSkinIdx;
         previewLoadedDetail = curDetailNow;
-        const char *themeName = (s_previewThemeIdx == 0)
-                                  ? "" : themeDirs[s_previewThemeIdx].c_str();
+        const char *skinName = (s_previewSkinIdx == 0)
+                                  ? "" : skinDirs[s_previewSkinIdx].c_str();
         for (int r = 0; r < kNumDensities; r++) {
             for (int c = 0; c < kNumCells; c++) {
                 if (previewTex[r][c]) {
@@ -639,7 +639,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
                     previewTex[r][c] = nullptr;
                 }
                 char path[1024];
-                if (findCellAsset(themeName, cells[c].base,
+                if (findCellAsset(skinName, cells[c].base,
                                   kDensities[r], path, sizeof(path))) {
                     int sz = TILE_SIZE_X * kDensities[r];
                     previewTex[r][c] = loadSvgToTexture(renderer, path, sz);
@@ -731,7 +731,7 @@ extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return;
-    /* Snap dropdown back to the active theme on every fresh open. */
+    /* Snap dropdown back to the active skin on every fresh open. */
     imguiSettingsResetGraphicsSelection();
 
     /* Save logical presentation */
@@ -1157,36 +1157,36 @@ extern "C" void imguiSettingsShow(void) {
         imguiSettingsDrawGraphicsSection(renderer);
 #if 0  /* moved into imguiSettingsDrawGraphicsSection() */
         if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
-            /* Theme picker — scan data/theme/* once per dialog open. */
-            static std::vector<std::string> themeDirs;
-            static bool themesScanned = false;
-            if (!themesScanned) {
-                themesScanned = true;
-                themeDirs.push_back("(default)");
+            /* Skin picker — scan data/skin/* once per dialog open. */
+            static std::vector<std::string> skinDirs;
+            static bool skinsScanned = false;
+            if (!skinsScanned) {
+                skinsScanned = true;
+                skinDirs.push_back("(default)");
 #ifdef _WIN32
                 WIN32_FIND_DATAA findData;
-                HANDLE h = FindFirstFileA("data\\theme\\*", &findData);
+                HANDLE h = FindFirstFileA("data\\skin\\*", &findData);
                 if (h != INVALID_HANDLE_VALUE) {
                     do {
                         if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
                             && strcmp(findData.cFileName, ".") != 0
                             && strcmp(findData.cFileName, "..") != 0) {
-                            themeDirs.push_back(findData.cFileName);
+                            skinDirs.push_back(findData.cFileName);
                         }
                     } while (FindNextFileA(h, &findData));
                     FindClose(h);
                 }
 #else
-                DIR *d = opendir("data/theme");
+                DIR *d = opendir("data/skin");
                 if (d) {
                     struct dirent *de;
                     while ((de = readdir(d))) {
                         if (de->d_name[0] == '.') continue;
                         char path[1024];
-                        snprintf(path, sizeof(path), "data/theme/%s", de->d_name);
+                        snprintf(path, sizeof(path), "data/skin/%s", de->d_name);
                         struct stat st;
                         if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-                            themeDirs.push_back(de->d_name);
+                            skinDirs.push_back(de->d_name);
                         }
                     }
                     closedir(d);
@@ -1194,52 +1194,52 @@ extern "C" void imguiSettingsShow(void) {
 #endif
             }
 
-            /* Current selection — match active theme name to list. */
-            const char *currentTheme = tileLoaderGetTheme();
-            int curThemeIdx = 0;
-            for (int i = 0; i < (int)themeDirs.size(); ++i) {
-                if (i == 0 && (!currentTheme || !currentTheme[0])) {
-                    curThemeIdx = 0; break;
+            /* Current selection — match active skin name to list. */
+            const char *currentSkin = tileLoaderGetSkin();
+            int curSkinIdx = 0;
+            for (int i = 0; i < (int)skinDirs.size(); ++i) {
+                if (i == 0 && (!currentSkin || !currentSkin[0])) {
+                    curSkinIdx = 0; break;
                 }
-                if (currentTheme && currentTheme[0]
-                    && strcmp(themeDirs[i].c_str(), currentTheme) == 0) {
-                    curThemeIdx = i; break;
+                if (currentSkin && currentSkin[0]
+                    && strcmp(skinDirs[i].c_str(), currentSkin) == 0) {
+                    curSkinIdx = i; break;
                 }
             }
 
             /* Pending preview selection (Apply commits it). */
-            static int s_previewThemeIdx = -1;
-            if (s_previewThemeIdx < 0) s_previewThemeIdx = curThemeIdx;
-            if (s_previewThemeIdx >= (int)themeDirs.size()) s_previewThemeIdx = curThemeIdx;
+            static int s_previewSkinIdx = -1;
+            if (s_previewSkinIdx < 0) s_previewSkinIdx = curSkinIdx;
+            if (s_previewSkinIdx >= (int)skinDirs.size()) s_previewSkinIdx = curSkinIdx;
 
-            ImGui::TextUnformatted("Theme");
+            ImGui::TextUnformatted("Skin");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(220);
-            if (ImGui::BeginCombo("##theme", themeDirs[s_previewThemeIdx].c_str())) {
-                for (int i = 0; i < (int)themeDirs.size(); ++i) {
-                    bool selected = (i == s_previewThemeIdx);
-                    bool active = (i == curThemeIdx);
+            if (ImGui::BeginCombo("##skin", skinDirs[s_previewSkinIdx].c_str())) {
+                for (int i = 0; i < (int)skinDirs.size(); ++i) {
+                    bool selected = (i == s_previewSkinIdx);
+                    bool active = (i == curSkinIdx);
                     /* Mark active with a leading dot so the user knows
                      * which one is currently in effect, vs. the one
                      * being previewed. */
                     char label[256];
                     snprintf(label, sizeof(label), "%s%s",
-                             active ? "\xE2\x97\x8F " : "  ", themeDirs[i].c_str());
+                             active ? "\xE2\x97\x8F " : "  ", skinDirs[i].c_str());
                     if (ImGui::Selectable(label, selected)) {
-                        s_previewThemeIdx = i;
+                        s_previewSkinIdx = i;
                     }
                     if (selected) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
             }
             /* Apply button: visible when preview differs from active. */
-            if (s_previewThemeIdx != curThemeIdx) {
+            if (s_previewSkinIdx != curSkinIdx) {
                 ImGui::SameLine();
-                if (ImGui::Button("Apply##theme")) {
-                    if (s_previewThemeIdx == 0) {
-                        tileLoaderSetTheme("");
+                if (ImGui::Button("Apply##skin")) {
+                    if (s_previewSkinIdx == 0) {
+                        tileLoaderSetSkin("");
                     } else {
-                        tileLoaderSetTheme(themeDirs[s_previewThemeIdx].c_str());
+                        tileLoaderSetSkin(skinDirs[s_previewSkinIdx].c_str());
                     }
                     sdl3DrawReloadTiles();
                 }
@@ -1263,11 +1263,11 @@ extern "C" void imguiSettingsShow(void) {
             }
             ImGui::TextDisabled(
                 "Floor = classic >>4 (default).  Nearest = round to game pixel.\n"
-                "Smooth = full sub-pixel; only meaningful with SVG themes.");
+                "Smooth = full sub-pixel; only meaningful with SVG skins.");
 
-            /* Theme preview — render a strip of N-facing tank/shell
+            /* Skin preview — render a strip of N-facing tank/shell
              * sprites from the live atlas so the user sees the
-             * effect of the active theme.  Atlas constants come from
+             * effect of the active skin.  Atlas constants come from
              * tile.bmp's classic layout (see src/gui/tiles.h). */
             ImGui::Spacing();
             ImGui::TextUnformatted("Preview");
@@ -1364,7 +1364,7 @@ extern "C" void imguiSettingsShow(void) {
                         ImGui::SameLine();
                         ImGui::TextDisabled(
                             "Live preview of TANK_SELF_0 from the\n"
-                            "active theme, rotated continuously.\n"
+                            "active skin, rotated continuously.\n"
                             "With stock_svg_ingamerotate this is\n"
                             "what every facing direction will look\n"
                             "like in-game.");
@@ -1492,23 +1492,23 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::SetCursorPosX(btnX);
         if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            if (imguiSettingsHasUnappliedThemePreview()) {
-                ImGui::OpenPopup("##applyTheme");
+            if (imguiSettingsHasUnappliedSkinPreview()) {
+                ImGui::OpenPopup("##applySkin");
             } else {
                 running = false;
             }
         }
 
-        /* Confirm popup: dropdown is on a different theme than the
+        /* Confirm popup: dropdown is on a different skin than the
          * active one and user hasn't clicked Apply. */
-        if (ImGui::BeginPopupModal("##applyTheme", nullptr,
+        if (ImGui::BeginPopupModal("##applySkin", nullptr,
                 ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Do you want to apply the theme currently being "
+            ImGui::Text("Do you want to apply the skin currently being "
                         "previewed (%s)?",
-                        imguiSettingsGetPreviewedThemeName());
+                        imguiSettingsGetPreviewedSkinName());
             ImGui::Spacing();
             if (ImGui::Button("Yes", ImVec2(80, 0))) {
-                imguiSettingsApplyPreviewedTheme();
+                imguiSettingsApplyPreviewedSkin();
                 ImGui::CloseCurrentPopup();
                 running = false;
             }

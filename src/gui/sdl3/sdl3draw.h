@@ -68,9 +68,9 @@ typedef struct { long left, top, right, bottom; } RECT;
 int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
-/* Live tile-sheet texture (loaded from data/skin.bmp + theme override).
+/* Live tile-sheet texture (loaded from data/skin.bmp + skin override).
  * Returned pointer is owned by sdl3draw and may be invalidated by
- * sdl3DrawReloadTiles().  Useful for ImGui-based theme previews. */
+ * sdl3DrawReloadTiles().  Useful for ImGui-based skin previews. */
 SDL_Texture  *sdl3DrawGetTilesTex(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
@@ -105,7 +105,7 @@ void sdl3DrawCleanup(void);
 *NAME:          sdl3DrawReloadTiles
 *PURPOSE:
 *  Force a tile-sheet rebuild on the next frame.  Call after
-*  switching themes (tileLoaderSetTheme) so new sprites take
+*  switching skins (tileLoaderSetSkin) so new sprites take
 *  effect without restarting the game.
 *********************************************************/
 void sdl3DrawReloadTiles(void);

@@ -141,7 +141,7 @@ static bool tryLoadSVGEx(const char *path, int w, int h,
 }
 
 /* Backwards-compat wrapper.  Point-sample for the Pixelate modes,
- * standard AA for Max Detail (regardless of theme — Max Detail
+ * standard AA for Max Detail (regardless of skin — Max Detail
  * means Max Detail). */
 static bool tryLoadSVG(const char *path, int w, int h,
                        unsigned char *out, NSVGrasterizer *rast) {
@@ -203,24 +203,24 @@ static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
     SDL_BlitSurface(bmp, &srcRect, sheet, &dstRect);
 }
 
-/* Theme override.  When non-empty, tileLoaderBuildSheet looks for
- * sprites in data/theme/<themeName>/<name>.svg|png BEFORE falling
+/* Skin override.  When non-empty, tileLoaderBuildSheet looks for
+ * sprites in data/skin/<skinName>/<name>.svg|png BEFORE falling
  * back to data/svg/<name>.svg|png and finally the BMP. */
-static char s_themeName[64] = "";
+static char s_skinName[64] = "";
 
-/* Per-direction "is this hand-crafted in the theme" cache, see
- * tileLoaderThemeHasSprite below.  Cleared on theme change. */
+/* Per-direction "is this hand-crafted in the skin" cache, see
+ * tileLoaderSkinHasSprite below.  Cleared on skin change. */
 typedef struct {
     char     base[24];
-    Uint16   mask;       /* bit N set ⇒ has _NN file in current theme */
-} ThemeMaskEntry;
-static ThemeMaskEntry s_themeMasks[8];
-static int            s_themeMaskCount = 0;
+    Uint16   mask;       /* bit N set ⇒ has _NN file in current skin */
+} SkinMaskEntry;
+static SkinMaskEntry s_skinMasks[8];
+static int            s_skinMaskCount = 0;
 
-/* Theme metadata, populated from data/theme/<active>/theme.ini on
- * tileLoaderSetTheme.  Defaults to "no INI / classic only" when
+/* Skin metadata, populated from data/skin/<active>/skin.ini on
+ * tileLoaderSetSkin.  Defaults to "no INI / classic only" when
  * absent. */
-static TileLoaderThemeInfo s_themeInfo = { .max_pixel_density = 1 };
+static TileLoaderSkinInfo s_skinInfo = { .max_pixel_density = 1 };
 
 #ifdef _WIN32
 #include <windows.h>
@@ -231,20 +231,20 @@ extern DWORD GetPrivateProfileString(const char *section, const char *key,
                                       DWORD size, const char *file);
 #endif
 
-static void resetThemeInfo(void) {
-    s_themeInfo.name[0]         = '\0';
-    s_themeInfo.author[0]       = '\0';
-    s_themeInfo.email[0]        = '\0';
-    s_themeInfo.website[0]      = '\0';
-    s_themeInfo.release_date[0] = '\0';
-    s_themeInfo.max_pixel_density = 1;
-    s_themeInfo.has_ini         = false;
+static void resetSkinInfo(void) {
+    s_skinInfo.name[0]         = '\0';
+    s_skinInfo.author[0]       = '\0';
+    s_skinInfo.email[0]        = '\0';
+    s_skinInfo.website[0]      = '\0';
+    s_skinInfo.release_date[0] = '\0';
+    s_skinInfo.max_pixel_density = 1;
+    s_skinInfo.has_ini         = false;
 }
 
-/* Fill *out from data/theme/<themeName>/theme.ini.  Pure read — does
+/* Fill *out from data/skin/<skinName>/skin.ini.  Pure read — does
  * not touch any global state.  out is reset to defaults first; on
  * a missing INI file out->has_ini stays false. */
-static void readThemeInfo(const char *themeName, TileLoaderThemeInfo *out) {
+static void readSkinInfo(const char *skinName, TileLoaderSkinInfo *out) {
     out->name[0]         = '\0';
     out->author[0]       = '\0';
     out->email[0]        = '\0';
@@ -252,95 +252,95 @@ static void readThemeInfo(const char *themeName, TileLoaderThemeInfo *out) {
     out->release_date[0] = '\0';
     out->max_pixel_density = 1;
     out->has_ini         = false;
-    if (!themeName || !themeName[0]) return;
+    if (!skinName || !skinName[0]) return;
     char iniPath[512];
-    SDL_snprintf(iniPath, sizeof(iniPath), "data/theme/%s/theme.ini", themeName);
+    SDL_snprintf(iniPath, sizeof(iniPath), "data/skin/%s/skin.ini", skinName);
     SDL_PathInfo pinfo;
     if (!SDL_GetPathInfo(iniPath, &pinfo)) return;
     out->has_ini = true;
     char buf[16];
-    GetPrivateProfileString("theme", "name",         "", out->name,         sizeof(out->name),         iniPath);
-    GetPrivateProfileString("theme", "author",       "", out->author,       sizeof(out->author),       iniPath);
-    GetPrivateProfileString("theme", "email",        "", out->email,        sizeof(out->email),        iniPath);
-    GetPrivateProfileString("theme", "website",      "", out->website,      sizeof(out->website),      iniPath);
-    GetPrivateProfileString("theme", "release_date", "", out->release_date, sizeof(out->release_date), iniPath);
-    GetPrivateProfileString("theme", "max_pixel_density", "1", buf, sizeof(buf), iniPath);
+    GetPrivateProfileString("skin", "name",         "", out->name,         sizeof(out->name),         iniPath);
+    GetPrivateProfileString("skin", "author",       "", out->author,       sizeof(out->author),       iniPath);
+    GetPrivateProfileString("skin", "email",        "", out->email,        sizeof(out->email),        iniPath);
+    GetPrivateProfileString("skin", "website",      "", out->website,      sizeof(out->website),      iniPath);
+    GetPrivateProfileString("skin", "release_date", "", out->release_date, sizeof(out->release_date), iniPath);
+    GetPrivateProfileString("skin", "max_pixel_density", "1", buf, sizeof(buf), iniPath);
     int v = atoi(buf);
     if (v < 1) v = 1;
     if (v > 16) v = 16;
     out->max_pixel_density = v;
 }
 
-void tileLoaderQueryThemeInfo(const char *themeName, TileLoaderThemeInfo *out) {
+void tileLoaderQuerySkinInfo(const char *skinName, TileLoaderSkinInfo *out) {
     if (!out) return;
-    readThemeInfo(themeName, out);
+    readSkinInfo(skinName, out);
 }
 
-static void loadThemeInfo(void) {
-    readThemeInfo(s_themeName, &s_themeInfo);
-    if (!s_themeInfo.has_ini) return;
-    SDL_Log("tileLoader: theme '%s' loaded (max_pixel_density=%d)",
-            s_themeName, s_themeInfo.max_pixel_density);
+static void loadSkinInfo(void) {
+    readSkinInfo(s_skinName, &s_skinInfo);
+    if (!s_skinInfo.has_ini) return;
+    SDL_Log("tileLoader: skin '%s' loaded (max_pixel_density=%d)",
+            s_skinName, s_skinInfo.max_pixel_density);
 }
 
-const TileLoaderThemeInfo *tileLoaderGetThemeInfo(void) {
-    return &s_themeInfo;
+const TileLoaderSkinInfo *tileLoaderGetSkinInfo(void) {
+    return &s_skinInfo;
 }
 
 /* Coverage scan: for each density 1..max we flag whether the active
- * theme has all/some/none of the tiles at that density.  Per-sprite
+ * skin has all/some/none of the tiles at that density.  Per-sprite
  * max density is also recorded so High Detail can pick per sprite.
  * Density 1 is always FULL because every TileMap sprite has at
  * least a 1× default in data/svg/.  SVG counts as covering up to
- * themeInfo.max_pixel_density. */
+ * skinInfo.max_pixel_density. */
 #define TLR_MAX_DENSITY 16
 static unsigned char s_densityCov[TLR_MAX_DENSITY + 1];   /* 0=none,1=some,2=all */
 
 /* Per-sprite max density.  We don't know gTileMap size at compile
- * time so use a small dynamic array; theme reload tears it down. */
+ * time so use a small dynamic array; skin reload tears it down. */
 typedef struct { char name[64]; int maxDensity; } SpriteDensity;
 static SpriteDensity *s_spriteDensities = NULL;
 static int            s_spriteDensitiesCount = 0;
 
-/* True when data/theme/<active>/<density>-<sprite>.png exists, OR
- * (when density <= themeInfo.max_pixel_density) the theme provides
+/* True when data/skin/<active>/<density>-<sprite>.png exists, OR
+ * (when density <= skinInfo.max_pixel_density) the skin provides
  * the sprite as an SVG that the engine treats as covering this
  * density. */
-static bool spriteAtDensityFor(const char *themeName, int themeMaxDensity,
+static bool spriteAtDensityFor(const char *skinName, int skinMaxDensity,
                                const char *spriteName, int density) {
-    if (!themeName || !themeName[0]) return false;
+    if (!skinName || !skinName[0]) return false;
     char path[512];
     SDL_PathInfo pi;
     int sizePx = density * TILE_SIZE_X;   /* density 2 => 32 */
     /* Suffix form: <name>_<size>.png (Inkscape batch-export friendly). */
-    SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%d.png",
-                 themeName, spriteName, sizePx);
+    SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%d.png",
+                 skinName, spriteName, sizePx);
     if (SDL_GetPathInfo(path, &pi)) return true;
     /* Legacy prefix form: <size>-<name>.png. */
-    SDL_snprintf(path, sizeof(path), "data/theme/%s/%d-%s.png",
-                 themeName, sizePx, spriteName);
+    SDL_snprintf(path, sizeof(path), "data/skin/%s/%d-%s.png",
+                 skinName, sizePx, spriteName);
     if (SDL_GetPathInfo(path, &pi)) return true;
     if (density == 1) {
         /* Density 1 also accepts the unprefixed PNG / SVG in the
-         * theme dir (legacy 1× sprites). */
-        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.png",
-                     themeName, spriteName);
+         * skin dir (legacy 1× sprites). */
+        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s.png",
+                     skinName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
-        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.svg",
-                     themeName, spriteName);
+        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s.svg",
+                     skinName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
     }
     /* SVG counts up to declared max_pixel_density. */
-    if (density <= themeMaxDensity) {
-        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s.svg",
-                     themeName, spriteName);
+    if (density <= skinMaxDensity) {
+        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s.svg",
+                     skinName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
     }
     return false;
 }
 
 static bool spriteAtDensity(const char *spriteName, int density) {
-    return spriteAtDensityFor(s_themeName, s_themeInfo.max_pixel_density,
+    return spriteAtDensityFor(s_skinName, s_skinInfo.max_pixel_density,
                               spriteName, density);
 }
 
@@ -349,13 +349,13 @@ static void scanDensityCoverage(void) {
     if (s_spriteDensities) { SDL_free(s_spriteDensities); s_spriteDensities = NULL; }
     s_spriteDensitiesCount = 0;
 
-    /* Density 1 always full (default theme always supplies 1×). */
+    /* Density 1 always full (default skin always supplies 1×). */
     s_densityCov[1] = 2;
-    int maxD = s_themeInfo.max_pixel_density;
+    int maxD = s_skinInfo.max_pixel_density;
     if (maxD < 1) maxD = 1;
     if (maxD > TLR_MAX_DENSITY) maxD = TLR_MAX_DENSITY;
-    if (!s_themeName[0]) {
-        /* No theme override: density 1 is fully covered, nothing else.
+    if (!s_skinName[0]) {
+        /* No skin override: density 1 is fully covered, nothing else.
          * Still want per-sprite max=1 for the High Detail path. */
         return;
     }
@@ -395,9 +395,9 @@ static void scanDensityCoverage(void) {
         }
     }
 
-    SDL_Log("tileLoader: density coverage for theme '%s': "
+    SDL_Log("tileLoader: density coverage for skin '%s': "
             "1=all, 2=%s, 3=%s, 4=%s",
-            s_themeName,
+            s_skinName,
             s_densityCov[2] == 2 ? "all" : (s_densityCov[2] == 1 ? "some" : "none"),
             s_densityCov[3] == 2 ? "all" : (s_densityCov[3] == 1 ? "some" : "none"),
             s_densityCov[4] == 2 ? "all" : (s_densityCov[4] == 1 ? "some" : "none"));
@@ -428,11 +428,11 @@ int tileLoaderGetSpriteMaxDensity(const char *spriteName) {
 }
 
 int tileLoaderGetMissingSprites(int density, char *outBuf, int outBufSize) {
-    return tileLoaderQueryMissingSprites(s_themeName, density, outBuf, outBufSize);
+    return tileLoaderQueryMissingSprites(s_skinName, density, outBuf, outBufSize);
 }
 
 /* HUD/chrome sprite names that don't count toward "full tile coverage" —
- * a theme that ships only world tiles is still considered fully covering
+ * a skin that ships only world tiles is still considered fully covering
  * the world. */
 static bool isNonWorldSprite(const char *name) {
     static const char *kSkipPrefixes[] = {
@@ -453,20 +453,20 @@ static bool isNonWorldSprite(const char *name) {
     return false;
 }
 
-int tileLoaderQueryMissingSprites(const char *themeName, int density,
+int tileLoaderQueryMissingSprites(const char *skinName, int density,
                                    char *outBuf, int outBufSize) {
     if (outBuf && outBufSize > 0) outBuf[0] = '\0';
-    if (!themeName || !themeName[0]) return 0;
+    if (!skinName || !skinName[0]) return 0;
     if (density < 1) density = 1;
-    /* Need the theme's declared max so SVG-as-coverage logic matches. */
-    TileLoaderThemeInfo info;
-    readThemeInfo(themeName, &info);
+    /* Need the skin's declared max so SVG-as-coverage logic matches. */
+    TileLoaderSkinInfo info;
+    readSkinInfo(skinName, &info);
     int count = 0;
     int writePos = 0;
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const char *name = gTileMap[i].name;
         if (isNonWorldSprite(name)) continue;
-        if (spriteAtDensityFor(themeName, info.max_pixel_density, name, density)) continue;
+        if (spriteAtDensityFor(skinName, info.max_pixel_density, name, density)) continue;
         count++;
         if (outBuf && outBufSize > 0) {
             int remaining = outBufSize - writePos;
@@ -478,45 +478,45 @@ int tileLoaderQueryMissingSprites(const char *themeName, int density,
     return count;
 }
 
-void tileLoaderSetTheme(const char *name) {
+void tileLoaderSetSkin(const char *name) {
     if (!name || !name[0]) {
-        s_themeName[0] = '\0';
+        s_skinName[0] = '\0';
     } else {
-        SDL_strlcpy(s_themeName, name, sizeof(s_themeName));
+        SDL_strlcpy(s_skinName, name, sizeof(s_skinName));
     }
-    /* Theme changed → drop the per-direction-presence cache and
-     * reload theme metadata + density coverage. */
-    s_themeMaskCount = 0;
-    loadThemeInfo();
+    /* Skin changed → drop the per-direction-presence cache and
+     * reload skin metadata + density coverage. */
+    s_skinMaskCount = 0;
+    loadSkinInfo();
     scanDensityCoverage();
 }
 
-const char *tileLoaderGetTheme(void) {
-    return s_themeName;
+const char *tileLoaderGetSkin(void) {
+    return s_skinName;
 }
 
-static Uint16 computeThemeMask(const char *base) {
+static Uint16 computeSkinMask(const char *base) {
     Uint16 mask = 0;
-    if (!s_themeName[0] || !base || !base[0]) return 0;
+    if (!s_skinName[0] || !base || !base[0]) return 0;
     static const int kPrefixes[] = { 16, 24, 32, 48, 64, 96, 128 };
     const int kNumPref = (int)(sizeof(kPrefixes) / sizeof(kPrefixes[0]));
     char path[512];
     SDL_PathInfo info;
     for (int dir = 0; dir < 16; dir++) {
-        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%02d.svg",
-                     s_themeName, base, dir);
+        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%02d.svg",
+                     s_skinName, base, dir);
         if (SDL_GetPathInfo(path, &info)) { mask |= (Uint16)(1 << dir); continue; }
-        SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%02d.png",
-                     s_themeName, base, dir);
+        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%02d.png",
+                     s_skinName, base, dir);
         if (SDL_GetPathInfo(path, &info)) { mask |= (Uint16)(1 << dir); continue; }
         bool found = false;
         for (int i = 0; i < kNumPref && !found; i++) {
             /* Suffix form first, then legacy prefix. */
-            SDL_snprintf(path, sizeof(path), "data/theme/%s/%s_%02d_%d.png",
-                         s_themeName, base, dir, kPrefixes[i]);
+            SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%02d_%d.png",
+                         s_skinName, base, dir, kPrefixes[i]);
             if (SDL_GetPathInfo(path, &info)) { found = true; break; }
-            SDL_snprintf(path, sizeof(path), "data/theme/%s/%d-%s_%02d.png",
-                         s_themeName, kPrefixes[i], base, dir);
+            SDL_snprintf(path, sizeof(path), "data/skin/%s/%d-%s_%02d.png",
+                         s_skinName, kPrefixes[i], base, dir);
             if (SDL_GetPathInfo(path, &info)) { found = true; break; }
         }
         if (found) mask |= (Uint16)(1 << dir);
@@ -524,33 +524,33 @@ static Uint16 computeThemeMask(const char *base) {
     return mask;
 }
 
-bool tileLoaderThemeHasSprite(const char *baseName, int dir) {
-    if (!s_themeName[0]) return false;
+bool tileLoaderSkinHasSprite(const char *baseName, int dir) {
+    if (!s_skinName[0]) return false;
     if (!baseName || !baseName[0]) return false;
     if (dir < 0 || dir > 15) return false;
-    for (int i = 0; i < s_themeMaskCount; i++) {
-        if (SDL_strcmp(s_themeMasks[i].base, baseName) == 0) {
-            return ((s_themeMasks[i].mask >> dir) & 1) != 0;
+    for (int i = 0; i < s_skinMaskCount; i++) {
+        if (SDL_strcmp(s_skinMasks[i].base, baseName) == 0) {
+            return ((s_skinMasks[i].mask >> dir) & 1) != 0;
         }
     }
-    int slot = s_themeMaskCount;
-    if (slot >= (int)(sizeof(s_themeMasks) / sizeof(s_themeMasks[0]))) return false;
-    SDL_strlcpy(s_themeMasks[slot].base, baseName,
-                sizeof(s_themeMasks[slot].base));
-    s_themeMasks[slot].mask = computeThemeMask(baseName);
-    s_themeMaskCount++;
-    return ((s_themeMasks[slot].mask >> dir) & 1) != 0;
+    int slot = s_skinMaskCount;
+    if (slot >= (int)(sizeof(s_skinMasks) / sizeof(s_skinMasks[0]))) return false;
+    SDL_strlcpy(s_skinMasks[slot].base, baseName,
+                sizeof(s_skinMasks[slot].base));
+    s_skinMasks[slot].mask = computeSkinMask(baseName);
+    s_skinMaskCount++;
+    return ((s_skinMasks[slot].mask >> dir) & 1) != 0;
 }
 
-bool tileLoaderThemeRotates(void) {
-    if (!s_themeName[0]) return false;
-    /* Convention: any theme dir ending with "_ingamerotate" only
+bool tileLoaderSkinRotates(void) {
+    if (!s_skinName[0]) return false;
+    /* Convention: any skin dir ending with "_ingamerotate" only
      * ships the north-facing (_00) variant of rotation groups. */
-    size_t n = SDL_strlen(s_themeName);
+    size_t n = SDL_strlen(s_skinName);
     const char *suffix = "_ingamerotate";
     size_t sn = SDL_strlen(suffix);
     if (n < sn) return false;
-    return SDL_strcmp(s_themeName + (n - sn), suffix) == 0;
+    return SDL_strcmp(s_skinName + (n - sn), suffix) == 0;
 }
 
 /* For Pixelate-to-Zoom: pick the best size-tagged PNG in <dir> for
@@ -672,14 +672,14 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         }
 
         /* Try N-<name>.png prefix at the chosen density, in the
-         * theme dir first then the default.  tryLoadSizedPNG
+         * skin dir first then the default.  tryLoadSizedPNG
          * already handles exact / smaller / larger fallback. */
         if (targetDensity > 1) {
             int targetPx = targetDensity * TILE_SIZE_X * (e->width / TILE_SIZE_X);
             (void)targetPx;
             char dir[256];
-            if (s_themeName[0]) {
-                SDL_snprintf(dir, sizeof(dir), "data/theme/%s", s_themeName);
+            if (s_skinName[0]) {
+                SDL_snprintf(dir, sizeof(dir), "data/skin/%s", s_skinName);
                 if (tryLoadSizedPNG(dir, e->name, w, w, h, tmpBuf)) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                     loaded = true;
@@ -702,10 +702,10 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int srcW = classicUpscale ? e->width  : w;
         int srcH = classicUpscale ? e->height : h;
 
-        /* Theme override: try data/theme/<theme>/<name>.svg|png. */
-        if (!loaded && s_themeName[0]) {
+        /* Skin override: try data/skin/<skin>/<name>.svg|png. */
+        if (!loaded && s_skinName[0]) {
             SDL_snprintf(pathBuf, sizeof(pathBuf),
-                         "data/theme/%s/%s.svg", s_themeName, e->name);
+                         "data/skin/%s/%s.svg", s_skinName, e->name);
             if (tryLoadSVG(pathBuf, srcW, srcH, tmpBuf, rast)) {
                 blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                 loaded = true;
@@ -713,14 +713,14 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             }
             if (!loaded) {
                 SDL_snprintf(pathBuf, sizeof(pathBuf),
-                             "data/theme/%s/%s.png", s_themeName, e->name);
+                             "data/skin/%s/%s.png", s_skinName, e->name);
                 if (tryLoadPNG(pathBuf, srcW, srcH, tmpBuf)) {
                     blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                     loaded = true;
                     pngCount++;
                 }
             }
-            /* Ingamerotate themes only ship _00 of rotation groups —
+            /* Ingamerotate skins only ship _00 of rotation groups —
              * runtime code rotates _00 at draw time. */
         }
 

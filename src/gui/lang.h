@@ -1097,7 +1097,7 @@
 #define STR_DLGSETTINGS_USE_UPNP            1207
 #define STR_DLGSETTINGS_USE_NATTRAV         1208
 
-/* Graphics section: tile detail / animation smoothness / theme info */
+/* Graphics section: tile detail / animation smoothness / skin info */
 #define STR_DLGSETTINGS_GFX_DISCLAIMER      1209
 #define STR_DLGSETTINGS_TILEDETAIL          1210
 #define STR_DLGSETTINGS_TD_CLASSIC          1211
@@ -1109,8 +1109,8 @@
 #define STR_DLGSETTINGS_AS_MAX              1217
 #define STR_DLGSETTINGS_FORCESMOOTHSHELLS   1218
 #define STR_DLGSETTINGS_FORCESMOOTH_TIP     1219
-#define STR_DLGSETTINGS_THEMES_DISCLAIMER   1220
-#define STR_DLGSETTINGS_THEME                1221
+#define STR_DLGSETTINGS_SKINS_DISCLAIMER   1220
+#define STR_DLGSETTINGS_SKIN                1221
 #define STR_DLGSETTINGS_PREVIEW             1222
 #define STR_DLGSETTINGS_INTERP              1223
 #define STR_DLGSETTINGS_INTERP_NEAREST      1224

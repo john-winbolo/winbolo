@@ -29,7 +29,7 @@ extern "C" {
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
 
-/* Draw the "Graphics" CollapsingHeader (Theme picker + Apply +
+/* Draw the "Graphics" CollapsingHeader (Skin picker + Apply +
  * Animation style + sprite/rotating-tank preview).  Shared between
  * the splash dialog and the in-game Settings panel.  Must be called
  * from inside an ImGui frame; the rotating preview uses the supplied
@@ -38,24 +38,24 @@ struct SDL_Renderer;
 void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *renderer);
 
 /* Reset the Graphics section's pending preview selection back to the
- * currently-active theme.  Call when opening the Settings dialog so
- * the dropdown shows the active theme on every fresh open instead of
+ * currently-active skin.  Call when opening the Settings dialog so
+ * the dropdown shows the active skin on every fresh open instead of
  * the last-previewed one from a prior session. */
 void imguiSettingsResetGraphicsSelection(void);
 
-/* True when the Graphics section's theme dropdown is on a different
- * theme than the active one — i.e. user picked but didn't click
- * Apply.  Used at close time to ask "apply previewed theme?". */
-bool imguiSettingsHasUnappliedThemePreview(void);
+/* True when the Graphics section's skin dropdown is on a different
+ * skin than the active one — i.e. user picked but didn't click
+ * Apply.  Used at close time to ask "apply previewed skin?". */
+bool imguiSettingsHasUnappliedSkinPreview(void);
 
-/* Name of the theme currently selected in the dropdown.  Returns
- * "(default)" for the empty/default theme.  Lifetime: valid until
+/* Name of the skin currently selected in the dropdown.  Returns
+ * "(default)" for the empty/default skin.  Lifetime: valid until
  * the next Settings dialog open. */
-const char *imguiSettingsGetPreviewedThemeName(void);
+const char *imguiSettingsGetPreviewedSkinName(void);
 
-/* Commit the previewed theme (same effect as clicking Apply in the
+/* Commit the previewed skin (same effect as clicking Apply in the
  * Graphics section). */
-void imguiSettingsApplyPreviewedTheme(void);
+void imguiSettingsApplyPreviewedSkin(void);
 
 #ifdef __cplusplus
 }

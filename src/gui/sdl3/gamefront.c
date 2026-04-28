@@ -1843,11 +1843,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
   labelTank = atoi(buff);
 
-  /* Graphics theme — applied here so the first sheet build picks it up. */
+  /* Graphics skin — applied here so the first sheet build picks it up. */
   {
-    char themeBuf[128] = "";
-    GetPrivateProfileString("GRAPHICS", "Theme", "", themeBuf, sizeof(themeBuf), prefsFile);
-    tileLoaderSetTheme(themeBuf);
+    char skinBuf[128] = "";
+    GetPrivateProfileString("GRAPHICS", "Skin", "", skinBuf, sizeof(skinBuf), prefsFile);
+    tileLoaderSetSkin(skinBuf);
   }
   /* Tile Detail Level (Classic / MatchToZoom / HighDetail). */
   {
@@ -1891,12 +1891,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 /* Forward declaration — defined after gameFrontPutPrefs */
 void gameFrontFlushWindowSettings(void);
 
-/* Persist the selected graphics theme name (empty string = default).
+/* Persist the selected graphics skin name (empty string = default).
  * Called from the Settings dialog Apply button so the choice survives
  * a restart. */
-void gameFrontSaveThemeChoice(const char *themeName) {
-  WritePrivateProfileString("GRAPHICS", "Theme",
-                             themeName ? themeName : "",
+void gameFrontSaveSkinChoice(const char *skinName) {
+  WritePrivateProfileString("GRAPHICS", "Skin",
+                             skinName ? skinName : "",
                              getPreferenceFilePath());
 }
 

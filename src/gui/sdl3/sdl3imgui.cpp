@@ -3162,7 +3162,7 @@ void sdl3ImguiShowSettings(void) {
     if (s_showSettings) {
         s_settingsNameBuf[0] = '\0';
         gameFrontGetPlayerName(s_settingsNameBuf);
-        /* Snap Graphics dropdown back to active theme on each open. */
+        /* Snap Graphics dropdown back to active skin on each open. */
         imguiSettingsResetGraphicsSelection();
 #if BOLO_MOBILE
         s_showSendMsg = false;

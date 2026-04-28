@@ -1054,17 +1054,17 @@ STR_DLGSETTINGS_NET_HELP=Settings take effect on the next hosted game.
 STR_DLGSETTINGS_USE_UPNP=Use UPnP / NAT-PMP for automatic port forwarding
 STR_DLGSETTINGS_USE_NATTRAV=Use NAT traversal (hole-punching) via tracker
 
-# Graphics section: tile detail / animation smoothness / theme info
+# Graphics section: tile detail / animation smoothness / skin info
 STR_DLGSETTINGS_TILEDETAIL=Tile Detail Level
 STR_DLGSETTINGS_TD_CLASSIC=Classic
-STR_DLGSETTINGS_TD_MATCHZOOM=Match to zoom (if theme supports it)
+STR_DLGSETTINGS_TD_MATCHZOOM=Match to zoom (if skin supports it)
 STR_DLGSETTINGS_TD_HIGHDETAIL=High Detail
 STR_DLGSETTINGS_ANIMSMOOTH=Animation Smoothness (Tanks, Shells, and Builders)
 STR_DLGSETTINGS_AS_MATCH=Match to pixelation
 STR_DLGSETTINGS_AS_MAX=Max - smoothest, ignores pixelation
 STR_DLGSETTINGS_FORCESMOOTHSHELLS=Force smooth path shells
-STR_DLGSETTINGS_THEMES_DISCLAIMER=All themes are cosmetic and do not affect game play.
-STR_DLGSETTINGS_THEME=Theme
+STR_DLGSETTINGS_SKINS_DISCLAIMER=All skins are cosmetic and do not affect game play.
+STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSETTINGS_PREVIEW=Preview
 STR_DLGSETTINGS_INTERP=Texture Interpolation
 STR_DLGSETTINGS_INTERP_NEAREST=Nearest (crisp pixels)

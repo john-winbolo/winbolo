@@ -26,7 +26,7 @@ typedef enum {
     /* Sprite x = round(world_unit / 16). Snaps to nearest game pixel. */
     GFX_ANIM_PIXEL_NEAREST = 1,
     /* Sprite x = world_unit / 16.0 (full sub-pixel). May blur for
-     * pixel-art textures unless the theme is SVG-based. */
+     * pixel-art textures unless the skin is SVG-based. */
     GFX_ANIM_SMOOTH        = 2,
 } GfxAnimStyle;
 
@@ -38,13 +38,13 @@ GfxAnimStyle  gfxSettingsGetAnimStyle(void);
 float gfxSettingsWuToGamePixel(int wu);
 
 /* Tile Detail Level — how the tile atlas is built from the active
- * theme's assets.  Independent of motion (see GfxAnimSmoothness).
+ * skin's assets.  Independent of motion (see GfxAnimSmoothness).
  *   Classic:     density 1 only.  Pixelation matches standard
  *                bolo's size.
  *   MatchToZoom: at the active gZoomFactor, use the highest density
- *                <= gZoomFactor for which the theme provides ALL
+ *                <= gZoomFactor for which the skin provides ALL
  *                tiles; fall back to a lower density that's full.
- *   HighDetail:  per sprite, use the highest density the theme
+ *   HighDetail:  per sprite, use the highest density the skin
  *                actually provides for that sprite — partial
  *                coverage is fine. */
 typedef enum {
@@ -83,7 +83,7 @@ bool gfxSettingsGetForceSmoothShells(void);
  *             pixel, no blending.  Classic Bolo crispness.
  *   Linear:   bilinear filtering — smooth interpolation between
  *             source pixels.  Softens edges, can read as blurry on
- *             pixel-art content but pleasant on vector themes.
+ *             pixel-art content but pleasant on vector skins.
  *   PixelArt: nearest-with-edge-improvements (SDL 3.4+) — keeps
  *             pixels crisp but avoids the harsh stair-step at
  *             non-integer zoom factors. */

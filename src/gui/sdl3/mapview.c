@@ -584,20 +584,20 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      *
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
-    /* Ingamerotate: theme only ships shell_00, so for dir != 0
+    /* Ingamerotate: skin only ships shell_00, so for dir != 0
      * redirect src to SHELL_0 and rotate at draw time.  Pivot is the
      * N-tip (1.5, 0) sprite-local; place dst so the pivot lands on
      * the un-tip-adjusted (sx, sy) world position. */
     /* Runtime rotation of _00 is Max-Detail-only.  In Pixelate
      * modes we let the atlas slot (which falls back to the stock
-     * theme when the user's theme didn't ship shell_<NN>) render
+     * skin when the user's skin didn't ship shell_<NN>) render
      * directly — no rotation, no pixel-art-rotated mush. */
     bool rotateLive = false;
     if (gfxSettingsGetTileDetail() == GFX_TILE_DETAIL_HIGH_DETAIL
-        && tileLoaderThemeRotates()
+        && tileLoaderSkinRotates()
         && frame >= SHELL_DIR1 && frame <= SHELL_DIR15) {
       int liveDir = frame - SHELL_DIR0;
-      rotateLive = !tileLoaderThemeHasSprite("shell", liveDir);
+      rotateLive = !tileLoaderSkinHasSprite("shell", liveDir);
     }
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15 && !rotateLive) {
       int dir = frame - SHELL_DIR0;
@@ -986,19 +986,19 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       /* See shell render for why 0.5 — atlas bleed under LINEAR. */
       float inset = 0.5f;
 
-      /* Ingamerotate: theme only ships tank_*_00.  For dir != 0
+      /* Ingamerotate: skin only ships tank_*_00.  For dir != 0
        * redirect src to the _0 atlas slot of the colour group and
        * rotate at draw time around the sprite centre.  Falls through
-       * to the per-direction atlas slot for non-ingamerotate themes
+       * to the per-direction atlas slot for non-ingamerotate skins
        * (or dir == 0). */
       int useSrcX = srcX, useSrcY = srcY;
       double rotAngleDeg = 0.0;
       bool useRotate = false;
       /* Runtime tank rotation is Max-Detail-only.  Pixelate modes
-       * use whatever's in the per-direction atlas slot (theme's
+       * use whatever's in the per-direction atlas slot (skin's
        * file if present, stock fallback otherwise). */
       if (gfxSettingsGetTileDetail() == GFX_TILE_DETAIL_HIGH_DETAIL
-          && tileLoaderThemeRotates()
+          && tileLoaderSkinRotates()
           && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
         int dir = frame & 0x0F;
         if (dir != 0) {
@@ -1015,9 +1015,9 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
             case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  baseName = "tank_evilboat"; break;
             default: bX = srcX; bY = srcY; break;
           }
-          /* Skip rotation when the theme ships a hand-crafted
+          /* Skip rotation when the skin ships a hand-crafted
            * <base>_<NN>; the per-direction atlas slot already has it. */
-          if (baseName && tileLoaderThemeHasSprite(baseName, dir)) {
+          if (baseName && tileLoaderSkinHasSprite(baseName, dir)) {
             /* leave useRotate = false → atlas slot used directly */
           } else {
             useSrcX = bX; useSrcY = bY;

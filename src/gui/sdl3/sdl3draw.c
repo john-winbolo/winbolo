@@ -286,7 +286,7 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
 static bool sdl3LoadTiles(void); /* forward */
 
 /* Public reload: drop the cached tile texture and immediately rebuild
- * it so the new theme / SVG-allow setting is available right away —
+ * it so the new skin / SVG-allow setting is available right away —
  * needed for the splash-mode Settings dialog where the world isn't
  * rendering between frames to lazily rebuild for us. */
 void sdl3DrawReloadTiles(void) {
@@ -316,13 +316,13 @@ static bool sdl3LoadTiles(void) {
   if (atlasZoom < 1) atlasZoom = 1;
   gSheetScale = atlasZoom;
 
-  /* Apply theme override from environment variable WINBOLO_THEME if
-   * set.  Useful for testing themes before the Graphics Settings UI
+  /* Apply skin override from environment variable WINBOLO_SKIN if
+   * set.  Useful for testing skins before the Graphics Settings UI
    * lands.  Setting it to "" or unsetting picks the vanilla sprites. */
-  const char *envTheme = SDL_getenv("WINBOLO_THEME");
-  if (envTheme && envTheme[0]) {
-    tileLoaderSetTheme(envTheme);
-    SDL_Log("sdl3LoadTiles: theme = '%s' (from WINBOLO_THEME)", envTheme);
+  const char *envSkin = SDL_getenv("WINBOLO_SKIN");
+  if (envSkin && envSkin[0]) {
+    tileLoaderSetSkin(envSkin);
+    SDL_Log("sdl3LoadTiles: skin = '%s' (from WINBOLO_SKIN)", envSkin);
   }
 
   SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * atlasZoom);
@@ -345,7 +345,7 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
   /* Allow SVG graphics → linear sampling so rotated sprites smooth
    * out at the edges.  Off → nearest for crisp pixel-art look.
-   * Ingamerotate themes always use NEAREST regardless of the toggle —
+   * Ingamerotate skins always use NEAREST regardless of the toggle —
    * crisp rotation is the look the user wants there. */
   /* Sampling mode comes from the user's Graphics > Interpolation
    * setting (NEAREST / LINEAR / PIXELART). */
@@ -1676,7 +1676,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                                        (int)cs->xOffset, (int)cs->yOffset);
       mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
       /* Push live per-tank angles to mapview so the ingamerotate
-       * theme can rotate to full 256-bolo-degree precision instead
+       * skin can rotate to full 256-bolo-degree precision instead
        * of the 16-step direction encoded in screenTanks frames. */
       if (cs) mapViewSetTankAnglesFromSim(&cs->sim);
       mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);

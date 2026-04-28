@@ -1014,17 +1014,17 @@ static const LangEntry langTable[] = {
     {1207, "Use UPnP / NAT-PMP for automatic port forwarding"},
     {1208, "Use NAT traversal (hole-punching) via tracker"},
 
-    /* Graphics section: tile detail / animation smoothness / theme info */
+    /* Graphics section: tile detail / animation smoothness / skin info */
     {1209, "All pixelation and animation settings do not affect "
            "gameplay. Internally, all tanks, shells and builders "
            "are stored with max precision and pixelation affects "
            "the visual display only."},
     {1210, "Tile Detail Level"},
     {1211, "Classic"},
-    {1212, "Match to zoom (if theme supports it)"},
+    {1212, "Match to zoom (if skin supports it)"},
     {1213, "High Detail"},
     {1214, "Match to zoom - Pixelation matches the window zoom,\n"
-           "if the theme provides that level of detail."},
+           "if the skin provides that level of detail."},
     {1215, "Animation Smoothness (Tanks, Shells, and Builders)"},
     {1216, "Match to pixelation"},
     {1217, "Max - smoothest, ignores pixelation"},
@@ -1032,8 +1032,8 @@ static const LangEntry langTable[] = {
     {1219, "Cosmetic - shells appear to fly more directly and\n"
            "smoothly, but their position no longer snaps to the\n"
            "pixel grid."},
-    {1220, "All themes are cosmetic and do not affect game play."},
-    {1221, "Theme"},
+    {1220, "All skins are cosmetic and do not affect game play."},
+    {1221, "Skin"},
     {1222, "Preview"},
     {1223, "Texture Interpolation"},
     {1224, "Nearest (crisp pixels)"},
