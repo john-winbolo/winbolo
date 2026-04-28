@@ -49,6 +49,7 @@
 #include "../tiles.h"
 #include "../ui_mode.h"
 #include "tileloader.h"
+#include "sdl_bmp.h"
 #include "../../bolo/global.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
@@ -330,16 +331,9 @@ static bool sdl3LoadBackground(void) {
     return TRUE;
   }
 
-  SDL_Surface *surf = SDL_LoadBMP("data/background.bmp");
-  if (surf == NULL) {
-    SDL_Log("sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
-    return FALSE;
-  }
-
-  gBackgroundTex = SDL_CreateTextureFromSurface(gRenderer, surf);
-  SDL_DestroySurface(surf);
+  gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, "data/background.bmp", false);
   if (gBackgroundTex == NULL) {
-    SDL_Log("sdl3DrawBackground: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
+    SDL_Log("sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
     return FALSE;
   }
   SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);

@@ -136,6 +136,7 @@ add_executable(logviewer
     ${LV_SOURCES}
     ${LV_IMGUI_SOURCES}
     ${LV_WASM_SOURCES}
+    ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
 )
 
 target_include_directories(logviewer PRIVATE
