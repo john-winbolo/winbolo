@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=Nätverk
 STR_DLGSETTINGS_NET_HELP=Inställningarna träder i kraft vid nästa hostat spel.
 STR_DLGSETTINGS_USE_UPNP=Använd UPnP / NAT-PMP för automatisk portvidarebefordran
 STR_DLGSETTINGS_USE_NATTRAV=Använd NAT-traversal (hole-punching) via tracker
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=Spelarnamnet är tomt.
+STR_NAME_INVALID_CHARS=Spelarnamnet innehåller otillåtna tecken.
+STR_NAME_INVALID_MIXED_SCRIPTS=Spelarnamnet blandar inkompatibla skriftsystem.
+STR_NAME_INVALID_RESERVED_PREFIX=Spelarnamnet får inte börja med '*'.
+STR_NAME_INVALID_RESERVED_SUFFIX=Spelarnamnet får inte sluta med '-unverified'.
+
+# Settings → Display: country-flag rendering preference
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Visa landslagsflaggor i chatten
+
+# Verified player name conflict messages
+STR_NAME_RENAMED_BY_VERIFIED={player} döptes om eftersom {other} anslöt som verifierad
+STR_NAME_TAKEN_BY_VERIFIED=Det visningsnamnet tillhör en verifierad spelare. Välj ett annat.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Det visningsnamnet används av en annan verifierad spelare. Välj ett annat.
+
+# Connection rejection and kick messages
+STR_REJECT_INCORRECT_PASSWORD=Felaktigt lösenord
+STR_REJECT_GAME_LOCKED=Spelet är låst
+STR_REJECT_SERVER_FULL=Servern är full
+STR_REJECT_NAME_POOL_EXHAUSTED=Serverns namnpool är slut
+STR_REJECT_INVALID_PLAYER_NAME=Ogiltigt spelarnamn
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net-verifiering misslyckades: {string1}
+STR_KICK_ANNOUNCE={player} har sparkats av servern.

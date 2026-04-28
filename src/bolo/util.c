@@ -38,6 +38,7 @@
 #include "bases.h"
 #include "util.h"
 #include "mathWinbolo.h"
+#include "playername_validate.h"
 
 /*********************************************************
 *NAME:          utilCalcDistance
@@ -596,34 +597,11 @@ void utilStripNameReplace(char *name) {
 *  name - String to remove from
 *********************************************************/
 void utilStripName(char *name) {
-  char *ptr;
-  int len;
-
-  len = (int) strlen(name);
-  /* Strip charectors at the end */
-  if (len > 2) {
-    ptr = name + strlen(name) - 1;
-    while (ptr != name && (*ptr == ' ' || *ptr == '\t')) {
-      *ptr = '\0';
-      ptr--;
-    }
-  }
-
-  /* Strip charectors at the start */
-  ptr = name;
-  len = 0;
-  while (*ptr != '\0' && (*ptr == ' ' || *ptr == '\t')) {
-    len++;
-    ptr++;
-  }
-  if (len != 0) {
-    ptr = name + len;
-    while (*ptr != '\0') {
-      *(ptr - len) = *ptr;
-      ptr++;
-    }
-    *(ptr - len) = *ptr;
-  }
+  /* Shim: the canonical Unicode-aware whitespace strip lives in
+   * playername_validate.c so the same set of separators is recognised at
+   * every entry point.  Pre-existing callers (screen.c, sdl3imgui.cpp,
+   * imgui_udpsetup.cpp) get the wider strip transparently. */
+  playerNameStripWhitespace(name);
 }
 
 /*********************************************************

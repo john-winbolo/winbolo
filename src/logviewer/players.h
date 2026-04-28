@@ -75,6 +75,9 @@ typedef struct {
   bool isChecked;                   /* Is this item checked */
   bool needUpdate;
   BYTE team;
+  /* Per-player account flags (v1 logs only). Bit 0 = WBN, bit 1 = Steam.
+   * Mirrors MESSAGE_FLAG_WBN / MESSAGE_FLAG_STEAM from src/gui/lang.h. */
+  BYTE accountFlags;
 } player;
 
 /* Array of all the players */
@@ -165,7 +168,7 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName);
 *  announce   - Do we want to announce this fact?
 *  override   - Override if the game is fastfowarding
 *********************************************************/
-void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override);
+void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override, BYTE accountFlags);
 
 void lv_playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat);
 

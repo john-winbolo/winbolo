@@ -1084,3 +1084,23 @@ STR_DLGSETTINGS_NETWORK=Sieć
 STR_DLGSETTINGS_NET_HELP=Ustawienia zaczną obowiązywać przy następnej hostowanej grze.
 STR_DLGSETTINGS_USE_UPNP=Użyj UPnP / NAT-PMP do automatycznego przekierowania portu
 STR_DLGSETTINGS_USE_NATTRAV=Użyj NAT traversal (hole-punching) przez tracker
+
+# Player name validation and verified-player rename notices
+STR_NAME_INVALID_EMPTY=Nazwa gracza jest pusta.
+STR_NAME_INVALID_CHARS=Nazwa gracza zawiera niedozwolone znaki.
+STR_NAME_INVALID_MIXED_SCRIPTS=Nazwa gracza miesza niezgodne systemy pisma.
+STR_NAME_INVALID_RESERVED_PREFIX=Nazwa gracza nie może zaczynać się od '*'.
+STR_NAME_INVALID_RESERVED_SUFFIX=Nazwa gracza nie może kończyć się na '-unverified'.
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Pokaż flagi krajów w czacie
+STR_NAME_RENAMED_BY_VERIFIED={player} został(a) przemianowany(a), ponieważ {other} dołączył(a) jako zweryfikowany gracz
+STR_NAME_TAKEN_BY_VERIFIED=Ta wyświetlana nazwa należy do zweryfikowanego gracza. Wybierz inną.
+
+# Connection rejection reasons and kick announcement
+STR_REJECT_INCORRECT_PASSWORD=Nieprawidłowe hasło
+STR_REJECT_GAME_LOCKED=Gra jest zablokowana
+STR_REJECT_SERVER_FULL=Serwer pełny
+STR_REJECT_NAME_POOL_EXHAUSTED=Pula nazw serwera wyczerpana
+STR_REJECT_INVALID_PLAYER_NAME=Nieprawidłowa nazwa gracza
+STR_REJECT_WBN_VERIFY_FAILED=Weryfikacja WinBolo.net nieudana: {string1}
+STR_KICK_ANNOUNCE={player} został(a) wyrzucony(a) przez serwer.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Ta wyświetlana nazwa jest już używana przez innego zweryfikowanego gracza. Wybierz inną.

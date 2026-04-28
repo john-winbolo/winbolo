@@ -41,8 +41,11 @@
 #include "input_packet.h"
 #include "gametype.h"
 
-/* Maximum UDP datagram payload we'll send */
-#define UDP_MAX_PAYLOAD 1024
+/* Maximum UDP datagram payload we'll send.
+ * Sits under the standard 1500-byte Ethernet MTU minus IPv4 (20) + UDP (8)
+ * headers (= 1472 cap), with headroom for IPv4 options or minor encapsulation
+ * overhead. Avoids fragmentation on typical internet paths. */
+#define UDP_MAX_PAYLOAD 1400
 
 /* Input packet ring buffer size for client redundancy */
 #define CLIENT_INPUT_RING_SIZE 16
@@ -75,15 +78,25 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
 
 #define PACKET_HEADER_SIZE 8
 
-/* Lobby slot wire format size: connected(1) + playerName(32) + teamNumber(1) + ready(1) + isBot(1) + pingMs(2) + countryCode(2) + wbn(1) + steam(1) */
-#define LOBBY_SLOT_WIRE_SIZE (1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
+/* Lobby slot wire format (variable length).
+ *   Disconnected slot: connected(0) — 1 byte total.
+ *   Connected slot:    connected(1) + nameLen(1) + name(0..63 UTF-8 bytes,
+ *                      no NUL on the wire) + teamNumber(1) + ready(1)
+ *                      + isBot(1) + pingMs(2) + countryCode(2) + wbn(1)
+ *                      + steam(1)  ->  11 + nameLen bytes (max 74).
+ * The macros below are buffer-size upper bounds, NOT the actual on-wire size.
+ * Encoders track running `pos` and emit only the bytes they actually wrote;
+ * decoders length-check each field and reject malformed packets. */
+#define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
 /* Lobby settings tail: mapName(36) + gameType(1) + hiddenMines(1) + aiType(1) + gameLength(4) + pillCount(1) + baseCount(1) + startCount(1) + mapSkipAvailable(1) */
 #define LOBBY_SETTINGS_SIZE  (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1)
+/* Upper bound for buffer sizing: serverState(1) + 16 max-size slots + settings tail. */
 #define LOBBY_STATE_PAYLOAD  (1 + MAX_TANKS * LOBBY_SLOT_WIRE_SIZE + LOBBY_SETTINGS_SIZE)
 
 #define INPUT_PACKET_WIRE_SIZE 21
 #define TANK_SNAPSHOT_WIRE_SIZE 27
+/* Upper bound: slot index(1) + max-size slot. */
 #define LOBBY_UPDATE_PAYLOAD (1 + LOBBY_SLOT_WIRE_SIZE)
 
 /* ---- Serialization helpers ---- */

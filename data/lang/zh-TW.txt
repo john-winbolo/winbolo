@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=網路
 STR_DLGSETTINGS_NET_HELP=設定將在下一局代管遊戲中生效。
 STR_DLGSETTINGS_USE_UPNP=使用 UPnP / NAT-PMP 自動轉發連接埠
 STR_DLGSETTINGS_USE_NATTRAV=透過 tracker 使用 NAT 穿透（hole-punching）
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=玩家名稱不能為空。
+STR_NAME_INVALID_CHARS=玩家名稱包含不允許的字元。
+STR_NAME_INVALID_MIXED_SCRIPTS=玩家名稱混用了不相容的文字系統。
+STR_NAME_INVALID_RESERVED_PREFIX=玩家名稱不能以「*」開頭。
+STR_NAME_INVALID_RESERVED_SUFFIX=玩家名稱不能以「-unverified」結尾。
+
+# Settings → Display: country-flag rendering preference
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=在聊天中顯示國旗
+
+# Verified-priority collision policy
+STR_NAME_RENAMED_BY_VERIFIED={player} 因 {other} 以已驗證身分加入而被重新命名
+STR_NAME_TAKEN_BY_VERIFIED=此顯示名稱屬於已驗證的玩家，請選擇其他名稱。
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=此顯示名稱已被另一位已驗證的玩家使用，請選擇其他名稱。
+
+# Connection rejection reasons and server kick announcement
+STR_REJECT_INCORRECT_PASSWORD=密碼不正確
+STR_REJECT_GAME_LOCKED=遊戲已鎖定
+STR_REJECT_SERVER_FULL=伺服器已滿
+STR_REJECT_NAME_POOL_EXHAUSTED=伺服器名稱池已耗盡
+STR_REJECT_INVALID_PLAYER_NAME=玩家名稱無效
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net 驗證失敗：{string1}
+STR_KICK_ANNOUNCE={player} 已被伺服器踢出。

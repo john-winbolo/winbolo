@@ -68,8 +68,9 @@ void lv_playersCreate() {
     plrs.item[count].inUse = FALSE;
     plrs.item[count].needUpdate = FALSE;
     plrs.item[count].allie = lv_allienceCreate();
-    plrs.item[count].isChecked = FALSE;  
+    plrs.item[count].isChecked = FALSE;
     plrs.item[count].team = NO_TEAM_SET;
+    plrs.item[count].accountFlags = 0;
   }
   testP[0] = '\0';
 }
@@ -173,11 +174,11 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
 *  announce   - Do we want to announce this fact?
 *  override   - Override if the game is fastfowarding
 *********************************************************/
-void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override) {
+void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override, BYTE accountFlags) {
   BYTE count; /* Looping variable */
 
   if (plrs.item[playerNum].inUse == FALSE || override == TRUE) {
-    
+
     if (override == FALSE || plrs.item[playerNum].inUse == FALSE) {
       /* onlysetup team if not overridding for rewind */
       plrs.item[playerNum].team = lv_playersGetUnusedTeam(playerNum);
@@ -197,7 +198,8 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
     }
     plrs.item[playerNum].frame = frame;
     plrs.item[playerNum].onBoat = onBoat;
-    
+    plrs.item[playerNum].accountFlags = accountFlags;
+
     plrs.item[playerNum].allie = lv_allienceCreate();
     count = 0;
     while (count < numAllies) {
@@ -612,6 +614,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
     plrs.item[playerNum].needUpdate = FALSE;
     plrs.item[playerNum].isChecked = FALSE;
     plrs.item[playerNum].team = NO_TEAM_SET;
+    plrs.item[playerNum].accountFlags = 0;
 
     if (announce == TRUE) {
       name[0] = '\0';

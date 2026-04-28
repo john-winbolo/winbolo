@@ -275,6 +275,17 @@ if(NOT MSVC)
     target_compile_options(stb_image PRIVATE -Wno-unused-function)
 endif()
 
+# utf8proc — Unicode normalization + property tables (vendored, MIT)
+# Compiled as a static lib to avoid duplicating its ~2MB Unicode table
+# across every target that links the bolo sources.
+add_library(utf8proc STATIC src/third_party/utf8proc/utf8proc.c)
+target_include_directories(utf8proc SYSTEM PUBLIC src/third_party/utf8proc)
+target_compile_definitions(utf8proc PUBLIC UTF8PROC_STATIC=1)
+set_target_properties(utf8proc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(utf8proc PRIVATE /wd4244 /wd4267)
+endif()
+
 # ImGui backends library for SDL3 + SDL Renderer
 add_library(imgui_backends STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -416,7 +427,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/grass.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/labels.c src/bolo/lgm.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -585,7 +596,7 @@ target_include_directories(WinBoloIOS PRIVATE
 )
 
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image
+    nanosvg stb_image utf8proc
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -837,7 +848,7 @@ set(CLIENT_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1007,7 +1018,7 @@ endif()
 
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
-    nanosvg stb_image cjson)
+    nanosvg stb_image utf8proc cjson)
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -1153,7 +1164,7 @@ set(SERVER_SOURCES
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screenbrainmap.c src/bolo/screenbullet.c src/bolo/screencalc.c
     src/bolo/shells.c src/bolo/starts.c
     src/bolo/swamp.c src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c
@@ -1218,7 +1229,7 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson)
+target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -1411,7 +1422,7 @@ set(HEADLESS_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1485,7 +1496,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
 # ONNX Runtime ML brain support for headless (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1541,7 +1552,7 @@ set(GYM_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1617,7 +1628,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
 if(OpenMP_C_FOUND)
     target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
@@ -1654,7 +1665,7 @@ set(BRAINTEST_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1715,7 +1726,7 @@ endif()
 
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
-    nanosvg stb_image
+    nanosvg stb_image utf8proc
 )
 
 # Copy shared libraries and assets next to BrainTest executable
@@ -1744,7 +1755,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1805,7 +1816,7 @@ endif()
 
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
-    nanosvg stb_image
+    nanosvg stb_image utf8proc
 )
 
 # macOS trackpad pinch-to-zoom support

@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=Red
 STR_DLGSETTINGS_NET_HELP=Los cambios surten efecto en la próxima partida hospedada.
 STR_DLGSETTINGS_USE_UPNP=Usar UPnP / NAT-PMP para reenvío automático de puerto
 STR_DLGSETTINGS_USE_NATTRAV=Usar travesía NAT (hole-punching) a través del tracker
+
+# Player name validation errors (Phase 4)
+STR_NAME_INVALID_EMPTY=El nombre del jugador está vacío.
+STR_NAME_INVALID_CHARS=El nombre del jugador contiene caracteres no permitidos.
+STR_NAME_INVALID_MIXED_SCRIPTS=El nombre del jugador mezcla sistemas de escritura incompatibles.
+STR_NAME_INVALID_RESERVED_PREFIX=El nombre del jugador no puede empezar por '*'.
+STR_NAME_INVALID_RESERVED_SUFFIX=El nombre del jugador no puede terminar en '-unverified'.
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Mostrar banderas de país en el chat
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} fue renombrado porque {other} se unió como verificado
+STR_NAME_TAKEN_BY_VERIFIED=Ese nombre de pantalla pertenece a un jugador verificado. Por favor, elige otro.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Ese nombre de pantalla está en uso por otro jugador verificado. Por favor, elige otro.
+
+# Connection rejection and kick messages
+STR_REJECT_INCORRECT_PASSWORD=Contraseña incorrecta
+STR_REJECT_GAME_LOCKED=La partida está bloqueada
+STR_REJECT_SERVER_FULL=Servidor lleno
+STR_REJECT_NAME_POOL_EXHAUSTED=Grupo de nombres del servidor agotado
+STR_REJECT_INVALID_PLAYER_NAME=Nombre de jugador no válido
+STR_REJECT_WBN_VERIFY_FAILED=Verificación de WinBolo.net fallida: {string1}
+STR_KICK_ANNOUNCE={player} ha sido expulsado por el servidor.

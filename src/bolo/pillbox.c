@@ -951,6 +951,8 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       MessageArgs args;
       memset(&args, 0, sizeof(args));
       playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
+      args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
+      playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
     } else if (owner == NEUTRAL) {
       /* Do nothing */
@@ -959,7 +961,11 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       MessageArgs args;
       memset(&args, 0, sizeof(args));
       playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
+      args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
+      playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
       playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+      args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
+      playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
     }
     /* Emit event so networked clients receive the capture message */

@@ -500,17 +500,23 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
       lv_utilPtoCString(mem, name);
-      if (g_lv->loadedLogVersion == LOG_VERSION_V0) {
-        /* Version 0: opt2-opt5 are IP address octets */
-        snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
-        lv_dnsLookup(mem, str, sizeof(str));
-        strncpy(mem, str, sizeof(mem) - 1);
-        mem[sizeof(mem) - 1] = '\0';
-      } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
-        /* Version 1: opt2-opt3 are 2-char country code, opt4-opt5 unused */
-        snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
+      {
+        BYTE accountFlags = 0;
+        if (g_lv->loadedLogVersion == LOG_VERSION_V0) {
+          /* Version 0: opt2-opt5 are IP address octets */
+          snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
+          lv_dnsLookup(mem, str, sizeof(str));
+          strncpy(mem, str, sizeof(mem) - 1);
+          mem[sizeof(mem) - 1] = '\0';
+        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
+          /* Version 1: opt2-opt3 are 2-char country code,
+           * opt4 is accountFlags (bit 0=WBN, bit 1=Steam),
+           * opt5 reserved (zero in current writers). */
+          snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
+          accountFlags = opt4;
+        }
+        lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE, accountFlags);
       }
-      lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE);
       {
         MessageArgs args = {0};
         strncpy(args.playerName, name, sizeof(args.playerName) - 1);
@@ -1144,7 +1150,10 @@ bool lv_processSnapshot() {
               returnValue = FALSE;
             } else {
               allies = data+pos;
-              lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE);
+              /* Snapshot wire format has no accountFlags; default to 0.
+               * The flags will be re-set by any subsequent log_PlayerJoined
+               * event for this slot. */
+              lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
               lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
             }
           }

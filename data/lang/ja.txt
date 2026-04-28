@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=ネットワーク
 STR_DLGSETTINGS_NET_HELP=設定は次回のホストゲームから反映されます。
 STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP による自動ポート転送を使用する
 STR_DLGSETTINGS_USE_NATTRAV=トラッカー経由で NAT traversal（ホールパンチング）を使用する
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=プレイヤー名が空です。
+STR_NAME_INVALID_CHARS=プレイヤー名に使用できない文字が含まれています。
+STR_NAME_INVALID_MIXED_SCRIPTS=プレイヤー名に互換性のない文字体系が混在しています。
+STR_NAME_INVALID_RESERVED_PREFIX=プレイヤー名を「*」で始めることはできません。
+STR_NAME_INVALID_RESERVED_SUFFIX=プレイヤー名を「-unverified」で終わらせることはできません。
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=チャットに国旗を表示
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} は {other} が認証済みで参加したため名前が変更されました
+STR_NAME_TAKEN_BY_VERIFIED=その表示名は認証済みプレイヤーのものです。別の名前を選択してください。
+
+# Localized server→client messages (Phase 9d)
+STR_REJECT_INCORRECT_PASSWORD=パスワードが正しくありません
+STR_REJECT_GAME_LOCKED=ゲームはロックされています
+STR_REJECT_SERVER_FULL=サーバーが満員です
+STR_REJECT_NAME_POOL_EXHAUSTED=サーバーの名前プールが枯渇しました
+STR_REJECT_INVALID_PLAYER_NAME=無効なプレイヤー名です
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net の認証に失敗しました: {string1}
+STR_KICK_ANNOUNCE={player} はサーバーからキックされました。
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=その表示名は別の認証済みプレイヤーが使用中です。別の名前を選択してください。

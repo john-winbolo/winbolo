@@ -19,6 +19,7 @@
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/frontend.h"
+#include "../bolo/playername_validate.h"
 #include "../bolo/transport.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/gui_message.h"
@@ -342,12 +343,36 @@ int main(int argc, char *argv[]) {
   }
   printf("[WASM] gameFrontStart OK\n");
 
-  /* Apply player name from URL after gameFrontStart sets defaults */
+  /* Apply player name from URL after gameFrontStart sets defaults.
+   * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
+   * when there is no persisted name and no stored WBN token (which
+   * would overwrite us authoritatively), and run the URL value
+   * through the Phase 2 validator before applying it. */
   {
     const char *urlName = getUrlParam("name");
     if (urlName[0] != '\0') {
-      gameFrontSetPlayerName((char *)urlName);
-      printf("[WASM] URL name=%s\n", urlName);
+      char persisted[PLAYER_NAME_LEN];
+      char token[256], expiry[256];
+      persisted[0] = '\0';
+      token[0] = '\0';
+      expiry[0] = '\0';
+      gameFrontGetPlayerName(persisted);
+      gameFrontGetWinbolonetToken(token, expiry);
+
+      if (persisted[0] != '\0') {
+        printf("[WASM] URL name ignored (already have %s)\n", persisted);
+      } else if (token[0] != '\0') {
+        printf("[WASM] URL name ignored (WBN token present)\n");
+      } else {
+        char validated[PLAYER_NAME_LEN];
+        if (playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
+          gameFrontSetPlayerName(validated);
+          printf("[WASM] URL name=%s\n", validated);
+        } else {
+          gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
+          printf("[WASM] URL name rejected, using default\n");
+        }
+      }
     }
   }
 

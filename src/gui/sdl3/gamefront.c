@@ -71,6 +71,7 @@
 #include "../../bolo/everard_map.h"
 #include "../../bolo/bolo_map.h"
 #include "../../bolo/platform_net.h"
+#include "../../bolo/playername_validate.h"
 #include "../../bolo/transport_udp.h"
 #include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet.h"
@@ -180,6 +181,11 @@ bool gameFrontUseNatTraversal = TRUE;
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
 static bool gameFrontShowTutorialButton = TRUE;
+
+/* Country-flag rendering in chat / newswire / players panels. Default
+ * TRUE; WBN and Steam badges are always shown when present and are not
+ * gated on this preference. */
+static bool gameFrontShowCountryFlagsInChat = TRUE;
 
 /* Persisted BCP-47 language code (e.g. "en", "de", "pt-br"). Empty
  * string means the user has not picked one yet — Phase 5 startup runs
@@ -817,7 +823,23 @@ static void gameFrontValidateWbnBeforeJoin(void) {
       if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, errorMsg)) {
         gameFrontSetWinbolonetToken(tokenOut, expiryOut);
         if (playerName[0] != '\0') {
-          gameFrontSetPlayerName(playerName);
+          char persisted[PLAYER_NAME_LEN];
+          persisted[0] = '\0';
+          gameFrontGetPlayerName(persisted);
+
+          if (persisted[0] == '\0') {
+            /* First-launch seed: persisted name is empty.  Run the Steam
+             * persona through Phase 2 validation; fall back to the app
+             * default name on rejection. */
+            char validated[PLAYER_NAME_LEN];
+            if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
+              gameFrontSetPlayerName(validated);
+            } else {
+              gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
+            }
+          }
+          /* Otherwise: keep the user's chosen name.  The Steam persona
+           * is NOT used to update an existing name (Phase 7 / Decision 3). */
         }
         SDL_Log("[Steam] Authenticated with WinBolo.net via Steam");
       } else {
@@ -1314,6 +1336,17 @@ void gameFrontSetShowTutorialButton(bool show) {
                             getPreferenceFilePath());
 }
 
+bool gameFrontGetShowCountryFlagsInChat(void) {
+  return gameFrontShowCountryFlagsInChat;
+}
+
+void gameFrontSetShowCountryFlagsInChat(bool show) {
+  gameFrontShowCountryFlagsInChat = show;
+  WritePrivateProfileString("SETTINGS", "Show Country Flags In Chat",
+                            TRUEFALSE_TO_STR(show),
+                            getPreferenceFilePath());
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -1728,6 +1761,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Tutorial visibility — defaults to "Yes" (show on first run). */
   GetPrivateProfileString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Country-flag rendering in chat / newswire — defaults to "Yes". */
+  GetPrivateProfileString("SETTINGS", "Show Country Flags In Chat", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontShowCountryFlagsInChat = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
    * fresh install — startup walks SDL_GetPreferredLocales() in that

@@ -169,6 +169,33 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping, bool wbn,
 SDL_Texture *sdl3ImguiGetGlobeIcon(void);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
+/*********************************************************
+*NAME:          renderPlayerName
+*PURPOSE:
+*  Renders a player name with its decorations as a single
+*  inline ImGui run: WBN globe (verified) and/or Steam icon
+*  to the left of the name, optional country flag to the
+*  right when showCountry is true and countryCode is a real
+*  ISO 3166 alpha-2 code. Both the WBN and Steam icons can
+*  appear together (a user signed into both); only the WBN
+*  icon implies verified status.
+*
+*ARGUMENTS:
+*  name        - UTF-8 NUL-terminated display name. NULL or
+*                "" emits just the WBN/Steam badge sequence
+*                (icon-only mode) — useful for surfaces that
+*                render the name via their own widget
+*                (Selectable, TextColored, etc.). In that
+*                mode countryCode/showCountry are ignored.
+*  flags       - MESSAGE_FLAG_WBN | MESSAGE_FLAG_STEAM
+*  countryCode - 2-letter ISO 3166 code, "" or "XX" for
+*                unknown
+*  showCountry - whether to render the country flag (the
+*                "Show country flags in chat" preference)
+*********************************************************/
+void renderPlayerName(const char *name, uint8_t flags,
+                      const char *countryCode, bool showCountry);
+
 #ifdef __cplusplus
 }
 #endif

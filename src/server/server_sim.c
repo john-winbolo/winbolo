@@ -1235,10 +1235,11 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
         {
             char pstr[256];
             int nameLen = (int)strlen(playerName);
+            BYTE accountFlags = playersGetAccountFlags(&sim->sim.plyrs, playerNum);
             if (nameLen > 255) nameLen = 255;
             pstr[0] = (char)nameLen;
             memcpy(pstr + 1, playerName, nameLen);
-            logAddEvent(log_PlayerJoined, playerNum, '?', '?', 0, 0, pstr);
+            logAddEvent(log_PlayerJoined, playerNum, '?', '?', accountFlags, 0, pstr);
         }
     }
 
@@ -1977,10 +1978,11 @@ void serverSimReturnToLobby(ServerSim *sim) {
                     if (name != NULL) {
                         char pstr[256];
                         int nameLen = (int)strlen(name);
+                        BYTE accountFlags = playersGetAccountFlags(&sim->sim.plyrs, (BYTE)i);
                         if (nameLen > 255) nameLen = 255;
                         pstr[0] = (char)nameLen;
                         memcpy(pstr + 1, name, nameLen);
-                        logAddEvent(log_PlayerJoined, i, '?', '?', 0, 0, pstr);
+                        logAddEvent(log_PlayerJoined, i, '?', '?', accountFlags, 0, pstr);
                     }
                 }
             }

@@ -541,12 +541,16 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
       MessageArgs args;
       memset(&args, 0, sizeof(args));
       playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
+      args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
+      playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
       if (returnValue != NEUTRAL) {
         (*value)->item[baseNum].armour = 0;
         (*value)->item[baseNum].shells = 0;
         (*value)->item[baseNum].mines = 0;
         (*value)->item[baseNum].baseTime = 0;
         playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+        args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
+        playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
         sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
       } else {
         /* Neutral */
@@ -619,12 +623,16 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         MessageArgs args;
         memset(&args, 0, sizeof(args));
         playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
+        args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
+        playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
         if (returnValue != NEUTRAL) {
           (*value)->item[count].armour = 0;
           (*value)->item[count].shells = 0;
           (*value)->item[count].mines = 0;
           (*value)->item[count].baseTime = 0;
           playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+          args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
+          playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
           sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
         } else {
           /* Neutral */
