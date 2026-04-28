@@ -44,9 +44,9 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize);
 /*********************************************************
  * NAME:          tileLoaderSetSkin / tileLoaderGetSkin
  * PURPOSE:
- *   Select a skin directory under data/skin/.  When set
+ *   Select a skin directory under data/skins/.  When set
  *   (non-empty), tileLoaderBuildSheet looks first in
- *   data/skin/<name>/<spritename>.svg|png and falls back
+ *   data/skins/<name>/<spritename>.svg|png and falls back
  *   to data/svg/<spritename>.svg|png if missing.  Pass an
  *   empty string or NULL to disable the skin override.
  *********************************************************/
@@ -59,7 +59,7 @@ const char *tileLoaderGetSkin(void);
  * directions at draw time.  Detected by name suffix _ingamerotate. */
 bool tileLoaderSkinRotates(void);
 
-/* Skin metadata loaded from data/skin/<active>/skin.ini.  All
+/* Skin metadata loaded from data/skins/<active>/skin.ini.  All
  * fields are NUL-terminated strings; max_pixel_density is the
  * skin author's declared cap on density (default 1 — "classic
  * Bolo only").  Strings are owned by tileloader; copy if you need
@@ -103,7 +103,7 @@ int tileLoaderGetSpriteMaxDensity(const char *spriteName);
 /* True when the active skin actually ships a hand-crafted sprite
  * for <baseName>_<NN> (e.g. "tank_selfboat", 5).  Checks .svg, .png,
  * and prefixed N-<baseName>_<NN>.png variants under
- * data/skin/<active>/.  Used by mapview for ingamerotate skins:
+ * data/skins/<active>/.  Used by mapview for ingamerotate skins:
  * if the user provided the per-direction file, render code should
  * use the atlas slot directly instead of rotating _00.  Result is
  * cached per (baseName, skin) so per-frame use is cheap. */

@@ -137,8 +137,8 @@ static bool findSkinAsset(const char *skinName, const char *base,
      * only ship SVG; the AllowSvg toggle only changes the texture
      * scale mode, not which sources we attempt). */
     if (skinName && skinName[0]) {
-        if (tryPath("data/skin/%s/%s.%s", skinName, base, "svg")) return true;
-        if (tryPath("data/skin/%s/%s.%s", skinName, base, "png")) return true;
+        if (tryPath("data/skins/%s/%s.%s", skinName, base, "svg")) return true;
+        if (tryPath("data/skins/%s/%s.%s", skinName, base, "png")) return true;
     }
     snprintf(outPath, outSize, "data/svg/%s.svg", base);
     SDL_PathInfo info;
@@ -295,7 +295,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
      * close-confirm Yes) re-enables on the next frame after a click. */
     if (g_skinApplyCooldown > 0) g_skinApplyCooldown--;
 
-    /* Skin picker — scan data/skin/* once per dialog open.
+    /* Skin picker — scan data/skins/* once per dialog open.
      * (Stored at file scope as g_skinDirs so the close-time confirm
      * popup in imguiSettingsShow can read it too.) */
     std::vector<std::string> &skinDirs = g_skinDirs;
@@ -317,13 +317,13 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
             FindClose(h);
         }
 #else
-        DIR *d = opendir("data/skin");
+        DIR *d = opendir("data/skins");
         if (d) {
             struct dirent *de;
             while ((de = readdir(d))) {
                 if (de->d_name[0] == '.') continue;
                 char path[1024];
-                snprintf(path, sizeof(path), "data/skin/%s", de->d_name);
+                snprintf(path, sizeof(path), "data/skins/%s", de->d_name);
                 struct stat st;
                 if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
                     skinDirs.push_back(de->d_name);
@@ -602,18 +602,18 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         if (density > 1 && skinName && skinName[0]) {
             int sizePx = density * TILE_SIZE_X;
             /* Suffix form first (Inkscape-friendly). */
-            snprintf(outPath, outSize, "data/skin/%s/%s_%d.png",
+            snprintf(outPath, outSize, "data/skins/%s/%s_%d.png",
                      skinName, base, sizePx);
             if (SDL_GetPathInfo(outPath, &info)) return true;
             /* Legacy prefix form. */
-            snprintf(outPath, outSize, "data/skin/%s/%d-%s.png",
+            snprintf(outPath, outSize, "data/skins/%s/%d-%s.png",
                      skinName, sizePx, base);
             if (SDL_GetPathInfo(outPath, &info)) return true;
         }
         if (skinName && skinName[0]) {
-            snprintf(outPath, outSize, "data/skin/%s/%s.svg", skinName, base);
+            snprintf(outPath, outSize, "data/skins/%s/%s.svg", skinName, base);
             if (SDL_GetPathInfo(outPath, &info)) return true;
-            snprintf(outPath, outSize, "data/skin/%s/%s.png", skinName, base);
+            snprintf(outPath, outSize, "data/skins/%s/%s.png", skinName, base);
             if (SDL_GetPathInfo(outPath, &info)) return true;
         }
         snprintf(outPath, outSize, "data/svg/%s.svg", base);
@@ -1158,7 +1158,7 @@ extern "C" void imguiSettingsShow(void) {
         imguiSettingsDrawGraphicsSection(renderer);
 #if 0  /* moved into imguiSettingsDrawGraphicsSection() */
         if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
-            /* Skin picker — scan data/skin/* once per dialog open. */
+            /* Skin picker — scan data/skins/* once per dialog open. */
             static std::vector<std::string> skinDirs;
             static bool skinsScanned = false;
             if (!skinsScanned) {
@@ -1178,13 +1178,13 @@ extern "C" void imguiSettingsShow(void) {
                     FindClose(h);
                 }
 #else
-                DIR *d = opendir("data/skin");
+                DIR *d = opendir("data/skins");
                 if (d) {
                     struct dirent *de;
                     while ((de = readdir(d))) {
                         if (de->d_name[0] == '.') continue;
                         char path[1024];
-                        snprintf(path, sizeof(path), "data/skin/%s", de->d_name);
+                        snprintf(path, sizeof(path), "data/skins/%s", de->d_name);
                         struct stat st;
                         if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
                             skinDirs.push_back(de->d_name);

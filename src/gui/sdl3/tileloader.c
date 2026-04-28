@@ -204,7 +204,7 @@ static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
 }
 
 /* Skin override.  When non-empty, tileLoaderBuildSheet looks for
- * sprites in data/skin/<skinName>/<name>.svg|png BEFORE falling
+ * sprites in data/skins/<skinName>/<name>.svg|png BEFORE falling
  * back to data/svg/<name>.svg|png and finally the BMP. */
 static char s_skinName[64] = "";
 
@@ -217,7 +217,7 @@ typedef struct {
 static SkinMaskEntry s_skinMasks[8];
 static int            s_skinMaskCount = 0;
 
-/* Skin metadata, populated from data/skin/<active>/skin.ini on
+/* Skin metadata, populated from data/skins/<active>/skin.ini on
  * tileLoaderSetSkin.  Defaults to "no INI / classic only" when
  * absent. */
 static TileLoaderSkinInfo s_skinInfo = { .max_pixel_density = 1 };
@@ -241,7 +241,7 @@ static void resetSkinInfo(void) {
     s_skinInfo.has_ini         = false;
 }
 
-/* Fill *out from data/skin/<skinName>/skin.ini.  Pure read — does
+/* Fill *out from data/skins/<skinName>/skin.ini.  Pure read — does
  * not touch any global state.  out is reset to defaults first; on
  * a missing INI file out->has_ini stays false. */
 static void readSkinInfo(const char *skinName, TileLoaderSkinInfo *out) {
@@ -254,7 +254,7 @@ static void readSkinInfo(const char *skinName, TileLoaderSkinInfo *out) {
     out->has_ini         = false;
     if (!skinName || !skinName[0]) return;
     char iniPath[512];
-    SDL_snprintf(iniPath, sizeof(iniPath), "data/skin/%s/skin.ini", skinName);
+    SDL_snprintf(iniPath, sizeof(iniPath), "data/skins/%s/skin.ini", skinName);
     SDL_PathInfo pinfo;
     if (!SDL_GetPathInfo(iniPath, &pinfo)) return;
     out->has_ini = true;
@@ -302,7 +302,7 @@ typedef struct { char name[64]; int maxDensity; } SpriteDensity;
 static SpriteDensity *s_spriteDensities = NULL;
 static int            s_spriteDensitiesCount = 0;
 
-/* True when data/skin/<active>/<density>-<sprite>.png exists, OR
+/* True when data/skins/<active>/<density>-<sprite>.png exists, OR
  * (when density <= skinInfo.max_pixel_density) the skin provides
  * the sprite as an SVG that the engine treats as covering this
  * density. */
@@ -313,26 +313,26 @@ static bool spriteAtDensityFor(const char *skinName, int skinMaxDensity,
     SDL_PathInfo pi;
     int sizePx = density * TILE_SIZE_X;   /* density 2 => 32 */
     /* Suffix form: <name>_<size>.png (Inkscape batch-export friendly). */
-    SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%d.png",
+    SDL_snprintf(path, sizeof(path), "data/skins/%s/%s_%d.png",
                  skinName, spriteName, sizePx);
     if (SDL_GetPathInfo(path, &pi)) return true;
     /* Legacy prefix form: <size>-<name>.png. */
-    SDL_snprintf(path, sizeof(path), "data/skin/%s/%d-%s.png",
+    SDL_snprintf(path, sizeof(path), "data/skins/%s/%d-%s.png",
                  skinName, sizePx, spriteName);
     if (SDL_GetPathInfo(path, &pi)) return true;
     if (density == 1) {
         /* Density 1 also accepts the unprefixed PNG / SVG in the
          * skin dir (legacy 1× sprites). */
-        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s.png",
+        SDL_snprintf(path, sizeof(path), "data/skins/%s/%s.png",
                      skinName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
-        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s.svg",
+        SDL_snprintf(path, sizeof(path), "data/skins/%s/%s.svg",
                      skinName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
     }
     /* SVG counts up to declared max_pixel_density. */
     if (density <= skinMaxDensity) {
-        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s.svg",
+        SDL_snprintf(path, sizeof(path), "data/skins/%s/%s.svg",
                      skinName, spriteName);
         if (SDL_GetPathInfo(path, &pi)) return true;
     }
@@ -503,19 +503,19 @@ static Uint16 computeSkinMask(const char *base) {
     char path[512];
     SDL_PathInfo info;
     for (int dir = 0; dir < 16; dir++) {
-        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%02d.svg",
+        SDL_snprintf(path, sizeof(path), "data/skins/%s/%s_%02d.svg",
                      s_skinName, base, dir);
         if (SDL_GetPathInfo(path, &info)) { mask |= (Uint16)(1 << dir); continue; }
-        SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%02d.png",
+        SDL_snprintf(path, sizeof(path), "data/skins/%s/%s_%02d.png",
                      s_skinName, base, dir);
         if (SDL_GetPathInfo(path, &info)) { mask |= (Uint16)(1 << dir); continue; }
         bool found = false;
         for (int i = 0; i < kNumPref && !found; i++) {
             /* Suffix form first, then legacy prefix. */
-            SDL_snprintf(path, sizeof(path), "data/skin/%s/%s_%02d_%d.png",
+            SDL_snprintf(path, sizeof(path), "data/skins/%s/%s_%02d_%d.png",
                          s_skinName, base, dir, kPrefixes[i]);
             if (SDL_GetPathInfo(path, &info)) { found = true; break; }
-            SDL_snprintf(path, sizeof(path), "data/skin/%s/%d-%s_%02d.png",
+            SDL_snprintf(path, sizeof(path), "data/skins/%s/%d-%s_%02d.png",
                          s_skinName, kPrefixes[i], base, dir);
             if (SDL_GetPathInfo(path, &info)) { found = true; break; }
         }
@@ -679,7 +679,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             (void)targetPx;
             char dir[256];
             if (s_skinName[0]) {
-                SDL_snprintf(dir, sizeof(dir), "data/skin/%s", s_skinName);
+                SDL_snprintf(dir, sizeof(dir), "data/skins/%s", s_skinName);
                 if (tryLoadSizedPNG(dir, e->name, w, w, h, tmpBuf)) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                     loaded = true;
@@ -702,10 +702,10 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int srcW = classicUpscale ? e->width  : w;
         int srcH = classicUpscale ? e->height : h;
 
-        /* Skin override: try data/skin/<skin>/<name>.svg|png. */
+        /* Skin override: try data/skins/<skin>/<name>.svg|png. */
         if (!loaded && s_skinName[0]) {
             SDL_snprintf(pathBuf, sizeof(pathBuf),
-                         "data/skin/%s/%s.svg", s_skinName, e->name);
+                         "data/skins/%s/%s.svg", s_skinName, e->name);
             if (tryLoadSVG(pathBuf, srcW, srcH, tmpBuf, rast)) {
                 blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                 loaded = true;
@@ -713,7 +713,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             }
             if (!loaded) {
                 SDL_snprintf(pathBuf, sizeof(pathBuf),
-                             "data/skin/%s/%s.png", s_skinName, e->name);
+                             "data/skins/%s/%s.png", s_skinName, e->name);
                 if (tryLoadPNG(pathBuf, srcW, srcH, tmpBuf)) {
                     blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                     loaded = true;
