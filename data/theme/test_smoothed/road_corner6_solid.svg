@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-bg layer-000000" data-color="#000000" data-role="background">
+    <rect x="0" y="0" width="160" height="160" fill="#000000"/>
+  </g>
+  <g class="layer-007321" data-color="#007321">
+    <path fill="#007321" fill-rule="nonzero" d="M140 23.5 Q140 20 136.5 20 L133.5 20 Q130 20 130 23.5 L130 26.5 Q130 30 133.5 30 L136.5 30 Q140 30 140 26.5 L140 23.5 Z"/>
+  </g>
+  <g class="layer-846342" data-color="#846342">
+    <path fill="#846342" fill-rule="nonzero" d="M160 95 Q160 60 156.5 60 L153.5 60 Q150 60 150 53 L150 47 Q150 40 146.5 40 L143.5 40 Q140 40 140 36.5 L140 33.5 Q140 30 136.5 30 L133.5 30 Q130 30 130 26.5 L130 23.5 Q130 20 126.5 20 L123.5 20 Q120 20 120 16.5 L120 13.5 Q120 10 113 10 L107 10 Q100 10 100 6.5 L100 3.5 Q100 0 65 0 L35 0 Q0 0 0 3.5 L0 6.5 Q0 10 35 10 L65 10 Q100 10 100 13.5 L100 16.5 Q100 20 107 20 L113 20 Q120 20 120 23.5 L120 26.5 Q120 30 123.5 30 L126.5 30 Q130 30 130 33.5 L130 36.5 Q130 40 133.5 40 L136.5 40 Q140 40 140 47 L140 53 Q140 60 143.5 60 L146.5 60 Q150 60 150 95 L150 125 Q150 160 153.5 160 L156.5 160 Q160 160 160 125 L160 95 Z"/>
+  </g>
+  </g>
+</svg>

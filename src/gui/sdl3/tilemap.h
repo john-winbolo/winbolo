@@ -76,7 +76,6 @@ static const TileMapEntry gTileMap[] = {
     { "building_single",       BUILD_SINGLE_X,    BUILD_SINGLE_Y,    16, 16 },
     { "swamp",                 SWAMP_X,           SWAMP_Y,           16, 16 },
     { "shot_building",         SHOT_BUILDING_X,   SHOT_BUILDING_Y,   16, 16 },
-    { "pillbox_evil15",        PILL_EVIL15_X,     PILL_EVIL15_Y,     16, 16 },
     { "base_good",             BASE_GOOD_X,       BASE_GOOD_Y,       16, 16 },
     { "building_horizontal",   BUILD_HORZ_X,      BUILD_HORZ_Y,      16, 16 },
     { "building_vertical",     BUILD_VERT_X,      BUILD_VERT_Y,      16, 16 },
@@ -346,8 +345,10 @@ static const TileMapEntry gTileMap[] = {
     { "forest_below",          FOREST_BELOW_X,    FOREST_BELOW_Y,    16, 16 },
     { "forest_above",          FOREST_ABOVE_X,    FOREST_ABOVE_Y,    16, 16 },
 
-    /* ---- Crater variants (y=160 area) ---- */
-    { "crater_single",         CRATER_SINGLE_X,   CRATER_SINGLE_Y,   16, 16 },
+    /* ---- Crater variants (y=160 area) ----
+     * crater_above/below/left/right/_single all live here on the
+     * atlas but rely on the skin.bmp fallback in the builder; no
+     * tilemap entry means no SVG/PNG override is searched for. */
 
     /* ---- Shells (irregular sizes, packed region) ---- */
     { "shell_00",              SHELL_0_X,         SHELL_0_Y,         SHELL_0_WIDTH,  SHELL_0_HEIGHT  },

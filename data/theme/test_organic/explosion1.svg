@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-bd0000" data-color="#bd0000">
+    <path fill="#bd0000" fill-rule="nonzero" d="M85 80 Q81.25 77.5 80 70 Q78.75 62.5 75 60 Q71.25 62.5 70 70 Q68.75 77.5 65 80 Q61.25 81.25 60 85 Q61.25 88.75 65 90 Q68.75 91.25 70 95 Q71.25 98.75 75 100 Q78.75 98.75 80 95 Q81.25 91.25 85 90 Q88.75 88.75 90 85 Q88.75 81.25 85 80 Z M95 80 Q98.75 78.75 100 75 Q98.75 71.25 95 70 Q91.25 71.25 90 75 Q91.25 78.75 95 80 Z M75 90 Q71.25 88.75 70 85 Q71.25 81.25 75 80 Q78.75 81.25 80 85 Q78.75 88.75 75 90 Z"/>
+  </g>
+  <g class="layer-ff0000" data-color="#ff0000">
+    <path fill="#ff0000" fill-rule="nonzero" d="M75 80 Q71.25 78.75 70 75 Q68.75 71.25 65 70 Q61.25 71.25 60 75 Q61.25 78.75 65 80 Q68.75 81.25 70 85 Q71.25 88.75 75 90 Q78.75 88.75 80 85 Q78.75 81.25 75 80 Z M85 80 Q88.75 81.25 90 85 Q91.25 88.75 95 90 Q98.75 88.75 100 85 Q98.75 81.25 95 80 Q91.25 77.5 90 70 Q88.75 62.5 85 60 Q81.25 62.5 80 70 Q81.25 77.5 85 80 Z"/>
+  </g>
+  <g class="layer-ff3131" data-color="#ff3131">
+    <path fill="#ff3131" fill-rule="nonzero" d="M85 90 Q81.25 91.25 80 95 Q81.25 98.75 85 100 Q88.75 98.75 90 95 Q88.75 91.25 85 90 Z"/>
+  </g>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-bg layer-000000" data-color="#000000" data-role="background">
+    <rect x="0" y="0" width="160" height="160" fill="#000000"/>
+  </g>
+  <g class="layer-008c9c" data-color="#008c9c">
+    <path fill="#008c9c" fill-rule="nonzero" d="M10 60 Q17.5 56.25 20 45 Q17.5 33.75 10 30 Q2.5 33.75 0 45 Q2.5 56.25 10 60 Z M10 100 Q2.5 103.75 0 115 Q2.5 126.25 10 130 Q17.5 126.25 20 115 Q17.5 103.75 10 100 Z"/>
+  </g>
+  <g class="layer-9c9c9c" data-color="#9c9c9c">
+    <path fill="#9c9c9c" fill-rule="nonzero" d="M0 15 Q3.75 26.25 15 30 Q26.25 26.25 30 15 Q26.25 3.75 15 0 Q3.75 3.75 0 15 Z M15 10 Q18.75 11.25 20 15 Q18.75 18.75 15 20 Q11.25 18.75 10 15 Q11.25 11.25 15 10 Z M15 60 Q3.75 65 0 80 Q3.75 95 15 100 Q26.25 95 30 80 Q26.25 65 15 60 Z M15 70 Q18.75 72.5 20 80 Q18.75 87.5 15 90 Q11.25 87.5 10 80 Q11.25 72.5 15 70 Z M0 145 Q3.75 156.25 15 160 Q26.25 156.25 30 145 Q26.25 133.75 15 130 Q3.75 133.75 0 145 Z M15 140 Q18.75 141.25 20 145 Q18.75 148.75 15 150 Q11.25 148.75 10 145 Q11.25 141.25 15 140 Z"/>
+  </g>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-bg layer-000000" data-color="#000000" data-role="background">
+    <rect x="0" y="0" width="160" height="160" fill="#000000"/>
+  </g>
+  <g class="layer-422121" data-color="#422121">
+    <path fill="#422121" fill-rule="nonzero" d="M10 15 Q11.25 26.25 15 30 Q18.75 41.25 20 75 Q18.75 108.75 15 120 Q11.25 125 10 140 Q18.75 155 45 160 Q71.25 140 80 80 Q71.25 20 45 0 Q18.75 3.75 10 15 Z M145 20 Q141.25 33.75 140 75 Q141.25 116.25 145 130 Q148.75 133.75 150 145 Q151.25 156.25 155 160 Q158.75 155 160 140 Q158.75 125 155 120 Q151.25 108.75 150 75 Q151.25 41.25 155 30 Q158.75 26.25 160 15 Q158.75 3.75 155 0 Q151.25 2.5 150 10 Q148.75 17.5 145 20 Z"/>
+  </g>
+  <g class="layer-bd9c6b" data-color="#bd9c6b">
+    <path fill="#bd9c6b" fill-rule="nonzero" d="M120 160 Q142.5 156.25 150 145 Q148.75 133.75 145 130 Q141.25 116.25 140 75 Q141.25 33.75 145 20 Q148.75 17.5 150 10 Q142.5 2.5 120 0 Q97.5 20 90 80 Q97.5 140 120 160 Z"/>
+  </g>
+  </g>
+</svg>
