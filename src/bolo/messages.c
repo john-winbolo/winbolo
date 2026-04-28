@@ -32,11 +32,136 @@
 #include "util.h"
 #include "messages.h"
 
+/* Step one UTF-8 codepoint at *p, advancing *p past the bytes consumed.
+ * Returns 0xFFFD on malformed sequences (and advances at least one byte so
+ * callers can keep walking). Returns 0 only when *p hits the NUL terminator;
+ * callers should check for empty input first. */
+static uint32_t utf8StepCodepoint(const char **p) {
+  const unsigned char *s = (const unsigned char *)*p;
+  if (*s == 0) {
+    return 0;
+  }
+  uint32_t cp;
+  int extra;
+  if (*s < 0x80) {
+    cp = *s;
+    extra = 0;
+  } else if ((*s & 0xE0) == 0xC0) {
+    cp = *s & 0x1F;
+    extra = 1;
+  } else if ((*s & 0xF0) == 0xE0) {
+    cp = *s & 0x0F;
+    extra = 2;
+  } else if ((*s & 0xF8) == 0xF0) {
+    cp = *s & 0x07;
+    extra = 3;
+  } else {
+    *p = (const char *)(s + 1);
+    return 0xFFFD;
+  }
+  s++;
+  for (int i = 0; i < extra; i++) {
+    if ((*s & 0xC0) != 0x80) {
+      *p = (const char *)s;
+      return 0xFFFD;
+    }
+    cp = (cp << 6) | (*s & 0x3F);
+    s++;
+  }
+  *p = (const char *)s;
+  return cp;
+}
+
+/* Visual width of a codepoint in monospace cells. Returns 2 for East
+ * Asian full-width / Wide ranges (CJK ideographs, kana, hangul, fullwidth
+ * forms, common emoji blocks) and 1 otherwise. Conservative: codepoints
+ * not explicitly listed are treated as narrow. Combining marks (which
+ * a stricter implementation would treat as W=0) are rare in chat and
+ * rendering them as W=1 doesn't harm column alignment in monospace. */
+static int cellWidth(uint32_t cp) {
+  if (cp == MESSAGE_CELL_CONT) return 0;
+  if (cp < 0x1100) return 1;
+  /* Hangul Jamo */
+  if (cp >= 0x1100 && cp <= 0x115F) return 2;
+  /* CJK Radicals + Kangxi + CJK Symbols */
+  if (cp >= 0x2E80 && cp <= 0x303E) return 2;
+  /* Hiragana, Katakana, CJK Letters, Bopomofo, Hangul Compat, Kanbun,
+   * CJK Strokes, Katakana Phonetic, Enclosed CJK, CJK Compatibility */
+  if (cp >= 0x3040 && cp <= 0x33FF) return 2;
+  /* CJK Unified Ideographs Extension A */
+  if (cp >= 0x3400 && cp <= 0x4DBF) return 2;
+  /* CJK Unified Ideographs */
+  if (cp >= 0x4E00 && cp <= 0x9FFF) return 2;
+  /* Yi Syllables + Radicals */
+  if (cp >= 0xA000 && cp <= 0xA4CF) return 2;
+  /* Hangul Syllables */
+  if (cp >= 0xAC00 && cp <= 0xD7A3) return 2;
+  /* CJK Compatibility Ideographs */
+  if (cp >= 0xF900 && cp <= 0xFAFF) return 2;
+  /* Vertical Forms + CJK Compat Forms + Small Form Variants */
+  if (cp >= 0xFE10 && cp <= 0xFE6F) return 2;
+  /* Fullwidth Forms */
+  if (cp >= 0xFF00 && cp <= 0xFF60) return 2;
+  /* Fullwidth signs */
+  if (cp >= 0xFFE0 && cp <= 0xFFE6) return 2;
+  /* Misc Symbols + Emoticons + Transport/Map + Supplemental Symbols */
+  if (cp >= 0x1F300 && cp <= 0x1FAFF) return 2;
+  /* CJK Unified Ideographs Extension B-F (supplementary plane) */
+  if (cp >= 0x20000 && cp <= 0x2FFFD) return 2;
+  /* CJK Unified Ideographs Extension G+ */
+  if (cp >= 0x30000 && cp <= 0x3FFFD) return 2;
+  return 1;
+}
+
+/* Encode an array of codepoints to a NUL-terminated UTF-8 byte buffer.
+ * MESSAGE_CELL_CONT cells are skipped — the codepoint in the previous
+ * cell already renders at its natural full-width advance, so the CONT
+ * cell only exists to keep the cell count in lockstep between top/bot.
+ * Truncates cleanly (without splitting a codepoint) if outBytes is too small. */
+static void encodeCellsToUtf8(const uint32_t *cells, size_t numCells,
+                              char *out, size_t outBytes) {
+  size_t pos = 0;
+  for (size_t i = 0; i < numCells; i++) {
+    uint32_t cp = cells[i];
+    if (cp == MESSAGE_CELL_CONT) continue;
+    char buf[4];
+    size_t n;
+    if (cp < 0x80) {
+      buf[0] = (char)cp;
+      n = 1;
+    } else if (cp < 0x800) {
+      buf[0] = (char)(0xC0 | (cp >> 6));
+      buf[1] = (char)(0x80 | (cp & 0x3F));
+      n = 2;
+    } else if (cp < 0x10000) {
+      buf[0] = (char)(0xE0 | (cp >> 12));
+      buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+      buf[2] = (char)(0x80 | (cp & 0x3F));
+      n = 3;
+    } else if (cp <= 0x10FFFF) {
+      buf[0] = (char)(0xF0 | (cp >> 18));
+      buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+      buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+      buf[3] = (char)(0x80 | (cp & 0x3F));
+      n = 4;
+    } else {
+      continue;
+    }
+    if (pos + n + 1 > outBytes) break;
+    memcpy(out + pos, buf, n);
+    pos += n;
+  }
+  if (pos < outBytes) {
+    out[pos] = '\0';
+  } else if (outBytes > 0) {
+    out[outBytes - 1] = '\0';
+  }
+}
+
 
 void messageCreate(MessageState *ms) {
   BYTE count;
 
-  ms->msg = NULL;
   ms->showNewswire = TRUE;
   ms->showAssistant = TRUE;
   ms->showAI = FALSE;
@@ -46,22 +171,38 @@ void messageCreate(MessageState *ms) {
   ms->lastMessage = globalMessage;
   ms->newMessage[0] = '\0';
   ms->newMessageFrom = 0;
-  for (count=0;count<MESSAGE_WIDTH;count++) {
-    ms->topLine[count] = MESSAGE_BLANK;
-    ms->bottomLine[count] = MESSAGE_BLANK;
+  ms->queueHead = 0;
+  ms->queueTail = 0;
+  ms->queueCount = 0;
+  for (count = 0; count < MESSAGE_WIDTH; count++) {
+    ms->topCells[count] = MESSAGE_BLANK;
+    ms->bottomCells[count] = MESSAGE_BLANK;
   }
-  ms->topLine[MESSAGE_WIDTH-1] = END_OF_STRING;
-  ms->bottomLine[MESSAGE_WIDTH-1] = END_OF_STRING;
+  /* Visible row is cells[0..WIDTH-2]; the last cell is the staging slot
+   * filled by messageUpdate before each shift. */
+  encodeCellsToUtf8(ms->topCells,    MESSAGE_WIDTH - 1, ms->topLine,    sizeof(ms->topLine));
+  encodeCellsToUtf8(ms->bottomCells, MESSAGE_WIDTH - 1, ms->bottomLine, sizeof(ms->bottomLine));
 }
 
 void messageDestroy(MessageState *ms) {
-  message q;
+  /* Ring buffer is inline in MessageState; nothing to free. Reset indices
+   * so a destroyed-then-reused state behaves like a fresh one. */
+  ms->queueHead = 0;
+  ms->queueTail = 0;
+  ms->queueCount = 0;
+}
 
-  while (!IsEmpty(ms->msg)) {
-    q = ms->msg;
-    ms->msg = MessageTail(q);
-    Dispose(q);
+/* Push one codepoint pair onto the ring. If the ring is full, drops the
+ * oldest pending pair (advances head) so producers never block. */
+static void messageQueuePush(MessageState *ms, uint32_t topCp, uint32_t botCp) {
+  if (ms->queueCount >= MESSAGE_QUEUE_CAP) {
+    ms->queueHead = (ms->queueHead + 1) % MESSAGE_QUEUE_CAP;
+    ms->queueCount--;
   }
+  ms->queueTop[ms->queueTail]    = topCp;
+  ms->queueBottom[ms->queueTail] = botCp;
+  ms->queueTail = (ms->queueTail + 1) % MESSAGE_QUEUE_CAP;
+  ms->queueCount++;
 }
 
 
@@ -287,84 +428,71 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
 
 
 void messageAddItem(MessageState *ms, char *top, char *bottom) {
-  message q;
-  message prev;
-  message add;
-  int lenTop;
-  int lenBottom;
-  int count;
-  int longest;
-  bool newQ;
+  /* Walk top and bottom in lockstep, but step by *visual columns* not
+   * codepoints. A wide (full-width CJK) codepoint emits its leading
+   * cell + a MESSAGE_CELL_CONT cell on its row's next iteration, so
+   * cell counts and visual widths stay matched between rows even when
+   * one is Latin and the other is CJK. The shorter stream is padded
+   * with MESSAGE_BLANK once it ends. */
+  const char *tp = top;
+  const char *bp = bottom;
+  int topPendingCont = 0;  /* CONT cells still owed for top's last wide cp */
+  int botPendingCont = 0;
 
-  newQ = FALSE;
-
-  if (IsEmpty(ms->msg)) {
-    newQ = TRUE;
-    New(ms->msg);
-    ms->msg->next = NULL;
-  }
-
-  prev = q = ms->msg;
-  while (NonEmpty(q)) {
-    prev = q;
-    q = MessageTail(q);
-  }
-  q = prev;
-
-  lenTop = (int) strlen(top);
-  lenBottom = (int) strlen(bottom);
-  if (lenTop > lenBottom) {
-    longest = lenTop;
-  } else {
-    longest = lenBottom;
-  }
-
-  count = 0;
-  while (count <= (longest)) {
-    New(add);
-    if (count < lenTop) {
-      add->topLine = top[count];
+  while (*tp != '\0' || *bp != '\0' || topPendingCont > 0 || botPendingCont > 0) {
+    uint32_t topCp;
+    if (topPendingCont > 0) {
+      topCp = MESSAGE_CELL_CONT;
+      topPendingCont--;
+    } else if (*tp != '\0') {
+      topCp = utf8StepCodepoint(&tp);
+      topPendingCont = cellWidth(topCp) - 1;  /* 0 for narrow, 1 for wide */
     } else {
-      add->topLine = MESSAGE_BLANK;
+      topCp = MESSAGE_BLANK;
     }
-    if (count < lenBottom) {
-      add->bottomLine = bottom[count];
+
+    uint32_t botCp;
+    if (botPendingCont > 0) {
+      botCp = MESSAGE_CELL_CONT;
+      botPendingCont--;
+    } else if (*bp != '\0') {
+      botCp = utf8StepCodepoint(&bp);
+      botPendingCont = cellWidth(botCp) - 1;
     } else {
-      add->bottomLine = MESSAGE_BLANK;
+      botCp = MESSAGE_BLANK;
     }
-    add->next = NULL;
-    q->next = add;
-    q = MessageTail(q);
-    count++;
+
+    messageQueuePush(ms, topCp, botCp);
   }
 
-
-  if (newQ == TRUE) {
-    q = ms->msg;
-    ms->msg = MessageTail(q);
-    Dispose(q);
-  }
+  /* Trailing blank cell, matching the legacy `count <= longest` overshoot. */
+  messageQueuePush(ms, MESSAGE_BLANK, MESSAGE_BLANK);
 }
 
 void messageUpdate(MessageState *ms) {
-  message q;
   BYTE count;
 
-  if (NonEmpty(ms->msg)) {
-    ms->topLine[MESSAGE_WIDTH-1] = MessageHeadTop(ms->msg);
-    ms->bottomLine[MESSAGE_WIDTH-1] = MessageHeadBottom(ms->msg);
-    q = ms->msg;
-    ms->msg = MessageTail(q);
-    Dispose(q);
+  if (ms->queueCount > 0) {
+    /* Pop the next codepoint pair into the staging slot at the right edge,
+     * shift cells left, blank the staging slot. */
+    ms->topCells[MESSAGE_WIDTH-1]    = ms->queueTop[ms->queueHead];
+    ms->bottomCells[MESSAGE_WIDTH-1] = ms->queueBottom[ms->queueHead];
+    ms->queueHead = (ms->queueHead + 1) % MESSAGE_QUEUE_CAP;
+    ms->queueCount--;
 
     count = 0;
     while (count < (MESSAGE_WIDTH-1)) {
-      ms->topLine[count] = ms->topLine[count+1];
-      ms->bottomLine[count] = ms->bottomLine[count+1];
+      ms->topCells[count]    = ms->topCells[count+1];
+      ms->bottomCells[count] = ms->bottomCells[count+1];
       count++;
     }
-    ms->topLine[MESSAGE_WIDTH-1] = END_OF_STRING;
-    ms->bottomLine[MESSAGE_WIDTH-1] = END_OF_STRING;
+    ms->topCells[MESSAGE_WIDTH-1]    = MESSAGE_BLANK;
+    ms->bottomCells[MESSAGE_WIDTH-1] = MESSAGE_BLANK;
+
+    /* Re-encode visible cells (everything except the staging slot) to UTF-8
+     * for the renderer. Buffers are sized to fit MESSAGE_WIDTH * 4 + 1. */
+    encodeCellsToUtf8(ms->topCells,    MESSAGE_WIDTH - 1, ms->topLine,    sizeof(ms->topLine));
+    encodeCellsToUtf8(ms->bottomCells, MESSAGE_WIDTH - 1, ms->bottomLine, sizeof(ms->bottomLine));
     frontEndMessages(ms->topLine, ms->bottomLine);
   }
 }

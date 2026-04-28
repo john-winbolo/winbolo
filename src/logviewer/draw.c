@@ -181,7 +181,7 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
         const char *fontBase = SDL_GetBasePath();
         if (!fontBase) fontBase = "./";
         char fontPath[1024];
-        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/CourierPrime-Regular.ttf", fontBase);
+        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf", fontBase);
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
@@ -280,7 +280,7 @@ BYTE lv_drawSetup(void) {
         const char *fontBase = SDL_GetBasePath();
         if (!fontBase) fontBase = "./";
         char fontPath[1024];
-        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/CourierPrime-Regular.ttf", fontBase);
+        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf", fontBase);
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 

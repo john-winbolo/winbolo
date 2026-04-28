@@ -397,8 +397,9 @@ set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"
     "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
-set(IOS_DATA_FONT
-    ${CMAKE_SOURCE_DIR}/data/fonts/CourierPrime-Regular.ttf
+file(GLOB IOS_DATA_FONT
+    "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
+    "${CMAKE_SOURCE_DIR}/data/fonts/*.otf"
 )
 file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")

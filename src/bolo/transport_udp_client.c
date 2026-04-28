@@ -602,12 +602,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_CHAT_BROADCAST:
         /* Chat broadcast format:
-         *   [header 8] [fromPlayer 1] [destPlayer 1] [message up to 128] */
+         *   [header 8] [fromPlayer 1] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE] */
         if (len > PACKET_HEADER_SIZE + 2) {
             uint8_t fromPlayer = buf[PACKET_HEADER_SIZE];
             int msgLen = len - PACKET_HEADER_SIZE - 2;
-            char message[129];
-            if (msgLen > 128) msgLen = 128;
+            char message[PACKET_MAX_CHAT_MESSAGE + 1];
+            if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
             memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
             message[msgLen] = '\0';
             if (fromPlayer >= MAX_TANKS) {
@@ -1375,7 +1375,7 @@ void transportUdpClientGetGameSettings(Transport *t, gameType *game,
 void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
                                 const char *message) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 128];
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
     int msgLen;
     int len;
 
@@ -1383,7 +1383,7 @@ void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
     if (message == NULL || message[0] == '\0') return;
 
     msgLen = (int)strlen(message);
-    if (msgLen > 128) msgLen = 128;
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
 
     packHeader(buf, PACKET_CHAT_MESSAGE, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = destPlayer;
