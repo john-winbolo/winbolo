@@ -296,7 +296,7 @@ void lv_imgui_game_info_window(void) {
             if (ImGui::IsItemClicked()) {
                 /* Open URL in browser */
                 char url[128];
-                snprintf(url, sizeof(url), "http://www.winbolo.net/gamelog.php?key=%s", s_wbn_key);
+                snprintf(url, sizeof(url), "https://www.winbolo.net/gamelog/%s", s_wbn_key);
 #ifdef _WIN32
                 ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOW);
 #else
