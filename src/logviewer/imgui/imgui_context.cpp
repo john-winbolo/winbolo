@@ -119,3 +119,9 @@ int lv_imgui_context_get_resize_delta(float* dx, float* dy) {
     if (dy) *dy = s_resize_delta.y;
     return (s_resize_delta.x != 0.0f || s_resize_delta.y != 0.0f) ? 1 : 0;
 }
+
+int lv_imgui_want_capture_mouse(void) {
+    if (!g_context) return 0;
+    ImGui::SetCurrentContext(g_context);
+    return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
+}
