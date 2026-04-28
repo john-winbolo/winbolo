@@ -158,6 +158,8 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     curTilesX = lv_screenGetSizeX();
     curTilesY = lv_screenGetSizeY();
     lv_screenGetOffsets(&oldOffX, &oldOffY);
+    int oldSubX = 0, oldSubY = 0;
+    lv_screenGetSubOffset(&oldSubX, &oldSubY);
 
     oldEffective = (float)(zf * TILE_SIZE_X) * oldZoom;
     if (oldEffective <= 0.0f) oldEffective = (float)TILE_SIZE_X;
@@ -177,8 +179,10 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     if (gx > maxGx) gx = maxGx;
     if (gy > maxGy) gy = maxGy;
 
-    anchorTileX = (float)oldOffX + gx / oldEffective;
-    anchorTileY = (float)oldOffY + gy / oldEffective;
+    /* Include the current sub-tile pan so the cursor anchors on the same
+     * map pixel even when a partial drag is in flight. */
+    anchorTileX = (float)oldOffX + (float)oldSubX / (float)TILE_SIZE_X + gx / oldEffective;
+    anchorTileY = (float)oldOffY + (float)oldSubY / (float)TILE_SIZE_Y + gy / oldEffective;
 
     /* Compute new viewport tile count so the blit fills (approximately)
      * the available window area at the new zoom. Use the same nearest-
@@ -218,6 +222,10 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
 
     lv_screenSetOffset((BYTE)newOffX, (BYTE)newOffY);
+    /* Zoom anchors on the cursor's tile, not its sub-tile pixel; reset
+     * sub-pan so the new viewport doesn't carry an offset from the
+     * pre-zoom sub-pixel position. */
+    lv_screenSetSubOffset(0, 0);
     lv_drawDirtyScreen();
     lv_windowNeedRedraw();
 }
@@ -583,22 +591,33 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     lv_drawLGMs(lgms);
     
     SDL_SetRenderTarget(sdlRenderer, NULL);
-    
+
     /* Get ImGui menu bar height to offset game rendering below it.
      * This prevents the game from drawing over the menu bar. */
     float menuBarHeight = 0.0f;
     menuBarHeight = lv_imgui_get_menu_bar_height();
-    
+
     /* SDL expects client-area coordinates (0,0), not screen coordinates.
      * The rcWindow passed in contains screen coordinates which would offset
      * the drawing by the window position + title bar + menu bar.
      * We offset by menuBarHeight to leave space for ImGui's menu bar.
      * Width/height are scaled by g_zoomLevel; texture target stays at
-     * native (1x) tile resolution. */
-    dstRect.x = 0.0f;
-    dstRect.y = menuBarHeight;  /* Offset below ImGui menu bar */
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+     * native (1x) tile resolution.
+     *
+     * Sub-tile pan: shift the dst rect by -(subPx * scale). This reveals
+     * subPx*scale pixels of empty area on the trailing edge — black-fill
+     * the un-shifted target rect first so that bleed shows black, not the
+     * previous frame's pixels. */
+    float scale = (float)zoomFactor * g_zoomLevel;
+    float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
+    float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+    SDL_FRect bgRect = { 0.0f, menuBarHeight, gameW, gameH };
+    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(sdlRenderer, &bgRect);
+    dstRect.x = -((float)lv->subPxX * scale);
+    dstRect.y = menuBarHeight - ((float)lv->subPxY * scale);
+    dstRect.w = gameW;
+    dstRect.h = gameH;
     SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
     
     /* NOTE: Don't call SDL_RenderPresent here - ImGui needs to render after the game
@@ -764,17 +783,26 @@ void lv_drawBlitGameTexture(void) {
     SDL_FRect dstRect;
     float menuBarHeight = 0.0f;
     BYTE zoomFactor = lv_windowGetZoomFactor();
-    
+    LogViewerState *lv = lv_screenGetState();
+
     if (!textureTarget || !sdlRenderer) return;
-    
+
     /* Get ImGui menu bar height to offset game rendering below it */
     menuBarHeight = lv_imgui_get_menu_bar_height();
-    
-    /* Blit the game texture to the screen, scaled by the user zoom level. */
-    dstRect.x = 0.0f;
-    dstRect.y = menuBarHeight;
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+
+    /* Blit the game texture to the screen, scaled by the user zoom level.
+     * Sub-tile pan: shift dst by -(subPx * scale); see lv_drawMainScreen
+     * for the rationale and the matching black-clear pass. */
+    float scale = (float)zoomFactor * g_zoomLevel;
+    float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
+    float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+    SDL_FRect bgRect = { 0.0f, menuBarHeight, gameW, gameH };
+    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(sdlRenderer, &bgRect);
+    dstRect.x = -((float)lv->subPxX * scale);
+    dstRect.y = menuBarHeight - ((float)lv->subPxY * scale);
+    dstRect.w = gameW;
+    dstRect.h = gameH;
     SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
 }
 

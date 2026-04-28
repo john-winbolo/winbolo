@@ -645,13 +645,17 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                 {
                     lv_screenSetSizeX((BYTE)newTilesX);
                     lv_screenSetSizeY((BYTE)newTilesY);
-                    /* Clamp scroll offset so the viewport stays within the 255x255 map */
+                    /* Clamp scroll offset so the viewport stays within the 255x255 map.
+                     * Reset sub-pixel pan so the resized viewport snaps cleanly to
+                     * tile boundaries — there's no "in-flight drag" state to preserve
+                     * across a window resize. */
                     if (g_lv->isLoaded) {
                         BYTE ox, oy;
                         lv_screenGetOffsets(&ox, &oy);
                         if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
                         if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
                         lv_screenSetOffset(ox, oy);
+                        lv_screenSetSubOffset(0, 0);
                     }
                 }
                 lv_drawResizeRenderTarget();
