@@ -1649,17 +1649,17 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_CHAT_MESSAGE: {
             /* Chat message format:
-             *   [header 8] [destPlayer 1] [message up to 128] */
+             *   [header 8] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE] */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len > PACKET_HEADER_SIZE + 1) {
                 uint8_t destPlayer = buf[PACKET_HEADER_SIZE];
                 int msgLen = len - PACKET_HEADER_SIZE - 1;
-                if (msgLen > 128) msgLen = 128;
+                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
 
                 /* Build broadcast packet:
                  *   [header 8] [fromPlayer 1] [destPlayer 1] [message] */
                 {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 2 + 128];
+                    uint8_t outBuf[PACKET_HEADER_SIZE + 2 + PACKET_MAX_CHAT_MESSAGE];
                     int outLen;
                     packHeader(outBuf, PACKET_CHAT_BROADCAST, 0);
                     outBuf[PACKET_HEADER_SIZE] = (uint8_t)clientIdx;

@@ -114,6 +114,12 @@ static TTF_Font    *gFontMsg  = NULL;
 static TTF_Font    *gFontKD   = NULL;
 static TTF_Font    *gFontTiny  = NULL;  /* tiny font for pill/base status panel labels */
 static TTF_Font    *gFontLabel = NULL;  /* larger font for pill/base labels in main view */
+/* SarasaMonoK chained via TTF_AddFallbackFont so hangul renders when
+ * the primary is J/SC/TC. Owned here; closed alongside the primaries. */
+static TTF_Font    *gFallbackFontMsg   = NULL;
+static TTF_Font    *gFallbackFontKD    = NULL;
+static TTF_Font    *gFallbackFontTiny  = NULL;
+static TTF_Font    *gFallbackFontLabel = NULL;
 
 /* Tank label texture cache (one per player slot, 0-15) */
 #define SDL3_MAX_PLAYERS 16
@@ -848,20 +854,86 @@ static void sdl3DrawShowLoadingScreen(void) {
   SDL_DestroyTexture(logoTex);
 }
 
-/* Map the active BCP-47 language code to the Sarasa Mono region that
- * carries its CJK glyphs, or NULL for non-CJK languages. Sarasa Mono
- * is a true monospace (Iosevka Latin merged with Source Han Sans),
- * which keeps the columnar status panels aligned when mixing Latin
- * and CJK characters. The picker normalises codes to lowercase
- * (lang.c langPickerScan); compare case-insensitively to also accept
- * codes set by other paths. */
+/* Map the active BCP-47 language code to the Sarasa Mono Slab region
+ * that carries its CJK glyphs. Sarasa Mono Slab is a true monospace
+ * (Iosevka Slab Latin merged with Source Han Sans) — typewriter
+ * aesthetic plus correct half-width / full-width cells, so the columnar
+ * status panels and the marquee align when mixing Latin and CJK. All
+ * regional variants share the same Iosevka cell metrics, so the
+ * SlabK hangul fallback chains cleanly onto a SlabJ / SlabSC / SlabTC
+ * primary. The picker normalises codes to lowercase (lang.c
+ * langPickerScan); compare case-insensitively to also accept codes set
+ * by other paths. */
 static const char *sarasaMonoFontPath(const char *langCode) {
-  if (!langCode || !*langCode) return NULL;
-  if (SDL_strcasecmp(langCode, "ja")    == 0) return "data/fonts/SarasaMonoJ-Regular.ttf";
-  if (SDL_strcasecmp(langCode, "ko")    == 0) return "data/fonts/SarasaMonoK-Regular.ttf";
-  if (SDL_strcasecmp(langCode, "zh-CN") == 0) return "data/fonts/SarasaMonoSC-Regular.ttf";
-  if (SDL_strcasecmp(langCode, "zh-TW") == 0) return "data/fonts/SarasaMonoTC-Regular.ttf";
-  return NULL;
+  if (langCode && *langCode) {
+    if (SDL_strcasecmp(langCode, "ko")    == 0) return "data/fonts/SarasaMonoSlabK-Regular.ttf";
+    if (SDL_strcasecmp(langCode, "zh-CN") == 0) return "data/fonts/SarasaMonoSlabSC-Regular.ttf";
+    if (SDL_strcasecmp(langCode, "zh-TW") == 0) return "data/fonts/SarasaMonoSlabTC-Regular.ttf";
+  }
+  return "data/fonts/SarasaMonoSlabJ-Regular.ttf";
+}
+
+/* Open the four in-game TTF font handles at sizes derived from gZoomFactor,
+ * plus the SarasaMonoSlabK fallback chain (so hangul renders even when the
+ * primary is SlabJ / SlabSC / SlabTC). Used by both sdl3DrawSetup and the
+ * zoom-change path in sdl3DrawAdaptRenderTarget so a window resize keeps
+ * the same font primary + fallback set. Sets all eight globals; assumes
+ * the existing handles have already been closed by the caller (or are
+ * NULL). */
+static void openInGameFonts(void) {
+  char langCode[32];
+  langCode[0] = '\0';
+  gameFrontGetLanguageCode(langCode, (int)sizeof(langCode));
+  const char *sarasaRel  = sarasaMonoFontPath(langCode);
+  const char *sarasaKRel = "data/fonts/SarasaMonoSlabK-Regular.ttf";
+
+#if defined(__EMSCRIPTEN__)
+  static char sarasaBuf[1024];
+  SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "/%s", sarasaRel);
+  const char *sarasaPath  = sarasaBuf;
+  const char *sarasaKPath = "/data/fonts/SarasaMonoSlabK-Regular.ttf";
+#elif defined(__ANDROID__)
+  const char *sarasaPath  = sarasaRel;
+  const char *sarasaKPath = sarasaKRel;
+#else
+  const char *base = SDL_GetBasePath();
+  static char sarasaBuf[1024];
+  static char sarasaKBuf[1024];
+  if (base) {
+    SDL_snprintf(sarasaBuf,  sizeof(sarasaBuf),  "%s%s", base, sarasaRel);
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s%s", base, sarasaKRel);
+  } else {
+    SDL_snprintf(sarasaBuf,  sizeof(sarasaBuf),  "%s", sarasaRel);
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s", sarasaKRel);
+  }
+  const char *sarasaPath  = sarasaBuf;
+  const char *sarasaKPath = sarasaKBuf;
+#endif
+
+  gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
+  gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
+  gFontTiny  = TTF_OpenFont(sarasaPath,  8 * gZoomFactor);
+  gFontLabel = TTF_OpenFont(sarasaPath, 10 * gZoomFactor);
+  if (!gFontMsg) {
+    SDL_Log("openInGameFonts: failed to open primary %s — text will not render",
+            sarasaPath);
+  }
+
+  /* Hangul fallback. Skip if primary already is SarasaMonoSlabK. */
+  if (SDL_strcmp(sarasaPath, sarasaKPath) != 0) {
+    gFallbackFontMsg   = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
+    gFallbackFontKD    = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
+    gFallbackFontTiny  = TTF_OpenFont(sarasaKPath,  8 * gZoomFactor);
+    gFallbackFontLabel = TTF_OpenFont(sarasaKPath, 10 * gZoomFactor);
+    if (gFontMsg   && gFallbackFontMsg)   TTF_AddFallbackFont(gFontMsg,   gFallbackFontMsg);
+    if (gFontKD    && gFallbackFontKD)    TTF_AddFallbackFont(gFontKD,    gFallbackFontKD);
+    if (gFontTiny  && gFallbackFontTiny)  TTF_AddFallbackFont(gFontTiny,  gFallbackFontTiny);
+    if (gFontLabel && gFallbackFontLabel) TTF_AddFallbackFont(gFontLabel, gFallbackFontLabel);
+    if (!gFallbackFontMsg) {
+      SDL_Log("openInGameFonts: failed to open SlabK fallback %s — hangul will tofu",
+              sarasaKPath);
+    }
+  }
 }
 
 bool sdl3DrawSetup(int zoomFactor) {
@@ -962,66 +1034,7 @@ bool sdl3DrawSetup(int zoomFactor) {
   /* --- Now load fonts at the correct zoom --- */
   bool ttfOk = TTF_Init();
   if (ttfOk) {
-    /* For CJK languages, prefer Sarasa Mono (Iosevka Latin merged with
-     * Source Han Sans) — true monospace with correct half-width/full-
-     * width cells, so the columnar status panels and message overlay
-     * stay aligned when mixing Latin and CJK. SDL_ttf can't merge
-     * fonts cleanly the way ImGui can, so this is a swap, not a chain.
-     * Fall back to Courier Prime if the Sarasa file is missing. */
-    char langCode[32];
-    langCode[0] = '\0';
-    gameFrontGetLanguageCode(langCode, (int)sizeof(langCode));
-    const char *sarasaRel = sarasaMonoFontPath(langCode);
-    const char *courierRel = "data/fonts/CourierPrime-Regular.ttf";
-
-#if defined(__EMSCRIPTEN__)
-    /* Emscripten preload uses a leading slash. */
-    static char sarasaBuf[1024];
-    const char *sarasaPath = NULL;
-    if (sarasaRel) {
-      SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "/%s", sarasaRel);
-      sarasaPath = sarasaBuf;
-    }
-    const char *courierPath = "/data/fonts/CourierPrime-Regular.ttf";
-#elif defined(__ANDROID__)
-    /* On Android, SDL_IOFromFile (used by TTF_OpenFont) reads from the
-     * asset manager when given a relative path.  Don't prepend BasePath. */
-    const char *sarasaPath  = sarasaRel;
-    const char *courierPath = courierRel;
-#else
-    const char *base = SDL_GetBasePath();
-    static char sarasaBuf[1024];
-    static char courierBuf[1024];
-    if (base) {
-      SDL_snprintf(courierBuf, sizeof(courierBuf), "%s%s", base, courierRel);
-      if (sarasaRel) SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s%s", base, sarasaRel);
-    } else {
-      SDL_snprintf(courierBuf, sizeof(courierBuf), "%s", courierRel);
-      if (sarasaRel) SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s", sarasaRel);
-    }
-    const char *sarasaPath  = sarasaRel ? sarasaBuf : NULL;
-    const char *courierPath = courierBuf;
-#endif
-
-    /* Probe Sarasa Mono once via SDL_IOFromFile so we can warn cleanly
-     * before TTF_OpenFont sees a missing file. */
-    const char *fontPath = courierPath;
-    if (sarasaPath) {
-      SDL_IOStream *probe = SDL_IOFromFile(sarasaPath, "rb");
-      if (probe) {
-        SDL_CloseIO(probe);
-        fontPath = sarasaPath;
-      } else {
-        SDL_Log("sdl3DrawSetup: Sarasa Mono font %s missing for language %s — "
-                "falling back to Courier Prime (CJK glyphs will tofu)",
-                sarasaPath, langCode);
-      }
-    }
-
-    gFontMsg   = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* messages: newswire / overlay */
-    gFontKD    = TTF_OpenFont(fontPath, 13 * gZoomFactor); /* kills/deaths */
-    gFontTiny  = TTF_OpenFont(fontPath,  8 * gZoomFactor); /* pill/base status labels */
-    gFontLabel = TTF_OpenFont(fontPath, 10 * gZoomFactor); /* pill/base main view labels */
+    openInGameFonts();
   }
 
   /* Clear label cache */
@@ -1131,6 +1144,10 @@ void sdl3DrawCleanup(void) {
   if (gFontKD)   { TTF_CloseFont(gFontKD);   gFontKD   = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
   if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
+  if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
+  if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
+  if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
+  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
   TTF_Quit();
 
   if (gManStatusTex)     { SDL_DestroyTexture(gManStatusTex);     gManStatusTex     = NULL; }
@@ -1224,25 +1241,18 @@ static void sdl3DrawAdaptRenderTarget(void) {
   if (gFontKD)    { TTF_CloseFont(gFontKD);    gFontKD    = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
   if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
+  if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
+  if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
+  if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
+  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
 
   /* Update zoom factor */
   gZoomFactor = needZoom;
 
-  /* Reload fonts at new zoom */
-  {
-    const char *relPath = "data/fonts/CourierPrime-Regular.ttf";
-    const char *base = SDL_GetBasePath();
-    static char fontBuf[1024];
-    if (base) {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s%s", base, relPath);
-    } else {
-      SDL_snprintf(fontBuf, sizeof(fontBuf), "%s", relPath);
-    }
-    gFontMsg   = TTF_OpenFont(fontBuf, 13 * gZoomFactor);
-    gFontKD    = TTF_OpenFont(fontBuf, 13 * gZoomFactor);
-    gFontTiny  = TTF_OpenFont(fontBuf,  8 * gZoomFactor);
-    gFontLabel = TTF_OpenFont(fontBuf, 10 * gZoomFactor);
-  }
+  /* Reload fonts at new zoom (Sarasa Mono primary + SarasaMonoK fallback,
+   * matching sdl3DrawSetup so chat / newswire keep CJK coverage after a
+   * window resize). */
+  openInGameFonts();
 
   /* Tiles will be reloaded lazily by sdl3LoadTiles() at new gZoomFactor */
 

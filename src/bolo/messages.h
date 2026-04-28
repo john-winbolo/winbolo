@@ -31,12 +31,6 @@
 #include <stdio.h>
 #include "global.h"
 
-#define IsEmpty(list) ((list) ==NULL)
-#define NonEmpty(list) (!IsEmpty(list))
-#define MessageTail(list) ((list)->next);
-#define MessageHeadTop(list) ((list)->topLine);
-#define MessageHeadBottom(list) ((list)->bottomLine);
-
 /* Message String Macros */
 #define MESSAGE_QUOTES "\""
 
@@ -47,20 +41,26 @@
 /* Blank space marker */
 #define MESSAGE_BLANK ' '
 
+/* Sentinel cell value for the second visual column of a wide (East Asian
+ * full-width) codepoint. Each cell in the marquee represents one visual
+ * column; a wide codepoint occupies its leading cell + a CONT cell so
+ * cell counts match between top and bottom rows even when one row has
+ * narrow Latin and the other has wide CJK. The encoder skips CONT cells
+ * (the codepoint in the leading cell already renders 2 cols at its
+ * natural advance). 0xFFFFFFFE is outside any valid Unicode codepoint. */
+#define MESSAGE_CELL_CONT 0xFFFFFFFEu
+
 /* An Empty Message */
 #define MESSAGE_EMPTY " \0"
 
 /* Time between screen updates */
 #define MESSAGE_SCROLL_TIME 4 /* Was 5 prior to 1.09 */
 
-/* Type structure */
-
-typedef struct messageObj *message;
-struct messageObj {
-  message next;
-  char topLine;
-  char bottomLine;
-};
+/* Pending codepoint pairs awaiting the next messageUpdate tick. Ring buffer
+ * sized for ~15 typical messages of scroll-in (1024 cells * 8 bytes/pair =
+ * 8 KB per stream). When full, the oldest pending cells are dropped so
+ * producers never block. */
+#define MESSAGE_QUEUE_CAP 1024
 
 /* Offset to a player message */
 #define PLAYER_MESSAGE_OFFSET 5
@@ -90,10 +90,29 @@ typedef enum {
   globalMessage     /* Message must be printed */
 } messageType;
 
+/* UTF-8 byte buffer sized for MESSAGE_WIDTH codepoints (max 4 bytes each)
+ * plus NUL terminator. The frontend receives this rendered byte string;
+ * the codepoint cells below are the canonical state. */
+#define MESSAGE_LINE_BYTES (MESSAGE_WIDTH * 4 + 1)
+
 /* Per-instance message state (moved from module-level globals) */
 typedef struct MessageState {
-  char    topLine[MESSAGE_WIDTH];
-  char    bottomLine[MESSAGE_WIDTH];
+  /* Canonical state: one Unicode codepoint per visible cell. */
+  uint32_t topCells[MESSAGE_WIDTH];
+  uint32_t bottomCells[MESSAGE_WIDTH];
+  /* UTF-8 rendering of topCells/bottomCells, refreshed each tick and
+   * passed to frontEndMessages(). NUL-terminated. */
+  char    topLine[MESSAGE_LINE_BYTES];
+  char    bottomLine[MESSAGE_LINE_BYTES];
+  /* Ring buffer of pending codepoint pairs. messageAddItem writes pairs
+   * at queueTail; messageUpdate consumes one pair from queueHead per tick.
+   * queueCount tracks population (0..MESSAGE_QUEUE_CAP). All inline — no
+   * heap allocations after construction. */
+  uint32_t queueTop[MESSAGE_QUEUE_CAP];
+  uint32_t queueBottom[MESSAGE_QUEUE_CAP];
+  int     queueHead;
+  int     queueTail;
+  int     queueCount;
   char    newMessage[FILENAME_MAX];
   BYTE    newMessageFrom;
   bool    showNewswire;
@@ -101,7 +120,6 @@ typedef struct MessageState {
   bool    showAI;
   bool    showNetwork;
   bool    showNetStat;
-  message msg;
   BYTE    messageTime;
   BYTE    lastMessage;
 } MessageState;

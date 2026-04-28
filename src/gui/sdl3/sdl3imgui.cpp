@@ -50,6 +50,7 @@ extern "C" {
 #include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
 #include "../../bolo/screen.h"   /* labelLen, lblNone/lblShort/lblLong */
 #include "../../bolo/client_sim.h"
+#include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -322,7 +323,12 @@ static KeySetupField s_keySetupWaiting      = ksNone;
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
 static int    s_sendMsgRecipient  = kSendAll;
-static char   s_sendMsgBuf[101]   = "";
+/* Sized to match the wire payload cap (PACKET_MAX_CHAT_MESSAGE bytes) used by
+ * transportUdpClientSendChat / transport_udp_server PACKET_CHAT_MESSAGE,
+ * + 1 for NUL. ImGui's InputText caps insertions at sizeof(buf) and
+ * rejects a whole UTF-8 codepoint that would overflow rather than
+ * splitting it, so this is the limit users see in the dialog too. */
+static char   s_sendMsgBuf[PACKET_MAX_CHAT_MESSAGE + 1] = "";
 static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in cooldown */
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */
 #define SEND_MSG_WAIT_MS 2000
@@ -841,7 +847,9 @@ static void renderSendMsgContent(ClientSim *cs) {
             numSend == 1 ? STR_DLGMSG_SENDPLAYER : STR_DLGMSG_SENDPLAYERS, &args));
     }
 
-    /* Text input — max 100 chars, matching Win32 EM_LIMITTEXT */
+    /* Text input — capped by the buffer size to 128 bytes of content
+     * (matches the chat wire payload). For CJK that's ~42 visible chars
+     * (3 bytes each); for ASCII it's 128. */
     /* Auto-focus on window appear or when Ctrl+M re-pressed */
     bool wantSelectAll = false;
     if (ImGui::IsWindowAppearing() || s_sendMsgFocusInput) {

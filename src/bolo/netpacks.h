@@ -271,6 +271,15 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 /* Max size of player name in join request */
 #define PACKET_MAX_PLAYER_NAME 32
 
+/* Max size of a chat message payload (PACKET_CHAT_MESSAGE /
+ * PACKET_CHAT_BROADCAST). Caps the bytes the client send buffer carries
+ * and the server-side truncation. UTF-8 fits transparently — the buffer
+ * is byte-sized — but visible character counts shrink for multi-byte
+ * scripts (~42 CJK chars vs 128 ASCII chars). The send-message dialog's
+ * input buffer is sized PACKET_MAX_CHAT_MESSAGE + 1 (NUL) so users see
+ * the same cap. */
+#define PACKET_MAX_CHAT_MESSAGE 128
+
 /* Map download chunk size — fits comfortably in a UDP datagram */
 #define MAP_DOWNLOAD_CHUNK_SIZE 900
 
