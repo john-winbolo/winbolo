@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=Мережа
 STR_DLGSETTINGS_NET_HELP=Налаштування набудуть чинності в наступній хостинговій грі.
 STR_DLGSETTINGS_USE_UPNP=Використовувати UPnP / NAT-PMP для автоматичного перенаправлення порту
 STR_DLGSETTINGS_USE_NATTRAV=Використовувати NAT traversal (hole-punching) через трекер
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=Ім'я гравця порожнє.
+STR_NAME_INVALID_CHARS=Ім'я гравця містить заборонені символи.
+STR_NAME_INVALID_MIXED_SCRIPTS=Ім'я гравця поєднує несумісні системи письма.
+STR_NAME_INVALID_RESERVED_PREFIX=Ім'я гравця не може починатися з «*».
+STR_NAME_INVALID_RESERVED_SUFFIX=Ім'я гравця не може закінчуватися на «-unverified».
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Показувати прапорці країн у чаті
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} перейменовано, бо {other} приєднався верифікованим
+STR_NAME_TAKEN_BY_VERIFIED=Це відображуване ім'я належить верифікованому гравцю. Будь ласка, оберіть інше.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Це відображуване ім'я вже використовує інший верифікований гравець. Будь ласка, оберіть інше.
+
+# Connection rejection reasons and server kick
+STR_REJECT_INCORRECT_PASSWORD=Неправильний пароль
+STR_REJECT_GAME_LOCKED=Гру заблоковано
+STR_REJECT_SERVER_FULL=Сервер заповнений
+STR_REJECT_NAME_POOL_EXHAUSTED=Пул імен сервера вичерпано
+STR_REJECT_INVALID_PLAYER_NAME=Недійсне ім'я гравця
+STR_REJECT_WBN_VERIFY_FAILED=Верифікація WinBolo.net не вдалася: {string1}
+STR_KICK_ANNOUNCE={player} виключено сервером.

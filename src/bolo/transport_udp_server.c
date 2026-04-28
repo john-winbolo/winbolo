@@ -41,6 +41,7 @@
 #include "sounddist.h"
 #include "bot_manager.h"
 #include "log.h"
+#include "playername_validate.h"
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -303,14 +304,64 @@ static int serverFindFreeSlot(void) {
     return -1;
 }
 
-/* Send a join reject to a specific address */
-static void serverSendJoinReject(const struct sockaddr_in *addr,
-                                 const char *reason) {
-    uint8_t buf[PACKET_HEADER_SIZE + 64];
+/* Pack a langid + arg list into buf at *pos.  Used by the localized
+ * server→client packets (PACKET_JOIN_REJECT and the fromPlayer=0xFF
+ * variant of PACKET_CHAT_BROADCAST).  Args are written verbatim as
+ * UTF-8 byte strings, each preceded by a length byte (0..PLAYER_NAME_LEN-1).
+ * Returns false (and leaves *pos undefined) if argCount > 4 or any arg
+ * exceeds the per-arg byte cap. */
+static bool packLocalizedPayload(uint8_t *buf, int *pos, int bufSize,
+                                 langid id, int argCount,
+                                 const char *const args[]) {
+    int i;
+    if (argCount < 0 || argCount > 4) return false;
+    if (*pos + 3 > bufSize) return false;
+    /* langid: 2 bytes big-endian */
+    buf[(*pos)++] = (uint8_t)((id >> 8) & 0xFF);
+    buf[(*pos)++] = (uint8_t)(id & 0xFF);
+    buf[(*pos)++] = (uint8_t)argCount;
+    for (i = 0; i < argCount; i++) {
+        const char *a = (args && args[i]) ? args[i] : "";
+        size_t aLen = strlen(a);
+        if (aLen > PLAYER_NAME_LEN - 1) return false;
+        if (*pos + 1 + (int)aLen > bufSize) return false;
+        buf[(*pos)++] = (uint8_t)aLen;
+        if (aLen > 0) {
+            memcpy(buf + *pos, a, aLen);
+            *pos += (int)aLen;
+        }
+    }
+    return true;
+}
+
+/* Send a localized join reject to a specific address.  Wire format is
+ * documented at PACKET_JOIN_REJECT in netpacks.h. */
+static void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
+                                 int argCount, const char *const args[]) {
+    /* Worst case: 8 hdr + 2 langid + 1 argCount + 4*(1 + 64) = 271. */
+    uint8_t buf[PACKET_HEADER_SIZE + 3 + 4 * (1 + PLAYER_NAME_LEN - 1)];
+    int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_JOIN_REJECT, 0);
-    memset(buf + PACKET_HEADER_SIZE, 0, 64);
-    strncpy((char *)(buf + PACKET_HEADER_SIZE), reason, 63);
-    udpSendTo(udpServer.sock, buf, sizeof(buf), addr);
+    if (!packLocalizedPayload(buf, &pos, sizeof(buf), id, argCount, args)) {
+        fprintf(stderr,
+                "[UDP SERVER] serverSendJoinReject: pack failed id=%u argc=%d\n",
+                (unsigned)id, argCount);
+        return;
+    }
+    udpSendTo(udpServer.sock, buf, pos, addr);
+}
+
+/* Send a PACKET_NAME_CHANGE_REJECT to a specific connected client.
+ * Payload is a single reasonCode byte (NAME_REJECT_*). The client maps
+ * it to a localized langid and surfaces it in the chat ring. */
+static void serverSendNameChangeReject(int clientIdx, uint8_t reasonCode) {
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return;
+    if (!udpServer.clients[clientIdx].connected) return;
+    packHeader(buf, PACKET_NAME_CHANGE_REJECT, 0);
+    buf[PACKET_HEADER_SIZE] = reasonCode;
+    udpSendTo(udpServer.sock, buf, sizeof(buf),
+              &udpServer.clients[clientIdx].addr);
 }
 
 /* Send a player joined/left notification to all connected clients */
@@ -438,6 +489,113 @@ static void serverCleanupMapDownload(int slot) {
 /* Forward declarations for lobby broadcast helpers (defined after serverRecv) */
 static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientIdx);
 void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum);
+static void serverSendServerMessage(langid id, int argCount,
+                                    const char *const args[]);
+static void serverSendServerEnglishBroadcast(const char *message);
+
+/* Phase 5 verified-priority preempt — rename `victimSlot` to `chosenName`
+ * and broadcast the change to all connected clients.  Sets the
+ * sticky-suffix flag so the slot keeps its renamed form for the rest of
+ * the session.  `incomingName` and `incomingCountry` describe the
+ * verified joiner that triggered the rename; both are used for the
+ * newswire announce. */
+static void serverPreemptRename(ServerSim *sim, int victimSlot,
+                                const char *chosenName,
+                                const char *incomingName,
+                                const char *incomingCountry) {
+    char originalName[PACKET_MAX_PLAYER_NAME];
+    int j;
+
+    strncpy(originalName, udpServer.clients[victimSlot].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    originalName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+
+    /* Update the per-slot transport-side name. */
+    strncpy(udpServer.clients[victimSlot].playerName, chosenName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    udpServer.clients[victimSlot].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    udpServer.clients[victimSlot].nameStickySuffix = true;
+
+    /* Update the gameSim player record — same path PACKET_NAME_CHANGE
+     * already uses (transport_udp_server.c PACKET_NAME_CHANGE handler). */
+    {
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        strncpy(nameBuf, chosenName, PACKET_MAX_PLAYER_NAME - 1);
+        nameBuf[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+        playersSetPlayerName(NULL, &sim->sim, &sim->sim.plyrs, NEUTRAL,
+                             (BYTE)victimSlot, nameBuf, TRUE);
+    }
+
+    /* Broadcast PACKET_NAME_CHANGE to all connected clients (including
+     * the victim — they need to update their own record too). */
+    {
+        uint8_t outBuf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
+        packHeader(outBuf, PACKET_NAME_CHANGE, 0);
+        outBuf[PACKET_HEADER_SIZE] = (uint8_t)victimSlot;
+        memset(outBuf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
+        strncpy((char *)(outBuf + PACKET_HEADER_SIZE + 1), chosenName,
+                PACKET_MAX_PLAYER_NAME - 1);
+        for (j = 0; j < MAX_TANKS; j++) {
+            if (udpServer.clients[j].connected) {
+                udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
+                          &udpServer.clients[j].addr);
+            }
+        }
+    }
+
+    /* Broadcast a single-slot lobby update so other surfaces (lobby
+     * table, players panel) refresh. */
+    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)victimSlot);
+
+    /* Post a newswire announcement. The server's messageAdd callback
+     * drops newswire messages today (see server_sim.c:serverSimCbMessageAdd),
+     * but we mirror the existing emit pattern for consistency and so a
+     * future server-side listener picks it up automatically.  Clients
+     * generate their own MESSAGE_CHANGENAME announce when they apply
+     * PACKET_NAME_CHANGE, so the visible chat update on each client comes
+     * from that path; the verified-specific phrasing is informational
+     * for now (Phase 11 wires it to chat). */
+    {
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        strncpy(args.playerName, originalName, PLAYER_NAME_LEN - 1);
+        strncpy(args.otherName, incomingName, PLAYER_NAME_LEN - 1);
+        args.playerFlags = playersGetAccountFlags(&sim->sim.plyrs,
+                                                  (BYTE)victimSlot);
+        playersGetCountryCode(&sim->sim.plyrs, (BYTE)victimSlot,
+                              args.playerCountry);
+        /* Incoming joiner has a slot allocated but isn't in the players
+         * struct yet; pull country from the caller-supplied lookup and
+         * mark the WBN flag manually since we only get here when they're
+         * verified. */
+        args.otherFlags = (uint8_t)MESSAGE_FLAG_WBN;
+        if (incomingCountry) {
+            args.otherCountry[0] = incomingCountry[0];
+            args.otherCountry[1] = incomingCountry[1];
+            args.otherCountry[2] = '\0';
+        }
+        sim->sim.callbacks.messageAdd(sim->sim.callbacks.ctx,
+                                      globalMessage, MESSAGE_NEWSWIRE,
+                                      STR_NAME_RENAMED_BY_VERIFIED, &args);
+    }
+
+    /* Phase 5.1: surface the announcement to clients via the server-message
+     * broadcast path (the messageAdd callback above drops on the server). */
+    {
+        const char *renameArgs[2];
+        renameArgs[0] = originalName;
+        renameArgs[1] = incomingName;
+        serverSendServerMessage(STR_NAME_RENAMED_BY_VERIFIED, 2, renameArgs);
+    }
+
+    {
+        char consoleMsg[256];
+        snprintf(consoleMsg, sizeof(consoleMsg),
+                 "Player '%s' renamed to '%s' (verified player '%s' joined)",
+                 originalName, chosenName, incomingName);
+        serverSimConsoleMessage(consoleMsg);
+    }
+}
 
 /* Handle a join request from a new client */
 static void serverHandleJoinRequest(const uint8_t *buf, int len,
@@ -472,6 +630,25 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
     pos += PACKET_MAX_PLAYER_NAME;
 
+    /* Validate the requested name before any other check.  The validator
+     * returns the NFC-normalized, stripped, codepoint-safe-truncated form
+     * which then becomes the canonical name we accept and store. */
+    {
+        char validated[PACKET_MAX_PLAYER_NAME];
+        PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+        if (!playerNameValidate(name, validated, sizeof(validated), &nameErr)) {
+            char consoleMsg[160];
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join rejected for '%s': Invalid player name (code %d)",
+                     name, (int)nameErr);
+            serverSimConsoleMessage(consoleMsg);
+            serverSendJoinReject(fromAddr, STR_REJECT_INVALID_PLAYER_NAME, 0, NULL);
+            return;
+        }
+        strncpy(name, validated, PACKET_MAX_PLAYER_NAME - 1);
+        name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    }
+
     memcpy(pass, buf + pos, MAP_STR_SIZE);
     pass[MAP_STR_SIZE - 1] = '\0';
     pos += MAP_STR_SIZE;
@@ -501,7 +678,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             snprintf(consoleMsg, sizeof(consoleMsg),
                      "Join rejected for '%s': Incorrect password", name);
             serverSimConsoleMessage(consoleMsg);
-            serverSendJoinReject(fromAddr, "Incorrect password");
+            serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0, NULL);
             return;
         }
     }
@@ -512,36 +689,204 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         snprintf(consoleMsg, sizeof(consoleMsg),
                  "Join rejected for '%s': Game is locked", name);
         serverSimConsoleMessage(consoleMsg);
-        serverSendJoinReject(fromAddr, "Game is locked");
+        serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
         return;
     }
 
-    /* Check name uniqueness */
+    /* Find free slot for the incoming player.  Slot allocation moved
+     * ahead of the duplicate check (Phase 5) so the WBN-verification
+     * step below has a slot to bind its player_key to, and the collision
+     * policy has the slot available before applying any preempt. */
+    slot = serverFindFreeSlot();
+    if (slot < 0) {
+        serverSimConsoleMessage("Join rejected: Server full");
+        serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+        return;
+    }
+
+    /* GeoIP country lookup for the incoming player.  Done early so the
+     * preempt path can include it in the rename newswire. */
+    char incomingCountry[3];
+    {
+        char ipStr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
+        if (!geoLookupCountry(ipStr, incomingCountry)) {
+            incomingCountry[0] = '\0';
+            incomingCountry[1] = '\0';
+        }
+        incomingCountry[2] = '\0';
+    }
+
+    /* Verify WBN token if provided.  Result drives the collision policy
+     * below.  On verification failure we reject without touching the
+     * slot (it's still unconnected at this point). */
+    bool incomingIsWBN = false;
+    bool wbnHasSteam = false;
+    if (wbnToken[0] != '\0' && winbolonetIsRunning()) {
+        char errorMsg[512];
+        errorMsg[0] = '\0';
+        if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg, &wbnHasSteam)) {
+            fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
+            incomingIsWBN = true;
+        } else {
+            /* Truncate the WBN reason to the per-arg wire cap so
+             * packLocalizedPayload doesn't reject the packet. */
+            char wbnReason[PLAYER_NAME_LEN];
+            /* Pad with two empty args so the reason lands in args.string1
+             * (positional mapping: arg0->playerName, arg1->otherName,
+             * arg2->string1).  STR_REJECT_WBN_VERIFY_FAILED uses {string1}. */
+            const char *wbnArgs[3];
+            fprintf(stderr,
+                    "[UDP SERVER] WinBolo.net verification failed: %s\n",
+                    errorMsg);
+            strncpy(wbnReason, errorMsg, sizeof(wbnReason) - 1);
+            wbnReason[sizeof(wbnReason) - 1] = '\0';
+            wbnArgs[0] = "";
+            wbnArgs[1] = "";
+            wbnArgs[2] = wbnReason;
+            serverSendJoinReject(fromAddr, STR_REJECT_WBN_VERIFY_FAILED, 3,
+                                 wbnArgs);
+            return;
+        }
+    }
+
+    /* Verified-priority collision policy (Phase 5).  Replaces the older
+     * single-rule "Name already in use" check.  Loop terminates on the
+     * first match (existing duplicate-loop semantics). */
     {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
-            if (udpServer.clients[i].connected &&
-                strcmp(udpServer.clients[i].playerName, name) == 0) {
+            if (!udpServer.clients[i].connected) continue;
+            if (i == slot) continue; /* slot is unconnected; defensive */
+            if (playerNameCompare(udpServer.clients[i].playerName, name) != 0)
+                continue;
+
+            bool existingIsWBN =
+                playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i);
+
+            if (!incomingIsWBN && !existingIsWBN) {
+                /* Both unverified (incl. Steam, bot): existing behavior. */
                 char consoleMsg[128];
                 snprintf(consoleMsg, sizeof(consoleMsg),
                          "Join rejected for '%s': Name already in use", name);
                 serverSimConsoleMessage(consoleMsg);
-                serverSendJoinReject(fromAddr, "Name already in use");
+                serverSendJoinReject(fromAddr, STR_DLGSETNAME_INUSE_ERR, 0, NULL);
                 return;
             }
-        }
-    }
+            if (!incomingIsWBN && existingIsWBN) {
+                /* Unverified joiner can't take a verified player's name. */
+                char consoleMsg[160];
+                snprintf(consoleMsg, sizeof(consoleMsg),
+                         "Join rejected for '%s': name taken by verified player",
+                         name);
+                serverSimConsoleMessage(consoleMsg);
+                serverSendJoinReject(fromAddr, STR_NAME_TAKEN_BY_VERIFIED, 0, NULL);
+                return;
+            }
+            if (incomingIsWBN && existingIsWBN) {
+                /* Two verified users with the same display name — Decision 7
+                 * says reject the second joiner rather than preempt. */
+                char consoleMsg[200];
+                snprintf(consoleMsg, sizeof(consoleMsg),
+                         "WARNING: verified-vs-verified collision for '%s'; "
+                         "rejecting joiner", name);
+                serverSimConsoleMessage(consoleMsg);
+                /* Roll back the WBN client/join we recorded above. */
+                if (incomingIsWBN) {
+                    winboloNetClientLeaveGame(
+                        (BYTE)slot, serverSimGetNumPlayers(sim),
+                        serverSimGetNumNeutralBases(sim),
+                        serverSimGetNumNeutralPills(sim));
+                }
+                serverSendJoinReject(fromAddr,
+                                     STR_NAME_TAKEN_BY_OTHER_VERIFIED, 0, NULL);
+                return;
+            }
 
-    /* Find free slot */
-    slot = serverFindFreeSlot();
-    if (slot < 0) {
-        serverSimConsoleMessage("Join rejected: Server full");
-        serverSendJoinReject(fromAddr, "Server full");
-        return;
+            /* incomingIsWBN && !existingIsWBN — preempt. */
+
+            if (udpServer.clients[i].nameStickySuffix) {
+                /* In practice unreachable: a sticky slot already stores
+                 * "<base>-unverified[-N]" so playerNameCompare wouldn't
+                 * have matched the bare incoming name.  Guard defensively
+                 * — never re-preempt a slot that has already been
+                 * suffix-renamed. */
+                continue;
+            }
+
+            /* Find a unique -unverified[-N] candidate for the victim. */
+            char baseName[PACKET_MAX_PLAYER_NAME];
+            char chosenName[PACKET_MAX_PLAYER_NAME];
+            bool chosenFound = false;
+            int suffixIdx;
+
+            strncpy(baseName, udpServer.clients[i].playerName,
+                    PACKET_MAX_PLAYER_NAME - 1);
+            baseName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+
+            /* Try indices 0, 2, 3, ..., 99 (1 is reserved — the bare
+             * "-unverified" form IS the "1"). */
+            for (suffixIdx = 0; suffixIdx <= 99; suffixIdx++) {
+                if (suffixIdx == 1) continue;
+                char candidate[PACKET_MAX_PLAYER_NAME];
+                if (!playerNameMakeUnverifiedSuffix(baseName, suffixIdx,
+                                                    candidate,
+                                                    sizeof(candidate))) {
+                    continue;
+                }
+
+                /* Candidate must be unique against ALL other connected
+                 * slots (not just the victim's slot). */
+                bool clash = false;
+                int k;
+                for (k = 0; k < MAX_TANKS; k++) {
+                    if (!udpServer.clients[k].connected) continue;
+                    if (k == i) continue;
+                    if (k == slot) continue;
+                    if (playerNameCompare(udpServer.clients[k].playerName,
+                                          candidate) == 0) {
+                        clash = true;
+                        break;
+                    }
+                }
+                if (clash) continue;
+
+                strncpy(chosenName, candidate, PACKET_MAX_PLAYER_NAME - 1);
+                chosenName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+                chosenFound = true;
+                break;
+            }
+
+            if (!chosenFound) {
+                /* Suffix pool exhausted.  Never preempt a verified
+                 * player even transitively (Decision 4 implication);
+                 * also never preempt twice — reject the verified joiner
+                 * instead. */
+                char consoleMsg[200];
+                snprintf(consoleMsg, sizeof(consoleMsg),
+                         "WARNING: -unverified suffix pool exhausted for "
+                         "'%s'; rejecting verified joiner", name);
+                serverSimConsoleMessage(consoleMsg);
+                if (incomingIsWBN) {
+                    winboloNetClientLeaveGame(
+                        (BYTE)slot, serverSimGetNumPlayers(sim),
+                        serverSimGetNumNeutralBases(sim),
+                        serverSimGetNumNeutralPills(sim));
+                }
+                serverSendJoinReject(fromAddr,
+                                     STR_REJECT_NAME_POOL_EXHAUSTED, 0, NULL);
+                return;
+            }
+
+            /* Apply the rename + broadcasts + newswire. */
+            serverPreemptRename(sim, i, chosenName, name, incomingCountry);
+            break; /* terminate the duplicate-search loop on first match */
+        }
     }
 
     /* Accept the player */
     udpServer.clients[slot].connected = true;
+    udpServer.clients[slot].nameStickySuffix = false;
     udpServer.clients[slot].addr = *fromAddr;
     udpServer.clients[slot].playerNum = (uint8_t)slot;
     strncpy(udpServer.clients[slot].playerName, name,
@@ -553,16 +898,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.clients[slot].pingMs = 0;
     udpServer.clients[slot].wantRejoin = wantRejoin;
 
-    /* GeoIP country lookup from client IP */
-    {
-        char ipStr[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
-        if (!geoLookupCountry(ipStr, udpServer.clients[slot].countryCode)) {
-            udpServer.clients[slot].countryCode[0] = '\0';
-            udpServer.clients[slot].countryCode[1] = '\0';
-        }
-        udpServer.clients[slot].countryCode[2] = '\0';
-    }
+    /* Persist the early GeoIP lookup result. */
+    udpServer.clients[slot].countryCode[0] = incomingCountry[0];
+    udpServer.clients[slot].countryCode[1] = incomingCountry[1];
+    udpServer.clients[slot].countryCode[2] = '\0';
 
     /* Initialize reliable event queues for this client */
     udpServer.eventQueues[slot].nextSeq = 1;
@@ -572,36 +911,20 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
 
-    /* Verify WBN token if provided */
-    bool wbnVerified = false;
-    bool wbnHasSteam = false;
-    if (wbnToken[0] != '\0' && winbolonetIsRunning()) {
-        char errorMsg[512];
-        errorMsg[0] = '\0';
-        if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg, &wbnHasSteam)) {
-            fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
-            wbnVerified = true;
-        } else {
-            char rejectMsg[256];
-            snprintf(rejectMsg, sizeof(rejectMsg),
-                     "WinBolo.net verification failed: %.220s", errorMsg);
-            fprintf(stderr, "[UDP SERVER] %s\n", rejectMsg);
-            udpServer.clients[slot].connected = false;
-            serverSendJoinReject(fromAddr, rejectMsg);
-            return;
-        }
+    /* Set WBN/Steam participant flags before serverSimAddPlayer so the
+     * log_PlayerJoined event recorded inside it captures the correct
+     * accountFlags byte. Always written (cleared when not WBN) so a
+     * recycled slot doesn't inherit a previous occupant's flags. */
+    playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)slot, incomingIsWBN);
+    playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)slot,
+                               incomingIsWBN ? wbnHasSteam : FALSE);
+    if (incomingIsWBN) {
+        SDL_Log("[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
     }
 
     /* Initialize player in the simulation */
     serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName,
                        udpServer.clients[slot].wantRejoin);
-
-    /* Set WBN/Steam participant flags if token was verified */
-    if (wbnVerified) {
-        playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)slot, TRUE);
-        playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)slot, wbnHasSteam);
-        SDL_Log("[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
-    }
 
     /* Compress current map state for the joining player.
      * Done after serverSimAddPlayer so rejoin ownership is included. */
@@ -610,7 +933,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (mapLen <= 0) {
             serverSimRemovePlayer(sim, (BYTE)slot);
             udpServer.clients[slot].connected = false;
-            serverSendJoinReject(fromAddr, "Map serialization failed");
+            serverSendJoinReject(fromAddr, NETERR_MAPSERIALIZE, 0, NULL);
             return;
         }
         udpServer.compressedMapSize = (uint32_t)mapLen;
@@ -951,13 +1274,46 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
                                (uint8_t)idx,
                                udpServer.clients[idx].playerName);
     udpServer.clients[idx].connected = false;
+    udpServer.clients[idx].nameStickySuffix = false;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
 }
 
-/* Send a server-originated message to all connected clients via chat broadcast.
- * Uses fromPlayer=0xFF to indicate it's from the server. */
-static void serverSendServerMessage(const char *message) {
+/* Send a localized server-originated message to all connected clients
+ * via PACKET_CHAT_BROADCAST.  Uses fromPlayer=0xFF, destPlayer=0xFF to
+ * mark the localized variant; client decodes langid + args and renders
+ * via langGetTextFmt. */
+static void serverSendServerMessage(langid id, int argCount,
+                                    const char *const args[]) {
+    /* 8 hdr + 1 from + 1 dest + 2 langid + 1 argCount + 4*(1+64) = 273. */
+    uint8_t outBuf[PACKET_HEADER_SIZE + 2 + 3 + 4 * (1 + PLAYER_NAME_LEN - 1)];
+    int pos = PACKET_HEADER_SIZE;
+    int j;
+
+    packHeader(outBuf, PACKET_CHAT_BROADCAST, 0);
+    outBuf[pos++] = 0xFF;     /* fromPlayer = server localized */
+    outBuf[pos++] = 0xFF;     /* destPlayer  = all */
+    if (!packLocalizedPayload(outBuf, &pos, sizeof(outBuf), id, argCount, args)) {
+        fprintf(stderr,
+                "[UDP SERVER] serverSendServerMessage: pack failed id=%u argc=%d\n",
+                (unsigned)id, argCount);
+        return;
+    }
+
+    for (j = 0; j < MAX_TANKS; j++) {
+        if (udpServer.clients[j].connected) {
+            udpSendTo(udpServer.sock, outBuf, pos,
+                      &udpServer.clients[j].addr);
+        }
+    }
+}
+
+/* Send a raw English server-originated message to all connected clients.
+ * Uses fromPlayer=0xFE to mark the legacy English variant — used by
+ * server-ops broadcasts (admin "say", lock toggle, ping enforcement)
+ * that don't yet have dedicated langids.  As individual messages are
+ * localized they should migrate to serverSendServerMessage above. */
+static void serverSendServerEnglishBroadcast(const char *message) {
     uint8_t outBuf[PACKET_HEADER_SIZE + 2 + 200];
     int msgLen = (int)strlen(message);
     int outLen;
@@ -965,7 +1321,7 @@ static void serverSendServerMessage(const char *message) {
 
     if (msgLen > 200) msgLen = 200;
     packHeader(outBuf, PACKET_CHAT_BROADCAST, 0);
-    outBuf[PACKET_HEADER_SIZE] = 0xFF;     /* fromPlayer = server */
+    outBuf[PACKET_HEADER_SIZE]     = 0xFE; /* fromPlayer = server raw English */
     outBuf[PACKET_HEADER_SIZE + 1] = 0xFF; /* destPlayer = all */
     memcpy(outBuf + PACKET_HEADER_SIZE + 2, message, msgLen);
     outLen = PACKET_HEADER_SIZE + 2 + msgLen;
@@ -984,13 +1340,15 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
-        if (strcasecmp(udpServer.clients[i].playerName, playerName) == 0) {
+        if (playerNameCompare(udpServer.clients[i].playerName, playerName) == 0) {
+            const char *kickArgs[1];
             snprintf(msg, sizeof(msg), "%s has been server kicked.",
                      udpServer.clients[i].playerName);
             fprintf(stderr, "[UDP SERVER] %s\n", msg);
             serverSimConsoleMessage(msg);
             /* Send kick message to all clients (including the kicked player) */
-            serverSendServerMessage(msg);
+            kickArgs[0] = udpServer.clients[i].playerName;
+            serverSendServerMessage(STR_KICK_ANNOUNCE, 1, kickArgs);
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);
@@ -1029,7 +1387,7 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
                          client->playerName, ping);
                 fprintf(stderr, "[UDP SERVER] %s\n", msg);
                 serverSimConsoleMessage(msg);
-                serverSendServerMessage(msg);
+                serverSendServerEnglishBroadcast(msg);
                 serverCleanupMapDownload(i);
                 serverDisconnectClient(sim, i, FALSE);
                 serverSimRemovePlayer(sim, (BYTE)i);
@@ -1047,7 +1405,7 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
                 snprintf(msg, sizeof(msg),
                          "%s has high ping (%dms) and may be kicked.",
                          client->playerName, ping);
-                serverSendServerMessage(msg);
+                serverSendServerEnglishBroadcast(msg);
                 client->pingWarned = true;
             }
         } else {
@@ -1106,6 +1464,7 @@ bool transportUdpServerCreate(unsigned short port,
 
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
+        udpServer.clients[i].nameStickySuffix = false;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
     }
 
@@ -1156,6 +1515,7 @@ void transportUdpServerDestroy(void) {
     }
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
+        udpServer.clients[i].nameStickySuffix = false;
         serverCleanupMapDownload(i);
     }
     udpServer.running = false;
@@ -1242,30 +1602,40 @@ static bool isOldProtocolInfoRequest(const uint8_t *buf, int len) {
 
 /* ---- Lobby broadcast helpers ---- */
 
-/* Lobby state wire format:
+/* Lobby state wire format (variable length per slot):
  *   [header 8] [serverState 1]
  *   For each of 16 slots:
- *     [connected 1] [playerName 32] [teamNumber 1] [ready 1] [isBot 1]
- *     [pingMs 2 (big-endian)] [countryCode 2] [wbn 1] [steam 1]
- *   Total per slot: 42 bytes.
+ *     [connected 1]
+ *     If connected:
+ *       [nameLen 1] [name nameLen UTF-8 bytes (no NUL)] [teamNumber 1]
+ *       [ready 1] [isBot 1] [pingMs 2 (big-endian)] [countryCode 2]
+ *       [wbn 1] [steam 1]   (11 + nameLen bytes for the slot)
  *   Game settings tail:
  *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
  *     [gameLength 4 (big-endian)] [pillCount 1] [baseCount 1] [startCount 1]
- *   Total payload: 1 + 16*42 + 46 = 719 bytes.
+ *     [mapSkipAvailable 1]
+ * Returns the number of bytes written into buf.
  */
 
-static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
+static int serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
     int pos = 0;
     int i;
     buf[pos++] = (uint8_t)sim->state;
     for (i = 0; i < MAX_TANKS; i++) {
-        buf[pos++] = sim->playerConnected[i] ? 1 : 0;
-        memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
-        if (sim->playerConnected[i]) {
-            strncpy((char *)(buf + pos), udpServer.clients[i].playerName,
-                    PACKET_MAX_PLAYER_NAME - 1);
+        bool connected = sim->playerConnected[i];
+        buf[pos++] = connected ? 1 : 0;
+        if (!connected) {
+            continue;
         }
-        pos += PACKET_MAX_PLAYER_NAME;
+        {
+            const char *name = udpServer.clients[i].playerName;
+            size_t nameLen = strnlen(name, PACKET_MAX_PLAYER_NAME - 1);
+            buf[pos++] = (uint8_t)nameLen;
+            if (nameLen > 0) {
+                memcpy(buf + pos, name, nameLen);
+                pos += (int)nameLen;
+            }
+        }
         buf[pos++] = sim->lobbyPlayers[i].teamNumber;
         buf[pos++] = sim->lobbyPlayers[i].ready ? 1 : 0;
         buf[pos++] = sim->lobbyPlayers[i].isBot ? 1 : 0;
@@ -1292,16 +1662,20 @@ static void serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
     buf[pos++] = basesGetNumBases(&sim->sim.bs);
     buf[pos++] = startsGetNumStarts(&sim->sim.ss);
     buf[pos++] = (sim->mapDirCount > 1 || sim->randomMapEnabled) ? 1 : 0;
+    return pos;
 }
 
 void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
     uint8_t buf[PACKET_HEADER_SIZE + LOBBY_STATE_PAYLOAD];
+    int payloadLen;
+    int sendLen;
     int i;
     packHeader(buf, PACKET_LOBBY_STATE, 0);
-    serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
+    payloadLen = serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
+    sendLen = PACKET_HEADER_SIZE + payloadLen;
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
+            udpSendTo(udpServer.sock, buf, sendLen,
                       &udpServer.clients[i].addr);
         }
     }
@@ -1309,34 +1683,40 @@ void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
 
 static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientIdx) {
     uint8_t buf[PACKET_HEADER_SIZE + LOBBY_STATE_PAYLOAD];
+    int payloadLen;
     packHeader(buf, PACKET_LOBBY_STATE, udpServer.clients[clientIdx].outSequence++);
-    serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
-    udpSendTo(udpServer.sock, buf, sizeof(buf), &udpServer.clients[clientIdx].addr);
+    payloadLen = serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
+    udpSendTo(udpServer.sock, buf, PACKET_HEADER_SIZE + payloadLen,
+              &udpServer.clients[clientIdx].addr);
 }
 
 void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
     uint8_t buf[PACKET_HEADER_SIZE + LOBBY_UPDATE_PAYLOAD];
     int pos = PACKET_HEADER_SIZE;
+    bool connected = sim->playerConnected[playerNum];
     int i;
 
     packHeader(buf, PACKET_LOBBY_UPDATE, 0);
     buf[pos++] = playerNum;
-    buf[pos++] = sim->playerConnected[playerNum] ? 1 : 0;
-    memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
-    if (sim->playerConnected[playerNum]) {
-        strncpy((char *)(buf + pos), udpServer.clients[playerNum].playerName,
-                PACKET_MAX_PLAYER_NAME - 1);
+    buf[pos++] = connected ? 1 : 0;
+    if (connected) {
+        const char *name = udpServer.clients[playerNum].playerName;
+        size_t nameLen = strnlen(name, PACKET_MAX_PLAYER_NAME - 1);
+        buf[pos++] = (uint8_t)nameLen;
+        if (nameLen > 0) {
+            memcpy(buf + pos, name, nameLen);
+            pos += (int)nameLen;
+        }
+        buf[pos++] = sim->lobbyPlayers[playerNum].teamNumber;
+        buf[pos++] = sim->lobbyPlayers[playerNum].ready ? 1 : 0;
+        buf[pos++] = sim->lobbyPlayers[playerNum].isBot ? 1 : 0;
+        buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs >> 8);
+        buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs & 0xFF);
+        buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
+        buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
+        buf[pos++] = playersGetWbnParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
+        buf[pos++] = playersGetSteamParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
     }
-    pos += PACKET_MAX_PLAYER_NAME;
-    buf[pos++] = sim->lobbyPlayers[playerNum].teamNumber;
-    buf[pos++] = sim->lobbyPlayers[playerNum].ready ? 1 : 0;
-    buf[pos++] = sim->lobbyPlayers[playerNum].isBot ? 1 : 0;
-    buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs >> 8);
-    buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs & 0xFF);
-    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
-    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
-    buf[pos++] = playersGetWbnParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
-    buf[pos++] = playersGetSteamParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
@@ -1721,16 +2101,59 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                        PACKET_MAX_PLAYER_NAME);
                 newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
 
+                /* Validate the new name before any further checks.  On
+                 * rejection, send PACKET_NAME_CHANGE_REJECT so the
+                 * client can surface a localized reason — the client
+                 * also validates locally, so this is the defensive
+                 * fallback against tampered or stale clients. */
+                {
+                    char validated[PACKET_MAX_PLAYER_NAME];
+                    PlayerNameValidationError vErr = PLAYER_NAME_OK;
+                    if (!playerNameValidate(newName, validated,
+                                            sizeof(validated), &vErr)) {
+                        uint8_t reasonCode;
+                        switch (vErr) {
+                            case PLAYER_NAME_ERR_EMPTY:
+                                reasonCode = NAME_REJECT_EMPTY;
+                                break;
+                            case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                                reasonCode = NAME_REJECT_RESERVED_PREFIX;
+                                break;
+                            case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                                reasonCode = NAME_REJECT_RESERVED_SUFFIX;
+                                break;
+                            case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                                reasonCode = NAME_REJECT_MIXED_SCRIPTS;
+                                break;
+                            case PLAYER_NAME_ERR_INVALID_UTF8:
+                            case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                            case PLAYER_NAME_ERR_TOO_LONG:
+                            default:
+                                reasonCode = NAME_REJECT_INVALID;
+                                break;
+                        }
+                        serverSendNameChangeReject(clientIdx, reasonCode);
+                        break;
+                    }
+                    strncpy(newName, validated, PACKET_MAX_PLAYER_NAME - 1);
+                    newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+                }
+
                 /* Check name uniqueness */
                 for (j = 0; j < MAX_TANKS; j++) {
                     if (j != clientIdx && udpServer.clients[j].connected &&
-                        strcmp(udpServer.clients[j].playerName, newName) == 0) {
+                        playerNameCompare(udpServer.clients[j].playerName, newName) == 0) {
                         nameTaken = TRUE;
                         break;
                     }
                 }
 
-                if (!nameTaken && newName[0] != '\0') {
+                if (nameTaken) {
+                    serverSendNameChangeReject(clientIdx, NAME_REJECT_TAKEN);
+                    break;
+                }
+
+                if (newName[0] != '\0') {
                     char msg[128];
                     snprintf(msg, sizeof(msg), "Player '%s' changed name to '%s'.",
                              udpServer.clients[clientIdx].playerName, newName);
@@ -1804,19 +2227,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          udpServer.clients[clientIdx].playerName,
                          allow ? "allowing" : "not allowing");
                 serverSimConsoleMessage(msg);
-                serverSendServerMessage(msg);
+                serverSendServerEnglishBroadcast(msg);
 
                 /* Check if consensus lock state changed */
                 {
                     bool nowLocked = serverClientsAllLocked();
                     if (nowLocked && !wasLocked) {
-                        serverSendServerMessage(
+                        serverSendServerEnglishBroadcast(
                             "This game is now locked to new players (client lock)");
                         serverSimConsoleMessage(
                             "Game locked by client consensus.");
                         winboloNetSendLock(TRUE);
                     } else if (!nowLocked && wasLocked) {
-                        serverSendServerMessage(
+                        serverSendServerEnglishBroadcast(
                             "This game is now unlocked to new players (client unlock)");
                         serverSimConsoleMessage(
                             "Game unlocked by client consensus.");
@@ -2552,7 +2975,11 @@ bool transportUdpServerGetLock(void) {
 }
 
 void transportUdpServerSendServerMessage(const char *message) {
-    serverSendServerMessage(message);
+    /* Public API: external callers (servermain console "say", saveMap
+     * announcement, server_lifecycle pendingWinMessage) pass arbitrary
+     * pre-rendered English strings.  These don't have dedicated langids
+     * yet, so route through the legacy English passthrough wire format. */
+    serverSendServerEnglishBroadcast(message);
 }
 
 void transportUdpServerPrintStatus(bool toFile) {

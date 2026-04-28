@@ -35,6 +35,7 @@ extern "C" {
 #include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
 #include "../../../bolo/util.h"
+#include "../../../bolo/playername_validate.h"
 #include "../../../winbolonet/winbolonet.h"
 #include "../../lang.h"
 #include "imgui_setname.h"
@@ -162,20 +163,37 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         if (wbnLocked) ImGui::BeginDisabled();
         if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0)) || enterPressed) {
             char newName[PLAYER_NAME_LEN];
-            SDL_strlcpy(newName, playerName, PLAYER_NAME_LEN);
-            utilStripName(newName);
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            bool nameOk = playerNameValidate(playerName, newName,
+                                             PLAYER_NAME_LEN, &nameErr);
 
-            if (newName[0] == '\0') {
-                errorMsg = langGetText(STR_DLGSETNAME_BLANK_ERR);
-                ImGui::OpenPopup(errPopupId);
-            } else if (newName[0] == '*') {
-                errorMsg = langGetText(STR_DLGSETNAME_STAR_ERR);
+            if (!nameOk) {
+                switch (nameErr) {
+                    case PLAYER_NAME_ERR_EMPTY:
+                        errorMsg = langGetText(STR_DLGSETNAME_BLANK_ERR);
+                        break;
+                    case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                        errorMsg = langGetText(STR_DLGSETNAME_STAR_ERR);
+                        break;
+                    case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                        errorMsg = langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);
+                        break;
+                    case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                        errorMsg = langGetText(STR_NAME_INVALID_MIXED_SCRIPTS);
+                        break;
+                    case PLAYER_NAME_ERR_INVALID_UTF8:
+                    case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                    case PLAYER_NAME_ERR_TOO_LONG:
+                    default:
+                        errorMsg = langGetText(STR_NAME_INVALID_CHARS);
+                        break;
+                }
                 ImGui::OpenPopup(errPopupId);
             } else if (inGame) {
                 char oldName[PLAYER_NAME_LEN];
                 oldName[0] = '\0';
                 screenGetPlayerNameCS(cs, oldName);
-                if (strcmp(oldName, newName) == 0) {
+                if (playerNameCompare(oldName, newName) == 0) {
                     running = false;
                 } else {
                     bool changeOK = screenSetPlayerNameCS(cs, newName);

@@ -135,7 +135,7 @@ static void push_brain_info_REMOVED(lua_State *L, const BrainInfo *info) {
 
   /* Player names: 1-based array of strings.
    * playernames is typed u_char36** but actually points at a flat
-   * char[MAX_TANKS][PLAYER_NAME_LEN] array (33 bytes per slot).
+   * char[MAX_TANKS][PLAYER_NAME_LEN] array (PLAYER_NAME_LEN bytes per slot).
    * Each slot is a pascal string: byte 0 = length, bytes 1..len = chars.
    * Index by byte offset rather than pointer indirection. */
   lua_newtable(L);

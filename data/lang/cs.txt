@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=Síť
 STR_DLGSETTINGS_NET_HELP=Nastavení se projeví u další hostované hry.
 STR_DLGSETTINGS_USE_UPNP=Použít UPnP / NAT-PMP pro automatické přesměrování portu
 STR_DLGSETTINGS_USE_NATTRAV=Použít NAT traversal (hole-punching) přes tracker
+
+# Player name validation errors (Phase 5)
+STR_NAME_INVALID_EMPTY=Jméno hráče je prázdné.
+STR_NAME_INVALID_CHARS=Jméno hráče obsahuje nepovolené znaky.
+STR_NAME_INVALID_MIXED_SCRIPTS=Jméno hráče kombinuje neslučitelné písemné systémy.
+STR_NAME_INVALID_RESERVED_PREFIX=Jméno hráče nesmí začínat znakem '*'.
+STR_NAME_INVALID_RESERVED_SUFFIX=Jméno hráče nesmí končit příponou '-unverified'.
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Zobrazit vlajky zemí v chatu
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} byl přejmenován, protože {other} se připojil jako ověřený
+STR_NAME_TAKEN_BY_VERIFIED=Toto zobrazované jméno patří ověřenému hráči. Vyber prosím jiné.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Toto zobrazované jméno již používá jiný ověřený hráč. Vyber prosím jiné.
+
+# Localized server→client messages (Phase 9d)
+STR_REJECT_INCORRECT_PASSWORD=Nesprávné heslo
+STR_REJECT_GAME_LOCKED=Hra je uzamčena
+STR_REJECT_SERVER_FULL=Server je plný
+STR_REJECT_NAME_POOL_EXHAUSTED=Zásobník jmen serveru je vyčerpán
+STR_REJECT_INVALID_PLAYER_NAME=Neplatné jméno hráče
+STR_REJECT_WBN_VERIFY_FAILED=Ověření WinBolo.net selhalo: {string1}
+STR_KICK_ANNOUNCE={player} byl vykopnut serverem.

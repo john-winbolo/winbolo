@@ -31,6 +31,7 @@
 #include "screen.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
 #include "../steam/steam_wrapper.h"
@@ -94,8 +95,10 @@ typedef struct {
     int32_t  serverStartDelay;
     int32_t  serverGameLen;
 
-    /* Join reject reason from server */
-    char joinRejectReason[64];
+    /* Join reject reason from server, rendered locally via langGetTextFmt
+     * after Phase 9d wire format change. Sized for the longest expected
+     * localized rendering. */
+    char joinRejectReason[256];
 
     /* Owning ClientSim — used for player state updates in callbacks */
     ClientSim *clientSim;
@@ -187,6 +190,77 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
 
     len = buildInputPacket(c, buf);
     udpClientSendTo(c, buf, len);
+}
+
+/* Decode a localized payload (langid + arg list) at buf[startPos..len)
+ * into outId and outArgs.  Mirrors packLocalizedPayload on the server.
+ * Args land in MessageArgs slots in order: #1->playerName, #2->otherName,
+ * #3->string1, #4->string2.  Returns false on malformed packet (bad
+ * length, argCount > 4, lenByte oversized, langid == 0). */
+static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
+                                   langid *outId, MessageArgs *outArgs) {
+    int pos = startPos;
+    uint8_t argCount;
+    uint16_t id16;
+    int i;
+    if (pos + 3 > len) {
+        fprintf(stderr,
+                "[UDP CLIENT] localized payload truncated (need 3 hdr bytes, len=%d pos=%d)\n",
+                len, pos);
+        return false;
+    }
+    id16 = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    argCount = buf[pos++];
+    if (id16 == 0) {
+        fprintf(stderr, "[UDP CLIENT] localized payload langid=0\n");
+        return false;
+    }
+    if (argCount > 4) {
+        fprintf(stderr,
+                "[UDP CLIENT] localized payload argCount=%u exceeds 4\n",
+                argCount);
+        return false;
+    }
+    memset(outArgs, 0, sizeof(*outArgs));
+    for (i = 0; i < argCount; i++) {
+        uint8_t aLen;
+        char *dst = NULL;
+        size_t cap = 0;
+        if (pos + 1 > len) {
+            fprintf(stderr,
+                    "[UDP CLIENT] localized payload truncated at arg %d lenByte\n",
+                    i);
+            return false;
+        }
+        aLen = buf[pos++];
+        if (pos + aLen > len) {
+            fprintf(stderr,
+                    "[UDP CLIENT] localized payload truncated: arg %d aLen=%u\n",
+                    i, aLen);
+            return false;
+        }
+        if (aLen >= PLAYER_NAME_LEN) {
+            fprintf(stderr,
+                    "[UDP CLIENT] localized payload arg %d aLen=%u exceeds %d\n",
+                    i, aLen, PLAYER_NAME_LEN - 1);
+            return false;
+        }
+        switch (i) {
+            case 0: dst = outArgs->playerName; cap = PLAYER_NAME_LEN; break;
+            case 1: dst = outArgs->otherName;  cap = PLAYER_NAME_LEN; break;
+            case 2: dst = outArgs->string1;    cap = LANG_MSGARG_STRING_LEN; break;
+            case 3: dst = outArgs->string2;    cap = LANG_MSGARG_STRING_LEN; break;
+        }
+        if (dst && cap > 0) {
+            size_t copy = (aLen < cap - 1) ? aLen : cap - 1;
+            if (copy > 0) memcpy(dst, buf + pos, copy);
+            dst[copy] = '\0';
+        }
+        pos += aLen;
+    }
+    *outId = (langid)id16;
+    return true;
 }
 
 /* Process a single incoming packet (used by both direct and delayed paths) */
@@ -315,19 +389,30 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_JOIN_REJECT:
-        if (len >= PACKET_HEADER_SIZE + 64) {
-            memcpy(c->joinRejectReason, buf + PACKET_HEADER_SIZE, 64);
-            c->joinRejectReason[63] = '\0';
-        } else if (len > PACKET_HEADER_SIZE) {
-            memcpy(c->joinRejectReason, buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE);
-            c->joinRejectReason[len - PACKET_HEADER_SIZE - 1] = '\0';
+    case PACKET_JOIN_REJECT: {
+        /* Wire format (Phase 9d):
+         *   [header 8] [langid 2 BE] [argCount 1] [args...] */
+        langid id = 0;
+        MessageArgs args;
+        if (decodeLocalizedPayload(buf, len, PACKET_HEADER_SIZE, &id, &args)) {
+            const char *rendered = langGetTextFmt(id, &args);
+            if (rendered && rendered[0]) {
+                strncpy(c->joinRejectReason, rendered,
+                        sizeof(c->joinRejectReason) - 1);
+                c->joinRejectReason[sizeof(c->joinRejectReason) - 1] = '\0';
+            } else {
+                strncpy(c->joinRejectReason, "Connection rejected",
+                        sizeof(c->joinRejectReason) - 1);
+                c->joinRejectReason[sizeof(c->joinRejectReason) - 1] = '\0';
+            }
         } else {
-            strncpy(c->joinRejectReason, "Connection rejected", 63);
-            c->joinRejectReason[63] = '\0';
+            strncpy(c->joinRejectReason, "Connection rejected",
+                    sizeof(c->joinRejectReason) - 1);
+            c->joinRejectReason[sizeof(c->joinRejectReason) - 1] = '\0';
         }
         c->joinState = UDP_CLIENT_ERROR;
         break;
+    }
 
     case PACKET_STATE_SNAPSHOT: {
         uint32_t seq = unpackU32(buf + 4);
@@ -600,25 +685,97 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
+    case PACKET_NAME_CHANGE_REJECT:
+        /* Name change reject format:
+         *   [header 8] [reasonCode 1] */
+        if (len < PACKET_HEADER_SIZE + 1) {
+            fprintf(stderr, "[UDP CLIENT] PACKET_NAME_CHANGE_REJECT: short packet (len=%d)\n", len);
+        } else {
+            uint8_t reasonCode = buf[PACKET_HEADER_SIZE];
+            langid msgId;
+            const char *rendered;
+            char rendBuf[FILENAME_MAX];
+            switch (reasonCode) {
+                case NAME_REJECT_TAKEN:
+                    msgId = STR_DLGSETNAME_INUSE_ERR;
+                    break;
+                case NAME_REJECT_RESERVED_PREFIX:
+                    msgId = STR_NAME_INVALID_RESERVED_PREFIX;
+                    break;
+                case NAME_REJECT_RESERVED_SUFFIX:
+                    msgId = STR_NAME_INVALID_RESERVED_SUFFIX;
+                    break;
+                case NAME_REJECT_MIXED_SCRIPTS:
+                    msgId = STR_NAME_INVALID_MIXED_SCRIPTS;
+                    break;
+                case NAME_REJECT_EMPTY:
+                    msgId = STR_NAME_INVALID_EMPTY;
+                    break;
+                case NAME_REJECT_INVALID:
+                    msgId = STR_NAME_INVALID_CHARS;
+                    break;
+                default:
+                    fprintf(stderr, "[UDP CLIENT] PACKET_NAME_CHANGE_REJECT: unknown reasonCode=%u\n", reasonCode);
+                    msgId = STR_NAME_INVALID_CHARS;
+                    break;
+            }
+            rendered = langGetText(msgId);
+            rendBuf[0] = '\0';
+            if (rendered) {
+                strncpy(rendBuf, rendered, sizeof(rendBuf) - 1);
+                rendBuf[sizeof(rendBuf) - 1] = '\0';
+            }
+            if (c->clientSim->inLobby) {
+                clientSimAppendLobbyChat(c->clientSim, "Server", rendBuf);
+            } else {
+                screenNetStatusMessage(c->clientSim, rendBuf);
+            }
+        }
+        break;
+
     case PACKET_CHAT_BROADCAST:
-        /* Chat broadcast format:
-         *   [header 8] [fromPlayer 1] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE] */
+        /* Chat broadcast — wire format depends on fromPlayer (see netpacks.h):
+         *   < MAX_TANKS  : player-to-player chat, payload is plain message
+         *   == 0xFF      : server localized, payload is langid + args
+         *   == 0xFE      : server raw English (transitional), payload is plain message
+         */
         if (len > PACKET_HEADER_SIZE + 2) {
             uint8_t fromPlayer = buf[PACKET_HEADER_SIZE];
-            int msgLen = len - PACKET_HEADER_SIZE - 2;
-            char message[PACKET_MAX_CHAT_MESSAGE + 1];
-            if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-            memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
-            message[msgLen] = '\0';
-            if (fromPlayer >= MAX_TANKS) {
-                /* Server message — show in lobby chat if in lobby,
-                 * otherwise use the in-game message queue */
+            if (fromPlayer == 0xFF) {
+                /* Localized server message: decode and render. */
+                langid id = 0;
+                MessageArgs args;
+                if (decodeLocalizedPayload(buf, len, PACKET_HEADER_SIZE + 2,
+                                           &id, &args)) {
+                    const char *rendered = langGetTextFmt(id, &args);
+                    if (rendered && rendered[0]) {
+                        if (c->clientSim->inLobby) {
+                            clientSimAppendLobbyChat(c->clientSim, "Server",
+                                                     rendered);
+                        } else {
+                            screenNetStatusMessage(c->clientSim, rendered);
+                        }
+                    }
+                }
+            } else if (fromPlayer == 0xFE || fromPlayer >= MAX_TANKS) {
+                /* Raw English server message (legacy / un-localized ops). */
+                int msgLen = len - PACKET_HEADER_SIZE - 2;
+                char message[PACKET_MAX_CHAT_MESSAGE + 1];
+                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+                memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
+                message[msgLen] = '\0';
                 if (c->clientSim->inLobby) {
                     clientSimAppendLobbyChat(c->clientSim, "Server", message);
                 } else {
                     screenNetStatusMessage(c->clientSim, message);
                 }
             } else {
+                /* Player-to-player chat: payload is plain message bytes. */
+                int msgLen = len - PACKET_HEADER_SIZE - 2;
+                char message[PACKET_MAX_CHAT_MESSAGE + 1];
+                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+                memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
+                message[msgLen] = '\0';
                 screenIncomingMessageCS(c->clientSim, fromPlayer, message);
             }
         }
@@ -665,37 +822,103 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_LOBBY_STATE:
-        /* Full lobby snapshot:
+        /* Full lobby snapshot (variable-length per slot):
          *   [header 8] [serverState 1]
-         *   16 slots × [connected 1] [playerName 32] [teamNumber 1] [ready 1] [isBot 1]
-         *              [pingMs 2] [countryCode 2] [wbn 1] [steam 1]
+         *   16 slots, each:
+         *     [connected 1]
+         *     If connected:
+         *       [nameLen 1] [name nameLen UTF-8 bytes (no NUL)]
+         *       [teamNumber 1] [ready 1] [isBot 1] [pingMs 2]
+         *       [countryCode 2] [wbn 1] [steam 1]
          *   Game settings tail:
          *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
          *     [gameLength 4] [pillCount 1] [baseCount 1] [startCount 1]
          *     [mapSkipAvailable 1] */
-        if (len >= PACKET_HEADER_SIZE + LOBBY_STATE_PAYLOAD) {
+        if (len > UDP_MAX_PAYLOAD) {
+            fprintf(stderr, "[UDP CLIENT] LOBBY_STATE oversized: len=%d\n", len);
+            break;
+        }
+        {
             int pos = PACKET_HEADER_SIZE;
             int i;
-            uint8_t serverState = buf[pos++];
-            for (i = 0; i < MAX_TANKS; i++) {
-                c->clientSim->lobbySlots[i].connected = buf[pos++] ? true : false;
-                memcpy(c->clientSim->lobbySlots[i].playerName, buf + pos, PACKET_MAX_PLAYER_NAME);
-                c->clientSim->lobbySlots[i].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-                pos += PACKET_MAX_PLAYER_NAME;
-                c->clientSim->lobbySlots[i].teamNumber = buf[pos++];
-                c->clientSim->lobbySlots[i].ready = buf[pos++] ? true : false;
-                c->clientSim->lobbySlots[i].isBot = buf[pos++] ? true : false;
-                c->clientSim->lobbySlots[i].pingMs = (uint16_t)(buf[pos] << 8 | buf[pos + 1]);
+            uint8_t serverState;
+            ClientLobbySlot tmpSlots[MAX_TANKS];
+            bool decodeOk = true;
+
+            /* Need at least serverState byte. */
+            if (pos + 1 > len) {
+                fprintf(stderr, "[UDP CLIENT] LOBBY_STATE truncated (no serverState): len=%d\n", len);
+                break;
+            }
+            serverState = buf[pos++];
+
+            memset(tmpSlots, 0, sizeof(tmpSlots));
+            for (i = 0; i < MAX_TANKS && decodeOk; i++) {
+                /* connected flag */
+                if (pos + 1 > len) {
+                    fprintf(stderr, "[UDP CLIENT] LOBBY_STATE truncated at slot %d connected\n", i);
+                    decodeOk = false;
+                    break;
+                }
+                tmpSlots[i].connected = buf[pos++] ? true : false;
+                if (!tmpSlots[i].connected) {
+                    /* Disconnected slots carry no further bytes. */
+                    continue;
+                }
+                /* nameLen */
+                if (pos + 1 > len) {
+                    fprintf(stderr, "[UDP CLIENT] LOBBY_STATE truncated at slot %d nameLen\n", i);
+                    decodeOk = false;
+                    break;
+                }
+                {
+                    uint8_t nameLen = buf[pos++];
+                    if (nameLen > PACKET_MAX_PLAYER_NAME - 1) {
+                        fprintf(stderr, "[UDP CLIENT] LOBBY_STATE slot %d nameLen=%u exceeds %d\n",
+                                i, nameLen, PACKET_MAX_PLAYER_NAME - 1);
+                        decodeOk = false;
+                        break;
+                    }
+                    /* name (nameLen bytes) + 9 bytes of fixed slot fields. */
+                    if (pos + nameLen + 9 > len) {
+                        fprintf(stderr, "[UDP CLIENT] LOBBY_STATE truncated at slot %d body\n", i);
+                        decodeOk = false;
+                        break;
+                    }
+                    if (nameLen > 0) {
+                        memcpy(tmpSlots[i].playerName, buf + pos, nameLen);
+                    }
+                    tmpSlots[i].playerName[nameLen] = '\0';
+                    pos += nameLen;
+                }
+                tmpSlots[i].teamNumber = buf[pos++];
+                tmpSlots[i].ready = buf[pos++] ? true : false;
+                tmpSlots[i].isBot = buf[pos++] ? true : false;
+                tmpSlots[i].pingMs = (uint16_t)(buf[pos] << 8 | buf[pos + 1]);
                 pos += 2;
-                c->clientSim->lobbySlots[i].countryCode[0] = (char)buf[pos++];
-                c->clientSim->lobbySlots[i].countryCode[1] = (char)buf[pos++];
-                c->clientSim->lobbySlots[i].countryCode[2] = '\0';
-                c->clientSim->lobbySlots[i].wbnParticipant = buf[pos++] ? true : false;
-                c->clientSim->lobbySlots[i].steamParticipant = buf[pos++] ? true : false;
-                if (c->clientSim->lobbySlots[i].wbnParticipant || c->clientSim->lobbySlots[i].steamParticipant) {
+                tmpSlots[i].countryCode[0] = (char)buf[pos++];
+                tmpSlots[i].countryCode[1] = (char)buf[pos++];
+                tmpSlots[i].countryCode[2] = '\0';
+                tmpSlots[i].wbnParticipant = buf[pos++] ? true : false;
+                tmpSlots[i].steamParticipant = buf[pos++] ? true : false;
+            }
+            if (!decodeOk) {
+                break;
+            }
+            /* Settings tail must be exactly LOBBY_SETTINGS_SIZE bytes. */
+            if (pos + LOBBY_SETTINGS_SIZE > len) {
+                fprintf(stderr, "[UDP CLIENT] LOBBY_STATE truncated at settings tail: pos=%d len=%d\n",
+                        pos, len);
+                break;
+            }
+
+            /* Commit decoded slots. */
+            for (i = 0; i < MAX_TANKS; i++) {
+                c->clientSim->lobbySlots[i] = tmpSlots[i];
+                if (tmpSlots[i].wbnParticipant || tmpSlots[i].steamParticipant) {
                     SDL_Log("[WBN LOBBY] slot %d wbn=%d steam=%d",
-                            i, c->clientSim->lobbySlots[i].wbnParticipant,
-                            c->clientSim->lobbySlots[i].steamParticipant);
+                            i, tmpSlots[i].wbnParticipant,
+                            tmpSlots[i].steamParticipant);
                 }
             }
             /* Game settings tail */
@@ -772,29 +995,65 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_LOBBY_UPDATE:
-        /* Single-player delta:
-         *   [header 8] [playerNum 1] [connected 1] [playerName 32]
-         *   [teamNumber 1] [ready 1] [isBot 1] [pingMs 2] [countryCode 2]
-         *   [wbn 1] [steam 1] */
-        if (len >= PACKET_HEADER_SIZE + 1 + LOBBY_SLOT_WIRE_SIZE) {
+        /* Single-player delta (variable length):
+         *   [header 8] [playerNum 1] [connected 1]
+         *   If connected:
+         *     [nameLen 1] [name nameLen UTF-8 bytes] [teamNumber 1] [ready 1]
+         *     [isBot 1] [pingMs 2] [countryCode 2] [wbn 1] [steam 1] */
+        if (len > UDP_MAX_PAYLOAD) {
+            fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE oversized: len=%d\n", len);
+            break;
+        }
+        {
             int pos = PACKET_HEADER_SIZE;
-            uint8_t playerNum = buf[pos++];
-            if (playerNum < MAX_TANKS) {
-                c->clientSim->lobbySlots[playerNum].connected = buf[pos++] ? true : false;
-                memcpy(c->clientSim->lobbySlots[playerNum].playerName, buf + pos, PACKET_MAX_PLAYER_NAME);
-                c->clientSim->lobbySlots[playerNum].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-                pos += PACKET_MAX_PLAYER_NAME;
-                c->clientSim->lobbySlots[playerNum].teamNumber = buf[pos++];
-                c->clientSim->lobbySlots[playerNum].ready = buf[pos++] ? true : false;
-                c->clientSim->lobbySlots[playerNum].isBot = buf[pos++] ? true : false;
-                c->clientSim->lobbySlots[playerNum].pingMs = (uint16_t)(buf[pos] << 8 | buf[pos + 1]);
-                pos += 2;
-                c->clientSim->lobbySlots[playerNum].countryCode[0] = (char)buf[pos++];
-                c->clientSim->lobbySlots[playerNum].countryCode[1] = (char)buf[pos++];
-                c->clientSim->lobbySlots[playerNum].countryCode[2] = '\0';
-                c->clientSim->lobbySlots[playerNum].wbnParticipant = buf[pos++] ? true : false;
-                c->clientSim->lobbySlots[playerNum].steamParticipant = buf[pos++] ? true : false;
+            uint8_t playerNum;
+            ClientLobbySlot tmp;
+
+            /* playerNum + connected flag (2 bytes minimum). */
+            if (pos + 2 > len) {
+                fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE truncated header: len=%d\n", len);
+                break;
             }
+            playerNum = buf[pos++];
+            if (playerNum >= MAX_TANKS) {
+                fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE bad playerNum=%u\n", playerNum);
+                break;
+            }
+            memset(&tmp, 0, sizeof(tmp));
+            tmp.connected = buf[pos++] ? true : false;
+            if (tmp.connected) {
+                uint8_t nameLen;
+                if (pos + 1 > len) {
+                    fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE truncated at nameLen\n");
+                    break;
+                }
+                nameLen = buf[pos++];
+                if (nameLen > PACKET_MAX_PLAYER_NAME - 1) {
+                    fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE nameLen=%u exceeds %d\n",
+                            nameLen, PACKET_MAX_PLAYER_NAME - 1);
+                    break;
+                }
+                if (pos + nameLen + 9 > len) {
+                    fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE truncated body for slot %u\n", playerNum);
+                    break;
+                }
+                if (nameLen > 0) {
+                    memcpy(tmp.playerName, buf + pos, nameLen);
+                }
+                tmp.playerName[nameLen] = '\0';
+                pos += nameLen;
+                tmp.teamNumber = buf[pos++];
+                tmp.ready = buf[pos++] ? true : false;
+                tmp.isBot = buf[pos++] ? true : false;
+                tmp.pingMs = (uint16_t)(buf[pos] << 8 | buf[pos + 1]);
+                pos += 2;
+                tmp.countryCode[0] = (char)buf[pos++];
+                tmp.countryCode[1] = (char)buf[pos++];
+                tmp.countryCode[2] = '\0';
+                tmp.wbnParticipant = buf[pos++] ? true : false;
+                tmp.steamParticipant = buf[pos++] ? true : false;
+            }
+            c->clientSim->lobbySlots[playerNum] = tmp;
         }
         break;
 

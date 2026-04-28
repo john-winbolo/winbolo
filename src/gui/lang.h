@@ -1097,6 +1097,32 @@
 #define STR_DLGSETTINGS_USE_UPNP            1207
 #define STR_DLGSETTINGS_USE_NATTRAV         1208
 
+/* Player-name validation (Phase 2). */
+#define STR_NAME_INVALID_EMPTY              1209
+#define STR_NAME_INVALID_CHARS              1210
+#define STR_NAME_INVALID_MIXED_SCRIPTS      1211
+#define STR_NAME_INVALID_RESERVED_PREFIX    1212
+#define STR_NAME_INVALID_RESERVED_SUFFIX    1213
+
+/* Settings → Display: country-flag rendering preference (Phase 4). */
+#define STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS  1214
+
+/* Verified-priority collision policy (Phase 5). */
+#define STR_NAME_RENAMED_BY_VERIFIED        1215
+#define STR_NAME_TAKEN_BY_VERIFIED          1216
+#define STR_NAME_TAKEN_BY_OTHER_VERIFIED    1217
+
+/* Localized server→client messages (Phase 9d). Sent over the wire as
+ * langid + args by serverSendJoinReject / serverSendServerMessage so
+ * each client renders in its own locale. */
+#define STR_REJECT_INCORRECT_PASSWORD       1218
+#define STR_REJECT_GAME_LOCKED              1219
+#define STR_REJECT_SERVER_FULL              1220
+#define STR_REJECT_NAME_POOL_EXHAUSTED      1221
+#define STR_REJECT_INVALID_PLAYER_NAME      1222
+#define STR_REJECT_WBN_VERIFY_FAILED        1223
+#define STR_KICK_ANNOUNCE                   1224
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
@@ -1149,9 +1175,19 @@ typedef struct {
  * Substitution is non-recursive — braces inside a substituted value
  * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
 #define LANG_MSGARG_STRING_LEN 64
+
+/* Bit flags for MessageArgs::playerFlags / otherFlags. Mirrors the
+ * accountFlags byte in TankSnapshot (src/bolo/input_packet.h). */
+#define MESSAGE_FLAG_WBN   0x01
+#define MESSAGE_FLAG_STEAM 0x02
+
 typedef struct {
-    char playerName[PLAYER_NAME_LEN];
-    char otherName[PLAYER_NAME_LEN];
+    char    playerName[PLAYER_NAME_LEN];
+    uint8_t playerFlags;        /* MESSAGE_FLAG_WBN | MESSAGE_FLAG_STEAM */
+    char    playerCountry[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
+    char    otherName[PLAYER_NAME_LEN];
+    uint8_t otherFlags;
+    char    otherCountry[3];
     int  number;
     int  number2;
     int  number3;

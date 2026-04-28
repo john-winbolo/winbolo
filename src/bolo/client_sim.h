@@ -31,6 +31,7 @@
 #include "client_state.h"
 #include "interpolation.h"
 #include "input_packet.h"
+#include "netpacks.h"     /* For PACKET_MAX_PLAYER_NAME */
 #include "screen.h"
 #include "brain.h"  /* For BuildInfo, ObjectInfo, aiType */
 #include "players.h" /* For PlayerBitMap */
@@ -41,7 +42,7 @@
 /* Client-side mirror of server lobby slot state */
 typedef struct {
     bool connected;
-    char playerName[32];   /* PACKET_MAX_PLAYER_NAME */
+    char playerName[PACKET_MAX_PLAYER_NAME];
     uint8_t teamNumber;    /* 0 = unassigned, 1-16 */
     bool ready;
     bool isBot;

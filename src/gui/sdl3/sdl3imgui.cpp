@@ -1260,6 +1260,8 @@ static void renderAllianceRequest(ClientSim *cs) {
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
+            args.playerFlags = playersGetAccountFlags(&cs->sim.plyrs, s_alliancePlayerNum);
+            playersGetCountryCode(&cs->sim.plyrs, s_alliancePlayerNum, args.playerCountry);
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
@@ -2062,13 +2064,11 @@ static void renderMenuBar(ClientSim *cs) {
 
                 /* Right-aligned WBN/Steam icons */
                 ImGui::SameLine(fullWidth - rightWidth);
-                if (s_playerWbn[i] && s_iconGlobe) {
-                    ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(iconW, iconW));
-                    ImGui::SameLine();
-                }
-                if (s_playerSteam[i] && s_iconSteam) {
-                    ImGui::Image((ImTextureID)s_iconSteam, ImVec2(iconW, iconW));
-                    ImGui::SameLine();
+                {
+                    uint8_t badgeFlags = 0;
+                    if (s_playerWbn[i])   badgeFlags |= MESSAGE_FLAG_WBN;
+                    if (s_playerSteam[i]) badgeFlags |= MESSAGE_FLAG_STEAM;
+                    renderPlayerName(NULL, badgeFlags, "", false);
                 }
 
                 /* Ping with color coding */
@@ -3121,6 +3121,35 @@ SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconSteam;
+}
+
+void renderPlayerName(const char *name, uint8_t flags,
+                      const char *countryCode, bool showCountry) {
+    ensureWbnIconsLoaded();
+    if ((flags & MESSAGE_FLAG_WBN) && s_iconGlobe) {
+        ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::SameLine();
+    }
+    if ((flags & MESSAGE_FLAG_STEAM) && s_iconSteam) {
+        ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::SameLine();
+    }
+    /* Icon-only mode: a NULL/empty name skips the text and trailing
+     * country flag so callers can use this helper to render just the
+     * WBN/Steam badges (the lobby table and players panel both render
+     * the name via their own widgets — Selectable/TextColored — and
+     * only need the badge sequence from here). */
+    if (name && name[0] != '\0') {
+        ImGui::TextUnformatted(name);
+        if (showCountry && countryCode && countryCode[0] != '\0' &&
+            !(countryCode[0] == 'X' && countryCode[1] == 'X')) {
+            SDL_Texture *flagTex = flagsGetTexture(countryCode);
+            if (flagTex) {
+                ImGui::SameLine();
+                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+            }
+        }
+    }
 }
 
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {

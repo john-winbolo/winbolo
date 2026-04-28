@@ -12,6 +12,7 @@
 
 extern "C" {
 #include "players_panel.h"
+#include "../bolo/global.h"
 #include "../bolo/screen.h"
 #include "../bolo/players.h"
 #include "../bolo/client_sim.h"
@@ -20,7 +21,6 @@ extern "C" {
 }
 
 #define MAX_PLAYERS 16
-#define PLAYER_NAME_LEN 33
 #define WBN_ICON_SIZE 14
 
 static bool sOpen = false;

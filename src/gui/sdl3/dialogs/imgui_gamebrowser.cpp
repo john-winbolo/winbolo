@@ -1140,19 +1140,27 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* ---- Set Player Name popup ---- */
         if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            bool wbnActive = gameFrontGetWinbolonetUse();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(200 * s);
+            if (wbnActive) ImGui::BeginDisabled();
             ImGui::InputText("##nameEdit", nameEditBuf, PLAYER_NAME_LEN);
+            if (wbnActive) ImGui::EndDisabled();
+            if (wbnActive) {
+                ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
+            }
             ImGui::Spacing();
             {
                 char okBuf[64], cancelBuf[64];
                 snprintf(okBuf,     sizeof(okBuf),     "%s##name", langGetText(STR_OK));
                 snprintf(cancelBuf, sizeof(cancelBuf), "%s##name", langGetText(STR_CANCEL));
+                if (wbnActive) ImGui::BeginDisabled();
                 if (ImGui::Button(okBuf, ImVec2(80 * s, 0))) {
                     gameFrontSetPlayerName(nameEditBuf);
                     ImGui::CloseCurrentPopup();
                 }
+                if (wbnActive) ImGui::EndDisabled();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
                     ImGui::CloseCurrentPopup();

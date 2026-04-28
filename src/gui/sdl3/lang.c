@@ -1013,6 +1013,22 @@ static const LangEntry langTable[] = {
     {1206, "Settings take effect on the next hosted game."},
     {1207, "Use UPnP / NAT-PMP for automatic port forwarding"},
     {1208, "Use NAT traversal (hole-punching) via tracker"},
+    {1209, "Player name is empty."},
+    {1210, "Player name contains disallowed characters."},
+    {1211, "Player name mixes incompatible scripts."},
+    {1212, "Player name cannot start with '*'."},
+    {1213, "Player name cannot end with '-unverified'."},
+    {1214, "Show country flags in chat"},
+    {1215, "%s was renamed because %s joined verified"},
+    {1216, "That display name belongs to a verified player. Please pick another."},
+    {1217, "That display name is in use by another verified player. Please pick another."},
+    {1218, "Incorrect password"},
+    {1219, "Game is locked"},
+    {1220, "Server full"},
+    {1221, "Server name pool exhausted"},
+    {1222, "Invalid player name"},
+    {1223, "WinBolo.net verification failed: {string1}"},
+    {1224, "{player} has been server kicked."},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display

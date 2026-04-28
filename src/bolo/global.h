@@ -206,8 +206,8 @@ void efree(Generic object);
 #define UNLIMITED_GAME_TIME -1
 
 /* Player Name string lengths */
-#define PLAYER_NAME_LEN 33
-#define PLAYER_NAME_LAST 32 
+#define PLAYER_NAME_LEN 65
+#define PLAYER_NAME_LAST 64
 
 /* These are for the static view when a tank dies.  The static
  * appears at different times depending on how the tank died. */

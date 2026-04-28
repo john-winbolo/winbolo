@@ -575,19 +575,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                         ImGui::SameLine();
                                     }
                                 }
-                                if (cs->lobbySlots[i].wbnParticipant) {
-                                    SDL_Texture *globeTex = sdl3ImguiGetGlobeIcon();
-                                    if (globeTex) {
-                                        ImGui::Image((ImTextureID)globeTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                                        ImGui::SameLine();
-                                    }
-                                }
-                                if (cs->lobbySlots[i].steamParticipant) {
-                                    SDL_Texture *steamTex = sdl3ImguiGetSteamIcon();
-                                    if (steamTex) {
-                                        ImGui::Image((ImTextureID)steamTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                                        ImGui::SameLine();
-                                    }
+                                {
+                                    uint8_t badgeFlags = 0;
+                                    if (cs->lobbySlots[i].wbnParticipant)   badgeFlags |= MESSAGE_FLAG_WBN;
+                                    if (cs->lobbySlots[i].steamParticipant) badgeFlags |= MESSAGE_FLAG_STEAM;
+                                    renderPlayerName(NULL, badgeFlags, "", false);
                                 }
                                 if (cs->lobbySlots[i].isBot) {
                                     MessageArgs args = {};

@@ -1430,6 +1430,8 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
         MessageArgs args;
         memset(&args, 0, sizeof(args));
         playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, args.playerName, sim->isServer);
+        args.playerFlags = playersGetAccountFlags(&sim->plyrs, (*lgman)->playerNum);
+        playersGetCountryCode(&sim->plyrs, (*lgman)->playerNum, args.playerCountry);
         sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
       }
       /* Emit event so all clients see the newswire message */

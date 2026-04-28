@@ -50,7 +50,7 @@
 
 #define LOG_HEADER "WBOLOMOV"
 #define LOG_VERSION_V0 0  /* Original: IP address octets in player join events */
-#define LOG_VERSION_V1 1  /* Country codes replace IP addresses in player join events */
+#define LOG_VERSION_V1 1  /* Country codes replace IP addresses; opt4 carries accountFlags (WBN/Steam) */
 #define LOG_VERSION LOG_VERSION_V1
 
 /* The events we record in our log file */

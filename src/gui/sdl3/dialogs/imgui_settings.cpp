@@ -37,6 +37,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
 #include "../../../bolo/screen.h"
+#include "../../../bolo/playername_validate.h"
 #include "../bg_game.h"
 #include "../../lang.h"
 #include "imgui_settings.h"
@@ -222,7 +223,7 @@ extern "C" void imguiSettingsShow(void) {
     }
 
     /* Load current player name */
-    char playerName[FILENAME_MAX];
+    char playerName[PLAYER_NAME_LEN];
     playerName[0] = '\0';
     gameFrontGetPlayerName(playerName);
 
@@ -357,6 +358,7 @@ extern "C" void imguiSettingsShow(void) {
 
         /* ---- Player ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
+            static int lastNameError = 0;
             bool wbnActive = gameFrontGetWinbolonetUse();
             if (wbnActive) {
                 /* Refresh local buffer from gameFront in case WBN login just set it */
@@ -366,11 +368,36 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(200);
             if (wbnActive) ImGui::BeginDisabled();
-            if (ImGui::InputText("##playerName", playerName, 33,
+            if (ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN,
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
-                playerName[32] = '\0';
-                if (playerName[0] != '\0') {
+                playerName[PLAYER_NAME_LAST] = '\0';
+                char validated[PLAYER_NAME_LEN];
+                PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+                if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, &nameErr)) {
+                    SDL_strlcpy(playerName, validated, PLAYER_NAME_LEN);
                     gameFrontSetPlayerName(playerName);
+                    lastNameError = 0;
+                } else {
+                    switch (nameErr) {
+                        case PLAYER_NAME_ERR_EMPTY:
+                            lastNameError = STR_DLGSETNAME_BLANK_ERR;
+                            break;
+                        case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                            lastNameError = STR_DLGSETNAME_STAR_ERR;
+                            break;
+                        case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                            lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
+                            break;
+                        case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                            lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
+                            break;
+                        case PLAYER_NAME_ERR_INVALID_UTF8:
+                        case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                        case PLAYER_NAME_ERR_TOO_LONG:
+                        default:
+                            lastNameError = STR_NAME_INVALID_CHARS;
+                            break;
+                    }
                 }
             }
             ImGui::SameLine();
@@ -378,13 +405,45 @@ extern "C" void imguiSettingsShow(void) {
                 char applyBuf[64];
                 snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
                 if (ImGui::Button(applyBuf)) {
-                    playerName[32] = '\0';
-                    if (playerName[0] != '\0') {
+                    playerName[PLAYER_NAME_LAST] = '\0';
+                    char validated[PLAYER_NAME_LEN];
+                    PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+                    if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, &nameErr)) {
+                        SDL_strlcpy(playerName, validated, PLAYER_NAME_LEN);
                         gameFrontSetPlayerName(playerName);
+                        lastNameError = 0;
+                    } else {
+                        switch (nameErr) {
+                            case PLAYER_NAME_ERR_EMPTY:
+                                lastNameError = STR_DLGSETNAME_BLANK_ERR;
+                                break;
+                            case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                                lastNameError = STR_DLGSETNAME_STAR_ERR;
+                                break;
+                            case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                                lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
+                                break;
+                            case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                                lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
+                                break;
+                            case PLAYER_NAME_ERR_INVALID_UTF8:
+                            case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                            case PLAYER_NAME_ERR_TOO_LONG:
+                            default:
+                                lastNameError = STR_NAME_INVALID_CHARS;
+                                break;
+                        }
                     }
                 }
             }
             if (wbnActive) ImGui::EndDisabled();
+            if (wbnActive) {
+                ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
+            }
+            if (lastNameError != 0) {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                   "%s", langGetText(lastNameError));
+            }
 
             ImGui::Spacing();
             imguiWinbolonetDrawSection(false);
@@ -516,6 +575,13 @@ extern "C" void imguiSettingsShow(void) {
                                     langGetText(STR_DLGLANG_MIDGAME_NOTE));
                 ImGui::PopTextWrapPos();
                 ImGui::EndPopup();
+            }
+
+            {
+                bool sf = gameFrontGetShowCountryFlagsInChat();
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS), &sf)) {
+                    gameFrontSetShowCountryFlagsInChat(sf);
+                }
             }
 
 #if !BOLO_MOBILE

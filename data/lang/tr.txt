@@ -1084,3 +1084,27 @@ STR_DLGSETTINGS_NETWORK=Ağ
 STR_DLGSETTINGS_NET_HELP=Ayarlar bir sonraki sunulan oyunda etkili olur.
 STR_DLGSETTINGS_USE_UPNP=Otomatik port yönlendirmesi için UPnP / NAT-PMP kullan
 STR_DLGSETTINGS_USE_NATTRAV=Tracker üzerinden NAT traversal (hole-punching) kullan
+
+# Player name validation (Phase 5)
+STR_NAME_INVALID_EMPTY=Oyuncu adı boş.
+STR_NAME_INVALID_CHARS=Oyuncu adı izin verilmeyen karakterler içeriyor.
+STR_NAME_INVALID_MIXED_SCRIPTS=Oyuncu adı uyumsuz yazı sistemleri karıştırıyor.
+STR_NAME_INVALID_RESERVED_PREFIX=Oyuncu adı '*' ile başlayamaz.
+STR_NAME_INVALID_RESERVED_SUFFIX=Oyuncu adı '-unverified' ile bitemez.
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Sohbette ülke bayraklarını göster
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} yeniden adlandırıldı; çünkü {other} doğrulanmış olarak katıldı
+STR_NAME_TAKEN_BY_VERIFIED=Bu görünen ad bir doğrulanmış oyuncuya ait. Lütfen başka bir ad seçin.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Bu görünen ad başka bir doğrulanmış oyuncu tarafından kullanılıyor. Lütfen başka bir ad seçin.
+
+# Localized server→client messages (Phase 9d)
+STR_REJECT_INCORRECT_PASSWORD=Yanlış şifre
+STR_REJECT_GAME_LOCKED=Oyun kilitli
+STR_REJECT_SERVER_FULL=Sunucu dolu
+STR_REJECT_NAME_POOL_EXHAUSTED=Sunucu ad havuzu tükendi
+STR_REJECT_INVALID_PLAYER_NAME=Geçersiz oyuncu adı
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net doğrulaması başarısız oldu: {string1}
+STR_KICK_ANNOUNCE={player} sunucudan atıldı.

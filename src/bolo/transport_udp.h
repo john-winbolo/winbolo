@@ -246,6 +246,9 @@ typedef struct {
     uint8_t pingKickStrikes;     /* consecutive pings >= kick threshold */
     bool    pingWarned;          /* warning already sent this streak */
     uint16_t lastEnforcedPingMs; /* pingMs value last time enforcement ran */
+    bool    nameStickySuffix;    /* Phase 5: server-renamed by verified-priority
+                                  * collision; keep the suffixed name for the
+                                  * rest of the session.  Cleared on disconnect. */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.
