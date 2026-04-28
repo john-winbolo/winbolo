@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-000000" data-color="#000000">
+    <path fill="#000000" fill-rule="nonzero" d="M90 90 L70 90 L70 10 L90 10 Z M130 150 L140 150 L140 60 L130 60 L130 40 L120 40 L120 30 L110 30 L110 20 L100 20 L100 10 L90 10 L90 0 L70 0 L70 10 L60 10 L60 20 L50 20 L50 30 L40 30 L40 40 L30 40 L30 60 L20 60 L20 150 L30 150 L30 160 L130 160 Z M60 110 L100 110 L100 100 L110 100 L110 60 L100 60 L100 50 L120 50 L120 60 L130 60 L130 140 L120 140 L120 150 L40 150 L40 140 L30 140 L30 60 L40 60 L40 50 L60 50 L60 60 L50 60 L50 100 L60 100 Z"/>
+  </g>
+  <g class="layer-6b6b6b" data-color="#6b6b6b">
+    <path fill="#6b6b6b" fill-rule="nonzero" d="M40 50 L40 60 L60 60 L60 50 Z M100 50 L100 60 L120 60 L120 50 Z M50 140 L40 140 L40 150 L120 150 L120 140 L110 140 L110 100 L100 100 L100 110 L60 110 L60 100 L50 100 Z"/>
+  </g>
+  <g class="layer-ffffff" data-color="#ffffff">
+    <path fill="#ffffff" fill-rule="nonzero" d="M90 90 L90 10 L70 10 L70 90 Z M50 60 L30 60 L30 140 L50 140 Z M130 60 L110 60 L110 140 L130 140 Z"/>
+  </g>
+  </g>
+</svg>

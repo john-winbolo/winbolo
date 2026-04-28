@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-bg layer-008c9c" data-color="#008c9c" data-role="background">
+    <rect x="0" y="0" width="160" height="160" fill="#008c9c"/>
+  </g>
+  <g class="layer-0000ce" data-color="#0000ce">
+    <path fill="#0000ce" fill-rule="nonzero" d="M10 10 L0 10 L0 20 L10 20 Z M30 20 L20 20 L20 30 L30 30 Z M60 30 L50 30 L50 40 L60 40 Z M100 30 L90 30 L90 40 L100 40 Z M80 90 L70 90 L70 100 L80 100 Z M30 110 L20 110 L20 120 L30 120 Z M130 110 L120 110 L120 120 L130 120 Z"/>
+  </g>
+  </g>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" shape-rendering="geometricPrecision">
+  <defs>
+    <clipPath id="tile-bounds">
+      <rect x="0" y="0" width="160" height="160"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile-bounds)">
+  <g class="layer-bd0000" data-color="#bd0000">
+    <path fill="#bd0000" fill-rule="nonzero" d="M60 50 L50 50 L50 60 L60 60 L60 70 L50 70 L50 80 L40 80 L40 90 L50 90 L50 100 L60 100 L60 110 L70 110 L70 100 L60 100 L60 90 L50 90 L50 80 L60 80 L60 70 L70 70 L70 90 L80 90 L80 120 L90 120 L90 90 L80 90 L80 70 L70 70 L70 60 L80 60 L80 50 L90 50 L90 70 L100 70 L100 90 L110 90 L110 70 L100 70 L100 50 L90 50 L90 40 L80 40 L80 50 L70 50 L70 60 L60 60 Z M110 100 L100 100 L100 110 L110 110 Z"/>
+  </g>
+  <g class="layer-ff0000" data-color="#ff0000">
+    <path fill="#ff0000" fill-rule="nonzero" d="M70 50 L60 50 L60 60 L70 60 Z M100 70 L90 70 L90 50 L80 50 L80 70 L90 70 L90 80 L100 80 Z M110 50 L100 50 L100 60 L110 60 Z M50 70 L40 70 L40 80 L50 80 Z M120 70 L110 70 L110 80 L120 80 Z M80 90 L70 90 L70 80 L60 80 L60 90 L70 90 L70 100 L80 100 Z M100 90 L90 90 L90 100 L100 100 Z M60 100 L50 100 L50 110 L60 110 Z M80 110 L70 110 L70 120 L80 120 Z"/>
+  </g>
+  <g class="layer-ff3131" data-color="#ff3131">
+    <path fill="#ff3131" fill-rule="nonzero" d="M80 40 L70 40 L70 50 L80 50 Z M60 60 L50 60 L50 70 L60 70 Z M110 60 L100 60 L100 70 L110 70 Z M110 90 L100 90 L100 80 L90 80 L90 70 L80 70 L80 80 L90 80 L90 90 L100 90 L100 100 L110 100 Z M60 80 L50 80 L50 90 L60 90 Z M80 100 L70 100 L70 110 L80 110 Z"/>
+  </g>
+  <g class="layer-ffce00" data-color="#ffce00">
+    <path fill="#ffce00" fill-rule="nonzero" d="M80 60 L70 60 L70 70 L60 70 L60 80 L70 80 L70 70 L80 70 Z M90 80 L80 80 L80 90 L90 90 Z M120 80 L110 80 L110 90 L120 90 Z M70 90 L60 90 L60 100 L70 100 Z M100 100 L90 100 L90 110 L100 110 Z"/>
+  </g>
+  </g>
+</svg>
