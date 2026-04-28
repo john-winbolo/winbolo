@@ -239,8 +239,47 @@ static bool themeIsIngamerotate(const char *themeName) {
  * theme (curThemeIdx). */
 static bool s_resetPreviewOnNextDraw = false;
 
+/* File-scope so the close-time confirm popup can read whether the
+ * dropdown is on a different theme than the active one.  Populated
+ * by imguiSettingsDrawGraphicsSection on every draw. */
+static std::vector<std::string> g_themeDirs;
+static int                      g_previewThemeIdx = -1;
+static int                      g_curThemeIdx     = 0;
+
+/* Debounce: short cooldown after a theme is applied so back-to-back
+ * Apply clicks (or Apply + the close-confirm Yes) can't queue two
+ * atlas rebuilds. Counts down per call to the graphics section. */
+static int                      g_themeApplyCooldown = 0;
+
 extern "C" void imguiSettingsResetGraphicsSelection(void) {
     s_resetPreviewOnNextDraw = true;
+}
+
+extern "C" bool imguiSettingsHasUnappliedThemePreview(void) {
+    if (g_previewThemeIdx < 0) return false;
+    if (g_previewThemeIdx >= (int)g_themeDirs.size()) return false;
+    return g_previewThemeIdx != g_curThemeIdx;
+}
+
+extern "C" const char *imguiSettingsGetPreviewedThemeName(void) {
+    if (g_previewThemeIdx < 0
+        || g_previewThemeIdx >= (int)g_themeDirs.size()) {
+        return "(default)";
+    }
+    return g_themeDirs[g_previewThemeIdx].c_str();
+}
+
+extern "C" void imguiSettingsApplyPreviewedTheme(void) {
+    if (!imguiSettingsHasUnappliedThemePreview()) return;
+    if (g_themeApplyCooldown > 0) return;
+    const char *newTheme = (g_previewThemeIdx == 0)
+                             ? "" : g_themeDirs[g_previewThemeIdx].c_str();
+    tileLoaderSetTheme(newTheme);
+    sdl3DrawReloadTiles();
+    extern void gameFrontSaveThemeChoice(const char *);
+    gameFrontSaveThemeChoice(newTheme);
+    g_themeApplyCooldown = 6;  /* a few frames so a held Enter / spam
+                                * click can't requeue an atlas rebuild */
 }
 
 extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererArg) {
@@ -252,8 +291,14 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_GFX_DISCLAIMER));
     ImGui::Spacing();
 
-    /* Theme picker — scan data/theme/* once per dialog open. */
-    static std::vector<std::string> themeDirs;
+    /* Tick the apply cooldown down to zero so the Apply button (and
+     * close-confirm Yes) re-enables on the next frame after a click. */
+    if (g_themeApplyCooldown > 0) g_themeApplyCooldown--;
+
+    /* Theme picker — scan data/theme/* once per dialog open.
+     * (Stored at file scope as g_themeDirs so the close-time confirm
+     * popup in imguiSettingsShow can read it too.) */
+    std::vector<std::string> &themeDirs = g_themeDirs;
     static bool themesScanned = false;
     if (!themesScanned) {
         themesScanned = true;
@@ -302,8 +347,11 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         }
     }
 
-    /* Pending preview selection (Apply commits it). */
-    static int s_previewThemeIdx = -1;
+    /* Pending preview selection (Apply commits it).  Mirrored to
+     * file-scope g_previewThemeIdx so the close-confirm popup can
+     * detect "user picked but didn't Apply". */
+    g_curThemeIdx = curThemeIdx;
+    int &s_previewThemeIdx = g_previewThemeIdx;
     if (s_resetPreviewOnNextDraw) {
         s_previewThemeIdx = curThemeIdx;
         s_resetPreviewOnNextDraw = false;
@@ -384,7 +432,39 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_FORCESMOOTH_TIP));
     }
 
+    /* Texture interpolation — applied to the tile atlas at draw time. */
+    int curInterp = (int)gfxSettingsGetInterp();
+    {
+        const char *labels[] = {
+            langGetText(STR_DLGSETTINGS_INTERP_NEAREST),
+            langGetText(STR_DLGSETTINGS_INTERP_LINEAR),
+            langGetText(STR_DLGSETTINGS_INTERP_PIXELART),
+        };
+        const int kNum = 3;
+        if (curInterp < 0 || curInterp >= kNum) curInterp = 0;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_INTERP));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(280);
+        if (ImGui::BeginCombo("##gfxinterp", labels[curInterp])) {
+            for (int i = 0; i < kNum; ++i) {
+                bool sel = (i == curInterp);
+                if (ImGui::Selectable(labels[i], sel)) {
+                    gfxSettingsSetInterp((GfxInterp)i);
+                    sdl3DrawReloadTiles();
+                    extern void gameFrontSaveInterp(int);
+                    gameFrontSaveInterp(i);
+                    curInterp = i;
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+
     ImGui::Spacing();
+    if (!ImGui::CollapsingHeader("Themes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
     ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_THEMES_DISCLAIMER));
     ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_THEME));
     ImGui::SameLine();
@@ -405,6 +485,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     }
     if (s_previewThemeIdx != curThemeIdx) {
         ImGui::SameLine();
+        ImGui::BeginDisabled(g_themeApplyCooldown > 0);
         if (ImGui::Button("Apply##theme")) {
             const char *newTheme = (s_previewThemeIdx == 0)
                                      ? "" : themeDirs[s_previewThemeIdx].c_str();
@@ -413,7 +494,9 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
             /* Persist to INI so the choice survives restart. */
             extern void gameFrontSaveThemeChoice(const char *);
             gameFrontSaveThemeChoice(newTheme);
+            g_themeApplyCooldown = 6;
         }
+        ImGui::EndDisabled();
     }
 
     /* Theme info display from theme.ini for the *previewed* theme
@@ -1409,7 +1492,36 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::SetCursorPosX(btnX);
         if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            running = false;
+            if (imguiSettingsHasUnappliedThemePreview()) {
+                ImGui::OpenPopup("##applyTheme");
+            } else {
+                running = false;
+            }
+        }
+
+        /* Confirm popup: dropdown is on a different theme than the
+         * active one and user hasn't clicked Apply. */
+        if (ImGui::BeginPopupModal("##applyTheme", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Do you want to apply the theme currently being "
+                        "previewed (%s)?",
+                        imguiSettingsGetPreviewedThemeName());
+            ImGui::Spacing();
+            if (ImGui::Button("Yes", ImVec2(80, 0))) {
+                imguiSettingsApplyPreviewedTheme();
+                ImGui::CloseCurrentPopup();
+                running = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("No", ImVec2(80, 0))) {
+                ImGui::CloseCurrentPopup();
+                running = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         ImGui::End(); /* ##SettingsPanel */

@@ -1871,6 +1871,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     GetPrivateProfileString("GRAPHICS", "ForceSmoothShells", "0", buf, sizeof(buf), prefsFile);
     gfxSettingsSetForceSmoothShells(atoi(buf) != 0);
   }
+  /* Texture interpolation (NEAREST / LINEAR / PIXELART). */
+  {
+    char buf[16] = "";
+    GetPrivateProfileString("GRAPHICS", "Interp", "0", buf, sizeof(buf), prefsFile);
+    int v = atoi(buf);
+    if (v < 0 || v > 2) v = 0;
+    gfxSettingsSetInterp((GfxInterp)v);
+  }
 
   /* Winbolo.net */
   GetPrivateProfileString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX, prefsFile);
@@ -1912,6 +1920,14 @@ void gameFrontSaveAnimSmoothness(int animSmoothness) {
 void gameFrontSaveForceSmoothShells(bool on) {
   WritePrivateProfileString("GRAPHICS", "ForceSmoothShells",
                              on ? "1" : "0",
+                             getPreferenceFilePath());
+}
+
+/* Persist the texture interpolation dropdown choice. */
+void gameFrontSaveInterp(int interp) {
+  char buf[8];
+  SDL_snprintf(buf, sizeof(buf), "%d", interp);
+  WritePrivateProfileString("GRAPHICS", "Interp", buf,
                              getPreferenceFilePath());
 }
 

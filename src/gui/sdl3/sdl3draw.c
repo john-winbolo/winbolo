@@ -347,10 +347,10 @@ static bool sdl3LoadTiles(void) {
    * out at the edges.  Off → nearest for crisp pixel-art look.
    * Ingamerotate themes always use NEAREST regardless of the toggle —
    * crisp rotation is the look the user wants there. */
-  /* Theme Detail = Max Detail uses PIXELART sampling — nearest-
-   * neighbor + edge anti-aliasing tuned for upscaled pixel art.
-   * Pixelate modes use NEAREST for the classic blocky look. */
-  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
+  /* Sampling mode comes from the user's Graphics > Interpolation
+   * setting (NEAREST / LINEAR / PIXELART). */
+  SDL_SetTextureScaleMode(gTilesTex,
+                          (SDL_ScaleMode)gfxSettingsGetInterpScaleMode());
   return TRUE;
 }
 

@@ -77,6 +77,30 @@ GfxAnimSmoothness gfxSettingsGetAnimSmoothness(void);
 void gfxSettingsSetForceSmoothShells(bool on);
 bool gfxSettingsGetForceSmoothShells(void);
 
+/* Texture interpolation mode applied to the tile atlas (and other
+ * gameplay textures) when scaled to the screen.
+ *   Nearest:  block pixels — every screen pixel is exactly one source
+ *             pixel, no blending.  Classic Bolo crispness.
+ *   Linear:   bilinear filtering — smooth interpolation between
+ *             source pixels.  Softens edges, can read as blurry on
+ *             pixel-art content but pleasant on vector themes.
+ *   PixelArt: nearest-with-edge-improvements (SDL 3.4+) — keeps
+ *             pixels crisp but avoids the harsh stair-step at
+ *             non-integer zoom factors. */
+typedef enum {
+    GFX_INTERP_NEAREST  = 0,
+    GFX_INTERP_LINEAR   = 1,
+    GFX_INTERP_PIXELART = 2,
+} GfxInterp;
+
+void      gfxSettingsSetInterp(GfxInterp i);
+GfxInterp gfxSettingsGetInterp(void);
+
+/* Resolves the GfxInterp choice to the SDL_ScaleMode the renderer
+ * should pass to SDL_SetTextureScaleMode.  Returns the int value of
+ * the SDL enum so this header can stay free of <SDL3/SDL.h>. */
+int gfxSettingsGetInterpScaleMode(void);
+
 #ifdef __cplusplus
 }
 #endif

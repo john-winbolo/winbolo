@@ -20,6 +20,8 @@
 #ifndef IMGUI_SETTINGS_H
 #define IMGUI_SETTINGS_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,6 +42,20 @@ void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *renderer);
  * the dropdown shows the active theme on every fresh open instead of
  * the last-previewed one from a prior session. */
 void imguiSettingsResetGraphicsSelection(void);
+
+/* True when the Graphics section's theme dropdown is on a different
+ * theme than the active one — i.e. user picked but didn't click
+ * Apply.  Used at close time to ask "apply previewed theme?". */
+bool imguiSettingsHasUnappliedThemePreview(void);
+
+/* Name of the theme currently selected in the dropdown.  Returns
+ * "(default)" for the empty/default theme.  Lifetime: valid until
+ * the next Settings dialog open. */
+const char *imguiSettingsGetPreviewedThemeName(void);
+
+/* Commit the previewed theme (same effect as clicking Apply in the
+ * Graphics section). */
+void imguiSettingsApplyPreviewedTheme(void);
 
 #ifdef __cplusplus
 }

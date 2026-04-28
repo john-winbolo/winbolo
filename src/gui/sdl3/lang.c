@@ -1035,6 +1035,10 @@ static const LangEntry langTable[] = {
     {1220, "All themes are cosmetic and do not affect game play."},
     {1221, "Theme"},
     {1222, "Preview"},
+    {1223, "Texture Interpolation"},
+    {1224, "Nearest (crisp pixels)"},
+    {1225, "Linear (smooth)"},
+    {1226, "Pixel Art (crisp + edge cleanup)"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
