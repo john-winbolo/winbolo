@@ -23,6 +23,7 @@
 #include "bg_game.h"
 #include "mapview.h"
 #include "tileloader.h"
+#include "../../common/wb_log.h"
 #include "../../bolo/global.h"
 #include "../../bolo/everard_map.h"
 #include "../../bolo/tank.h"
@@ -74,7 +75,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     SDL_memset(bg, 0, sizeof(*bg));
     bg->valid = false;
 
-    SDL_Log("[BgGame] Creating with map: %s", mapFile);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Creating with map: %s", mapFile);
 
     /* Try loading the map file. On Android, fopen can't read APK assets,
      * so use SDL_LoadFile to extract to a temp file, then use the proven
@@ -98,22 +99,22 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
                     fclose(fp);
                     mapLoaded = serverSimCreate(&bg->sim, tmpPath, gameTournament, false, 0, -1);
                     if (!mapLoaded) {
-                        SDL_Log("[BgGame] serverSimCreate failed for temp file '%s'", tmpPath);
+                        WB_LOG_WARN(WB_LOG_CAT_GUI, "[BgGame] serverSimCreate failed for temp file '%s'", tmpPath);
                     }
                     remove(tmpPath);
                 }
                 SDL_free(fileData);
             } else {
-                SDL_Log("[BgGame] SDL_LoadFile failed for '%s'", mapFile);
+                WB_LOG_WARN(WB_LOG_CAT_GUI, "[BgGame] SDL_LoadFile failed for '%s'", mapFile);
             }
         }
     }
     if (!mapLoaded) {
         /* Fall back to embedded Everard Island */
         BYTE emap[6000] = E_MAP;
-        SDL_Log("[BgGame] Falling back to embedded Everard Island");
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Falling back to embedded Everard Island");
         if (!serverSimCreateCompressed(&bg->sim, emap, 5097, gameTournament, false, 0, -1)) {
-            SDL_Log("[BgGame] serverSimCreateCompressed also failed");
+            WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimCreateCompressed also failed");
             return false;
         }
         strncpy(bg->sim.mapName, "Everard Island", MAP_STR_SIZE - 1);
@@ -125,7 +126,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
-        SDL_Log("[BgGame] tileLoaderBuildSheet failed");
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "[BgGame] tileLoaderBuildSheet failed");
         serverSimDestroy(&bg->sim);
         return false;
     }
@@ -135,7 +136,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         SDL_SetTextureScaleMode(bg->tilesTex, SDL_SCALEMODE_NEAREST);
     }
     if (!bg->tilesTex) {
-        SDL_Log("[BgGame] SDL_CreateTextureFromSurface failed");
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "[BgGame] SDL_CreateTextureFromSurface failed");
         serverSimDestroy(&bg->sim);
         return false;
     }
@@ -201,7 +202,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         bg->mapMaxX = maxX;
         bg->mapMaxY = maxY;
 
-        SDL_Log("[BgGame] Map bounds: (%d,%d)-(%d,%d) = %dx%d tiles",
+        WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] Map bounds: (%d,%d)-(%d,%d) = %dx%d tiles",
                 minX, minY, maxX, maxY, maxX - minX + 1, maxY - minY + 1);
     }
 
@@ -209,7 +210,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     botManagerInit();
     char brainPath[512];
     if (findBrainPath(brainPath, sizeof(brainPath))) {
-        SDL_Log("[BgGame] Found brain: %s", brainPath);
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Found brain: %s", brainPath);
         int numBots = BG_MIN_BOTS + (rand() % (BG_MAX_BOTS - BG_MIN_BOTS + 1));
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
@@ -218,7 +219,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
                 bg->numBots++;
             }
         }
-        SDL_Log("[BgGame] Added %d bots", bg->numBots);
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Added %d bots", bg->numBots);
 
         /* Randomize teams: 0 = no teams, 2-4 = number of teams */
         int numTeams = 0;
@@ -244,13 +245,13 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
                 }
             }
             bg->numTeams = (BYTE)numTeams;
-            SDL_Log("[BgGame] Set up %d teams for %d bots", numTeams, bg->numBots);
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Set up %d teams for %d bots", numTeams, bg->numBots);
         } else {
             bg->numTeams = 0;
-            SDL_Log("[BgGame] Free-for-all (no teams)");
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Free-for-all (no teams)");
         }
     } else {
-        SDL_Log("[BgGame] No brain script found");
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] No brain script found");
     }
 
     /* Set camera to center of map content, follow first bot */

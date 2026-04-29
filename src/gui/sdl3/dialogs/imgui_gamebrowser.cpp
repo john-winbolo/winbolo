@@ -30,6 +30,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "../../../common/wb_log.h"
+
 #include "imgui.h"
 #include "../../imgui_theme.h"
 #include "imgui_impl_sdl3.h"
@@ -190,10 +192,10 @@ static PingResult pingServer(const PingWork &work) {
     Uint64 sendTime = SDL_GetTicks();
     int ret = sendto(sock, (const char *)buff, BOLOPACKET_REQUEST_SIZE, 0,
                      (struct sockaddr *)&dest, sizeof(dest));
-    SDL_Log("ping: sent %d bytes to %s:%u (expected %d)",
+    WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: sent %d bytes to %s:%u (expected %d)",
             ret, work.address, work.port, BOLOPACKET_REQUEST_SIZE);
     if (ret != BOLOPACKET_REQUEST_SIZE) {
-        SDL_Log("ping: sendto failed for %s:%u", work.address, work.port);
+        WB_LOG_WARN(WB_LOG_CAT_NET, "ping: sendto failed for %s:%u", work.address, work.port);
         closesocket(sock);
         return res;
     }
@@ -213,13 +215,13 @@ static PingResult pingServer(const PingWork &work) {
         res.freePills = info->free_pills;
         res.freeBases = info->free_bases;
         res.numPlayers = info->num_players;
-        SDL_Log("ping: %s:%u responded in %dms, players=%d",
+        WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, players=%d",
                 work.address, work.port, res.pingMs, res.numPlayers);
     } else {
 #ifdef _WIN32
-        SDL_Log("ping: %s:%u no response (len=%d, err=%d)", work.address, work.port, len, WSAGetLastError());
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, err=%d)", work.address, work.port, len, WSAGetLastError());
 #else
-        SDL_Log("ping: %s:%u no response (len=%d, errno=%d)", work.address, work.port, len, errno);
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, errno=%d)", work.address, work.port, len, errno);
 #endif
     }
 
@@ -251,7 +253,7 @@ static ServerEntry serverEntryFromInfoPacket(INFO_PACKET *info, struct in_addr *
         SDL_strlcpy(e.address, inet_ntoa(info->gameid.serveraddress), sizeof(e.address));
     }
     e.port = info->gameid.serverport;
-    SDL_Log("serverEntryFromInfoPacket: raw serverport=%u e.port=%u", (unsigned)info->gameid.serverport, (unsigned)e.port);
+    WB_LOG_TRACE(WB_LOG_CAT_NET, "serverEntryFromInfoPacket: raw serverport=%u e.port=%u", (unsigned)info->gameid.serverport, (unsigned)e.port);
     SDL_snprintf(e.version, sizeof(e.version), "%d.%d%d",
                  info->h.versionMajor, info->h.versionMinor, info->h.versionRevision);
     e.numPlayers = (BYTE)info->num_players;
@@ -395,7 +397,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             geoLookupCreate("dbip-country-lite.mmdb");
         }
 #endif
-        SDL_Log("[GameBrowser] GeoIP database loaded: %s", geoLookupIsLoaded() ? "yes" : "no");
+        WB_LOG_INFO(WB_LOG_CAT_ASSET, "[GameBrowser] GeoIP database loaded: %s", geoLookupIsLoaded() ? "yes" : "no");
     }
 
     /* Background game */
@@ -664,11 +666,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
                 for (int i = 0; i < 2 && !s_refreshIcon; i++) {
                     if (candidates[i]) {
-                        SDL_Log("[GameBrowser] Trying refresh icon: %s", candidates[i]);
+                        WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Trying refresh icon: %s", candidates[i]);
                         s_refreshIcon = imguiLoadSvgIcon(renderer, candidates[i], iconSize);
                     }
                 }
-                SDL_Log("[GameBrowser] Refresh icon loaded: %s", s_refreshIcon ? "yes" : "no");
+                WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Refresh icon loaded: %s", s_refreshIcon ? "yes" : "no");
             }
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));

@@ -156,7 +156,7 @@ static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
     unsigned char *data = imguiFontLoadData(
         "data/fonts/NotoSansCJKsc-Regular.otf", &sz);
     if (!data) {
-        SDL_Log("imgui_settings: NotoSansCJKsc-Regular.otf missing — "
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "imgui_settings: NotoSansCJKsc-Regular.otf missing — "
                 "picker CJK names will render as tofu");
         return;
     }

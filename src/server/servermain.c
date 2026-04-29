@@ -50,6 +50,7 @@
 #include "../bolo/bot_manager.h"
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
+#include "../common/wb_log.h"
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -778,6 +779,8 @@ int main(int argc, char **argv) {
   srand((unsigned int)(time(NULL) ^ getpid()));
   sentryInit("WinBoloDS", argc, argv);
   atexit(sentryClose);
+  wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
+  atexit(wb_log_shutdown);
 
 #ifdef _WIN32
   // Show the console w/o activation if we were started hidden by WinBolo.exe

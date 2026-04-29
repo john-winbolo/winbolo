@@ -42,6 +42,7 @@
 #include "bot_manager.h"
 #include "log.h"
 #include "playername_validate.h"
+#include "../common/wb_log.h"
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -341,8 +342,19 @@ static void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
     /* Worst case: 8 hdr + 2 langid + 1 argCount + 4*(1 + 64) = 271. */
     uint8_t buf[PACKET_HEADER_SIZE + 3 + 4 * (1 + PLAYER_NAME_LEN - 1)];
     int pos = PACKET_HEADER_SIZE;
+    {
+        struct in_addr ia = addr->sin_addr;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "join reject: dest=%s:%u langid=%u argc=%d",
+            inet_ntoa(ia),
+            (unsigned)ntohs(addr->sin_port),
+            (unsigned)id, argCount);
+    }
     packHeader(buf, PACKET_JOIN_REJECT, 0);
     if (!packLocalizedPayload(buf, &pos, sizeof(buf), id, argCount, args)) {
+        WB_LOG_ERROR(WB_LOG_CAT_NET,
+            "serverSendJoinReject: pack failed id=%u argc=%d",
+            (unsigned)id, argCount);
         fprintf(stderr,
                 "[UDP SERVER] serverSendJoinReject: pack failed id=%u argc=%d\n",
                 (unsigned)id, argCount);
@@ -607,8 +619,17 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     char wbnToken[WBN_TOKEN_WIRE_LEN];
     int slot;
 
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+        "join request from %s:%u len=%d",
+        inet_ntoa(fromAddr->sin_addr),
+        (unsigned)ntohs(fromAddr->sin_port), len);
     fprintf(stderr, "[UDP SERVER] Join request received, len=%d\n", len);
     if (len < pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "join request malformed: need=%d got=%d from=%s:%u",
+            pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3, len,
+            inet_ntoa(fromAddr->sin_addr),
+            (unsigned)ntohs(fromAddr->sin_port));
         fprintf(stderr, "[UDP SERVER] Join request malformed (need %d, got %d)\n",
                 pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3, len);
         return; /* Malformed */
@@ -618,6 +639,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (serverFindClient(fromAddr) >= 0) {
         /* Resend accept in case they missed it */
         slot = serverFindClient(fromAddr);
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+            "join from already-connected slot=%d, resending accept", slot);
         serverSendJoinAccept(slot, sim, fromAddr);
         /* Resend map chunks if download not complete */
         if (!udpServer.mapDownload[slot].downloadComplete) {
@@ -919,7 +942,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)slot,
                                incomingIsWBN ? wbnHasSteam : FALSE);
     if (incomingIsWBN) {
-        SDL_Log("[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
+        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
     }
 
     /* Initialize player in the simulation */
@@ -1251,6 +1274,20 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     char msg[128];
     if (!udpServer.clients[idx].connected) return;
 
+    {
+        UdpServerClient *c = &udpServer.clients[idx];
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+            "disconnect slot=%d name='%s' addr=%s:%u graceful=%d "
+            "tickCount=%u lastReceivedTick=%u tickDiff=%u (timeout=%d)",
+            idx, c->playerName,
+            inet_ntoa(c->addr.sin_addr), (unsigned)ntohs(c->addr.sin_port),
+            (int)graceful,
+            (unsigned)udpServer.tickCount,
+            (unsigned)c->lastReceivedTick,
+            (unsigned)(udpServer.tickCount - c->lastReceivedTick),
+            (int)CLIENT_TIMEOUT_TICKS);
+    }
+
     if (graceful) {
         snprintf(msg, sizeof(msg), "%s is quitting.",
                  udpServer.clients[idx].playerName);
@@ -1260,6 +1297,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
         snprintf(msg, sizeof(msg), "%s timed out.",
                  udpServer.clients[idx].playerName);
     }
+    WB_LOG_INFO(WB_LOG_CAT_NET, "%s", msg);
     fprintf(stderr, "[UDP SERVER] %s\n", msg);
     serverSimConsoleMessage(msg);
 
@@ -1344,6 +1382,8 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             const char *kickArgs[1];
             snprintf(msg, sizeof(msg), "%s has been server kicked.",
                      udpServer.clients[i].playerName);
+            WB_LOG_WARN(WB_LOG_CAT_NET, "admin kick slot=%d name='%s'",
+                        i, udpServer.clients[i].playerName);
             fprintf(stderr, "[UDP SERVER] %s\n", msg);
             serverSimConsoleMessage(msg);
             /* Send kick message to all clients (including the kicked player) */
@@ -1385,6 +1425,11 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
                 snprintf(msg, sizeof(msg),
                          "%s kicked for high ping (%dms).",
                          client->playerName, ping);
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "ping-kick slot=%d name='%s' ping=%ums strikes=%d/%d threshold=%d",
+                    i, client->playerName, (unsigned)ping,
+                    (int)client->pingKickStrikes, (int)PING_KICK_COUNT,
+                    (int)PING_KICK_THRESHOLD_MS);
                 fprintf(stderr, "[UDP SERVER] %s\n", msg);
                 serverSimConsoleMessage(msg);
                 serverSendServerEnglishBroadcast(msg);
@@ -1444,6 +1489,7 @@ bool transportUdpServerCreate(unsigned short port,
 
     if (bind(udpServer.sock, (struct sockaddr *)&bindAddr,
              sizeof(bindAddr)) == SOCKET_ERROR) {
+        WB_LOG_ERROR(WB_LOG_CAT_NET, "bind() failed on port %u", port);
         fprintf(stderr, "[UDP SERVER] bind() failed on port %u\n", port);
         closesocket(udpServer.sock);
         udpServer.sock = INVALID_SOCKET;
@@ -1459,6 +1505,12 @@ bool transportUdpServerCreate(unsigned short port,
     udpServer.running = true;
     udpServer.tickCount = 0;
     sim->serverPort = port;
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
+        port,
+        (addrToUse && *addrToUse) ? addrToUse : "0.0.0.0",
+        (unsigned)maxPlayers,
+        (password && *password) ? "yes" : "no");
     fprintf(stderr, "[UDP SERVER] Created, bound to port %u\n", port);
     udpServer.compressedMapSize = 0;
 
@@ -1479,8 +1531,12 @@ bool transportUdpServerCreate(unsigned short port,
     SDL_SetAtomicInt(&recvThreadRunning, 1);
     recvThread = SDL_CreateThread(serverRecvThreadFunc, "SrvRecv", NULL);
     if (recvThread) {
+        WB_LOG_INFO(WB_LOG_CAT_NET, "recv thread started");
         fprintf(stderr, "[UDP SERVER] Recv thread started\n");
     } else {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "failed to create recv thread, using polled fallback: %s",
+            SDL_GetError());
         fprintf(stderr, "[UDP SERVER] WARNING: Failed to create recv thread, using polled fallback\n");
         SDL_SetAtomicInt(&recvThreadRunning, 0);
     }
@@ -1491,6 +1547,9 @@ bool transportUdpServerCreate(unsigned short port,
 
 void transportUdpServerDestroy(void) {
     int i;
+
+    WB_LOG_INFO(WB_LOG_CAT_NET, "server destroy: tickCount=%u dropCount=%u",
+                (unsigned)udpServer.tickCount, (unsigned)recvDropCount);
 
     /* Stop recv thread before touching the socket */
     if (recvThread) {
@@ -2013,6 +2072,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
     pktType = getPacketType(buf, len);
     if (pktType != PACKET_INPUT && pktType != PACKET_MAP_ACK) {
+        WB_LOG_TRACE(WB_LOG_CAT_NET,
+            "recv %s (%u) len=%d from %s:%u",
+            packetTypeName(pktType), pktType, len,
+            inet_ntoa(fromAddr->sin_addr), ntohs(fromAddr->sin_port));
         fprintf(stderr, "[UDP SERVER] Recv %s (%u) len=%d from %s:%u\n",
                 packetTypeName(pktType), pktType, len,
                 inet_ntoa(fromAddr->sin_addr), ntohs(fromAddr->sin_port));
@@ -2194,6 +2257,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_QUIT: {
             int clientIdx = serverFindClient(fromAddr);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "PACKET_QUIT from %s:%u clientIdx=%d",
+                inet_ntoa(fromAddr->sin_addr),
+                (unsigned)ntohs(fromAddr->sin_port),
+                clientIdx);
             if (clientIdx >= 0) {
                 serverCleanupMapDownload(clientIdx);
                 serverDisconnectClient(sim, clientIdx, TRUE);
@@ -2892,6 +2960,14 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
         if (!udpServer.clients[i].connected) continue;
         if (udpServer.tickCount - udpServer.clients[i].lastReceivedTick
             > CLIENT_TIMEOUT_TICKS) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "timeout: slot=%d name='%s' tickCount=%u lastReceived=%u "
+                "diff=%u > CLIENT_TIMEOUT_TICKS=%d -> disconnect",
+                i, udpServer.clients[i].playerName,
+                (unsigned)udpServer.tickCount,
+                (unsigned)udpServer.clients[i].lastReceivedTick,
+                (unsigned)(udpServer.tickCount - udpServer.clients[i].lastReceivedTick),
+                (int)CLIENT_TIMEOUT_TICKS);
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);

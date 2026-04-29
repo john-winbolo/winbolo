@@ -27,6 +27,7 @@
 #include <SDL3/SDL.h>
 #include "imgui.h"
 #include "../../imgui_fonts.h"
+#include "../../../common/wb_log.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -328,7 +329,7 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
         SDL_SetWindowTitle(win, title);
     }
 
-    SDL_Log("Device preset: %s (%dx%d, %s)", p->name, p->w, p->h,
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "Device preset: %s (%dx%d, %s)", p->name, p->w, p->h,
             p->mode == UI_MODE_TABLET ? "TABLET" : "DESKTOP");
 }
 
@@ -396,7 +397,7 @@ static inline bool dialogHandleUrlDropEvent(const SDL_Event *ev) {
             char urlCopy[512];
             SDL_strlcpy(urlCopy, url, sizeof(urlCopy));
             gameFrontHandleUrlOpen(urlCopy);
-            SDL_Log("[URL] Received winbolo:// link on menu: %s", url);
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link on menu: %s", url);
             return true;
         }
     }

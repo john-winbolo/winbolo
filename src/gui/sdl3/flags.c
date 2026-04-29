@@ -17,6 +17,7 @@
 #include <string.h>
 #include <SDL3/SDL_log.h>
 
+#include "../../common/wb_log.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -73,7 +74,7 @@ static SDL_Texture *loadFlag(const char c0, const char c1) {
     SDL_free(pixels);
 
     if (tex) {
-        SDL_Log("[FLAGS] Loaded %s (%dx%d)", path, w, h);
+        WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[FLAGS] Loaded %s (%dx%d)", path, w, h);
     }
     return tex;
 }
@@ -83,7 +84,7 @@ bool flagsCreate(SDL_Renderer *renderer) {
     s_renderer = renderer;
     s_rasterizer = nsvgCreateRasterizer();
     memset(flagCache, 0, sizeof(flagCache));
-    SDL_Log("[FLAGS] Initialized (SVG-based, lazy loading)");
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "[FLAGS] Initialized (SVG-based, lazy loading)");
     return s_rasterizer != NULL;
 }
 

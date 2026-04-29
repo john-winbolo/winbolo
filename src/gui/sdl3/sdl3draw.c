@@ -36,6 +36,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../../common/wb_log.h"
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #endif
@@ -305,18 +307,18 @@ static bool sdl3LoadTiles(void) {
 
   SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * atlasZoom);
   if (!sheet) {
-    SDL_Log("sdl3LoadTiles: tileLoaderBuildSheet failed");
+    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3LoadTiles: tileLoaderBuildSheet failed");
     gSheetScale = 1;
     return FALSE;
   }
 
-  SDL_Log("sdl3LoadTiles: atlas scale=%d, sheet=%dx%d",
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "sdl3LoadTiles: atlas scale=%d, sheet=%dx%d",
           atlasZoom, sheet->w, sheet->h);
 
   gTilesTex = SDL_CreateTextureFromSurface(gRenderer, sheet);
   SDL_DestroySurface(sheet);
   if (gTilesTex == NULL) {
-    SDL_Log("sdl3LoadTiles: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
+    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3LoadTiles: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
     gSheetScale = 1;
     return FALSE;
   }
@@ -333,7 +335,7 @@ static bool sdl3LoadBackground(void) {
 
   gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, "data/background.bmp", false);
   if (gBackgroundTex == NULL) {
-    SDL_Log("sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
+    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
     return FALSE;
   }
   SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);
@@ -353,7 +355,7 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
                                        SDL_TEXTUREACCESS_TARGET,
                                        w, h);
   if (tex == NULL) {
-    SDL_Log("sdl3CreateRenderTarget: failed %dx%d: %s", w, h, SDL_GetError());
+    WB_LOG_ERROR(WB_LOG_CAT_GUI, "sdl3CreateRenderTarget: failed %dx%d: %s", w, h, SDL_GetError());
     return NULL;
   }
   /* No premultiplied alpha when drawing into the target */
@@ -913,7 +915,7 @@ static void openInGameFonts(void) {
   gFontTiny  = TTF_OpenFont(sarasaPath,  8 * gZoomFactor);
   gFontLabel = TTF_OpenFont(sarasaPath, 10 * gZoomFactor);
   if (!gFontMsg) {
-    SDL_Log("openInGameFonts: failed to open primary %s — text will not render",
+    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open primary %s — text will not render",
             sarasaPath);
   }
 
@@ -928,7 +930,7 @@ static void openInGameFonts(void) {
     if (gFontTiny  && gFallbackFontTiny)  TTF_AddFallbackFont(gFontTiny,  gFallbackFontTiny);
     if (gFontLabel && gFallbackFontLabel) TTF_AddFallbackFont(gFontLabel, gFallbackFontLabel);
     if (!gFallbackFontMsg) {
-      SDL_Log("openInGameFonts: failed to open SlabK fallback %s — hangul will tofu",
+      WB_LOG_WARN(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open SlabK fallback %s — hangul will tofu",
               sarasaKPath);
     }
   }
@@ -965,7 +967,7 @@ bool sdl3DrawSetup(int zoomFactor) {
 #endif
   }
   if (gWindow == NULL) {
-    SDL_Log("sdl3DrawSetup: SDL_CreateWindow failed: %s", SDL_GetError());
+    WB_LOG_ERROR(WB_LOG_CAT_GUI, "sdl3DrawSetup: SDL_CreateWindow failed: %s", SDL_GetError());
     return FALSE;
   }
 
@@ -974,7 +976,7 @@ bool sdl3DrawSetup(int zoomFactor) {
 
   gRenderer = SDL_CreateRenderer(gWindow, NULL);
   if (gRenderer == NULL) {
-    SDL_Log("sdl3DrawSetup: SDL_CreateRenderer failed: %s", SDL_GetError());
+    WB_LOG_ERROR(WB_LOG_CAT_GUI, "sdl3DrawSetup: SDL_CreateRenderer failed: %s", SDL_GetError());
     SDL_DestroyWindow(gWindow);
     gWindow = NULL;
     return FALSE;
@@ -1019,10 +1021,10 @@ bool sdl3DrawSetup(int zoomFactor) {
     int logW = ww * logH / wh;
     SDL_SetRenderLogicalPresentation(gRenderer, logW, logH,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    SDL_Log("sdl3DrawSetup: mobile tablet logical presentation %dx%d (zoom %d)",
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: mobile tablet logical presentation %dx%d (zoom %d)",
             logW, logH, bestZoom);
     gZoomFactor = bestZoom;
-    SDL_Log("sdl3DrawSetup: render output %dx%d, effective zoom %d", ww, wh, gZoomFactor);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: render output %dx%d, effective zoom %d", ww, wh, gZoomFactor);
   }
 #endif
 
@@ -1114,7 +1116,7 @@ bool sdl3DrawSetup(int zoomFactor) {
                                           gGameRTWidth, gGameRTHeight);
     if (gGameRenderTarget) {
       SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
-      SDL_Log("sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
+      WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
 #endif
@@ -1215,7 +1217,7 @@ static void sdl3DrawAdaptRenderTarget(void) {
   /* Nothing to do if already at the right zoom */
   if (needZoom == gZoomFactor && gGameRenderTarget != NULL) return;
 
-  SDL_Log("sdl3DrawAdaptRenderTarget: window %dx%d -> zoom %d (was %d)",
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: window %dx%d -> zoom %d (was %d)",
           winW, winH, needZoom, gZoomFactor);
 
   /* Destroy old resources that are zoom-dependent */
@@ -1267,7 +1269,7 @@ static void sdl3DrawAdaptRenderTarget(void) {
                                         gGameRTWidth, gGameRTHeight);
   if (gGameRenderTarget) {
     SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
-    SDL_Log("sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
 #endif
 }

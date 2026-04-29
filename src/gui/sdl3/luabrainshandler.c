@@ -76,6 +76,7 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include "../../common/wb_log.h"
 #include "../../bolo/global.h"
 #include "../../bolo/brain.h"
 #include "../../bolo/screen.h"
@@ -377,14 +378,14 @@ static bool call_brain_think(lua_State *L) {
 
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {
-    SDL_Log("luaBrainsHandler: 'brain' global is not a table");
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainsHandler: 'brain' global is not a table");
     lua_settop(L, top);
     return false;
   }
 
   lua_getfield(L, -1, "think");
   if (!lua_isfunction(L, -1)) {
-    SDL_Log("luaBrainsHandler: brain.think is not a function");
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainsHandler: brain.think is not a function");
     lua_settop(L, top);
     return false;
   }
@@ -392,7 +393,7 @@ static bool call_brain_think(lua_State *L) {
   push_brain_info(L, &bInfo);
 
   if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-    SDL_Log("luaBrainsHandler: brain.think() error: %s", lua_tostring(L, -1));
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainsHandler: brain.think() error: %s", lua_tostring(L, -1));
     lua_settop(L, top);
     return false;
   }
@@ -429,7 +430,7 @@ static bool call_brain_method(lua_State *L, const char *method) {
   push_brain_info(L, &bInfo);
 
   if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-    SDL_Log("luaBrainsHandler: brain.%s() error: %s",
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainsHandler: brain.%s() error: %s",
             method, lua_tostring(L, -1));
     lua_settop(L, top);
     return false;
@@ -557,7 +558,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   /* Create Lua VM */
   L = luaL_newstate();
   if (L == NULL) {
-    SDL_Log("luaBrainInstance: failed to create Lua state for '%s'", name);
+    WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to create Lua state for '%s'", name);
     return false;
   }
 
@@ -632,26 +633,26 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       int loadErr = luaL_loadbuffer(L, src, srcLen, resolvedPath);
       SDL_free(src);
       if (loadErr != LUA_OK) {
-        SDL_Log("luaBrainInstance: failed to load '%s': %s",
+        WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
                 resolvedPath, lua_tostring(L, -1));
         lua_close(L);
         return false;
       }
     } else if (luaL_loadfile(L, resolvedPath) != LUA_OK) {
-      SDL_Log("luaBrainInstance: failed to load '%s': %s",
+      WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
               resolvedPath, lua_tostring(L, -1));
       lua_close(L);
       return false;
     }
   }
   if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
-    SDL_Log("luaBrainInstance: error running '%s': %s",
+    WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: error running '%s': %s",
             path, lua_tostring(L, -1));
     lua_close(L);
     return false;
   }
   if (!lua_istable(L, -1)) {
-    SDL_Log("luaBrainInstance: '%s' did not return a table", path);
+    WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: '%s' did not return a table", path);
     lua_close(L);
     return false;
   }
@@ -751,7 +752,7 @@ LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
   }
 
   if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
-    SDL_Log("luaBrainInstance: brain.settings() error: %s",
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainInstance: brain.settings() error: %s",
             lua_tostring(L, -1));
     lua_settop(L, top);
     return NULL;
@@ -870,7 +871,7 @@ void luaBrainInstanceSetSetting(LuaBrainInstance *inst,
   }
 
   if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
-    SDL_Log("luaBrainInstance: brain.set_setting('%s') error: %s",
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainInstance: brain.set_setting('%s') error: %s",
             setting->id, lua_tostring(L, -1));
   }
 
@@ -1082,7 +1083,7 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
     }
   }
 
-  SDL_Log("luaBrainsHandler: started brain '%s'", name);
+  WB_LOG_INFO(WB_LOG_CAT_LUA, "luaBrainsHandler: started brain '%s'", name);
   return true;
 }
 
@@ -1111,7 +1112,7 @@ void luaBrainRun(void) {
     Uint64 t1 = SDL_GetPerformanceCounter();
     double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
     if (ms > 5.0) {
-      SDL_Log("luaBrainsHandler: think took %.3f ms", ms);
+      WB_LOG_DEBUG(WB_LOG_CAT_LUA, "luaBrainsHandler: think took %.3f ms", ms);
     }
   }
 
@@ -1119,7 +1120,7 @@ void luaBrainRun(void) {
   clientMutexRelease();
 
   if (!ok) {
-    SDL_Log("luaBrainsHandler: think failed, stopping brain");
+    WB_LOG_WARN(WB_LOG_CAT_LUA, "luaBrainsHandler: think failed, stopping brain");
     luaBrainStop();
   }
 }
@@ -1148,7 +1149,7 @@ void luaBrainStop(void) {
   clientMutexRelease();
 
   brainsRunningIdx = -1;
-  SDL_Log("luaBrainsHandler: brain stopped");
+  WB_LOG_INFO(WB_LOG_CAT_LUA, "luaBrainsHandler: brain stopped");
 }
 
 /*********************************************************
@@ -1299,7 +1300,7 @@ bool mlBrainStartSingleton(const char *path, const char *name, ClientSim *cs) {
     clientMutexRelease();
 
     if (mlSingletonInst == NULL) {
-        SDL_Log("mlBrainStartSingleton: failed to load '%s'", path);
+        WB_LOG_ERROR(WB_LOG_CAT_LUA, "mlBrainStartSingleton: failed to load '%s'", path);
         return false;
     }
 
@@ -1314,7 +1315,7 @@ bool mlBrainStartSingleton(const char *path, const char *name, ClientSim *cs) {
         }
     }
 
-    SDL_Log("mlBrainStartSingleton: started ML brain '%s'", name);
+    WB_LOG_INFO(WB_LOG_CAT_LUA, "mlBrainStartSingleton: started ML brain '%s'", name);
     return true;
 #else
     (void)path; (void)name; (void)cs;
@@ -1333,7 +1334,7 @@ void mlBrainStopSingleton(void) {
     clientMutexRelease();
 
     brainsRunningIdx = -1;
-    SDL_Log("mlBrainStopSingleton: ML brain stopped");
+    WB_LOG_INFO(WB_LOG_CAT_LUA, "mlBrainStopSingleton: ML brain stopped");
 #endif
 }
 
@@ -1359,7 +1360,7 @@ bool mlBrainRunSingleton(ClientSim *cs) {
         Uint64 t1 = SDL_GetPerformanceCounter();
         double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
         if (ms > 5.0) {
-            SDL_Log("mlBrainRunSingleton: inference took %.3f ms", ms);
+            WB_LOG_DEBUG(WB_LOG_CAT_LUA, "mlBrainRunSingleton: inference took %.3f ms", ms);
         }
     }
 

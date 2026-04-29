@@ -623,6 +623,7 @@ if(HAVE_SENTRY_IOS)
 endif()
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
+target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -682,6 +683,36 @@ endif()
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
+
+# wb_log compile-time level. Calls below this level expand to ((void)0)
+# and are stripped by the compiler. Empty = wb_log.h decides (DEBUG in
+# Debug builds, INFO in Release).
+set(WINBOLO_LOG_LEVEL "" CACHE STRING
+    "Compile-time log level for wb_log macros: TRACE/DEBUG/INFO/WARN/ERROR/OFF (empty = auto)")
+set_property(CACHE WINBOLO_LOG_LEVEL PROPERTY STRINGS
+    "" "TRACE" "DEBUG" "INFO" "WARN" "ERROR" "OFF")
+if(WINBOLO_LOG_LEVEL)
+    if(WINBOLO_LOG_LEVEL STREQUAL "TRACE")
+        set(_WB_LOG_LEVEL_NUM 1)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "DEBUG")
+        set(_WB_LOG_LEVEL_NUM 2)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "INFO")
+        set(_WB_LOG_LEVEL_NUM 3)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "WARN")
+        set(_WB_LOG_LEVEL_NUM 4)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "ERROR")
+        set(_WB_LOG_LEVEL_NUM 5)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "OFF")
+        set(_WB_LOG_LEVEL_NUM 6)
+    else()
+        message(FATAL_ERROR
+            "WINBOLO_LOG_LEVEL must be one of TRACE/DEBUG/INFO/WARN/ERROR/OFF (got '${WINBOLO_LOG_LEVEL}')")
+    endif()
+    add_compile_definitions(WB_LOG_LEVEL=${_WB_LOG_LEVEL_NUM})
+    message(STATUS "wb_log: compile-time level = ${WINBOLO_LOG_LEVEL} (${_WB_LOG_LEVEL_NUM})")
+else()
+    message(STATUS "wb_log: compile-time level = auto (DEBUG in Debug builds, INFO in Release)")
+endif()
 
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
@@ -1247,6 +1278,7 @@ endif()
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
+target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)

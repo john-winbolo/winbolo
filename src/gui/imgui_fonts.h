@@ -21,6 +21,7 @@
 
 #include <SDL3/SDL.h>
 #include "imgui.h"
+#include "../common/wb_log.h"
 
 /* gamefront.h is C-only and not normally included before this header
  * in our C++ TUs (it's pulled in later inside an extern "C" block).
@@ -134,7 +135,7 @@ static inline void imguiMergeCjk(const char *path, const ImWchar *ranges,
     int sz = 0;
     unsigned char *data = imguiFontLoadData(path, &sz);
     if (!data) {
-        SDL_Log("imguiMergeCjk: %s missing — those glyphs will tofu", path);
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "imguiMergeCjk: %s missing — those glyphs will tofu", path);
         return;
     }
     ImFontConfig cfg;

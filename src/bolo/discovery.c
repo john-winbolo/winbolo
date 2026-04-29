@@ -39,6 +39,7 @@
 #include "udppackets.h"
 #include "util.h"
 #include "discovery.h"
+#include "../common/wb_log.h"
 
 /* Used to stop socket blocking */
 #define NO_BLOCK_SOCK 1
@@ -283,7 +284,7 @@ static void gameFinderProcess(currentGames *cg, char *buff, int len, char *motd)
       gameFinderProcessV1(cg, ptr, 20000, motd);
       break;
     default:
-      SDL_Log("discovery: Unsupported tracker version %d\n", version);
+      WB_LOG_WARN(WB_LOG_CAT_NET, "discovery: Unsupported tracker version %d", version);
   }
 }
 
@@ -317,7 +318,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
 
   ret = bolo_net_init();
   if (ret != 0) {
-    SDL_Log("discovery: Failed to initialise network for tracker");
+    WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to initialise network for tracker");
     returnValue = FALSE;
   }
 
@@ -325,7 +326,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
     sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
       returnValue = FALSE;
-      SDL_Log("discovery: Failed to create TCP socket for tracker");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to create TCP socket for tracker");
     }
   }
 
@@ -337,7 +338,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
       phe = gethostbyname(trackerAddress);
       if (phe == 0) {
         returnValue = FALSE;
-        SDL_Log("discovery: Tracker DNS lookup failed");
+        WB_LOG_WARN(WB_LOG_CAT_NET, "discovery: Tracker DNS lookup failed");
       } else {
         con.sin_addr.s_addr = *((uint32_t*)phe->h_addr_list[0]);
       }
@@ -347,7 +348,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
   if (returnValue == TRUE) {
     ret = connect(sock, (struct sockaddr *) &con, sizeof(con));
     if (ret == SOCKET_ERROR) {
-      SDL_Log("discovery: Failed to connect to tracker");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to connect to tracker");
       returnValue = FALSE;
     }
   }
@@ -356,7 +357,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
   if (returnValue == TRUE) {
     ret = ioctlsocket(sock, (long) FIONBIO, &noBlock);
     if (ret == SOCKET_ERROR) {
-      SDL_Log("discovery: Error setting socket to non blocking mode");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Error setting socket to non blocking mode");
       returnValue = FALSE;
     }
   }
@@ -389,7 +390,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
     }
 
     if (len == 0) {
-      SDL_Log("discovery: No data received from tracker");
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: No data received from tracker");
       returnValue = FALSE;
     } else {
       gameFinderProcess(cg, (char *) buff, len, motd);
@@ -431,7 +432,7 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
 
   ret = bolo_net_init();
   if (ret != 0) {
-    SDL_Log("discovery: Failed to initialise network for broadcast");
+    WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to initialise network for broadcast");
     returnValue = FALSE;
   }
 
@@ -439,7 +440,7 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
       returnValue = FALSE;
-      SDL_Log("discovery: Failed to create UDP socket for broadcast");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to create UDP socket for broadcast");
     }
   }
 
@@ -450,7 +451,7 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
     ret = bind(sock, (struct sockaddr *)&addr, sizeof(addr));
     if (ret != 0) {
       returnValue = FALSE;
-      SDL_Log("discovery: Failed to bind broadcast UDP socket");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to bind broadcast UDP socket");
     }
   }
 
@@ -459,7 +460,7 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
     ret = ioctlsocket(sock, (long) FIONBIO, &noBlock);
     if (ret == SOCKET_ERROR) {
       returnValue = FALSE;
-      SDL_Log("discovery: Error setting broadcast socket options");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Error setting broadcast socket options");
     }
   }
   if (returnValue == TRUE) {
@@ -467,7 +468,7 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
     ret = setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char *)&optval, sizeof(optval));
     if (ret != 0) {
       returnValue = FALSE;
-      SDL_Log("discovery: Error setting broadcast socket option");
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Error setting broadcast socket option");
     }
   }
 
@@ -490,9 +491,9 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
             memcpy(&bcast, &InterfaceList[i].iiBroadcastAddress, sizeof(bcast));
             bcast.sin_port = htons(LAN_BROADCAST_PORT);
             bcast.sin_family = AF_INET;
-            SDL_Log("discovery: Sending broadcast to %s:%d", inet_ntoa(bcast.sin_addr), LAN_BROADCAST_PORT);
+            WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Sending broadcast to %s:%d", inet_ntoa(bcast.sin_addr), LAN_BROADCAST_PORT);
             ret = sendto(sock, buff, BOLOPACKET_REQUEST_SIZE, 0, (struct sockaddr *)&bcast, sizeof(bcast));
-            SDL_Log("discovery: sendto returned %d (expected %d)", ret, BOLOPACKET_REQUEST_SIZE);
+            WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: sendto returned %d (expected %d)", ret, BOLOPACKET_REQUEST_SIZE);
             if (ret == BOLOPACKET_REQUEST_SIZE)
               sendOk = 1;
           }
@@ -537,14 +538,14 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
     }
 #endif
     if (!sendOk) {
-      SDL_Log("discovery: Broadcast send failed");
+      WB_LOG_WARN(WB_LOG_CAT_NET, "discovery: Broadcast send failed");
       returnValue = FALSE;
     }
   }
 
   SDL_Delay(50);
   if (returnValue == TRUE) {
-    SDL_Log("discovery: Waiting for broadcast responses...");
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Waiting for broadcast responses...");
     szlast = sizeof(last);
     len = recvfrom(sock, (char *) (ptr+len), (int) (sizeof(buff)-len), 0, (struct sockaddr *) &last, &szlast);
     timeOut = 0;
@@ -552,15 +553,15 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
 
     while (timeOut <= 5000) {
       if (len > 0) {
-        SDL_Log("discovery: Received %d bytes from %s:%u (expect %d for INFO_PACKET)",
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Received %d bytes from %s:%u (expect %d for INFO_PACKET)",
                 len, inet_ntoa(last.sin_addr), ntohs(last.sin_port), (int)sizeof(INFO_PACKET));
       }
       if (len == (int) sizeof(INFO_PACKET)) {
         if (strncmp(buff, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 && buff[BOLO_VERSION_MAJORPOS] == BOLO_VERSION_MAJOR && buff[BOLO_VERSION_MINORPOS] == BOLO_VERSION_MINOR && buff[BOLO_VERSION_REVISIONPOS] == BOLO_VERSION_REVISION && buff[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFORESPONSE) {
-          SDL_Log("discovery: Valid INFO_PACKET response, adding server");
+          WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Valid INFO_PACKET response, adding server");
           gameFinderProcessBroadcast((INFO_PACKET *) buff, &(last.sin_addr), callback, userData);
         } else {
-          SDL_Log("discovery: Packet signature/version mismatch");
+          WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Packet signature/version mismatch");
         }
       }
       SDL_Delay(50);
@@ -571,7 +572,7 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
         memcpy(&last, &from, sizeof(from));
       }
     }
-    SDL_Log("discovery: Broadcast scan complete (timeout after 5s)");
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Broadcast scan complete (timeout after 5s)");
   }
 
   if (sock != INVALID_SOCKET) {
