@@ -784,6 +784,41 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   }
 }
 
+/* Set the window icon (taskbar / title bar) from data/bolo-icon.png.
+ * macOS Cocoa ignores this — the .icns in the bundle drives the Dock icon. */
+static void sdl3DrawSetWindowIcon(SDL_Window *window) {
+  if (!window) return;
+
+  SDL_IOStream *io = SDL_IOFromFile("data/bolo-icon.png", "rb");
+  if (!io) {
+    const char *base = SDL_GetBasePath();
+    if (!base) base = "./";
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%sdata/bolo-icon.png", base);
+    io = SDL_IOFromFile(path, "rb");
+  }
+  if (!io) return;
+
+  Sint64 fileSize = SDL_GetIOSize(io);
+  if (fileSize <= 0) { SDL_CloseIO(io); return; }
+  unsigned char *buf = (unsigned char *)SDL_malloc((size_t)fileSize);
+  if (!buf) { SDL_CloseIO(io); return; }
+  SDL_ReadIO(io, buf, (size_t)fileSize);
+  SDL_CloseIO(io);
+
+  int w, h, channels;
+  unsigned char *pixels = stbi_load_from_memory(buf, (int)fileSize, &w, &h, &channels, 4);
+  SDL_free(buf);
+  if (!pixels) return;
+
+  SDL_Surface *surf = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+  if (surf) {
+    SDL_SetWindowIcon(window, surf);
+    SDL_DestroySurface(surf);
+  }
+  stbi_image_free(pixels);
+}
+
 /* -------------------------------------------------------
  * Loading screen — show smalllogo-transparent.png centered
  * on black.  Called immediately after window/renderer
@@ -970,6 +1005,8 @@ bool sdl3DrawSetup(int zoomFactor) {
     WB_LOG_ERROR(WB_LOG_CAT_GUI, "sdl3DrawSetup: SDL_CreateWindow failed: %s", SDL_GetError());
     return FALSE;
   }
+
+  sdl3DrawSetWindowIcon(gWindow);
 
   /* Aspect ratio is enforced dynamically in sdl3imgui.cpp resize handler
      to account for the fixed 22px menu bar. */
