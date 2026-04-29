@@ -485,7 +485,6 @@ void lv_screenSetSizeY(BYTE y);
 
 void lv_screenGetOffsets(BYTE *x, BYTE *y);
 void lv_screenSetOffset(BYTE x, BYTE y);
-void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset);
 
 /* Sub-tile pan, in zoom-1 native pixels within the (xOffset,yOffset) tile.
  * Used by mouse-drag panning to give smooth scrolling between tiles. */

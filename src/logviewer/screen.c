@@ -1615,18 +1615,6 @@ void lv_screenGetOffsets(BYTE *x, BYTE *y) {
   }
 }
 
-void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
-  if (g_lv->logLoaded == FALSE) {
-    return;
-  }
-  if (newXOffset == g_lv->xOffset && newYOffset == g_lv->yOffset) {
-    return;
-  }
-  g_lv->xOffset = newXOffset;
-  g_lv->yOffset = newYOffset;
-  lv_screenUpdate(redraw);
-}
-
 void lv_screenGetSubOffset(int *x, int *y) {
   if (x != NULL) *x = g_lv->subPxX;
   if (y != NULL) *y = g_lv->subPxY;
