@@ -1053,21 +1053,21 @@ STR_DLGSETTINGS_NETWORK=Network
 STR_DLGSETTINGS_NET_HELP=Settings take effect on the next hosted game.
 STR_DLGSETTINGS_USE_UPNP=Use UPnP / NAT-PMP for automatic port forwarding
 STR_DLGSETTINGS_USE_NATTRAV=Use NAT traversal (hole-punching) via tracker
+
+# Player-name validation (Phase 2).
 STR_NAME_INVALID_EMPTY=Player name is empty.
 STR_NAME_INVALID_CHARS=Player name contains disallowed characters.
 STR_NAME_INVALID_MIXED_SCRIPTS=Player name mixes incompatible scripts.
 STR_NAME_INVALID_RESERVED_PREFIX=Player name cannot start with '*'.
 STR_NAME_INVALID_RESERVED_SUFFIX=Player name cannot end with '-unverified'.
 
-# Settings → Display: country-flag rendering preference (Phase 4)
+# Settings → Display: country-flag rendering preference (Phase 4).
 STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Show country flags in chat
 
-# Verified-priority collision policy (Phase 5)
-STR_NAME_RENAMED_BY_VERIFIED={player} was renamed because {other} joined verified
+# Verified-priority collision policy (Phase 5).
+STR_NAME_RENAMED_BY_VERIFIED=%s was renamed because %s joined verified
 STR_NAME_TAKEN_BY_VERIFIED=That display name belongs to a verified player. Please pick another.
 STR_NAME_TAKEN_BY_OTHER_VERIFIED=That display name is in use by another verified player. Please pick another.
-
-# Localized server→client messages (Phase 9d)
 STR_REJECT_INCORRECT_PASSWORD=Incorrect password
 STR_REJECT_GAME_LOCKED=Game is locked
 STR_REJECT_SERVER_FULL=Server full
@@ -1075,6 +1075,14 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Server name pool exhausted
 STR_REJECT_INVALID_PLAYER_NAME=Invalid player name
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net verification failed: {string1}
 STR_KICK_ANNOUNCE={player} has been server kicked.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Comments
+STR_LV_INFO_SIGNIN_TO_COMMENT=Sign in via WinBolo (in the main game) to post a comment
+STR_LV_INFO_NO_WBN_KEY=Open a log with a WinBolo.net key to view comments
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Open from WinBolo.net...
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
