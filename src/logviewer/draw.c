@@ -269,8 +269,12 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
     sdlRenderer = renderer;
     ownsWindow = FALSE;
 
-    targetWidth  = lv_screenGetSizeX() * TILE_SIZE_X;
-    targetHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
+    /* +1 tile of margin in each dimension. The blit clips the margin
+     * with a srcRect so the visible window is sizeX*TILE_SIZE_X by
+     * sizeY*TILE_SIZE_Y; the margin only fills in the leading-edge
+     * pixels revealed by sub-tile scrolling. */
+    targetWidth  = (lv_screenGetSizeX() + 1) * TILE_SIZE_X;
+    targetHeight = (lv_screenGetSizeY() + 1) * TILE_SIZE_Y;
     textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
                                       SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
     if (!textureTarget) {
@@ -366,8 +370,9 @@ BYTE lv_drawSetup(void) {
     }
     SDL_SetRenderVSync(sdlRenderer, 1);
 
-    targetWidth  = lv_screenGetSizeX() * TILE_SIZE_X;
-    targetHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
+    /* See lv_drawSetupWithHandles for the +1 margin rationale. */
+    targetWidth  = (lv_screenGetSizeX() + 1) * TILE_SIZE_X;
+    targetHeight = (lv_screenGetSizeY() + 1) * TILE_SIZE_Y;
     textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
                                       SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
     if (!textureTarget) {
@@ -441,8 +446,8 @@ void lv_drawCleanup(void) {
 *  will scale the texture, causing coordinate drift.
 *********************************************************/
 void lv_drawResizeRenderTarget(void) {
-    int newWidth = lv_screenGetSizeX() * TILE_SIZE_X;
-    int newHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
+    int newWidth = (lv_screenGetSizeX() + 1) * TILE_SIZE_X;
+    int newHeight = (lv_screenGetSizeY() + 1) * TILE_SIZE_Y;
     
     if (sdlRenderer == NULL) return;
     
@@ -600,7 +605,9 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
             }
         }
         
-        if (++x == lv_screenGetSizeX()) { x = 0; y++; if (y == lv_screenGetSizeY()) done = TRUE; }
+        /* Iterate sizeX+1 by sizeY+1 to paint the +1 margin column/row;
+         * clipped from view by the final-blit srcRect. */
+        if (++x > lv_screenGetSizeX()) { x = 0; y++; if (y > lv_screenGetSizeY()) done = TRUE; }
     }
     
     lv_drawShells(sBullets);
@@ -621,21 +628,24 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
      * Width/height are scaled by g_zoomLevel; texture target stays at
      * native (1x) tile resolution.
      *
-     * Sub-tile pan: shift the dst rect by -(subPx * scale). This reveals
-     * subPx*scale pixels of empty area on the trailing edge — black-fill
-     * the un-shifted target rect first so that bleed shows black, not the
-     * previous frame's pixels. */
-    float scale = (float)zoomFactor * g_zoomLevel;
+     * Sub-tile pan: the texture target is sized (sizeX+1, sizeY+1) tiles
+     * and gets painted with a 1-tile margin on every edge. The srcRect
+     * picks the visible (sizeX, sizeY)-tile slice starting at the
+     * sub-pixel offset, so the leading edge reveals the margin instead
+     * of empty pixels. */
     float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
     float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
-    SDL_FRect bgRect = { 0.0f, menuBarHeight, gameW, gameH };
-    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
-    SDL_RenderFillRect(sdlRenderer, &bgRect);
-    dstRect.x = -((float)lv->subPxX * scale);
-    dstRect.y = menuBarHeight - ((float)lv->subPxY * scale);
+    SDL_FRect srcRect = {
+        (float)lv->subPxX,
+        (float)lv->subPxY,
+        (float)(lv_screenGetSizeX() * TILE_SIZE_X),
+        (float)(lv_screenGetSizeY() * TILE_SIZE_Y),
+    };
+    dstRect.x = 0.0f;
+    dstRect.y = menuBarHeight;
     dstRect.w = gameW;
     dstRect.h = gameH;
-    SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
+    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
     
     /* NOTE: Don't call SDL_RenderPresent here - ImGui needs to render after the game
      * and present once at the end. Calling present here causes the game to overwrite
@@ -808,19 +818,23 @@ void lv_drawBlitGameTexture(void) {
     menuBarHeight = lv_imgui_get_menu_bar_height();
 
     /* Blit the game texture to the screen, scaled by the user zoom level.
-     * Sub-tile pan: shift dst by -(subPx * scale); see lv_drawMainScreen
-     * for the rationale and the matching black-clear pass. */
-    float scale = (float)zoomFactor * g_zoomLevel;
+     * Sub-tile pan: srcRect picks the visible (sizeX, sizeY)-tile slice
+     * starting at the sub-pixel offset within the (sizeX+1, sizeY+1)
+     * texture target — the +1 margin is what fills the leading edge.
+     * See lv_drawMainScreen for the matching paint. */
     float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
     float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
-    SDL_FRect bgRect = { 0.0f, menuBarHeight, gameW, gameH };
-    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
-    SDL_RenderFillRect(sdlRenderer, &bgRect);
-    dstRect.x = -((float)lv->subPxX * scale);
-    dstRect.y = menuBarHeight - ((float)lv->subPxY * scale);
+    SDL_FRect srcRect = {
+        (float)lv->subPxX,
+        (float)lv->subPxY,
+        (float)(lv_screenGetSizeX() * TILE_SIZE_X),
+        (float)(lv_screenGetSizeY() * TILE_SIZE_Y),
+    };
+    dstRect.x = 0.0f;
+    dstRect.y = menuBarHeight;
     dstRect.w = gameW;
     dstRect.h = gameH;
-    SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
+    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
 }
 
 /*********************************************************

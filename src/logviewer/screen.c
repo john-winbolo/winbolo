@@ -106,7 +106,10 @@ BYTE lv_screenCalcSquare(BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
   BYTE below;
   BYTE belowRight;
 
-int a = (scrY*lv_screenGetSizeX())+scrX ;
+/* Stride is sizeX+1 (not sizeX) because the screen buffer carries a
+ * one-tile margin column/row beyond the visible viewport, used by the
+ * sub-tile-scrolling blit to avoid the trailing-edge bleed. */
+int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
 
   if (a > 1989) {
     above = 1;
@@ -283,9 +286,17 @@ void lv_screenUpdateView(updateType value) {
     }
   }
 
-  for (count=0;count < ssx; count++) {
-    for (count2=0;count2 < ssy; count2++) {
-      *((*g_lv->view).screenItem+(ssx*count2)+count) = lv_screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
+  /* Iterate sizeX+1 by sizeY+1 to populate one extra column and row
+   * beyond the visible viewport. The margin tile is shown when sub-tile
+   * scrolling shifts the final blit, eliminating the trailing-edge
+   * bleed. The margin coords reach 255 at the map boundary, which is
+   * still in-range for lv_mapGetPos; adjacency reads inside
+   * lv_screenCalcSquare wrap (BYTE +1 of 255 -> 0) but only when
+   * subPx == 0, in which case the blit's srcRect clips the margin
+   * tile from view, so the wrong adjacency is never user-visible. */
+  for (count=0;count <= ssx; count++) {
+    for (count2=0;count2 <= ssy; count2++) {
+      *((*g_lv->view).screenItem+((ssx+1)*count2)+count) = lv_screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
     }
   }
 }
@@ -471,8 +482,10 @@ void lv_screenSetPos(BYTE xValue, BYTE yValue, BYTE terrain) {
 BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
-  if (xValue < lv_screenGetSizeX() && yValue < lv_screenGetSizeY()) {
-      returnValue = *((*g_lv->view).screenItem+(yValue*lv_screenGetSizeX()+xValue));
+  /* Buffer holds sizeX+1 by sizeY+1 tiles (visible + 1-tile margin for
+   * sub-tile scrolling). Stride is sizeX+1. */
+  if (xValue <= lv_screenGetSizeX() && yValue <= lv_screenGetSizeY()) {
+      returnValue = *((*g_lv->view).screenItem+(yValue*(lv_screenGetSizeX()+1)+xValue));
   }
   return returnValue;
 }
@@ -1502,8 +1515,9 @@ bool lv_screenSetBase(BYTE x, BYTE y) {
 bool lv_screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
   bool returnValue = FALSE; /* Value to return */
 
-  if (xValue < lv_screenGetSizeX() && yValue < lv_screenGetSizeY()) {
-    returnValue = *((*value)->mineItem+(yValue*lv_screenGetSizeX()+xValue));
+  /* Same +1 margin geometry as the screen tile buffer; see lv_screenGetPos. */
+  if (xValue <= lv_screenGetSizeX() && yValue <= lv_screenGetSizeY()) {
+    returnValue = *((*value)->mineItem+(yValue*(lv_screenGetSizeX()+1)+xValue));
   }
   return returnValue;
 }
