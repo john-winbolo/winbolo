@@ -44,6 +44,7 @@
 #include "imgui/imgui_game_info.h"
 #include "imgui/imgui_events.h"
 #include "imgui/imgui_item_info.h"
+#include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 
@@ -542,6 +543,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     lv_imgui_game_info_init();
     lv_imgui_events_init();
     lv_imgui_item_info_init();
+    lv_imgui_comments_init();
     lv_imgui_dialogs_init(g_lv);
     lv_imgui_game_viewport_init(g_lv);
 
@@ -709,6 +711,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         lv_imgui_game_info_window();
         lv_imgui_events_window();
         lv_imgui_item_info_window();
+        lv_imgui_comments_window();
         lv_g_reset_window_positions = false;
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
@@ -723,6 +726,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
      * ----------------------------------------------------------------------- */
     savePreferences();
     lv_windowStop(FALSE);
+    lv_imgui_comments_shutdown();
     lv_imgui_context_shutdown();
     lv_drawCleanupSplash();
     lv_soundCleanup();

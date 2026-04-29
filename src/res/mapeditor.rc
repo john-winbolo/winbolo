@@ -1,0 +1,9 @@
+// WinBolo Map Editor Windows resources (minimal — SDL3+ImGui handles UI)
+
+#include "mapeditor_resource.h"
+
+// Application manifest (DPI awareness, visual styles)
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "app.manifest"
+
+// Application icon
+IDI_ICON1 ICON "mapeditor.ico"

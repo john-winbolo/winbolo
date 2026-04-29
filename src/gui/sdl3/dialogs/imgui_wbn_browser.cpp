@@ -47,6 +47,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "../../lang.h"
 #include "../../../winbolonet/http.h"
+#include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
 #include "imgui_winbolonet.h"
@@ -322,18 +323,13 @@ struct DownloadResult {
     char error[256];
 };
 
-/* ---- Comment post state ---- */
-struct CommentResult {
-    bool success;
-    char message[256];
-};
-
-extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
+extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
+                                                struct SDL_Renderer *renderer_in) {
     WbnBrowserResult finalResult = {};
     finalResult.action = WBN_BROWSER_CLOSE;
 
-    SDL_Window *window = sdl3DrawGetWindow();
-    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    SDL_Window *window = window_in;
+    SDL_Renderer *renderer = renderer_in;
     if (!window || !renderer) return finalResult;
 
     /* Save logical presentation */
@@ -355,9 +351,13 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
-    /* Set up ImGui context */
+    /* Set up ImGui context. CreateContext only makes itself current if no
+     * context was already active — so when called from another ImGui app
+     * (e.g. LogViewer) we have to switch explicitly or backends initialise
+     * onto the caller's IO and trip an assertion. */
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    ImGuiContext *dlgCtx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(dlgCtx);
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -414,11 +414,8 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
     static DownloadResult downloadResult = {};
     static std::atomic<bool> downloadDone(false);
 
-    /* Async comment post */
-    static std::mutex commentMtx;
-    static std::atomic<bool> commenting(false);
-    static CommentResult commentResultData = {};
-    static std::atomic<bool> commentDone(false);
+    /* Async comment post — owned handle, freed when result is consumed */
+    static WbnCommentPost *commentPost = nullptr;
 
     /* Comment form */
     char commentText[512] = {};
@@ -728,10 +725,13 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
         }
 
         /* Process comment completion */
-        if (commentDone) {
-            commentDone = false;
-            std::lock_guard<std::mutex> lock(commentMtx);
-            if (commentResultData.success) {
+        if (commentPost && wbn_comments_post_done(commentPost)) {
+            char msg[256];
+            int status = wbn_comments_post_result(commentPost, msg, sizeof(msg));
+            wbn_comments_post_free(commentPost);
+            commentPost = nullptr;
+
+            if (status == 200 || status == 201) {
                 commentSuccess = langGetText(STR_DLGWBN_POSTED);
                 commentError = nullptr;
                 commentText[0] = '\0';
@@ -742,7 +742,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     triggerDetailFetch(tabs[currentTab].logs[selectedItem].key);
                 }
             } else {
-                commentError = commentResultData.message[0] ? commentResultData.message : "Failed to post comment";
+                commentError = msg[0] ? msg : "Failed to post comment";
                 commentSuccess = nullptr;
             }
         }
@@ -1043,71 +1043,13 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(void) {
                     ImGui::InputTextWithHint("##cmtText", langGetText(STR_DLGWBN_HINT_COMMENT), commentText, sizeof(commentText));
                     ImGui::SameLine();
 
-                    bool canPost = commentText[0] != '\0' && !commenting;
+                    bool canPost = commentText[0] != '\0' && commentPost == nullptr;
                     if (!canPost) ImGui::BeginDisabled();
                     if (ImGui::Button(langGetText(STR_DLGWBN_POST))) {
-                        commenting = true;
-                        commentDone = false;
                         commentError = nullptr;
                         commentSuccess = nullptr;
-
-                        char keyCopy[33];
-                        SDL_strlcpy(keyCopy, e.key, sizeof(keyCopy));
-                        char textCopy[512];
-                        SDL_strlcpy(textCopy, commentText, sizeof(textCopy));
-                        int ratingCopy = commentRating;
-                        char tokenCopy[256];
-                        SDL_strlcpy(tokenCopy, wbnToken, sizeof(tokenCopy));
-
-                        std::thread([keyCopy, textCopy, ratingCopy, tokenCopy]() {
-                            CommentResult res = {};
-
-                            cJSON *body = cJSON_CreateObject();
-                            cJSON_AddStringToObject(body, "token", tokenCopy);
-                            cJSON_AddStringToObject(body, "comment", textCopy);
-                            if (ratingCopy > 0)
-                                cJSON_AddNumberToObject(body, "rating", ratingCopy);
-
-                            char endpoint[128];
-                            SDL_snprintf(endpoint, sizeof(endpoint), "logs/%s/comment", keyCopy);
-
-                            char *json_str = cJSON_PrintUnformatted(body);
-                            char *response = nullptr;
-                            int status = wbn_api_post(endpoint, json_str, &response);
-
-                            if (status == 200 || status == 201) {
-                                res.success = true;
-                                SDL_strlcpy(res.message, langGetText(STR_DLGWBN_POSTED), sizeof(res.message));
-                            } else {
-                                res.success = false;
-                                if (response) {
-                                    cJSON *errJson = cJSON_Parse(response);
-                                    if (errJson) {
-                                        cJSON *errMsg = cJSON_GetObjectItem(errJson, "error");
-                                        if (errMsg && errMsg->valuestring)
-                                            SDL_strlcpy(res.message, errMsg->valuestring, sizeof(res.message));
-                                        else
-                                            SDL_snprintf(res.message, sizeof(res.message), "HTTP %d", status);
-                                        cJSON_Delete(errJson);
-                                    } else {
-                                        SDL_snprintf(res.message, sizeof(res.message), "HTTP %d", status);
-                                    }
-                                } else {
-                                    SDL_strlcpy(res.message, langGetText(STR_DLGWBN_NETERR), sizeof(res.message));
-                                }
-                            }
-
-                            free(json_str);
-                            free(response);
-                            cJSON_Delete(body);
-
-                            {
-                                std::lock_guard<std::mutex> lock(commentMtx);
-                                commentResultData = res;
-                            }
-                            commentDone = true;
-                            commenting = false;
-                        }).detach();
+                        commentPost = wbn_comments_post_start(e.key, wbnToken,
+                                                              commentText, commentRating);
                     }
                     if (!canPost) ImGui::EndDisabled();
 

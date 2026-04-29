@@ -40,6 +40,7 @@
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
+#include "../third_party/stb/stb_image.h"
 
 /* Must be included after global.h to avoid bool type conflict */
 #include <SDL3/SDL.h>
@@ -349,16 +350,37 @@ BYTE lv_drawSetup(void) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating SDL window", NULL);
         return FALSE;
     }
-    /* Set window icon from logo.bmp (used on Linux taskbar; macOS uses the .icns bundle) */
+    /* Set window icon from data/icons/logviewerr-icon.png (used on Linux/Windows
+       taskbar; macOS uses the .icns bundle). */
     {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char iconPath[1024];
-        SDL_snprintf(iconPath, sizeof(iconPath), "%sdata/logo.bmp", basePath);
-        SDL_Surface *icon = SDL_LoadBMP(iconPath);
-        if (icon) {
-            SDL_SetWindowIcon(sdlWindow, icon);
-            SDL_DestroySurface(icon);
+        SDL_IOStream *io = SDL_IOFromFile("data/icons/logviewerr-icon.png", "rb");
+        if (!io) {
+            const char *basePath = SDL_GetBasePath();
+            if (!basePath) basePath = "./";
+            char iconPath[1024];
+            SDL_snprintf(iconPath, sizeof(iconPath), "%sdata/icons/logviewerr-icon.png", basePath);
+            io = SDL_IOFromFile(iconPath, "rb");
+        }
+        if (io) {
+            Sint64 fileSize = SDL_GetIOSize(io);
+            if (fileSize > 0) {
+                unsigned char *buf = (unsigned char *)SDL_malloc((size_t)fileSize);
+                if (buf) {
+                    SDL_ReadIO(io, buf, (size_t)fileSize);
+                    int iw, ih, ch;
+                    unsigned char *pixels = stbi_load_from_memory(buf, (int)fileSize, &iw, &ih, &ch, 4);
+                    SDL_free(buf);
+                    if (pixels) {
+                        SDL_Surface *icon = SDL_CreateSurfaceFrom(iw, ih, SDL_PIXELFORMAT_RGBA32, pixels, iw * 4);
+                        if (icon) {
+                            SDL_SetWindowIcon(sdlWindow, icon);
+                            SDL_DestroySurface(icon);
+                        }
+                        stbi_image_free(pixels);
+                    }
+                }
+            }
+            SDL_CloseIO(io);
         }
     }
 

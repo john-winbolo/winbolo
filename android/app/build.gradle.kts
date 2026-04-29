@@ -144,6 +144,7 @@ tasks.register<Copy>("copyGameAssets") {
         include("flags/*.svg")
         include("svg/*.png")
         include("svg/*.svg")
+        include("icons/*.png")
         exclude("dbip-country-lite.mmdb")
     }
     into(assetsDataDir)

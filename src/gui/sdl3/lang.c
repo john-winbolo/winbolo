@@ -1031,6 +1031,14 @@ static const LangEntry langTable[] = {
     {1223, "WinBolo.net verification failed: {string1}"},
     {1224, "{player} has been server kicked."},
 
+    /* Log viewer comments panel */
+    {1225, "Comments"},
+    {1226, "Sign in via WinBolo (in the main game) to post a comment"},
+    {1227, "Open a log with a WinBolo.net key to view comments"},
+
+    /* Log viewer File menu — open log from WinBolo.net */
+    {1228, "Open from WinBolo.net..."},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

@@ -1123,6 +1123,14 @@
 #define STR_REJECT_WBN_VERIFY_FAILED        1223
 #define STR_KICK_ANNOUNCE                   1224
 
+/* Log viewer comments panel */
+#define STR_LV_WIN_COMMENTS                 1225
+#define STR_LV_INFO_SIGNIN_TO_COMMENT       1226
+#define STR_LV_INFO_NO_WBN_KEY              1227
+
+/* Log viewer File menu — open log from WinBolo.net */
+#define STR_LV_MENU_OPEN_WBN                1228
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

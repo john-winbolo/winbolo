@@ -55,6 +55,7 @@ extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
 /* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
 #ifndef _WIN32
 extern void preferencesGetPreferenceFile(char *dest);
+extern void preferencesSetPreferenceFileOverride(const char *path);
 extern DWORD GetPrivateProfileString(const char *section, const char *key,
                                       const char *def, char *dest,
                                       DWORD size, const char *file);
@@ -1769,6 +1770,11 @@ static const char *meGetPrefsPath(void) {
             snprintf(path, sizeof(path), "%s", "WinBolo.ini");
         }
         resolved = true;
+#ifndef _WIN32
+        /* Pin posix_stubs to this same file so any code that reaches via
+         * preferencesGetPreferenceFile lands on the same WinBolo.ini. */
+        preferencesSetPreferenceFileOverride(path);
+#endif
     }
     return path;
 }

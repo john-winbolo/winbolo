@@ -34,6 +34,13 @@ if(APPLE AND NOT CMAKE_OSX_SYSROOT)
     )
 endif()
 
+# Build universal2 on macOS so the same .app runs natively on Apple Silicon
+# and Intel Macs. Override on the command line with -DCMAKE_OSX_ARCHITECTURES=arm64
+# for a single-arch build. iOS sets its own architectures via the toolchain.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures")
+endif()
+
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
 
 # Derive network protocol version bytes from WINBOLO_VERSION.
@@ -909,7 +916,7 @@ set(CLIENT_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c
     src/server/server_lifecycle.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -959,6 +966,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
 )
@@ -1211,7 +1219,7 @@ set(SERVER_SOURCES
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
@@ -1352,6 +1360,16 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_comments.cpp
+)
+
+# Reuse the SDL3 main-game WBN browser dialog. LogViewer provides stubs for
+# the few main-game-only symbols it pulls in (bg_game, gamefront token,
+# imgui_winbolonet sign-in section). The dialog is *not* added to
+# LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
+set(LOGVIEWER_WBN_BROWSER_SOURCES
+    src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
 set(LOGVIEWER_PLATFORM_SOURCES
@@ -1359,21 +1377,38 @@ set(LOGVIEWER_PLATFORM_SOURCES
     src/logviewer/platform/platform_dialogs.c
 )
 
+# WinBolo.net HTTP client + Ed25519 signing — shared with the SDL3 client and
+# servers. LogViewer uses it to fetch/post comments on logs that have a WBN key.
+set(LOGVIEWER_WBN_SOURCES
+    src/winbolonet/http.c
+    src/winbolonet/wbn_comments.cpp
+    src/third_party/tweetnacl/tweetnacl.c
+)
+
 add_executable(LogViewer
     ${LOGVIEWER_SOURCES}
     ${LOGVIEWER_IMGUI_SOURCES}
     ${LOGVIEWER_PLATFORM_SOURCES}
+    ${LOGVIEWER_WBN_SOURCES}
+    ${LOGVIEWER_WBN_BROWSER_SOURCES}
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/ui_mode.c
 )
+if(NOT WIN32)
+    # posix_stubs provides preferencesGetPreferenceFile + GetPrivateProfileString /
+    # WritePrivateProfileString shared with the main game and map editor.
+    target_sources(LogViewer PRIVATE src/server/posix_stubs.c)
+endif()
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    PREFERENCE_FILE="WinBolo.ini"
 )
 
 if(WIN32)
@@ -1410,11 +1445,14 @@ target_include_directories(LogViewer PRIVATE
     ${CMAKE_SOURCE_DIR}/src/logviewer
     ${CMAKE_SOURCE_DIR}/src/logviewer/imgui
     ${CMAKE_SOURCE_DIR}/src/logviewer/platform
+    ${CMAKE_SOURCE_DIR}/src/winbolonet
+    ${CMAKE_SOURCE_DIR}/src/third_party/tweetnacl
+    ${cjson_SOURCE_DIR}
 )
 
 target_link_libraries(LogViewer PRIVATE
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
-    nanosvg stb_image
+    nanosvg stb_image CURL::libcurl cjson
 )
 
 if(WIN32)
@@ -1479,7 +1517,7 @@ set(HEADLESS_SOURCES
     src/server/server_sim.c
     src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1609,7 +1647,7 @@ set(GYM_SOURCES
     src/server/server_sim.c
     src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
@@ -1841,6 +1879,7 @@ target_include_directories(MapEditor PRIVATE
 )
 
 if(WIN32)
+    target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
 else()
@@ -1860,6 +1899,22 @@ target_link_libraries(MapEditor PRIVATE
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
     target_link_libraries(MapEditor PRIVATE "-framework AppKit")
+endif()
+
+# macOS app bundle with icon
+if(APPLE)
+    set(MAPEDITOR_ICON "${CMAKE_SOURCE_DIR}/src/mapeditor/platform/AppIcon.icns")
+    if(EXISTS "${MAPEDITOR_ICON}")
+        target_sources(MapEditor PRIVATE "${MAPEDITOR_ICON}")
+        set_source_files_properties("${MAPEDITOR_ICON}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources")
+        set_target_properties(MapEditor PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/mapeditor/platform/Info.plist.in"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.winbolo.mapeditor"
+            MACOSX_BUNDLE_BUNDLE_NAME "WinBolo Map Editor")
+    endif()
 endif()
 
 # Copy shared libraries and assets next to MapEditor executable
