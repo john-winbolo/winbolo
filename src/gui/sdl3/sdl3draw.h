@@ -69,6 +69,14 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+
+/* Atlas sheet scale used when blitting from the texture returned by
+ * sdl3DrawGetTilesTexture. Sprite source coords stored in the legacy
+ * tables (e.g. mapViewPosX/Y) are at scale 1; multiply by this factor
+ * before passing to SDL_RenderTexture. Returns 1 when the atlas has
+ * not been loaded. */
+int sdl3DrawGetSheetScale(void);
+
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);
 
