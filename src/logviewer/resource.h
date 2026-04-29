@@ -35,7 +35,6 @@
 #define IDB_BASE                        123
 #define IDB_PILLBOX                     124
 #define IDD_COMDLG32                    126
-#define IDI_ICON2                       127
 #define IDD_TEAMCOLOURS                 128
 #define IDB_TANKS                       131
 #define IDB_BOATS                       132
