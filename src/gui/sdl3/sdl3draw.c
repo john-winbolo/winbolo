@@ -784,17 +784,17 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   }
 }
 
-/* Set the window icon (taskbar / title bar) from data/bolo-icon.png.
+/* Set the window icon (taskbar / title bar) from data/icons/bolo-icon.png.
  * macOS Cocoa ignores this — the .icns in the bundle drives the Dock icon. */
 static void sdl3DrawSetWindowIcon(SDL_Window *window) {
   if (!window) return;
 
-  SDL_IOStream *io = SDL_IOFromFile("data/bolo-icon.png", "rb");
+  SDL_IOStream *io = SDL_IOFromFile("data/icons/bolo-icon.png", "rb");
   if (!io) {
     const char *base = SDL_GetBasePath();
     if (!base) base = "./";
     char path[1024];
-    SDL_snprintf(path, sizeof(path), "%sdata/bolo-icon.png", base);
+    SDL_snprintf(path, sizeof(path), "%sdata/icons/bolo-icon.png", base);
     io = SDL_IOFromFile(path, "rb");
   }
   if (!io) return;

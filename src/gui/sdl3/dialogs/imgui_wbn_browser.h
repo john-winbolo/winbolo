@@ -25,6 +25,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+struct SDL_Window;
+struct SDL_Renderer;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,8 +50,15 @@ typedef struct {
 } WbnBrowserResult;
 
 /* Show the WBN log browser dialog as a blocking modal loop.
- * Returns a result struct indicating what the user chose. */
-WbnBrowserResult imguiWbnBrowserShow(void);
+ * Caller passes the SDL window and renderer to use; the dialog takes them
+ * over for the duration of the modal and creates its own ImGui context.
+ * Returns a result struct indicating what the user chose.
+ *
+ * NOTE: The dialog calls httpCreate()/httpDestroy() internally, so a caller
+ * that uses the WBN HTTP client outside this dialog must re-create after
+ * the call returns. */
+WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window,
+                                     struct SDL_Renderer *renderer);
 
 #ifdef __cplusplus
 }

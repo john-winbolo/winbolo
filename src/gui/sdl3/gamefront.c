@@ -95,6 +95,7 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
 /* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
 #ifndef _WIN32
 extern void preferencesGetPreferenceFile(char *dest);
+extern void preferencesSetPreferenceFileOverride(const char *path);
 extern DWORD GetPrivateProfileString(const char *section, const char *key,
                                       const char *def, char *dest,
                                       DWORD size, const char *file);
@@ -350,6 +351,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   gameFrontName[0] = '\0';
   gameFrontUdpAddress[0] = '\0';
   wantRejoin = FALSE;
+
+  /* Pin posix_stubs / http.c / map editor / log viewer to the same WinBolo.ini
+   * the SDL3 client uses (SDL_GetPrefPath). Without this, http.c's
+   * preferencesGetPreferenceFile would hit posix_stubs' headless fallback
+   * (~/.config/winbolo/) and read [WINBOLO.NET] Host from a different file
+   * than where Token gets written. */
+#ifndef _WIN32
+  preferencesSetPreferenceFileOverride(getPreferenceFilePath());
+#endif
+
   langSetup();
 
   /* Read preferences */
@@ -752,7 +763,8 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     case openLogViewer: {
-      WbnBrowserResult wbnResult = imguiWbnBrowserShow();
+      WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
+                                                       sdl3DrawGetRenderer());
       switch (wbnResult.action) {
       case WBN_BROWSER_PLAY_FILE:
         logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);

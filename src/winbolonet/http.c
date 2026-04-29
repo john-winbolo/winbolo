@@ -48,9 +48,13 @@ void randombytes(unsigned char *buf, unsigned long long len) {
 }
 
 #ifdef _WIN32
-  #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
+  #ifndef PREFERENCE_FILE
+    /* PREFERENCE_FILE may be predefined by the build (e.g. LogViewer) so we
+     * don't need to drag in the main game's gamefront.h. */
+    #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
+  #endif
 #else
-  /* Provided by posix_stubs.c (server) or platform_config.c (client) */
+  /* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
   void preferencesGetPreferenceFile(char *dest);
   unsigned int GetPrivateProfileString(const char *section, const char *key,
                                        const char *def, char *out,

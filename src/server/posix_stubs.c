@@ -36,7 +36,24 @@
 /* preferencesGetPreferenceFile                                        */
 /* ------------------------------------------------------------------ */
 
+static char preferenceFileOverride[FILENAME_MAX] = "";
+
+void preferencesSetPreferenceFileOverride(const char *path) {
+  if (!path || !path[0]) {
+    preferenceFileOverride[0] = '\0';
+    return;
+  }
+  strncpy(preferenceFileOverride, path, FILENAME_MAX - 1);
+  preferenceFileOverride[FILENAME_MAX - 1] = '\0';
+}
+
 void preferencesGetPreferenceFile(char *dest) {
+  if (preferenceFileOverride[0]) {
+    strncpy(dest, preferenceFileOverride, FILENAME_MAX - 1);
+    dest[FILENAME_MAX - 1] = '\0';
+    return;
+  }
+
   const char *home = getenv("HOME");
   if (!home) {
     struct passwd *pw = getpwuid(getuid());

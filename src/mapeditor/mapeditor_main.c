@@ -27,9 +27,45 @@
 #endif
 
 #include "mapeditor.h"
+#include "../third_party/stb/stb_image.h"
 
 #define DEFAULT_WINDOW_W 1280
 #define DEFAULT_WINDOW_H 800
+
+/* Set the window icon (taskbar / title bar) from data/icons/mapeditor-icon.png.
+ * macOS Cocoa ignores this — the .icns in the bundle drives the Dock icon. */
+static void mapEditorSetWindowIcon(SDL_Window *window) {
+    if (!window) return;
+
+    SDL_IOStream *io = SDL_IOFromFile("data/icons/mapeditor-icon.png", "rb");
+    if (!io) {
+        const char *base = SDL_GetBasePath();
+        if (!base) base = "./";
+        char path[1024];
+        SDL_snprintf(path, sizeof(path), "%sdata/icons/mapeditor-icon.png", base);
+        io = SDL_IOFromFile(path, "rb");
+    }
+    if (!io) return;
+
+    Sint64 fileSize = SDL_GetIOSize(io);
+    if (fileSize <= 0) { SDL_CloseIO(io); return; }
+    unsigned char *buf = (unsigned char *)SDL_malloc((size_t)fileSize);
+    if (!buf) { SDL_CloseIO(io); return; }
+    SDL_ReadIO(io, buf, (size_t)fileSize);
+    SDL_CloseIO(io);
+
+    int w, h, channels;
+    unsigned char *pixels = stbi_load_from_memory(buf, (int)fileSize, &w, &h, &channels, 4);
+    SDL_free(buf);
+    if (!pixels) return;
+
+    SDL_Surface *surf = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (surf) {
+        SDL_SetWindowIcon(window, surf);
+        SDL_DestroySurface(surf);
+    }
+    stbi_image_free(pixels);
+}
 
 int main(int argc, char *argv[]) {
     srand((unsigned int)(time(NULL) ^ getpid()));
@@ -61,6 +97,8 @@ int main(int argc, char *argv[]) {
         SDL_Quit();
         return 1;
     }
+
+    mapEditorSetWindowIcon(window);
 
     /* Create renderer with vsync */
     SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);

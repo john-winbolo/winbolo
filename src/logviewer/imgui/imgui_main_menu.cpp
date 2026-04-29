@@ -13,6 +13,7 @@
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
+#include "../../gui/sdl3/dialogs/imgui_wbn_browser.h"
 #include <SDL3/SDL.h>
 
 #include <cstdio>
@@ -22,6 +23,8 @@
 /* External functions from main.c - using C types directly */
 extern "C" {
     #include "logviewer.h"
+    #include "../backend.h"
+    #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
     void lv_windowSaveMap(void);
     void lv_windowPlay(void);
@@ -29,17 +32,64 @@ extern "C" {
     void lv_windowStop(int corruptLog);
     void lv_windowRewind(void);
     void lv_windowFastForward(void);
+    void lv_windowNeedRedraw(void);
     void lv_screenTankCentred(int enabled);
     int lv_dnsSetEnabled(int enabled);
+    void lv_imgui_events_clear(void);
 }
 
 static LogViewerState *s_lv = nullptr;
+
+/* Open the WinBolo.net log browser as a blocking modal. The dialog creates
+ * its own ImGui context, takes over the window, and returns the user's
+ * choice. We save/restore LogViewer's ImGui context, window size+title,
+ * and re-init HTTP (the dialog destroys it on close). */
+static void open_wbn_browser_modal(void) {
+    if (!s_lv || !s_lv->window || !s_lv->renderer) return;
+
+    ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
+
+    int saved_w = 0, saved_h = 0;
+    SDL_GetWindowSize(s_lv->window, &saved_w, &saved_h);
+    char saved_title[256];
+    const char *cur_title = SDL_GetWindowTitle(s_lv->window);
+    SDL_strlcpy(saved_title, cur_title ? cur_title : "", sizeof(saved_title));
+
+    WbnBrowserResult res = imguiWbnBrowserShow(s_lv->window, s_lv->renderer);
+
+    ImGui::SetCurrentContext(saved_ctx);
+    SDL_SetWindowSize(s_lv->window, saved_w, saved_h);
+    SDL_SetWindowTitle(s_lv->window, saved_title);
+    httpCreate();   /* dialog destroyed it on the way out */
+
+    switch (res.action) {
+    case WBN_BROWSER_PLAY_FILE:
+        lv_windowOpenFile(res.filePath);
+        break;
+    case WBN_BROWSER_PLAY_MEMORY:
+        lv_windowStop(0);
+        if (lv_screenLoadMapFromMemory(res.memoryData, res.memorySize)) {
+            s_lv->isLoaded = TRUE;
+            lv_imgui_events_clear();
+            lv_windowNeedRedraw();
+        }
+        /* memoryData ownership transferred — don't free */
+        break;
+    case WBN_BROWSER_OPEN_LOCAL:
+        lv_windowOpenFile(NULL);
+        break;
+    case WBN_BROWSER_CLOSE:
+    default:
+        break;
+    }
+}
 
 /* Window visibility state */
 bool lv_g_show_controls_window = true;
 bool lv_g_show_game_info_window = true;
 bool lv_g_show_events_window = true;
 bool lv_g_show_item_info_window = true;
+bool lv_g_show_comments_window = false;  /* Opt-in: WBN comments are noisy if you don't want them */
 bool lv_g_reset_window_positions = false;
 
 /* Options state */
@@ -76,6 +126,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     
     lv_platform_config_get_string("LOGVIEWER", "Window.ItemInformation.Visible", "Yes", val, sizeof(val));
     lv_g_show_item_info_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.Comments.Visible", "No", val, sizeof(val));
+    lv_g_show_comments_window = (val[0] == 'Y' || val[0] == 'y');
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -86,6 +139,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.Events.Visible", lv_g_show_events_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.GameInformation.Visible", lv_g_show_game_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.ItemInformation.Visible", lv_g_show_item_info_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
 }
 
 static void handle_keyboard_shortcuts(int *clicked) {
@@ -143,6 +197,10 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_item_info_window = !lv_g_show_item_info_window;
         *clicked = 1;
     }
+    if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+        lv_g_show_comments_window = !lv_g_show_comments_window;
+        *clicked = 1;
+    }
 }
 
 int lv_imgui_main_menu_bar(void) {
@@ -153,6 +211,10 @@ int lv_imgui_main_menu_bar(void) {
     if (ImGui::BeginMainMenuBar()) {
         /* File Menu */
         if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN))) {
+                open_wbn_browser_modal();
+                clicked = 1;
+            }
             if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN), "Ctrl+O")) {
                 lv_windowOpenFile(NULL);
                 clicked = 1;
@@ -272,6 +334,10 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_ITEMINFO), "Ctrl+4", lv_g_show_item_info_window)) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
+                lv_g_show_comments_window = !lv_g_show_comments_window;
                 clicked = 1;
             }
             ImGui::Separator();
