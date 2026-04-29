@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Grupo de nombres del servidor agotado
 STR_REJECT_INVALID_PLAYER_NAME=Nombre de jugador no válido
 STR_REJECT_WBN_VERIFY_FAILED=Verificación de WinBolo.net fallida: {string1}
 STR_KICK_ANNOUNCE={player} ha sido expulsado por el servidor.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Comentarios
+STR_LV_INFO_SIGNIN_TO_COMMENT=Inicia sesión en WinBolo (en el juego principal) para publicar un comentario
+STR_LV_INFO_NO_WBN_KEY=Abre un log con una clave de WinBolo.net para ver los comentarios
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Abrir desde WinBolo.net…

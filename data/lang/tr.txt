@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Sunucu ad havuzu tükendi
 STR_REJECT_INVALID_PLAYER_NAME=Geçersiz oyuncu adı
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net doğrulaması başarısız oldu: {string1}
 STR_KICK_ANNOUNCE={player} sunucudan atıldı.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Yorumlar
+STR_LV_INFO_SIGNIN_TO_COMMENT=Yorum göndermek için WinBolo üzerinden oturum açın (ana oyunda)
+STR_LV_INFO_NO_WBN_KEY=Yorumları görüntülemek için WinBolo.net anahtarı olan bir günlük açın
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=WinBolo.net'ten Aç...

@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Zásobník jmen serveru je vyčerpán
 STR_REJECT_INVALID_PLAYER_NAME=Neplatné jméno hráče
 STR_REJECT_WBN_VERIFY_FAILED=Ověření WinBolo.net selhalo: {string1}
 STR_KICK_ANNOUNCE={player} byl vykopnut serverem.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Komentáře
+STR_LV_INFO_SIGNIN_TO_COMMENT=Přihlaste se přes WinBolo (v hlavní hře) a napište komentář
+STR_LV_INFO_NO_WBN_KEY=Otevřete log s klíčem WinBolo.net, abyste viděli komentáře
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Otevřít z WinBolo.net…

@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Пул імен сервера вичерпано
 STR_REJECT_INVALID_PLAYER_NAME=Недійсне ім'я гравця
 STR_REJECT_WBN_VERIFY_FAILED=Верифікація WinBolo.net не вдалася: {string1}
 STR_KICK_ANNOUNCE={player} виключено сервером.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Коментарі
+STR_LV_INFO_SIGNIN_TO_COMMENT=Увійдіть через WinBolo (у головній грі), щоб залишити коментар
+STR_LV_INFO_NO_WBN_KEY=Відкрийте журнал з ключем WinBolo.net, щоб переглянути коментарі
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Відкрити з WinBolo.net...
