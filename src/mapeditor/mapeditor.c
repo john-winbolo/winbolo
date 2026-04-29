@@ -1777,6 +1777,9 @@ static const char *meGetPrefsPath(void) {
  * Keys: Recent1 … Recent10
  * ------------------------------------------------------- */
 static void meLoadRecentFiles(MapEditorState *ed) {
+    /* Existence is verified lazily on click — see meLoadFromPath +
+     * meRemoveRecentFile. A startup fopen() on each entry blocks for
+     * seconds when a path points at an unreachable share / dead drive. */
     const char *ini = meGetPrefsPath();
     ed->numRecentFiles = 0;
     for (int i = 0; i < ME_MAX_RECENT_FILES; i++) {
@@ -1785,13 +1788,8 @@ static void meLoadRecentFiles(MapEditorState *ed) {
         char val[ME_PATH_MAX];
         GetPrivateProfileString("MAPEDITOR", key, "", val, ME_PATH_MAX, ini);
         if (val[0] == '\0') break;
-        /* Only add if the file still exists */
-        FILE *f = fopen(val, "rb");
-        if (f) {
-            fclose(f);
-            SDL_strlcpy(ed->recentFiles[ed->numRecentFiles], val, ME_PATH_MAX);
-            ed->numRecentFiles++;
-        }
+        SDL_strlcpy(ed->recentFiles[ed->numRecentFiles], val, ME_PATH_MAX);
+        ed->numRecentFiles++;
     }
 }
 
@@ -1804,6 +1802,19 @@ static void meSaveRecentFiles(MapEditorState *ed) {
             WritePrivateProfileString("MAPEDITOR", key, ed->recentFiles[i], ini);
         } else {
             WritePrivateProfileString("MAPEDITOR", key, "", ini);
+        }
+    }
+}
+
+static void meRemoveRecentFile(MapEditorState *ed, const char *path) {
+    for (int i = 0; i < ed->numRecentFiles; i++) {
+        if (strcmp(ed->recentFiles[i], path) == 0) {
+            for (int j = i; j < ed->numRecentFiles - 1; j++) {
+                SDL_strlcpy(ed->recentFiles[j], ed->recentFiles[j + 1], ME_PATH_MAX);
+            }
+            ed->numRecentFiles--;
+            meSaveRecentFiles(ed);
+            return;
         }
     }
 }
@@ -2173,6 +2184,7 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
         startsDestroy(&newSs);
         snprintf(ed->errorMessage, sizeof(ed->errorMessage),
                  "Failed to read map file:\n%s", path);
+        meRemoveRecentFile(ed, path);
         return false;
     }
 
