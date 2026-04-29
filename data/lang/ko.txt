@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=서버 이름 풀이 소진됐어요
 STR_REJECT_INVALID_PLAYER_NAME=유효하지 않은 플레이어 이름이에요
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net 인증에 실패했어요: {string1}
 STR_KICK_ANNOUNCE={player}님이 서버에서 강제 퇴장됐어요.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=댓글
+STR_LV_INFO_SIGNIN_TO_COMMENT=댓글을 작성하려면 WinBolo(메인 게임)에서 로그인해 주세요
+STR_LV_INFO_NO_WBN_KEY=댓글을 보려면 WinBolo.net 키가 있는 로그를 열어 주세요
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=WinBolo.net에서 열기...

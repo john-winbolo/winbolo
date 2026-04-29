@@ -1106,3 +1106,11 @@ STR_REJECT_INVALID_PLAYER_NAME=Недопустимое имя игрока
 STR_REJECT_WBN_VERIFY_FAILED=Проверка WinBolo.net не пройдена: {string1}
 STR_KICK_ANNOUNCE={player} был исключён сервером.
 STR_NAME_TAKEN_BY_OTHER_VERIFIED=Это отображаемое имя занято другим подтверждённым игроком. Выберите другое.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Комментарии
+STR_LV_INFO_SIGNIN_TO_COMMENT=Войдите через WinBolo (в основной игре), чтобы оставить комментарий
+STR_LV_INFO_NO_WBN_KEY=Откройте лог с ключом WinBolo.net, чтобы просмотреть комментарии
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Открыть с WinBolo.net…

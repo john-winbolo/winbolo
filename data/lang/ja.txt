@@ -1108,3 +1108,11 @@ STR_REJECT_INVALID_PLAYER_NAME=無効なプレイヤー名です
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net の認証に失敗しました: {string1}
 STR_KICK_ANNOUNCE={player} はサーバーからキックされました。
 STR_NAME_TAKEN_BY_OTHER_VERIFIED=その表示名は別の認証済みプレイヤーが使用中です。別の名前を選択してください。
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=コメント
+STR_LV_INFO_SIGNIN_TO_COMMENT=コメントを投稿するには、WinBolo（メインゲーム）でサインインしてください。
+STR_LV_INFO_NO_WBN_KEY=コメントを表示するには、WinBolo.net キーを含むログを開いてください。
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=WinBolo.net から開く...

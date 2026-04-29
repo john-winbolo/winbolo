@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Serverns namnpool är slut
 STR_REJECT_INVALID_PLAYER_NAME=Ogiltigt spelarnamn
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net-verifiering misslyckades: {string1}
 STR_KICK_ANNOUNCE={player} har sparkats av servern.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Kommentarer
+STR_LV_INFO_SIGNIN_TO_COMMENT=Logga in via WinBolo (i huvudspelet) för att skriva en kommentar
+STR_LV_INFO_NO_WBN_KEY=Öppna en logg med en WinBolo.net-nyckel för att visa kommentarer
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Öppna från WinBolo.net…

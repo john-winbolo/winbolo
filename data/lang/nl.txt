@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=Naampool van server uitgeput
 STR_REJECT_INVALID_PLAYER_NAME=Ongeldige spelernaam
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net-verificatie mislukt: {string1}
 STR_KICK_ANNOUNCE={player} is van de server verwijderd.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Reacties
+STR_LV_INFO_SIGNIN_TO_COMMENT=Meld je aan via WinBolo (in het hoofdspel) om een reactie te plaatsen
+STR_LV_INFO_NO_WBN_KEY=Open een log met een WinBolo.net-sleutel om reacties te bekijken
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Openen vanuit WinBolo.net...

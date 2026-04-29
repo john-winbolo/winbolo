@@ -1108,3 +1108,11 @@ STR_REJECT_NAME_POOL_EXHAUSTED=伺服器名稱池已耗盡
 STR_REJECT_INVALID_PLAYER_NAME=玩家名稱無效
 STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net 驗證失敗：{string1}
 STR_KICK_ANNOUNCE={player} 已被伺服器踢出。
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=評論
+STR_LV_INFO_SIGNIN_TO_COMMENT=請透過 WinBolo（主遊戲中）登入後發表評論
+STR_LV_INFO_NO_WBN_KEY=請開啟含有 WinBolo.net 金鑰的日誌以檢視評論
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=從 WinBolo.net 開啟...
