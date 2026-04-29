@@ -35,10 +35,11 @@
 #include "tilenum.h"
 #include "positions.h"
 #include "draw.h"
-#include "draw_setup_arrays.h"
 #include "logviewer.h"
 #include "imgui/imgui_main_menu.h"
 #include "../gui/sdl3/sdl_bmp.h"
+#include "../gui/sdl3/sprite_positions.h"
+#include "../gui/sdl3/tileloader.h"
 
 /* Must be included after global.h to avoid bool type conflict */
 #include <SDL3/SDL.h>
@@ -238,6 +239,20 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY) {
     lv_drawApplyZoomStep(g_zoomStepIndex - 1, mouseScreenX, mouseScreenY);
 }
 
+/* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
+ * Returns NULL on failure. The log viewer always uses scale 1 — the
+ * blit-time scaling is in the texture target, not the source atlas. */
+static SDL_Texture *buildTileAtlas(SDL_Renderer *renderer) {
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
+    if (!sheet) return NULL;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, sheet);
+    SDL_DestroySurface(sheet);
+    if (!tex) return NULL;
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+    return tex;
+}
+
 /*********************************************************
 *NAME:          lv_drawSetupWithHandles
 *PURPOSE:
@@ -261,13 +276,16 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
     if (!textureTarget) {
         return FALSE;
     }
+    /* Tile background uses the unified atlas (SVG/PNG with skin.bmp
+     * fallback) shared with the game and map editor. Tank, boat, and
+     * pill/base sprites stay on their own BMPs because they use the
+     * 16-row team-colour palette indexed via lv->tc[], which the
+     * unified atlas does not provide. */
+    textureTiles = buildTileAtlas(sdlRenderer);
     {
         const char *basePath = SDL_GetBasePath();
         if (!basePath) basePath = "./";
         char bmpPath[1024];
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
-        textureTiles = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
         textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
@@ -290,7 +308,7 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
-    lv_drawSetupArrays(1);
+    mapViewInit();
     return TRUE;
 }
 
@@ -357,13 +375,12 @@ BYTE lv_drawSetup(void) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating render target", NULL);
         return FALSE;
     }
+    /* See lv_drawSetupWithHandles for the tile-vs-tank/items split. */
+    textureTiles = buildTileAtlas(sdlRenderer);
     {
         const char *basePath = SDL_GetBasePath();
         if (!basePath) basePath = "./";
         char bmpPath[1024];
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
-        textureTiles = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
         textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
@@ -389,7 +406,7 @@ BYTE lv_drawSetup(void) {
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
-    lv_drawSetupArrays(1);
+    mapViewInit();
     return TRUE;
 }
 
@@ -569,8 +586,8 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                 drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             } else {
-                outputX = lv_drawPosX[pos];
-                outputY = lv_drawPosY[pos];
+                outputX = mapViewPosX[pos];
+                outputY = mapViewPosY[pos];
                 drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
                     zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             }

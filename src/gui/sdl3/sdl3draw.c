@@ -600,6 +600,10 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+int sdl3DrawGetSheetScale(void) {
+  return gSheetScale;
+}
+
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready) {
   if (ready) *ready = gManStatusReady;
   return gManStatusTex;
