@@ -37,6 +37,8 @@
 /* SDL3 before bolo headers — see note above */
 #include <SDL3/SDL.h>
 
+#include "../../common/wb_log.h"
+
 /* ImGui */
 #include "imgui.h"
 #include "../imgui_theme.h"
@@ -273,7 +275,7 @@ static void ensureWbnIconsLoaded(void) {
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
     s_iconGlobe = imguiLoadSvgIcon(r, "data/ui/globe.svg", WBN_ICON_SIZE);
     s_iconSteam = imguiLoadSvgIcon(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    SDL_Log("[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
@@ -2439,12 +2441,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
         if (uiModeIsTablet()) {
             if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP) {
-                SDL_Log("TAP-DBG: FINGER %s x=%.2f y=%.2f",
+                WB_LOG_TRACE(WB_LOG_CAT_GUI, "TAP-DBG: FINGER %s x=%.2f y=%.2f",
                         ev.type == SDL_EVENT_FINGER_DOWN ? "DOWN" : "UP",
                         ev.tfinger.x, ev.tfinger.y);
             }
             if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-                SDL_Log("TAP-DBG: MOUSE %s btn=%d x=%.1f y=%.1f which=%u winID=%u",
+                WB_LOG_TRACE(WB_LOG_CAT_GUI, "TAP-DBG: MOUSE %s btn=%d x=%.1f y=%.1f which=%u winID=%u",
                         ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? "DOWN" : "UP",
                         ev.button.button, ev.button.x, ev.button.y,
                         ev.button.which, ev.button.windowID);
@@ -2660,7 +2662,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (ev.type == SDL_EVENT_DROP_FILE && ev.drop.data) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
-                SDL_Log("[URL] Received winbolo:// link while running: %s", url);
+                WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link while running: %s", url);
                 if (cs && cs->netStat == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
@@ -3087,10 +3089,10 @@ void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *c
         s_playerCountry[playerNum][0] = countryCode[0];
         s_playerCountry[playerNum][1] = countryCode[1];
         s_playerCountry[playerNum][2] = '\0';
-        SDL_Log("[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country='%s' (0x%02X 0x%02X)", playerNum, name, s_playerCountry[playerNum], (unsigned char)countryCode[0], (unsigned char)countryCode[1]);
+        WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country='%s' (0x%02X 0x%02X)", playerNum, name, s_playerCountry[playerNum], (unsigned char)countryCode[0], (unsigned char)countryCode[1]);
     } else {
         s_playerCountry[playerNum][0] = '\0';
-        SDL_Log("[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country=NULL", playerNum, name);
+        WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country=NULL", playerNum, name);
     }
     s_playerEnabled[playerNum] = true;
 }

@@ -82,6 +82,7 @@
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
+#include "../common/wb_log.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -1497,6 +1498,9 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Error: SDL_Init failed: %s\n", SDL_GetError());
     return 1;
   }
+
+  wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
+  atexit(wb_log_shutdown);
 
   initWinboloTimer();
 

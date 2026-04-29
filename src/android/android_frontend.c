@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
+#include "../common/wb_log.h"
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/frontend.h"
@@ -117,7 +118,7 @@ BYTE windowGetZoomFactor(void)         { return zoomFactor; }
 void windowZoomChange(BYTE amount, bool fromDragResize) {
   (void)fromDragResize;  /* Android doesn't use resize detection */
   if (amount == zoomFactor) return;
-  SDL_Log("[Android] windowZoomChange: %d -> %d", zoomFactor, amount);
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] windowZoomChange: %d -> %d", zoomFactor, amount);
   drawBusy = TRUE;
   clientMutexWaitFor();
   sdl3DrawCleanup();
@@ -312,7 +313,7 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
 }
 
 void frontEndGameOver(void) {
-  SDL_Log("[Android] Game over (time limit expired)");
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game over (time limit expired)");
   finishedLoop = TRUE;
 }
 

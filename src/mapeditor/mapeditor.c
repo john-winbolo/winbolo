@@ -12,6 +12,7 @@
  *********************************************************/
 
 #include "mapeditor.h"
+#include "../common/wb_log.h"
 #include "mapeditor_imgui.h"
 #include "mapeditor_generate.h"
 #include "mapeditor_maze.h"
@@ -3067,14 +3068,14 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Build tile atlas */
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
-        SDL_Log("mapEditorRun: tileLoaderBuildSheet failed");
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "mapEditorRun: tileLoaderBuildSheet failed");
         free(ed);
         return;
     }
     ed->tilesTex = SDL_CreateTextureFromSurface(renderer, sheet);
     SDL_DestroySurface(sheet);
     if (!ed->tilesTex) {
-        SDL_Log("mapEditorRun: SDL_CreateTextureFromSurface failed");
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "mapEditorRun: SDL_CreateTextureFromSurface failed");
         free(ed);
         return;
     }
@@ -3090,7 +3091,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         basesCreate(&ed->bs);
         startsCreate(&ed->ss);
         if (!mapRead((char *)mapPath, &ed->mp, &ed->pb, &ed->bs, &ed->ss)) {
-            SDL_Log("mapEditorRun: failed to load map '%s', creating blank", mapPath);
+            WB_LOG_WARN(WB_LOG_CAT_MAP, "mapEditorRun: failed to load map '%s', creating blank", mapPath);
             mapDestroy(&ed->mp);
             pillsDestroy(&ed->pb);
             basesDestroy(&ed->bs);

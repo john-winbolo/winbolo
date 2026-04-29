@@ -46,6 +46,7 @@
 #include <ctype.h>
 #include <time.h>
 
+#include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/global.h"
@@ -366,7 +367,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       snprintf(langPath, sizeof(langPath), "data/lang/%s.txt",
                gameFrontLanguageCode);
       if (!langLoadFile(langPath)) {
-        SDL_Log("gameFrontStart: persisted language '%s' not found — "
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "gameFrontStart: persisted language '%s' not found — "
                 "falling back to English",
                 gameFrontLanguageCode);
       }
@@ -562,7 +563,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
         char *mapFiles[256];
         DIR *d = opendir(dir);
         if (!d) {
-            SDL_Log("[BgGame] pickRandomMap: opendir('%s') failed", dir);
+            WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: opendir('%s') failed", dir);
             return false;
         }
         struct dirent *ent;
@@ -577,19 +578,19 @@ static bool pickRandomMap(char *out, size_t outLen) {
         }
         closedir(d);
         if (count == 0) {
-            SDL_Log("[BgGame] pickRandomMap: no .map files in '%s'", dir);
+            WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no .map files in '%s'", dir);
             return false;
         }
         int idx = rand() % count;
         SDL_snprintf(out, outLen, "%s/%s", dir, mapFiles[idx]);
-        SDL_Log("[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
+        WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
         for (int i = 0; i < count; i++) SDL_free(mapFiles[i]);
         return true;
     }
 #else
     char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
     if (!list || count == 0) {
-        SDL_Log("[BgGame] pickRandomMap: SDL_GlobDirectory found 0 maps in '%s'", dir);
+        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: SDL_GlobDirectory found 0 maps in '%s'", dir);
         if (list) SDL_free(list);
         return false;
     }
@@ -602,13 +603,13 @@ static bool pickRandomMap(char *out, size_t outLen) {
         }
     }
     if (filtered == 0) {
-        SDL_Log("[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
+        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
         SDL_free(list);
         return false;
     }
     int idx = rand() % filtered;
     SDL_snprintf(out, outLen, "%s/%s", dir, list[idx]);
-    SDL_Log("[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
+    WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
     SDL_free(list);
     return true;
 #endif
@@ -618,7 +619,7 @@ static bool gameFrontDialogs(void) {
   bool done = FALSE;
   bool userQuit = FALSE;
 
-  SDL_Log("[BgGame] gameFrontDialogs entered, dlgState=%d", dlgState);
+  WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] gameFrontDialogs entered, dlgState=%d", dlgState);
 
   /* Disable render logical presentation during dialogs so that ImGui
    * touch/mouse coordinates match the rendering coordinates.  On Android
@@ -635,7 +636,7 @@ static bool gameFrontDialogs(void) {
       hasBg = bgGameCreate(&bg, mapPath, sdl3DrawGetRenderer());
     }
   }
-  SDL_Log("[BgGame] hasBg=%d", hasBg);
+  WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] hasBg=%d", hasBg);
   if (hasBg) bgGameSetShared(&bg);
 
   while (done == FALSE) {
@@ -841,9 +842,9 @@ static void gameFrontValidateWbnBeforeJoin(void) {
           /* Otherwise: keep the user's chosen name.  The Steam persona
            * is NOT used to update an existing name (Phase 7 / Decision 3). */
         }
-        SDL_Log("[Steam] Authenticated with WinBolo.net via Steam");
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
       } else {
-        SDL_Log("[Steam] WBN Steam auth failed: %s", errorMsg);
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Steam] WBN Steam auth failed: %s", errorMsg);
       }
     }
     return;
@@ -1062,7 +1063,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
             const char *seedStr = fileName + 10;
             if (!mapGenSeedToConfig(seedStr, &cfg)) {
-                SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+                WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
             }
             cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
             cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
@@ -1554,7 +1555,7 @@ bool gameFrontSetupServer(void) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
     if (!mapGenSeedToConfig(seedStr, &mcfg)) {
-      SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+      WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
     }
     mcfg.x1 = MAP_MINE_EDGE_LEFT + 1; mcfg.y1 = MAP_MINE_EDGE_TOP + 1;
     mcfg.x2 = MAP_MINE_EDGE_RIGHT - 1; mcfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;

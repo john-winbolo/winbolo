@@ -19,6 +19,7 @@
 *********************************************************/
 
 #include "../lang.h"
+#include "../../common/wb_log.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1194,7 +1195,7 @@ bool langLoadFile(const char *path) {
 
     FILE *f = fopen(path, "rb");
     if (!f) {
-        SDL_Log("langLoadFile: could not open '%s'", path);
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: could not open '%s'", path);
         clearOverrides();
         return FALSE;
     }
@@ -1237,7 +1238,7 @@ bool langLoadFile(const char *path) {
 
         char *eq = strchr(t, '=');
         if (!eq) {
-            SDL_Log("langLoadFile: skipping malformed line: %s", t);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: skipping malformed line: %s", t);
             continue;
         }
         *eq = '\0';
@@ -1267,17 +1268,17 @@ bool langLoadFile(const char *path) {
 
         langid id = resolveName(key);
         if (id == 0) {
-            SDL_Log("langLoadFile: unknown ID '%s' — skipping", key);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: unknown ID '%s' — skipping", key);
             continue;
         }
 
         if (id < overrideTableSize && overrideTable && overrideTable[id]) {
-            SDL_Log("langLoadFile: duplicate ID '%s' — last one wins", key);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: duplicate ID '%s' — last one wins", key);
         }
 
         char *decoded = unescapeValue(value);
         if (!decoded) {
-            SDL_Log("langLoadFile: out of memory decoding '%s'", key);
+            WB_LOG_ERROR(WB_LOG_CAT_ASSET, "langLoadFile: out of memory decoding '%s'", key);
             continue;
         }
         setOverride(id, decoded);
@@ -1725,7 +1726,7 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
     }
 
     if (truncated) {
-        SDL_Log("langGetTextFmt: id=%u rendered output exceeded "
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "langGetTextFmt: id=%u rendered output exceeded "
                 "LANG_FMT_BUFFER_SIZE=%d; result was clipped",
                 (unsigned)id, LANG_FMT_BUFFER_SIZE);
     }

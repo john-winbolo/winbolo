@@ -35,6 +35,7 @@
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
 #include "../steam/steam_wrapper.h"
+#include "../common/wb_log.h"
 
 /* ================================================================
  * CLIENT SIDE
@@ -285,6 +286,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          *   [header 8] [playerNum 1] [serverTick 4] [gameType 1]
          *   [hiddenMines 1] [startDelay 4] [gameLen 4] [mapSize 4]
          * Total: 8 + 19 = 27 bytes minimum */
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
+            (int)c->joinState, len, PACKET_HEADER_SIZE + 19);
         if ((c->joinState == UDP_CLIENT_JOINING ||
              c->joinState == UDP_CLIENT_DOWNLOADING_MAP) &&
             len >= PACKET_HEADER_SIZE + 19) {
@@ -383,6 +387,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* Check if all chunks received */
             if (c->mapChunksReceived >= c->mapChunksExpected) {
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "map download complete: chunks=%u/%u bytes=%u/%u "
+                    "-> CONNECTED (playerNum=%u)",
+                    (unsigned)c->mapChunksReceived,
+                    (unsigned)c->mapChunksExpected,
+                    (unsigned)c->mapDownloadReceived,
+                    (unsigned)c->mapDownloadTotal,
+                    (unsigned)c->playerNum);
                 c->joinState = UDP_CLIENT_CONNECTED;
                 c->clientSim->mapDownloadComplete = true;
             }
@@ -410,6 +422,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     sizeof(c->joinRejectReason) - 1);
             c->joinRejectReason[sizeof(c->joinRejectReason) - 1] = '\0';
         }
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "PACKET_JOIN_REJECT: langid=%u reason='%s'",
+            (unsigned)id, c->joinRejectReason);
         c->joinState = UDP_CLIENT_ERROR;
         break;
     }
@@ -818,6 +833,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_SERVER_SHUTDOWN:
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "PACKET_SERVER_SHUTDOWN received -> SERVER_SHUTDOWN");
         c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         break;
 
@@ -916,7 +933,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             for (i = 0; i < MAX_TANKS; i++) {
                 c->clientSim->lobbySlots[i] = tmpSlots[i];
                 if (tmpSlots[i].wbnParticipant || tmpSlots[i].steamParticipant) {
-                    SDL_Log("[WBN LOBBY] slot %d wbn=%d steam=%d",
+                    WB_LOG_DEBUG(WB_LOG_CAT_NET, "[WBN LOBBY] slot %d wbn=%d steam=%d",
                             i, tmpSlots[i].wbnParticipant,
                             tmpSlots[i].steamParticipant);
                 }
@@ -985,7 +1002,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                         memcpy(ra + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
                         udpClientSendTo(c, ra, sizeof(ra));
                     }
-                    SDL_Log("[WBN] Sent re-auth for slot %d", c->playerNum);
+                    WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
                 }
             } else {
                 /* Flag was restored or not needed — reset for next round */
@@ -1273,6 +1290,9 @@ static bool udpClientTick(void *ctx) {
         c->ticksSinceJoinSent++;
         if (c->ticksSinceJoinSent >= JOIN_RETRY_INTERVAL) {
             if (c->joinAttempts >= JOIN_MAX_RETRIES) {
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "join handshake exhausted: attempts=%d max=%d -> ERROR",
+                    (int)c->joinAttempts, (int)JOIN_MAX_RETRIES);
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
                 uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN + 1];
@@ -1291,6 +1311,12 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
+                WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                    "join request sent: attempt=%d/%d to=%s:%u name='%s'",
+                    (int)(c->joinAttempts + 1), (int)JOIN_MAX_RETRIES,
+                    inet_ntoa(c->serverAddr.sin_addr),
+                    (unsigned)ntohs(c->serverAddr.sin_port),
+                    c->playerName);
                 c->joinAttempts++;
                 c->ticksSinceJoinSent = 0;
 
@@ -1326,6 +1352,13 @@ static bool udpClientTick(void *ctx) {
          * LOBBY_STATE broadcasts, so this works in all states. */
         if (c->lastSnapshotTick > 0 &&
             c->localTick - c->lastSnapshotTick >= CLIENT_TIMEOUT_TICKS) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "client timeout: localTick=%u lastSnapshot=%u diff=%u "
+                ">= CLIENT_TIMEOUT_TICKS=%d -> SERVER_SHUTDOWN",
+                (unsigned)c->localTick,
+                (unsigned)c->lastSnapshotTick,
+                (unsigned)(c->localTick - c->lastSnapshotTick),
+                (int)CLIENT_TIMEOUT_TICKS);
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
     }
@@ -1400,6 +1433,16 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     TransportUdpClientCtx *c;
     struct hostent *he;
 
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "client connect: server=%s:%u name='%s' wantRejoin=%d "
+        "wbnToken=%s tracker=%s:%u",
+        serverAddr ? serverAddr : "(null)", (unsigned)serverPort,
+        playerName ? playerName : "(null)",
+        (int)wantRejoin,
+        (wbnToken && *wbnToken) ? "yes" : "no",
+        (trackerAddr && *trackerAddr) ? trackerAddr : "(none)",
+        (unsigned)trackerPort);
+
     memset(&t, 0, sizeof(t));
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
@@ -1409,6 +1452,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     c->sock = createUdpSocket();
     if (c->sock == INVALID_SOCKET) {
+        WB_LOG_ERROR(WB_LOG_CAT_NET, "client connect: createUdpSocket failed");
         c->joinState = UDP_CLIENT_ERROR;
         t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
@@ -1427,7 +1471,14 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         he = gethostbyname(serverAddr);
         if (he != NULL) {
             memcpy(&c->serverAddr.sin_addr, he->h_addr_list[0], he->h_length);
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "client connect: resolved %s -> %s",
+                serverAddr,
+                inet_ntoa(c->serverAddr.sin_addr));
         } else {
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                "client connect: gethostbyname('%s') failed",
+                serverAddr ? serverAddr : "(null)");
             c->joinState = UDP_CLIENT_ERROR;
             t.recordInput = udpClientRecordInput;
             t.sendInput = udpClientSendInput;
@@ -1487,12 +1538,17 @@ void transportUdpClientDestroy(Transport *t) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return;
     c = (TransportUdpClientCtx *)t->ctx;
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "client destroy: joinState=%d localTick=%u lastSnapshot=%u",
+        (int)c->joinState, (unsigned)c->localTick,
+        (unsigned)c->lastSnapshotTick);
     if (c->sock != INVALID_SOCKET) {
         /* Send graceful quit packet to server before closing */
         if (c->joinState == UDP_CLIENT_CONNECTED) {
             uint8_t qbuf[PACKET_HEADER_SIZE];
             packHeader(qbuf, PACKET_QUIT, c->outSequence++);
             udpClientSendTo(c, qbuf, PACKET_HEADER_SIZE);
+            WB_LOG_DEBUG(WB_LOG_CAT_NET, "client sent PACKET_QUIT to server");
         }
         closesocket(c->sock);
     }

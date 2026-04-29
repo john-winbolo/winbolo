@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
+#include "../common/wb_log.h"
 #ifdef _WIN32
 #include <process.h>
 #define getpid _getpid
@@ -72,7 +74,7 @@ int main(int argc, char *argv[]) {
 
     /* Initialize SDL_ttf for TrueType font support */
     if (!TTF_Init()) {
-        SDL_Log("Warning: TTF_Init failed: %s", SDL_GetError());
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "TTF_Init failed: %s", SDL_GetError());
         /* Continue — bitmap fonts still work, TTF just won't be available */
     }
 

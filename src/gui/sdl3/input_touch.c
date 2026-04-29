@@ -20,6 +20,7 @@
 #include <TargetConditionals.h>
 #endif
 #include "input_touch.h"
+#include "../../common/wb_log.h"
 
 /* Joystick deadzone in pixels */
 #define JOYSTICK_DEADZONE 20.0f
@@ -601,7 +602,7 @@ static tankButton inputTouchGetMovementAbsolute(float dist) {
       case TRIGHTDECEL: cmdName = "RIGHT+DECEL"; break;
       default: cmdName = "NONE"; break;
     }
-    SDL_Log("[AbsSteer] tank=%d target=%d raw=%d diff=%d absDiff=%d cmd=%s turnRate=%.1f",
+    WB_LOG_TRACE(WB_LOG_CAT_GUI, "[AbsSteer] tank=%d target=%d raw=%d diff=%d absDiff=%d cmd=%s turnRate=%.1f",
             (int)currentAngle, (int)targetAngle, (int)rawTarget, diff, absDiff, cmdName,
             s_observedTurnRate);
   }

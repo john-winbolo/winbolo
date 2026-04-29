@@ -63,6 +63,7 @@
 #include "../bolo/position_history.h"
 #include "../bolo/screenbullet.h"
 #include "../mapeditor/mapeditor_generate.h"
+#include "../common/wb_log.h"
 
 #ifndef HAVE_SCREEN_C
 /* Forward declaration — defined in servermain.c (server target only) */
@@ -396,9 +397,16 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 }
 
 bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSim create: map='%s' gameType=%d hiddenMines=%d startDelay=%d gameLen=%d",
+        mapFileName ? mapFileName : "(null)",
+        (int)game, (int)hiddenMines, (int)startDelay, (int)gameLen);
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSim create: mapRead failed for '%s'",
+            mapFileName ? mapFileName : "(null)");
         return FALSE;
     }
 
@@ -623,6 +631,8 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER, "serverSim destroy: state=%d", (int)sim->state);
 
     /* Signal the balance thread to stop and wait for it to finish */
     SDL_SetAtomicInt(&sim->balanceProposal.shutdownFlag, 1);
@@ -1186,7 +1196,16 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "addPlayer slot=%u name='%s' wantRejoin=%d state=%d",
+        (unsigned)playerNum,
+        playerName ? playerName : "(null)",
+        (int)wantRejoin,
+        (int)sim->state);
     if (playerNum >= MAX_TANKS) {
+        WB_LOG_WARN(WB_LOG_CAT_SERVER,
+            "addPlayer rejected: slot=%u >= MAX_TANKS=%d",
+            (unsigned)playerNum, (int)MAX_TANKS);
         return;
     }
 
@@ -1257,6 +1276,13 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return;
+    {
+        char nm[PLAYER_NAME_LEN];
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, TRUE);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "removePlayer slot=%u name='%s' state=%d",
+            (unsigned)playerNum, nm, (int)sim->state);
+    }
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
     sim->playerConnected[playerNum] = FALSE;
@@ -1360,7 +1386,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
             if (sim->mapSkipVotes[k]) voteCount++;
         }
         if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
-            SDL_Log("Map skip: disconnect pushed votes over threshold (%d/%d), skipping map", voteCount, connectedHumans);
+            WB_LOG_INFO(WB_LOG_CAT_SERVER, "Map skip: disconnect pushed votes over threshold (%d/%d), skipping map", voteCount, connectedHumans);
             if (sim->randomMapEnabled) {
                 serverSimRandomMapRegenerate(sim);
             } else {
@@ -1587,7 +1613,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         { static bool _snaplg[16] = {0};
           if (!_snaplg[i] && ts->accountFlags != 0) {
             _snaplg[i] = 1;
-            SDL_Log("[WBN SNAP] player %d accountFlags=0x%02x", i, ts->accountFlags);
+            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d accountFlags=0x%02x", i, ts->accountFlags);
           }
         }
 
@@ -2534,11 +2560,11 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
         if (sim->mapSkipVotes[i]) voteCount++;
     }
 
-    SDL_Log("Map skip: player %d voted %s (%d/%d)", playerNum,
+    WB_LOG_INFO(WB_LOG_CAT_SERVER, "Map skip: player %d voted %s (%d/%d)", playerNum,
             sim->mapSkipVotes[playerNum] ? "yes" : "no", voteCount, connectedHumans);
 
     if (connectedHumans > 0 && voteCount * 2 > connectedHumans) {
-        SDL_Log("Map skip: majority reached (%d/%d), skipping map", voteCount, connectedHumans);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER, "Map skip: majority reached (%d/%d), skipping map", voteCount, connectedHumans);
         if (sim->randomMapEnabled) {
             serverSimRandomMapRegenerate(sim);
         } else {

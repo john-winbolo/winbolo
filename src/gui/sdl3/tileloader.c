@@ -23,6 +23,8 @@
 #include "tilemap.h"
 #include "../tiles.h"
 
+#include "../../common/wb_log.h"
+
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -143,7 +145,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
     SDL_Surface *sheet = SDL_CreateSurface(sheetW, sheetH,
                                            SDL_PIXELFORMAT_RGBA32);
     if (!sheet) {
-        SDL_Log("tileLoaderBuildSheet: SDL_CreateSurface(%dx%d) failed: %s",
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: SDL_CreateSurface(%dx%d) failed: %s",
                 sheetW, sheetH, SDL_GetError());
         return NULL;
     }
@@ -163,7 +165,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         SDL_DestroySurface(bmpRaw);
     }
     if (!bmp) {
-        SDL_Log("tileLoaderBuildSheet: warning — could not load data/skin.bmp fallback");
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: could not load data/skin.bmp fallback");
     }
 
     NSVGrasterizer *rast = nsvgCreateRasterizer();
@@ -234,7 +236,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         }
     }
 
-    SDL_Log("tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites",
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites",
             scale, sheetW, sheetH, svgCount, pngCount, bmpCount);
 
     SDL_free(tmpBuf);

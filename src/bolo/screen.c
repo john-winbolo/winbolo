@@ -37,6 +37,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include "../common/wb_log.h"
 #include "global.h"
 #include "bolo_map.h"
 #include "pillbox.h"
@@ -3241,7 +3242,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
     playersSetWbnParticipant(&csPtr->sim.plyrs, pn, (tanks[i].accountFlags & 0x01) != 0);
     playersSetSteamParticipant(&csPtr->sim.plyrs, pn, (tanks[i].accountFlags & 0x02) != 0);
     if (tanks[i].accountFlags != 0) {
-      SDL_Log("[WBN] player %d accountFlags=0x%02x", pn, tanks[i].accountFlags);
+      WB_LOG_TRACE(WB_LOG_CAT_CLIENT, "[WBN] player %d accountFlags=0x%02x", pn, tanks[i].accountFlags);
     }
 
     if (pn == playerNum) {

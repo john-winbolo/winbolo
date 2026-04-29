@@ -15,6 +15,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "../common/wb_log.h"
+
 #include "imgui.h"
 #include "../gui/imgui_theme.h"
 #include "imgui_impl_sdl3.h"
@@ -140,10 +142,10 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
             fontData = loadFontFromAssets("fonts/InterVariable.ttf", &fontDataSize);
         }
         if (fontData) {
-            SDL_Log("[GameSetup] Loaded font, %d bytes, size=%.0f", fontDataSize, fontSize);
+            WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameSetup] Loaded font, %d bytes, size=%.0f", fontDataSize, fontSize);
             io.Fonts->AddFontFromMemoryTTF(fontData, fontDataSize, fontSize);
         } else {
-            SDL_Log("[GameSetup] Font load failed, using default font scaled");
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "[GameSetup] Font load failed, using default font scaled");
             ImFontConfig config;
             config.SizePixels = fontSize;
             config.OversampleH = 2;
