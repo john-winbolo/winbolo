@@ -135,11 +135,17 @@ typedef struct {
     bool         paused;
     int          zoomFactor;
 
-    /* Overlay toggles */
-    bool         showInfluence;
-    bool         showDanger;
-    bool         showFrontLine;
-    bool         showPath;
+    /* Native overlay toggles live in the viz registry alongside
+     * brain-registered ones — single source of truth, single INI.
+     * We cache each native's registry idx at startup so number-key
+     * handlers and renderers can flip / read in O(1) without a
+     * string lookup. -1 if registration failed. */
+    int          regIdxInfluence;
+    int          regIdxDanger;
+    int          regIdxFrontLine;
+    int          regIdxPath;
+    int          regIdxFog;
+    int          regIdxValues;
     bool         showHUD;          /* status bar + legend (toggle with H) */
 
     /* Overlay texture (256x256 RGBA, updated once per game tick) */
@@ -211,16 +217,19 @@ typedef struct {
     int          keyShoot;
     int          keyLayMine;
 
-    /* Fog of war overlay (6 key). Black tile fills on every map
-     * cell that's still 0xFF (unseen) in the bot's pathfinder
-     * worldPtr — i.e. tiles the brain has never observed. */
-    bool         showFog;
-
-    /* Cell value numeric overlay (9 key). Prints the underlying
-     * danger / influence value on each visible tile when the
-     * matching grid overlay (1 or 2) is active. */
-    bool         showValues;
 } BrainTestApp;
+
+/* Registry-backed accessor + flip for the native toggles. Returns
+ * false if the row hasn't been registered (shouldn't happen — we
+ * register them all at startup). */
+static bool vizFlag(int idx) {
+    const VizRegistryEntry *e = vizRegistryGet(idx);
+    return e ? e->is_on : false;
+}
+static void vizFlagFlip(int idx) {
+    VizRegistryEntry *e = vizRegistryGetMutable(idx);
+    if (e) e->is_on = !e->is_on;
+}
 
 static volatile bool appQuit = FALSE;
 
@@ -292,8 +301,8 @@ static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
  * corresponding grid overlay is on. Skipped at low zoom (numbers
  * unreadable). Generic — reads only BrainPathfinder grids. */
 static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
-    if (!app->showValues) return;
-    if (!app->showDanger && !app->showInfluence) return;
+    if (!vizFlag(app->regIdxValues)) return;
+    if (!vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxInfluence)) return;
     BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
     if (!pf) return;
 
@@ -318,7 +327,7 @@ static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
             if (tx < 0 || tx > 255) continue;
             int idx = ty * 256 + tx;
             bool drawn = false;
-            if (app->showDanger) {
+            if (vizFlag(app->regIdxDanger)) {
                 uint16_t d = pf->danger_grid[idx];
                 if (d > 0) {
                     float sx, sy;
@@ -332,7 +341,7 @@ static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
                     drawn = true;
                 }
             }
-            if (app->showInfluence) {
+            if (vizFlag(app->regIdxInfluence)) {
                 int16_t inf = pf->influence_grid[idx];
                 if (inf != 0) {
                     float sx, sy;
@@ -358,7 +367,7 @@ static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
  * 256×256 byte map (which the pathfinder API guarantees: see
  * brainPathfinderSetMap). */
 static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
-    if (!app->showFog) return;
+    if (!vizFlag(app->regIdxFog)) return;
     BrainPathfinder *bpf = botManagerGetBrainPathfinder(app->followBot);
     if (!bpf || !bpf->map) return;
 
@@ -722,7 +731,7 @@ static inline void blendPixel(uint8_t *pixels, int pitch, int x, int y,
 static void updateOverlayTexture(BrainTestApp *app) {
     BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
     if (!pf) return;
-    if (!app->showInfluence && !app->showDanger && !app->showFrontLine) return;
+    if (!vizFlag(app->regIdxInfluence) && !vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxFrontLine)) return;
 
     /* Only rebuild when the sim has ticked or overlays were toggled */
     if (app->sim.tick == app->overlayTick && !app->overlayDirty) return;
@@ -740,7 +749,7 @@ static void updateOverlayTexture(BrainTestApp *app) {
     memset(pixels, 0, 256 * pitch);
 
     /* Influence overlay: blue (friendly +) / red (hostile -) */
-    if (app->showInfluence) {
+    if (vizFlag(app->regIdxInfluence)) {
         for (int y = 0; y < 256; y++) {
             for (int x = 0; x < 256; x++) {
                 int16_t inf = brainPathfinderInfluenceAt(pf, x, y);
@@ -761,7 +770,7 @@ static void updateOverlayTexture(BrainTestApp *app) {
     }
 
     /* Danger overlay: red/orange intensity */
-    if (app->showDanger) {
+    if (vizFlag(app->regIdxDanger)) {
         for (int y = 0; y < 256; y++) {
             for (int x = 0; x < 256; x++) {
                 float d = brainPathfinderDangerAt(pf, x, y);
@@ -775,7 +784,7 @@ static void updateOverlayTexture(BrainTestApp *app) {
     }
 
     /* Front line overlay: bright yellow points */
-    if (app->showFrontLine) {
+    if (vizFlag(app->regIdxFrontLine)) {
         int flx[4096], fly[4096];
         int n = brainPathfinderFindFrontLine(pf, flx, fly, 4096);
         for (int i = 0; i < n; i++) {
@@ -790,12 +799,43 @@ static void updateOverlayTexture(BrainTestApp *app) {
 
 /* Cache the brain's A* path for screen-space rendering */
 static void updateCachedPath(BrainTestApp *app) {
-    if (!app->showPath) return;
+    if (!vizFlag(app->regIdxPath)) return;
     BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
     if (!pf) return;
-    int n = brainPathfinderTracePath(pf, app->cachedPath_x, app->cachedPath_y, 2048);
+
+    /* The brain mostly navigates by Dijkstra slate lookup now —
+     * `cpf.path_to` tries Dijkstra first and falls back to A* only
+     * when no slate is available. Mirror that priority here so the
+     * green polyline reflects what the brain is actually following.
+     *
+     * To trace a Dijkstra path we need the destination tile. The
+     * brain's goal info carries it (`mx, my` on the active goal).
+     * If goal info isn't available, fall through to the legacy A*
+     * trace which uses pf->dest_x/y from the last A* search. */
+    int n = 0;
+    BrainGoalInfo gi;
+    if (botManagerGetGoalInfo(app->followBot, &gi)
+        && gi.kind[0] != '\0'
+        && strcmp(gi.kind, "none") != 0) {
+        /* KIND_NORMAL = 0; the brain's primary nav slate. Other
+         * kinds (KIND_PILL etc.) exist for special queries — we
+         * could probe them too if NORMAL returns 0, but the brain
+         * always keeps a NORMAL slate refreshed for steering. */
+        n = brainPathfinderDijkstraTracePath(pf, /* slate */ 0,
+                                              gi.mx, gi.my,
+                                              app->cachedPath_x,
+                                              app->cachedPath_y, 2048);
+    }
+    if (n == 0) {
+        n = brainPathfinderTracePath(pf, app->cachedPath_x,
+                                      app->cachedPath_y, 2048);
+    }
     if (n > 0) {
         app->cachedPathLen = n;
+    } else {
+        /* No path either way — clear the previous trace so we don't
+         * keep drawing a stale polyline indefinitely. */
+        app->cachedPathLen = 0;
     }
 }
 
@@ -839,8 +879,8 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
     /* Update cached path data (independent of grid overlays) */
     updateCachedPath(app);
 
-    bool hasGridOverlay = app->showInfluence || app->showDanger || app->showFrontLine;
-    bool hasPathOverlay = (app->showPath && app->cachedPathLen > 0) ||
+    bool hasGridOverlay = vizFlag(app->regIdxInfluence) || vizFlag(app->regIdxDanger) || vizFlag(app->regIdxFrontLine);
+    bool hasPathOverlay = (vizFlag(app->regIdxPath) && app->cachedPathLen > 0) ||
                           (app->clickActive && app->clickPathLen > 0);
 
     if (!hasGridOverlay && !hasPathOverlay) return;
@@ -872,7 +912,7 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
     /* Path overlays as screen-space lines */
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
 
-    if (app->showPath && app->cachedPathLen > 0) {
+    if (vizFlag(app->regIdxPath) && app->cachedPathLen > 0) {
         renderPathLines(app, screenW, screenH,
                         app->cachedPath_x, app->cachedPath_y, app->cachedPathLen,
                         0, 255, 80, 240);
@@ -1130,10 +1170,10 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
             app->freeCamera ? "FREE" : "FOLLOW",
             pf ? "PF:ok" : "PF:none",
             app->zoomFactor,
-            app->showInfluence ? "*" : "",
-            app->showDanger ? "*" : "",
-            app->showFrontLine ? "*" : "",
-            app->showPath ? "*" : "",
+            vizFlag(app->regIdxInfluence) ? "*" : "",
+            vizFlag(app->regIdxDanger) ? "*" : "",
+            vizFlag(app->regIdxFrontLine) ? "*" : "",
+            vizFlag(app->regIdxPath) ? "*" : "",
             app->paused ? "PAUSED" : "running",
             app->freeCamera ? "follow" : "free");
 
@@ -1187,17 +1227,17 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
     }
 
     /* Overlay legend at bottom-left (toggle with H) */
-    if (app->showHUD && (app->showInfluence || app->showDanger || app->showFrontLine
-        || app->showPath || app->clickActive)) {
+    if (app->showHUD && (vizFlag(app->regIdxInfluence) || vizFlag(app->regIdxDanger) || vizFlag(app->regIdxFrontLine)
+        || vizFlag(app->regIdxPath) || app->clickActive)) {
         float legScale = 2.0f;
         float legH = 8.0f * legScale + 8.0f;
         float legY = (float)screenH - legH;
 
         char legend[256] = "";
-        if (app->showInfluence) strcat(legend, "Blue=friendly Red=hostile  ");
-        if (app->showDanger)    strcat(legend, "Orange=danger  ");
-        if (app->showFrontLine) strcat(legend, "Yellow=frontline  ");
-        if (app->showPath)      strcat(legend, "Green=path  ");
+        if (vizFlag(app->regIdxInfluence)) strcat(legend, "Blue=friendly Red=hostile  ");
+        if (vizFlag(app->regIdxDanger))    strcat(legend, "Orange=danger  ");
+        if (vizFlag(app->regIdxFrontLine)) strcat(legend, "Yellow=frontline  ");
+        if (vizFlag(app->regIdxPath))      strcat(legend, "Green=path  ");
         if (app->clickActive)   strcat(legend, "Magenta=click  ");
 
         float legW = (float)strlen(legend) * 8.0f * legScale + 12.0f;
@@ -1368,8 +1408,46 @@ int main(int argc, char *argv[]) {
     memset(&app, 0, sizeof(app));
     app.zoomFactor = 2;
     app.freeCamera = false;
-    app.showPath = true;
     app.showHUD = false;
+
+    /* Register the C-side native toggles in the viz registry so
+     * they show up alongside brain-registered overlays in the V
+     * dialog (one place to find every toggle, one INI to persist
+     * them). Cache the indices on the app so number-key handlers
+     * and renderers can read/flip in O(1). */
+    app.regIdxInfluence = vizRegistryAddNative(
+        "Influence",
+        "Friendly/hostile territorial influence grid (blue/red)",
+        "Reads BrainPathfinder.influence_grid: positive=friendly, "
+        "negative=hostile. Stamped per friendly/hostile base + pill.",
+        "1", false);
+    app.regIdxDanger = vizRegistryAddNative(
+        "Danger",
+        "Pill danger grid (orange tint, opacity scales with anger)",
+        "Reads BrainPathfinder.danger_grid: stamped per hostile/neutral "
+        "pill, intensity scales with pill anger.",
+        "2", false);
+    app.regIdxFrontLine = vizRegistryAddNative(
+        "Frontline",
+        "Yellow dots where friendly/hostile influence zones meet",
+        "Computed from influence_grid sign-flips between adjacent cells.",
+        "3", false);
+    app.regIdxPath = vizRegistryAddNative(
+        "A* / Dijkstra Path",
+        "Green polyline of the bot's currently-followed nav path",
+        "Traces the active Dijkstra slate (KIND_NORMAL) to the bot's "
+        "current goal; falls back to the last A* search.",
+        "4", true);
+    app.regIdxFog = vizRegistryAddNative(
+        "Fog of war",
+        "Dark tint on tiles the bot hasn't observed",
+        "Reads BrainPathfinder.map for cells still 0xFF / unknown.",
+        "6", false);
+    app.regIdxValues = vizRegistryAddNative(
+        "Cell values",
+        "Print the numeric value on each tile of the active 1/2 grid",
+        "Companion to Influence / Danger — only renders at zoom >= 1.",
+        "9", false);
 
     if (!parseArgs(argc, argv)) return 1;
     app.followBot = (BYTE)optFollow;
@@ -1575,32 +1653,41 @@ int main(int argc, char *argv[]) {
                     app.showHUD = !app.showHUD;
                     break;
                 case SDLK_1:
-                    app.showInfluence = !app.showInfluence;
+                    vizFlagFlip(app.regIdxInfluence);
                     app.overlayDirty = true;
                     break;
                 case SDLK_2:
-                    app.showDanger = !app.showDanger;
+                    vizFlagFlip(app.regIdxDanger);
                     app.overlayDirty = true;
                     break;
                 case SDLK_3:
-                    app.showFrontLine = !app.showFrontLine;
+                    vizFlagFlip(app.regIdxFrontLine);
                     app.overlayDirty = true;
                     break;
                 case SDLK_4:
-                    app.showPath = !app.showPath;
+                    vizFlagFlip(app.regIdxPath);
                     app.overlayDirty = true;
                     break;
                 case SDLK_6:
-                    app.showFog = !app.showFog;
+                    vizFlagFlip(app.regIdxFog);
                     break;
                 case SDLK_9:
-                    app.showValues = !app.showValues;
+                    vizFlagFlip(app.regIdxValues);
                     break;
-                case SDLK_0:
-                    app.showInfluence = app.showDanger = app.showFrontLine =
-                        app.showPath = app.showFog = app.showValues = false;
+                case SDLK_0: {
+                    /* Clear every native row in one shot. */
+                    int natives[6] = {
+                        app.regIdxInfluence, app.regIdxDanger,
+                        app.regIdxFrontLine, app.regIdxPath,
+                        app.regIdxFog,       app.regIdxValues,
+                    };
+                    for (int i = 0; i < 6; i++) {
+                        VizRegistryEntry *e = vizRegistryGetMutable(natives[i]);
+                        if (e) e->is_on = false;
+                    }
                     app.overlayDirty = true;
                     break;
+                }
                 case SDLK_EQUALS:
                 case SDLK_KP_PLUS:
                     if (app.zoomFactor < MAX_ZOOM) app.zoomFactor++;
