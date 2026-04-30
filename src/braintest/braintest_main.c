@@ -277,6 +277,52 @@ static const char *keyToRole(BrainTestApp *app, int scancode) {
     return NULL;
 }
 
+/* Fog of war overlay: tile-by-tile dark fill on every cell that's
+ * still 0xFF (unseen) in the followed bot's pathfinder map.
+ * Generic — works for any brain that maintains a worldPtr to a
+ * 256×256 byte map (which the pathfinder API guarantees: see
+ * brainPathfinderSetMap). */
+static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
+    if (!app->showFog) return;
+    BrainPathfinder *bpf = botManagerGetBrainPathfinder(app->followBot);
+    if (!bpf || !bpf->map) return;
+
+    int zf = app->zoomFactor;
+    int tp = 16 * zf;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float moX = scx - (app->viewCenterX >> 8) * tp
+        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
+    float moY = scy - (app->viewCenterY >> 8) * tp
+        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
+
+    /* Cull to visible tiles only (full 256×256 sweep is wasteful
+     * at zoomed-in views). */
+    int startX = (int)((-moX) / tp) - 1;
+    int startY = (int)((-moY) / tp) - 1;
+    int endX = startX + screenW / tp + 3;
+    int endY = startY + screenH / tp + 3;
+    if (startX < 0) startX = 0;
+    if (startY < 0) startY = 0;
+    if (endX > 255) endX = 255;
+    if (endY > 255) endY = 255;
+
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
+    for (int y = startY; y <= endY; y++) {
+        for (int x = startX; x <= endX; x++) {
+            BYTE raw = bpf->map[y * 256 + x];
+            /* "Unseen" = literal 0xFF sentinel OR low-nibble == 15
+             * (the unknown terrain marker the pathfinder uses). */
+            if (raw == 0xFF || (raw & 0x0F) == 15) {
+                SDL_FRect rect = { moX + x * tp, moY + y * tp,
+                                   (float)tp, (float)tp };
+                SDL_RenderFillRect(app->renderer, &rect);
+            }
+        }
+    }
+}
+
 /* ---------------- Viz registry callback + Lua state push ----------
  * The brain calls braintest_viz_register("id", ...) at brain.open().
  * Our callback adds the row to the registry. We also need to push
@@ -1189,6 +1235,11 @@ static void appRender(BrainTestApp *app) {
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);
 
+        /* Fog-of-war (drawn between BrainTest pathfinder overlays
+         * and the brain's own overlays so the brain's stuff isn't
+         * obscured). */
+        renderFogOverlay(app, screenW, screenH);
+
         /* Brain-emitted overlay commands (lines/rects/circles/text
          * the brain pushed via the overlay_* Lua API this tick). */
         renderBrainOverlay(app, screenW, screenH);
@@ -1461,8 +1512,12 @@ int main(int argc, char *argv[]) {
                     app.showPath = !app.showPath;
                     app.overlayDirty = true;
                     break;
+                case SDLK_6:
+                    app.showFog = !app.showFog;
+                    break;
                 case SDLK_0:
-                    app.showInfluence = app.showDanger = app.showFrontLine = app.showPath = false;
+                    app.showInfluence = app.showDanger = app.showFrontLine =
+                        app.showPath = app.showFog = false;
                     app.overlayDirty = true;
                     break;
                 case SDLK_EQUALS:
