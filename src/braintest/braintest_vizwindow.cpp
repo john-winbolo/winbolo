@@ -162,6 +162,17 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
                 continue;
             }
             ImGui::TableNextRow();
+
+            /* Highlight a frequently-toggled meta-row (label_overlays
+             * is the "tag every shape with its viz_id" debug aid)
+             * with a green tint so the user can spot it at a glance
+             * even when the list is filtered or scrolled. */
+            if (e->id[0] && strcmp(e->id, "label_overlays") == 0) {
+                ImU32 bgCol = ImGui::GetColorU32(
+                    ImVec4(0.15f, 0.45f, 0.15f, 0.55f));
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, bgCol);
+            }
+
             ImGui::TableSetColumnIndex(0);
             ImGui::TextColored(
                 e->is_on ? ImVec4(0.40f, 0.95f, 0.40f, 1.0f)

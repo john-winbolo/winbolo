@@ -937,87 +937,13 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
-    /* ── Goal info panel (top-right) ── */
-    if (app->goalInfoValid) {
-        float ps = 1.0f;  /* panel text scale */
-        float lineH = 8.0f * ps + 1.0f;
-        float panelW = 480.0f;
-        /* Clamp panel to screen */
-        if (panelW > (float)screenW - 8.0f) panelW = (float)screenW - 8.0f;
-        float panelX = (float)screenW - panelW - 2.0f;
-        float py = 2.0f;
-
-        /* Count lines for background height */
-        int numLines = 2;  /* goal + cost */
-        if (app->goalInfo.substate[0]) numLines++;
-        int maxCandidates = app->goalInfo.num_candidates;
-        /* Clamp candidates to fit screen */
-        float availH = (float)screenH - py - 8.0f;
-        int maxFit = (int)((availH - lineH * (float)numLines - 4.0f) / lineH) - 1;
-        if (maxFit < 0) maxFit = 0;
-        if (maxCandidates > maxFit) maxCandidates = maxFit;
-        if (maxCandidates > 0) numLines += 1 + maxCandidates; /* header + items */
-
-        float panelH = lineH * (float)numLines + 4.0f;
-        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
-        SDL_FRect panelBg = { panelX, py, panelW, panelH };
-        SDL_RenderFillRect(app->renderer, &panelBg);
-
-        /* Current goal */
-        if (app->goalInfo.target_id >= 0) {
-            SDL_snprintf(line, sizeof(line), "Goal: %s #%d (%d,%d)",
-                         app->goalInfo.kind, app->goalInfo.target_id,
-                         app->goalInfo.mx, app->goalInfo.my);
-        } else {
-            SDL_snprintf(line, sizeof(line), "Goal: %s (%d,%d)",
-                         app->goalInfo.kind, app->goalInfo.mx, app->goalInfo.my);
-        }
-        py = drawHudLine(app->renderer, panelX + 3.0f, py + 1.0f, ps,
-                         100, 255, 100, line);
-
-        /* Substate if present */
-        if (app->goalInfo.substate[0]) {
-            SDL_snprintf(line, sizeof(line), " sub: %s", app->goalInfo.substate);
-            py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                             180, 180, 180, line);
-        }
-
-        /* Target cost + pathfinder status */
-        {
-            const char *pfSt = pf ? (pf->status == 1 ? "done" :
-                                     pf->status == 0 ? "run" : "fail") : "-";
-            if (pf && pf->status == 1 &&
-                pf->dest_x == app->goalInfo.mx && pf->dest_y == app->goalInfo.my) {
-                SDL_snprintf(line, sizeof(line), "A*=%.0f  est=%.0f  PF:%s",
-                             app->targetCost, app->targetEstCost, pfSt);
-            } else if (pf) {
-                SDL_snprintf(line, sizeof(line), "est=%.0f  PF:%s",
-                             app->targetEstCost, pfSt);
-            } else {
-                SDL_snprintf(line, sizeof(line), "cost:- PF:%s", pfSt);
-            }
-        }
-        py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                         200, 200, 100, line);
-
-        /* Candidate pool */
-        if (maxCandidates > 0) {
-            py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                             140, 140, 140, "-- candidates --");
-            for (int i = 0; i < maxCandidates; i++) {
-                SDL_snprintf(line, sizeof(line), "%s%-30s %5.0f x%.1f",
-                             app->goalInfo.candidates[i].winner ? ">" : " ",
-                             app->goalInfo.candidates[i].desc,
-                             app->goalInfo.candidates[i].cost,
-                             app->goalInfo.candidates[i].phase_weight);
-                uint8_t cr = app->goalInfo.candidates[i].winner ? 100 : 150;
-                uint8_t cg = app->goalInfo.candidates[i].winner ? 255 : 150;
-                uint8_t cb = app->goalInfo.candidates[i].winner ? 100 : 150;
-                py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                                 cr, cg, cb, line);
-            }
-        }
-    }
+    /* The top-right goal/cost/candidate panel that used to live
+     * here has been removed — the brain emits richer equivalents
+     * (hud_goal, hud_replan, hud_goal_candidates, hud_attack_status,
+     * etc.) via the overlay_hud_text Lua API, which renderBrainOverlay
+     * draws and the V dialog gates per-id. Keeping a duplicate native
+     * panel here would mean two-source-of-truth and more code to
+     * decouple from any specific brain. */
 
     /* ── Click cost display (bottom-right) ── */
     if (app->clickActive) {
@@ -1537,10 +1463,15 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_WHEEL:
-                if (ev.wheel.y > 0) {
-                    if (app.zoomFactor < MAX_ZOOM) app.zoomFactor++;
-                } else if (ev.wheel.y < 0) {
-                    if (app.zoomFactor > MIN_ZOOM) app.zoomFactor--;
+                /* Only zoom on wheel events delivered to the MAIN
+                 * window — wheel events in the V dialog scroll its
+                 * row list and shouldn't leak through. */
+                if (ev.wheel.windowID == SDL_GetWindowID(app.window)) {
+                    if (ev.wheel.y > 0) {
+                        if (app.zoomFactor < MAX_ZOOM) app.zoomFactor++;
+                    } else if (ev.wheel.y < 0) {
+                        if (app.zoomFactor > MIN_ZOOM) app.zoomFactor--;
+                    }
                 }
                 break;
             }
