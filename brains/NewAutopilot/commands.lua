@@ -205,11 +205,11 @@ function M.execute(cmd, state, world)
 
     state.paused = false
     state.command_goal = {
-      kind = "bpc_pill", id = cmd.id,
+      kind = "attack_pill", id = cmd.id,
       mx = p.mx, my = p.my, wx = U.m2w(p.mx), wy = U.m2w(p.my),
     }
     state.goal = {
-      kind = "bpc_pill", mx = p.mx, my = p.my,
+      kind = "attack_pill", mx = p.mx, my = p.my,
       wx = U.m2w(p.mx), wy = U.m2w(p.my),
     }
     state.pf.status = "idle"

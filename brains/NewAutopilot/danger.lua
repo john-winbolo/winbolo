@@ -35,12 +35,15 @@ local threat = require("threat")
 
 local M = {}
 
--- shell_map[mkey] = expires_tick
+-- M.shell_map[mkey] = expires_tick
 -- Cells on predicted hostile-shell trajectories this tick.
-local shell_map = {}
+-- Lives on M (not a closure-private local) so the state serializer can
+-- include it in snapshots and replays see the same shell predictions.
+M.shell_map = {}
 
 function M.reset()
-  shell_map = {}
+  -- Mutate in place so any cached references stay valid.
+  for k in pairs(M.shell_map) do M.shell_map[k] = nil end
 end
 
 -- -------------------------------------------------------------------------
@@ -75,7 +78,7 @@ local function predict_shells(info, tick)
 
         -- Mark this cell as dangerous
         local k = U.mkey(mx, my)
-        shell_map[k] = tick + C.DANGER_DECAY_TICKS_SHELL
+        M.shell_map[k] = tick + C.DANGER_DECAY_TICKS_SHELL
 
         -- Stop at solid terrain (shell impacts here)
         local tt = U.traw(mx, my) & TERRAIN_MASK
@@ -91,9 +94,9 @@ end
 -- Internal: expire old shell-map entries (called every 10 ticks)
 -- -------------------------------------------------------------------------
 local function purge_shell_map(tick)
-  for k, exp in pairs(shell_map) do
+  for k, exp in pairs(M.shell_map) do
     if tick >= exp then
-      shell_map[k] = nil
+      M.shell_map[k] = nil
     end
   end
 end
@@ -104,7 +107,7 @@ end
 -- -------------------------------------------------------------------------
 function M.danger_at(mx, my, tick, world)
   local k = U.mkey(mx, my)
-  local shell_val = (shell_map[k] and tick < shell_map[k])
+  local shell_val = (M.shell_map[k] and tick < M.shell_map[k])
                     and C.DANGER_SHELL_IMPACT or 0
   local threat_val = threat.at(mx, my)
   return shell_val + threat_val
@@ -136,6 +139,54 @@ function M.lgm_path_safe(info, dest_mx, dest_my, threshold, tick, world)
       return false
     end
   end
+  return true
+end
+
+-- -------------------------------------------------------------------------
+-- Enhanced LGM path safety: samples midpoints and handles wall detours.
+-- The straight-line check above can miss dangers on the actual LGM path
+-- (which routes around walls) or flag tiles the LGM never traverses.
+-- This version samples at quarter-points and checks perpendicular offsets
+-- when midpoints hit impassable terrain.
+-- -------------------------------------------------------------------------
+function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world)
+  -- Quick check: destination
+  if M.danger_at(dest_mx, dest_my, tick, world) > threshold then
+    return false
+  end
+
+  local tx = info.tankx >> 8
+  local ty = info.tanky >> 8
+  local ddx = dest_mx - tx
+  local ddy = dest_my - ty
+  local dist = math.abs(ddx) + math.abs(ddy)
+
+  if dist <= 1 then
+    return M.danger_at(tx, ty, tick, world) <= threshold
+  end
+
+  -- Sample at fractions along the straight line
+  local fracs = dist > 4 and {0.25, 0.5, 0.75} or {0.5}
+  for _, frac in ipairs(fracs) do
+    local sx = math.floor(tx + ddx * frac + 0.5)
+    local sy = math.floor(ty + ddy * frac + 0.5)
+    local stt = U.ttype(sx, sy)
+
+    if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
+      -- LGM goes around walls: check perpendicular offsets
+      local len = math.sqrt(ddx * ddx + ddy * ddy)
+      local px = len > 0 and math.floor(-ddy / len + 0.5) or 0
+      local py = len > 0 and math.floor(ddx / len + 0.5) or 0
+      local ok1 = M.danger_at(sx + px, sy + py, tick, world) <= threshold
+      local ok2 = M.danger_at(sx - px, sy - py, tick, world) <= threshold
+      if not (ok1 or ok2) then return false end
+    else
+      if M.danger_at(sx, sy, tick, world) > threshold then
+        return false
+      end
+    end
+  end
+
   return true
 end
 

@@ -12,6 +12,85 @@ local log = require("logger")
 
 local M = {}
 
+-- Shells likely needed for the next 1-2 attack missions, read from the
+-- previous replan's pool_cache. At tick 0 the cache is empty and this
+-- returns 0 — the baseline floor still applies.
+--
+-- For each entry we combine:
+--   path_shells  = shells spent shooting walls en route
+--                  (info.shells - entry._shells_on_arrival, floored at 0)
+--   target_shells = shells to destroy the target (pill.health / base.health)
+-- capped at TANK_FULL_SHELLS, then the top two estimates are summed.
+local function estimate_mission_shells(state, world, info)
+  local pc = state.pool_cache
+  if not pc then return 0 end
+
+  local current = info and info.shells or C.TANK_FULL_SHELLS
+
+  local function path_cost(entry)
+    local soa = entry._shells_on_arrival
+    if not soa then return 0 end
+    return math.max(0, current - soa)
+  end
+
+  local estimates = {}
+  local p6 = pc[6]  -- attack_pill
+  if p6 and p6._pill and p6._pill.health then
+    estimates[#estimates + 1] = math.min(path_cost(p6) + p6._pill.health,
+                                         C.TANK_FULL_SHELLS)
+  end
+  local p7 = pc[7]  -- attack_base
+  if p7 and p7.goal and p7.goal.target_id and world and world.bases then
+    local base = world.bases[p7.goal.target_id]
+    local hp = (base and base.health) or 20  -- base HP fallback if unresolvable
+    estimates[#estimates + 1] = math.min(path_cost(p7) + hp, C.TANK_FULL_SHELLS)
+  end
+
+  table.sort(estimates, function(a, b) return a > b end)
+  local sum = 0
+  for i = 1, math.min(2, #estimates) do sum = sum + estimates[i] end
+  return sum
+end
+
+local function tank_combat_shells(state, info)
+  if not (state.perc and state.perc.enemy_tanks) then return 0 end
+  local count = 0
+  for _, et in ipairs(state.perc.enemy_tanks) do
+    if (et.dist or math.huge) <= C.REFUEL_ENEMY_TANK_RANGE then
+      count = count + 1
+      if count >= C.REFUEL_MAX_ENEMY_TANKS_COUNTED then break end
+    end
+  end
+  return count * C.REFUEL_PER_ENEMY_TANK
+end
+
+local function needs_full_armour(state, info)
+  if not (state.perc and state.perc.enemy_tanks) then return false end
+  for _, et in ipairs(state.perc.enemy_tanks) do
+    if (et.dist or math.huge) <= C.REFUEL_ENEMY_TANK_RANGE then
+      return true
+    end
+  end
+  return false
+end
+
+-- Sets state.shell_target and state.armour_target. Called once per tick
+-- at the end of M.update, so the rest of the brain (init.lua refuel check,
+-- goals.lua pool-1 scaling, nearest_resupply_base filters) reads a single
+-- consistent pair.
+local function compute_refuel_targets(state, world, info)
+  local baseline = C.REFUEL_BASELINE_SHELLS
+  local mission  = estimate_mission_shells(state, world, info)
+  local combat   = tank_combat_shells(state, info)
+
+  local target = math.max(baseline, mission + C.SHELL_RESERVE, combat)
+  state.shell_target = math.min(target, C.TANK_FULL_SHELLS)
+
+  state.armour_target = needs_full_armour(state, info)
+                        and C.TANK_FULL_ARMOUR
+                        or C.ARMOUR_COMBAT
+end
+
 -- Compute center of gravity of friendly bases + pills
 local function friendly_cog(world)
   local sx, sy, count = 0, 0, 0
@@ -34,29 +113,62 @@ end
 function M.update(state, world, info)
   local perc = state.perc
 
-  -- Count totals (perception already has friendly/hostile/neutral counts)
+  -- Count all pills and bases — neutrals count as unclaimed territory.
+  -- Endgame requires ALL pills AND bases to be captured (no neutrals left).
   local friendly_pills = perc.friendly_pill_count or 0
-  local total_pills = friendly_pills + (perc.hostile_pill_count or 0)
-                      + (perc.dead_neutral_pill_count or 0)
+  local hostile_pills = perc.hostile_pill_count or 0
+  local neutral_pills = (perc.neutral_pill_count or 0) + (perc.dead_neutral_pill_count or 0)
+  local total_pills = friendly_pills + hostile_pills + neutral_pills
   local friendly_ratio = total_pills > 0 and (friendly_pills / total_pills) or 0.5
 
   local friendly_bases = perc.friendly_base_count or 0
-  local total_bases = friendly_bases + (perc.hostile_base_count or 0)
-                      + (perc.neutral_base_count or 0)
-  local base_ratio = total_bases > 0 and (friendly_bases / total_bases) or 0.5
+  local hostile_bases = perc.hostile_base_count or 0
+  local contested_bases = friendly_bases + hostile_bases
+  local base_ratio = contested_bases > 0 and (friendly_bases / contested_bases) or 0.5
+
+  -- Total counts (including neutrals) still needed for opening phase check
+  local total_bases = friendly_bases + hostile_bases + (perc.neutral_base_count or 0)
 
   -- Determine candidate phase
-  local new_phase
-  if (perc.neutral_base_count or 0) > 0 or state.tick < C.OPENING_MIN_TICKS then
+  -- Opening threshold: as time passes, tolerate more neutral bases remaining.
+  -- At t=0: must capture ALL neutral bases (threshold=0)
+  -- At 4min (12000t): allow 1/4 of bases neutral (threshold = total * 0.25)
+  -- At 6min (18000t): allow 1/2 of bases neutral (threshold = total * 0.5)
+  local neutral_count = perc.neutral_base_count or 0
+  local opening_tolerance = 0
+  if state.tick > C.OPENING_MIN_TICKS and total_bases > 0 then
+    local minutes = state.tick / (50 * 60)
+    -- Exponential ramp: 0 at 0min, ~0.25 at 4min, ~0.5 at 6min, ~0.75 at 10min
+    opening_tolerance = total_bases * (1.0 - math.exp(-minutes * 0.18))
+  end
+
+  local new_phase, phase_reason
+  if state.tick < C.OPENING_MIN_TICKS then
     new_phase = "opening"
-  elseif friendly_ratio > C.ENDGAME_PILL_RATIO or base_ratio > C.ENDGAME_BASE_RATIO then
+    phase_reason = string.format("tick %d < %d", state.tick, C.OPENING_MIN_TICKS)
+  elseif neutral_count > opening_tolerance then
+    new_phase = "opening"
+    phase_reason = string.format("neutral_bases %d > %.0f tol", neutral_count, opening_tolerance)
+  elseif neutral_pills > 0 or neutral_count > 0 then
+    new_phase = "middle"
+    phase_reason = string.format("neutrals remain: %d pills %d bases", neutral_pills, neutral_count)
+  elseif friendly_ratio > C.ENDGAME_PILL_RATIO then
     new_phase = "endgame_winning"
-  elseif friendly_ratio < (1.0 - C.ENDGAME_PILL_RATIO)
-      or base_ratio < (1.0 - C.ENDGAME_BASE_RATIO) then
+    phase_reason = string.format("pills %.0f%% > %.0f%% (%d of %d)", friendly_ratio*100, C.ENDGAME_PILL_RATIO*100, friendly_pills, total_pills)
+  elseif base_ratio > C.ENDGAME_BASE_RATIO then
+    new_phase = "endgame_winning"
+    phase_reason = string.format("bases %.0f%% > %.0f%% (%d of %d contested)", base_ratio*100, C.ENDGAME_BASE_RATIO*100, friendly_bases, contested_bases)
+  elseif friendly_ratio < (1.0 - C.ENDGAME_PILL_RATIO) then
     new_phase = "endgame_losing"
+    phase_reason = string.format("pills %.0f%% < %.0f%% (%d of %d)", friendly_ratio*100, (1.0 - C.ENDGAME_PILL_RATIO)*100, friendly_pills, total_pills)
+  elseif base_ratio < (1.0 - C.ENDGAME_BASE_RATIO) then
+    new_phase = "endgame_losing"
+    phase_reason = string.format("bases %.0f%% < %.0f%% (%d of %d contested)", base_ratio*100, (1.0 - C.ENDGAME_BASE_RATIO)*100, friendly_bases, contested_bases)
   else
     new_phase = "middle"
+    phase_reason = string.format("pills=%.0f%% (%d/%d) bases=%.0f%% (%d/%d)", friendly_ratio*100, friendly_pills, total_pills, base_ratio*100, friendly_bases, contested_bases)
   end
+  state.phase_reason = phase_reason
 
   -- Hysteresis: require N consecutive ticks before switching
   if new_phase ~= state.phase then
@@ -116,6 +228,11 @@ function M.update(state, world, info)
       state.front_dir_y = nil
     end
   end
+
+  -- Run last so every downstream reader (init.lua refuel gate, goals.lua
+  -- pool-1 scaling, nearest_resupply_base filters) sees the same targets
+  -- this tick.
+  compute_refuel_targets(state, world, info)
 end
 
 -- Call from Brain.open() to set initial phase
@@ -130,6 +247,11 @@ function M.init(state)
   state.front_dir_x = nil
   state.front_dir_y = nil
   state.front_line_tick = nil
+
+  -- Safe conservative defaults for any tick-0 reader that runs before
+  -- strategy.update() (and thus compute_refuel_targets) has fired.
+  state.shell_target  = C.TANK_FULL_SHELLS
+  state.armour_target = C.TANK_FULL_ARMOUR
 end
 
 return M

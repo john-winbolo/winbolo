@@ -5,17 +5,25 @@
 local C       = require("constants")
 local metrics = require("metrics")
 local changes = require("changes")
+-- viz is required for line_walk's optional debug-overlay drawing.
+-- It must come AFTER changes/metrics to keep the load order stable
+-- (no circular requires; viz doesn't pull anything from util).
+local viz     = require("viz")
 
 local M = {}
 
 function M.w2m(w)   return w >> 8          end
 function M.m2w(m)   return (m << 8) | 0x80 end
 
--- Terrain cache: detect changes and notify pathfinder via changes.terrain
+-- Terrain cache: detect changes and notify pathfinder via changes.terrain.
+-- Exposed as M.terrain_prev for consumers that need "what terrain have we
+-- seen at tile X" (fog-of-war lookup). Mutated in place on reset so the
+-- exposed reference stays valid.
 local terrain_prev = {}   -- mkey -> last seen terrain type
+M.terrain_prev = terrain_prev
 
 function M.reset()
-  terrain_prev = {}
+  for k in pairs(terrain_prev) do terrain_prev[k] = nil end
 end
 
 function M.ttype(mx, my)
@@ -91,6 +99,29 @@ function M.bcos(a)
   return math.floor(math.cos(a * C.TWO_PI / 256) * 128 + 0.5)
 end
 
+-- Float-precision bolo-angle trig (no rounding, for smooth visuals and aiming)
+function M.bsin_f(a)
+  return math.sin(a * C.TWO_PI / 256)
+end
+
+function M.bcos_f(a)
+  return math.cos(a * C.TWO_PI / 256)
+end
+
+-- Compute crosshair position: (x,y) in tile coords at gun_range from tank
+function M.crosshair_at(tankx, tanky, direction, gun_range)
+  local twx = tankx / 256.0
+  local twy = tanky / 256.0
+  local rad = direction * C.TWO_PI / 256
+  return twx + math.sin(rad) * gun_range,
+         twy - math.cos(rad) * gun_range
+end
+
+-- Float-precision aim_at: returns exact bolo angle (float, not rounded)
+function M.aim_at_f(sx, sy, tx, ty)
+  return math.atan(tx - sx, -(ty - sy)) * 256 / C.TWO_PI
+end
+
 -- Bolo angle from (sx,sy) toward (tx,ty)
 function M.aim_at(sx, sy, tx, ty)
   return math.floor(math.atan(tx - sx, -(ty - sy)) * 256 / C.TWO_PI + 0.5) & 0xFF
@@ -99,7 +130,7 @@ end
 -- Signed angular difference a->b in [-128, +127]
 -- Positive = b is clockwise of a
 function M.adiff(a, b)
-  local d = (b - a) & 0xFF
+  local d = (b - a) % 256
   return d >= 128 and d - 256 or d
 end
 
@@ -126,6 +157,45 @@ function M.bresenham(x0, y0, x1, y1, fn)
     if cx == x1 and cy == y1 then break end
     local result = fn(cx, cy)
     if result then return result end
+  end
+  return nil
+end
+
+-- Walk a precise float-coordinate line from (fx0,fy0) to (fx1,fy1), stepping
+-- 0.5 units at a time, calling fn(tile_x, tile_y) for each unique tile visited.
+-- This is symmetric (no Bresenham bias) and useful for LOS / cover checks
+-- where rounding artifacts cause asymmetric results.
+-- If fn returns a non-nil, non-false value, stops early and returns that value.
+--
+-- Optional `viz_color` = {r, g, b, a} draws an overlay_rect on each
+-- visited tile via viz.rect. When viz_color is set, viz_id MUST also
+-- be supplied (the V-dialog checkbox the rect is gated by); calling
+-- with viz_color and no viz_id raises a Lua error from viz.rect.
+function M.line_walk(fx0, fy0, fx1, fy1, fn, viz_color, viz_id)
+  local ddx = fx1 - fx0
+  local ddy = fy1 - fy0
+  local dlen = math.sqrt(ddx * ddx + ddy * ddy)
+  if dlen < 0.01 then return nil end
+  local steps = math.ceil(dlen * 2)  -- 2 samples per tile = 0.5-unit steps
+  local stepx, stepy = ddx / steps, ddy / steps
+  local visited = {}
+  for i = 0, steps do
+    local fx = fx0 + stepx * i
+    local fy = fy0 + stepy * i
+    local bx = math.floor(fx)
+    local by = math.floor(fy)
+    local k = by * 256 + bx
+    if not visited[k] then
+      visited[k] = true
+      if viz_color then
+        local r, g, b, a = viz_color[1], viz_color[2], viz_color[3], viz_color[4] or 200
+        -- Draw two nested outlines for thickness
+        viz.rect(viz_id, bx,         by,         bx + 1,    by + 1,    r, g, b, a)
+        viz.rect(viz_id, bx + 0.05,  by + 0.05,  bx + 0.95, by + 0.95, r, g, b, a)
+      end
+      local result = fn(bx, by)
+      if result then return result end
+    end
   end
   return nil
 end
@@ -160,11 +230,18 @@ function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   end
 
   -- Speed: proportional to aim quality
-  --   < 16°  : full accelerate (well aimed)
+  --   < 16°  : accelerate up to max_speed (was: full throttle ignoring cap)
   --   16-80° : linear ramp from max_speed down to min_speed
   --   > 80°  : hard brake
   if abs_corr < 16 then
-    keys = keys | KEY_FASTER
+    -- Honor max_speed even when well-aimed. Without this, callers that
+    -- want a slow creep (e.g. centering on a tile) get the engine's
+    -- default ~48 wu/tick instead of their requested cap.
+    if speed > max_speed + 1 then
+      keys = keys | KEY_SLOWER
+    elseif speed < max_speed then
+      keys = keys | KEY_FASTER
+    end
   elseif abs_corr > 80 then
     if speed > min_speed then keys = keys | KEY_SLOWER end
   else

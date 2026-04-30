@@ -45,22 +45,41 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   pf.dest_mx = dest_mx
   pf.dest_my = dest_my
 
+  local function _log(who, mx, my, extra)
+    local f = io.open("pf_next_ms.log", "a")
+    if not f then return end
+    local tmx_l = (info and info.tankx) and (info.tankx >> 8) or -1
+    local tmy_l = (info and info.tanky) and (info.tanky >> 8) or -1
+    local cheb = (mx >= 0 and tmx_l >= 0)
+      and math.max(math.abs(mx - tmx_l), math.abs(my - tmy_l))
+      or -1
+    f:write(string.format(
+      "t=%d who=%s tank=(%d,%d) new=(%d,%d) cheb=%d %s\n",
+      state and state.tick or -1, who, tmx_l, tmy_l, mx, my, cheb, extra or ""))
+    f:close()
+  end
   if status == 1 then
     pf.status  = "done"
     pf.next_mx = nx
     pf.next_my = ny
+    _log("bpc.path_to:done", nx, ny,
+         string.format("dest=(%d,%d)", dest_mx, dest_my))
     pf.age     = 0
   elseif status == 0 then
     pf.status = "running"
     if nx >= 0 then
       pf.next_mx = nx
       pf.next_my = ny
+      _log("bpc.path_to:running", nx, ny,
+           string.format("dest=(%d,%d)", dest_mx, dest_my))
     end
     pf.age = (pf.age or 0) + 1
   else
     pf.status  = "failed"
     pf.next_mx = -1
     pf.next_my = -1
+    _log("bpc.path_to:failed", -1, -1,
+         string.format("dest=(%d,%d)", dest_mx, dest_my))
   end
 
   if (pf.status == "done" or pf.status == "running") and pf.next_mx >= 0 then
@@ -113,7 +132,7 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   -- ── shoot: face the pill, pump shells, nudge to stay in range ─────
-  elseif goal.substate == "shoot" or goal.substate == "stand_shoot" then
+  elseif goal.substate == "stand_shoot" then
     local dist_tiles = pdist_w / 256.0
     local too_far  = dist_tiles > C.BPC_RANGE - 0.5
     local too_close = dist_tiles < C.BPC_RANGE - 2.0
@@ -240,22 +259,39 @@ function M.update(goal, state, world, info)
     return
   end
 
-  -- ── approach ──────────────────────────────────────────────────────
+  -- ── approach: navigate to standoff position, stop there ──────────
   if goal.substate == "approach" then
-    local pdist_w = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
-    local clear   = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
-    if pdist_w <= 8 * 256 and clear and not info.inboat then
-      goal.substate     = "shoot"
-      goal.shoot_armour = info.armour
-      print(string.format("[BPC] shoot pill@(%d,%d) dist=%.1f arm=%d",
-            goal.mx, goal.my, pdist_w / 256.0, info.armour))
-      log.event("bpc", "shoot")
+    -- Check if we've arrived at the standoff position
+    local smx = goal.standoff_mx or goal.mx
+    local smy = goal.standoff_my or goal.my
+    local sdist = U.mdist(tmx, tmy, smx, smy)
+    if sdist <= 1 and info.speed <= 4 and not info.inboat then
+      -- Arrived at standoff — now aim at the pill before shooting
+      goal.substate = "aim"
+      print(string.format("[BPC] arrived at standoff (%d,%d), aiming at pill@(%d,%d)",
+            smx, smy, goal.mx, goal.my))
+      log.event("bpc", "aim")
     end
     return
   end
 
-  -- ── shoot ─────────────────────────────────────────────────────────
-  if goal.substate == "shoot" then
+  -- ── aim: turn to face the pill without moving, then shoot ────────
+  if goal.substate == "aim" then
+    local aim_dir = U.aim_at(info.tankx, info.tanky, goal.wx, goal.wy)
+    local corr = math.abs(U.adiff(info.direction, aim_dir))
+    local clear = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
+    if corr < 4 and clear then
+      goal.substate     = "stand_shoot"
+      goal.shoot_armour = info.armour
+      print(string.format("[BPC] aimed at pill@(%d,%d) corr=%d, firing",
+            goal.mx, goal.my, corr))
+      log.event("bpc", "stand_shoot")
+    end
+    return
+  end
+
+  -- ── stand_shoot ───────────────────────────────────────────────────
+  if goal.substate == "stand_shoot" then
     if info.armour <= C.ARMOUR_CRITICAL then
       goal.substate = "disengage"
       print(string.format("[BPC] armour critical (%d)", info.armour))
