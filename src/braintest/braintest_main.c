@@ -116,6 +116,112 @@ time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
 #define SCROLL_SPEED        4   /* map tiles per second of held arrow key */
 #define MIN_ZOOM            1
 #define MAX_ZOOM           16
+#define CONTROL_BAR_HEIGHT 32   /* timeline scrubber strip at bottom */
+#define MAX_RECORDING_FRAMES 60000
+
+/* ------------------------------------------------------------------ */
+/* Recording infrastructure (per-tick snapshot for timeline scrubber)  */
+/*                                                                     */
+/* Ported from optimize-perf branch. Per-tick captures the followed    */
+/* bot's view of the world: map terrain + pathfinder grids + brainMap  */
+/* with delta encoding (every KEYFRAME_INTERVAL frames is a full       */
+/* keyframe; the others store only changed bytes vs. the previous      */
+/* frame), plus tank/shell/base/pill snapshots and the per-panel JSON  */
+/* the brain emitted that tick. Playback re-applies deltas onto a      */
+/* shared playback* buffer that BrainTest's existing renderers read    */
+/* from when app->playbackMode is on.                                  */
+/* ------------------------------------------------------------------ */
+
+#define KEYFRAME_INTERVAL 500   /* full snapshot every N frames */
+
+typedef struct {
+    uint32_t offset;
+    uint8_t  oldVal;
+    uint8_t  newVal;
+} ByteDelta;
+
+typedef struct {
+    uint32_t offset;
+    int16_t  oldVal;
+    int16_t  newVal;
+} GridDelta;
+
+typedef struct {
+    uint32_t tick;
+    bool     isKeyframe;
+
+    /* Map terrain (256*256 bytes): keyframe carries fullMap, deltas
+     * carry only changed bytes vs. previous frame. */
+    BYTE      *fullMap;
+    ByteDelta *mapDeltas;
+    int        mapDeltaCount;
+
+    /* Pathfinder grids — danger / influence / overlay (65536 entries
+     * each). Same keyframe-or-delta pattern. */
+    uint16_t  *fullDanger;
+    GridDelta *dangerDeltas;
+    int        dangerDeltaCount;
+    int16_t   *fullInfluence;
+    GridDelta *influenceDeltas;
+    int        influenceDeltaCount;
+    uint16_t  *fullOverlay;
+    GridDelta *overlayDeltas;
+    int        overlayDeltaCount;
+
+    /* brainMap (fog of war) for the followed bot. */
+    BYTE      *fullBrainMap;
+    ByteDelta *brainMapDeltas;
+    int        brainMapDeltaCount;
+
+    /* Small game state — full copy every frame (cheap). */
+    TankSnapshot      tanks[MAX_TANKS];
+    uint8_t           tankCount;
+    ShellSnapshot     snapShells[MAX_SNAPSHOT_SHELLS];
+    uint8_t           shellCount;
+    BaseSnapshot      snapBases[MAX_SNAPSHOT_BASES];
+    uint8_t           baseCount;
+    PillSnapshot      snapPills[MAX_SNAPSHOT_PILLS];
+    uint8_t           pillCount;
+
+    /* Camera + brain perf for the HUD. */
+    WORLD viewCenterX, viewCenterY;
+    float thinkMs;
+
+    /* Goal info for scrubber tick markers. The scrubber detects
+     * replan ticks by diffing consecutive frames' goal info, so no
+     * explicit wasReplan flag — this branch's BrainGoalInfo doesn't
+     * carry one. */
+    BrainGoalInfo goalInfo;
+    bool          goalInfoValid;
+
+    /* Per-panel JSON the brain returned this tick, indexed by panel
+     * registry idx. NULL = panel didn't exist or wasn't polled this
+     * frame. Owned by the frame; freed in recordingFreeFrame. */
+    char *recordedPanels[PANEL_REG_MAX];
+} RecordingFrame;
+
+typedef struct {
+    RecordingFrame *frames;
+    int             count;
+    int             capacity;
+
+    /* Previous-frame state for computing deltas. */
+    BYTE     *prevMap;
+    uint16_t *prevDanger;
+    int16_t  *prevInfluence;
+    uint16_t *prevOverlay;
+    BYTE     *prevBrainMap;
+    bool      hasPrev;
+
+    /* Reconstructed playback buffers — populated by
+     * recordingReconstructMap before each playback render pass. */
+    BYTE     *playbackMap;
+    uint16_t *playbackDanger;
+    int16_t  *playbackInfluence;
+    uint16_t *playbackOverlay;
+    BYTE     *playbackBrainMap;
+    int       playbackMapFrame;  /* frame the playback buffers reflect */
+} RecordingBuffer;
 
 /* ------------------------------------------------------------------ */
 /* App state                                                           */
@@ -261,6 +367,28 @@ typedef struct {
     float        cpuHist[CPU_HIST_BARS];
     int          cpuHistCount;   /* 0..CPU_HIST_BARS, capped at the buffer size */
     int          cpuHistHead;    /* next-write index, wraps mod CPU_HIST_BARS */
+
+    /* Timeline recording + playback (stage 4).
+     *  - recording captures full game state per tick (map, grids,
+     *    tanks, shells, bases, pills) plus the brain's per-panel
+     *    JSON output. Memory-bounded via delta encoding for the
+     *    256x256 grids.
+     *  - playbackMode flips the entire renderer over to reading
+     *    from a reconstructed snapshot of frame `playbackFrame`
+     *    instead of the live sim. Toggling viz in playback works
+     *    because the renderers read live viz flags but draw against
+     *    the patched-in snapshot data.
+     *  - scrubbing is true while the user has the timeline thumb
+     *    grabbed; the main loop steers playbackFrame from the mouse
+     *    instead of advancing it. */
+    RecordingBuffer recording;
+    bool         playbackMode;
+    int          playbackFrame;
+    bool         scrubbing;
+    /* (goalInfo / goalInfoValid live higher up in the struct already
+     * — they're refreshed per tick before recordingCapture and the
+     * scrubber's goal-change tick markers read from the captured
+     * frames, not the live cache.) */
 } BrainTestApp;
 
 /* Common "is this cost infinite?" cutoff for the heatmap renderers.
@@ -284,6 +412,137 @@ static void vizFlagFlip(int idx) {
 }
 
 static volatile bool appQuit = FALSE;
+
+/* ────────────────────────────────────────────────────────────── */
+/* Recording (per-tick capture) + playback reconstruction.        */
+/* All ported from optimize-perf branch. See struct comment above */
+/* for the design overview.                                        */
+/* ────────────────────────────────────────────────────────────── */
+
+static void recordingInit(RecordingBuffer *rb) {
+    memset(rb, 0, sizeof(*rb));
+    rb->playbackMapFrame = -1;
+    int mapSz  = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+    int gridSz = 65536;
+    rb->prevMap          = (BYTE *)calloc(mapSz, 1);
+    rb->prevDanger       = (uint16_t *)calloc(gridSz, sizeof(uint16_t));
+    rb->prevInfluence    = (int16_t  *)calloc(gridSz, sizeof(int16_t));
+    rb->prevOverlay      = (uint16_t *)calloc(gridSz, sizeof(uint16_t));
+    rb->prevBrainMap     = (BYTE *)calloc(mapSz, 1);
+    rb->playbackMap      = (BYTE *)calloc(mapSz, 1);
+    rb->playbackDanger   = (uint16_t *)calloc(gridSz, sizeof(uint16_t));
+    rb->playbackInfluence= (int16_t  *)calloc(gridSz, sizeof(int16_t));
+    rb->playbackOverlay  = (uint16_t *)calloc(gridSz, sizeof(uint16_t));
+    rb->playbackBrainMap = (BYTE *)calloc(mapSz, 1);
+}
+
+static void recordingFreeFrame(RecordingFrame *f) {
+    free(f->fullMap);
+    free(f->mapDeltas);
+    free(f->fullDanger);
+    free(f->dangerDeltas);
+    free(f->fullInfluence);
+    free(f->influenceDeltas);
+    free(f->fullOverlay);
+    free(f->overlayDeltas);
+    free(f->fullBrainMap);
+    free(f->brainMapDeltas);
+    for (int i = 0; i < PANEL_REG_MAX; i++) free(f->recordedPanels[i]);
+    memset(f, 0, sizeof(*f));
+}
+
+static void recordingDestroy(RecordingBuffer *rb) {
+    for (int i = 0; i < rb->count; i++) recordingFreeFrame(&rb->frames[i]);
+    free(rb->frames);
+    free(rb->prevMap);
+    free(rb->prevDanger);
+    free(rb->prevInfluence);
+    free(rb->prevOverlay);
+    free(rb->prevBrainMap);
+    free(rb->playbackMap);
+    free(rb->playbackDanger);
+    free(rb->playbackInfluence);
+    free(rb->playbackOverlay);
+    free(rb->playbackBrainMap);
+    memset(rb, 0, sizeof(*rb));
+    rb->playbackMapFrame = -1;
+}
+
+/* recordingCapture lives further down (near pushVizStateToBots) —
+ * it touches BrainTestApp fields that aren't visible up here yet. */
+
+/* Reconstruct rb->playbackMap / playbackDanger / playbackInfluence
+ * / playbackOverlay / playbackBrainMap to the state at frame
+ * `targetFrame`. Walks back to the nearest keyframe at or before
+ * targetFrame, then applies deltas forward. Idempotent — bails
+ * early if the buffers already reflect targetFrame. */
+static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
+    if (targetFrame < 0 || targetFrame >= rb->count) return;
+    if (rb->playbackMapFrame == targetFrame) return;
+
+    int kf = targetFrame;
+    while (kf >= 0 && !rb->frames[kf].isKeyframe) kf--;
+    if (kf < 0) return;
+
+    int mapSz  = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+    int gridSz = 65536;
+    if (rb->frames[kf].fullMap)
+        memcpy(rb->playbackMap, rb->frames[kf].fullMap, mapSz);
+    if (rb->frames[kf].fullDanger)
+        memcpy(rb->playbackDanger, rb->frames[kf].fullDanger,
+               gridSz * sizeof(uint16_t));
+    else
+        memset(rb->playbackDanger, 0, gridSz * sizeof(uint16_t));
+    if (rb->frames[kf].fullInfluence)
+        memcpy(rb->playbackInfluence, rb->frames[kf].fullInfluence,
+               gridSz * sizeof(int16_t));
+    else
+        memset(rb->playbackInfluence, 0, gridSz * sizeof(int16_t));
+    if (rb->frames[kf].fullOverlay)
+        memcpy(rb->playbackOverlay, rb->frames[kf].fullOverlay,
+               gridSz * sizeof(uint16_t));
+    else
+        memset(rb->playbackOverlay, 0, gridSz * sizeof(uint16_t));
+    if (rb->frames[kf].fullBrainMap)
+        memcpy(rb->playbackBrainMap, rb->frames[kf].fullBrainMap, mapSz);
+    else
+        memset(rb->playbackBrainMap, 0xFF, mapSz);
+
+    for (int i = kf + 1; i <= targetFrame; i++) {
+        RecordingFrame *df = &rb->frames[i];
+        for (int d = 0; d < df->mapDeltaCount; d++)
+            rb->playbackMap[df->mapDeltas[d].offset] = df->mapDeltas[d].newVal;
+        for (int d = 0; d < df->dangerDeltaCount; d++)
+            rb->playbackDanger[df->dangerDeltas[d].offset] =
+                (uint16_t)df->dangerDeltas[d].newVal;
+        for (int d = 0; d < df->influenceDeltaCount; d++)
+            rb->playbackInfluence[df->influenceDeltas[d].offset] =
+                df->influenceDeltas[d].newVal;
+        for (int d = 0; d < df->overlayDeltaCount; d++)
+            rb->playbackOverlay[df->overlayDeltas[d].offset] =
+                (uint16_t)df->overlayDeltas[d].newVal;
+        for (int d = 0; d < df->brainMapDeltaCount; d++)
+            rb->playbackBrainMap[df->brainMapDeltas[d].offset] =
+                df->brainMapDeltas[d].newVal;
+    }
+    rb->playbackMapFrame = targetFrame;
+}
+
+/* Drop frames at-and-after `keepCount`. Used when the user scrubs
+ * back and resumes — the future is now stale. */
+static void recordingTruncate(RecordingBuffer *rb, int keepCount) {
+    for (int i = keepCount; i < rb->count; i++) recordingFreeFrame(&rb->frames[i]);
+    rb->count = keepCount;
+    rb->playbackMapFrame = -1;
+    if (keepCount > 0) {
+        recordingReconstructMap(rb, keepCount - 1);
+        memcpy(rb->prevMap, rb->playbackMap,
+               MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        rb->hasPrev = true;
+    } else {
+        rb->hasPrev = false;
+    }
+}
 
 /* Read the user's WinBolo key bindings from the same INI the main
  * game uses, so manual control in BrainTest matches the muscle
@@ -874,6 +1133,11 @@ static BYTE     g_panelPollFollowBot   = 0;
 static bool     g_panelRecordEnabled   = false;
 static char     g_panelRecordDir[FILENAME_MAX] = "";
 static uint32_t g_panelPollTick        = 0;
+/* Playback bridge — when set, the poll callback returns the
+ * recorded panel JSON for `g_panelPollFrame` instead of asking
+ * the live brain. Updated by appRender each frame. */
+static RecordingBuffer *g_panelPollRecording = NULL;
+static int              g_panelPollFrame    = -1;
 
 /* Slugify a panel name for the filename: lowercase, non-alnum → '_'.
  * Output buffer must be ≥ strlen(in)+1. */
@@ -895,6 +1159,23 @@ static void slugifyPanelName(const char *in, char *out, size_t outLen) {
 static char *panelPollCallback(int panel_idx) {
     const PanelRegistryEntry *e = panelRegistryGet(panel_idx);
     if (!e || !e->lua_expr[0]) return NULL;
+    /* Playback path: serve the recorded JSON for this frame. We
+     * hand back a heap-allocated copy because the panel window
+     * frees what we return. NULL → renderer keeps showing whatever
+     * it already had (better than blanking on a gap). */
+    if (g_panelPollRecording
+        && g_panelPollFrame >= 0
+        && g_panelPollFrame < g_panelPollRecording->count
+        && panel_idx >= 0
+        && panel_idx < PANEL_REG_MAX) {
+        const char *rec = g_panelPollRecording->frames[g_panelPollFrame]
+                          .recordedPanels[panel_idx];
+        if (!rec) return NULL;
+        size_t n = strlen(rec);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, rec, n + 1);
+        return copy;
+    }
     char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
      * offline (great for "look at the queue at tick 4321" — files
@@ -1465,6 +1746,210 @@ static void pushVizStateToBots(bool vizSuppressActive) {
     }
 }
 
+/* Per-tick recording capture. Called once per game tick from the
+ * main loop after botManagerTick + serverSimTick. Captures the
+ * followed bot's view of the world (map, grids, brainMap), the
+ * authoritative tank/shell/base/pill state from the server sim,
+ * and the brain's per-panel JSON output (so playback can show
+ * the same pool breakdown / queue text the user would have seen
+ * at that tick). */
+static void recordingCapture(BrainTestApp *app) {
+    RecordingBuffer *rb = &app->recording;
+    if (rb->count >= MAX_RECORDING_FRAMES) return;
+    if (rb->count >= rb->capacity) {
+        int newCap = rb->capacity == 0 ? 1024 : rb->capacity * 2;
+        if (newCap > MAX_RECORDING_FRAMES) newCap = MAX_RECORDING_FRAMES;
+        rb->frames = (RecordingFrame *)realloc(rb->frames,
+                       newCap * sizeof(RecordingFrame));
+        rb->capacity = newCap;
+    }
+
+    RecordingFrame *f = &rb->frames[rb->count];
+    memset(f, 0, sizeof(*f));
+    f->tick = app->sim.tick;
+
+    int mapSz  = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+    int gridSz = 65536;
+    bool needKeyframe = !rb->hasPrev || (rb->count % KEYFRAME_INTERVAL == 0);
+    f->isKeyframe = needKeyframe;
+
+    /* ── Map terrain ── */
+    const BYTE *curMap = &app->sim.sim.mp->mapItem[0][0];
+    if (needKeyframe) {
+        f->fullMap = (BYTE *)malloc(mapSz);
+        memcpy(f->fullMap, curMap, mapSz);
+    } else {
+        ByteDelta tmp[4096];
+        int n = 0;
+        for (int i = 0; i < mapSz && n < 4096; i++) {
+            if (curMap[i] != rb->prevMap[i]) {
+                tmp[n].offset = i;
+                tmp[n].oldVal = rb->prevMap[i];
+                tmp[n].newVal = curMap[i];
+                n++;
+            }
+        }
+        f->mapDeltaCount = n;
+        if (n > 0) {
+            f->mapDeltas = (ByteDelta *)malloc(n * sizeof(ByteDelta));
+            memcpy(f->mapDeltas, tmp, n * sizeof(ByteDelta));
+        }
+    }
+    memcpy(rb->prevMap, curMap, mapSz);
+
+    /* ── Pathfinder grids (followed bot) ── */
+    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    if (pf) {
+        if (needKeyframe) {
+            f->fullDanger = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
+            memcpy(f->fullDanger, pf->danger_grid, gridSz * sizeof(uint16_t));
+            f->fullInfluence = (int16_t *)malloc(gridSz * sizeof(int16_t));
+            memcpy(f->fullInfluence, pf->influence_grid, gridSz * sizeof(int16_t));
+            f->fullOverlay = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
+            memcpy(f->fullOverlay, pf->overlay_grid, gridSz * sizeof(uint16_t));
+        } else {
+            GridDelta tmp[4096];
+            int n;
+            n = 0;
+            for (int i = 0; i < gridSz && n < 4096; i++) {
+                if (pf->danger_grid[i] != rb->prevDanger[i]) {
+                    tmp[n].offset = i;
+                    tmp[n].oldVal = (int16_t)rb->prevDanger[i];
+                    tmp[n].newVal = (int16_t)pf->danger_grid[i];
+                    n++;
+                }
+            }
+            f->dangerDeltaCount = n;
+            if (n > 0) {
+                f->dangerDeltas = (GridDelta *)malloc(n * sizeof(GridDelta));
+                memcpy(f->dangerDeltas, tmp, n * sizeof(GridDelta));
+            }
+            n = 0;
+            for (int i = 0; i < gridSz && n < 4096; i++) {
+                if (pf->influence_grid[i] != rb->prevInfluence[i]) {
+                    tmp[n].offset = i;
+                    tmp[n].oldVal = rb->prevInfluence[i];
+                    tmp[n].newVal = pf->influence_grid[i];
+                    n++;
+                }
+            }
+            f->influenceDeltaCount = n;
+            if (n > 0) {
+                f->influenceDeltas = (GridDelta *)malloc(n * sizeof(GridDelta));
+                memcpy(f->influenceDeltas, tmp, n * sizeof(GridDelta));
+            }
+            n = 0;
+            for (int i = 0; i < gridSz && n < 4096; i++) {
+                if (pf->overlay_grid[i] != rb->prevOverlay[i]) {
+                    tmp[n].offset = i;
+                    tmp[n].oldVal = (int16_t)rb->prevOverlay[i];
+                    tmp[n].newVal = (int16_t)pf->overlay_grid[i];
+                    n++;
+                }
+            }
+            f->overlayDeltaCount = n;
+            if (n > 0) {
+                f->overlayDeltas = (GridDelta *)malloc(n * sizeof(GridDelta));
+                memcpy(f->overlayDeltas, tmp, n * sizeof(GridDelta));
+            }
+        }
+        memcpy(rb->prevDanger,    pf->danger_grid,    gridSz * sizeof(uint16_t));
+        memcpy(rb->prevInfluence, pf->influence_grid, gridSz * sizeof(int16_t));
+        memcpy(rb->prevOverlay,   pf->overlay_grid,   gridSz * sizeof(uint16_t));
+    }
+
+    /* ── brainMap (fog of war) for followed bot. The pathfinder's
+     *    `map` field already points at the bot's brainMap (see
+     *    brainPathfinderSetMap), so we read it through there
+     *    instead of needing botManagerGetClientSim. ── */
+    if (pf && pf->map) {
+        const BYTE *bm = pf->map;
+        if (needKeyframe) {
+            f->fullBrainMap = (BYTE *)malloc(mapSz);
+            memcpy(f->fullBrainMap, bm, mapSz);
+        } else {
+            ByteDelta tmp[4096];
+            int n = 0;
+            for (int i = 0; i < mapSz && n < 4096; i++) {
+                if (bm[i] != rb->prevBrainMap[i]) {
+                    tmp[n].offset = i;
+                    tmp[n].oldVal = rb->prevBrainMap[i];
+                    tmp[n].newVal = bm[i];
+                    n++;
+                }
+            }
+            f->brainMapDeltaCount = n;
+            if (n > 0) {
+                f->brainMapDeltas = (ByteDelta *)malloc(n * sizeof(ByteDelta));
+                memcpy(f->brainMapDeltas, tmp, n * sizeof(ByteDelta));
+            }
+        }
+        memcpy(rb->prevBrainMap, bm, mapSz);
+    }
+    rb->hasPrev = true;
+
+    /* ── Tanks / shells / explosions via the existing snapshot path ── */
+    SnapshotHeader hdr;
+    GameEvent      evtBuf[MAX_SNAPSHOT_EVENTS];
+    BaseSnapshot   dummyB[1];
+    PillSnapshot   dummyP[1];
+    TkExplosionSnapshot dummyTkExp[1];
+    serverSimBuildSnapshot(&app->sim, app->followBot, &hdr,
+                           f->tanks, MAX_TANKS,
+                           f->snapShells, MAX_SNAPSHOT_SHELLS,
+                           dummyTkExp, 0,
+                           dummyB, 0,
+                           dummyP, 0,
+                           evtBuf, MAX_SNAPSHOT_EVENTS);
+    f->tankCount  = hdr.tankCount;
+    f->shellCount = hdr.shellCount;
+
+    /* ── Bases / pills (read directly from the server sim) ── */
+    f->baseCount = app->sim.sim.bs->numBases;
+    if (f->baseCount > MAX_SNAPSHOT_BASES) f->baseCount = MAX_SNAPSHOT_BASES;
+    for (int i = 0; i < f->baseCount; i++) {
+        f->snapBases[i].owner  = app->sim.sim.bs->item[i].owner;
+        f->snapBases[i].armour = app->sim.sim.bs->item[i].armour;
+        f->snapBases[i].shells = app->sim.sim.bs->item[i].shells;
+        f->snapBases[i].mines  = app->sim.sim.bs->item[i].mines;
+    }
+    f->pillCount = app->sim.sim.pb->numPills;
+    if (f->pillCount > MAX_SNAPSHOT_PILLS) f->pillCount = MAX_SNAPSHOT_PILLS;
+    for (int i = 0; i < f->pillCount; i++) {
+        f->snapPills[i].x      = app->sim.sim.pb->item[i].x;
+        f->snapPills[i].y      = app->sim.sim.pb->item[i].y;
+        f->snapPills[i].owner  = app->sim.sim.pb->item[i].owner;
+        f->snapPills[i].armour = app->sim.sim.pb->item[i].armour;
+        f->snapPills[i].speed  = app->sim.sim.pb->item[i].speed;
+        f->snapPills[i].inTank = app->sim.sim.pb->item[i].inTank ? 1 : 0;
+    }
+
+    /* ── Camera + brain perf for HUD ── */
+    f->viewCenterX = app->viewCenterX;
+    f->viewCenterY = app->viewCenterY;
+    f->thinkMs     = (float)botManagerGetLastThinkMs(app->followBot);
+
+    /* ── Goal info (drives scrubber goal-change tick markers) ── */
+    if (botManagerGetGoalInfo(app->followBot, &f->goalInfo)) {
+        f->goalInfoValid = true;
+    }
+
+    /* ── Per-panel JSON capture ── one poll per registered panel
+     * for the followed bot. Pays the brain-eval cost only for
+     * panels the user actually has registered, not visible — so
+     * no need for "is the window open" gating. */
+    int totalN = panelRegistryCount();
+    for (int pi = 0; pi < totalN && pi < PANEL_REG_MAX; pi++) {
+        const PanelRegistryEntry *e = panelRegistryGet(pi);
+        if (!e || e->bot_owner != app->followBot) continue;
+        if (!e->lua_expr[0]) continue;
+        f->recordedPanels[pi] =
+            botManagerEvalLuaString(app->followBot, e->lua_expr);
+    }
+
+    rb->count++;
+}
+
 /* ------------------------------------------------------------------ */
 /* Brain overlay rendering — walks each bot's OverlayCmdBuffer and
  * draws the commands the brain emitted via the overlay_* Lua API.
@@ -1845,6 +2330,17 @@ static void appTick(BrainTestApp *app) {
         }
     }
 
+    /* Update goal-info cache for the scrubber's goal-change ticks
+     * and per-frame replan markers. Polled live (not from
+     * playback) — captureRecording reads it on the next tick. */
+    app->goalInfoValid =
+        botManagerGetGoalInfo(app->followBot, &app->goalInfo);
+
+    /* Per-tick recording capture. Run AFTER both serverSimTicks so
+     * the captured tank/shell/base/pill state matches what the
+     * brain actually saw. */
+    recordingCapture(app);
+
     /* Update camera if following a bot */
     if (!app->freeCamera && app->followBot < MAX_TANKS) {
         WORLD wx, wy;
@@ -1882,6 +2378,100 @@ static void refreshGoalInfo(BrainTestApp *app) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Control bar (timeline scrubber strip at bottom of window)            */
+/* ------------------------------------------------------------------ */
+
+/* Geometry helpers — also used by the mouse handler so click hit-
+ * testing matches what the renderer drew. Returns the scrubber
+ * track rect (line endpoints + thumb size). */
+static void scrubberGeometry(BrainTestApp *app, int screenW, int screenH,
+                              float *trackL, float *trackR, float *trackY,
+                              float *thumbW) {
+    int barY = screenH - CONTROL_BAR_HEIGHT;
+    *trackL = 12.0f;
+    *trackR = (float)screenW - 80.0f;     /* leave room for tick counter on right */
+    *trackY = barY + CONTROL_BAR_HEIGHT * 0.5f;
+    *thumbW = 8.0f;
+}
+
+static void renderControlBar(BrainTestApp *app, int screenW, int screenH) {
+    int barY = screenH - CONTROL_BAR_HEIGHT;
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(app->renderer, 20, 20, 30, 220);
+    SDL_FRect bg = { 0, (float)barY, (float)screenW, CONTROL_BAR_HEIGHT };
+    SDL_RenderFillRect(app->renderer, &bg);
+
+    if (app->recording.count <= 0) {
+        SDL_SetRenderDrawColor(app->renderer, 130, 130, 150, 255);
+        SDL_RenderDebugText(app->renderer, 10.0f, (float)barY + 12.0f,
+                            "(no frames recorded yet)");
+        return;
+    }
+
+    float trackL, trackR, trackY, thumbW;
+    scrubberGeometry(app, screenW, screenH, &trackL, &trackR, &trackY, &thumbW);
+    float trackW = trackR - trackL;
+    if (trackW < 20.0f) return;
+
+    /* Track background line. */
+    SDL_SetRenderDrawColor(app->renderer, 60, 60, 80, 255);
+    SDL_RenderLine(app->renderer, trackL, trackY, trackR, trackY);
+
+    /* Filled portion up to current position. */
+    float fillFrac = app->playbackMode
+        ? (float)app->playbackFrame / (float)(app->recording.count - 1)
+        : 1.0f;
+    if (fillFrac < 0) fillFrac = 0;
+    if (fillFrac > 1) fillFrac = 1;
+    float fillX = trackL + fillFrac * trackW;
+    SDL_SetRenderDrawColor(app->renderer, 80, 140, 220, 255);
+    SDL_RenderLine(app->renderer, trackL, trackY, fillX, trackY);
+
+    /* Goal-change tick markers (yellow vertical lines). Detected by
+     * diffing consecutive frames' goalInfo — simpler than the
+     * optimize branch which had an explicit wasReplan flag. */
+    SDL_SetRenderDrawColor(app->renderer, 255, 220, 50, 200);
+    for (int i = 1; i < app->recording.count; i++) {
+        if (!app->recording.frames[i].goalInfoValid) continue;
+        if (!app->recording.frames[i-1].goalInfoValid) continue;
+        const BrainGoalInfo *cur  = &app->recording.frames[i].goalInfo;
+        const BrainGoalInfo *prev = &app->recording.frames[i-1].goalInfo;
+        if (strcmp(cur->kind, prev->kind) != 0
+            || cur->target_id != prev->target_id
+            || cur->mx != prev->mx
+            || cur->my != prev->my) {
+            float mx = trackL + ((float)i / (float)(app->recording.count - 1)) * trackW;
+            SDL_RenderLine(app->renderer, mx, trackY - 5.0f, mx, trackY + 5.0f);
+        }
+    }
+
+    /* Thumb. */
+    SDL_FRect thumb = { fillX - thumbW * 0.5f,
+                        trackY - 6.0f,
+                        thumbW, 12.0f };
+    SDL_SetRenderDrawColor(app->renderer, 200, 200, 240, 255);
+    SDL_RenderFillRect(app->renderer, &thumb);
+
+    /* Frame counter on the right. */
+    int displayFrame = app->playbackMode
+        ? app->playbackFrame + 1
+        : app->recording.count;
+    char frameStr[32];
+    SDL_snprintf(frameStr, sizeof(frameStr), "%d / %d",
+                 displayFrame, app->recording.count);
+    SDL_SetRenderDrawColor(app->renderer, 180, 180, 200, 255);
+    SDL_RenderDebugText(app->renderer,
+                        trackR + 8.0f, (float)barY + 12.0f, frameStr);
+
+    /* Mode hint on the left when scrubbing. */
+    if (app->playbackMode) {
+        SDL_SetRenderDrawColor(app->renderer, 255, 200, 80, 255);
+        SDL_RenderDebugText(app->renderer,
+                            trackL, (float)barY + 2.0f, "PLAYBACK");
+    }
+}
+
 static void appRender(BrainTestApp *app) {
     int screenW, screenH;
     SDL_GetWindowSize(app->window, &screenW, &screenH);
@@ -1893,6 +2483,75 @@ static void appRender(BrainTestApp *app) {
     SDL_RenderClear(app->renderer);
 
     if (app->simValid) {
+        /* ── PLAYBACK PATCH-IN ──
+         * In playback mode we patch the recorded snapshot's data
+         * into the live sim structures BEFORE rendering, then
+         * restore the live values AFTER. This way every existing
+         * renderer (mapViewRenderCentered, overlays, brain
+         * commands) draws the recorded state with no per-renderer
+         * playback awareness needed. */
+        BYTE  *savedMapBytes = NULL;
+        uint16_t *savedDanger = NULL;
+        int16_t  *savedInflu  = NULL;
+        uint16_t *savedOverl  = NULL;
+        const BYTE *savedBrainMapPtr = NULL;  /* pointer-swap, not byte-copy */
+        BrainPathfinder *pbPf = botManagerGetBrainPathfinder(app->followBot);
+        struct basesObj  savedBases;
+        struct pillsObj  savedPills;
+        bool patched = false;
+        if (app->playbackMode
+            && app->playbackFrame >= 0
+            && app->playbackFrame < app->recording.count) {
+            recordingReconstructMap(&app->recording, app->playbackFrame);
+            RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+            int mapSz = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+            int gridSz = 65536;
+            /* Map terrain. */
+            savedMapBytes = (BYTE *)malloc(mapSz);
+            memcpy(savedMapBytes, &app->sim.sim.mp->mapItem[0][0], mapSz);
+            memcpy(&app->sim.sim.mp->mapItem[0][0],
+                   app->recording.playbackMap, mapSz);
+            /* Pathfinder grids + brainMap (used by overlay renderers). */
+            if (pbPf) {
+                savedDanger = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
+                savedInflu  = (int16_t  *)malloc(gridSz * sizeof(int16_t));
+                savedOverl  = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
+                memcpy(savedDanger, pbPf->danger_grid,    gridSz * sizeof(uint16_t));
+                memcpy(savedInflu,  pbPf->influence_grid, gridSz * sizeof(int16_t));
+                memcpy(savedOverl,  pbPf->overlay_grid,   gridSz * sizeof(uint16_t));
+                memcpy(pbPf->danger_grid,    app->recording.playbackDanger,    gridSz * sizeof(uint16_t));
+                memcpy(pbPf->influence_grid, app->recording.playbackInfluence, gridSz * sizeof(int16_t));
+                memcpy(pbPf->overlay_grid,   app->recording.playbackOverlay,   gridSz * sizeof(uint16_t));
+                /* brainMap is externally-owned memory the pathfinder
+                 * just holds a pointer to. Swap the pointer to our
+                 * playback buffer for the duration of this render
+                 * and restore it after — much cheaper than memcpy
+                 * and avoids mutating the bot's actual brainMap. */
+                if (pbPf->map) {
+                    savedBrainMapPtr = pbPf->map;
+                    pbPf->map = app->recording.playbackBrainMap;
+                }
+            }
+            /* Bases & pills — full copy, simpler than per-field patch. */
+            savedBases = *app->sim.sim.bs;
+            savedPills = *app->sim.sim.pb;
+            for (int i = 0; i < pf_->baseCount && i < app->sim.sim.bs->numBases; i++) {
+                app->sim.sim.bs->item[i].owner  = pf_->snapBases[i].owner;
+                app->sim.sim.bs->item[i].armour = pf_->snapBases[i].armour;
+                app->sim.sim.bs->item[i].shells = pf_->snapBases[i].shells;
+                app->sim.sim.bs->item[i].mines  = pf_->snapBases[i].mines;
+            }
+            for (int i = 0; i < pf_->pillCount && i < app->sim.sim.pb->numPills; i++) {
+                app->sim.sim.pb->item[i].x      = pf_->snapPills[i].x;
+                app->sim.sim.pb->item[i].y      = pf_->snapPills[i].y;
+                app->sim.sim.pb->item[i].owner  = pf_->snapPills[i].owner;
+                app->sim.sim.pb->item[i].armour = pf_->snapPills[i].armour;
+                app->sim.sim.pb->item[i].speed  = pf_->snapPills[i].speed;
+                app->sim.sim.pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            }
+            patched = true;
+        }
+
         /* Set perspective to followed bot for correct coloring */
         BYTE prevSelf = app->sim.sim.viewPlayer;
         app->sim.sim.viewPlayer = app->followBot;
@@ -1924,10 +2583,33 @@ static void appRender(BrainTestApp *app) {
         /* Brain-emitted overlay commands (lines/rects/circles/text
          * the brain pushed via the overlay_* Lua API this tick). */
         renderBrainOverlay(app, screenW, screenH);
+
+        /* ── PLAYBACK RESTORE ── unwind every patch we made above
+         * so the next sim tick / data poll sees live data. */
+        if (patched) {
+            int mapSz = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+            int gridSz = 65536;
+            memcpy(&app->sim.sim.mp->mapItem[0][0], savedMapBytes, mapSz);
+            free(savedMapBytes);
+            if (pbPf) {
+                memcpy(pbPf->danger_grid,    savedDanger, gridSz * sizeof(uint16_t));
+                memcpy(pbPf->influence_grid, savedInflu,  gridSz * sizeof(int16_t));
+                memcpy(pbPf->overlay_grid,   savedOverl,  gridSz * sizeof(uint16_t));
+                free(savedDanger); free(savedInflu); free(savedOverl);
+                if (savedBrainMapPtr) {
+                    pbPf->map = savedBrainMapPtr;
+                }
+            }
+            *app->sim.sim.bs = savedBases;
+            *app->sim.sim.pb = savedPills;
+        }
     }
 
     /* HUD */
     renderHUD(app, screenW, screenH);
+
+    /* Timeline scrubber strip at the bottom. */
+    renderControlBar(app, screenW, screenH);
 
     /* Bare-screen indicator when X-key suppress is active. */
     if (app->vizSuppressActive) {
@@ -1958,6 +2640,12 @@ static void appRender(BrainTestApp *app) {
         SDL_GetWindowSize(app->vizWindow, &vw, &vh);
         vizWindowRender(app->vizRenderer, vw, vh, NULL);
     }
+
+    /* Pre-set the panel poll bridge: in playback the callback
+     * returns recorded JSON for app->playbackFrame; otherwise it
+     * evaluates the brain live. */
+    g_panelPollRecording = app->playbackMode ? &app->recording : NULL;
+    g_panelPollFrame     = app->playbackMode ? app->playbackFrame : -1;
 
     /* P dialog (panels). Same pattern as the V window. */
     if (app->panelWindow && app->panelRenderer
@@ -1990,6 +2678,9 @@ int main(int argc, char *argv[]) {
     app.zoomFactor = 2;
     app.freeCamera = false;
     app.showHUD = false;
+    /* Pre-allocate the recording buffers (delta scratchpads etc.) up
+     * front; per-frame storage grows on demand inside recordingCapture. */
+    recordingInit(&app.recording);
 
     /* Register the C-side native toggles in the viz registry so
      * they show up alongside brain-registered overlays in the V
@@ -2451,6 +3142,20 @@ int main(int argc, char *argv[]) {
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
                     break;
+                case SDLK_END:
+                    /* Jump back to live (latest tick), exit playback. */
+                    app.playbackMode  = false;
+                    app.scrubbing     = false;
+                    app.playbackFrame = (app.recording.count > 0)
+                        ? app.recording.count - 1 : 0;
+                    break;
+                case SDLK_HOME:
+                    /* Jump to start of recording, stay in playback. */
+                    if (app.recording.count > 0) {
+                        app.playbackMode  = true;
+                        app.playbackFrame = 0;
+                    }
+                    break;
                 default: {
                     /* Last-chance dispatch: bot-defined panel
                      * shortcuts. Built-in keys have already had
@@ -2492,6 +3197,20 @@ int main(int argc, char *argv[]) {
                                                   sw, sh,
                                                   &app.hoverMX, &app.hoverMY);
                 }
+                /* Drag-to-scrub takes priority over drag-to-pan. */
+                if (app.scrubbing) {
+                    int sw, sh;
+                    SDL_GetWindowSize(app.window, &sw, &sh);
+                    float trackL, trackR, trackY, thumbW;
+                    scrubberGeometry(&app, sw, sh, &trackL, &trackR,
+                                     &trackY, &thumbW);
+                    float frac = (ev.motion.x - trackL) / (trackR - trackL);
+                    if (frac < 0) frac = 0;
+                    if (frac > 1) frac = 1;
+                    int f = (int)(frac * (app.recording.count - 1) + 0.5f);
+                    app.playbackFrame = f;
+                    break;
+                }
                 /* Drag-to-pan */
                 if (app.rightDown) app.rightDragged = true;
                 if (app.dragging) {
@@ -2524,6 +3243,27 @@ int main(int argc, char *argv[]) {
                 } else if (ev.button.button == SDL_BUTTON_LEFT) {
                     int sw, sh;
                     SDL_GetWindowSize(app.window, &sw, &sh);
+                    /* Bottom-strip click → scrubber. Pre-empt the
+                     * map-click handler so cost-query queries don't
+                     * fire while the user is grabbing the timeline. */
+                    if (ev.button.y >= sh - CONTROL_BAR_HEIGHT
+                        && app.recording.count > 0) {
+                        float trackL, trackR, trackY, thumbW;
+                        scrubberGeometry(&app, sw, sh, &trackL, &trackR,
+                                         &trackY, &thumbW);
+                        if (ev.button.x >= trackL - 4
+                            && ev.button.x <= trackR + 4) {
+                            app.scrubbing    = true;
+                            app.playbackMode = true;
+                            float frac = (ev.button.x - trackL)
+                                       / (trackR - trackL);
+                            if (frac < 0) frac = 0;
+                            if (frac > 1) frac = 1;
+                            int f = (int)(frac * (app.recording.count - 1) + 0.5f);
+                            app.playbackFrame = f;
+                        }
+                        break;
+                    }
                     int cmx, cmy;
                     if (screenToMap(&app, ev.button.x, ev.button.y,
                                      sw, sh, &cmx, &cmy)) {
@@ -2544,6 +3284,11 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (ev.button.button == SDL_BUTTON_LEFT && app.scrubbing) {
+                    /* Release ends the drag but stays in playback. */
+                    app.scrubbing = false;
+                    break;
+                }
                 if (ev.button.button == SDL_BUTTON_MIDDLE) {
                     app.dragging = false;
                 } else if (ev.button.button == SDL_BUTTON_RIGHT) {
@@ -2627,6 +3372,7 @@ int main(int argc, char *argv[]) {
     }
     free(app.costToGrid);
     if (app.costToMutex) SDL_DestroyMutex(app.costToMutex);
+    recordingDestroy(&app.recording);
     botManagerDestroy(&app.sim);
     if (app.debugPF) brainPathfinderDestroy(app.debugPF);
     if (app.overlayTex) SDL_DestroyTexture(app.overlayTex);
