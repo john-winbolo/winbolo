@@ -324,6 +324,7 @@ typedef struct {
     /* Mouse / click-to-cost state */
     float        mouseX, mouseY;        /* screen coords */
     int          hoverMX, hoverMY;      /* map tile under cursor */
+    int          hoverWX, hoverWY;      /* full-precision wu (1/256 tile) */
     bool         hoverValid;
 
     bool         clickActive;           /* a click-cost query is active */
@@ -1409,6 +1410,33 @@ static bool screenToMap(BrainTestApp *app, float sx, float sy,
     return true;
 }
 
+/* Screen → world units (full 1/256-tile precision). Used for the
+ * sub-tile hover-coords HUD overlay. Returns false if the cursor
+ * is outside the 256×256-tile map. */
+static bool screenToWU(BrainTestApp *app, float sx, float sy,
+                       int screenW, int screenH,
+                       int *outWX, int *outWY) {
+    int zf = app->zoomFactor;
+    int tilePixels = 16 * zf;
+    int centerMX = app->viewCenterX >> 8;
+    int centerMY = app->viewCenterY >> 8;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float mapOriginX = scx - centerMX * tilePixels
+                       - (float)(app->viewCenterX & 0xFF) * tilePixels / 256.0f;
+    float mapOriginY = scy - centerMY * tilePixels
+                       - (float)(app->viewCenterY & 0xFF) * tilePixels / 256.0f;
+    float tileFX = (sx - mapOriginX) / tilePixels;
+    float tileFY = (sy - mapOriginY) / tilePixels;
+    int wx = (int)floorf(tileFX * 256.0f);
+    int wy = (int)floorf(tileFY * 256.0f);
+    if (wx < 0 || wx > 256 * 256 - 1 || wy < 0 || wy > 256 * 256 - 1)
+        return false;
+    *outWX = wx;
+    *outWY = wy;
+    return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Debug pathfinder sync & click-cost computation                      */
 /* ------------------------------------------------------------------ */
@@ -2311,14 +2339,24 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         drawHudLine(app->renderer, cx + 4.0f, cy + 4.0f + lineH2, cs, 180, 180, 100, line2);
     }
 
-    /* ── Hover tile coords (bottom center) ── */
+    /* ── Hover coords (just above the control bar): tile (sub-tile
+     * decimal), game pixel (16 wu = 1 px), and raw wu (1/256 tile).
+     * Sits above the control bar so it doesn't overlap the scrubber
+     * even at low window heights. */
     if (app->hoverValid) {
         float hs = 1.5f;
-        SDL_snprintf(line, sizeof(line), "Tile (%d,%d)", app->hoverMX, app->hoverMY);
+        float tileX = app->hoverWX / 256.0f;
+        float tileY = app->hoverWY / 256.0f;
+        float gpxX  = app->hoverWX / 16.0f;
+        float gpxY  = app->hoverWY / 16.0f;
+        SDL_snprintf(line, sizeof(line),
+                     "tile (%.4f,%.4f)  gpx (%.2f,%.2f)  wu (%d,%d)",
+                     tileX, tileY, gpxX, gpxY,
+                     app->hoverWX, app->hoverWY);
         float hw = (float)strlen(line) * 8.0f * hs + 8.0f;
         float hh = 8.0f * hs + 6.0f;
         float hx = ((float)screenW - hw) / 2.0f;
-        float hy = (float)screenH - hh - 4.0f;
+        float hy = (float)screenH - hh - 4.0f - CONTROL_BAR_HEIGHT;
         SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 140);
         SDL_FRect hbg = { hx, hy, hw, hh };
         SDL_RenderFillRect(app->renderer, &hbg);
@@ -3512,6 +3550,10 @@ int main(int argc, char *argv[]) {
                     app.hoverValid = screenToMap(&app, app.mouseX, app.mouseY,
                                                   sw, sh,
                                                   &app.hoverMX, &app.hoverMY);
+                    if (app.hoverValid) {
+                        screenToWU(&app, app.mouseX, app.mouseY, sw, sh,
+                                   &app.hoverWX, &app.hoverWY);
+                    }
                 }
                 /* Drag-to-scrub takes priority over drag-to-pan. */
                 if (app.scrubbing) {
@@ -3650,6 +3692,25 @@ int main(int argc, char *argv[]) {
                         app.overlayDirty = true;
                         syncDebugPathfinder(&app);
                         computeClickPath(&app, cmx, cmy);
+
+                        /* Forward to brain.on_click(mx, my, {shift,
+                         * ctrl, alt}) so brains can implement custom
+                         * click handlers — NewAutopilot uses
+                         * shift+click to toggle the pill inspector
+                         * overlay and ctrl+click to force-attack a
+                         * pill. The cost-query path above runs
+                         * unconditionally; the brain decides whether
+                         * to do anything in addition based on mods. */
+                        SDL_Keymod mod = SDL_GetModState();
+                        char luaBuf[256];
+                        SDL_snprintf(luaBuf, sizeof(luaBuf),
+                            "if brain and brain.on_click then "
+                            "brain.on_click(%d, %d, {shift=%s, ctrl=%s, alt=%s}) end",
+                            cmx, cmy,
+                            (mod & SDL_KMOD_SHIFT) ? "true" : "false",
+                            (mod & SDL_KMOD_CTRL)  ? "true" : "false",
+                            (mod & SDL_KMOD_ALT)   ? "true" : "false");
+                        botManagerExecLua(app.followBot, luaBuf);
                     }
                 } else if (ev.button.button == SDL_BUTTON_RIGHT) {
                     app.rightDown = true;
