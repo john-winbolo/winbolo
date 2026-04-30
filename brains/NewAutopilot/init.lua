@@ -110,6 +110,18 @@ function Brain.get_queue_status()
   return goals.get_queue_status(state)
 end
 
+function Brain.get_pool_breakdown_json()
+  -- Structured (JSON-encoded) version for the pool_grid panel.
+  -- Errors return a minimal valid JSON envelope so the host always
+  -- has something to parse (panel renders an empty grid).
+  local ok, result = pcall(goals.get_pool_breakdown_json, state)
+  if ok then return result end
+  io.stderr:write("BRAIN ERROR get_pool_breakdown_json: " .. tostring(result) .. "\n")
+  return string.format(
+    '{"phase":"error","tick":%d,"replan_left":0,"sections":[]}',
+    state.tick or 0)
+end
+
 function Brain.get_pool_breakdown()
   local ok, result = pcall(goals.get_pool_breakdown, state)
   if ok then return result end
@@ -170,6 +182,27 @@ function Brain.open(info)
   -- client); the brain still emits overlay commands but they're
   -- never displayed.
   viz.register_all()
+  -- Advertise text panels for BrainTest's P-toggled side window.
+  -- Each call: panel name + Lua chunk that returns the body text
+  -- to display. Host polls the active tab at ~10Hz. Same NULL-
+  -- callback handling as braintest_viz_register: under WinBolo
+  -- client this binding is a no-op so the calls are harmless.
+  if braintest_panel_register then
+    -- Pool breakdown gets the bespoke 2x5 grid renderer (panel type
+    -- "pool_grid"). Brain emits structured JSON; host parses with
+    -- cJSON and walks the section/row tree. The 4th-arg opts table
+    -- requests its own SDL window with shortcut K (pooKs… alright,
+    -- "K" for Killset — pick any free letter).
+    braintest_panel_register("Pool breakdown", "pool_grid",
+      "return brain.get_pool_breakdown_json()",
+      { shortcut = "P" })
+    -- Queue status uses the generic text renderer (panel type "text").
+    -- No shortcut → appears as a tab in the main P window.
+    if Brain.get_queue_status then
+      braintest_panel_register("Queue status", "text",
+        "return brain.get_queue_status()")
+    end
+  end
   -- Clear module-level caches from any previous game
   U.reset()
   PF.reset()

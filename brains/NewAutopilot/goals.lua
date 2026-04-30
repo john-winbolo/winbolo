@@ -5130,6 +5130,127 @@ function M.get_pool_breakdown(state)
   return table.concat(lines, "\n")
 end
 
+-- =========================================================================
+-- get_pool_breakdown_json — structured (JSON) version of the pool data
+-- consumed by BrainTest's pool_grid panel renderer. Builds the same
+-- per-pool candidate lists the text version emits, but as a Lua table
+-- the host parses with cJSON. Keeps the brain's data shape explicit and
+-- the host's renderer free of tab-delimited string parsing.
+--
+-- MVP shape — covers the essentials. The text version still has more
+-- detail (formula breakdown after ||, hyst suffixes, phase metrics);
+-- those land here as sub-fields when needed.
+--
+-- Schema:
+--   {
+--     phase: string,
+--     tick:  number,
+--     replan_left: number,
+--     sections: [
+--       { idx: number, name: string, weight: number, winner_id: number,
+--         layout_cell: [row, col],   -- 1-indexed for the 2x5 grid
+--         rows: [
+--           { id: number, mx: number, my: number,
+--             cost: number, weighted: number,
+--             is_winner: bool, formula: string },
+--           ...
+--         ]
+--       },
+--       ...
+--     ]
+--   }
+-- =========================================================================
+function M.get_pool_breakdown_json(state)
+  local json = require("json")
+  local now = state.tick or 0
+  local cache = state.cost_cache or {}
+  local pc = state.pool_cache or {}
+  local phase_weights = C.PHASE_WEIGHTS[state.phase]
+
+  local replan_left = 0
+  if state.replan_offset then
+    replan_left = C.GOAL_REPLAN_INTERVAL
+        - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
+    if replan_left == C.GOAL_REPLAN_INTERVAL then replan_left = 0 end
+  end
+
+  -- Fixed 2x5 layout matching the optimize-branch poolwindow.
+  local LAYOUT_CELL = {
+    [1] = {1,1}, [2] = {1,2}, [3] = {1,3}, [4] = {1,4}, [5] = {1,5},
+    [6] = {2,1}, [7] = {2,2}, [8] = {2,3}, [9] = {2,4}, [10]= {2,5},
+  }
+
+  -- Group eval_queue items by pool, same iteration as the text version.
+  local by_pool = {}
+  for _, item in ipairs(state.eval_queue or {}) do
+    local p = item.pool
+    local obj = item.obj
+    if obj then
+      by_pool[p] = by_pool[p] or {}
+      local cached = cache[p .. ":" .. item.id]
+      by_pool[p][#by_pool[p] + 1] = {
+        id = item.id, mx = obj.mx or 0, my = obj.my or 0,
+        cost = (cached and cached.cost) or -1,
+        formula = (cached and get_formula(cached)) or "",
+      }
+    end
+  end
+
+  local sections = {}
+  local winners = {}
+  for idx = 1, 9 do
+    local pname = POOL_NAMES[idx] or ("p"..idx)
+    local pw = (phase_weights and phase_weights[idx]) or 1.0
+    local rows_raw = by_pool[idx] or {}
+    -- Sort by phase-weighted cost ascending (cheapest first).
+    table.sort(rows_raw, function(a, b)
+      local ac = (a.cost >= 0) and a.cost * pw or math.huge
+      local bc = (b.cost >= 0) and b.cost * pw or math.huge
+      return ac < bc
+    end)
+    local rows = {}
+    for i, r in ipairs(rows_raw) do
+      rows[i] = {
+        id = r.id, mx = r.mx, my = r.my,
+        cost = r.cost,
+        weighted = (r.cost >= 0) and (r.cost * pw) or -1,
+        is_winner = (i == 1 and r.cost >= 0),
+        formula = r.formula,
+      }
+    end
+    local winner_id = -1
+    if rows[1] and rows[1].is_winner then
+      winner_id = rows[1].id
+      winners[#winners + 1] = {
+        id = rows[1].id, mx = rows[1].mx, my = rows[1].my,
+        cost = rows[1].weighted,
+        formula = string.format("%s(x%.1f): %s", pname, pw, rows[1].formula),
+        is_winner = false, weighted = rows[1].weighted,
+      }
+    end
+    sections[#sections + 1] = {
+      idx = idx, name = pname, weight = pw, winner_id = winner_id,
+      layout_cell = LAYOUT_CELL[idx], rows = rows,
+    }
+  end
+
+  -- Cell 10 = cross-pool WINNERS table (ranked by cost ascending).
+  table.sort(winners, function(a, b) return a.cost < b.cost end)
+  if winners[1] then winners[1].is_winner = true end
+  sections[#sections + 1] = {
+    idx = 10, name = "WINNERS", weight = 1.0,
+    winner_id = (winners[1] and winners[1].id) or -1,
+    layout_cell = LAYOUT_CELL[10], rows = winners,
+  }
+
+  return json.encode({
+    phase = state.phase or "?",
+    tick = now,
+    replan_left = replan_left,
+    sections = sections,
+  })
+end
+
 -- Draw persistent wsim path overlays (called every tick from init.lua)
 function M.draw_wsim_paths(state)
   if not state._wsim_viz_paths then return end

@@ -163,6 +163,23 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
 double botManagerGetLastThinkMs(BYTE playerNum);
 
 /*********************************************************
+ *NAME:          botManagerEvalLuaString
+ *PURPOSE:
+ *  Compile + run a Lua chunk in the bot's state and return
+ *  the resulting string (NULL if the chunk doesn't produce
+ *  a string, the bot is inactive, or evaluation fails).
+ *  Caller owns the returned buffer and must free() it.
+ *
+ *  Used by BrainTest's panel system to poll
+ *  brain.get_pool_breakdown() etc. on demand.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot
+ *  src       - Lua chunk; should `return <something>`
+ *********************************************************/
+char *botManagerEvalLuaString(BYTE playerNum, const char *src);
+
+/*********************************************************
  *NAME:          botManagerExecLua
  *PURPOSE:
  *  Compile + run a string of Lua code in the given bot's

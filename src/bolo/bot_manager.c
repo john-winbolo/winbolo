@@ -434,6 +434,37 @@ bool botManagerExecLua(BYTE playerNum, const char *src) {
     return true;
 }
 
+char *botManagerEvalLuaString(BYTE playerNum, const char *src) {
+    if (playerNum >= MAX_TANKS) return NULL;
+    if (!bots[playerNum].active) return NULL;
+    if (!bots[playerNum].brain.running) return NULL;
+    lua_State *L = bots[playerNum].brain.L;
+    if (!L || !src) return NULL;
+    /* Caller-owned heap copy of whatever string the chunk returns.
+     * On any error path (compile fail, runtime fail, non-string
+     * result) we return NULL — the panel renderer treats that as
+     * "no fresh data, keep showing the previous text". */
+    if (luaL_loadstring(L, src) != LUA_OK) {
+        lua_pop(L, 1);
+        return NULL;
+    }
+    if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        lua_pop(L, 1);
+        return NULL;
+    }
+    char *result = NULL;
+    if (lua_isstring(L, -1)) {
+        const char *s = lua_tostring(L, -1);
+        if (s) {
+            size_t n = strlen(s);
+            result = (char *)malloc(n + 1);
+            if (result) memcpy(result, s, n + 1);
+        }
+    }
+    lua_pop(L, 1);
+    return result;
+}
+
 /* ------------------------------------------------------------------ */
 /* Lua state query helpers for goal info                               */
 /* ------------------------------------------------------------------ */
