@@ -119,6 +119,13 @@ time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
 #define CONTROL_BAR_HEIGHT 32   /* timeline scrubber strip at bottom */
 #define MAX_RECORDING_FRAMES 60000
 
+/* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
+static const int SPEED_PRESETS[] = {
+    1, 2, 5, 10, 20, 40, 80, 150, 300, 500, 1000, 2000, 5000
+};
+#define NUM_SPEED_PRESETS (int)(sizeof(SPEED_PRESETS) / sizeof(SPEED_PRESETS[0]))
+#define DEFAULT_SPEED_INDEX 4  /* 20ms = real-time 50Hz */
+
 /* ------------------------------------------------------------------ */
 /* Recording infrastructure (per-tick snapshot for timeline scrubber)  */
 /*                                                                     */
@@ -398,6 +405,9 @@ typedef struct {
     bool         playbackMode;
     int          playbackFrame;
     bool         scrubbing;
+    /* Speed control — index into SPEED_PRESETS. Affects both live
+     * tick rate and playback frame-step rate. */
+    int          speedIndex;
     /* (goalInfo / goalInfoValid live higher up in the struct already
      * — they're refreshed per tick before recordingCapture and the
      * scrubber's goal-change tick markers read from the captured
@@ -2438,41 +2448,118 @@ static void refreshGoalInfo(BrainTestApp *app) {
 /* Control bar (timeline scrubber strip at bottom of window)            */
 /* ------------------------------------------------------------------ */
 
-/* Geometry helpers — also used by the mouse handler so click hit-
- * testing matches what the renderer drew. Returns the scrubber
- * track rect (line endpoints + thumb size). */
+/* Geometry for every clickable element in the control bar. Computed
+ * once so the renderer and the mouse handler agree on hit boxes
+ * exactly. Layout:
+ *
+ *   [<] [Nms] [>]   <track ─────────────────>   [>] [>>] [X]   N/M
+ *   ^^^         ^                            ^                  ^
+ *   speed      speed                       transport       frame
+ *   slower     faster                                      counter
+ *
+ * x ranges are inclusive on the left, exclusive on the right. */
+typedef struct {
+    int barY;
+    float speedSlowerL, speedSlowerR;     /* [<] */
+    float speedLabelL,  speedLabelR;
+    float speedFasterL, speedFasterR;     /* [>] */
+    float trackL, trackR, trackY;         /* scrubber */
+    float thumbW;
+    float playL, playR;                   /* [>] play replay */
+    float jumpLiveL, jumpLiveR;           /* [>>] jump to live */
+    float dropFwdL, dropFwdR;             /* [X] drop forward */
+    float frameCounterX;
+} ControlBarLayout;
+
+static void controlBarLayout(BrainTestApp *app, int screenW, int screenH,
+                              ControlBarLayout *out) {
+    out->barY = screenH - CONTROL_BAR_HEIGHT;
+
+    float sx = 8.0f;
+    out->speedSlowerL = sx;            sx += 28.0f; out->speedSlowerR = sx;
+    /* Speed label width depends on current value. */
+    char speedStr[32];
+    SDL_snprintf(speedStr, sizeof(speedStr),
+                 "%dms", SPEED_PRESETS[app->speedIndex]);
+    float labelW = (float)strlen(speedStr) * 8.0f;
+    out->speedLabelL  = sx;            sx += labelW + 8.0f; out->speedLabelR = sx;
+    out->speedFasterL = sx;            sx += 28.0f; out->speedFasterR = sx;
+    sx += 8.0f; /* gap before scrubber */
+
+    /* Frame counter text width (right-aligned). */
+    char frameStr[32];
+    int displayFrame = app->playbackMode ? app->playbackFrame + 1
+                                          : app->recording.count;
+    SDL_snprintf(frameStr, sizeof(frameStr), "%d / %d",
+                 displayFrame, app->recording.count);
+    float frameW = (float)strlen(frameStr) * 8.0f;
+
+    float rightX = (float)screenW;
+    out->frameCounterX = rightX - frameW - 8.0f;
+    rightX = out->frameCounterX - 4.0f;
+    out->dropFwdR  = rightX;     rightX -= 28.0f; out->dropFwdL  = rightX;
+    rightX -= 4.0f;
+    out->jumpLiveR = rightX;     rightX -= 36.0f; out->jumpLiveL = rightX;
+    rightX -= 4.0f;
+    out->playR     = rightX;     rightX -= 28.0f; out->playL     = rightX;
+    rightX -= 8.0f;
+
+    out->trackL = sx;
+    out->trackR = rightX;
+    out->trackY = out->barY + CONTROL_BAR_HEIGHT * 0.5f;
+    out->thumbW = 8.0f;
+}
+
+/* Back-compat shim for the existing scrubberGeometry callers. */
 static void scrubberGeometry(BrainTestApp *app, int screenW, int screenH,
                               float *trackL, float *trackR, float *trackY,
                               float *thumbW) {
-    int barY = screenH - CONTROL_BAR_HEIGHT;
-    *trackL = 12.0f;
-    *trackR = (float)screenW - 80.0f;     /* leave room for tick counter on right */
-    *trackY = barY + CONTROL_BAR_HEIGHT * 0.5f;
-    *thumbW = 8.0f;
+    ControlBarLayout L;
+    controlBarLayout(app, screenW, screenH, &L);
+    *trackL = L.trackL; *trackR = L.trackR;
+    *trackY = L.trackY; *thumbW = L.thumbW;
 }
 
 static void renderControlBar(BrainTestApp *app, int screenW, int screenH) {
-    int barY = screenH - CONTROL_BAR_HEIGHT;
+    ControlBarLayout L;
+    controlBarLayout(app, screenW, screenH, &L);
+
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(app->renderer, 20, 20, 30, 220);
-    SDL_FRect bg = { 0, (float)barY, (float)screenW, CONTROL_BAR_HEIGHT };
+    SDL_FRect bg = { 0, (float)L.barY, (float)screenW, CONTROL_BAR_HEIGHT };
     SDL_RenderFillRect(app->renderer, &bg);
+
+    float textY = (float)L.barY + 12.0f;
+
+    /* ── Speed control ── */
+    SDL_SetRenderDrawColor(app->renderer, 180, 180, 200, 255);
+    SDL_RenderDebugText(app->renderer, L.speedSlowerL + 6, textY, "[<]");
+    char speedStr[32];
+    SDL_snprintf(speedStr, sizeof(speedStr),
+                 "%dms", SPEED_PRESETS[app->speedIndex]);
+    SDL_SetRenderDrawColor(app->renderer, 255, 255, 100, 255);
+    /* Center the label inside its allocated slot (slot has 8px of
+     * extra padding so the text gets 4px on each side). */
+    float labelTextX = L.speedLabelL
+        + ((L.speedLabelR - L.speedLabelL) - (float)strlen(speedStr) * 8.0f)
+          * 0.5f;
+    SDL_RenderDebugText(app->renderer, labelTextX, textY, speedStr);
+    SDL_SetRenderDrawColor(app->renderer, 180, 180, 200, 255);
+    SDL_RenderDebugText(app->renderer, L.speedFasterL + 6, textY, "[>]");
 
     if (app->recording.count <= 0) {
         SDL_SetRenderDrawColor(app->renderer, 130, 130, 150, 255);
-        SDL_RenderDebugText(app->renderer, 10.0f, (float)barY + 12.0f,
+        SDL_RenderDebugText(app->renderer, L.trackL, textY,
                             "(no frames recorded yet)");
         return;
     }
 
-    float trackL, trackR, trackY, thumbW;
-    scrubberGeometry(app, screenW, screenH, &trackL, &trackR, &trackY, &thumbW);
-    float trackW = trackR - trackL;
+    float trackW = L.trackR - L.trackL;
     if (trackW < 20.0f) return;
 
     /* Track background line. */
     SDL_SetRenderDrawColor(app->renderer, 60, 60, 80, 255);
-    SDL_RenderLine(app->renderer, trackL, trackY, trackR, trackY);
+    SDL_RenderLine(app->renderer, L.trackL, L.trackY, L.trackR, L.trackY);
 
     /* Filled portion up to current position. */
     float fillFrac = app->playbackMode
@@ -2480,9 +2567,9 @@ static void renderControlBar(BrainTestApp *app, int screenW, int screenH) {
         : 1.0f;
     if (fillFrac < 0) fillFrac = 0;
     if (fillFrac > 1) fillFrac = 1;
-    float fillX = trackL + fillFrac * trackW;
+    float fillX = L.trackL + fillFrac * trackW;
     SDL_SetRenderDrawColor(app->renderer, 80, 140, 220, 255);
-    SDL_RenderLine(app->renderer, trackL, trackY, fillX, trackY);
+    SDL_RenderLine(app->renderer, L.trackL, L.trackY, fillX, L.trackY);
 
     /* Goal-change tick markers (yellow vertical lines). Detected by
      * diffing consecutive frames' goalInfo — simpler than the
@@ -2497,34 +2584,45 @@ static void renderControlBar(BrainTestApp *app, int screenW, int screenH) {
             || cur->target_id != prev->target_id
             || cur->mx != prev->mx
             || cur->my != prev->my) {
-            float mx = trackL + ((float)i / (float)(app->recording.count - 1)) * trackW;
-            SDL_RenderLine(app->renderer, mx, trackY - 5.0f, mx, trackY + 5.0f);
+            float mx = L.trackL + ((float)i / (float)(app->recording.count - 1)) * trackW;
+            SDL_RenderLine(app->renderer, mx, L.trackY - 5.0f, mx, L.trackY + 5.0f);
         }
     }
 
     /* Thumb. */
-    SDL_FRect thumb = { fillX - thumbW * 0.5f,
-                        trackY - 6.0f,
-                        thumbW, 12.0f };
+    SDL_FRect thumb = { fillX - L.thumbW * 0.5f, L.trackY - 6.0f,
+                        L.thumbW, 12.0f };
     SDL_SetRenderDrawColor(app->renderer, 200, 200, 240, 255);
     SDL_RenderFillRect(app->renderer, &thumb);
 
-    /* Frame counter on the right. */
+    /* ── Transport buttons ── colored brighter when actionable. */
+    /* [>] play replay — only meaningful in playback mode. */
+    SDL_SetRenderDrawColor(app->renderer,
+        100, 255, 100, app->playbackMode ? 255 : 90);
+    SDL_RenderDebugText(app->renderer, L.playL + 6, textY, "[>]");
+    /* [>>] jump to live. */
+    SDL_SetRenderDrawColor(app->renderer, 100, 200, 255, 255);
+    SDL_RenderDebugText(app->renderer, L.jumpLiveL + 6, textY, "[>>]");
+    /* [X] drop forward — only meaningful in playback. */
+    SDL_SetRenderDrawColor(app->renderer,
+        255, 80, 80, app->playbackMode ? 255 : 90);
+    SDL_RenderDebugText(app->renderer, L.dropFwdL + 6, textY, "[X]");
+
+    /* Frame counter on the far right. */
+    char frameStr[32];
     int displayFrame = app->playbackMode
         ? app->playbackFrame + 1
         : app->recording.count;
-    char frameStr[32];
     SDL_snprintf(frameStr, sizeof(frameStr), "%d / %d",
                  displayFrame, app->recording.count);
     SDL_SetRenderDrawColor(app->renderer, 180, 180, 200, 255);
-    SDL_RenderDebugText(app->renderer,
-                        trackR + 8.0f, (float)barY + 12.0f, frameStr);
+    SDL_RenderDebugText(app->renderer, L.frameCounterX, textY, frameStr);
 
-    /* Mode hint on the left when scrubbing. */
+    /* Mode hint at top-left of the bar when scrubbing. */
     if (app->playbackMode) {
         SDL_SetRenderDrawColor(app->renderer, 255, 200, 80, 255);
         SDL_RenderDebugText(app->renderer,
-                            trackL, (float)barY + 2.0f, "PLAYBACK");
+                            L.trackL, (float)L.barY + 2.0f, "PLAYBACK");
     }
 }
 
@@ -2895,6 +2993,7 @@ int main(int argc, char *argv[]) {
     app.zoomFactor = 2;
     app.freeCamera = false;
     app.showHUD = false;
+    app.speedIndex = DEFAULT_SPEED_INDEX;
     /* Pre-allocate the recording buffers (delta scratchpads etc.) up
      * front; per-frame storage grows on demand inside recordingCapture. */
     recordingInit(&app.recording);
@@ -3460,24 +3559,85 @@ int main(int argc, char *argv[]) {
                 } else if (ev.button.button == SDL_BUTTON_LEFT) {
                     int sw, sh;
                     SDL_GetWindowSize(app.window, &sw, &sh);
-                    /* Bottom-strip click → scrubber. Pre-empt the
+                    /* Bottom-strip click → control bar. Pre-empt the
                      * map-click handler so cost-query queries don't
                      * fire while the user is grabbing the timeline. */
-                    if (ev.button.y >= sh - CONTROL_BAR_HEIGHT
-                        && app.recording.count > 0) {
-                        float trackL, trackR, trackY, thumbW;
-                        scrubberGeometry(&app, sw, sh, &trackL, &trackR,
-                                         &trackY, &thumbW);
-                        if (ev.button.x >= trackL - 4
-                            && ev.button.x <= trackR + 4) {
+                    if (ev.button.y >= sh - CONTROL_BAR_HEIGHT) {
+                        ControlBarLayout L;
+                        controlBarLayout(&app, sw, sh, &L);
+                        float cx = ev.button.x;
+                        /* Speed [<] (slower = larger interval). */
+                        if (cx >= L.speedSlowerL && cx < L.speedSlowerR) {
+                            if (app.speedIndex < NUM_SPEED_PRESETS - 1)
+                                app.speedIndex++;
+                            break;
+                        }
+                        /* Speed [>] (faster). */
+                        if (cx >= L.speedFasterL && cx < L.speedFasterR) {
+                            if (app.speedIndex > 0) app.speedIndex--;
+                            break;
+                        }
+                        if (app.recording.count <= 0) break;
+                        /* [>] play replay — exit pause, advance
+                         * playbackFrame at chosen speed. Only does
+                         * anything in playback mode. */
+                        if (cx >= L.playL && cx < L.playR) {
+                            if (app.playbackMode) app.paused = false;
+                            break;
+                        }
+                        /* [>>] jump to live. */
+                        if (cx >= L.jumpLiveL && cx < L.jumpLiveR) {
+                            app.playbackMode  = false;
+                            app.scrubbing     = false;
+                            app.playbackFrame = app.recording.count - 1;
+                            break;
+                        }
+                        /* [X] drop forward frames + pause at the
+                         * scrubbed point in live mode. */
+                        if (cx >= L.dropFwdL && cx < L.dropFwdR) {
+                            if (app.playbackMode) {
+                                recordingTruncate(&app.recording,
+                                    app.playbackFrame + 1);
+                                app.playbackMode = false;
+                                app.paused       = true;
+                            }
+                            break;
+                        }
+                        /* Scrubber track. Snap to a goal-change
+                         * marker if the click landed within 10 px
+                         * of one. */
+                        if (cx >= L.trackL - 4 && cx <= L.trackR + 4) {
                             app.scrubbing    = true;
                             app.playbackMode = true;
-                            float frac = (ev.button.x - trackL)
-                                       / (trackR - trackL);
+                            float frac = (cx - L.trackL)
+                                       / (L.trackR - L.trackL);
                             if (frac < 0) frac = 0;
                             if (frac > 1) frac = 1;
-                            int f = (int)(frac * (app.recording.count - 1) + 0.5f);
-                            app.playbackFrame = f;
+                            int clickFrame = (int)(frac
+                                * (app.recording.count - 1) + 0.5f);
+                            int bestSnap = clickFrame;
+                            float bestDist = 11.0f;
+                            for (int si = 1; si < app.recording.count; si++) {
+                                if (!app.recording.frames[si].goalInfoValid) continue;
+                                if (!app.recording.frames[si-1].goalInfoValid) continue;
+                                const BrainGoalInfo *cur =
+                                    &app.recording.frames[si].goalInfo;
+                                const BrainGoalInfo *prev =
+                                    &app.recording.frames[si-1].goalInfo;
+                                if (strcmp(cur->kind, prev->kind) == 0
+                                    && cur->target_id == prev->target_id
+                                    && cur->mx == prev->mx
+                                    && cur->my == prev->my) continue;
+                                float mx = L.trackL
+                                    + ((float)si / (float)(app.recording.count - 1))
+                                      * (L.trackR - L.trackL);
+                                float dist = fabsf(cx - mx);
+                                if (dist < bestDist) {
+                                    bestDist = dist;
+                                    bestSnap = si - 1;
+                                }
+                            }
+                            app.playbackFrame = bestSnap;
                         }
                         break;
                     }
@@ -3555,19 +3715,35 @@ int main(int argc, char *argv[]) {
             app.viewCenterY = (WORLD)cy;
         }
 
-        /* Game ticks at 50 Hz */
+        /* Tick scheduler. Cadence = SPEED_PRESETS[speedIndex] ms,
+         * controlled by the bottom bar [<]/[>] buttons.
+         *  - In playback mode: advance app.playbackFrame, do NOT
+         *    drive the live sim (tanks/shells/etc. stay paused at
+         *    the live position; the renderer reads from the
+         *    recorded snapshot anyway).
+         *  - In live mode: appTick the simulation as before. */
+        int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();
-            while (now - lastTickTime >= TICK_INTERVAL_MS) {
-                appTick(&app);
-                lastTickTime += TICK_INTERVAL_MS;
-                /* Auto-pause after first brain tick so the initial
-                 * goal decision and path are visible immediately */
-                if (!autoPauseDone && app.sim.tick >= 4) {
-                    app.paused = true;
-                    autoPauseDone = true;
-                    break;
+            while (now - lastTickTime >= (Uint64)tickMs) {
+                if (app.playbackMode) {
+                    if (app.playbackFrame + 1 < app.recording.count) {
+                        app.playbackFrame++;
+                    } else {
+                        /* Hit the end of recorded history → snap
+                         * back to live and resume the live sim. */
+                        app.playbackMode = false;
+                    }
+                } else {
+                    appTick(&app);
+                    if (!autoPauseDone && app.sim.tick >= 4) {
+                        app.paused = true;
+                        autoPauseDone = true;
+                        lastTickTime += tickMs;
+                        break;
+                    }
                 }
+                lastTickTime += tickMs;
             }
         } else {
             lastTickTime = SDL_GetTicks();
