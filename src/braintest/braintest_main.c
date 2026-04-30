@@ -189,9 +189,93 @@ typedef struct {
      * the always-visible HUD-resources overlay. Pressing X again
      * lifts it; the per-id checkbox states are untouched. */
     bool         vizSuppressActive;
+
+    /* Manual control mode (M key). When on, the keyboard talks to
+     * the brain via two optional Lua hooks the brain may implement:
+     *   brain.set_manual_mode(int)         — flag flipped by M key
+     *   brain.manual_key(role_name, bool)  — Forward/Backward/Left/
+     *     Right/Shoot/LayMine down/up. Role names are derived from
+     *     the user's WinBolo key bindings (loaded from the same INI
+     *     the main game uses), so the brain doesn't have to care
+     *     what physical key the user has configured.
+     * Brains that don't implement them ignore the messages; the
+     * flag still flips C-side so callers can query app.manualControl. */
+    bool         manualControl;
+    /* SDL_Scancode values, loaded from WinBolo.ini [KEYS] at
+     * startup. Defaults match the original Mac WinBolo bindings
+     * (E forward, D backward, S left, F right). */
+    int          keyForward;
+    int          keyBackward;
+    int          keyLeft;
+    int          keyRight;
+    int          keyShoot;
+    int          keyLayMine;
+
+    /* Fog of war overlay (6 key). Black tile fills on every map
+     * cell that's still 0xFF (unseen) in the bot's pathfinder
+     * worldPtr — i.e. tiles the brain has never observed. */
+    bool         showFog;
 } BrainTestApp;
 
 static volatile bool appQuit = FALSE;
+
+/* Read the user's WinBolo key bindings from the same INI the main
+ * game uses, so manual control in BrainTest matches the muscle
+ * memory the user already has. Falls back to defaults if the file
+ * or the [KEYS] section is missing. Stored as SDL_Scancode values. */
+static void loadKeyBindings(BrainTestApp *app) {
+    /* Defaults match Bolo's Mac defaults — E forward, D backward,
+     * S left, F right, Space shoot, LShift mine. */
+    app->keyForward  = SDL_SCANCODE_E;
+    app->keyBackward = SDL_SCANCODE_D;
+    app->keyLeft     = SDL_SCANCODE_S;
+    app->keyRight    = SDL_SCANCODE_F;
+    app->keyShoot    = SDL_SCANCODE_SPACE;
+    app->keyLayMine  = SDL_SCANCODE_LSHIFT;
+
+#ifdef _WIN32
+    char buff[64];
+    char iniPath[FILENAME_MAX];
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir && prefDir[0]) {
+        SDL_snprintf(iniPath, sizeof(iniPath), "%sWinBolo.ini", prefDir);
+    } else {
+        SDL_snprintf(iniPath, sizeof(iniPath), "WinBolo.ini");
+    }
+    /* The values stored in the INI by the main game are SDL
+     * scancodes (the same numbers SDL3 uses). Each call falls
+     * back to its hardcoded default scancode. */
+    GetPrivateProfileStringA("KEYS", "Forward",   "8",   buff, sizeof(buff), iniPath);
+    app->keyForward  = atoi(buff);
+    GetPrivateProfileStringA("KEYS", "Backwards", "7",   buff, sizeof(buff), iniPath);
+    app->keyBackward = atoi(buff);
+    GetPrivateProfileStringA("KEYS", "Left",      "22",  buff, sizeof(buff), iniPath);
+    app->keyLeft     = atoi(buff);
+    GetPrivateProfileStringA("KEYS", "Right",     "9",   buff, sizeof(buff), iniPath);
+    app->keyRight    = atoi(buff);
+    GetPrivateProfileStringA("KEYS", "Shoot",     "44",  buff, sizeof(buff), iniPath);
+    app->keyShoot    = atoi(buff);
+    GetPrivateProfileStringA("KEYS", "Lay Mine",  "225", buff, sizeof(buff), iniPath);
+    app->keyLayMine  = atoi(buff);
+#endif
+
+    SDL_Log("Manual key bindings (scancodes): fwd=%d back=%d left=%d "
+            "right=%d shoot=%d mine=%d",
+            app->keyForward, app->keyBackward, app->keyLeft, app->keyRight,
+            app->keyShoot, app->keyLayMine);
+}
+
+/* SDL_Scancode → role name lookup. Returns NULL if the scancode
+ * isn't bound to any of the manual control roles. */
+static const char *keyToRole(BrainTestApp *app, int scancode) {
+    if (scancode == app->keyForward)  return "forward";
+    if (scancode == app->keyBackward) return "backward";
+    if (scancode == app->keyLeft)     return "left";
+    if (scancode == app->keyRight)    return "right";
+    if (scancode == app->keyShoot)    return "shoot";
+    if (scancode == app->keyLayMine)  return "lay_mine";
+    return NULL;
+}
 
 /* ---------------- Viz registry callback + Lua state push ----------
  * The brain calls braintest_viz_register("id", ...) at brain.open().
@@ -1205,6 +1289,10 @@ int main(int argc, char *argv[]) {
      * calls during brain.open() are silent no-ops). */
     brainCoreSetVizRegisterCallback(vizRegisterCallback);
 
+    /* Load manual-control key bindings from the user's WinBolo.ini
+     * (POSIX falls back to defaults — no INI parsing wrapper here). */
+    loadKeyBindings(&app);
+
     /* Initialize map view lookup tables */
     mapViewInit();
 
@@ -1302,7 +1390,43 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
+            case SDL_EVENT_KEY_UP: {
+                /* Manual control: translate the user's configured
+                 * Bolo key bindings (loaded from WinBolo.ini) into
+                 * role names and forward releases to the brain. */
+                if (!app.manualControl) break;
+                const char *role = keyToRole(&app, ev.key.scancode);
+                if (role) {
+                    char buf[128];
+                    SDL_snprintf(buf, sizeof(buf),
+                        "if brain and brain.manual_key then "
+                        "brain.manual_key('%s',false) end", role);
+                    botManagerExecLua(app.followBot, buf);
+                }
+                break;
+            }
+
             case SDL_EVENT_KEY_DOWN:
+                /* Manual control: same as above, for key presses.
+                 * We do this BEFORE the repeat check + switch below
+                 * so a held key keeps re-asserting the keystate at
+                 * SDL's autorepeat rate (close enough to 'held') and
+                 * so e.g. the user's configured Shoot key doesn't
+                 * trigger a BrainTest hotkey for the same scancode. */
+                if (app.manualControl) {
+                    const char *role = keyToRole(&app, ev.key.scancode);
+                    if (role) {
+                        char buf[128];
+                        SDL_snprintf(buf, sizeof(buf),
+                            "if brain and brain.manual_key then "
+                            "brain.manual_key('%s',true) end", role);
+                        botManagerExecLua(app.followBot, buf);
+                        /* Suppress BrainTest hotkey conflict — the
+                         * configured key has been consumed by the
+                         * brain. */
+                        break;
+                    }
+                }
                 if (ev.key.repeat) break;
                 switch (ev.key.key) {
                 case SDLK_SPACE:
@@ -1378,6 +1502,19 @@ int main(int argc, char *argv[]) {
                      * except hud_resources. Pressing X again restores. */
                     app.vizSuppressActive = !app.vizSuppressActive;
                     break;
+                case SDLK_M: {
+                    app.manualControl = !app.manualControl;
+                    /* Notify the brain via the optional hook. Brains
+                     * that don't implement Brain.set_manual_mode just
+                     * ignore the call. */
+                    char buf[96];
+                    SDL_snprintf(buf, sizeof(buf),
+                        "if brain and brain.set_manual_mode then "
+                        "brain.set_manual_mode(%d) end",
+                        app.manualControl ? 1 : 0);
+                    botManagerExecLua(app.followBot, buf);
+                    break;
+                }
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
                     break;

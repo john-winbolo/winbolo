@@ -2726,8 +2726,22 @@ function Brain.set_manual_mode(on)
   if not manual_active then manual_keys = 0 end
 end
 
+-- Manual key dispatcher. The host (BrainTest) sends ROLE NAMES
+-- ("forward", "backward", "left", "right", "shoot", "lay_mine")
+-- it derived from the user's Bolo key bindings, so the brain
+-- doesn't need to care which physical keys are configured. Legacy
+-- letter names ("w", "s", "a", "d", "space", "lshift") are kept
+-- as aliases so any other host that sends literal SDL key letters
+-- still works.
 function Brain.manual_key(name, down)
   local map = {
+    forward  = KEY_FASTER,
+    backward = KEY_SLOWER,
+    left     = KEY_TURNLEFT,
+    right    = KEY_TURNRIGHT,
+    shoot    = KEY_SHOOT,
+    lay_mine = KEY_DROPMINE,
+    -- Legacy literal-key aliases.
     w = KEY_FASTER, s = KEY_SLOWER, a = KEY_TURNLEFT, d = KEY_TURNRIGHT,
     space = KEY_SHOOT, lshift = KEY_DROPMINE,
   }
