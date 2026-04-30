@@ -35,6 +35,7 @@
 #include "brain.h"
 #include "brain_pathfinder.h"
 #include "brain_worldsim.h"
+#include "brain_overlay.h"
 
 /*********************************************************
  *NAME:          brainCoreRegisterConstants
@@ -126,5 +127,38 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr);
  *           for the lifetime of the Lua state.
  *********************************************************/
 void brainCoreRegisterWorldSim(lua_State *L, BrainWorldSim **wsPtr);
+
+/*********************************************************
+ *NAME:          brainCoreRegisterOverlay
+ *PURPOSE:
+ *  Registers overlay_* Lua globals for debug drawing.
+ *  Uses a pointer-to-pointer upvalue so the buffer can
+ *  be swapped per brain instance.
+ *********************************************************/
+void brainCoreRegisterOverlay(lua_State *L, OverlayCmdBuffer **bufPtr);
+
+/*********************************************************
+ *NAME:          brainCoreRegisterPrintCapture
+ *PURPOSE:
+ *  Overrides Lua's print() to call a capture callback
+ *  in addition to writing to stderr. The callback receives
+ *  the concatenated print output as a single string.
+ *
+ *ARGUMENTS:
+ *  L   - Lua state
+ *  cb  - Callback function (tick, text, userdata)
+ *  ud  - Opaque userdata passed to callback
+ *  tickPtr - Pointer to current tick counter (read each call)
+ *********************************************************/
+typedef void (*BrainPrintCaptureFunc)(uint32_t tick, const char *text, void *userdata);
+
+/* Register a print capture override on a specific Lua state */
+void brainCoreRegisterPrintCapture(lua_State *L, BrainPrintCaptureFunc cb,
+                                    void *ud, const uint32_t *tickPtr);
+
+/* Set a global print capture that all new Lua brain instances will use.
+ * Call before creating any brain instances. */
+void brainCoreSetGlobalPrintCapture(BrainPrintCaptureFunc cb, void *ud,
+                                     const uint32_t *tickPtr);
 
 #endif /* BRAINCORE_H */

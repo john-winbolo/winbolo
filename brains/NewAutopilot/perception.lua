@@ -33,23 +33,28 @@ function M.update(state, world, info)
   local friendly_pills_damaged = 0
   local friendly_pill_count = 0
   local dead_neutral_pill_count = 0
+  local neutral_pill_count = 0
   local hostile_pill_count = 0
   local attackable_pill_count = 0  -- hostile or neutral with health > 0
 
   for id, p in pairs(world.pills) do
     if p.owner == "friendly" then
       friendly_pill_count = friendly_pill_count + 1
-      if p.health > 0 and p.health < C.PILLS_MAX_HEALTH then
+      if p.health == 0 and not p.in_tank then
+        dead_neutral_pill_count = dead_neutral_pill_count + 1
+      elseif p.health > 0 and p.health < C.PILLS_MAX_HEALTH then
         friendly_pills_damaged = friendly_pills_damaged + 1
       end
     else
       -- hostile or neutral
-      if p.health == 0 and p.owner == "neutral" then
+      if p.health == 0 and p.owner == "neutral" and not p.in_tank then
         dead_neutral_pill_count = dead_neutral_pill_count + 1
       elseif p.health > 0 then
         attackable_pill_count = attackable_pill_count + 1
         if p.owner == "hostile" then
           hostile_pill_count = hostile_pill_count + 1
+        elseif p.owner == "neutral" then
+          neutral_pill_count = neutral_pill_count + 1
         end
         local d = U.mdist(tmx, tmy, p.mx, p.my)
         -- Track nearest hostile/neutral pill (any distance)
@@ -86,25 +91,54 @@ function M.update(state, world, info)
   perc.friendly_pill_count = friendly_pill_count
   perc.friendly_pills_damaged = friendly_pills_damaged
   perc.dead_neutral_pill_count = dead_neutral_pill_count
+  perc.neutral_pill_count = neutral_pill_count
   perc.hostile_pill_count = hostile_pill_count
   perc.attackable_pill_count = attackable_pill_count
 
   -- ----- Hostile tanks from info.objects (speed from C ObjectInfo) -----
+  -- Velocity tracking: match tanks frame-to-frame by proximity to compute
+  -- true velocity (WU per tick) for lead-time aiming.
+  local prev_tanks = state._prev_enemy_tanks or {}
   local nearest_hostile_tank = nil
   local nearest_hostile_tank_dist = math.huge
   local enemy_tank_count = 0
+  local allied_tank_count = 0
   local enemy_tanks = {}  -- all visible hostile tanks
 
   for _, ob in ipairs(info.objects) do
+    if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
+      allied_tank_count = allied_tank_count + 1
+    end
     if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) ~= 0 then
       enemy_tank_count = enemy_tank_count + 1
       local omx = ob.x >> 8
       local omy = ob.y >> 8
       local d = U.mdist(tmx, tmy, omx, omy)
 
-      -- Speed comes directly from TankSnapshot (actual_speed * 4)
+      -- Match to closest previous-frame tank for velocity + smoothing
+      local vx, vy = 0, 0
+      local svx, svy = 0, 0  -- EMA-smoothed velocity for lead prediction
+      local best_match_d = 5 * 256  -- max 5 tiles to match
+      for _, pt in ipairs(prev_tanks) do
+        local dx = ob.x - pt.wx
+        local dy = ob.y - pt.wy
+        local md = math.abs(dx) + math.abs(dy)
+        if md < best_match_d then
+          best_match_d = md
+          vx = dx  -- WU per brain-tick delta
+          vy = dy
+          -- EMA: blend new raw sample with previous smoothed value
+          -- alpha=0.5: fast enough to track direction changes, smooths single-tick noise
+          local alpha = 0.5
+          svx = alpha * vx + (1 - alpha) * (pt.svx or vx)
+          svy = alpha * vy + (1 - alpha) * (pt.svy or vy)
+        end
+      end
+
       local entry = { mx = omx, my = omy, dist = d, obj = ob,
-                       speed = ob.speed or 0 }
+                       speed = ob.speed or 0,
+                       wx = ob.x, wy = ob.y, vx = vx, vy = vy,
+                       svx = svx, svy = svy }
       enemy_tanks[#enemy_tanks + 1] = entry
 
       if d < nearest_hostile_tank_dist then
@@ -114,9 +148,75 @@ function M.update(state, world, info)
     end
   end
 
+  -- Save current positions + smoothed velocity for next tick's computation
+  state._prev_enemy_tanks = {}
+  for _, et in ipairs(enemy_tanks) do
+    state._prev_enemy_tanks[#state._prev_enemy_tanks + 1] = {
+      wx = et.wx, wy = et.wy, svx = et.svx, svy = et.svy
+    }
+  end
+
   perc.nearest_hostile_tank = nearest_hostile_tank
   perc.enemy_tank_count = enemy_tank_count
   perc.enemy_tanks = enemy_tanks
+
+  -- ----- Enemy LGM tracking: detect parachutes (dead enemy LGM) -----
+  local enemy_lgm_sightings = state._enemy_lgm_sightings or {}
+  local now = state.tick or 0
+  for _, ob in ipairs(info.objects) do
+    if ob.type == OBJECT_PARACHUTE and (ob.info & OBJECT_HOSTILE) ~= 0 then
+      local omx = ob.x >> 8
+      local omy = ob.y >> 8
+      enemy_lgm_sightings[U.mkey(omx, omy)] = {
+        tick = now, mx = omx, my = omy,
+      }
+    end
+  end
+  -- Check if any enemy LGM is known dead recently
+  local enemy_lgm_dead = false
+  local enemy_lgm_eta = math.huge
+  for k, s in pairs(enemy_lgm_sightings) do
+    local return_tick = s.tick + C.ENEMY_LGM_RETURN_TICKS
+    if now < return_tick then
+      enemy_lgm_dead = true
+      if return_tick < enemy_lgm_eta then enemy_lgm_eta = return_tick end
+    else
+      enemy_lgm_sightings[k] = nil  -- expired
+    end
+  end
+  state._enemy_lgm_sightings = enemy_lgm_sightings
+  perc.enemy_lgm_dead = enemy_lgm_dead
+  perc.enemy_lgm_return_tick = enemy_lgm_dead and enemy_lgm_eta or nil
+
+  -- Base Killer Mode: auto-activate when team outnumbers opponents
+  -- Count includes self (+1 for our tank)
+  perc.allied_tank_count = allied_tank_count + 1  -- +1 = us
+  perc.team_advantage = (allied_tank_count + 1) - enemy_tank_count
+  perc.base_killer_mode = perc.team_advantage >= C.BASE_KILLER_TEAM_ADVANTAGE
+      and enemy_tank_count > 0  -- need at least 1 enemy to make sense
+
+  -- Dead pills on deep sea (bait detection). Piggyback on U.terrain_prev:
+  -- every U.ttype/U.traw call from pathfinding/steering/threat populates it,
+  -- so we reuse that shared cache instead of running a dedicated view scan.
+  -- Unseen tiles are absent (nil), so == C.T_DEEPSEA won't false-flag.
+  local terrain_prev = U.terrain_prev
+  perc.deepsea_pill_ids = {}
+  for pid, p in pairs(world.pills) do
+    if p.health == 0 and terrain_prev[U.mkey(p.mx, p.my)] == C.T_DEEPSEA then
+      perc.deepsea_pill_ids[pid] = true
+    end
+  end
+
+  -- ----- Allied LGM protection (aIndy: avoid driving over allied LGMs) -----
+  local allied_lgm_positions = {}
+  for _, ob in ipairs(info.objects) do
+    if ob.type == OBJECT_BUILDMAN and (ob.info & OBJECT_HOSTILE) == 0 then
+      local lmx = ob.x >> 8
+      local lmy = ob.y >> 8
+      allied_lgm_positions[#allied_lgm_positions + 1] = { mx = lmx, my = lmy }
+    end
+  end
+  perc.allied_lgm_positions = allied_lgm_positions
 
   -- ----- Under fire: shell danger or angry pill in range -----
   local threat_at_tank = danger.danger_at(tmx, tmy, now, world)
