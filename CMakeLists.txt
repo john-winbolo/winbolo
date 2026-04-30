@@ -870,6 +870,11 @@ if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     # PIC so the static lib can also link into shared targets (winbolo_gym).
     if(TARGET plum)
         set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        # MSVC: libplum's pcp.h has a zero-sized array (C4200) which our
+        # /WX-as-error policy rejects. Disable just that warning for plum.
+        if(MSVC)
+            target_compile_options(plum PRIVATE /wd4200)
+        endif()
     endif()
     set(HAVE_LIBPLUM TRUE)
     message(STATUS "libplum enabled — automatic NAT port mapping")

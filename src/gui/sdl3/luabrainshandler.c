@@ -580,6 +580,14 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainCoreRegisterWorldSim(L, &inst->worldsim);
   }
 
+  /* Per-brain overlay command buffer + register overlay_* globals.
+   * The buffer is owned by this instance; the registered Lua closures
+   * hold a pointer-to-pointer so the buffer can be swapped per tick
+   * by the consumer (e.g. a UI replaying historical frames). */
+  overlayCmdBufferInit(&inst->overlay);
+  inst->overlayPtr = &inst->overlay;
+  brainCoreRegisterOverlay(L, &inst->overlayPtr);
+
   setup_brain_package_path(L, path);
 
   /* Install SDL-based searcher so require() works on Android assets.
@@ -732,6 +740,9 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
 
   brainWorldSimDestroy(inst->worldsim);
   inst->worldsim = NULL;
+
+  overlayCmdBufferDestroy(&inst->overlay);
+  inst->overlayPtr = NULL;
 
   lua_close(inst->L);
   inst->L = NULL;

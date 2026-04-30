@@ -28,6 +28,7 @@
 #include "global.h"
 #include "screen.h"  /* For aiType, gameType */
 #include "brain_pathfinder.h"
+#include "brain_overlay.h"
 
 /* Forward declarations */
 struct ServerSim;
@@ -134,6 +135,19 @@ bool botManagerIsBot(BYTE playerNum);
  *  playerNum - Player slot to query
  *********************************************************/
 BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerGetOverlayCmds
+ *PURPOSE:
+ *  Returns the per-bot overlay command buffer the brain
+ *  populates each tick via overlay_* Lua calls. Read-only
+ *  access for renderers (BrainTest, recording capture).
+ *  Returns NULL if the slot is not an active bot.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot to query
+ *********************************************************/
+OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
 
 /* ------------------------------------------------------------------ */
 /* Goal info for debug viewer (BrainTest)                              */
