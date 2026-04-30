@@ -592,6 +592,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * dialog rows. Routes to a callback BrainTest sets at startup;
    * NULL when the brain runs under WinBolo client → no-op. */
   brainCoreRegisterVizRegister(L);
+  /* braintest_panel_register binding (sibling of viz register) for
+   * the Q-toggled panel window. Same NULL-callback behavior under
+   * the client. */
+  brainCoreRegisterPanelRegister(L);
 
   setup_brain_package_path(L, path);
 

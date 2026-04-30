@@ -79,6 +79,13 @@
 #include "../bolo/brain_overlay.h"
 #include "braintest_viz_registry.h"
 #include "braintest_vizwindow.h"
+#include "braintest_panel_registry.h"
+#include "braintest_panelwindow.h"
+#include "braintest_panel_types.h"
+#include "braintest_botwindow.h"
+
+/* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
+void panelRenderText(const char *body);
 #include "../gui/clientmutex.h"
 #include "../gui/lang.h"
 
@@ -211,6 +218,12 @@ typedef struct {
      * with its own ImGui context. Created on first 'V' press. */
     SDL_Window  *vizWindow;
     SDL_Renderer*vizRenderer;
+
+    /* P dialog (panel/text dump tabs) — same shape as V, separate
+     * window + ImGui context. Tabs come from the panel registry
+     * which the brain populates via braintest_panel_register. */
+    SDL_Window  *panelWindow;
+    SDL_Renderer*panelRenderer;
 
     /* X-key bare-screen mode: short-circuits all viz overlays except
      * the always-visible HUD-resources overlay. Pressing X again
@@ -774,6 +787,131 @@ static int vizRegisterCallback(const char *id, const char *label,
     return idx;
 }
 
+/* While bots are being created the host sets these so the panel
+ * registration callback can tag the entry with the right owner +
+ * namespace the type with the brain's name. Both reset to -1 / ""
+ * after each bot's brain.open() returns so a stray Lua call
+ * outside that window can't accidentally claim ownership. */
+static int  g_currentInitBot = -1;
+static char g_currentInitBrainName[64] = "";
+
+/* Keys BrainTest core already binds — bots can't claim these. The
+ * check is one-letter-only (uppercase normalized) since shortcuts
+ * are single characters. */
+static bool isReservedShortcut(char k) {
+    /* P is intentionally NOT here — the old host-owned P-window-with-
+     * tabs is gone, so bots are free to claim P (e.g. NewAutopilot's
+     * Pool breakdown). */
+    static const char *reserved = "VMXHFTLGCBQ";
+    if (k == '\0') return false;
+    char up = (k >= 'a' && k <= 'z') ? (char)(k - 'a' + 'A') : k;
+    for (const char *p = reserved; *p; p++) {
+        if (up == *p) return true;
+    }
+    return false;
+}
+
+/* Brain → host callback for the panel registry. Auto-namespaces
+ * the panel type with the registering bot's brain name so two
+ * brains registering "pool_grid" with different schemas don't
+ * collide ("NewAutopilot:pool_grid" vs "OtherBot:pool_grid").
+ * Per-bot panel modules in brains/<botname>/braintest_panels/
+ * register their renderers under the same namespaced names.
+ *
+ * `shortcut` is optional. When present and not reserved, the panel
+ * gets its own SDL window toggled by that key (lazy-created on
+ * first toggle). Reserved keys log a warning and are stripped —
+ * the panel still registers, just as a tab in the P window. */
+static int panelRegisterCallback(const char *name, const char *type,
+                                  const char *lua_expr,
+                                  const char *shortcut) {
+    if (g_currentInitBot < 0) {
+        SDL_Log("WARN: braintest_panel_register('%s') called outside "
+                "brain.open() — ignored", name ? name : "?");
+        return -1;
+    }
+    char namespaced[PANEL_REG_TYPE_MAX];
+    if (type && type[0] && g_currentInitBrainName[0]) {
+        SDL_snprintf(namespaced, sizeof(namespaced), "%s:%s",
+                     g_currentInitBrainName, type);
+    } else if (type && type[0]) {
+        SDL_snprintf(namespaced, sizeof(namespaced), "%s", type);
+    } else {
+        SDL_snprintf(namespaced, sizeof(namespaced), "text");
+    }
+    /* Validate shortcut. Single ASCII letter only; uppercased; not
+     * reserved. Anything else falls back to "no shortcut" with a
+     * one-time warning so the panel doesn't silently vanish. */
+    char  shortBuf[2] = { 0, 0 };
+    const char *useShort = NULL;
+    if (shortcut && shortcut[0]) {
+        char k = shortcut[0];
+        if (k >= 'a' && k <= 'z') k = (char)(k - 'a' + 'A');
+        if (k < 'A' || k > 'Z' || shortcut[1] != '\0') {
+            SDL_Log("WARN: panel '%s' shortcut '%s' is not a single "
+                    "letter — ignored", name, shortcut);
+        } else if (isReservedShortcut(k)) {
+            SDL_Log("WARN: panel '%s' shortcut '%c' is reserved by "
+                    "BrainTest core — falling back to P-window tab",
+                    name, k);
+        } else {
+            shortBuf[0] = k;
+            useShort = shortBuf;
+        }
+    }
+    return panelRegistryAdd(g_currentInitBot, name, namespaced,
+                            lua_expr, useShort);
+}
+
+/* The panel window's poll callback runs from inside ImGui rendering
+ * and only knows the panel index — it has no app handle. Stash the
+ * followBot + recording-enabled flag + sim tick in file-statics the
+ * callback can read. Updated every frame the panel window is visible. */
+static BYTE     g_panelPollFollowBot   = 0;
+static bool     g_panelRecordEnabled   = true; /* on by default */
+static char     g_panelRecordDir[FILENAME_MAX] = "";
+static uint32_t g_panelPollTick        = 0;
+
+/* Slugify a panel name for the filename: lowercase, non-alnum → '_'.
+ * Output buffer must be ≥ strlen(in)+1. */
+static void slugifyPanelName(const char *in, char *out, size_t outLen) {
+    size_t j = 0;
+    for (size_t i = 0; in[i] && j + 1 < outLen; i++) {
+        char c = in[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            out[j++] = c;
+        } else if (c >= 'A' && c <= 'Z') {
+            out[j++] = (char)(c - 'A' + 'a');
+        } else {
+            out[j++] = '_';
+        }
+    }
+    out[j] = '\0';
+}
+
+static char *panelPollCallback(int panel_idx) {
+    const PanelRegistryEntry *e = panelRegistryGet(panel_idx);
+    if (!e || !e->lua_expr[0]) return NULL;
+    char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
+    /* Persist to disk so the same per-tick snapshot can be inspected
+     * offline (great for "look at the queue at tick 4321" — files
+     * are JSON for typed panels, raw text for the "text" type). */
+    if (body && g_panelRecordEnabled && g_panelRecordDir[0]) {
+        char slug[PANEL_REG_NAME_MAX];
+        slugifyPanelName(e->name, slug, sizeof(slug));
+        char path[FILENAME_MAX];
+        SDL_snprintf(path, sizeof(path), "%s/p%d_%s_%u.json",
+                     g_panelRecordDir, e->bot_owner, slug,
+                     (unsigned)g_panelPollTick);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fwrite(body, 1, strlen(body), f);
+            fclose(f);
+        }
+    }
+    return body;
+}
+
 static void signalHandler(int sig) {
     (void)sig;
     appQuit = TRUE;
@@ -801,6 +939,7 @@ static void printUsage(const char *prog) {
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
+        "  --no-record-panels   Disable per-tick panel JSON dumps (default: on)\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -840,6 +979,11 @@ static bool parseArgs(int argc, char **argv) {
             else if (strcmp(v, "tournament") == 0)  optGame = gameTournament;
             else if (strcmp(v, "strict") == 0)      optGame = gameStrictTournament;
             else { fprintf(stderr, "Unknown game type: %s\n", v); return FALSE; }
+        } else if (strcmp(argv[i], "--no-record-panels") == 0) {
+            /* Suppress per-tick panel JSON dumps. Recording is on
+             * by default since the disk cost is trivial (~10KB/s
+             * for one open panel) and the replay value is high. */
+            g_panelRecordEnabled = false;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);
@@ -1810,6 +1954,24 @@ static void appRender(BrainTestApp *app) {
         SDL_GetWindowSize(app->vizWindow, &vw, &vh);
         vizWindowRender(app->vizRenderer, vw, vh, NULL);
     }
+
+    /* P dialog (panels). Same pattern as the V window. */
+    if (app->panelWindow && app->panelRenderer
+        && !(SDL_GetWindowFlags(app->panelWindow) & SDL_WINDOW_HIDDEN)) {
+        int pw, ph;
+        SDL_GetWindowSize(app->panelWindow, &pw, &ph);
+        g_panelPollFollowBot = app->followBot;
+        g_panelPollTick      = app->sim.tick / 2; /* brain tick */
+        panelWindowRender(app->panelRenderer, pw, ph,
+                          (int)app->followBot, panelPollCallback);
+    }
+
+    /* Bot-defined custom windows. Each one polls + renders only
+     * when its slot is visible, so the cost is bounded by what the
+     * user actually opened. */
+    g_panelPollFollowBot = app->followBot;
+    g_panelPollTick      = app->sim.tick / 2;
+    botWindowRenderAll((int)app->followBot, panelPollCallback);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1938,6 +2100,14 @@ int main(int argc, char *argv[]) {
      * Lua state is created (otherwise braintest_viz_register
      * calls during brain.open() are silent no-ops). */
     brainCoreSetVizRegisterCallback(vizRegisterCallback);
+    brainCoreSetPanelRegisterCallback(panelRegisterCallback);
+    /* Built-in panel renderer: type "text" → plain unformatted
+     * dump. Defined in braintest_panelwindow.cpp so it can call
+     * ImGui directly. Per-bot panel modules in
+     * brains/<bot>/braintest_panels/ self-register their renderers
+     * via static initializers; this just makes sure the fallback
+     * always exists. */
+    panelTypeRegister("text", panelRenderText);
 
     /* Load manual-control key bindings from the user's WinBolo.ini
      * (POSIX falls back to defaults — no INI parsing wrapper here). */
@@ -1997,14 +2167,68 @@ int main(int argc, char *argv[]) {
     /* Add bots */
     botManagerInit();
     char brainPath[1024];
+    /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
+     * once at startup. We use a timestamped subdir so multiple BrainTest
+     * runs don't trample each other; offline tools / LLMs reading these
+     * files just point at the directory printed below. */
+    if (g_panelRecordEnabled) {
+        time_t t = time(NULL);
+        struct tm tmv;
+#ifdef _WIN32
+        localtime_s(&tmv, &t);
+#else
+        localtime_r(&t, &tmv);
+#endif
+        char ts[32];
+        strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+        SDL_snprintf(g_panelRecordDir, sizeof(g_panelRecordDir),
+                     "debug_sessions/%s/panels", ts);
+        /* SDL_CreateDirectory is recursive in SDL3. */
+        if (!SDL_CreateDirectory(g_panelRecordDir)) {
+            SDL_Log("WARN: couldn't create %s — panel recording disabled (%s)",
+                    g_panelRecordDir, SDL_GetError());
+            g_panelRecordEnabled = false;
+            g_panelRecordDir[0] = '\0';
+        } else {
+            fprintf(stderr, "  Panel recording: %s\n", g_panelRecordDir);
+        }
+    }
+
     if (findBrainScript(optBrain, brainPath, sizeof(brainPath))) {
         fprintf(stderr, "  Brain script: %s\n", brainPath);
+        /* Extract brain dir basename ("brains/NewAutopilot" or
+         * "brains/NewAutopilot/init.lua" -> "NewAutopilot") so the
+         * panel-register callback can namespace types with it. */
+        char brainName[64] = "";
+        {
+            const char *src = optBrain;
+            const char *last_slash = src;
+            for (const char *p = src; *p; p++) {
+                if (*p == '/' || *p == '\\') last_slash = p + 1;
+            }
+            SDL_snprintf(brainName, sizeof(brainName), "%s", last_slash);
+            /* Strip ".lua" if the user pointed at a file. */
+            size_t bl = strlen(brainName);
+            if (bl > 4 && SDL_strcasecmp(brainName + bl - 4, ".lua") == 0) {
+                brainName[bl - 4] = '\0';
+            }
+            /* Drop a trailing slash or '/init' if either snuck in. */
+            bl = strlen(brainName);
+            if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
+                brainName[bl-1] = '\0';
+        }
         for (int i = 0; i < optNumPlayers; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i);
-            if (botManagerAddBot(&app.sim, (BYTE)i, brainPath, name, optAI, optGame, false)) {
-                app.numBots++;
-            }
+            /* Tag the panel-register callback for this bot's brain.open(). */
+            g_currentInitBot = i;
+            SDL_snprintf(g_currentInitBrainName,
+                         sizeof(g_currentInitBrainName), "%s", brainName);
+            bool ok = botManagerAddBot(&app.sim, (BYTE)i, brainPath, name,
+                                       optAI, optGame, false);
+            g_currentInitBot = -1;
+            g_currentInitBrainName[0] = '\0';
+            if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
     } else {
@@ -2031,6 +2255,10 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&ev)) {
             /* Forward to V dialog's ImGui context (no-op if not init). */
             vizWindowProcessEvent(&ev);
+            /* Same for P (panels) dialog. */
+            panelWindowProcessEvent(&ev);
+            /* Same for every per-bot custom window. */
+            botWindowProcessEvent(&ev);
             switch (ev.type) {
             case SDL_EVENT_QUIT:
                 appQuit = TRUE;
@@ -2041,6 +2269,8 @@ int main(int argc, char *argv[]) {
                     appQuit = TRUE;
                 } else if (evWin == app.vizWindow) {
                     SDL_HideWindow(app.vizWindow);
+                } else if (evWin == app.panelWindow) {
+                    SDL_HideWindow(app.panelWindow);
                 }
                 break;
             }
@@ -2217,8 +2447,34 @@ int main(int argc, char *argv[]) {
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
                     break;
-                default:
+                default: {
+                    /* Last-chance dispatch: bot-defined panel
+                     * shortcuts. Built-in keys have already had
+                     * their case-arms handled above; whatever
+                     * lands here might be a single letter a bot
+                     * registered. We only consider plain
+                     * single-letter keys (no modifiers) and only
+                     * panels owned by the currently-followed bot
+                     * — different bot's shortcuts shouldn't fire
+                     * when you're watching this one. */
+                    SDL_Keycode k = ev.key.key;
+                    if (ev.key.mod &
+                        (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))
+                        break;
+                    if (k < 'a' || k > 'z') break;
+                    char up = (char)(k - 'a' + 'A');
+                    int totalN = panelRegistryCount();
+                    for (int pi = 0; pi < totalN; pi++) {
+                        const PanelRegistryEntry *e = panelRegistryGet(pi);
+                        if (!e || !e->shortcut[0]) continue;
+                        if (e->bot_owner != app.followBot) continue;
+                        if (e->shortcut[0] == up) {
+                            botWindowToggle(pi);
+                            break;
+                        }
+                    }
                     break;
+                }
                 }
                 break;
 
@@ -2384,6 +2640,12 @@ int main(int argc, char *argv[]) {
         if (app.vizRenderer) SDL_DestroyRenderer(app.vizRenderer);
         SDL_DestroyWindow(app.vizWindow);
     }
+    if (app.panelWindow) {
+        panelWindowShutdown();
+        if (app.panelRenderer) SDL_DestroyRenderer(app.panelRenderer);
+        SDL_DestroyWindow(app.panelWindow);
+    }
+    botWindowShutdownAll();
     SDL_DestroyRenderer(app.renderer);
     SDL_DestroyWindow(app.window);
     langCleanup();

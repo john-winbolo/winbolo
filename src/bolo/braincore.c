@@ -1672,3 +1672,50 @@ void brainCoreRegisterVizRegister(lua_State *L) {
   lua_pushcfunction(L, l_braintest_viz_register);
   lua_setglobal(L, "braintest_viz_register");
 }
+
+/* ── braintest_panel_register host hook (parallel of viz register) ── */
+static BrainPanelRegisterFunc g_panelRegisterCb = NULL;
+
+void brainCoreSetPanelRegisterCallback(BrainPanelRegisterFunc cb) {
+  g_panelRegisterCb = cb;
+}
+
+static int l_braintest_panel_register(lua_State *L) {
+  /* Signature: braintest_panel_register(name, type, lua_expr [, opts]).
+   *   `type`     — optional ("text" if nil); namespaced by host
+   *   `lua_expr` — required; Lua chunk that returns the body string
+   *   `opts`     — optional table; recognized keys:
+   *                  shortcut = "T"   → panel gets its own SDL window
+   *                                      toggled by this key. Empty /
+   *                                      missing → tab in the P window.
+   *
+   * Two-arg form (name, lua_expr) still supported for older brains:
+   * type defaults to "text", no opts. */
+  const char *name = luaL_checkstring(L, 1);
+  const char *type = NULL;
+  const char *lua_expr = NULL;
+  const char *shortcut = NULL;
+  int top = lua_gettop(L);
+  if (top >= 3) {
+    if (!lua_isnoneornil(L, 2)) type = luaL_checkstring(L, 2);
+    lua_expr = luaL_checkstring(L, 3);
+    if (top >= 4 && lua_istable(L, 4)) {
+      lua_getfield(L, 4, "shortcut");
+      if (lua_isstring(L, -1)) shortcut = lua_tostring(L, -1);
+      lua_pop(L, 1);
+    }
+  } else {
+    lua_expr = luaL_checkstring(L, 2);
+  }
+  int idx = -1;
+  if (g_panelRegisterCb) {
+    idx = g_panelRegisterCb(name, type, lua_expr, shortcut);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+void brainCoreRegisterPanelRegister(lua_State *L) {
+  lua_pushcfunction(L, l_braintest_panel_register);
+  lua_setglobal(L, "braintest_panel_register");
+}

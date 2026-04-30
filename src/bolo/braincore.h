@@ -187,4 +187,26 @@ typedef int (*BrainVizRegisterFunc)(const char *id,
 void brainCoreSetVizRegisterCallback(BrainVizRegisterFunc cb);
 void brainCoreRegisterVizRegister(lua_State *L);
 
+/*********************************************************
+ *NAME:          braintest_panel_register hook
+ *PURPOSE:
+ *  Lua binding `braintest_panel_register(name, lua_expr)`
+ *  lets brains advertise text panels for BrainTest's
+ *  Q-toggled side window. The host opens a tab per panel
+ *  and polls `lua_expr` periodically; whatever string the
+ *  expression returns is rendered as the tab body.
+ *
+ *  Same shape as the viz register callback: hosts wire up
+ *  via brainCoreSetPanelRegisterCallback; non-host runtimes
+ *  (game client, headless server) leave it NULL and the
+ *  binding silently no-ops.
+ *********************************************************/
+typedef int (*BrainPanelRegisterFunc)(const char *name,
+                                       const char *type,
+                                       const char *lua_expr,
+                                       const char *shortcut);
+
+void brainCoreSetPanelRegisterCallback(BrainPanelRegisterFunc cb);
+void brainCoreRegisterPanelRegister(lua_State *L);
+
 #endif /* BRAINCORE_H */

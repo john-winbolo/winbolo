@@ -1762,7 +1762,19 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
+    src/braintest/braintest_panel_registry.c
+    src/braintest/braintest_panel_types.c
+    src/braintest/braintest_panelwindow.cpp
+    src/braintest/braintest_botwindow.cpp
 )
+
+# Per-bot BrainTest panel modules. Each bot may ship its own set of
+# C++ panel renderers under brains/<bot>/braintest_panels/*.cpp; they
+# self-register via static initializers using panelTypeRegister().
+# Glob is build-time — adding a new bot's panels needs a CMake re-run.
+file(GLOB BRAINTEST_BOT_PANEL_SOURCES
+    "${CMAKE_SOURCE_DIR}/brains/*/braintest_panels/*.cpp")
+list(APPEND BRAINTEST_SOURCES ${BRAINTEST_BOT_PANEL_SOURCES})
 
 
 # BSD headers
@@ -1793,6 +1805,7 @@ target_include_directories(BrainTest PRIVATE
     src/server
     src/braintest
     src/mapeditor
+    ${cjson_SOURCE_DIR}
 )
 
 # braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
@@ -1812,7 +1825,7 @@ endif()
 
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
-    nanosvg stb_image utf8proc
+    nanosvg stb_image utf8proc cjson
 )
 
 # Copy shared libraries and assets next to BrainTest executable
