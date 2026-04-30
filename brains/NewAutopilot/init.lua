@@ -301,6 +301,9 @@ end
 -- =========================================================================
 
 function Brain.think(info)
+  -- Capture wall clock at think entry; the matching exit-time
+  -- snapshot at the bottom drives the top-left tick-info HUD.
+  local _think_t0 = os.clock()
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
@@ -2684,6 +2687,28 @@ function Brain.think(info)
   -- later once better candidates finish evaluating.
   if now <= C.STARTUP_HOLD_TICKS then
     keys, taps, build_cmd = 0, 0, -1
+  end
+
+  -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
+  -- C-side already renders tick + think_ms; keep this line tight
+  -- with the brain-only bits: replan countdown, phase, current goal.
+  do
+    local _think_ms = (os.clock() - _think_t0) * 1000.0  -- unused but cheap; kept in case someone wants it
+    local replan_left = C.GOAL_REPLAN_INTERVAL
+        - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
+    if replan_left == C.GOAL_REPLAN_INTERVAL then replan_left = 0 end
+    local g = state.goal or {}
+    local goal_str = (g.kind or "none")
+    if g.target_id and g.target_id >= 0 then
+      goal_str = string.format("%s#%d(%d,%d)",
+        goal_str, g.target_id, g.mx or 0, g.my or 0)
+    elseif g.mx then
+      goal_str = string.format("%s(%d,%d)", goal_str, g.mx, g.my)
+    end
+    viz.hud_text("hud_tick_info", 8, 32,
+      string.format("replan:%d  phase:%s  goal:%s",
+        replan_left, state.phase or "?", goal_str),
+      "topleft", 200, 220, 200)
   end
 
   -- Output
