@@ -141,14 +141,15 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
 
     ImGui::Separator();
 
-    if (ImGui::BeginTable("##viz", 4,
+    if (ImGui::BeginTable("##viz", 5,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
             ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("On",      ImGuiTableColumnFlags_WidthFixed,   50.0f);
-        ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthFixed,  200.0f);
-        ImGui::TableSetupColumn("Short",   ImGuiTableColumnFlags_WidthFixed,  340.0f);
-        ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("On",       ImGuiTableColumnFlags_WidthFixed,   40.0f);
+        ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed,   70.0f);
+        ImGui::TableSetupColumn("Name",     ImGuiTableColumnFlags_WidthFixed,  200.0f);
+        ImGui::TableSetupColumn("Short",    ImGuiTableColumnFlags_WidthFixed,  340.0f);
+        ImGui::TableSetupColumn("Details",  ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
 
         int n = build_sort_order();
@@ -179,16 +180,23 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
                          : ImVec4(0.55f, 0.55f, 0.55f, 1.0f),
                 e->is_on ? "[X]" : "[ ]");
 
+            /* Shortcut column. Only show the hint when it's a real
+             * binding ("-" means "no key"). */
             ImGui::TableSetColumnIndex(1);
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0.55f, 0.85f, 0.95f, 1.0f));
+            ImGui::TextUnformatted(
+                (e->key_hint[0] && strcmp(e->key_hint, "-") != 0)
+                    ? e->key_hint : "");
+            ImGui::PopStyleColor();
+
+            ImGui::TableSetColumnIndex(2);
             const char *nameSrc = e->id[0] ? e->id : e->label;
-            char nameBuf[128];
-            SDL_snprintf(nameBuf, sizeof(nameBuf), "%s  (%s)",
-                         nameSrc, e->key_hint);
             ImVec4 col = e->is_on ? ImVec4(0.85f, 1.0f, 0.85f, 1.0f)
                                   : ImVec4(0.85f, 0.85f, 0.95f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, col);
             char selId[160];
-            SDL_snprintf(selId, sizeof(selId), "%s##nm%d", nameBuf, idx);
+            SDL_snprintf(selId, sizeof(selId), "%s##nm%d", nameSrc, idx);
             if (ImGui::Selectable(selId, false,
                                   ImGuiSelectableFlags_SpanAllColumns)) {
                 VizRegistryEntry *m = vizRegistryGetMutable(idx);
@@ -197,12 +205,12 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
             }
             ImGui::PopStyleColor();
 
-            ImGui::TableSetColumnIndex(2);
+            ImGui::TableSetColumnIndex(3);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
             ImGui::TextWrapped("%s", e->short_desc);
             ImGui::PopStyleColor();
 
-            ImGui::TableSetColumnIndex(3);
+            ImGui::TableSetColumnIndex(4);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.72f, 0.8f, 1.0f));
             ImGui::TextWrapped("%s", e->long_desc);
             ImGui::PopStyleColor();
