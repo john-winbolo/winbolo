@@ -10,8 +10,17 @@ local U = require("util")
 
 local M = {}
 
--- Combat heat entries: heat[mkey] = { mx, my, intensity, tick }
-local heat = {}
+-- Combat heat entries live in two parallel flat tables keyed by mkey:
+--   M.heat_intensity[k] -> float (current heat level)
+--   M.heat_tick[k]      -> int   (tick of most recent update)
+-- mx and my are recoverable from k (mx = k & 255, my = k >> 8) since
+-- mkey(mx, my) = my * 256 + mx, so we don't store them per entry.
+-- This eliminates the per-first-sight { mx, my, intensity, tick } table
+-- allocation that caused the us_threat_hearing ~5 ms GC outlier.
+-- Both tables live on M (not closure-private) so the state serializer
+-- snapshots and restores them for replay fidelity.
+M.heat_intensity = {}
+M.heat_tick      = {}
 
 local HEAT_DECAY_TICKS = 200   -- heat decays to zero over this many ticks
 local HEAT_SHOOT       = 0.3   -- intensity bump per shoot event
@@ -34,17 +43,23 @@ if SND_MINE_EXPLOSION_FAR  then COMBAT_SOUNDS[SND_MINE_EXPLOSION_FAR]  = HEAT_SO
 
 local function add_heat(mx, my, amount, tick)
   local k = mkey(mx, my)
-  local h = heat[k]
-  if h then
-    -- Decay existing intensity before adding
-    local elapsed = tick - h.tick
+  local cur = M.heat_intensity[k]
+  if cur then
+    local elapsed = tick - M.heat_tick[k]
     if elapsed > 0 then
-      h.intensity = math.max(0, h.intensity - elapsed / HEAT_DECAY_TICKS)
+      cur = cur - elapsed / HEAT_DECAY_TICKS
+      if cur < 0 then cur = 0 end
     end
-    h.intensity = math.min(HEAT_MAX, h.intensity + amount)
-    h.tick = tick
+    cur = cur + amount
+    if cur > HEAT_MAX then
+      M.heat_intensity[k] = HEAT_MAX
+    else
+      M.heat_intensity[k] = cur
+    end
+    M.heat_tick[k] = tick
   else
-    heat[k] = { mx = mx, my = my, intensity = amount, tick = tick }
+    M.heat_intensity[k] = amount
+    M.heat_tick[k] = tick
   end
 end
 
@@ -76,10 +91,10 @@ function M.update(info, tick)
 
   -- Prune dead entries periodically
   if tick % 100 == 0 then
-    for k, h in pairs(heat) do
-      local elapsed = tick - h.tick
-      if elapsed > HEAT_DECAY_TICKS then
-        heat[k] = nil
+    for k, t in pairs(M.heat_tick) do
+      if tick - t > HEAT_DECAY_TICKS then
+        M.heat_tick[k]      = nil
+        M.heat_intensity[k] = nil
       end
     end
   end
@@ -91,21 +106,27 @@ end
 -- -------------------------------------------------------------------------
 function M.nearest_combat(mx, my)
   local best_d = math.huge
-  local best_h = nil
-  for _, h in pairs(heat) do
-    if h.intensity > 0.1 then
-      local d = U.mdist(mx, my, h.mx, h.my)
+  local best_k = nil
+  local best_i = nil
+  for k, intensity in pairs(M.heat_intensity) do
+    if intensity > 0.1 then
+      local hx = k & 255
+      local hy = k >> 8
+      local d = U.mdist(mx, my, hx, hy)
       if d < best_d then
         best_d = d
-        best_h = h
+        best_k = k
+        best_i = intensity
       end
     end
   end
-  if not best_h then return nil end
+  if not best_k then return nil end
+  local hx = best_k & 255
+  local hy = best_k >> 8
   return {
-    mx = best_h.mx, my = best_h.my,
-    dx = best_h.mx - mx, dy = best_h.my - my,
-    dist = best_d, intensity = best_h.intensity,
+    mx = hx, my = hy,
+    dx = hx - mx, dy = hy - my,
+    dist = best_d, intensity = best_i,
   }
 end
 
@@ -118,10 +139,10 @@ function M.is_area_hot(mx, my, tick)
   for dy = -radius, radius do
     for dx = -radius, radius do
       local k = mkey(mx + dx, my + dy)
-      local h = heat[k]
-      if h then
-        local elapsed = tick - h.tick
-        local intensity = math.max(0, h.intensity - elapsed / HEAT_DECAY_TICKS)
+      local cur = M.heat_intensity[k]
+      if cur then
+        local elapsed = tick - M.heat_tick[k]
+        local intensity = math.max(0, cur - elapsed / HEAT_DECAY_TICKS)
         if intensity > 0.2 then return true end
       end
     end
@@ -134,7 +155,9 @@ end
 -- Clear all heat data (call from Brain.open).
 -- -------------------------------------------------------------------------
 function M.reset()
-  heat = {}
+  -- Mutate in place so any cached references stay valid.
+  for k in pairs(M.heat_intensity) do M.heat_intensity[k] = nil end
+  for k in pairs(M.heat_tick)      do M.heat_tick[k]      = nil end
 end
 
 return M

@@ -9,6 +9,7 @@ local TAG = "[" .. C.BRAIN_NAME .. "]"
 local M = {}
 
 local file    = nil
+local current_filename = nil  -- track path for cleanup on reopen
 local events  = {}   -- accumulated during a tick, flushed on log_tick()
 local reasons = {}   -- decision reasoning accumulated during a tick
 
@@ -17,15 +18,25 @@ local reasons = {}   -- decision reasoning accumulated during a tick
 -- =========================================================================
 
 --- Generate a timestamped log filename.
---  e.g. prefix="player0" -> "player0_20260321_115200.jsonl"
+--  e.g. prefix="player0" -> "debug_sessions/20260321_115200/player0.jsonl"
+--  Uses DEBUG_SESSION_DIR if set by BrainTest, otherwise current directory.
 function M.make_filename(prefix)
+  local dir = _G.DEBUG_SESSION_DIR
+  if dir then
+    return dir .. "/" .. prefix .. ".jsonl"
+  end
   local ts = os.date("%Y%m%d_%H%M%S")
   return prefix .. "_" .. ts .. ".jsonl"
 end
 
 function M.open(filename)
+  -- If reopening to a new path, remove the old file (avoids stale CWD copies)
+  if current_filename and current_filename ~= filename then
+    os.remove(current_filename)
+  end
   file = io.open(filename, "w")
   if file then
+    current_filename = filename
     print(TAG .. " LOG: opened " .. filename)
   else
     print(TAG .. " LOG: FAILED to open " .. filename)
@@ -216,7 +227,18 @@ local function to_json_array(arr)
 end
 
 function M.log_tick(state, info, goal, keys, taps, build_cmd)
-  if not file then return end
+  -- Runtime gate: skip writes when the JSONL logger flag is off.
+  -- The C side toggles _G._JSONL_LOGGER_ENABLED whenever the user
+  -- changes the checkbox in the BrainTest debug modules panel.
+  if not _G._JSONL_LOGGER_ENABLED then return end
+
+  -- Lazy open: if the user enabled the flag mid-session and there's
+  -- no open file yet, open one now using the standard naming scheme.
+  if not file then
+    local fname = M.make_filename("player" .. (info.player_number or 0))
+    if not M.open(fname) then return end
+    M.dump_map()
+  end
 
   local pf = state.pf
 
@@ -304,7 +326,7 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     .. '"boat":%s,"arm":%d,"sh":%d,"mi":%d,"tr":%d,"cpill":%d,'
     .. '"lgm":%d,"lx":%d,"ly":%d,'
     .. '"goal":"%s","gsub":"%s","gx":%d,"gy":%d,'
-    .. '"pf":"%s","nx":%d,"ny":%d,"pfage":%d,"pfopen":%d,"pfclosed":%d,'
+    .. '"pf":"%s","nx":%d,"ny":%d,"lax":%d,"lay":%d,"pfage":%d,"pfopen":%d,"pfclosed":%d,'
     .. '"path":%s,'
     .. '"cmd":%s,'
     .. '"keys":%d,"taps":%d,"bld":%s,"bmode":"%s",'
@@ -318,7 +340,9 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     info.carried_pills,
     info.man_status, info.man_x, info.man_y,
     goal.kind, goal.substate or "-", goal.mx, goal.my,
-    pf.status, pf.next_mx, pf.next_my, pf.age or 0, pf_open_size, pf_closed_size,
+    pf.status, pf.next_mx, pf.next_my,
+    state._steer_lx or -1, state._steer_ly or -1,
+    pf.age or 0, pf_open_size, pf_closed_size,
     path_str,
     cg,
     keys, taps, bld, bmode,

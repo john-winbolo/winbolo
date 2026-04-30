@@ -26,6 +26,7 @@
 *********************************************************/
 
 #include <memory.h>
+#include <math.h>   /* atan2f, lroundf — for shellAngleFromTarget */
 
 #include "bolo_map.h"
 #include "building.h"
@@ -56,8 +57,106 @@
 bool c;
 shellsNetHit snh;
 
+/* ---------------------------------------------------------------------- */
+/* Debug: ring buffer of recent shell-hit positions in WORLD coords.      */
+/* Consumed by the BrainTest debug renderer to draw an orange pixel at    */
+/* each hit so we can see when a shell explodes without registering on   */
+/* the expected target.                                                    */
+/* ---------------------------------------------------------------------- */
+#define SHELL_HIT_LOG_SIZE 128
+typedef struct { int wx; int wy; uint32_t tick; uint8_t owner; } ShellHitLogEntry;
+static ShellHitLogEntry g_shell_hit_log[SHELL_HIT_LOG_SIZE];
+static int g_shell_hit_log_head = 0;   /* next write slot */
+static int g_shell_hit_log_count = 0;  /* min(writes, SIZE) */
+
+void shellsDebugHitLogClear(void) {
+    g_shell_hit_log_head = 0;
+    g_shell_hit_log_count = 0;
+}
+
+int shellsDebugHitLogCount(void) {
+    return g_shell_hit_log_count;
+}
+
+/* Read slot i (0-based from the oldest). */
+int shellsDebugHitLogGet(int i, int *wx, int *wy, uint32_t *tick, uint8_t *owner) {
+    if (i < 0 || i >= g_shell_hit_log_count) return 0;
+    int idx;
+    if (g_shell_hit_log_count < SHELL_HIT_LOG_SIZE) {
+        idx = i;
+    } else {
+        idx = (g_shell_hit_log_head + i) % SHELL_HIT_LOG_SIZE;
+    }
+    if (wx)    *wx    = g_shell_hit_log[idx].wx;
+    if (wy)    *wy    = g_shell_hit_log[idx].wy;
+    if (tick)  *tick  = g_shell_hit_log[idx].tick;
+    if (owner) *owner = g_shell_hit_log[idx].owner;
+    return 1;
+}
+
+static void shellsDebugHitLogAdd(int wx, int wy, uint32_t tick, uint8_t owner) {
+    g_shell_hit_log[g_shell_hit_log_head].wx = wx;
+    g_shell_hit_log[g_shell_hit_log_head].wy = wy;
+    g_shell_hit_log[g_shell_hit_log_head].tick = tick;
+    g_shell_hit_log[g_shell_hit_log_head].owner = owner;
+    g_shell_hit_log_head = (g_shell_hit_log_head + 1) % SHELL_HIT_LOG_SIZE;
+    if (g_shell_hit_log_count < SHELL_HIT_LOG_SIZE) g_shell_hit_log_count++;
+}
+
 #undef SHELL_START_ADD
 #define SHELL_START_ADD 5
+
+/* ── Pure shell-physics primitives ────────────────────────────────
+ * These are the single source of truth for shell motion. Both the
+ * live engine (shellsUpdate, shellsAddItem) and the brain's
+ * stateless trajectory simulator call into these so the trajectory
+ * math can't drift between them. */
+
+void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd) {
+  *x = (WORLD)((int)*x + (SHELL_START_ADD) * xAdd);
+  *y = (WORLD)((int)*y + (SHELL_START_ADD) * yAdd);
+}
+
+void shellAdvance1Tick(WORLD *x, WORLD *y,
+                       int32_t *xAcc, int32_t *yAcc,
+                       int32_t xStep, int32_t yStep) {
+  *xAcc += xStep;
+  *yAcc += yStep;
+  int xMove = (int)(*xAcc >> 8);
+  int yMove = (int)(*yAcc >> 8);
+  *xAcc -= xMove << 8;
+  *yAcc -= yMove << 8;
+  *x = (WORLD)((int)*x + xMove);
+  *y = (WORLD)((int)*y + yMove);
+}
+
+int shellLifeTicks(int len) {
+  int t = SHELL_LIFE * len - SHELL_START_ADD;
+  return t < 0 ? 0 : t;
+}
+
+TURNTYPE shellAngleFromTarget(WORLD ox, WORLD oy, WORLD tx, WORLD ty) {
+  int dx = (int)tx - (int)ox;
+  int dy = (int)ty - (int)oy;
+  if (dx == 0 && dy == 0) return 0;
+  /* atan2(dx, -dy) → radians cw from north → bradians via *128/π.
+   * lroundf rounds half-away-from-zero so the float never falls one
+   * brad short of the engine's integer tank.direction. */
+  float angle_f = atan2f((float)dx, -(float)dy) *
+                  (128.0f / 3.14159265358979323846f);
+  long  angle_i = lroundf(angle_f);
+  angle_i = ((angle_i % 256) + 256) % 256;
+  return (TURNTYPE)angle_i;
+}
+
+void shellSpawnPos(WORLD tank_x, WORLD tank_y, TURNTYPE angle,
+                   WORLD *out_x, WORLD *out_y) {
+  int xAdd, yAdd;
+  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
+  *out_x = tank_x;
+  *out_y = tank_y;
+  shellApplyStartOffset(out_x, out_y, xAdd, yAdd);
+}
 
 
 /*********************************************************
@@ -124,8 +223,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   BYTE soundMY = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
 
   utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
-  x = (WORLD) (x + (SHELL_START_ADD) * xAdd);
-  y = (WORLD) (y + (SHELL_START_ADD) * yAdd);
+  shellApplyStartOffset(&x, &y, xAdd, yAdd);
 /*
   if (xAdd >= 0) {
     x += 22;
@@ -142,7 +240,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->x = x;
   q->y = y;
   q->angle = angle;
-  q->length = (BYTE) ((SHELL_LIFE * len) - (SHELL_START_ADD));
+  q->length = (BYTE) shellLifeTicks((int)len);
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;
@@ -214,17 +312,19 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 		} else if (position->shellDead == TRUE && position->packSent == FALSE) {
 			needUpdate = TRUE;
 		} else if (position->length > SHELL_DEATH) {
-			/* Move the shell using high-precision fixed-point accumulator.
-			 * xStep/yStep are SHELL_SPEED*cos/sin*256 (24.8 format).
-			 * xAcc/yAcc carry the fractional remainder between ticks. */
-			position->xAcc += position->xStep;
-			position->yAcc += position->yStep;
-			xAdd = position->xAcc >> 8;
-			yAdd = position->yAcc >> 8;
-			position->xAcc -= xAdd << 8;
-			position->yAcc -= yAdd << 8;
-			newX = (WORLD) (position->x + xAdd);
-			newY = (WORLD) (position->y + yAdd);
+			/* Move the shell. The pure math lives in shellAdvance1Tick
+			 * so the brain's stateless trajectory simulator
+			 * (brainPathfinderSimulateShot) walks an identical path
+			 * — drift between the live shell and the brain's
+			 * "would my shot hit?" prediction is structurally
+			 * impossible. */
+			newX = position->x;
+			newY = position->y;
+			shellAdvance1Tick(&newX, &newY,
+			                  &position->xAcc, &position->yAcc,
+			                  position->xStep, position->yStep);
+			xAdd = (int)newX - (int)position->x;
+			yAdd = (int)newY - (int)position->y;
 			/* Check for colision */
 			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks, position->compensationTicks)) == TRUE)
 			{
@@ -251,6 +351,8 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				conv >>= TANK_SHIFT_PIXELSIZE;
 				spy = (BYTE) conv;
 				explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
+				/* Debug: record the exact world-pixel hit for BrainTest viz */
+				shellsDebugHitLogAdd((int)newX, (int)newY, 0, position->owner);
 				if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, sx, sy, spx, spy);
 				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 				count = 0;

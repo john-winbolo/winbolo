@@ -9,14 +9,44 @@ local PF     = require("pathfinder")
 local cpf    = require("cpathfinder")
 local log    = require("logger")
 local threat = require("threat")
+local shot_tracker = require("shot_tracker")
+local shield = require("attack_shield")
+local viz    = require("viz")
+
+local smart_cost = cpf.smart_cost
+local KIND_PILL  = cpf.KIND_PILL
+
+local print2 = require("print2")
 
 local M = {}
 
--- Toggle: set true to use behaviour-tree implementations
-M.USE_WALLSHIELD_BT = true
-M.USE_PILLPLACE_BT  = true
-local wallshield_bt  -- lazy-loaded
-local pillplace_bt   -- lazy-loaded
+-- "Effectively stopped" gate for the substate transitions in approach
+-- and in_range_position. Returns true if EITHER the reported speed is
+-- at/below speed_tol OR the tank's wu position hasn't changed for the
+-- last `still_ticks` ticks. Catches the corner case where info.speed
+-- reads a low value (e.g. 4) but the tank is no longer making any
+-- actual progress (terrain friction, wedged against a tile boundary,
+-- etc.). Per-key trackers live on `state.attack_motion` so they
+-- survive the per-tick goal-table swap without polluting the goal.
+local function effectively_stopped(state, info, now, speed_tol, still_ticks, key)
+  if info.speed <= speed_tol then return true end
+  state.attack_motion = state.attack_motion or {}
+  local sub = state.attack_motion[key] or {}
+  state.attack_motion[key] = sub
+  if sub.wx ~= info.tankx or sub.wy ~= info.tanky then
+    sub.wx    = info.tankx
+    sub.wy    = info.tanky
+    sub.since = now
+    return false
+  end
+  return (now - (sub.since or now)) >= still_ticks
+end
+
+-- Attack pill constants (from constants.lua)
+-- ATTACK_PILL_STANDOFF: distance to stand from pill
+-- ATTACK_PILL_RANGE: max distance to start shooting
+-- ATTACK_CURVE_AFTER_HITS: hits before curving away
+-- ATTACK_CURVE_TICKS: duration of curve-away maneuver
 
 -- Find a pill at (mx, my) via spatial index. Returns the pill entry or nil.
 function M.find_pill_at(world, mx, my)
@@ -41,10 +71,19 @@ end
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
 -- endpoints.  Each one would be destroyed by a shell fired along this path —
 -- a resource cost since the brain farms trees for road building and pill repair.
-local function forest_tiles_on_path(x0, y0, x1, y1)
+-- Counts forest tiles on the line from (x0,y0) to (x1,y1).
+-- If `do_viz` is true, draws a white outline on each forest tile considered.
+local function forest_tiles_on_path(x0, y0, x1, y1, do_viz)
   local count = 0
-  U.bresenham(x0, y0, x1, y1, function(cx, cy)
-    if U.ttype(cx, cy) == C.T_FOREST then count = count + 1 end
+  -- Use precise sub-pixel walk: tile centers at +0.5
+  U.line_walk(x0 + 0.5, y0 + 0.5, x1 + 0.5, y1 + 0.5, function(cx, cy)
+    if U.ttype(cx, cy) == C.T_FOREST then
+      count = count + 1
+      if do_viz then
+        viz.rect("forest_path_tiles", cx,        cy,        cx + 1,    cy + 1,    255, 255, 255, 220)
+        viz.rect("forest_path_tiles", cx + 0.05, cy + 0.05, cx + 0.95, cy + 0.95, 255, 255, 255, 220)
+      end
+    end
   end)
   return count
 end
@@ -160,15 +199,16 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   end
 
   -- Approach cost from the tank's current position.
-  -- Use the tank's actual travel mode for approach cost.  Always using land mode
-  -- made every northern/western standoff look prohibitively expensive when the
-  -- tank was in deep sea (straight-line estimate crossed deepsea at 9999/tile),
-  -- causing the planner to always pick the nearest accessible position regardless
-  -- of proximity penalties.  Boat mode correctly reflects reachability.
+  -- Use KIND_NORMAL Dijkstra (full danger) — we're navigating to a firing
+  -- position, not through the pill, so full danger applies.
+  -- Falls back to straight-line estimate if Dijkstra hasn't reached this tile.
   local tmx    = info.tankx >> 8
   local tmy    = info.tanky >> 8
   local ammo   = (info.shells or 0) + (info.mines or 0)
-  local approach = cpf.estimate_cost(tmx, tmy, cx, cy, info.inboat and 1 or 0)
+  local approach = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, cx, cy, info.inboat and 1 or 0)
+  if approach >= 1e29 then
+    approach = cpf.estimate_cost(tmx, tmy, cx, cy, info.inboat and 1 or 0)
+  end
 
   -- Approach exposure: penalise routes that cross slow terrain within the
   -- target pill's firing range.  On swamp/rubble/crater the tank moves at
@@ -254,7 +294,32 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   -- without dominating terrain/pushback penalties.
   local threat_pen = threat.at(cx, cy) * 2
 
-  return approach + water_pen + pushback_pen + crossfire + escape_cost + tree_pen + approach_exposure + orbit_pen + threat_pen
+  -- Influence bias: prefer standing on the friendly side of the pill so a
+  -- retreat after the exchange lands in our territory, not deep in the
+  -- enemy's. Friendly influence is positive, hostile is negative — negating
+  -- converts to a penalty (hostile tile bad, friendly tile bonus).
+  local influence_pen = -(cpf.influence_at(cx, cy) or 0)
+                        * C.ATTACK_STANDOFF_INFLUENCE_WEIGHT
+
+  -- Friendly pill as barrier bonus (aIndy): if a friendly pill is between us
+  -- and the target, it absorbs enemy fire — discount the position.
+  local fpill_barrier_bonus = 0
+  for _, fp in pairs(world.pills) do
+    if fp.owner == "friendly" and fp.health > 0 then
+      -- Check if friendly pill is roughly on the line target→standoff
+      local d_fp_target = U.mdist(fp.mx, fp.my, pill.mx, pill.my)
+      local d_fp_us = U.mdist(fp.mx, fp.my, cx, cy)
+      local d_total = U.mdist(cx, cy, pill.mx, pill.my)
+      -- Friendly pill is "between" if both distances are less than total
+      if d_fp_target < d_total and d_fp_us < d_total and d_fp_target >= 1 then
+        fpill_barrier_bonus = fpill_barrier_bonus + C.FPILL_BARRIER_BONUS
+      end
+    end
+  end
+
+  return approach + water_pen + pushback_pen + crossfire + escape_cost + tree_pen
+       + approach_exposure + orbit_pen + threat_pen + influence_pen
+       - fpill_barrier_bonus
 end
 
 -- Enumerate candidate standoff positions around `pill` and pick the best scored one.
@@ -262,8 +327,8 @@ end
 -- shell range lands on walls, nearby passable tiles are still considered.
 -- Falls back to the closest candidate if none have finite scores (e.g. pill in open water).
 function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radius)
-  local R_MAX = standoff_override or C.ATTACK_PILL_STANDOFF   -- 7 (shell range)
-  local R_MIN = math.max(4, R_MAX - 2)   -- 5 (don't get closer than this)
+  local R_MAX = standoff_override or C.ATTACK_PILL_STANDOFF
+  local R_MIN = R_MAX   -- stay on the circle edge, don't go closer
   local N     = C.ATTACK_PLAN_DIRS
   local tmx   = info.tankx >> 8
   local tmy   = info.tanky >> 8
@@ -304,6 +369,20 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
         if score < best_score then
           best_score = score; best_mx = cx; best_my = cy
         end
+
+        -- Overlay: show candidate positions with color-coded scores
+        if score >= math.huge then
+          -- Unreachable: dim red
+          viz.rect("pill_take_target", cx, cy, cx + 1, cy + 1, 100, 0, 0, 60)
+        elseif score == best_score then
+          -- Currently best: bright green (will be overwritten by final pick)
+        else
+          -- Scored: yellow-to-red gradient based on relative cost
+          local rel = math.min(1.0, score / math.max(1, best_score * 3))
+          local r = math.floor(255 * rel)
+          local g = math.floor(255 * (1 - rel))
+          viz.rect("pill_take_target", cx, cy, cx + 1, cy + 1, r, g, 0, 50)
+        end
       end
     end
   end
@@ -311,6 +390,10 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local smx = best_mx or fallback_mx
   local smy = best_my or fallback_my
   if smx then
+    -- Overlay: mark chosen standoff with bright green circle
+    viz.circle("pill_take_target", smx + 0.5, smy + 0.5, 0.45, 0, 255, 0, 220)
+    -- Line from pill to chosen standoff (green)
+    viz.line("pill_take_target", pill.mx + 0.5, pill.my + 0.5, smx + 0.5, smy + 0.5, 0, 255, 0, 100)
     print(string.format(TAG .. " ATTACK PLAN: pill@(%d,%d) standoff=(%d,%d) score=%s",
           pill.mx, pill.my, smx, smy,
           best_score >= math.huge and "INF(fallback)" or string.format("%.1f", best_score)))
@@ -502,71 +585,2344 @@ function M.get_standoff(world, info, pill_key, pill, state)
     end
   end
 
-  -- Try wall-shield tactic first
-  local wmx, wmy, smx, smy, pbmx, pbmy = pick_wall_shield(world, info, pill, state)
-  if wmx then
-    state.pill_attack_plan = {
-      pill_key      = pill_key,
-      standoff_mx   = smx,
-      standoff_my   = smy,
-      wall_mx       = wmx,
-      wall_my       = wmy,
-      prebuild_mx   = pbmx,
-      prebuild_my   = pbmy,
-      wall_shield   = true,
-      replan_at     = now + C.PILL_ATTACK_REPLAN_TICKS,
-    }
-    return smx, smy
-  end
-
-  -- Fall back to normal standoff
-  smx, smy = M.pick_standoff(world, info, pill, state)
+  local smx, smy = M.pick_standoff(world, info, pill, state)
   state.pill_attack_plan = {
     pill_key    = pill_key,
     standoff_mx = smx,
     standoff_my = smy,
-    wall_shield = false,
     replan_at   = now + C.PILL_ATTACK_REPLAN_TICKS,
   }
   return smx, smy
 end
 
 -- =========================================================================
--- Attack pill substate machine (called every tick from init.lua)
+-- Unified attack pill substate machine
 -- =========================================================================
--- Substates: plan → approach → engage → reposition → approach ...
+-- Substates: position → aim → engage → curve_away → (back to engage)
+--            pill dies at any point → rush
+--            armour critical → disengage
 --
--- plan:       standoff not yet computed (transient — usually resolved same tick)
--- approach:   navigating to standoff position
--- engage:     at/near standoff, aiming and shooting
--- reposition: knocked too far from standoff, replanning
+--
+-- =========================================================================
+-- M.evaluate_pill_difficulty(pill, world, detailed)
+-- Scan the standoff circle around a pill and score how hard it is to attack.
+-- Returns: best_score (lower=easier), spots (list of scored positions)
+-- No pathfinding calls — only grid lookups, safe to call on all pills.
+--
+-- detailed=false (default): returns only best_score and minimal spots
+--   (no maneuver_tiles, no cx/cy floats — lightweight for goal selection)
+-- detailed=true: full data including maneuver_tiles and precise positions
+--   (for visualization when actively attacking this pill)
+-- =========================================================================
+
+-- ── Precomputed ellipse stamps ──
+--
+-- For each scan angle, compute once: the list of integer (dx, dy) tile
+-- offsets RELATIVE TO THE SPOT TILE that fall inside the maneuver
+-- ellipse oriented at that angle. The runtime code iterates the stamp
+-- directly instead of nested loops + tile_in_ellipse calls.
+--
+-- The ellipse geometry depends only on the angle (orientation) and
+-- the standard radii (r_long = 4, r_short = ATTACK_SAFE_RADIUS / 3).
+-- The float center sub-tile offset varies per angle, so each stamp is
+-- generated for that exact angle's spot center.
+--
+-- ELLIPSE_STAMPS_5DEG  — 72 stamps at 5° steps, used by the full
+--                        plan_position scan (detailed=true case).
+-- ELLIPSE_STAMPS_45DEG —  8 stamps at 45° steps, used by the quick
+--                        per-candidate eval in goals.lua step_eval_queue.
+local ELLIPSE_STAMPS_5DEG  = {}
+local ELLIPSE_STAMPS_45DEG = {}
+do
+  local R       = C.ATTACK_PILL_STANDOFF
+  local r_long  = 4
+  local r_short = C.ATTACK_SAFE_RADIUS / 3.0
+  local iter_r  = math.ceil(r_long) + 1
+
+  local function build_stamp(deg)
+    local rad = math.rad(deg)
+    -- Spot center if pill is at (0, 0). pmx + 0.5 = 0.5, etc.
+    local cx = 0.5 + math.sin(rad) * R
+    local cy = 0.5 - math.cos(rad) * R
+    local mx = math.floor(cx)
+    local my = math.floor(cy)
+    -- Orientation: unit vector from spot toward pill (0, 0).
+    local edx = 0.5 - cx
+    local edy = 0.5 - cy
+    local elen = math.sqrt(edx * edx + edy * edy)
+    if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
+    local ux, uy = edx / elen, edy / elen   -- radial (toward pill)
+    local vx, vy = -uy, ux                  -- tangential
+
+    -- 5 sample offsets (4 corners + center) — same as the original
+    -- tile_in_ellipse so the stamp matches its result exactly.
+    local sample_offsets = {
+      {0,   0}, {1,   0}, {0,   1}, {1,   1}, {0.5, 0.5},
+    }
+    local function tile_in(sx, sy)
+      for _, off in ipairs(sample_offsets) do
+        local rel_x = (sx + off[1]) - cx
+        local rel_y = (sy + off[2]) - cy
+        local pu = rel_x * ux + rel_y * uy
+        local pv = rel_x * vx + rel_y * vy
+        if (pu * pu) / (r_long * r_long) + (pv * pv) / (r_short * r_short) <= 1.0 then
+          return true
+        end
+      end
+      return false
+    end
+
+    local stamp = {}
+    for dy = -iter_r, iter_r do
+      for dx = -iter_r, iter_r do
+        local sx = mx + dx
+        local sy = my + dy
+        if tile_in(sx, sy) then
+          -- Store offsets from the SPOT TILE (mx, my) so the runtime
+          -- code can do `mx_runtime + off.dx`, `my_runtime + off.dy`.
+          stamp[#stamp + 1] = { dx = dx, dy = dy }
+        end
+      end
+    end
+    return stamp
+  end
+
+  for deg = 0, 359, 5 do
+    ELLIPSE_STAMPS_5DEG[deg] = build_stamp(deg)
+  end
+  for deg = 0, 359, 45 do
+    ELLIPSE_STAMPS_45DEG[deg] = build_stamp(deg)
+  end
+end
+
+function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase)
+  local pmx, pmy = pill.mx, pill.my
+  local R = C.ATTACK_PILL_STANDOFF
+  local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
+  local safe_r = C.ATTACK_SAFE_RADIUS
+  -- Pick the right precomputed stamp set for this scan resolution.
+  -- Falls back to nil for other step values (the runtime then uses
+  -- the slower tile_in_ellipse path).
+  local stamps = (step_deg == 5) and ELLIPSE_STAMPS_5DEG
+              or (step_deg == 45) and ELLIPSE_STAMPS_45DEG
+              or nil
+
+  local spots = detailed and {} or nil
+  local best_score = math.huge
+  local best_spot = nil  -- track best spot for returning
+  local all_valid = {}   -- collect all LOS-valid spots for two-pass selection
+
+  for deg = 0, 359, step_deg do
+    local rad = math.rad(deg)
+    local cx = pmx + 0.5 + math.sin(rad) * R
+    local cy = pmy + 0.5 - math.cos(rad) * R
+    local mx = math.floor(cx)
+    local my = math.floor(cy)
+    if not U.in_map(mx, my) then goto next_spot end
+
+    local tt = U.ttype(mx, my)
+    local passable = (C.TERRAIN_COST_LAND[tt] or 9999) < 9999 and not U.is_water(tt)
+    if not passable then goto next_spot end
+
+    -- LOS test: try a real-physics shot from the spot's tile center to
+    -- the pill's center + 4 corners. As long as one of the five trial
+    -- shots has a clean trajectory (no wall, no other pill in the way),
+    -- the spot has line of sight. Skewed corner shots can slip past
+    -- obstacles that block the direct center line.
+    local spot_wx = (mx << 8) | 128
+    local spot_wy = (my << 8) | 128
+    local has_los = PF.pill_shots_clear(spot_wx, spot_wy, pill, world,
+                                        cpf.SHOT_TANK, 0)
+
+    local score_a, score_b, score_d, score_e, total_score = 0, 0, 0, 0, 999
+    local maneuver_tiles = detailed and {} or nil
+    if has_los then
+      local total_danger = 0
+      local safe_tiles = 0
+      local terrain_penalty = 0
+      -- Ellipse oriented toward the pill: long axis = radial (safe_r),
+      -- short axis = tangential (safe_r / 3).  Compute unit vector from
+      -- spot toward pill to define the axes.
+      local edx = pmx + 0.5 - cx
+      local edy = pmy + 0.5 - cy
+      local elen = math.sqrt(edx * edx + edy * edy)
+      if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
+      local ux, uy = edx / elen, edy / elen  -- radial (toward pill)
+      local vx, vy = -uy, ux                 -- tangential (perpendicular)
+      local r_long = 4               -- radial half-length
+      local r_short = safe_r / 3.0   -- tangential half-width (= 1)
+
+      -- Pre-compute crossfire: count hostile pills where ANY ellipse tile
+      -- is in range.  Once a pill is marked as covering, skip to the next.
+      -- Iterate up to ceil(r_long) + 1 to cover the long axis (buffer for the
+      -- offset between integer tile mx,my and the precise float spot cx,cy).
+      local iter_r = math.ceil(r_long) + 1
+      -- Tile (sx, sy) is "inside" the ellipse if its center OR any of its 4
+      -- corners falls inside.  Offsets are corner positions on the tile:
+      local sample_offsets = {
+        {0,   0},    -- top-left corner
+        {1,   0},    -- top-right corner
+        {0,   1},    -- bottom-left corner
+        {1,   1},    -- bottom-right corner
+        {0.5, 0.5},  -- center
+      }
+      local function tile_in_ellipse(sx, sy)
+        for _, off in ipairs(sample_offsets) do
+          -- Position relative to the precise ellipse center (cx, cy)
+          local rel_x = (sx + off[1]) - cx
+          local rel_y = (sy + off[2]) - cy
+          local pu = rel_x * ux + rel_y * uy
+          local pv = rel_x * vx + rel_y * vy
+          if (pu * pu) / (r_long * r_long) + (pv * pv) / (r_short * r_short) <= 1.0 then
+            return true
+          end
+        end
+        return false
+      end
+
+      -- Use the precomputed ellipse stamp for this angle if available;
+      -- otherwise fall back to the slower nested-loop + tile_in_ellipse
+      -- path. The stamp is a flat list of (dx, dy) offsets relative to
+      -- the spot tile (mx, my) — exactly the tiles inside the ellipse
+      -- for this angle.
+      local stamp = stamps and stamps[deg] or nil
+
+      -- ── Crossfire (Scan A) ──
+      -- Worst (highest-coverage) tile in the BACK HALF of the ellipse
+      -- (away from the pill). The pill-side half is already expected to
+      -- take fire from the target — only unexpected crossfire from behind
+      -- matters for positioning. Tiles with positive projection onto ux,uy
+      -- (toward pill) are skipped.
+      local max_coverage = 0
+      if stamp then
+        for i = 1, #stamp do
+          local off = stamp[i]
+          -- Project offset onto radial axis (toward pill). Skip pill-side half.
+          local proj = off.dx * ux + off.dy * uy
+          if proj <= 0 then
+            local sx2, sy2 = mx + off.dx, my + off.dy
+            if U.in_map(sx2, sy2) then
+              local cov = threat.coverage_at(sx2, sy2)
+              if cov > max_coverage then max_coverage = cov end
+            end
+          end
+        end
+      else
+        for dy2 = -iter_r, iter_r do
+          for dx2 = -iter_r, iter_r do
+            local proj = dx2 * ux + dy2 * uy
+            if proj <= 0 then
+              local sx2, sy2 = mx + dx2, my + dy2
+              if tile_in_ellipse(sx2, sy2) and U.in_map(sx2, sy2) then
+                local cov = threat.coverage_at(sx2, sy2)
+                if cov > max_coverage then max_coverage = cov end
+              end
+            end
+          end
+        end
+      end
+      if max_coverage > 1 then
+        score_e = 100 * (max_coverage - 1)
+      end
+
+      -- ── Maneuver area scan (Scan B) ──
+      -- Sum danger + accumulate terrain penalty over the in-ellipse
+      -- tiles. Per-tile work cannot be precomputed (threat / terrain
+      -- change per tick), but iterating the stamp directly cuts the
+      -- per-tile overhead from ~50 ops (tile_in_ellipse) to ~0.
+      local function process_tile(sx, sy)
+        if not U.in_map(sx, sy) then return end
+        local d = threat.pill_at(sx, sy)
+        -- Tree cover: reduce danger based on surrounding forest count
+        if d > 0 and U.ttype(sx, sy) == C.T_FOREST then
+          local tree_n = 0
+          if U.in_map(sx-1, sy) and U.ttype(sx-1, sy) == C.T_FOREST then tree_n = tree_n + 1 end
+          if U.in_map(sx+1, sy) and U.ttype(sx+1, sy) == C.T_FOREST then tree_n = tree_n + 1 end
+          if U.in_map(sx, sy-1) and U.ttype(sx, sy-1) == C.T_FOREST then tree_n = tree_n + 1 end
+          if U.in_map(sx, sy+1) and U.ttype(sx, sy+1) == C.T_FOREST then tree_n = tree_n + 1 end
+          if tree_n >= 2 then d = math.max(0, d - (tree_n - 1)) end
+        end
+        total_danger = total_danger + d
+        if detailed then
+          maneuver_tiles[#maneuver_tiles + 1] = { val = math.floor(d + 0.5), x = sx, y = sy }
+        end
+        safe_tiles = safe_tiles + 1
+        local stt = U.ttype(sx, sy)
+        -- Hostile bases are no-go: treat them like deep water.
+        local base_entry = world.base_at[sy * 256 + sx]
+        local enemy_base = base_entry and base_entry.base
+                           and base_entry.base.owner == "hostile"
+        if stt == C.T_DEEPSEA or enemy_base then
+          terrain_penalty = terrain_penalty + 1000
+        elseif stt == C.T_BUILDING or stt == C.T_HALFBUILD
+           or stt == C.T_SWAMP or stt == C.T_RIVER
+           or stt == C.T_PILLBOX then
+          -- Pillboxes (including friendly ones) act like walls for our
+          -- purposes: the tank can't drive through them, so a spot whose
+          -- maneuver ellipse overlaps a pill tile is worse for the take.
+          terrain_penalty = terrain_penalty + 100
+        end
+      end
+
+      if stamp then
+        for i = 1, #stamp do
+          local off = stamp[i]
+          process_tile(mx + off.dx, my + off.dy)
+        end
+      else
+        for dy = -iter_r, iter_r do
+          for dx = -iter_r, iter_r do
+            local sx, sy = mx + dx, my + dy
+            if tile_in_ellipse(sx, sy) then
+              process_tile(sx, sy)
+            end
+          end
+        end
+      end
+      score_a = safe_tiles > 0 and (total_danger / safe_tiles) or 999
+      score_b = 0
+      if detailed then
+        for _, t in ipairs(maneuver_tiles) do
+          if t.val >= C.ATTACK_DANGER_HOTSPOT then score_b = 10; break end
+        end
+      else
+        -- Lightweight hotspot check: recompute from max_danger
+        if total_danger / math.max(1, safe_tiles) >= C.ATTACK_DANGER_HOTSPOT then
+          score_b = 10
+        end
+      end
+      score_d = terrain_penalty
+      total_score = score_a + score_b + score_d + score_e
+      -- Mid/late-game spots deep in enemy influence are much riskier to
+      -- hold during the take — boost their cost so we prefer takes
+      -- through friendlier or contested ground when one exists.
+      local hostile_inf_mult = 1
+      if phase and phase ~= "opening" then
+        local infl = cpf.influence_at(mx, my) or 0
+        if infl <= C.PILL_TAKE_HOSTILE_INF_THRESHOLD then
+          hostile_inf_mult = C.PILL_TAKE_HOSTILE_INF_MULT
+          total_score = total_score * hostile_inf_mult
+        end
+      end
+      all_valid[#all_valid + 1] = {
+        mx = mx, my = my, cx = cx, cy = cy, score = total_score, deg = deg,
+        hostile_inf_mult = hostile_inf_mult,
+      }
+    end
+
+    if detailed then
+      spots[#spots + 1] = {
+        cx = cx, cy = cy, mx = mx, my = my,
+        has_los = has_los,
+        score_a = score_a, score_b = score_b, score_d = score_d, score_e = score_e,
+        total_score = total_score, deg = deg,
+        maneuver_tiles = maneuver_tiles,
+      }
+    end
+    ::next_spot::
+  end
+
+  -- Two-pass selection: group valid spots by score in 100-buckets,
+  -- take the best bucket, then pick the one with lowest Dijkstra
+  -- cost (real travel distance) within that bucket.
+  if #all_valid > 0 then
+    -- Find the lowest score bucket (floor to nearest 100)
+    local min_score = math.huge
+    for _, s in ipairs(all_valid) do
+      if s.score < min_score then min_score = s.score end
+    end
+    local bucket_floor = math.floor(min_score / 50) * 50
+    local bucket_ceil = bucket_floor + 50
+
+    -- Among spots in the best bucket, pick the one with lowest
+    -- Dijkstra path cost (KIND_NORMAL, full danger)
+    local best_dij = math.huge
+    for _, s in ipairs(all_valid) do
+      if s.score >= bucket_floor and s.score < bucket_ceil then
+        local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, s.mx, s.my, 0)
+        if dij >= 1e29 then dij = U.mdist(pill.mx, pill.my, s.mx, s.my) * 10 end
+        if dij < best_dij then
+          best_dij = dij
+          best_spot = s
+          best_score = s.score
+        end
+      end
+    end
+  end
+
+  return best_score, spots, best_spot
+end
+
+-- =========================================================================
+-- evaluate_tank_standoff — find best engagement position around enemy tank
+--
+-- Same concept as evaluate_pill_difficulty but for tank combat:
+-- sample 8 positions at TANK_COMBAT_STANDOFF_RANGE around the target,
+-- score each for terrain, maneuver space (ellipse), crossfire from
+-- hostile pills, and wall obstructions. Returns the best standoff
+-- tile coordinates and score, plus the A* cost to reach it.
+--
+-- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival
+--          or nil if no valid standoff position found.
+-- =========================================================================
+function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
+  print2(string.format("attack_tank standoff: evaluating enemy@(%d,%d) from tank@(%d,%d) R=%d",
+    et.mx, et.my, tmx, tmy, C.TANK_COMBAT_STANDOFF_RANGE))
+  local R = C.TANK_COMBAT_STANDOFF_RANGE
+  local safe_r = C.ATTACK_SAFE_RADIUS
+  local stamps = ELLIPSE_STAMPS_45DEG
+  local best_score = math.huge
+  local best_mx, best_my = nil, nil
+  local best_deg = 0
+  local scan_spots = {}
+
+  for deg = 0, 315, 45 do
+    local rad = math.rad(deg)
+    local cx = et.mx + 0.5 + math.sin(rad) * R
+    local cy = et.my + 0.5 - math.cos(rad) * R
+    local mx = math.floor(cx)
+    local my = math.floor(cy)
+    if not U.in_map(mx, my) then goto next_tank_spot end
+
+    local tt = U.ttype(mx, my)
+    local passable = (C.TERRAIN_COST_LAND[tt] or 9999) < 9999 and not U.is_water(tt)
+    if not passable then
+      print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: impassable tt=%d", deg, mx, my, tt))
+      scan_spots[#scan_spots + 1] = {
+        cx = cx, cy = cy, mx = mx, my = my, deg = deg,
+        has_los = false, total_score = 999, reason = "impassable",
+        score_danger = 0, score_crossfire = 0, score_terrain = 0, score_approach = 0,
+      }
+      goto next_tank_spot
+    end
+
+    -- Wall check: need clear shot to the enemy tank from this position
+    local wall_hp = PF.wall_hp_between(mx, my, et.mx, et.my)
+    if wall_hp > 0 then
+      print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: wall_hp=%d", deg, mx, my, wall_hp))
+      scan_spots[#scan_spots + 1] = {
+        cx = cx, cy = cy, mx = mx, my = my, deg = deg,
+        has_los = false, total_score = 999, reason = "wall_blocked",
+        score_danger = 0, score_crossfire = 0, score_terrain = 0, score_approach = 0,
+      }
+      goto next_tank_spot
+    end
+
+    -- ── Maneuver ellipse scan ──
+    -- Oriented toward the enemy tank, same geometry as pill attack.
+    local total_danger = 0
+    local safe_tiles = 0
+    local terrain_penalty = 0
+    local max_coverage = 0
+    local maneuver_tiles = {}
+
+    local stamp = stamps and stamps[deg] or nil
+    local function process_tile(sx, sy)
+      if not U.in_map(sx, sy) then return end
+      local d = threat.pill_at(sx, sy)
+      total_danger = total_danger + d
+      safe_tiles = safe_tiles + 1
+      maneuver_tiles[#maneuver_tiles + 1] = { x = sx, y = sy, val = math.floor(d + 0.5) }
+      local stt = U.ttype(sx, sy)
+      local base_entry = world.base_at[sy * 256 + sx]
+      local enemy_base = base_entry and base_entry.base
+                         and base_entry.base.owner == "hostile"
+      if stt == C.T_DEEPSEA or enemy_base then
+        terrain_penalty = terrain_penalty + 1000
+      elseif stt == C.T_BUILDING or stt == C.T_HALFBUILD
+         or stt == C.T_SWAMP or stt == C.T_RIVER then
+        terrain_penalty = terrain_penalty + 100
+      end
+      local cov = threat.coverage_at(sx, sy)
+      if cov > max_coverage then max_coverage = cov end
+    end
+
+    if stamp then
+      for i = 1, #stamp do
+        local off = stamp[i]
+        process_tile(mx + off.dx, my + off.dy)
+      end
+    end
+
+    local score_danger = safe_tiles > 0 and (total_danger / safe_tiles) or 999
+    local score_crossfire = max_coverage > 0 and (100 * max_coverage) or 0
+    -- Approach cost: lightweight distance tiebreaker only. The A* path_cost
+    -- to the winning standoff already captures the real travel cost — the
+    -- standoff score should just pick the better LOCAL position, not
+    -- double-count travel via the full Dijkstra cost.
+    local score_approach = U.mdist(tmx, tmy, mx, my) * 2
+    local score = score_danger + score_crossfire + terrain_penalty + score_approach
+
+    scan_spots[#scan_spots + 1] = {
+      cx = cx, cy = cy, mx = mx, my = my, deg = deg,
+      has_los = true, total_score = score,
+      score_danger = score_danger, score_crossfire = score_crossfire,
+      score_terrain = terrain_penalty, score_approach = score_approach,
+      maneuver_tiles = maneuver_tiles,
+    }
+
+    print2(string.format("  attack_tank cand deg=%d @(%d,%d) danger=%.1f xfire=%.0f terrain=%.0f approach=%.0f total=%.0f",
+      deg, mx, my, score_danger, score_crossfire, terrain_penalty, score_approach, score))
+
+    -- Overlay: color-coded candidate positions
+    if score < best_score then
+      -- Will be best (for now) — skip, we'll draw the winner after
+    else
+      local rel = math.min(1.0, score / math.max(1, best_score * 3))
+      local cr = math.floor(255 * rel)
+      local cg = math.floor(255 * (1 - rel))
+      viz.rect("tank_combat_standoff_scan", cx - 0.15, cy - 0.15, cx + 0.15, cy + 0.15, cr, cg, 0, 120)
+    end
+
+    if score < best_score then
+      best_score = score
+      best_mx = mx
+      best_my = my
+      best_deg = deg
+    end
+
+    ::next_tank_spot::
+  end
+
+  if not best_mx then
+    print2("  attack_tank: NO valid standoff position found")
+    return nil
+  end
+  print2(string.format("  attack_tank WINNER: deg=%d @(%d,%d) score=%.1f", best_deg, best_mx, best_my, best_score))
+
+  -- Overlay: mark chosen standoff with green circle + line to enemy
+  viz.circle("tank_combat_standoff_scan", best_mx + 0.5, best_my + 0.5, 0.45, 0, 255, 0, 220)
+  viz.line("tank_combat_standoff_scan", et.mx + 0.5, et.my + 0.5, best_mx + 0.5, best_my + 0.5, 0, 255, 0, 100)
+
+  -- Draw ellipse outline on winner
+  do
+    local best_spot = nil
+    for _, s in ipairs(scan_spots) do
+      if s.deg == best_deg and s.has_los then best_spot = s; break end
+    end
+    if best_spot then
+      local edx = et.mx + 0.5 - best_spot.cx
+      local edy = et.my + 0.5 - best_spot.cy
+      local elen = math.sqrt(edx * edx + edy * edy)
+      if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
+      local ux, uy = edx / elen, edy / elen
+      local vx, vy = -uy, ux
+      local rl, rs = 4, safe_r / 3.0
+      local segs = 24
+      local px, py
+      for i = 0, segs do
+        local a = (i / segs) * 2 * math.pi
+        local eu = math.cos(a) * rl
+        local ev = math.sin(a) * rs
+        local nx = best_spot.cx + eu * ux + ev * vx
+        local ny = best_spot.cy + eu * uy + ev * vy
+        if px then
+          viz.line("tank_combat_standoff_scan", px, py, nx, ny, 0, 200, 0, 100)
+        end
+        px, py = nx, ny
+      end
+    end
+  end
+
+  -- Score labels on each candidate
+  for _, s in ipairs(scan_spots) do
+    if s.has_los and s.total_score < 900 then
+      local label = string.format("D%.0f+X%.0f+T%.0f+A%.0f=%.0f",
+        s.score_danger, s.score_crossfire, s.score_terrain, s.score_approach,
+        s.total_score)
+      viz.text("tank_combat_standoff_scan", s.cx - 1, s.cy - 0.5, label, "topleft", 255, 0, 255, 255)
+    elseif not s.has_los then
+      viz.text("tank_combat_standoff_scan", s.cx, s.cy - 0.3, s.reason or "blocked", "center", 200, 0, 0, 180)
+    end
+  end
+
+  -- A* to the best standoff position (not the enemy tank itself)
+  cpf.set_config("danger_scale", 0.1)
+  local path_cost = smart_cost(KIND_PILL, tmx, tmy, best_mx, best_my, 0,
+                               info.shells or 32, info.trees or 0,
+                               info.mines or 0, info.armour or 40)
+  cpf.set_config("danger_scale", 1.0)
+
+  local shells_on_arrival = cpf.dijkstra_shells_at(KIND_PILL, best_mx, best_my)
+                         or cpf.astar_shells_at(best_mx, best_my)
+
+  print2(string.format("  attack_tank A* to (%d,%d): path_cost=%.1f shells_arr=%s",
+    best_mx, best_my, path_cost,
+    shells_on_arrival and tostring(math.floor(shells_on_arrival)) or "nil"))
+
+  return best_mx, best_my, best_score, path_cost, shells_on_arrival, scan_spots, best_deg
+end
+
+-- position:   navigating to standoff, braking to stop
+-- aim:        stopped at standoff, turning to face pill
+-- engage:     firing at pill, monitoring armour
+-- curve_away: evasive turn after taking hits
+-- rush:       pill dead, drive to capture
+-- disengage:  armour critical, flee
+
+-- Walk shot_tracker.shots and update goal._on_target_fired (count of shots
+-- fired during this attack whose crosshair-at-fire was on the target pill)
+-- and goal._on_target_misses (shots that died without landing on the pill).
+-- For each newly-detected miss, bump goal._bullets_needed by one so the
+-- charge/engage swerve trigger waits for a replacement shot.
+local function update_shot_accounting(goal, world)
+  if not goal._attack_start_tick then
+    goal._on_target_fired  = 0
+    goal._on_target_misses = 0
+    return
+  end
+  local pmx, pmy = goal.mx, goal.my
+  local pwx = (pmx + 0.5) * 256
+  local pwy = (pmy + 0.5) * 256
+  local hit_tol_wu = 384        -- death within 1.5 tiles counts as a hit
+  local hit2 = hit_tol_wu * hit_tol_wu
+  local fired, on_target_fired, on_target_in_flight, misses = 0, 0, 0, 0
+  for _, s in ipairs(shot_tracker.shots) do
+    if s.fire_tick >= goal._attack_start_tick then
+      -- Total shots fired during this attack (any direction).
+      fired = fired + 1
+
+      -- A shot is "on target" if its actual simulated trajectory
+      -- (cpf.simulate_shot, same physics as the engine) crosses the
+      -- pill tile. Stricter than the prior ray-perpendicular check —
+      -- a near-miss that fires from where the trajectory would only
+      -- clip the corner of an adjacent tile no longer counts.
+      local sm = math.sqrt(s.step_x * s.step_x + s.step_y * s.step_y)
+      local on_target = false
+      if sm > 0 then
+        -- Project a target point far down the firing direction so
+        -- simulate_shot traces the full trajectory's range. Round to
+        -- integers — cpf_simulate_shot's binding uses luaL_checkinteger
+        -- so floats from the (far/sm) scale crash the brain.
+        local far = 14 * 256
+        local tx_w = math.floor(s.fire_fx + s.step_x * (far / sm) + 0.5)
+        local ty_w = math.floor(s.fire_fy + s.step_y * (far / sm) + 0.5)
+        local path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
+                                       cpf.SHOT_TANK, 14)
+        if path then
+          for _, t in ipairs(path) do
+            if t.mx == pmx and t.my == pmy then
+              on_target = true
+              break
+            end
+          end
+        end
+      end
+      if on_target then
+        on_target_fired = on_target_fired + 1
+        if s.status == "in_flight" then
+          on_target_in_flight = on_target_in_flight + 1
+        elseif s.status == "dead" then
+          local ddx = s.dead_fx - pwx
+          local ddy = s.dead_fy - pwy
+          local missed = (ddx * ddx + ddy * ddy) > hit2
+          if missed then
+            misses = misses + 1
+            if not s._attack_handled then
+              -- First detection of this miss — bump the kill budget.
+              goal._bullets_needed = (goal._bullets_needed or 0) + 1
+            end
+          end
+          s._attack_handled = true
+        end
+      end
+    end
+  end
+  goal._fired               = fired
+  goal._on_target_fired     = on_target_fired
+  goal._on_target_in_flight = on_target_in_flight
+  goal._on_target_misses    = misses
+end
 
 function M.update_attack_substate(goal, state, world, info)
   if goal.kind ~= "attack_pill" then return end
 
-  if M.USE_WALLSHIELD_BT then
-    if not wallshield_bt then wallshield_bt = require("wallshield_bt") end
-    wallshield_bt.tick(goal, state, world, info)
-    return
+  -- Tally on-target shots and bump bullets_needed for any misses.
+  update_shot_accounting(goal, world)
+
+  -- HUD: kill attempt indicator (top-left)
+  if goal._kill_attempt ~= nil then
+    local label = goal._kill_attempt and "KILL ATTEMPT" or "DAMAGE ONLY"
+    local r, g, b = goal._kill_attempt and 100 or 255,
+                    goal._kill_attempt and 255 or 200,
+                    goal._kill_attempt and 100 or 50
+    viz.hud_text("hud_kill_attempt", 10, 160, label, "topleft", r, g, b, 255)
+    viz.hud_text("hud_kill_attempt", 10, 175,
+      string.format("bullets_needed=%d pill_hp=%d", goal._bullets_needed or 0,
+                    goal.target_id and (function()
+                      local p = world.pills[goal.target_id]
+                      return p and p.health or 0
+                    end)() or 0),
+      "topleft", 200, 200, 200, 255)
+    viz.hud_text("hud_kill_attempt", 10, 190,
+      string.format("fired=%d on_pill=%d misses=%d",
+                    goal._fired or 0,
+                    goal._on_target_fired or 0,
+                    goal._on_target_misses or 0),
+      "topleft", 0, 255, 255, 255)
   end
 
-  -- ── Legacy FSM (kept as fallback) ─────────────────────────────────
+  -- Floating count above the target pill:
+  --   "<on-target shots still in flight> / <pill HP remaining>"
+  -- A tree-blocked shot drops out of the in-flight side without changing
+  -- the HP side, so the indicator visibly goes down by one rather than
+  -- pretending we somehow need more bullets to kill the pill.
+  if goal._fired and goal._fired > 0 then
+    local pill_hp = 0
+    if goal.target_id then
+      local p = world.pills[goal.target_id]
+      pill_hp = p and p.health or 0
+    end
+    viz.text("pill_shot_count", goal.mx + 0.5, goal.my - 0.6,
+      string.format("%d/%d", goal._on_target_in_flight or 0, pill_hp),
+      "center", 0, 255, 255, 255)
+  end
+
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
   local now = state.tick
+  local pmx, pmy = goal.mx, goal.my
 
-  -- Backward compat: goals without substate default to old behavior
-  if not goal.substate then return end
+  if not goal.substate then goal.substate = "plan_position" end
 
-  if goal.substate == "plan" then
-    -- Shouldn't persist; standoff is computed at goal creation.
-    -- Safety fallback: recompute now.
-    local pill = nil
-    pill = M.find_pill_at(world, goal.mx, goal.my)
-    if pill then
-      local pk = U.mkey(goal.mx, goal.my)
-      state.pill_attack_plan = nil  -- force fresh computation
-      local smx, smy = M.get_standoff(world, info, pk, pill, state)
+  -- Only log on substate transitions (avoid spamming every tick)
+  if goal.substate ~= goal._last_logged_sub then
+    goal._last_logged_sub = goal.substate
+    print(string.format(TAG .. " [ATTACK] substate=%s pill=(%d,%d)", goal.substate, pmx, pmy))
+  end
+
+  -- Look up pill
+  local pill = M.find_pill_at(world, pmx, pmy)
+
+  -- Per-tick PPT eligibility check. The original _is_ppt assignment
+  -- happens once in plan_position's scan-once block; if the goal stays
+  -- on the same pill across multiple engage rounds (swerve -> rush ->
+  -- engage, etc.) without revisiting plan_position, the flag never
+  -- refreshes even though the pill's HP keeps dropping. Pill health
+  -- only goes down, so PPT can demote but never re-promote — this
+  -- check is one-way. Once the pill drops below the threshold, also
+  -- swap out of any PPT-only substate so steering picks up the right
+  -- non-PPT path immediately.
+  if pill and goal.kind == "attack_pill" and goal._is_ppt then
+    local hp = pill.health or 0
+    local threshold = C.PPT_HEALTH_THRESHOLD or 8
+    if hp < threshold then
+      goal._is_ppt = false
+      print(string.format(TAG .. " ATTACK: demoting shielded -> no-shield (pill_hp=%d < %d)",
+            hp, threshold))
+      local sub_swap = {
+        in_range_position     = "charge",
+        in_range_aim          = "aim",
+        in_range_aim_finetune = "aim",
+        shoot_pill            = "engage",
+      }
+      local new_sub = sub_swap[goal.substate]
+      if new_sub then
+        print(string.format(TAG .. " ATTACK: shielded demote mid-substate %s -> %s",
+              goal.substate, new_sub))
+        goal.substate = new_sub
+        if new_sub == "charge" then
+          goal._charge_braking = nil
+          goal._aim_locked     = nil
+        end
+      end
+    end
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- plan_position: full terrain analysis to find best attack spot
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "plan_position" then
+    -- Only scan once, reuse stored results for drawing
+    if not goal.scan_spots then
+      goal._scan_tank_mx = tmx
+      goal._scan_tank_my = tmy
+
+      local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, nil, state.phase)
+      goal.scan_spots = spots
+
+      -- Step 1: apply influence bonus/penalty to all LOS spots.
+      --   friendly territory (influence > 0): -5 (cheaper)
+      --   hostile territory  (influence < 0): +5 (more expensive)
+      -- Stored as adj_score for all subsequent ranking.
+      for _, s in ipairs(spots) do
+        if s.has_los then
+          s._influence = cpf.influence_at(s.mx, s.my)
+          local infl_adj = 0
+          if s._influence > 0 then infl_adj = -5
+          elseif s._influence < 0 then infl_adj = 5
+          end
+          s._infl_adj = infl_adj
+          s._adj_score = s.total_score + infl_adj
+        end
+      end
+
+      -- Step 2: collect all "green" spots (adj_score < 10 with LOS)
+      local greens = {}
+      for _, s in ipairs(spots) do
+        if s.has_los and s._adj_score < 10 then
+          greens[#greens + 1] = s
+        end
+      end
+
+      -- Step 3: no greens — pick top-scoring LOS spot + all within 25% of it.
+      -- "Within 25%" means adj_score <= top_score * 1.25 (lower is better).
+      if #greens == 0 then
+        local los_spots = {}
+        for _, s in ipairs(spots) do
+          if s.has_los then los_spots[#los_spots + 1] = s end
+        end
+        table.sort(los_spots, function(a, b) return a._adj_score < b._adj_score end)
+        if #los_spots > 0 then
+          local top_score = los_spots[1]._adj_score
+          local threshold = top_score * 1.25
+          for _, s in ipairs(los_spots) do
+            if s._adj_score <= threshold then
+              greens[#greens + 1] = s
+            else
+              break  -- sorted, so we can stop
+            end
+          end
+        end
+      end
+
+      local best = nil
+      if #greens > 0 then
+        -- Step 4: rank by real Dijkstra travel cost from the tank.
+        -- The bot already maintains a KIND_NORMAL full-map Dijkstra
+        -- rooted at its current position, so this is a cached lookup
+        -- (no per-spot search) that beats the linear estimate the
+        -- shortlist tiebreak used to use.
+        local boat = info.inboat and 1 or 0
+        for _, s in ipairs(greens) do
+          local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, s.mx, s.my, boat)
+          if dij >= 1e29 then
+            -- Tile not yet reached by the search (rare on land paths
+            -- but possible early in a search or for unreachable spots).
+            -- Fall back to the linear estimate so ranking still works.
+            dij = cpf.estimate_cost(tmx, tmy, s.mx, s.my, boat)
+          end
+          s._est = dij
+        end
+        table.sort(greens, function(a, b) return (a._est or math.huge) < (b._est or math.huge) end)
+        best = greens[1]
+      end
+
+      -- Log selection
+      print(string.format(TAG .. " PLAN SELECT: greens=%d oranges=%s best=%s score=%.1f",
+            #greens, best_orange and string.format("%.1f", best_orange.total_score) or "none",
+            best and string.format("(%d,%d) %.1f", best.mx, best.my, best.total_score) or "none",
+            best and best.total_score or -1))
+
+      if best then
+        goal.standoff_mx = best.mx   -- integer tile for A* nav
+        goal.standoff_my = best.my
+        goal.standoff_fx = best.cx  -- precise float for charge/engage
+        goal.standoff_fy = best.cy
+        goal._chosen_deg = best.deg
+        -- Approach position: extend line from pill through standoff by
+        -- APPROACH_OFFSET. Stored as both float (precise final target)
+        -- and clamped integer tile (for the A* path target).
+        local dx = best.cx - (pmx + 0.5)
+        local dy = best.cy - (pmy + 0.5)
+        local d = math.sqrt(dx * dx + dy * dy)
+        if d > 0.01 then
+          local ux, uy = dx / d, dy / d
+          goal.approach_fx = best.cx + ux * C.ATTACK_APPROACH_OFFSET
+          goal.approach_fy = best.cy + uy * C.ATTACK_APPROACH_OFFSET
+          goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+          goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+        else
+          goal.approach_mx = best.mx
+          goal.approach_my = best.my
+          goal.approach_fx = best.cx
+          goal.approach_fy = best.cy
+        end
+        if not goal._plan_logged then
+          local n_los = 0
+          for _, s in ipairs(spots) do if s.has_los then n_los = n_los + 1 end end
+          print(string.format(TAG .. " PLAN: pill@(%d,%d) best=(%d,%d) deg=%d score=%.1f (A=%.1f B=%.0f D=%.0f) candidates=%d",
+                pmx, pmy, best.mx, best.my, best.deg, best.total_score,
+                best.score_a or 0, best.score_b or 0, best.score_d or 0, n_los))
+          goal._plan_logged = true
+        end
+
+        -- Protected pill take (PPT) gating: high-HP pills use a tighter
+        -- standoff and a slower charge so the wall-shielded angle is
+        -- preserved. Determined ONCE here for the lifetime of this
+        -- attack_pill goal and stashed on the goal for downstream
+        -- substates / steering.
+        local pill_hp = pill and pill.health or 0
+        goal._is_ppt = pill_hp >= (C.PPT_HEALTH_THRESHOLD or 8)
+        local scan_radius = goal._is_ppt and C.PPT_STANDOFF
+                            or C.ATTACK_PILL_STANDOFF
+        -- For PPT, pull the chosen standoff in from 7.4 to 7.0 along
+        -- the same angle the planner picked. evaluate_pill_difficulty
+        -- already laid the standoff on the 7.4 circle; rescaling keeps
+        -- the angle and just trims the radius.
+        if goal._is_ppt and goal.standoff_fx and goal.standoff_fy then
+          local cdx = goal.standoff_fx - (pmx + 0.5)
+          local cdy = goal.standoff_fy - (pmy + 0.5)
+          local clen = math.sqrt(cdx * cdx + cdy * cdy)
+          if clen > 0.01 then
+            local scale = scan_radius / clen
+            goal.standoff_fx = (pmx + 0.5) + cdx * scale
+            goal.standoff_fy = (pmy + 0.5) + cdy * scale
+            goal.standoff_mx = U.mclamp(math.floor(goal.standoff_fx))
+            goal.standoff_my = U.mclamp(math.floor(goal.standoff_fy))
+          end
+        end
+
+        -- Wall-shielded standoff search: scan 8 nearby angles around the
+        -- chosen standoff and pick a more cover-protected spot if one
+        -- exists. Replaces standoff_* and recomputes approach_* in place
+        -- so all downstream substates see the new spot. Stash the scan
+        -- result for the upcoming build_walls substate (Phase 2) and for
+        -- the in-place viz overlay below.
+        -- No-builder mode: if the LGM is dead/parachuting we can't
+        -- place new walls, so the shield scan must score only
+        -- already-existing cover (walls + friendly pills). If
+        -- nothing scores, the demote below kicks PPT off and we
+        -- charge unshielded.
+        local no_builder = (info.man_status == C.LGM_DEAD)
+        local sscan = shield.scan(pill, world,
+                                  goal.standoff_mx, goal.standoff_my,
+                                  goal._chosen_deg or 0,
+                                  goal.standoff_fx, goal.standoff_fy,
+                                  scan_radius, no_builder)
+        if no_builder and sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
+          print(TAG .. " ATTACK: LGM dead and no existing cover — demoting to no-shield")
+          goal._is_ppt = false
+          sscan = nil
+        end
+        if sscan then sscan.created_tick = now end
+        goal._shield_scan = sscan
+        if sscan and sscan.best then
+          local w = sscan.best
+          local n_blockers = 0
+          if w.best_aim_idx and w.aims[w.best_aim_idx] then
+            n_blockers = #w.aims[w.best_aim_idx].blockers
+          end
+          print(string.format(TAG .. " SHIELD: replacing standoff (%d,%d)->(%d,%d) deg %.1f->%.1f score=%d blockers=%d (aim=%d)",
+                goal.standoff_mx, goal.standoff_my, w.mx, w.my,
+                goal._chosen_deg or 0, w.deg, w.score,
+                n_blockers, w.best_aim_idx or 0))
+          goal.standoff_mx = w.mx
+          goal.standoff_my = w.my
+          goal.standoff_fx = w.cx
+          goal.standoff_fy = w.cy
+          goal._chosen_deg = w.deg
+          -- Recompute approach point behind the new standoff.
+          local dxn = w.cx - (pmx + 0.5)
+          local dyn = w.cy - (pmy + 0.5)
+          local dn  = math.sqrt(dxn * dxn + dyn * dyn)
+          if dn > 0.01 then
+            local ux, uy = dxn / dn, dyn / dn
+            goal.approach_fx = w.cx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = w.cy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          end
+          -- Aim/engage default to pill center; override to the exact
+          -- corner (or center) the shield scan chose so the tank shoots
+          -- through the protected lane it picked, not down the middle.
+          -- Use _TILE_FIRE (1 gu deeper than the scoring inset) so the
+          -- real gun aim has extra error tolerance vs. the scoring
+          -- pick. Same corner index — just shifted further inward.
+          local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
+                      or shield.AIM_OFFSETS_TILE_FIRE[1]
+          goal.aim_mx = pmx + off[1]
+          goal.aim_my = pmy + off[2]
+        end
+      else
+        if not goal._plan_logged then
+          print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
+          goal._plan_logged = true
+        end
+        local smx, smy = M.pick_standoff(world, info, pill, state)
+        goal.standoff_mx = smx
+        goal.standoff_my = smy
+      end
+    end -- if not goal.scan_spots (scan once)
+
+    -- Transition to approach after 3 ticks. The old 50-tick (1s) hold was
+    -- for letting a human inspect the spot-scoring viz; planning is now
+    -- reliable enough that we don't need the pause in normal play. 3 ticks
+    -- is enough to be catchable when scrubbing a replay. Bump higher
+    -- (e.g. 50 for 1 second) if the scoring viz needs live dwell time.
+    if goal.standoff_mx then
+      if not goal._plan_show_tick then
+        goal._plan_show_tick = now
+      elseif (now - goal._plan_show_tick) >= 3 then
+        -- Pre-flight tree check: PPT plans build wall_shields, each
+        -- costs WALL_SHIELD_BUILD_COST trees. Better to gather BEFORE
+        -- approaching — once at the standoff, the forest may be on the
+        -- other side of the pill / a river / etc., and gathering then
+        -- forces the tank to leave its hard-won standoff.
+        local need_gather = false
+        local trees_needed = 0
+        local n_pots = 0
+        if goal._is_ppt and goal._shield_scan and goal._shield_scan.best then
+          local w = goal._shield_scan.best
+          local pots = w.best_aim_idx and w.aims[w.best_aim_idx]
+                       and w.aims[w.best_aim_idx].potential_blockers
+          if pots and #pots > 0 then
+            n_pots = #pots
+            trees_needed = n_pots * (C.WALL_SHIELD_BUILD_COST or 2)
+            if (info.trees or 0) < trees_needed then
+              need_gather = true
+            end
+          end
+        end
+        if need_gather then
+          goal.substate = "gather_trees"
+          goal._trees_for_walls = trees_needed
+          goal._gather_start    = now
+          goal._gather_last_progress = now
+          goal._gather_last_trees    = info.trees or 0
+          print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
+                info.trees or 0, trees_needed, n_pots))
+        else
+          goal.substate = "approach"
+          print(string.format(TAG .. " ATTACK: plan_position -> approach, standoff=(%d,%d) precise=(%.1f,%.1f)",
+                goal.standoff_mx, goal.standoff_my,
+                goal.standoff_fx or goal.standoff_mx + 0.5,
+                goal.standoff_fy or goal.standoff_my + 0.5))
+        end
+      end
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- gather_trees: hold position before approach, let LGM harvest nearby
+  -- forest until we have enough trees for the planned shield walls.
+  -- The builder's existing "gather" mode (set via builder.set_mode) does
+  -- the actual work — including all the smarts about reachable forest,
+  -- LGM_DEPLOY_DIST cap, and danger-safe path. We just gate the
+  -- transition to approach.
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "gather_trees" then
+    local trees_have = info.trees or 0
+    local trees_need = goal._trees_for_walls or 0
+    -- Track tree-count progress so we can detect "no nearby forest"
+    -- via a no-progress timeout instead of waiting the full hard cap.
+    if trees_have ~= goal._gather_last_trees then
+      goal._gather_last_trees    = trees_have
+      goal._gather_last_progress = now
+    end
+    local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
+    local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
+    if trees_have >= trees_need then
+      goal.substate = "approach"
+      goal._trees_for_walls = nil
+      goal._gather_start    = nil
+      goal._gather_last_progress = nil
+      goal._gather_last_trees    = nil
+      print(string.format(TAG .. " ATTACK: gather_trees -> approach (%d trees stocked)", trees_have))
+    elseif stalled or timed_out then
+      -- Demote out of PPT entirely so the rest of the attack runs the
+      -- legacy non-PPT flow (charge -> engage -> swerve, near-edge aim
+      -- via the per-tick fallback in init.lua). Wiping _shield_scan
+      -- frees init.lua's aim override to set aim_mx/aim_my from the
+      -- pill-edge geometry instead of the corner the scan picked,
+      -- which would otherwise be unprotected without walls.
+      goal.substate = "approach"
+      goal._is_ppt = false
+      goal._shield_scan = nil
+      local why = stalled and "no nearby forest reachable" or "hard timeout"
+      print(string.format(TAG .. " ATTACK: gather_trees -> approach (%s, %d/%d trees) — demoted to no-shield",
+            why, trees_have, trees_need))
+      goal._trees_for_walls = nil
+      goal._gather_start    = nil
+      goal._gather_last_progress = nil
+      goal._gather_last_trees    = nil
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- approach: navigate to standoff position, brake to stop
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "approach" then
+    if not goal.standoff_mx then
+      goal.substate = "plan_position"
+      goal.scan_spots = nil
+      goal._plan_show_tick = nil
+      goal._plan_logged = nil
+      print(TAG .. " ATTACK: approach has no standoff, replanning")
+    else
+      -- First-tick init for approach progress timer (used for the
+      -- timeout below). Reset on every entry from another substate.
+      if not goal._approach_start then
+        goal._approach_start = now
+        goal._approach_last_progress = now
+        goal._approach_last_dist = nil
+      end
+
+      -- Reach the approach point (precise float, 1.5 tiles behind standoff).
+      -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.
+      local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
+                                    or (goal.standoff_mx and (goal.standoff_mx + 0.5))
+      local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
+                                    or (goal.standoff_my and (goal.standoff_my + 0.5))
+      local awx = math.floor(afx * 256 + 0.5)
+      local awy = math.floor(afy * 256 + 0.5)
+      local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+      -- Closing the distance counts as progress and resets the timer.
+      if goal._approach_last_dist == nil or adist < goal._approach_last_dist - 4 then
+        goal._approach_last_progress = now
+        goal._approach_last_dist     = adist
+      end
+      -- Was 64 (1/4 tile). At that tolerance the tank brakes early and
+      -- coasts to a stop short of the approach point — visible as a
+      -- noticeable gap at the green winner-marker. 16 wu (1/16 tile)
+      -- forces the tank to creep right up onto the spot.
+      local DIST_TOL  = 16
+      -- Matches the creep target speed in steering.lua (the tank holds
+      -- at 4 inside the 16-wu approach window). Insisting on 0 makes
+      -- the substate hang since the tank doesn't decelerate further.
+      local SPEED_TOL = 4
+
+      -- HUD overlay near the tank: current distance + threshold so we
+      -- can see live what's blocking the transition.
+      do
+        local twx = info.tankx / 256.0
+        local twy = info.tanky / 256.0
+        local dist_ok  = adist <= DIST_TOL
+        local speed_ok = info.speed <= SPEED_TOL
+        local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
+        local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
+        viz.text("approach_dist", twx + 1.0, twy - 1.0,
+          string.format("dist=%d/%d", adist, DIST_TOL),
+          "topleft", dr, dg, db, 255)
+        viz.text("approach_dist", twx + 1.0, twy - 0.4,
+          string.format("spd=%d/%d", info.speed, SPEED_TOL),
+          "topleft", sr, sg, sb, 255)
+      end
+
+      if adist <= DIST_TOL and
+         effectively_stopped(state, info, now, SPEED_TOL, 5, "approach") then
+        -- Shield-scan-driven wall building: prefer the explicit winner;
+        -- if there's no winner, fall back to the standoff candidate so
+        -- we can still build out its protection slots if any exist.
+        local target_for_build = nil
+        local why_no_build = "no shield scan"
+        if goal._shield_scan then
+          target_for_build = goal._shield_scan.best or goal._shield_scan.standoff
+          if not goal._shield_scan.best then why_no_build = "no winner; using standoff" end
+        end
+        local pots = nil
+        if target_for_build then
+          if target_for_build.best_aim_idx and target_for_build.aims[target_for_build.best_aim_idx] then
+            pots = target_for_build.aims[target_for_build.best_aim_idx].potential_blockers
+            -- Lock the gun aim onto the chosen corner/center for the
+            -- shield target. If best_aim_idx is set, that means at least
+            -- one outgoing aim is clean, and that's the lane we want
+            -- charge/aim/engage to all use. (Done unconditionally here
+            -- in case the standoff itself ends up being target_for_build
+            -- — the original best-only path doesn't set aim_mx/my then.)
+            local off = shield.AIM_OFFSETS_TILE_FIRE[target_for_build.best_aim_idx]
+                        or shield.AIM_OFFSETS_TILE_FIRE[1]
+            goal.aim_mx = pmx + off[1]
+            goal.aim_my = pmy + off[2]
+          else
+            why_no_build = "target has no clean aim (all blocked by wall)"
+            -- No clean shot through any aim means PPT can't function
+            -- (in_range_aim/shoot_pill rely on a chosen corner). Demote
+            -- to non-PPT so aim transitions to the regular charge path
+            -- instead of in_range_position, which would just sit idle.
+            if goal._is_ppt then
+              print(TAG .. " ATTACK: demoting shielded -> no-shield (no clean aim available)")
+              goal._is_ppt = false
+            end
+          end
+        end
+        -- Tree budget check: each wall needs WALL_SHIELD_BUILD_COST
+        -- trees. The pre-flight gather_trees substate (entered before
+        -- approach in plan_position) should have stocked us by now —
+        -- if we're still short here, gathering would either be wasted
+        -- (no nearby forest reachable from the standoff) or undoing
+        -- the approach we just finished. Degrade to no-shield aim.
+        local cost_per_wall = C.WALL_SHIELD_BUILD_COST or 2
+        local needs_build = pots and #pots > 0
+        -- Wall-building is a PPT-only behavior. If the per-tick health
+        -- check has demoted us to non-PPT (pill HP < threshold), the
+        -- whole point of shielded charge is moot — slot straight into
+        -- the legacy charge path instead of detouring through a build.
+        if needs_build and not goal._is_ppt then
+          needs_build = false
+          why_no_build = "no-shield (pill HP below threshold) — no walls needed"
+        end
+        local trees_needed = needs_build and (#pots * cost_per_wall) or 0
+        if needs_build and (info.trees or 0) < trees_needed then
+          needs_build = false
+          why_no_build = string.format("not enough trees (%d/%d for %d walls) at standoff",
+                                       info.trees or 0, trees_needed, #pots)
+        end
+        local decision_msg
+        if needs_build then
+          goal.substate = "build_walls"
+          decision_msg = string.format("BUILD_WALLS: %d slots (%s, score=%d, trees=%d/%d)",
+                                       #pots, target_for_build.kind or "?",
+                                       target_for_build.score or 0,
+                                       info.trees or 0, trees_needed)
+        else
+          goal.substate = "aim"
+          goal.aim_tick = now
+          goal._aim_locked = nil
+          if pots and #pots == 0 then why_no_build = "0 potential blockers (already all built or no slots exist)" end
+          decision_msg = "skip build_walls: " .. why_no_build
+        end
+        -- Approach finished — clear its timer so a future re-entry
+        -- starts a fresh countdown.
+        goal._approach_start = nil
+        goal._approach_last_progress = nil
+        goal._approach_last_dist = nil
+        print(TAG .. " ATTACK: at approach " .. decision_msg)
+        -- Park the message on screen for ~2 seconds (100 ticks @ 50Hz)
+        -- so the human can read it without scrubbing the trace.
+        goal._build_decision_msg   = decision_msg
+        goal._build_decision_until = now + 100
+      else
+        -- Hard approach timeout: if we make NO net progress closing
+        -- the gap to the approach point in APPROACH_GIVE_UP_TICKS
+        -- (~10 s @ 50 Hz), bail back to plan_position. Without this,
+        -- the stuck-detection whitelist for "approach" can leave the
+        -- tank parked indefinitely against an obstacle.
+        local APPROACH_GIVE_UP_TICKS = 500
+        goal._approach_timeout_total = APPROACH_GIVE_UP_TICKS
+        if (now - goal._approach_last_progress) > APPROACH_GIVE_UP_TICKS then
+          print(string.format(TAG .. " ATTACK: approach stalled (no progress in %d ticks, dist=%d), replanning",
+                APPROACH_GIVE_UP_TICKS, adist))
+          goal.substate = "plan_position"
+          goal.scan_spots = nil
+          goal._shield_scan = nil
+          goal._plan_show_tick = nil
+          goal._plan_logged = nil
+          goal._approach_start = nil
+          goal._approach_last_progress = nil
+          goal._approach_last_dist = nil
+        end
+      end
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- build_walls: tank waits at approach point while LGM builds the
+  -- shield walls along the chosen aim's protection slots, closest-to-
+  -- pill first so the LGM never has to walk past a freshly built wall
+  -- to reach the next site. Sets goal.wall_shield + goal.wall_mx/my
+  -- one wall at a time; builder.lua picks them up via the wall_shield
+  -- mode (which already knows how to dispatch BUILDMODE_BUILD).
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "build_walls" then
+    -- Lazy init: build the wall queue once, sorted closest-to-pill first.
+    if not goal._wall_build_list then
+      local pots = nil
+      if goal._shield_scan and goal._shield_scan.best then
+        local w = goal._shield_scan.best
+        if w.best_aim_idx and w.aims[w.best_aim_idx] then
+          pots = w.aims[w.best_aim_idx].potential_blockers
+        end
+      end
+      pots = pots or {}
+      local sorted = {}
+      for _, p in ipairs(pots) do sorted[#sorted + 1] = p end
+      table.sort(sorted, function(a, b)
+        local da = (a.mx - pmx) * (a.mx - pmx) + (a.my - pmy) * (a.my - pmy)
+        local db = (b.mx - pmx) * (b.mx - pmx) + (b.my - pmy) * (b.my - pmy)
+        return da < db
+      end)
+      goal._wall_build_list  = sorted
+      goal._wall_build_idx   = 1
+      goal._wall_build_start = now
+      goal._wall_build_last_progress = now
+      print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
+                          #sorted))
+    end
+
+    local list = goal._wall_build_list
+    local idx  = goal._wall_build_idx
+
+    -- Skip walls that are already built (could be by us, ally, or just
+    -- pre-existing terrain we re-checked). Counts as progress so the
+    -- give-up timer resets.
+    while idx <= #list do
+      local target = list[idx]
+      local tt = U.ttype(target.mx, target.my)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+        idx = idx + 1
+        goal._wall_build_last_progress = now
+        goal._wall_idx_started = nil  -- reset per-wall sub-timer
+      else
+        break
+      end
+    end
+    goal._wall_build_idx = idx
+
+    -- Per-wall sub-timeout: if a single queue entry has been the
+    -- current target for WALL_STALL_TICKS without finishing, skip to
+    -- the next one. Catches unreachable walls (LGM can't get there),
+    -- builder safety rejections (danger / no trees / pill nearby),
+    -- etc., without waiting on the overall give-up window.
+    local WALL_STALL_TICKS = 250  -- ~5 s @ 50 Hz
+    if idx <= #list then
+      if not goal._wall_idx_started then
+        goal._wall_idx_started = now
+      elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
+        local target = list[idx]
+        print(string.format(TAG ..
+          " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks), skipping",
+          idx, #list, target.mx, target.my, WALL_STALL_TICKS))
+        idx = idx + 1
+        goal._wall_build_idx = idx
+        goal._wall_idx_started = nil
+      end
+    end
+
+    -- LGM round-trip: any change in man_status between ticks counts as
+    -- progress. So a successful dispatch (in -> out) AND the LGM coming
+    -- back to the tank (out -> in) both reset the give-up timer. Lets
+    -- a pillbox-shielded build that requires multiple LGM trips run
+    -- as long as the LGM keeps moving.
+    local cur_man_status = info.man_status or 0
+    if goal._wall_build_prev_man ~= nil and
+       goal._wall_build_prev_man ~= cur_man_status then
+      goal._wall_build_last_progress = now
+    end
+    goal._wall_build_prev_man = cur_man_status
+    -- Wall target advancement (idx incremented above) is already
+    -- captured by the in-loop progress reset, but record it explicitly
+    -- here too for any future case where the queue is mutated outside
+    -- this block.
+    if goal._wall_build_prev_idx ~= nil and
+       goal._wall_build_prev_idx ~= idx then
+      goal._wall_build_last_progress = now
+    end
+    goal._wall_build_prev_idx = idx
+
+    -- Hard timeout: if NO progress (no wall built, no LGM transition)
+    -- in BUILD_GIVE_UP_TICKS (~10 sec at 50 Hz), proceed without the
+    -- rest. Avoids hanging the attack flow when trees are short, the
+    -- LGM is genuinely dead, or the build site is unreachable.
+    local BUILD_GIVE_UP_TICKS = 500
+    local stalled = (now - goal._wall_build_last_progress) > BUILD_GIVE_UP_TICKS
+
+    -- Stash for the per-tick draw block below; it owns rendering so
+    -- the countdown shows even at the moment we transition out (and
+    -- stays put across substate flips while the goal still has the
+    -- build state populated).
+    goal._build_timeout_total = BUILD_GIVE_UP_TICKS
+
+    if idx > #list or stalled then
+      if stalled then
+        print(string.format(TAG .. " BUILD_WALLS: stalled (no wall built in %d ticks), proceeding to aim",
+                            BUILD_GIVE_UP_TICKS))
+      else
+        print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks, %d walls built, proceeding to aim",
+                            now - goal._wall_build_start, #list))
+      end
+      goal.wall_shield = false
+      goal.wall_mx = nil
+      goal.wall_my = nil
+      goal.substate = "aim"
+      goal.aim_tick = now
+      goal._aim_locked = nil
+    else
+      -- Point the builder at the current target wall.
+      local target = list[idx]
+      goal.wall_shield = true
+      goal.wall_mx = target.mx
+      goal.wall_my = target.my
+    end
+    -- Fall through to draw.
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- charge: accelerate toward standoff, let auto-slowdown stop us
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "charge" then
+    if not goal.standoff_mx then
+      goal.substate = "plan_position"
+    end
+    -- Record shell count and pill HP at start of charge for swerve trigger.
+    -- Decide intent NOW: if bullets we'll fire >= pill HP, we're going for a
+    -- confirmed kill; otherwise we're just chipping (defensive swerve later).
+    if not goal._charge_shells then
+      goal._charge_shells = info.shells
+      local pill_hp_now = pill and pill.health or 15
+      goal._bullets_needed = math.min(10, pill_hp_now)
+      goal._kill_attempt = (goal._bullets_needed >= pill_hp_now)
+      goal._attack_start_tick = now
+      -- Stash for the swerve-duration override below — low-HP pills get
+      -- shorter swerves since the kill is fast and we don't need a long
+      -- evasion window.
+      goal._charge_start_hp = pill_hp_now
+    end
+
+    -- Immediate swerve: pill dead OR fired enough shots
+    local bullets_fired = (goal._charge_shells or info.shells) - info.shells
+    local pill_hp = pill and pill.health or 0
+    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+      goal.substate = "swerve"
+      goal._swerve_start = now
+      -- Low-HP pills get a much shorter swerve — the kill happens fast,
+      -- the pill won't get many (if any) shots off, so a long evasion
+      -- just delays the next goal. Lookup by HP at start of charge.
+      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
+      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
+      if low_hp_ticks then
+        goal._swerve_ticks_left = low_hp_ticks
+        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
+      elseif goal._kill_attempt then
+        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
+        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+      else
+        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+      end
+      goal._swerve_pill_dead = (pill_hp <= 0)
+      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+      goal._engage_hits = nil
+      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, goal._bullets_needed or 0, pill_hp,
+            tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
+    end
+    -- Steering handles movement and transition to engage
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- aim: stopped at standoff, turning to face pill, no shooting
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "aim" then
+    -- Check if aimed (steering sets _aim_locked when corr <= 1)
+    if goal._aim_locked then
+      -- Pre-calculate best swerve direction: which side has more cover?
+      -- Sample 2 tiles perpendicular to approach line (precise float coords)
+      do
+        local dx = pmx - tmx
+        local dy = pmy - tmy
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len > 0.01 then
+          local ux, uy = dx / len, dy / len
+          -- Tank center (float), and precise sample positions perpendicular
+          -- (use tile centers: tank at (tmx+0.5, tmy+0.5))
+          local tcx, tcy = tmx + 0.5, tmy + 0.5
+          local pcx, pcy = pmx + 0.5, pmy + 0.5
+          local lfx = tcx + (-uy) * 2
+          local lfy = tcy + ux * 2
+          local rfx = tcx + uy * 2
+          local rfy = tcy + (-ux) * 2
+
+          -- Only count cover tiles inside the pill's fire range circle
+          local fire_r2 = C.PILL_FIRE_RANGE * C.PILL_FIRE_RANGE
+          local function in_fire_range(bx, by)
+            local ddx = bx - pmx
+            local ddy = by - pmy
+            return ddx * ddx + ddy * ddy <= fire_r2
+          end
+
+          -- Walk the line from swerve sample point to pill.
+          --   Inside pill fire range  -> tile counts as +cover (blocks LOS).
+          --   Outside pill fire range -> hazards score -10 (in the tank's way).
+          local function count_cover(fx0, fy0, viz_color)
+            local n = 0
+            U.line_walk(fx0, fy0, pcx, pcy, function(bx, by)
+              if not U.in_map(bx, by) then return end
+              local tt = U.ttype(bx, by)
+              local pk = world.pill_at[by * 256 + bx]
+              local friendly_pill = pk and world.pills[pk] and world.pills[pk].owner == "friendly"
+              -- Hostile base on this tile counts as a hard hazard
+              -- (same weight as deep water — tank shouldn't drive over).
+              local base_entry = world.base_at[by * 256 + bx]
+              local enemy_base = base_entry and base_entry.base
+                                 and base_entry.base.owner == "hostile"
+              if in_fire_range(bx, by) then
+                -- Cover: trees and walls block pill shots
+                if tt == C.T_FOREST or tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+                  n = n + 1
+                end
+                if friendly_pill then n = n + 3 end
+                if enemy_base then n = n - 10 end
+              else
+                -- Hazards in the swerve path that don't help block fire
+                if tt == C.T_BUILDING or tt == C.T_HALFBUILD
+                   or tt == C.T_RIVER  or tt == C.T_DEEPSEA
+                   or tt == C.T_SWAMP  or tt == C.T_RUBBLE then
+                  n = n - 10
+                end
+                if friendly_pill then n = n - 10 end
+                if enemy_base then n = n - 10 end
+              end
+            end, viz_color)
+            return n
+          end
+
+          -- Initial count (no viz) — viz happens during the per-tick redraw below
+          local left_cover = count_cover(lfx, lfy)
+          local right_cover = count_cover(rfx, rfy)
+          goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
+          -- Save precise float positions for HUD visualization
+          goal._swerve_viz = {
+            lfx = lfx, lfy = lfy, left_cover = left_cover, left_tiles = left_tiles,
+            rfx = rfx, rfy = rfy, right_cover = right_cover, right_tiles = right_tiles,
+            chosen = goal._best_swerve_dir,
+            pcx = pcx, pcy = pcy,
+          }
+          print(string.format(TAG .. " ATTACK: swerve calc L(%.2f,%.2f)=%d R(%.2f,%.2f)=%d -> %s",
+                lfx, lfy, left_cover, rfx, rfy, right_cover,
+                goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
+        end
+      end
+
+      -- Check for trees between tank and crosshairs (pill direction).
+      -- Skip detree entirely for shielded pill takes — the shield scan
+      -- already picked an aim corner with a clear shot through the
+      -- chosen angle, so any trees on the pill-center line aren't on
+      -- our actual firing path. Burning shells to clear them just
+      -- wastes ammo and time before we can take the corner shot.
+      local trees = goal._is_ppt and 0
+                    or forest_tiles_on_path(tmx, tmy, pmx, pmy)
+      if trees > 0 then
+        goal.substate = "detree"
+        goal._aim_locked = nil
+        goal._detree_shells_at_start = info.shells  -- baseline for actual shots fired
+        goal._detree_shots_needed = trees
+        print(string.format(TAG .. " ATTACK: aimed, clearing %d trees", trees))
+      elseif goal._is_ppt then
+        -- Shielded: skip the aggressive charge — move carefully into
+        -- range, re-aim precisely, then shoot.
+        goal.substate = "in_range_position"
+        goal._aim_locked = nil
+        print(TAG .. " ATTACK: shielded aimed, moving into firing range")
+      else
+        goal.substate = "charge"
+        goal._aim_locked = nil
+        goal._charge_braking = nil
+        print(TAG .. " ATTACK: aimed, charging to standoff")
+      end
+    -- Abort if can't aim within 3 seconds
+    elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
+      print(TAG .. " ATTACK: aim timeout, aborting")
+      state.goal.kind = "none"
+      state.pf.status = "idle"
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- detree: shoot trees between tank and pill until clear
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "detree" then
+    -- Visualize remaining trees (recount each tick just for the viz)
+    local trees_left = forest_tiles_on_path(tmx, tmy, pmx, pmy, true)
+    local needed = goal._detree_shots_needed or 0
+    -- Count actual shots fired by tracking shell count drops
+    local fired = (goal._detree_shells_at_start or info.shells) - info.shells
+    -- HUD: detree progress above the tank
+    viz.text("detree_progress", tmx + 0.5, tmy - 1.2,
+      string.format("DETREE %d/%d (left=%d)", fired, needed, trees_left),
+      "center", 255, 255, 100, 255)
+    if fired >= needed or fired >= 6 then
+      if goal._is_ppt then
+        goal.substate = "in_range_position"
+        print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
+              fired, needed))
+      else
+        goal.substate = "charge"
+        goal._charge_braking = nil
+        print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), charging",
+              fired, needed))
+      end
+    end
+    -- Steering handles shooting; fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- in_range_position (PPT): creep to the standoff at the same speed
+  -- the approach uses, hold to the same dist+spd tolerance, no firing.
+  -- Steering owns the actual movement; attack.lua just decides when to
+  -- transition out.
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "in_range_position" then
+    if not goal.standoff_mx then
+      goal.substate = "plan_position"
+      goal.scan_spots = nil
+      goal._plan_show_tick = nil
+      goal._plan_logged = nil
+      print(TAG .. " ATTACK: in_range_position has no standoff, replanning")
+    else
+      local sfx = goal.standoff_fx or (goal.standoff_mx + 0.5)
+      local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
+      local swx = math.floor(sfx * 256)
+      local swy = math.floor(sfy * 256)
+      local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
+      local DIST_TOL  = 16
+      local SPEED_TOL = 4
+
+      do
+        local twx = info.tankx / 256.0
+        local twy = info.tanky / 256.0
+        local dist_ok  = sdist <= DIST_TOL
+        local speed_ok = info.speed <= SPEED_TOL
+        local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
+        local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
+        viz.text("approach_dist", twx + 1.0, twy - 1.0,
+          string.format("dist=%d/%d", sdist, DIST_TOL),
+          "topleft", dr, dg, db, 255)
+        viz.text("approach_dist", twx + 1.0, twy - 0.4,
+          string.format("spd=%d/%d", info.speed, SPEED_TOL),
+          "topleft", sr, sg, sb, 255)
+      end
+
+      if sdist <= DIST_TOL and
+         effectively_stopped(state, info, now, SPEED_TOL, 5, "in_range_position") then
+        goal.substate = "in_range_aim"
+        goal.aim_tick = now
+        goal._aim_locked = nil
+        print(string.format(TAG .. " ATTACK: PPT in range (%.2f,%.2f) sdist=%d spd=%d, aiming",
+              sfx, sfy, sdist, info.speed))
+      end
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- in_range_aim (PPT): turn to face the chosen aim point exactly.
+  -- Steering does the turning; we just transition to shoot_pill once
+  -- aim is locked.
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "in_range_aim" then
+    if goal._aim_locked then
+      -- Detour through the finetune substate. The angle is good per
+      -- the brain's measurement, but the engine quantizes direction
+      -- to 1-brad steps so the actual shell trajectory may still slip
+      -- a half-tile off at standoff range. Finetune verifies via
+      -- cpf.simulate_shot and nudges one brad if the trajectory
+      -- doesn't actually cross the pill tile.
+      goal.substate         = "in_range_aim_finetune"
+      goal._finetune_start  = now
+      goal._finetune_taps   = 0
+      print(TAG .. " ATTACK: shielded aim locked, finetuning trajectory")
+    elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
+      print(TAG .. " ATTACK: shielded in_range_aim timeout, aborting")
+      state.goal.kind = "none"
+      state.pf.status = "idle"
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- in_range_aim_finetune: trajectory check via cpf.simulate_shot.
+  -- The aim angle is locked (within 1 brad of the corner), but engine
+  -- direction is integer brads — at a 7-tile standoff, that 1 brad
+  -- of slop = ~0.17 tile of lateral error on the pill, enough to skim
+  -- the corner instead of landing on the pillbox tile. Each tick:
+  --   1. Simulate firing in the current direction; collect tile path.
+  --   2. If the pill tile appears anywhere in the path -> ready, jump
+  --      to shoot_pill.
+  --   3. Otherwise compute the sign of the correction toward the pill
+  --      center and let steering tap one brad in that direction.
+  -- Capped at FINETUNE_MAX_TAPS to avoid oscillation if the shot
+  -- can never line up (rare; means aim_mx/my is inconsistent with
+  -- pill location, fall through to shoot_pill anyway).
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "in_range_aim_finetune" then
+    local FINETUNE_MAX_TAPS = 8
+    local FINETUNE_TIMEOUT  = 100  -- ~2 s @ 50 Hz
+    -- Aim a "shot" along the current tank direction (use sight_len's
+    -- max so we trace the full possible path).
+    local far_wu = 14 * 256  -- GUNSIGHT_MAX tiles
+    local sin_d  = U.bsin(info.direction)  -- -128..+128
+    local cos_d  = U.bcos(info.direction)
+    local tx_w   = info.tankx + math.floor(sin_d * far_wu / 128 + 0.5)
+    local ty_w   = info.tanky - math.floor(cos_d * far_wu / 128 + 0.5)
+    local path = cpf.simulate_shot(info.tankx, info.tanky, tx_w, ty_w,
+                                   cpf.SHOT_TANK, info.gunrange or 14)
+    local on_pill = false
+    if path then
+      for _, t in ipairs(path) do
+        if t.mx == pmx and t.my == pmy then on_pill = true; break end
+      end
+    end
+    -- Stash the simulated path and on-pill verdict for the TARGET viz
+    -- to read this same tick.
+    goal._finetune_path    = path
+    goal._finetune_on_pill = on_pill
+    if on_pill then
+      goal.substate          = "shoot_pill"
+      goal._shoot_armour     = info.armour
+      goal._shoot_shells     = info.shells
+      goal._shoot_hits_total = 0
+      goal._shoot_start_tick = now
+      print(string.format(TAG .. " ATTACK: shielded finetune locked (%d taps), opening fire",
+                          goal._finetune_taps or 0))
+    elseif (goal._finetune_taps or 0) >= FINETUNE_MAX_TAPS
+       or (now - (goal._finetune_start or now)) > FINETUNE_TIMEOUT then
+      -- Couldn't line up — fire anyway with whatever angle we have.
+      goal.substate          = "shoot_pill"
+      goal._shoot_armour     = info.armour
+      goal._shoot_shells     = info.shells
+      goal._shoot_hits_total = 0
+      goal._shoot_start_tick = now
+      print(string.format(TAG .. " ATTACK: shielded finetune gave up (%d taps), firing anyway",
+                          goal._finetune_taps or 0))
+    end
+    -- Else: steering will issue a single tap this tick toward pill center.
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- shoot_pill (PPT): park, hold aim, fire — same swerve heuristic as
+  -- engage: ATTACK_CURVE_AFTER_HITS hits taken or pill killed.
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "shoot_pill" then
+    if not goal._shoot_armour then goal._shoot_armour = info.armour end
+    local hits_taken = goal._shoot_armour - info.armour
+    goal._shoot_armour = info.armour
+    goal._shoot_hits_total = (goal._shoot_hits_total or 0) + hits_taken
+
+    local pill_hp = pill and pill.health or 0
+    local should_swerve = false
+    local pill_dead     = false
+    if pill_hp <= 0 then
+      should_swerve = true
+      pill_dead     = true
+    elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS then
+      should_swerve = true
+    end
+
+    if should_swerve then
+      goal.substate    = "swerve"
+      goal._swerve_start = now
+      if pill_dead then
+        goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
+        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+      else
+        goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+      end
+      goal._swerve_pill_dead = pill_dead
+      goal._swerve_dir       = goal._best_swerve_dir
+                               or ((now % 2 == 0) and 1 or -1)
+      print(string.format(TAG .. " ATTACK: PPT shoot_pill -> swerve (hits=%d hp=%d dead=%s)",
+            goal._shoot_hits_total or 0, pill_hp, tostring(pill_dead)))
+    end
+    -- Steering handles braking, aim hold, and shooting; fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- engage: stationary, fire at pill
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "engage" then
+    -- Track armour to detect incoming hits
+    if not goal._engage_armour then goal._engage_armour = info.armour end
+    local hits_taken = goal._engage_armour - info.armour
+    goal._engage_armour = info.armour
+
+    -- Track bullets fired since charge started
+    local bullets_fired = (goal._charge_shells or info.shells) - info.shells
+    local pill_hp = pill and pill.health or 0
+
+    -- Immediate swerve: pill dead OR fired enough shots
+    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+      goal.substate = "swerve"
+      goal._swerve_start = now
+      -- Low-HP shortcut from charge_start_hp (see charge handler).
+      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
+      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
+      if low_hp_ticks then
+        goal._swerve_ticks_left = low_hp_ticks
+        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
+      elseif goal._kill_attempt then
+        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
+        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+      else
+        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+      end
+      goal._swerve_pill_dead = (pill_hp <= 0)
+      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+      goal._engage_hits = nil
+      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, goal._bullets_needed or 0, pill_hp,
+            tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
+    else
+      -- Count cumulative hits taken during this engage
+      goal._engage_hits = (goal._engage_hits or 0) + hits_taken
+
+      -- Swerve early: after taking ATTACK_CURVE_AFTER_HITS hits, dodge
+      -- This triggers while crosshairs are still on pill — preemptive evasion
+      local should_swerve = goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS
+
+      -- Also check if crosshairs off pill (knocked out of range)
+      local cx, cy = U.crosshair_at(info.tankx, info.tanky, info.direction, 7.0)
+      local cdx, cdy = cx - (pmx + 0.5), cy - (pmy + 0.5)
+      local crosshairs_off = math.sqrt(cdx * cdx + cdy * cdy) > 0.7
+
+      if should_swerve or crosshairs_off then
+        local pill_anger = pill and pill.anger or 0
+        if pill_anger > C.ANGER_ATTACK_THRESHOLD then
+          -- Pill is angry — swerve to dodge
+          goal.substate = "swerve"
+          goal._swerve_start = now
+          -- Defensive swerve (pill still alive): longer turn
+          goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+          goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+          goal._swerve_pill_dead = false
+          goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+          print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
+                goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
+        else
+          -- Pill is calm — go straight to loiter/refuel decision
+          goal.substate = "post_engage"
+          goal._post_engage_tick = now
+        end
+      -- Abort if can't aim within 3 seconds (~150 ticks)
+      elseif goal.engage_tick and not goal._engage_aimed
+             and (now - goal.engage_tick) > 150 then
+        print(TAG .. " ATTACK: engage timeout — can't aim, aborting")
+        state.goal.kind = "none"
+        state.pf.status = "idle"
+      end
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- loiter: wait outside pill range for anger to decay, then re-engage
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "loiter" then
+    if not pill or pill.health <= 0 then
+      -- Pill killed (by us-via-leftover-shells or by an ally) while
+      -- we waited. Release to capture_pill via the normal selector
+      -- instead of locking into rush — see swerve completion above.
+      state.goal.kind = "none"
+      state.pf.status = "idle"
+      print(TAG .. " ATTACK: pill died during loiter — releasing to capture_pill")
+    elseif pill.anger and pill.anger < C.ANGER_ATTACK_THRESHOLD then
+      -- Pill calmed down — re-engage with fresh scan
+      goal.substate = "plan_position"
+      goal.scan_spots = nil
+      goal._plan_show_tick = nil
+      goal._plan_logged = nil
+      print(string.format(TAG .. " ATTACK: pill cooled (anger=%.2f), re-engaging", pill.anger))
+    elseif goal._loiter_start and (now - goal._loiter_start) > C.ANGER_WAIT_MAX then
+      -- Waited too long — give up, go refuel
+      state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now }
+      print(TAG .. " ATTACK: loiter timeout, abandoning")
+      state.goal.kind = "none"
+      state.pf.status = "idle"
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- swerve: hard turn to dodge pill's predictive aim after engage
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "swerve" then
+    -- If pill dies mid-swerve, shorten the turn portion to 25 ticks remaining
+    if not goal._swerve_pill_dead then
+      local pill_now_dead = (not pill or pill.health <= 0)
+      if pill_now_dead then
+        goal._swerve_pill_dead = true
+        if (goal._swerve_turn_ticks_left or 0) > C.SWERVE_TURN_TICKS then
+          goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+          if (goal._swerve_ticks_left or 0) > C.SWERVE_TOTAL_TICKS then
+            goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
+          end
+          print(TAG .. " ATTACK: swerve shortened — pill confirmed dead")
+        end
+      end
+    end
+    goal._swerve_ticks_left = (goal._swerve_ticks_left or 1) - 1
+    if (goal._swerve_turn_ticks_left or 0) > 0 then
+      goal._swerve_turn_ticks_left = goal._swerve_turn_ticks_left - 1
+    end
+    if goal._swerve_ticks_left <= 0 then
+      -- Swerve done — check if pill died
+      if not pill or pill.health <= 0 then
+        -- Drop the attack_pill goal entirely. The dead pill will
+        -- pop into pool 11 (capture_pill) on the next replan, win
+        -- via normal hysteresis (it's the natural follow-on so the
+        -- goal-group lock favors it), and the tank will drive in
+        -- to grab it through standard nav. Going through the goal
+        -- selector lets a genuinely higher-priority goal (flee,
+        -- urgent rescue) interrupt — the old "rush" substate
+        -- locked us to this pill no matter what.
+        state.goal.kind = "none"
+        state.pf.status = "idle"
+        print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
+      elseif (goal._on_target_in_flight or 0) >= pill.health then
+        -- Pill still alive but enough on-target shells are in flight
+        -- to expect a kill. Don't drop into post_engage yet (it'd
+        -- pick loiter/refuel based on the pill being "alive" before
+        -- our inbound shells finish the job). Extend the swerve a
+        -- bit and recheck — usually the in-flight shots resolve
+        -- within a tick or two. Cap the extensions so a stuck
+        -- in-flight count can't loop forever.
+        goal._swerve_extends = (goal._swerve_extends or 0) + 1
+        if goal._swerve_extends <= 30 then
+          goal._swerve_ticks_left = 1
+          if goal._swerve_extends == 1 then
+            print(string.format(TAG ..
+              " ATTACK: swerve extending — %d on-target in flight vs hp=%d",
+              goal._on_target_in_flight or 0, pill.health))
+          end
+        else
+          -- Give up extending; treat as a real swerve completion.
+          if state.command_goal then
+            print(TAG .. " ATTACK: command pill take done — releasing command, replanning")
+            state.command_goal = nil
+            state.goal.kind = "none"
+            state.pf.status = "idle"
+          else
+            goal.substate = "post_engage"
+            goal._post_engage_tick = now
+            print(TAG .. " ATTACK: swerve done (extends exhausted), evaluating next move")
+          end
+        end
+      else
+        -- If this was a manual command (ctrl-click), clear it so normal
+        -- goal selection takes over instead of loitering/refueling.
+        if state.command_goal then
+          print(TAG .. " ATTACK: command pill take done — releasing command, replanning")
+          state.command_goal = nil
+          state.goal.kind = "none"
+          state.pf.status = "idle"
+        else
+          goal.substate = "post_engage"
+          goal._post_engage_tick = now
+          print(TAG .. " ATTACK: swerve done, evaluating next move")
+        end
+      end
+    end
+    -- HUD overlay: show raw swerve goal._* values (screen-relative)
+    viz.hud_text("hud_swerve_debug", 10, 80,  "SWERVE", "topleft", 255, 255, 100, 255)
+    viz.hud_text("hud_swerve_debug", 10, 100, "_swerve_ticks_left=" .. tostring(goal._swerve_ticks_left), "topleft", 255, 255, 100, 255)
+    viz.hud_text("hud_swerve_debug", 10, 120, "_swerve_turn_ticks_left=" .. tostring(goal._swerve_turn_ticks_left), "topleft", 255, 255, 100, 255)
+    viz.hud_text("hud_swerve_debug", 10, 140, "_swerve_pill_dead=" .. tostring(goal._swerve_pill_dead), "topleft", 255, 255, 100, 255)
+    -- During swerve: do NOT check pill health or allow any interrupts.
+    -- Swerve MUST complete to minimize damage taken.
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- post_engage: decide loiter vs refuel after engage/swerve
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "post_engage" then
+    local pill_anger = pill and pill.anger or 1.0
+    local ticks_to_calm = math.max(0, (pill_anger - C.ANGER_ATTACK_THRESHOLD) * C.PILL_ANGER_DECAY)
+
+    local refuel_cost = math.huge
+    for _, b in pairs(world.bases) do
+      if b.owner == "friendly" then
+        local there = cpf.estimate_cost(tmx, tmy, b.mx, b.my, info.inboat and 1 or 0)
+        local back  = cpf.estimate_cost(b.mx, b.my, pmx, pmy, 0)
+        local trip = there + back + 100
+        if trip < refuel_cost then refuel_cost = trip end
+      end
+    end
+
+    if ticks_to_calm < refuel_cost and ticks_to_calm < C.ANGER_WAIT_MAX then
+      goal.substate = "loiter"
+      goal._loiter_start = now
+      print(string.format(TAG .. " ATTACK: loitering (wait=%d vs refuel=%d)",
+            math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+    else
+      state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill and pill.health or 0, tick = now }
+      print(string.format(TAG .. " ATTACK: refueling (wait=%d vs refuel=%d)",
+            math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+      state.goal.kind = "none"
+      state.pf.status = "idle"
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- rush: pill dead, drive to pill tile to capture
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "rush" then
+    if pill and pill.health > 0 then
+      -- Pill came back (repaired?), re-engage
+      goal.substate = "engage"
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- DRAW swerve direction choice (left/right cover sample lines)
+  -- ══════════════════════════════════════════════════════════════════
+  if goal._swerve_viz then
+    local sv = goal._swerve_viz
+    -- Color: chosen side bright green, unchosen dim red
+    local lr, lg, lb = (sv.chosen == 1) and 50  or 200,
+                       (sv.chosen == 1) and 255 or 50,
+                       50
+    local rr, rg, rb = (sv.chosen == -1) and 50  or 200,
+                       (sv.chosen == -1) and 255 or 50,
+                       50
+    -- Mark the sample point with a small dot circle
+    viz.circle("swerve_dir_choice", sv.lfx, sv.lfy, 0.25, lr, lg, lb, 220)
+    viz.circle("swerve_dir_choice", sv.rfx, sv.rfy, 0.25, rr, rg, rb, 220)
+    -- Blue outlines around each tile considered for cover (re-walk for viz)
+    local function noop() end
+    U.line_walk(sv.lfx, sv.lfy, sv.pcx, sv.pcy, noop, {50, 100, 255, 200}, "bpc_cover_samples")
+    U.line_walk(sv.rfx, sv.rfy, sv.pcx, sv.pcy, noop, {50, 100, 255, 200}, "bpc_cover_samples")
+    -- Draw the LOS line from each sample to the pill
+    viz.line("swerve_dir_choice", sv.lfx, sv.lfy, sv.pcx, sv.pcy, lr, lg, lb, 200)
+    viz.line("swerve_dir_choice", sv.rfx, sv.rfy, sv.pcx, sv.pcy, rr, rg, rb, 200)
+    -- Cover scores at each sample
+    viz.text("swerve_dir_choice", sv.lfx, sv.lfy - 0.3, "L=" .. sv.left_cover,  "center", lr, lg, lb, 255)
+    viz.text("swerve_dir_choice", sv.rfx, sv.rfy - 0.3, "R=" .. sv.right_cover, "center", rr, rg, rb, 255)
+  end
+
+  -- Shield-scan overlay: 8 candidate spots + winner blocker tiles.
+  -- Drawn while planning so a human can see where the alternate
+  -- standoffs landed and what's giving cover. Draws every tick the
+  -- goal still owns _shield_scan.
+  if goal._shield_scan then
+    shield.draw_overlay(goal._shield_scan, now)
+
+    -- Pronounced TARGET marker on the chosen aim point. Drawn on top
+    -- of the per-aim borders so the user can verify the corner the
+    -- shield scan actually chose vs which one charge/shoot is using.
+    -- Stays visible during all PPT substates (in_range_position /
+    -- in_range_aim / shoot_pill) and the legacy aim/charge/engage
+    -- substates too.
+    if goal.aim_mx and goal.aim_my then
+      local ax, ay = goal.aim_mx, goal.aim_my
+      -- Three concentric magenta circles + crosshair lines. Sized so the
+      -- visible mass fits inside a single pillbox tile — at the previous
+      -- 0.45-tile radius, ~85% of the rings extended outside the tile
+      -- when the aim was a corner (pmx+0.06, pmy+0.06), making the
+      -- marker look like it was sitting OUTSIDE the pill.
+      viz.circle("pill_take_target", ax, ay, 0.10, 255, 0, 255, 230)
+      viz.circle("pill_take_target", ax, ay, 0.06, 255, 0, 255, 240)
+      viz.circle("pill_take_target", ax, ay, 0.03, 255, 0, 255, 255)
+      viz.line("pill_take_target", ax - 0.18, ay,        ax + 0.18, ay,        255, 0, 255, 255)
+      viz.line("pill_take_target", ax,         ay - 0.18, ax,         ay + 0.18, 255, 0, 255, 255)
+      viz.text("pill_take_target", ax + 0.12, ay - 0.18, "TARGET",
+                   "topleft", 255, 100, 255, 255, 0.35)
+      -- Live aim accuracy: how many bradians the tank's current
+      -- direction is off from a perfect aim at (ax, ay), and the
+      -- finetune verdict (does cpf.simulate_shot say the trajectory
+      -- crosses the pill tile?). 1 brad = engine quantum, so values
+      -- below 1 are unactable but useful as ground truth.
+      local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                                 ax, ay)
+      local corr    = U.adiff(info.direction, aim_dir)
+      local on_pill = goal._finetune_on_pill
+      local on_str
+      if on_pill == nil then
+        on_str = ""
+      elseif on_pill then
+        on_str = "  [on pill]"
+      else
+        on_str = "  [OFF]"
+      end
+      local cr, cg, cb = 255, 100, 255
+      if on_pill then cr, cg, cb = 80, 255, 120 end
+      if on_pill == false then cr, cg, cb = 255, 200, 80 end
+      viz.text("pill_take_target", ax + 0.12, ay + 0.04,
+               string.format("corr=%.2f<=1%s", corr, on_str),
+               "topleft", cr, cg, cb, 255, 0.30)
+    end
+  end
+
+  -- Build-walls decision banner: re-emit each tick until expiry so the
+  -- text actually persists on screen (overlay commands are cleared per
+  -- frame). 100 ticks ~= 2 seconds at the 50 Hz sim rate.
+  if goal._build_decision_msg and goal._build_decision_until and
+     now < goal._build_decision_until then
+    local twx = info.tankx / 256.0
+    local twy = info.tanky / 256.0
+    viz.text("build_decision_banner", twx, twy - 2.0, goal._build_decision_msg,
+                 "center", 255, 240, 100, 255, 0.5)
+  end
+
+  -- Build-walls status / timeout countdown. Drawn at TWO positions so
+  -- it's always visible: once next to the standoff (in case the camera
+  -- is on the pill), once next to the tank (in case the camera is on
+  -- the tank). Shows three states:
+  --   - countdown (queue active)
+  --   - "build pending" (scan winner exists, queue not yet built)
+  --   - nothing if no shield scan at all
+  if goal._shield_scan then
+    -- Color helper: drains green -> yellow -> red as fraction goes
+    -- from 1 (fresh) to 0 (timeout).
+    local function color_for(frac)
+      if frac > 0.5 then return 100, 230, 100
+      elseif frac > 0.2 then return 230, 220, 80
+      else return 230, 60, 60 end
+    end
+
+    local labels = {}  -- list of {label, r, g, b, viz_id}
+
+    -- Approach timeout while in approach substate.
+    if goal.substate == "approach" and goal._approach_last_progress
+       and goal._approach_timeout_total then
+      local total = goal._approach_timeout_total
+      local ticks_left = total - (now - goal._approach_last_progress)
+      if ticks_left < 0 then ticks_left = 0 end
+      local r, g, b = color_for(ticks_left / total)
+      labels[#labels + 1] = {
+        string.format("APPROACH t-%d (%.1fs)", ticks_left, ticks_left / 50.0),
+        r, g, b, "build_status" }
+    end
+
+    -- Build-walls: countdown if active, "pending" hint otherwise.
+    if goal._wall_build_list and goal._wall_build_last_progress
+       and goal._build_timeout_total then
+      local total = goal._build_timeout_total
+      local ticks_left = total - (now - goal._wall_build_last_progress)
+      if ticks_left < 0 then ticks_left = 0 end
+      local r, g, b = color_for(ticks_left / total)
+      local idx_now = goal._wall_build_idx or 0
+      labels[#labels + 1] = {
+        string.format("BUILD t-%d (%.1fs)  q=%d/%d",
+                      ticks_left, ticks_left / 50.0, idx_now,
+                      #goal._wall_build_list),
+        r, g, b, "build_status" }
+    elseif goal.substate ~= "approach" then
+      -- Don't double up with the APPROACH timer — only show the
+      -- "BUILD pending" line once approach is finished.
+      labels[#labels + 1] = {
+        string.format("BUILD pending (sub=%s)", goal.substate or "?"),
+        180, 180, 180, "build_status" }
+    end
+
+    -- Wall-shield builder skip reason — surfaces silent gate failures
+    -- (no trees, angry pill, LGM can't reach, path unsafe) right next
+    -- to the build queue so the user sees why a wall isn't going up
+    -- instead of staring at an idle tank.
+    if goal.substate == "build_walls" and state._wall_shield_skip
+       and (now - state._wall_shield_skip.tick) < 30 then
+      local s = state._wall_shield_skip
+      local parts = {}
+      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL" end
+      if not s.has_trees    then parts[#parts + 1] =
+        string.format("TREES(%d/%d)", s.trees_have, s.trees_need) end
+      if not s.can_reach    then parts[#parts + 1] = "NO_REACH" end
+      if not s.path_safe    then parts[#parts + 1] = "UNSAFE_PATH" end
+      if #parts > 0 then
+        labels[#labels + 1] = {
+          "WALL_SKIP: " .. table.concat(parts, " ") ..
+            string.format("  @(%d,%d)", s.wx or 0, s.wy or 0),
+          230, 80, 80, "wall_skip_reason" }
+      end
+    end
+
+    if goal.standoff_fx and goal.standoff_fy then
+      for i, lbl in ipairs(labels) do
+        viz.text(lbl[5],
+                     goal.standoff_fx + 4,
+                     goal.standoff_fy + 4 + (i - 1) * 0.6,
+                     lbl[1], "topleft", lbl[2], lbl[3], lbl[4], 255, 0.5)
+      end
+    end
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- DRAW scan results every tick (persisted in goal.scan_spots)
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.scan_spots then
+    local safe_r = C.ATTACK_SAFE_RADIUS
+    -- During plan_position show all spots; after that only the chosen one
+    local show_all = (goal.substate == "plan_position")
+    for _, s in ipairs(goal.scan_spots) do
+      if not show_all and s.deg ~= goal._chosen_deg then
+        goto next_draw_spot
+      end
+      -- Inner box: green=LOS, red=no LOS
+      local cr, cg = s.has_los and 0 or 200, s.has_los and 200 or 0
+      viz.rect("attack_scan_spots", s.cx - 0.15, s.cy - 0.15, s.cx + 0.15, s.cy + 0.15, cr, cg, 0, 200)
+
+      if s.has_los then
+        -- Outer box: green=safe, orange=dangerous
+        local sr, sg = s.total_score < 10 and 0 or 255, s.total_score < 10 and 200 or 165
+        viz.rect("attack_scan_spots", s.cx - 0.25, s.cy - 0.25, s.cx + 0.25, s.cy + 0.25, sr, sg, 0, 120)
+
+        -- Yellow squares on each tile in the maneuver area (from stored data)
+        if s.maneuver_tiles then
+          for _, t in ipairs(s.maneuver_tiles) do
+            viz.rect("attack_scan_spots", t.x, t.y, t.x + 1, t.y + 1, 255, 255, 0, 100)
+          end
+        end
+
+        -- Draw maneuver ellipse outline with line segments
+        do
+          local edx = pmx + 0.5 - s.cx
+          local edy = pmy + 0.5 - s.cy
+          local elen = math.sqrt(edx * edx + edy * edy)
+          if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
+          local ux, uy = edx / elen, edy / elen
+          local vx, vy = -uy, ux
+          local rl, rs = 4, safe_r / 3.0  -- match score_attack_spot
+          local segs = 24
+          local px, py
+          for i = 0, segs do
+            local a = (i / segs) * 2 * math.pi
+            local eu = math.cos(a) * rl
+            local ev = math.sin(a) * rs
+            local nx = s.cx + eu * ux + ev * vx
+            local ny = s.cy + eu * uy + ev * vy
+            if px then
+              local er, eg = s.total_score < 10 and 0 or 255, s.total_score < 10 and 200 or 165
+              viz.line("attack_scan_spots", px, py, nx, ny, er, eg, 0, 100)
+            end
+            px, py = nx, ny
+          end
+        end
+
+        -- Score text above the circle
+        if s.total_score < 900 then
+          local n = s.maneuver_tiles and #s.maneuver_tiles or 0
+          local label = string.format("A%.0f+B%.0f+D%.0f+E%.0f=%.0f",
+            s.score_a, s.score_b, s.score_d or 0, s.score_e or 0, s.total_score)
+          viz.text("attack_scan_spots", s.cx - 1, s.cy - 0.5, label, "topleft", 255, 0, 255, 255)
+        end
+      end
+      ::next_draw_spot::
+    end
+    -- Legend for scoring components (only during plan_position)
+    if show_all then
+      local lx, ly = pmx + 12, pmy - 6
+      viz.text("attack_scan_spots", lx, ly,       "Position Score Legend:", "topleft", 255, 200, 0, 255)
+      viz.text("attack_scan_spots", lx, ly + 0.7, "A = avg danger in maneuver area", "topleft", 255, 0, 255, 255)
+      viz.text("attack_scan_spots", lx, ly + 1.4, "B = hotspot penalty (any tile >= " .. C.ATTACK_DANGER_HOTSPOT .. ")", "topleft", 255, 0, 255, 255)
+      viz.text("attack_scan_spots", lx, ly + 2.1, "D = terrain penalty", "topleft", 255, 0, 255, 255)
+      viz.text("attack_scan_spots", lx, ly + 2.8, "E = crossfire 10*(N-1) pills", "topleft", 255, 0, 255, 255)
+    end
+
+    -- Draw line from scan-time tank position to chosen standoff
+    -- (C scores are relative to this position, not current tank position)
+    local stmx = goal._scan_tank_mx or tmx
+    local stmy = goal._scan_tank_my or tmy
+    if goal.standoff_mx then
+      viz.line("attack_scan_spots", stmx + 0.5, stmy + 0.5,
+                   goal.standoff_mx + 0.5, goal.standoff_my + 0.5, 0, 255, 100, 200)
+    end
+    -- Mark scan-time tank position (small white square)
+    viz.rect("attack_scan_spots", stmx + 0.2, stmy + 0.2, stmx + 0.8, stmy + 0.8, 255, 255, 255, 150)
+    -- Mark chosen standoff spot (green) at precise position
+    if goal.standoff_fx then
+      viz.circle("attack_scan_spots", goal.standoff_fx, goal.standoff_fy, 0.3, 0, 255, 100, 255)
+    elseif goal.standoff_mx then
+      viz.circle("attack_scan_spots", goal.standoff_mx + 0.5, goal.standoff_my + 0.5, 0.3, 0, 255, 100, 255)
+    end
+    -- Mark approach point (purple) at the precise float position.
+    -- Falls back to tile center if only the integer fields are present.
+    if (goal.approach_fx or goal.approach_mx) then
+      local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+      local afy = goal.approach_fy or (goal.approach_my + 0.5)
+      viz.circle("attack_scan_spots", afx, afy, 0.3, 180, 0, 255, 200)
+      -- Line from standoff (or pill) through the approach point so the
+      -- geometry is visible end-to-end without any tile-snapping.
+      local sfx = goal.standoff_fx or (goal.standoff_mx and (goal.standoff_mx + 0.5)) or (goal.mx + 0.5)
+      local sfy = goal.standoff_fy or (goal.standoff_my and (goal.standoff_my + 0.5)) or (goal.my + 0.5)
+      viz.line("attack_scan_spots", sfx, sfy, afx, afy, 180, 0, 255, 180)
+    end
+  end
+end
+
+return M
+--[[ REMOVED: position/aim/engage/curve_away/rush/disengage substates
+  if goal.substate == "position" then
+    if not goal.standoff_mx then
+      goal.substate = "plan_position"
+      return
+    end
+    local sdist = U.mdist(tmx, tmy, goal.standoff_mx, goal.standoff_my)
+    if sdist <= 1 and info.speed <= 4 and not info.inboat then
+      goal.substate = "aim"
+      print(string.format(TAG .. " ATTACK: arrived at standoff (%d,%d)",
+            goal.standoff_mx, goal.standoff_my))
+      log.event("attack", "aim")
+    end
+    return
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- aim: stopped, turn to face pill, no shooting
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "aim" then
+    local aim_dir = U.aim_at(info.tankx, info.tanky, goal.wx, goal.wy)
+    local corr = math.abs(U.adiff(info.direction, aim_dir))
+    local clear = PF.wall_hp_between(tmx, tmy, pmx, pmy) == 0
+    if corr < 4 and clear then
+      goal.substate = "engage"
+      goal.engage_tick = now
+      goal.engage_armour = info.armour
+      goal.hits_taken = 0
+      print(string.format(TAG .. " ATTACK: aimed, engaging pill@(%d,%d)", pmx, pmy))
+      log.event("attack", "engage")
+    end
+    return
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- engage: fire at pill, monitor armour
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "engage" then
+    local hits = (goal.engage_armour or info.armour) - info.armour
+    goal.hits_taken = hits
+
+    if goal.engage_tick then
+      local ticks_shooting = now - goal.engage_tick
+      if ticks_shooting >= C.DRAIN_PROJECTION_MIN_TICKS and hits > 0 then
+        local drain_rate = hits / ticks_shooting
+        local pill_hp = pill and pill.health or 0
+        local projected = info.armour - drain_rate * (pill_hp * C.TTK_TICKS_PER_HIT)
+        if projected < C.ARMOUR_CRITICAL + C.DRAIN_ARMOUR_MARGIN then
+          goal.substate = "disengage"
+          print(string.format(TAG .. " ATTACK: drain disengage arm=%d proj=%.1f", info.armour, projected))
+          return
+        end
+      end
+    end
+
+    if hits >= C.ATTACK_CURVE_AFTER_HITS then
+      goal.substate = "curve_away"
+      goal.curve_tick = now
+      goal.curve_dir = (math.random() > 0.5) and 1 or -1
+      print(string.format(TAG .. " ATTACK: curve_away after %d hits", hits))
+      log.event("attack", "curve_away")
+    end
+    return
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- curve_away: evasive turn, then replan position
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "curve_away" then
+    if now - (goal.curve_tick or now) >= C.ATTACK_CURVE_TICKS then
+      goal.substate = "plan_position"
+      goal.standoff_mx = nil
+      goal.standoff_my = nil
+      print(TAG .. " ATTACK: curve done, replanning position")
+      log.event("attack", "replan")
+    end
+    return
+  end
+
+  -- rush: pill dead, steering handles navigation
+  if goal.substate == "rush" then return end
+
+  -- disengage: clear goal
+  if goal.substate == "disengage" then
+    goal.kind = "none"
+    state.pf.status = "idle"
+    print(TAG .. " ATTACK: disengaged")
+    return
+  end
+end
+
+return M
+--[[ REMOVED: old wall-shield, pill-place, and legacy attack substates
       goal.standoff_mx = smx; goal.standoff_my = smy
       goal.substate = smx and "approach" or "plan"
     end
@@ -594,13 +2950,13 @@ function M.update_attack_substate(goal, state, world, info)
         })
       end
     else
-      -- Normal approach: navigate to standoff
+      -- Normal approach: navigate to standoff, must stop before engaging
       local sdist   = U.mdist(tmx, tmy, goal.standoff_mx, goal.standoff_my)
       local pdist_w = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
       local in_range  = pdist_w <= C.ATTACK_PILL_RANGE * 256
       local clear_los = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
       if sdist <= C.ATTACK_ENGAGE_RADIUS and in_range and clear_los
-         and not info.inboat then
+         and info.speed <= 4 and not info.inboat then
         goal.substate    = "engage"
         goal.engage_tick = now
         print(string.format(TAG .. " ATTACK: engage pill@(%d,%d) from (%d,%d)",
@@ -747,7 +3103,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- Tank retreating perpendicular to the pill->wall line to draw fire away.
     -- Once outside pill range, transition to ws_rebuild.
     local pdist_w = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
-    local outside_range = pdist_w > C.PILL_RANGE_MAP * 256
+    local outside_range = pdist_w > C.PILL_FIRE_RANGE * 256
     -- Also accept if we've been retreating long enough
     local retreat_time = now - (goal.ws_retreat_tick or now)
     if outside_range or retreat_time > 150 then
@@ -1349,5 +3705,4 @@ function M.update_pill_place_substate(goal, state, world, info)
     return
   end
 end
-
-return M
+--]]

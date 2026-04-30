@@ -32,6 +32,8 @@
 
 #include "global.h"
 #include "brain.h"
+#include "brain_overlay.h"
+#include "shells.h"
 #include "screen.h"
 #include "util.h"
 #include "braincore.h"
@@ -446,6 +448,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info) {
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {
     fprintf(stderr, "brainCore: 'brain' global is not a table\n");
+    { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain global is not a table (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
     lua_settop(L, top);
     return false;
   }
@@ -453,6 +456,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info) {
   lua_getfield(L, -1, "think");
   if (!lua_isfunction(L, -1)) {
     fprintf(stderr, "brainCore: brain.think is not a function\n");
+    { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain.think is not a function (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
     lua_settop(L, top);
     return false;
   }
@@ -460,7 +464,24 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info) {
   brainCorePushInfo(L, info);
 
   if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-    fprintf(stderr, "brainCore: brain.think() error: %s\n", lua_tostring(L, -1));
+    const char *errMsg = lua_tostring(L, -1);
+    fprintf(stderr, "brainCore: brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
+    /* Write to brain_error.log so errors are never lost */
+    {
+      FILE *ef = fopen("brain_error.log", "a");
+      if (ef) {
+        fprintf(ef, "brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
+        fclose(ef);
+      }
+    }
+    /* Route error through Lua print() so BrainTest Print Output captures it */
+    lua_getglobal(L, "print");
+    if (lua_isfunction(L, -1)) {
+      lua_pushfstring(L, "[FATAL] brain.think() error: %s", errMsg ? errMsg : "(unknown)");
+      lua_pcall(L, 1, 0, 0);
+    } else {
+      lua_pop(L, 1);
+    }
     lua_settop(L, top);
     return false;
   }
@@ -488,8 +509,16 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method) {
   brainCorePushInfo(L, info);
 
   if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+    const char *errMsg = lua_tostring(L, -1);
     fprintf(stderr, "brainCore: brain.%s() error: %s\n",
-            method, lua_tostring(L, -1));
+            method, errMsg ? errMsg : "(unknown)");
+    {
+      FILE *ef = fopen("brain_error.log", "a");
+      if (ef) {
+        fprintf(ef, "brain.%s() error: %s\n", method, errMsg ? errMsg : "(unknown)");
+        fclose(ef);
+      }
+    }
     lua_settop(L, top);
     return false;
   }
@@ -566,6 +595,25 @@ static int l_cpf_set_danger(lua_State *L) {
   return 0;
 }
 
+/* Batch-load the entire danger grid from a Lua table keyed by mkey
+ * (my*256 + mx) -> value. Clears the grid first. One C call replaces
+ * the per-entry cpf_set_danger loop driven from Lua. */
+static int l_cpf_load_danger(lua_State *L) {
+  CPF_GET(L);
+  luaL_checktype(L, 1, LUA_TTABLE);
+  brainPathfinderClearDanger(pf);
+  lua_pushnil(L);
+  while (lua_next(L, 1) != 0) {
+    lua_Integer k = luaL_checkinteger(L, -2);
+    float v = (float)luaL_checknumber(L, -1);
+    int x = (int)(k & 255);
+    int y = (int)((k >> 8) & 255);
+    brainPathfinderSetDanger(pf, x, y, v);
+    lua_pop(L, 1);
+  }
+  return 0;
+}
+
 static int l_cpf_set_overlay(lua_State *L) {
   CPF_GET(L);
   int x = (int)luaL_checkinteger(L, 1);
@@ -614,12 +662,22 @@ static int l_cpf_path_to(lua_State *L) {
   int sy = (int)luaL_checkinteger(L, 2);
   int dx = (int)luaL_checkinteger(L, 3);
   int dy = (int)luaL_checkinteger(L, 4);
-  int in_boat = lua_toboolean(L, 5);
+  int in_boat = (int)luaL_checkinteger(L, 5);
   int shells = (int)luaL_checkinteger(L, 6);
   int trees = (int)luaL_checkinteger(L, 7);
   int mines = (int)luaL_optinteger(L, 8, 0);
   int armour = (int)luaL_optinteger(L, 9, 40);
   int budget = (int)luaL_optinteger(L, 10, 1500);
+
+  /* Log Lua stack trace to A* log if enabled */
+  if (pf->astarLog) {
+    FILE *alog = (FILE *)pf->astarLog;
+    luaL_traceback(L, L, NULL, 1);
+    fprintf(alog, "CALLER: boat=%d %s\n", in_boat, lua_tostring(L, -1));
+    lua_pop(L, 1);
+    fflush(alog);
+  }
+
   status = brainPathfinderPathTo(pf, sx, sy, dx, dy,
                                   in_boat, shells, trees,
                                   mines, armour, budget,
@@ -648,13 +706,283 @@ static int l_cpf_cost_to(lua_State *L) {
   return 1;
 }
 
+static int l_cpf_cost_to_reset(lua_State *L) {
+  CPF_GET(L);
+  int sx = (int)luaL_checkinteger(L, 1);
+  int sy = (int)luaL_checkinteger(L, 2);
+  int in_boat = (int)luaL_checkinteger(L, 3);
+  int shells = (int)luaL_checkinteger(L, 4);
+  int trees = (int)luaL_checkinteger(L, 5);
+  int mines = (int)luaL_checkinteger(L, 6);
+  int armour = (int)luaL_checkinteger(L, 7);
+  brainPathfinderCostToReset(pf, sx, sy, in_boat, shells, trees, mines, armour);
+  return 0;
+}
+
+static int l_cpf_cost_to_incremental(lua_State *L) {
+  CPF_GET(L);
+  int dx = (int)luaL_checkinteger(L, 1);
+  int dy = (int)luaL_checkinteger(L, 2);
+  int budget = (int)luaL_optinteger(L, 3, 16000);
+  float cost = brainPathfinderCostToIncremental(pf, dx, dy, budget);
+  lua_pushnumber(L, (double)cost);
+  return 1;
+}
+
+/* cpf_dijkstra_from(sx, sy, in_boat, shells, trees, mines, armour)
+ * Runs full Dijkstra from the source. Returns three values:
+ *   us       - wall-clock microseconds the search took
+ *   expanded - number of nodes expanded
+ *   peak_open - peak heap size during the search
+ * After it returns, internal g_cost holds min cost to every reachable tile,
+ * but no lookup helper is exposed yet — this is a perf-measurement entry. */
+static int l_cpf_dijkstra_from(lua_State *L) {
+  CPF_GET(L);
+  int sx = (int)luaL_checkinteger(L, 1);
+  int sy = (int)luaL_checkinteger(L, 2);
+  int in_boat = (int)luaL_checkinteger(L, 3);
+  int shells = (int)luaL_checkinteger(L, 4);
+  int trees = (int)luaL_checkinteger(L, 5);
+  int mines = (int)luaL_checkinteger(L, 6);
+  int armour = (int)luaL_checkinteger(L, 7);
+  int expanded = 0, peak_open = 0;
+  double us = brainPathfinderDijkstraFrom(pf, sx, sy, in_boat,
+                                           shells, trees, mines, armour,
+                                           &expanded, &peak_open);
+  lua_pushnumber(L, us);
+  lua_pushinteger(L, expanded);
+  lua_pushinteger(L, peak_open);
+  return 3;
+}
+
+/* cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
+ *                    max_cost, exact, danger_scale, kind) */
+static int l_cpf_dijkstra_start(lua_State *L) {
+  CPF_GET(L);
+  int slate = (int)luaL_checkinteger(L, 1);
+  uint32_t tick = (uint32_t)luaL_checkinteger(L, 2);
+  int sx = (int)luaL_checkinteger(L, 3);
+  int sy = (int)luaL_checkinteger(L, 4);
+  int in_boat = (int)luaL_checkinteger(L, 5);
+  int shells = (int)luaL_checkinteger(L, 6);
+  int trees = (int)luaL_checkinteger(L, 7);
+  int mines = (int)luaL_checkinteger(L, 8);
+  int armour = (int)luaL_checkinteger(L, 9);
+  float max_cost = (float)luaL_optnumber(L, 10, 0.0);
+  int exact;
+  if (lua_isnoneornil(L, 11)) {
+    exact = 1;
+  } else if (lua_isboolean(L, 11)) {
+    exact = lua_toboolean(L, 11) ? 1 : 0;
+  } else {
+    exact = (int)luaL_checkinteger(L, 11) != 0 ? 1 : 0;
+  }
+  float danger_scale = (float)luaL_optnumber(L, 12, 1.0);
+  int kind = (int)luaL_optinteger(L, 13, 0);
+  brainPathfinderDijkstraStart(pf, slate, tick, sx, sy, in_boat,
+                                shells, trees, mines, armour,
+                                max_cost, exact, danger_scale, kind);
+  return 0;
+}
+
+/* cpf_dijkstra_step(slate, tick, budget) */
+static int l_cpf_dijkstra_step(lua_State *L) {
+  CPF_GET(L);
+  int slate = (int)luaL_checkinteger(L, 1);
+  uint32_t tick = (uint32_t)luaL_checkinteger(L, 2);
+  int budget = (int)luaL_checkinteger(L, 3);
+  int done = brainPathfinderDijkstraStep(pf, slate, tick, budget);
+  int expanded = 0, peak_open = 0, d = 0;
+  brainPathfinderDijkstraStatus(pf, slate, &expanded, &peak_open, &d);
+  lua_pushboolean(L, done);
+  lua_pushinteger(L, expanded);
+  lua_pushinteger(L, peak_open);
+  return 3;
+}
+
+/* cpf_dijkstra_cost_at(slate, x, y, boat) */
+static int l_cpf_dijkstra_cost_at(lua_State *L) {
+  CPF_GET(L);
+  int slate = (int)luaL_checkinteger(L, 1);
+  int x = (int)luaL_checkinteger(L, 2);
+  int y = (int)luaL_checkinteger(L, 3);
+  int boat = (int)luaL_optinteger(L, 4, 0);
+  float cost = brainPathfinderDijkstraCostAt(pf, slate, x, y, boat);
+  lua_pushnumber(L, (double)cost);
+  return 1;
+}
+
+/* cpf_dijkstra_lookup_by_kind(kind, x, y, boat)
+ * Searches all slates of given kind in started_tick descending order,
+ * returns first finite cost. Newer searches win even if still running. */
+static int l_cpf_dijkstra_lookup_by_kind(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  int x = (int)luaL_checkinteger(L, 2);
+  int y = (int)luaL_checkinteger(L, 3);
+  int boat = (int)luaL_optinteger(L, 4, 0);
+  float cost = brainPathfinderDijkstraLookupByKind(pf, kind, x, y, boat);
+  lua_pushnumber(L, (double)cost);
+  return 1;
+}
+
+/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy) → nx, ny or nil */
+static int l_cpf_dijkstra_next_step(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  int sx = (int)luaL_checkinteger(L, 2);
+  int sy = (int)luaL_checkinteger(L, 3);
+  int dx = (int)luaL_checkinteger(L, 4);
+  int dy = (int)luaL_checkinteger(L, 5);
+  int nx = -1, ny = -1;
+  if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy, &nx, &ny)) {
+    lua_pushinteger(L, nx);
+    lua_pushinteger(L, ny);
+    return 2;
+  }
+  lua_pushnil(L);
+  return 1;
+}
+
+/* cpf_dijkstra_trace_path(kind, dx, dy) → array of {x=, y=} or nil */
+static int l_cpf_dijkstra_trace_path(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  int dx = (int)luaL_checkinteger(L, 2);
+  int dy = (int)luaL_checkinteger(L, 3);
+  int slate = brainPathfinderDijkstraFindBest(pf, kind);
+  if (slate < 0) { lua_pushnil(L); return 1; }
+  int path_x[512], path_y[512];
+  int n = brainPathfinderDijkstraTracePath(pf, slate, dx, dy, path_x, path_y, 512);
+  if (n <= 0) { lua_pushnil(L); return 1; }
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, path_x[i]);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, path_y[i]);
+    lua_setfield(L, -2, "y");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
+/* cpf_dijkstra_pick_reuse_slate(kind)
+ * Returns the slate index the brain should reuse next when starting a
+ * search of the given kind. Picks an unused slate first, then the
+ * oldest slate of matching kind, then the oldest slate overall. */
+static int l_cpf_dijkstra_pick_reuse_slate(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  lua_pushinteger(L, brainPathfinderDijkstraPickReuseSlate(pf, kind));
+  return 1;
+}
+
+/* cpf_dijkstra_find_best(kind) → slate index of freshest slate, or -1. */
+static int l_cpf_dijkstra_find_best(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  lua_pushinteger(L, brainPathfinderDijkstraFindBest(pf, kind));
+  return 1;
+}
+
+/* cpf_dijkstra_status(slate)
+ * Returns: active, done, kind, started_tick, completed_tick,
+ *          expanded, peak_open, src_x, src_y, in_boat, danger_scale. */
+static int l_cpf_dijkstra_status(lua_State *L) {
+  CPF_GET(L);
+  int slate = (int)luaL_checkinteger(L, 1);
+  const DijkstraSlate *s = brainPathfinderDijkstraGetSlate(pf, slate);
+  if (!s) {
+    /* Push 11 nils so the caller can rely on the count */
+    for (int i = 0; i < 11; i++) lua_pushnil(L);
+    return 11;
+  }
+  lua_pushboolean(L, s->active);
+  lua_pushboolean(L, s->done);
+  lua_pushinteger(L, s->kind);
+  lua_pushinteger(L, s->started_tick);
+  lua_pushinteger(L, s->completed_tick);
+  lua_pushinteger(L, s->expanded);
+  lua_pushinteger(L, s->peak_open);
+  lua_pushinteger(L, s->src_x);
+  lua_pushinteger(L, s->src_y);
+  lua_pushinteger(L, s->in_boat);
+  lua_pushnumber(L, s->danger_scale);
+  return 11;
+}
+
+/* cpf_rebuild_edge_costs()
+ * Force a rebuild of the precomputed neighbor edge cost grid. Normally
+ * happens lazily on the first Dijkstra start after a map change; this
+ * lets the brain trigger it explicitly (e.g. after a base capture or
+ * pillbox demolition that changes terrain). */
+static int l_cpf_rebuild_edge_costs(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderRebuildEdgeCosts(pf);
+  return 0;
+}
+
+/* cpf_simulate_shot(origin_wx, origin_wy, target_wx, target_wy,
+ *                   shooter_type=TANK, sight_len=0)
+ *   -> { {mx=..., my=...}, ... }
+ * Stateless wrapper over brainPathfinderSimulateShot (no pf instance
+ * needed — uses only static physics constants). */
+static int l_cpf_simulate_shot(lua_State *L) {
+  WORLD ox = (WORLD)luaL_checkinteger(L, 1);
+  WORLD oy = (WORLD)luaL_checkinteger(L, 2);
+  WORLD tx = (WORLD)luaL_checkinteger(L, 3);
+  WORLD ty = (WORLD)luaL_checkinteger(L, 4);
+  int shooter   = (int)luaL_optinteger(L, 5, BRAIN_SHOT_SHOOTER_TANK);
+  int sight_len = (int)luaL_optinteger(L, 6, 0);
+
+  BrainShotTile tiles[64];
+  int n = brainPathfinderSimulateShot(ox, oy, tx, ty, shooter, sight_len,
+                                      tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, tiles[i].mx); lua_setfield(L, -2, "mx");
+    lua_pushinteger(L, tiles[i].my); lua_setfield(L, -2, "my");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
+/* cpf_simulate_shot_angle(origin_wx, origin_wy, angle,
+ *                          shooter_type=TANK, sight_len=0)
+ *   -> { {mx=..., my=...}, ... }
+ * Same as cpf_simulate_shot but takes the firing angle directly
+ * (0..255 bradians). Use this when you want a bit-exact match to a
+ * real shell — pass info.direction so the sim doesn't have to
+ * round-trip through atan2 + lroundf. */
+static int l_cpf_simulate_shot_angle(lua_State *L) {
+  WORLD ox = (WORLD)luaL_checkinteger(L, 1);
+  WORLD oy = (WORLD)luaL_checkinteger(L, 2);
+  int angle    = (int)luaL_checkinteger(L, 3);
+  int shooter  = (int)luaL_optinteger(L, 4, BRAIN_SHOT_SHOOTER_TANK);
+  int sight_len= (int)luaL_optinteger(L, 5, 0);
+
+  BrainShotTile tiles[64];
+  int n = brainPathfinderSimulateShotAngle(ox, oy, angle, shooter, sight_len,
+                                           tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, tiles[i].mx); lua_setfield(L, -2, "mx");
+    lua_pushinteger(L, tiles[i].my); lua_setfield(L, -2, "my");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 static int l_cpf_estimate_cost(lua_State *L) {
   CPF_GET(L);
   int sx = (int)luaL_checkinteger(L, 1);
   int sy = (int)luaL_checkinteger(L, 2);
   int dx = (int)luaL_checkinteger(L, 3);
   int dy = (int)luaL_checkinteger(L, 4);
-  int in_boat = lua_toboolean(L, 5);
+  int in_boat = (int)luaL_checkinteger(L, 5);
   float cost = brainPathfinderEstimateCost(pf, sx, sy, dx, dy, in_boat);
   lua_pushnumber(L, (double)cost);
   return 1;
@@ -709,7 +1037,7 @@ static int l_cpf_estimate_tank_travel_ticks(lua_State *L) {
   int sy = (int)luaL_checkinteger(L, 2);
   int dx = (int)luaL_checkinteger(L, 3);
   int dy = (int)luaL_checkinteger(L, 4);
-  int in_boat = lua_toboolean(L, 5);
+  int in_boat = (int)luaL_checkinteger(L, 5);
   int maxTicks = (int)luaL_optinteger(L, 6, 4000);
   int stuckTicks = (int)luaL_optinteger(L, 7, 200);
   int result = brainPathfinderEstimateTankTravelTicks(pf, sx, sy, dx, dy,
@@ -737,6 +1065,60 @@ static int l_cpf_find_front_line(lua_State *L) {
   return 1;
 }
 
+/* cpf_dijkstra_shells_at(kind, x, y)
+ * Returns shells remaining on arrival at (x,y) from the freshest Dijkstra
+ * slate of the given kind, or nil if no slate has a finite cost there.
+ * Valid after smart_cost when Dijkstra was the source of the cost. */
+static int l_cpf_dijkstra_shells_at(lua_State *L) {
+  CPF_GET(L);
+  int kind  = (int)luaL_checkinteger(L, 1);
+  int x     = (int)luaL_checkinteger(L, 2);
+  int y     = (int)luaL_checkinteger(L, 3);
+  int best  = brainPathfinderDijkstraFindBest(pf, kind);
+  if (best < 0) { lua_pushnil(L); return 1; }
+  DijkstraSlate *s = &pf->dij_slates[best];
+  if (!s->shells_at) { lua_pushnil(L); return 1; }
+  int node = y * 256 + x;  /* land node (boat=0) */
+  float g = s->g_cost ? s->g_cost[node] : 1e30f;
+  if (g >= 1e29f) { lua_pushnil(L); return 1; }  /* slate hasn't reached tile */
+  lua_pushinteger(L, (lua_Integer)s->shells_at[node]);
+  return 1;
+}
+
+/* cpf_astar_shells_at(x, y)
+ * Returns shells remaining on arrival at (x,y) from the last cost_to call.
+ * Valid after smart_cost when A* was used (Dijkstra off or tile not yet reached). */
+static int l_cpf_astar_shells_at(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  int node = y * 256 + x;  /* land node */
+  lua_pushinteger(L, (lua_Integer)pf->shells_at[node]);
+  return 1;
+}
+
+/* shell_debug_hits() → array of tables {wx=, wy=, owner=}
+ * Returns the ring buffer of recent shell-collision world positions as
+ * recorded by shellsUpdate in the C sim. The brain calls this each tick
+ * and redraws overlays — because overlay commands are recorded per-frame,
+ * replay scrubbing shows the exact set known at that historical tick. */
+static int l_shell_debug_hits(lua_State *L) {
+  int n = shellsDebugHitLogCount();
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    int wx = 0, wy = 0;
+    uint32_t tk = 0;
+    uint8_t owner = 0;
+    if (!shellsDebugHitLogGet(i, &wx, &wy, &tk, &owner)) continue;
+    lua_createtable(L, 0, 3);
+    lua_pushinteger(L, wx);    lua_setfield(L, -2, "wx");
+    lua_pushinteger(L, wy);    lua_setfield(L, -2, "wy");
+    lua_pushinteger(L, owner); lua_setfield(L, -2, "owner");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 static int l_cpf_trace_path(lua_State *L) {
   CPF_GET(L);
   int path_x[64], path_y[64];
@@ -753,6 +1135,33 @@ static int l_cpf_trace_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_serialize() -> string
+ * Returns binary blob of the full pathfinder state (grids + Dijkstra slates). */
+static int l_cpf_serialize(lua_State *L) {
+  BrainPathfinder **pfPtr = (BrainPathfinder **)lua_touserdata(L, lua_upvalueindex(1));
+  BrainPathfinder *pf = pfPtr ? *pfPtr : NULL;
+  if (!pf) { lua_pushnil(L); return 1; }
+  size_t blobSize = 0;
+  unsigned char *blob = brainPathfinderSerialize(pf, &blobSize);
+  if (!blob) { lua_pushnil(L); return 1; }
+  lua_pushlstring(L, (const char *)blob, blobSize);
+  free(blob);
+  return 1;
+}
+
+/* cpf_deserialize(string) -> bool
+ * Restores pathfinder state from a blob returned by cpf_serialize(). */
+static int l_cpf_deserialize(lua_State *L) {
+  BrainPathfinder **pfPtr = (BrainPathfinder **)lua_touserdata(L, lua_upvalueindex(1));
+  BrainPathfinder *pf = pfPtr ? *pfPtr : NULL;
+  if (!pf) { lua_pushboolean(L, 0); return 1; }
+  size_t len = 0;
+  const char *data = luaL_checklstring(L, 1, &len);
+  int ok = brainPathfinderDeserialize(pf, (const unsigned char *)data, len);
+  lua_pushboolean(L, ok);
+  return 1;
+}
+
 void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
   static const struct { const char *name; lua_CFunction func; } funcs[] = {
     { "cpf_set_terrain_cost",  l_cpf_set_terrain_cost },
@@ -762,6 +1171,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_danger",      l_cpf_clear_danger },
     { "cpf_stamp_pill",        l_cpf_stamp_pill },
     { "cpf_set_danger",        l_cpf_set_danger },
+    { "cpf_load_danger",       l_cpf_load_danger },
     { "cpf_set_overlay",       l_cpf_set_overlay },
     { "cpf_clear_overlay",     l_cpf_clear_overlay },
     { "cpf_clear_influence",   l_cpf_clear_influence },
@@ -769,13 +1179,33 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_influence_at",      l_cpf_influence_at },
     { "cpf_path_to",           l_cpf_path_to },
     { "cpf_cost_to",           l_cpf_cost_to },
+    { "cpf_cost_to_reset",     l_cpf_cost_to_reset },
+    { "cpf_cost_to_incremental", l_cpf_cost_to_incremental },
+    { "cpf_dijkstra_from",     l_cpf_dijkstra_from },
+    { "cpf_dijkstra_start",         l_cpf_dijkstra_start },
+    { "cpf_dijkstra_step",          l_cpf_dijkstra_step },
+    { "cpf_dijkstra_cost_at",       l_cpf_dijkstra_cost_at },
+    { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
+    { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
+    { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
+    { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
+    { "cpf_dijkstra_find_best",     l_cpf_dijkstra_find_best },
+    { "cpf_dijkstra_status",        l_cpf_dijkstra_status },
+    { "cpf_rebuild_edge_costs", l_cpf_rebuild_edge_costs },
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
+    { "cpf_simulate_shot",        l_cpf_simulate_shot },
+    { "cpf_simulate_shot_angle",  l_cpf_simulate_shot_angle },
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
+    { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
+    { "cpf_astar_shells_at",       l_cpf_astar_shells_at },
     { "cpf_trace_path",            l_cpf_trace_path },
+    { "shell_debug_hits",          l_shell_debug_hits },
     { "cpf_find_front_line",       l_cpf_find_front_line },
+    { "cpf_serialize",             l_cpf_serialize },
+    { "cpf_deserialize",           l_cpf_deserialize },
     { NULL, NULL }
   };
   int i;
@@ -933,6 +1363,24 @@ static int l_wsim_run(lua_State *L) {
   }
   lua_setfield(L, -2, "pills");
 
+  /* Per-hit position log */
+  lua_createtable(L, r.num_hits, 0);
+  for (i = 0; i < r.num_hits; i++) {
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, r.hits[i].mx);
+    lua_setfield(L, -2, "mx");
+    lua_pushinteger(L, r.hits[i].my);
+    lua_setfield(L, -2, "my");
+    lua_pushinteger(L, r.hits[i].armour_after);
+    lua_setfield(L, -2, "armour");
+    lua_pushinteger(L, r.hits[i].tick);
+    lua_setfield(L, -2, "tick");
+    lua_pushinteger(L, r.hits[i].pill_idx);
+    lua_setfield(L, -2, "pill");
+    lua_rawseti(L, -2, i + 1);
+  }
+  lua_setfield(L, -2, "hits");
+
   return 1;
 }
 
@@ -954,4 +1402,237 @@ void brainCoreRegisterWorldSim(lua_State *L, BrainWorldSim **wsPtr) {
     lua_pushcclosure(L, funcs[i].func, 1);
     lua_setglobal(L, funcs[i].name);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Overlay drawing Lua wrappers (overlay_* globals)                    */
+/* ------------------------------------------------------------------ */
+
+#define OVL_GET(L) \
+  OverlayCmdBuffer **ppb = (OverlayCmdBuffer **)lua_touserdata(L, lua_upvalueindex(1)); \
+  OverlayCmdBuffer *buf = (ppb && *ppb) ? *ppb : NULL; \
+  if (!buf) return 0
+
+/* overlay_clear() */
+static int l_overlay_clear(lua_State *L) {
+  OVL_GET(L);
+  overlayCmdBufferClear(buf);
+  return 0;
+}
+
+/* overlay_line(x1, y1, x2, y2, r, g, b [, a [, viz_idx]])
+ * viz_idx: optional uint8 index into BrainTest's VIZ_TOGGLES array,
+ *          set by viz.lua wrappers so the renderer can filter
+ *          recorded commands during playback. Defaults to 0xFF
+ *          ("no viz_id" — never filtered). */
+static int l_overlay_line(lua_State *L) {
+  OVL_GET(L);
+  float x1 = (float)luaL_checknumber(L, 1);
+  float y1 = (float)luaL_checknumber(L, 2);
+  float x2 = (float)luaL_checknumber(L, 3);
+  float y2 = (float)luaL_checknumber(L, 4);
+  int r = luaL_checkinteger(L, 5);
+  int g = luaL_checkinteger(L, 6);
+  int b = luaL_checkinteger(L, 7);
+  int a = luaL_optinteger(L, 8, 255);
+  int viz_idx = luaL_optinteger(L, 9, OVERLAY_VIZ_IDX_NONE);
+  overlayCmdLine(buf, x1, y1, x2, y2, r, g, b, a);
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
+/* overlay_rect(x1, y1, x2, y2, r, g, b [, a [, filled]]) */
+static int l_overlay_rect(lua_State *L) {
+  OVL_GET(L);
+  float x1 = (float)luaL_checknumber(L, 1);
+  float y1 = (float)luaL_checknumber(L, 2);
+  float x2 = (float)luaL_checknumber(L, 3);
+  float y2 = (float)luaL_checknumber(L, 4);
+  int r = luaL_checkinteger(L, 5);
+  int g = luaL_checkinteger(L, 6);
+  int b = luaL_checkinteger(L, 7);
+  int a = luaL_optinteger(L, 8, 255);
+  int filled = lua_toboolean(L, 9);
+  /* 10th arg (optional, default false): if true and rect is filled,
+   * the overlay is drawn at full 1/256-tile precision instead of
+   * being floored to the game-pixel grid. Used by overlays that
+   * track sub-wu sprites (e.g. the LGM, which renders at sub-wu). */
+  int subpixel = lua_toboolean(L, 10);
+  /* 11th arg (optional): viz_idx for playback-time filtering. */
+  int viz_idx = luaL_optinteger(L, 11, OVERLAY_VIZ_IDX_NONE);
+  overlayCmdRect(buf, x1, y1, x2, y2, r, g, b, a, filled);
+  if (subpixel && filled && buf && buf->count > 0) {
+    buf->cmds[buf->count - 1].type = OVERLAY_CMD_RECT_FILL_SUBPIXEL;
+  }
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
+/* overlay_circle(cx, cy, radius, r, g, b [, a]) */
+static int l_overlay_circle(lua_State *L) {
+  OVL_GET(L);
+  float cx = (float)luaL_checknumber(L, 1);
+  float cy = (float)luaL_checknumber(L, 2);
+  float radius = (float)luaL_checknumber(L, 3);
+  int r = luaL_checkinteger(L, 4);
+  int g = luaL_checkinteger(L, 5);
+  int b = luaL_checkinteger(L, 6);
+  int a = luaL_optinteger(L, 7, 255);
+  int viz_idx = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
+  overlayCmdCircle(buf, cx, cy, radius, r, g, b, a);
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
+/* overlay_text(x, y, text [, anchor [, r, g, b [, a]]])
+ * anchor: "topleft", "topright", "bottomleft", "bottomright", "center" */
+static int l_overlay_text(lua_State *L) {
+  OVL_GET(L);
+  float x = (float)luaL_checknumber(L, 1);
+  float y = (float)luaL_checknumber(L, 2);
+  const char *text = luaL_checkstring(L, 3);
+  const char *anchorStr = luaL_optstring(L, 4, "topleft");
+  int r = luaL_optinteger(L, 5, 255);
+  int g = luaL_optinteger(L, 6, 255);
+  int b = luaL_optinteger(L, 7, 255);
+  int a = luaL_optinteger(L, 8, 255);
+  float scale = (float)luaL_optnumber(L, 9, 1.0);
+  int viz_idx = luaL_optinteger(L, 10, OVERLAY_VIZ_IDX_NONE);
+
+  uint8_t anchor = OVERLAY_ANCHOR_TOPLEFT;
+  if (strcmp(anchorStr, "topright") == 0)         anchor = OVERLAY_ANCHOR_TOPRIGHT;
+  else if (strcmp(anchorStr, "bottomleft") == 0)  anchor = OVERLAY_ANCHOR_BOTTOMLEFT;
+  else if (strcmp(anchorStr, "bottomright") == 0) anchor = OVERLAY_ANCHOR_BOTTOMRIGHT;
+  else if (strcmp(anchorStr, "center") == 0)      anchor = OVERLAY_ANCHOR_CENTER;
+
+  overlayCmdText(buf, x, y, text, anchor, r, g, b, a);
+  /* Store scale in the radius field (unused for text) */
+  if (buf && buf->count > 0) {
+    buf->cmds[buf->count - 1].radius = scale;
+  }
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
+/* overlay_hud_text(offset_x, offset_y, text, anchor, r, g, b [, a])
+ * anchor: "topleft", "topright", "bottomleft", "bottomright"
+ * x/y are pixel offsets from the chosen corner */
+static int l_overlay_hud_text(lua_State *L) {
+  OVL_GET(L);
+  float x = (float)luaL_checknumber(L, 1);
+  float y = (float)luaL_checknumber(L, 2);
+  const char *text = luaL_checkstring(L, 3);
+  const char *anchorStr = luaL_optstring(L, 4, "topleft");
+  int r = luaL_optinteger(L, 5, 255);
+  int g = luaL_optinteger(L, 6, 255);
+  int b = luaL_optinteger(L, 7, 255);
+  int a = luaL_optinteger(L, 8, 255);
+  int viz_idx = luaL_optinteger(L, 9, OVERLAY_VIZ_IDX_NONE);
+
+  uint8_t anchor = OVERLAY_ANCHOR_TOPLEFT;
+  if (strcmp(anchorStr, "topright") == 0)         anchor = OVERLAY_ANCHOR_TOPRIGHT;
+  else if (strcmp(anchorStr, "bottomleft") == 0)  anchor = OVERLAY_ANCHOR_BOTTOMLEFT;
+  else if (strcmp(anchorStr, "bottomright") == 0) anchor = OVERLAY_ANCHOR_BOTTOMRIGHT;
+  else if (strcmp(anchorStr, "center") == 0)      anchor = OVERLAY_ANCHOR_CENTER;
+
+  overlayCmdHudText(buf, x, y, text, anchor, r, g, b, a);
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
+/* UNUSED ON THIS BRANCH — kept in lockstep with the BrainTest source
+ * line so future merges don't conflict. Registers overlay_* Lua
+ * globals (debug-shape drawing) backed by a per-brain OverlayCmdBuffer.
+ * No caller wires up `bufPtr` here, so the brain's viz.lua wrappers
+ * see overlay_* as nil and silently no-op (`if not overlay_text then
+ * return end`). When BrainTest is wired in on a future branch, it
+ * calls this from luabrainshandler.c after creating the brain instance. */
+void brainCoreRegisterOverlay(lua_State *L, OverlayCmdBuffer **bufPtr) {
+  static const struct { const char *name; lua_CFunction func; } funcs[] = {
+    { "overlay_clear",    l_overlay_clear },
+    { "overlay_line",     l_overlay_line },
+    { "overlay_rect",     l_overlay_rect },
+    { "overlay_circle",   l_overlay_circle },
+    { "overlay_text",     l_overlay_text },
+    { "overlay_hud_text", l_overlay_hud_text },
+    { NULL, NULL }
+  };
+  int i;
+  for (i = 0; funcs[i].name != NULL; i++) {
+    lua_pushlightuserdata(L, (void *)bufPtr);
+    lua_pushcclosure(L, funcs[i].func, 1);
+    lua_setglobal(L, funcs[i].name);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Print capture (override Lua's print to also call a callback)        */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    BrainPrintCaptureFunc cb;
+    void *ud;
+    const uint32_t *tickPtr;
+} PrintCaptureCtx;
+
+static int l_captured_print(lua_State *L) {
+  PrintCaptureCtx *ctx = (PrintCaptureCtx *)lua_touserdata(L, lua_upvalueindex(1));
+
+  /* Build the output string (same as Lua's default print) */
+  int n = lua_gettop(L);
+  char buf[4096];
+  int pos = 0;
+  for (int i = 1; i <= n; i++) {
+    if (i > 1 && pos < (int)sizeof(buf) - 1) buf[pos++] = '\t';
+    const char *s = luaL_tolstring(L, i, NULL);
+    if (s) {
+      int slen = (int)strlen(s);
+      int room = (int)sizeof(buf) - pos - 1;
+      if (slen > room) slen = room;
+      memcpy(buf + pos, s, slen);
+      pos += slen;
+    }
+    lua_pop(L, 1); /* pop the tostring result */
+  }
+  buf[pos] = '\0';
+
+  /* Write to stderr as usual */
+  fprintf(stderr, "%s\n", buf);
+
+  /* Call the capture callback */
+  if (ctx->cb) {
+    uint32_t tick = ctx->tickPtr ? *ctx->tickPtr : 0;
+    ctx->cb(tick, buf, ctx->ud);
+  }
+
+  return 0;
+}
+
+/* Global print capture — applied to all new brain instances */
+/* UNUSED ON THIS BRANCH — kept in lockstep with the BrainTest source.
+ * Lua print() override that mirrors output to a callback (used by
+ * BrainTest's log window to capture per-bot prints with tick context).
+ * No caller invokes brainCoreSetGlobalPrintCapture or
+ * brainCoreRegisterPrintCapture here, so Lua's print() retains its
+ * default stderr behavior. */
+BrainPrintCaptureFunc g_printCb = NULL;
+void *g_printCbUd = NULL;
+const uint32_t *g_printTickPtr = NULL;
+
+void brainCoreSetGlobalPrintCapture(BrainPrintCaptureFunc cb, void *ud,
+                                     const uint32_t *tickPtr) {
+  g_printCb = cb;
+  g_printCbUd = ud;
+  g_printTickPtr = tickPtr;
+}
+
+void brainCoreRegisterPrintCapture(lua_State *L, BrainPrintCaptureFunc cb,
+                                    void *ud, const uint32_t *tickPtr) {
+  /* Allocate context as Lua userdata so it lives as long as the Lua state */
+  PrintCaptureCtx *ctx = (PrintCaptureCtx *)lua_newuserdata(L, sizeof(PrintCaptureCtx));
+  ctx->cb = cb;
+  ctx->ud = ud;
+  ctx->tickPtr = tickPtr;
+  lua_pushcclosure(L, l_captured_print, 1);
+  lua_setglobal(L, "print");
 }

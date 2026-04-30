@@ -72,6 +72,15 @@ typedef struct {
   uint8_t  speed;           /* WU/tick (~4) */
 } WSimLGM;
 
+#define WSIM_MAX_HITS 64
+
+typedef struct {
+  int16_t  mx, my;            /* map tile where hit occurred */
+  int16_t  armour_after;      /* armour remaining after this hit */
+  int16_t  tick;              /* sim tick of the hit */
+  uint8_t  pill_idx;          /* which pill fired (index into sim pills) */
+} WSimHitRecord;
+
 typedef struct {
   int16_t  armour_remaining;
   int16_t  damage_taken;
@@ -84,6 +93,9 @@ typedef struct {
   uint16_t pill_shots[WSIM_MAX_PILLS];
   uint8_t  pill_final_health[WSIM_MAX_PILLS];
   uint8_t  pill_final_speed[WSIM_MAX_PILLS];
+  /* Per-hit position log */
+  WSimHitRecord hits[WSIM_MAX_HITS];
+  int16_t  num_hits;
 } WSimResult;
 
 typedef struct {

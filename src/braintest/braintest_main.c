@@ -55,7 +55,9 @@
 #include <signal.h>
 #include <time.h>
 #include <math.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "../bolo/global.h"
 #include "../bolo/everard_map.h"
