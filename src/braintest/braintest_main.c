@@ -146,6 +146,23 @@ typedef struct {
     int          regIdxPath;
     int          regIdxFog;
     int          regIdxValues;
+    int          regIdxDijkstra;
+    int          regIdxCostTo;
+    /* Dijkstra heatmap (7 key) — which slate the UI displays. The
+     * brain runs up to DIJKSTRA_NUM_SLATES (4) parallel searches
+     * with different parameters; Shift+7 cycles which one is on
+     * screen. Wrapped at the slate count. */
+    int          dijViewSlate;
+
+    /* cost_to heatmap (5 key). Computed off-thread on a cloned
+     * pathfinder so a 16k-budget radial sweep doesn't stall the
+     * sim. Grid = -1 (uncomputed), >=1e9 (unreachable / over budget),
+     * otherwise the actual cost. Shift+5 lowers danger weight to
+     * 0.1 to match the pill-cost estimator. */
+    float       *costToGrid;
+    int          costToTankMX, costToTankMY;
+    SDL_Thread  *costToThread;
+    bool         costToAbort;
     bool         showHUD;          /* status bar + legend (toggle with H) */
 
     /* Overlay texture (256x256 RGBA, updated once per game tick) */
@@ -402,6 +419,261 @@ static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
                 SDL_FRect rect = { moX + x * tp, moY + y * tp,
                                    (float)tp, (float)tp };
                 SDL_RenderFillRect(app->renderer, &rect);
+            }
+        }
+    }
+}
+
+static void syncDebugPathfinder(BrainTestApp *app);
+
+/* ── cost_to heatmap background thread (key 5) ──
+ * Runs brainPathfinderCostTo from the bot's tile out to neighbors
+ * in expanding-ring order so the heatmap fills outward visibly.
+ * Operates on a *cloned* pathfinder with its own copy of the bot's
+ * map + cost tables — the live PF would otherwise be mutated by an
+ * A* search running concurrently on the main thread (cost_to and
+ * pathTo share the search arrays). Stops when ten consecutive
+ * rings produced nothing finite (search front exhausted) or when
+ * the abort flag flips. */
+typedef struct {
+    BrainPathfinder *pf;
+    BYTE  *mapCopy;
+    float *grid;
+    int    tmx, tmy, in_boat;
+    int    shells, trees, mines, armour;
+    int    budget;
+    bool  *abort;
+} CostToThreadCtx;
+
+static int SDLCALL costToThreadFunc(void *data) {
+    CostToThreadCtx *ctx = (CostToThreadCtx *)data;
+    int consInf = 0;
+    for (int r = 1; r < 128 && consInf < 10; r++) {
+        if (*ctx->abort) break;
+        bool anyFinite = false;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                if (abs(dx) != r && abs(dy) != r) continue;
+                if (*ctx->abort) goto done;
+                int x = ctx->tmx + dx, y = ctx->tmy + dy;
+                if (x < 0 || x > 255 || y < 0 || y > 255) continue;
+                float c = brainPathfinderCostTo(ctx->pf,
+                    ctx->tmx, ctx->tmy, x, y, ctx->in_boat,
+                    ctx->shells, ctx->trees, ctx->mines, ctx->armour,
+                    ctx->budget);
+                ctx->grid[y * 256 + x] = c;
+                if (c < 1e9f) anyFinite = true;
+            }
+        }
+        if (!anyFinite) consInf++;
+        else            consInf = 0;
+        SDL_Delay(1); /* let the renderer breathe between rings */
+    }
+done:
+    brainPathfinderDestroy(ctx->pf);
+    free(ctx->mapCopy);
+    free(ctx);
+    return 0;
+}
+
+/* Renders whatever cells the thread has filled in so far. Uses the
+ * same green→red gradient as the Dijkstra heatmap; INF cells (over
+ * budget / unreachable) render as solid red so the user can see the
+ * boundary of what's actually reachable. */
+static void renderCostToHeatmap(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxCostTo) || !app->costToGrid) return;
+
+    int   zf = app->zoomFactor;
+    int   tp = 16 * zf;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float moX = scx - (app->viewCenterX >> 8) * tp
+        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
+    float moY = scy - (app->viewCenterY >> 8) * tp
+        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
+
+    int startX = (int)((-moX) / tp) - 1;
+    int startY = (int)((-moY) / tp) - 1;
+    int endX = startX + screenW / tp + 3;
+    int endY = startY + screenH / tp + 3;
+    if (startX < 0) startX = 0;
+    if (startY < 0) startY = 0;
+    if (endX > 255) endX = 255;
+    if (endY > 255) endY = 255;
+
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    for (int y = startY; y <= endY; y++) {
+        for (int x = startX; x <= endX; x++) {
+            float c = app->costToGrid[y * 256 + x];
+            if (c < 0) continue; /* not yet computed */
+
+            int r, g, b, a;
+            if (c >= 1e9f) {
+                r = 255; g = 0; b = 0; a = 120;
+            } else {
+                float t = c / 500.0f;
+                if (t > 1.0f) t = 1.0f;
+                r = (int)(t * 255);
+                g = (int)((1.0f - t) * 255);
+                b = 0; a = 80;
+            }
+            SDL_SetRenderDrawColor(app->renderer, r, g, b, a);
+            SDL_FRect rect = { moX + x * tp, moY + y * tp,
+                               (float)tp, (float)tp };
+            SDL_RenderFillRect(app->renderer, &rect);
+
+            if (zf >= 2) {
+                char buf[16];
+                if (c >= 1e9f) SDL_snprintf(buf, sizeof(buf), "INF");
+                else           SDL_snprintf(buf, sizeof(buf), "%.0f", c);
+                int tw = (int)strlen(buf) * 8;
+                int th = 8;
+                float tx = rect.x + (tp - tw) * 0.5f;
+                float ty = rect.y + (tp - th) * 0.5f;
+                SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 200);
+                SDL_RenderDebugText(app->renderer, tx, ty, buf);
+            }
+        }
+    }
+}
+
+/* Kick off a cost_to computation. Stops any in-flight thread first
+ * so a re-press always restarts from the current tank position. */
+static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
+    if (app->costToThread) {
+        app->costToAbort = true;
+        SDL_WaitThread(app->costToThread, NULL);
+        app->costToThread = NULL;
+    }
+
+    syncDebugPathfinder(app);
+    BrainPathfinder *src = app->debugPF;
+    if (!src || !src->map) return;
+
+    WORLD twx, twy;
+    if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
+    int smx = twx >> 8;
+    int smy = twy >> 8;
+    int in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
+                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+
+    if (!app->costToGrid) {
+        app->costToGrid = (float *)malloc(256 * 256 * sizeof(float));
+        if (!app->costToGrid) return;
+    }
+    for (int i = 0; i < 256 * 256; i++) app->costToGrid[i] = -1.0f;
+    app->costToTankMX = smx;
+    app->costToTankMY = smy;
+
+    BrainPathfinder *clone = brainPathfinderCreate();
+    if (!clone) return;
+    BYTE *mapCopy = (BYTE *)malloc(256 * 256);
+    if (!mapCopy) { brainPathfinderDestroy(clone); return; }
+    memcpy(mapCopy, src->map, 256 * 256);
+    brainPathfinderSetMap(clone, mapCopy);
+    memcpy(clone->terrain_cost_table,      src->terrain_cost_table,      sizeof(src->terrain_cost_table));
+    memcpy(clone->terrain_cost_boat_table, src->terrain_cost_boat_table, sizeof(src->terrain_cost_boat_table));
+    memcpy(clone->terrain_speed_table,     src->terrain_speed_table,     sizeof(src->terrain_speed_table));
+    memcpy(clone->danger_grid,             src->danger_grid,             sizeof(src->danger_grid));
+    memcpy(clone->influence_grid,          src->influence_grid,          sizeof(src->influence_grid));
+    clone->turn_cost          = src->turn_cost;
+    clone->wall_shoot_cost    = src->wall_shoot_cost;
+    clone->wall_shoot_shells  = src->wall_shoot_shells;
+    clone->mine_penalty       = src->mine_penalty;
+    clone->shell_reserve      = src->shell_reserve;
+    clone->tree_reserve       = src->tree_reserve;
+    clone->water_drain_rate   = src->water_drain_rate;
+    clone->shell_loss_cost    = src->shell_loss_cost;
+    clone->mine_loss_cost     = src->mine_loss_cost;
+    clone->armour_drain_rate  = src->armour_drain_rate;
+    clone->road_build_cost    = src->road_build_cost;
+    clone->min_shells         = src->min_shells;
+    clone->min_mines          = src->min_mines;
+    clone->min_armour         = src->min_armour;
+    clone->danger_scale       = lowDanger ? 0.1f : src->danger_scale;
+
+    CostToThreadCtx *ctx = (CostToThreadCtx *)calloc(1, sizeof(CostToThreadCtx));
+    if (!ctx) { brainPathfinderDestroy(clone); free(mapCopy); return; }
+    ctx->pf       = clone;
+    ctx->mapCopy  = mapCopy;
+    ctx->grid     = app->costToGrid;
+    ctx->tmx      = smx;
+    ctx->tmy      = smy;
+    ctx->in_boat  = in_boat;
+    /* Same defaults as computeClickPath — the live BrainInfo accessor
+     * isn't exposed in this branch and these match a typical mid-game
+     * resource load close enough for visualization purposes. */
+    ctx->shells   = 40;
+    ctx->trees    = 20;
+    ctx->mines    = 20;
+    ctx->armour   = 40;
+    ctx->budget   = 16000;
+    ctx->abort    = &app->costToAbort;
+    app->costToAbort = false;
+    app->costToThread = SDL_CreateThread(costToThreadFunc, "CostTo", ctx);
+}
+
+/* Live Dijkstra heatmap (key 7): per-tile cost-to-every-tile from
+ * the followed bot's incremental Dijkstra. Pure O(1) array lookups
+ * per tile via brainPathfinderDijkstraCostAt — no thread, no copy.
+ * We sample both land and boat layers and display whichever is
+ * cheaper. Shift+7 cycles which slate (0..3) is being viewed. */
+static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxDijkstra)) return;
+    BrainPathfinder *botPf = botManagerGetBrainPathfinder(app->followBot);
+    if (!botPf) return;
+
+    int viewSlate = app->dijViewSlate;
+    int expanded = 0, peakOpen = 0, done = 0;
+    int active = brainPathfinderDijkstraStatus(botPf, viewSlate,
+                                               &expanded, &peakOpen, &done);
+    if (!active) return;
+
+    int   zf = app->zoomFactor;
+    int   tp = 16 * zf;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float moX = scx - (app->viewCenterX >> 8) * tp
+        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
+    float moY = scy - (app->viewCenterY >> 8) * tp
+        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
+
+    /* Cull to visible tiles. */
+    int startX = (int)((-moX) / tp) - 1;
+    int startY = (int)((-moY) / tp) - 1;
+    int endX = startX + screenW / tp + 3;
+    int endY = startY + screenH / tp + 3;
+    if (startX < 0) startX = 0;
+    if (startY < 0) startY = 0;
+    if (endX > 255) endX = 255;
+    if (endY > 255) endY = 255;
+
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    for (int y = startY; y <= endY; y++) {
+        for (int x = startX; x <= endX; x++) {
+            float landC = brainPathfinderDijkstraCostAt(botPf, viewSlate, x, y, 0);
+            float boatC = brainPathfinderDijkstraCostAt(botPf, viewSlate, x, y, 1);
+            float c = (boatC < landC) ? boatC : landC;
+            if (c >= 1e29f) continue; /* not yet reached by the search */
+
+            float t = c / 500.0f;
+            if (t > 1.0f) t = 1.0f;
+            int r = (int)(t * 255);
+            int g = (int)((1.0f - t) * 255);
+            SDL_SetRenderDrawColor(app->renderer, r, g, 60, 90);
+            SDL_FRect rect = { moX + x * tp, moY + y * tp,
+                               (float)tp, (float)tp };
+            SDL_RenderFillRect(app->renderer, &rect);
+
+            if (zf >= 2) {
+                char numBuf[16];
+                SDL_snprintf(numBuf, sizeof(numBuf), "%.0f", c);
+                int tw = (int)strlen(numBuf) * 8;
+                int th = 8;
+                float tx = rect.x + (tp - tw) * 0.5f;
+                float ty = rect.y + (tp - th) * 0.5f;
+                SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 200);
+                SDL_RenderDebugText(app->renderer, tx, ty, numBuf);
             }
         }
     }
@@ -1358,6 +1630,12 @@ static void appRender(BrainTestApp *app) {
          * obscured). */
         renderFogOverlay(app, screenW, screenH);
 
+        /* Live Dijkstra heatmap from the followed bot's slate. */
+        renderDijkstraHeatmap(app, screenW, screenH);
+
+        /* cost_to heatmap (filled in by background thread). */
+        renderCostToHeatmap(app, screenW, screenH);
+
         /* Brain-emitted overlay commands (lines/rects/circles/text
          * the brain pushed via the overlay_* Lua API this tick). */
         renderBrainOverlay(app, screenW, screenH);
@@ -1448,6 +1726,19 @@ int main(int argc, char *argv[]) {
         "Print the numeric value on each tile of the active 1/2 grid",
         "Companion to Influence / Danger — only renders at zoom >= 1.",
         "9", false);
+    app.regIdxDijkstra = vizRegistryAddNative(
+        "Dijkstra heatmap",
+        "Live cost-to-every-tile from a Dijkstra slate (green->red)",
+        "Reads BrainPathfinder.dij_slates[N] g_cost via "
+        "brainPathfinderDijkstraCostAt. Shift+7 cycles slate 0..3.",
+        "7", false);
+    app.dijViewSlate = 0;
+    app.regIdxCostTo = vizRegistryAddNative(
+        "Cost-to heatmap",
+        "Threaded brainPathfinderCostTo sweep from tank (green->red)",
+        "Clones the bot's pathfinder + map, runs cost_to in expanding "
+        "rings on a worker thread. Shift+5 lowers danger scale to 0.1.",
+        "5", false);
 
     if (!parseArgs(argc, argv)) return 1;
     app.followBot = (BYTE)optFollow;
@@ -1517,9 +1808,14 @@ int main(int argc, char *argv[]) {
         SDL_SetTextureScaleMode(app.tilesTex, SDL_SCALEMODE_NEAREST);
     }
 
-    /* Create overlay texture (256x256 RGBA) */
+    /* Create overlay texture (256x256 RGBA). Force nearest-neighbor
+     * scaling — single-pixel markers (frontline yellow dots) get
+     * washed out under SDL3's default linear filter when this 256²
+     * texture is upscaled to fill the map view. */
     app.overlayTex = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_RGBA32,
                                        SDL_TEXTUREACCESS_STREAMING, 256, 256);
+    if (app.overlayTex)
+        SDL_SetTextureScaleMode(app.overlayTex, SDL_SCALEMODE_NEAREST);
 
     /* Load map */
     bool mapLoaded = false;
@@ -1668,20 +1964,48 @@ int main(int argc, char *argv[]) {
                     vizFlagFlip(app.regIdxPath);
                     app.overlayDirty = true;
                     break;
+                case SDLK_5: {
+                    /* If a worker is still running, treat 5 as a stop.
+                     * Otherwise toggle the overlay; on enable, kick off
+                     * a fresh sweep from the tank. Shift+5 = lower
+                     * danger weighting (matches pill-cost estimator). */
+                    if (app.costToThread) {
+                        app.costToAbort = true;
+                        SDL_WaitThread(app.costToThread, NULL);
+                        app.costToThread = NULL;
+                        break;
+                    }
+                    vizFlagFlip(app.regIdxCostTo);
+                    if (vizFlag(app.regIdxCostTo)) {
+                        bool lowDanger = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
+                        startCostToHeatmap(&app, lowDanger);
+                    }
+                    break;
+                }
                 case SDLK_6:
                     vizFlagFlip(app.regIdxFog);
+                    break;
+                case SDLK_7:
+                    /* Shift+7 cycles which slate (0..3) the heatmap
+                     * reads from; plain 7 toggles the overlay. */
+                    if (ev.key.mod & SDL_KMOD_SHIFT) {
+                        app.dijViewSlate = (app.dijViewSlate + 1) % 4;
+                    } else {
+                        vizFlagFlip(app.regIdxDijkstra);
+                    }
                     break;
                 case SDLK_9:
                     vizFlagFlip(app.regIdxValues);
                     break;
                 case SDLK_0: {
                     /* Clear every native row in one shot. */
-                    int natives[6] = {
+                    int natives[8] = {
                         app.regIdxInfluence, app.regIdxDanger,
                         app.regIdxFrontLine, app.regIdxPath,
                         app.regIdxFog,       app.regIdxValues,
+                        app.regIdxDijkstra,  app.regIdxCostTo,
                     };
-                    for (int i = 0; i < 6; i++) {
+                    for (int i = 0; i < 8; i++) {
                         VizRegistryEntry *e = vizRegistryGetMutable(natives[i]);
                         if (e) e->is_on = false;
                     }
@@ -1884,6 +2208,12 @@ int main(int argc, char *argv[]) {
 
     /* Cleanup */
     fprintf(stderr, "Shutting down after tick %u\n", app.sim.tick);
+    if (app.costToThread) {
+        app.costToAbort = true;
+        SDL_WaitThread(app.costToThread, NULL);
+        app.costToThread = NULL;
+    }
+    free(app.costToGrid);
     botManagerDestroy(&app.sim);
     if (app.debugPF) brainPathfinderDestroy(app.debugPF);
     if (app.overlayTex) SDL_DestroyTexture(app.overlayTex);
