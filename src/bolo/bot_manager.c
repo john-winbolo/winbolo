@@ -392,6 +392,16 @@ BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum) {
     return bots[playerNum].brain.pathfinder;
 }
 
+OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) return NULL;
+    if (!bots[playerNum].active) return NULL;
+    /* The brain instance owns the buffer; return a pointer into it
+     * so callers can read this tick's commands. The buffer is
+     * populated by overlay_* Lua calls during brain.think(). */
+    if (!bots[playerNum].brain.running) return NULL;
+    return &bots[playerNum].brain.overlay;
+}
+
 /* ------------------------------------------------------------------ */
 /* Lua state query helpers for goal info                               */
 /* ------------------------------------------------------------------ */

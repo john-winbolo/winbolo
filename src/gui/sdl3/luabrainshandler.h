@@ -41,6 +41,7 @@
 #include "../../bolo/brain.h"  /* For BrainInfo, aiType */
 #include "../../bolo/brain_pathfinder.h"
 #include "../../bolo/brain_worldsim.h"
+#include "../../bolo/brain_overlay.h"
 
 /* Forward declarations */
 struct ClientSim;
@@ -315,6 +316,12 @@ typedef struct {
     const BYTE *worldPtr;       /* get_terrain upvalue (updated per-tick) */
     BrainPathfinder *pathfinder; /* C pathfinder instance (cpf_* globals) */
     BrainWorldSim *worldsim;     /* C world simulator instance (wsim_* globals) */
+    /* Per-brain overlay command buffer + the pointer-to-pointer the
+     * Lua overlay_* closures hold as upvalue. brainCoreRegisterOverlay
+     * captures &overlayPtr so we could swap buffers per tick (we
+     * don't, but the indirection is what the API expects). */
+    OverlayCmdBuffer  overlay;
+    OverlayCmdBuffer *overlayPtr;
     BrainInfo bInfo;            /* Per-instance BrainInfo */
 } LuaBrainInstance;
 
