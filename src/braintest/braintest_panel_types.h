@@ -21,12 +21,23 @@
 extern "C" {
 #endif
 
-/* Render a panel's body. The body string is whatever the
- * brain's Lua expression most recently returned; for typed
- * panels (pool_grid etc.) it'll be JSON the renderer
- * parses with cJSON. NULL = no fresh data — renderer should
- * draw a placeholder, not assert. */
-typedef void (*PanelRenderFn)(const char *body);
+/* Poll cadence for panel data refresh — used by both the P-window
+ * dispatcher (panelwindow.cpp) and the per-shortcut bot windows
+ * (botwindow.cpp). 100ms / 10 Hz is a comfortable interactive rate
+ * that doesn't burn CPU re-encoding the brain's view per render. */
+#define PANEL_POLL_INTERVAL_MS 100
+
+/* Render a panel's body.
+ *  - registry_idx: stable identity of the panel within this
+ *    process. Renderers that keep persistent UI state
+ *    (selection, popup, animation) MUST key it by this idx
+ *    so two bots' windows for the same type don't share
+ *    state. Pass -1 from harnesses that have no idx.
+ *  - body: whatever the brain's Lua expression most recently
+ *    returned; for typed panels it's JSON the renderer
+ *    parses with cJSON. NULL = no fresh data — renderer
+ *    should draw a placeholder, not assert. */
+typedef void (*PanelRenderFn)(int registry_idx, const char *body);
 
 /* Register a renderer for `type_name`. Last-write-wins on
  * collision (intentional — a per-bot module can override a

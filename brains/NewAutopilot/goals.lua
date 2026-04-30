@@ -16,6 +16,7 @@ local attack = require("attack")
 local print2 = require("print2")
 local threat = require("threat")
 local vizmod = require("viz")
+local json   = require("json")
 
 local M = {}
 
@@ -5161,7 +5162,6 @@ end
 --   }
 -- =========================================================================
 function M.get_pool_breakdown_json(state)
-  local json = require("json")
   local now = state.tick or 0
   local cache = state.cost_cache or {}
   local pc = state.pool_cache or {}
@@ -5284,6 +5284,11 @@ function M.get_pool_breakdown_json(state)
   end
 
   return json.encode({
+    -- Bump schema_version when the shape changes in a way that
+    -- breaks existing renderers / recorded snapshots. Renderers
+    -- check this and surface a warning for unknown versions
+    -- instead of silently misparsing.
+    schema_version = 1,
     phase = state.phase or "?",
     tick = now,
     replan_left = replan_left,
