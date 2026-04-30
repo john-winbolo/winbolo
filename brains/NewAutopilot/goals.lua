@@ -5175,12 +5175,26 @@ function M.get_pool_breakdown_json(state)
   end
 
   -- Fixed 2x5 layout matching the optimize-branch poolwindow.
+  -- (Indexes 11/12 used by def_build/wait_for_lgm strips below the grid.)
   local LAYOUT_CELL = {
     [1] = {1,1}, [2] = {1,2}, [3] = {1,3}, [4] = {1,4}, [5] = {1,5},
     [6] = {2,1}, [7] = {2,2}, [8] = {2,3}, [9] = {2,4}, [10]= {2,5},
   }
 
+  -- Active-goal lookup. The renderer marks the row whose (pool, id)
+  -- matches the bot's currently-committed goal so the user can see at
+  -- a glance which candidate is actually being acted on (vs. just the
+  -- sort-winner). Pool index is derived from the goal kind name.
+  local KIND_TO_POOL = {}
+  for i, n in pairs(POOL_NAMES) do KIND_TO_POOL[n] = i end
+  local active_pool, active_id = nil, nil
+  if state.goal and state.goal.kind then
+    active_pool = KIND_TO_POOL[state.goal.kind]
+    active_id   = state.goal.target_id
+  end
+
   -- Group eval_queue items by pool, same iteration as the text version.
+  -- Capture cached.tick so we can compute staleness per row.
   local by_pool = {}
   for _, item in ipairs(state.eval_queue or {}) do
     local p = item.pool
@@ -5192,17 +5206,17 @@ function M.get_pool_breakdown_json(state)
         id = item.id, mx = obj.mx or 0, my = obj.my or 0,
         cost = (cached and cached.cost) or -1,
         formula = (cached and get_formula(cached)) or "",
+        stale = (cached and cached.tick) and (now - cached.tick) or -1,
       }
     end
   end
 
-  local sections = {}
-  local winners = {}
-  for idx = 1, 9 do
+  -- Build a normal pool section. Used for indexes 1..9 and the
+  -- def_build (11) / wait_for_lgm (12) strips below the main grid.
+  local function build_section(idx)
     local pname = POOL_NAMES[idx] or ("p"..idx)
     local pw = (phase_weights and phase_weights[idx]) or 1.0
     local rows_raw = by_pool[idx] or {}
-    -- Sort by phase-weighted cost ascending (cheapest first).
     table.sort(rows_raw, function(a, b)
       local ac = (a.cost >= 0) and a.cost * pw or math.huge
       local bc = (b.cost >= 0) and b.cost * pw or math.huge
@@ -5215,26 +5229,42 @@ function M.get_pool_breakdown_json(state)
         cost = r.cost,
         weighted = (r.cost >= 0) and (r.cost * pw) or -1,
         is_winner = (i == 1 and r.cost >= 0),
+        active_goal = (active_pool == idx and active_id == r.id),
+        stale = r.stale,
         formula = r.formula,
       }
     end
     local winner_id = -1
-    if rows[1] and rows[1].is_winner then
-      winner_id = rows[1].id
-      winners[#winners + 1] = {
-        id = rows[1].id, mx = rows[1].mx, my = rows[1].my,
-        cost = rows[1].weighted,
-        formula = string.format("%s(x%.1f): %s", pname, pw, rows[1].formula),
-        is_winner = false, weighted = rows[1].weighted,
-      }
-    end
-    sections[#sections + 1] = {
+    if rows[1] and rows[1].is_winner then winner_id = rows[1].id end
+    return {
       idx = idx, name = pname, weight = pw, winner_id = winner_id,
       layout_cell = LAYOUT_CELL[idx], rows = rows,
-    }
+    }, rows[1]
   end
 
-  -- Cell 10 = cross-pool WINNERS table (ranked by cost ascending).
+  local sections = {}
+  local winners = {}
+  for idx = 1, 9 do
+    local sec, w = build_section(idx)
+    sections[#sections + 1] = sec
+    if w then
+      -- Cross-pool WINNERS row carries src_pool so the renderer can
+      -- color it with its origin pool's hue.
+      local pname = POOL_NAMES[idx] or ("p"..idx)
+      local pw = (phase_weights and phase_weights[idx]) or 1.0
+      winners[#winners + 1] = {
+        id = w.id, src_pool = idx,
+        mx = w.mx, my = w.my,
+        cost = w.weighted, weighted = w.weighted,
+        is_winner = false,
+        active_goal = w.active_goal,
+        stale = w.stale,
+        formula = string.format("%s(x%.1f): %s", pname, pw, w.formula),
+      }
+    end
+  end
+
+  -- Cell 10 = cross-pool WINNERS table (ranked ascending).
   table.sort(winners, function(a, b) return a.cost < b.cost end)
   if winners[1] then winners[1].is_winner = true end
   sections[#sections + 1] = {
@@ -5243,10 +5273,21 @@ function M.get_pool_breakdown_json(state)
     layout_cell = LAYOUT_CELL[10], rows = winners,
   }
 
+  -- Strips below the grid: def_build (11) and wait_for_lgm (12).
+  -- Only emit the section if the brain actually produced candidates
+  -- for that pool this tick — keeps the renderer from drawing empty
+  -- placeholders when the brain doesn't use the slot.
+  for _, idx in ipairs({11, 12}) do
+    if by_pool[idx] and #by_pool[idx] > 0 then
+      sections[#sections + 1] = (build_section(idx))
+    end
+  end
+
   return json.encode({
     phase = state.phase or "?",
     tick = now,
     replan_left = replan_left,
+    bot = state.player_number or 0,
     sections = sections,
   })
 end
