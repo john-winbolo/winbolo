@@ -156,12 +156,16 @@ typedef struct {
 
     /* cost_to heatmap (5 key). Computed off-thread on a cloned
      * pathfinder so a 16k-budget radial sweep doesn't stall the
-     * sim. Grid = -1 (uncomputed), >=1e9 (unreachable / over budget),
-     * otherwise the actual cost. Shift+5 lowers danger weight to
-     * 0.1 to match the pill-cost estimator. */
+     * sim. Grid = -1 (uncomputed), >= BT_COST_INF_THRESHOLD
+     * (unreachable / over budget), otherwise the actual cost.
+     * Shift+5 lowers danger weight to 0.1 to match the pill-cost
+     * estimator. The mutex serializes worker writes against the
+     * renderer's per-frame read — a torn float read is technically
+     * UB even though aligned 4-byte stores are atomic on x86. */
     float       *costToGrid;
     int          costToTankMX, costToTankMY;
     SDL_Thread  *costToThread;
+    SDL_Mutex   *costToMutex;
     bool         costToAbort;
     bool         showHUD;          /* status bar + legend (toggle with H) */
 
@@ -234,11 +238,29 @@ typedef struct {
     int          keyShoot;
     int          keyLayMine;
 
+    /* Ring buffer of the followed bot's last N think-times (ms),
+     * captured once per game tick. The CPU-use graph in the top-
+     * right HUD plots these as bars so spikes / steady-state
+     * trends are visible at a glance. `cpuHistHead` is the index
+     * of the next slot to write; the array holds at most
+     * CPU_HIST_BARS samples (oldest is overwritten). */
+#define CPU_HIST_BARS 200
+    float        cpuHist[CPU_HIST_BARS];
+    int          cpuHistCount;   /* 0..CPU_HIST_BARS, capped at the buffer size */
+    int          cpuHistHead;    /* next-write index, wraps mod CPU_HIST_BARS */
 } BrainTestApp;
+
+/* Common "is this cost infinite?" cutoff for the heatmap renderers.
+ * Real path costs top out around the low thousands; brain_pathfinder
+ * uses COST_INF = 1e30f, and brainPathfinderCostTo treats anything
+ * past `budget` as effectively unreachable. Anything above 1e20 is
+ * unambiguously a sentinel, regardless of which API produced it. */
+#define BT_COST_INF_THRESHOLD 1e20f
 
 /* Registry-backed accessor + flip for the native toggles. Returns
  * false if the row hasn't been registered (shouldn't happen — we
- * register them all at startup). */
+ * register them all at startup; a -1 here usually means the registry
+ * is full or duplicate-id collision logged at startup). */
 static bool vizFlag(int idx) {
     const VizRegistryEntry *e = vizRegistryGet(idx);
     return e ? e->is_on : false;
@@ -267,26 +289,28 @@ static void loadKeyBindings(BrainTestApp *app) {
 #ifdef _WIN32
     char buff[64];
     char iniPath[FILENAME_MAX];
-    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    /* SDL_GetPrefPath returns a heap-allocated string; must free. */
+    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir && prefDir[0]) {
         SDL_snprintf(iniPath, sizeof(iniPath), "%sWinBolo.ini", prefDir);
     } else {
         SDL_snprintf(iniPath, sizeof(iniPath), "WinBolo.ini");
     }
+    SDL_free(prefDir);
     /* The values stored in the INI by the main game are SDL
-     * scancodes (the same numbers SDL3 uses). Each call falls
-     * back to its hardcoded default scancode. */
-    GetPrivateProfileStringA("KEYS", "Forward",   "8",   buff, sizeof(buff), iniPath);
+     * scancodes (the same numbers SDL3 uses). Default fallbacks
+     * are scancodes for E/D/S/F/Space/LShift respectively. */
+    GetPrivateProfileStringA("KEYS", "Forward",   "8",   buff, sizeof(buff), iniPath); /* E */
     app->keyForward  = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Backwards", "7",   buff, sizeof(buff), iniPath);
+    GetPrivateProfileStringA("KEYS", "Backwards", "7",   buff, sizeof(buff), iniPath); /* D */
     app->keyBackward = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Left",      "22",  buff, sizeof(buff), iniPath);
+    GetPrivateProfileStringA("KEYS", "Left",      "22",  buff, sizeof(buff), iniPath); /* S */
     app->keyLeft     = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Right",     "9",   buff, sizeof(buff), iniPath);
+    GetPrivateProfileStringA("KEYS", "Right",     "9",   buff, sizeof(buff), iniPath); /* F */
     app->keyRight    = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Shoot",     "44",  buff, sizeof(buff), iniPath);
+    GetPrivateProfileStringA("KEYS", "Shoot",     "44",  buff, sizeof(buff), iniPath); /* Space */
     app->keyShoot    = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Lay Mine",  "225", buff, sizeof(buff), iniPath);
+    GetPrivateProfileStringA("KEYS", "Lay Mine",  "225", buff, sizeof(buff), iniPath); /* LShift */
     app->keyLayMine  = atoi(buff);
 #endif
 
@@ -378,6 +402,33 @@ static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
     SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
 }
 
+/* Common per-frame projection used by every full-map overlay: tile
+ * pixel size, screen origin of map tile (0,0), and the visible tile
+ * range clamped to [0..255]. Three renderers reproduced this math
+ * verbatim before — keep them in sync via this one helper. */
+static void mapTileWindow(BrainTestApp *app, int screenW, int screenH,
+                          int *outTilePx, float *outMoX, float *outMoY,
+                          int *outStartX, int *outStartY,
+                          int *outEndX, int *outEndY) {
+    int   tp  = 16 * app->zoomFactor;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float moX = scx - (app->viewCenterX >> 8) * tp
+        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
+    float moY = scy - (app->viewCenterY >> 8) * tp
+        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
+    int sx = (int)((-moX) / tp) - 1;
+    int sy = (int)((-moY) / tp) - 1;
+    int ex = sx + screenW / tp + 3;
+    int ey = sy + screenH / tp + 3;
+    if (sx < 0) sx = 0;
+    if (sy < 0) sy = 0;
+    if (ex > 255) ex = 255;
+    if (ey > 255) ey = 255;
+    *outTilePx = tp; *outMoX = moX; *outMoY = moY;
+    *outStartX = sx; *outStartY = sy; *outEndX = ex; *outEndY = ey;
+}
+
 /* Fog of war overlay: tile-by-tile dark fill on every cell that's
  * still 0xFF (unseen) in the followed bot's pathfinder map.
  * Generic — works for any brain that maintains a worldPtr to a
@@ -388,25 +439,10 @@ static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
     BrainPathfinder *bpf = botManagerGetBrainPathfinder(app->followBot);
     if (!bpf || !bpf->map) return;
 
-    int zf = app->zoomFactor;
-    int tp = 16 * zf;
-    float scx = screenW / 2.0f;
-    float scy = screenH / 2.0f;
-    float moX = scx - (app->viewCenterX >> 8) * tp
-        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
-    float moY = scy - (app->viewCenterY >> 8) * tp
-        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
-
-    /* Cull to visible tiles only (full 256×256 sweep is wasteful
-     * at zoomed-in views). */
-    int startX = (int)((-moX) / tp) - 1;
-    int startY = (int)((-moY) / tp) - 1;
-    int endX = startX + screenW / tp + 3;
-    int endY = startY + screenH / tp + 3;
-    if (startX < 0) startX = 0;
-    if (startY < 0) startY = 0;
-    if (endX > 255) endX = 255;
-    if (endY > 255) endY = 255;
+    int   tp, startX, startY, endX, endY;
+    float moX, moY;
+    mapTileWindow(app, screenW, screenH, &tp, &moX, &moY,
+                  &startX, &startY, &endX, &endY);
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
@@ -437,20 +473,28 @@ static void syncDebugPathfinder(BrainTestApp *app);
  * the abort flag flips. */
 typedef struct {
     BrainPathfinder *pf;
-    BYTE  *mapCopy;
-    float *grid;
-    int    tmx, tmy, in_boat;
-    int    shells, trees, mines, armour;
-    int    budget;
-    bool  *abort;
+    BYTE      *mapCopy;
+    float     *grid;
+    SDL_Mutex *gridMutex;          /* shared with main thread */
+    int        tmx, tmy, in_boat;
+    int        shells, trees, mines, armour;
+    int        budget;
+    bool      *abort;
 } CostToThreadCtx;
 
 static int SDLCALL costToThreadFunc(void *data) {
     CostToThreadCtx *ctx = (CostToThreadCtx *)data;
     int consInf = 0;
+    /* Buffer one ring's worth of results, then publish under the
+     * mutex in a single batch. Keeps the renderer's lock window
+     * tiny and avoids lock-per-cell churn. Worst case is the
+     * outermost ring (4*r cells), which at r=127 is ~508 entries. */
+    int   bufX[512 * 4], bufY[512 * 4];
+    float bufC[512 * 4];
     for (int r = 1; r < 128 && consInf < 10; r++) {
         if (*ctx->abort) break;
         bool anyFinite = false;
+        int  bufN = 0;
         for (int dx = -r; dx <= r; dx++) {
             for (int dy = -r; dy <= r; dy++) {
                 if (abs(dx) != r && abs(dy) != r) continue;
@@ -461,10 +505,19 @@ static int SDLCALL costToThreadFunc(void *data) {
                     ctx->tmx, ctx->tmy, x, y, ctx->in_boat,
                     ctx->shells, ctx->trees, ctx->mines, ctx->armour,
                     ctx->budget);
-                ctx->grid[y * 256 + x] = c;
-                if (c < 1e9f) anyFinite = true;
+                if (bufN < (int)(sizeof(bufX) / sizeof(bufX[0]))) {
+                    bufX[bufN] = x; bufY[bufN] = y; bufC[bufN] = c;
+                    bufN++;
+                }
+                if (c < BT_COST_INF_THRESHOLD) anyFinite = true;
             }
         }
+        if (ctx->gridMutex) SDL_LockMutex(ctx->gridMutex);
+        for (int i = 0; i < bufN; i++) {
+            ctx->grid[bufY[i] * 256 + bufX[i]] = bufC[i];
+        }
+        if (ctx->gridMutex) SDL_UnlockMutex(ctx->gridMutex);
+
         if (!anyFinite) consInf++;
         else            consInf = 0;
         SDL_Delay(1); /* let the renderer breathe between rings */
@@ -483,32 +536,36 @@ done:
 static void renderCostToHeatmap(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxCostTo) || !app->costToGrid) return;
 
-    int   zf = app->zoomFactor;
-    int   tp = 16 * zf;
-    float scx = screenW / 2.0f;
-    float scy = screenH / 2.0f;
-    float moX = scx - (app->viewCenterX >> 8) * tp
-        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
-    float moY = scy - (app->viewCenterY >> 8) * tp
-        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
-
-    int startX = (int)((-moX) / tp) - 1;
-    int startY = (int)((-moY) / tp) - 1;
-    int endX = startX + screenW / tp + 3;
-    int endY = startY + screenH / tp + 3;
-    if (startX < 0) startX = 0;
-    if (startY < 0) startY = 0;
-    if (endX > 255) endX = 255;
-    if (endY > 255) endY = 255;
+    int   tp, startX, startY, endX, endY;
+    float moX, moY;
+    mapTileWindow(app, screenW, screenH, &tp, &moX, &moY,
+                  &startX, &startY, &endX, &endY);
+    int zf = app->zoomFactor;
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
-    for (int y = startY; y <= endY; y++) {
-        for (int x = startX; x <= endX; x++) {
-            float c = app->costToGrid[y * 256 + x];
+    /* Snapshot the visible window under the mutex so the worker
+     * can't mid-write a float we're about to read. Worst case is
+     * the full 256×256 grid (very low zoom on a huge window), so
+     * the snapshot buffer is sized to match. */
+    int  spanX = endX - startX + 1;
+    int  spanY = endY - startY + 1;
+    if (spanX <= 0 || spanY <= 0) return;
+    static float snap[256 * 256];
+    if (app->costToMutex) SDL_LockMutex(app->costToMutex);
+    for (int y = 0; y < spanY; y++) {
+        memcpy(&snap[y * spanX],
+               &app->costToGrid[(startY + y) * 256 + startX],
+               spanX * sizeof(float));
+    }
+    if (app->costToMutex) SDL_UnlockMutex(app->costToMutex);
+
+    for (int y = 0; y < spanY; y++) {
+        for (int x = 0; x < spanX; x++) {
+            float c = snap[y * spanX + x];
             if (c < 0) continue; /* not yet computed */
 
             int r, g, b, a;
-            if (c >= 1e9f) {
+            if (c >= BT_COST_INF_THRESHOLD) {
                 r = 255; g = 0; b = 0; a = 120;
             } else {
                 float t = c / 500.0f;
@@ -518,14 +575,17 @@ static void renderCostToHeatmap(BrainTestApp *app, int screenW, int screenH) {
                 b = 0; a = 80;
             }
             SDL_SetRenderDrawColor(app->renderer, r, g, b, a);
-            SDL_FRect rect = { moX + x * tp, moY + y * tp,
+            SDL_FRect rect = { moX + (startX + x) * tp,
+                               moY + (startY + y) * tp,
                                (float)tp, (float)tp };
             SDL_RenderFillRect(app->renderer, &rect);
 
             if (zf >= 2) {
                 char buf[16];
-                if (c >= 1e9f) SDL_snprintf(buf, sizeof(buf), "INF");
-                else           SDL_snprintf(buf, sizeof(buf), "%.0f", c);
+                if (c >= BT_COST_INF_THRESHOLD)
+                    SDL_snprintf(buf, sizeof(buf), "INF");
+                else
+                    SDL_snprintf(buf, sizeof(buf), "%.0f", c);
                 int tw = (int)strlen(buf) * 8;
                 int th = 8;
                 float tx = rect.x + (tp - tw) * 0.5f;
@@ -561,7 +621,13 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
         app->costToGrid = (float *)malloc(256 * 256 * sizeof(float));
         if (!app->costToGrid) return;
     }
+    if (!app->costToMutex) app->costToMutex = SDL_CreateMutex();
+    /* Reset under the lock — even though no worker can be running
+     * right now (we waited above), a paranoid future change might
+     * spawn the worker before this loop finishes. Cheap insurance. */
+    if (app->costToMutex) SDL_LockMutex(app->costToMutex);
     for (int i = 0; i < 256 * 256; i++) app->costToGrid[i] = -1.0f;
+    if (app->costToMutex) SDL_UnlockMutex(app->costToMutex);
     app->costToTankMX = smx;
     app->costToTankMY = smy;
 
@@ -594,10 +660,11 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
 
     CostToThreadCtx *ctx = (CostToThreadCtx *)calloc(1, sizeof(CostToThreadCtx));
     if (!ctx) { brainPathfinderDestroy(clone); free(mapCopy); return; }
-    ctx->pf       = clone;
-    ctx->mapCopy  = mapCopy;
-    ctx->grid     = app->costToGrid;
-    ctx->tmx      = smx;
+    ctx->pf        = clone;
+    ctx->mapCopy   = mapCopy;
+    ctx->grid      = app->costToGrid;
+    ctx->gridMutex = app->costToMutex;
+    ctx->tmx       = smx;
     ctx->tmy      = smy;
     ctx->in_boat  = in_boat;
     /* Same defaults as computeClickPath — the live BrainInfo accessor
@@ -629,24 +696,11 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
                                                &expanded, &peakOpen, &done);
     if (!active) return;
 
-    int   zf = app->zoomFactor;
-    int   tp = 16 * zf;
-    float scx = screenW / 2.0f;
-    float scy = screenH / 2.0f;
-    float moX = scx - (app->viewCenterX >> 8) * tp
-        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
-    float moY = scy - (app->viewCenterY >> 8) * tp
-        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
-
-    /* Cull to visible tiles. */
-    int startX = (int)((-moX) / tp) - 1;
-    int startY = (int)((-moY) / tp) - 1;
-    int endX = startX + screenW / tp + 3;
-    int endY = startY + screenH / tp + 3;
-    if (startX < 0) startX = 0;
-    if (startY < 0) startY = 0;
-    if (endX > 255) endX = 255;
-    if (endY > 255) endY = 255;
+    int   tp, startX, startY, endX, endY;
+    float moX, moY;
+    mapTileWindow(app, screenW, screenH, &tp, &moX, &moY,
+                  &startX, &startY, &endX, &endY);
+    int zf = app->zoomFactor;
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
     for (int y = startY; y <= endY; y++) {
@@ -654,7 +708,7 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
             float landC = brainPathfinderDijkstraCostAt(botPf, viewSlate, x, y, 0);
             float boatC = brainPathfinderDijkstraCostAt(botPf, viewSlate, x, y, 1);
             float c = (boatC < landC) ? boatC : landC;
-            if (c >= 1e29f) continue; /* not yet reached by the search */
+            if (c >= BT_COST_INF_THRESHOLD) continue; /* not yet reached */
 
             float t = c / 500.0f;
             if (t > 1.0f) t = 1.0f;
@@ -689,12 +743,14 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
  * idx using vizRegistryGet(idx)->is_on. */
 
 static void vizConfigPath(char *out, size_t n) {
-    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    /* SDL_GetPrefPath returns a heap-allocated string; must free. */
+    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir && prefDir[0]) {
         SDL_snprintf(out, n, "%sBrainTestViz.ini", prefDir);
     } else {
         SDL_snprintf(out, n, "BrainTestViz.ini");
     }
+    SDL_free(prefDir);
 }
 
 /* Push every entry's on/off state + the id→idx lookup table + the
@@ -1089,14 +1145,18 @@ static void updateCachedPath(BrainTestApp *app) {
     if (botManagerGetGoalInfo(app->followBot, &gi)
         && gi.kind[0] != '\0'
         && strcmp(gi.kind, "none") != 0) {
-        /* KIND_NORMAL = 0; the brain's primary nav slate. Other
-         * kinds (KIND_PILL etc.) exist for special queries — we
-         * could probe them too if NORMAL returns 0, but the brain
-         * always keeps a NORMAL slate refreshed for steering. */
-        n = brainPathfinderDijkstraTracePath(pf, /* slate */ 0,
-                                              gi.mx, gi.my,
-                                              app->cachedPath_x,
-                                              app->cachedPath_y, 2048);
+        /* Ask the pathfinder which slate currently holds the freshest
+         * KIND_NORMAL search. The slate index isn't stable — the
+         * brain rotates them via DijkstraPickReuseSlate — so a
+         * hardcoded `0` would silently go stale whenever the brain
+         * parked NORMAL elsewhere. */
+        int slate = brainPathfinderDijkstraFindBest(pf, /* KIND_NORMAL */ 0);
+        if (slate >= 0) {
+            n = brainPathfinderDijkstraTracePath(pf, slate,
+                                                  gi.mx, gi.my,
+                                                  app->cachedPath_x,
+                                                  app->cachedPath_y, 2048);
+        }
     }
     if (n == 0) {
         n = brainPathfinderTracePath(pf, app->cachedPath_x,
@@ -1272,18 +1332,26 @@ static void pushVizStateToBots(bool vizSuppressActive) {
 static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
                             int screenW, int screenH,
                             float *out_sx, float *out_sy) {
-    int zf = app->zoomFactor;
-    int tilePx = 16 * zf;
-    int centerMX = app->viewCenterX >> 8;
-    int centerMY = app->viewCenterY >> 8;
-    float scx = screenW / 2.0f;
-    float scy = screenH / 2.0f;
-    float originX = scx - centerMX * tilePx
-                    - (float)(app->viewCenterX & 0xFF) * tilePx / 256.0f;
-    float originY = scy - centerMY * tilePx
-                    - (float)(app->viewCenterY & 0xFF) * tilePx / 256.0f;
-    *out_sx = originX + tx * tilePx;
-    *out_sy = originY + ty * tilePx;
+    /* Quantize to game-pixel precision to match the sprite renderer
+     * (mapview.c does `q->x >> 4`). Both camera AND per-object
+     * positions are floored to whole game pixels, then scaled by
+     * zoom — so overlays step in whole game pixels alongside sprites
+     * with no sub-pixel drift between them as the camera scrolls.
+     *
+     * The integer-floored half-viewport `(screenW/(2*zf))*zf` is the
+     * other half of the trick: at zoom 3 with screenW=1000 it equals
+     * 996, not 1000 — using `screenW/2.0f` here would produce a
+     * delta that varies with zoom and makes overlays jump around
+     * sprites as zoom changes. */
+    int zf       = app->zoomFactor;
+    int centerPX = (int)app->viewCenterX >> 4;     /* wu → game-pixel */
+    int centerPY = (int)app->viewCenterY >> 4;
+    int scx      = (screenW / (2 * zf)) * zf;
+    int scy      = (screenH / (2 * zf)) * zf;
+    int pixelX   = (int)floorf(tx * 16.0f);
+    int pixelY   = (int)floorf(ty * 16.0f);
+    *out_sx = (float)scx + (float)(pixelX - centerPX) * (float)zf;
+    *out_sy = (float)scy + (float)(pixelY - centerPY) * (float)zf;
 }
 
 static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
@@ -1412,18 +1480,78 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
 
-    /* Tick counter — show brain tick (sim.tick/2) to match JSONL log */
-    SDL_snprintf(line, sizeof(line), "Tick: %u", app->sim.tick / 2);
-    float tickScale = 3.0f;
+    /* Tick counter — show brain tick (sim.tick/2) to match JSONL
+     * log, plus the followed bot's most recent think wall time so
+     * the user has the headline perf number at a glance without
+     * needing the V dialog. The Lua bar below adds replan/phase/goal. */
+    double thinkMs = botManagerGetLastThinkMs(app->followBot);
+    SDL_snprintf(line, sizeof(line), "Tick: %u  think: %.2fms",
+                 app->sim.tick / 2, thinkMs);
+    float tickScale = 2.0f;
     float tickW = (float)strlen(line) * 8.0f * tickScale;
-    float tickH = 8.0f * tickScale + 12.0f;
+    float tickH = 8.0f * tickScale + 8.0f;
     SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
-    SDL_FRect tickBg = { 0, 0, tickW + 16.0f, tickH };
+    SDL_FRect tickBg = { 0, 0, tickW + 12.0f, tickH };
     SDL_RenderFillRect(app->renderer, &tickBg);
     SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
     SDL_SetRenderScale(app->renderer, tickScale, tickScale);
-    SDL_RenderDebugText(app->renderer, 6.0f / tickScale, 6.0f / tickScale, line);
+    SDL_RenderDebugText(app->renderer, 4.0f / tickScale, 4.0f / tickScale, line);
     SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+
+    /* CPU-use graph (top-right) — last CPU_HIST_BARS think-times
+     * for the followed bot. Color codes: green<5ms, yellow<10ms,
+     * orange<20ms, red≥20ms. The 20ms line corresponds to the
+     * 50Hz tick budget (TICK_INTERVAL_MS); bars hitting it mean
+     * the brain is consuming the entire frame. */
+    if (app->cpuHistCount > 0) {
+        float graphH = 40.0f;
+        float barW   = 2.0f;
+        float maxMs  = 20.0f;
+        int   count  = app->cpuHistCount;
+        float graphW = count * barW;
+        float gx = ((float)screenW - graphW) / 2.0f;
+        float gy = 4.0f;
+
+        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
+        SDL_FRect gbg = { gx - 2, gy - 2, graphW + 4, graphH + 14 };
+        SDL_RenderFillRect(app->renderer, &gbg);
+
+        /* Walk the ring oldest-first so the most recent sample
+         * lands on the right edge. tail is the oldest live entry;
+         * for a half-full buffer it's index 0, otherwise it's
+         * the slot just past head. */
+        int tail = (app->cpuHistCount < CPU_HIST_BARS)
+            ? 0
+            : app->cpuHistHead;
+        for (int i = 0; i < count; i++) {
+            float ms = app->cpuHist[(tail + i) % CPU_HIST_BARS];
+            float h = ms / maxMs * graphH;
+            if (h > graphH) h = graphH;
+            if (h < 1.0f)   h = 1.0f;
+
+            Uint8 r, g, b;
+            if      (ms <  5.0f) { r =  40; g = 200; b =  40; }
+            else if (ms < 10.0f) { r = 255; g = 230; b =  40; }
+            else if (ms < 20.0f) { r = 255; g = 140; b =  30; }
+            else                 { r = 255; g =  50; b =  40; }
+            SDL_SetRenderDrawColor(app->renderer, r, g, b, 220);
+            SDL_FRect bar = { gx + i * barW, gy + graphH - h,
+                              barW - 1, h };
+            SDL_RenderFillRect(app->renderer, &bar);
+        }
+
+        /* 20ms budget line. */
+        float budgetY = gy + graphH - (20.0f / maxMs * graphH);
+        SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 180);
+        SDL_RenderLine(app->renderer, gx, budgetY,
+                       gx + graphW, budgetY);
+
+        SDL_SetRenderDrawColor(app->renderer, 180, 180, 180, 200);
+        SDL_RenderDebugText(app->renderer, gx, gy + graphH + 2, "0");
+        SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 200);
+        SDL_RenderDebugText(app->renderer,
+                            gx + graphW + 4, budgetY - 4, "20ms");
+    }
 
     /* Status bar below the tick counter (toggle with H) */
     if (app->showHUD) {
@@ -1542,6 +1670,15 @@ static void appTick(BrainTestApp *app) {
 
     /* Run brain AI then tick the simulation (two ticks per brain call) */
     botManagerTick(&app->sim, optAI);
+    /* Sample the followed bot's think time and push onto the CPU
+     * history ring. Sampling here (not per render frame) keeps
+     * each bar = one game tick regardless of rendering rate. */
+    {
+        double ms = botManagerGetLastThinkMs(app->followBot);
+        app->cpuHist[app->cpuHistHead] = (float)ms;
+        app->cpuHistHead = (app->cpuHistHead + 1) % CPU_HIST_BARS;
+        if (app->cpuHistCount < CPU_HIST_BARS) app->cpuHistCount++;
+    }
     serverSimTick(&app->sim);
     {
         GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
@@ -1739,6 +1876,21 @@ int main(int argc, char *argv[]) {
         "Clones the bot's pathfinder + map, runs cost_to in expanding "
         "rings on a worker thread. Shift+5 lowers danger scale to 0.1.",
         "5", false);
+    /* If any of these came back negative the registry is full or hit a
+     * duplicate-id collision — vizFlag would silently no-op forever.
+     * Surface it loudly at startup so it's obvious during dev. */
+    {
+        int idxs[8] = { app.regIdxInfluence, app.regIdxDanger,
+                        app.regIdxFrontLine, app.regIdxPath,
+                        app.regIdxFog, app.regIdxValues,
+                        app.regIdxDijkstra, app.regIdxCostTo };
+        for (int i = 0; i < 8; i++) {
+            if (idxs[i] < 0) {
+                SDL_Log("WARN: native viz registration %d failed; "
+                        "the corresponding hotkey will be inert", i);
+            }
+        }
+    }
 
     if (!parseArgs(argc, argv)) return 1;
     app.followBot = (BYTE)optFollow;
@@ -2214,6 +2366,7 @@ int main(int argc, char *argv[]) {
         app.costToThread = NULL;
     }
     free(app.costToGrid);
+    if (app.costToMutex) SDL_DestroyMutex(app.costToMutex);
     botManagerDestroy(&app.sim);
     if (app.debugPF) brainPathfinderDestroy(app.debugPF);
     if (app.overlayTex) SDL_DestroyTexture(app.overlayTex);

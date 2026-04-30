@@ -58,6 +58,10 @@ typedef struct {
     BYTE            playerNum;
     bool            active;
     aiType          ai;
+    /* Wall-clock duration of this bot's most recent brain.think call,
+     * in milliseconds. Updated every botManagerTick. Surfaced via
+     * botManagerGetLastThinkMs so HUDs / perf graphs can read it. */
+    double          lastThinkMs;
 } BotContext;
 
 static BotContext bots[MAX_TANKS];
@@ -289,6 +293,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             bool ok = luaBrainInstanceTick(&bot->brain);
             Uint64 t1 = SDL_GetPerformanceCounter();
             double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+            bot->lastThinkMs = ms;
             if (ms > 5.0) {
                 fprintf(stderr, "serverBrains: bot %d think took %.1fms\n", i, ms);
             }
@@ -401,6 +406,12 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum) {
      * populated by overlay_* Lua calls during brain.think(). */
     if (!bots[playerNum].brain.running) return NULL;
     return &bots[playerNum].brain.overlay;
+}
+
+double botManagerGetLastThinkMs(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) return 0.0;
+    if (!bots[playerNum].active) return 0.0;
+    return bots[playerNum].lastThinkMs;
 }
 
 bool botManagerExecLua(BYTE playerNum, const char *src) {

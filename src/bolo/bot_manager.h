@@ -150,6 +150,19 @@ BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum);
 OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
 
 /*********************************************************
+ *NAME:          botManagerGetLastThinkMs
+ *PURPOSE:
+ *  Wall-clock duration of the bot's most recent
+ *  brain.think() call, in milliseconds. Updated every
+ *  botManagerTick. Returns 0 if the slot is inactive.
+ *  Used by debug HUDs and perf graphs.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot to query
+ *********************************************************/
+double botManagerGetLastThinkMs(BYTE playerNum);
+
+/*********************************************************
  *NAME:          botManagerExecLua
  *PURPOSE:
  *  Compile + run a string of Lua code in the given bot's

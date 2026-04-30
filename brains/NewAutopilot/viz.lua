@@ -63,6 +63,8 @@ M.IDS = {
                          long  = "Top-left/right MANUAL CONTROL banner + key list" },
   hud_resources      = { short = "HUD: resources",
                          long  = "Shells/Mines/Armour/Trees/Speed/Boat counters" },
+  hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal)",
+                         long  = "Top-left line under the big TICK box. Brain-side timing via os.clock; color codes the think_ms cell green<5/yellow<10/orange<20/red>=20." },
   hud_replan         = { short = "HUD: replan + phase",
                          long  = "Replan countdown + phase + reason" },
   hud_goal           = { short = "HUD: current goal",
