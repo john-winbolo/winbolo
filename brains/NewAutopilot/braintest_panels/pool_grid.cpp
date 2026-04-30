@@ -122,17 +122,12 @@ struct Section {
     int   nrows;
 };
 
-/* ── Per-section rank tracking for flash animation ── */
-static std::unordered_map<int,int>    sPrevRank[13];
-static std::unordered_map<int,Uint64> sFlashStart[13];
 static const float FLASH_DURATION_MS = 1000.0f;
 
-/* ── Selection / clipboard / detail popup state ─────── */
-static int  sSelectedSection       = -1;
-static int  sSelectedRowId         = -1;
-static char sCopyBuf[512]          = {0};
-static bool sAnyRowClickedThisFrame = false;
-
+/* All persistent per-window state lives here. Keyed by the panel
+ * registry idx the host passes to render() so that opening pool
+ * windows for two different bots doesn't bleed selection / detail-
+ * popup / rank-flash state between them. */
 struct DetailRow {
     bool  open, justOpened;
     int   sectionIdx;
@@ -143,7 +138,32 @@ struct DetailRow {
     bool  winner;
     char  formula[512];
 };
-static DetailRow sDetail = {};
+struct PanelState {
+    /* Per-section rank tracking for flash animation, indexed by
+     * section idx (1..12). map<row_id → rank/flash-start>. */
+    std::unordered_map<int,int>    prevRank[13];
+    std::unordered_map<int,Uint64> flashStart[13];
+
+    /* Click selection + Ctrl+C copy buffer. */
+    int  selectedSection = -1;
+    int  selectedRowId   = -1;
+    char copyBuf[512]    = {0};
+    bool anyRowClickedThisFrame = false;
+
+    /* Double-click detail popup. */
+    DetailRow detail = {};
+};
+
+/* Lookup-by-idx so each (registry_idx → PanelState) pair survives
+ * across frames. unordered_map for sparse keying — most idxs never
+ * have a pool_grid renderer attached. */
+static std::unordered_map<int, PanelState> g_states;
+
+static PanelState &stateFor(int registry_idx) {
+    /* operator[] default-constructs on first access; subsequent calls
+     * return the same instance. -1 (no idx) gets its own slot. */
+    return g_states[registry_idx];
+}
 
 /* ── Section list parsing from cJSON ─────────────────── */
 static void parseRow(cJSON *jrow, Row *r, int section_idx, bool is_winners) {
@@ -196,8 +216,10 @@ static void freeSections(Section *s, int n) {
     for (int i = 0; i < n; i++) free(s[i].rows);
 }
 
-/* ── Row rendering — verbatim from optimize branch ── */
-static void renderRow(const Section *s, int i, Row *r) {
+/* ── Row rendering — verbatim from optimize branch ──
+ * `st` is the per-window state; selection / detail / copy buffer
+ * all live there so two windows for different bots don't share. */
+static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     ImVec4 rowCol = poolColorFor(r->src_pool);
     const float lineH = ImGui::GetTextLineHeightWithSpacing();
     const int lines = (r->formula[0] ? 2 : 1);
@@ -207,34 +229,35 @@ static void renderRow(const Section *s, int i, Row *r) {
     SDL_snprintf(hitId, sizeof(hitId), "##hit%d_%d", s->idx, i);
     if (ImGui::InvisibleButton(hitId,
             ImVec2(ImGui::GetContentRegionAvail().x, lineH * lines))) {
-        sSelectedSection        = s->idx;
-        sSelectedRowId          = r->id;
-        sAnyRowClickedThisFrame = true;
+        st.selectedSection        = s->idx;
+        st.selectedRowId          = r->id;
+        st.anyRowClickedThisFrame = true;
         if (r->cost >= 1e9f)
-            SDL_snprintf(sCopyBuf, sizeof(sCopyBuf),
+            SDL_snprintf(st.copyBuf, sizeof(st.copyBuf),
                 "#%d (%d,%d) cost=INF wt=%.0f  %s",
                 r->id, r->mx, r->my, r->weighted, r->formula);
         else
-            SDL_snprintf(sCopyBuf, sizeof(sCopyBuf),
+            SDL_snprintf(st.copyBuf, sizeof(st.copyBuf),
                 "#%d (%d,%d) cost=%.0f wt=%.0f  %s",
                 r->id, r->mx, r->my, r->cost, r->weighted, r->formula);
     }
     if (ImGui::IsItemHovered() &&
         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-        sDetail.open       = true;
-        sDetail.justOpened = true;
-        sDetail.sectionIdx = s->idx;
-        sDetail.srcPool    = r->src_pool;
-        SDL_strlcpy(sDetail.poolName, s->name, sizeof(sDetail.poolName));
-        sDetail.rowId    = r->id;
-        sDetail.mx       = r->mx;
-        sDetail.my       = r->my;
-        sDetail.cost     = r->cost;
-        sDetail.weighted = r->weighted;
-        sDetail.winner   = r->winner;
-        SDL_strlcpy(sDetail.formula, r->formula, sizeof(sDetail.formula));
+        st.detail.open       = true;
+        st.detail.justOpened = true;
+        st.detail.sectionIdx = s->idx;
+        st.detail.srcPool    = r->src_pool;
+        SDL_strlcpy(st.detail.poolName, s->name, sizeof(st.detail.poolName));
+        st.detail.rowId    = r->id;
+        st.detail.mx       = r->mx;
+        st.detail.my       = r->my;
+        st.detail.cost     = r->cost;
+        st.detail.weighted = r->weighted;
+        st.detail.winner   = r->winner;
+        SDL_strlcpy(st.detail.formula, r->formula, sizeof(st.detail.formula));
     }
-    bool isSelected = (sSelectedSection == s->idx && sSelectedRowId == r->id);
+    bool isSelected = (st.selectedSection == s->idx
+                       && st.selectedRowId == r->id);
     ImGui::SetCursorPos(hitCursorStart);
 
     ImVec2 rowStart = ImGui::GetCursorScreenPos();
@@ -328,7 +351,7 @@ static void renderRow(const Section *s, int i, Row *r) {
     ImGui::Spacing();
 }
 
-static void renderSection(const Section *s) {
+static void renderSection(PanelState &st, Section *s) {
     ImVec4 col = poolColorFor(s->idx);
     bool isWinners = (strcmp(s->name, "WINNERS") == 0);
     if (!isWinners) {
@@ -352,7 +375,7 @@ static void renderSection(const Section *s) {
     ImGui::BeginChild(childId, ImVec2(0, 0), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
     for (int i = 0; i < s->nrows; i++) {
-        renderRow(s, i, &((Section *)s)->rows[i]);
+        renderRow(st, s, i, &s->rows[i]);
     }
     ImGui::EndChild();
 }
@@ -362,7 +385,8 @@ static void renderSection(const Section *s) {
  * half; parses the display half into name{value} terms; cross-
  * references each term with kTermDocs (meaning) and the computation
  * half (how-computed); renders everything in a 3- or 4-column table. */
-static void renderDetailPopup(int winW, int winH) {
+static void renderDetailPopup(PanelState &st, int winW, int winH) {
+    DetailRow &sDetail = st.detail;
     if (!sDetail.open) return;
 
     if (sDetail.justOpened) {
@@ -540,7 +564,8 @@ static void renderDetailPopup(int winW, int winH) {
 }
 
 /* ── Top-level renderer registered for "NewAutopilot:pool_grid" ── */
-void renderPoolGrid(const char *body) {
+void renderPoolGrid(int registry_idx, const char *body) {
+    PanelState &st = stateFor(registry_idx);
     if (!body || !body[0]) {
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.4f, 1.0f),
                            "(no data yet — polling brain.get_pool_breakdown_json)");
@@ -555,11 +580,22 @@ void renderPoolGrid(const char *body) {
         return;
     }
 
+    const int   kSchemaVersion = 1;
+    int  schemaV     = (int)getNum(root, "schema_version", 0);
     const char *phase = getStr(root, "phase", "?");
     int  tickIn      = (int)getNum(root, "tick", -1);
     int  replanIn    = (int)getNum(root, "replan_left", -1);
     bool isReplanTick = (replanIn == 0);
     int  followBot    = (int)getNum(root, "bot", -1);
+
+    /* Schema-version banner — render but don't bail. The renderer
+     * may still produce a useful (if degraded) view if the brain
+     * upgraded fields without breaking shape. */
+    if (schemaV != kSchemaVersion) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+            "WARN: pool_grid schema_version=%d, renderer expects %d",
+            schemaV, kSchemaVersion);
+    }
 
     /* Index sections by idx for grid placement (1..12). */
     enum { MAX_SECS = 32 };
@@ -580,8 +616,8 @@ void renderPoolGrid(const char *body) {
     for (int si = 1; si <= 12; si++) {
         Section *sec = byIdx[si];
         if (!sec) continue;
-        auto &prev  = sPrevRank[si];
-        auto &flash = sFlashStart[si];
+        auto &prev  = st.prevRank[si];
+        auto &flash = st.flashStart[si];
         for (int ri = 0; ri < sec->nrows; ri++) {
             Row *r = &sec->rows[ri];
             auto it = prev.find(r->id);
@@ -652,7 +688,7 @@ void renderPoolGrid(const char *body) {
             SDL_snprintf(cellId, sizeof(cellId), "##cell%d", sidx);
             ImGui::BeginChild(cellId, ImVec2(colW, rowH), true);
             if (byIdx[sidx]) {
-                renderSection(byIdx[sidx]);
+                renderSection(st, byIdx[sidx]);
             } else {
                 ImGui::TextColored(poolColorFor(sidx),
                                    "%d. (no data)", sidx);
@@ -666,35 +702,35 @@ void renderPoolGrid(const char *body) {
     if (byIdx[11]) {
         ImVec2 a11 = ImGui::GetContentRegionAvail();
         ImGui::BeginChild("##cell11", ImVec2(a11.x, 52.0f), true);
-        renderSection(byIdx[11]);
+        renderSection(st, byIdx[11]);
         ImGui::EndChild();
     }
     /* wait_for_lgm (12) — single-row strip. */
     if (byIdx[12]) {
         ImVec2 a12 = ImGui::GetContentRegionAvail();
         ImGui::BeginChild("##cell12", ImVec2(a12.x, 52.0f), true);
-        renderSection(byIdx[12]);
+        renderSection(st, byIdx[12]);
         ImGui::EndChild();
     }
 
     /* Click on empty space deselects. */
-    if (ImGui::IsMouseClicked(0) && !sAnyRowClickedThisFrame) {
-        sSelectedSection = -1;
-        sSelectedRowId   = -1;
-        sCopyBuf[0]      = '\0';
+    if (ImGui::IsMouseClicked(0) && !st.anyRowClickedThisFrame) {
+        st.selectedSection = -1;
+        st.selectedRowId   = -1;
+        st.copyBuf[0]      = '\0';
     }
-    sAnyRowClickedThisFrame = false;
+    st.anyRowClickedThisFrame = false;
 
     /* Ctrl+C copies the selected row to the system clipboard. */
-    if (sSelectedRowId >= 0 && sCopyBuf[0] &&
+    if (st.selectedRowId >= 0 && st.copyBuf[0] &&
             ImGui::GetIO().KeyCtrl &&
             ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-        ImGui::SetClipboardText(sCopyBuf);
+        ImGui::SetClipboardText(st.copyBuf);
     }
 
     int winW = (int)ImGui::GetWindowWidth();
     int winH = (int)ImGui::GetWindowHeight();
-    renderDetailPopup(winW, winH);
+    renderDetailPopup(st, winW, winH);
 
     freeSections(sections, nSections);
     cJSON_Delete(root);

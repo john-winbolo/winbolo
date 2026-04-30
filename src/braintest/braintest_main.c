@@ -85,7 +85,7 @@
 #include "braintest_botwindow.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
-void panelRenderText(const char *body);
+void panelRenderText(int registry_idx, const char *body);
 #include "../gui/clientmutex.h"
 #include "../gui/lang.h"
 
@@ -868,7 +868,10 @@ static int panelRegisterCallback(const char *name, const char *type,
  * followBot + recording-enabled flag + sim tick in file-statics the
  * callback can read. Updated every frame the panel window is visible. */
 static BYTE     g_panelPollFollowBot   = 0;
-static bool     g_panelRecordEnabled   = true; /* on by default */
+/* Off by default: recording produces one file per polled tick per
+ * panel, which adds up fast over long sessions and has no rotation
+ * yet. Opt in with --record-panels when you want offline replay. */
+static bool     g_panelRecordEnabled   = false;
 static char     g_panelRecordDir[FILENAME_MAX] = "";
 static uint32_t g_panelPollTick        = 0;
 
@@ -939,7 +942,7 @@ static void printUsage(const char *prog) {
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
-        "  --no-record-panels   Disable per-tick panel JSON dumps (default: on)\n"
+        "  --record-panels      Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -979,11 +982,12 @@ static bool parseArgs(int argc, char **argv) {
             else if (strcmp(v, "tournament") == 0)  optGame = gameTournament;
             else if (strcmp(v, "strict") == 0)      optGame = gameStrictTournament;
             else { fprintf(stderr, "Unknown game type: %s\n", v); return FALSE; }
-        } else if (strcmp(argv[i], "--no-record-panels") == 0) {
-            /* Suppress per-tick panel JSON dumps. Recording is on
-             * by default since the disk cost is trivial (~10KB/s
-             * for one open panel) and the replay value is high. */
-            g_panelRecordEnabled = false;
+        } else if (strcmp(argv[i], "--record-panels") == 0) {
+            /* Enable per-tick panel JSON dumps to
+             * debug_sessions/<ts>/panels/. Off by default — there's
+             * no rotation yet so a long session creates many files.
+             * Use when you want to inspect / replay later. */
+            g_panelRecordEnabled = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);

@@ -443,12 +443,29 @@ char *botManagerEvalLuaString(BYTE playerNum, const char *src) {
     /* Caller-owned heap copy of whatever string the chunk returns.
      * On any error path (compile fail, runtime fail, non-string
      * result) we return NULL — the panel renderer treats that as
-     * "no fresh data, keep showing the previous text". */
+     * "no fresh data, keep showing the previous text".
+     *
+     * Errors are logged with rate limiting so a recurring brain bug
+     * doesn't flood the console; without this the panel just goes
+     * silent and the user can't tell why. */
+    static Uint64 sLastErrLogMs = 0;
     if (luaL_loadstring(L, src) != LUA_OK) {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastErrLogMs > 2000) {
+            SDL_Log("brain %d: panel eval compile error: %s",
+                    playerNum, lua_tostring(L, -1));
+            sLastErrLogMs = now;
+        }
         lua_pop(L, 1);
         return NULL;
     }
     if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastErrLogMs > 2000) {
+            SDL_Log("brain %d: panel eval runtime error: %s",
+                    playerNum, lua_tostring(L, -1));
+            sLastErrLogMs = now;
+        }
         lua_pop(L, 1);
         return NULL;
     }

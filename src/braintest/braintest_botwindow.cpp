@@ -32,12 +32,18 @@ struct BotWindowState {
     ImGuiContext  *ctx;
     char          *cachedText;
     Uint64         lastPollMs;
+    /* `visible` tracks the actual SDL_Window state (shown vs hidden);
+     * `userWanted` tracks "should this window be open when the user
+     * returns to its bot." Switching followBot away auto-hides the
+     * window but leaves userWanted alone — switching back restores it.
+     * Toggling via shortcut key flips both. */
     bool           visible;
+    bool           userWanted;
     bool           initialized;
 };
 static BotWindowState g_slots[PANEL_REG_MAX];
 
-static const Uint64 kPollIntervalMs = 100; /* 10 Hz, same as P. */
+static const Uint64 kPollIntervalMs = PANEL_POLL_INTERVAL_MS;
 
 static bool ensureCreated(int idx, const PanelRegistryEntry *e) {
     BotWindowState *s = &g_slots[idx];
@@ -83,11 +89,13 @@ bool botWindowToggle(int registry_idx) {
     BotWindowState *s = &g_slots[registry_idx];
     if (s->visible) {
         SDL_HideWindow(s->window);
-        s->visible = false;
+        s->visible    = false;
+        s->userWanted = false;
     } else {
         SDL_ShowWindow(s->window);
         SDL_RaiseWindow(s->window);
-        s->visible = true;
+        s->visible    = true;
+        s->userWanted = true;
     }
     return true;
 }
@@ -111,7 +119,8 @@ void botWindowProcessEvent(SDL_Event *ev) {
             BotWindowState *s = &g_slots[i];
             if (s->window == w && s->visible) {
                 SDL_HideWindow(s->window);
-                s->visible = false;
+                s->visible    = false;
+                s->userWanted = false; /* explicit close = stay closed */
                 break;
             }
         }
@@ -125,19 +134,36 @@ bool botWindowWantsTextInput(void) {
 
 void botWindowRenderAll(int followBot,
                         char *(*onPollPanel)(int registry_idx)) {
+    /* First pass: reconcile visibility against followBot.
+     *  - Owner mismatch + currently visible → hide but keep userWanted
+     *    so we restore on switch-back.
+     *  - Owner match + userWanted + currently hidden → re-show.
+     * This runs over every initialized slot so swap-state is consistent
+     * even for windows the user hasn't pressed the shortcut for this
+     * frame. */
+    for (int i = 0; i < PANEL_REG_MAX; i++) {
+        BotWindowState *s = &g_slots[i];
+        if (!s->initialized || !s->window) continue;
+        const PanelRegistryEntry *e = panelRegistryGet(i);
+        if (!e) continue;
+        if (e->bot_owner != followBot) {
+            if (s->visible) {
+                SDL_HideWindow(s->window);
+                s->visible = false; /* userWanted preserved */
+            }
+        } else if (s->userWanted && !s->visible) {
+            SDL_ShowWindow(s->window);
+            SDL_RaiseWindow(s->window);
+            s->visible = true;
+        }
+    }
+
     for (int i = 0; i < PANEL_REG_MAX; i++) {
         BotWindowState *s = &g_slots[i];
         if (!s->visible || !s->window || !s->renderer || !s->ctx) continue;
         const PanelRegistryEntry *e = panelRegistryGet(i);
         if (!e) continue;
-        /* Auto-hide when the user isn't watching this bot — same
-         * filter the P window applies to its tabs. State is kept
-         * so toggling back to the bot reveals the same window. */
-        if (e->bot_owner != followBot) {
-            SDL_HideWindow(s->window);
-            s->visible = false;
-            continue;
-        }
+        if (e->bot_owner != followBot) continue; /* belt + suspenders */
 
         /* Poll the panel's data on the same 10Hz cadence as P. */
         Uint64 now = SDL_GetTicks();
@@ -170,7 +196,7 @@ void botWindowRenderAll(int followBot,
 
         PanelRenderFn fn = panelTypeFind(e->type);
         if (!fn) fn = panelTypeFind("text");
-        if (fn) fn(s->cachedText);
+        if (fn) fn(i, s->cachedText);
 
         ImGui::End();
         ImGui::Render();

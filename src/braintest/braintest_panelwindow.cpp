@@ -21,7 +21,7 @@ extern "C" {
  * whatever string the brain returned. Exported (no static)
  * so braintest_main.c can register it as the type "text"
  * handler at startup. */
-extern "C" void panelRenderText(const char *body) {
+extern "C" void panelRenderText(int /*registry_idx*/, const char *body) {
     if (body && body[0]) {
         ImGui::TextUnformatted(body);
     } else {
@@ -45,7 +45,7 @@ static TabCache sCache[PANEL_REG_MAX];
 static int      sActiveTab    = 0;
 static int      sLastActiveTab = -1;
 
-static const Uint64 kPollIntervalMs = 100; /* 10 Hz */
+static const Uint64 kPollIntervalMs = PANEL_POLL_INTERVAL_MS;
 
 void panelWindowInit(SDL_Window *window, SDL_Renderer *renderer) {
     if (sInitialized || !window || !renderer) return;
@@ -201,7 +201,7 @@ void panelWindowRender(SDL_Renderer *renderer, int winW, int winH,
                  * instead of going blank. */
                 PanelRenderFn fn = panelTypeFind(e->type);
                 if (!fn) fn = panelTypeFind("text");
-                if (fn) fn(body);
+                if (fn) fn(absIdx, body);
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
