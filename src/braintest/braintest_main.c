@@ -215,6 +215,11 @@ typedef struct {
      * cell that's still 0xFF (unseen) in the bot's pathfinder
      * worldPtr — i.e. tiles the brain has never observed. */
     bool         showFog;
+
+    /* Cell value numeric overlay (9 key). Prints the underlying
+     * danger / influence value on each visible tile when the
+     * matching grid overlay (1 or 2) is active. */
+    bool         showValues;
 } BrainTestApp;
 
 static volatile bool appQuit = FALSE;
@@ -275,6 +280,76 @@ static const char *keyToRole(BrainTestApp *app, int scancode) {
     if (scancode == app->keyShoot)    return "shoot";
     if (scancode == app->keyLayMine)  return "lay_mine";
     return NULL;
+}
+
+/* Forward decl — defined later with renderBrainOverlay. */
+static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
+                            int screenW, int screenH,
+                            float *out_sx, float *out_sy);
+
+/* Cell-value numeric overlay (toggled with 9). Prints the raw
+ * danger / influence value on every visible tile when the
+ * corresponding grid overlay is on. Skipped at low zoom (numbers
+ * unreadable). Generic — reads only BrainPathfinder grids. */
+static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
+    if (!app->showValues) return;
+    if (!app->showDanger && !app->showInfluence) return;
+    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    if (!pf) return;
+
+    int zf = app->zoomFactor;
+    int tilePx = 16 * zf;
+    if (tilePx < 16) return;     /* too small to read */
+
+    int centerMX = app->viewCenterX >> 8;
+    int centerMY = app->viewCenterY >> 8;
+    int tilesW = screenW / tilePx + 2;
+    int tilesH = screenH / tilePx + 2;
+    int startMX = centerMX - tilesW / 2;
+    int startMY = centerMY - tilesH / 2;
+
+    float textScale = (tilePx >= 32) ? 1.0f : 0.5f;
+    SDL_SetRenderScale(app->renderer, textScale, textScale);
+
+    char buf[16];
+    for (int ty = startMY; ty < startMY + tilesH; ty++) {
+        if (ty < 0 || ty > 255) continue;
+        for (int tx = startMX; tx < startMX + tilesW; tx++) {
+            if (tx < 0 || tx > 255) continue;
+            int idx = ty * 256 + tx;
+            bool drawn = false;
+            if (app->showDanger) {
+                uint16_t d = pf->danger_grid[idx];
+                if (d > 0) {
+                    float sx, sy;
+                    mapTileToScreen(app, (float)tx + 0.1f,
+                                          (float)ty + 0.2f,
+                                          screenW, screenH, &sx, &sy);
+                    SDL_snprintf(buf, sizeof(buf), "%d", d);
+                    SDL_SetRenderDrawColor(app->renderer, 255, 140, 0, 255);
+                    SDL_RenderDebugText(app->renderer,
+                        sx / textScale, sy / textScale, buf);
+                    drawn = true;
+                }
+            }
+            if (app->showInfluence) {
+                int16_t inf = pf->influence_grid[idx];
+                if (inf != 0) {
+                    float sx, sy;
+                    float yOff = drawn ? 0.6f : 0.2f;
+                    mapTileToScreen(app, (float)tx + 0.1f,
+                                          (float)ty + yOff,
+                                          screenW, screenH, &sx, &sy);
+                    SDL_snprintf(buf, sizeof(buf), "%d", inf);
+                    if (inf > 0) SDL_SetRenderDrawColor(app->renderer,  80, 140, 255, 255);
+                    else         SDL_SetRenderDrawColor(app->renderer, 255,  80,  80, 255);
+                    SDL_RenderDebugText(app->renderer,
+                        sx / textScale, sy / textScale, buf);
+                }
+            }
+        }
+    }
+    SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
 }
 
 /* Fog of war overlay: tile-by-tile dark fill on every cell that's
@@ -1235,6 +1310,9 @@ static void appRender(BrainTestApp *app) {
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);
 
+        /* Numeric cell values (companion to 1/2 grid overlays). */
+        renderCellValues(app, screenW, screenH);
+
         /* Fog-of-war (drawn between BrainTest pathfinder overlays
          * and the brain's own overlays so the brain's stuff isn't
          * obscured). */
@@ -1515,9 +1593,12 @@ int main(int argc, char *argv[]) {
                 case SDLK_6:
                     app.showFog = !app.showFog;
                     break;
+                case SDLK_9:
+                    app.showValues = !app.showValues;
+                    break;
                 case SDLK_0:
                     app.showInfluence = app.showDanger = app.showFrontLine =
-                        app.showPath = app.showFog = false;
+                        app.showPath = app.showFog = app.showValues = false;
                     app.overlayDirty = true;
                     break;
                 case SDLK_EQUALS:
