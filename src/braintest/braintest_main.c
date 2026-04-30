@@ -2498,6 +2498,17 @@ static void appRender(BrainTestApp *app) {
         BrainPathfinder *pbPf = botManagerGetBrainPathfinder(app->followBot);
         struct basesObj  savedBases;
         struct pillsObj  savedPills;
+        /* Temp objects for tanks/lgm/shells. The sim holds POINTERS to
+         * these in tanks[] / lgmen[] / shs, so the storage must outlive
+         * the render call — keeping them at function scope. Saved
+         * pointers below capture what the live sim was pointing at so
+         * we can restore after rendering. */
+        struct tankObj   tempTanks[MAX_TANKS];
+        tank             savedTanks[MAX_TANKS];
+        struct lgmObj    tempLgmen[MAX_TANKS];
+        lgm              savedLgmen[MAX_TANKS];
+        struct shellsObj tempShellNodes[MAX_SNAPSHOT_SHELLS];
+        shells           savedShells = NULL;
         bool patched = false;
         if (app->playbackMode
             && app->playbackFrame >= 0
@@ -2548,6 +2559,75 @@ static void appRender(BrainTestApp *app) {
                 app->sim.sim.pb->item[i].armour = pf_->snapPills[i].armour;
                 app->sim.sim.pb->item[i].speed  = pf_->snapPills[i].speed;
                 app->sim.sim.pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            }
+
+            /* ── Tanks ── reconstruct from TankSnapshot wire entries
+             * into temp tankObj structs and re-aim sim.tanks[i] at
+             * them. Subset of fields the renderer reads (x/y/angle/
+             * speed/onBoat/death/resources). */
+            memset(tempTanks, 0, sizeof(tempTanks));
+            for (int i = 0; i < MAX_TANKS; i++) {
+                savedTanks[i] = app->sim.sim.tanks[i];
+                app->sim.sim.tanks[i] = NULL;
+            }
+            for (int i = 0; i < pf_->tankCount; i++) {
+                TankSnapshot *ts = &pf_->tanks[i];
+                BYTE pn = ts->playerNum;
+                if (pn >= MAX_TANKS) continue;
+                struct tankObj *t = &tempTanks[pn];
+                t->x         = ts->worldX;
+                t->y         = ts->worldY;
+                t->angle     = (TURNTYPE)(ts->angle / 256);
+                t->speed     = (SPEEDTYPE)(ts->speed / 256);
+                t->onBoat    = (ts->tankStatus & 0x0F) ? TRUE : FALSE;
+                t->deathWait = ts->deathWait;
+                t->armour    = ts->armour;
+                t->shells    = ts->shells;
+                t->mines     = ts->mines;
+                t->trees     = ts->trees;
+                app->sim.sim.tanks[pn] = t;
+            }
+
+            /* ── LGMs ── lgmFrame is encoded as actual_frame+1 with 0
+             * meaning "in tank or dead" (invisible). Position comes
+             * from lgmMX/MY map coords + lgmPX/PY pixel offsets. */
+            memset(tempLgmen, 0, sizeof(tempLgmen));
+            for (int i = 0; i < MAX_TANKS; i++) {
+                savedLgmen[i] = app->sim.sim.lgmen[i];
+                app->sim.sim.lgmen[i] = NULL;
+            }
+            for (int i = 0; i < pf_->tankCount; i++) {
+                TankSnapshot *ts = &pf_->tanks[i];
+                BYTE pn = ts->playerNum;
+                if (pn >= MAX_TANKS) continue;
+                if (ts->lgmFrame == 0) continue;  /* in-tank / dead */
+                struct lgmObj *l = &tempLgmen[pn];
+                l->playerNum = pn;
+                l->frame     = ts->lgmFrame - 1;
+                l->x = (WORLD)((ts->lgmMX << 8) + (ts->lgmPX << 4));
+                l->y = (WORLD)((ts->lgmMY << 8) + (ts->lgmPY << 4));
+                l->inTank    = FALSE;
+                l->isDead    = FALSE;
+                app->sim.sim.lgmen[pn] = l;
+            }
+
+            /* ── Shells ── linked list reconstruction. */
+            memset(tempShellNodes, 0, sizeof(tempShellNodes));
+            savedShells = app->sim.sim.shs;
+            app->sim.sim.shs = NULL;
+            if (pf_->shellCount > 0) {
+                for (int i = 0; i < pf_->shellCount; i++) {
+                    struct shellsObj *s = &tempShellNodes[i];
+                    s->x         = pf_->snapShells[i].worldX;
+                    s->y         = pf_->snapShells[i].worldY;
+                    s->angle     = pf_->snapShells[i].angle;
+                    s->owner     = pf_->snapShells[i].owner;
+                    s->length    = pf_->snapShells[i].length;
+                    s->shellDead = FALSE;
+                    s->next = (i + 1 < pf_->shellCount) ? &tempShellNodes[i + 1] : NULL;
+                    s->prev = (i > 0) ? &tempShellNodes[i - 1] : NULL;
+                }
+                app->sim.sim.shs = &tempShellNodes[0];
             }
             patched = true;
         }
@@ -2602,6 +2682,11 @@ static void appRender(BrainTestApp *app) {
             }
             *app->sim.sim.bs = savedBases;
             *app->sim.sim.pb = savedPills;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                app->sim.sim.tanks[i] = savedTanks[i];
+                app->sim.sim.lgmen[i] = savedLgmen[i];
+            }
+            app->sim.sim.shs = savedShells;
         }
     }
 
