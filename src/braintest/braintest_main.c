@@ -198,6 +198,19 @@ typedef struct {
      * registry idx. NULL = panel didn't exist or wasn't polled this
      * frame. Owned by the frame; freed in recordingFreeFrame. */
     char *recordedPanels[PANEL_REG_MAX];
+
+    /* Brain-emitted overlay commands captured per active bot. Without
+     * this, scrubbing back would show whatever the brain has emitted
+     * MOST RECENTLY (live) — not what it emitted at the scrubbed
+     * tick. Stored per-bot so Tab-switching followBot during playback
+     * still pulls the right bot's overlays. */
+    OverlayCmd *botOverlayCmds[MAX_TANKS];
+    int         botOverlayCmdCount[MAX_TANKS];
+
+    /* A* / Dijkstra path snapshot for the green key-4 overlay. */
+    int *pathX;
+    int *pathY;
+    int  pathLen;
 } RecordingFrame;
 
 typedef struct {
@@ -448,6 +461,9 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->fullBrainMap);
     free(f->brainMapDeltas);
     for (int i = 0; i < PANEL_REG_MAX; i++) free(f->recordedPanels[i]);
+    for (int i = 0; i < MAX_TANKS; i++) free(f->botOverlayCmds[i]);
+    free(f->pathX);
+    free(f->pathY);
     memset(f, 0, sizeof(*f));
 }
 
@@ -1557,6 +1573,9 @@ static void updateOverlayTexture(BrainTestApp *app) {
 /* Cache the brain's A* path for screen-space rendering */
 static void updateCachedPath(BrainTestApp *app) {
     if (!vizFlag(app->regIdxPath)) return;
+    /* In playback the path was already patched in from the recorded
+     * frame; re-tracing the live brain's slate would clobber it. */
+    if (app->playbackMode) return;
     BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
     if (!pf) return;
 
@@ -1932,6 +1951,43 @@ static void recordingCapture(BrainTestApp *app) {
     /* ── Goal info (drives scrubber goal-change tick markers) ── */
     if (botManagerGetGoalInfo(app->followBot, &f->goalInfo)) {
         f->goalInfoValid = true;
+    }
+
+    /* ── Per-bot overlay command snapshots ── copy each active
+     * bot's current OverlayCmdBuffer so Tab switching during
+     * playback still shows that bot's overlays for the scrubbed
+     * tick (not whatever they emitted most recently live). */
+    for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
+        OverlayCmdBuffer *ovl = botManagerGetOverlayCmds(oi);
+        if (ovl && ovl->count > 0) {
+            f->botOverlayCmdCount[oi] = ovl->count;
+            f->botOverlayCmds[oi] = (OverlayCmd *)malloc(
+                ovl->count * sizeof(OverlayCmd));
+            memcpy(f->botOverlayCmds[oi], ovl->cmds,
+                   ovl->count * sizeof(OverlayCmd));
+        }
+    }
+
+    /* ── A* / Dijkstra path (the key-4 green polyline) ── trace
+     * from the followed bot's NORMAL Dijkstra slate to its current
+     * goal. Mirrors updateCachedPath()'s logic, but writing into
+     * the frame's pathX/pathY/pathLen instead of the live cache. */
+    if (pf && f->goalInfoValid
+        && f->goalInfo.kind[0] != '\0'
+        && strcmp(f->goalInfo.kind, "none") != 0) {
+        int slate = brainPathfinderDijkstraFindBest(pf, /* KIND_NORMAL */ 0);
+        if (slate >= 0) {
+            int tx[2048], ty[2048];
+            int n = brainPathfinderDijkstraTracePath(pf, slate,
+                f->goalInfo.mx, f->goalInfo.my, tx, ty, 2048);
+            if (n > 0) {
+                f->pathLen = n;
+                f->pathX = (int *)malloc(n * sizeof(int));
+                f->pathY = (int *)malloc(n * sizeof(int));
+                memcpy(f->pathX, tx, n * sizeof(int));
+                memcpy(f->pathY, ty, n * sizeof(int));
+            }
+        }
     }
 
     /* ── Per-panel JSON capture ── one poll per registered panel
@@ -2509,6 +2565,19 @@ static void appRender(BrainTestApp *app) {
         lgm              savedLgmen[MAX_TANKS];
         struct shellsObj tempShellNodes[MAX_SNAPSHOT_SHELLS];
         shells           savedShells = NULL;
+        /* Per-bot overlay-cmd buffer pointer-swap. We point each
+         * bot's OverlayCmdBuffer at the recorded array for the
+         * render then restore. */
+        OverlayCmd *savedOvlCmds[MAX_TANKS] = {0};
+        int         savedOvlCount[MAX_TANKS] = {0};
+        OverlayCmdBuffer *savedOvlBufs[MAX_TANKS] = {0};
+        /* A-star / Dijkstra path (key-4 overlay) — patch app->cachedPath. */
+        int savedCachedPathLen = 0;
+        bool patchedPath = false;
+        /* Camera — only restored if we replaced it (free-camera mode
+         * keeps the user's pan even during playback). */
+        WORLD savedViewCenterX = 0, savedViewCenterY = 0;
+        bool patchedCamera = false;
         bool patched = false;
         if (app->playbackMode
             && app->playbackFrame >= 0
@@ -2577,8 +2646,13 @@ static void appRender(BrainTestApp *app) {
                 struct tankObj *t = &tempTanks[pn];
                 t->x         = ts->worldX;
                 t->y         = ts->worldY;
-                t->angle     = (TURNTYPE)(ts->angle / 256);
-                t->speed     = (SPEEDTYPE)(ts->speed / 256);
+                /* TURNTYPE / SPEEDTYPE are floats. Wire format is
+                 * actual * 256, so divide by 256.0f to recover
+                 * sub-tick precision (integer / 256 would snap
+                 * the tank to coarse angle increments and look
+                 * janky during scrubbing). */
+                t->angle     = (TURNTYPE)((float)ts->angle  / 256.0f);
+                t->speed     = (SPEEDTYPE)((float)ts->speed / 256.0f);
                 t->onBoat    = (ts->tankStatus & 0x0F) ? TRUE : FALSE;
                 t->deathWait = ts->deathWait;
                 t->armour    = ts->armour;
@@ -2629,6 +2703,55 @@ static void appRender(BrainTestApp *app) {
                 }
                 app->sim.sim.shs = &tempShellNodes[0];
             }
+
+            /* ── Brain overlay command buffers ── pointer-swap each
+             * active bot's OverlayCmdBuffer to the recorded cmds.
+             * We don't memcpy the whole buffer; we just retarget its
+             * cmds/count fields and reset them after render. */
+            for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
+                OverlayCmdBuffer *ovl = botManagerGetOverlayCmds(oi);
+                if (!ovl) continue;
+                savedOvlBufs[oi]  = ovl;
+                savedOvlCmds[oi]  = ovl->cmds;
+                savedOvlCount[oi] = ovl->count;
+                ovl->cmds  = pf_->botOverlayCmds[oi];
+                ovl->count = pf_->botOverlayCmdCount[oi];
+            }
+
+            /* ── A* / Dijkstra path overlay ── temporarily replace
+             * app->cachedPath_* with the recorded path. The
+             * polyline renderer reads these directly, so this is
+             * enough. updateCachedPath() (which would re-poll the
+             * brain) is gated by playbackMode below. */
+            savedCachedPathLen = app->cachedPathLen;
+            int plen = pf_->pathLen;
+            if (plen > 2048) plen = 2048;
+            if (plen > 0 && pf_->pathX && pf_->pathY) {
+                /* cachedPath_x/y are fixed-size on the app, so we
+                 * memcpy in. Saved length above lets us truncate
+                 * back without restoring the bytes — anything
+                 * beyond cachedPathLen is treated as junk by the
+                 * renderer anyway. */
+                memcpy(app->cachedPath_x, pf_->pathX, plen * sizeof(int));
+                memcpy(app->cachedPath_y, pf_->pathY, plen * sizeof(int));
+                app->cachedPathLen = plen;
+            } else {
+                app->cachedPathLen = 0;
+            }
+            patchedPath = true;
+
+            /* ── Camera ── follow the recorded view center unless
+             * the user has explicitly enabled free-camera. Lets the
+             * scrubber show what was on screen at that tick instead
+             * of jumping the camera to the live tank position. */
+            if (!app->freeCamera) {
+                savedViewCenterX = app->viewCenterX;
+                savedViewCenterY = app->viewCenterY;
+                app->viewCenterX = pf_->viewCenterX;
+                app->viewCenterY = pf_->viewCenterY;
+                patchedCamera = true;
+            }
+
             patched = true;
         }
 
@@ -2685,8 +2808,17 @@ static void appRender(BrainTestApp *app) {
             for (int i = 0; i < MAX_TANKS; i++) {
                 app->sim.sim.tanks[i] = savedTanks[i];
                 app->sim.sim.lgmen[i] = savedLgmen[i];
+                if (savedOvlBufs[i]) {
+                    savedOvlBufs[i]->cmds  = savedOvlCmds[i];
+                    savedOvlBufs[i]->count = savedOvlCount[i];
+                }
             }
             app->sim.sim.shs = savedShells;
+            if (patchedPath) app->cachedPathLen = savedCachedPathLen;
+            if (patchedCamera) {
+                app->viewCenterX = savedViewCenterX;
+                app->viewCenterY = savedViewCenterY;
+            }
         }
     }
 
