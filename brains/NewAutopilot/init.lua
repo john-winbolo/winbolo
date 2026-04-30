@@ -122,36 +122,6 @@ function Brain.get_pool_breakdown_json()
     state.tick or 0)
 end
 
-function Brain.get_pool_breakdown()
-  local ok, result = pcall(goals.get_pool_breakdown, state)
-  if ok then return result end
-  -- Error! Log to brain_errors.log with full stack trace, then return a
-  -- minimal valid breakdown containing the error so the UI still shows
-  -- something and we know what went wrong.
-  local err_msg = tostring(result)
-  local trace = debug.traceback(err_msg, 2)
-  local sdir = _G.DEBUG_SESSION_DIR or "."
-  local f = io.open(sdir .. "/brain_errors.log", "a")
-  if f then
-    f:write(string.format("[%s] tick=%d get_pool_breakdown: %s\n%s\n\n",
-      os.date("%Y-%m-%d %H:%M:%S"), state.tick or 0, err_msg, trace))
-    f:close()
-  end
-  -- Also print once per unique error to stderr so it's visible in console
-  _G._last_pool_err = _G._last_pool_err or {}
-  if not _G._last_pool_err[err_msg] then
-    _G._last_pool_err[err_msg] = true
-    io.stderr:write("BRAIN ERROR get_pool_breakdown: " .. err_msg .. "\n")
-    io.stderr:write(trace .. "\n")
-  end
-  local msg = err_msg:gsub("\n", " "):sub(1, 200)
-  return string.format(
-    "=PHASE\terror\t0\tq6=0\tpc6=0\ttick=%d\n"..
-    "=SECTION\t10\tWINNERS\t1\t0\t1.00\n"..
-    "ROW\t0\t0\t0\t0\t-1.0\t-1.0\t0\t-1\tget_pool_breakdown ERROR: %s",
-    state.tick or 0, msg)
-end
-
 function Brain.get_strategic_place_heatmap()
   if not state._last_info then return nil end
   return goals.get_strategic_place_heatmap(state, world, state._last_info)
