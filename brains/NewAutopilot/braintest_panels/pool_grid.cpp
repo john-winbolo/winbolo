@@ -18,6 +18,7 @@
  *********************************************************/
 
 #include <SDL3/SDL.h>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,40 @@
 #include "braintest_panel_types.h"
 
 namespace {
+
+/* ── Term documentation (verbatim from optimize-branch poolwindow) ──
+ * Looked up by the word immediately before "{value}" in a row's
+ * formula — populates the "Meaning" column of the detail popup. */
+struct TermDoc { const char *term; const char *desc; };
+static const TermDoc kTermDocs[] = {
+    {"A*",      "Path cost — Dijkstra/A* weighted grid distance to the target tile"},
+    {"raw",     "Uncapped A* cost (shown when it was capped for distant/water targets)"},
+    {"base",    "Fixed base constant added to every candidate of this goal type"},
+    {"danger",  "Danger at destination × weight — hostile pills/tanks in firing range"},
+    {"stale",   "Staleness penalty — target not seen recently; info may be wrong"},
+    {"contest", "Contested penalty — an enemy tank is near this base"},
+    {"hyst",    "Switch penalty — GOAL_SWITCH_PENALTY(30) or GOAL_TARGET_SWITCH_PENALTY(15) + commitment(ticks*0.5, cap 75); negative in Pool 1 means already on this target"},
+    {"deplete", "Depletion penalty — base observed to have low shells or armour stock"},
+    {"urgency", "Urgency discount (negative) — more pill damage = higher priority"},
+    {"diff",    "Difficulty score — terrain around pill makes the attack harder"},
+    {"spot",    "Best attack spot — path cost to the nearest good firing position"},
+    {"anger",   "Anger wait cost — pill is riled up; penalty reflects waiting for it to calm"},
+    {"xfire",   "Crossfire penalty — other hostile pills nearby will also fire at you"},
+    {"intcpt",  "Intercept risk — enemy tank may reach this pill before you do"},
+    {"hp",      "Health multiplier — lower pill HP = lower cost (easier kill)"},
+    {"wound",   "Wounded discount — heavily damaged pill is a very high-value target"},
+    {"threat",  "Threat coverage × weight — hostile pill fire overlaps this base"},
+    {"carry",   "Carry discount (negative) — you are already holding a pill to place"},
+    {"mult",    "Multiplier — scales the entire bracketed cost sum"},
+    {"cpill",   "Capture pill multiplier — dead pill pickup scales the path cost down"},
+    {"aim",     "Aim bonus (negative) — tank is already in your sights; cheaper to engage"},
+    {"wall",    "Wall obstruction penalty — blocks between you and target beyond 1; 2 blocks=+100, 5 blocks=+400"},
+    {"loc",     "Strategic location multiplier — Phase 2; scales cost by terrain/position (e.g. deep_hostile). 1.0 = neutral."},
+    {"dens",    "Density discount multiplier — Phase 4; lower when many friendly candidates of the same kind cluster nearby (n = neighbor count). 1.0 = no discount."},
+    {"pickup",  "Pickup value — Phase 3; dead-pill bonus subtracted from travel cost when a pickup lies along the way."},
+    {"wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block."},
+    {NULL, NULL}
+};
 
 /* ── cJSON helpers ─────────────────────────────────── */
 double getNum(const cJSON *o, const char *k, double d) {
@@ -322,40 +357,186 @@ static void renderSection(const Section *s) {
     ImGui::EndChild();
 }
 
+/* Detail popup — verbatim port from optimize-branch poolwindow.
+ * Splits the formula at "||" into a display half and a computation
+ * half; parses the display half into name{value} terms; cross-
+ * references each term with kTermDocs (meaning) and the computation
+ * half (how-computed); renders everything in a 3- or 4-column table. */
 static void renderDetailPopup(int winW, int winH) {
     if (!sDetail.open) return;
+
     if (sDetail.justOpened) {
-        ImGui::SetNextWindowPos(
-            ImVec2(winW * 0.5f - 280, winH * 0.5f - 200),
-            ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(560, 400), ImGuiCond_Always);
+        ImGui::SetNextWindowFocus();
         sDetail.justOpened = false;
     }
-    char title[96];
+    ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(
+        ImVec2((float)winW * 0.5f - 280, (float)winH * 0.5f - 230),
+        ImGuiCond_FirstUseEver);
+
+    char title[80];
+    ImVec4 poolCol = poolColorFor(sDetail.srcPool > 0
+                                  ? sDetail.srcPool
+                                  : sDetail.sectionIdx);
     SDL_snprintf(title, sizeof(title),
-                 "Row #%d  —  %s###detail",
-                 sDetail.rowId, sDetail.poolName);
+                 "Pool %d (%s)  —  Row #%d###detail",
+                 sDetail.sectionIdx, sDetail.poolName, sDetail.rowId);
+
     bool open = sDetail.open;
-    if (ImGui::Begin(title, &open,
-                     ImGuiWindowFlags_NoSavedSettings)) {
-        ImVec4 pc = poolColorFor(sDetail.srcPool > 0
-                                 ? sDetail.srcPool
-                                 : sDetail.sectionIdx);
-        ImGui::TextColored(pc, "Pool: %s", sDetail.poolName);
-        ImGui::Text("ID: #%d   Pos: (%d, %d)",
-                    sDetail.rowId, sDetail.mx, sDetail.my);
-        if (sDetail.cost >= 1e9f)
-            ImGui::Text("Cost: INF   Weighted: %.0f", sDetail.weighted);
-        else
-            ImGui::Text("Cost: %.0f   Weighted: %.0f",
-                        sDetail.cost, sDetail.weighted);
-        ImGui::Separator();
-        ImGui::TextWrapped("Formula:");
-        ImGui::TextWrapped("%s", sDetail.formula);
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) open = false;
+    ImGui::Begin(title, &open,
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+
+    if (ImGui::IsWindowFocused() &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        open = false;
+
+    ImGui::TextColored(poolCol, "Pool %d: %s",
+                       sDetail.sectionIdx, sDetail.poolName);
+    if (sDetail.winner) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
+                           "  \xe2\x98\x85 WINNER");
     }
+    ImGui::Separator();
+
+    ImGui::Text("ID: #%d    Location: (%d, %d)",
+                sDetail.rowId, sDetail.mx, sDetail.my);
+    if (sDetail.cost < 0)
+        ImGui::Text("Cost: (pending)    Weighted: —");
+    else if (sDetail.cost >= 1e9f)
+        ImGui::Text("Cost: INF    Weighted: INF");
+    else
+        ImGui::Text("Cost: %.1f    Weighted (×phase): %.1f",
+                    sDetail.cost, sDetail.weighted);
+    ImGui::Separator();
+
+    /* Split the formula at the "||" detail separator. */
+    const char *detailSep = strstr(sDetail.formula, "||");
+    char dispFormula[512] = {0};
+    if (detailSep) {
+        int dlen = (int)(detailSep - sDetail.formula);
+        if (dlen >= (int)sizeof(dispFormula)) dlen = (int)sizeof(dispFormula) - 1;
+        memcpy(dispFormula, sDetail.formula, dlen);
+    } else {
+        SDL_strlcpy(dispFormula, sDetail.formula, sizeof(dispFormula));
+    }
+
+    /* Parse the per-term computation map from the || section.
+     * Format: "name:computation|name:computation|..." */
+    struct TermCompute { char name[32]; char compute[400]; };
+    TermCompute computes[24];
+    int nComputes = 0;
+    if (detailSep) {
+        const char *dp = detailSep + 2;
+        while (*dp && nComputes < 24) {
+            const char *segEnd = strchr(dp, '|');
+            if (!segEnd) segEnd = dp + strlen(dp);
+            const char *colon = (const char *)memchr(dp, ':', segEnd - dp);
+            if (colon) {
+                int nlen = (int)(colon - dp);
+                int clen = (int)(segEnd - colon - 1);
+                if (nlen > 0 && nlen < 32 && clen > 0 && clen < 400) {
+                    SDL_strlcpy(computes[nComputes].name,    dp,        nlen + 1);
+                    SDL_strlcpy(computes[nComputes].compute, colon + 1, clen + 1);
+                    nComputes++;
+                }
+            }
+            dp = (*segEnd == '|') ? segEnd + 1 : segEnd;
+        }
+    }
+
+    /* Display-portion formula in yellow. */
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Formula:");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.65f, 1.0f));
+    ImGui::TextWrapped("  %s", dispFormula[0] ? dispFormula : "(none)");
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+
+    /* Parse word{value} terms out of the display formula. */
+    struct ParsedTerm { char name[32]; char value[32]; };
+    ParsedTerm terms[32];
+    int nTerms = 0;
+    const char *p = dispFormula;
+    while (*p && nTerms < 32) {
+        const char *ob = strchr(p, '{');
+        if (!ob) break;
+        const char *cb = strchr(ob + 1, '}');
+        if (!cb) break;
+        const char *ns = ob - 1;
+        while (ns >= dispFormula &&
+               (isalnum((unsigned char)*ns) || *ns == '*' || *ns == '_'))
+            ns--;
+        ns++;
+        int nlen = (int)(ob - ns);
+        int vlen = (int)(cb - ob - 1);
+        if (nlen > 0 && nlen < 32 && vlen < 32) {
+            SDL_strlcpy(terms[nTerms].name,  ns,     nlen + 1);
+            SDL_strlcpy(terms[nTerms].value, ob + 1, vlen + 1);
+            nTerms++;
+        }
+        p = cb + 1;
+    }
+
+    bool hasComputed = (nComputes > 0);
+    if (nTerms > 0) {
+        ImGui::Text("Term Breakdown:");
+        ImGui::Spacing();
+        int nCols = hasComputed ? 4 : 3;
+        if (ImGui::BeginTable("##termtbl", nCols,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY)) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Term",    ImGuiTableColumnFlags_WidthFixed,  68.0f);
+            ImGui::TableSetupColumn("Value",   ImGuiTableColumnFlags_WidthFixed,  52.0f);
+            ImGui::TableSetupColumn("Meaning", ImGuiTableColumnFlags_WidthStretch);
+            if (hasComputed)
+                ImGui::TableSetupColumn("How computed",
+                                        ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            for (int ti = 0; ti < nTerms; ti++) {
+                const char *docStr = NULL;
+                for (int di = 0; kTermDocs[di].term; di++) {
+                    if (strcmp(terms[ti].name, kTermDocs[di].term) == 0) {
+                        docStr = kTermDocs[di].desc;
+                        break;
+                    }
+                }
+                const char *compStr = NULL;
+                for (int ci = 0; ci < nComputes; ci++) {
+                    if (strcmp(terms[ti].name, computes[ci].name) == 0) {
+                        compStr = computes[ci].compute;
+                        break;
+                    }
+                }
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.5f, 1.0f),
+                                   "%s", terms[ti].name);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f),
+                                   "%s", terms[ti].value);
+                ImGui::TableSetColumnIndex(2);
+                if (docStr) ImGui::TextWrapped("%s", docStr);
+                else        ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1),
+                                               "(no description)");
+                if (hasComputed) {
+                    ImGui::TableSetColumnIndex(3);
+                    if (compStr)
+                        ImGui::TextWrapped("%s", compStr);
+                    else
+                        ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1), "—");
+                }
+            }
+            ImGui::EndTable();
+        }
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                           "No formula terms to explain.");
+    }
+
     ImGui::End();
-    if (!open) sDetail.open = false;
+    sDetail.open = open;
 }
 
 /* ── Top-level renderer registered for "NewAutopilot:pool_grid" ── */
