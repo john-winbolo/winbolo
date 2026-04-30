@@ -768,7 +768,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                             clientSimAppendLobbyChat(c->clientSim, "Server",
                                                      rendered);
                         } else {
-                            screenNetStatusMessage(c->clientSim, rendered);
+                            screenNetStatusMessage(c->clientSim, (char *)rendered);
                         }
                     }
                 }

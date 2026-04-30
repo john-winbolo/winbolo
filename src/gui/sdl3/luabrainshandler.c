@@ -66,6 +66,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <stdio.h>   /* fopen, fprintf — for brain_error.log writes */
+
 #ifndef _WIN32
 #  include <dirent.h>
 #  include <sys/stat.h>
@@ -633,26 +635,37 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       int loadErr = luaL_loadbuffer(L, src, srcLen, resolvedPath);
       SDL_free(src);
       if (loadErr != LUA_OK) {
+        const char *e = lua_tostring(L, -1);
         WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
-                resolvedPath, lua_tostring(L, -1));
+                resolvedPath, e);
+        FILE *ef = fopen("brain_error.log", "a");
+        if (ef) { fprintf(ef, "luaBrainInstance load (buffer) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); }
         lua_close(L);
         return false;
       }
     } else if (luaL_loadfile(L, resolvedPath) != LUA_OK) {
+      const char *e = lua_tostring(L, -1);
       WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
-              resolvedPath, lua_tostring(L, -1));
+              resolvedPath, e);
+      FILE *ef = fopen("brain_error.log", "a");
+      if (ef) { fprintf(ef, "luaBrainInstance load (file) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); }
       lua_close(L);
       return false;
     }
   }
   if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+    const char *e = lua_tostring(L, -1);
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: error running '%s': %s",
-            path, lua_tostring(L, -1));
+            path, e);
+    FILE *ef = fopen("brain_error.log", "a");
+    if (ef) { fprintf(ef, "luaBrainInstance run '%s' error: %s\n", path, e ? e : "(null)"); fclose(ef); }
     lua_close(L);
     return false;
   }
   if (!lua_istable(L, -1)) {
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: '%s' did not return a table", path);
+    FILE *ef = fopen("brain_error.log", "a");
+    if (ef) { fprintf(ef, "luaBrainInstance: '%s' did not return a table\n", path); fclose(ef); }
     lua_close(L);
     return false;
   }

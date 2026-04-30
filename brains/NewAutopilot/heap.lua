@@ -5,9 +5,10 @@
 local M = {}
 
 function M.new()    return { n = 0 }  end
-function M.empty(h) return h.n == 0   end
+function M.empty(h) return (h.n or #h) == 0 end
 
 function M.push(h, node)
+  if not h.n then h.n = #h end  -- recover from deserialization
   h.n = h.n + 1
   h[h.n] = node
   local i = h.n
@@ -20,6 +21,7 @@ function M.push(h, node)
 end
 
 function M.pop(h)
+  if not h.n then h.n = #h end
   if h.n == 0 then return nil end
   local top = h[1]
   h[1]   = h[h.n]

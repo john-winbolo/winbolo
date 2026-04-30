@@ -43,6 +43,40 @@ typedef struct {
   uint8_t _pad;
 } BrainPFHeapEntry;
 
+/* ── Incremental Dijkstra slate ──
+ * One slate holds all the state of a single full-map Dijkstra search.
+ * The pathfinder owns N slates (see DIJKSTRA_NUM_SLATES) so the brain
+ * can run multiple parallel searches with different parameters
+ * (e.g. normal-danger vs lowered-pill-danger) and double-buffer the
+ * recompute cycle so lookups always have a finished result available. */
+#define DIJKSTRA_NUM_SLATES 4
+
+typedef struct {
+  float    *g_cost;       /* per-node best cost-from-source (NODE_COUNT) */
+  uint8_t  *closed;       /* closed bitset (NODE_COUNT/8) */
+  uint8_t  *dir_at;       /* per-node arrival direction (NODE_COUNT) */
+  int16_t  *shells_at;    /* per-node remaining shells (NODE_COUNT) — exact mode only */
+  BrainPFHeapEntry *heap;
+  int32_t  *heap_pos;     /* per-node heap index (NODE_COUNT); -1 if not in heap */
+  int       heap_capacity;
+  int       open_count;
+
+  int   active;       /* 1 if Start has been called and Step hasn't been reset */
+  int   done;         /* 1 if the search has emptied its heap */
+  int   exact;        /* 1 = track per-node shell budget for wall_shoot */
+  int   kind;         /* user-defined tag for the freshness/lookup matcher */
+  int   src_x, src_y;
+  int   in_boat;
+  int   src_shells;
+  int   expanded;     /* nodes expanded since Start */
+  int   peak_open;    /* peak heap size since Start */
+  float max_cost;     /* hard cap on f; 0 = unlimited */
+  float danger_scale; /* per-slate danger weighting (overrides pf->danger_scale) */
+  uint32_t version;
+  uint32_t started_tick;   /* tick passed to Start; identifies "recency" for lookups */
+  uint32_t completed_tick; /* tick when done flipped true; 0 while running */
+} DijkstraSlate;
+
 /* Per-instance pathfinder state */
 typedef struct {
   /* Terrain map pointer (set each tick, not owned) */
@@ -67,12 +101,14 @@ typedef struct {
   float tree_reserve;
   float mine_penalty;
   float estimate_samples;
+  float danger_scale;          /* multiplier for danger component in cost (default 1.0) */
 
   /* Resource drain config */
   float water_drain_rate;    /* shells+mines lost per river tile on foot (default 6) */
   float shell_loss_cost;     /* A* cost per shell lost to water drain (default 3) */
   float mine_loss_cost;      /* A* cost per mine lost to water drain (default 2) */
   float armour_drain_rate;   /* armour lost per unit of danger-exposure (default 0.02) */
+  float road_build_danger_max; /* don't assume road-build when danger >= this (default 10) */
   float min_shells;          /* prune paths arriving with fewer shells (default 0) */
   float min_mines;           /* prune paths arriving with fewer mines (default 0) */
   float min_armour;          /* prune paths arriving with less armour (default 0) */
@@ -89,6 +125,30 @@ typedef struct {
   int16_t  armour_at[131072];
   uint8_t  dir_at[131072];
 
+  /* Epoch versioning: a node's per-search state (g_cost / closed /
+   * parent / dir_at / shells_at / ...) is valid only when
+   * epoch[i] == current_epoch. A fresh search bumps current_epoch,
+   * making all nodes uniformly stale in O(1) rather than memset'ing
+   * the 2 MB of per-node arrays.
+   *
+   * Epoch 0 is reserved as "never touched" so a zero-initialized
+   * struct reads as fully stale. current_epoch starts at 1. */
+  uint32_t epoch[131072];
+  uint32_t current_epoch;
+
+  /* Precomputed per-tile per-direction edge base cost.
+   * edge_cost[ni*8 + d] = base terrain cost of stepping from ni in direction d
+   *                       (or COST_INF if blocked / out of bounds / diagonal
+   *                       through impassable corner). Lazily allocated by
+   * brainPathfinderRebuildEdgeCosts() so empty/test pathfinders don't pay
+   * the 4MB allocation up front. Reused across many searches.
+   *
+   * Note: this is the STATIC portion only. Danger, overlay, mine penalty,
+   * water-drain etc. still get applied in the inner loop at runtime. */
+  float   *edge_cost;          /* malloc'd: 131072 * 8 floats = 4MB */
+  int      edge_cost_valid;    /* 0 = stale (rebuild needed), 1 = current */
+  const BYTE *edge_cost_map;   /* map pointer the cache was built from */
+
   /* Binary min-heap */
   BrainPFHeapEntry *heap;
   int heap_capacity;
@@ -101,6 +161,25 @@ typedef struct {
   int next_x, next_y;
   int age;
   int in_boat;
+
+  /* Short-circuit cache for brainPathfinderPathTo. When a completed search
+   * (status == 1) is asked again with identical inputs and nothing that
+   * feeds the A* cost has changed since, return the stored next_x/next_y
+   * without re-running A*. Mutators that can change an A* result set this
+   * flag; a fresh search clears it. */
+  uint8_t cache_dirty;
+
+  /* Debug logging — when non-NULL, A* writes verbose trace to this file */
+  void *astarLog;  /* FILE* — void* to avoid stdio include in header */
+  const uint32_t *astarLogTickPtr;  /* pointer to current tick counter */
+
+  /* ── Incremental Dijkstra slates ──
+   * Each slate holds the full state of one Dijkstra search. The brain
+   * can use them however it wants — typical pattern is double-buffered
+   * pairs (current + previous fallback) for two danger-scale variants
+   * (normal vs lowered-pill-danger). All slates are lazy-allocated on
+   * first use (~700 KB each, ~960 KB with exact mode). */
+  DijkstraSlate dij_slates[DIJKSTRA_NUM_SLATES];
 } BrainPathfinder;
 
 /*********************************************************
@@ -110,6 +189,108 @@ typedef struct {
 BrainPathfinder *brainPathfinderCreate(void);
 void brainPathfinderDestroy(BrainPathfinder *pf);
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map);
+
+/* Debug logging — writes detailed A* info to astar_costto.log */
+void brainPathfinderEnableLog(int enable);
+/* Independent toggle for the per-step incremental Dijkstra log
+ * (dijkstra.log). Off by default; the per-tick STEP entries are
+ * high-frequency and add measurable overhead, so this isn't piggy-
+ * backed on the cost_to debug toggle. */
+void brainPathfinderEnableDijkstraLog(int enable);
+
+/* Incremental cost_to: reset clears accumulated state,
+ * then subsequent cost_to calls reuse closed nodes from prior searches */
+void brainPathfinderCostToReset(BrainPathfinder *pf,
+                                 int sx, int sy, int in_boat,
+                                 int shells, int trees, int mines, int armour);
+float brainPathfinderCostToIncremental(BrainPathfinder *pf,
+                                        int dx, int dy, int budget);
+
+/* Full Dijkstra from (sx,sy). Expands every reachable node — no heuristic,
+ * no destination, no budget. After it returns, the per-node g_cost array
+ * holds the minimum cost to every reachable tile.
+ *
+ * Returns wall-clock microseconds taken. Out-params (if non-NULL) report
+ * how many nodes were expanded and the peak open-list size. */
+double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
+                                    int sx, int sy, int in_boat,
+                                    int shells, int trees, int mines, int armour,
+                                    int *out_expanded, int *out_peak_open);
+
+/* ── Incremental (split-across-ticks) Dijkstra, multi-slate ──
+ * Each slate (0..DIJKSTRA_NUM_SLATES-1) is an independent search work
+ * area with its own g_cost, closed set, heap, etc. Pattern:
+ *
+ *   brainPathfinderDijkstraStart(pf, slate, tick, sx, sy, ...,
+ *                                max_cost, exact, danger_scale, kind);
+ *   // ... each tick:
+ *   int done = brainPathfinderDijkstraStep(pf, slate, tick, budget);
+ *   // lookup, by-kind so brain doesn't need to know slate indices:
+ *   float c = brainPathfinderDijkstraLookupByKind(pf, kind, x, y, boat);
+ *
+ * tick: a monotonically-increasing counter the caller provides. Used to
+ *       determine slate "recency" — newer slates are preferred for
+ *       lookups even if still running.
+ * kind: caller-defined matcher tag. LookupByKind only considers slates
+ *       with the same kind, picking the one with the highest started_tick.
+ *       If that slate hasn't reached the destination yet, the next-newest
+ *       slate of the same kind is tried, and so on. Lets the brain run
+ *       multiple parallel searches with different parameters and have a
+ *       single lookup pick the freshest valid result.
+ */
+void  brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
+                                    int sx, int sy, int in_boat,
+                                    int shells, int trees, int mines, int armour,
+                                    float max_cost, int exact,
+                                    float danger_scale, int kind);
+int   brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget);
+float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
+                                     int x, int y, int boat);
+int   brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
+                                     int *out_expanded, int *out_peak_open,
+                                     int *out_done);
+
+/* High-level lookup: iterate all active slates of matching kind in
+ * started_tick descending order, return the first one that has a finite
+ * g_cost for the destination. The newest slate wins even if still
+ * running; the older slate (or older still) serves as fallback. Returns
+ * COST_INF if no slate of the kind has reached the destination yet. */
+float brainPathfinderDijkstraLookupByKind(BrainPathfinder *pf, int kind,
+                                           int x, int y, int boat);
+
+/* Trace the Dijkstra parent chain from (dx,dy) back to the source.
+ * Returns the first step on the optimal path.
+ * Returns 1 on success (out_next_x/y populated), 0 if unreachable. */
+int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
+                                     int sx, int sy,
+                                     int dx, int dy,
+                                     int *out_next_x, int *out_next_y);
+
+/* Find the slate index that the brain should reuse next when starting a
+ * search of the given kind. Picks the slate with the LOWEST started_tick
+ * among slates of matching kind (LRU within kind), so the freshest
+ * matching slate is preserved as a fallback. If no slate has the kind
+ * yet, picks the oldest slate of any kind (or an unused slot). */
+int brainPathfinderDijkstraPickReuseSlate(BrainPathfinder *pf, int kind);
+
+/* Find the freshest slate of given kind. Returns -1 if none. */
+int brainPathfinderDijkstraFindBest(BrainPathfinder *pf, int kind);
+
+/* Read-only access to a slate's metadata so the brain can mirror state
+ * for debugging / scheduler decisions. */
+const DijkstraSlate *brainPathfinderDijkstraGetSlate(BrainPathfinder *pf, int slate);
+
+/* Trace the path from the slate's search source to (dx, dy). */
+int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
+                                      int dx, int dy,
+                                      int *path_x, int *path_y,
+                                      int max_steps);
+
+/* Precomputed neighbor edge cost grid. Recomputes the static portion of
+ * compute_cost (terrain base + diagonal corner blocking) for every tile,
+ * for every direction. Speeds up Dijkstra/A* inner loops by ~30-40%.
+ * Call this whenever the map changes (which is rare for the brain). */
+void  brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf);
 
 /* Configuration */
 void brainPathfinderSetTerrainCost(BrainPathfinder *pf, int type, float cost);
@@ -187,6 +368,68 @@ int brainPathfinderTracePath(BrainPathfinder *pf,
  * Returns number of front-line points found. */
 int brainPathfinderFindFrontLine(BrainPathfinder *pf,
                                   int *out_x, int *out_y, int max_points);
+
+/* ── Shot path simulation ──────────────────────────────────────
+ * Quick geometric simulation of a shell flying from (origin_wx,
+ * origin_wy) toward (target_wx, target_wy), as if fired by a tank
+ * or pillbox. Mirrors the real shell physics from shellsAddItem +
+ * shellsUpdate (SHELL_SPEED, SHELL_START_ADD initial offset, the
+ * 24.8 fixed-point per-tick step) so tile crossings match what an
+ * actual fired shell would touch.
+ *
+ * Does NOT short-circuit on collision — the full geometric flight
+ * to the shooter's max range is recorded. Callers can intersect
+ * the returned tiles against terrain/objects themselves. */
+
+#define BRAIN_SHOT_SHOOTER_TANK 0
+#define BRAIN_SHOT_SHOOTER_PILL 1
+
+typedef struct {
+  uint8_t mx;
+  uint8_t my;
+} BrainShotTile;
+
+/* Returns the number of unique tiles written to out_tiles
+ * (de-duplicated against the previous tile, never against earlier
+ * tiles — a shot that loops would record both visits, but real
+ * shells fly straight so this is a non-issue).
+ *
+ * shooter_type: BRAIN_SHOT_SHOOTER_TANK or BRAIN_SHOT_SHOOTER_PILL.
+ * sight_len:    tank's sightLen (1..GUNSIGHT_MAX). Pass 0 to use
+ *               GUNSIGHT_MAX. Ignored when shooter_type is PILL.
+ *
+ * Returns 0 if origin == target, out_tiles is NULL, or max_tiles<=0.
+ * Stops early (returning max_tiles) if the buffer fills. */
+int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
+                                 WORLD target_wx, WORLD target_wy,
+                                 int shooter_type, int sight_len,
+                                 BrainShotTile *out_tiles, int max_tiles);
+
+/* Same as brainPathfinderSimulateShot but takes the firing angle
+ * directly (0..255 bradians) instead of deriving it from origin →
+ * target geometry. Use this when you want a bit-exact match to a
+ * real shell — the engine fires from tank.direction (an int), so
+ * passing it in here skips any atan2 rounding ambiguity. The
+ * (target_wx, target_wy) args are unused and exist only so the
+ * Lua binding signature lines up with the inferred-angle call. */
+int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
+                                     int angle,
+                                     int shooter_type, int sight_len,
+                                     BrainShotTile *out_tiles, int max_tiles);
+
+/* ── Serialization (for exact trace replay) ────────────────── */
+
+/* Serialize the full pathfinder state (grids, config, Dijkstra slates)
+ * into a malloc'd binary blob. Returns the blob and sets *out_size.
+ * Caller frees with free(). Returns NULL on failure. */
+unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size);
+
+/* Restore pathfinder state from a blob previously returned by
+ * brainPathfinderSerialize. Returns 1 on success, 0 on failure.
+ * Does NOT allocate the pathfinder itself — caller must pass an
+ * existing (created) BrainPathfinder. */
+int brainPathfinderDeserialize(BrainPathfinder *pf,
+                                const unsigned char *data, size_t size);
 
 #ifdef __cplusplus
 }
