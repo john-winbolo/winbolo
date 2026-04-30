@@ -149,6 +149,20 @@ BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum);
  *********************************************************/
 OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
 
+/*********************************************************
+ *NAME:          botManagerExecLua
+ *PURPOSE:
+ *  Compile + run a string of Lua code in the given bot's
+ *  Lua state. Used by hosts (e.g. BrainTest) to push UI
+ *  toggle state into the brain's globals each frame.
+ *  Errors are swallowed; returns false on any failure.
+ *
+ *ARGUMENTS:
+ *  playerNum - Bot slot
+ *  src       - Lua source string (NUL-terminated)
+ *********************************************************/
+bool botManagerExecLua(BYTE playerNum, const char *src);
+
 /* ------------------------------------------------------------------ */
 /* Goal info for debug viewer (BrainTest)                              */
 /* ------------------------------------------------------------------ */

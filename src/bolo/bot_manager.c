@@ -43,6 +43,7 @@
 #include "input_packet.h"
 #include "bot_manager.h"
 #include <lua.h>
+#include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
 #include "transport_udp.h"
 #include "../server/server_sim.h"
 #include "../gui/sdl3/luabrainshandler.h"
@@ -400,6 +401,26 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum) {
      * populated by overlay_* Lua calls during brain.think(). */
     if (!bots[playerNum].brain.running) return NULL;
     return &bots[playerNum].brain.overlay;
+}
+
+bool botManagerExecLua(BYTE playerNum, const char *src) {
+    if (playerNum >= MAX_TANKS) return false;
+    if (!bots[playerNum].active) return false;
+    if (!bots[playerNum].brain.running) return false;
+    lua_State *L = bots[playerNum].brain.L;
+    if (!L || !src) return false;
+    /* Compile + run a chunk of Lua in this bot's state. Used by
+     * BrainTest to push viz toggle state into the brain's globals
+     * each frame. Errors are swallowed (best-effort push). */
+    if (luaL_loadstring(L, src) != LUA_OK) {
+        lua_pop(L, 1);
+        return false;
+    }
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        lua_pop(L, 1);
+        return false;
+    }
+    return true;
 }
 
 /* ------------------------------------------------------------------ */

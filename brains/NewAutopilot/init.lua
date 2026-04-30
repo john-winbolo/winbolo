@@ -165,6 +165,11 @@ end
 -- =========================================================================
 
 function Brain.open(info)
+  -- Register every viz_id with the host's V dialog. No-op when
+  -- braintest_viz_register isn't bound (e.g. running under WinBolo
+  -- client); the brain still emits overlay commands but they're
+  -- never displayed.
+  viz.register_all()
   -- Clear module-level caches from any previous game
   U.reset()
   PF.reset()

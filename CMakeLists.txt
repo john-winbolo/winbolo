@@ -1760,6 +1760,8 @@ set(BRAINTEST_SOURCES
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
+    src/braintest/braintest_viz_registry.c
+    src/braintest/braintest_vizwindow.cpp
 )
 
 
@@ -1792,6 +1794,10 @@ target_include_directories(BrainTest PRIVATE
     src/braintest
     src/mapeditor
 )
+
+# braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
+# backends). imgui_backends carries the headers + the impl libs.
+target_link_libraries(BrainTest PRIVATE imgui_backends)
 
 if(WIN32)
     target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32)

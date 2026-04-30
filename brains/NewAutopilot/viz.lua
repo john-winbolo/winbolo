@@ -278,6 +278,27 @@ function M.is_on(viz_id)
   return g ~= false
 end
 
+-- Register every entry in M.IDS with the host's V dialog. Called from
+-- Brain.open(). The braintest_viz_register binding only exists when
+-- the brain runs under BrainTest; under WinBolo client it's nil and
+-- this function is a no-op (the brain still draws overlays, they're
+-- just never displayed).
+function M.register_all()
+  if not braintest_viz_register then return end
+  for id, entry in pairs(M.IDS) do
+    -- The 5th arg (default_on) is omitted so the C binding defaults
+    -- to ON. Brains that want a viz off-by-default can pass the
+    -- entry through with a `default_on = false` field; we honor it.
+    local def_on = entry.default_on
+    if def_on == nil then def_on = true end
+    braintest_viz_register(id,
+                           entry.short or id,
+                           entry.short or "",
+                           entry.long or "",
+                           def_on)
+  end
+end
+
 -- viz_idx lookup: BrainTest pushes a _BT_VIZ_IDS = { id = idx, ... }
 -- table every tick. We cache the idx on M.IDS[id].idx so the
 -- per-call overhead is a single table lookup. Returns 255
