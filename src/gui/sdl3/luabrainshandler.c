@@ -588,6 +588,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   inst->overlayPtr = &inst->overlay;
   brainCoreRegisterOverlay(L, &inst->overlayPtr);
 
+  /* braintest_viz_register binding so brains can populate the V
+   * dialog rows. Routes to a callback BrainTest sets at startup;
+   * NULL when the brain runs under WinBolo client → no-op. */
+  brainCoreRegisterVizRegister(L);
+
   setup_brain_package_path(L, path);
 
   /* Install SDL-based searcher so require() works on Android assets.
