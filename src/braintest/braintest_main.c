@@ -556,15 +556,28 @@ static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
 }
 
 /* Drop frames at-and-after `keepCount`. Used when the user scrubs
- * back and resumes — the future is now stale. */
+ * back and resumes — the future is now stale.
+ *
+ * After truncating, the prev* buffers (which the next capture
+ * computes deltas against) need to reflect the LAST KEPT frame's
+ * state — not the dropped tail's. recordingReconstructMap fills
+ * playback* with that exact state, so we can copy each playback*
+ * into its corresponding prev* in one shot. Without this the next
+ * frame's deltas would be computed against ghost data and replay
+ * would show stale grid cells. */
 static void recordingTruncate(RecordingBuffer *rb, int keepCount) {
     for (int i = keepCount; i < rb->count; i++) recordingFreeFrame(&rb->frames[i]);
     rb->count = keepCount;
     rb->playbackMapFrame = -1;
     if (keepCount > 0) {
+        int mapSz  = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+        int gridSz = 65536;
         recordingReconstructMap(rb, keepCount - 1);
-        memcpy(rb->prevMap, rb->playbackMap,
-               MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        memcpy(rb->prevMap,       rb->playbackMap,       mapSz);
+        memcpy(rb->prevDanger,    rb->playbackDanger,    gridSz * sizeof(uint16_t));
+        memcpy(rb->prevInfluence, rb->playbackInfluence, gridSz * sizeof(int16_t));
+        memcpy(rb->prevOverlay,   rb->playbackOverlay,   gridSz * sizeof(uint16_t));
+        memcpy(rb->prevBrainMap,  rb->playbackBrainMap,  mapSz);
         rb->hasPrev = true;
     } else {
         rb->hasPrev = false;
@@ -2682,11 +2695,18 @@ static void appRender(BrainTestApp *app) {
          * renderer (mapViewRenderCentered, overlays, brain
          * commands) draws the recorded state with no per-renderer
          * playback awareness needed. */
-        BYTE  *savedMapBytes = NULL;
-        uint16_t *savedDanger = NULL;
-        int16_t  *savedInflu  = NULL;
-        uint16_t *savedOverl  = NULL;
-        const BYTE *savedBrainMapPtr = NULL;  /* pointer-swap, not byte-copy */
+        /* Save buffers are static — they're identically sized every
+         * frame (full map + 3 grids), so reusing them avoids ~448KB
+         * of malloc/free per playback render frame (~27 MB/s of
+         * allocator traffic at 60fps). Lazily-allocated on first
+         * playback render; freed at shutdown via recordingDestroy
+         * is NOT enough — these aren't part of the recording — so
+         * we leak at exit, which is fine for a debug tool. */
+        static BYTE     *savedMapBytes  = NULL;
+        static uint16_t *savedDanger    = NULL;
+        static int16_t  *savedInflu     = NULL;
+        static uint16_t *savedOverl     = NULL;
+        const  BYTE     *savedBrainMapPtr = NULL;  /* pointer-swap, not byte-copy */
         BrainPathfinder *pbPf = botManagerGetBrainPathfinder(app->followBot);
         struct basesObj  savedBases;
         struct pillsObj  savedPills;
@@ -2722,16 +2742,17 @@ static void appRender(BrainTestApp *app) {
             RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
             int mapSz = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
             int gridSz = 65536;
+            /* Lazy first-time alloc of the static save buffers. */
+            if (!savedMapBytes) savedMapBytes = (BYTE *)malloc(mapSz);
+            if (!savedDanger)   savedDanger   = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
+            if (!savedInflu)    savedInflu    = (int16_t  *)malloc(gridSz * sizeof(int16_t));
+            if (!savedOverl)    savedOverl    = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
             /* Map terrain. */
-            savedMapBytes = (BYTE *)malloc(mapSz);
             memcpy(savedMapBytes, &app->sim.sim.mp->mapItem[0][0], mapSz);
             memcpy(&app->sim.sim.mp->mapItem[0][0],
                    app->recording.playbackMap, mapSz);
             /* Pathfinder grids + brainMap (used by overlay renderers). */
             if (pbPf) {
-                savedDanger = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
-                savedInflu  = (int16_t  *)malloc(gridSz * sizeof(int16_t));
-                savedOverl  = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
                 memcpy(savedDanger, pbPf->danger_grid,    gridSz * sizeof(uint16_t));
                 memcpy(savedInflu,  pbPf->influence_grid, gridSz * sizeof(int16_t));
                 memcpy(savedOverl,  pbPf->overlay_grid,   gridSz * sizeof(uint16_t));
@@ -2929,12 +2950,10 @@ static void appRender(BrainTestApp *app) {
             int mapSz = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
             int gridSz = 65536;
             memcpy(&app->sim.sim.mp->mapItem[0][0], savedMapBytes, mapSz);
-            free(savedMapBytes);
             if (pbPf) {
                 memcpy(pbPf->danger_grid,    savedDanger, gridSz * sizeof(uint16_t));
                 memcpy(pbPf->influence_grid, savedInflu,  gridSz * sizeof(int16_t));
                 memcpy(pbPf->overlay_grid,   savedOverl,  gridSz * sizeof(uint16_t));
-                free(savedDanger); free(savedInflu); free(savedOverl);
                 if (savedBrainMapPtr) {
                     pbPf->map = savedBrainMapPtr;
                 }
@@ -3651,6 +3670,12 @@ int main(int argc, char *argv[]) {
                         if (cx >= L.trackL - 4 && cx <= L.trackR + 4) {
                             app.scrubbing    = true;
                             app.playbackMode = true;
+                            /* Pause replay auto-advance while the
+                             * user has the thumb grabbed; otherwise
+                             * the tick scheduler fights the drag and
+                             * the thumb appears to slip. The user
+                             * can press [>] to resume after release. */
+                            app.paused       = true;
                             float frac = (cx - L.trackL)
                                        / (L.trackR - L.trackL);
                             if (frac < 0) frac = 0;
