@@ -28,6 +28,76 @@ local M = {}
 -- actual progress (terrain friction, wedged against a tile boundary,
 -- etc.). Per-key trackers live on `state.attack_motion` so they
 -- survive the per-tick goal-table swap without polluting the goal.
+-- Pick which side to swerve toward based on perpendicular cover.
+-- Samples 2 tiles perpendicular to the tank->pill line, walks each
+-- back to the pill counting cover (forest/walls/friendly pills) and
+-- subtracting hazards (water/swamp/rubble/enemy bases). The side with
+-- more cover wins. Sets goal._best_swerve_dir (1=LEFT-sample,
+-- -1=RIGHT-sample) and goal._swerve_viz for the HUD overlay.
+-- Called from BOTH the legacy aim->swerve path AND PPT shoot_pill->
+-- swerve so PPT doesn't fall back to a random direction.
+local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+  local dx = pmx - tmx
+  local dy = pmy - tmy
+  local len = math.sqrt(dx * dx + dy * dy)
+  if len <= 0.01 then return end
+  local ux, uy = dx / len, dy / len
+  local tcx, tcy = tmx + 0.5, tmy + 0.5
+  local pcx, pcy = pmx + 0.5, pmy + 0.5
+  local lfx = tcx + (-uy) * 2
+  local lfy = tcy + ux * 2
+  local rfx = tcx + uy * 2
+  local rfy = tcy + (-ux) * 2
+
+  local fire_r2 = C.PILL_FIRE_RANGE * C.PILL_FIRE_RANGE
+  local function in_fire_range(bx, by)
+    local ddx = bx - pmx
+    local ddy = by - pmy
+    return ddx * ddx + ddy * ddy <= fire_r2
+  end
+  local function count_cover(fx0, fy0)
+    local n = 0
+    U.line_walk(fx0, fy0, pcx, pcy, function(bx, by)
+      if not U.in_map(bx, by) then return end
+      local tt = U.ttype(bx, by)
+      local pk = world.pill_at[by * 256 + bx]
+      local friendly_pill = pk and world.pills[pk] and world.pills[pk].owner == "friendly"
+      local base_entry = world.base_at[by * 256 + bx]
+      local enemy_base = base_entry and base_entry.base
+                         and base_entry.base.owner == "hostile"
+      if in_fire_range(bx, by) then
+        if tt == C.T_FOREST or tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+          n = n + 1
+        end
+        if friendly_pill then n = n + 3 end
+        if enemy_base then n = n - 10 end
+      else
+        if tt == C.T_BUILDING or tt == C.T_HALFBUILD
+           or tt == C.T_RIVER  or tt == C.T_DEEPSEA
+           or tt == C.T_SWAMP  or tt == C.T_RUBBLE then
+          n = n - 10
+        end
+        if friendly_pill then n = n - 10 end
+        if enemy_base then n = n - 10 end
+      end
+    end)
+    return n
+  end
+
+  local left_cover  = count_cover(lfx, lfy)
+  local right_cover = count_cover(rfx, rfy)
+  goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
+  goal._swerve_viz = {
+    lfx = lfx, lfy = lfy, left_cover = left_cover,
+    rfx = rfx, rfy = rfy, right_cover = right_cover,
+    chosen = goal._best_swerve_dir,
+    pcx = pcx, pcy = pcy,
+  }
+  print(string.format(TAG .. " ATTACK: swerve calc L(%.2f,%.2f)=%d R(%.2f,%.2f)=%d -> %s",
+        lfx, lfy, left_cover, rfx, rfy, right_cover,
+        goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
+end
+
 local function effectively_stopped(state, info, now, speed_tol, still_ticks, key)
   if info.speed <= speed_tol then return true end
   state.attack_motion = state.attack_motion or {}
@@ -1969,6 +2039,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
       end
       goal._swerve_pill_dead = (pill_hp <= 0)
+      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
       goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
       goal._engage_hits = nil
       print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
@@ -1985,83 +2056,7 @@ function M.update_attack_substate(goal, state, world, info)
   if goal.substate == "aim" then
     -- Check if aimed (steering sets _aim_locked when corr <= 1)
     if goal._aim_locked then
-      -- Pre-calculate best swerve direction: which side has more cover?
-      -- Sample 2 tiles perpendicular to approach line (precise float coords)
-      do
-        local dx = pmx - tmx
-        local dy = pmy - tmy
-        local len = math.sqrt(dx * dx + dy * dy)
-        if len > 0.01 then
-          local ux, uy = dx / len, dy / len
-          -- Tank center (float), and precise sample positions perpendicular
-          -- (use tile centers: tank at (tmx+0.5, tmy+0.5))
-          local tcx, tcy = tmx + 0.5, tmy + 0.5
-          local pcx, pcy = pmx + 0.5, pmy + 0.5
-          local lfx = tcx + (-uy) * 2
-          local lfy = tcy + ux * 2
-          local rfx = tcx + uy * 2
-          local rfy = tcy + (-ux) * 2
-
-          -- Only count cover tiles inside the pill's fire range circle
-          local fire_r2 = C.PILL_FIRE_RANGE * C.PILL_FIRE_RANGE
-          local function in_fire_range(bx, by)
-            local ddx = bx - pmx
-            local ddy = by - pmy
-            return ddx * ddx + ddy * ddy <= fire_r2
-          end
-
-          -- Walk the line from swerve sample point to pill.
-          --   Inside pill fire range  -> tile counts as +cover (blocks LOS).
-          --   Outside pill fire range -> hazards score -10 (in the tank's way).
-          local function count_cover(fx0, fy0, viz_color)
-            local n = 0
-            U.line_walk(fx0, fy0, pcx, pcy, function(bx, by)
-              if not U.in_map(bx, by) then return end
-              local tt = U.ttype(bx, by)
-              local pk = world.pill_at[by * 256 + bx]
-              local friendly_pill = pk and world.pills[pk] and world.pills[pk].owner == "friendly"
-              -- Hostile base on this tile counts as a hard hazard
-              -- (same weight as deep water — tank shouldn't drive over).
-              local base_entry = world.base_at[by * 256 + bx]
-              local enemy_base = base_entry and base_entry.base
-                                 and base_entry.base.owner == "hostile"
-              if in_fire_range(bx, by) then
-                -- Cover: trees and walls block pill shots
-                if tt == C.T_FOREST or tt == C.T_BUILDING or tt == C.T_HALFBUILD then
-                  n = n + 1
-                end
-                if friendly_pill then n = n + 3 end
-                if enemy_base then n = n - 10 end
-              else
-                -- Hazards in the swerve path that don't help block fire
-                if tt == C.T_BUILDING or tt == C.T_HALFBUILD
-                   or tt == C.T_RIVER  or tt == C.T_DEEPSEA
-                   or tt == C.T_SWAMP  or tt == C.T_RUBBLE then
-                  n = n - 10
-                end
-                if friendly_pill then n = n - 10 end
-                if enemy_base then n = n - 10 end
-              end
-            end, viz_color)
-            return n
-          end
-
-          -- Initial count (no viz) — viz happens during the per-tick redraw below
-          local left_cover = count_cover(lfx, lfy)
-          local right_cover = count_cover(rfx, rfy)
-          goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
-          -- Save precise float positions for HUD visualization
-          goal._swerve_viz = {
-            lfx = lfx, lfy = lfy, left_cover = left_cover, left_tiles = left_tiles,
-            rfx = rfx, rfy = rfy, right_cover = right_cover, right_tiles = right_tiles,
-            chosen = goal._best_swerve_dir,
-            pcx = pcx, pcy = pcy,
-          }
-          print(string.format(TAG .. " ATTACK: swerve calc L(%.2f,%.2f)=%d R(%.2f,%.2f)=%d -> %s",
-                lfx, lfy, left_cover, rfx, rfy, right_cover,
-                goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
-        end
-      end
+      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
       -- Check for trees between tank and crosshairs (pill direction).
       -- Skip detree entirely for shielded pill takes — the shield scan
@@ -2145,8 +2140,19 @@ function M.update_attack_substate(goal, state, world, info)
       local swx = math.floor(sfx * 256)
       local swy = math.floor(sfy * 256)
       local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
-      local DIST_TOL  = 16
+      -- 3-blocker takes need a tighter standoff: more walls means
+      -- the gun-line geometry is more sensitive to the tank's exact
+      -- world position. Default 16 wu (1 game-pixel) is enough for
+      -- 1-2 blocker setups; 3-blocker setups want 8 wu (½ pixel).
+      local n_blockers = (goal._shield_scan and goal._shield_scan.best
+                          and goal._shield_scan.best.blockers_count) or 0
+      local DIST_TOL  = (n_blockers >= 3) and 8 or 16
       local SPEED_TOL = 4
+      -- Mirror to a goal field so steering can match the brake
+      -- threshold to the same tolerance — without this, steering
+      -- brakes at the default 16 wu and a 3-blocker take with
+      -- tol=8 will stall just outside the transition window.
+      goal._in_range_dist_tol = DIST_TOL
 
       do
         local twx = info.tankx / 256.0
@@ -2415,6 +2421,11 @@ function M.update_attack_substate(goal, state, world, info)
         goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
       end
       goal._swerve_pill_dead = pill_dead
+      -- PPT skips the legacy aim substate where _best_swerve_dir is
+      -- normally computed, so compute it fresh here. Without this,
+      -- the `or random` fallback below would coin-flip the swerve
+      -- direction and could send the tank into a hazard.
+      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
       goal._swerve_dir       = goal._best_swerve_dir
                                or ((now % 2 == 0) and 1 or -1)
       print(string.format(TAG .. " ATTACK: PPT shoot_pill -> swerve (hits=%d hp=%d dead=%s)",
@@ -2454,6 +2465,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
       end
       goal._swerve_pill_dead = (pill_hp <= 0)
+      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
       goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
       goal._engage_hits = nil
       print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
@@ -2486,7 +2498,8 @@ function M.update_attack_substate(goal, state, world, info)
           goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
           goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
           goal._swerve_pill_dead = false
-          goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+          compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
         else

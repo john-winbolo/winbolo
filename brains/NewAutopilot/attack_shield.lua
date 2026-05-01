@@ -33,7 +33,10 @@ local M = {}
 -- (14 each side, 0.5° steps).
 M.NUM_CANDIDATES        = 28
 M.STEP_DEG              = 0.5
-M.BLOCKER_MIN_DIST      = 2.0   -- excludes tank tile + 8 neighbors
+M.BLOCKER_MIN_DIST      = 1.0   -- excludes only the standoff tile itself
+                                 -- (tank is 14 px in a 16 px tile so an
+                                 -- orthogonal-neighbor wall doesn't
+                                 -- collide with the tank body)
 M.NEIGHBOR_BONUS        = 4   -- per contiguous neighbor that "covers"
                               -- the candidate. Walks left + right
                               -- separately, stops on first gap, then
@@ -51,14 +54,25 @@ M.BUILT_BONUS           = 1   -- extra per slot that already has a wall/pill
 -- "Favored" subsets get WOUNDED_FAVOR_BONUS added to their total;
 -- subsets failing the chain-length floor are excluded entirely
 -- (set total = -inf so they never win).
-M.WOUNDED_HP_HIGH_MAX           = 15  -- HP <= this AND >= MIN
+-- Tiered: full/near-full pills get a bigger bonus for a 3-blocker
+-- setup (worth the LGM time when the pill is going to take many
+-- shots anyway). Mid-wounded prefers 2 blockers. Low-HP rushes
+-- with 1 blocker.
+M.WOUNDED_HP_FULL_MAX           = 15  -- HP <= this AND >= FULL_MIN
+M.WOUNDED_HP_FULL_MIN           = 14
+M.WOUNDED_HP_FULL_FAV2_BLOCKERS = 2   -- 2-blocker bonus tier
+M.WOUNDED_HP_FULL_BONUS2        = 1000
+M.WOUNDED_HP_FULL_FAV3_BLOCKERS = 3   -- 3-blocker bonus tier (bigger)
+M.WOUNDED_HP_FULL_BONUS3        = 2000
+M.WOUNDED_HP_FULL_MIN_CHAIN     = 2
+M.WOUNDED_HP_HIGH_MAX           = 13  -- HP <= this AND >= MIN
 M.WOUNDED_HP_HIGH_MIN           = 11
 M.WOUNDED_HP_HIGH_FAV_BLOCKERS  = 2   -- favor subsets w/ this many (a+p)
 M.WOUNDED_HP_HIGH_MIN_CHAIN     = 2   -- HARD floor: chain (sym total) must be >= this
 M.WOUNDED_HP_LOW_MAX            = 10  -- HP <= this
 M.WOUNDED_HP_LOW_FAV_BLOCKERS   = 1
 M.WOUNDED_HP_LOW_MIN_CHAIN      = 0   -- no floor for the rush case
-M.WOUNDED_FAVOR_BONUS           = 1000  -- big enough to dominate over chain*NEIGHBOR_BONUS
+M.WOUNDED_FAVOR_BONUS           = 1000  -- bonus for the high/low favored count
 
 -- Viz: hide losing candidates after this many ticks. Lets a human read
 -- the full grid right after scan, then de-clutters once they've seen it.
@@ -447,15 +461,33 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- min_chain is a HARD floor: subsets with chain < this are
   -- excluded outright.
   local pill_hp = pill.health or 0
-  local fav_blockers = 0
-  local min_chain    = 0
-  if pill_hp >= M.WOUNDED_HP_HIGH_MIN and pill_hp <= M.WOUNDED_HP_HIGH_MAX then
-    fav_blockers = M.WOUNDED_HP_HIGH_FAV_BLOCKERS
-    min_chain    = M.WOUNDED_HP_HIGH_MIN_CHAIN
+  -- Map of subset_size -> bonus for the active tier. Allows multiple
+  -- favored sizes in one tier (e.g. full-HP gets 2-blocker AND
+  -- 3-blocker bonuses, with 3 being bigger).
+  local fav_bonus_by_size = {}
+  local min_chain = 0
+  local tier_label = "NONE"
+  if pill_hp >= M.WOUNDED_HP_FULL_MIN and pill_hp <= M.WOUNDED_HP_FULL_MAX then
+    fav_bonus_by_size[M.WOUNDED_HP_FULL_FAV2_BLOCKERS] = M.WOUNDED_HP_FULL_BONUS2
+    fav_bonus_by_size[M.WOUNDED_HP_FULL_FAV3_BLOCKERS] = M.WOUNDED_HP_FULL_BONUS3
+    min_chain  = M.WOUNDED_HP_FULL_MIN_CHAIN
+    tier_label = "FULL"
+  elseif pill_hp >= M.WOUNDED_HP_HIGH_MIN and pill_hp <= M.WOUNDED_HP_HIGH_MAX then
+    fav_bonus_by_size[M.WOUNDED_HP_HIGH_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
+    min_chain  = M.WOUNDED_HP_HIGH_MIN_CHAIN
+    tier_label = "HIGH"
   elseif pill_hp <= M.WOUNDED_HP_LOW_MAX then
-    fav_blockers = M.WOUNDED_HP_LOW_FAV_BLOCKERS
-    min_chain    = M.WOUNDED_HP_LOW_MIN_CHAIN
+    fav_bonus_by_size[M.WOUNDED_HP_LOW_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
+    min_chain  = M.WOUNDED_HP_LOW_MIN_CHAIN
+    tier_label = "LOW"
   end
+  -- Largest bonus in the tier — drives the hard-exclusion magnitude
+  -- so an excluded subset always loses against any favored one.
+  local max_bonus = 0
+  for _, b in pairs(fav_bonus_by_size) do
+    if b > max_bonus then max_bonus = b end
+  end
+  if max_bonus == 0 then max_bonus = M.WOUNDED_FAVOR_BONUS end
 
   for i = 1, #candidates do
     local c = candidates[i]
@@ -559,12 +591,13 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
               -- as bias on the eval row so the dialog shows it.
               local bias = 0
               local subset_size = actual_n + potential_n
-              if fav_blockers > 0 and subset_size == fav_blockers then
-                bias = bias + M.WOUNDED_FAVOR_BONUS
+              local size_bonus = fav_bonus_by_size[subset_size]
+              if size_bonus then
+                bias = bias + size_bonus
               end
               if min_chain > 0 and chain < min_chain then
                 -- Hard exclusion: -inf-ish so this subset can never win.
-                bias = bias - M.WOUNDED_FAVOR_BONUS * 100
+                bias = bias - max_bonus * 100
               end
               total = total + bias
               chain_evals[#chain_evals + 1] = {
@@ -598,6 +631,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
         c.best_chain_len = best_chain
         c.score_actual   = (M.SCORE_PER_SLOT + M.BUILT_BONUS) * #best_subset_actual
         c.score_potential = M.SCORE_PER_SLOT * #best_subset_potential
+        c.blockers_count = #best_subset_actual + #best_subset_potential
         -- Store the winning subset so the wall-builder commits to
         -- exactly those tiles (and doesn't waste LGM time building
         -- potentials we decided weren't worth the rigid setup).
@@ -627,9 +661,10 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     best          = best,
     standoff      = candidates[1],
     pill          = pill,
-    pill_hp       = pill_hp,
-    fav_blockers  = fav_blockers,
-    min_chain     = min_chain,
+    pill_hp           = pill_hp,
+    fav_bonus_by_size = fav_bonus_by_size,
+    min_chain         = min_chain,
+    tier_label        = tier_label,
   }
 end
 
@@ -680,15 +715,22 @@ function M.draw_overlay(scan, now_tick)
       viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
         math.floor(c.score or 0),
         c.score_actual or 0, c.score_potential or 0, c.score_neighbor or 0))
-      if scan.fav_blockers and scan.fav_blockers > 0 then
+      if scan.fav_bonus_by_size and next(scan.fav_bonus_by_size) then
+        local parts = {}
+        local sizes = {}
+        for k, _ in pairs(scan.fav_bonus_by_size) do sizes[#sizes+1] = k end
+        table.sort(sizes)
+        for _, sz in ipairs(sizes) do
+          parts[#parts+1] = string.format("%d->+%d", sz, scan.fav_bonus_by_size[sz])
+        end
         viz.detail_text(did, string.format(
-          "wounded bias: pill_hp=%d -> favor %d blockers, min_chain=%d (bonus=%d)",
-          scan.pill_hp or 0, scan.fav_blockers, scan.min_chain or 0,
-          M.WOUNDED_FAVOR_BONUS))
+          "wounded bias: pill_hp=%d tier=%s min_chain=%d  blockers: %s",
+          scan.pill_hp or 0, scan.tier_label or "?", scan.min_chain or 0,
+          table.concat(parts, ", ")))
       else
         viz.detail_text(did, string.format(
-          "wounded bias: pill_hp=%d -> NONE (HP > %d, healthy)",
-          scan.pill_hp or 0, M.WOUNDED_HP_HIGH_MAX))
+          "wounded bias: pill_hp=%d -> NONE (HP > %d)",
+          scan.pill_hp or 0, M.WOUNDED_HP_FULL_MAX))
       end
       viz.detail_text(did, string.format("position: cx=%.4f cy=%.4f wu=(%d,%d) tile=(%d,%d)",
         c.cx, c.cy, math.floor(c.cx*256+0.5), math.floor(c.cy*256+0.5),

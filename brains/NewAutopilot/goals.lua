@@ -2693,7 +2693,14 @@ function M.step_eval_queue(state, world, info)
           if hp_factor > 0 and spot_cost < 1e9 then
             local pcontrib = threat.pill_contrib[obj.my * 256 + obj.mx]
             if pcontrib then
+              -- Walk Dijkstra's parent chain when the slate reached the
+              -- spot; otherwise fall back to the A* search smart_cost
+              -- just ran. cpf.trace_path() returns the most-recent
+              -- cost_to result and stays valid until the next
+              -- cost_to/path_to call — nothing in this candidate's eval
+              -- runs another A* between smart_cost and here.
               local path = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, best_spot.mx, best_spot.my)
+                        or cpf.trace_path()
               if path then
                 for _, node in ipairs(path) do
                   local k = node.y * 256 + node.x
