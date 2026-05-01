@@ -1636,3 +1636,39 @@ void brainCoreRegisterPrintCapture(lua_State *L, BrainPrintCaptureFunc cb,
   lua_pushcclosure(L, l_captured_print, 1);
   lua_setglobal(L, "print");
 }
+
+/* ── braintest_viz_register binding + callback hook ─────────────────
+ * Brains call `braintest_viz_register(id, label, short, long, default)`
+ * to surface their viz_ids in BrainTest's V dialog. The host
+ * (BrainTest) sets a callback that actually populates the registry;
+ * other hosts (WinBolo client, headless server) leave the callback
+ * NULL and the binding silently returns -1, which the Lua wrapper
+ * treats as "not running under BrainTest, fine, do nothing". */
+static BrainVizRegisterFunc g_vizRegisterCb = NULL;
+
+void brainCoreSetVizRegisterCallback(BrainVizRegisterFunc cb) {
+  g_vizRegisterCb = cb;
+}
+
+static int l_braintest_viz_register(lua_State *L) {
+  const char *id         = luaL_checkstring(L, 1);
+  const char *label      = luaL_optstring(L, 2, id);
+  const char *short_desc = luaL_optstring(L, 3, "");
+  const char *long_desc  = luaL_optstring(L, 4, "");
+  int default_on         = lua_toboolean(L, 5);
+  /* When the 5th arg isn't supplied, lua_toboolean returns 0 (off).
+   * Treat "missing" as "default to ON" — most viz_ids start visible.
+   * Detect via lua_isnoneornil. */
+  if (lua_isnoneornil(L, 5)) default_on = 1;
+  int idx = -1;
+  if (g_vizRegisterCb) {
+    idx = g_vizRegisterCb(id, label, short_desc, long_desc, default_on);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+void brainCoreRegisterVizRegister(lua_State *L) {
+  lua_pushcfunction(L, l_braintest_viz_register);
+  lua_setglobal(L, "braintest_viz_register");
+}

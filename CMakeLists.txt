@@ -870,6 +870,11 @@ if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     # PIC so the static lib can also link into shared targets (winbolo_gym).
     if(TARGET plum)
         set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        # MSVC: libplum's pcp.h has a zero-sized array (C4200) which our
+        # /WX-as-error policy rejects. Disable just that warning for plum.
+        if(MSVC)
+            target_compile_options(plum PRIVATE /wd4200)
+        endif()
     endif()
     set(HAVE_LIBPLUM TRUE)
     message(STATUS "libplum enabled — automatic NAT port mapping")
@@ -1755,6 +1760,8 @@ set(BRAINTEST_SOURCES
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
+    src/braintest/braintest_viz_registry.c
+    src/braintest/braintest_vizwindow.cpp
 )
 
 
@@ -1787,6 +1794,10 @@ target_include_directories(BrainTest PRIVATE
     src/braintest
     src/mapeditor
 )
+
+# braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
+# backends). imgui_backends carries the headers + the impl libs.
+target_link_libraries(BrainTest PRIVATE imgui_backends)
 
 if(WIN32)
     target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32)

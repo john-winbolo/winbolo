@@ -75,6 +75,10 @@
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../bolo/braincore.h"
+#include "../bolo/brain_overlay.h"
+#include "braintest_viz_registry.h"
+#include "braintest_vizwindow.h"
 #include "../gui/clientmutex.h"
 #include "../gui/lang.h"
 
@@ -175,9 +179,58 @@ typedef struct {
     bool         goalInfoValid;
     float        targetCost;            /* A* cost to current goal target */
     float        targetEstCost;         /* linear estimate (what brain uses for ranking) */
+
+    /* V dialog (visualizations checkbox list) — separate SDL window
+     * with its own ImGui context. Created on first 'V' press. */
+    SDL_Window  *vizWindow;
+    SDL_Renderer*vizRenderer;
+
+    /* X-key bare-screen mode: short-circuits all viz overlays except
+     * the always-visible HUD-resources overlay. Pressing X again
+     * lifts it; the per-id checkbox states are untouched. */
+    bool         vizSuppressActive;
 } BrainTestApp;
 
 static volatile bool appQuit = FALSE;
+
+/* ---------------- Viz registry callback + Lua state push ----------
+ * The brain calls braintest_viz_register("id", ...) at brain.open().
+ * Our callback adds the row to the registry. We also need to push
+ * each row's current state back to the brain as _BT_VIZ_<UPPER_ID>
+ * so viz.lua's is_on() check sees it. The brain stamps the registry
+ * idx onto every overlay command (via the trailing viz_idx arg the
+ * Lua wrappers thread through), and our renderer filters by that
+ * idx using vizRegistryGet(idx)->is_on. */
+
+static void vizConfigPath(char *out, size_t n) {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir && prefDir[0]) {
+        SDL_snprintf(out, n, "%sBrainTestViz.ini", prefDir);
+    } else {
+        SDL_snprintf(out, n, "BrainTestViz.ini");
+    }
+}
+
+/* Push every entry's on/off state + the id→idx lookup table + the
+ * X-key suppress flag into every active bot's Lua state. Also
+ * pushes _BT_VIZ_IDS (the table viz.lua's vid() reads to learn
+ * which integer to stamp on each overlay command). */
+static void pushVizStateToBots(bool vizSuppressActive);
+
+static int vizRegisterCallback(const char *id, const char *label,
+                                const char *short_desc, const char *long_desc,
+                                int default_on) {
+    int existed_before = (vizRegistryFind(id) >= 0);
+    int idx = vizRegistryAddBrain(id, label, short_desc, long_desc,
+                                   default_on ? true : false);
+    if (idx >= 0 && !existed_before) {
+        /* Apply persisted state from INI (load merges over defaults). */
+        char path[FILENAME_MAX];
+        vizConfigPath(path, sizeof(path));
+        vizRegistryLoadIni(path);
+    }
+    return idx;
+}
 
 static void signalHandler(int sig) {
     (void)sig;
@@ -633,6 +686,195 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
     }
 }
 
+/* Build the Lua statement that mirrors the registry's state into
+ * the bot's Lua globals: _BT_VIZ_<UPPER_ID> per-id booleans plus
+ * _BT_VIZ_IDS = {id=idx, ...} lookup. Pushed every brain frame so
+ * a freshly-spawned bot sees current state on its first think. */
+static void pushVizStateToBots(bool vizSuppressActive) {
+    char buf[16384];
+    int  off = 0;
+    int  n = vizRegistryCount();
+    for (int i = 0; i < n; i++) {
+        const VizRegistryEntry *e = vizRegistryGet(i);
+        if (!e || !e->id[0]) continue;
+        char up[VIZ_REG_ID_MAX];
+        size_t L = strlen(e->id);
+        if (L >= sizeof(up)) L = sizeof(up) - 1;
+        for (size_t j = 0; j < L; j++) {
+            char c = e->id[j];
+            up[j] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+        }
+        up[L] = '\0';
+        int w = SDL_snprintf(buf + off, sizeof(buf) - off,
+                              "_G._BT_VIZ_%s=%s; ",
+                              up, e->is_on ? "true" : "false");
+        if (w < 0 || w >= (int)(sizeof(buf) - off)) break;
+        off += w;
+    }
+    /* IDS lookup. */
+    {
+        int w = SDL_snprintf(buf + off, sizeof(buf) - off,
+                              "_G._BT_VIZ_IDS={");
+        if (w > 0 && w < (int)(sizeof(buf) - off)) off += w;
+        for (int i = 0; i < n; i++) {
+            const VizRegistryEntry *e = vizRegistryGet(i);
+            if (!e || !e->id[0]) continue;
+            w = SDL_snprintf(buf + off, sizeof(buf) - off,
+                              "%s=%d,", e->id, i);
+            if (w < 0 || w >= (int)(sizeof(buf) - off)) break;
+            off += w;
+        }
+        w = SDL_snprintf(buf + off, sizeof(buf) - off, "}; ");
+        if (w > 0 && w < (int)(sizeof(buf) - off)) off += w;
+    }
+    /* Suppress flag. */
+    {
+        int w = SDL_snprintf(buf + off, sizeof(buf) - off,
+                              "_G._BT_VIZ_SUPPRESS_ALL=%s; ",
+                              vizSuppressActive ? "true" : "false");
+        if (w > 0 && w < (int)(sizeof(buf) - off)) off += w;
+    }
+    if (off == 0) return;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (botManagerIsBot((BYTE)i)) botManagerExecLua((BYTE)i, buf);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Brain overlay rendering — walks each bot's OverlayCmdBuffer and
+ * draws the commands the brain emitted via the overlay_* Lua API.
+ * Each command is filtered by its viz_idx against the runtime
+ * viz registry: if the row is off (or X-key suppress is on and the
+ * row isn't hud_resources), the command is skipped.
+ *
+ * Coordinate system: brain command x/y are in TILE units (1.0 =
+ * 256 wu = 16 game pixels). We convert to screen pixels via the
+ * same camera math the map renderer uses.
+ * ------------------------------------------------------------------ */
+
+static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
+                            int screenW, int screenH,
+                            float *out_sx, float *out_sy) {
+    int zf = app->zoomFactor;
+    int tilePx = 16 * zf;
+    int centerMX = app->viewCenterX >> 8;
+    int centerMY = app->viewCenterY >> 8;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float originX = scx - centerMX * tilePx
+                    - (float)(app->viewCenterX & 0xFF) * tilePx / 256.0f;
+    float originY = scy - centerMY * tilePx
+                    - (float)(app->viewCenterY & 0xFF) * tilePx / 256.0f;
+    *out_sx = originX + tx * tilePx;
+    *out_sy = originY + ty * tilePx;
+}
+
+static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
+    OverlayCmdBuffer *buf = botManagerGetOverlayCmds(app->followBot);
+    if (!buf || buf->count == 0) return;
+
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+
+    for (int i = 0; i < buf->count; i++) {
+        OverlayCmd *cmd = &buf->cmds[i];
+
+        /* viz_idx filter — skip if the matching row is off, or if
+         * the X-key suppress flag is set (hud_resources stays on
+         * because the user always wants the resource counters). */
+        if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE) {
+            const VizRegistryEntry *e = vizRegistryGet(cmd->viz_idx);
+            if (e) {
+                if (app->vizSuppressActive
+                    && strcmp(e->id, "hud_resources") != 0) continue;
+                if (!e->is_on) continue;
+            }
+        }
+
+        SDL_SetRenderDrawColor(app->renderer, cmd->r, cmd->g, cmd->b, cmd->a);
+
+        switch (cmd->type) {
+        case OVERLAY_CMD_LINE: {
+            float sx1, sy1, sx2, sy2;
+            mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &sx1, &sy1);
+            mapTileToScreen(app, cmd->x2, cmd->y2, screenW, screenH, &sx2, &sy2);
+            SDL_RenderLine(app->renderer, sx1, sy1, sx2, sy2);
+            break;
+        }
+        case OVERLAY_CMD_RECT:
+        case OVERLAY_CMD_RECT_FILL:
+        case OVERLAY_CMD_RECT_FILL_SUBPIXEL: {
+            float sx1, sy1, sx2, sy2;
+            mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &sx1, &sy1);
+            mapTileToScreen(app, cmd->x2, cmd->y2, screenW, screenH, &sx2, &sy2);
+            SDL_FRect r = { sx1, sy1, sx2 - sx1, sy2 - sy1 };
+            if (cmd->type == OVERLAY_CMD_RECT) {
+                SDL_RenderRect(app->renderer, &r);
+            } else {
+                SDL_RenderFillRect(app->renderer, &r);
+            }
+            break;
+        }
+        case OVERLAY_CMD_CIRCLE: {
+            float cx, cy;
+            mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &cx, &cy);
+            float sr = cmd->radius * 16.0f * app->zoomFactor;
+            int seg = (int)(sr * 2.0f);
+            if (seg < 12) seg = 12;
+            for (int s = 0; s < seg; s++) {
+                float a0 = (float)s / seg * 2.0f * 3.14159265f;
+                float a1 = (float)(s + 1) / seg * 2.0f * 3.14159265f;
+                SDL_RenderLine(app->renderer,
+                    cx + cosf(a0) * sr, cy + sinf(a0) * sr,
+                    cx + cosf(a1) * sr, cy + sinf(a1) * sr);
+            }
+            break;
+        }
+        case OVERLAY_CMD_TEXT: {
+            float sx, sy;
+            mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &sx, &sy);
+            float scale = (cmd->radius > 0 ? cmd->radius : 1.2f)
+                          * ((float)app->zoomFactor / 2.0f);
+            int tlen = (int)strlen(cmd->text);
+            float tw = tlen * 8.0f * scale;
+            float th = 8.0f * scale;
+            switch (cmd->anchor) {
+            case OVERLAY_ANCHOR_TOPRIGHT:    sx -= tw; break;
+            case OVERLAY_ANCHOR_BOTTOMLEFT:  sy -= th; break;
+            case OVERLAY_ANCHOR_BOTTOMRIGHT: sx -= tw; sy -= th; break;
+            case OVERLAY_ANCHOR_CENTER:      sx -= tw * 0.5f; sy -= th * 0.5f; break;
+            }
+            SDL_SetRenderScale(app->renderer, scale, scale);
+            SDL_RenderDebugText(app->renderer, sx / scale, sy / scale, cmd->text);
+            SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+            break;
+        }
+        case OVERLAY_CMD_HUD_TEXT: {
+            /* HUD text — coordinates are pixel offsets from the
+             * chosen corner. */
+            float sx = cmd->x1, sy = cmd->y1;
+            int tlen = (int)strlen(cmd->text);
+            float scale = 1.5f;
+            float tw = tlen * 8.0f * scale;
+            float th = 8.0f * scale;
+            switch (cmd->anchor) {
+            case OVERLAY_ANCHOR_TOPRIGHT:    sx = (float)screenW - sx - tw; break;
+            case OVERLAY_ANCHOR_BOTTOMLEFT:  sy = (float)screenH - sy - th; break;
+            case OVERLAY_ANCHOR_BOTTOMRIGHT: sx = (float)screenW - sx - tw;
+                                              sy = (float)screenH - sy - th; break;
+            }
+            SDL_SetRenderScale(app->renderer, scale, scale);
+            SDL_RenderDebugText(app->renderer, sx / scale, sy / scale, cmd->text);
+            SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+            break;
+        }
+        case OVERLAY_CMD_CLEAR:
+            /* No-op here; the brain calls overlay_clear() at the
+             * top of think() to wipe its OWN buffer, not ours. */
+            break;
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* HUD text rendering                                                  */
 /* ------------------------------------------------------------------ */
@@ -695,87 +937,13 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
-    /* ── Goal info panel (top-right) ── */
-    if (app->goalInfoValid) {
-        float ps = 1.0f;  /* panel text scale */
-        float lineH = 8.0f * ps + 1.0f;
-        float panelW = 480.0f;
-        /* Clamp panel to screen */
-        if (panelW > (float)screenW - 8.0f) panelW = (float)screenW - 8.0f;
-        float panelX = (float)screenW - panelW - 2.0f;
-        float py = 2.0f;
-
-        /* Count lines for background height */
-        int numLines = 2;  /* goal + cost */
-        if (app->goalInfo.substate[0]) numLines++;
-        int maxCandidates = app->goalInfo.num_candidates;
-        /* Clamp candidates to fit screen */
-        float availH = (float)screenH - py - 8.0f;
-        int maxFit = (int)((availH - lineH * (float)numLines - 4.0f) / lineH) - 1;
-        if (maxFit < 0) maxFit = 0;
-        if (maxCandidates > maxFit) maxCandidates = maxFit;
-        if (maxCandidates > 0) numLines += 1 + maxCandidates; /* header + items */
-
-        float panelH = lineH * (float)numLines + 4.0f;
-        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
-        SDL_FRect panelBg = { panelX, py, panelW, panelH };
-        SDL_RenderFillRect(app->renderer, &panelBg);
-
-        /* Current goal */
-        if (app->goalInfo.target_id >= 0) {
-            SDL_snprintf(line, sizeof(line), "Goal: %s #%d (%d,%d)",
-                         app->goalInfo.kind, app->goalInfo.target_id,
-                         app->goalInfo.mx, app->goalInfo.my);
-        } else {
-            SDL_snprintf(line, sizeof(line), "Goal: %s (%d,%d)",
-                         app->goalInfo.kind, app->goalInfo.mx, app->goalInfo.my);
-        }
-        py = drawHudLine(app->renderer, panelX + 3.0f, py + 1.0f, ps,
-                         100, 255, 100, line);
-
-        /* Substate if present */
-        if (app->goalInfo.substate[0]) {
-            SDL_snprintf(line, sizeof(line), " sub: %s", app->goalInfo.substate);
-            py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                             180, 180, 180, line);
-        }
-
-        /* Target cost + pathfinder status */
-        {
-            const char *pfSt = pf ? (pf->status == 1 ? "done" :
-                                     pf->status == 0 ? "run" : "fail") : "-";
-            if (pf && pf->status == 1 &&
-                pf->dest_x == app->goalInfo.mx && pf->dest_y == app->goalInfo.my) {
-                SDL_snprintf(line, sizeof(line), "A*=%.0f  est=%.0f  PF:%s",
-                             app->targetCost, app->targetEstCost, pfSt);
-            } else if (pf) {
-                SDL_snprintf(line, sizeof(line), "est=%.0f  PF:%s",
-                             app->targetEstCost, pfSt);
-            } else {
-                SDL_snprintf(line, sizeof(line), "cost:- PF:%s", pfSt);
-            }
-        }
-        py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                         200, 200, 100, line);
-
-        /* Candidate pool */
-        if (maxCandidates > 0) {
-            py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                             140, 140, 140, "-- candidates --");
-            for (int i = 0; i < maxCandidates; i++) {
-                SDL_snprintf(line, sizeof(line), "%s%-30s %5.0f x%.1f",
-                             app->goalInfo.candidates[i].winner ? ">" : " ",
-                             app->goalInfo.candidates[i].desc,
-                             app->goalInfo.candidates[i].cost,
-                             app->goalInfo.candidates[i].phase_weight);
-                uint8_t cr = app->goalInfo.candidates[i].winner ? 100 : 150;
-                uint8_t cg = app->goalInfo.candidates[i].winner ? 255 : 150;
-                uint8_t cb = app->goalInfo.candidates[i].winner ? 100 : 150;
-                py = drawHudLine(app->renderer, panelX + 3.0f, py, ps,
-                                 cr, cg, cb, line);
-            }
-        }
-    }
+    /* The top-right goal/cost/candidate panel that used to live
+     * here has been removed — the brain emits richer equivalents
+     * (hud_goal, hud_replan, hud_goal_candidates, hud_attack_status,
+     * etc.) via the overlay_hud_text Lua API, which renderBrainOverlay
+     * draws and the V dialog gates per-id. Keeping a duplicate native
+     * panel here would mean two-source-of-truth and more code to
+     * decouple from any specific brain. */
 
     /* ── Click cost display (bottom-right) ── */
     if (app->clickActive) {
@@ -848,6 +1016,12 @@ static void appTick(BrainTestApp *app) {
 
     /* Propagate frontend state into the sim struct */
     app->sim.sim.isInMenu = isInMenu;
+
+    /* Push current viz registry state (per-id on/off + IDS lookup
+     * + suppress flag) into every active bot's Lua state BEFORE
+     * brain.think() so a freshly-spawned bot sees current state on
+     * its first think instead of defaulting to nil/on. */
+    pushVizStateToBots(app->vizSuppressActive);
 
     /* Run brain AI then tick the simulation (two ticks per brain call) */
     botManagerTick(&app->sim, optAI);
@@ -930,12 +1104,44 @@ static void appRender(BrainTestApp *app) {
 
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);
+
+        /* Brain-emitted overlay commands (lines/rects/circles/text
+         * the brain pushed via the overlay_* Lua API this tick). */
+        renderBrainOverlay(app, screenW, screenH);
     }
 
     /* HUD */
     renderHUD(app, screenW, screenH);
 
+    /* Bare-screen indicator when X-key suppress is active. */
+    if (app->vizSuppressActive) {
+        const char *msg = "VIZ HIDDEN (X to restore)";
+        float scale = 1.4f;
+        float tw = (float)strlen(msg) * 8.0f * scale;
+        float th = 8.0f * scale;
+        float x = 8.0f;
+        float y = (float)screenH * 0.75f - th * 0.5f;
+        SDL_FRect bg = { x - 4.0f, y - 4.0f, tw + 8.0f, th + 8.0f };
+        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 200);
+        SDL_RenderFillRect(app->renderer, &bg);
+        SDL_SetRenderDrawColor(app->renderer, 255, 200, 60, 255);
+        SDL_RenderRect(app->renderer, &bg);
+        SDL_SetRenderScale(app->renderer, scale, scale);
+        SDL_SetRenderDrawColor(app->renderer, 255, 220, 80, 255);
+        SDL_RenderDebugText(app->renderer, x / scale, y / scale, msg);
+        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+    }
+
     SDL_RenderPresent(app->renderer);
+
+    /* V dialog (separate window). Drawn last so its own render
+     * present doesn't fight with the main window's. */
+    if (app->vizWindow && app->vizRenderer
+        && !(SDL_GetWindowFlags(app->vizWindow) & SDL_WINDOW_HIDDEN)) {
+        int vw, vh;
+        SDL_GetWindowSize(app->vizWindow, &vw, &vh);
+        vizWindowRender(app->vizRenderer, vw, vh, NULL);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -993,6 +1199,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     SDL_SetRenderVSync(app.renderer, 1);
+
+    /* Wire the brain → registry callback BEFORE the first bot's
+     * Lua state is created (otherwise braintest_viz_register
+     * calls during brain.open() are silent no-ops). */
+    brainCoreSetVizRegisterCallback(vizRegisterCallback);
 
     /* Initialize map view lookup tables */
     mapViewInit();
@@ -1075,10 +1286,21 @@ int main(int argc, char *argv[]) {
         /* Process events */
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            /* Forward to V dialog's ImGui context (no-op if not init). */
+            vizWindowProcessEvent(&ev);
             switch (ev.type) {
             case SDL_EVENT_QUIT:
                 appQuit = TRUE;
                 break;
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED: {
+                SDL_Window *evWin = SDL_GetWindowFromEvent(&ev);
+                if (evWin == app.window) {
+                    appQuit = TRUE;
+                } else if (evWin == app.vizWindow) {
+                    SDL_HideWindow(app.vizWindow);
+                }
+                break;
+            }
 
             case SDL_EVENT_KEY_DOWN:
                 if (ev.key.repeat) break;
@@ -1126,6 +1348,35 @@ int main(int argc, char *argv[]) {
                 case SDLK_MINUS:
                 case SDLK_KP_MINUS:
                     if (app.zoomFactor > MIN_ZOOM) app.zoomFactor--;
+                    break;
+                case SDLK_V: {
+                    /* Show V dialog (lazy-create on first press). */
+                    if (vizWindowWantsTextInput()) break;
+                    if (!app.vizWindow) {
+                        app.vizWindow = SDL_CreateWindow("BrainTest – Visualizations",
+                                                         900, 700,
+                                                         SDL_WINDOW_RESIZABLE);
+                        if (app.vizWindow) {
+                            app.vizRenderer = SDL_CreateRenderer(app.vizWindow, NULL);
+                            if (app.vizRenderer) {
+                                vizWindowInit(app.vizWindow, app.vizRenderer);
+                            } else {
+                                SDL_DestroyWindow(app.vizWindow);
+                                app.vizWindow = NULL;
+                            }
+                        }
+                    } else if (SDL_GetWindowFlags(app.vizWindow) & SDL_WINDOW_HIDDEN) {
+                        SDL_ShowWindow(app.vizWindow);
+                        SDL_RaiseWindow(app.vizWindow);
+                    } else {
+                        SDL_HideWindow(app.vizWindow);
+                    }
+                    break;
+                }
+                case SDLK_X:
+                    /* Bare-screen mode: short-circuit all viz overlays
+                     * except hud_resources. Pressing X again restores. */
+                    app.vizSuppressActive = !app.vizSuppressActive;
                     break;
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
@@ -1212,10 +1463,15 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_WHEEL:
-                if (ev.wheel.y > 0) {
-                    if (app.zoomFactor < MAX_ZOOM) app.zoomFactor++;
-                } else if (ev.wheel.y < 0) {
-                    if (app.zoomFactor > MIN_ZOOM) app.zoomFactor--;
+                /* Only zoom on wheel events delivered to the MAIN
+                 * window — wheel events in the V dialog scroll its
+                 * row list and shouldn't leak through. */
+                if (ev.wheel.windowID == SDL_GetWindowID(app.window)) {
+                    if (ev.wheel.y > 0) {
+                        if (app.zoomFactor < MAX_ZOOM) app.zoomFactor++;
+                    } else if (ev.wheel.y < 0) {
+                        if (app.zoomFactor > MIN_ZOOM) app.zoomFactor--;
+                    }
                 }
                 break;
             }
@@ -1274,6 +1530,17 @@ int main(int argc, char *argv[]) {
     if (app.tilesTex) SDL_DestroyTexture(app.tilesTex);
     tileLoaderCleanup();
     if (app.simValid) serverSimDestroy(&app.sim);
+    /* Persist viz registry state. */
+    {
+        char path[FILENAME_MAX];
+        vizConfigPath(path, sizeof(path));
+        vizRegistrySaveIni(path);
+    }
+    if (app.vizWindow) {
+        vizWindowShutdown();
+        if (app.vizRenderer) SDL_DestroyRenderer(app.vizRenderer);
+        SDL_DestroyWindow(app.vizWindow);
+    }
     SDL_DestroyRenderer(app.renderer);
     SDL_DestroyWindow(app.window);
     langCleanup();
