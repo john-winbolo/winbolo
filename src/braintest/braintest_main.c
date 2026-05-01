@@ -3436,10 +3436,12 @@ static void appRender(BrainTestApp *app) {
                 app->viewCenterX = savedViewCenterX;
                 app->viewCenterY = savedViewCenterY;
             }
-            /* Drop the viz_detail playback override so the next live
-             * brain tick rebuilds the live registry without the
-             * scrubbed-frame entries hanging around. */
-            vizDetailClearPlaybackView();
+            /* NOTE: the viz_detail playback override stays ACTIVE
+             * past this point — the D dialog and highlight pass below
+             * (mainImGuiBeginFrame / vizDetailWindowRender) need to
+             * see the recorded frame's entries, not whatever the live
+             * registry happened to hold from the last live tick.
+             * Cleared after mainImGuiEndFrame instead. */
         }
     }
 
@@ -3516,7 +3518,7 @@ static void appRender(BrainTestApp *app) {
         /* Always inflate by a 10-px border so the highlight is
          * clearly visible around the primitive (not on top of it).
          * Then bump up to a min size for tiny dots. */
-        const float BORDER   = 10.0f;
+        const float BORDER   = 5.0f;
         const float MIN_SIZE = 32.0f;
         bx -= BORDER; by -= BORDER;
         bw += BORDER * 2; bh += BORDER * 2;
@@ -3571,6 +3573,10 @@ static void appRender(BrainTestApp *app) {
     mainImGuiRenderShortcuts(&app->showShortcuts);
     vizDetailWindowRender();
     mainImGuiEndFrame(app->renderer);
+    /* Drop the viz_detail playback override now that the dialog +
+     * highlight pass have consumed it. Idempotent — safe to call
+     * even if no patch was active this frame. */
+    vizDetailClearPlaybackView();
 
     SDL_RenderPresent(app->renderer);
 
