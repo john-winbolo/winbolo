@@ -2039,6 +2039,48 @@ local POOL_FILTERS = {
 }
 
 -- =========================================================================
+-- compute_pool4_cost — the capture_pill cost formula extracted so it
+-- can be evaluated synchronously at queue-add time (high-priority
+-- "grab the pill we just killed" responsiveness) AND at the normal
+-- per-tick step_eval_queue cadence (refresh as conditions change).
+-- Returns (cost, dist_score, danger_val, intercept) so the caller
+-- can stash the components for the breakdown formula.
+local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
+  -- Distance to cheapest reachable adjacent tile (pill tile itself
+  -- carries an impassable overlay so we route to a neighbor).
+  local best_adj = math.huge
+  local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
+  local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
+  for d = 1, 8 do
+    local ax, ay = obj.mx + DX[d], obj.my + DY[d]
+    if U.in_map(ax, ay) then
+      local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ax, ay, 0)
+      if ac < best_adj then best_adj = ac end
+    end
+  end
+  local dist_raw   = (best_adj < math.huge) and best_adj or 0
+  local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
+  local danger_val = threat.at(obj.mx, obj.my)
+  -- Intercept: an enemy tank close enough to beat us to the pill
+  -- (Manhattan dist ratio scaled by safety margin) bumps the cost.
+  local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
+  local intercept = 0
+  local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
+  for _, et in ipairs(enemy_tanks) do
+    local et_dist = U.mdist(et.mx, et.my, obj.mx, obj.my)
+    if et_dist <= C.INTERCEPT_MAX_RANGE
+       and our_dist > et_dist * C.INTERCEPT_SAFETY_MARGIN then
+      local ratio = our_dist / math.max(1, et_dist)
+      local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
+      if pen > intercept then intercept = pen end
+    end
+  end
+  local c = C.CAPTURE_PILL_BASE_COST + dist_score
+          + danger_val * C.CAPTURE_PILL_DANGER_SCALE
+          + intercept
+  return c, dist_raw, dist_score, danger_val, intercept
+end
+
 -- build_eval_queue — called at the start of each replan cycle.
 -- Iterates all incremental pools, applies filters, and builds a flat
 -- work queue of candidates to evaluate (2 per tick).
@@ -2108,12 +2150,29 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Pool 4: capture_pill
+  -- Pool 4: capture_pill. Score brand-new candidates synchronously
+  -- so a pill we just killed shows up in the pool grid with a real
+  -- cost the same tick it appears (instead of "—" for the ticks
+  -- step_eval_queue takes to pop it). The eval is cheap (8 dijkstra
+  -- lookups + a threat lookup + an enemy-tank loop), so doing it at
+  -- add time has negligible cost. step_eval_queue still re-evaluates
+  -- on its normal cadence so the score stays current.
   local has_dead = not perc or (perc.dead_neutral_pill_count > 0)
   if has_dead then
+    if not state.cost_cache then state.cost_cache = {} end
     for id, obj in pairs(world.pills) do
       if filter_capture_pill(obj, state) then
         queue[#queue + 1] = { pool = 4, id = id, obj = obj }
+        local ck = "4:" .. id
+        if not state.cost_cache[ck] then
+          local c, _draw, dscore, dval, intcpt =
+            compute_pool4_cost(state, world, info, obj, tmx, tmy)
+          state.cost_cache[ck] = {
+            cost = c, raw = _draw, tick = now, _p = 4,
+            _mx = obj.mx, _my = obj.my,
+            _ds = dscore, _dv = dval, _intcpt = intcpt,
+          }
+        end
       end
     end
   end
@@ -2730,36 +2789,8 @@ function M.step_eval_queue(state, world, info)
       local _cpill_dist_score, _cpill_danger_val, _cpill_intcpt = 0, 0, 0
       local _cpill_dist_raw = raw_cost
       if pool_idx == 4 then
-        local best_adj = math.huge
-        for d = 0, 7 do
-          local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
-          local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
-          local ax, ay = obj.mx + DX[d+1], obj.my + DY[d+1]
-          if U.in_map(ax, ay) then
-            local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ax, ay, 0)
-            if ac < best_adj then best_adj = ac end
-          end
-        end
-        if best_adj < math.huge then _cpill_dist_raw = best_adj end
-        _cpill_dist_score  = (_cpill_dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
-        _cpill_danger_val  = threat.at(obj.mx, obj.my)
-        -- Intercept: mirror attack_pill's logic but use our own arrival distance
-        -- as the "completion time" (pill is already capturable, so TTC ~ travel).
-        -- Manhattan distance is a fair proxy since both tanks share speed rules.
-        local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
-        local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-        for _, et in ipairs(enemy_tanks) do
-          local et_dist = U.mdist(et.mx, et.my, obj.mx, obj.my)
-          if et_dist <= C.INTERCEPT_MAX_RANGE
-             and our_dist > et_dist * C.INTERCEPT_SAFETY_MARGIN then
-            local ratio = our_dist / math.max(1, et_dist)
-            local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
-            if pen > _cpill_intcpt then _cpill_intcpt = pen end
-          end
-        end
-        c = C.CAPTURE_PILL_BASE_COST + _cpill_dist_score
-            + _cpill_danger_val * C.CAPTURE_PILL_DANGER_SCALE
-            + _cpill_intcpt
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt =
+          compute_pool4_cost(state, world, info, obj, tmx, tmy)
       end
 
       -- Store raw components for lazy formula building (get_formula on cold path).
