@@ -2276,9 +2276,9 @@ local function get_formula_inner(e)
     end
     local _d_finish_other = _fin_mult > 1.001
       and string.format(
-        "wounded pill (id=%s, hp=%d, age=%d ticks) is at or below WOUNDED_FINISH_THRESHOLD=%d;"..
+        "wounded pill (id=%d, hp=%d, age=%d ticks) is at or below WOUNDED_FINISH_THRESHOLD=%d;"..
         " mult = 1 + (%.1f-1) × (%d-%d)/%d × max(0, 1 - %d/%d) = %.2f",
-        tostring(state.wounded_pill and state.wounded_pill.id or "?"),
+        e._fin_wpid or -1,
         e._fin_wphp or 0, e._fin_age or 0,
         C.WOUNDED_FINISH_THRESHOLD or 10,
         C.WOUNDED_FINISH_OTHER_PENALTY or 3.0,
@@ -2564,6 +2564,7 @@ function M.step_eval_queue(state, world, info)
       local _finish_other_mult  = 1.0
       local _finish_other_wp_hp = 0
       local _finish_other_age   = 0
+      local _finish_other_wp_id = -1
       local spot_found_mx, spot_found_my = 0, 0  -- hoisted for formula
       local pill_anger, _ticks_to_calm = 0, 0  -- hoisted for formula detail
       if pool_idx == 6 then
@@ -2703,6 +2704,7 @@ function M.step_eval_queue(state, world, info)
               _finish_other_mult  = m
               _finish_other_wp_hp = wp_hp
               _finish_other_age   = age
+              _finish_other_wp_id = wp.id or -1
             end
           end
         end
@@ -2776,6 +2778,7 @@ function M.step_eval_queue(state, world, info)
         entry._fin_mult=_finish_other_mult
         entry._fin_wphp=_finish_other_wp_hp
         entry._fin_age=_finish_other_age
+        entry._fin_wpid=_finish_other_wp_id
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._stale=stale_cost; entry._age=_gen_age

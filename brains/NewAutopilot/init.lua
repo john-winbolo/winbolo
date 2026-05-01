@@ -545,8 +545,9 @@ function Brain.think(info)
     viz.hud_text("hud_manual_control", 10, 80, "Keys: " .. key_str, "topleft", 255, 255, 100)
     viz.hud_text("hud_manual_control", 10, 92, string.format("spd=%d dir=%d arm=%d sh=%d",
       info.speed, info.direction, info.armour, info.shells), "topleft", 200, 200, 200)
-    -- HUD: tank stats
-    local y = 10
+    -- HUD: tank stats (offset up so the kill-attempt indicator can sit
+    -- under it without overlap on shorter window heights).
+    local y = 90
     viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
     viz.hud_text("hud_resources", 10, y + 12, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
     viz.hud_text("hud_resources", 10, y + 24, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
@@ -759,8 +760,9 @@ function Brain.think(info)
     viz.rect("adjacent_tiles", pos[1], pos[2], pos[1]+1, pos[2]+1, 0, 255, 255, 180)
   end
 
-  -- HUD: tank stats in bottom-left
-  local y = 10
+  -- HUD: tank stats in bottom-left (offset up so the kill-attempt
+  -- indicator can sit under it without overlap on shorter window heights).
+  local y = 90
   viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
   viz.hud_text("hud_resources", 10, y + 12, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
   viz.hud_text("hud_resources", 10, y + 24, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
