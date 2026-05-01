@@ -335,6 +335,13 @@ local LABEL_SIZE = 0.25
 local function label(viz_id, x, y)
   if viz_id == "label_overlays" then return end
   if not overlay_text then return end
+  -- Don't emit the label when the parent viz is off — otherwise the
+  -- shape itself hides (filtered at render by its own viz_idx) but
+  -- its label keeps showing because the label is tagged with
+  -- label_overlays' idx, not the parent's. Trade-off: in playback,
+  -- frames captured while parent was off won't suddenly show labels
+  -- if you flip parent on. Acceptable for the common case.
+  if not M.is_on(viz_id) then return end
   overlay_text(x, y, viz_id, "topleft", 220, 220, 220, 200, LABEL_SIZE,
                vid("label_overlays"))
 end

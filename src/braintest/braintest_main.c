@@ -281,6 +281,7 @@ typedef struct {
     int          regIdxValues;
     int          regIdxDijkstra;
     int          regIdxCostTo;
+    int          regIdxShellHitbox;
     /* Dijkstra heatmap (7 key) — which slate the UI displays. The
      * brain runs up to DIJKSTRA_NUM_SLATES (4) parallel searches
      * with different parameters; Shift+7 cycles which one is on
@@ -3527,6 +3528,49 @@ int main(int argc, char *argv[]) {
                     if (app.recording.count > 0) {
                         app.playbackMode  = true;
                         app.playbackFrame = 0;
+                    }
+                    break;
+                case SDLK_COMMA:
+                    /* Step exactly one frame back. The SDLK_DOWN switch
+                     * already early-outs on ev.key.repeat above so a
+                     * held key is one press = one frame. Auto-pauses
+                     * + enters playback so the scheduler doesn't fight
+                     * the manual step.
+                     *
+                     * Entering playback from live: anchor playbackFrame
+                     * at the latest tick first so the FIRST `,` actually
+                     * steps back one tick (without this it'd just
+                     * trigger playback at frame 0). */
+                    if (app.recording.count > 0) {
+                        if (!app.playbackMode) {
+                            app.playbackFrame = app.recording.count - 1;
+                        }
+                        app.playbackMode = true;
+                        app.paused       = true;
+                        app.scrubbing    = false;
+                        if (app.playbackFrame > 0) app.playbackFrame--;
+                    }
+                    break;
+                case SDLK_PERIOD:
+                    /* Step one frame forward. If we're already at the
+                     * latest recorded frame (or the recording is
+                     * empty) advance the LIVE sim by one tick instead
+                     * — that way `.` keeps working past the end of
+                     * history as a single-tick step. Stays paused
+                     * after either case. */
+                    app.scrubbing = false;
+                    if (app.recording.count > 0
+                        && app.playbackFrame + 1 < app.recording.count) {
+                        app.playbackMode = true;
+                        app.paused       = true;
+                        app.playbackFrame++;
+                    } else {
+                        /* Past the end (or empty) → step live. */
+                        app.playbackMode = false;
+                        app.paused       = true;
+                        appTick(&app);
+                        app.playbackFrame = app.recording.count > 0
+                            ? app.recording.count - 1 : 0;
                     }
                     break;
                 default: {

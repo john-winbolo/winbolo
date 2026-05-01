@@ -2461,6 +2461,37 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
     playersGetBrainTanksInRect(csPtr, &csPtr->sim.plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
     playersGetBrainLgmsInRect(csPtr, &csPtr->sim.plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
   }
+  /* Bots have no client-side prediction layer that fills sim.shs, so
+   * shellsGetBrainShellsInRect above adds nothing for bot players.
+   * Mirror the snapshot shells (now retained for bots — see
+   * screenSyncFromSnapshotCS) into the brain object array so
+   * info.objects actually contains type=OBJECT_SHOT entries the
+   * brain (and BrainTest's shell-hitbox overlay) can render. */
+  if (csPtr->isBot) {
+    BYTE leftPos   = value->view_left;
+    BYTE rightPos  = (BYTE)(value->view_left  + value->view_width);
+    BYTE topPos    = value->view_top;
+    BYTE bottomPos = (BYTE)(value->view_top   + value->view_height);
+    BYTE myPN      = csPtr->myPlayerNum;
+    for (int i = 0; i < csPtr->serverShellCount; i++) {
+      const ShellSnapshot *s = &csPtr->serverShellSnaps[i];
+      BYTE smx = (BYTE)(s->worldX >> TANK_SHIFT_MAPSIZE);
+      BYTE smy = (BYTE)(s->worldY >> TANK_SHIFT_MAPSIZE);
+      if (smx < leftPos || smx > rightPos || smy < topPos || smy > bottomPos)
+        continue;
+      BYTE owner;
+      if (s->owner == NEUTRAL) owner = SHELLS_BRAIN_NEUTRAL;
+      else if (playersIsAllie(&csPtr->sim.plyrs, myPN, s->owner) == TRUE)
+        owner = SHELLS_BRAIN_FRIENDLY;
+      else
+        owner = SHELLS_BRAIN_HOSTILE;
+      screenAddBrainObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
+                           s->worldX, s->worldY, 0,
+                           utilGet16Dir((TURNTYPE)s->angle),
+                           owner, 0);
+    }
+  }
+
   value->num_objects = *clientSimGetBrainsNumObjects(csPtr);
   *clientSimGetBrainsNumObjects(csPtr) = 0;
 
@@ -3532,19 +3563,20 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 
   /* Store server shell snapshot data for rendering.
    * These are rendered directly to screen bullets in screenUpdate(),
-   * bypassing the shells linked list (which would apply unwanted offsets). */
+   * bypassing the shells linked list (which would apply unwanted offsets).
+   *
+   * Humans filter out their own shells here because they're rendered via
+   * the local prediction layer instead. Bots have no prediction layer
+   * and rely on this snapshot for everything they shoot, so KEEP their
+   * own shells — without this the brain (info.objects, BrainTest
+   * shell-hitbox overlay) never sees shells fired by the bot itself. */
   if (shellSnaps != NULL) {
-    /* Always filter out server shells owned by the local player —
-     * own shells are rendered exclusively via predicted shells. */
-    {
-      int si, di = 0;
-      for (si = 0; si < shellCount && di < MAX_SNAPSHOT_SHELLS; si++) {
-        if (shellSnaps[si].owner != playerNum) {
-          csPtr->serverShellSnaps[di++] = shellSnaps[si];
-        }
-      }
-      csPtr->serverShellCount = di;
+    int si, di = 0;
+    for (si = 0; si < shellCount && di < MAX_SNAPSHOT_SHELLS; si++) {
+      if (isHuman && shellSnaps[si].owner == playerNum) continue;
+      csPtr->serverShellSnaps[di++] = shellSnaps[si];
     }
+    csPtr->serverShellCount = di;
   }
 
   /* Tank fireballs are spawned via EVENT_TK_EXPLOSION (handled below) and

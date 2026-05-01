@@ -299,6 +299,83 @@ function Brain.open(info)
 end
 
 
+-- Shell-hitbox + own-tank-hitbox overlay. Factored out so it can run
+-- in BOTH manual mode AND autonomous mode — without this, shells the
+-- user fires while driving via M-mode wouldn't show their hit dots
+-- (the manual-mode early-return in Brain.think used to skip past
+-- the autonomous block where this lived).
+local function draw_shell_hitbox_viz(info)
+  if not info.objects then return end
+  local pill_live = {}
+  for i = 1, #info.objects do
+    local ob = info.objects[i]
+    if ob.type == 2 and (ob.direction or 0) > 0 then
+      local pmx = ob.x >> 8
+      local pmy = ob.y >> 8
+      pill_live[pmy * 256 + pmx] = true
+    end
+  end
+  for i = 1, #info.objects do
+    local ob = info.objects[i]
+    if ob.type == 1 then   -- OBJECT_SHOT
+      local smx = ob.x >> 8
+      local smy = ob.y >> 8
+      local on_live_pill = pill_live[smy * 256 + smx] or false
+      local DOT_WU = 4
+      local HALF = DOT_WU * 0.5
+      local tx1 = (ob.x - HALF) / 256.0
+      local ty1 = (ob.y - HALF) / 256.0
+      local tx2 = (ob.x + HALF) / 256.0
+      local cxt = ob.x / 256.0
+      local cyt = ob.y / 256.0
+      local r, g, b = 255, 140, 0
+      if on_live_pill then r, g, b = 255, 0, 0 end
+      -- 1/16-tile grid inside the shell's tile (gated by the
+      -- 'shot_tile_grid' viz toggle). Lets the user read off the
+      -- exact pixel position of the orange shell-hit dot.
+      do
+        local gr, gg, gb, ga = 80, 80, 200, 180
+        for ii = 0, 16 do
+          local f = ii / 16.0
+          viz.line("shot_tile_grid", smx + f, smy, smx + f, smy + 1, gr, gg, gb, ga)
+          viz.line("shot_tile_grid", smx, smy + f, smx + 1, smy + f, gr, gg, gb, ga)
+        end
+      end
+      viz.circle("shell_hit_dot", cxt, cyt, 3 / 256.0, r, g, b, 255)
+      -- Sprite-tip diagnostic (must mirror mapview.c kTipCol/Row).
+      local kTipCol = {1.5, 3.0, 4.0, 4.0,  4.0, 4.0, 4.0, 3.0,
+                       1.5, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0}
+      local kTipRow = {0.0, 0.0, 0.0, 0.0,  1.5, 3.0, 4.0, 4.0,
+                       4.0, 4.0, 3.0, 3.0,  1.5, 0.0, 0.0, 0.0}
+      local dir16 = (ob.direction or 0) >> 4
+      local tc = kTipCol[dir16 + 1]
+      local tr = kTipRow[dir16 + 1]
+      local x_tile = ob.x / 256.0
+      local y_tile = ob.y / 256.0
+      local tip_x_tile = tc / 16.0
+      local tip_y_tile = tr / 16.0
+      local render_x_tile = x_tile - tip_x_tile
+      local render_y_tile = y_tile - tip_y_tile
+      viz.text("shell_hitbox", tx2 + 0.2, ty1 - 0.05,
+        string.format("d=%d tip=(%.4f,%.4f) x=%.4f y=%.4f render=(%.4f,%.4f)",
+          dir16, tip_x_tile, tip_y_tile,
+          x_tile, y_tile,
+          render_x_tile, render_y_tile),
+        "topleft", 255, 220, 120, 255, 0.25)
+    end
+  end
+  -- Own-tank hitbox outline. Per tank.c:1089 a shell hits when
+  -- abs(tank.x-shell.x) < 128 && abs(tank.y-shell.y) < 128 — so
+  -- the hitbox is a 256x256 wu (1 tile) centered on the tank.
+  if info.tankx and info.tanky then
+    local htx1 = (info.tankx - 128) / 256.0
+    local hty1 = (info.tanky - 128) / 256.0
+    local htx2 = (info.tankx + 128) / 256.0
+    local hty2 = (info.tanky + 128) / 256.0
+    viz.rect("tank_hitbox", htx1, hty1, htx2, hty2, 255, 255, 0, 200, false)
+  end
+end
+
 -- =========================================================================
 -- THINK
 -- =========================================================================
@@ -355,6 +432,9 @@ function Brain.think(info)
       metrics.inc("danger_skips")
     end
     if overlay_clear then overlay_clear() end
+    -- Same hitbox overlay as the autonomous path so shells the user
+    -- shoots while M-driving still get the orange dot + cyan tile.
+    draw_shell_hitbox_viz(info)
     -- Track our own fired shells in manual mode too, so the cyan/green/
     -- magenta sim circles render while the human is driving.
     shot_tracker.update(info, now)
@@ -401,137 +481,36 @@ function Brain.think(info)
   if overlay_clear then overlay_clear() end
   viz.hud_text("hud_version", 10, 4, "NewAutopilot " .. BOT_VERSION, "bottomright", 150, 150, 150)
 
-  -- SHELL_HITBOX_VIZ: pixel at each in-flight shell's hit-test position.
-  -- Drawn AFTER overlay_clear so it survives the wipe. Overlay commands
-  -- flow into per-frame recording → replay scrub shows correct per-tick
-  -- positions.
-  -- Colors: orange over normal terrain, red when the shell's tile has a
-  -- live pill (armour > 0) — i.e. pillsIsPillHit should return TRUE
-  -- next tick.
+  -- SHELL_HITBOX_VIZ + own-tank hitbox: drawn after overlay_clear so
+  -- it survives the wipe. Same call as manual mode runs above so the
+  -- two paths can't drift.
+  draw_shell_hitbox_viz(info)
+
+  -- Optional debug log — keeps the per-tick shell positions in
+  -- hitboxes.log for one-off bug hunts. Rendering is handled by
+  -- draw_shell_hitbox_viz above; this block ONLY writes the log.
   do
     local hb_log = io.open("hitboxes.log", "a")
-    if info.objects then
+    if hb_log and info.objects then
       local shell_count = 0
-      local pill_live = {}
       for i = 1, #info.objects do
         local ob = info.objects[i]
-        if ob.type == 2 and (ob.direction or 0) > 0 then
-          local pmx = ob.x >> 8
-          local pmy = ob.y >> 8
-          pill_live[pmy * 256 + pmx] = true
-        end
-      end
-      for i = 1, #info.objects do
-        local ob = info.objects[i]
-        if ob.type == 1 then   -- OBJECT_SHOT
+        if ob.type == 1 then
           shell_count = shell_count + 1
           local smx = ob.x >> 8
           local smy = ob.y >> 8
-          local on_live_pill = pill_live[smy * 256 + smx] or false
-          -- WinBolo: 1 tile = 256 wu = 16 game pixels. Draw the hit dot
-          -- at the shell's exact 1-wu position (1/256 of a tile). The
-          -- renderer (braintest_main.c renderBrainOverlay RECT_FILL
-          -- path) inflates any filled rect that would be smaller than
-          -- MIN_DOT_SCREEN_PX screen pixels up to that size, centered
-          -- on the original point — so the dot stays visible at low
-          -- zoom while at high zoom its center shows the real sub-wu
-          -- offset against the hitbox edge.
-          local px = ob.x >> 4     -- integer game pixel for log only
-          local py = ob.y >> 4
-          -- Hit dot size in wu. Smaller = closer to true 1/256-tile
-          -- precision but invisible at low zoom; larger = visible at low
-          -- zoom but obscures the sub-pixel offset against hitbox edges.
-          -- The renderBrainOverlay floor still inflates very small rects
-          -- to MIN_DOT_SCREEN_PX so we never lose it entirely.
-          -- Rect is centered on the shell's authoritative (x, y) — NOT
-          -- offset top-left at it — because the C inflate code centers
-          -- the visible dot on the rect's midpoint. If the rect spanned
-          -- [shell, shell+DOT_WU] the dot would end up DOT_WU/2 wu off
-          -- the true hit point (~1 screen pixel at high zoom).
-          local DOT_WU = 4
-          local HALF = DOT_WU * 0.5
-          local tx1 = (ob.x - HALF) / 256.0
-          local ty1 = (ob.y - HALF) / 256.0
-          local tx2 = (ob.x + HALF) / 256.0
-          local ty2 = (ob.y + HALF) / 256.0
-          local cxt = ob.x / 256.0
-          local cyt = ob.y / 256.0
-          local r, g, b = 255, 140, 0
-          if on_live_pill then r, g, b = 255, 0, 0 end
-          -- DIAG: outline the tile the shell is in, plus 1/16-tile grid
-          -- lines inside it so the orange hit pixel can be read off the
-          -- pixel grid directly. Gated by BrainTest's viz dialog
-          -- ("Shot tile grid"); BrainTest sets _BT_SHOW_SHOT_TILE_GRID.
-          -- Defaults to true for backward compat when running outside
-          -- BrainTest (the global is nil, so the `~= false` test passes).
-          do
-            local gr, gg, gb, ga = 80, 80, 200, 180
-            for i = 0, 16 do
-              local f = i / 16.0
-              viz.line("shot_tile_grid", smx + f, smy, smx + f, smy + 1, gr, gg, gb, ga)
-              viz.line("shot_tile_grid", smx, smy + f, smx + 1, smy + f, gr, gg, gb, ga)
-            end
-          end
-          -- Cyan-blue tile outline around the shell.
-          viz.rect("shell_hitbox", smx, smy, smx + 1, smy + 1, 120, 120, 255, 255, false)
-          -- Orange/red dot at the shell's exact wu position. Use a tiny
-          -- circle (outline rendered at float precision via SDL_RenderLine)
-          -- so the marker keeps full sub-wu accuracy regardless of zoom —
-          -- the rect path floors filled rects to the game-pixel grid
-          -- unless the subpixel flag is passed.
-          viz.circle("shell_hit_dot", cxt, cyt, 3 / 256.0, r, g, b, 255)
-          -- DIAG: print the sprite-tip offset that mapview applies for
-          -- this shell's direction so we can visually compare the orange
-          -- pixel position to where the sprite ought to be anchored.
-          -- Tables must mirror src/gui/sdl3/mapview.c kTipCol/kTipRow.
-          -- Float tip anchors matching src/gui/sdl3/mapview.c.
-          -- Symmetric diamond — must match mapview.c kTipCol/kTipRow.
-          local kTipCol = {1.5, 3.0, 4.0, 4.0,  4.0, 4.0, 4.0, 3.0,
-                           1.5, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0}
-          local kTipRow = {0.0, 0.0, 0.0, 0.0,  1.5, 3.0, 4.0, 4.0,
-                           4.0, 4.0, 3.0, 3.0,  1.5, 0.0, 0.0, 0.0}
-          -- ob.direction for shells is utilGet16Dir output: 0,16,32,...,240 (BRadians), not 0..15.
-          local dir16 = (ob.direction or 0) >> 4
-          local tc = kTipCol[dir16 + 1]
-          local tr = kTipRow[dir16 + 1]
-          do
-            -- All values in tile units (decimal).
-            local x_tile = ob.x / 256.0
-            local y_tile = ob.y / 256.0
-            local tip_x_tile = tc / 16.0
-            local tip_y_tile = tr / 16.0
-            local render_x_tile = x_tile - tip_x_tile
-            local render_y_tile = y_tile - tip_y_tile
-            viz.text("shell_hitbox", tx2 + 0.2, ty1 - 0.05,
-              string.format("d=%d tip=(%.4f,%.4f) x=%.4f y=%.4f render=(%.4f,%.4f)",
-                dir16, tip_x_tile, tip_y_tile,
-                x_tile, y_tile,
-                render_x_tile, render_y_tile),
-              "topleft", 255, 220, 120, 255, 0.25)
-          end
-          if hb_log then
-            hb_log:write(string.format(
-              "  t=%d SHELL wx=%d wy=%d tile=(%d,%d) px=(%d,%d) pill=%s\n",
-              state.tick, ob.x, ob.y, smx, smy, px, py, tostring(on_live_pill)))
-          end
+          local px  = ob.x >> 4
+          local py  = ob.y >> 4
+          hb_log:write(string.format(
+            "  t=%d SHELL wx=%d wy=%d tile=(%d,%d) px=(%d,%d)\n",
+            state.tick, ob.x, ob.y, smx, smy, px, py))
         end
       end
-      if hb_log and shell_count > 0 then
+      if shell_count > 0 then
         hb_log:write(string.format("t=%d shell_count=%d\n", state.tick, shell_count))
       end
     end
     if hb_log then hb_log:close() end
-    -- Own tank hitbox outline. Per tank.c:1089 a shell is considered a hit
-    -- when abs(tank.x - shell.x) < 128 AND abs(tank.y - shell.y) < 128, so
-    -- the hitbox is a 256x256 wu square (1 tile, ±8 game px) centered on
-    -- the tank's world position.
-    if info.tankx and info.tanky then
-      local htx1 = (info.tankx - 128) / 256.0
-      local hty1 = (info.tanky - 128) / 256.0
-      local htx2 = (info.tankx + 128) / 256.0
-      local hty2 = (info.tanky + 128) / 256.0
-      viz.rect("tank_hitbox", htx1, hty1, htx2, hty2, 255, 255, 0, 200, false)
-    end
 
     -- Tank position readout. Three lines next to the tank: world
     -- units (0..65535), game pixels (wu/16), and tile + sub-tile
