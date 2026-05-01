@@ -1636,9 +1636,12 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
                                         100000, &nx, &ny);
     }
 
+    /* A* cost: real path cost if A* completed, sentinel otherwise so
+     * the HUD can render "unreached" without conflating with the
+     * estimate. */
     app->clickCost = (status == 1)
         ? dpf->g_cost[dmy * 256 + dmx]
-        : brainPathfinderEstimateCost(dpf, smx, smy, dmx, dmy, in_boat);
+        : 1e30f;
     app->clickEstCost = brainPathfinderEstimateCost(dpf, smx, smy, dmx, dmy, in_boat);
 
     /* Trace the path */
@@ -2512,11 +2515,75 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * panel here would mean two-source-of-truth and more code to
      * decouple from any specific brain. */
 
-    /* (Old C-side click-cost panel removed — the brain emits a
-     * richer "hud_click_cost" overlay instead, gated by the
-     * matching viz_id so it can be toggled from the V dialog like
-     * any other overlay. C still computes the A* path geometry in
-     * computeClickPath; only the text box moved to the brain.) */
+    /* Click-cost panel (bottom-right). Shows the most-recent map
+     * click's tile coords, A* path cost (or estimate fallback),
+     * heuristic estimate, and live Dijkstra cost from the followed
+     * bot's KIND_NORMAL slate. In playback the Dijkstra value reads
+     * "N/A" — slates aren't recorded per frame, so a live lookup
+     * would reflect the current sim, not the scrubbed tick.
+     * computeClickPath already uses the playback tank position when
+     * scrubbing, so A* / est track history correctly. */
+    if (app->clickActive) {
+        char l1[160], l2[160];
+        const char *dijStr;
+        char dijBuf[32];
+        if (app->playbackMode) {
+            dijStr = "N/A (playback)";
+        } else {
+            /* Read the same slate the "7" overlay shows (cycled via
+             * Shift+7) so the panel agrees with the heatmap pixel
+             * under the cursor. The slate's g_cost array is
+             * initialized to COST_INF for unreached nodes. */
+            BrainPathfinder *pfDij = botManagerGetBrainPathfinder(app->followBot);
+            const DijkstraSlate *s = pfDij
+                ? brainPathfinderDijkstraGetSlate(pfDij, app->dijViewSlate)
+                : NULL;
+            int in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
+                           tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+            float dij = 1e30f;
+            if (s && s->g_cost) {
+                int ni = (in_boat ? 65536 : 0)
+                       + app->clickMY * 256 + app->clickMX;
+                dij = s->g_cost[ni];
+            }
+            if (dij >= 1e29f) {
+                dijStr = "unreached";
+            } else {
+                SDL_snprintf(dijBuf, sizeof(dijBuf),
+                             "%.0f (slate %d)", (double)dij, app->dijViewSlate);
+                dijStr = dijBuf;
+            }
+        }
+        char astarBuf[32];
+        const char *astarStr;
+        if (app->clickCost >= 1e29f) {
+            astarStr = "unreached";
+        } else {
+            SDL_snprintf(astarBuf, sizeof(astarBuf), "%.0f", (double)app->clickCost);
+            astarStr = astarBuf;
+        }
+        SDL_snprintf(l1, sizeof(l1),
+            "Click (%d,%d)  A*=%s  est=%.0f  dij=%s",
+            app->clickMX, app->clickMY,
+            astarStr, (double)app->clickEstCost, dijStr);
+        SDL_snprintf(l2, sizeof(l2),
+            "(A* / est use the followed tank's%s position)",
+            app->playbackMode ? " playback" : " live");
+        float cs = 1.5f;
+        float cw1 = (float)strlen(l1) * 8.0f * cs + 8.0f;
+        float cw2 = (float)strlen(l2) * 8.0f * cs + 8.0f;
+        float cw  = cw1 > cw2 ? cw1 : cw2;
+        float ch  = (8.0f * cs + 2.0f) * 2 + 6.0f;
+        float cx  = (float)screenW - cw - 4.0f;
+        /* +80 px up so the playback slider doesn't cover the panel. */
+        float cy  = (float)screenH - ch - 4.0f - CONTROL_BAR_HEIGHT - 80.0f;
+        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 160);
+        SDL_FRect cbg = { cx, cy, cw, ch };
+        SDL_RenderFillRect(app->renderer, &cbg);
+        drawHudLine(app->renderer, cx + 4.0f, cy + 3.0f, cs, 255, 100, 255, l1);
+        drawHudLine(app->renderer, cx + 4.0f, cy + 3.0f + 8.0f * cs + 2.0f,
+                    cs, 180, 180, 100, l2);
+    }
 
     /* ── Hover coords (just above the control bar): tile (sub-tile
      * decimal), game pixel (16 wu = 1 px), and raw wu (1/256 tile).

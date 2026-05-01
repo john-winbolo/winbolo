@@ -83,8 +83,8 @@ M.IDS = {
                          long  = "'BASE KILLER' mode label" },
   hud_stuck_counter  = { short = "HUD: stuck counter",
                          long  = "Stuck-detection countdown" },
-  hud_click_cost     = { short = "HUD: click cost panel",
-                         long  = "Bottom-right panel showing pathfinding cost values for the most-recent map click: heuristic estimate, Dijkstra lookup, and clicked tile coords. Replaces the old C-side hardcoded panel — toggleable from V dialog." },
+  -- (hud_click_cost removed — panel is rendered C-side again so it can
+  --  use the live Dijkstra slate / show "N/A" in playback.)
   hud_compass        = { short = "HUD: compass dirs",
                          long  = "Direction-text indicators" },
   hud_emergency_drop = { short = "HUD: emergency drop",

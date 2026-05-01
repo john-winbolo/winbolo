@@ -174,7 +174,12 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   local dest_changed = (pf.dest_mx ~= dest_mx or pf.dest_my ~= dest_my)
   local use_fallback = tank_moved and not dest_changed and fallback_nx >= 0
 
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET)
+  -- capture_pill: a just-died pill is still impassable in the cached
+  -- dijkstra slate (overlay was 32767 when it was alive). Force fresh
+  -- A* every tick so we route to the (now drivable) pill tile rather
+  -- than treating it as unreachable.
+  local skip_dijkstra = state.goal and state.goal.kind == "capture_pill"
+  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, skip_dijkstra)
 
   -- Update state.pf tracking fields
   pf.src_mx  = tmx
@@ -196,19 +201,6 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.path_chain = cpf.trace_path()
     if not pf.path_chain or #pf.path_chain == 0 then
       pf.path_chain = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, dest_mx, dest_my)
-    end
-    -- capture_pill: A* destination is the cheapest 8-neighbor of the
-    -- pill (the pill tile itself carries the impassable overlay). The
-    -- bot needs to drive ONTO the pill tile to actually pick it up,
-    -- so append the pill tile as the final waypoint. path_lookahead
-    -- will then drive the last hop from the neighbor onto the pill.
-    if state.goal and state.goal.kind == "capture_pill"
-       and pf.path_chain and #pf.path_chain > 0 then
-      local last = pf.path_chain[#pf.path_chain]
-      local pmx, pmy = state.goal.mx, state.goal.my
-      if last.x ~= pmx or last.y ~= pmy then
-        pf.path_chain[#pf.path_chain + 1] = { x = pmx, y = pmy }
-      end
     end
   elseif status == 0 then  -- running
     pf.status = "running"
@@ -868,7 +860,11 @@ local function attack_pill_steer(state, world, info, goal)
       -- instead of crawling the last quarter-tile.
       local stop_dist = info.speed * 2
       local target_speed = 8   -- was 4; double the cruising creep
-      if sdist > math.max(16, stop_dist) then
+      -- Match the attack.lua transition tolerance so we don't brake
+      -- at 16 wu and stall outside the (possibly tighter) window
+      -- the 3-blocker take needs.
+      local close_enough = goal._in_range_dist_tol or 16
+      if sdist > math.max(close_enough, stop_dist) then
         local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
         local corr = U.adiff(info.direction, move_dir)
         local k, t = nav_turn_speed(corr, info.speed, target_speed, 2)
@@ -1574,33 +1570,12 @@ function M.steer(state, world, info, goal)
         nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
       end
     end
-    -- capture_pill: pill tile carries an impassable overlay (32767)
-    -- so A* can't route TO it. Pick the cheapest-to-reach 8-neighbor
-    -- of the pill (Dijkstra cost from tank's slate, accounting for
-    -- in-boat) as the actual A* destination. Mirrors the cost-side
-    -- formula in compute_pool4_cost so the path follows the same
-    -- adjacent tile that the goal evaluator scored against.
-    if goal.kind == "capture_pill" then
-      local pmx, pmy = goal.mx, goal.my
-      local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
-      local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
-      local boat_flag = info.inboat and 1 or 0
-      local best_amx, best_amy = nil, nil
-      local best_cost = math.huge
-      for d = 1, 8 do
-        local ax = U.mclamp(pmx + DX[d])
-        local ay = U.mclamp(pmy + DY[d])
-        local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ax, ay, boat_flag)
-        if ac < best_cost then
-          best_cost = ac
-          best_amx, best_amy = ax, ay
-        end
-      end
-      if best_amx then
-        nav_mx, nav_my = best_amx, best_amy
-        nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
-      end
-    end
+    -- capture_pill: route directly to the pill tile. The cached
+    -- dijkstra slate may still treat the pill as alive/impassable
+    -- (overlay 32767 baked in when it had health > 0), so cpf_path_to
+    -- forces fresh A* via skip_dijkstra=true. The pill tile itself
+    -- has no overlay applied for dead pills (init.lua only marks
+    -- pm.health > 0), so A* will route onto it.
     -- Rescue LGM: chase the LGM's LIVE sub-tile world position (not the
     -- cached goal.wx/wy from when the goal was created — the LGM moves).
     -- Tile coords still come from goal.mx/my for the A* path target.

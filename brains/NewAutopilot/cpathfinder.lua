@@ -195,12 +195,16 @@ end
 --- @return status integer  0=running, 1=done, -1=failed
 --- @return nx integer      next step x (-1 if no step yet)
 --- @return ny integer      next step y (-1 if no step yet)
-function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget)
+function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, skip_dijkstra)
   -- Try Dijkstra first — same cost surface, no duplicate A* search.
   -- Uses KIND_NORMAL (0) for general navigation.
   -- Passes current tank position so it finds the next step from HERE,
   -- not from the Dijkstra source (which may be stale).
-  if C.DIJKSTRA_USE_FOR_GOALS then
+  -- skip_dijkstra: set true when the slate is known-stale for the
+  -- destination tile (e.g. capture_pill targeting a pill that JUST
+  -- died — slate still treats it as alive/impassable). Forces a
+  -- fresh A* search every tick instead of trusting the cached slate.
+  if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
     local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy)
     if nx then
       print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))

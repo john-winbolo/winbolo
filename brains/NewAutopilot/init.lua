@@ -776,34 +776,10 @@ function Brain.think(info)
   viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
     "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
 
-  -- HUD: click-cost panel (bottom-right). Replaces the old C-side
-  -- hardcoded "Click (X,Y) A*=N est=N" box. Persists until the
-  -- next click overwrites state.click_inspect (or until a new
-  -- game). Skipped silently if no click yet this game.
-  if state.click_inspect then
-    local ci = state.click_inspect
-    local tmx = info.tankx >> 8
-    local tmy = info.tanky >> 8
-    local in_boat = info.inboat and 1 or 0
-    local est = cpf.estimate_cost(tmx, tmy, ci.mx, ci.my, in_boat)
-    local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ci.mx, ci.my, in_boat)
-    local dij_str
-    if not dij or dij >= 1e29 then
-      dij_str = "unreached"
-    else
-      dij_str = string.format("%.0f", dij)
-    end
-    -- Two lines stacked from bottom-right. Pixel offsets from
-    -- bottom-right corner: positive x goes left, positive y goes up.
-    viz.hud_text("hud_click_cost", 8, 24,
-      string.format("Click (%d,%d)  est=%.0f  dij=%s  age=%d",
-                    ci.mx, ci.my, est, dij_str,
-                    (state.tick or 0) - (ci.tick or 0)),
-      "bottomright", 255, 100, 255, 255)
-    viz.hud_text("hud_click_cost", 8, 12,
-      "(brain ranks goals by est; dij is nav cost from tank)",
-      "bottomright", 180, 180, 100, 220)
-  end
+  -- HUD: click-cost panel — moved back to C side (braintest_main.c
+  -- renderHUD) so it can use the live Dijkstra slate when not in
+  -- playback (and show "N/A" when scrubbed). The brain-side
+  -- state.click_inspect handler is no longer needed.
 
   -- HUD: replan countdown (left side, middle)
   do
