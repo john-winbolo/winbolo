@@ -31,10 +31,20 @@
 extern "C" void gameFrontGetLanguageCode(char *out, int outSize);
 
 /* Try to load a TTF font via SDL_IOFromFile (works on Android assets
- * and desktop).  Returns the buffer allocated with IM_ALLOC — ImGui
- * takes ownership via AddFontFromMemoryTTF. */
+ * and desktop).  Falls back to SDL_GetBasePath()-prefixed path so the
+ * font is found regardless of CWD (e.g. standalone macOS .app bundles).
+ * Returns the buffer allocated with IM_ALLOC — ImGui takes ownership
+ * via AddFontFromMemoryTTF. */
 static inline unsigned char *imguiFontLoadData(const char *path, int *outSize) {
     SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+    if (!io) {
+        const char *basePath = SDL_GetBasePath();
+        if (basePath && *basePath) {
+            char fullPath[1024];
+            SDL_snprintf(fullPath, sizeof(fullPath), "%s%s", basePath, path);
+            io = SDL_IOFromFile(fullPath, "rb");
+        }
+    }
     if (!io) return nullptr;
     Sint64 size = SDL_GetIOSize(io);
     if (size <= 0) { SDL_CloseIO(io); return nullptr; }
