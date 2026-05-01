@@ -199,7 +199,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # to look for SDL3::SDL3-shared.  Force it OFF so it uses the static SDL3.
     set(_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(sdl3_ttf imgui)
+    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
     set(BUILD_SHARED_LIBS "${_saved_build_shared_libs}" CACHE BOOL "" FORCE)
     # Restore try_compile mode now that all probing dependencies are fetched
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
@@ -493,7 +494,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_lobby.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
-    src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/map_preview_popup.cpp
 )
 
@@ -605,7 +605,7 @@ target_include_directories(WinBoloIOS PRIVATE
 )
 
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc
+    nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
