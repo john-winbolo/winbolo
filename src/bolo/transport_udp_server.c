@@ -1135,7 +1135,8 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
                            tkExplSnaps, MAX_SNAPSHOT_TK_EXPLOSIONS,
                            baseSnaps, MAX_SNAPSHOT_BASES,
                            pillSnaps, MAX_SNAPSHOT_PILLS,
-                           eventSnaps, MAX_SNAPSHOT_EVENTS);
+                           eventSnaps, MAX_SNAPSHOT_EVENTS,
+                           false);
 
     /* Packet header */
     packHeader(buf, PACKET_STATE_SNAPSHOT, client->outSequence++);
