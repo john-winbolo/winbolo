@@ -209,4 +209,22 @@ typedef int (*BrainPanelRegisterFunc)(const char *name,
 void brainCoreSetPanelRegisterCallback(BrainPanelRegisterFunc cb);
 void brainCoreRegisterPanelRegister(lua_State *L);
 
+/*********************************************************
+ *NAME:          braintest_shotsim_poi_register hook
+ *
+ *  Lua binding `braintest_shotsim_poi_register(name, lua_expr)`
+ *  for surfacing brain-defined points of interest as
+ *  one-click endpoint sources in BrainTest's shot-sim
+ *  panel. The lua_expr returns either two integers (wx, wy)
+ *  when the POI is currently available, or nil. Callback is
+ *  set by the host via brainCoreSetShotSimPoiRegisterCallback;
+ *  non-host runtimes leave it NULL and the binding silently
+ *  no-ops.
+ *********************************************************/
+typedef int (*BrainShotSimPoiRegisterFunc)(const char *name,
+                                            const char *lua_expr);
+
+void brainCoreSetShotSimPoiRegisterCallback(BrainShotSimPoiRegisterFunc cb);
+void brainCoreRegisterShotSimPoiRegister(lua_State *L);
+
 #endif /* BRAINCORE_H */

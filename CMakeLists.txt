@@ -1766,6 +1766,9 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
     src/braintest/braintest_botwindow.cpp
+    src/braintest/braintest_mainimgui.cpp
+    src/braintest/braintest_shotsimpanel.cpp
+    src/braintest/braintest_shotsim_poi_registry.c
 )
 
 # Per-bot BrainTest panel modules. Each bot may ship its own set of

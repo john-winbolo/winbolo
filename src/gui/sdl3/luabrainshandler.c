@@ -596,6 +596,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * the Q-toggled panel window. Same NULL-callback behavior under
    * the client. */
   brainCoreRegisterPanelRegister(L);
+  /* braintest_shotsim_poi_register binding (sibling of panel register)
+   * for the shot-sim panel's POI buttons. Same NULL-callback behavior
+   * under the client. */
+  brainCoreRegisterShotSimPoiRegister(L);
 
   setup_brain_package_path(L, path);
 
