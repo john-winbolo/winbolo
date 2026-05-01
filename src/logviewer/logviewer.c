@@ -51,6 +51,7 @@
 /* Platform abstraction */
 #include "platform/platform_config.h"
 #include "platform/platform_dialogs.h"
+#include "../gui/sdl3/macos_pinch.h"
 
 /* Version string referenced by imgui_dialogs.cpp */
 const char *lv_g_version_string = "1.01";
@@ -530,6 +531,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     /* Associate the window with dialogs (needed on Linux/Wayland for portal) */
     lv_platform_dialogs_set_window(g_lv->window);
 
+    /* macOS trackpad pinch-to-zoom (no-op if already initialised or non-macOS) */
+    macOSPinchZoomInit();
+
     /* Initialize ImGui */
     if (lv_imgui_context_init(g_lv->window, g_lv->renderer) == 0) {
         lv_drawCleanup();
@@ -682,6 +686,25 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
                 break;
+            }
+        }
+
+        /* Trackpad pinch-to-zoom (macOS) — anchor on current mouse position */
+        {
+            float pinch = macOSPinchZoomConsume();
+            if (pinch != 0.0f) {
+                static float pinchAccum = 0.0f;
+                pinchAccum += pinch;
+                float mx, my;
+                SDL_GetMouseState(&mx, &my);
+                while (pinchAccum > 0.15f) {
+                    lv_drawZoomIn((int)mx, (int)my);
+                    pinchAccum -= 0.15f;
+                }
+                while (pinchAccum < -0.15f) {
+                    lv_drawZoomOut((int)mx, (int)my);
+                    pinchAccum += 0.15f;
+                }
             }
         }
 
