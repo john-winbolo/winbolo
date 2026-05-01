@@ -1467,6 +1467,12 @@ if(MATH_LIB)
     target_link_libraries(LogViewer PRIVATE ${MATH_LIB})
 endif()
 
+# macOS trackpad pinch-to-zoom support
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(LogViewer PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_link_libraries(LogViewer PRIVATE "-framework AppKit")
+endif()
+
 # Copy shared libraries next to LogViewer (all platforms)
 add_custom_command(TARGET LogViewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
