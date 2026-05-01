@@ -45,6 +45,21 @@ M.SCORE_PER_SLOT        = 1   -- per protection slot (existing OR potential)
 M.BUILT_BONUS           = 1   -- extra per slot that already has a wall/pill
                               -- so: actual = 2, potential = 1
 
+-- Wounded-pill biasing for the (aim, subset) chooser. Goal: when
+-- the pill is already softened we don't need a heavy setup, so
+-- prefer fewer blockers. When it's still tough, prefer more.
+-- "Favored" subsets get WOUNDED_FAVOR_BONUS added to their total;
+-- subsets failing the chain-length floor are excluded entirely
+-- (set total = -inf so they never win).
+M.WOUNDED_HP_HIGH_MAX           = 15  -- HP <= this AND >= MIN
+M.WOUNDED_HP_HIGH_MIN           = 11
+M.WOUNDED_HP_HIGH_FAV_BLOCKERS  = 2   -- favor subsets w/ this many (a+p)
+M.WOUNDED_HP_HIGH_MIN_CHAIN     = 2   -- HARD floor: chain (sym total) must be >= this
+M.WOUNDED_HP_LOW_MAX            = 10  -- HP <= this
+M.WOUNDED_HP_LOW_FAV_BLOCKERS   = 1
+M.WOUNDED_HP_LOW_MIN_CHAIN      = 0   -- no floor for the rush case
+M.WOUNDED_FAVOR_BONUS           = 1000  -- big enough to dominate over chain*NEIGHBOR_BONUS
+
 -- Viz: hide losing candidates after this many ticks. Lets a human read
 -- the full grid right after scan, then de-clutters once they've seen it.
 M.NONWINNER_FADE_TICKS  = 200  -- ~4 s at 50 Hz
@@ -425,6 +440,23 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- known PPT geometry actually has >3 walls in a single setup.
   -- Bitmask iteration: mask 1..(2^N - 1).
   local MAX_SUBSET_BLOCKERS = 3
+
+  -- Wounded-pill bias setup (one-shot per scan). pill.armour is
+  -- the current HP; ranges chosen to bracket "soft / very-soft".
+  -- favored_blockers = 0 means "no preference" (don't apply bonus).
+  -- min_chain is a HARD floor: subsets with chain < this are
+  -- excluded outright.
+  local pill_hp = pill.health or 0
+  local fav_blockers = 0
+  local min_chain    = 0
+  if pill_hp >= M.WOUNDED_HP_HIGH_MIN and pill_hp <= M.WOUNDED_HP_HIGH_MAX then
+    fav_blockers = M.WOUNDED_HP_HIGH_FAV_BLOCKERS
+    min_chain    = M.WOUNDED_HP_HIGH_MIN_CHAIN
+  elseif pill_hp <= M.WOUNDED_HP_LOW_MAX then
+    fav_blockers = M.WOUNDED_HP_LOW_FAV_BLOCKERS
+    min_chain    = M.WOUNDED_HP_LOW_MIN_CHAIN
+  end
+
   for i = 1, #candidates do
     local c = candidates[i]
     if c.kind == "candidate" then
@@ -522,6 +554,19 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                 (M.SCORE_PER_SLOT + M.BUILT_BONUS) * actual_n
                 + M.SCORE_PER_SLOT * potential_n
               local total = subset_aim_score + chain * M.NEIGHBOR_BONUS
+              -- Wounded-pill bias: bonus for the "favored" subset
+              -- size, exclusion if chain is below the floor. Stored
+              -- as bias on the eval row so the dialog shows it.
+              local bias = 0
+              local subset_size = actual_n + potential_n
+              if fav_blockers > 0 and subset_size == fav_blockers then
+                bias = bias + M.WOUNDED_FAVOR_BONUS
+              end
+              if min_chain > 0 and chain < min_chain then
+                -- Hard exclusion: -inf-ish so this subset can never win.
+                bias = bias - M.WOUNDED_FAVOR_BONUS * 100
+              end
+              total = total + bias
               chain_evals[#chain_evals + 1] = {
                 aim          = ai,
                 actual_n     = actual_n,
@@ -530,6 +575,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                 potential_list = subset_potential,
                 aim_score    = subset_aim_score,
                 chain        = chain,
+                wounded_bias = bias,
                 total        = total,
               }
               if total > best_total then
@@ -577,10 +623,13 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   end
 
   return {
-    candidates  = candidates,
-    best        = best,
-    standoff    = candidates[1],
-    pill        = pill,
+    candidates    = candidates,
+    best          = best,
+    standoff      = candidates[1],
+    pill          = pill,
+    pill_hp       = pill_hp,
+    fav_blockers  = fav_blockers,
+    min_chain     = min_chain,
   }
 end
 
@@ -631,6 +680,16 @@ function M.draw_overlay(scan, now_tick)
       viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
         math.floor(c.score or 0),
         c.score_actual or 0, c.score_potential or 0, c.score_neighbor or 0))
+      if scan.fav_blockers and scan.fav_blockers > 0 then
+        viz.detail_text(did, string.format(
+          "wounded bias: pill_hp=%d -> favor %d blockers, min_chain=%d (bonus=%d)",
+          scan.pill_hp or 0, scan.fav_blockers, scan.min_chain or 0,
+          M.WOUNDED_FAVOR_BONUS))
+      else
+        viz.detail_text(did, string.format(
+          "wounded bias: pill_hp=%d -> NONE (HP > %d, healthy)",
+          scan.pill_hp or 0, M.WOUNDED_HP_HIGH_MAX))
+      end
       viz.detail_text(did, string.format("position: cx=%.4f cy=%.4f wu=(%d,%d) tile=(%d,%d)",
         c.cx, c.cy, math.floor(c.cx*256+0.5), math.floor(c.cy*256+0.5),
         c.mx or 0, c.my or 0))
@@ -668,10 +727,14 @@ function M.draw_overlay(scan, now_tick)
           for _, b in ipairs(e.potential_list or {}) do
             blocker_strs[#blocker_strs+1] = string.format("P(%d,%d)", b.mx, b.my)
           end
+          local bias_str = ""
+          if e.wounded_bias and e.wounded_bias ~= 0 then
+            bias_str = string.format(" wbias=%+d", e.wounded_bias)
+          end
           viz.detail_text(did, string.format(
-            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s",
+            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s%s",
             e.aim, aim_name, e.actual_n, e.potential_n,
-            e.aim_score, e.chain, e.total, marker))
+            e.aim_score, e.chain, e.total, bias_str, marker))
           if #blocker_strs > 0 then
             viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
           end

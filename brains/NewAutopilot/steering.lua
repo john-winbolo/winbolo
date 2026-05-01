@@ -197,6 +197,19 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     if not pf.path_chain or #pf.path_chain == 0 then
       pf.path_chain = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, dest_mx, dest_my)
     end
+    -- capture_pill: A* destination is the cheapest 8-neighbor of the
+    -- pill (the pill tile itself carries the impassable overlay). The
+    -- bot needs to drive ONTO the pill tile to actually pick it up,
+    -- so append the pill tile as the final waypoint. path_lookahead
+    -- will then drive the last hop from the neighbor onto the pill.
+    if state.goal and state.goal.kind == "capture_pill"
+       and pf.path_chain and #pf.path_chain > 0 then
+      local last = pf.path_chain[#pf.path_chain]
+      local pmx, pmy = state.goal.mx, state.goal.my
+      if last.x ~= pmx or last.y ~= pmy then
+        pf.path_chain[#pf.path_chain + 1] = { x = pmx, y = pmy }
+      end
+    end
   elseif status == 0 then  -- running
     pf.status = "running"
     if nx >= 0 then
