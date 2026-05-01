@@ -1579,6 +1579,72 @@ void brainCoreRegisterOverlay(lua_State *L, OverlayCmdBuffer **bufPtr) {
   }
 }
 
+/* ── viz_detail registry hook ─────────────────────────────────────── */
+/*
+ * The brain calls overlay_detail / overlay_detail_text each tick to
+ * register clickable map primitives with rich text bodies. The host
+ * (BrainTest) implements the actual registry; under non-host runtimes
+ * (game client, headless server) the callbacks stay NULL and these
+ * bindings silently no-op so the brain doesn't have to gate on
+ * "am I in BrainTest". */
+
+static BrainVizDetailRegisterFunc g_vizDetailRegisterCb = NULL;
+static BrainVizDetailAppendBodyFunc g_vizDetailAppendBodyCb = NULL;
+static BrainVizDetailClearFunc g_vizDetailClearCb = NULL;
+
+void brainCoreSetVizDetailRegisterCallback(BrainVizDetailRegisterFunc cb) {
+  g_vizDetailRegisterCb = cb;
+}
+void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb) {
+  g_vizDetailAppendBodyCb = cb;
+}
+void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb) {
+  g_vizDetailClearCb = cb;
+}
+
+/* overlay_detail(detail_id, kind, x1, y1, x2, y2, label) */
+static int l_overlay_detail(lua_State *L) {
+  const char *id    = luaL_checkstring(L, 1);
+  const char *kind  = luaL_checkstring(L, 2);
+  float       x1    = (float)luaL_checknumber(L, 3);
+  float       y1    = (float)luaL_checknumber(L, 4);
+  float       x2    = (float)luaL_checknumber(L, 5);
+  float       y2    = (float)luaL_checknumber(L, 6);
+  const char *label = luaL_optstring(L, 7, "");
+  int idx = -1;
+  if (g_vizDetailRegisterCb) {
+    idx = g_vizDetailRegisterCb(id, kind, x1, y1, x2, y2, label);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+/* overlay_detail_text(detail_id, line) */
+static int l_overlay_detail_text(lua_State *L) {
+  const char *id   = luaL_checkstring(L, 1);
+  const char *line = luaL_checkstring(L, 2);
+  int idx = -1;
+  if (g_vizDetailAppendBodyCb) {
+    idx = g_vizDetailAppendBodyCb(id, line);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+/* overlay_detail_clear() — wipe the entire registry. Brains call
+ * once at the top of think() so each tick rebuilds from scratch. */
+static int l_overlay_detail_clear(lua_State *L) {
+  (void)L;
+  if (g_vizDetailClearCb) g_vizDetailClearCb();
+  return 0;
+}
+
+void brainCoreRegisterVizDetail(lua_State *L) {
+  lua_pushcfunction(L, l_overlay_detail);       lua_setglobal(L, "overlay_detail");
+  lua_pushcfunction(L, l_overlay_detail_text);  lua_setglobal(L, "overlay_detail_text");
+  lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
+}
+
 /* ------------------------------------------------------------------ */
 /* Print capture (override Lua's print to also call a callback)        */
 /* ------------------------------------------------------------------ */

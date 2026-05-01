@@ -2165,12 +2165,70 @@ function M.update_attack_substate(goal, state, world, info)
 
       if sdist <= DIST_TOL and
          effectively_stopped(state, info, now, SPEED_TOL, 5, "in_range_position") then
-        goal.substate = "in_range_aim"
-        goal.aim_tick = now
-        goal._aim_locked = nil
-        print(string.format(TAG .. " ATTACK: PPT in range (%.2f,%.2f) sdist=%d spd=%d, aiming",
-              sfx, sfy, sdist, info.speed))
+        -- Compute the pre-aim point: ONE GAME-PIXEL OUTSIDE the
+        -- pillbox tile on the same side as the chosen aim corner.
+        -- For a center aim there's no offset, the pre-aim IS the
+        -- center. The idea: settle the gun on a slightly-overshot
+        -- direction first, then refine to the corner inside the
+        -- tile. Splits the rotation cleanly so steering doesn't
+        -- have to slow down across the lock threshold while the
+        -- finetune sim is also sampling the trajectory.
+        local PIX = 2.0 / 16.0    -- 2 game-pixels = 32 wu = 1/8 tile
+        local fx, fy = goal.aim_mx - pmx, goal.aim_my - pmy
+        local pre_dx, pre_dy
+        if fx < 0.5 - 1e-3 then
+          pre_dx = -PIX                -- corner on left side → outside is further left
+        elseif fx > 0.5 + 1e-3 then
+          pre_dx = 1.0 + PIX           -- right side → outside is past the right edge
+        else
+          pre_dx = 0.5                 -- centered: no x offset
+        end
+        if fy < 0.5 - 1e-3 then
+          pre_dy = -PIX
+        elseif fy > 0.5 + 1e-3 then
+          pre_dy = 1.0 + PIX
+        else
+          pre_dy = 0.5
+        end
+        goal.aim_pre_mx = pmx + pre_dx
+        goal.aim_pre_my = pmy + pre_dy
+
+        goal.substate        = "in_range_aim_pre"
+        goal.aim_tick        = now
+        goal._aim_locked     = nil
+        goal._pre_aim_locked = nil
+        print(string.format(TAG ..
+          " ATTACK: PPT in range (%.2f,%.2f) sdist=%d spd=%d, pre-aiming to (%.3f,%.3f)",
+          sfx, sfy, sdist, info.speed, goal.aim_pre_mx, goal.aim_pre_my))
       end
+    end
+    -- Fall through to draw
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- in_range_aim_pre (PPT): turn to a coarse pre-aim point one game-
+  -- pixel OUTSIDE the pillbox tile on the same side as the chosen
+  -- corner (or the center, if the chosen aim was already center).
+  -- Same lock condition as in_range_aim — once corr <= 1, hand off
+  -- to in_range_aim for the final corner aim. No trajectory check
+  -- here; that lives in in_range_aim_finetune.
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "in_range_aim_pre" then
+    -- pre-aim is "I'm pointed at the correct SIDE of the pillbox to
+    -- begin fine aiming" — it uses its own _pre_aim_locked flag
+    -- (set by steering when corr <= 1 of aim_pre_mx/my). The next
+    -- substate (in_range_aim) needs its own fresh _aim_locked, so
+    -- we explicitly null both here on transition.
+    if goal._pre_aim_locked then
+      goal.substate        = "in_range_aim"
+      goal.aim_tick        = now
+      goal._pre_aim_locked = nil
+      goal._aim_locked     = nil
+      print(TAG .. " ATTACK: pre-aim locked, refining to chosen corner")
+    elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
+      print(TAG .. " ATTACK: shielded in_range_aim_pre timeout, aborting")
+      state.goal.kind = "none"
+      state.pf.status = "idle"
     end
     -- Fall through to draw
   end
@@ -2219,7 +2277,7 @@ function M.update_attack_substate(goal, state, world, info)
   --     plan is wrong and goal-selector should re-pick.
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "in_range_aim_finetune" then
-    local FINETUNE_MAX_TAPS = 8
+    local FINETUNE_MAX_TAPS = 16
     local FINETUNE_TIMEOUT  = 100  -- ~2 s @ 50 Hz
     local angle_f = info.tank_angle or info.direction
     local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
@@ -2294,6 +2352,7 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal._shoot_progress_hp then
       goal._shoot_progress_hp   = pill_hp
       goal._shoot_progress_tick = now
+      goal._shoot_initial_hp    = pill_hp  -- baseline for the kill bar
     elseif pill_hp < goal._shoot_progress_hp then
       goal._shoot_progress_hp   = pill_hp
       goal._shoot_progress_tick = now
@@ -2304,6 +2363,36 @@ function M.update_attack_substate(goal, state, world, info)
         now - (goal._shoot_progress_tick or now), pill_hp))
       state.goal.kind = "none"
       state.pf.status = "idle"
+    end
+
+    -- HUD: live progress toward each of the three exit triggers.
+    -- Bar fills as we approach the exit (kill / swerve-from-hits / abort).
+    do
+      local function bar(frac)
+        if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+        local n = math.floor(frac * 10 + 0.5)
+        return string.rep("#", n) .. string.rep("-", 10 - n)
+      end
+      local init_hp     = goal._shoot_initial_hp or pill_hp
+      local hits_total  = goal._shoot_hits_total or 0
+      local curve_after = C.ATTACK_CURVE_AFTER_HITS or 1
+      local stale_ticks = now - (goal._shoot_progress_tick or now)
+      local kill_frac   = (init_hp > 0) and (1.0 - pill_hp / init_hp) or 1.0
+
+      viz.hud_text("hud_shoot_pill_progress", 10, 210,
+        "PPT shoot_pill exits:", "topleft", 255, 220, 100, 255)
+      viz.hud_text("hud_shoot_pill_progress", 10, 225,
+        string.format(" kill   [%s] hp=%d/%d", bar(kill_frac), pill_hp, init_hp),
+        "topleft", 100, 255, 100, 255)
+      viz.hud_text("hud_shoot_pill_progress", 10, 240,
+        string.format(" swerve [%s] hits=%d/%d",
+          bar(hits_total / curve_after), hits_total, curve_after),
+        "topleft", 255, 180, 80, 255)
+      viz.hud_text("hud_shoot_pill_progress", 10, 255,
+        string.format(" abort  [%s] %d/%d ticks since last hp drop",
+          bar(stale_ticks / SHOOT_NO_PROGRESS_TICKS),
+          stale_ticks, SHOOT_NO_PROGRESS_TICKS),
+        "topleft", 255, 120, 120, 255)
     end
 
     local should_swerve = false
@@ -2442,6 +2531,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal._is_ppt               = nil
       goal._shield_scan          = nil
       goal._aim_locked           = nil
+      goal._pre_aim_locked       = nil
       goal._finetune_taps        = nil
       goal._finetune_start       = nil
       goal._finetune_path        = nil
@@ -2686,12 +2776,45 @@ function M.update_attack_substate(goal, state, world, info)
                string.format("corr=%.2f<=1%s", corr, on_str),
                "topleft", cr, cg, cb, 255, 0.30)
 
-      -- Finetune progress indicator: how many 1-brad nudges toward
-      -- pill center we've done in in_range_aim_finetune. Idle (no
-      -- finetune in progress) shows as blank.
+      -- Substate progress indicator. Surfaces:
+      --   in_range_aim_pre       → PRE-AIM rotating to the right
+      --                            side of the pill (orange while
+      --                            still rotating, green once
+      --                            _pre_aim_locked); shows the aim
+      --                            timeout countdown so the user
+      --                            can see how close to abort.
+      --   in_range_aim           → AIM rotating to the chosen
+      --                            corner. Same color/timeout
+      --                            convention as PRE-AIM.
+      --   in_range_aim_finetune  → FINETUNE per-tick sim verify;
+      --                            green when sim hits, orange
+      --                            while tapping, with tap counter.
+      --   else                   → blank "(awaiting aim lock)".
       local mode_str
       local mr, mg, mb = 200, 200, 200
-      if goal.substate == "in_range_aim_finetune" then
+      if goal.substate == "in_range_aim_pre" then
+        local elapsed   = (goal.aim_tick and (now - goal.aim_tick)) or 0
+        local timeout   = 150
+        if goal._pre_aim_locked then
+          mode_str = string.format("PRE-AIM: locked (%dt → AIM)", elapsed)
+          mr, mg, mb = 80, 255, 120
+        else
+          mode_str = string.format("PRE-AIM: rotating (%dt / %dt timeout)",
+                                   elapsed, timeout)
+          mr, mg, mb = 255, 200, 80
+        end
+      elseif goal.substate == "in_range_aim" then
+        local elapsed   = (goal.aim_tick and (now - goal.aim_tick)) or 0
+        local timeout   = 150
+        if goal._aim_locked then
+          mode_str = string.format("AIM: locked (%dt → FINETUNE)", elapsed)
+          mr, mg, mb = 80, 255, 120
+        else
+          mode_str = string.format("AIM: rotating to corner (%dt / %dt timeout)",
+                                   elapsed, timeout)
+          mr, mg, mb = 255, 200, 80
+        end
+      elseif goal.substate == "in_range_aim_finetune" then
         if on_pill then
           mode_str = string.format("FINETUNE: locked (%d taps)",
                                    goal._finetune_taps or 0)

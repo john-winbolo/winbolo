@@ -92,3 +92,94 @@ bool mainImGuiWantsMouse(void) {
     if (prev) ImGui::SetCurrentContext(prev);
     return want;
 }
+
+bool mainImGuiWantsTextInput(void) {
+    if (!sInitialized || !sCtx) return false;
+    ImGuiContext *prev = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(sCtx);
+    bool want = ImGui::GetIO().WantTextInput;
+    if (prev) ImGui::SetCurrentContext(prev);
+    return want;
+}
+
+void mainImGuiRenderShortcuts(bool *visible) {
+    if (!visible || !*visible) return;
+    if (!sInitialized || !sCtx) return;
+    bool open = true;
+    ImGui::SetNextWindowSize(ImVec2(440, 540), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("BrainTest – Shortcuts (F1)", &open,
+                      ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        if (!open) *visible = false;
+        return;
+    }
+
+    /* Static list — keep in lockstep with the SDL_EVENT_KEY_DOWN
+     * switch in braintest_main.c. Two columns: key, description. */
+    struct Row { const char *key; const char *desc; };
+    static const Row kPlayback[] = {
+        {"Space",   "Pause / resume"},
+        {",",       "Step back one frame (auto-pause + playback)"},
+        {".",       "Step forward one frame (steps live past end)"},
+        {"Home",    "Jump to start of recording (playback)"},
+        {"End",     "Jump back to live (latest tick)"},
+        {NULL,      NULL},
+    };
+    static const Row kView[] = {
+        {"Tab",     "Cycle to next active bot"},
+        {"F",       "Free camera toggle"},
+        {"H",       "Top HUD toggle"},
+        {"M",       "Manual control toggle"},
+        {"X",       "Bare-screen mode (suppress all overlays except HUD)"},
+        {"= / +",   "Zoom in"},
+        {"- / _",   "Zoom out"},
+        {"V",       "Toggle V dialog (visualization filter)"},
+        {"S",       "Toggle Shot Simulator panel"},
+        {"F1",      "Toggle this shortcut list"},
+        {"Esc",     "Quit"},
+        {NULL,      NULL},
+    };
+    static const Row kOverlays[] = {
+        {"1",       "Influence overlay"},
+        {"2",       "Danger overlay"},
+        {"3",       "Front-line overlay"},
+        {"4",       "A* / Dijkstra path overlay"},
+        {"5",       "Cost-to heatmap (Shift = lower danger weight)"},
+        {"6",       "Fog of war"},
+        {"7",       "Dijkstra heatmap (Shift = cycle slate)"},
+        {"9",       "Values overlay"},
+        {"0",       "Clear all native overlays"},
+        {NULL,      NULL},
+    };
+
+    auto drawSection = [](const char *title, const Row *rows) {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.30f, 1.0f), "%s", title);
+        ImGui::Separator();
+        if (ImGui::BeginTable(title, 2,
+                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+            for (const Row *r = rows; r->key; r++) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(ImVec4(0.7f, 0.95f, 1.0f, 1.0f), "%s", r->key);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", r->desc);
+            }
+            ImGui::EndTable();
+        }
+        ImGui::Spacing();
+    };
+
+    drawSection("Playback / time",     kPlayback);
+    drawSection("View / windows",      kView);
+    drawSection("Overlays (numeric)",  kOverlays);
+
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                       "Bot-registered panel keys (lowercase a-z) are added");
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                       "dynamically when the brain registers them.");
+
+    ImGui::End();
+    if (!open) *visible = false;
+}

@@ -870,15 +870,30 @@ local function attack_pill_steer(state, world, info, goal)
     -- pathfinder still works us closer.
   end
 
-  -- in_range_aim (PPT): stop, turn to the chosen aim point exactly,
-  -- no firing. _aim_locked flips true once corr is within 1 brad.
-  -- Pure trig — atan2 to compute target heading, adiff for the
-  -- correction, hold/tap turn keys to close it. Does NOT consult
-  -- the shell physics simulator.
-  if goal.substate == "in_range_aim" then
+  -- in_range_aim_pre / in_range_aim (PPT): stop, turn to an aim
+  -- point exactly, no firing. _aim_locked flips true once corr is
+  -- within 1 brad. Pure trig — atan2 to compute target heading,
+  -- adiff for the correction, hold/tap turn keys to close it. Does
+  -- NOT consult the shell physics simulator.
+  --
+  -- The two substates share this handler but read from different
+  -- aim fields:
+  --   in_range_aim_pre → goal.aim_pre_mx/my (1 game-pixel outside
+  --                      the pillbox on the chosen-corner side, or
+  --                      pillbox center for center aims)
+  --   in_range_aim     → goal.aim_mx/my     (the chosen aim corner)
+  -- That way the canonical aim corner stays in goal.aim_mx/my and
+  -- pre-aim doesn't have to mutate it.
+  if goal.substate == "in_range_aim_pre" or goal.substate == "in_range_aim" then
     if info.speed > 0 then keys = keys | KEY_SLOWER end
-    local aim_tx = goal.aim_mx or (goal.mx + 0.5)
-    local aim_ty = goal.aim_my or (goal.my + 0.5)
+    local aim_tx, aim_ty
+    if goal.substate == "in_range_aim_pre" then
+      aim_tx = goal.aim_pre_mx or goal.aim_mx or (goal.mx + 0.5)
+      aim_ty = goal.aim_pre_my or goal.aim_my or (goal.my + 0.5)
+    else
+      aim_tx = goal.aim_mx or (goal.mx + 0.5)
+      aim_ty = goal.aim_my or (goal.my + 0.5)
+    end
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                                aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
@@ -888,7 +903,18 @@ local function attack_pill_steer(state, world, info, goal)
     elseif corr < -1 then taps = taps | KEY_TURNLEFT
     end
     if math.abs(corr) <= 1 then
-      goal._aim_locked = true
+      -- Use distinct flags per substate so pre's "I'm on the right
+      -- SIDE of the pill" decision doesn't pre-pop the in_range_aim
+      -- lock that signals "I'm aimed at the chosen corner". Without
+      -- this, in_range_aim would inherit a true _aim_locked the
+      -- moment it took over and immediately cascade into
+      -- in_range_aim_finetune without ever actually settling on
+      -- the corner — which is a different point than pre-aim.
+      if goal.substate == "in_range_aim_pre" then
+        goal._pre_aim_locked = true
+      else
+        goal._aim_locked = true
+      end
     end
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE
@@ -1535,6 +1561,33 @@ function M.steer(state, world, info, goal)
         nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
       end
     end
+    -- capture_pill: pill tile carries an impassable overlay (32767)
+    -- so A* can't route TO it. Pick the cheapest-to-reach 8-neighbor
+    -- of the pill (Dijkstra cost from tank's slate, accounting for
+    -- in-boat) as the actual A* destination. Mirrors the cost-side
+    -- formula in compute_pool4_cost so the path follows the same
+    -- adjacent tile that the goal evaluator scored against.
+    if goal.kind == "capture_pill" then
+      local pmx, pmy = goal.mx, goal.my
+      local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
+      local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
+      local boat_flag = info.inboat and 1 or 0
+      local best_amx, best_amy = nil, nil
+      local best_cost = math.huge
+      for d = 1, 8 do
+        local ax = U.mclamp(pmx + DX[d])
+        local ay = U.mclamp(pmy + DY[d])
+        local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ax, ay, boat_flag)
+        if ac < best_cost then
+          best_cost = ac
+          best_amx, best_amy = ax, ay
+        end
+      end
+      if best_amx then
+        nav_mx, nav_my = best_amx, best_amy
+        nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
+      end
+    end
     -- Rescue LGM: chase the LGM's LIVE sub-tile world position (not the
     -- cached goal.wx/wy from when the goal was created — the LGM moves).
     -- Tile coords still come from goal.mx/my for the A* path target.
@@ -1992,6 +2045,7 @@ function M.steer(state, world, info, goal)
       gather_trees       = true,
       approach           = true,
       in_range_position  = true,
+      in_range_aim_pre   = true,
       in_range_aim       = true,
       in_range_aim_finetune = true,
       shoot_pill         = true,

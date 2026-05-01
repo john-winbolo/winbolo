@@ -3072,7 +3072,7 @@ function M.finalize_pools(state, world, info)
     local LOCK_SUBS = {
       gather_trees=true, approach=true, build_walls=true,
       aim=true, detree=true, charge=true, engage=true, rush=true,
-      in_range_position=true, in_range_aim=true,
+      in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
       in_range_aim_finetune=true, shoot_pill=true,
       ws_prebuild=true, ws_prewait=true, ws_advance=true,
       ws_engage=true, ws_retreat=true, ws_rebuild=true,
@@ -3365,6 +3365,7 @@ local function goal_selection(state, world, info, quiet)
              or state.goal.substate == "ws_engage"
              or state.goal.substate == "aim"
              or state.goal.substate == "in_range_position"
+             or state.goal.substate == "in_range_aim_pre"
              or state.goal.substate == "in_range_aim"
              or state.goal.substate == "in_range_aim_finetune"
              or state.goal.substate == "shoot_pill"
@@ -3793,7 +3794,7 @@ local function goal_selection(state, world, info, quiet)
       ws_prebuild=true, ws_prewait=true, ws_advance=true,
       ws_engage=true,   ws_retreat=true, ws_rebuild=true,
       gather_trees=true, build_walls=true,
-      in_range_position=true, in_range_aim=true,
+      in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
       in_range_aim_finetune=true, shoot_pill=true,
     }
     local cur_sub = state.goal and state.goal.substate

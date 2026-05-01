@@ -83,6 +83,8 @@ M.IDS = {
                          long  = "'BASE KILLER' mode label" },
   hud_stuck_counter  = { short = "HUD: stuck counter",
                          long  = "Stuck-detection countdown" },
+  hud_click_cost     = { short = "HUD: click cost panel",
+                         long  = "Bottom-right panel showing pathfinding cost values for the most-recent map click: heuristic estimate, Dijkstra lookup, and clicked tile coords. Replaces the old C-side hardcoded panel — toggleable from V dialog." },
   hud_compass        = { short = "HUD: compass dirs",
                          long  = "Direction-text indicators" },
   hud_emergency_drop = { short = "HUD: emergency drop",
@@ -219,6 +221,11 @@ M.IDS = {
   -- HUD: kill attempt indicator (KILL ATTEMPT / DAMAGE ONLY + counters).
   hud_kill_attempt   = { short = "HUD: kill attempt",
                          long  = "Top-left KILL ATTEMPT/DAMAGE ONLY label + bullets_needed/pill_hp/fired counters" },
+
+  -- HUD: shoot_pill (PPT) live progress toward each of the three exit
+  -- triggers (kill / swerve-after-N-hits / no-progress abort).
+  hud_shoot_pill_progress = { short = "HUD: shoot_pill progress",
+                              long  = "PPT shoot_pill exit-trigger bars: kill (pill_hp), swerve (hits taken), abort (ticks since last hp drop)" },
 
   -- Floating "<in-flight>/<pill HP>" label above the target pill.
   pill_shot_count    = { short = "Pill shot count",
@@ -412,6 +419,74 @@ function M.hud_text(viz_id, ...)
   -- overlay_hud_text args: x, y, text, anchor, r, g, b, a, viz_idx
   local x, y, text, anchor, r, g, b, a = ...
   return overlay_hud_text(x, y, text, anchor, r, g, b, a, idx)
+end
+
+-- =========================================================================
+-- viz_detail registry — per-tick clickable map regions with rich body
+-- text shown in BrainTest's "D" inspector dialog.
+--
+-- Lifecycle: brain calls M.detail_clear() at the top of think(), then
+-- per-primitive calls M.detail(detail_id, kind, ...geometry..., label)
+-- and zero-or-more M.detail_text(detail_id, line) to attach body lines.
+-- The registry is shared across all bots; the dialog filters/sorts
+-- by id. Each id is unique per primitive (brain decides naming).
+--
+-- All overlay_detail_* bindings are NULL-safe so brains running outside
+-- BrainTest skip the work transparently.
+-- =========================================================================
+
+function M.detail_clear()
+  -- DEPRECATED. The host (BrainTest) clears the viz_detail registry
+  -- ONCE per tick before any brain.think runs (see appTickBrain in
+  -- braintest_main.c). Brains that called this themselves were
+  -- wiping each other's entries because the registry is global —
+  -- last bot won, others lost. Kept as a no-op so existing brain
+  -- code that calls viz.detail_clear() still works without error.
+end
+
+--- Register a clickable rect spanning (x1,y1)-(x2,y2) in tile coords.
+--- detail_id must be unique per-primitive within a tick.
+function M.detail_rect(detail_id, x1, y1, x2, y2, label)
+  if not overlay_detail then return end
+  return overlay_detail(detail_id, "rect", x1, y1, x2, y2, label or "")
+end
+
+--- Register a clickable circle centered at (cx, cy) with given radius.
+function M.detail_circle(detail_id, cx, cy, radius, label)
+  if not overlay_detail then return end
+  return overlay_detail(detail_id, "circle", cx, cy, radius, 0, label or "")
+end
+
+--- Register a clickable text anchor at (x, y).
+function M.detail_text_anchor(detail_id, x, y, label)
+  if not overlay_detail then return end
+  return overlay_detail(detail_id, "text", x, y, 0, 0, label or "")
+end
+
+--- Append a body line to the entry for detail_id. Body lines are
+--- shown in a read-only multiline text field so the user can copy.
+function M.detail_text(detail_id, line)
+  if not overlay_detail_text then return end
+  return overlay_detail_text(detail_id, line)
+end
+
+--- Convenience: register + multiple body lines in one call.
+--- usage: M.detail("id", "rect", {x1,y1,x2,y2}, "label", {"line1","line2"})
+function M.detail(detail_id, kind, geometry, label, body_lines)
+  if not overlay_detail then return end
+  local x1, y1, x2, y2 = 0, 0, 0, 0
+  if geometry then
+    x1 = geometry[1] or 0
+    y1 = geometry[2] or 0
+    x2 = geometry[3] or 0
+    y2 = geometry[4] or 0
+  end
+  overlay_detail(detail_id, kind, x1, y1, x2, y2, label or "")
+  if body_lines and overlay_detail_text then
+    for i = 1, #body_lines do
+      overlay_detail_text(detail_id, body_lines[i])
+    end
+  end
 end
 
 return M

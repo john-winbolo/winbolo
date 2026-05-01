@@ -86,6 +86,8 @@
 #include "braintest_mainimgui.h"
 #include "braintest_shotsimpanel.h"
 #include "braintest_shotsim_poi_registry.h"
+#include "braintest_vizdetail_registry.h"
+#include "braintest_vizdetailwindow.h"
 #include "../bolo/brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
@@ -222,6 +224,26 @@ typedef struct {
     int *pathX;
     int *pathY;
     int  pathLen;
+
+    /* Shot-sim POI poll results captured at this tick. The shot-sim
+     * panel polls POIs via Lua against the followed bot's live state;
+     * playback re-uses these recorded values so the buttons reflect
+     * what the bot would have shown at the scrubbed tick instead of
+     * the current live state. Indexed by POI registry slot. */
+    struct {
+        int32_t wx;
+        int32_t wy;
+        bool    ok;
+    } shotSimPois[SHOTSIM_POI_REG_MAX];
+    uint8_t shotSimPoiCount;  /* slots populated this frame */
+
+    /* viz_detail registry snapshot (clickable map primitives the
+     * brain registered this tick with rich body text). Without
+     * recording this, the inspector dialog goes blank during
+     * playback because the brain isn't running. malloc'd per frame;
+     * freed in recordingFreeFrame. */
+    VizDetailEntry *vizDetails;
+    int             vizDetailCount;
 } RecordingFrame;
 
 typedef struct {
@@ -306,6 +328,7 @@ typedef struct {
     SDL_Mutex   *costToMutex;
     bool         costToAbort;
     bool         showHUD;          /* status bar + legend (toggle with H) */
+    bool         showShortcuts;    /* keyboard-shortcut help overlay (F1) */
 
     /* Overlay texture (256x256 RGBA, updated once per game tick) */
     SDL_Texture *overlayTex;
@@ -457,6 +480,10 @@ static volatile bool appQuit = FALSE;
 /* for the design overview.                                        */
 /* ────────────────────────────────────────────────────────────── */
 
+/* Forward decl — defined alongside the shot-sim panel callbacks below.
+ * Needed here because recordingCapture polls every POI per tick. */
+static bool shotSimPoiPollLive(int idx, BrainTestApp *app, int *outWX, int *outWY);
+
 static void recordingInit(RecordingBuffer *rb) {
     memset(rb, 0, sizeof(*rb));
     rb->playbackMapFrame = -1;
@@ -489,6 +516,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     for (int i = 0; i < MAX_TANKS; i++) free(f->botOverlayCmds[i]);
     free(f->pathX);
     free(f->pathY);
+    free(f->vizDetails);
     memset(f, 0, sizeof(*f));
 }
 
@@ -1020,6 +1048,28 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     int expanded = 0, peakOpen = 0, done = 0;
     int active = brainPathfinderDijkstraStatus(botPf, viewSlate,
                                                &expanded, &peakOpen, &done);
+
+    /* Status label — shows which slate is being viewed, its kind, age,
+     * and progress. Drawn even when the slate is INACTIVE so the user
+     * can see "I cycled to slate 2 but it has nothing" rather than
+     * silent absence. Cyan + top-left, just under the bot/zoom status
+     * line at the very top. Format mirrors the original optimize-perf
+     * branch verbatim so muscle memory carries over. */
+    {
+        int dijKind = botPf->dij_slates[viewSlate].kind;
+        uint32_t dijStarted = botPf->dij_slates[viewSlate].started_tick;
+        uint32_t curTick    = app->sim.tick / 2;
+        int life = (dijStarted > 0) ? (int)(curTick - dijStarted) : 0;
+        char dijLabel[160];
+        SDL_snprintf(dijLabel, sizeof(dijLabel),
+            "[7] dijkstra slate=%d kind=%d %s life=%d exp=%d peak_open=%d %s",
+            viewSlate, dijKind,
+            active ? "ACTIVE" : "INACTIVE",
+            life, expanded, peakOpen,
+            done ? "DONE" : "(running)");
+        SDL_SetRenderDrawColor(app->renderer, 0, 255, 255, 255);
+        SDL_RenderDebugText(app->renderer, 4.0f, 144.0f, dijLabel);
+    }
     if (!active) return;
 
     int   tp, startX, startY, endX, endY;
@@ -1179,6 +1229,32 @@ static int panelRegisterCallback(const char *name, const char *type,
 /* braintest_shotsim_poi_register host hook. Routes Lua → POI
  * registry; returns the slot index or -1. The brain's bot_owner
  * is the same as g_currentInitBot used for panel registration. */
+/* viz_detail registry adapters. The brain calls overlay_detail /
+ * overlay_detail_text / overlay_detail_clear via braincore.c; these
+ * translate the string-kind to the VizDetailKind enum and forward to
+ * the per-tick registry. bot_owner is taken from g_currentInitBot
+ * during brain.open and from the followed bot otherwise (-1 if no
+ * bot context is active). */
+static VizDetailKind vizDetailKindFromStr(const char *s) {
+    if (!s) return VIZDETAIL_KIND_RECT;
+    if (strcmp(s, "rect")   == 0) return VIZDETAIL_KIND_RECT;
+    if (strcmp(s, "circle") == 0) return VIZDETAIL_KIND_CIRCLE;
+    if (strcmp(s, "text")   == 0) return VIZDETAIL_KIND_TEXT;
+    return VIZDETAIL_KIND_RECT;
+}
+static int vizDetailRegisterCallback(const char *id, const char *kind,
+                                      float x1, float y1, float x2, float y2,
+                                      const char *label) {
+    return vizDetailRegister(g_currentInitBot, id, vizDetailKindFromStr(kind),
+                              x1, y1, x2, y2, label);
+}
+static int vizDetailAppendBodyCallback(const char *id, const char *line) {
+    return vizDetailAppendBody(g_currentInitBot, id, line);
+}
+static void vizDetailClearCallback(void) {
+    vizDetailRegistryClear();
+}
+
 static int shotSimPoiRegisterCallback(const char *name,
                                        const char *lua_expr) {
     if (g_currentInitBot < 0) {
@@ -1516,12 +1592,35 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     BrainPathfinder *dpf = app->debugPF;
     if (!dpf || !dpf->map) return;
 
-    WORLD twx, twy;
-    if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
-    int smx = twx >> 8;
-    int smy = twy >> 8;
-    int in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
+    /* Origin: in playback, use the followed tank's RECORDED position
+     * for that frame so the A* path lines up with where the tank is
+     * being rendered. In live mode use the live tank state. Without
+     * this, a playback click would show a path from the live tank
+     * (which has moved on by many ticks), not the one on screen. */
+    int smx, smy, in_boat = 0;
+    bool got_origin = false;
+    if (app->playbackMode
+        && app->playbackFrame >= 0
+        && app->playbackFrame < app->recording.count) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        for (int i = 0; i < pf_->tankCount; i++) {
+            if (pf_->tanks[i].playerNum == app->followBot) {
+                smx = pf_->tanks[i].worldX >> 8;
+                smy = pf_->tanks[i].worldY >> 8;
+                in_boat = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                got_origin = true;
+                break;
+            }
+        }
+    }
+    if (!got_origin) {
+        WORLD twx, twy;
+        if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
+        smx = twx >> 8;
+        smy = twy >> 8;
+        in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
                    tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+    }
 
     /* Reset the debug PF search state by changing destination */
     dpf->status = 0;
@@ -2085,6 +2184,45 @@ static void recordingCapture(BrainTestApp *app) {
             botManagerEvalLuaString(app->followBot, e->lua_expr);
     }
 
+    /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
+     * followed bot and stash the result so playback can re-show the
+     * same buttons. Same one-poll-per-tick cost the live panel pays. */
+    int npoi = shotSimPoiCount();
+    if (npoi > SHOTSIM_POI_REG_MAX) npoi = SHOTSIM_POI_REG_MAX;
+    f->shotSimPoiCount = (uint8_t)npoi;
+    for (int pi = 0; pi < npoi; pi++) {
+        int wx = 0, wy = 0;
+        f->shotSimPois[pi].ok = shotSimPoiPollLive(pi, app, &wx, &wy);
+        f->shotSimPois[pi].wx = wx;
+        f->shotSimPois[pi].wy = wy;
+    }
+
+    /* ── viz_detail registry snapshot ── shallow memcpy of the
+     * per-tick entries so the inspector dialog can scrub backwards
+     * to any frame and see the brain's clickable map primitives +
+     * body text from THAT frame. The brain rebuilds the live
+     * registry next tick; this snapshot is the only record after
+     * that. Strings are inline (fixed-size arrays inside the
+     * struct), so a single malloc + memcpy captures everything. */
+    {
+        int vdc = vizDetailCount();
+        if (vdc > 0) {
+            f->vizDetails = (VizDetailEntry *)malloc(vdc * sizeof(VizDetailEntry));
+            if (f->vizDetails) {
+                for (int i = 0; i < vdc; i++) {
+                    const VizDetailEntry *src = vizDetailGet(i);
+                    if (src) f->vizDetails[i] = *src;
+                }
+                f->vizDetailCount = vdc;
+            } else {
+                f->vizDetailCount = 0;
+            }
+        } else {
+            f->vizDetails = NULL;
+            f->vizDetailCount = 0;
+        }
+    }
+
     rb->count++;
 }
 
@@ -2276,7 +2414,6 @@ static float drawHudLine(SDL_Renderer *r, float x, float y, float scale,
 }
 
 static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
     char line[256];
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
@@ -2299,8 +2436,8 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         hudTick = pf_->tick / 2;
         thinkMs = (double)pf_->thinkMs;
     }
-    SDL_snprintf(line, sizeof(line), "Tick: %u  think: %.2fms",
-                 hudTick, thinkMs);
+    SDL_snprintf(line, sizeof(line), "Tick: %u  think: %.2fms  Bot: %d",
+                 hudTick, thinkMs, app->followBot);
     float tickScale = 2.0f;
     float tickW = (float)strlen(line) * 8.0f * tickScale;
     float tickH = 8.0f * tickScale + 8.0f;
@@ -2367,35 +2504,6 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
                             gx + graphW + 4, budgetY - 4, "20ms");
     }
 
-    /* Status bar below the tick counter (toggle with H) */
-    if (app->showHUD) {
-        float statusScale = 2.0f;
-        float statusY = tickH;
-        float statusH = 8.0f * statusScale + 8.0f;
-        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 160);
-        SDL_FRect bg = { 0, statusY, (float)screenW, statusH };
-        SDL_RenderFillRect(app->renderer, &bg);
-
-        SDL_SetRenderDrawColor(app->renderer, 200, 200, 200, 255);
-
-        SDL_snprintf(line, sizeof(line),
-            "Bot:%d %s | %s | Zoom:%d | [1]Inf%s [2]Dng%s [3]FL%s [4]Path%s | [Space]%s [F]%s [H]HUD [Tab]Next",
-            app->followBot,
-            app->freeCamera ? "FREE" : "FOLLOW",
-            pf ? "PF:ok" : "PF:none",
-            app->zoomFactor,
-            vizFlag(app->regIdxInfluence) ? "*" : "",
-            vizFlag(app->regIdxDanger) ? "*" : "",
-            vizFlag(app->regIdxFrontLine) ? "*" : "",
-            vizFlag(app->regIdxPath) ? "*" : "",
-            app->paused ? "PAUSED" : "running",
-            app->freeCamera ? "follow" : "free");
-
-        SDL_SetRenderScale(app->renderer, statusScale, statusScale);
-        SDL_RenderDebugText(app->renderer, 4.0f / statusScale, (statusY + 4.0f) / statusScale, line);
-        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
-    }
-
     /* The top-right goal/cost/candidate panel that used to live
      * here has been removed — the brain emits richer equivalents
      * (hud_goal, hud_replan, hud_goal_candidates, hud_attack_status,
@@ -2404,27 +2512,11 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * panel here would mean two-source-of-truth and more code to
      * decouple from any specific brain. */
 
-    /* ── Click cost display (bottom-right) ── */
-    if (app->clickActive) {
-        float cs = 2.0f;
-        float lineH2 = 8.0f * cs + 2.0f;
-        char line2[256];
-        SDL_snprintf(line, sizeof(line), "Click (%d,%d) A*=%.0f  est=%.0f",
-                     app->clickMX, app->clickMY, app->clickCost, app->clickEstCost);
-        /* Show which cost the brain uses for goal selection */
-        SDL_snprintf(line2, sizeof(line2), "brain uses est for goal ranking");
-        float lw1 = (float)strlen(line) * 8.0f * cs;
-        float lw2 = (float)strlen(line2) * 8.0f * cs;
-        float cw = (lw1 > lw2 ? lw1 : lw2) + 12.0f;
-        float ch = lineH2 * 2.0f + 8.0f;
-        float cx = (float)screenW - cw - 4.0f;
-        float cy = (float)screenH - ch - 4.0f;
-        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
-        SDL_FRect cbg = { cx, cy, cw, ch };
-        SDL_RenderFillRect(app->renderer, &cbg);
-        drawHudLine(app->renderer, cx + 4.0f, cy + 4.0f, cs, 255, 100, 255, line);
-        drawHudLine(app->renderer, cx + 4.0f, cy + 4.0f + lineH2, cs, 180, 180, 100, line2);
-    }
+    /* (Old C-side click-cost panel removed — the brain emits a
+     * richer "hud_click_cost" overlay instead, gated by the
+     * matching viz_id so it can be toggled from the V dialog like
+     * any other overlay. C still computes the A* path geometry in
+     * computeClickPath; only the text box moved to the brain.) */
 
     /* ── Hover coords (just above the control bar): tile (sub-tile
      * decimal), game pixel (16 wu = 1 px), and raw wu (1/256 tile).
@@ -2498,6 +2590,15 @@ static void appTickBrain(BrainTestApp *app) {
     app->sim.sim.isInMenu = isInMenu;
 
     pushVizStateToBots(app->vizSuppressActive);
+
+    /* Clear the viz_detail registry ONCE before any bot's think runs.
+     * The registry is global, so if each bot called overlay_detail_clear
+     * itself the last bot to think would wipe earlier bots' entries —
+     * recordingCapture would then snapshot 0 entries even though the
+     * followed bot emitted plenty. Clearing here gives every bot's
+     * Brain.think a fresh registry that all bots accumulate into; the
+     * recording capture below catches the union after botManagerTick. */
+    vizDetailRegistryClear();
 
     botManagerTick(&app->sim, optAI);
     {
@@ -2942,8 +3043,11 @@ static bool shotSimTankAngleCallback(float *outAngle, void *ud) {
  * integers (wx, wy) or nil. We use a small Lua snippet to coerce
  * both forms into a single string we can parse here. Returns false
  * (greys out the button) when nil / parse fails. */
-static bool shotSimPoiPollCallback(int idx, int *outWX, int *outWY, void *ud) {
-    BrainTestApp *app = (BrainTestApp *)ud;
+/* Live POI eval — evaluates the registered POI's lua_expr against
+ * the followed bot's current Lua state. Shared by the live panel
+ * callback below and recordingCapture (so playback frames carry the
+ * exact value the panel would have shown at that tick). */
+static bool shotSimPoiPollLive(int idx, BrainTestApp *app, int *outWX, int *outWY) {
     const ShotSimPoiEntry *e = shotSimPoiGet(idx);
     if (!e || e->bot_owner != app->followBot) return false;
     char wrap[SHOTSIM_POI_REG_EXPR_MAX + 256];
@@ -2961,6 +3065,27 @@ static bool shotSimPoiPollCallback(int idx, int *outWX, int *outWY, void *ud) {
     *outWX = wx;
     *outWY = wy;
     return true;
+}
+
+static bool shotSimPoiPollCallback(int idx, int *outWX, int *outWY, void *ud) {
+    BrainTestApp *app = (BrainTestApp *)ud;
+    /* In playback, return the recorded value for the displayed frame
+     * instead of polling the live brain — same reason as the tank
+     * pos/angle callbacks. */
+    if (app->playbackMode) {
+        int f = app->playbackFrame;
+        if (f >= 0 && f < app->recording.count) {
+            const RecordingFrame *pf = &app->recording.frames[f];
+            if (idx >= 0 && idx < (int)pf->shotSimPoiCount
+                && pf->shotSimPois[idx].ok) {
+                *outWX = pf->shotSimPois[idx].wx;
+                *outWY = pf->shotSimPois[idx].wy;
+                return true;
+            }
+        }
+        return false;
+    }
+    return shotSimPoiPollLive(idx, app, outWX, outWY);
 }
 
 static void appRender(BrainTestApp *app) {
@@ -3201,6 +3326,14 @@ static void appRender(BrainTestApp *app) {
                 ovl->count = pf_->botOverlayCmdCount[oi];
             }
 
+            /* ── viz_detail registry ── point reads at the recorded
+             * frame's snapshot. Inspector dialog + map click hit-
+             * test go through vizDetailGet/HitTest which honor the
+             * playback override transparently. Cleared on patch-out
+             * so the next live brain tick repopulates the live
+             * registry without interference. */
+            vizDetailSetPlaybackView(pf_->vizDetails, pf_->vizDetailCount);
+
             /* ── A* / Dijkstra path overlay ── temporarily replace
              * app->cachedPath_* with the recorded path. The
              * polyline renderer reads these directly, so this is
@@ -3303,6 +3436,10 @@ static void appRender(BrainTestApp *app) {
                 app->viewCenterX = savedViewCenterX;
                 app->viewCenterY = savedViewCenterY;
             }
+            /* Drop the viz_detail playback override so the next live
+             * brain tick rebuilds the live registry without the
+             * scrubbed-frame entries hanging around. */
+            vizDetailClearPlaybackView();
         }
     }
 
@@ -3334,6 +3471,91 @@ static void appRender(BrainTestApp *app) {
     /* Shot-sim result on top of the map (under ImGui panels). */
     renderShotSimResult(app, screenW, screenH);
 
+    /* Viz-detail highlights. Two passes:
+     *   - Hovered (cyan, lighter): row-hover preview from the D
+     *     dialog. Drawn first so the selected red wins when both
+     *     apply to the same id.
+     *   - Selected (red, pulsing): row click in D, focused detail
+     *     window, or map hit-test.
+     * Geometry resolution is identical for both, so we loop. */
+    for (int pass = 0; pass < 2; pass++) {
+        const char *id = (pass == 0)
+            ? vizDetailWindowGetHovered()
+            : vizDetailWindowGetSelected();
+        if (!id || !id[0]) continue;
+        /* Skip the hover pass when it duplicates the selected id —
+         * the red highlight would obscure it anyway. */
+        if (pass == 0) {
+            const char *sel = vizDetailWindowGetSelected();
+            if (sel && sel[0] && strncmp(sel, id, VIZDETAIL_ID_MAX) == 0) continue;
+        }
+        int idx = vizDetailFindByID(id);
+        const VizDetailEntry *e = (idx >= 0) ? vizDetailGet(idx) : NULL;
+        if (!e) continue;
+        /* Resolve geometry to a bounding screen rect. */
+        float sx1, sy1, sx2, sy2;
+        if (e->kind == VIZDETAIL_KIND_RECT) {
+            mapTileToScreen(app, e->x1, e->y1, screenW, screenH, &sx1, &sy1);
+            mapTileToScreen(app, e->x2, e->y2, screenW, screenH, &sx2, &sy2);
+        } else if (e->kind == VIZDETAIL_KIND_CIRCLE) {
+            float cx, cy;
+            mapTileToScreen(app, e->x1, e->y1, screenW, screenH, &cx, &cy);
+            float sr = e->x2 * 16.0f * app->zoomFactor;
+            sx1 = cx - sr; sy1 = cy - sr;
+            sx2 = cx + sr; sy2 = cy + sr;
+        } else { /* TEXT */
+            float cx, cy;
+            mapTileToScreen(app, e->x1, e->y1, screenW, screenH, &cx, &cy);
+            sx1 = cx - 4; sy1 = cy - 4;
+            sx2 = cx + 4; sy2 = cy + 4;
+        }
+        float bx = sx1 < sx2 ? sx1 : sx2;
+        float by = sy1 < sy2 ? sy1 : sy2;
+        float bw = fabsf(sx2 - sx1);
+        float bh = fabsf(sy2 - sy1);
+        /* Always inflate by a 10-px border so the highlight is
+         * clearly visible around the primitive (not on top of it).
+         * Then bump up to a min size for tiny dots. */
+        const float BORDER   = 10.0f;
+        const float MIN_SIZE = 32.0f;
+        bx -= BORDER; by -= BORDER;
+        bw += BORDER * 2; bh += BORDER * 2;
+        if (bw < MIN_SIZE) { bx -= (MIN_SIZE - bw) * 0.5f; bw = MIN_SIZE; }
+        if (bh < MIN_SIZE) { by -= (MIN_SIZE - bh) * 0.5f; bh = MIN_SIZE; }
+        SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+        if (pass == 0) {
+            /* Cyan hover preview — flat, no pulse, lower alpha. */
+            SDL_SetRenderDrawColor(app->renderer, 80, 220, 255, 60);
+            SDL_FRect glow = { bx - 4, by - 4, bw + 8, bh + 8 };
+            SDL_RenderFillRect(app->renderer, &glow);
+            SDL_SetRenderDrawColor(app->renderer, 80, 220, 255, 110);
+            SDL_FRect r = { bx, by, bw, bh };
+            SDL_RenderFillRect(app->renderer, &r);
+            SDL_SetRenderDrawColor(app->renderer, 200, 245, 255, 220);
+            for (int off = 0; off < 2; off++) {
+                SDL_FRect rr = { bx - off, by - off,
+                                 bw + off * 2, bh + off * 2 };
+                SDL_RenderRect(app->renderer, &rr);
+            }
+        } else {
+            /* Pulse alpha 100..220 over a ~1s cycle. */
+            float pulse = 0.5f + 0.5f * sinf((float)SDL_GetTicks() * 0.006f);
+            int alpha   = (int)(100.0f + pulse * 120.0f);
+            SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, alpha / 3);
+            SDL_FRect glow = { bx - 6, by - 6, bw + 12, bh + 12 };
+            SDL_RenderFillRect(app->renderer, &glow);
+            SDL_SetRenderDrawColor(app->renderer, 255, 50, 50, (Uint8)alpha);
+            SDL_FRect r = { bx, by, bw, bh };
+            SDL_RenderFillRect(app->renderer, &r);
+            SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
+            for (int off = 0; off < 4; off++) {
+                SDL_FRect rr = { bx - off, by - off,
+                                 bw + off * 2, bh + off * 2 };
+                SDL_RenderRect(app->renderer, &rr);
+            }
+        }
+    }
+
     /* Main-window ImGui pass — draws the shot-sim panel (when
      * visible) and any future floating tools. The panel itself
      * polls its POI/tank callbacks to stay in sync with the live
@@ -3346,6 +3568,8 @@ static void appRender(BrainTestApp *app) {
                        shotSimTankAngleCallback,
                        shotSimPoiPollCallback,
                        app);
+    mainImGuiRenderShortcuts(&app->showShortcuts);
+    vizDetailWindowRender();
     mainImGuiEndFrame(app->renderer);
 
     SDL_RenderPresent(app->renderer);
@@ -3522,6 +3746,9 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizRegisterCallback(vizRegisterCallback);
     brainCoreSetPanelRegisterCallback(panelRegisterCallback);
     brainCoreSetShotSimPoiRegisterCallback(shotSimPoiRegisterCallback);
+    brainCoreSetVizDetailRegisterCallback(vizDetailRegisterCallback);
+    brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
+    brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
      * dump. Defined in braintest_panelwindow.cpp so it can call
      * ImGui directly. Per-bot panel modules in
@@ -3739,6 +3966,17 @@ int main(int argc, char *argv[]) {
                     }
                 }
                 if (ev.key.repeat) break;
+                /* Skip BrainTest hotkeys while a text field is being
+                 * edited inside the V dialog (its own ImGui context
+                 * — has the V-dialog filter input). The main-window
+                 * ImGui context has no text inputs today (shot-sim
+                 * panel + shortcuts window are all buttons/radios/
+                 * tables), so we don't gate on its WantTextInput —
+                 * doing so was eating SPACE / TAB / etc. when the
+                 * shot-sim panel just had focus without any text
+                 * field active. Re-add a main-context gate when a
+                 * real text input lands there. */
+                if (vizWindowWantsTextInput()) break;
                 switch (ev.key.key) {
                 case SDLK_SPACE:
                     app.paused = !app.paused;
@@ -3863,6 +4101,16 @@ int main(int argc, char *argv[]) {
                      * inside shotSimPanelToggle). */
                     shotSimPanelToggle();
                     break;
+                case SDLK_D:
+                    /* Toggle the viz-detail inspector panel — lists
+                     * every clickable map primitive the brain has
+                     * registered this tick with read-only multiline
+                     * bodies you can copy from. Click a header to
+                     * highlight that primitive on the map; click the
+                     * primitive on the map to scroll/expand its
+                     * entry here. */
+                    vizDetailWindowToggle();
+                    break;
                 case SDLK_M: {
                     app.manualControl = !app.manualControl;
                     /* Notify the brain via the optional hook. Brains
@@ -3876,6 +4124,9 @@ int main(int argc, char *argv[]) {
                     botManagerExecLua(app.followBot, buf);
                     break;
                 }
+                case SDLK_F1:
+                    app.showShortcuts = !app.showShortcuts;
+                    break;
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
                     break;
@@ -4160,6 +4411,26 @@ int main(int argc, char *argv[]) {
                         app.overlayDirty = true;
                         syncDebugPathfinder(&app);
                         computeClickPath(&app, cmx, cmy);
+
+                        /* Viz-detail hit-test: if the click landed on
+                         * a registered primitive, scroll/expand the
+                         * matching entry in the viz-detail dialog and
+                         * make it the highlight target. Use WU-level
+                         * precision (sub-tile) so nested rects and
+                         * small circles still hit accurately. */
+                        {
+                            int cwx = 0, cwy = 0;
+                            if (screenToWU(&app, ev.button.x, ev.button.y,
+                                            sw, sh, &cwx, &cwy)) {
+                                float tx = cwx / 256.0f;
+                                float ty = cwy / 256.0f;
+                                int hit = vizDetailHitTest(tx, ty);
+                                if (hit >= 0) {
+                                    const VizDetailEntry *e = vizDetailGet(hit);
+                                    if (e) vizDetailWindowSelectAndScroll(e->id);
+                                }
+                            }
+                        }
 
                         /* Forward to brain.on_click(mx, my, {shift,
                          * ctrl, alt}) so brains can implement custom
