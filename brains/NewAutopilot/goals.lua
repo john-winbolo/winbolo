@@ -2251,6 +2251,23 @@ function M.build_eval_queue(state, world, info)
   -- Cost cache persists across cycles (initialized once)
   if not state.cost_cache then state.cost_cache = {} end
 
+  -- Synchronously evaluate attack_tank at the START of the cycle so a
+  -- newly-spotted enemy tank shows up in the pool grid with a real
+  -- cost on the same tick it appears, instead of waiting for finalize
+  -- (which can be many ticks later for a long eval cycle). Same
+  -- spirit as the pool-4 capture_pill seeding above. attack_tank
+  -- doesn't go through the per-tick eval queue (it's in
+  -- FINALIZE_POOLS), so this is its analog of "evaluate at add time".
+  -- finalize_pools will re-run it again at decision tick to pick up
+  -- any updates from the intervening ticks; the redundant eval is
+  -- cheap (1 cost-scan over enemy_tanks) and the final value wins.
+  if not state.pool_cache then state.pool_cache = {} end
+  do
+    local ammo = (info.shells or 0) + (info.mines or 0)
+    state.pool_cache[9] = eval_attack_tank(state, world, info, tmx, tmy,
+                                            info.inboat, ammo)
+  end
+
   -- Incremental cost_to disabled (A* heuristic bias causes missing targets)
   -- TODO: switch to Dijkstra (heuristic=0) for incremental to work correctly
 end
