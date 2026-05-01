@@ -1991,13 +1991,17 @@ static void recordingCapture(BrainTestApp *app) {
     BaseSnapshot   dummyB[1];
     PillSnapshot   dummyP[1];
     TkExplosionSnapshot dummyTkExp[1];
+    /* Recording is god-view: capture every tank/shell regardless of how
+     * far they are from followBot. Without this, tanks that drift outside
+     * followBot's snapshot viewport vanish from playback. */
     serverSimBuildSnapshot(&app->sim, app->followBot, &hdr,
                            f->tanks, MAX_TANKS,
                            f->snapShells, MAX_SNAPSHOT_SHELLS,
                            dummyTkExp, 0,
                            dummyB, 0,
                            dummyP, 0,
-                           evtBuf, MAX_SNAPSHOT_EVENTS);
+                           evtBuf, MAX_SNAPSHOT_EVENTS,
+                           true);
     f->tankCount  = hdr.tankCount;
     f->shellCount = hdr.shellCount;
 
@@ -2878,6 +2882,27 @@ static void appRender(BrainTestApp *app) {
 
     /* Refresh goal info every frame (works while paused too) */
     refreshGoalInfo(app);
+
+    /* Reset the shot-sim panel when the brain enters a new pill take
+     * (different target_id, or transition into attack_pill from
+     * something else). Endpoints picked while attacking pill A would
+     * otherwise linger pointing at A's stale standoff/aim coords
+     * once the brain moves on to pill B. */
+    static char  prevGoalKind[32]      = "";
+    static int   prevGoalTargetId      = -1;
+    if (app->goalInfoValid) {
+        bool isPillTake = strcmp(app->goalInfo.kind, "attack_pill") == 0;
+        bool changedTo  = isPillTake
+                       && (strcmp(prevGoalKind, "attack_pill") != 0
+                           || prevGoalTargetId != app->goalInfo.target_id);
+        if (changedTo) {
+            shotSimPanelClearAll();
+            app->shotHasResult = false;
+            app->shotTileCount = 0;
+        }
+        SDL_strlcpy(prevGoalKind, app->goalInfo.kind, sizeof(prevGoalKind));
+        prevGoalTargetId = app->goalInfo.target_id;
+    }
 
     SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 255);
     SDL_RenderClear(app->renderer);

@@ -7,6 +7,7 @@
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
+#include <cfloat>
 
 extern "C" {
 #include "braintest_shotsimpanel.h"
@@ -97,23 +98,44 @@ static void endpointPickRow(const char *epLabel, bool isOrigin,
     }
     if (!tankAvail) ImGui::EndDisabled();
 
-    /* Per-POI buttons — one row per registered POI. Disabled while
-     * the POI is currently unavailable (poiCb returns false). */
+    /* "From list" — brain-registered POIs. We poll every POI once
+     * up front so the section header is only emitted when at least
+     * one is currently available; a section with all-disabled rows
+     * is just clutter. Each row is a two-line button: name on top,
+     * "(wx, wy)  tile (mx, my)" greyed underneath. */
     int npoi = shotSimPoiCount();
-    for (int i = 0; i < npoi; i++) {
-        const ShotSimPoiEntry *e = shotSimPoiGet(i);
-        if (!e) continue;
-        int wx = 0, wy = 0;
-        bool ok = poiCb && poiCb(i, &wx, &wy, ud);
-        snprintf(btnId, sizeof(btnId), "%s##poi_%s_%d",
-                 e->name, isOrigin ? "o" : "t", i);
-        if (!ok) ImGui::BeginDisabled();
-        if (ImGui::Button(btnId) && ok) {
-            *destWX  = wx;
-            *destWY  = wy;
-            *destSet = true;
+    if (npoi > 0) {
+        struct Resolved { int wx, wy; bool ok; };
+        Resolved cache[SHOTSIM_POI_REG_MAX];
+        int liveCount = 0;
+        for (int i = 0; i < npoi && i < SHOTSIM_POI_REG_MAX; i++) {
+            int wx = 0, wy = 0;
+            bool ok = poiCb && poiCb(i, &wx, &wy, ud);
+            cache[i].wx = wx;
+            cache[i].wy = wy;
+            cache[i].ok = ok;
+            if (ok) liveCount++;
         }
-        if (!ok) ImGui::EndDisabled();
+        if (liveCount > 0) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("From list");
+            for (int i = 0; i < npoi && i < SHOTSIM_POI_REG_MAX; i++) {
+                if (!cache[i].ok) continue;
+                const ShotSimPoiEntry *e = shotSimPoiGet(i);
+                if (!e) continue;
+                int wx = cache[i].wx, wy = cache[i].wy;
+                char label[160];
+                snprintf(label, sizeof(label),
+                         "%s\n(%d, %d)  tile (%d, %d)##poi_%s_%d",
+                         e->name, wx, wy, wx >> 8, wy >> 8,
+                         isOrigin ? "o" : "t", i);
+                if (ImGui::Button(label, ImVec2(-FLT_MIN, 0))) {
+                    *destWX  = wx;
+                    *destWY  = wy;
+                    *destSet = true;
+                }
+            }
+        }
     }
 }
 
@@ -129,9 +151,11 @@ void shotSimPanelRender(bool visible, ShotSimRunFn runCb,
         return;
     }
     bool open = true;
-    ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Shot simulator", &open,
-                      ImGuiWindowFlags_AlwaysAutoResize)) {
+    /* Initial size only — user can resize, drag, etc. We keep auto-
+     * resize off so a tall POI list doesn't make the panel grow off-
+     * screen each tick. */
+    ImGui::SetNextWindowSize(ImVec2(360, 480), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Shot simulator", &open)) {
         ImGui::End();
         if (!open) s.visible = false;
         return;
@@ -227,6 +251,13 @@ void shotSimPanelSetClickedWU(int wx, int wy) {
 }
 
 int shotSimPanelGetShooterType(void) { return s.shooterType; }
+
+void shotSimPanelClearAll(void) {
+    s.originSet    = false;
+    s.targetSet    = false;
+    s.pickArmed    = SHOTSIM_PICK_NONE;
+    s.lastRunValid = false;
+}
 
 bool shotSimPanelGetOrigin(int *outWX, int *outWY) {
     if (!s.originSet) return false;

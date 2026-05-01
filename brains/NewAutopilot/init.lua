@@ -127,6 +127,62 @@ function Brain.get_strategic_place_heatmap()
   return goals.get_strategic_place_heatmap(state, world, state._last_info)
 end
 
+-- Shot-sim POI getters. Each returns (wx, wy) when the POI is
+-- currently meaningful, or nil. Nothing here mutates state — these
+-- are pure reads of whatever the brain happens to have decided this
+-- tick. Polled by BrainTest's shot-sim panel.
+local function _attack_pill_for_focus()
+  if not state.goal then return nil end
+  if state.goal.kind ~= "attack_pill" then return nil end
+  local id = state.goal.target_id
+  if not id then return nil end
+  return world.pills and world.pills[id] or nil
+end
+
+function Brain.shotsim_focused_pill_take_wu()
+  local p = _attack_pill_for_focus()
+  if not p then return nil end
+  -- Pill center in WU. Pills always sit at MAP_SQUARE_MIDDLE within
+  -- their tile so this matches the engine's pill firing geometry.
+  return (p.mx << 8) | 128, (p.my << 8) | 128
+end
+
+function Brain.shotsim_chosen_standoff_wu()
+  if not state.goal or not state.goal._shield_scan then return nil end
+  local s = state.goal._shield_scan.standoff
+  if not s then return nil end
+  -- Candidate cx/cy are tile-center floats (e.g. 12.5). Convert to
+  -- WU by multiplying by 256 (1 tile = 256 WU).
+  if not s.cx or not s.cy then return nil end
+  return math.floor(s.cx * 256 + 0.5), math.floor(s.cy * 256 + 0.5)
+end
+
+function Brain.shotsim_shield_candidate_wu(i)
+  if not state.goal or not state.goal._shield_scan then return nil end
+  local cands = state.goal._shield_scan.candidates
+  if not cands then return nil end
+  -- attack_shield builds the array as [1] = standoff, [2..N+1] =
+  -- ring candidates. The shot-sim button index is 1-based over the
+  -- ring candidates only, so shift by +1 to skip the standoff slot
+  -- (which already has its own dedicated POI button).
+  local c = cands[i + 1]
+  if not c or not c.cx or not c.cy then return nil end
+  return math.floor(c.cx * 256 + 0.5), math.floor(c.cy * 256 + 0.5)
+end
+
+-- Chosen pill-take aim point (which corner of the pill the brain
+-- decided to fire at — driven by attack_shield's best_aim_idx +
+-- the AIM_OFFSETS_TILE_FIRE table). attack.lua writes this as
+-- goal.aim_mx / aim_my in tile-fraction units; we just multiply by
+-- 256 to get WU. Returns nil when no aim is set (pre-PPT, between
+-- replans, or non-attack_pill goals).
+function Brain.shotsim_chosen_aim_wu()
+  if not state.goal then return nil end
+  local ax, ay = state.goal.aim_mx, state.goal.aim_my
+  if not ax or not ay then return nil end
+  return math.floor(ax * 256 + 0.5), math.floor(ay * 256 + 0.5)
+end
+
 function Brain.get_debug_info()
   local g = state.goal or {}
   local info = {
@@ -171,6 +227,36 @@ function Brain.open(info)
     if Brain.get_queue_status then
       braintest_panel_register("Queue status", "text",
         "return brain.get_queue_status()")
+    end
+  end
+  -- Shot-sim points of interest. Each lua_expr returns (wx, wy) when
+  -- the POI is currently available, or nil. Polled every BrainTest
+  -- frame against the followed bot — keep the bodies cheap.
+  if braintest_shotsim_poi_register then
+    -- The currently-attacked pill (focused pill take target).
+    braintest_shotsim_poi_register("Focused pill take",
+      "return brain.shotsim_focused_pill_take_wu()")
+    -- Currently-chosen standoff (where the tank is heading for the
+    -- shot — driven by attack_shield's scan winner during PPT).
+    braintest_shotsim_poi_register("Chosen standoff",
+      "return brain.shotsim_chosen_standoff_wu()")
+    -- Chosen aim point — which corner of the focused pill we're
+    -- firing at (center / TL / TR / BL / BR, picked by the shield
+    -- scan). Useful as the shot-sim Target.
+    braintest_shotsim_poi_register("Pill take aim",
+      "return brain.shotsim_chosen_aim_wu()")
+    -- Every individual shield-scan candidate (±7° at 0.5° steps
+    -- around the standoff). Indexed 1..NUM_CANDIDATES; the brain's
+    -- helper returns nil for indices the live scan doesn't cover so
+    -- the panel buttons grey out outside the active scan.
+    -- Hardcoded 28 to match attack_shield.NUM_CANDIDATES — bumping
+    -- that constant means bumping this too. Worth the duplication
+    -- since the registration list is read at brain.open() and we
+    -- don't want to drag a runtime require here.
+    for i = 1, 28 do
+      braintest_shotsim_poi_register(
+        string.format("Shield candidate %d", i),
+        string.format("return brain.shotsim_shield_candidate_wu(%d)", i))
     end
   end
   -- Clear module-level caches from any previous game
