@@ -87,6 +87,13 @@ int  shotSimPanelGetShooterType(void);
 bool shotSimPanelGetOrigin(int *outWX, int *outWY);
 bool shotSimPanelGetTarget(int *outWX, int *outWY);
 
+/* Reset endpoints, pick mode, and the auto-run dedupe state — same
+ * as pressing Clear, except it doesn't fire the host's clearCb
+ * (caller controls when to drop the rendered tile overlay). The
+ * host calls this on goal transitions so a pick from a previous
+ * pill take doesn't linger. */
+void shotSimPanelClearAll(void);
+
 #ifdef __cplusplus
 }
 #endif

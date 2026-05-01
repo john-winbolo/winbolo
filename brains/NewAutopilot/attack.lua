@@ -623,7 +623,9 @@ end
 -- directly instead of nested loops + tile_in_ellipse calls.
 --
 -- The ellipse geometry depends only on the angle (orientation) and
--- the standard radii (r_long = 4, r_short = ATTACK_SAFE_RADIUS / 3).
+-- the standard radii (r_long = ATTACK_SAFE_RADIUS,
+-- r_short = ATTACK_SAFE_RADIUS / 3) — same axes the inspector viz
+-- uses to draw the outline.
 -- The float center sub-tile offset varies per angle, so each stamp is
 -- generated for that exact angle's spot center.
 --
@@ -635,7 +637,11 @@ local ELLIPSE_STAMPS_5DEG  = {}
 local ELLIPSE_STAMPS_45DEG = {}
 do
   local R       = C.ATTACK_PILL_STANDOFF
-  local r_long  = 4
+  -- r_long was hardcoded to 4 for years while the inspector viz drew
+  -- the outline using ATTACK_SAFE_RADIUS; shrinking SAFE_RADIUS made
+  -- the visible ellipse smaller but left the stamps the original
+  -- size. Source both axes from the same constant so they track.
+  local r_long  = C.ATTACK_SAFE_RADIUS
   local r_short = C.ATTACK_SAFE_RADIUS / 3.0
   local iter_r  = math.ceil(r_long) + 1
 
@@ -749,8 +755,11 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase)
       if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
       local ux, uy = edx / elen, edy / elen  -- radial (toward pill)
       local vx, vy = -uy, ux                 -- tangential (perpendicular)
-      local r_long = 4               -- radial half-length
-      local r_short = safe_r / 3.0   -- tangential half-width (= 1)
+      -- Match the stamp + inspector viz: r_long sourced from safe_r
+      -- so all three (runtime fallback, precomputed stamp, drawn
+      -- ellipse) stay in lockstep.
+      local r_long  = safe_r         -- radial half-length
+      local r_short = safe_r / 3.0   -- tangential half-width
 
       -- Pre-compute crossfire: count hostile pills where ANY ellipse tile
       -- is in range.  Once a pill is marked as covering, skip to the next.
