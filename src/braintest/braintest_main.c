@@ -2407,29 +2407,42 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
 /* Tick and render                                                     */
 /* ------------------------------------------------------------------ */
 
-static void appTick(BrainTestApp *app) {
+/* Tick is split into two phases (ported from optimize-perf branch):
+ *   appTickBrain — pushes viz state, runs brain.think (which writes
+ *                   the overlay buffer), updates goal-info cache.
+ *   appTickSim   — advances the sim two ticks (game + keys), updates
+ *                   the camera, syncs debug pathfinder.
+ *
+ * The main loop runs sim → brain → render so the rendered sprites
+ * AND the overlay buffer reflect the same post-sim state. Without the
+ * split, render saw the post-sim sprite positions but the overlays
+ * were against the previous tick's state — visible as the orange
+ * shell-hit dot trailing the actual shell sprite by one tick. */
+
+static void appTickBrain(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
-    /* Propagate frontend state into the sim struct */
     app->sim.sim.isInMenu = isInMenu;
 
-    /* Push current viz registry state (per-id on/off + IDS lookup
-     * + suppress flag) into every active bot's Lua state BEFORE
-     * brain.think() so a freshly-spawned bot sees current state on
-     * its first think instead of defaulting to nil/on. */
     pushVizStateToBots(app->vizSuppressActive);
 
-    /* Run brain AI then tick the simulation (two ticks per brain call) */
     botManagerTick(&app->sim, optAI);
-    /* Sample the followed bot's think time and push onto the CPU
-     * history ring. Sampling here (not per render frame) keeps
-     * each bar = one game tick regardless of rendering rate. */
     {
         double ms = botManagerGetLastThinkMs(app->followBot);
         app->cpuHist[app->cpuHistHead] = (float)ms;
         app->cpuHistHead = (app->cpuHistHead + 1) % CPU_HIST_BARS;
         if (app->cpuHistCount < CPU_HIST_BARS) app->cpuHistCount++;
     }
+
+    /* Update goal-info cache for the scrubber's goal-change ticks
+     * and per-frame replan markers. */
+    app->goalInfoValid =
+        botManagerGetGoalInfo(app->followBot, &app->goalInfo);
+}
+
+static void appTickSim(BrainTestApp *app) {
+    if (!app->simValid || app->numBots == 0) return;
+
     serverSimTick(&app->sim);
     {
         GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
@@ -2448,29 +2461,24 @@ static void appTick(BrainTestApp *app) {
         }
     }
 
-    /* Update goal-info cache for the scrubber's goal-change ticks
-     * and per-frame replan markers. Polled live (not from
-     * playback) — captureRecording reads it on the next tick. */
-    app->goalInfoValid =
-        botManagerGetGoalInfo(app->followBot, &app->goalInfo);
-
-    /* Per-tick recording capture. Run AFTER both serverSimTicks so
-     * the captured tank/shell/base/pill state matches what the
-     * brain actually saw. */
-    recordingCapture(app);
-
-    /* Update camera if following a bot */
     if (!app->freeCamera && app->followBot < MAX_TANKS) {
         WORLD wx, wy;
         if (serverSimGetTankState(&app->sim, app->followBot, &wx, &wy)) {
-            /* Smooth lerp */
             app->viewCenterX = app->viewCenterX + ((int)wx - (int)app->viewCenterX) / 4;
             app->viewCenterY = app->viewCenterY + ((int)wy - (int)app->viewCenterY) / 4;
         }
     }
 
-    /* Sync debug pathfinder grids */
     syncDebugPathfinder(app);
+}
+
+/* Convenience for callers that want a full tick in one shot
+ * (frame-step '.' past end-of-recording). Order matters: sim first
+ * so subsequent capture/render get matched (sim, overlay) state. */
+static void appTick(BrainTestApp *app) {
+    appTickSim(app);
+    recordingCapture(app);
+    appTickBrain(app);
 }
 
 static void refreshGoalInfo(BrainTestApp *app) {
@@ -3317,6 +3325,7 @@ int main(int argc, char *argv[]) {
     Uint64 lastTickTime = SDL_GetTicks();
     const bool *keystate = SDL_GetKeyboardState(NULL);
     bool autoPauseDone = false;
+    bool firstBrainSeeded = false;
 
     while (!appQuit) {
         /* Process events */
@@ -3845,13 +3854,15 @@ int main(int argc, char *argv[]) {
             app.viewCenterY = (WORLD)cy;
         }
 
-        /* Tick scheduler. Cadence = SPEED_PRESETS[speedIndex] ms,
-         * controlled by the bottom bar [<]/[>] buttons.
-         *  - In playback mode: advance app.playbackFrame, do NOT
-         *    drive the live sim (tanks/shells/etc. stay paused at
-         *    the live position; the renderer reads from the
-         *    recorded snapshot anyway).
-         *  - In live mode: appTick the simulation as before. */
+        /* Tick scheduler. Cadence = SPEED_PRESETS[speedIndex] ms.
+         *  - Playback mode: advance app.playbackFrame, no live sim.
+         *  - Live mode: per iteration, sim → capture → brain. The
+         *    brain runs LAST so its overlay buffer reflects the
+         *    just-advanced sim state — render right after sees a
+         *    matching (sprites, overlays) pair. Without this split
+         *    the overlays would be one tick behind the rendered
+         *    sprites (visible as orange shell-hit dot trailing the
+         *    actual shell sprite). */
         int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();
@@ -3865,7 +3876,10 @@ int main(int argc, char *argv[]) {
                         app.playbackMode = false;
                     }
                 } else {
-                    appTick(&app);
+                    appTickSim(&app);
+                    recordingCapture(&app);
+                    appTickBrain(&app);
+                    firstBrainSeeded = true;
                     if (!autoPauseDone && app.sim.tick >= 4) {
                         app.paused = true;
                         autoPauseDone = true;
@@ -3877,6 +3891,14 @@ int main(int argc, char *argv[]) {
             }
         } else {
             lastTickTime = SDL_GetTicks();
+            /* First-iteration seed: run the brain once against the
+             * initial state so the very first paused frame has a
+             * populated overlay buffer to render. Without this the
+             * splash frame shows sprites with no brain overlays. */
+            if (!firstBrainSeeded && app.simValid && app.numBots > 0) {
+                appTickBrain(&app);
+                firstBrainSeeded = true;
+            }
         }
 
         /* Render */
