@@ -44,6 +44,14 @@ local STUCK_TICKS    = 100   -- ticks of no progress before triggering (~2s)
 local STUCK_MOVE_WU  = 24    -- world-units the tank must move within window
 local STUCK_PENALTY  = 1500  -- overlay cost added to the offending tile
 local STUCK_DURATION = 600   -- ticks the penalty stays active (~12s)
+-- Earlier sub-trigger: if the tank has been not-moving for this long
+-- (less than STUCK_TICKS so it fires BEFORE the blacklist kicks in),
+-- collapse path_lookahead to the tank's own tile. The tank then aims
+-- at its own center, the engine re-centers within the tile, and the
+-- next tick's lookahead can advance again. Lets the bot break out of
+-- "lookahead pulled past a corner I can't actually reach" without
+-- waiting for the heavier blacklist + A* recompute.
+local STUCK_LOOKAHEAD_COLLAPSE_TICKS = 30
 
 local _ap_stationary = {
   plan_position=true, position=true, aim=true, engage=true,
@@ -338,6 +346,23 @@ local function path_lookahead(state, info, nx, ny)
   if info.inboat then
     sdbg("lookahead: in boat, return nx=%d ny=%d", nx, ny)
     return nx, ny
+  end
+
+  -- Stuck-recovery collapse: if stuck_recovery's progress tracker says
+  -- we haven't moved STUCK_MOVE_WU toward the same next-step tile in
+  -- STUCK_LOOKAHEAD_COLLAPSE_TICKS, jump the lookahead all the way back
+  -- to the tank's own tile. Aiming at our own center lets the engine
+  -- re-center us within the tile, after which the next tick's normal
+  -- lookahead chain walk will advance from a clean position. Fires
+  -- before the heavier STUCK_TICKS-blacklist trigger so we get a
+  -- gentler recovery first.
+  do
+    local sp = state.stuck_progress
+    if sp and (state.tick or 0) - sp.since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
+      sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
+           (state.tick or 0) - sp.since, tmx, tmy)
+      return tmx, tmy
+    end
   end
 
   -- Find nx,ny in the chain
