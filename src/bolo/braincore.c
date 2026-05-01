@@ -236,6 +236,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->tankx);          lua_setfield(L, -2, "tankx");
   lua_pushinteger(L, info->tanky);          lua_setfield(L, -2, "tanky");
   lua_pushinteger(L, info->direction);      lua_setfield(L, -2, "direction");
+  lua_pushnumber(L,  info->tank_angle);     lua_setfield(L, -2, "tank_angle");
   lua_pushinteger(L, info->speed);          lua_setfield(L, -2, "speed");
   lua_pushboolean(L, info->inboat);         lua_setfield(L, -2, "inboat");
   lua_pushboolean(L, info->hidden);         lua_setfield(L, -2, "hidden");
@@ -927,7 +928,10 @@ static int l_cpf_rebuild_edge_costs(lua_State *L) {
  *                   shooter_type=TANK, sight_len=0)
  *   -> { {mx=..., my=...}, ... }
  * Stateless wrapper over brainPathfinderSimulateShot (no pf instance
- * needed — uses only static physics constants). */
+ * needed — uses only static physics constants). The angle is derived
+ * from origin → target via atan2 + lroundf. For sub-brad precision
+ * matching the engine's actual shell flight, use
+ * cpf_simulate_shot_angle with BrainInfo.tank_angle (a float). */
 static int l_cpf_simulate_shot(lua_State *L) {
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
@@ -953,13 +957,15 @@ static int l_cpf_simulate_shot(lua_State *L) {
  *                          shooter_type=TANK, sight_len=0)
  *   -> { {mx=..., my=...}, ... }
  * Same as cpf_simulate_shot but takes the firing angle directly
- * (0..255 bradians). Use this when you want a bit-exact match to a
- * real shell — pass info.direction so the sim doesn't have to
- * round-trip through atan2 + lroundf. */
+ * (0..255 bradians, FLOAT). Use this with BrainInfo.tank_angle
+ * for a bit-exact match to a real shell — the engine's
+ * shellsAddItem fires at the float tank.angle, so a brain that
+ * predicts using the BYTE-floored direction will be off by up to
+ * one brad. */
 static int l_cpf_simulate_shot_angle(lua_State *L) {
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
-  int angle    = (int)luaL_checkinteger(L, 3);
+  float angle  = (float)luaL_checknumber(L, 3);
   int shooter  = (int)luaL_optinteger(L, 4, BRAIN_SHOT_SHOOTER_TANK);
   int sight_len= (int)luaL_optinteger(L, 5, 0);
 
@@ -1468,7 +1474,11 @@ static int l_overlay_rect(lua_State *L) {
   return 0;
 }
 
-/* overlay_circle(cx, cy, radius, r, g, b [, a]) */
+/* overlay_circle(cx, cy, radius, r, g, b [, a [, viz_idx [, subpixel]]])
+ * subpixel (optional, default false): if true the circle's center
+ * uses 1/256-tile precision instead of being floored to the game-pixel
+ * grid. Use for markers that pin to a sub-game-pixel position (e.g.
+ * shell hit dot) where the standard 1-gp quantization is visible. */
 static int l_overlay_circle(lua_State *L) {
   OVL_GET(L);
   float cx = (float)luaL_checknumber(L, 1);
@@ -1478,8 +1488,12 @@ static int l_overlay_circle(lua_State *L) {
   int g = luaL_checkinteger(L, 5);
   int b = luaL_checkinteger(L, 6);
   int a = luaL_optinteger(L, 7, 255);
-  int viz_idx = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
+  int viz_idx  = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
+  int subpixel = lua_toboolean(L, 9);
   overlayCmdCircle(buf, cx, cy, radius, r, g, b, a);
+  if (subpixel && buf && buf->count > 0) {
+    buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_SUBPIXEL;
+  }
   overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
   return 0;
 }

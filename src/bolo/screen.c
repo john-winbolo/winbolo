@@ -2296,6 +2296,10 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   /* Tank */
   tankGetWorld(&MY_TANK(csPtr), &(value->tankx), &(value->tanky));
   value->direction = tankGet256Dir(&MY_TANK(csPtr));
+  /* Float tank angle for sub-brad-precision brains. tank->angle is
+   * the float the engine fires shells at; `direction` above floors
+   * it for legacy BYTE consumers. */
+  value->tank_angle = (MY_TANK(csPtr) != NULL) ? (float)MY_TANK(csPtr)->angle : 0.0f;
   value->speed = (BYTE) (tankGetSpeed(&MY_TANK(csPtr)) * 4);
   value->inboat = tankIsOnBoat(&MY_TANK(csPtr));
   value->hidden = utilIsTankInTrees(&csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, value->tankx, value->tanky);

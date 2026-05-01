@@ -847,6 +847,9 @@ local function attack_pill_steer(state, world, info, goal)
 
   -- in_range_aim (PPT): stop, turn to the chosen aim point exactly,
   -- no firing. _aim_locked flips true once corr is within 1 brad.
+  -- Pure trig — atan2 to compute target heading, adiff for the
+  -- correction, hold/tap turn keys to close it. Does NOT consult
+  -- the shell physics simulator.
   if goal.substate == "in_range_aim" then
     if info.speed > 0 then keys = keys | KEY_SLOWER end
     local aim_tx = goal.aim_mx or (goal.mx + 0.5)
@@ -868,12 +871,16 @@ local function attack_pill_steer(state, world, info, goal)
     return keys, taps
   end
 
-  -- in_range_aim_finetune: brake to 0, then nudge ONE brad per tick
-  -- toward the pill CENTER until cpf.simulate_shot says the shell
-  -- trajectory crosses the pill tile. The transition out (to
-  -- shoot_pill) is owned by attack.lua's substate handler — we just
-  -- supply the tap. Counts taps via goal._finetune_taps so attack.lua
-  -- can cap and bail out.
+  -- in_range_aim_finetune (PPT): brake to 0, then nudge ONE brad per
+  -- tick toward the pill CENTER until attack.lua's per-tick sim
+  -- (cpf.simulate_shot_angle with info.tank_angle) reports the
+  -- trajectory crosses the pill tile. The success transition out
+  -- (to shoot_pill) is owned by attack.lua's substate handler — we
+  -- just keep tapping while it tells us we haven't hit yet via
+  -- goal._finetune_on_pill. May succeed on tick 0 with no taps
+  -- needed (corner aim already lined up); typical case is 0-2
+  -- taps. Counts taps via goal._finetune_taps so attack.lua can
+  -- cap and abort if the geometry won't converge.
   if goal.substate == "in_range_aim_finetune" then
     if info.speed > 0 then keys = keys | KEY_SLOWER end
     if not goal._finetune_on_pill then

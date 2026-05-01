@@ -26,7 +26,7 @@
 *********************************************************/
 
 #include <memory.h>
-#include <math.h>   /* atan2f, lroundf — for shellAngleFromTarget */
+#include <math.h>   /* atan2f, fmodf — for shellAngleFromTarget */
 
 #include "bolo_map.h"
 #include "building.h"
@@ -140,13 +140,16 @@ TURNTYPE shellAngleFromTarget(WORLD ox, WORLD oy, WORLD tx, WORLD ty) {
   int dy = (int)ty - (int)oy;
   if (dx == 0 && dy == 0) return 0;
   /* atan2(dx, -dy) → radians cw from north → bradians via *128/π.
-   * lroundf rounds half-away-from-zero so the float never falls one
-   * brad short of the engine's integer tank.direction. */
+   * Returns a FLOAT — the engine's tank.angle is float and
+   * shellsAddItem fires at that exact float, so rounding here
+   * would inject up to ~0.5 brad of error vs. a real shell. The
+   * downstream simulate_shot_walk + utilCalcDistance preserve the
+   * fractional brad through the trajectory. */
   float angle_f = atan2f((float)dx, -(float)dy) *
                   (128.0f / 3.14159265358979323846f);
-  long  angle_i = lroundf(angle_f);
-  angle_i = ((angle_i % 256) + 256) % 256;
-  return (TURNTYPE)angle_i;
+  /* Wrap to [0, 256) keeping the fraction. */
+  angle_f = fmodf(fmodf(angle_f, 256.0f) + 256.0f, 256.0f);
+  return (TURNTYPE)angle_f;
 }
 
 void shellSpawnPos(WORLD tank_x, WORLD tank_y, TURNTYPE angle,

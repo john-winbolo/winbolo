@@ -261,6 +261,19 @@ M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shel
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
 M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take
 
+-- "Finish what you started" bias. When state.wounded_pill is set AND
+-- that pill's current HP is at or below WOUNDED_FINISH_THRESHOLD, the
+-- attack-pill cost evaluator scales the cost of OTHER pill takes by
+-- up to WOUNDED_FINISH_OTHER_PENALTY. The penalty fades linearly with
+-- ticks since wounded_pill was set (matches the 500-tick wounded
+-- expiry in init.lua) and scales with how close the wounded pill is
+-- to dead (1 HP gets the full penalty, threshold HP gets none). Self-
+-- defense (attack_tank, flee) is unaffected — only sibling pill
+-- takes get penalized so an enemy tank rush still wins priority.
+M.WOUNDED_FINISH_THRESHOLD     = 10
+M.WOUNDED_FINISH_DECAY_TICKS   = 500
+M.WOUNDED_FINISH_OTHER_PENALTY = 3.0  -- max cost multiplier on other pills
+
 -- Protected pill take (PPT). When the target pill's health is at least
 -- PPT_HEALTH_THRESHOLD, the bot enters PPT mode: shorter standoff
 -- (PPT_STANDOFF), and a slower / more precise charge so the carefully

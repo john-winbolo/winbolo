@@ -352,14 +352,16 @@ function M.simulate_shot(ox, oy, tx, ty, shooter_type, sight_len)
 end
 
 --- Bit-exact shell trajectory simulation: pass the firing angle
---- directly (0..255 bradians) instead of inferring from a target
---- point. Use this when matching a real shell's path — the engine
---- fires from tank.direction (an int), so passing it skips the
---- atan2 + lroundf round-trip in the geometry-derived variant.
+--- directly (0..255 bradians, FLOAT) instead of inferring from a
+--- target point. Use this with info.tank_angle for a bit-exact
+--- match to the engine's actual shell flight — the engine stores
+--- tank.angle as a float and shellsAddItem fires at that exact
+--- value, so the BYTE-floored info.direction misses the actual
+--- flight path by up to one brad (~3 game pixels at gun_range 7).
 function M.simulate_shot_angle(ox, oy, angle, shooter_type, sight_len)
   return cpf_simulate_shot_angle(
     math.floor(ox + 0.5), math.floor(oy + 0.5),
-    math.floor(angle + 0.5),
+    angle,                              -- pass float through
     shooter_type or M.SHOT_TANK,
     sight_len or 0)
 end

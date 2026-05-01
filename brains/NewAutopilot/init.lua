@@ -427,7 +427,10 @@ local function draw_shell_hitbox_viz(info)
           viz.line("shot_tile_grid", smx, smy + f, smx + 1, smy + f, gr, gg, gb, ga)
         end
       end
-      viz.circle("shell_hit_dot", cxt, cyt, 3 / 256.0, r, g, b, 255)
+      -- Precise (sub-game-pixel) so the dot lands on the shell's
+      -- authoritative WU position instead of being floored to the
+      -- nearest game pixel.
+      viz.circle("shell_hit_dot", cxt, cyt, 3 / 256.0, r, g, b, 255, true)
       -- Sprite-tip diagnostic (must mirror mapview.c kTipCol/Row).
       local kTipCol = {1.5, 3.0, 4.0, 4.0,  4.0, 4.0, 4.0, 3.0,
                        1.5, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0}
@@ -2281,6 +2284,87 @@ function Brain.think(info)
     end
   end
 
+  -- Wounded pill marker: highlights the pill we should be finishing
+  -- (state.wounded_pill, set by post_engage refuel + swerve completion).
+  -- Shows three things at the pill location:
+  --   - pulsing red ring → eye-catching at the world position
+  --   - "WOUNDED hp=N" label → current HP read live from world.pills
+  --     (so we can see it ticking down as in-flight shells land) and
+  --     the bonus multiplier on this pill (always 0.30x — the existing
+  --     wounded discount in attack_pill_adjustments)
+  --   - "other pills x M.MM" label → the live finish_other multiplier
+  --     applied to every OTHER pill take this tick. Mirrors the math
+  --     in attack_pill_adjustments so the user can verify what the
+  --     pool grid will show. Greys out when the multiplier is 1.0
+  --     (HP > threshold or time decay finished).
+  -- Drawn every tick state.wounded_pill is set; cleared by the
+  -- 500-tick expiry in the housekeeping block above.
+  if state.wounded_pill then
+    local wp = state.wounded_pill
+    local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
+    local wp_hp  = wp_now and wp_now.health or wp.hp or 0
+    local wpx, wpy = wp.mx + 0.5, wp.my + 0.5
+    -- Pulsing radius: 0.5..0.85 over a 30-tick cycle.
+    local pulse = 0.5 + 0.35 * (0.5 + 0.5 * math.sin(now * 0.21))
+    viz.circle("wounded_pill_marker", wpx, wpy, pulse,        255, 80, 80, 220)
+    viz.circle("wounded_pill_marker", wpx, wpy, pulse + 0.04, 255, 80, 80, 120)
+    viz.text  ("wounded_pill_marker", wpx + 0.6, wpy - 0.6,
+               string.format("WOUNDED hp=%d (this pill x0.30)", wp_hp),
+               "topleft", 255, 120, 120, 255, 0.35)
+    -- Live "finish_other" multiplier for OTHER pill takes.
+    local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
+    local mult, mr, mg, mb
+    if wp_hp > 0 and wp_hp <= thresh then
+      local hp_factor   = (thresh - wp_hp) / thresh
+      local age         = (state.tick or 0) - (wp.tick or 0)
+      local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+      local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
+      mult = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
+      if mult > 1.001 then
+        mr, mg, mb = 255, 200, 80
+      else
+        mr, mg, mb = 150, 150, 150
+      end
+    else
+      mult = 1.0
+      mr, mg, mb = 150, 150, 150
+    end
+    viz.text("wounded_pill_marker", wpx + 0.6, wpy - 0.25,
+             string.format("other pills x%.2f", mult),
+             "topleft", mr, mg, mb, 255, 0.30)
+  end
+
+  -- Per-pill self_dr labels for pool 6 (attack_pill). Shows the
+  -- self-danger reduction the eval queue computed for each pill
+  -- candidate this tick — the discount subtracted from spot+combat
+  -- cost equal to (pill's own danger contribution along the spot
+  -- path) × (1 - hp/15). Higher values = more aggressive closing
+  -- in on a low-HP pill that would otherwise scare us off via its
+  -- own anger contribution to the danger grid.
+  --
+  -- Source: state.cost_cache, populated in goals.lua's eval queue.
+  -- Each pool-6 entry has _self_dr stashed alongside its position.
+  -- We render every entry whose value is non-zero; tiles with no
+  -- discount stay unannotated.
+  if state.cost_cache then
+    for _, e in pairs(state.cost_cache) do
+      if e._p == 6 and (e._self_dr or 0) > 0
+         and e._mx and e._my then
+        local px, py = e._mx + 0.5, e._my + 0.5
+        -- Color ramps with magnitude: faint blue at small discounts,
+        -- bright cyan at large ones. Cap perception around 200 cost-
+        -- units (typical pool-6 spot cost is in low hundreds).
+        local mag    = math.min(1.0, e._self_dr / 200.0)
+        local r      = math.floor(60 + 30  * mag)
+        local g      = math.floor(180 + 60 * mag)
+        local b      = math.floor(220 + 35 * mag)
+        viz.text("pool6_self_dr", px - 0.4, py + 0.7,
+                 string.format("self_dr=%.0f", e._self_dr),
+                 "topleft", r, g, b, 230, 0.30)
+      end
+    end
+  end
+
   -- Shift+click pill inspect overlay (computed once on click, toggle off/on to refresh)
   if state.inspect_pill then
     local ip = state.inspect_pill
@@ -2706,22 +2790,31 @@ function Brain.think(info)
     dbg.end_trace(Brain.think)
   end
 
-  -- HUD: arrow key indicators in bottom-right corner (screen pixel coords)
+  -- HUD: arrow key indicators in bottom-right corner. Each arrow has
+  -- three states:
+  --   off  (dim grey)   — neither held nor tapped this tick
+  --   tap  (yellow)     — single-frame nudge in `taps`; the engine's
+  --                       slow-start ramps it to ~1/8 the held rate so
+  --                       this is the brain's fine-aim mode
+  --   hold (green)      — continuous turn in `keys`; full turn rate
   do
-    local fwd_on  = (keys & KEY_FASTER)    ~= 0
-    local back_on = (keys & KEY_SLOWER)    ~= 0
-    local left_on = (keys & KEY_TURNLEFT)  ~= 0
-    local right_on= (keys & KEY_TURNRIGHT) ~= 0
-    local function arrow(dx, dy, ch, on)
-      local r, g, b = on and 100 or 60, on and 255 or 60, on and 100 or 60
+    local function arrow(dx, dy, ch, k_on, t_on)
+      local r, g, b
+      if k_on then
+        r, g, b = 100, 255, 100         -- green = held
+      elseif t_on then
+        r, g, b = 255, 220,  60         -- yellow = tap
+      else
+        r, g, b =  60,  60,  60         -- dim = nothing this tick
+      end
       viz.hud_text("hud_compass", dx, dy, ch, "bottomright", r, g, b, 255)
     end
     -- Pixel offsets from bottom-right corner. Note bottomright anchor:
     -- (0,0) = bottom-right; positive x goes left, positive y goes up.
-    arrow(40, 80, "^", fwd_on)
-    arrow(60, 60, "<", left_on)
-    arrow(40, 60, "v", back_on)
-    arrow(20, 60, ">", right_on)
+    arrow(40, 80, "^", (keys & KEY_FASTER)    ~= 0, (taps & KEY_FASTER)    ~= 0)
+    arrow(60, 60, "<", (keys & KEY_TURNLEFT)  ~= 0, (taps & KEY_TURNLEFT)  ~= 0)
+    arrow(40, 60, "v", (keys & KEY_SLOWER)    ~= 0, (taps & KEY_SLOWER)    ~= 0)
+    arrow(20, 60, ">", (keys & KEY_TURNRIGHT) ~= 0, (taps & KEY_TURNRIGHT) ~= 0)
   end
 
   -- Flush print2 log for this tick
