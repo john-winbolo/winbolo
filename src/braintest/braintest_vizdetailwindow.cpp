@@ -51,8 +51,26 @@ struct OpenDetailWindow {
 static OpenDetailWindow sOpenDetails[VIZDETAIL_MAX_OPEN_WINDOWS];
 static int              sOpenDetailCount = 0;
 
+/* Single-window mode (default): clicking a new row replaces the
+ * one open detail window instead of opening another. The window
+ * uses a fixed ImGui id so position/size are preserved across
+ * id swaps. Toggle off via the index-dialog checkbox to get the
+ * old per-id-window behavior. */
+static bool sSingleWindowMode = true;
+
 static void requestOpenDetail(const char *id) {
     if (!id || !id[0]) return;
+    if (sSingleWindowMode) {
+        /* Reuse slot 0; close any other slots that linger from a
+         * previous multi-window session. */
+        for (int i = 1; i < sOpenDetailCount; i++) {
+            sOpenDetails[i].open = false;
+        }
+        snprintf(sOpenDetails[0].id, VIZDETAIL_ID_MAX, "%s", id);
+        sOpenDetails[0].open = true;
+        if (sOpenDetailCount < 1) sOpenDetailCount = 1;
+        return;
+    }
     for (int i = 0; i < sOpenDetailCount; i++) {
         if (strncmp(sOpenDetails[i].id, id, VIZDETAIL_ID_MAX) == 0) {
             sOpenDetails[i].open = true;
@@ -113,6 +131,8 @@ static void renderIndexDialog(void) {
 
     int n = vizDetailCount();
     ImGui::Text("%d entries this tick", n);
+    ImGui::SameLine();
+    ImGui::Checkbox("single window", &sSingleWindowMode);
     if (sSelectedID[0]) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.55f, 0.95f, 0.55f, 1.0f),
@@ -174,7 +194,14 @@ static void renderDetailWindow(int slot) {
     const VizDetailEntry *e = (idx >= 0) ? vizDetailGet(idx) : NULL;
 
     char title[VIZDETAIL_ID_MAX + 32];
-    snprintf(title, sizeof(title), "Detail: %s###vd_w_%s", w->id, w->id);
+    /* In single-window mode use a fixed ImGui id so position/size
+     * persist as the user clicks between rows. In multi mode the id
+     * is per-entry so each window remembers its own placement. */
+    if (sSingleWindowMode) {
+        snprintf(title, sizeof(title), "Detail: %s###vd_w_single", w->id);
+    } else {
+        snprintf(title, sizeof(title), "Detail: %s###vd_w_%s", w->id, w->id);
+    }
     ImGui::SetNextWindowSize(ImVec2(460, 360), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(title, &w->open)) {
         ImGui::End();

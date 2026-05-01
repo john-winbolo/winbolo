@@ -36,9 +36,11 @@ M.STEP_DEG              = 0.5
 M.BLOCKER_MIN_DIST      = 2.0   -- excludes tank tile + 8 neighbors
 M.NEIGHBOR_BONUS        = 4   -- per contiguous neighbor that "covers"
                               -- the candidate. Walks left + right
-                              -- separately, stops on first gap. No
-                              -- hard depth cap; runs of 5-8 are
-                              -- typical at NUM_CANDIDATES=28.
+                              -- separately, stops on first gap, then
+                              -- counts only 2 * min(left, right) — the
+                              -- symmetric chain. A 8/4 run scores like
+                              -- a 4/4 run; favors positions with
+                              -- forgivable margin in both directions.
 M.SCORE_PER_SLOT        = 1   -- per protection slot (existing OR potential)
 M.BUILT_BONUS           = 1   -- extra per slot that already has a wall/pill
                               -- so: actual = 2, potential = 1
@@ -500,15 +502,22 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                 if not n_a or n_a.blocked then return false end
                 return subset(subset_set, blocker_keys_for(j, ai))
               end
-              local chain = 0
+              -- Symmetric chain: only count out as far as BOTH
+               -- sides extend. A 8-left/4-right run scores like 4+4,
+               -- not 12. Favors candidates with margin in both
+               -- directions — nudges off cliff-edges of the chain.
+              local left = 0
               for j = i - 1, 1, -1 do
                 if not covers(j) then break end
-                chain = chain + 1
+                left = left + 1
               end
+              local right = 0
               for j = i + 1, #candidates do
                 if not covers(j) then break end
-                chain = chain + 1
+                right = right + 1
               end
+              local sym = left < right and left or right
+              local chain = sym * 2
               local subset_aim_score =
                 (M.SCORE_PER_SLOT + M.BUILT_BONUS) * actual_n
                 + M.SCORE_PER_SLOT * potential_n
@@ -540,6 +549,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
         c.best_aim_idx   = best_aim
         c.score          = best_total
         c.score_neighbor = best_chain * M.NEIGHBOR_BONUS
+        c.best_chain_len = best_chain
         c.score_actual   = (M.SCORE_PER_SLOT + M.BUILT_BONUS) * #best_subset_actual
         c.score_potential = M.SCORE_PER_SLOT * #best_subset_potential
         -- Store the winning subset so the wall-builder commits to
@@ -608,8 +618,15 @@ function M.draw_overlay(scan, now_tick)
     for ci, c in ipairs(scan.candidates) do
       local did = string.format("shield_cand_%d", ci)
       local kind_str = c.kind == "standoff" and "STANDOFF" or "candidate"
-      local hdr = string.format("%s @ deg=%.1f off=%+.1f",
-                                kind_str, c.deg or 0, c.offset_deg or 0)
+      local hdr = string.format("%s score=%d @ deg=%.1f off=%+.1f  %d = %d + %d + %d[%d]",
+                                kind_str,
+                                math.floor(c.score or 0),
+                                c.deg or 0, c.offset_deg or 0,
+                                math.floor(c.score or 0),
+                                c.score_potential or 0,
+                                c.score_actual or 0,
+                                c.score_neighbor or 0,
+                                c.best_chain_len or 0)
       viz.detail_circle(did, c.cx, c.cy, 0.04, hdr)
       viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
         math.floor(c.score or 0),
@@ -652,8 +669,8 @@ function M.draw_overlay(scan, now_tick)
             blocker_strs[#blocker_strs+1] = string.format("P(%d,%d)", b.mx, b.my)
           end
           viz.detail_text(did, string.format(
-            "  aim=%s a=%d p=%d aim_score=%d chain=%d total=%d%s",
-            aim_name, e.actual_n, e.potential_n,
+            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s",
+            e.aim, aim_name, e.actual_n, e.potential_n,
             e.aim_score, e.chain, e.total, marker))
           if #blocker_strs > 0 then
             viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
