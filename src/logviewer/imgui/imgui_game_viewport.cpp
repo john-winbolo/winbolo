@@ -88,10 +88,8 @@ void lv_imgui_game_viewport_render_background(void) {
 }
 
 /* Convert screen coordinates to game texture coordinates.
- * Accounts for menu bar offset at the top of the window and the user
- * zoom level (the texture target is rendered at native size and then
- * scaled by zoom at blit time, so a screen pixel maps to 1/zoom
- * texture pixels).
+ * Accounts for menu bar offset at the top of the window, the user
+ * zoom level, and the sub-pixel pan offset from smooth scrolling.
  * Returns 1 if coordinates are within game texture bounds, 0 otherwise.
  */
 static int screen_to_game_coords(float screen_x, float screen_y,
@@ -100,18 +98,22 @@ static int screen_to_game_coords(float screen_x, float screen_y,
     float zoom = lv_drawGetZoomLevel();
     if (zoom <= 0.0f) zoom = 1.0f;
 
-    /* Subtract menu bar offset, then divide by zoom to get texture coords. */
-    *game_x = (int)(screen_x / zoom);
-    *game_y = (int)((screen_y - menu_bar_height) / zoom);
+    /* The blit srcRect starts at (subPxX, subPxY) in the texture target,
+     * so screen pixel 0 corresponds to texture pixel subPxX, not 0. */
+    int subPxX = 0, subPxY = 0;
+    lv_screenGetSubOffset(&subPxX, &subPxY);
+
+    *game_x = (int)(screen_x / zoom) + subPxX;
+    *game_y = (int)((screen_y - menu_bar_height) / zoom) + subPxY;
 
     /* Check if coordinates are within game texture bounds */
     if (*game_x < 0 || *game_y < 0) {
         return 0;
     }
 
-    /* Game texture dimensions */
-    int game_width = 100 * TILE_SIZE_X;  /* Max map size */
-    int game_height = 100 * TILE_SIZE_Y;
+    /* Use actual viewport tile count, not a hardcoded limit */
+    int game_width = (s_lv->screenSizeX + 1) * TILE_SIZE_X;
+    int game_height = (s_lv->screenSizeY + 1) * TILE_SIZE_Y;
 
     if (*game_x >= game_width || *game_y >= game_height) {
         return 0;
