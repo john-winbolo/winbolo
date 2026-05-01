@@ -161,4 +161,30 @@ void brainCoreRegisterPrintCapture(lua_State *L, BrainPrintCaptureFunc cb,
 void brainCoreSetGlobalPrintCapture(BrainPrintCaptureFunc cb, void *ud,
                                      const uint32_t *tickPtr);
 
+/*********************************************************
+ *NAME:          braintest_viz_register hook
+ *PURPOSE:
+ *  Lua binding `braintest_viz_register(id, label, short,
+ *  long, default_on)` lets brains contribute rows to
+ *  BrainTest's V dialog without BrainTest knowing about
+ *  any specific brain at compile time.
+ *
+ *  brainCoreRegisterVizRegister(L) installs the binding on
+ *  a brain Lua state. The binding routes to a static
+ *  callback set by the host via brainCoreSetVizRegisterCallback.
+ *  Hosts that don't care (WinBolo client, headless server)
+ *  leave the callback NULL and the binding silently no-ops.
+ *
+ *  Returns the registered viz_idx (or -1 on failure) so the
+ *  brain can stamp it on subsequent overlay commands.
+ *********************************************************/
+typedef int (*BrainVizRegisterFunc)(const char *id,
+                                     const char *label,
+                                     const char *short_desc,
+                                     const char *long_desc,
+                                     int default_on);
+
+void brainCoreSetVizRegisterCallback(BrainVizRegisterFunc cb);
+void brainCoreRegisterVizRegister(lua_State *L);
+
 #endif /* BRAINCORE_H */
