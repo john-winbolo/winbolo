@@ -3652,6 +3652,10 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_MOTION:
+                /* Same windowID gate as the button events — motion
+                 * over a sub-window shouldn't update main-window
+                 * hover state or pan/scrub the map. */
+                if (ev.motion.windowID != SDL_GetWindowID(app.window)) break;
                 app.mouseX = ev.motion.x;
                 app.mouseY = ev.motion.y;
                 {
@@ -3703,6 +3707,10 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                /* Only handle clicks delivered to the MAIN window —
+                 * clicks in the panel/V/pool windows shouldn't leak
+                 * through and trigger map clicks or scrubber drags. */
+                if (ev.button.windowID != SDL_GetWindowID(app.window)) break;
                 if (ev.button.button == SDL_BUTTON_MIDDLE) {
                     app.dragging = true;
                     app.dragLastX = ev.button.x;
@@ -3838,11 +3846,16 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                /* Same gate as BUTTON_DOWN — but always release the
+                 * scrubber drag if it was active, regardless of
+                 * which window the release happened in (otherwise
+                 * dragging out of the main window leaves us stuck
+                 * in scrubbing state). */
                 if (ev.button.button == SDL_BUTTON_LEFT && app.scrubbing) {
-                    /* Release ends the drag but stays in playback. */
                     app.scrubbing = false;
                     break;
                 }
+                if (ev.button.windowID != SDL_GetWindowID(app.window)) break;
                 if (ev.button.button == SDL_BUTTON_MIDDLE) {
                     app.dragging = false;
                 } else if (ev.button.button == SDL_BUTTON_RIGHT) {
