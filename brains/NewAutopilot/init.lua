@@ -569,6 +569,11 @@ function Brain.think(info)
 
   -- Debug overlay
   if overlay_clear then overlay_clear() end
+  -- viz_detail registry rebuilds from scratch each think tick. Brain
+  -- code that wants to surface clickable map primitives in the D
+  -- inspector dialog calls viz.detail_rect/circle/text_anchor +
+  -- viz.detail_text after this clear.
+  viz.detail_clear()
   viz.hud_text("hud_version", 10, 4, "NewAutopilot " .. BOT_VERSION, "bottomright", 150, 150, 150)
 
   -- SHELL_HITBOX_VIZ + own-tank hitbox: drawn after overlay_clear so
@@ -770,6 +775,35 @@ function Brain.think(info)
   viz.hud_text("hud_resources", 10, y + 48, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
   viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
     "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
+
+  -- HUD: click-cost panel (bottom-right). Replaces the old C-side
+  -- hardcoded "Click (X,Y) A*=N est=N" box. Persists until the
+  -- next click overwrites state.click_inspect (or until a new
+  -- game). Skipped silently if no click yet this game.
+  if state.click_inspect then
+    local ci = state.click_inspect
+    local tmx = info.tankx >> 8
+    local tmy = info.tanky >> 8
+    local in_boat = info.inboat and 1 or 0
+    local est = cpf.estimate_cost(tmx, tmy, ci.mx, ci.my, in_boat)
+    local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ci.mx, ci.my, in_boat)
+    local dij_str
+    if not dij or dij >= 1e29 then
+      dij_str = "unreached"
+    else
+      dij_str = string.format("%.0f", dij)
+    end
+    -- Two lines stacked from bottom-right. Pixel offsets from
+    -- bottom-right corner: positive x goes left, positive y goes up.
+    viz.hud_text("hud_click_cost", 8, 24,
+      string.format("Click (%d,%d)  est=%.0f  dij=%s  age=%d",
+                    ci.mx, ci.my, est, dij_str,
+                    (state.tick or 0) - (ci.tick or 0)),
+      "bottomright", 255, 100, 255, 255)
+    viz.hud_text("hud_click_cost", 8, 12,
+      "(brain ranks goals by est; dij is nav cost from tank)",
+      "bottomright", 180, 180, 100, 220)
+  end
 
   -- HUD: replan countdown (left side, middle)
   do
@@ -1251,7 +1285,7 @@ function Brain.think(info)
   -- build_walls: tank parks at approach point while LGM builds shield
   --              walls (can take many seconds, multi-trip).
   -- Without these, stuck detection fires flee_pill mid-attack.
-  local attack_stationary = { plan_position=true, position=true, aim=true, approach=true, build_walls=true, in_range_position=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true, rush=true, disengage=true, gather_trees=true }
+  local attack_stationary = { plan_position=true, position=true, aim=true, approach=true, build_walls=true, in_range_position=true, in_range_aim_pre=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true, rush=true, disengage=true, gather_trees=true }
   local pp_stationary = { dispatch=true, wait_place=true, prewait=true, advance=true, shield_engage=true, engage=true, reposition=true, finish=true, select_pill=true }
   local tank_combat_stationary = { engage=true, close=true, disengage=true }
   local intentionally_stationary =
@@ -1903,7 +1937,7 @@ function Brain.think(info)
         new_goal.first_hit_tick  = state.goal.first_hit_tick
         new_goal.last_armour     = state.goal.last_armour
         -- Preserve standoff/wall positions during active engage or ws_ substates
-        local active_sub = { plan_position=true, approach=true, build_walls=true, in_range_position=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, charge=true, aim=true, detree=true, engage=true, swerve=true, post_engage=true, loiter=true, rush=true, ws_prebuild=true, ws_prewait=true, ws_advance=true, ws_engage=true, ws_retreat=true, ws_rebuild=true, gather_trees=true }
+        local active_sub = { plan_position=true, approach=true, build_walls=true, in_range_position=true, in_range_aim_pre=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, charge=true, aim=true, detree=true, engage=true, swerve=true, post_engage=true, loiter=true, rush=true, ws_prebuild=true, ws_prewait=true, ws_advance=true, ws_engage=true, ws_retreat=true, ws_rebuild=true, gather_trees=true }
         if active_sub[state.goal.substate or ""] then
           new_goal.scan_spots      = state.goal.scan_spots
           new_goal.approach_mx     = state.goal.approach_mx
@@ -3008,6 +3042,13 @@ function Brain.on_click(mx, my, mods)
       end
     end
     rp(string.format(TAG .. " CLICK: no pill at (%d,%d)", mx, my))
+  else
+    -- Plain click: stash for the hud_click_cost overlay. Per-tick
+    -- think emits the actual text so the panel persists until the
+    -- next click. The C-side already drew the A* path overlay
+    -- itself (computeClickPath); we just supply the rich-info
+    -- label that the old C-side panel used to draw.
+    state.click_inspect = { mx = mx, my = my, tick = state.tick or 0 }
   end
 end
 

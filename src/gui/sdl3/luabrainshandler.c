@@ -600,6 +600,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * for the shot-sim panel's POI buttons. Same NULL-callback behavior
    * under the client. */
   brainCoreRegisterShotSimPoiRegister(L);
+  /* viz_detail bindings (overlay_detail / _text / _clear) for the
+   * interactive inspector dialog. Same null-callback no-op behavior
+   * outside BrainTest. */
+  brainCoreRegisterVizDetail(L);
 
   setup_brain_package_path(L, path);
 

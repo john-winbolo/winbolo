@@ -34,8 +34,11 @@ local M = {}
 M.NUM_CANDIDATES        = 28
 M.STEP_DEG              = 0.5
 M.BLOCKER_MIN_DIST      = 2.0   -- excludes tank tile + 8 neighbors
-M.NEIGHBOR_BONUS        = 4   -- per match (max 6 matches = +24:
-                              -- left, left-2, left-3, right, right-2, right-3)
+M.NEIGHBOR_BONUS        = 4   -- per contiguous neighbor that "covers"
+                              -- the candidate. Walks left + right
+                              -- separately, stops on first gap. No
+                              -- hard depth cap; runs of 5-8 are
+                              -- typical at NUM_CANDIDATES=28.
 M.SCORE_PER_SLOT        = 1   -- per protection slot (existing OR potential)
 M.BUILT_BONUS           = 1   -- extra per slot that already has a wall/pill
                               -- so: actual = 2, potential = 1
@@ -368,23 +371,33 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- doesn't share that potential slot loses the planned cover too.
   -- Standoff is excluded both as a center and as a neighbor — only
   -- ring-to-ring relationships count.
-  local function blocker_keys(c)
+  -- Per-(candidate, aim) blocker_keys cache. Lazily filled on first
+  -- access. With per-subset chain evaluation the same neighbor's
+  -- key set is requested up to (2^MAX_SUBSET_BLOCKERS - 1) times
+  -- per candidate per aim, so memoizing this small table pays for
+  -- itself many times over. Indexed [cand_idx][aim_idx] = set;
+  -- nil = not yet built.
+  local bk_cache = {}
+  local function blocker_keys_for(i, ai)
+    local row = bk_cache[i]
+    if row and row[ai] then return row[ai] end
+    if not row then row = {}; bk_cache[i] = row end
     local set = {}
-    if c and c.aims and c.best_aim_idx then
-      local a = c.aims[c.best_aim_idx]
-      if a then
-        if a.blockers then
-          for _, b in ipairs(a.blockers) do
-            set[b.my * 256 + b.mx] = true
-          end
+    local c = candidates[i]
+    local a = c and c.aims and c.aims[ai]
+    if a then
+      if a.blockers then
+        for _, b in ipairs(a.blockers) do
+          set[b.my * 256 + b.mx] = true
         end
-        if a.potential_blockers then
-          for _, b in ipairs(a.potential_blockers) do
-            set[b.my * 256 + b.mx] = true
-          end
+      end
+      if a.potential_blockers then
+        for _, b in ipairs(a.potential_blockers) do
+          set[b.my * 256 + b.mx] = true
         end
       end
     end
+    row[ai] = set
     return set
   end
   local function subset(a_set, b_set)
@@ -393,67 +406,155 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     end
     return true
   end
-  -- Chain bonus: +NEIGHBOR_BONUS if the immediate neighbor on a side
-  -- covers, and another +NEIGHBOR_BONUS per side if the NEXT-out
-  -- neighbor on that same side ALSO covers (guarded by the immediate
-  -- one — a chain only counts as long as it's contiguous). Encourages
-  -- candidates that sit deep inside a wide protected band rather than
-  -- right at its edge. Max bonus = NEIGHBOR_BONUS * 3
-  -- (1 base, +1 per side that extends).
+
+  -- Per-aim, per-SUBSET chain evaluation. For each candidate we
+  -- enumerate every non-empty subset of the aim's combined blocker
+  -- list (actual ∪ potential) and chain-walk neighbors that have
+  -- THIS subset as part of their own blocker set. The (aim, subset)
+  -- with the highest total wins — meaning a candidate with 3
+  -- blockers might win with subset {A} (cheap to set up + many
+  -- forgiving neighbors) over subset {A,B,C} (more cover but few
+  -- neighbors share the exact triple). Tunable via NEIGHBOR_BONUS
+  -- and SCORE_PER_SLOT / BUILT_BONUS.
+  --
+  -- Subset count cap MAX_SUBSET_BLOCKERS=3 → max 7 subsets per
+  -- corner per candidate (singletons 3, pairs 3, triple 1).
+  -- Above 3 blockers we degrade to "use the full set only" — no
+  -- known PPT geometry actually has >3 walls in a single setup.
+  -- Bitmask iteration: mask 1..(2^N - 1).
+  local MAX_SUBSET_BLOCKERS = 3
   for i = 1, #candidates do
     local c = candidates[i]
-    if c.score > 0 and c.kind == "candidate" then
-      local cur_blockers = blocker_keys(c)
-      local cur_aim      = c.best_aim_idx
-      local function neighbor_covers(n)
-        if not n or n.kind ~= "candidate" or (n.score or 0) <= 0 then
-          return false
+    if c.kind == "candidate" then
+      local best_total           = -1
+      local best_aim             = nil
+      local best_chain           = 0
+      local best_subset_keys     = nil
+      local best_subset_actual   = nil
+      local best_subset_potential = nil
+      -- Per-eval log so the viz_detail dialog can surface every
+      -- (aim, subset) pair we considered with its chain count and
+      -- subtotal. The dialog formats these as body lines.
+      local chain_evals = {}
+      for ai = 1, #AIM_OFFSETS do
+        local a = c.aims and c.aims[ai]
+        if a and not a.blocked and (a.score or 0) > 0 then
+          -- Combined blocker list with kind tags so per-subset
+          -- score knows actual-vs-potential weights.
+          local all_blockers = {}
+          for _, b in ipairs(a.blockers or {}) do
+            all_blockers[#all_blockers + 1] =
+              { mx = b.mx, my = b.my, key = b.my * 256 + b.mx, actual = true,
+                ref = b }
+          end
+          for _, b in ipairs(a.potential_blockers or {}) do
+            all_blockers[#all_blockers + 1] =
+              { mx = b.mx, my = b.my, key = b.my * 256 + b.mx, actual = false,
+                ref = b }
+          end
+          local n = #all_blockers
+          if n > 0 then
+            local n_iter = math.min(n, MAX_SUBSET_BLOCKERS)
+            local fixed_count = n - n_iter   -- entries beyond the cap are
+                                             -- always included (degenerate
+                                             -- "use full set" behavior for
+                                             -- pathological N>3 cases)
+            local mask_max = (1 << n_iter) - 1
+            for mask = 1, mask_max do
+              local subset_set      = {}
+              local actual_n        = 0
+              local potential_n     = 0
+              local subset_actual   = {}
+              local subset_potential = {}
+              -- Bitmasked entries
+              for idx = 1, n_iter do
+                if (mask & (1 << (idx - 1))) ~= 0 then
+                  local b = all_blockers[idx]
+                  subset_set[b.key] = true
+                  if b.actual then
+                    actual_n = actual_n + 1
+                    subset_actual[#subset_actual + 1] = b.ref
+                  else
+                    potential_n = potential_n + 1
+                    subset_potential[#subset_potential + 1] = b.ref
+                  end
+                end
+              end
+              -- Always-included entries (only fires when n > MAX)
+              for idx = n_iter + 1, n do
+                local b = all_blockers[idx]
+                subset_set[b.key] = true
+                if b.actual then
+                  actual_n = actual_n + 1
+                  subset_actual[#subset_actual + 1] = b.ref
+                else
+                  potential_n = potential_n + 1
+                  subset_potential[#subset_potential + 1] = b.ref
+                end
+              end
+              -- Score this subset against all neighbors.
+              local function covers(j)
+                local nc = candidates[j]
+                if not nc or nc.kind ~= "candidate" then return false end
+                local n_a = nc.aims and nc.aims[ai]
+                if not n_a or n_a.blocked then return false end
+                return subset(subset_set, blocker_keys_for(j, ai))
+              end
+              local chain = 0
+              for j = i - 1, 1, -1 do
+                if not covers(j) then break end
+                chain = chain + 1
+              end
+              for j = i + 1, #candidates do
+                if not covers(j) then break end
+                chain = chain + 1
+              end
+              local subset_aim_score =
+                (M.SCORE_PER_SLOT + M.BUILT_BONUS) * actual_n
+                + M.SCORE_PER_SLOT * potential_n
+              local total = subset_aim_score + chain * M.NEIGHBOR_BONUS
+              chain_evals[#chain_evals + 1] = {
+                aim          = ai,
+                actual_n     = actual_n,
+                potential_n  = potential_n,
+                actual_list  = subset_actual,
+                potential_list = subset_potential,
+                aim_score    = subset_aim_score,
+                chain        = chain,
+                total        = total,
+              }
+              if total > best_total then
+                best_total            = total
+                best_aim              = ai
+                best_chain            = chain
+                best_subset_keys      = subset_set
+                best_subset_actual    = subset_actual
+                best_subset_potential = subset_potential
+              end
+            end
+          end
         end
-        -- Same-corner clean-shot requirement: the neighbor must have
-        -- a non-blocked aim at the SAME aim_idx the current chose.
-        -- Otherwise drifting into the neighbor loses the firing lane
-        -- even if the cover blockers are still in play.
-        if not cur_aim then return false end
-        local n_aim = n.aims and n.aims[cur_aim]
-        if not n_aim or n_aim.blocked then return false end
-        return subset(cur_blockers, blocker_keys(n))
       end
-      local left1, left2, left3   = candidates[i - 1], candidates[i - 2], candidates[i - 3]
-      local right1, right2, right3 = candidates[i + 1], candidates[i + 2], candidates[i + 3]
-      local left_ok  = neighbor_covers(left1)
-      local right_ok = neighbor_covers(right1)
-      local left2_ok  = left_ok  and neighbor_covers(left2)
-      local right2_ok = right_ok and neighbor_covers(right2)
-      -- Each side gets its own +NEIGHBOR_BONUS at each chain depth:
-      --   +4 immediate left / right
-      --   +4 if left covers AND left-of-left also covers (depth 2)
-      --   +4 if depth-2 chain holds AND left-of-left-of-left covers (depth 3)
-      -- Same for right. Max +24 if both sides have a 3-deep run of
-      -- matching neighbors. Each level requires the previous to hold,
-      -- so a gap in the run breaks the chain at that point.
-      if left_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if right_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if left2_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if right2_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if left2_ok and neighbor_covers(left3) then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if right2_ok and neighbor_covers(right3) then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
+      c._chain_evals = chain_evals   -- viz_detail reads this
+      if best_aim then
+        c.best_aim_idx   = best_aim
+        c.score          = best_total
+        c.score_neighbor = best_chain * M.NEIGHBOR_BONUS
+        c.score_actual   = (M.SCORE_PER_SLOT + M.BUILT_BONUS) * #best_subset_actual
+        c.score_potential = M.SCORE_PER_SLOT * #best_subset_potential
+        -- Store the winning subset so the wall-builder commits to
+        -- exactly those tiles (and doesn't waste LGM time building
+        -- potentials we decided weren't worth the rigid setup).
+        -- Overwrite the aim's potential_blockers list with the
+        -- chosen subset so downstream code that already reads
+        -- `aims[best_aim_idx].potential_blockers` automatically
+        -- uses the winning slice.
+        c.aims[best_aim].potential_blockers = best_subset_potential
+        -- Same for actual blockers (might also be a strict subset
+        -- of the original list when N > MAX_SUBSET_BLOCKERS — for
+        -- N <= 3 it'll be == the original).
+        c.aims[best_aim].blockers = best_subset_actual
+        c.aims[best_aim].subset_keys = best_subset_keys
       end
     end
   end
@@ -495,7 +596,78 @@ function M.draw_overlay(scan, now_tick)
   end
   local kept_target = scan.best or scan.standoff
 
-  -- Draw every candidate. Standoff gets a brighter outline + "S" label.
+  -- Pass A: register viz_detail entries for ALL candidates regardless
+  -- of the hide_losers fade. The fade only de-clutters the on-screen
+  -- markers + score labels; the inspector dialog should always have
+  -- every candidate available so the user can scrub the chain-eval
+  -- breakdown for losers too. Geometry mirrors the visible marker
+  -- (small circle at cx/cy), so a click on the marker still hit-tests
+  -- to its entry — but even after fade, clicking the spot will land
+  -- on the registered hit area.
+  if viz.detail_circle then
+    for ci, c in ipairs(scan.candidates) do
+      local did = string.format("shield_cand_%d", ci)
+      local kind_str = c.kind == "standoff" and "STANDOFF" or "candidate"
+      local hdr = string.format("%s @ deg=%.1f off=%+.1f",
+                                kind_str, c.deg or 0, c.offset_deg or 0)
+      viz.detail_circle(did, c.cx, c.cy, 0.04, hdr)
+      viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
+        math.floor(c.score or 0),
+        c.score_actual or 0, c.score_potential or 0, c.score_neighbor or 0))
+      viz.detail_text(did, string.format("position: cx=%.4f cy=%.4f wu=(%d,%d) tile=(%d,%d)",
+        c.cx, c.cy, math.floor(c.cx*256+0.5), math.floor(c.cy*256+0.5),
+        c.mx or 0, c.my or 0))
+      if c.best_aim_idx then
+        local aim_name = M.AIM_NAMES[c.best_aim_idx] or tostring(c.best_aim_idx)
+        viz.detail_text(did, string.format("winning aim: idx=%d (%s)",
+          c.best_aim_idx, aim_name))
+        local a = c.aims and c.aims[c.best_aim_idx]
+        if a then
+          viz.detail_text(did, string.format("  blockers: actual=%d potential=%d",
+            #(a.blockers or {}), #(a.potential_blockers or {})))
+          for _, b in ipairs(a.blockers or {}) do
+            viz.detail_text(did, string.format("    actual    @ tile (%d,%d)", b.mx, b.my))
+          end
+          for _, b in ipairs(a.potential_blockers or {}) do
+            viz.detail_text(did, string.format("    potential @ tile (%d,%d)", b.mx, b.my))
+          end
+        end
+      else
+        viz.detail_text(did, "no winning aim (all blocked or scored 0)")
+      end
+      local evals = c._chain_evals
+      if evals and #evals > 0 then
+        viz.detail_text(did, string.format("chain evals: %d (aim, subset) combos:", #evals))
+        local sorted = {}
+        for i, e in ipairs(evals) do sorted[i] = e end
+        table.sort(sorted, function(a, b) return (a.total or 0) > (b.total or 0) end)
+        for _, e in ipairs(sorted) do
+          local aim_name = M.AIM_NAMES[e.aim] or tostring(e.aim)
+          local marker = (e.aim == c.best_aim_idx and e.total == c.score) and " *WIN" or ""
+          local blocker_strs = {}
+          for _, b in ipairs(e.actual_list or {}) do
+            blocker_strs[#blocker_strs+1] = string.format("A(%d,%d)", b.mx, b.my)
+          end
+          for _, b in ipairs(e.potential_list or {}) do
+            blocker_strs[#blocker_strs+1] = string.format("P(%d,%d)", b.mx, b.my)
+          end
+          viz.detail_text(did, string.format(
+            "  aim=%s a=%d p=%d aim_score=%d chain=%d total=%d%s",
+            aim_name, e.actual_n, e.potential_n,
+            e.aim_score, e.chain, e.total, marker))
+          if #blocker_strs > 0 then
+            viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
+          end
+        end
+      else
+        viz.detail_text(did, "no chain evals (no non-blocked aims with score>0)")
+      end
+    end
+  end
+
+  -- Pass B: visible markers + score labels. Honors the hide_losers
+  -- fade so the on-screen cluster stays clean a few seconds after
+  -- the scan is generated.
   for ci, c in ipairs(scan.candidates) do
     if hide_losers and c ~= kept_target then goto next_cand_draw end
     local color_r, color_g, color_b
@@ -547,6 +719,9 @@ function M.draw_overlay(scan, now_tick)
     local lx = (ci % 2 == 0) and (c.cx + 0.06) or (c.cx - 0.06)
     viz.text("shield_scan_candidates", lx, c.cy - 0.04,
              label, side, color_r, color_g, color_b, 255, 0.18)
+
+    -- (viz_detail registration moved to Pass A above so loser
+     -- candidates still get inspector entries after the visual fade.)
     ::next_cand_draw::
   end
 

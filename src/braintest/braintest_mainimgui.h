@@ -40,6 +40,17 @@ void mainImGuiEndFrame(SDL_Renderer *renderer);
  * left-click handler to suppress map clicks that landed on a panel. */
 bool mainImGuiWantsMouse(void);
 
+/* True when ImGui currently has a text-input field active — used by
+ * the host's keydown handler to skip BrainTest hotkeys while the
+ * user is typing into a panel filter / search box / etc. */
+bool mainImGuiWantsTextInput(void);
+
+/* Floating ImGui window listing every BrainTest keyboard shortcut.
+ * Toggled by the host (F1). *visible flips false when the user
+ * closes the window via its [X]. Must be called between
+ * mainImGuiBeginFrame and mainImGuiEndFrame. */
+void mainImGuiRenderShortcuts(bool *visible);
+
 #ifdef __cplusplus
 }
 #endif

@@ -227,4 +227,25 @@ typedef int (*BrainShotSimPoiRegisterFunc)(const char *name,
 void brainCoreSetShotSimPoiRegisterCallback(BrainShotSimPoiRegisterFunc cb);
 void brainCoreRegisterShotSimPoiRegister(lua_State *L);
 
+/*********************************************************
+ *NAME:          viz_detail registry hook
+ *
+ *  Lua bindings overlay_detail / overlay_detail_text /
+ *  overlay_detail_clear let brains register clickable map
+ *  primitives with rich text bodies for an interactive
+ *  inspection dialog (BrainTest 'D' key). Host (BrainTest)
+ *  installs the callbacks; non-host runtimes leave them
+ *  NULL and the bindings silently no-op.
+ *********************************************************/
+typedef int  (*BrainVizDetailRegisterFunc)(const char *id, const char *kind,
+                                            float x1, float y1, float x2, float y2,
+                                            const char *label);
+typedef int  (*BrainVizDetailAppendBodyFunc)(const char *id, const char *line);
+typedef void (*BrainVizDetailClearFunc)(void);
+
+void brainCoreSetVizDetailRegisterCallback(BrainVizDetailRegisterFunc cb);
+void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb);
+void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
+void brainCoreRegisterVizDetail(lua_State *L);
+
 #endif /* BRAINCORE_H */
