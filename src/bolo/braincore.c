@@ -1719,3 +1719,29 @@ void brainCoreRegisterPanelRegister(lua_State *L) {
   lua_pushcfunction(L, l_braintest_panel_register);
   lua_setglobal(L, "braintest_panel_register");
 }
+
+/* ── braintest_shotsim_poi_register host hook ─────────────────────── */
+static BrainShotSimPoiRegisterFunc g_shotSimPoiRegisterCb = NULL;
+
+void brainCoreSetShotSimPoiRegisterCallback(BrainShotSimPoiRegisterFunc cb) {
+  g_shotSimPoiRegisterCb = cb;
+}
+
+static int l_braintest_shotsim_poi_register(lua_State *L) {
+  /* Signature: braintest_shotsim_poi_register(name, lua_expr).
+   *   lua_expr — Lua chunk that returns (wx, wy) or nil.
+   * Returns the slot index, or -1 if the host isn't listening. */
+  const char *name     = luaL_checkstring(L, 1);
+  const char *lua_expr = luaL_checkstring(L, 2);
+  int idx = -1;
+  if (g_shotSimPoiRegisterCb) {
+    idx = g_shotSimPoiRegisterCb(name, lua_expr);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+void brainCoreRegisterShotSimPoiRegister(lua_State *L) {
+  lua_pushcfunction(L, l_braintest_shotsim_poi_register);
+  lua_setglobal(L, "braintest_shotsim_poi_register");
+}

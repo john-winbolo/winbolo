@@ -83,6 +83,10 @@
 #include "braintest_panelwindow.h"
 #include "braintest_panel_types.h"
 #include "braintest_botwindow.h"
+#include "braintest_mainimgui.h"
+#include "braintest_shotsimpanel.h"
+#include "braintest_shotsim_poi_registry.h"
+#include "../bolo/brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
 void panelRenderText(int registry_idx, const char *body);
@@ -410,6 +414,15 @@ typedef struct {
     /* Speed control — index into SPEED_PRESETS. Affects both live
      * tick rate and playback frame-step rate. */
     int          speedIndex;
+
+    /* Shot-sim result — owned by main, populated by the panel's
+     * Run callback. Drawn over the live map by appRenderOverlay. */
+    BrainShotTile shotTiles[8192];
+    int           shotTileCount;
+    bool          shotHasResult;
+    int           shotOriginWX, shotOriginWY;
+    int           shotTargetWX, shotTargetWY;
+    int           shotShooterType;
     /* (goalInfo / goalInfoValid live higher up in the struct already
      * — they're refreshed per tick before recordingCapture and the
      * scrubber's goal-change tick markers read from the captured
@@ -1161,6 +1174,19 @@ static int panelRegisterCallback(const char *name, const char *type,
     }
     return panelRegistryAdd(g_currentInitBot, name, namespaced,
                             lua_expr, useShort);
+}
+
+/* braintest_shotsim_poi_register host hook. Routes Lua → POI
+ * registry; returns the slot index or -1. The brain's bot_owner
+ * is the same as g_currentInitBot used for panel registration. */
+static int shotSimPoiRegisterCallback(const char *name,
+                                       const char *lua_expr) {
+    if (g_currentInitBot < 0) {
+        SDL_Log("WARN: braintest_shotsim_poi_register('%s') called "
+                "outside brain.open() — ignored", name ? name : "?");
+        return -1;
+    }
+    return shotSimPoiRegister(g_currentInitBot, name, lua_expr);
 }
 
 /* The panel window's poll callback runs from inside ImGui rendering
@@ -2702,6 +2728,150 @@ static void renderControlBar(BrainTestApp *app, int screenW, int screenH) {
     }
 }
 
+/* WU → screen coords. WU is 1/256-tile (256 WU = one tile). Used by
+ * the shot-sim overlay to draw origin/target endpoint markers and
+ * the connecting flight line at sub-tile precision. */
+static void mapToScreenWU(BrainTestApp *app, float wx, float wy,
+                           int screenW, int screenH,
+                           float *outSX, float *outSY) {
+    float tilex = wx / 256.0f;
+    float tiley = wy / 256.0f;
+    int zf = app->zoomFactor;
+    int tilePixels = 16 * zf;
+    int centerMX = app->viewCenterX >> 8;
+    int centerMY = app->viewCenterY >> 8;
+    float scx = screenW / 2.0f;
+    float scy = screenH / 2.0f;
+    float mapOriginX = scx - centerMX * tilePixels
+                       - (float)(app->viewCenterX & 0xFF) * tilePixels / 256.0f;
+    float mapOriginY = scy - centerMY * tilePixels
+                       - (float)(app->viewCenterY & 0xFF) * tilePixels / 256.0f;
+    *outSX = mapOriginX + tilex * tilePixels;
+    *outSY = mapOriginY + tiley * tilePixels;
+}
+
+/* Draw the shot-simulator overlay on top of the live map.
+ * Three independent layers, each drawn only when its data exists:
+ *   - per-tile yellow squares + yellow flight line — only when a
+ *     simulation result is cached (auto-runs after both endpoints
+ *     are set, so this lights up immediately too)
+ *   - green square at the origin — as soon as origin is set
+ *   - red X at the target — as soon as target is set
+ * The endpoint markers are read straight from the panel's current
+ * state, so they appear the moment the user clicks / picks an
+ * endpoint, even before a Run has produced tile data. */
+static void renderShotSimResult(BrainTestApp *app, int screenW, int screenH) {
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+
+    if (app->shotHasResult && app->shotTileCount > 0) {
+        int tilePx = 16 * app->zoomFactor;
+        for (int i = 0; i < app->shotTileCount; i++) {
+            float tcx, tcy;
+            mapToScreenWU(app,
+                          (float)(app->shotTiles[i].mx * 256 + 128),
+                          (float)(app->shotTiles[i].my * 256 + 128),
+                          screenW, screenH, &tcx, &tcy);
+            SDL_FRect r = { tcx - tilePx * 0.5f, tcy - tilePx * 0.5f,
+                            (float)tilePx, (float)tilePx };
+            SDL_SetRenderDrawColor(app->renderer, 255, 220, 60, 90);
+            SDL_RenderFillRect(app->renderer, &r);
+            SDL_SetRenderDrawColor(app->renderer, 255, 220, 60, 200);
+            SDL_RenderRect(app->renderer, &r);
+        }
+        float ox, oy, tx, ty;
+        mapToScreenWU(app, (float)app->shotOriginWX, (float)app->shotOriginWY,
+                      screenW, screenH, &ox, &oy);
+        mapToScreenWU(app, (float)app->shotTargetWX, (float)app->shotTargetWY,
+                      screenW, screenH, &tx, &ty);
+        SDL_SetRenderDrawColor(app->renderer, 255, 240, 100, 255);
+        SDL_RenderLine(app->renderer, ox, oy, tx, ty);
+    }
+
+    int wx, wy;
+    if (shotSimPanelGetOrigin(&wx, &wy)) {
+        float sx, sy;
+        mapToScreenWU(app, (float)wx, (float)wy, screenW, screenH, &sx, &sy);
+        SDL_SetRenderDrawColor(app->renderer, 60, 220, 60, 230);
+        SDL_FRect omark = { sx - 5, sy - 5, 10, 10 };
+        SDL_RenderFillRect(app->renderer, &omark);
+    }
+    if (shotSimPanelGetTarget(&wx, &wy)) {
+        float sx, sy;
+        mapToScreenWU(app, (float)wx, (float)wy, screenW, screenH, &sx, &sy);
+        SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 255);
+        SDL_RenderLine(app->renderer, sx - 6, sy - 6, sx + 6, sy + 6);
+        SDL_RenderLine(app->renderer, sx - 6, sy + 6, sx + 6, sy - 6);
+    }
+}
+
+/* Shot-sim run callback — invoked by the panel's [Run] button. Stores
+ * the full simulation result on the app for renderShotSimResult to
+ * pick up next frame. */
+static void shotSimRunCallback(int oWX, int oWY, int tWX, int tWY,
+                                int shooter, void *ud) {
+    BrainTestApp *app = (BrainTestApp *)ud;
+    app->shotOriginWX    = oWX;
+    app->shotOriginWY    = oWY;
+    app->shotTargetWX    = tWX;
+    app->shotTargetWY    = tWY;
+    app->shotShooterType = shooter;
+    app->shotTileCount   = brainPathfinderSimulateShot(
+        (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
+        shooter, 0, app->shotTiles,
+        (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
+    app->shotHasResult = (app->shotTileCount > 0);
+}
+
+/* Shot-sim Clear callback — drops the cached tile list so the
+ * yellow overlay disappears next frame. The panel resets its own
+ * endpoint state inline. */
+static void shotSimClearCallback(void *ud) {
+    BrainTestApp *app = (BrainTestApp *)ud;
+    app->shotHasResult = false;
+    app->shotTileCount = 0;
+}
+
+/* Shot-sim "From tank" callback — fills WU coords from the followed
+ * tank's current position. Returns false if no tank is followed or
+ * the tank slot isn't populated. */
+static bool shotSimTankPosCallback(int *outWX, int *outWY, void *ud) {
+    BrainTestApp *app = (BrainTestApp *)ud;
+    if (!app->simValid) return false;
+    BYTE pn = app->followBot;
+    if (pn >= MAX_TANKS) return false;
+    struct tankObj *t = app->sim.sim.tanks[pn];
+    if (!t) return false;
+    *outWX = (int)t->x;
+    *outWY = (int)t->y;
+    return true;
+}
+
+/* Shot-sim POI poll callback — evaluates the registered POI's
+ * lua_expr against the followed bot. Expression returns either two
+ * integers (wx, wy) or nil. We use a small Lua snippet to coerce
+ * both forms into a single string we can parse here. Returns false
+ * (greys out the button) when nil / parse fails. */
+static bool shotSimPoiPollCallback(int idx, int *outWX, int *outWY, void *ud) {
+    BrainTestApp *app = (BrainTestApp *)ud;
+    const ShotSimPoiEntry *e = shotSimPoiGet(idx);
+    if (!e || e->bot_owner != app->followBot) return false;
+    char wrap[SHOTSIM_POI_REG_EXPR_MAX + 256];
+    SDL_snprintf(wrap, sizeof(wrap),
+        "local _x,_y = (function() %s end)(); "
+        "if _x == nil or _y == nil then return nil end "
+        "return tostring(math.floor(_x))..','..tostring(math.floor(_y))",
+        e->lua_expr);
+    char *body = botManagerEvalLuaString(app->followBot, wrap);
+    if (!body || !body[0]) { free(body); return false; }
+    int wx = 0, wy = 0;
+    bool ok = (sscanf(body, "%d,%d", &wx, &wy) == 2);
+    free(body);
+    if (!ok) return false;
+    *outWX = wx;
+    *outWY = wy;
+    return true;
+}
+
 static void appRender(BrainTestApp *app) {
     int screenW, screenH;
     SDL_GetWindowSize(app->window, &screenW, &screenH);
@@ -3049,6 +3219,22 @@ static void appRender(BrainTestApp *app) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
+    /* Shot-sim result on top of the map (under ImGui panels). */
+    renderShotSimResult(app, screenW, screenH);
+
+    /* Main-window ImGui pass — draws the shot-sim panel (when
+     * visible) and any future floating tools. The panel itself
+     * polls its POI/tank callbacks to stay in sync with the live
+     * brain state. */
+    mainImGuiBeginFrame();
+    shotSimPanelRender(true,
+                       shotSimRunCallback,
+                       shotSimClearCallback,
+                       shotSimTankPosCallback,
+                       shotSimPoiPollCallback,
+                       app);
+    mainImGuiEndFrame(app->renderer);
+
     SDL_RenderPresent(app->renderer);
 
     /* V dialog (separate window). Drawn last so its own render
@@ -3211,11 +3397,18 @@ int main(int argc, char *argv[]) {
     }
     SDL_SetRenderVSync(app.renderer, 1);
 
+    /* Stand up the main-window ImGui context for floating tool
+     * panels (shot sim today, more later). The V/panel/pool
+     * sub-windows still each have their own context bound to
+     * their own SDL window — those are unaffected. */
+    mainImGuiInit(app.window, app.renderer);
+
     /* Wire the brain → registry callback BEFORE the first bot's
      * Lua state is created (otherwise braintest_viz_register
      * calls during brain.open() are silent no-ops). */
     brainCoreSetVizRegisterCallback(vizRegisterCallback);
     brainCoreSetPanelRegisterCallback(panelRegisterCallback);
+    brainCoreSetShotSimPoiRegisterCallback(shotSimPoiRegisterCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
      * dump. Defined in braintest_panelwindow.cpp so it can call
      * ImGui directly. Per-bot panel modules in
@@ -3369,6 +3562,10 @@ int main(int argc, char *argv[]) {
         /* Process events */
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            /* Forward to the main window's ImGui context for the
+             * floating tool panels (shot sim etc). Internal window-id
+             * gate makes this a no-op for events aimed elsewhere. */
+            mainImGuiProcessEvent(&ev);
             /* Forward to V dialog's ImGui context (no-op if not init). */
             vizWindowProcessEvent(&ev);
             /* Same for P (panels) dialog. */
@@ -3546,6 +3743,12 @@ int main(int argc, char *argv[]) {
                     /* Bare-screen mode: short-circuit all viz overlays
                      * except hud_resources. Pressing X again restores. */
                     app.vizSuppressActive = !app.vizSuppressActive;
+                    break;
+                case SDLK_S:
+                    /* Toggle the shot-simulator panel. Closing the
+                     * panel also clears any armed pick mode (handled
+                     * inside shotSimPanelToggle). */
+                    shotSimPanelToggle();
                     break;
                 case SDLK_M: {
                     app.manualControl = !app.manualControl;
@@ -3807,6 +4010,34 @@ int main(int argc, char *argv[]) {
                         }
                         break;
                     }
+                    /* Shot-sim pick mode: if the panel has armed an
+                     * endpoint pick, the next left-click on the map
+                     * fills it instead of triggering map-click /
+                     * brain.on_click. Pill shooter snaps the origin
+                     * to the tile center to match in-game pillbox
+                     * physics (pillboxes always fire from
+                     * MAP_SQUARE_MIDDLE). */
+                    if (shotSimPanelGetPick() != SHOTSIM_PICK_NONE) {
+                        int cwx = 0, cwy = 0;
+                        if (screenToWU(&app, ev.button.x, ev.button.y,
+                                        sw, sh, &cwx, &cwy)) {
+                            if (shotSimPanelGetPick() == SHOTSIM_PICK_ORIGIN
+                                && shotSimPanelGetShooterType()
+                                   == BRAIN_SHOT_SHOOTER_PILL) {
+                                cwx = ((cwx >> TANK_SHIFT_MAPSIZE)
+                                       << TANK_SHIFT_MAPSIZE) | MAP_SQUARE_MIDDLE;
+                                cwy = ((cwy >> TANK_SHIFT_MAPSIZE)
+                                       << TANK_SHIFT_MAPSIZE) | MAP_SQUARE_MIDDLE;
+                            }
+                            shotSimPanelSetClickedWU(cwx, cwy);
+                        }
+                        break;
+                    }
+                    /* Suppress map clicks that landed on an ImGui
+                     * panel — without this, dragging the shot-sim
+                     * window across the map would also drop click
+                     * paths underneath it. */
+                    if (mainImGuiWantsMouse()) break;
                     int cmx, cmy;
                     if (screenToMap(&app, ev.button.x, ev.button.y,
                                      sw, sh, &cmx, &cmy)) {
@@ -3992,6 +4223,9 @@ int main(int argc, char *argv[]) {
         SDL_DestroyWindow(app.panelWindow);
     }
     botWindowShutdownAll();
+    /* Tear down the main-window ImGui context BEFORE destroying the
+     * renderer/window it was bound to. */
+    mainImGuiShutdown();
     SDL_DestroyRenderer(app.renderer);
     SDL_DestroyWindow(app.window);
     langCleanup();
