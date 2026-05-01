@@ -2224,10 +2224,23 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
     /* Tick counter — show brain tick (sim.tick/2) to match JSONL
      * log, plus the followed bot's most recent think wall time so
      * the user has the headline perf number at a glance without
-     * needing the V dialog. The Lua bar below adds replan/phase/goal. */
-    double thinkMs = botManagerGetLastThinkMs(app->followBot);
+     * needing the V dialog. The Lua bar below adds replan/phase/goal.
+     *
+     * In playback mode, show the SCRUBBED frame's tick (and the
+     * think time the brain spent on that frame) so the HUD reflects
+     * what's actually rendered, not where the live sim has advanced
+     * to in the background. */
+    uint32_t hudTick = app->sim.tick / 2;
+    double   thinkMs = botManagerGetLastThinkMs(app->followBot);
+    if (app->playbackMode
+        && app->playbackFrame >= 0
+        && app->playbackFrame < app->recording.count) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        hudTick = pf_->tick / 2;
+        thinkMs = (double)pf_->thinkMs;
+    }
     SDL_snprintf(line, sizeof(line), "Tick: %u  think: %.2fms",
-                 app->sim.tick / 2, thinkMs);
+                 hudTick, thinkMs);
     float tickScale = 2.0f;
     float tickW = (float)strlen(line) * 8.0f * tickScale;
     float tickH = 8.0f * tickScale + 8.0f;
@@ -2473,12 +2486,15 @@ static void appTickSim(BrainTestApp *app) {
 }
 
 /* Convenience for callers that want a full tick in one shot
- * (frame-step '.' past end-of-recording). Order matters: sim first
- * so subsequent capture/render get matched (sim, overlay) state. */
+ * (frame-step '.' past end-of-recording). Order matters: sim →
+ * brain → capture so the captured frame holds the sim state at
+ * tick N AND the overlay buffer the brain just produced from
+ * that same state. Capturing between sim and brain would store
+ * the previous tick's overlays and replay them one frame stale. */
 static void appTick(BrainTestApp *app) {
     appTickSim(app);
-    recordingCapture(app);
     appTickBrain(app);
+    recordingCapture(app);
 }
 
 static void refreshGoalInfo(BrainTestApp *app) {
@@ -2730,6 +2746,14 @@ static void appRender(BrainTestApp *app) {
         lgm              savedLgmen[MAX_TANKS];
         struct shellsObj tempShellNodes[MAX_SNAPSHOT_SHELLS];
         shells           savedShells = NULL;
+        /* Explosions: we don't snapshot these per frame, so the
+         * cleanest playback behavior is to hide them entirely (live
+         * explosions playing back at the wrong tick would be more
+         * confusing than missing). Save the head pointers, NULL the
+         * lists during render, restore after. */
+        explosions       savedExpl = NULL;
+        struct tkExplosionObj *savedTkExpl = NULL;
+        minesExp         savedMinesExpl = NULL;
         /* Per-bot overlay-cmd buffer pointer-swap. We point each
          * bot's OverlayCmdBuffer at the recorded array for the
          * render then restore. */
@@ -2870,6 +2894,17 @@ static void appRender(BrainTestApp *app) {
                 app->sim.sim.shs = &tempShellNodes[0];
             }
 
+            /* ── Explosions ── hide entirely during playback. Live
+             * explosion animation frames don't correspond to anything
+             * recorded, so playing them back at a scrubbed tick is
+             * just visual noise. Save heads, NULL the lists. */
+            savedExpl      = app->sim.sim.expl;
+            savedTkExpl    = app->sim.sim.tankExplosions;
+            savedMinesExpl = app->sim.sim.minesExplosions;
+            app->sim.sim.expl            = NULL;
+            app->sim.sim.tankExplosions  = NULL;
+            app->sim.sim.minesExplosions = NULL;
+
             /* ── Brain overlay command buffers ── pointer-swap each
              * active bot's OverlayCmdBuffer to the recorded cmds.
              * We don't memcpy the whole buffer; we just retarget its
@@ -2977,7 +3012,10 @@ static void appRender(BrainTestApp *app) {
                     savedOvlBufs[i]->count = savedOvlCount[i];
                 }
             }
-            app->sim.sim.shs = savedShells;
+            app->sim.sim.shs            = savedShells;
+            app->sim.sim.expl            = savedExpl;
+            app->sim.sim.tankExplosions  = savedTkExpl;
+            app->sim.sim.minesExplosions = savedMinesExpl;
             if (patchedPath) app->cachedPathLen = savedCachedPathLen;
             if (patchedCamera) {
                 app->viewCenterX = savedViewCenterX;
@@ -3856,13 +3894,13 @@ int main(int argc, char *argv[]) {
 
         /* Tick scheduler. Cadence = SPEED_PRESETS[speedIndex] ms.
          *  - Playback mode: advance app.playbackFrame, no live sim.
-         *  - Live mode: per iteration, sim → capture → brain. The
-         *    brain runs LAST so its overlay buffer reflects the
-         *    just-advanced sim state — render right after sees a
-         *    matching (sprites, overlays) pair. Without this split
-         *    the overlays would be one tick behind the rendered
-         *    sprites (visible as orange shell-hit dot trailing the
-         *    actual shell sprite). */
+         *  - Live mode: per iteration, sim → brain → capture. The
+         *    brain runs against the just-advanced sim so overlay
+         *    + sprite stay in phase for the live render, AND the
+         *    capture stores both together so playback gets the
+         *    same matched pair (rather than the previous tick's
+         *    overlay buffer as it would if capture ran before
+         *    brain). */
         int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();
@@ -3877,8 +3915,8 @@ int main(int argc, char *argv[]) {
                     }
                 } else {
                     appTickSim(&app);
-                    recordingCapture(&app);
                     appTickBrain(&app);
+                    recordingCapture(&app);
                     firstBrainSeeded = true;
                     if (!autoPauseDone && app.sim.tick >= 4) {
                         app.paused = true;
