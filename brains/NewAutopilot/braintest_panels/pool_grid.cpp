@@ -50,6 +50,7 @@ static const TermDoc kTermDocs[] = {
     {"intcpt",  "Intercept risk — enemy tank may reach this pill before you do"},
     {"hp",      "Health multiplier — lower pill HP = lower cost (easier kill)"},
     {"wound",   "Wounded discount — heavily damaged pill is a very high-value target"},
+    {"self_dr", "Self-danger reduction (subtracted) — discount on the spot-path cost equal to the target pill's own contribution × (1 - hp/15). Lets the bot close in on a pill it's about to kill without being scared off by that pill's own anger."},
     {"threat",  "Threat coverage × weight — hostile pill fire overlaps this base"},
     {"carry",   "Carry discount (negative) — you are already holding a pill to place"},
     {"mult",    "Multiplier — scales the entire bracketed cost sum"},

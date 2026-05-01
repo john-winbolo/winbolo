@@ -2125,6 +2125,26 @@ static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
     *out_sy = (float)scy + (float)(pixelY - centerPY) * (float)zf;
 }
 
+/* Sub-game-pixel variant — no floor on the per-object pixel coords.
+ * Camera + half-viewport are still snapped to whole game pixels (so
+ * the camera doesn't jitter as it scrolls), but the overlay's own
+ * position keeps its 1/256-tile precision. Use for annotations that
+ * mark a precise WU-level position (shell hit dot, etc.) where the
+ * 1-game-pixel quantization in the standard path is visible. */
+static void mapTileToScreenPrecise(BrainTestApp *app, float tx, float ty,
+                                    int screenW, int screenH,
+                                    float *out_sx, float *out_sy) {
+    int   zf       = app->zoomFactor;
+    int   centerPX = (int)app->viewCenterX >> 4;
+    int   centerPY = (int)app->viewCenterY >> 4;
+    int   scx      = (screenW / (2 * zf)) * zf;
+    int   scy      = (screenH / (2 * zf)) * zf;
+    float pixelX   = tx * 16.0f;
+    float pixelY   = ty * 16.0f;
+    *out_sx = (float)scx + (pixelX - (float)centerPX) * (float)zf;
+    *out_sy = (float)scy + (pixelY - (float)centerPY) * (float)zf;
+}
+
 static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
     OverlayCmdBuffer *buf = botManagerGetOverlayCmds(app->followBot);
     if (!buf || buf->count == 0) return;
@@ -2160,8 +2180,13 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
         case OVERLAY_CMD_RECT_FILL:
         case OVERLAY_CMD_RECT_FILL_SUBPIXEL: {
             float sx1, sy1, sx2, sy2;
-            mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &sx1, &sy1);
-            mapTileToScreen(app, cmd->x2, cmd->y2, screenW, screenH, &sx2, &sy2);
+            if (cmd->type == OVERLAY_CMD_RECT_FILL_SUBPIXEL) {
+                mapTileToScreenPrecise(app, cmd->x1, cmd->y1, screenW, screenH, &sx1, &sy1);
+                mapTileToScreenPrecise(app, cmd->x2, cmd->y2, screenW, screenH, &sx2, &sy2);
+            } else {
+                mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &sx1, &sy1);
+                mapTileToScreen(app, cmd->x2, cmd->y2, screenW, screenH, &sx2, &sy2);
+            }
             SDL_FRect r = { sx1, sy1, sx2 - sx1, sy2 - sy1 };
             if (cmd->type == OVERLAY_CMD_RECT) {
                 SDL_RenderRect(app->renderer, &r);
@@ -2170,9 +2195,14 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             }
             break;
         }
-        case OVERLAY_CMD_CIRCLE: {
+        case OVERLAY_CMD_CIRCLE:
+        case OVERLAY_CMD_CIRCLE_SUBPIXEL: {
             float cx, cy;
-            mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &cx, &cy);
+            if (cmd->type == OVERLAY_CMD_CIRCLE_SUBPIXEL) {
+                mapTileToScreenPrecise(app, cmd->x1, cmd->y1, screenW, screenH, &cx, &cy);
+            } else {
+                mapTileToScreen(app, cmd->x1, cmd->y1, screenW, screenH, &cx, &cy);
+            }
             float sr = cmd->radius * 16.0f * app->zoomFactor;
             int seg = (int)(sr * 2.0f);
             if (seg < 12) seg = 12;
@@ -2808,21 +2838,32 @@ static void renderShotSimResult(BrainTestApp *app, int screenW, int screenH) {
     }
 }
 
-/* Shot-sim run callback — invoked by the panel's [Run] button. Stores
- * the full simulation result on the app for renderShotSimResult to
- * pick up next frame. */
+/* Shot-sim run callback — auto-invoked when both endpoints are set.
+ * Stores the full simulation result on the app for renderShotSimResult
+ * to pick up next frame. When useTankAngle is true the panel is in
+ * "Shoot from tank" mode — fire from origin at the live tank float
+ * angle (bit-exact with the engine) instead of inferring from the
+ * synthetic target. */
 static void shotSimRunCallback(int oWX, int oWY, int tWX, int tWY,
-                                int shooter, void *ud) {
+                                int shooter, bool useTankAngle,
+                                float tankAngle, void *ud) {
     BrainTestApp *app = (BrainTestApp *)ud;
     app->shotOriginWX    = oWX;
     app->shotOriginWY    = oWY;
     app->shotTargetWX    = tWX;
     app->shotTargetWY    = tWY;
     app->shotShooterType = shooter;
-    app->shotTileCount   = brainPathfinderSimulateShot(
-        (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
-        shooter, 0, app->shotTiles,
-        (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
+    if (useTankAngle) {
+        app->shotTileCount = brainPathfinderSimulateShotAngle(
+            (WORLD)oWX, (WORLD)oWY, tankAngle,
+            shooter, 0, app->shotTiles,
+            (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
+    } else {
+        app->shotTileCount = brainPathfinderSimulateShot(
+            (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
+            shooter, 0, app->shotTiles,
+            (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
+    }
     app->shotHasResult = (app->shotTileCount > 0);
 }
 
@@ -2838,15 +2879,61 @@ static void shotSimClearCallback(void *ud) {
 /* Shot-sim "From tank" callback — fills WU coords from the followed
  * tank's current position. Returns false if no tank is followed or
  * the tank slot isn't populated. */
+/* Find the recorded TankSnapshot for the followed bot at the active
+ * playback frame, or NULL if not found / not in playback. */
+static const TankSnapshot *playbackTankForFollowed(const BrainTestApp *app) {
+    if (!app->playbackMode) return NULL;
+    int f = app->playbackFrame;
+    if (f < 0 || f >= app->recording.count) return NULL;
+    const RecordingFrame *pf = &app->recording.frames[f];
+    BYTE pn = app->followBot;
+    for (int i = 0; i < pf->tankCount; i++) {
+        if (pf->tanks[i].playerNum == pn) return &pf->tanks[i];
+    }
+    return NULL;
+}
+
 static bool shotSimTankPosCallback(int *outWX, int *outWY, void *ud) {
     BrainTestApp *app = (BrainTestApp *)ud;
     if (!app->simValid) return false;
     BYTE pn = app->followBot;
     if (pn >= MAX_TANKS) return false;
+    /* In playback, read the snapshot for the displayed frame instead of
+     * the live sim — by the time the shot-sim panel renders, the live
+     * tank pointers have already been restored (see playback render
+     * teardown), so the live values don't match what the user sees. */
+    const TankSnapshot *ts = playbackTankForFollowed(app);
+    if (ts) {
+        *outWX = (int)ts->worldX;
+        *outWY = (int)ts->worldY;
+        return true;
+    }
     struct tankObj *t = app->sim.sim.tanks[pn];
     if (!t) return false;
     *outWX = (int)t->x;
     *outWY = (int)t->y;
+    return true;
+}
+
+/* Live float angle of the followed tank — used by the shot-sim
+ * panel's "Shoot from tank" target mode so the simulation matches
+ * the engine's actual shell flight bit-exactly. In playback, returns
+ * the angle from the displayed frame's snapshot. */
+static bool shotSimTankAngleCallback(float *outAngle, void *ud) {
+    BrainTestApp *app = (BrainTestApp *)ud;
+    if (!app->simValid) return false;
+    BYTE pn = app->followBot;
+    if (pn >= MAX_TANKS) return false;
+    const TankSnapshot *ts = playbackTankForFollowed(app);
+    if (ts) {
+        /* Wire format is angle*256 (matches the playback render
+         * reconstruction in this file). */
+        *outAngle = (float)ts->angle / 256.0f;
+        return true;
+    }
+    struct tankObj *t = app->sim.sim.tanks[pn];
+    if (!t) return false;
+    *outAngle = (float)t->angle;
     return true;
 }
 
@@ -3256,6 +3343,7 @@ static void appRender(BrainTestApp *app) {
                        shotSimRunCallback,
                        shotSimClearCallback,
                        shotSimTankPosCallback,
+                       shotSimTankAngleCallback,
                        shotSimPoiPollCallback,
                        app);
     mainImGuiEndFrame(app->renderer);
@@ -4128,9 +4216,11 @@ int main(int argc, char *argv[]) {
 
             case SDL_EVENT_MOUSE_WHEEL:
                 /* Only zoom on wheel events delivered to the MAIN
-                 * window — wheel events in the V dialog scroll its
-                 * row list and shouldn't leak through. */
-                if (ev.wheel.windowID == SDL_GetWindowID(app.window)) {
+                 * window AND not over an ImGui panel inside it —
+                 * scrolling the shot-sim panel's collapsing-header
+                 * region shouldn't also zoom the underlying map. */
+                if (ev.wheel.windowID == SDL_GetWindowID(app.window)
+                    && !mainImGuiWantsMouse()) {
                     if (ev.wheel.y > 0) {
                         if (app.zoomFactor < MAX_ZOOM) app.zoomFactor++;
                     } else if (ev.wheel.y < 0) {

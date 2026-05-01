@@ -36,7 +36,14 @@ typedef enum {
  * into shotSimPanelRender. */
 typedef void (*ShotSimRunFn)(int originWX, int originWY,
                               int targetWX, int targetWY,
-                              int shooterType, void *ud);
+                              int shooterType,
+                              /* useTankAngle=true: ignore target; fire
+                               * from origin at tankAngle (float brads).
+                               * Used by the "Shoot from tank" target
+                               * mode to bit-exact-match what the engine
+                               * actually fires. */
+                              bool useTankAngle, float tankAngle,
+                              void *ud);
 
 /* Clear the host-rendered shot result. Called when the user presses
  * the panel's Clear button — the panel resets its own endpoint state
@@ -47,6 +54,13 @@ typedef void (*ShotSimClearFn)(void *ud);
  * current tank's WU position. Returns true on success, false if no
  * tank is followed. */
 typedef bool (*ShotSimTankPosFn)(int *outWX, int *outWY, void *ud);
+
+/* Read the followed tank's float angle (0..256 brads). Returns true
+ * + fills outAngle when a tank is being followed. Used by the
+ * "Shoot from tank" target mode + by the synthetic target endpoint
+ * line that the panel projects from the tank along its current
+ * gun direction. */
+typedef bool (*ShotSimTankAngleFn)(float *outAngle, void *ud);
 
 /* Poll a POI by registry index. Returns true (and fills out coords)
  * if the POI is currently available. The panel calls this every
@@ -62,6 +76,7 @@ void shotSimPanelRender(bool visible,
                         ShotSimRunFn runCb,
                         ShotSimClearFn clearCb,
                         ShotSimTankPosFn tankCb,
+                        ShotSimTankAngleFn tankAngleCb,
                         ShotSimPoiPollFn poiCb,
                         void *ud);
 

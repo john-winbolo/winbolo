@@ -173,6 +173,8 @@ M.IDS = {
                              long  = "Orange outline around pills marked for repositioning" },
   wounded_pill_marker    = { short = "Wounded pill marker",
                              long  = "Marker on the wounded-pill carryover target" },
+  pool6_self_dr          = { short = "self_dr per pool-6 pill",
+                             long  = "Pool 6 (attack_pill) candidates labeled with their self-danger reduction value — the discount subtracted from the spot-path cost equal to that pill's own danger contribution × (1 - hp/15). Larger values = more committed to closing in despite the pill's own anger." },
 
   -- Shot tracker.
   shot_tracker_viz  = { short = "Shot tracker",
@@ -394,9 +396,9 @@ function M.circle(viz_id, ...)
   assert_id(viz_id)
   if not overlay_circle then return end
   local idx = vid(viz_id)
-  -- overlay_circle args: cx, cy, radius, r, g, b, a, viz_idx
-  local cx, cy, radius, r, g, b, a = ...
-  local result = overlay_circle(cx, cy, radius, r, g, b, a, idx)
+  -- overlay_circle args: cx, cy, radius, r, g, b, a, viz_idx, subpixel
+  local cx, cy, radius, r, g, b, a, subpixel = ...
+  local result = overlay_circle(cx, cy, radius, r, g, b, a, idx, subpixel)
   if type(cx) == "number" and type(cy) == "number" and type(radius) == "number" then
     label(viz_id, cx + radius * 0.7071, cy + radius * 0.7071)
   end

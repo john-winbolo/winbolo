@@ -1303,40 +1303,16 @@ function M.update_attack_substate(goal, state, world, info)
   -- Look up pill
   local pill = M.find_pill_at(world, pmx, pmy)
 
-  -- Per-tick PPT eligibility check. The original _is_ppt assignment
-  -- happens once in plan_position's scan-once block; if the goal stays
-  -- on the same pill across multiple engage rounds (swerve -> rush ->
-  -- engage, etc.) without revisiting plan_position, the flag never
-  -- refreshes even though the pill's HP keeps dropping. Pill health
-  -- only goes down, so PPT can demote but never re-promote — this
-  -- check is one-way. Once the pill drops below the threshold, also
-  -- swap out of any PPT-only substate so steering picks up the right
-  -- non-PPT path immediately.
-  if pill and goal.kind == "attack_pill" and goal._is_ppt then
-    local hp = pill.health or 0
-    local threshold = C.PPT_HEALTH_THRESHOLD or 8
-    if hp < threshold then
-      goal._is_ppt = false
-      print(string.format(TAG .. " ATTACK: demoting shielded -> no-shield (pill_hp=%d < %d)",
-            hp, threshold))
-      local sub_swap = {
-        in_range_position     = "charge",
-        in_range_aim          = "aim",
-        in_range_aim_finetune = "aim",
-        shoot_pill            = "engage",
-      }
-      local new_sub = sub_swap[goal.substate]
-      if new_sub then
-        print(string.format(TAG .. " ATTACK: shielded demote mid-substate %s -> %s",
-              goal.substate, new_sub))
-        goal.substate = new_sub
-        if new_sub == "charge" then
-          goal._charge_braking = nil
-          goal._aim_locked     = nil
-        end
-      end
-    end
-  end
+  -- PPT eligibility is decided ONCE at goal start (plan_position's
+  -- scan-once block sets _is_ppt from the initial pill HP). We used
+  -- to re-check every tick and demote shoot_pill -> engage if the
+  -- pill dropped below threshold mid-attack — that produced a
+  -- jarring "I was about to fire and now I'm in the wrong substate
+  -- with the wrong aim point and the shield wall still up" moment
+  -- that lost shots. Since we already paid the PPT setup cost
+  -- (built shield walls, picked corner aim), riding it out for the
+  -- rest of the kill is the right call. The non-PPT engage path
+  -- only makes sense as the INITIAL choice for a low-HP pill.
 
   -- ══════════════════════════════════════════════════════════════════
   -- plan_position: full terrain analysis to find best attack spot
@@ -2201,21 +2177,25 @@ function M.update_attack_substate(goal, state, world, info)
 
   -- ══════════════════════════════════════════════════════════════════
   -- in_range_aim (PPT): turn to face the chosen aim point exactly.
-  -- Steering does the turning; we just transition to shoot_pill once
-  -- aim is locked.
+  -- Steering does the turning; once aim is locked we simulate the
+  -- actual shell trajectory (using info.tank_angle = float, bit-
+  -- exact with engine) and verify the pill tile is hit.
+  --   - hit  → shoot_pill
+  --   - miss → fall back to aiming at pill CENTER and try again
+  --   - miss while already aimed at center → abort the pill take
+  --     (something changed since plan-time: pill moved, blocker
+  --     appeared, range insufficient, etc.)
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "in_range_aim" then
+    -- Phase 1: turn to the chosen aim point (corner from the shield
+    -- scan). Pure trig in steering — no trajectory simulation here.
+    -- Hands off to in_range_aim_finetune the moment steering
+    -- reports the corner is locked (corr <= 1).
     if goal._aim_locked then
-      -- Detour through the finetune substate. The angle is good per
-      -- the brain's measurement, but the engine quantizes direction
-      -- to 1-brad steps so the actual shell trajectory may still slip
-      -- a half-tile off at standoff range. Finetune verifies via
-      -- cpf.simulate_shot and nudges one brad if the trajectory
-      -- doesn't actually cross the pill tile.
-      goal.substate         = "in_range_aim_finetune"
-      goal._finetune_start  = now
-      goal._finetune_taps   = 0
-      print(TAG .. " ATTACK: shielded aim locked, finetuning trajectory")
+      goal.substate        = "in_range_aim_finetune"
+      goal._finetune_start = now
+      goal._finetune_taps  = 0
+      print(TAG .. " ATTACK: aim locked, entering in_range_aim_finetune (sim-verify)")
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: shielded in_range_aim timeout, aborting")
       state.goal.kind = "none"
@@ -2225,62 +2205,66 @@ function M.update_attack_substate(goal, state, world, info)
   end
 
   -- ══════════════════════════════════════════════════════════════════
-  -- in_range_aim_finetune: trajectory check via cpf.simulate_shot.
-  -- The aim angle is locked (within 1 brad of the corner), but engine
-  -- direction is integer brads — at a 7-tile standoff, that 1 brad
-  -- of slop = ~0.17 tile of lateral error on the pill, enough to skim
-  -- the corner instead of landing on the pillbox tile. Each tick:
-  --   1. Simulate firing in the current direction; collect tile path.
-  --   2. If the pill tile appears anywhere in the path -> ready, jump
-  --      to shoot_pill.
-  --   3. Otherwise compute the sign of the correction toward the pill
-  --      center and let steering tap one brad in that direction.
-  -- Capped at FINETUNE_MAX_TAPS to avoid oscillation if the shot
-  -- can never line up (rare; means aim_mx/my is inconsistent with
-  -- pill location, fall through to shoot_pill anyway).
+  -- in_range_aim_finetune (PPT): per-tick trajectory verify.
+  --   Success: cpf.simulate_shot_angle(info.tank_angle) — using the
+  --     FLOAT tank angle for bit-exact match to the engine's actual
+  --     shell flight — produces a tile path that includes the pill
+  --     tile. May succeed immediately on the first tick (no tap
+  --     needed) if the corner aim already lines up. Otherwise
+  --     steering taps 1 brad/tick toward the pill center until the
+  --     sim crosses the pill.
+  --   Cap: FINETUNE_MAX_TAPS taps OR FINETUNE_TIMEOUT ticks without
+  --     a hit → abort the take. We won't fire on a verified miss;
+  --     if the geometry won't converge after a fair attempt the
+  --     plan is wrong and goal-selector should re-pick.
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "in_range_aim_finetune" then
     local FINETUNE_MAX_TAPS = 8
     local FINETUNE_TIMEOUT  = 100  -- ~2 s @ 50 Hz
-    -- Aim a "shot" along the current tank direction (use sight_len's
-    -- max so we trace the full possible path).
-    local far_wu = 14 * 256  -- GUNSIGHT_MAX tiles
-    local sin_d  = U.bsin(info.direction)  -- -128..+128
-    local cos_d  = U.bcos(info.direction)
-    local tx_w   = info.tankx + math.floor(sin_d * far_wu / 128 + 0.5)
-    local ty_w   = info.tanky - math.floor(cos_d * far_wu / 128 + 0.5)
-    local path = cpf.simulate_shot(info.tankx, info.tanky, tx_w, ty_w,
-                                   cpf.SHOT_TANK, info.gunrange or 14)
+    local angle_f = info.tank_angle or info.direction
+    local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
+                                         cpf.SHOT_TANK, info.gunrange or 14)
     local on_pill = false
     if path then
       for _, t in ipairs(path) do
         if t.mx == pmx and t.my == pmy then on_pill = true; break end
       end
     end
-    -- Stash the simulated path and on-pill verdict for the TARGET viz
-    -- to read this same tick.
-    goal._finetune_path    = path
+    goal._finetune_path    = path        -- viz reads these
     goal._finetune_on_pill = on_pill
+
     if on_pill then
+      -- Lock the verified angle as the new aim point so shoot_pill's
+      -- corner-correction tap (steering.lua's shoot_pill block) doesn't
+      -- pull the angle back toward the original shield-scan corner —
+      -- finetune just spent N taps drifting AWAY from that corner to
+      -- satisfy the sim, and reverting would immediately invalidate
+      -- the verified hit. Project ~16 tiles along the current angle so
+      -- shoot_pill's `aim_at_f(tank → aim)` returns essentially the
+      -- current direction; corr stays near 0, no further tapping.
+      local far_t = 16.0
+      local rad   = angle_f * (3.14159265358979323846 / 128.0)
+      goal.aim_mx = info.tankx / 256.0 + math.sin(rad) * far_t
+      goal.aim_my = info.tanky / 256.0 - math.cos(rad) * far_t
       goal.substate          = "shoot_pill"
       goal._shoot_armour     = info.armour
       goal._shoot_shells     = info.shells
       goal._shoot_hits_total = 0
       goal._shoot_start_tick = now
-      print(string.format(TAG .. " ATTACK: shielded finetune locked (%d taps), opening fire",
-                          goal._finetune_taps or 0))
+      print(string.format(TAG ..
+        " ATTACK: finetune verified (angle %.2f, %d taps) — opening fire",
+        angle_f, goal._finetune_taps or 0))
     elseif (goal._finetune_taps or 0) >= FINETUNE_MAX_TAPS
        or (now - (goal._finetune_start or now)) > FINETUNE_TIMEOUT then
-      -- Couldn't line up — fire anyway with whatever angle we have.
-      goal.substate          = "shoot_pill"
-      goal._shoot_armour     = info.armour
-      goal._shoot_shells     = info.shells
-      goal._shoot_hits_total = 0
-      goal._shoot_start_tick = now
-      print(string.format(TAG .. " ATTACK: shielded finetune gave up (%d taps), firing anyway",
-                          goal._finetune_taps or 0))
+      print(string.format(TAG ..
+        " ATTACK: finetune couldn't line up after %d taps / %d ticks (angle %.2f, pill@(%d,%d)) — aborting pill take",
+        goal._finetune_taps or 0,
+        now - (goal._finetune_start or now),
+        angle_f, pmx, pmy))
+      state.goal.kind = "none"
+      state.pf.status = "idle"
     end
-    -- Else: steering will issue a single tap this tick toward pill center.
+    -- Else: steering will tap one brad toward pill center this tick.
     -- Fall through to draw
   end
 
@@ -2295,6 +2279,33 @@ function M.update_attack_substate(goal, state, world, info)
     goal._shoot_hits_total = (goal._shoot_hits_total or 0) + hits_taken
 
     local pill_hp = pill and pill.health or 0
+
+    -- No-progress timeout. shoot_pill has no built-in escape if the
+    -- shells are silently missing (trajectory off, friendly LGM in
+    -- the lane, pill picked up — all leave pill HP unchanged while
+    -- we keep "firing"). Track the highest pill HP we've observed
+    -- and the last tick HP went DOWN. If too long without progress,
+    -- abort the take so the goal selector can re-plan from scratch.
+    --
+    -- Threshold: 100 ticks (~2 s @ 50 Hz). Reload is ~0.5 s so we
+    -- expect 4 shells fired in that window — none landing means
+    -- something's actually wrong, not just bad luck.
+    local SHOOT_NO_PROGRESS_TICKS = 100
+    if not goal._shoot_progress_hp then
+      goal._shoot_progress_hp   = pill_hp
+      goal._shoot_progress_tick = now
+    elseif pill_hp < goal._shoot_progress_hp then
+      goal._shoot_progress_hp   = pill_hp
+      goal._shoot_progress_tick = now
+    elseif (now - (goal._shoot_progress_tick or now)) > SHOOT_NO_PROGRESS_TICKS
+       and pill_hp > 0 then
+      print(string.format(TAG ..
+        " ATTACK: shoot_pill no progress for %d ticks (pill_hp=%d) — aborting take",
+        now - (goal._shoot_progress_tick or now), pill_hp))
+      state.goal.kind = "none"
+      state.pf.status = "idle"
+    end
+
     local should_swerve = false
     local pill_dead     = false
     if pill_hp <= 0 then
@@ -2368,7 +2379,11 @@ function M.update_attack_substate(goal, state, world, info)
       local should_swerve = goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS
 
       -- Also check if crosshairs off pill (knocked out of range)
-      local cx, cy = U.crosshair_at(info.tankx, info.tanky, info.direction, 7.0)
+      -- Float angle so the displayed crosshair matches the engine's
+      -- actual firing direction; info.direction is a floor and would
+      -- show the crosshair offset from the true shell path.
+      local cx, cy = U.crosshair_at(info.tankx, info.tanky,
+                                    info.tank_angle or info.direction, 7.0)
       local cdx, cdy = cx - (pmx + 0.5), cy - (pmy + 0.5)
       local crosshairs_off = math.sqrt(cdx * cdx + cdy * cdy) > 0.7
 
@@ -2413,12 +2428,43 @@ function M.update_attack_substate(goal, state, world, info)
       state.pf.status = "idle"
       print(TAG .. " ATTACK: pill died during loiter — releasing to capture_pill")
     elseif pill.anger and pill.anger < C.ANGER_ATTACK_THRESHOLD then
-      -- Pill calmed down — re-engage with fresh scan
-      goal.substate = "plan_position"
-      goal.scan_spots = nil
-      goal._plan_show_tick = nil
-      goal._plan_logged = nil
-      print(string.format(TAG .. " ATTACK: pill cooled (anger=%.2f), re-engaging", pill.anger))
+      -- Pill calmed down — re-engage with a FULL fresh plan. We have
+      -- to wipe everything plan_position will re-derive (scan grid,
+      -- PPT decision, shield-scan, chosen aim, ranged-armour
+      -- counters) so a take that was PPT against a tough pill
+      -- doesn't re-enter PPT machinery against the same pill now at
+      -- 1-2 HP — the right move on a weakened pill is the cheap
+      -- engage path, but only plan_position knows that.
+      goal.substate              = "plan_position"
+      goal.scan_spots            = nil
+      goal._plan_show_tick       = nil
+      goal._plan_logged          = nil
+      goal._is_ppt               = nil
+      goal._shield_scan          = nil
+      goal._aim_locked           = nil
+      goal._finetune_taps        = nil
+      goal._finetune_start       = nil
+      goal._finetune_path        = nil
+      goal._finetune_on_pill     = nil
+      goal.aim_mx                = nil
+      goal.aim_my                = nil
+      goal._shoot_armour         = nil
+      goal._shoot_shells         = nil
+      goal._shoot_hits_total     = nil
+      goal._shoot_progress_hp    = nil
+      goal._shoot_progress_tick  = nil
+      goal._engage_armour        = nil
+      goal._engage_hits          = nil
+      goal._charge_braking       = nil
+      goal._charge_shells        = nil
+      goal._charge_start_hp      = nil
+      goal._kill_attempt         = nil
+      goal._bullets_needed       = nil
+      goal._on_target_in_flight  = nil
+      goal._swerve_extends       = nil
+      print(string.format(TAG ..
+        " ATTACK: pill cooled (anger=%.2f, hp=%d), re-planning from scratch",
+        pill.anger, pill.health or 0))
     elseif goal._loiter_start and (now - goal._loiter_start) > C.ANGER_WAIT_MAX then
       -- Waited too long — give up, go refuel
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now }
@@ -2639,6 +2685,27 @@ function M.update_attack_substate(goal, state, world, info)
       viz.text("pill_take_target", ax + 0.12, ay + 0.04,
                string.format("corr=%.2f<=1%s", corr, on_str),
                "topleft", cr, cg, cb, 255, 0.30)
+
+      -- Finetune progress indicator: how many 1-brad nudges toward
+      -- pill center we've done in in_range_aim_finetune. Idle (no
+      -- finetune in progress) shows as blank.
+      local mode_str
+      local mr, mg, mb = 200, 200, 200
+      if goal.substate == "in_range_aim_finetune" then
+        if on_pill then
+          mode_str = string.format("FINETUNE: locked (%d taps)",
+                                   goal._finetune_taps or 0)
+          mr, mg, mb = 80, 255, 120
+        else
+          mode_str = string.format("FINETUNE: tap-to-center (%d taps)",
+                                   goal._finetune_taps or 0)
+          mr, mg, mb = 255, 200, 80
+        end
+      else
+        mode_str = "(awaiting aim lock)"
+      end
+      viz.text("pill_take_target", ax + 0.12, ay + 0.16, mode_str,
+               "topleft", mr, mg, mb, 255, 0.28)
     end
   end
 

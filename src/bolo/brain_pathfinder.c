@@ -2935,11 +2935,14 @@ int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
 /* Public entry: take the firing angle directly. Bit-exact match to a
  * real shell when called with the engine's tank.direction. */
 int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
-                                     int angle,
+                                     float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles) {
   if (out_tiles == NULL || max_tiles <= 0) return 0;
-  int a = ((angle % 256) + 256) % 256;
+  /* Wrap to [0, 256) keeping the fractional part — utilCalcDistance
+   * uses a 256-entry sin/cos table internally but interpolates at
+   * the call site for sub-brad accuracy. */
+  float a = fmodf(fmodf(angle, 256.0f) + 256.0f, 256.0f);
   return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);

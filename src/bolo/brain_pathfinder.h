@@ -406,14 +406,14 @@ int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
                                  BrainShotTile *out_tiles, int max_tiles);
 
 /* Same as brainPathfinderSimulateShot but takes the firing angle
- * directly (0..255 bradians) instead of deriving it from origin →
- * target geometry. Use this when you want a bit-exact match to a
- * real shell — the engine fires from tank.direction (an int), so
- * passing it in here skips any atan2 rounding ambiguity. The
- * (target_wx, target_wy) args are unused and exist only so the
- * Lua binding signature lines up with the inferred-angle call. */
+ * directly (0..255 bradians, FLOAT) instead of deriving it from
+ * origin → target geometry. Use this when you want a bit-exact
+ * match to a real shell — the engine stores tank.angle as a float
+ * and shellsAddItem fires at that exact value, so a brain that has
+ * the float angle (BrainInfo.tank_angle) gets sub-brad precision by
+ * passing it here. Integer callers can promote freely. */
 int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
-                                     int angle,
+                                     float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles);
 

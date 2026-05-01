@@ -788,6 +788,35 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     antic_desc = antic_desc .. string.format(" *wounded(hp=%d)", state.wounded_pill.hp)
   end
 
+  -- "Finish what you started" penalty: every OTHER pill take gets
+  -- more expensive while we have an in-progress wounded pill at low
+  -- HP. Encourages the bot to come back and close out a kill instead
+  -- of starting a fresh take elsewhere. Scales with (1 - hp/thresh)
+  -- so a 1-HP wounded pill gets the full penalty, a 10-HP one gets
+  -- none. Decays linearly to 0 over WOUNDED_FINISH_DECAY_TICKS so it
+  -- doesn't trap the bot if it can't actually get back to that pill.
+  -- Self-defense (attack_tank) is in a different evaluator — this
+  -- never bumps an enemy-tank response off the top.
+  if state.wounded_pill
+     and (state.wounded_pill.mx ~= pill.mx or state.wounded_pill.my ~= pill.my) then
+    local wp = state.wounded_pill
+    local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
+    local wp_hp  = wp_now and wp_now.health or wp.hp or 0
+    local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
+    if wp_hp > 0 and wp_hp <= thresh then
+      local hp_factor   = (thresh - wp_hp) / thresh        -- 0..1, low HP = stronger
+      local age         = (state.tick or 0) - (wp.tick or 0)
+      local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+      local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
+      local mult        = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
+      if mult > 1.001 then
+        combat_cost = combat_cost * mult
+        antic_desc  = antic_desc .. string.format(
+          " *finish_other(x%.2f hp=%d age=%d)", mult, wp_hp, age)
+      end
+    end
+  end
+
   -- Base Killer Mode: deprioritize pill attacks in favor of bases
   if state.perc and state.perc.base_killer_mode then
     combat_cost = combat_cost * C.BASE_KILLER_PILL_PENALTY
@@ -2231,18 +2260,49 @@ local function get_formula_inner(e)
       or string.format("anger=%.0f <= %.0f[ANGER_ATTACK_THRESHOLD] → 0",
         e._pa, C.ANGER_ATTACK_THRESHOLD)
     local _d_stale = fmt_stale_detail(e._age, e._stale)
-    local _wound_detail = e._wound < 1 and string.format("*wound{%.1f}", e._wound) or ""
+    -- _wound shows as *wound{0.30} on the wounded pill (discount); on
+    -- every OTHER pill it's the finish_other multiplier (>1, penalty),
+    -- because step_eval_queue folds finish_other into the same wound_mult
+    -- variable. Display them with distinct labels so it's obvious
+    -- which kind of adjustment is in play.
+    local _fin_mult = e._fin_mult or 1.0
+    local _wound_detail
+    if e._wound < 1 then
+      _wound_detail = string.format("*wound{%.2f}", e._wound)
+    elseif _fin_mult > 1.001 then
+      _wound_detail = string.format("*finish_other{%.2f}", _fin_mult)
+    else
+      _wound_detail = ""
+    end
+    local _d_finish_other = _fin_mult > 1.001
+      and string.format(
+        "wounded pill (id=%s, hp=%d, age=%d ticks) is at or below WOUNDED_FINISH_THRESHOLD=%d;"..
+        " mult = 1 + (%.1f-1) × (%d-%d)/%d × max(0, 1 - %d/%d) = %.2f",
+        tostring(state.wounded_pill and state.wounded_pill.id or "?"),
+        e._fin_wphp or 0, e._fin_age or 0,
+        C.WOUNDED_FINISH_THRESHOLD or 10,
+        C.WOUNDED_FINISH_OTHER_PENALTY or 3.0,
+        C.WOUNDED_FINISH_THRESHOLD or 10, e._fin_wphp or 0,
+        C.WOUNDED_FINISH_THRESHOLD or 10,
+        e._fin_age or 0, C.WOUNDED_FINISH_DECAY_TICKS or 500,
+        _fin_mult)
+      or  "1.00 (no wounded pill, or this IS the wounded pill, or HP > threshold, or decayed out)"
+    local _self_dr = e._self_dr or 0
+    local _d_self_dr = _self_dr > 0
+      and string.format("target pill's danger contribution along spot path × (1 - hp/15) = %.0f", _self_dr)
+      or  string.format("0 (target pill at full HP, or no contribution along path)")
     f = string.format(
-      "spot{%.0f}@(%d,%d) + (A*{%.0f%s}@(%d,%d) + stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s"..
+      "spot{%.0f}@(%d,%d) + (A*{%.0f%s}@(%d,%d) + stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f}"..
       "||spot cost is NOT scaled by hp — only combat/travel terms are"..
-      "|hp:%s|anger:%s|stale:%s",
+      "|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       raw > 500 and string.format("/raw%s",
         raw >= 1e9 and "=INF" or string.format("=%.0f", raw)) or "",
       e._mx or 0, e._my or 0,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _d_hp, _d_anger, _d_stale)
+      e._hp, _wound_detail, _self_dr,
+      _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2493,6 +2553,17 @@ function M.step_eval_queue(state, world, info)
       -- Extra costs for attack_pill (pool 6)
       local anger_cost, xfire_cost, intcpt_cost, wound_mult = 0, 0, 0, 1.0
       local diff_cost, spot_cost = 0, 0
+      local self_dr = 0  -- self-danger reduction: target pill's contribution
+                         -- along the spot path, scaled by missing HP. Subtracts
+                         -- from the final cost so the bot doesn't get scared off
+                         -- approaching a pill it's about to kill.
+      -- "Finish what you started" multiplier on this candidate (>1 only
+      -- when this is NOT the wounded pill AND the wounded pill is at
+      -- low HP within the decay window). 1.0 = no penalty, surfaced in
+      -- the per-pool detail formula via entry._fin_mult below.
+      local _finish_other_mult  = 1.0
+      local _finish_other_wp_hp = 0
+      local _finish_other_age   = 0
       local spot_found_mx, spot_found_my = 0, 0  -- hoisted for formula
       local pill_anger, _ticks_to_calm = 0, 0  -- hoisted for formula detail
       if pool_idx == 6 then
@@ -2532,6 +2603,34 @@ function M.step_eval_queue(state, world, info)
                                  boat_flag, shells, trees, mines, armour)
           if spot_cost >= 1e9 then spot_cost = 500 end
           _spot_us = clock_us() - _t_spot
+
+          -- Self-danger reduction: subtract this pill's own contribution
+          -- to the spot-path cost, scaled linearly by missing HP. At full
+          -- HP we don't discount (pill is healthy and threatening); at 0
+          -- HP we discount fully (pill is about to die). Walks the
+          -- realized Dijkstra path and sums per-tile contributions in
+          -- cost-units (matches Dijkstra step formula:
+          -- danger * danger_scale * 16/speed, with danger_scale=1 here).
+          local hp = obj.health or 0
+          local hp_factor = 1.0 - (hp / 15.0)
+          if hp_factor > 0 and spot_cost < 1e9 then
+            local pcontrib = threat.pill_contrib[obj.my * 256 + obj.mx]
+            if pcontrib then
+              local path = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, best_spot.mx, best_spot.my)
+              if path then
+                for _, node in ipairs(path) do
+                  local k = node.y * 256 + node.x
+                  local p = pcontrib[k]
+                  if p then
+                    local tt = U.ttype(node.x, node.y)
+                    local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
+                    if spd <= 0 then spd = 16 end
+                    self_dr = self_dr + p * (16 / spd) * hp_factor
+                  end
+                end
+              end
+            end
+          end
         end
         if _diff_us > 1000 or _spot_us > 1000 then
           print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
@@ -2579,13 +2678,44 @@ function M.step_eval_queue(state, world, info)
         if state.wounded_pill and state.wounded_pill.mx == obj.mx and state.wounded_pill.my == obj.my then
           wound_mult = 0.3
         end
+        -- "Finish what you started" penalty: every OTHER pill take
+        -- (i.e. NOT the wounded one) gets bumped by a multiplier
+        -- scaled by how close the wounded pill is to dead × time
+        -- decay. Mirrors attack_pill_adjustments's logic so the per-
+        -- tick eval queue stays consistent with the goal evaluator.
+        -- Stashed on the entry below so the breakdown formula can
+        -- show it explicitly.
+        if state.wounded_pill
+           and (state.wounded_pill.mx ~= obj.mx
+                or state.wounded_pill.my ~= obj.my) then
+          local wp = state.wounded_pill
+          local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
+          local wp_hp  = wp_now and wp_now.health or wp.hp or 0
+          local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
+          if wp_hp > 0 and wp_hp <= thresh then
+            local hp_factor   = (thresh - wp_hp) / thresh
+            local age         = (state.tick or 0) - (wp.tick or 0)
+            local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+            local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
+            local m           = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
+            if m > 1.001 then
+              wound_mult     = wound_mult * m
+              _finish_other_mult  = m
+              _finish_other_wp_hp = wp_hp
+              _finish_other_age   = age
+            end
+          end
+        end
       end
 
       -- Spot cost (path to firing position) stays fixed. A* and other combat
       -- terms scale with hp/wound — a nearly-dead pill is easier to fight
       -- but still costs the same to reach a good firing spot.
+      -- self_dr (pool 6 only) is the linear-by-HP discount on the spot path
+      -- for the target pill's own contribution; subtracted so the bot will
+      -- close in on a pill it's about to kill.
       local combat = (travel + stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
-      local c = spot_cost + combat * capture_mult + base_extra + threat_cost
+      local c = spot_cost + combat * capture_mult + base_extra + threat_cost - self_dr
 
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
@@ -2642,6 +2772,10 @@ function M.step_eval_queue(state, world, info)
         entry._xfire=xfire_cost; entry._intcpt=intcpt_cost; entry._hp=hp_mult
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
+        entry._self_dr=self_dr
+        entry._fin_mult=_finish_other_mult
+        entry._fin_wphp=_finish_other_wp_hp
+        entry._fin_age=_finish_other_age
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._stale=stale_cost; entry._age=_gen_age
