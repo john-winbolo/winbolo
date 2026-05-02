@@ -60,8 +60,18 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     U.line_walk(fx0, fy0, pcx, pcy, function(bx, by)
       if not U.in_map(bx, by) then return end
       local tt = U.ttype(bx, by)
-      local pk = world.pill_at[by * 256 + bx]
-      local friendly_pill = pk and world.pills[pk] and world.pills[pk].owner == "friendly"
+      -- pill_at[k] is a list of {id=,pill=} records (see world.lua:32) —
+      -- old code did world.pills[<list>] which is always nil, so the
+      -- friendly_pill cover bonus never fired.
+      local plist = world.pill_at[by * 256 + bx]
+      local friendly_pill = false
+      if plist then
+        for _, e in ipairs(plist) do
+          if e.pill and e.pill.owner == "friendly" then
+            friendly_pill = true; break
+          end
+        end
+      end
       local base_entry = world.base_at[by * 256 + bx]
       local enemy_base = base_entry and base_entry.base
                          and base_entry.base.owner == "hostile"
@@ -174,12 +184,7 @@ end
 
 -- Check every intermediate tile between (x0,y0) and (x1,y1) is water.
 -- When true a boat shell travels over them and strikes the first land (the pill).
-local function water_corridor_to(x0, y0, x1, y1)
-  local blocked = U.bresenham(x0, y0, x1, y1, function(cx, cy)
-    if not U.is_water(U.ttype(cx, cy)) then return true end
-  end)
-  return not blocked
-end
+local water_corridor_to = U.water_corridor_to
 
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
 -- endpoints.  Each one would be destroyed by a shell fired along this path —
@@ -1951,6 +1956,16 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_idx   = 1
       goal._wall_build_start = now
       goal._wall_build_last_progress = now
+      -- Reset the LGM-progress trackers too, otherwise they retain
+      -- state from a previous build attempt on the same goal table
+      -- and the give-up timer compares against stale "last seen
+      -- making progress" values.
+      goal._wall_build_prev_man  = nil
+      goal._wall_build_prev_idx  = nil
+      goal._wall_idx_started     = nil
+      goal._build_decision_msg   = nil
+      goal._build_decision_until = nil
+      goal._build_timeout_total  = nil
       print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
                           #sorted))
     end

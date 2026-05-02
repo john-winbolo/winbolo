@@ -407,11 +407,26 @@ local function path_lookahead(state, info, nx, ny)
   end
 
   -- Build set of all tiles on the A* path
-  local on_path = {}
-  for i = 1, #chain do
-    on_path[U.mkey(chain[i].x, chain[i].y)] = true
+  -- Cache the on_path set keyed by chain identity. The chain table
+  -- is replaced wholesale by cpf_path_to whenever the path changes,
+  -- so we use the table itself as the cache key. Avoids rebuilding
+  -- a ~200-entry set every tick on long paths. Tank-tile membership
+  -- is OR'd in at lookup time so we don't pollute the cache with
+  -- per-tick tank positions.
+  local pf = state.pf
+  local on_path_chain = pf._on_path_cache
+  if pf._on_path_chain ~= chain or not on_path_chain then
+    on_path_chain = {}
+    for i = 1, #chain do
+      on_path_chain[U.mkey(chain[i].x, chain[i].y)] = true
+    end
+    pf._on_path_cache = on_path_chain
+    pf._on_path_chain = chain
   end
-  on_path[U.mkey(tmx, tmy)] = true
+  local tank_key = U.mkey(tmx, tmy)
+  local function on_path_check(key)
+    return on_path_chain[key] or key == tank_key
+  end
 
   local best_x, best_y = nx, ny
   for i = start_idx + 1, #chain do
@@ -445,7 +460,7 @@ local function path_lookahead(state, info, nx, ny)
     local off_tile_x, off_tile_y = -1, -1
     U.bresenham(tmx, tmy, cx, cy, function(bx, by)
       if bx == tmx and by == tmy then return end
-      if not on_path[U.mkey(bx, by)] then
+      if not on_path_check(U.mkey(bx, by)) then
         all_on_path = false
         off_tile_x, off_tile_y = bx, by
         return true
@@ -640,9 +655,9 @@ local function attack_pill_steer(state, world, info, goal)
     local tank_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
     local standoff_to_pill = U.wdist(swx, swy, pill_wx, pill_wy)
     
-    -- Shoot during charge if inside standoff range and roughly aimed
-    local pill_wx, pill_wy = U.m2w(goal.mx), U.m2w(goal.my)
-    local dist_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+    -- Shoot during charge if inside standoff range and roughly aimed.
+    -- pill_wx/wy and dist_to_pill = tank_to_pill from above.
+    local dist_to_pill = tank_to_pill
     viz.hud_text("charge_status", 10, 75, string.format("   dist_to_pill=%d <= %d corr=%.1f", dist_to_pill, math.floor(C.ATTACK_PILL_STANDOFF * 256), corr), "topleft", 255, 255, 0)
     if dist_to_pill <= C.ATTACK_PILL_STANDOFF * 256
        and math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
@@ -836,12 +851,9 @@ local function attack_pill_steer(state, world, info, goal)
     return keys, taps
   end
 
-  -- wait_for_lgm: stand still and let the LGM finish whatever he's
-  -- doing (farming, opportunistic build) before chasing new goals.
-  if goal.kind == "wait_for_lgm" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
-    return keys, taps
-  end
+  -- (was: wait_for_lgm branch — moved to M.steer's main dispatch
+  -- since attack_pill_steer early-returns for non-attack_pill kinds,
+  -- making the inline check unreachable.)
 
   -- in_range_position (PPT): drive toward standoff at a moderate cap
   -- (faster than the old creep of 4 — the user complained it was
@@ -1040,12 +1052,7 @@ end
 -- (x1,y1) is water (river or deep sea).  When this holds, a shell fired from
 -- a boat travels over those water tiles and strikes the first land square
 -- (the target tile), so shooting is valid even from a boat.
-local function water_corridor_to(x0, y0, x1, y1)
-  local blocked = U.bresenham(x0, y0, x1, y1, function(cx, cy)
-    if not U.is_water(U.ttype(cx, cy)) then return true end
-  end)
-  return not blocked
-end
+local water_corridor_to = U.water_corridor_to
 
 -- =========================================================================
 -- Tank combat steering — chase, aim with lead prediction, shoot, jink
@@ -1294,7 +1301,11 @@ local function tank_combat_steer(state, world, info, goal)
   local shell_travel_ticks = wdist / shell_speed_per_tick
   local svx = target.svx or 0
   local svy = target.svy or 0
-  if (target.speed or 0) <= 4 then svx = 0; svy = 0 end
+  -- Skip lead-prediction when target is essentially stationary. Use
+  -- the actual smoothed velocity magnitude (WU/tick), not target.speed
+  -- which is the engine's SPEEDTYPE in a different scale and isn't
+  -- directly comparable. ≤8 wu/tick = ≤0.03 tile/tick = barely moving.
+  if (svx * svx + svy * svy) <= 64 then svx = 0; svy = 0 end
   local pred_wx = twx + svx * shell_travel_ticks
   local pred_wy = twy + svy * shell_travel_ticks
 
@@ -1507,6 +1518,14 @@ function M.steer(state, world, info, goal)
   -- attack_pill: plan_position just visualizes, no steering needed.
   -- Falls through to general navigation for position substate.
 
+  elseif goal.kind == "wait_for_lgm" then
+    -- Stand still and let the LGM finish whatever he's doing
+    -- (farming, opportunistic build) before chasing new goals.
+    -- Was incorrectly placed inside attack_pill_steer where it was
+    -- unreachable; moved here to actually fire.
+    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    return keys, taps
+
   elseif goal.kind == "refuel_at_base" then
     -- Navigate to the base if not on it yet; brake if already there
     local on_base = (tmx == goal.mx and tmy == goal.my)
@@ -1634,24 +1653,10 @@ function M.steer(state, world, info, goal)
           nav_wy = U.m2w(nav_my)
         end
       end
-    elseif goal.kind == "attack_pill" then
-      if goal.standoff_mx then
-        nav_mx = goal.standoff_mx
-        nav_my = goal.standoff_my
-        nav_wx = U.m2w(nav_mx)
-        nav_wy = U.m2w(nav_my)
-      else
-        -- Fallback: stand off on the line pill→tank at BPC_STANDOFF
-        local dx  = tmx - goal.mx
-        local dy  = tmy - goal.my
-        local len = math.sqrt(dx * dx + dy * dy)
-        if len > 0.1 then
-          nav_mx = U.mclamp(math.floor(goal.mx + dx / len * C.BPC_STANDOFF + 0.5))
-          nav_my = U.mclamp(math.floor(goal.my + dy / len * C.BPC_STANDOFF + 0.5))
-          nav_wx = U.m2w(nav_mx)
-          nav_wy = U.m2w(nav_my)
-        end
-      end
+    -- (was: a second `elseif goal.kind == "attack_pill"` branch with
+    -- a BPC_STANDOFF fallback — unreachable because the if branch
+    -- above already matches attack_pill. The legacy ATTACK_PILL_STANDOFF
+    -- fallback at line 1630-1640 covers the no-standoff_mx case.)
     end
 
     -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
@@ -2022,6 +2027,14 @@ function M.steer(state, world, info, goal)
         end
       elseif math.abs(correction) <= ORBIT_RELEASE_BRAD then
         goal._orbit_stuck = 0
+      else
+        -- Out of zone but still misaligned: decay rather than freeze,
+        -- so a long break (e.g. driving away from the goal) lets the
+        -- counter drift back down. Without this, _orbit_stuck stays
+        -- pinned and the next time we re-enter the zone we'd brake
+        -- immediately even after a clean detour.
+        local s = goal._orbit_stuck or 0
+        if s > 0 then goal._orbit_stuck = s - 1 end
       end
       goal._orbit_last_dist = eff_dist
     end

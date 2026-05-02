@@ -1943,9 +1943,17 @@ function Brain.think(info)
                              and new_goal.kind ~= "capture_pill" then
         new_goal = state.goal  -- keep current goal
       end
+      -- Compare on (kind, mx, my, target_id). Without target_id in
+      -- the comparison, a hostile pill that gets captured + replaced
+      -- at the same tile (different id) would keep the OLD goal's
+      -- _shield_scan / _wall_build_* state, which was computed against
+      -- a pill that no longer exists. target_id mismatch forces the
+      -- full goal-change path (cooldown + history + new state.goal).
       if new_goal.kind ~= state.goal.kind
          or new_goal.mx ~= state.goal.mx
-         or new_goal.my ~= state.goal.my then
+         or new_goal.my ~= state.goal.my
+         or (new_goal.target_id and state.goal.target_id
+             and new_goal.target_id ~= state.goal.target_id) then
         local old_kind = state.goal.kind
         local old_id   = state.goal.target_id
         -- Record abandoned goal on cooldown (prevent oscillation)
