@@ -978,12 +978,33 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     BrainPathfinder *src = app->debugPF;
     if (!src || !src->map) return;
 
-    WORLD twx, twy;
-    if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
+    /* Origin selection: in playback, anchor to the followed tank's
+     * RECORDED position at the scrubbed frame (not the live sim's
+     * frozen position). Live mode keeps the previous behavior. */
+    WORLD twx = 0, twy = 0;
+    int in_boat = 0;
+    bool haveOrigin = false;
+    if (app->playbackMode &&
+        app->playbackFrame >= 0 &&
+        app->playbackFrame < app->recording.count) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        for (int i = 0; i < pf_->tankCount; i++) {
+            if (pf_->tanks[i].playerNum == app->followBot) {
+                twx = pf_->tanks[i].worldX;
+                twy = pf_->tanks[i].worldY;
+                in_boat = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                haveOrigin = true;
+                break;
+            }
+        }
+    }
+    if (!haveOrigin) {
+        if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
+        in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
+                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+    }
     int smx = twx >> 8;
     int smy = twy >> 8;
-    int in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
-                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
 
     if (!app->costToGrid) {
         app->costToGrid = (float *)malloc(256 * 256 * sizeof(float));
@@ -2509,55 +2530,77 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * for the followed bot. Color codes: green<5ms, yellow<10ms,
      * orange<20ms, red≥20ms. The 20ms line corresponds to the
      * 50Hz tick budget (TICK_INTERVAL_MS); bars hitting it mean
-     * the brain is consuming the entire frame. */
-    if (app->cpuHistCount > 0) {
-        float graphH = 40.0f;
-        float barW   = 2.0f;
-        float maxMs  = 20.0f;
-        int   count  = app->cpuHistCount;
-        float graphW = count * barW;
-        float gx = ((float)screenW - graphW) / 2.0f;
-        float gy = 4.0f;
-
-        SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
-        SDL_FRect gbg = { gx - 2, gy - 2, graphW + 4, graphH + 14 };
-        SDL_RenderFillRect(app->renderer, &gbg);
-
-        /* Walk the ring oldest-first so the most recent sample
-         * lands on the right edge. tail is the oldest live entry;
-         * for a half-full buffer it's index 0, otherwise it's
-         * the slot just past head. */
-        int tail = (app->cpuHistCount < CPU_HIST_BARS)
-            ? 0
-            : app->cpuHistHead;
-        for (int i = 0; i < count; i++) {
-            float ms = app->cpuHist[(tail + i) % CPU_HIST_BARS];
-            float h = ms / maxMs * graphH;
-            if (h > graphH) h = graphH;
-            if (h < 1.0f)   h = 1.0f;
-
-            Uint8 r, g, b;
-            if      (ms <  5.0f) { r =  40; g = 200; b =  40; }
-            else if (ms < 10.0f) { r = 255; g = 230; b =  40; }
-            else if (ms < 20.0f) { r = 255; g = 140; b =  30; }
-            else                 { r = 255; g =  50; b =  40; }
-            SDL_SetRenderDrawColor(app->renderer, r, g, b, 220);
-            SDL_FRect bar = { gx + i * barW, gy + graphH - h,
-                              barW - 1, h };
-            SDL_RenderFillRect(app->renderer, &bar);
+     * the brain is consuming the entire frame.
+     *
+     * Source switches in playback mode: instead of the live ring
+     * buffer (frozen at whatever live tick was reached when the
+     * user entered playback) we source from the recording's per-
+     * frame thinkMs, ending at the displayed playback frame. The
+     * graph thus slides left as the user scrubs back, so the
+     * rightmost bar always corresponds to the current displayed
+     * tick. */
+    {
+        float histBuf[CPU_HIST_BARS];
+        int   histN = 0;
+        if (app->playbackMode
+            && app->playbackFrame >= 0
+            && app->playbackFrame < app->recording.count) {
+            int end_ = app->playbackFrame;          /* inclusive */
+            int start = end_ - (CPU_HIST_BARS - 1);
+            if (start < 0) start = 0;
+            for (int i = start; i <= end_; i++) {
+                histBuf[histN++] = app->recording.frames[i].thinkMs;
+            }
+        } else if (app->cpuHistCount > 0) {
+            int tail = (app->cpuHistCount < CPU_HIST_BARS)
+                ? 0
+                : app->cpuHistHead;
+            for (int i = 0; i < app->cpuHistCount; i++) {
+                histBuf[histN++] = app->cpuHist[(tail + i) % CPU_HIST_BARS];
+            }
         }
 
-        /* 20ms budget line. */
-        float budgetY = gy + graphH - (20.0f / maxMs * graphH);
-        SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 180);
-        SDL_RenderLine(app->renderer, gx, budgetY,
-                       gx + graphW, budgetY);
+        if (histN > 0) {
+            float graphH = 40.0f;
+            float barW   = 2.0f;
+            float maxMs  = 20.0f;
+            float graphW = histN * barW;
+            float gx = ((float)screenW - graphW) / 2.0f;
+            float gy = 4.0f;
 
-        SDL_SetRenderDrawColor(app->renderer, 180, 180, 180, 200);
-        SDL_RenderDebugText(app->renderer, gx, gy + graphH + 2, "0");
-        SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 200);
-        SDL_RenderDebugText(app->renderer,
-                            gx + graphW + 4, budgetY - 4, "20ms");
+            SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 180);
+            SDL_FRect gbg = { gx - 2, gy - 2, graphW + 4, graphH + 14 };
+            SDL_RenderFillRect(app->renderer, &gbg);
+
+            for (int i = 0; i < histN; i++) {
+                float ms = histBuf[i];
+                float h = ms / maxMs * graphH;
+                if (h > graphH) h = graphH;
+                if (h < 1.0f)   h = 1.0f;
+
+                Uint8 r, g, b;
+                if      (ms <  5.0f) { r =  40; g = 200; b =  40; }
+                else if (ms < 10.0f) { r = 255; g = 230; b =  40; }
+                else if (ms < 20.0f) { r = 255; g = 140; b =  30; }
+                else                 { r = 255; g =  50; b =  40; }
+                SDL_SetRenderDrawColor(app->renderer, r, g, b, 220);
+                SDL_FRect bar = { gx + i * barW, gy + graphH - h,
+                                  barW - 1, h };
+                SDL_RenderFillRect(app->renderer, &bar);
+            }
+
+            /* 20ms budget line. */
+            float budgetY = gy + graphH - (20.0f / maxMs * graphH);
+            SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 180);
+            SDL_RenderLine(app->renderer, gx, budgetY,
+                           gx + graphW, budgetY);
+
+            SDL_SetRenderDrawColor(app->renderer, 180, 180, 180, 200);
+            SDL_RenderDebugText(app->renderer, gx, gy + graphH + 2, "0");
+            SDL_SetRenderDrawColor(app->renderer, 255, 60, 60, 200);
+            SDL_RenderDebugText(app->renderer,
+                                gx + graphW + 4, budgetY - 4, "20ms");
+        }
     }
 
     /* The top-right goal/cost/candidate panel that used to live

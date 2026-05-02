@@ -242,6 +242,30 @@ M.IDS = {
   attack_scan_spots  = { short = "Attack scan spots",
                          long  = "Pill-take scan spots: per-spot LOS+score boxes, maneuver tiles, ellipses, legend, standoff/approach markers" },
 
+  -- When on, the pool-6 evaluator emits the full scan-spots overlay
+  -- (LOS, score, ellipse, maneuver tiles) for EVERY hostile/neutral
+  -- pill it considers — not just the one that won. Emission happens
+  -- on the tick `evaluate_pill_difficulty` ran for that pill (~once
+  -- per second per pill given the 50-tick diff cache), so the
+  -- recording carries the data and you can scrub onto a replan tick
+  -- in playback to see every pill's candidate spots.
+  -- Default off — when on, pool-6 evaluation runs in detailed mode
+  -- (~9× per-pill scan cost). Flip on when debugging a surprising
+  -- target/spot pick.
+  attack_scan_spots_all_pills = {
+    short = "Attack scan spots: ALL pills (pool 6)",
+    long  = "Per-pill candidate-spot overlay during pool 6 evaluation. Emits the scan-spot overlay (LOS, score, ellipse, maneuver tiles) for every hostile/neutral pill the goal selector considers, on the tick its eval ran. Diff cache TTL ~50 ticks so each pill emits once per ~1s. Heavier than the master attack_scan_spots toggle (forces detailed scan).",
+    default_on = false,
+  },
+
+  -- Persistent solid-beige disc + pill target_id label centered on the
+  -- chosen attack standoff. Drawn every tick the goal holds a standoff
+  -- so it stays visible until the standoff changes or the goal ends —
+  -- a low-noise marker for "this is the take we're committing to".
+  attack_chosen_standoff_marker = {
+    short = "Attack chosen standoff marker",
+    long  = "Persistent beige disc with the target pill's id at the chosen attack standoff. Stays visible while the goal holds a standoff." },
+
   -- Meta: when on, every overlay shape gets its viz_id labeled in tiny
   -- text at the bottom-right. Useful for "what overlay is THAT?" debugging.
   label_overlays     = { short = "Label overlays",

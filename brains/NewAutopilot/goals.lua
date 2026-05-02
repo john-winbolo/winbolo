@@ -2815,19 +2815,38 @@ function M.step_eval_queue(state, world, info)
         if not diff_cache then diff_cache = {}; state._pill_diff_cache = diff_cache end
         local dck = obj.mx .. ":" .. obj.my .. ":" .. (state.phase or "")
         local dc = diff_cache[dck]
-        local diff_score, best_spot
-        if dc and dc.hp == (obj.health or 0) and (now - dc.tick) < 50 then
+        local diff_score, best_spot, _spots
+        -- When the all-pills viz toggle is on, force detailed=true so
+        -- the spots array comes back and we can emit per-pill candidate
+        -- overlays this tick. Cache hits without spots get
+        -- re-evaluated when the toggle is on so the user always sees
+        -- spots for the active pool-6 candidates.
+        local force_detailed = vizmod.is_on("attack_scan_spots_all_pills")
+        local just_evaluated = false
+        if dc and dc.hp == (obj.health or 0) and (now - dc.tick) < 50
+           and (not force_detailed or dc.spots) then
           diff_score = dc.score
           best_spot = dc.spot
+          _spots    = dc.spots
         else
           -- EXPERIMENTAL: full 5° scan in eval-queue ranking (was 45°).
           -- More accurate diff_score / best_spot but ~9x more spots
           -- evaluated per pill per cache miss. Watch the perf impact;
           -- revert to 45 if step_eval_queue starts blowing its budget.
-          diff_score, _, best_spot = attack.evaluate_pill_difficulty(obj, world, false, 5, state.phase, state)
+          diff_score, _spots, best_spot =
+            attack.evaluate_pill_difficulty(obj, world, force_detailed,
+                                            5, state.phase, state)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
+                              spots = _spots,  -- nil unless force_detailed
+                              mx = obj.mx, my = obj.my,
                               hp = obj.health or 0, tick = now }
+          just_evaluated = true
         end
+        -- Per-pill candidate overlays now emit every tick from the
+        -- staged-reveal pass below (driven by state._pill_diff_cache),
+        -- not from the just_evaluated branch — so the all → bucket →
+        -- winner progression plays out across consecutive frames for
+        -- every cached pill.
         diff_cost = diff_score or 999
         local _diff_us = clock_us() - _t_diff
         local _spot_us = 0
@@ -3462,6 +3481,30 @@ function M.update_pool_cache(state, world, info)
   -- The queue is built by init.lua after each replan decision,
   -- giving ~49 ticks to process before the next decision.
   M.step_eval_queue(state, world, info)
+
+  -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
+  -- Iterates the diff cache and emits each pill's spots with a mode
+  -- that depends on how many ticks have passed since its scan:
+  --   age 0 → all spots
+  --   age 1 → only in-bucket spots
+  --   age ≥ 2 → only the winner
+  -- Cache TTL is ~50 ticks, so the winner stays visible until the
+  -- next re-eval refreshes the entry and the cycle restarts.
+  if vizmod.is_on("attack_scan_spots_all_pills") and state._pill_diff_cache then
+    local now = state.tick or 0
+    for _, dc in pairs(state._pill_diff_cache) do
+      if dc.spots and dc.mx then
+        local age  = now - (dc.tick or 0)
+        local mode = (age <= 0) and "all"
+                  or (age == 1) and "bucket"
+                  or "winner"
+        local cdeg = dc.spot and dc.spot.deg or nil
+        attack.draw_pill_eval_spots(dc.spots, dc.mx, dc.my,
+                                    "attack_scan_spots_all_pills",
+                                    mode, cdeg)
+      end
+    end
+  end
 end
 
 -- =========================================================================
