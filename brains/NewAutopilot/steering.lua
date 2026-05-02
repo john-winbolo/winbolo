@@ -640,7 +640,10 @@ local function attack_pill_steer(state, world, info, goal)
   if goal.substate == "charge" then
     local sfx = goal.standoff_fx or (goal.mx + 0.5)
     local sfy = goal.standoff_fy or (goal.my + 0.5)
-    local swx, swy = math.floor(sfx * 256), math.floor(sfy * 256)
+    -- Round-to-nearest matches in_range_position (line 914) and the
+    -- attack-side dist viz; truncating here would split the standoff
+    -- by 1 wu vs the substate that owns the transition decision.
+    local swx, swy = math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5)
     local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
 
     if info.gunrange < C.GUNSIGHT_MAX then
@@ -1106,34 +1109,45 @@ local function attack_pill_steer(state, world, info, goal)
                               pcx, pcy)
       local pcorr = U.adiff(info.direction, pdir)
       -- 3-tier turn (hold for big corrections, tap for fine):
-      -- holds give continuous engine rotation; taps give ~1 brad per
-      -- tick — but ONLY when firstLeft/firstRight is 0. The engine
-      -- ramps the first 6 turn ticks at /8 speed and only releases
-      -- to full speed afterwards (tank.c:1751). When consecutive
-      -- ticks emit a tap key, the engine sees a continuous hold and
-      -- the ramp counter advances, so the 5th-or-so tap suddenly
-      -- jumps a big chunk instead of nudging by ~1 brad like we
-      -- want. Workaround: burst 4 tap ticks, then 1 idle tick to
-      -- force the engine's counter back to 0, then 4 more — keeps
-      -- every emitted tap at the slow /8 rate.
+      -- holds give continuous engine rotation; taps stay at /8 ramp
+      -- speed PROVIDED the engine's firstLeft/firstRight counter
+      -- doesn't saturate (tank.c:1751 — first 6 turn ticks at /8,
+      -- then full speed). The brain runs at half the engine's rate,
+      -- so 1 brain tick of held key = 2 engine ticks. That makes
+      -- the safe burst max 3 brain ticks (= 6 engine ticks at /8).
+      -- A 4-brain-tick burst overshoots: the last 2 engine ticks
+      -- of L (delivered AFTER the brain's "release" tick due to a
+      -- 1-brain-tick input lag) hit at full speed and produce a
+      -- 2.0-brad jump on what looks like an idle tick. Burst 3
+      -- brain ticks then 1 idle to force the engine's ramp counter
+      -- back to 0, then 3 more — keeps every emitted tap at /8.
       -- The sim check (attack.lua's per-tick simulate_shot_angle) flips
       -- _finetune_on_pill the moment the trajectory crosses the pill,
       -- so a brief overshoot on the hold→tap boundary is caught.
-      if pcorr > 2 then
-        keys = keys | KEY_TURNRIGHT
-        goal._finetune_burst = 0
-      elseif pcorr < -2 then
-        keys = keys | KEY_TURNLEFT
-        goal._finetune_burst = 0
-      elseif pcorr ~= 0 then
+      -- Unified burst: ANY turn-emitting tick (hold OR tap) counts
+      -- against the same 3-burst cap, then 1 idle to drain the
+      -- engine's firstLeft/firstRight ramp. Holds saturate the ramp
+      -- twice as fast as taps (1 brain tick of held key = 2 engine
+      -- ticks), so 3 consecutive holds = 6 engine ticks = exactly the
+      -- /8 window. The previous design only capped consecutive taps,
+      -- so a sustained hold (pcorr stuck >2) would burn the ramp into
+      -- full-speed territory and the 1-tick input lag spilled the
+      -- final engine tick onto the next brain tick — visible as a
+      -- jarring 2-brad jump on what looked like an idle frame.
+      local turn_key = nil
+      if pcorr > 0 then turn_key = KEY_TURNRIGHT
+      elseif pcorr < 0 then turn_key = KEY_TURNLEFT end
+      if turn_key then
         local burst = goal._finetune_burst or 0
-        if burst < 4 then
-          if pcorr > 0 then taps = taps | KEY_TURNRIGHT
-          else                 taps = taps | KEY_TURNLEFT end
+        if burst < 3 then
+          if math.abs(pcorr) > 2 then
+            keys = keys | turn_key       -- hold (1 brain = 2 engine ticks)
+          else
+            taps = taps | turn_key       -- tap (1 engine tick)
+          end
           goal._finetune_burst = burst + 1
         else
-          -- Idle tick: emit nothing so firstLeft/firstRight resets
-          -- to 0 in tank.c. Next tick the burst restarts at /8.
+          -- Idle tick: emit nothing so firstLeft/firstRight resets to 0.
           goal._finetune_burst = 0
         end
       else
@@ -1151,6 +1165,16 @@ local function attack_pill_steer(state, world, info, goal)
   -- Mirrors engage's tap-correction + fire-while-aimed pattern.
   if goal.substate == "shoot_pill" then
     if info.speed > 0 then keys = keys | KEY_SLOWER end
+    -- First-tick idle, same reason as finetune: scrub any leftover
+    -- engine-side firstLeft/Right ramp from the previous substate so
+    -- the very first emitted tap below starts at /8.
+    if goal._shoot_first_steer then
+      goal._shoot_first_steer = nil
+      if info.gunrange < C.GUNSIGHT_MAX then
+        keys = keys | KEY_MORERANGE
+      end
+      return keys, taps
+    end
     local aim_tx = goal.aim_mx or (goal.mx + 0.5)
     local aim_ty = goal.aim_my or (goal.my + 0.5)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,

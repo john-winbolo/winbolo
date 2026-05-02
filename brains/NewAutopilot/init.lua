@@ -1246,9 +1246,12 @@ function Brain.think(info)
         max_cost, C.DIJKSTRA_EXACT,
         danger_scale, kind)
       refresh_slate(idx)
+      local kind_str = (kind == cpf.KIND_PILL) and "PILL"
+                    or (kind == cpf.KIND_NORMAL) and "NORMAL"
+                    or string.format("?(%d)", kind)
       print2(string.format(
-        "dij START slate=%d kind=%d ds=%.1f max_cost=%.0f src=(%d,%d) tick=%d",
-        idx, kind, danger_scale, max_cost, tmx, tmy, now))
+        "dij START slate=%d kind=%s ds=%.1f max_cost=%.0f src=(%d,%d) tick=%d",
+        idx, kind_str, danger_scale, max_cost, tmx, tmy, now))
     end
 
     -- Short-range NORMAL: 1-second radar ping
@@ -1301,9 +1304,13 @@ function Brain.think(info)
         local done, expanded, peak_open = cpf.dijkstra_step(idx, now, budget_each)
         if done then
           refresh_slate(idx)
+          local k = d.slates[idx].kind
+          local kind_str = (k == cpf.KIND_PILL) and "PILL"
+                        or (k == cpf.KIND_NORMAL) and "NORMAL"
+                        or string.format("?(%d)", k)
           print2(string.format(
-            "dij DONE slate=%d kind=%d at_tick=%d (took %d, expanded=%d)",
-            idx, d.slates[idx].kind, now,
+            "dij DONE slate=%d kind=%s at_tick=%d (took %d, expanded=%d)",
+            idx, kind_str, now,
             now - (d.slates[idx].started_tick or now), expanded))
         end
       end
