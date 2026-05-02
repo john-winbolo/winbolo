@@ -359,6 +359,13 @@ function Brain.open(info)
   -- Blocked destinations: mkey -> expiry tick
   state.blocked = {}
 
+  -- Banned approach angles per pill: { [pill_key] = { [deg_bucket] = expiry_tick } }
+  -- Populated when an attack_pill approach times out without reaching
+  -- the approach spot — bans that angle for 3 minutes so plan_position
+  -- doesn't pick the same unreachable spot on the next replan.
+  -- pill_key = my * 256 + mx (stationary while alive); deg_bucket = floor(deg/5)*5.
+  state.banned_pill_angles = {}
+
   -- Exploration
   state.visited      = {}
   state.frontier     = heap.new()
@@ -1430,6 +1437,18 @@ function Brain.think(info)
     for k, until_t in pairs(state.blocked) do
       if now >= until_t then state.blocked[k] = nil end
     end
+    -- Same cadence: sweep expired banned-approach-angle entries.
+    -- Per-pill sub-tables get GC'd when emptied.
+    if state.banned_pill_angles then
+      for pkey, bans in pairs(state.banned_pill_angles) do
+        local any_left = false
+        for bucket, exp in pairs(bans) do
+          if now >= exp then bans[bucket] = nil
+          else any_left = true end
+        end
+        if not any_left then state.banned_pill_angles[pkey] = nil end
+      end
+    end
   end
 
   -- Water escape emergency
@@ -2297,14 +2316,18 @@ function Brain.think(info)
     local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
     local wp_hp  = wp_now and wp_now.health or wp.hp or 0
     local wpx, wpy = wp.mx + 0.5, wp.my + 0.5
-    -- Pulsing radius: 0.5..0.85 over a 30-tick cycle.
-    local pulse = 0.5 + 0.35 * (0.5 + 0.5 * math.sin(now * 0.21))
+    -- Pulse rate slows as the marker ages out — visual countdown so
+    -- you can see at a glance whether the wounded effects are about
+    -- to expire. Fresh: ~30-tick cycle (0.21 rad/tick). Fully
+    -- decayed: ~120-tick cycle (0.05 rad/tick), barely throbbing.
+    local age         = (state.tick or 0) - (wp.tick or 0)
+    local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+    local pulse_speed = 0.05 + 0.16 * time_factor   -- 0.21 fresh -> 0.05 expired
+    local pulse = 0.5 + 0.35 * (0.5 + 0.5 * math.sin(now * pulse_speed))
     viz.circle("wounded_pill_marker", wpx, wpy, pulse,        255, 80, 80, 220)
     viz.circle("wounded_pill_marker", wpx, wpy, pulse + 0.04, 255, 80, 80, 120)
     -- Header line shows the in-pool 0.30x AND the cross-goal commit
     -- discount (decays alongside finish_other; 1.0x once expired).
-    local age         = (state.tick or 0) - (wp.tick or 0)
-    local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
     local commit_mult = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
     viz.text  ("wounded_pill_marker", wpx + 0.6, wpy - 0.6,
                string.format("WOUNDED hp=%d (this pill x0.30 *commit x%.2f)",
@@ -2372,7 +2395,7 @@ function Brain.think(info)
     if ipill and (ipill.owner == "hostile" or ipill.owner == "neutral") and ipill.health > 0 then
       -- Compute on first display only; stored in inspect_pill table
       if not ip._spots then
-        local _, spots = attack.evaluate_pill_difficulty(ipill, world, true, nil, state.phase)
+        local _, spots = attack.evaluate_pill_difficulty(ipill, world, true, nil, state.phase, state)
         ip._spots = spots or {}
       end
       local spots = ip._spots

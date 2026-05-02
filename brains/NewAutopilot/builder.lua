@@ -584,10 +584,30 @@ function M.decide(state, world, info, now)
       end
       local has_trees   = info.trees >= cost
       local can_reach   = lgm_can_reach(info, wx, wy)
+      -- Exclude the target pill's own per-tile contribution from the
+      -- safety check — we're committed to killing it, so its danger
+      -- footprint shouldn't bully our LGM dispatch within its own
+      -- range. Mirrors goals.lua's self_dr trick. tp is the
+      -- target_pill set above when mode == "wall_shield".
+      local excl_mx = tp and tp.mx or nil
+      local excl_my = tp and tp.my or nil
       local path_safe   = can_reach and
                           danger.lgm_path_safe_enhanced(info, wx, wy,
-                              C.LGM_DANGER_HIGH, now, world)
+                              C.LGM_DANGER_HIGH, now, world,
+                              excl_mx, excl_my)
       if not angry_pill_close and has_trees and can_reach and path_safe then
+        -- Forest in the way? The engine can't drop a wall on T_FOREST;
+        -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
+        -- Dispatch FARM first to harvest, then the next builder tick
+        -- will see grass/road and dispatch the actual BUILD. Two
+        -- separate LGM round-trips, but the wall_shield idx in attack.lua
+        -- only advances on T_BUILDING/T_HALFBUILD so it'll keep
+        -- targeting the same tile until the wall is genuinely up.
+        if wtt == C.T_FOREST then
+          log.reason("build", { mode = b.mode, why = "harvest forest before wall",
+                                wall_mx = wx, wall_my = wy })
+          return { x = wx, y = wy, action = BUILDMODE_FARM }
+        end
         local why = b.mode == "base_shield" and "building wall to protect refuel"
                                               or "building wall for pill attack"
         log.reason("build", { mode = b.mode, why = why, wall_mx = wx, wall_my = wy })

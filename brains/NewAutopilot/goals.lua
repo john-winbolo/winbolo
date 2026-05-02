@@ -2737,7 +2737,7 @@ function M.step_eval_queue(state, world, info)
           -- More accurate diff_score / best_spot but ~9x more spots
           -- evaluated per pill per cache miss. Watch the perf impact;
           -- revert to 45 if step_eval_queue starts blowing its budget.
-          diff_score, _, best_spot = attack.evaluate_pill_difficulty(obj, world, false, 5, state.phase)
+          diff_score, _, best_spot = attack.evaluate_pill_difficulty(obj, world, false, 5, state.phase, state)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               hp = obj.health or 0, tick = now }
         end
