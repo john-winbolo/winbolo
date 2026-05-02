@@ -1987,134 +1987,24 @@ function Brain.think(info)
               info.carried_pills or 0, info.armour, info.shells, info.trees,
               state.player_name))
         log.event("goal", string.format("%s->%s@%d,%d", old_label, new_label, new_goal.mx, new_goal.my))
-      elseif new_goal.kind == "attack_pill" and state.goal.substate then
-        -- Same pill target: preserve substate and timing fields.
-        -- During engage/ws_ substates: keep the OLD standoff and wall positions.
-        -- Adopting new positions while fighting triggers spurious repositioning.
-        new_goal.substate        = state.goal.substate
-        new_goal.engage_tick     = state.goal.engage_tick
-        new_goal.reposition_tick = state.goal.reposition_tick
-        new_goal.first_hit_tick  = state.goal.first_hit_tick
-        new_goal.last_armour     = state.goal.last_armour
-        -- Preserve standoff/wall positions during active engage or ws_ substates
-        if ACTIVE_SUBS[state.goal.substate or ""] then
-          new_goal.scan_spots      = state.goal.scan_spots
-          new_goal.approach_mx     = state.goal.approach_mx
-          new_goal.approach_my     = state.goal.approach_my
-          -- Approach float coords were missing from the preservation
-          -- list; without them the goal-swap dropped sub-tile precision
-          -- after each tick and steering fell back to the tile center.
-          new_goal.approach_fx     = state.goal.approach_fx
-          new_goal.approach_fy     = state.goal.approach_fy
-          new_goal._chosen_deg     = state.goal._chosen_deg
-          new_goal._plan_show_tick = state.goal._plan_show_tick
-          new_goal._aim_locked      = state.goal._aim_locked
-          new_goal._charge_braking  = state.goal._charge_braking
-          new_goal._engage_aimed    = state.goal._engage_aimed
-          new_goal._plan_logged  = state.goal._plan_logged
-          new_goal._scan_tank_mx = state.goal._scan_tank_mx
-          new_goal._scan_tank_my = state.goal._scan_tank_my
-          new_goal.aim_tick      = state.goal.aim_tick
-          -- Shield-scan + build-walls state (attack_shield phase 1/2).
-          -- Without these, the per-tick goal-table swap wipes the scan
-          -- result computed in plan_position before approach completes.
-          new_goal._shield_scan             = state.goal._shield_scan
-          new_goal._wall_build_list         = state.goal._wall_build_list
-          new_goal._wall_build_idx          = state.goal._wall_build_idx
-          new_goal._wall_build_start        = state.goal._wall_build_start
-          new_goal._wall_build_last_progress = state.goal._wall_build_last_progress
-          new_goal._wall_build_prev_man     = state.goal._wall_build_prev_man
-          new_goal._wall_build_prev_idx     = state.goal._wall_build_prev_idx
-          new_goal._wall_idx_started        = state.goal._wall_idx_started
-          new_goal._build_decision_msg      = state.goal._build_decision_msg
-          new_goal._build_decision_until    = state.goal._build_decision_until
-          new_goal._build_timeout_total     = state.goal._build_timeout_total
-          new_goal._approach_start          = state.goal._approach_start
-          new_goal._approach_last_progress  = state.goal._approach_last_progress
-          new_goal._approach_last_dist      = state.goal._approach_last_dist
-          new_goal._approach_timeout_total  = state.goal._approach_timeout_total
-          -- Pre-flight tree gather (PPT). Must persist across the per-tick
-          -- goal-swap or the gather_trees handler loses its progress timer.
-          new_goal._trees_for_walls         = state.goal._trees_for_walls
-          new_goal._gather_start            = state.goal._gather_start
-          new_goal._gather_last_progress    = state.goal._gather_last_progress
-          new_goal._gather_last_trees       = state.goal._gather_last_trees
-          -- Trajectory finetune (in_range_aim_finetune) state.
-          new_goal._finetune_start          = state.goal._finetune_start
-          new_goal._finetune_taps           = state.goal._finetune_taps
-          new_goal._finetune_path           = state.goal._finetune_path
-          new_goal._finetune_on_pill        = state.goal._finetune_on_pill
-          new_goal.aim_mx                   = state.goal.aim_mx
-          new_goal.aim_my                   = state.goal.aim_my
-          new_goal._is_ppt                  = state.goal._is_ppt
-          new_goal._shoot_armour            = state.goal._shoot_armour
-          new_goal._shoot_shells            = state.goal._shoot_shells
-          new_goal._shoot_hits_total        = state.goal._shoot_hits_total
-          new_goal._shoot_start_tick        = state.goal._shoot_start_tick
-          -- Charge entry pill HP (drives short-swerve override for
-          -- low-HP pills at charge → swerve / engage → swerve).
-          new_goal._charge_start_hp         = state.goal._charge_start_hp
-          -- Swerve-completion extension counter (used to wait for
-          -- inbound on-target shells when swerve ends with the pill
-          -- still alive but a confirmed-kill in flight).
-          new_goal._swerve_extends          = state.goal._swerve_extends
-          -- Orbit detector (steering): no-progress counter + last
-          -- distance reading. Must persist or we never accumulate
-          -- enough ticks to trigger.
-          new_goal._orbit_stuck             = state.goal._orbit_stuck
-          new_goal._orbit_last_dist         = state.goal._orbit_last_dist
-          if state.goal.standoff_mx then
-            new_goal.standoff_mx = state.goal.standoff_mx
-            new_goal.standoff_my = state.goal.standoff_my
-            new_goal.standoff_fx = state.goal.standoff_fx
-            new_goal.standoff_fy = state.goal.standoff_fy
-          end
-          if state.goal.wall_mx then
-            new_goal.wall_shield = state.goal.wall_shield
-            new_goal.wall_mx     = state.goal.wall_mx
-            new_goal.wall_my     = state.goal.wall_my
-          end
-          if state.goal.prebuild_mx then
-            new_goal.prebuild_mx = state.goal.prebuild_mx
-            new_goal.prebuild_my = state.goal.prebuild_my
-          end
-        end
-        -- Preserve wall-shield timing fields
-        new_goal.ws_build_tick   = state.goal.ws_build_tick
-        new_goal.ws_wait_tick    = state.goal.ws_wait_tick
-        new_goal.ws_rebuild_tick = state.goal.ws_rebuild_tick
-        new_goal.ws_retreat_tick = state.goal.ws_retreat_tick
-        new_goal.lgm_return_tick = state.goal.lgm_return_tick
-        state.goal = new_goal
-      elseif new_goal.kind == "pill_place" and state.goal.substate then
-        -- Same pill_place target: preserve substate and all timing/position fields
-        new_goal.substate       = state.goal.substate
-        new_goal.source_mx      = state.goal.source_mx
-        new_goal.source_my      = state.goal.source_my
-        new_goal.source_id      = state.goal.source_id
-        new_goal.place_mx       = state.goal.place_mx
-        new_goal.place_my       = state.goal.place_my
-        new_goal.deploy_mx      = state.goal.deploy_mx
-        new_goal.deploy_my      = state.goal.deploy_my
-        new_goal.placed_mx      = state.goal.placed_mx
-        new_goal.placed_my      = state.goal.placed_my
-        -- Shield engage fields (shared with wall-shield pipeline)
-        new_goal.standoff_mx    = state.goal.standoff_mx
-        new_goal.standoff_my    = state.goal.standoff_my
-        new_goal.shield_mx      = state.goal.shield_mx
-        new_goal.shield_my      = state.goal.shield_my
-        new_goal.shield_type    = state.goal.shield_type
-        new_goal.lgm_return_tick = state.goal.lgm_return_tick
-        new_goal.reposition_tick = state.goal.reposition_tick
-        -- Timing fields
-        new_goal.dispatch_tick  = state.goal.dispatch_tick
-        new_goal.wait_tick      = state.goal.wait_tick
-        new_goal.engage_tick    = state.goal.engage_tick
-        new_goal.collect_tick   = state.goal.collect_tick
-        new_goal.finish_tick    = state.goal.finish_tick
-        new_goal.first_hit_tick = state.goal.first_hit_tick
-        new_goal.last_armour    = state.goal.last_armour
-        state.goal = new_goal
+      elseif (new_goal.kind == "attack_pill" or new_goal.kind == "pill_place")
+             and state.goal.substate then
+        -- Same target, same kind, mid-substate: keep state.goal table
+        -- intact rather than swap to new_goal. new_goal is essentially
+        -- a re-affirmation from the cost evaluator and carries only
+        -- the {kind, mx, my, target_id} core — all the substate
+        -- machinery (substate, engage_tick, _shield_scan, standoff_*,
+        -- _wall_build_*, _gather_*, _finetune_*, etc.) lives on
+        -- state.goal and would be wiped by an unconditional swap.
+        --
+        -- Previously this branch had ~100 lines of hand-written
+        -- "new_goal.X = state.goal.X" preservation copies — every
+        -- new field added to the goal table needed a corresponding
+        -- line or it'd silently drop after the next tick's swap.
+        -- Inverting the pattern (keep state.goal, ignore new_goal)
+        -- closes that maintenance hole. State.goal_cost is read but
+        -- never assigned anywhere in the codebase, so there's nothing
+        -- cost-related to carry across.
       -- (bpc_pill block removed — unified into attack_pill above)
       end
     end
