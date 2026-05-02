@@ -683,7 +683,7 @@ void frontEndGameOver(void) {
 }
 
 void frontEndClearPlayer(playerNumbers value) { (void)value; }
-void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)wbnParticipant; (void)steamParticipant; }
+void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
 void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) { (void)value; (void)isChecked; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }

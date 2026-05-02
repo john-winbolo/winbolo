@@ -260,8 +260,8 @@ static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
 static bool     s_playerChecked[MAX_PLAYERS]  = {};
 static uint16_t s_playerPing[MAX_PLAYERS] = {};
-static bool     s_playerWbn[MAX_PLAYERS]  = {};
-static bool     s_playerSteam[MAX_PLAYERS] = {};
+static uint8_t  s_playerClientType[MAX_PLAYERS] = {};
+static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
 
 /* WBN/Steam icon textures */
 static SDL_Texture *s_iconGlobe = nullptr;
@@ -278,6 +278,24 @@ static void ensureWbnIconsLoaded(void) {
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+}
+
+/* Platform icon textures, indexed by ClientType. UNKNOWN slot stays NULL. */
+static SDL_Texture *s_iconPlatform[CLIENT_TYPE_COUNT] = {};
+static bool s_platformIconsLoaded = false;
+
+static void ensurePlatformIconsLoaded(void) {
+    if (s_platformIconsLoaded) return;
+    s_platformIconsLoaded = true;
+    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    s_iconPlatform[CLIENT_TYPE_UNKNOWN]   = nullptr;
+    s_iconPlatform[CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIcon(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_LINUX]     = imguiLoadSvgIcon(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_MACOS]     = imguiLoadSvgIcon(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_IOS]       = imguiLoadSvgIcon(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_ANDROID]   = imguiLoadSvgIcon(r, "data/ui/android.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIcon(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_WEB]       = imguiLoadSvgIcon(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
 }
 
 /* Settings panel state */
@@ -984,10 +1002,6 @@ static void renderPlayersPanel(ClientSim *cs) {
     int enabledCount = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i]) {
-            /* Refresh ping/WBN/Steam */
-            s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-            s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
-            s_playerSteam[i] = playersGetSteamParticipant(&cs->sim.plyrs, (BYTE)i);
             enabledPlayers[enabledCount++] = i;
         }
     }
@@ -1015,23 +1029,8 @@ static void renderPlayersPanel(ClientSim *cs) {
             }
         }
 
-        /* WBN participant icon */
-        if (s_playerWbn[i]) {
-            ensureWbnIconsLoaded();
-            if (s_iconGlobe) {
-                ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                ImGui::SameLine();
-            }
-        }
-
-        /* Steam participant icon */
-        if (s_playerSteam[i]) {
-            ensureWbnIconsLoaded();
-            if (s_iconSteam) {
-                ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                ImGui::SameLine();
-            }
-        }
+        /* Platform / WBN / Steam icons */
+        renderPlayerName(NULL, s_playerFlags[i], s_playerClientType[i], "", false);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
         char defLabel[16];
@@ -2031,10 +2030,6 @@ static void renderMenuBar(ClientSim *cs) {
                 }
             }
             if (s_playerEnabled[i]) {
-                /* Refresh ping/WBN from player struct each frame */
-                s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-                s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
-
                 /* Custom row: selectable name on left, colored WBN+ping on right */
                 float fullWidth = ImGui::GetContentRegionAvail().x;
 
@@ -2047,14 +2042,19 @@ static void renderMenuBar(ClientSim *cs) {
                 }
                 /* Measure right-side width: icons + ping + checkmark (rightmost) */
                 ensureWbnIconsLoaded();
+                ensurePlatformIconsLoaded();
                 ImGuiContext &g = *GImGui;
                 float checkSz = g.FontSize * 0.866f;
                 float iconW = (float)WBN_ICON_SIZE;
                 float pingWidth = ImGui::CalcTextSize(pingStr).x;
                 float spacing = ImGui::GetStyle().ItemSpacing.x;
+                uint8_t pflags = s_playerFlags[i];
+                uint8_t pct    = s_playerClientType[i];
                 float iconsWidth = 0.0f;
-                if (s_playerWbn[i] && s_iconGlobe)  iconsWidth += iconW + spacing;
-                if (s_playerSteam[i] && s_iconSteam) iconsWidth += iconW + spacing;
+                if (sdl3ImguiGetPlatformIcon(pct))                         iconsWidth += iconW + spacing;
+                if ((pflags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe)    iconsWidth += iconW + spacing;
+                if ((pflags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam)
+                    iconsWidth += iconW + spacing;
                 float rightWidth = iconsWidth + pingWidth + spacing + checkSz;
 
                 /* Selectable player name (no highlight) */
@@ -2064,14 +2064,9 @@ static void renderMenuBar(ClientSim *cs) {
                     screenTogglePlayerCheckStateCS(cs, (BYTE)i);
                 }
 
-                /* Right-aligned WBN/Steam icons */
+                /* Right-aligned platform/WBN/Steam icons */
                 ImGui::SameLine(fullWidth - rightWidth);
-                {
-                    uint8_t badgeFlags = 0;
-                    if (s_playerWbn[i])   badgeFlags |= MESSAGE_FLAG_WBN;
-                    if (s_playerSteam[i]) badgeFlags |= MESSAGE_FLAG_STEAM;
-                    renderPlayerName(NULL, badgeFlags, "", false);
-                }
+                renderPlayerName(NULL, pflags, pct, "", false);
 
                 /* Ping with color coding */
                 ImGui::SameLine();
@@ -3104,15 +3099,16 @@ void sdl3ImguiClearPlayer(unsigned char playerNum) {
     s_playerEnabled[playerNum] = false;
     s_playerChecked[playerNum] = false;
     s_playerPing[playerNum] = 0;
-    s_playerWbn[playerNum] = false;
-    s_playerSteam[playerNum] = false;
+    s_playerClientType[playerNum] = CLIENT_TYPE_UNKNOWN;
+    s_playerFlags[playerNum] = 0;
 }
 
-void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping, bool wbn, bool steam) {
+void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
+                               uint8_t clientType, uint8_t clientFlags) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerPing[playerNum] = ping;
-    s_playerWbn[playerNum]  = wbn;
-    s_playerSteam[playerNum] = steam;
+    s_playerClientType[playerNum] = clientType;
+    s_playerFlags[playerNum] = clientFlags;
 }
 
 SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
@@ -3125,14 +3121,51 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     return s_iconSteam;
 }
 
-void renderPlayerName(const char *name, uint8_t flags,
+SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType) {
+    ensurePlatformIconsLoaded();
+    if (clientType >= CLIENT_TYPE_COUNT) return nullptr;
+    return s_iconPlatform[clientType];
+}
+
+/* Gold tint for supporters; white = no tint (passthrough). */
+static const ImVec4 SUPPORTER_TINT = ImVec4(1.00f, 0.84f, 0.20f, 1.00f);
+static const ImVec4 NO_TINT        = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+
+static const char *platformName(uint8_t ct) {
+    static const char *names[CLIENT_TYPE_COUNT] = {
+        "", "Windows", "Linux", "macOS", "iOS", "Android", "Steam Deck", "Web"
+    };
+    return (ct < CLIENT_TYPE_COUNT) ? names[ct] : "";
+}
+
+void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
+    ensurePlatformIconsLoaded();
+    SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
+    if (platTex) {
+        ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
+        /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
+         * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
+        ImGui::ImageWithBg((ImTextureID)platTex,
+                           ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                           ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0, 0, 0, 0), tint);
+        if (ImGui::IsItemHovered()) {
+            const char *plat = platformName(clientType);
+            if (flags & PLAYER_FLAG_SUPPORTER)
+                ImGui::SetTooltip("%s — Supporter", plat);
+            else
+                ImGui::SetTooltip("%s", plat);
+        }
+        ImGui::SameLine();
+    }
+
     ensureWbnIconsLoaded();
-    if ((flags & MESSAGE_FLAG_WBN) && s_iconGlobe) {
+    if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
         ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
         ImGui::SameLine();
     }
-    if ((flags & MESSAGE_FLAG_STEAM) && s_iconSteam) {
+    if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
         ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
         ImGui::SameLine();
     }
@@ -3173,6 +3206,12 @@ void sdl3ImguiCleanup(void) {
     if (s_iconGlobe) { SDL_DestroyTexture(s_iconGlobe); s_iconGlobe = nullptr; }
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     s_wbnIconsLoaded = false;
+    for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
+        /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a
+         * distinct SDL_Texture so destroying every slot is safe. */
+        if (s_iconPlatform[i]) { SDL_DestroyTexture(s_iconPlatform[i]); s_iconPlatform[i] = nullptr; }
+    }
+    s_platformIconsLoaded = false;
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;

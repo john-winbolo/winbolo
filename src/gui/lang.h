@@ -1161,6 +1161,7 @@
 #ifndef RC_INVOKED
 
 #include "../bolo/global.h"
+#include "../bolo/player_flags.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1189,14 +1190,9 @@ typedef struct {
  * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
 #define LANG_MSGARG_STRING_LEN 64
 
-/* Bit flags for MessageArgs::playerFlags / otherFlags. Mirrors the
- * accountFlags byte in TankSnapshot (src/bolo/input_packet.h). */
-#define MESSAGE_FLAG_WBN   0x01
-#define MESSAGE_FLAG_STEAM 0x02
-
 typedef struct {
     char    playerName[PLAYER_NAME_LEN];
-    uint8_t playerFlags;        /* MESSAGE_FLAG_WBN | MESSAGE_FLAG_STEAM */
+    uint8_t playerFlags;        /* PLAYER_FLAG_* bits */
     char    playerCountry[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
     char    otherName[PLAYER_NAME_LEN];
     uint8_t otherFlags;

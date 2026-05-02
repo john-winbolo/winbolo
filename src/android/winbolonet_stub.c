@@ -64,9 +64,11 @@ void winboloNetSendLock(bool isLocked) {
   (void)isLocked;
 }
 
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
+                                 bool *hasSteam, bool *isSupporter) {
   (void)token; (void)playerNum; (void)errorMsg;
-  if (hasSteam) *hasSteam = FALSE;
+  if (hasSteam)    *hasSteam    = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
   return FALSE;
 }
 

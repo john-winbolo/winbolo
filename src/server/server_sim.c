@@ -1608,12 +1608,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->firstLeft = tankGetFirstLeft(&sim->sim.tanks[i]);
         ts->firstRight = tankGetFirstRight(&sim->sim.tanks[i]);
         ts->pingMs = sim->playerPing[i];
-        ts->accountFlags = (playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x01 : 0)
-                         | (playersGetSteamParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x02 : 0);
+        ts->clientFlags = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
         { static bool _snaplg[16] = {0};
-          if (!_snaplg[i] && ts->accountFlags != 0) {
+          if (!_snaplg[i] && ts->clientFlags != 0) {
             _snaplg[i] = 1;
-            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d accountFlags=0x%02x", i, ts->accountFlags);
+            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d clientFlags=0x%02x", i, ts->clientFlags);
           }
         }
 

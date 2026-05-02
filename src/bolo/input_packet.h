@@ -100,7 +100,7 @@ typedef struct {
     uint8_t  deathWait;    /* Ticks remaining until respawn (0 = alive) */
     uint8_t  reload;       /* Ticks remaining until can fire again (owning player only) */
     uint16_t pingMs;       /* This player's ping in ms */
-    uint8_t  accountFlags; /* Bit 0: WBN participant, Bit 1: Steam participant */
+    uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
 } TankSnapshot;
 
 /* Per-shell data within a snapshot (wire format) */

@@ -242,10 +242,10 @@ void frontEndClearPlayer(playerNumbers value);
 *  str         - String identifier of the name
 *  countryCode - 2-letter country code (e.g. "US"), or empty
 *  ping        - Player ping in ms, 0 = unknown
-*  wbnParticipant - Whether the player is logged into WinBolo.net
-*  steamParticipant - Whether the player is logged into Steam
+*  clientType  - ClientType enum (CLIENT_TYPE_*, see players.h)
+*  clientFlags - PLAYER_FLAG_* bits (see players.h)
 *********************************************************/
-void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant);
+void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags);
 
 /*********************************************************
 *NAME:          frontEndDrawDownload

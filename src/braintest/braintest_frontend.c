@@ -84,8 +84,8 @@ void frontEndClearPlayer(playerNumbers value) {
   (void)value;
 }
 
-void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant) {
-  (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)wbnParticipant; (void)steamParticipant;
+void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
+  (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags;
 }
 
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
@@ -192,9 +192,11 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
+                                 bool *hasSteam, bool *isSupporter) {
   (void)token; (void)playerNum; (void)errorMsg;
-  if (hasSteam) *hasSteam = FALSE;
+  if (hasSteam)    *hasSteam    = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
   return FALSE;
 }
 

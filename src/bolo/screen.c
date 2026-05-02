@@ -1015,7 +1015,7 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
     frontEndUpdateTankStatusBars(sh, mi, ar, tr);
   }
   playersSetSelf(csPtr, &csPtr->sim, &csPtr->sim.plyrs, (playerNumbers) playerNum, playerName, FALSE);
-  frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, false, false);
+  frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, CLIENT_TYPE_UNKNOWN, 0);
 }
 
 /*********************************************************
@@ -1735,8 +1735,8 @@ void screenSetBaseNetDataCS(ClientSim *csPtr, BYTE *buff, int length) {
     playersGetCountryCode(&csPtr->sim.plyrs, max, cc);
     frontEndSetPlayer(csPtr, (playerNumbers) max, pn, cc,
                       playersGetPing(&csPtr->sim.plyrs, max),
-                      playersGetWbnParticipant(&csPtr->sim.plyrs, max),
-                      playersGetSteamParticipant(&csPtr->sim.plyrs, max));
+                      playersGetClientType(&csPtr->sim.plyrs, max),
+                      playersGetClientFlags(&csPtr->sim.plyrs, max));
   }
   /* Set The other players in the menu */
   playersSetMenuItems(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
@@ -3237,12 +3237,20 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
   for (i = 0; i < tankCount; i++) {
     BYTE pn = tanks[i].playerNum;
 
-    /* Update ping and account flags for all players from snapshot */
+    /* Update ping and client flags for all players from snapshot */
     playersSetPing(&csPtr->sim.plyrs, pn, tanks[i].pingMs);
-    playersSetWbnParticipant(&csPtr->sim.plyrs, pn, (tanks[i].accountFlags & 0x01) != 0);
-    playersSetSteamParticipant(&csPtr->sim.plyrs, pn, (tanks[i].accountFlags & 0x02) != 0);
-    if (tanks[i].accountFlags != 0) {
-      WB_LOG_TRACE(WB_LOG_CAT_CLIENT, "[WBN] player %d accountFlags=0x%02x", pn, tanks[i].accountFlags);
+    {
+      /* Snapshot is authoritative only for these bits — preserve any others
+       * (e.g. STEAM_BUILD set once from JOIN_REQUEST) across snapshot ticks. */
+      const uint8_t snapshotMask = PLAYER_FLAG_WBN_VERIFIED
+                                 | PLAYER_FLAG_WBN_STEAM_LINKED
+                                 | PLAYER_FLAG_SUPPORTER;
+      uint8_t cur = playersGetClientFlags(&csPtr->sim.plyrs, pn);
+      uint8_t next = (uint8_t)((cur & ~snapshotMask) | (tanks[i].clientFlags & snapshotMask));
+      playersSetClientFlags(&csPtr->sim.plyrs, pn, next);
+    }
+    if (tanks[i].clientFlags != 0) {
+      WB_LOG_TRACE(WB_LOG_CAT_CLIENT, "[WBN] player %d clientFlags=0x%02x", pn, tanks[i].clientFlags);
     }
 
     if (pn == playerNum) {

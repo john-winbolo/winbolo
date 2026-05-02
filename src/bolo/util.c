@@ -39,6 +39,11 @@
 #include "util.h"
 #include "mathWinbolo.h"
 #include "playername_validate.h"
+#include "players.h"
+#include "../steam/steam_wrapper.h"
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 /*********************************************************
 *NAME:          utilCalcDistance
@@ -718,5 +723,31 @@ void utilSpiralOffset(int step, int *dx, int *dy) {
     *dy = ring - offset;
     break;
   }
+}
+
+uint8_t bolo_detect_client_type(void) {
+#if defined(__EMSCRIPTEN__)
+  return CLIENT_TYPE_WEB;
+#elif defined(__APPLE__)
+  #if TARGET_OS_IOS
+    return CLIENT_TYPE_IOS;
+  #else
+    return CLIENT_TYPE_MACOS;
+  #endif
+#elif defined(__ANDROID__)
+  return CLIENT_TYPE_ANDROID;
+#elif defined(_WIN32)
+  return CLIENT_TYPE_WINDOWS;
+#elif defined(__linux__)
+  if (steam_is_steam_deck()) return CLIENT_TYPE_STEAMDECK;
+  return CLIENT_TYPE_LINUX;
+#else
+  return CLIENT_TYPE_UNKNOWN;
+#endif
+}
+
+bool bolo_steam_has_supporter_dlc(void) {
+  /* TODO: SteamApps()->BIsDlcInstalled(SUPPORTER_DLC_APPID) once DLC exists */
+  return false;
 }
 

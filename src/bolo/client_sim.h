@@ -48,8 +48,8 @@ typedef struct {
     bool isBot;
     uint16_t pingMs;       /* Player ping in ms */
     char countryCode[3];   /* ISO 3166-1 alpha-2 (e.g. "US") */
-    bool wbnParticipant;   /* Logged into WinBolo.net */
-    bool steamParticipant; /* Logged into Steam */
+    uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
+    uint8_t clientType;    /* ClientType enum */
 } ClientLobbySlot;
 
 /* Callback typedefs for new transport message sending */

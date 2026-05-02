@@ -30,6 +30,7 @@
 
 #include "global.h"
 #include "allience.h"
+#include "player_flags.h"
 #include "screentank.h"
 #include "screenlgm.h"
 
@@ -61,6 +62,10 @@ typedef struct { unsigned char c[36]; } u_char36;
 
 typedef struct playersObj *players;
 
+/* ClientType enum and PLAYER_FLAG_* bit defines live in player_flags.h
+ * (included above) so they can be shared with lang.h without dragging
+ * the conflicting struct definitions below into logviewer translation units. */
+
 typedef struct {
   bool inUse;                       /* Is player slot in use? */
   char playerName[PLAYER_NAME_LEN]; /* Player name */
@@ -84,8 +89,8 @@ typedef struct {
   bool needUpdate;
   /* Ping & WBN */
   uint16_t ping;                    /* Last known ping in ms, 0 = unknown */
-  bool wbnParticipant;              /* Logged into WinBolo.net */
-  bool steamParticipant;            /* Logged into Steam */
+  uint8_t clientFlags;              /* PLAYER_FLAG_* bits */
+  uint8_t clientType;               /* ClientType enum */
   uint8_t speed;                    /* Brain-API speed (actual_speed * 4), converted from TankSnapshot */
 } player;
 
@@ -305,7 +310,7 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 *PURPOSE:
 * Returns the player's account-flag byte: bit 0 = WBN
 * participant, bit 1 = Steam participant. Mirrors
-* MESSAGE_FLAG_WBN / MESSAGE_FLAG_STEAM in lang.h. Zero if
+* PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED. Zero if
 * the slot is not in use.
 *
 *ARGUMENTS:
@@ -937,10 +942,10 @@ void playersSetMyLastPlayerName(struct ClientSim *cs, char *dest);
 
 void     playersSetPing(players *plrs, BYTE playerNum, uint16_t ping);
 uint16_t playersGetPing(players *plrs, BYTE playerNum);
-void     playersSetWbnParticipant(players *plrs, BYTE playerNum, bool val);
-bool     playersGetWbnParticipant(players *plrs, BYTE playerNum);
-void     playersSetSteamParticipant(players *plrs, BYTE playerNum, bool val);
-bool     playersGetSteamParticipant(players *plrs, BYTE playerNum);
+void     playersSetClientFlags(players *plrs, BYTE playerNum, uint8_t flags);
+uint8_t  playersGetClientFlags(players *plrs, BYTE playerNum);
+void     playersSetClientType(players *plrs, BYTE playerNum, uint8_t clientType);
+uint8_t  playersGetClientType(players *plrs, BYTE playerNum);
 
 #endif /* PLAYERS_H */
 

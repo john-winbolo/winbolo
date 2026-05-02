@@ -376,25 +376,32 @@ static void serverSendNameChangeReject(int clientIdx, uint8_t reasonCode) {
               &udpServer.clients[clientIdx].addr);
 }
 
-/* Send a player joined/left notification to all connected clients */
+/* Send a player joined/left notification to all connected clients.
+ * PLAYER_JOINED layout: [pNum 1][name 32][cc 2][clientType 1][clientFlags 1].
+ * PLAYER_LEFT layout:   [pNum 1][name 32][cc 2]. */
 static void serverBroadcastPlayerEvent(uint8_t eventType, uint8_t playerNum,
                                        const char *playerName) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2];
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2];
     int i;
-    int pktLen = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2;
+    int pos = PACKET_HEADER_SIZE;
+    int pktLen;
 
     packHeader(buf, eventType, 0);
-    buf[PACKET_HEADER_SIZE] = playerNum;
-    memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
+    buf[pos++] = playerNum;
+    memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
     if (playerName != NULL) {
-        strncpy((char *)(buf + PACKET_HEADER_SIZE + 1), playerName,
-                PACKET_MAX_PLAYER_NAME - 1);
+        strncpy((char *)(buf + pos), playerName, PACKET_MAX_PLAYER_NAME - 1);
     }
+    pos += PACKET_MAX_PLAYER_NAME;
     /* Append country code */
-    buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME] =
-        (uint8_t)udpServer.clients[playerNum].countryCode[0];
-    buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 1] =
-        (uint8_t)udpServer.clients[playerNum].countryCode[1];
+    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
+    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
+    if (eventType == PACKET_PLAYER_JOINED) {
+        ServerSim *sim = serverSimGetActive();
+        buf[pos++] = playersGetClientType(&sim->sim.plyrs, playerNum);
+        buf[pos++] = playersGetClientFlags(&sim->sim.plyrs, playerNum);
+    }
+    pktLen = pos;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
@@ -580,7 +587,7 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
          * struct yet; pull country from the caller-supplied lookup and
          * mark the WBN flag manually since we only get here when they're
          * verified. */
-        args.otherFlags = (uint8_t)MESSAGE_FLAG_WBN;
+        args.otherFlags = (uint8_t)PLAYER_FLAG_WBN_VERIFIED;
         if (incomingCountry) {
             args.otherCountry[0] = incomingCountry[0];
             args.otherCountry[1] = incomingCountry[1];
@@ -624,14 +631,19 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         inet_ntoa(fromAddr->sin_addr),
         (unsigned)ntohs(fromAddr->sin_port), len);
     fprintf(stderr, "[UDP SERVER] Join request received, len=%d\n", len);
-    if (len < pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3) {
+    /* Full JOIN_REQUEST payload after header: name + pass + 3 version bytes
+     * + WBN token + 1 flags byte + 2 client-identity bytes (clientType,
+     * clientHints).  No backward-compat path — older clients are rejected. */
+    int joinReqMin = pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3
+                     + WBN_TOKEN_WIRE_LEN + 1 + 2;
+    if (len < joinReqMin) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
             "join request malformed: need=%d got=%d from=%s:%u",
-            pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3, len,
+            joinReqMin, len,
             inet_ntoa(fromAddr->sin_addr),
             (unsigned)ntohs(fromAddr->sin_port));
         fprintf(stderr, "[UDP SERVER] Join request malformed (need %d, got %d)\n",
-                pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3, len);
+                joinReqMin, len);
         return; /* Malformed */
     }
 
@@ -694,6 +706,14 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         pos++;
     }
 
+    /* Read clientType + clientHints (length already gated above). */
+    uint8_t clientType  = buf[pos++];
+    uint8_t clientHints = buf[pos++];
+    if (clientType >= CLIENT_TYPE_COUNT) clientType = CLIENT_TYPE_UNKNOWN;
+    /* Drop reserved/server-only bits — clients are never trusted to set
+     * WBN_VERIFIED or WBN_STEAM_LINKED. */
+    clientHints &= PLAYER_CLIENT_HINT_MASK;
+
     /* Check password */
     if (udpServer.password[0] != '\0') {
         if (strcmp(pass, udpServer.password) != 0) {
@@ -745,10 +765,12 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * slot (it's still unconnected at this point). */
     bool incomingIsWBN = false;
     bool wbnHasSteam = false;
+    bool wbnIsSupporter = false;
     if (wbnToken[0] != '\0' && winbolonetIsRunning()) {
         char errorMsg[512];
         errorMsg[0] = '\0';
-        if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg, &wbnHasSteam)) {
+        if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg,
+                                        &wbnHasSteam, &wbnIsSupporter)) {
             fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
             incomingIsWBN = true;
         } else {
@@ -785,7 +807,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                 continue;
 
             bool existingIsWBN =
-                playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i);
+                (playersGetClientFlags(&sim->sim.plyrs, (BYTE)i)
+                 & PLAYER_FLAG_WBN_VERIFIED) != 0;
 
             if (!incomingIsWBN && !existingIsWBN) {
                 /* Both unverified (incl. Steam, bot): existing behavior. */
@@ -925,6 +948,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.clients[slot].countryCode[0] = incomingCountry[0];
     udpServer.clients[slot].countryCode[1] = incomingCountry[1];
     udpServer.clients[slot].countryCode[2] = '\0';
+    udpServer.clients[slot].clientType  = clientType;
+    udpServer.clients[slot].clientHints = clientHints;
 
     /* Initialize reliable event queues for this client */
     udpServer.eventQueues[slot].nextSeq = 1;
@@ -934,16 +959,22 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
 
-    /* Set WBN/Steam participant flags before serverSimAddPlayer so the
-     * log_PlayerJoined event recorded inside it captures the correct
-     * accountFlags byte. Always written (cleared when not WBN) so a
-     * recycled slot doesn't inherit a previous occupant's flags. */
-    playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)slot, incomingIsWBN);
-    playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)slot,
-                               incomingIsWBN ? wbnHasSteam : FALSE);
-    if (incomingIsWBN) {
-        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Set player %d wbn=1 steam=%d", slot, wbnHasSteam ? 1 : 0);
+    /* Merge client-supplied hints with server-determined WBN trust into a
+     * single clientFlags byte before serverSimAddPlayer so the
+     * log_PlayerJoined event captures the right value.  Always written
+     * (cleared when not WBN) so a recycled slot doesn't inherit a previous
+     * occupant's flags. */
+    {
+        uint8_t flags = clientHints & PLAYER_CLIENT_HINT_MASK;
+        if (incomingIsWBN)                  flags |= PLAYER_FLAG_WBN_VERIFIED;
+        if (incomingIsWBN && wbnHasSteam)   flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
+        if (incomingIsWBN && wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+        playersSetClientFlags(&sim->sim.plyrs, (BYTE)slot, flags);
+        playersSetClientType (&sim->sim.plyrs, (BYTE)slot, clientType);
     }
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "join accept: slot=%d clientType=%u clientHints=0x%02x",
+                slot, (unsigned)clientType, (unsigned)clientHints);
 
     /* Initialize player in the simulation */
     serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName,
@@ -1668,7 +1699,7 @@ static bool isOldProtocolInfoRequest(const uint8_t *buf, int len) {
  *     If connected:
  *       [nameLen 1] [name nameLen UTF-8 bytes (no NUL)] [teamNumber 1]
  *       [ready 1] [isBot 1] [pingMs 2 (big-endian)] [countryCode 2]
- *       [wbn 1] [steam 1]   (11 + nameLen bytes for the slot)
+ *       [clientType 1] [clientFlags 1]   (11 + nameLen bytes for the slot)
  *   Game settings tail:
  *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
  *     [gameLength 4 (big-endian)] [pillCount 1] [baseCount 1] [startCount 1]
@@ -1704,9 +1735,8 @@ static int serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
         /* Country code (2 chars, or zeros if unknown) */
         buf[pos++] = (uint8_t)udpServer.clients[i].countryCode[0];
         buf[pos++] = (uint8_t)udpServer.clients[i].countryCode[1];
-        /* WBN/Steam participant flags */
-        buf[pos++] = playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i) ? 1 : 0;
-        buf[pos++] = playersGetSteamParticipant(&sim->sim.plyrs, (BYTE)i) ? 1 : 0;
+        buf[pos++] = playersGetClientType(&sim->sim.plyrs, (BYTE)i);
+        buf[pos++] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
     }
     /* Game settings tail */
     memset(buf + pos, 0, MAP_STR_SIZE);
@@ -1773,8 +1803,8 @@ void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
         buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs & 0xFF);
         buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
         buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
-        buf[pos++] = playersGetWbnParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
-        buf[pos++] = playersGetSteamParticipant(&sim->sim.plyrs, playerNum) ? 1 : 0;
+        buf[pos++] = playersGetClientType(&sim->sim.plyrs, playerNum);
+        buf[pos++] = playersGetClientFlags(&sim->sim.plyrs, playerNum);
     }
 
     for (i = 0; i < MAX_TANKS; i++) {
@@ -2534,10 +2564,21 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (winbolonetIsRunning() && token[0] != '\0') {
                     char errorMsg[512];
                     bool hasSteam = FALSE;
+                    bool wbnIsSupporter = FALSE;
                     errorMsg[0] = '\0';
-                    if (winbolonetServerVerifyToken(token, (BYTE)clientIdx, errorMsg, &hasSteam)) {
-                        playersSetWbnParticipant(&sim->sim.plyrs, (BYTE)clientIdx, TRUE);
-                        playersSetSteamParticipant(&sim->sim.plyrs, (BYTE)clientIdx, hasSteam);
+                    if (winbolonetServerVerifyToken(token, (BYTE)clientIdx, errorMsg,
+                                                    &hasSteam, &wbnIsSupporter)) {
+                        /* Re-merge using the clientHints captured at JOIN_REQUEST
+                         * (the client doesn't re-send them on REAUTH; we re-verify
+                         * against WBN, not the network). */
+                        uint8_t storedHints = udpServer.clients[clientIdx].clientHints;
+                        uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
+                        flags |= PLAYER_FLAG_WBN_VERIFIED;
+                        if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
+                        if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+                        playersSetClientFlags(&sim->sim.plyrs, (BYTE)clientIdx, flags);
+                        playersSetClientType (&sim->sim.plyrs, (BYTE)clientIdx,
+                                              udpServer.clients[clientIdx].clientType);
                         fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
                                 clientIdx, hasSteam ? 1 : 0);
                         /* If game is already running, send the join event now */
@@ -2893,7 +2934,8 @@ void transportUdpServerSend(ServerSim *sim) {
          * This must happen after map download so the client's players
          * struct (recreated during map load) is ready.
          * Format: [header][count]
-         *   [playerNum 1][name 32][numAllies 1][ally0 1][ally1 1]...
+         *   [playerNum 1][name 32][cc 2][clientType 1][clientFlags 1]
+         *   [numAllies 1][ally0 1][ally1 1]...
          * Each player entry is variable-length due to allies. */
         if (udpServer.clients[i].needsPlayerList) {
             uint8_t plBuf[UDP_MAX_PAYLOAD];
@@ -2913,8 +2955,8 @@ void transportUdpServerSend(ServerSim *sim) {
                 numAllies = playersMakeNetAlliences(
                     &serverSimGetActive()->sim.plyrs, (BYTE)j, allies);
 
-                /* Check we have room: 1 + 32 + 2 + 1 + numAllies */
-                if (plPos + 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + numAllies
+                /* Check we have room: 1 + 32 + 2 + 2 + 1 + numAllies */
+                if (plPos + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2 + 1 + numAllies
                     > (int)sizeof(plBuf))
                     break;
 
@@ -2928,6 +2970,8 @@ void transportUdpServerSend(ServerSim *sim) {
                 /* Country code (2 bytes) */
                 plBuf[plPos++] = (uint8_t)udpServer.clients[j].countryCode[0];
                 plBuf[plPos++] = (uint8_t)udpServer.clients[j].countryCode[1];
+                plBuf[plPos++] = playersGetClientType(&sim->sim.plyrs, (BYTE)j);
+                plBuf[plPos++] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)j);
                 plBuf[plPos++] = numAllies;
                 if (numAllies > 0) {
                     memcpy(plBuf + plPos, allies, numAllies);

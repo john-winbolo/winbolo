@@ -31,3 +31,5 @@ void steam_store_stats(void) {}
 void steam_set_join_callback(SteamJoinCallback cb) {
   (void)cb;
 }
+
+bool steam_is_steam_deck(void) { return false; }
