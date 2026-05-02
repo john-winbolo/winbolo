@@ -2219,7 +2219,8 @@ function Brain.think(info)
     local g = state.goal
     if g.mx and g.my then
       local gk = g.kind
-      if gk == "attack_pill" or gk == "attack_pill" or gk == "pill_place" then
+      if gk == "attack_pill" or gk == "defend_pill"
+         or gk == "repair_pill" or gk == "pill_place" then
         local pmx, pmy = g.mx + 0.5, g.my + 0.5
         -- Near-edge aim point (computed before steering)
         local aim_mx = g.aim_mx or pmx
