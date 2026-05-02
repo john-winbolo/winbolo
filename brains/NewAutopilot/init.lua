@@ -914,8 +914,7 @@ function Brain.think(info)
     elseif msg == ASSIST_MSG_PILL_NO_REPAIR then
       -- Pill doesn't need repair: cancel repair goal
       if state.goal.kind == "repair_pill" then
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        attack.clear_attack_goal(state)
         log.event("assist_msg", "pill_no_repair")
       end
     elseif msg == ASSIST_MSG_MAN_DEAD then
@@ -1323,11 +1322,13 @@ function Brain.think(info)
     state.command_reply = nil
   end
 
-  -- Respawn handling
+  -- Respawn handling. Use clear_attack_goal so any in-progress
+  -- attack_pill / PPT state (substate, _shield_scan, _aim_locked,
+  -- _wall_build_list, etc.) doesn't leak through into the next
+  -- goal selection on the new tank.
   if info.newtank then
     state.stuck_for = 0
-    state.pf.status = "idle"
-    state.goal.kind = "none"
+    attack.clear_attack_goal(state)
     print(string.format(TAG .. " t=%d RESPAWN at (%d,%d)",
           now, info.tankx >> 8, info.tanky >> 8))
     log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
@@ -1414,8 +1415,7 @@ function Brain.think(info)
           state.command_goal = nil
           print(TAG .. " CMD: cancelled due to stuck")
         end
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        attack.clear_attack_goal(state)
       end
       state.stuck_for = 0
     end
@@ -1745,8 +1745,7 @@ function Brain.think(info)
       print(string.format(TAG .. " t=%d GOAL INVALID: %s at (%d,%d) — replanning",
             now, gk, gmx, gmy))
       log.event("goal_invalid", string.format("%s@%d,%d", gk, gmx, gmy))
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      attack.clear_attack_goal(state)
     end
 
     t_goal0 = clock_us()
@@ -1845,8 +1844,7 @@ function Brain.think(info)
         if not getting_something then
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 200
-          state.goal.kind = "none"
-          state.pf.status = "idle"
+          attack.clear_attack_goal(state)
           print(string.format(TAG .. " t=%d REFUEL: base at (%d,%d) can't supply us (arm=%d sh=%d mn=%d), replanning",
                 now, state.goal.mx or 0, state.goal.my or 0,
                 info.base.armour or 0, info.base.shells or 0, info.base.mines or 0))
@@ -2144,8 +2142,7 @@ function Brain.think(info)
         state.visited[gk] = true
         print(string.format(TAG .. " t=%d ARRIVED/FAILED explore (%d,%d) -- marking visited",
               now, state.goal.mx, state.goal.my))
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        attack.clear_attack_goal(state)
       elseif state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Can't reach attack position: flee away from the pill.
         -- No pf_fail_logged guard here — we always want to flee, not sit stuck.
@@ -2176,8 +2173,7 @@ function Brain.think(info)
           -- Block this destination so goal selection picks something else
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 600
-          state.goal.kind = "none"
-          state.pf.status = "idle"
+          attack.clear_attack_goal(state)
           state.pf_fail_count = 0
         else
           -- Retry: reset pf to idle so it tries again next tick

@@ -335,6 +335,55 @@ function M.estimate_cost(sx, sy, dx, dy, in_boat)
   return cpf_estimate_cost(sx, sy, dx, dy, in_boat)
 end
 
+--- 8-neighbor cheapest-adjacent sweep. Iterates the 8 tiles around
+--- (mx, my), runs smart_cost(kind, sx, sy, ax, ay, ...) for each
+--- in-map neighbor, and returns (best_cost, best_x, best_y) for
+--- the cheapest. Returns (math.huge, nil, nil) if all neighbors are
+--- out of map or unreachable. Centralises a pattern that was
+--- duplicated in goals.lua (3 sites) and attack.lua (1 site).
+---
+--- Kind selects the slate (KIND_NORMAL or KIND_PILL).
+local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
+local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
+function M.cheapest_adjacent(kind, sx, sy, mx, my, in_boat, shells, trees, mines, armour)
+  local best_cost = math.huge
+  local best_x, best_y = nil, nil
+  for d = 1, 8 do
+    local ax = mx + DX8[d]
+    local ay = my + DY8[d]
+    if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+      local ac = M.smart_cost(kind, sx, sy, ax, ay, in_boat or 0,
+                              shells or 32, trees or 0, mines or 0, armour or 40)
+      if ac < best_cost then
+        best_cost = ac
+        best_x, best_y = ax, ay
+      end
+    end
+  end
+  return best_cost, best_x, best_y
+end
+
+--- Same shape but uses dijkstra_lookup_by_kind (no smart_cost A*
+--- fallback). Returns (best_cost, best_x, best_y) where unreachable
+--- tiles produce math.huge. Use when you only want the slate's
+--- precomputed value and don't want to trigger an A* fallback.
+function M.cheapest_adjacent_dij(kind, mx, my, in_boat)
+  local best_cost = math.huge
+  local best_x, best_y = nil, nil
+  for d = 1, 8 do
+    local ax = mx + DX8[d]
+    local ay = my + DY8[d]
+    if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+      local ac = M.dijkstra_lookup_by_kind(kind, ax, ay, in_boat or 0)
+      if ac < best_cost then
+        best_cost = ac
+        best_x, best_y = ax, ay
+      end
+    end
+  end
+  return best_cost, best_x, best_y
+end
+
 --- Simulate a shell flight (real physics: SHELL_SPEED, SHELL_START_ADD,
 --- 24.8 fixed-point step) from origin world coords toward target world
 --- coords. Returns the unique tiles the shell would cross, in order,
