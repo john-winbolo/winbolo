@@ -167,7 +167,7 @@ int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
     buf[22] = ts->deathWait;
     buf[23] = ts->reload;
     packU16(buf + 24, ts->pingMs);
-    buf[26] = ts->accountFlags;
+    buf[26] = ts->clientFlags;
     return 27;
 }
 
@@ -193,7 +193,7 @@ void unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
     ts->deathWait = buf[22];
     ts->reload = buf[23];
     ts->pingMs = unpackU16(buf + 24);
-    ts->accountFlags = buf[26];
+    ts->clientFlags = buf[26];
 }
 
 /* Serialize one ShellSnapshot into buf. Returns bytes written (7). */

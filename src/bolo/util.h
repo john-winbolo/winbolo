@@ -334,4 +334,11 @@ void initWinboloTimer(void);
 DWORD winboloTimer(void);
 void endWinboloTimer(void);
 
+/* Returns the CLIENT_TYPE_* enum value for the platform we're running on. */
+uint8_t bolo_detect_client_type(void);
+
+/* Returns true iff the running Steam build owns the Supporter DLC.
+ * Currently a stub — DLC AppID is not yet allocated. */
+bool bolo_steam_has_supporter_dlc(void);
+
 #endif /* UTILS_H */

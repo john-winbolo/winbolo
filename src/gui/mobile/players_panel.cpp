@@ -23,7 +23,6 @@ extern "C" {
 
 #define MAX_PLAYERS 16
 #define PLAYER_NAME_LEN 33
-#define WBN_ICON_SIZE 14
 
 static bool sOpen = false;
 
@@ -116,25 +115,11 @@ extern "C" void playersPanelRender(void) {
         }
 
         if (sPlayerEnabled[i]) {
-            uint16_t ping = playersGetPing(&humanSim->sim.plyrs, (BYTE)i);
-            bool wbn = playersGetWbnParticipant(&humanSim->sim.plyrs, (BYTE)i);
-            bool steam = playersGetSteamParticipant(&humanSim->sim.plyrs, (BYTE)i);
+            uint16_t ping  = playersGetPing(&humanSim->sim.plyrs, (BYTE)i);
+            uint8_t flags  = playersGetClientFlags(&humanSim->sim.plyrs, (BYTE)i);
+            uint8_t ctype  = playersGetClientType(&humanSim->sim.plyrs, (BYTE)i);
 
-            /* WBN/Steam icons */
-            if (wbn) {
-                SDL_Texture *globeTex = sdl3ImguiGetGlobeIcon();
-                if (globeTex) {
-                    ImGui::Image((ImTextureID)globeTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                    ImGui::SameLine();
-                }
-            }
-            if (steam) {
-                SDL_Texture *steamTex = sdl3ImguiGetSteamIcon();
-                if (steamTex) {
-                    ImGui::Image((ImTextureID)steamTex, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                    ImGui::SameLine();
-                }
-            }
+            renderPlayerName(NULL, flags, ctype, "", false);
 
             char checkId[48];
             snprintf(checkId, sizeof(checkId), "%s##p%d", label, i);

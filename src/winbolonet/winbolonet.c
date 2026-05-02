@@ -557,13 +557,15 @@ bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playe
 * token.  POSTs to client/join and stores the resulting
 * player_key at the given slot.  Returns TRUE on success.
 *********************************************************/
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
+                                 bool *hasSteam, bool *isSupporter) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
   bool ok = FALSE;
 
   if (hasSteam) *hasSteam = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
 
   if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
     strcpy(errorMsg, "WinBolo.net not running");
@@ -593,6 +595,13 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
           if (steamObj && cJSON_IsBool(steamObj)) {
             *hasSteam = cJSON_IsTrue(steamObj) ? TRUE : FALSE;
           }
+        }
+        if (isSupporter) {
+          /* TODO: enable once WBN /client/join returns "supporter" field
+          cJSON *supObj = cJSON_GetObjectItem(resp, "supporter");
+          if (supObj && cJSON_IsBool(supObj))
+              *isSupporter = cJSON_IsTrue(supObj) ? TRUE : FALSE;
+          */
         }
       } else {
         strcpy(errorMsg, "WinBolo.net returned no player key");

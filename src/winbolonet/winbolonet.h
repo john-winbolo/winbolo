@@ -105,12 +105,16 @@ bool winbolonetCreateClient(const char *token, const char *serverKey, char *erro
 * Returns TRUE on success.
 *
 *ARGUMENTS:
-* token     - WBN auth token from the join request
-* playerNum - Player slot number
-* errorMsg  - Buffer for error message on failure
-* hasSteam  - Output: set to TRUE if player has linked Steam
+* token       - WBN auth token from the join request
+* playerNum   - Player slot number
+* errorMsg    - Buffer for error message on failure
+* hasSteam    - Output: set to TRUE if player has linked Steam
+* isSupporter - Output: set to TRUE iff the WBN response declares this
+*               account as a Supporter (currently always FALSE — DLC field
+*               not yet exposed by WBN).
 *********************************************************/
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam);
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
+                                 bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
 *NAME:          winbolonetDestroy

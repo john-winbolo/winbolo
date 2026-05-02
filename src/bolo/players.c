@@ -74,8 +74,8 @@ void playersCreate(players *plrs, bool isServer) {
     (*plrs)->item[count].allie = allienceCreate();
     (*plrs)->item[count].isChecked = FALSE;
     (*plrs)->item[count].ping = 0;
-    (*plrs)->item[count].wbnParticipant = FALSE;
-    (*plrs)->item[count].steamParticipant = FALSE;
+    (*plrs)->item[count].clientFlags = 0;
+    (*plrs)->item[count].clientType = CLIENT_TYPE_UNKNOWN;
     (*plrs)->playerBrainNames[count][0] = '\0';
   }
 }
@@ -133,7 +133,7 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
       lgmSetPlayerNum(&sim->lgmen[playerNum], playerNum);
       utilCtoPString(playerName, (char *) (*plrs)->playerBrainNames[playerNum]);
       if (isServer == FALSE) {
-        frontEndSetPlayer(csParam, (playerNumbers) playerNum, playerName, "", 0, false, false);
+        frontEndSetPlayer(csParam, (playerNumbers) playerNum, playerName, "", 0, CLIENT_TYPE_UNKNOWN, 0);
       }
     }
   }
@@ -195,8 +195,8 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
         frontEndSetPlayer(csParam, (playerNumbers) playerNum, temp,
                           (*plrs)->item[playerNum].countryCode,
                           (*plrs)->item[playerNum].ping,
-                          (*plrs)->item[playerNum].wbnParticipant,
-                          (*plrs)->item[playerNum].steamParticipant);
+                          playersGetClientType(plrs, playerNum),
+                          playersGetClientFlags(plrs, playerNum));
       }
       /* Log it */
       logAddEvent(log_ChangeName, playerNum, 0, 0, 0, 0, (*plrs)->playerBrainNames[playerNum]);
@@ -233,8 +233,8 @@ void playersSetPlayersMenu(ClientSim *csParam, players *plrs, BYTE selfPlayer, b
         frontEndSetPlayer(csParam, (playerNumbers) count, temp,
                           (*plrs)->item[count].countryCode,
                           (*plrs)->item[count].ping,
-                          (*plrs)->item[count].wbnParticipant,
-                          (*plrs)->item[count].steamParticipant);
+                          playersGetClientType(plrs, count),
+                          playersGetClientFlags(plrs, count));
       }
     }
     count++;
@@ -325,8 +325,8 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
       frontEndSetPlayer(csParam, (playerNumbers) playerNum, str,
                         (*plrs)->item[playerNum].countryCode,
                         (*plrs)->item[playerNum].ping,
-                        (*plrs)->item[playerNum].wbnParticipant,
-                        (*plrs)->item[playerNum].steamParticipant);
+                        playersGetClientType(plrs, playerNum),
+                        playersGetClientFlags(plrs, playerNum));
       frontEndStatusTank((BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
       frontEndRedrawAll(csParam);
     }
@@ -502,8 +502,8 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
 uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
   uint8_t flags = 0;
   if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
-    if ((*plrs)->item[playerNum].wbnParticipant)   flags |= MESSAGE_FLAG_WBN;
-    if ((*plrs)->item[playerNum].steamParticipant) flags |= MESSAGE_FLAG_STEAM;
+    flags = (*plrs)->item[playerNum].clientFlags
+            & (PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_WBN_STEAM_LINKED);
   }
   return flags;
 }
@@ -1020,8 +1020,8 @@ void playersSetMenuItems(ClientSim *csParam, players *plrs, BYTE selfPlayer, boo
         frontEndSetPlayer(csParam, (playerNumbers) count, str,
                           (*plrs)->item[count].countryCode,
                           (*plrs)->item[count].ping,
-                          (*plrs)->item[count].wbnParticipant,
-                          (*plrs)->item[count].steamParticipant);
+                          playersGetClientType(plrs, count),
+                          playersGetClientFlags(plrs, count));
       }
     }
   }
@@ -2195,28 +2195,28 @@ uint16_t playersGetPing(players *plrs, BYTE playerNum) {
   return 0;
 }
 
-void playersSetWbnParticipant(players *plrs, BYTE playerNum, bool val) {
+void playersSetClientFlags(players *plrs, BYTE playerNum, uint8_t flags) {
   if (playerNum < MAX_TANKS && (*plrs) != NULL) {
-    (*plrs)->item[playerNum].wbnParticipant = val;
+    (*plrs)->item[playerNum].clientFlags = flags;
   }
 }
 
-bool playersGetWbnParticipant(players *plrs, BYTE playerNum) {
+uint8_t playersGetClientFlags(players *plrs, BYTE playerNum) {
   if (playerNum < MAX_TANKS && (*plrs) != NULL) {
-    return (*plrs)->item[playerNum].wbnParticipant;
+    return (*plrs)->item[playerNum].clientFlags;
   }
-  return FALSE;
+  return 0;
 }
 
-void playersSetSteamParticipant(players *plrs, BYTE playerNum, bool val) {
+void playersSetClientType(players *plrs, BYTE playerNum, uint8_t clientType) {
   if (playerNum < MAX_TANKS && (*plrs) != NULL) {
-    (*plrs)->item[playerNum].steamParticipant = val;
+    (*plrs)->item[playerNum].clientType = clientType;
   }
 }
 
-bool playersGetSteamParticipant(players *plrs, BYTE playerNum) {
+uint8_t playersGetClientType(players *plrs, BYTE playerNum) {
   if (playerNum < MAX_TANKS && (*plrs) != NULL) {
-    return (*plrs)->item[playerNum].steamParticipant;
+    return (*plrs)->item[playerNum].clientType;
   }
-  return FALSE;
+  return CLIENT_TYPE_UNKNOWN;
 }

@@ -82,8 +82,9 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
  *   Disconnected slot: connected(0) — 1 byte total.
  *   Connected slot:    connected(1) + nameLen(1) + name(0..63 UTF-8 bytes,
  *                      no NUL on the wire) + teamNumber(1) + ready(1)
- *                      + isBot(1) + pingMs(2) + countryCode(2) + wbn(1)
- *                      + steam(1)  ->  11 + nameLen bytes (max 74).
+ *                      + isBot(1) + pingMs(2) + countryCode(2)
+ *                      + clientType(1) + clientFlags(1)
+ *                      ->  11 + nameLen bytes (max 74).
  * The macros below are buffer-size upper bounds, NOT the actual on-wire size.
  * Encoders track running `pos` and emit only the bytes they actually wrote;
  * decoders length-check each field and reject malformed packets. */

@@ -249,6 +249,11 @@ typedef struct {
     bool    nameStickySuffix;    /* Phase 5: server-renamed by verified-priority
                                   * collision; keep the suffixed name for the
                                   * rest of the session.  Cleared on disconnect. */
+    /* Set once at JOIN_REQUEST and not refreshed mid-connection.  Server does
+     * not push updates if e.g. a Steam Deck docks mid-game; this is
+     * intentional, not a bug. */
+    uint8_t clientType;          /* immutable after JOIN_REQUEST */
+    uint8_t clientHints;         /* immutable after JOIN_REQUEST; SUPPORTER|STEAM_BUILD only */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.

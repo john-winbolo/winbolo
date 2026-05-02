@@ -76,7 +76,7 @@ typedef struct {
   bool needUpdate;
   BYTE team;
   /* Per-player account flags (v1 logs only). Bit 0 = WBN, bit 1 = Steam.
-   * Mirrors MESSAGE_FLAG_WBN / MESSAGE_FLAG_STEAM from src/gui/lang.h. */
+   * Mirrors PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED from src/bolo/player_flags.h. */
   BYTE accountFlags;
 } player;
 

@@ -101,3 +101,9 @@ extern "C" void steam_store_stats(void) {
 extern "C" void steam_set_join_callback(SteamJoinCallback cb) {
   s_join_callback = cb;
 }
+
+extern "C" bool steam_is_steam_deck(void) {
+  if (!s_initialized) return false;
+  ISteamUtils *utils = SteamUtils();
+  return utils && utils->IsSteamRunningOnSteamDeck();
+}

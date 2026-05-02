@@ -1166,7 +1166,8 @@ bool lv_processSnapshot() {
               returnValue = FALSE;
             } else {
               allies = data+pos;
-              /* Snapshot wire format has no accountFlags; default to 0.
+              /* Snapshot replay does not extract the clientFlags byte in
+               * TankSnapshot; default the v1-log accountFlags storage to 0.
                * The flags will be re-set by any subsequent log_PlayerJoined
                * event for this slot. */
               lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
