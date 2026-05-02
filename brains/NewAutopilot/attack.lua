@@ -98,18 +98,30 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
         goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
 end
 
+-- STILL_POS_TOL: max world-unit drift over the still-window that
+-- still counts as "stopped". Without this, a 1-wu-per-tick jitter
+-- (common on tree/swamp tiles where info.speed lies about actual
+-- ground motion) keeps resetting `since` and effectively_stopped
+-- never returns true even when the tank is visually frozen.
+-- 4 wu = ¼ game-pixel — well below anything that matters for aim.
+local STILL_POS_TOL = 4
 local function effectively_stopped(state, info, now, speed_tol, still_ticks, key)
   if info.speed <= speed_tol then return true end
   state.attack_motion = state.attack_motion or {}
   local sub = state.attack_motion[key] or {}
   state.attack_motion[key] = sub
-  if sub.wx ~= info.tankx or sub.wy ~= info.tanky then
-    sub.wx    = info.tankx
-    sub.wy    = info.tanky
-    sub.since = now
+  -- Anchor on first call OR when drift exceeds tolerance.
+  if not sub.wx then
+    sub.wx, sub.wy, sub.since = info.tankx, info.tanky, now
     return false
   end
-  return (now - (sub.since or now)) >= still_ticks
+  local dx = info.tankx - sub.wx
+  local dy = info.tanky - sub.wy
+  if dx * dx + dy * dy > STILL_POS_TOL * STILL_POS_TOL then
+    sub.wx, sub.wy, sub.since = info.tankx, info.tanky, now
+    return false
+  end
+  return (now - sub.since) >= still_ticks
 end
 
 -- Attack pill constants (from constants.lua)
@@ -2570,7 +2582,7 @@ function M.update_attack_substate(goal, state, world, info)
         pill.anger, pill.health or 0))
     elseif goal._loiter_start and (now - goal._loiter_start) > C.ANGER_WAIT_MAX then
       -- Waited too long — give up, go refuel
-      state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now }
+      state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now, owner = pill.owner }
       print(TAG .. " ATTACK: loiter timeout, abandoning")
       state.goal.kind = "none"
       state.pf.status = "idle"
@@ -2691,7 +2703,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG .. " ATTACK: loitering (wait=%d vs refuel=%d)",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
     else
-      state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill and pill.health or 0, tick = now }
+      state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill and pill.health or 0, tick = now, owner = pill and pill.owner or nil }
       print(string.format(TAG .. " ATTACK: refueling (wait=%d vs refuel=%d)",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
       state.goal.kind = "none"

@@ -88,6 +88,7 @@
 #include "braintest_shotsim_poi_registry.h"
 #include "braintest_vizdetail_registry.h"
 #include "braintest_vizdetailwindow.h"
+#include "braintest_pillcontrib_registry.h"
 #include "../bolo/brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
@@ -244,6 +245,14 @@ typedef struct {
      * freed in recordingFreeFrame. */
     VizDetailEntry *vizDetails;
     int             vizDetailCount;
+
+    /* pill_contrib registry snapshot (per-pill, per-tile danger
+     * contribution maps). Same scrub-back rationale as vizDetails:
+     * brain isn't running in playback so the shift-2 overlay needs
+     * the recorded data to remain functional. malloc'd per frame;
+     * freed in recordingFreeFrame. */
+    PillContribEntry *pillContrib;
+    int               pillContribCount;
 } RecordingFrame;
 
 typedef struct {
@@ -329,6 +338,10 @@ typedef struct {
     bool         costToAbort;
     bool         showHUD;          /* status bar + legend (toggle with H) */
     bool         showShortcuts;    /* keyboard-shortcut help overlay (F1) */
+    /* shift-2 cycles through pill_contrib overlays one pill at a time.
+     * 0 = off; 1..pillContribCount() selects that pill (1-based for
+     * easy keyboard cycling). */
+    int          pillContribSel;
 
     /* Overlay texture (256x256 RGBA, updated once per game tick) */
     SDL_Texture *overlayTex;
@@ -517,6 +530,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->pathX);
     free(f->pathY);
     free(f->vizDetails);
+    free(f->pillContrib);
     memset(f, 0, sizeof(*f));
 }
 
@@ -1255,6 +1269,16 @@ static void vizDetailClearCallback(void) {
     vizDetailRegistryClear();
 }
 
+static void pillContribClearCallback(void) {
+    pillContribClear();
+}
+static int pillContribBeginPillCallback(int pill_id, int mx, int my) {
+    return pillContribBeginPill(pill_id, mx, my);
+}
+static void pillContribAddTileCallback(int slot, int tx, int ty, float value) {
+    pillContribAddTile(slot, tx, ty, value);
+}
+
 static int shotSimPoiRegisterCallback(const char *name,
                                        const char *lua_expr) {
     if (g_currentInitBot < 0) {
@@ -1686,9 +1710,16 @@ static void updateOverlayTexture(BrainTestApp *app) {
     if (!pf) return;
     if (!vizFlag(app->regIdxInfluence) && !vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxFrontLine)) return;
 
-    /* Only rebuild when the sim has ticked or overlays were toggled */
-    if (app->sim.tick == app->overlayTick && !app->overlayDirty) return;
-    app->overlayTick = app->sim.tick;
+    /* Cache key: live ticks count up from 0; playback frames live in
+     * the high half so a scrub never collides with a live tick. Without
+     * this, scrubbing while the live sim is paused would re-use the
+     * stale texture (sim.tick frozen) even though the playback patch-in
+     * just swapped pf->danger_grid to a different historical state. */
+    uint32_t cacheKey = app->playbackMode
+        ? (0x80000000u | (uint32_t)app->playbackFrame)
+        : app->sim.tick;
+    if (cacheKey == app->overlayTick && !app->overlayDirty) return;
+    app->overlayTick = cacheKey;
     app->overlayDirty = false;
 
     /* Lock the 256x256 overlay texture */
@@ -2226,6 +2257,28 @@ static void recordingCapture(BrainTestApp *app) {
         }
     }
 
+    /* pill_contrib snapshot — same scrub-back rationale as
+     * vizDetails. Each PillContribEntry is fixed-size (inline
+     * tile array), so a single malloc + memcpy captures the lot. */
+    {
+        int pcc = pillContribCount();
+        if (pcc > 0) {
+            f->pillContrib = (PillContribEntry *)malloc(pcc * sizeof(PillContribEntry));
+            if (f->pillContrib) {
+                for (int i = 0; i < pcc; i++) {
+                    const PillContribEntry *src = pillContribGet(i);
+                    if (src) f->pillContrib[i] = *src;
+                }
+                f->pillContribCount = pcc;
+            } else {
+                f->pillContribCount = 0;
+            }
+        } else {
+            f->pillContrib = NULL;
+            f->pillContribCount = 0;
+        }
+    }
+
     rb->count++;
 }
 
@@ -2666,6 +2719,9 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think a fresh registry that all bots accumulate into; the
      * recording capture below catches the union after botManagerTick. */
     vizDetailRegistryClear();
+    /* Same multi-bot rationale: clear pillcontrib once host-side
+     * so per-bot Lua emit just appends to the union. */
+    pillContribClear();
 
     botManagerTick(&app->sim, optAI);
     {
@@ -3400,6 +3456,7 @@ static void appRender(BrainTestApp *app) {
              * so the next live brain tick repopulates the live
              * registry without interference. */
             vizDetailSetPlaybackView(pf_->vizDetails, pf_->vizDetailCount);
+            pillContribSetPlaybackView(pf_->pillContrib, pf_->pillContribCount);
 
             /* ── A* / Dijkstra path overlay ── temporarily replace
              * app->cachedPath_* with the recorded path. The
@@ -3540,6 +3597,94 @@ static void appRender(BrainTestApp *app) {
     /* Shot-sim result on top of the map (under ImGui panels). */
     renderShotSimResult(app, screenW, screenH);
 
+    /* Pill-contribution overlay (shift-2 cycle). Renders one colored
+     * rect per tile that the selected pill contributes danger to,
+     * with alpha proportional to the contribution value. Honors the
+     * playback override transparently via pillContribGet. */
+    if (app->pillContribSel > 0) {
+        int n = pillContribCount();
+        int sel0 = app->pillContribSel - 1; /* shift to 0-based */
+        if (sel0 < n) {
+            const PillContribEntry *pe = pillContribGet(sel0);
+            if (pe) {
+                /* Find max value for normalization. */
+                float vmax = 1.0f;
+                for (int i = 0; i < pe->tile_count; i++) {
+                    if (pe->tiles[i].value > vmax) vmax = pe->tiles[i].value;
+                }
+                SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+                bool show_values = vizFlag(app->regIdxValues);
+                for (int i = 0; i < pe->tile_count; i++) {
+                    const PillContribTile *t = &pe->tiles[i];
+                    float sx, sy, sx2, sy2;
+                    mapTileToScreen(app, (float)t->tile_x, (float)t->tile_y,
+                                    screenW, screenH, &sx, &sy);
+                    mapTileToScreen(app, (float)t->tile_x + 1.0f, (float)t->tile_y + 1.0f,
+                                    screenW, screenH, &sx2, &sy2);
+                    float bw = sx2 - sx, bh = sy2 - sy;
+                    /* Hot orange→red gradient by normalized value. */
+                    float norm = t->value / vmax;
+                    if (norm > 1.0f) norm = 1.0f;
+                    Uint8 a = (Uint8)(60 + norm * 160);
+                    Uint8 r = 255;
+                    Uint8 g = (Uint8)(180 - norm * 150);
+                    Uint8 b = (Uint8)(60  - norm * 50);
+                    SDL_SetRenderDrawColor(app->renderer, r, g, b, a);
+                    SDL_FRect rr = { sx, sy, bw, bh };
+                    SDL_RenderFillRect(app->renderer, &rr);
+                    /* Numeric value label centered in the tile when 9 is on
+                     * and the tile is big enough on screen to fit text. */
+                    if (show_values && bw >= 14.0f) {
+                        char buf[16];
+                        if (t->value >= 100.0f) {
+                            snprintf(buf, sizeof(buf), "%d", (int)(t->value + 0.5f));
+                        } else {
+                            snprintf(buf, sizeof(buf), "%.1f", t->value);
+                        }
+                        /* Light text on darker tiles, dark on lighter ones. */
+                        if (norm > 0.5f) {
+                            SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
+                        } else {
+                            SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 255);
+                        }
+                        float tw = (float)strlen(buf) * 8.0f;
+                        SDL_RenderDebugText(app->renderer,
+                                            sx + (bw - tw) * 0.5f,
+                                            sy + (bh - 8.0f) * 0.5f,
+                                            buf);
+                    }
+                }
+                /* Pulsing ring on the source pill. */
+                float pcx, pcy;
+                mapTileToScreen(app, (float)pe->pill_mx + 0.5f, (float)pe->pill_my + 0.5f,
+                                screenW, screenH, &pcx, &pcy);
+                float pulse = 0.5f + 0.5f * sinf((float)SDL_GetTicks() * 0.005f);
+                float pr = (12.0f + pulse * 4.0f);
+                SDL_SetRenderDrawColor(app->renderer, 255, 255, 80, 230);
+                /* Diamond approximation of a circle outline (cheap). */
+                SDL_FPoint pts[5] = {
+                    { pcx,      pcy - pr },
+                    { pcx + pr, pcy      },
+                    { pcx,      pcy + pr },
+                    { pcx - pr, pcy      },
+                    { pcx,      pcy - pr },
+                };
+                SDL_RenderLines(app->renderer, pts, 5);
+                /* Top-left status: "PILL_CONTRIB k/N  pill_id=X @(mx,my)" */
+                char status[128];
+                snprintf(status, sizeof(status),
+                         "PILL_CONTRIB %d/%d  pill_id=%d @(%d,%d) tiles=%d  [shift-2 cycle]",
+                         app->pillContribSel, n,
+                         pe->pill_id, pe->pill_mx, pe->pill_my, pe->tile_count);
+                SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 200);
+                SDL_FRect bg = { 4, 4, (float)(strlen(status) * 8 + 8), 16 };
+                SDL_RenderFillRect(app->renderer, &bg);
+                SDL_SetRenderDrawColor(app->renderer, 255, 220, 80, 255);
+                SDL_RenderDebugText(app->renderer, 8, 8, status);
+            }
+        }
+    }
+
     /* Viz-detail highlights. Two passes:
      *   - Hovered (cyan, lighter): row-hover preview from the D
      *     dialog. Drawn first so the selected red wins when both
@@ -3644,6 +3789,7 @@ static void appRender(BrainTestApp *app) {
      * highlight pass have consumed it. Idempotent — safe to call
      * even if no patch was active this frame. */
     vizDetailClearPlaybackView();
+    pillContribClearPlaybackView();
 
     SDL_RenderPresent(app->renderer);
 
@@ -3822,6 +3968,9 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailRegisterCallback(vizDetailRegisterCallback);
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
+    brainCoreSetPillContribClearCallback(pillContribClearCallback);
+    brainCoreSetPillContribBeginPillCallback(pillContribBeginPillCallback);
+    brainCoreSetPillContribAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
      * dump. Defined in braintest_panelwindow.cpp so it can call
      * ImGui directly. Per-bot panel modules in
@@ -4072,8 +4221,21 @@ int main(int argc, char *argv[]) {
                     app.overlayDirty = true;
                     break;
                 case SDLK_2:
-                    vizFlagFlip(app.regIdxDanger);
-                    app.overlayDirty = true;
+                    if ((ev.key.mod & SDL_KMOD_SHIFT) && (ev.key.mod & SDL_KMOD_CTRL)) {
+                        /* ctrl-shift-2: dedicated off switch (no
+                         * cycling through every pill to reach 0). */
+                        app.pillContribSel = 0;
+                    } else if (ev.key.mod & SDL_KMOD_SHIFT) {
+                        /* shift-2: cycle through pill_contrib overlays
+                         * one pill at a time. Wraps via 0 (off) so the
+                         * user can return to a clean view between cycles. */
+                        int n = pillContribCount();
+                        app.pillContribSel++;
+                        if (app.pillContribSel > n) app.pillContribSel = 0;
+                    } else {
+                        vizFlagFlip(app.regIdxDanger);
+                        app.overlayDirty = true;
+                    }
                     break;
                 case SDLK_3:
                     vizFlagFlip(app.regIdxFrontLine);

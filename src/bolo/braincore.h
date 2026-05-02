@@ -248,4 +248,22 @@ void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb);
 void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
 void brainCoreRegisterVizDetail(lua_State *L);
 
+/*********************************************************
+ *NAME:          pill_contrib registry hook
+ *
+ *  Lua bindings pillcontrib_clear / pillcontrib_begin_pill /
+ *  pillcontrib_add_tile let brains push per-pill, per-tile
+ *  danger contribution data to BrainTest each tick. Host
+ *  uses it for an overlay (shift-2 cycles through pills).
+ *  Non-host runtimes leave callbacks NULL and bindings no-op.
+ *********************************************************/
+typedef void (*BrainPillContribClearFunc)(void);
+typedef int  (*BrainPillContribBeginPillFunc)(int pill_id, int mx, int my);
+typedef void (*BrainPillContribAddTileFunc)(int slot, int tx, int ty, float value);
+
+void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb);
+void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb);
+void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb);
+void brainCoreRegisterPillContrib(lua_State *L);
+
 #endif /* BRAINCORE_H */

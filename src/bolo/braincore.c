@@ -868,6 +868,33 @@ static int l_cpf_dijkstra_trace_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → array of {x=,y=} or nil.
+ * Multi-slate: walks slates of given kind in recency order, picks the
+ * first where (dx,dy) is reachable, traces from THAT slate. Use when
+ * the cost was found via lookup_by_kind's older-slate fallback — the
+ * single-slate trace_path picks "best" which may be a newer slate that
+ * hasn't reached (dx,dy) yet, returning nil. */
+static int l_cpf_dijkstra_trace_path_by_kind(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  int dx   = (int)luaL_checkinteger(L, 2);
+  int dy   = (int)luaL_checkinteger(L, 3);
+  int path_x[512], path_y[512];
+  int n = brainPathfinderDijkstraTracePathByKind(pf, kind, dx, dy,
+                                                  path_x, path_y, 512);
+  if (n <= 0) { lua_pushnil(L); return 1; }
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, path_x[i]);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, path_y[i]);
+    lua_setfield(L, -2, "y");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 /* cpf_dijkstra_pick_reuse_slate(kind)
  * Returns the slate index the brain should reuse next when starting a
  * search of the given kind. Picks an unused slate first, then the
@@ -1194,6 +1221,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
+    { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
     { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
     { "cpf_dijkstra_find_best",     l_cpf_dijkstra_find_best },
     { "cpf_dijkstra_status",        l_cpf_dijkstra_status },
@@ -1643,6 +1671,63 @@ void brainCoreRegisterVizDetail(lua_State *L) {
   lua_pushcfunction(L, l_overlay_detail);       lua_setglobal(L, "overlay_detail");
   lua_pushcfunction(L, l_overlay_detail_text);  lua_setglobal(L, "overlay_detail_text");
   lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
+}
+
+/* ------------------------------------------------------------------ */
+/* pill_contrib registry (per-pill, per-tile danger contributions)     */
+/* ------------------------------------------------------------------ */
+
+static BrainPillContribClearFunc      g_pillContribClearCb     = NULL;
+static BrainPillContribBeginPillFunc  g_pillContribBeginPillCb = NULL;
+static BrainPillContribAddTileFunc    g_pillContribAddTileCb   = NULL;
+
+void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb) {
+  g_pillContribClearCb = cb;
+}
+void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb) {
+  g_pillContribBeginPillCb = cb;
+}
+void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb) {
+  g_pillContribAddTileCb = cb;
+}
+
+/* pillcontrib_clear() — reset the per-tick registry. Brains call
+ * once before pushing this tick's pills. */
+static int l_pillcontrib_clear(lua_State *L) {
+  (void)L;
+  if (g_pillContribClearCb) g_pillContribClearCb();
+  return 0;
+}
+
+/* pillcontrib_begin_pill(pill_id, mx, my) -> slot (or -1 on overflow) */
+static int l_pillcontrib_begin_pill(lua_State *L) {
+  int pill_id = (int)luaL_checkinteger(L, 1);
+  int mx      = (int)luaL_checkinteger(L, 2);
+  int my      = (int)luaL_checkinteger(L, 3);
+  int slot = -1;
+  if (g_pillContribBeginPillCb) {
+    slot = g_pillContribBeginPillCb(pill_id, mx, my);
+  }
+  lua_pushinteger(L, slot);
+  return 1;
+}
+
+/* pillcontrib_add_tile(slot, tile_x, tile_y, value) */
+static int l_pillcontrib_add_tile(lua_State *L) {
+  int   slot  = (int)luaL_checkinteger(L, 1);
+  int   tx    = (int)luaL_checkinteger(L, 2);
+  int   ty    = (int)luaL_checkinteger(L, 3);
+  float value = (float)luaL_checknumber(L, 4);
+  if (g_pillContribAddTileCb) {
+    g_pillContribAddTileCb(slot, tx, ty, value);
+  }
+  return 0;
+}
+
+void brainCoreRegisterPillContrib(lua_State *L) {
+  lua_pushcfunction(L, l_pillcontrib_clear);      lua_setglobal(L, "pillcontrib_clear");
+  lua_pushcfunction(L, l_pillcontrib_begin_pill); lua_setglobal(L, "pillcontrib_begin_pill");
+  lua_pushcfunction(L, l_pillcontrib_add_tile);   lua_setglobal(L, "pillcontrib_add_tile");
 }
 
 /* ------------------------------------------------------------------ */

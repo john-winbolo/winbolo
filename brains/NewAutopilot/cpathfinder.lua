@@ -408,6 +408,16 @@ function M.dijkstra_trace_path(kind, dx, dy)
   return cpf_dijkstra_trace_path(kind, dx, dy)
 end
 
+--- Multi-slate trace: walks slates of `kind` in started_tick descending
+--- order, returns the trace from the first slate where (dx, dy) is
+--- reachable. Use this when the cost was found via lookup_by_kind's
+--- older-slate fallback — the single-slate dijkstra_trace_path picks
+--- the "best" slate which may be a newer one that hasn't expanded to
+--- (dx, dy) yet, returning nil even though some other slate has it.
+function M.dijkstra_trace_path_by_kind(kind, dx, dy)
+  return cpf_dijkstra_trace_path_by_kind(kind, dx, dy)
+end
+
 function M.estimate_tank_travel_ticks(sx, sy, dx, dy, in_boat, max_ticks, stuck_ticks)
   return cpf_estimate_tank_travel_ticks(sx, sy, dx, dy, in_boat,
                                          max_ticks or 4000, stuck_ticks or 200)

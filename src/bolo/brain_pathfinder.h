@@ -286,6 +286,18 @@ int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
                                       int *path_x, int *path_y,
                                       int max_steps);
 
+/* Multi-slate trace: walks slates of `kind` in started_tick descending
+ * order, returns the trace from the first slate where (dx, dy) has a
+ * finite cost. Mirrors brainPathfinderDijkstraLookupByKind's slate
+ * selection so a cost found via fallback to an older slate is matched
+ * by a path traced from THAT slate. Use this instead of
+ * DijkstraTracePath(FindBest(...), ...) when consumers need the path
+ * to correspond to whichever slate actually has the destination. */
+int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
+                                            int dx, int dy,
+                                            int *path_x, int *path_y,
+                                            int max_steps);
+
 /* Precomputed neighbor edge cost grid. Recomputes the static portion of
  * compute_cost (terrain base + diagonal corner blocking) for every tile,
  * for every direction. Speeds up Dijkstra/A* inner loops by ~30-40%.
