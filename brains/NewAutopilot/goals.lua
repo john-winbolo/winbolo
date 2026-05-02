@@ -3352,26 +3352,10 @@ local function goal_selection(state, world, info, quiet)
 
   -- Helper: are we on a friendly base that can actually resupply us?
   -- Uses state.perc.base_supply (computed once per tick by perception.lua)
-  -- instead of re-reading info.base directly.
-  -- IMPORTANT: info.base reports the nearest friendly base within 7 tiles,
-  -- but the engine only refuels when the tank is ON the base tile.  We must
-  -- check that the tank map position matches the base map position.
-  local at_resupply_base = false
-  local bs = state.perc and state.perc.base_supply
-  if bs and info.base then
-    local on_base = (tmx == info.base.x and tmy == info.base.y)
-    if on_base then
-      -- Threshold must match the depleted-block check in init.lua
-      -- (LOW = 4). Otherwise a base with 1-3 units left fires Override 2
-      -- and the depleted-block fires next tick — infinite loop.
-      local LOW = 4
-      local need_arm = (info.armour < C.TANK_FULL_ARMOUR) and (bs.armour or 0) >= LOW
-      local need_sh  = (info.shells < C.TANK_FULL_SHELLS) and (bs.shells or 0) >= LOW
-      if need_arm or need_sh then
-        at_resupply_base = true
-      end
-    end
-  end
+  -- (Was: at_resupply_base computation — set but never read after
+  -- Override 2 was removed. Removed in this pass; if a future
+  -- re-introduction needs it, the bs/info.base reads + on-base
+  -- comparison were the entire body.)
 
   -- Dynamic flee threshold: when attacking a pill, account for escape cost.
   -- On slow terrain or far from a base the tank needs more armour buffer
