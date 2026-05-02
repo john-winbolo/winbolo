@@ -922,6 +922,7 @@ function M.reset()
   for k in pairs(M.tank_grid)  do M.tank_grid[k]  = nil end
   for k in pairs(M.prev_pills) do M.prev_pills[k] = nil end
   for k in pairs(M.prev_friendly_pills) do M.prev_friendly_pills[k] = nil end
+  for k in pairs(M.prev_hostile_pills)  do M.prev_hostile_pills[k]  = nil end
   for k in pairs(M.prev_hostile_bases)  do M.prev_hostile_bases[k]  = nil end
   M.pill_dirty    = true  -- force rebuild on first tick
   M.overlay_dirty = true  -- force overlay rebuild on first tick

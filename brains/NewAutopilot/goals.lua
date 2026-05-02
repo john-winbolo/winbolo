@@ -257,7 +257,9 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
       ::skip::
     end
   end
-  if danger_scale_override then cpf.set_config("danger_scale", 1.0) end
+  -- Always restore even if no override was set — defends against any
+  -- earlier code path leaving danger_scale in a non-default state.
+  cpf.set_config("danger_scale", 1.0)
   return best, best_id, best_cost, candidates
 end
 
@@ -641,8 +643,12 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   local desc = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost)
   if imminent then desc = desc .. " IMMINENT" end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+  -- race_mode is currently a single bool. The "or imminent" branch
+  -- is dead because CAPTURE_RACE_MODE_CAPTURE is always true; left
+  -- here as a single assignment from the global constant. If we ever
+  -- want to distinguish "always race" from "only race when imminent",
+  -- this needs to become two flags or a string.
   local race_mode = C.CAPTURE_RACE_MODE_CAPTURE
-                    or (imminent and C.CAPTURE_RACE_MODE_IMMINENT)
   return {
     cost = raw_cost,
     loc_mult = lm, loc_reason = lr,
@@ -680,8 +686,12 @@ local function eval_capture_pill(state, world, info, tmx, tmy, boat, ammo)
   local desc = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost)
   if imminent then desc = desc .. " IMMINENT" end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+  -- race_mode is currently a single bool. The "or imminent" branch
+  -- is dead because CAPTURE_RACE_MODE_CAPTURE is always true; left
+  -- here as a single assignment from the global constant. If we ever
+  -- want to distinguish "always race" from "only race when imminent",
+  -- this needs to become two flags or a string.
   local race_mode = C.CAPTURE_RACE_MODE_CAPTURE
-                    or (imminent and C.CAPTURE_RACE_MODE_IMMINENT)
   return {
     cost = raw_cost,
     loc_mult = lm, loc_reason = lr,
@@ -772,7 +782,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     end
   end
   if crossfire_pen > 0 then
-    adj_cost = adj_cost + crossfire_pen
+    combat_cost = combat_cost + crossfire_pen
     antic_desc = antic_desc .. string.format(" +xfire=%.0f", crossfire_pen)
   end
 
@@ -1742,7 +1752,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
 
   -- Don't defend if already attacking near this pill
   local gk = state.goal and state.goal.kind or "none"
-  if gk == "attack_pill" or gk == "attack_pill" or gk == "pill_place" then
+  if gk == "attack_pill" or gk == "attack_tank" or gk == "pill_place" then
     if state.goal.mx and U.mdist(state.goal.mx, state.goal.my, target.mx, target.my) <= 5 then
       return nil
     end
@@ -1867,6 +1877,30 @@ local POOL_NAMES = {
   "refuel", "defend_pill", "capture_base", "capture_pill", "repair_pill",
   "attack_pill", "attack_base", "place_strategic", "attack_tank",
   [12] = "wait_for_lgm",
+}
+
+-- Substates during which a fresh attack_pill goal selection should
+-- LOCK ONTO the current pill instead of re-picking from the pool —
+-- protects in-progress takes from being yanked off-target.
+local LOCK_SUBS = {
+  gather_trees=true, approach=true, build_walls=true,
+  aim=true, detree=true, charge=true, engage=true, rush=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
+  ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true, ws_retreat=true, ws_rebuild=true,
+  swerve=true, post_engage=true, loiter=true,
+}
+
+-- Wall-shield investment substates; gain extra commitment penalty
+-- in goal_selection's hysteresis so we don't abandon a half-built
+-- shield setup just because another pill briefly looks cheaper.
+local WS_SUBS = {
+  ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true,   ws_retreat=true, ws_rebuild=true,
+  gather_trees=true, build_walls=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
 }
 
 -- Inject a low-cost wait_for_lgm candidate so the bot prefers to wait
@@ -2070,7 +2104,14 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
       if ac < best_adj then best_adj = ac end
     end
   end
-  local dist_raw   = (best_adj < math.huge) and best_adj or 0
+  -- Unreachable: bail with COST_INF instead of collapsing to 0.
+  -- The previous `or 0` made an unreachable pill score as a 0-distance
+  -- target, which is exactly the wrong direction (it'd dominate the
+  -- pool). 1e30 is the COST_INF convention used elsewhere here.
+  if best_adj >= math.huge then
+    return 1e30, 1e30, 1e30, 0
+  end
+  local dist_raw   = best_adj
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
   local danger_val = threat.at(obj.mx, obj.my)
   -- Intercept: an enemy tank close enough to beat us to the pill
@@ -2224,9 +2265,8 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Sort queue by euclidean distance (closest evaluated first)
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  -- Sort queue by euclidean distance (closest evaluated first).
+  -- tmx/tmy already in scope from line 2110-2111.
   table.sort(queue, function(a, b)
     local da = (a.obj.mx - tmx)^2 + (a.obj.my - tmy)^2
     local db = (b.obj.mx - tmx)^2 + (b.obj.my - tmy)^2
@@ -2386,9 +2426,14 @@ local function get_formula_inner(e)
         _fin_mult)
       or  "1.00 (no wounded pill, or this IS the wounded pill, or HP > threshold, or decayed out)"
     local _self_dr = e._self_dr or 0
-    local _d_self_dr = _self_dr > 0
-      and string.format("sum of target pill's danger contribution along spot path (HP-independent) = %.0f", _self_dr)
-      or  string.format("0 (no path tile lands inside the target pill's range disk, or no contribution stamped)")
+    local _d_self_dr
+    if _self_dr > 0 then
+      _d_self_dr = string.format("sum of target pill's danger contribution along spot path (HP-independent) = %.0f", _self_dr)
+    elseif e._self_dr_no_path then
+      _d_self_dr = "0 (NO PATH — dijkstra slate hadn't reached best_spot at eval time; trace returned nil)"
+    else
+      _d_self_dr = "0 (no path tile lands inside the target pill's range disk, or no contribution stamped)"
+    end
     local _ammo = e._ammo or 0
     local _sh_now = e._sh_now or 0
     local _sh_end = e._sh_end or 0
@@ -2535,25 +2580,34 @@ function M.step_eval_queue(state, world, info)
     local ds_override = nil
     if capture_pool then ds_override = C.CAPTURE_THREAT_WEIGHT
     elseif pill_pool then ds_override = 0.1 end
-    if ds_override then cpf.set_config("danger_scale", ds_override) end
-    -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
+    -- Pool 4 (capture_pill) does its own distance calculation via
+    -- compute_pool4_cost (8-neighbor sweep with KIND_NORMAL — the
+    -- pill is dead, so KIND_PILL would give a misleading low-danger
+    -- read). Skip the smart_cost block entirely for pool 4 to avoid
+    -- a wasted A*/Dijkstra call per candidate per tick. raw_cost is
+    -- backfilled from compute_pool4_cost's return below.
     local cost_dx, cost_dy = obj.mx, obj.my
-    if obj.health and obj.health > 0 then
-      local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
-      local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
-      local adj_best = math.huge
-      for d = 1, 8 do
-        local ax, ay = obj.mx + DX8[d], obj.my + DY8[d]
-        if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-          local ac = smart_cost(kind, tmx, tmy, ax, ay, boat_flag,
-                                shells, trees, mines, armour)
-          if ac < adj_best then adj_best = ac; cost_dx = ax; cost_dy = ay end
+    local raw_cost = 0
+    if pool_idx ~= 4 then
+      if ds_override then cpf.set_config("danger_scale", ds_override) end
+      -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
+      if obj.health and obj.health > 0 then
+        local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
+        local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
+        local adj_best = math.huge
+        for d = 1, 8 do
+          local ax, ay = obj.mx + DX8[d], obj.my + DY8[d]
+          if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+            local ac = smart_cost(kind, tmx, tmy, ax, ay, boat_flag,
+                                  shells, trees, mines, armour)
+            if ac < adj_best then adj_best = ac; cost_dx = ax; cost_dy = ay end
+          end
         end
       end
+      raw_cost = smart_cost(kind, tmx, tmy, cost_dx, cost_dy, boat_flag,
+                             shells, trees, mines, armour)
+      if ds_override then cpf.set_config("danger_scale", 1.0) end
     end
-    local raw_cost = smart_cost(kind, tmx, tmy, cost_dx, cost_dy, boat_flag,
-                                 shells, trees, mines, armour)
-    if ds_override then cpf.set_config("danger_scale", 1.0) end
 
     -- For attack_pill / attack_base candidates, capture shells-on-arrival so
     -- strategy.compute_refuel_targets can account for wall-shoot consumption
@@ -2674,6 +2728,7 @@ function M.step_eval_queue(state, world, info)
                          -- along the spot path, scaled by missing HP. Subtracts
                          -- from the final cost so the bot doesn't get scared off
                          -- approaching a pill it's about to kill.
+      local _self_dr_no_path = false  -- true when trace_path returned nil
       local ammo_cost = 0  -- shells gate: COST_INF if we can't finish the
                            -- pill, otherwise 25 per shell under SHELLS_LOW
                            -- the take would leave us at.
@@ -2768,6 +2823,11 @@ function M.step_eval_queue(state, world, info)
                     self_dr = self_dr + p * (16 / spd)
                   end
                 end
+              else
+                -- Surface the trace failure on the entry so the formula
+                -- breakdown can show "self_dr=0 (no path)" instead of an
+                -- ambiguous 0 that could equally mean "path has no overlap".
+                _self_dr_no_path = true
               end
             end
           end
@@ -2901,6 +2961,10 @@ function M.step_eval_queue(state, world, info)
       if pool_idx == 4 then
         c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
+        -- Pool 4 skipped the smart_cost block (see above), so backfill
+        -- raw_cost from compute_pool4_cost's distance — keeps the panel
+        -- formula breakdown showing a meaningful raw value.
+        raw_cost = _cpill_dist_raw
       end
 
       -- Store raw components for lazy formula building (get_formula on cold path).
@@ -2916,6 +2980,7 @@ function M.step_eval_queue(state, world, info)
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
         entry._self_dr=self_dr
+        entry._self_dr_no_path=_self_dr_no_path
         entry._ammo=ammo_cost
         entry._sh_now=info.shells
         entry._sh_end=(info.shells or 0) - (obj.health or 0)
@@ -3084,8 +3149,8 @@ function M.finalize_pools(state, world, info)
     local desc3 = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost3)
     if imminent3 then desc3 = desc3 .. " IMMINENT" end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+    -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode3 = C.CAPTURE_RACE_MODE_CAPTURE
-                       or (imminent3 and C.CAPTURE_RACE_MODE_IMMINENT)
     pc[3] = {
       cost = raw_cost3,
       loc_mult = lm3, loc_reason = lr3,
@@ -3117,8 +3182,8 @@ function M.finalize_pools(state, world, info)
     local desc4 = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost4)
     if imminent4 then desc4 = desc4 .. " IMMINENT" end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+    -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode4 = C.CAPTURE_RACE_MODE_CAPTURE
-                       or (imminent4 and C.CAPTURE_RACE_MODE_IMMINENT)
     pc[4] = {
       cost = raw_cost4,
       loc_mult = lm4, loc_reason = lr4,
@@ -3166,15 +3231,7 @@ function M.finalize_pools(state, world, info)
     -- current goal's pill so pool 6 surfaces THIS pill, not a cheaper
     -- one. Plan_position itself is not locked (we may legitimately
     -- want to switch before any real investment).
-    local LOCK_SUBS = {
-      gather_trees=true, approach=true, build_walls=true,
-      aim=true, detree=true, charge=true, engage=true, rush=true,
-      in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
-      in_range_aim_finetune=true, shoot_pill=true,
-      ws_prebuild=true, ws_prewait=true, ws_advance=true,
-      ws_engage=true, ws_retreat=true, ws_rebuild=true,
-      swerve=true, post_engage=true, loiter=true,
-    }
+    -- LOCK_SUBS hoisted to module scope (see top of file).
     if state.goal and state.goal.kind == "attack_pill"
        and state.goal.mx and state.goal.my
        and LOCK_SUBS[state.goal.substate or ""] then
@@ -3887,15 +3944,9 @@ local function goal_selection(state, world, info, quiet)
     -- pill-take substates introduced with PPT (gather_trees through
     -- shoot_pill — each represents real progress that resets if we
     -- swap targets).
-    local ws_subs = {
-      ws_prebuild=true, ws_prewait=true, ws_advance=true,
-      ws_engage=true,   ws_retreat=true, ws_rebuild=true,
-      gather_trees=true, build_walls=true,
-      in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
-      in_range_aim_finetune=true, shoot_pill=true,
-    }
+    -- WS_SUBS hoisted to module scope (see top of file).
     local cur_sub = state.goal and state.goal.substate
-    if cur_sub and ws_subs[cur_sub] then
+    if cur_sub and WS_SUBS[cur_sub] then
       commitment = commitment + C.WALL_SHIELD_COMMITMENT
     end
     -- Track per-goal commitment bonuses. Bonuses stack on TOP of the capped

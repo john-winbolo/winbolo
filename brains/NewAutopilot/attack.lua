@@ -98,6 +98,26 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
         goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
 end
 
+-- Clear the active goal, idle the pathfinder, and (optionally) wipe
+-- transient attack-side state that downstream code shouldn't see
+-- after we abandon. Centralizing this fixes the bug class where
+-- one site clears 25 fields by hand and another site clears just
+-- `kind`, leaving stale _shield_scan / _aim_locked / etc. to leak
+-- into the next goal that happens to inherit the same goal table.
+--
+-- Replaces state.goal with a fresh table so nothing leaks. Keep the
+-- table identity for any upvalues that might cache a ref — callers
+-- that pre-cached `local goal = state.goal` need to re-read after
+-- this returns. None of the existing callers do.
+local function clear_attack_goal(state, reason)
+  state.goal = { kind = "none" }
+  if state.pf then state.pf.status = "idle" end
+  if reason then
+    print(string.format("[clear_attack_goal] %s", reason))
+  end
+end
+M.clear_attack_goal = clear_attack_goal
+
 -- STILL_POS_TOL: max world-unit drift over the still-window that
 -- still counts as "stopped". Without this, a 1-wu-per-tick jitter
 -- (common on tree/swamp tiles where info.speed lies about actual
