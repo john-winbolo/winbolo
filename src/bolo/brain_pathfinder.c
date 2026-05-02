@@ -2079,6 +2079,33 @@ const DijkstraSlate *brainPathfinderDijkstraGetSlate(BrainPathfinder *pf, int sl
   return &pf->dij_slates[slate];
 }
 
+/* Walks slates by recency, picks the first where (dx, dy) is reachable
+ * (cheaper boat layer < INF), then traces from that one. O(slates) for
+ * the slate selection (cheap; O(1) cost-at lookup per slate), O(path)
+ * for the trace. Mirrors LookupByKind's selection so the chosen slate
+ * is the same one that returned the cost. */
+int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
+                                            int dx, int dy,
+                                            int *path_x, int *path_y,
+                                            int max_steps) {
+  if (!pf) return 0;
+  if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
+  int order[DIJKSTRA_NUM_SLATES];
+  int n = slate_indices_by_recency(pf, kind, order);
+  for (int i = 0; i < n; i++) {
+    int slate = order[i];
+    DijkstraSlate *s = &pf->dij_slates[slate];
+    if (!s->active || !s->g_cost || !s->dir_at) continue;
+    float c_land = s->g_cost[node_idx(dx, dy, 0)];
+    float c_boat = s->g_cost[node_idx(dx, dy, 1)];
+    if (c_land >= COST_INF && c_boat >= COST_INF) continue;
+    int got = brainPathfinderDijkstraTracePath(pf, slate, dx, dy,
+                                                path_x, path_y, max_steps);
+    if (got > 0) return got;
+  }
+  return 0;
+}
+
 int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
                                       int dx, int dy,
                                       int *path_x, int *path_y,

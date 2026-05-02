@@ -604,6 +604,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * interactive inspector dialog. Same null-callback no-op behavior
    * outside BrainTest. */
   brainCoreRegisterVizDetail(L);
+  /* pill_contrib bindings (pillcontrib_clear / _begin_pill / _add_tile)
+   * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
+   * no-op outside BrainTest. */
+  brainCoreRegisterPillContrib(L);
 
   setup_brain_package_path(L, path);
 

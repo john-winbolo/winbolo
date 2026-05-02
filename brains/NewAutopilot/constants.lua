@@ -271,8 +271,18 @@ M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take
 -- defense (attack_tank, flee) is unaffected — only sibling pill
 -- takes get penalized so an enemy tank rush still wins priority.
 M.WOUNDED_FINISH_THRESHOLD     = 10
-M.WOUNDED_FINISH_DECAY_TICKS   = 500
+M.WOUNDED_FINISH_DECAY_TICKS   = 1500
 M.WOUNDED_FINISH_OTHER_PENALTY = 3.0  -- max cost multiplier on other pills
+
+-- Cross-goal commit discount. Stacks with the existing 0.3x in-pool
+-- pill discount: when the wounded pill is in the active "finish_other"
+-- window, ALSO multiply the wounded-pill take's cost by this factor.
+-- The 0.3x already nudges it past sibling pills; this further tilts
+-- it past unrelated goals (capture_base, refuel, attack_tank when
+-- not urgent, etc.). Decays alongside finish_other via the same
+-- time_factor — fully active at age=0 (×0.5), back to ×1.0 once
+-- WOUNDED_FINISH_DECAY_TICKS expires.
+M.WOUNDED_COMMIT_DISCOUNT      = 0.5
 
 -- Protected pill take (PPT). When the target pill's health is at least
 -- PPT_HEALTH_THRESHOLD, the bot enters PPT mode: shorter standoff

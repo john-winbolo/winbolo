@@ -50,7 +50,8 @@ static const TermDoc kTermDocs[] = {
     {"intcpt",  "Intercept risk — enemy tank may reach this pill before you do"},
     {"hp",      "Health multiplier — lower pill HP = lower cost (easier kill)"},
     {"wound",   "Wounded discount — heavily damaged pill is a very high-value target"},
-    {"self_dr", "Self-danger reduction (subtracted) — discount on the spot-path cost equal to the target pill's own contribution × (1 - hp/15). Lets the bot close in on a pill it's about to kill without being scared off by that pill's own anger."},
+    {"self_dr", "Self-danger reduction (subtracted) — discount on the spot-path cost equal to the sum of the target pill's own contribution along that path. Applied regardless of pill HP so a fresh-but-targeted pill stops bullying its own approach corridor."},
+    {"ammo",    "Shells-budget penalty — INF if shells < pill_hp (can't finish), otherwise 5 per shell that the take would leave us at below SHELLS_LOW (assuming exactly pill.health shots). Replaces the old has_shells gate that cleared the entire pool when shells dipped below SHELLS_LOW mid-take."},
     {"threat",  "Threat coverage × weight — hostile pill fire overlaps this base"},
     {"carry",   "Carry discount (negative) — you are already holding a pill to place"},
     {"mult",    "Multiplier — scales the entire bracketed cost sum"},
@@ -426,12 +427,14 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
 
     ImGui::Text("ID: #%d    Location: (%d, %d)",
                 sDetail.rowId, sDetail.mx, sDetail.my);
+    /* ASCII dashes (not em-dash) so the glyph always renders in the
+     * default ImGui font. The em-dash showed as "?" otherwise. */
     if (sDetail.cost < 0)
-        ImGui::Text("Cost: (pending)    Weighted: —");
+        ImGui::Text("Cost: (pending)    Weighted: --");
     else if (sDetail.cost >= 1e9f)
         ImGui::Text("Cost: INF    Weighted: INF");
     else
-        ImGui::Text("Cost: %.1f    Weighted (×phase): %.1f",
+        ImGui::Text("Cost: %.1f    Weighted (xphase): %.1f",
                     sDetail.cost, sDetail.weighted);
     ImGui::Separator();
 
@@ -727,6 +730,30 @@ void renderPoolGrid(int registry_idx, const char *body) {
             ImGui::GetIO().KeyCtrl &&
             ImGui::IsKeyPressed(ImGuiKey_C, false)) {
         ImGui::SetClipboardText(st.copyBuf);
+    }
+
+    /* Refresh the detail window from this frame's freshly-parsed
+     * sections so playback scrubbing keeps it in sync. Match by
+     * (sectionIdx, rowId). If the row isn't present this frame
+     * (e.g. the candidate fell out of the queue), leave sDetail
+     * as-is so the user keeps the last-known state. */
+    if (st.detail.open && !st.detail.justOpened) {
+        for (int si = 0; si < nSections; si++) {
+            if (sections[si].idx != st.detail.sectionIdx) continue;
+            for (int ri = 0; ri < sections[si].nrows; ri++) {
+                Row *r = &sections[si].rows[ri];
+                if (r->id != st.detail.rowId) continue;
+                st.detail.srcPool  = r->src_pool;
+                st.detail.mx       = r->mx;
+                st.detail.my       = r->my;
+                st.detail.cost     = r->cost;
+                st.detail.weighted = r->weighted;
+                st.detail.winner   = r->winner;
+                SDL_strlcpy(st.detail.formula, r->formula, sizeof(st.detail.formula));
+                break;
+            }
+            break;
+        }
     }
 
     int winW = (int)ImGui::GetWindowWidth();

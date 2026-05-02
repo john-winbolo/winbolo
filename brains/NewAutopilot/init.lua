@@ -899,9 +899,28 @@ function Brain.think(info)
   -- Selective cache invalidation based on pill/terrain changes
   PF.begin_tick(now, world)
 
-  -- Expire wounded pill memory after 500 ticks (~10 seconds)
-  if state.wounded_pill and (now - state.wounded_pill.tick) > 500 then
-    state.wounded_pill = nil
+  -- Expire wounded pill memory:
+  --   1. After WOUNDED_FINISH_DECAY_TICKS (matches the cost-curve decay
+  --      so the marker disappears at the same tick the discounts hit 1.0x).
+  --   2. If the pill at that tile no longer matches the wounded entry —
+  --      either someone else captured it, we captured it, or the pill
+  --      was rebuilt with a different id. Without this, the 0.30x and
+  --      commit discount keep applying to a now-enemy-owned pill that
+  --      may already be healing back to full HP.
+  if state.wounded_pill then
+    local wp     = state.wounded_pill
+    local expire = (now - wp.tick) > (C.WOUNDED_FINISH_DECAY_TICKS or 1500)
+    local cur    = wp.id and world.pills and world.pills[wp.id] or nil
+    local owner_changed = wp.owner and cur and cur.owner ~= wp.owner
+    local pill_gone     = wp.id and not cur
+    -- Healed past where we left it: enemy LGM repaired it back up.
+    -- Compare to the recorded wp.hp (HP at the moment we tagged it,
+    -- typically at swerve / loiter timeout). Even a 1-HP rise means
+    -- someone is actively repairing — re-evaluate at normal cost.
+    local healed = cur and cur.health and (cur.health > (wp.hp or 0))
+    if expire or owner_changed or pill_gone or healed then
+      state.wounded_pill = nil
+    end
   end
 
   -- Update world knowledge
@@ -935,6 +954,42 @@ function Brain.think(info)
     metrics.inc("danger_reloads")
   else
     metrics.inc("danger_skips")
+  end
+
+  -- Push per-pill contribution maps to the host (BrainTest reads
+  -- this for the shift-2 cycle-pill-overlay). Bindings no-op
+  -- under non-host runtimes (game client, headless server).
+  -- NOTE: clear is done host-side once per tick (BrainTest's
+  -- appTickBrain) so multi-bot games don't have one bot wipe
+  -- another's entries. We just append from here.
+  if pillcontrib_begin_pill then
+    -- Walk pills in id-stable order so the cycle index stays
+    -- consistent across ticks. Skip dead pills (no contribution).
+    if world.pills and threat.pill_contrib then
+      local pids = {}
+      for id, _ in pairs(world.pills) do pids[#pids+1] = id end
+      table.sort(pids)
+      for _, id in ipairs(pids) do
+        local p = world.pills[id]
+        if p and p.health and p.health > 0
+           and (p.owner == "hostile" or p.owner == "neutral") then
+          local pkey = p.my * 256 + p.mx
+          local contrib = threat.pill_contrib[pkey]
+          if contrib then
+            local slot = pillcontrib_begin_pill(id, p.mx, p.my)
+            if slot >= 0 then
+              for tkey, val in pairs(contrib) do
+                if val and val > 0 then
+                  local tx = tkey % 256
+                  local ty = (tkey - tx) / 256
+                  pillcontrib_add_tile(slot, tx, ty, val)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
   end
 
   -- Populate influence grid (friendly = positive, hostile = negative).
@@ -2320,16 +2375,20 @@ function Brain.think(info)
     local pulse = 0.5 + 0.35 * (0.5 + 0.5 * math.sin(now * 0.21))
     viz.circle("wounded_pill_marker", wpx, wpy, pulse,        255, 80, 80, 220)
     viz.circle("wounded_pill_marker", wpx, wpy, pulse + 0.04, 255, 80, 80, 120)
+    -- Header line shows the in-pool 0.30x AND the cross-goal commit
+    -- discount (decays alongside finish_other; 1.0x once expired).
+    local age         = (state.tick or 0) - (wp.tick or 0)
+    local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+    local commit_mult = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
     viz.text  ("wounded_pill_marker", wpx + 0.6, wpy - 0.6,
-               string.format("WOUNDED hp=%d (this pill x0.30)", wp_hp),
+               string.format("WOUNDED hp=%d (this pill x0.30 *commit x%.2f)",
+                             wp_hp, commit_mult),
                "topleft", 255, 120, 120, 255, 0.35)
     -- Live "finish_other" multiplier for OTHER pill takes.
     local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
     local mult, mr, mg, mb
     if wp_hp > 0 and wp_hp <= thresh then
       local hp_factor   = (thresh - wp_hp) / thresh
-      local age         = (state.tick or 0) - (wp.tick or 0)
-      local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
       local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
       mult = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
       if mult > 1.001 then
