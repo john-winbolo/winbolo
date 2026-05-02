@@ -1650,7 +1650,13 @@ function Brain.think(info)
           if e.pill.health == 0 and not e.pill.in_tank then p = e.pill; break end
         end
       end
-      if not p or p.owner == "hostile" then goal_valid = false end
+      -- A dead hostile pill is still capturable (engine sets owner to
+       -- dead-player when an enemy dies carrying it; tank.c:1920).
+       -- filter_capture_pill in goals.lua explicitly accepts hostile-
+       -- owned dead pills, so validation must too — otherwise the goal
+       -- gets invalidated the tick after selection and we ping-pong
+       -- into attack_pill on a different target.
+      if not p then goal_valid = false end
     elseif gk == "attack_pill" and not state.capture_objective then
       -- Autonomous attack (not cp command): invalid if pill died or changed side
       -- BUT NOT during swerve — swerve must complete to dodge damage,
