@@ -80,8 +80,7 @@ static uint32_t g_dwFrameTotal = 0;
  * sized to the visible tile count and the blit scales it up. */
 static const float g_zoomSteps[] = {
     0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-    1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
-    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f
+    1.0f, 2.0f, 3.0f, 4.0f
 };
 #define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
 #define ZOOM_STEP_1X    5
@@ -238,6 +237,23 @@ void lv_drawZoomIn(int mouseScreenX, int mouseScreenY) {
 
 void lv_drawZoomOut(int mouseScreenX, int mouseScreenY) {
     lv_drawApplyZoomStep(g_zoomStepIndex - 1, mouseScreenX, mouseScreenY);
+}
+
+int lv_drawGetZoomStepIndex(void) {
+    return g_zoomStepIndex;
+}
+
+int lv_drawGetZoomStepCount(void) {
+    return ZOOM_STEP_COUNT;
+}
+
+float lv_drawGetZoomStepValue(int index) {
+    if (index < 0 || index >= ZOOM_STEP_COUNT) return 1.0f;
+    return g_zoomSteps[index];
+}
+
+void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY) {
+    lv_drawApplyZoomStep(stepIndex, mouseScreenX, mouseScreenY);
 }
 
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.

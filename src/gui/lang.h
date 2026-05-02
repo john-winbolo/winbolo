@@ -1131,6 +1131,11 @@
 /* Log viewer File menu — open log from WinBolo.net */
 #define STR_LV_MENU_OPEN_WBN                1228
 
+/* Log viewer zoom menu */
+#define STR_LV_ZOOM                         1229
+#define STR_LV_ZOOM_IN                      1230
+#define STR_LV_ZOOM_OUT                     1231
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

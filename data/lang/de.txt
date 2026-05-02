@@ -1116,3 +1116,8 @@ STR_LV_INFO_NO_WBN_KEY=Öffne ein Log mit einem WinBolo.net-Schlüssel, um Komme
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=Aus WinBolo.net öffnen…
+
+# Log viewer zoom menu
+STR_LV_ZOOM=Zoom
+STR_LV_ZOOM_IN=Vergrößern
+STR_LV_ZOOM_OUT=Verkleinern
