@@ -819,9 +819,18 @@ do
   end
 end
 
-function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase)
+function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state)
   local pmx, pmy = pill.mx, pill.my
   local R = C.ATTACK_PILL_STANDOFF
+  -- Banned-angle map for this pill (set by approach-timeout handler).
+  -- nil if state isn't passed (legacy callers / unit tests) or this
+  -- pill has no bans.
+  local banned_for_pill = nil
+  local now_for_ban = 0
+  if state and state.banned_pill_angles then
+    banned_for_pill = state.banned_pill_angles[pmy * 256 + pmx]
+    now_for_ban = state.tick or 0
+  end
   local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
   local safe_r = C.ATTACK_SAFE_RADIUS
   -- Pick the right precomputed stamp set for this scan resolution.
@@ -837,6 +846,12 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase)
   local all_valid = {}   -- collect all LOS-valid spots for two-pass selection
 
   for deg = 0, 359, step_deg do
+    -- Skip banned approach angles (set by approach timeout). 5° bucket.
+    if banned_for_pill then
+      local bucket = math.floor((deg % 360) / 5) * 5
+      local exp = banned_for_pill[bucket]
+      if exp and now_for_ban < exp then goto next_spot end
+    end
     local rad = math.rad(deg)
     local cx = pmx + 0.5 + math.sin(rad) * R
     local cy = pmy + 0.5 - math.cos(rad) * R
@@ -993,11 +1008,27 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase)
         local base_entry = world.base_at[sy * 256 + sx]
         local enemy_base = base_entry and base_entry.base
                            and base_entry.base.owner == "hostile"
+        -- Friendly pill on this tile? pill_at[k] is a list — walk it.
+        -- Friendlies don't change tile-type the same way owned pillboxes
+        -- do (engine-dependent), so the T_PILLBOX check below can miss
+        -- them. Catch explicitly so the maneuver area sees them as
+        -- impassable (we can't drive on a friendly pill).
+        local friendly_pill_here = false
+        local plist = world.pill_at[sy * 256 + sx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.owner == "friendly"
+               and (e.pill.health or 0) > 0 then
+              friendly_pill_here = true; break
+            end
+          end
+        end
         if stt == C.T_DEEPSEA or enemy_base then
           terrain_penalty = terrain_penalty + 1000
         elseif stt == C.T_BUILDING or stt == C.T_HALFBUILD
            or stt == C.T_SWAMP or stt == C.T_RIVER
-           or stt == C.T_PILLBOX then
+           or stt == C.T_PILLBOX
+           or friendly_pill_here then
           -- Pillboxes (including friendly ones) act like walls for our
           -- purposes: the tank can't drive through them, so a spot whose
           -- maneuver ellipse overlaps a pill tile is worse for the take.
@@ -1455,7 +1486,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal._scan_tank_mx = tmx
       goal._scan_tank_my = tmy
 
-      local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, nil, state.phase)
+      local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, nil, state.phase, state)
       goal.scan_spots = spots
 
       -- Step 1: apply influence bonus/penalty to all LOS spots.
@@ -1571,6 +1602,30 @@ function M.update_attack_substate(goal, state, world, info)
         -- substates / steering.
         local pill_hp = pill and pill.health or 0
         goal._is_ppt = pill_hp >= (C.PPT_HEALTH_THRESHOLD or 8)
+        -- Force PPT when our armour is low enough that taking return
+        -- fire during a charge could be lethal, even on a soft pill:
+        --   * armour <= ARMOUR_LOW (15): one or two hits from flee.
+        --   * armour <= ARMOUR_MODERATE (25) AND chosen standoff is in
+        --     a hot threat zone (>= ARMOUR_MOD_PPT_DANGER): mid-armour
+        --     plus dangerous approach corridor.
+        if not goal._is_ppt then
+          local force_low = info.armour <= (C.ARMOUR_LOW or 15)
+          local force_mod = false
+          if info.armour <= (C.ARMOUR_MODERATE or 25)
+             and goal.standoff_mx and goal.standoff_my then
+            local sd = threat.at(goal.standoff_mx, goal.standoff_my)
+            if sd >= (C.ARMOUR_MOD_PPT_DANGER or 75) then
+              force_mod = true
+            end
+          end
+          if force_low or force_mod then
+            goal._is_ppt = true
+            print(string.format(TAG ..
+              " ATTACK: forcing PPT (armour=%d hp=%d reason=%s)",
+              info.armour, pill_hp,
+              force_low and "LOW_ARMOUR" or "MOD_ARMOUR+HOT_STANDOFF"))
+          end
+        end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                             or C.ATTACK_PILL_STANDOFF
         -- For PPT, pull the chosen standoff in from 7.4 to 7.0 along
@@ -1910,6 +1965,23 @@ function M.update_attack_substate(goal, state, world, info)
         local APPROACH_GIVE_UP_TICKS = 500
         goal._approach_timeout_total = APPROACH_GIVE_UP_TICKS
         if (now - goal._approach_last_progress) > APPROACH_GIVE_UP_TICKS then
+          -- Ban this approach angle on this pill for 3 minutes (9000
+          -- ticks @ 50Hz). evaluate_pill_difficulty's per-degree scan
+          -- will skip banned buckets so plan_position's next pass picks
+          -- a different angle. Bucket to 5° so close-but-not-identical
+          -- candidate angles around the failed one are also excluded.
+          if goal._chosen_deg then
+            local pkey = pmy * 256 + pmx
+            local pill_bans = state.banned_pill_angles[pkey]
+            if not pill_bans then
+              pill_bans = {}
+              state.banned_pill_angles[pkey] = pill_bans
+            end
+            local bucket = math.floor((goal._chosen_deg % 360) / 5) * 5
+            pill_bans[bucket] = now + 9000
+            print(string.format(TAG .. " ATTACK: banning approach angle %d° on pill (%d,%d) for 3 min",
+                  bucket, pmx, pmy))
+          end
           print(string.format(TAG .. " ATTACK: approach stalled (no progress in %d ticks, dist=%d), replanning",
                 APPROACH_GIVE_UP_TICKS, adist))
           goal.substate = "plan_position"
@@ -1996,16 +2068,26 @@ function M.update_attack_substate(goal, state, world, info)
     -- etc., without waiting on the overall give-up window.
     local WALL_STALL_TICKS = 250  -- ~5 s @ 50 Hz
     if idx <= #list then
+      local target = list[idx]
+      local cur_tt = U.ttype(target.mx, target.my)
       if not goal._wall_idx_started then
         goal._wall_idx_started = now
+        goal._wall_idx_prev_tt = cur_tt
+      elseif goal._wall_idx_prev_tt ~= cur_tt then
+        -- Tile type changed (e.g. forest harvested → grass) — that's
+        -- real LGM progress on this slot. Reset the per-wall timer
+        -- so the BUILD round-trip after a harvest doesn't trip the
+        -- stall and skip a slot we're actively working on.
+        goal._wall_idx_started = now
+        goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
-        local target = list[idx]
         print(string.format(TAG ..
-          " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks), skipping",
-          idx, #list, target.mx, target.my, WALL_STALL_TICKS))
+          " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
+          idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
         idx = idx + 1
         goal._wall_build_idx = idx
         goal._wall_idx_started = nil
+        goal._wall_idx_prev_tt = nil
       end
     end
 
@@ -2436,6 +2518,15 @@ function M.update_attack_substate(goal, state, world, info)
         " ATTACK: shoot_pill no progress for %d ticks (pill_hp=%d) — aborting take",
         now - (goal._shoot_progress_tick or now), pill_hp))
       clear_attack_goal(state)
+      -- clear_attack_goal mutates state.goal in place (wipes all
+      -- non-core fields, sets kind="none"). The local `goal` here
+      -- aliases the same table, so downstream reads like
+      -- `goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS` would
+      -- compare nil and crash. Bail out of the substate handler
+      -- immediately — the goal selector will pick a fresh goal next
+      -- tick. (Brain crash on May 1: this exact path, line 2461 of
+      -- 1c528b1.)
+      return
     end
 
     -- HUD: live progress toward each of the three exit triggers.
@@ -2959,6 +3050,26 @@ function M.update_attack_substate(goal, state, world, info)
                       ticks_left, ticks_left / 50.0, idx_now,
                       #goal._wall_build_list),
         r, g, b, "build_status" }
+      -- Per-wall stall timer (WALL_STALL_TICKS=250). Tile-type
+      -- change (forest→grass after harvest, grass→half-build after
+      -- build start) resets it; only fires when the LGM is genuinely
+      -- not progressing on this slot.
+      if goal._wall_idx_started then
+        local STALL = 250
+        local stall_left = STALL - (now - goal._wall_idx_started)
+        if stall_left < 0 then stall_left = 0 end
+        local sr, sg, sb = color_for(stall_left / STALL)
+        local cur_target = goal._wall_build_list[idx_now]
+        local tt_str = (goal._wall_idx_prev_tt ~= nil)
+          and string.format(" tt=%d", goal._wall_idx_prev_tt) or ""
+        labels[#labels + 1] = {
+          string.format("WALL t-%d (%.1fs) @(%d,%d)%s",
+                        stall_left, stall_left / 50.0,
+                        cur_target and cur_target.mx or -1,
+                        cur_target and cur_target.my or -1,
+                        tt_str),
+          sr, sg, sb, "build_status" }
+      end
     elseif goal.substate ~= "approach" then
       -- Don't double up with the APPROACH timer — only show the
       -- "BUILD pending" line once approach is finished.
@@ -2988,11 +3099,18 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
 
-    if goal.standoff_fx and goal.standoff_fy then
+    -- Anchor labels near the TANK (not 4 tiles diagonally away from
+    -- the standoff — that put them off-screen at normal zoom and the
+    -- user reported never seeing the BUILD countdown). Stack 0.6 tile
+    -- per line so multiple labels (BUILD + WALL_SKIP + APPROACH) read
+    -- vertically.
+    do
+      local twx = info.tankx / 256.0
+      local twy = info.tanky / 256.0
       for i, lbl in ipairs(labels) do
         viz.text(lbl[5],
-                     goal.standoff_fx + 4,
-                     goal.standoff_fy + 4 + (i - 1) * 0.6,
+                     twx + 1.0,
+                     twy + 1.5 + (i - 1) * 0.6,
                      lbl[1], "topleft", lbl[2], lbl[3], lbl[4], 255, 0.5)
       end
     end

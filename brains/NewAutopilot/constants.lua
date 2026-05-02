@@ -154,7 +154,19 @@ M.TANK_FULL_SHELLS = 40
 -- Goal selection thresholds
 M.ARMOUR_CRITICAL  = 5    -- flee immediately
 M.ARMOUR_LOW       = 15   -- seek resupply
+M.ARMOUR_MODERATE  = 25   -- conditionally force PPT when standoff is hot
 M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
+
+-- PPT-force thresholds. PPT (Protected Pill Take) is normally only
+-- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let
+-- low-armour situations force PPT even on a soft pill, because the
+-- bot can't afford to take return fire while charging:
+--   - armour <= ARMOUR_LOW: always force PPT regardless of standoff
+--     danger (we're one or two hits from flee territory).
+--   - armour <= ARMOUR_MODERATE AND standoff danger >= ARMOUR_MOD_PPT_DANGER:
+--     mid-armour and the chosen standoff is hot — too risky to charge
+--     unshielded even on a low-HP pill.
+M.ARMOUR_MOD_PPT_DANGER = 75
 M.ARMOUR_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.SHELLS_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.ARMOUR_PER_PILL_HP = 2  -- estimated armour lost per pill HP when attacking
@@ -271,7 +283,7 @@ M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take
 -- defense (attack_tank, flee) is unaffected — only sibling pill
 -- takes get penalized so an enemy tank rush still wins priority.
 M.WOUNDED_FINISH_THRESHOLD     = 10
-M.WOUNDED_FINISH_DECAY_TICKS   = 1500
+M.WOUNDED_FINISH_DECAY_TICKS   = 15000  -- 5 min @ 50Hz
 M.WOUNDED_FINISH_OTHER_PENALTY = 3.0  -- max cost multiplier on other pills
 
 -- Cross-goal commit discount. Stacks with the existing 0.3x in-pool

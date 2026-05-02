@@ -353,6 +353,32 @@ local function path_lookahead(state, info, nx, ny)
     return nx, ny
   end
 
+  -- Cliff guard: if there's a deep-water tile within 1 tile (8-neighbor)
+  -- of the tank, suppress the lookahead entirely and return the immediate
+  -- A* next step. The lookahead's straight-line "skip ahead" can aim
+  -- the tank past a deep-sea tile that the bresenham check accepted as
+  -- on-path but the tank's body sweep clips into. Holding to the
+  -- adjacent waypoint forces the engine to re-evaluate per-tile.
+  do
+    local cliff_near = false
+    for dy = -1, 1 do
+      for dx = -1, 1 do
+        if not (dx == 0 and dy == 0) then
+          local cx, cy = tmx + dx, tmy + dy
+          if U.in_map(cx, cy) and U.ttype(cx, cy) == C.T_DEEPSEA then
+            cliff_near = true
+            break
+          end
+        end
+      end
+      if cliff_near then break end
+    end
+    if cliff_near then
+      sdbg("lookahead: DEEPSEA within 1 tile, holding to nx=(%d,%d)", nx, ny)
+      return nx, ny
+    end
+  end
+
   -- Stuck-recovery collapse: if stuck_recovery's progress tracker says
   -- we haven't moved STUCK_MOVE_WU toward the same next-step tile in
   -- STUCK_LOOKAHEAD_COLLAPSE_TICKS, jump the lookahead all the way back
@@ -654,15 +680,38 @@ local function attack_pill_steer(state, world, info, goal)
     local tank_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
     local standoff_to_pill = U.wdist(swx, swy, pill_wx, pill_wy)
     
-    -- Shoot during charge if inside standoff range and roughly aimed.
-    -- pill_wx/wy and dist_to_pill = tank_to_pill from above.
+    -- Shoot during charge if inside standoff range AND a shell-sim
+    -- says the trajectory actually crosses the pill tile. The old
+    -- `corr <= 5` brad gate let through edge-of-pill shots that
+    -- physically miss (5 brads ≈ 7°; at 7-tile range that's ~0.85
+    -- tile lateral error — wider than the pill). Sim is bit-exact
+    -- with the engine.
     local dist_to_pill = tank_to_pill
-    viz.hud_text("charge_status", 10, 75, string.format("   dist_to_pill=%d <= %d corr=%.1f", dist_to_pill, math.floor(C.ATTACK_PILL_STANDOFF * 256), corr), "topleft", 255, 255, 0)
+    viz.hud_text("charge_status", 10, 75, string.format("   dist_to_pill=%d <= %d corr=%.1f",
+                                                         dist_to_pill, math.floor(C.ATTACK_PILL_STANDOFF * 256), corr),
+                 "topleft", 255, 255, 0)
     if dist_to_pill <= C.ATTACK_PILL_STANDOFF * 256
        and math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
-      keys = keys | KEY_SHOOT
-      charge_phase = charge_phase .. " FIRE"
-      viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, LET'S FIRE!", "topleft", 255, 255, 0)
+      -- Pre-gate: rough corr check first (cheap) to avoid the sim
+      -- when we're way off. Sim only when within 5 brads.
+      local angle_f = info.tank_angle or info.direction
+      local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
+                                            cpf.SHOT_TANK, info.gunrange or 14)
+      local hits_pill = false
+      if path then
+        for _, t in ipairs(path) do
+          if t.mx == goal.mx and t.my == goal.my then hits_pill = true; break end
+        end
+      end
+      if hits_pill then
+        keys = keys | KEY_SHOOT
+        charge_phase = charge_phase .. " FIRE"
+        viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, FIRE (sim hits)",
+                     "topleft", 255, 255, 0)
+      else
+        viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, hold (sim misses)",
+                     "topleft", 255, 180, 100, 255)
+      end
     end
 
     if sdist < 50 or tank_to_pill < standoff_to_pill then
@@ -875,21 +924,97 @@ local function attack_pill_steer(state, world, info, goal)
       -- coasting before brakes fire. speed*2 lines up the decel curve
       -- with the actual stop point so the tank drifts onto the spot
       -- instead of crawling the last quarter-tile.
-      local stop_dist = info.speed * 2
-      local target_speed = 8   -- was 4; double the cruising creep
+      -- +4 wu (~¼ game-pixel) of brake-earlier slack. User saw a
+      -- consistent dist=9/8 overshoot — tank coasts ~1 wu past the
+      -- tolerance window. This nudges the brake gate barely earlier
+      -- without changing the overall approach feel.
+      local target_speed = 8   -- cruising cap inside the creep window
       -- Match the attack.lua transition tolerance so we don't brake
       -- at 16 wu and stall outside the (possibly tighter) window
       -- the 3-blocker take needs.
       local close_enough = goal._in_range_dist_tol or 16
-      if sdist > math.max(close_enough, stop_dist) then
+      -- Decision tree:
+      --   Inside the tolerance window: settle (brake to stop).
+      --   Inside it BUT moving fast enough to overshoot: brake.
+      --   Otherwise: keep creeping toward the spot (re-accelerate
+      --              even after a brake stopped us short).
+      -- The earlier "brake whenever sdist <= max(close_enough, stop_dist)"
+      -- gate could leave the tank parked at e.g. dist=12 with speed 0
+      -- because the brake pinned it without ever re-accelerating to
+      -- close the remaining 4 wu. Now: only brake when actually at the
+      -- spot OR when current speed would overshoot the gap.
+      local at_spot = sdist <= close_enough
+      -- speed * 2 wu of coast is the empirical brake distance. If that
+      -- exceeds the gap to the tolerance window, brake; otherwise keep
+      -- going (slowly).
+      local would_overshoot = (info.speed * 2 + 4) > (sdist - close_enough)
+      -- Detect "info.speed lies, real motion is 0" (friction-stuck on
+      -- tree/swamp): if sdist hasn't changed for several ticks even
+      -- though info.speed > 0, the brake is useless and we should be
+      -- pushing through with KEY_FASTER instead. Tracker on the goal.
+      local now_t = state.tick or 0
+      if goal._inrange_prev_sdist == nil
+         or math.abs(sdist - goal._inrange_prev_sdist) >= 2 then
+        goal._inrange_prev_sdist  = sdist
+        goal._inrange_stuck_since = now_t
+      end
+      local stuck_ticks = now_t - (goal._inrange_stuck_since or now_t)
+      local friction_stuck = stuck_ticks >= 8 and not at_spot
+      local branch  -- which decision tier fired this tick (for viz)
+      if at_spot then
+        branch = "AT_SPOT"
+        if info.speed > 0 then keys = keys | KEY_SLOWER end
+      elseif friction_stuck then
+        -- Wheels spinning, tank not moving. Force forward instead of
+        -- braking — the brake key would only confirm what the friction
+        -- is already enforcing. Re-aim and accelerate; engine + terrain
+        -- will resolve.
+        branch = "FRICTION_STUCK"
+        local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
+        local corr = U.adiff(info.direction, move_dir)
+        local k, t = nav_turn_speed(corr, 0, target_speed, 2)
+        keys = keys | k
+        taps = taps | t
+      elseif would_overshoot and info.speed > 2 then
+        -- Coasting tail will land us in the window — brake. Speed gate
+        -- (>2) prevents a permanent brake-pin when we're already nearly
+        -- stopped but the brake-distance heuristic keeps re-arming.
+        branch = "BRAKE"
+        keys = keys | KEY_SLOWER
+      else
+        branch = "CREEP"
         local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
         local corr = U.adiff(info.direction, move_dir)
         local k, t = nav_turn_speed(corr, info.speed, target_speed, 2)
         keys = keys | k
         taps = taps | t
-      elseif info.speed > 0 then
-        keys = keys | KEY_SLOWER
       end
+
+      -- Visualization: state machine status near the tank.
+      do
+        local twx = info.tankx / 256.0
+        local twy = info.tanky / 256.0
+        local stop_dist_now = info.speed * 2 + 4
+        local gap = sdist - close_enough
+        -- Color by branch: green=at_spot/creep, yellow=brake, red=stuck
+        local r, g, b = 100, 255, 100
+        if branch == "BRAKE"          then r, g, b = 255, 220, 80
+        elseif branch == "FRICTION_STUCK" then r, g, b = 255, 80,  80
+        end
+        viz.text("approach_dist", twx + 1.0, twy + 0.4,
+          string.format("in_range: %s  sdist=%d gap=%+d stop=%d",
+                        branch, sdist, gap, stop_dist_now),
+          "topleft", r, g, b, 255, 0.4)
+        viz.text("approach_dist", twx + 1.0, twy + 1.0,
+          string.format("stuck=%d/8t prev_sd=%d",
+                        stuck_ticks, goal._inrange_prev_sdist or -1),
+          "topleft", r, g, b, 255, 0.35)
+        -- Standoff target marker (small magenta dot) so we can see the
+        -- spot the brake/creep is aiming at.
+        viz.circle("approach_dist", swx / 256.0, swy / 256.0, 0.18,
+                   255, 60, 200, 220)
+      end
+
       return keys, taps
     end
     -- Outside the creep window, fall through to A* nav so the normal

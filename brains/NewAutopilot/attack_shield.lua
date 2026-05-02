@@ -202,16 +202,20 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
   --   - potential_blockers: tile is empty/passable but qualifies as a
   --                         protection slot (wall could be built here)
   -- Both lists are filtered identically: not on tank's outgoing path,
-  -- not too close to the tank, not the pill or tank tile, and NOT past
-  -- the tank from the pill's perspective. The simulated return path
-  -- continues until the shell expires; any tile further from the pill
-  -- than the tank is "behind" us and a wall built there would block
-  -- nothing real.
+  -- Pill-distance gate: a wall is only useful if it's strictly
+  -- between the pill and the standoff (i.e. closer to the pill than
+  -- the standoff is). We use the STANDOFF position (cand.cx/cy via
+  -- spot_wx/wy) as the reference, NOT origin_mx/my — origin_mx/my
+  -- is the LGM dispatch position (approach, ~1.5 tiles further from
+  -- pill than standoff), which would let walls behind the standoff
+  -- slip through as "in front of" the approach.
   local pill_cx, pill_cy = pmx + 0.5, pmy + 0.5
-  local tank_cx, tank_cy = origin_mx + 0.5, origin_my + 0.5
-  local pdtx, pdty = tank_cx - pill_cx, tank_cy - pill_cy
-  local pill_to_tank_d2 = pdtx * pdtx + pdty * pdty
+  local standoff_cx = spot_wx / 256.0
+  local standoff_cy = spot_wy / 256.0
+  local pdtx, pdty = standoff_cx - pill_cx, standoff_cy - pill_cy
+  local pill_to_standoff_d = math.sqrt(pdtx * pdtx + pdty * pdty)
   local actual_blockers, potential_blockers = {}, {}
+  local unreachable_blockers = {}  -- buildable tiles the LGM can't reach (viz only)
   if not outgoing_blocked_by_wall and return_tiles_list then
     for ti = 1, #return_tiles_list do
       local t = return_tiles_list[ti]
@@ -219,17 +223,20 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
       local skip = (t.mx == pmx and t.my == pmy) or
                    (t.mx == origin_mx and t.my == origin_my)
       if not skip and not outgoing_set[idx] and U.in_map(t.mx, t.my) then
-        local ddx = t.mx + 0.5 - tank_cx
-        local ddy = t.my + 0.5 - tank_cy
-        local d = math.sqrt(ddx * ddx + ddy * ddy)
-        -- Past-the-tank reject: tile's distance from the PILL exceeds
-        -- the pill→tank distance, so the pill's shell would have hit
-        -- the tank before reaching this tile. A wall here protects
-        -- nothing.
+        -- Distance from standoff (anti-clobber: tank body would
+        -- overlap an immediately-adjacent wall; BLOCKER_MIN_DIST=1.0
+        -- excludes only the standoff tile itself).
+        local sdx = t.mx + 0.5 - standoff_cx
+        local sdy = t.my + 0.5 - standoff_cy
+        local d_standoff = math.sqrt(sdx * sdx + sdy * sdy)
+        -- Distance from pill: must be strictly less than the
+        -- standoff-to-pill distance so the wall sits between us and
+        -- the pill rather than behind us.
         local pdx = t.mx + 0.5 - pill_cx
         local pdy = t.my + 0.5 - pill_cy
-        local past_tank = (pdx * pdx + pdy * pdy) > pill_to_tank_d2
-        if d >= M.BLOCKER_MIN_DIST and not past_tank then
+        local pdist = math.sqrt(pdx * pdx + pdy * pdy)
+        local in_front_of_standoff = pdist < pill_to_standoff_d
+        if d_standoff >= M.BLOCKER_MIN_DIST and in_front_of_standoff then
           local kind = nil
           -- pill_at[k] is a list of {id=, pill=} (see world.lua:32) —
           -- old code did world.pills[<list>] which is always nil, so
@@ -270,15 +277,39 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
             -- if the resulting score is 0 across all candidates.
             if no_builder then buildable = false end
             if buildable then
-              potential_blockers[#potential_blockers + 1] =
-                { mx = t.mx, my = t.my, kind = "empty" }
+              -- LGM-reachability: the tank parks on (origin_mx,origin_my)
+              -- during build_walls and dispatches the LGM from there.
+              -- If lgm_travel_ticks_map says no path exists, this
+              -- blocker is fictional — drop it. Skips the C call when
+              -- adjacent (always reachable, identical to lgm_can_reach
+              -- in builder.lua).
+              local reachable = true
+              if math.abs(t.mx - origin_mx) + math.abs(t.my - origin_my) > 1 then
+                local ticks = cpf.lgm_travel_ticks_map(
+                  origin_mx, origin_my, t.mx, t.my, 0, 0, 2000, 150)
+                reachable = ticks ~= -1
+              end
+              if reachable then
+                potential_blockers[#potential_blockers + 1] =
+                  { mx = t.mx, my = t.my, kind = "empty" }
+              else
+                -- Track separately so the viz_detail dialog can show
+                -- WHY a buildable tile didn't make the cut. Not used
+                -- by scoring (kept out of potential_blockers). Stash
+                -- the origin (the candidate standoff the LGM would
+                -- dispatch from) so the viz can show the failed
+                -- start→end pair, not just the destination.
+                unreachable_blockers[#unreachable_blockers + 1] =
+                  { mx = t.mx, my = t.my, kind = "unreachable",
+                    origin_mx = origin_mx, origin_my = origin_my }
+              end
             end
           end
         end
       end
     end
   end
-  return out_tiles, outgoing_blocked_by_wall, actual_blockers, potential_blockers
+  return out_tiles, outgoing_blocked_by_wall, actual_blockers, potential_blockers, unreachable_blockers
 end
 
 -- Score one candidate position fully (all 5 aims + return fire).
@@ -310,11 +341,34 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
                                          cpf.SHOT_PILL, 0)
   cand.return_fire = { tiles = return_tiles }
 
+  -- LGM dispatch origin during build_walls. The tank doesn't park on
+  -- the standoff tile during the build — it sits at the APPROACH
+  -- position (~1.5 tiles further from the pill, see attack.lua's
+  -- approach_fx/fy calc). So the LGM walks from there, not from
+  -- standoff. Compute the approach tile here using the same formula
+  -- attack.lua uses (ATTACK_APPROACH_OFFSET away from the pill along
+  -- the standoff→pill line) and pass into score_aim for the
+  -- LGM-reachability check.
+  local lgm_omx, lgm_omy = mx, my
+  do
+    local dx = cand.cx - (pmx + 0.5)
+    local dy = cand.cy - (pmy + 0.5)
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > 0.01 then
+      local ux, uy = dx / d, dy / d
+      local afx = cand.cx + ux * (C.ATTACK_APPROACH_OFFSET or 1.5)
+      local afy = cand.cy + uy * (C.ATTACK_APPROACH_OFFSET or 1.5)
+      local amx = U.mclamp(math.floor(afx))
+      local amy = U.mclamp(math.floor(afy))
+      if U.in_map(amx, amy) then lgm_omx, lgm_omy = amx, amy end
+    end
+  end
+
   local best_aim_idx = nil
   local best_score = 0
   for ai = 1, #AIM_OFFSETS do
-    local out_tiles, blocked, actual_blockers, potential_blockers = score_aim(
-      spot_wx, spot_wy, mx, my,
+    local out_tiles, blocked, actual_blockers, potential_blockers, unreachable_blockers = score_aim(
+      spot_wx, spot_wy, lgm_omx, lgm_omy,
       pmx, pmy, pill_wx, pill_wy,
       AIM_OFFSETS[ai], nil, return_tiles, world, no_builder)
     -- Score = 10 per protection slot (actual or potential) + small
@@ -333,6 +387,7 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
       blocked             = blocked,
       blockers            = actual_blockers,
       potential_blockers  = potential_blockers,
+      unreachable_blockers = unreachable_blockers,
       score               = aim_score,
     }
     if aim_score > best_score then
@@ -762,13 +817,20 @@ function M.draw_overlay(scan, now_tick)
           c.best_aim_idx, aim_name))
         local a = c.aims and c.aims[c.best_aim_idx]
         if a then
-          viz.detail_text(did, string.format("  blockers: actual=%d potential=%d",
-            #(a.blockers or {}), #(a.potential_blockers or {})))
+          local n_unreach = #(a.unreachable_blockers or {})
+          viz.detail_text(did, string.format(
+            "  blockers: actual=%d potential=%d  (LGM-unreachable dropped: %d)",
+            #(a.blockers or {}), #(a.potential_blockers or {}), n_unreach))
           for _, b in ipairs(a.blockers or {}) do
-            viz.detail_text(did, string.format("    actual    @ tile (%d,%d)", b.mx, b.my))
+            viz.detail_text(did, string.format("    actual      @ tile (%d,%d)", b.mx, b.my))
           end
           for _, b in ipairs(a.potential_blockers or {}) do
-            viz.detail_text(did, string.format("    potential @ tile (%d,%d)", b.mx, b.my))
+            viz.detail_text(did, string.format("    potential   @ tile (%d,%d)", b.mx, b.my))
+          end
+          for _, b in ipairs(a.unreachable_blockers or {}) do
+            viz.detail_text(did, string.format(
+              "    UNREACHABLE @ tile (%d,%d) (LGM origin (%d,%d) -> dest unreachable per cpf.lgm_travel_ticks_map)",
+              b.mx, b.my, b.origin_mx or -1, b.origin_my or -1))
           end
         end
       else
@@ -967,6 +1029,35 @@ function M.draw_overlay(scan, now_tick)
           for _, b in ipairs(a.potential_blockers) do
             border_box("shield_scan_blockers", b.mx, b.my, inset,
                        col[1], col[2], col[3], math.floor(col[4] * 0.55))
+          end
+        end
+        -- LGM-unreachable buildable tiles: red X-style cross + dim
+        -- border so the user can see why a candidate's score is lower
+        -- than expected (the slot exists geometrically but the LGM
+        -- can't get to it from the standoff).
+        if a.unreachable_blockers and #a.unreachable_blockers > 0 then
+          for _, b in ipairs(a.unreachable_blockers) do
+            viz.line("shield_scan_blockers",
+                     b.mx + 0.15, b.my + 0.15,
+                     b.mx + 0.85, b.my + 0.85,
+                     220, 60, 60, 230)
+            viz.line("shield_scan_blockers",
+                     b.mx + 0.85, b.my + 0.15,
+                     b.mx + 0.15, b.my + 0.85,
+                     220, 60, 60, 230)
+            viz.text("shield_scan_blockers",
+                     b.mx + 0.5, b.my + 0.95,
+                     string.format("LGM-unreach from (%d,%d)",
+                                   b.origin_mx or -1, b.origin_my or -1),
+                     "center", 220, 60, 60, 220, 0.3)
+            -- Faint dashed-ish line from origin to dest to make the
+            -- attempted route visible.
+            if b.origin_mx then
+              viz.line("shield_scan_blockers",
+                       b.origin_mx + 0.5, b.origin_my + 0.5,
+                       b.mx + 0.5, b.my + 0.5,
+                       220, 60, 60, 80)
+            end
           end
         end
       end
