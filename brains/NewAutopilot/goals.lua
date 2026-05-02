@@ -29,6 +29,32 @@ local last_strategic_goal = nil  -- track to avoid spamming logs
 -- Technique selection: which attack method to use against hostile pills.
 -- Priority: pill placement > wall-shield > hardline (bpc)
 -- Returns "pill_place", "wall_shield", or "hardline"
+-- TTK-vs-TTI intercept penalty: looks at every enemy tank, computes
+-- their time-to-arrive at (target_mx, target_my) and compares to our
+-- time-to-kill (= target_hp * TTK_TICKS_PER_HIT). If they can intercept
+-- with safety margin to spare, returns the largest penalty across all
+-- threats; otherwise 0. Centralises a loop that was duplicated in
+-- attack_pill_adjustments and compute_pool*_cost — drift risk was high
+-- since the same penalty curve was in two places.
+local function intercept_penalty_ttk(target_mx, target_my, target_hp, enemy_tanks)
+  if not enemy_tanks or #enemy_tanks == 0 then return 0 end
+  local ttk = target_hp * C.TTK_TICKS_PER_HIT
+  local worst = 0
+  for _, et in ipairs(enemy_tanks) do
+    local et_dist = U.mdist(et.mx, et.my, target_mx, target_my)
+    if et_dist <= C.INTERCEPT_MAX_RANGE then
+      local espeed = math.max(et.speed, 0.5)
+      local tti = et_dist / espeed
+      if ttk > tti * C.INTERCEPT_SAFETY_MARGIN then
+        local ratio = ttk / math.max(1, tti)
+        local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
+        if pen > worst then worst = pen end
+      end
+    end
+  end
+  return worst
+end
+
 local function pick_attack_technique(world, info, state)
   -- Pill placement is always preferred when pills are available
   if (info.carried_pills or 0) > 0 then
@@ -81,19 +107,8 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
       wsim_dx, wsim_dy = spot_mx, spot_my
     else
       -- Fallback: cheapest adjacent tile to the pill
-      local best_adj_cost = math.huge
-      for d = 0, 7 do
-        local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
-        local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
-        local ax, ay = gmx + DX[d+1], gmy + DY[d+1]
-        if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-          local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_PILL, ax, ay, 0)
-          if ac < best_adj_cost then
-            best_adj_cost = ac
-            wsim_dx, wsim_dy = ax, ay
-          end
-        end
-      end
+      local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_PILL, gmx, gmy, 0)
+      if ax then wsim_dx, wsim_dy = ax, ay end
     end
   end
 
@@ -220,20 +235,9 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
         -- onto a live pill; bases are expensive to stand on).
         local dx, dy = obj.mx, obj.my
         if obj.health and obj.health > 0 then
-          local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
-          local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
-          local adj_best = math.huge
-          for d = 1, 8 do
-            local ax, ay = obj.mx + DX8[d], obj.my + DY8[d]
-            if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-              local ac = smart_cost(kind, tmx, tmy, ax, ay, boat_flag,
-                                    shells, trees, mines, armour)
-              if ac < adj_best then
-                adj_best = ac
-                dx, dy = ax, ay
-              end
-            end
-          end
+          local _, ax, ay = cpf.cheapest_adjacent(kind, tmx, tmy,
+            obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+          if ax then dx, dy = ax, ay end
         end
         local c = smart_cost(kind, tmx, tmy, dx, dy, boat_flag,
                               shells, trees, mines, armour)
@@ -747,21 +751,8 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   end
 
   -- Enemy tank intercept (TTK vs TTI)
-  local ttk = pill.health * C.TTK_TICKS_PER_HIT
   local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-  local worst_intercept = 0
-  for _, et in ipairs(enemy_tanks) do
-    local et_dist = U.mdist(et.mx, et.my, pill.mx, pill.my)
-    if et_dist <= C.INTERCEPT_MAX_RANGE then
-      local espeed = math.max(et.speed, 0.5)
-      local tti = et_dist / espeed
-      if ttk > tti * C.INTERCEPT_SAFETY_MARGIN then
-        local ratio = ttk / math.max(1, tti)
-        local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
-        if pen > worst_intercept then worst_intercept = pen end
-      end
-    end
-  end
+  local worst_intercept = intercept_penalty_ttk(pill.mx, pill.my, pill.health, enemy_tanks)
   if worst_intercept > 0 then
     combat_cost = combat_cost + worst_intercept
     antic_desc = antic_desc .. string.format(" +intercept=%.0f", worst_intercept)
@@ -2093,17 +2084,11 @@ local POOL_FILTERS = {
 -- can stash the components for the breakdown formula.
 local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- Distance to cheapest reachable adjacent tile (pill tile itself
-  -- carries an impassable overlay so we route to a neighbor).
-  local best_adj = math.huge
-  local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
-  local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
-  for d = 1, 8 do
-    local ax, ay = obj.mx + DX[d], obj.my + DY[d]
-    if U.in_map(ax, ay) then
-      local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ax, ay, 0)
-      if ac < best_adj then best_adj = ac end
-    end
-  end
+  -- carries an impassable overlay so we route to a neighbor). Uses
+  -- the dijkstra-only variant — no A* fallback because we want the
+  -- per-tick cost lookup to be cheap; A* cost is computed by the
+  -- step_eval_queue path if the slate misses.
+  local best_adj = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
   -- Unreachable: bail with COST_INF instead of collapsing to 0.
   -- The previous `or 0` made an unreachable pill score as a 0-distance
   -- target, which is exactly the wrong direction (it'd dominate the
@@ -2592,17 +2577,9 @@ function M.step_eval_queue(state, world, info)
       if ds_override then cpf.set_config("danger_scale", ds_override) end
       -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
       if obj.health and obj.health > 0 then
-        local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
-        local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
-        local adj_best = math.huge
-        for d = 1, 8 do
-          local ax, ay = obj.mx + DX8[d], obj.my + DY8[d]
-          if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-            local ac = smart_cost(kind, tmx, tmy, ax, ay, boat_flag,
-                                  shells, trees, mines, armour)
-            if ac < adj_best then adj_best = ac; cost_dx = ax; cost_dy = ay end
-          end
-        end
+        local _, ax, ay = cpf.cheapest_adjacent(kind, tmx, tmy,
+          obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+        if ax then cost_dx, cost_dy = ax, ay end
       end
       raw_cost = smart_cost(kind, tmx, tmy, cost_dx, cost_dy, boat_flag,
                              shells, trees, mines, armour)
@@ -2860,19 +2837,9 @@ function M.step_eval_queue(state, world, info)
           end
         end
         -- Intercept
-        local ttk = (obj.health or 0) * C.TTK_TICKS_PER_HIT
-        local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-        for _, et in ipairs(enemy_tanks) do
-          local et_dist = U.mdist(et.mx, et.my, obj.mx, obj.my)
-          if et_dist <= C.INTERCEPT_MAX_RANGE then
-            local espeed = math.max(et.speed, 0.5)
-            local tti = et_dist / espeed
-            if ttk > tti * C.INTERCEPT_SAFETY_MARGIN then
-              local ratio = ttk / math.max(1, tti)
-              local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
-              if pen > intcpt_cost then intcpt_cost = pen end
-            end
-          end
+        do
+          local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
+          intcpt_cost = intercept_penalty_ttk(obj.mx, obj.my, obj.health or 0, enemy_tanks)
         end
         -- Wounded discount. 0.3x is the in-pool (sibling-pill)
         -- discount; commit-discount on top tilts vs unrelated goals.

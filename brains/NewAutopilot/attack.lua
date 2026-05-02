@@ -98,19 +98,30 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
         goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
 end
 
--- Clear the active goal, idle the pathfinder, and (optionally) wipe
--- transient attack-side state that downstream code shouldn't see
--- after we abandon. Centralizing this fixes the bug class where
--- one site clears 25 fields by hand and another site clears just
--- `kind`, leaving stale _shield_scan / _aim_locked / etc. to leak
--- into the next goal that happens to inherit the same goal table.
+-- Clear the active goal, idle the pathfinder, and wipe ALL transient
+-- attack-side state that downstream code shouldn't see after we
+-- abandon. Centralises the bug class where one site clears 25
+-- fields by hand and another site clears just `kind`, leaving stale
+-- _shield_scan / _aim_locked / etc. to leak into the next goal that
+-- happens to inherit the same goal table.
 --
--- Replaces state.goal with a fresh table so nothing leaks. Keep the
--- table identity for any upvalues that might cache a ref — callers
--- that pre-cached `local goal = state.goal` need to re-read after
--- this returns. None of the existing callers do.
+-- Mutates state.goal IN PLACE (preserves table identity) so callers
+-- that pre-cached `local goal = state.goal` continue to see "none"
+-- on subsequent reads. Only the core identity fields are kept so
+-- the new goal selector can re-derive everything else cleanly.
+local CORE_GOAL_FIELDS = {
+  kind = true, mx = true, my = true, wx = true, wy = true,
+  target_id = true,
+}
 local function clear_attack_goal(state, reason)
-  state.goal = { kind = "none" }
+  if state.goal then
+    for k in pairs(state.goal) do
+      if not CORE_GOAL_FIELDS[k] then state.goal[k] = nil end
+    end
+    state.goal.kind = "none"
+  else
+    state.goal = { kind = "none" }
+  end
   if state.pf then state.pf.status = "idle" end
   if reason then
     print(string.format("[clear_attack_goal] %s", reason))
@@ -2133,8 +2144,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- Abort if can't aim within 3 seconds
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: aim timeout, aborting")
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
     -- Fall through to draw
   end
@@ -2279,8 +2289,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(TAG .. " ATTACK: pre-aim locked, refining to chosen corner")
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: shielded in_range_aim_pre timeout, aborting")
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
     -- Fall through to draw
   end
@@ -2308,8 +2317,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(TAG .. " ATTACK: aim locked, entering in_range_aim_finetune (sim-verify)")
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: shielded in_range_aim timeout, aborting")
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
     -- Fall through to draw
   end
@@ -2371,8 +2379,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal._finetune_taps or 0,
         now - (goal._finetune_start or now),
         angle_f, pmx, pmy))
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
     -- Else: steering will tap one brad toward pill center this tick.
     -- Fall through to draw
@@ -2413,8 +2420,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG ..
         " ATTACK: shoot_pill no progress for %d ticks (pill_hp=%d) — aborting take",
         now - (goal._shoot_progress_tick or now), pill_hp))
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
 
     -- HUD: live progress toward each of the three exit triggers.
@@ -2557,8 +2563,7 @@ function M.update_attack_substate(goal, state, world, info)
       elseif goal.engage_tick and not goal._engage_aimed
              and (now - goal.engage_tick) > 150 then
         print(TAG .. " ATTACK: engage timeout — can't aim, aborting")
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        clear_attack_goal(state)
       end
     end
     -- Fall through to draw
@@ -2572,8 +2577,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- Pill killed (by us-via-leftover-shells or by an ally) while
       -- we waited. Release to capture_pill via the normal selector
       -- instead of locking into rush — see swerve completion above.
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
       print(TAG .. " ATTACK: pill died during loiter — releasing to capture_pill")
     elseif pill.anger and pill.anger < C.ANGER_ATTACK_THRESHOLD then
       -- Pill calmed down — re-engage with a FULL fresh plan. We have
@@ -2618,8 +2622,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- Waited too long — give up, go refuel
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now, owner = pill.owner }
       print(TAG .. " ATTACK: loiter timeout, abandoning")
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
     -- Fall through to draw
   end
@@ -2657,8 +2660,7 @@ function M.update_attack_substate(goal, state, world, info)
         -- selector lets a genuinely higher-priority goal (flee,
         -- urgent rescue) interrupt — the old "rush" substate
         -- locked us to this pill no matter what.
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        clear_attack_goal(state)
         print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
       elseif (goal._on_target_in_flight or 0) >= pill.health then
         -- Pill still alive but enough on-target shells are in flight
@@ -2681,8 +2683,7 @@ function M.update_attack_substate(goal, state, world, info)
           if state.command_goal then
             print(TAG .. " ATTACK: command pill take done — releasing command, replanning")
             state.command_goal = nil
-            state.goal.kind = "none"
-            state.pf.status = "idle"
+            clear_attack_goal(state)
           else
             goal.substate = "post_engage"
             goal._post_engage_tick = now
@@ -2695,8 +2696,7 @@ function M.update_attack_substate(goal, state, world, info)
         if state.command_goal then
           print(TAG .. " ATTACK: command pill take done — releasing command, replanning")
           state.command_goal = nil
-          state.goal.kind = "none"
-          state.pf.status = "idle"
+          clear_attack_goal(state)
         else
           goal.substate = "post_engage"
           goal._post_engage_tick = now
@@ -2740,8 +2740,7 @@ function M.update_attack_substate(goal, state, world, info)
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill and pill.health or 0, tick = now, owner = pill and pill.owner or nil }
       print(string.format(TAG .. " ATTACK: refueling (wait=%d vs refuel=%d)",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      clear_attack_goal(state)
     end
     -- Fall through to draw
   end
