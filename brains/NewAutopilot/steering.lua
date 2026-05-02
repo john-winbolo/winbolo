@@ -593,10 +593,9 @@ local function attack_pill_steer(state, world, info, goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
 
-    if     corr >  6 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -6 then keys = keys | KEY_TURNLEFT
-    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    do
+      local h, t = U.aim_turn_bits(corr, 6, 1)
+      keys = keys | h; taps = taps | t
     end
 
     if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
@@ -762,10 +761,9 @@ local function attack_pill_steer(state, world, info, goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
 
-    if     corr >  6 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -6 then keys = keys | KEY_TURNLEFT
-    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    do
+      local h, t = U.aim_turn_bits(corr, 6, 1)
+      keys = keys | h; taps = taps | t
     end
 
     if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
