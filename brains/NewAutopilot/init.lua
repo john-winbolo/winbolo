@@ -40,6 +40,34 @@ local manual_keys = 0
 local AUTOSTART = true
 local ENABLE_LOGGING = false
 
+-- Hoisted lookup tables (don't realloc every tick of every Brain.think).
+-- Used by stuck detection / urgent-replan gating downstream — file-scope
+-- so the loop bodies just do membership checks.
+local ATTACK_STATIONARY_SUBS = {
+  plan_position=true, position=true, aim=true, approach=true, build_walls=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true,
+  rush=true, disengage=true, gather_trees=true,
+}
+local PP_STATIONARY_SUBS = {
+  dispatch=true, wait_place=true, prewait=true, advance=true,
+  shield_engage=true, engage=true, reposition=true, finish=true,
+  select_pill=true,
+}
+local TANK_COMBAT_STATIONARY_SUBS = {
+  engage=true, close=true, disengage=true,
+}
+-- Substates during which a goal-change should preserve standoff/wall
+-- state (so a re-target doesn't drop in-progress geometry).
+local ACTIVE_SUBS = {
+  plan_position=true, approach=true, build_walls=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true, charge=true, aim=true,
+  detree=true, engage=true, swerve=true, post_engage=true, loiter=true,
+  rush=true, ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true, ws_retreat=true, ws_rebuild=true, gather_trees=true,
+}
+
 -- Default initial substate for each goal kind.
 -- Enforced whenever a goal changes to prevent skipping positioning.
 local INITIAL_SUBSTATE = {
@@ -1316,13 +1344,10 @@ function Brain.think(info)
   -- build_walls: tank parks at approach point while LGM builds shield
   --              walls (can take many seconds, multi-trip).
   -- Without these, stuck detection fires flee_pill mid-attack.
-  local attack_stationary = { plan_position=true, position=true, aim=true, approach=true, build_walls=true, in_range_position=true, in_range_aim_pre=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true, rush=true, disengage=true, gather_trees=true }
-  local pp_stationary = { dispatch=true, wait_place=true, prewait=true, advance=true, shield_engage=true, engage=true, reposition=true, finish=true, select_pill=true }
-  local tank_combat_stationary = { engage=true, close=true, disengage=true }
   local intentionally_stationary =
-       (state.goal.kind == "attack_pill" and attack_stationary[state.goal.substate or ""])
-    or (state.goal.kind == "pill_place" and pp_stationary[state.goal.substate or ""])
-    or (state.goal.kind == "attack_tank" and tank_combat_stationary[state.goal.substate or ""])
+       (state.goal.kind == "attack_pill" and ATTACK_STATIONARY_SUBS[state.goal.substate or ""])
+    or (state.goal.kind == "pill_place" and PP_STATIONARY_SUBS[state.goal.substate or ""])
+    or (state.goal.kind == "attack_tank" and TANK_COMBAT_STATIONARY_SUBS[state.goal.substate or ""])
     -- refuel_at_base only counts as stationary when actually parked on the base
     or (state.goal.kind == "refuel_at_base" and W.tank_on_friendly_base(world, info))
     or state.goal.kind == "rescue_lgm"
@@ -1974,8 +1999,7 @@ function Brain.think(info)
         new_goal.first_hit_tick  = state.goal.first_hit_tick
         new_goal.last_armour     = state.goal.last_armour
         -- Preserve standoff/wall positions during active engage or ws_ substates
-        local active_sub = { plan_position=true, approach=true, build_walls=true, in_range_position=true, in_range_aim_pre=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, charge=true, aim=true, detree=true, engage=true, swerve=true, post_engage=true, loiter=true, rush=true, ws_prebuild=true, ws_prewait=true, ws_advance=true, ws_engage=true, ws_retreat=true, ws_rebuild=true, gather_trees=true }
-        if active_sub[state.goal.substate or ""] then
+        if ACTIVE_SUBS[state.goal.substate or ""] then
           new_goal.scan_spots      = state.goal.scan_spots
           new_goal.approach_mx     = state.goal.approach_mx
           new_goal.approach_my     = state.goal.approach_my
@@ -2102,7 +2126,8 @@ function Brain.think(info)
       local gk = state.goal.kind
       local gid = state.goal.target_id
       if gid and gid >= 0 then
-        if gk == "attack_pill" or gk == "attack_pill" or gk == "capture_pill" then
+        if gk == "attack_pill" or gk == "capture_pill"
+           or gk == "defend_pill" or gk == "repair_pill" then
           send_msg = comms.format_pill_claim(gid, state.goal_cost or 0)
           msg_dest = 0xFFFF  -- broadcast to all
         elseif gk == "capture_base" or gk == "attack_base" then
