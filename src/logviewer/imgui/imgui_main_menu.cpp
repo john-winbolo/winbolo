@@ -24,6 +24,7 @@
 extern "C" {
     #include "logviewer.h"
     #include "../backend.h"
+    #include "../draw.h"
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
     void lv_windowSaveMap(void);
@@ -142,11 +143,30 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
 }
 
+static void zoom_at_center(int stepIndex) {
+    int w = 0, h = 0;
+    if (s_lv && s_lv->window) SDL_GetWindowSize(s_lv->window, &w, &h);
+    lv_drawSetZoomStep(stepIndex, w / 2, h / 2);
+}
+
 static void handle_keyboard_shortcuts(int *clicked) {
     /* Skip shortcuts when ImGui wants the keyboard (e.g., text input focused) */
     if (ImGui::GetIO().WantCaptureKeyboard) return;
 
     ImGuiIO& io = ImGui::GetIO();
+
+    /* Zoom shortcuts: +/= to zoom in, - to zoom out (no modifier required) */
+    if (!io.KeyCtrl && !io.KeyAlt) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) {
+            zoom_at_center(lv_drawGetZoomStepIndex() + 1);
+            *clicked = 1;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) {
+            zoom_at_center(lv_drawGetZoomStepIndex() - 1);
+            *clicked = 1;
+        }
+    }
+
     bool ctrl = io.KeyCtrl;
     if (!ctrl) return;
 
@@ -272,6 +292,35 @@ int lv_imgui_main_menu_bar(void) {
 
         /* Options Menu */
         if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_OPTIONS))) {
+            /* Zoom submenu */
+            if (ImGui::BeginMenu(langGetText(STR_LV_ZOOM))) {
+                int curStep = lv_drawGetZoomStepIndex();
+                int stepCount = lv_drawGetZoomStepCount();
+                for (int i = 0; i < stepCount; i++) {
+                    float val = lv_drawGetZoomStepValue(i);
+                    char label[32];
+                    if (val == (float)(int)val) {
+                        snprintf(label, sizeof(label), "%dx", (int)val);
+                    } else {
+                        snprintf(label, sizeof(label), "%.1fx", val);
+                    }
+                    if (ImGui::MenuItem(label, NULL, i == curStep)) {
+                        zoom_at_center(i);
+                        clicked = 1;
+                    }
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_LV_ZOOM_IN), "+", false, curStep < stepCount - 1)) {
+                    zoom_at_center(curStep + 1);
+                    clicked = 1;
+                }
+                if (ImGui::MenuItem(langGetText(STR_LV_ZOOM_OUT), "-", false, curStep > 0)) {
+                    zoom_at_center(curStep - 1);
+                    clicked = 1;
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
             /* Mode submenu */
             if (ImGui::BeginMenu(langGetText(STR_LV_MODE))) {
                 if (ImGui::MenuItem(langGetText(STR_LV_MODE_INFO), "Ctrl+I", s_mode_information)) {

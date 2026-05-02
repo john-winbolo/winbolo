@@ -1116,3 +1116,8 @@ STR_LV_INFO_NO_WBN_KEY=コメントを表示するには、WinBolo.net キーを
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=WinBolo.net から開く...
+
+# Log viewer zoom menu
+STR_LV_ZOOM=ズーム
+STR_LV_ZOOM_IN=拡大
+STR_LV_ZOOM_OUT=縮小

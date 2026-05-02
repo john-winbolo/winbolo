@@ -1084,6 +1084,11 @@ STR_LV_INFO_NO_WBN_KEY=Open a log with a WinBolo.net key to view comments
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=Open from WinBolo.net...
 
+# Log viewer zoom menu
+STR_LV_ZOOM=Zoom
+STR_LV_ZOOM_IN=Zoom In
+STR_LV_ZOOM_OUT=Zoom Out
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

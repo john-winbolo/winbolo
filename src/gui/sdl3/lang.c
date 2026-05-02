@@ -1039,6 +1039,11 @@ static const LangEntry langTable[] = {
     /* Log viewer File menu — open log from WinBolo.net */
     {1228, "Open from WinBolo.net..."},
 
+    /* Log viewer zoom menu */
+    {1229, "Zoom"},
+    {1230, "Zoom In"},
+    {1231, "Zoom Out"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

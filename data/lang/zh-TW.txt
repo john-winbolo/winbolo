@@ -1116,3 +1116,8 @@ STR_LV_INFO_NO_WBN_KEY=請開啟含有 WinBolo.net 金鑰的日誌以檢視評�
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=從 WinBolo.net 開啟...
+
+# Log viewer zoom menu
+STR_LV_ZOOM=縮放
+STR_LV_ZOOM_IN=放大
+STR_LV_ZOOM_OUT=縮小

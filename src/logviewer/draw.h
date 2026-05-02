@@ -284,4 +284,33 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY);
 *********************************************************/
 float lv_drawGetZoomLevel(void);
 
+/*********************************************************
+*NAME:          lv_drawGetZoomStepIndex
+*PURPOSE:
+*  Returns the current zoom step index into the zoom table.
+*********************************************************/
+int lv_drawGetZoomStepIndex(void);
+
+/*********************************************************
+*NAME:          lv_drawGetZoomStepCount
+*PURPOSE:
+*  Returns the total number of zoom steps available.
+*********************************************************/
+int lv_drawGetZoomStepCount(void);
+
+/*********************************************************
+*NAME:          lv_drawGetZoomStepValue
+*PURPOSE:
+*  Returns the zoom multiplier for a given step index.
+*********************************************************/
+float lv_drawGetZoomStepValue(int index);
+
+/*********************************************************
+*NAME:          lv_drawSetZoomStep
+*PURPOSE:
+*  Sets zoom to a specific step index, anchored on the
+*  given screen coordinates.
+*********************************************************/
+void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY);
+
 #endif

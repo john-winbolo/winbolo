@@ -1116,3 +1116,8 @@ STR_LV_INFO_NO_WBN_KEY=Yorumları görüntülemek için WinBolo.net anahtarı ol
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=WinBolo.net'ten Aç...
+
+# Log viewer zoom menu
+STR_LV_ZOOM=Yakınlaştır
+STR_LV_ZOOM_IN=Yakınlaştır
+STR_LV_ZOOM_OUT=Uzaklaştır
