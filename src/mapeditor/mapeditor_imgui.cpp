@@ -133,7 +133,9 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
                            bool *showStampLibrary,
-                           bool fromMainMenu) {
+                           bool fromMainMenu,
+                           int zoomStepIndex, int zoomStepCount,
+                           const float *zoomStepValues) {
     memset(action, 0, sizeof(*action));
     action->openRecentIndex = -1;
 
@@ -245,6 +247,31 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_OPTIONS))) {
+            /* Zoom submenu */
+            if (ImGui::BeginMenu(langGetText(STR_LV_ZOOM))) {
+                for (int i = 0; i < zoomStepCount; i++) {
+                    float val = zoomStepValues[i];
+                    char label[32];
+                    if (val == (float)(int)val) {
+                        snprintf(label, sizeof(label), "%dx", (int)val);
+                    } else {
+                        snprintf(label, sizeof(label), "%.1fx", val);
+                    }
+                    if (ImGui::MenuItem(label, NULL, i == zoomStepIndex)) {
+                        action->wantZoomSet = true;
+                        action->zoomSetIndex = i;
+                    }
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_LV_ZOOM_IN), "+", false, zoomStepIndex < zoomStepCount - 1)) {
+                    action->wantZoomIn = true;
+                }
+                if (ImGui::MenuItem(langGetText(STR_LV_ZOOM_OUT), "-", false, zoomStepIndex > 0)) {
+                    action->wantZoomOut = true;
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_CENTER), "Home")) {
                 action->wantCenter = true;
             }
