@@ -57,6 +57,8 @@ M.IDS = {
                      long  = "Per-factor red/green labels by the LGM" },
   tank_position  = { short = "Tank position",
                      long  = "Tank wu/gu/tile readout + standoff wu" },
+  tank_angle     = { short = "Tank angle",
+                     long  = "Tank heading in brads (256 = full circle): integer info.direction + float info.tank_angle when present, plus turn-ramp counter (firstLeft/firstRight) value the engine reports." },
 
   -- HUD text (corners).
   hud_manual_control = { short = "HUD: manual control",

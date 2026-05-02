@@ -2008,27 +2008,35 @@ local function filter_capture_base(obj, state)
   return true
 end
 
+-- filter_capture_pill: returns nil if the pill qualifies for scoring,
+-- or a reject descriptor table { reason = "<short>", remaining = <ticks> }
+-- when it should be SHOWN in the pool grid but greyed out (so the user can
+-- see "this pill exists, here's why we're not picking it"). The only
+-- truly-hard reject is "alive" (that's attack_pill's job, not ours).
 local function filter_capture_pill(obj, state)
-  -- Health == 0 + on the ground = capturable. Owner can be:
-  --   neutral  : freshly placed / never owned
-  --   friendly : an ally died carrying it (still claims it but worth 0)
-  --   hostile  : an enemy died carrying it (tank.c:1920 sets armour=0,
-  --              owner=dead-player). Without this branch the pill would
-  --              be invisible to capture_pill (only picks neutral/friendly)
-  --              and to attack_pill (requires health > 0), and so just
-  --              sit on the map ignored.
-  if not (obj.health == 0
-          and (obj.owner == "neutral" or obj.owner == "friendly"
-               or obj.owner == "hostile")) then return false end
-  -- Skip pills already in someone's tank — picked up, mx/my is stale.
-  if obj.in_tank then return false end
+  -- Alive pills aren't capturable — they belong in attack_pill. Hide
+  -- entirely (we don't want every alive pill cluttering pool 4).
+  if (obj.health or 0) > 0 then return { reason = "alive" } end
+  -- in_tank: someone picked it up. Show as rejected so the user can see
+  -- "yes the dead pill exists, but it's currently in flight."
+  if obj.in_tank then return { reason = "in_tank" } end
+  -- blocked: stuck/no-build cooldown on this tile.
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
-    if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end
+    local until_tick = state.blocked[bk]
+    if until_tick and (state.tick or 0) < until_tick then
+      return { reason = "blocked", remaining = until_tick - (state.tick or 0) }
+    end
   end
+  -- stale: bot hasn't observed this pill recently. Likely fog of war.
   local now = state and state.tick or 0
-  if obj.last_seen and now > 0 and (now - obj.last_seen) > C.STALE_SKIP_TICKS then return false end
-  return true
+  if obj.last_seen and now > 0 then
+    local age = now - obj.last_seen
+    if age > C.STALE_SKIP_TICKS then
+      return { reason = "stale", remaining = age - C.STALE_SKIP_TICKS }
+    end
+  end
+  return nil
 end
 
 local function filter_repair_pill(obj, state, info)
@@ -2195,14 +2203,28 @@ function M.build_eval_queue(state, world, info)
   -- lookups + a threat lookup + an enemy-tank loop), so doing it at
   -- add time has negligible cost. step_eval_queue still re-evaluates
   -- on its normal cadence so the score stays current.
-  local has_dead = not perc or (perc.dead_neutral_pill_count > 0)
-  if has_dead then
-    if not state.cost_cache then state.cost_cache = {} end
-    for id, obj in pairs(world.pills) do
-      if filter_capture_pill(obj, state) then
-        queue[#queue + 1] = { pool = 4, id = id, obj = obj }
-        local ck = "4:" .. id
-        if not state.cost_cache[ck] then
+  -- Pool 4 (capture_pill): no perception gate — every dead pill on the
+  -- map gets a row in the queue. Pills that can't actually be picked
+  -- (in_tank / blocked / stale) ride along with cost = INF and a
+  -- _reject tag so the pool grid can show them dimmed with the reason.
+  -- Hard reject only "alive" (that's attack_pill's territory).
+  if not state.cost_cache then state.cost_cache = {} end
+  for id, obj in pairs(world.pills) do
+    local reject = filter_capture_pill(obj, state)
+    if not reject or reject.reason ~= "alive" then
+      queue[#queue + 1] = { pool = 4, id = id, obj = obj, reject = reject }
+      local ck = "4:" .. id
+      if not state.cost_cache[ck] or (state.cost_cache[ck]._reject ~= nil) ~= (reject ~= nil) then
+        if reject then
+          -- Skip the cost compute — entry just exists so the row shows.
+          state.cost_cache[ck] = {
+            cost = 1e30, raw = 1e30, tick = now, _p = 4,
+            _mx = obj.mx, _my = obj.my,
+            _ds = 0, _dv = 0, _intcpt = 0,
+            _reject = reject.reason,
+            _reject_remaining = reject.remaining or 0,
+          }
+        else
           local c, _draw, dscore, dval, intcpt =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
           state.cost_cache[ck] = {
@@ -2438,10 +2460,33 @@ local function get_formula_inner(e)
         "shells=%d - pill_hp=%d = %d ≥ SHELLS_LOW=%d → 0",
         _sh_now, e._hpv, _sh_end, C.SHELLS_LOW)
     end
+    -- "How spot was computed" detail. Method tag (dijkstra/astar/none),
+    -- slate index when dijkstra was used, the tick smart_cost ran on,
+    -- and the realized path tiles (truncated at 24 by the producer to
+    -- fit the 400-char per-segment cap in pool_grid.cpp's parser).
+    local _spot_method = e._spot_method or "?"
+    local _spot_slate  = e._spot_slate
+    local _spot_tick   = e._spot_tick
+    local _spot_path   = e._spot_path or "(no path captured)"
+    local _spot_pathlen= e._spot_path_len or 0
+    local _d_spot
+    if _spot_method == "dijkstra" then
+      _d_spot = string.format(
+        "method=dijkstra slate=%s tick=%s path_len=%d path=%s",
+        tostring(_spot_slate), tostring(_spot_tick), _spot_pathlen, _spot_path)
+    elseif _spot_method == "astar" then
+      _d_spot = string.format(
+        "method=astar (dijkstra slate hadn't reached spot) tick=%s path_len=%d path=%s",
+        tostring(_spot_tick), _spot_pathlen, _spot_path)
+    else
+      _d_spot = string.format(
+        "method=%s tick=%s — no path produced",
+        tostring(_spot_method), tostring(_spot_tick))
+    end
     f = string.format(
       "spot{%.0f}@(%d,%d) + (A*{%.0f%s}@(%d,%d) + stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
       "||spot cost is NOT scaled by hp — only combat/travel terms are"..
-      "|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s",
+      "|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       raw > 500 and string.format("/raw%s",
@@ -2449,7 +2494,7 @@ local function get_formula_inner(e)
       e._mx or 0, e._my or 0,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
       e._hp, _wound_detail, _self_dr, _ammo_str,
-      _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo)
+      _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2459,15 +2504,28 @@ local function get_formula_inner(e)
       "A*{%.0f}@(%d,%d) + base{%.0f} + threat{%.0f} + stale{%.0f}||base:%.0f[ATTACK_BASE_EXTRA_COST]|threat:%s|stale:%s",
       raw, e._mx or 0, e._my or 0, e._base, e._thr, e._stale, C.ATTACK_BASE_EXTRA_COST, _d_threat, _d_stale)
   elseif p == 4 then
-    local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
-    local _intcpt = e._intcpt or 0
-    local intcpt_tok = _intcpt > 0 and string.format(" + intcpt{%.0f}", _intcpt) or ""
-    local intcpt_det = _intcpt > 0 and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt) or ""
-    f = string.format(
-      "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f}%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
-      C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, intcpt_tok,
-      raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
-      e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
+    -- Rejected dead-pill rows: short-circuit with a "REJECT: <reason>"
+    -- formula so the breakdown panel makes clear why the row exists
+    -- with INF cost. Cost compute was skipped at queue-build time.
+    if e._reject then
+      local rem = e._reject_remaining or 0
+      local rem_tok = (e._reject == "blocked" or e._reject == "stale")
+                      and string.format(" %dt", rem) or ""
+      f = string.format(
+        "REJECT %s%s @(%d,%d)||reject:%s%s — pill exists on the map but cannot be picked this tick",
+        e._reject, rem_tok, e._mx or 0, e._my or 0,
+        e._reject, rem_tok)
+    else
+      local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
+      local _intcpt = e._intcpt or 0
+      local intcpt_tok = _intcpt > 0 and string.format(" + intcpt{%.0f}", _intcpt) or ""
+      local intcpt_det = _intcpt > 0 and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt) or ""
+      f = string.format(
+        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f}%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
+        C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, intcpt_tok,
+        raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
+        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
+    end
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
       raw, e._mx or 0, e._my or 0, e._stale, fmt_stale_detail(e._age, e._stale))
@@ -2547,6 +2605,29 @@ function M.step_eval_queue(state, world, info)
       partial[pool_idx] = { candidates = {}, best_cost = math.huge, best_id = nil, best_obj = nil }
     end
     local pr = partial[pool_idx]
+
+    -- Rejected candidates (in_tank / blocked / stale dead pills): the
+    -- entry already exists in cost_cache with cost = INF and a _reject
+    -- tag. Skip the expensive cost compute — they're displayed as a
+    -- greyed-out row, not a real choice. Also recompute remaining-
+    -- ticks each tick so countdowns tick down in the panel.
+    if item.reject then
+      local ck = pool_idx .. ":" .. id
+      local entry = state.cost_cache[ck]
+      if entry then
+        if item.reject.reason == "blocked" and state.blocked then
+          local bk = U.mkey(obj.mx, obj.my)
+          local until_tick = state.blocked[bk]
+          entry._reject_remaining = (until_tick and (until_tick - now)) or 0
+          if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
+        elseif item.reject.reason == "stale" and obj.last_seen then
+          entry._reject_remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS
+          if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
+        end
+        entry.tick = now
+      end
+      goto continue
+    end
 
     -- Use the appropriate dijkstra slate via smart_cost. The pill_pool
     -- flag selects KIND_PILL (low-danger slate) for attack/capture pill
@@ -2719,6 +2800,12 @@ function M.step_eval_queue(state, world, info)
       local _finish_other_wp_id = -1
       local spot_found_mx, spot_found_my = 0, 0  -- hoisted for formula
       local pill_anger, _ticks_to_calm = 0, 0  -- hoisted for formula detail
+      -- Spot-cost provenance for the detail panel (pool 6 only).
+      local goal_spot_method   = nil
+      local goal_spot_slate    = nil
+      local goal_spot_tick     = nil
+      local goal_spot_path_str = nil
+      local goal_spot_path_len = 0
       if pool_idx == 6 then
         -- Quick difficulty scan + best spot cost.
         -- Cache the scan per pill — result only changes when pill HP or
@@ -2756,6 +2843,71 @@ function M.step_eval_queue(state, world, info)
                                  boat_flag, shells, trees, mines, armour)
           if spot_cost >= 1e9 then spot_cost = 500 end
           _spot_us = clock_us() - _t_spot
+
+          -- Capture which pathfinder produced spot_cost + the realized
+          -- path tiles, so the pool detail panel can show the user
+          -- exactly how this number was reached (mirrors smart_cost's
+          -- own dijkstra-then-A* fallback order).
+          -- Multi-slate Dijkstra trace: dijkstra_trace_path_by_kind
+          -- mirrors lookup_by_kind's slate-walk so we trace from the
+          -- exact slate that produced spot_cost. The single-slate
+          -- variant picks freshest-active and routinely misses when an
+          -- older slate is the one that actually reached dest. Then
+          -- only fall back to A* (cost_to) trace when no slate has it.
+          local _path_tiles = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL,
+                                                               best_spot.mx, best_spot.my)
+          local _spot_method, _spot_slate
+          if _path_tiles and #_path_tiles > 0 then
+            _spot_method = "dijkstra"
+            _spot_slate  = cpf.dijkstra_find_best(cpf.KIND_NORMAL)
+          else
+            -- smart_cost fell back to cost_to (one-shot A*). cost_to
+            -- resets pf->status/dest at the end so cpf.trace_path()
+            -- returns empty even when the search reached dest. Use
+            -- the explicit-dest variant which walks the parent chain
+            -- using the just-finished search's epoch state.
+            _path_tiles  = cpf.trace_last_search(best_spot.mx, best_spot.my)
+            _spot_method = (_path_tiles and #_path_tiles > 0) and "astar" or "(no path)"
+            _spot_slate  = nil
+          end
+          -- Serialize the path. Keep the first SPOT_PATH_FRONT tiles
+          -- (so the user sees how the bot leaves the tank) AND always
+          -- the last SPOT_PATH_TAIL=5 tiles (those are inside the
+          -- pill's range disk and matter most for the planner). For
+          -- long paths the middle is collapsed to "(... +N ...)" so
+          -- the segment stays under the renderer's per-segment cap.
+          local SPOT_PATH_FRONT = 14
+          local SPOT_PATH_TAIL  = 5
+          local spot_path_str
+          if not _path_tiles or #_path_tiles == 0 then
+            spot_path_str = "(empty)"
+          else
+            local n = #_path_tiles
+            local parts = {}
+            if n <= SPOT_PATH_FRONT + SPOT_PATH_TAIL then
+              for i = 1, n do
+                parts[#parts + 1] = string.format("(%d,%d)",
+                  _path_tiles[i].x, _path_tiles[i].y)
+              end
+            else
+              for i = 1, SPOT_PATH_FRONT do
+                parts[#parts + 1] = string.format("(%d,%d)",
+                  _path_tiles[i].x, _path_tiles[i].y)
+              end
+              parts[#parts + 1] = string.format("(... +%d ...)",
+                n - SPOT_PATH_FRONT - SPOT_PATH_TAIL)
+              for i = n - SPOT_PATH_TAIL + 1, n do
+                parts[#parts + 1] = string.format("(%d,%d)",
+                  _path_tiles[i].x, _path_tiles[i].y)
+              end
+            end
+            spot_path_str = table.concat(parts, " ")
+          end
+          goal_spot_method   = _spot_method
+          goal_spot_slate    = _spot_slate
+          goal_spot_tick     = now
+          goal_spot_path_str = spot_path_str
+          goal_spot_path_len = _path_tiles and #_path_tiles or 0
 
           -- Self-danger reduction: subtract this pill's own contribution
           -- to the spot-path cost, scaled linearly by missing HP. At full
@@ -2947,6 +3099,11 @@ function M.step_eval_queue(state, world, info)
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
         entry._self_dr=self_dr
+        entry._spot_method=goal_spot_method
+        entry._spot_slate=goal_spot_slate
+        entry._spot_tick=goal_spot_tick
+        entry._spot_path=goal_spot_path_str
+        entry._spot_path_len=goal_spot_path_len
         entry._self_dr_no_path=_self_dr_no_path
         entry._ammo=ammo_cost
         entry._sh_now=info.shells
@@ -2986,6 +3143,7 @@ function M.step_eval_queue(state, world, info)
         pool_idx, tostring(id), _t_total / 1000, _t_raw / 1000,
         tostring(_used_dij_for_raw)))
     end
+    ::continue::
   end
 
   state.eval_queue_pos = pos
@@ -4727,6 +4885,8 @@ function M.get_pool_breakdown_json(state)
         cost = (cached and cached.cost) or -1,
         formula = (cached and get_formula(cached)) or "",
         stale = (cached and cached.tick) and (now - cached.tick) or -1,
+        reject = cached and cached._reject or nil,
+        reject_remaining = cached and cached._reject_remaining or 0,
       }
     end
   end
@@ -4748,10 +4908,12 @@ function M.get_pool_breakdown_json(state)
         id = r.id, mx = r.mx, my = r.my,
         cost = r.cost,
         weighted = (r.cost >= 0) and (r.cost * pw) or -1,
-        is_winner = (i == 1 and r.cost >= 0),
+        is_winner = (i == 1 and r.cost >= 0 and not r.reject),
         active_goal = (active_pool == idx and active_id == r.id),
         stale = r.stale,
         formula = r.formula,
+        reject = r.reject,
+        reject_remaining = r.reject_remaining,
       }
     end
     local winner_id = -1

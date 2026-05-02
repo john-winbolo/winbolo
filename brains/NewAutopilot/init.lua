@@ -665,6 +665,41 @@ function Brain.think(info)
         string.format("tile=(%d+%d/256, %d+%d/256)", tile_x, sub_x, tile_y, sub_y),
         "topleft", 200, 220, 255, 255, 0.4)
 
+      -- Heading readout — integer info.direction (the brain-visible
+      -- coarse angle) plus the float info.tank_angle when present
+      -- (engine's actual sub-brad value, used for shot trajectory
+      -- sims). Cardinal letter helps when the number is 200ish and
+      -- you can't remember which way that's pointing.
+      do
+        local dir_int = info.direction or 0
+        local dir_f   = info.tank_angle  -- may be nil on older snapshots
+        local card
+        if     dir_int <  16 or dir_int > 240 then card = "N"
+        elseif dir_int <  48                  then card = "NE"
+        elseif dir_int <  80                  then card = "E"
+        elseif dir_int < 112                  then card = "SE"
+        elseif dir_int < 144                  then card = "S"
+        elseif dir_int < 176                  then card = "SW"
+        elseif dir_int < 208                  then card = "W"
+        else                                       card = "NW"
+        end
+        local fl = info.tank_first_left  or 0
+        local fr = info.tank_first_right or 0
+        local ramp_str = ""
+        if fl > 0 or fr > 0 then
+          ramp_str = string.format("  ramp_L=%d ramp_R=%d", fl, fr)
+        end
+        if dir_f then
+          viz.text("tank_angle", lx, ly + 1.2,
+            string.format("dir=%d (%.3f) %s%s", dir_int, dir_f, card, ramp_str),
+            "topleft", 255, 220, 140, 255, 0.4)
+        else
+          viz.text("tank_angle", lx, ly + 1.2,
+            string.format("dir=%d %s%s", dir_int, card, ramp_str),
+            "topleft", 255, 220, 140, 255, 0.4)
+        end
+      end
+
       local g = state.goal
       if g and g.kind == "attack_pill" and g.standoff_fx and g.standoff_fy then
         local s_wx = math.floor(g.standoff_fx * 256 + 0.5)

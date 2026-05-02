@@ -111,7 +111,17 @@ struct Row {
     bool   isOverride;
     int    staleTicks;
     float  flashAlpha;
-    char   formula[512];
+    /* Bumped from 512 → 2048 to fit pool-6's multi-segment detail map
+     * (hp / anger / stale / finish_other / self_dr / ammo / spot —
+     * the last carries the realized path tiles which alone can be
+     * 300+ chars). Truncation here cuts off the trailing segments
+     * and the parser then prints "?" in the affected rows. */
+    char   formula[2048];
+    /* Reject info (capture_pill: dead pill that exists on the map but
+     * can't be picked this tick — in_tank / blocked / stale). When
+     * non-empty, the row renders dimmed with a colored chip. */
+    char   reject[24];
+    int    rejectRemaining;
 };
 
 struct Section {
@@ -138,7 +148,10 @@ struct DetailRow {
     int   rowId, mx, my;
     float cost, weighted;
     bool  winner;
-    char  formula[512];
+    /* Match Row::formula's 2048 — without this, the double-click
+     * handler truncates the formula again on its way into the popup
+     * and the trailing detail segments (e.g. spot path) get lost. */
+    char  formula[2048];
 };
 struct PanelState {
     /* Per-section rank tracking for flash animation, indexed by
@@ -183,6 +196,9 @@ static void parseRow(cJSON *jrow, Row *r, int section_idx, bool is_winners) {
     r->staleTicks= (int)getNum(jrow, "stale", -1);
     const char *f = getStr(jrow, "formula", "");
     SDL_strlcpy(r->formula, f, sizeof(r->formula));
+    const char *rej = getStr(jrow, "reject", "");
+    SDL_strlcpy(r->reject, rej, sizeof(r->reject));
+    r->rejectRemaining = (int)getNum(jrow, "reject_remaining", 0);
 }
 
 static int parseSections(cJSON *root, Section *out, int outMax) {
@@ -225,6 +241,11 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     ImVec4 rowCol = poolColorFor(r->src_pool);
     const float lineH = ImGui::GetTextLineHeightWithSpacing();
     const int lines = (r->formula[0] ? 2 : 1);
+    /* Rejected rows (e.g., capture_pill row that exists but cannot be
+     * picked this tick — in_tank / blocked / stale) render dimmed with
+     * a colored chip explaining why. The hit-button stays full-alpha so
+     * the row remains clickable / inspectable in the detail popup. */
+    const bool isRej = (r->reject[0] != '\0');
 
     ImVec2 hitCursorStart = ImGui::GetCursorPos();
     char hitId[32];
@@ -290,6 +311,13 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         ImGui::GetWindowDrawList()->AddRectFilled(a, b, flash, 3.0f);
     }
 
+    /* Dim the entire row when rejected. Pop'd at the end of the row.
+     * Hit area was already drawn above with full alpha. */
+    if (isRej) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            ImGui::GetStyle().Alpha * 0.45f);
+    }
+
     /* Line 1: marker / id / pos / cost / weighted / staleness */
     if (r->activeGoal) {
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1), "\xe2\x96\xb6");
@@ -334,6 +362,26 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1), "%dt", r->staleTicks);
     }
 
+    /* Reject chip — appears on the same line as cost/wt/stale. Pop'd
+     * the dim alpha briefly so the chip itself reads at full opacity. */
+    if (isRej) {
+        ImGui::SameLine();
+        ImGui::PopStyleVar();
+        ImVec4 chipCol;
+        if      (!strcmp(r->reject, "in_tank")) chipCol = ImVec4(0.95f,0.85f,0.20f,1);
+        else if (!strcmp(r->reject, "blocked")) chipCol = ImVec4(1.00f,0.40f,0.40f,1);
+        else if (!strcmp(r->reject, "stale"))   chipCol = ImVec4(0.70f,0.70f,0.70f,1);
+        else                                     chipCol = ImVec4(0.85f,0.85f,0.85f,1);
+        if ((!strcmp(r->reject, "blocked") || !strcmp(r->reject, "stale"))
+            && r->rejectRemaining > 0) {
+            ImGui::TextColored(chipCol, "[%s %dt]", r->reject, r->rejectRemaining);
+        } else {
+            ImGui::TextColored(chipCol, "[%s]", r->reject);
+        }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            ImGui::GetStyle().Alpha * 0.45f);
+    }
+
     /* Line 2: dim formula (truncate at "||" detail separator) */
     if (r->formula[0]) {
         ImVec4 fcol = ImVec4(rowCol.x * 0.7f, rowCol.y * 0.7f,
@@ -350,6 +398,7 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
             ImGui::TextColored(fcol, "    %s", r->formula);
         }
     }
+    if (isRej) ImGui::PopStyleVar();
     ImGui::Spacing();
 }
 
@@ -440,6 +489,9 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
 
     /* Split the formula at the "||" detail separator. */
     const char *detailSep = strstr(sDetail.formula, "||");
+    /* dispFormula only holds the half before "||"; that side is short
+     * (~150 chars). 512 is plenty here — the long part is the detail
+     * map after "||" which the parser walks directly off sDetail.formula. */
     char dispFormula[512] = {0};
     if (detailSep) {
         int dlen = (int)(detailSep - sDetail.formula);

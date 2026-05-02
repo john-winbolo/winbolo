@@ -2569,6 +2569,49 @@ int brainPathfinderTracePath(BrainPathfinder *pf,
   }
 }
 
+/* Variant of brainPathfinderTracePath that takes explicit (dx, dy) and
+ * walks the parent chain regardless of pf->status. Useful immediately
+ * after a one-shot cost_to call: cost_to leaves the closed/parent
+ * state in the current epoch but resets pf->status = -1 and
+ * pf->dest_x/y = -1 so the regular trace_path fails. The parent
+ * chain is still readable via the epoch-aware get_parent/get_closed
+ * helpers. Returns 0 if the dest tile isn't in the closed set
+ * (search didn't reach it). */
+int brainPathfinderTraceLastSearchPath(BrainPathfinder *pf,
+                                        int dx, int dy,
+                                        int *path_x, int *path_y,
+                                        int max_steps) {
+  int cur, count, i;
+  int stack_x[512], stack_y[512];
+
+  if (!pf) return 0;
+  if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
+
+  int dest_tile = dy * MAP_SIZE + dx;
+  int dest_ni = -1;
+  if (get_closed(pf, dest_tile)) dest_ni = dest_tile;
+  else if (get_closed(pf, dest_tile + BOAT_OFFSET)) dest_ni = dest_tile + BOAT_OFFSET;
+  if (dest_ni < 0) return 0;
+
+  cur = dest_ni;
+  count = 0;
+  while (cur >= 0 && cur < NODE_COUNT && count < 512) {
+    uint32_t p;
+    stack_x[count] = node_x(cur);
+    stack_y[count] = node_y(cur);
+    count++;
+    p = get_parent(pf, cur);
+    if (p == PARENT_NONE) break;
+    cur = (int)p;
+  }
+
+  for (i = 0; i < count && i < max_steps; i++) {
+    path_x[i] = stack_x[count - 1 - i];
+    path_y[i] = stack_y[count - 1 - i];
+  }
+  return count < max_steps ? count : max_steps;
+}
+
 /* ------------------------------------------------------------------ */
 /* Front line detection (influence sign-change boundaries)              */
 /* ------------------------------------------------------------------ */
