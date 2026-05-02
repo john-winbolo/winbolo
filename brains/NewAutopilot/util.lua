@@ -138,6 +138,17 @@ function M.is_water(tt)
   return tt == C.T_RIVER or tt == C.T_DEEPSEA
 end
 
+-- True if every intermediate tile between (x0,y0) and (x1,y1) is water.
+-- Lets a boat-shell traveling over the corridor reach (x1,y1) without
+-- being absorbed mid-flight by terrain. Hoisted from attack.lua and
+-- steering.lua where it was duplicated verbatim.
+function M.water_corridor_to(x0, y0, x1, y1)
+  local blocked = M.bresenham(x0, y0, x1, y1, function(cx, cy)
+    if not M.is_water(M.ttype(cx, cy)) then return true end
+  end)
+  return not blocked
+end
+
 -- Walk a Bresenham line from (x0,y0) to (x1,y1), calling fn(cx,cy) for each
 -- intermediate tile (excluding start and end points).
 -- If fn returns a non-nil, non-false value, stops early and returns that value.

@@ -162,7 +162,8 @@ function M.update(state, world, info)
 
   -- ----- Enemy LGM tracking: detect parachutes (dead enemy LGM) -----
   local enemy_lgm_sightings = state._enemy_lgm_sightings or {}
-  local now = state.tick or 0
+  -- (was: redundant `local now = state.tick or 0` — outer `now` from
+  -- line 25 is in scope and identical when state.tick is set.)
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_PARACHUTE and (ob.info & OBJECT_HOSTILE) ~= 0 then
       local omx = ob.x >> 8

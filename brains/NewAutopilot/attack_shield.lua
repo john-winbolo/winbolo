@@ -98,12 +98,18 @@ M.NONWINNER_FADE_TICKS  = 200  -- ~4 s at 50 Hz
 --                      already lands a bit inside the corner so a
 --                      sub-tile wobble at firing time still reads as
 --                      "the corner".
--- AIM_INSET_FIRE     : extra inset (on top of AIM_INSET) applied when
---                      we actually take the shot. Aiming a bit deeper
---                      than the scoring point gives the real shell
---                      another safety margin against drift.
-M.AIM_INSET      = 24   -- 1.5 gu (16 wu/gu) — scoring
-M.AIM_INSET_FIRE = 16   -- 1 gu — actual fire aim sits 1 gu inside the corner
+-- AIM_INSET_FIRE     : standalone (NOT stacked with AIM_INSET) inset
+--                      used when the shot actually fires. Scoring uses
+--                      AIM_INSET (deeper inside the tile) to reject
+--                      candidates whose corner aim is borderline; the
+--                      fire-time inset is smaller (closer to the edge,
+--                      more aggressive corner aim) so the shell has
+--                      maximum chance of clearing the wall corner.
+--                      Earlier comment claimed FIRE was "extra inset
+--                      on top of AIM_INSET" — wrong on both counts;
+--                      it's standalone AND smaller.
+M.AIM_INSET      = 24   -- 1.5 gu (16 wu/gu) — scoring (more conservative)
+M.AIM_INSET_FIRE = 16   -- 1 gu — fire-time aim (more aggressive corner)
 local AIM_OFFSETS = {
   { 128, 128 },                                -- 1: center
   { M.AIM_INSET,       M.AIM_INSET       },    -- 2: top-left
@@ -173,9 +179,18 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           outgoing_blocked_by_wall = true
         end
         -- Any non-target pill in the path = the shell hits it. Reject.
-        local pk = world.pill_at and world.pill_at[t.my * 256 + t.mx]
-        if pk and world.pills and world.pills[pk] then
-          outgoing_blocked_by_wall = true
+        -- pill_at[k] is a LIST of {id=, pill=} records (multiple pills
+        -- can briefly share a tile during pickup/replace), not a single
+        -- id — old code did `world.pills[<list>]` which is always nil
+        -- and never fired this reject. Walk the list and check each.
+        local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+              outgoing_blocked_by_wall = true
+              break
+            end
+          end
         end
       end
     end
@@ -216,10 +231,16 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
         local past_tank = (pdx * pdx + pdy * pdy) > pill_to_tank_d2
         if d >= M.BLOCKER_MIN_DIST and not past_tank then
           local kind = nil
-          local pk = world.pill_at and world.pill_at[idx]
-          if pk and world.pills and world.pills[pk] then
-            if world.pills[pk].owner == "friendly" then
-              kind = "friendly_pill"
+          -- pill_at[k] is a list of {id=, pill=} (see world.lua:32) —
+          -- old code did world.pills[<list>] which is always nil, so
+          -- friendly pills were never recognised as blockers.
+          local plist = world.pill_at and world.pill_at[idx]
+          if plist then
+            for _, e in ipairs(plist) do
+              if e.pill and e.pill.owner == "friendly" then
+                kind = "friendly_pill"
+                break
+              end
             end
           end
           if not kind then

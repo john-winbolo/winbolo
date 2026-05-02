@@ -35,6 +35,15 @@ local viz    = require("viz")
 
 local M = {}
 
+-- Hoisted: was reallocated inside the wall-build threat-blocker
+-- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
+-- when in build mode). Module-scope constant.
+local BAD_TERRAIN_FOR_WALL = {
+  [C.T_BUILDING]=true, [C.T_HALFBUILD]=true,
+  [C.T_RIVER]=true, [C.T_DEEPSEA]=true,
+  [C.T_PILLBOX]=true, [C.T_SWAMP]=true,
+}
+
 -- -------------------------------------------------------------------------
 -- Mode mapping: tank goal kind → builder mode
 -- -------------------------------------------------------------------------
@@ -376,8 +385,8 @@ function M.decide(state, world, info, now)
   local tmy = info.tanky >> 8
   -- Allow base shield when ON the base or within 1 tile of it.
   -- Wall must be placed on one of the 8 tiles adjacent to the base.
-  local has_base = info.base and info.base.mx
-  local near_base = has_base and U.mdist(tmx, tmy, info.base.mx, info.base.my) <= 1
+  local has_base = info.base and info.base.x
+  local near_base = has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) <= 1
   local has_trees = info.trees >= C.BASE_SHIELD_BUILD_COST
   local took_dmg = state.took_damage_this_tick
   local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
@@ -385,7 +394,7 @@ function M.decide(state, world, info, now)
   -- Always show precondition status on the HUD when near a base
   if has_base then
     local parts = {}
-    parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.mx, info.base.my) or -1)
+    parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
     parts[#parts + 1] = has_trees and string.format("trees:YES(%d)", info.trees) or string.format("trees:NO(%d<%d)", info.trees, C.BASE_SHIELD_BUILD_COST)
     parts[#parts + 1] = took_dmg and "took_dmg:YES" or "took_dmg:NO"
     parts[#parts + 1] = pill_threats_exist and string.format("threats:%d", #state.perc.pill_threats) or "threats:0"
@@ -395,7 +404,7 @@ function M.decide(state, world, info, now)
   end
 
   if near_base and has_trees and took_dmg then
-    local bmx, bmy = info.base.mx, info.base.my
+    local bmx, bmy = info.base.x, info.base.y
     local perc = state.perc
     local pill_threats = perc and perc.pill_threats or {}
     local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
@@ -411,13 +420,7 @@ function M.decide(state, world, info, now)
           local wx, wy = bmx + DX8[d], bmy + DY8[d]
           if U.in_map(wx, wy) then
             local wtt = U.ttype(wx, wy)
-            -- Skip unsuitable terrain
-            local BAD_TERRAIN = {
-              [C.T_BUILDING]=true, [C.T_HALFBUILD]=true,
-              [C.T_RIVER]=true, [C.T_DEEPSEA]=true,
-              [C.T_PILLBOX]=true, [C.T_SWAMP]=true,
-            }
-            if not BAD_TERRAIN[wtt] then
+            if not BAD_TERRAIN_FOR_WALL[wtt] then
               -- Score: how well does this tile block the pill's line to the base?
               -- Lower = better blocker (closer to the pill direction from base)
               local tile_dir = math.atan(wx - bmx, -(wy - bmy))
