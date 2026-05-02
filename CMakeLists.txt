@@ -994,14 +994,14 @@ endif()
 
 # macOS app bundle with icon
 if(APPLE)
-    set(WINBOLO_ICON "${CMAKE_SOURCE_DIR}/src/gui/sdl3/platform/AppIcon.icns")
+    set(WINBOLO_ICON "${CMAKE_SOURCE_DIR}/data/icons/winbolo.icns")
     if(EXISTS "${WINBOLO_ICON}")
         target_sources(WinBolo PRIVATE "${WINBOLO_ICON}")
         set_source_files_properties("${WINBOLO_ICON}" PROPERTIES
             MACOSX_PACKAGE_LOCATION "Resources")
         set_target_properties(WinBolo PROPERTIES
             MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
+            MACOSX_BUNDLE_ICON_FILE "winbolo.icns"
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/gui/sdl3/platform/Info.plist.in"
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.winbolo.macos"
             MACOSX_BUNDLE_BUNDLE_NAME "WinBolo")
@@ -1435,13 +1435,13 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/logviewer/platform/Info.plist"
     )
-    set(APP_ICON_ICNS "${CMAKE_SOURCE_DIR}/src/logviewer/platform/AppIcon.icns")
+    set(APP_ICON_ICNS "${CMAKE_SOURCE_DIR}/data/icons/logviewer.icns")
     if(EXISTS "${APP_ICON_ICNS}")
         target_sources(LogViewer PRIVATE "${APP_ICON_ICNS}")
         set_source_files_properties("${APP_ICON_ICNS}" PROPERTIES
             MACOSX_PACKAGE_LOCATION "Resources")
         set_target_properties(LogViewer PROPERTIES
-            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns")
+            MACOSX_BUNDLE_ICON_FILE "logviewer.icns")
     endif()
 endif()
 
@@ -1920,14 +1920,14 @@ endif()
 
 # macOS app bundle with icon
 if(APPLE)
-    set(MAPEDITOR_ICON "${CMAKE_SOURCE_DIR}/src/mapeditor/platform/AppIcon.icns")
+    set(MAPEDITOR_ICON "${CMAKE_SOURCE_DIR}/data/icons/mapeditor.icns")
     if(EXISTS "${MAPEDITOR_ICON}")
         target_sources(MapEditor PRIVATE "${MAPEDITOR_ICON}")
         set_source_files_properties("${MAPEDITOR_ICON}" PROPERTIES
             MACOSX_PACKAGE_LOCATION "Resources")
         set_target_properties(MapEditor PROPERTIES
             MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
+            MACOSX_BUNDLE_ICON_FILE "mapeditor.icns"
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/mapeditor/platform/Info.plist.in"
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.winbolo.mapeditor"
             MACOSX_BUNDLE_BUNDLE_NAME "WinBolo Map Editor")
