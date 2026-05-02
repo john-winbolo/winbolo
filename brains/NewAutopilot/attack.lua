@@ -921,9 +921,23 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase)
       -- tiles. Per-tile work cannot be precomputed (threat / terrain
       -- change per tick), but iterating the stamp directly cuts the
       -- per-tile overhead from ~50 ops (tile_in_ellipse) to ~0.
+      -- Subtract THIS pill's own contribution from each tile so the
+      -- maneuver-area average reflects ambient threat rather than the
+      -- target's own footprint (mirrors what self_dr does for the
+      -- approach path). Same rationale: the bot is committed to
+      -- killing this pill, so its danger shouldn't bully position
+      -- selection AGAINST it.
+      local _self_pcontrib = threat.pill_contrib[pmy * 256 + pmx]
       local function process_tile(sx, sy)
         if not U.in_map(sx, sy) then return end
         local d = threat.pill_at(sx, sy)
+        if _self_pcontrib then
+          local self_d = _self_pcontrib[sy * 256 + sx]
+          if self_d then
+            d = d - self_d
+            if d < 0 then d = 0 end
+          end
+        end
         -- Tree cover: reduce danger based on surrounding forest count
         if d > 0 and U.ttype(sx, sy) == C.T_FOREST then
           local tree_n = 0

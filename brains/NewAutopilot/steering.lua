@@ -693,7 +693,14 @@ local function attack_pill_steer(state, world, info, goal)
       return keys, taps
     end
 
-    -- Once we start braking, commit to it (no re-accelerating)
+    -- Once we start braking, commit to it (no re-accelerating).
+    -- Exception: if we've stalled to a full stop well before the
+    -- arrival window (sdist > 80, vs the 50-wu arrival check above),
+    -- something blocked us — clear the brake flag so the next tick
+    -- can KEY_FASTER and try to push through.
+    if goal._charge_braking and info.speed == 0 and sdist > 80 then
+      goal._charge_braking = nil
+    end
     if stop_dist >= sdist or goal._charge_braking then
       goal._charge_braking = true
       keys = keys | KEY_SLOWER
