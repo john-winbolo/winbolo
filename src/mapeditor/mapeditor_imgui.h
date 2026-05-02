@@ -74,6 +74,10 @@ typedef struct {
     bool wantText;
     bool wantImageImport;
     bool wantExportPNG;
+    bool wantZoomIn;
+    bool wantZoomOut;
+    bool wantZoomSet;
+    int  zoomSetIndex;      /* target zoom step when wantZoomSet is true */
     int  openRecentIndex;   /* -1 = none, else index into recent files */
 } MapEditorMenuAction;
 
@@ -92,7 +96,9 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
                            bool *showStampLibrary,
-                           bool fromMainMenu);
+                           bool fromMainMenu,
+                           int zoomStepIndex, int zoomStepCount,
+                           const float *zoomStepValues);
 
 /* Render the unsaved changes modal dialog.
  * Must be called every frame after OpenPopup("Unsaved Changes").
