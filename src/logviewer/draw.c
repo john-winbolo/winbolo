@@ -595,7 +595,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
             lv_drawLast[x][y] = pos;
             isPill = isBase = FALSE;
             
-            if ((pos >= PILL_EVIL_0 && pos <= PILL_EVIL_15) || (pos >= PILL_GOOD_0 && pos <= PILL_GOOD_15)) {
+            if (pos == PILL_EVIL_15 || (pos >= PILL_EVIL_14 && pos <= PILL_EVIL_0) || (pos >= PILL_GOOD_15 && pos <= PILL_GOOD_0)) {
                 isPill = TRUE;
                 lv_drawLast[x][y] = 10000;
             }
