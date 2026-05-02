@@ -1085,16 +1085,59 @@ local function attack_pill_steer(state, world, info, goal)
   -- cap and abort if the geometry won't converge.
   if goal.substate == "in_range_aim_finetune" then
     if info.speed > 0 then keys = keys | KEY_SLOWER end
+    -- First tick of finetune is always idle: we don't know whether
+    -- the previous substate (in_range_aim) was holding a turn key,
+    -- so the engine's firstLeft/firstRight counter could be
+    -- anywhere from 0 to 6+. One blank tick guarantees it resets
+    -- to 0, so the very first emitted tap below starts at the /8
+    -- ramp rate as intended.
+    if (goal._finetune_taps or 0) == 0 and not goal._finetune_on_pill then
+      goal._finetune_taps = 1
+      goal._finetune_burst = 0
+      if info.gunrange < C.GUNSIGHT_MAX then
+        keys = keys | KEY_MORERANGE
+      end
+      return keys, taps
+    end
     if not goal._finetune_on_pill then
       local pcx = (goal.mx or 0) + 0.5
       local pcy = (goal.my or 0) + 0.5
       local pdir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                               pcx, pcy)
       local pcorr = U.adiff(info.direction, pdir)
-      if pcorr > 0 then
-        taps = taps | KEY_TURNRIGHT
-      elseif pcorr < 0 then
-        taps = taps | KEY_TURNLEFT
+      -- 3-tier turn (hold for big corrections, tap for fine):
+      -- holds give continuous engine rotation; taps give ~1 brad per
+      -- tick — but ONLY when firstLeft/firstRight is 0. The engine
+      -- ramps the first 6 turn ticks at /8 speed and only releases
+      -- to full speed afterwards (tank.c:1751). When consecutive
+      -- ticks emit a tap key, the engine sees a continuous hold and
+      -- the ramp counter advances, so the 5th-or-so tap suddenly
+      -- jumps a big chunk instead of nudging by ~1 brad like we
+      -- want. Workaround: burst 4 tap ticks, then 1 idle tick to
+      -- force the engine's counter back to 0, then 4 more — keeps
+      -- every emitted tap at the slow /8 rate.
+      -- The sim check (attack.lua's per-tick simulate_shot_angle) flips
+      -- _finetune_on_pill the moment the trajectory crosses the pill,
+      -- so a brief overshoot on the hold→tap boundary is caught.
+      if pcorr > 2 then
+        keys = keys | KEY_TURNRIGHT
+        goal._finetune_burst = 0
+      elseif pcorr < -2 then
+        keys = keys | KEY_TURNLEFT
+        goal._finetune_burst = 0
+      elseif pcorr ~= 0 then
+        local burst = goal._finetune_burst or 0
+        if burst < 4 then
+          if pcorr > 0 then taps = taps | KEY_TURNRIGHT
+          else                 taps = taps | KEY_TURNLEFT end
+          goal._finetune_burst = burst + 1
+        else
+          -- Idle tick: emit nothing so firstLeft/firstRight resets
+          -- to 0 in tank.c. Next tick the burst restarts at /8.
+          goal._finetune_burst = 0
+        end
+      else
+        goal._finetune_burst = 0
       end
       goal._finetune_taps = (goal._finetune_taps or 0) + 1
     end

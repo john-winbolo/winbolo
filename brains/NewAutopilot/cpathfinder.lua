@@ -497,4 +497,14 @@ function M.trace_path()
   return cpf_trace_path()
 end
 
+--- Trace the most-recent A* search's path to (dx, dy) regardless of
+--- pf->status. Use immediately after cost_to() — its cleanup
+--- (status=-1, dest_x/y=-1) makes the regular trace_path() return
+--- empty even when the search reached dest, but the closed/parent
+--- state is still readable in the current epoch.
+--- @return table  Array of {x=, y=} steps, or empty if dest wasn't reached.
+function M.trace_last_search(dx, dy)
+  return cpf_trace_last_search(dx, dy)
+end
+
 return M

@@ -1168,6 +1168,29 @@ static int l_cpf_trace_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_trace_last_search(dx, dy) -> array of {x=, y=}
+ * Trace the most-recent A* search's parent chain to (dx, dy) without
+ * the status==1 gate. Use after cost_to() — its end-of-call cleanup
+ * zaps status/dest so cpf_trace_path() returns empty, but the
+ * closed/parent state is still good enough to reconstruct the path. */
+static int l_cpf_trace_last_search(lua_State *L) {
+  CPF_GET(L);
+  int dx = (int)luaL_checkinteger(L, 1);
+  int dy = (int)luaL_checkinteger(L, 2);
+  int path_x[64], path_y[64];
+  int count = brainPathfinderTraceLastSearchPath(pf, dx, dy, path_x, path_y, 64);
+  lua_createtable(L, count, 0);
+  for (int i = 0; i < count; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, path_x[i]);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, path_y[i]);
+    lua_setfield(L, -2, "y");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 /* cpf_serialize() -> string
  * Returns binary blob of the full pathfinder state (grids + Dijkstra slates). */
 static int l_cpf_serialize(lua_State *L) {
@@ -1236,6 +1259,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
     { "cpf_astar_shells_at",       l_cpf_astar_shells_at },
     { "cpf_trace_path",            l_cpf_trace_path },
+    { "cpf_trace_last_search",     l_cpf_trace_last_search },
     { "shell_debug_hits",          l_shell_debug_hits },
     { "cpf_find_front_line",       l_cpf_find_front_line },
     { "cpf_serialize",             l_cpf_serialize },

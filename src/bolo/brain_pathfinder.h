@@ -374,6 +374,17 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
 int brainPathfinderTracePath(BrainPathfinder *pf,
                               int *path_x, int *path_y, int max_steps);
 
+/* Like brainPathfinderTracePath but takes explicit destination and
+ * skips the pf->status check. Use this after a cost_to call: cost_to
+ * resets status/dest to -1 at the end (so the next path_to starts
+ * fresh) but the closed/parent state is still readable in the current
+ * epoch, which is enough to walk the path. Returns 0 if dest isn't in
+ * the closed set (i.e., the search didn't reach it). */
+int brainPathfinderTraceLastSearchPath(BrainPathfinder *pf,
+                                        int dx, int dy,
+                                        int *path_x, int *path_y,
+                                        int max_steps);
+
 /* Scan influence grid for front-line cells (where positive/negative neighbors meet).
  * Writes up to max_points pairs into out_x[], out_y[].
  * Skips cells where both values are 0 (unclaimed vs unclaimed).
