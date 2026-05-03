@@ -271,7 +271,7 @@ void lv_windowOpenFile(char *cmdLine) {
 
 void lv_windowSaveMap(void) {
     /* Save not yet implemented in WASM build */
-    lv_platform_dialog_message("Log Viewer", "Save Map is not yet available in the web version.");
+    lv_platform_dialog_message("WinBolo Log Viewer", "Save Map is not yet available in the web version.");
 }
 
 /* --------------------------------------------------------------------------

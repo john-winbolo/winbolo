@@ -516,7 +516,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     lv_platform_dialogs_init();
 
     if (lv_clientMutexCreate() == FALSE) {
-        lv_platform_dialog_error("Log Viewer", "Could not create mutex");
+        lv_platform_dialog_error("WinBolo Log Viewer", "Could not create mutex");
         if (window == NULL) { lv_platform_config_shutdown(); lv_platform_dialogs_shutdown(); }
         free(g_lv);
         g_lv = NULL;

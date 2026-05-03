@@ -127,6 +127,40 @@ static inline SDL_Texture *imguiLoadSvgIcon(SDL_Renderer *rend, const char *path
     return tex;
 }
 
+/* Like imguiLoadSvgIcon, but treats the rasterised SVG as an alpha mask
+ * and forces the colour channels to white. Use for monochrome icons that
+ * must read against an arbitrary ImGui background regardless of the
+ * SVG's authored fill colour; ImGui's tint multiplier can darken but
+ * cannot brighten, so dark SVG fills are unrecoverable without this. */
+static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+    if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
+    float scale = (float)size / image->height;
+    if (image->width * scale > (float)size) scale = (float)size / image->width;
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    float offX = ((float)w - image->width * scale) * 0.5f;
+    float offY = ((float)h - image->height * scale) * 0.5f;
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    for (int i = 0; i < w * h; ++i) {
+        pixels[i * 4 + 0] = 255;
+        pixels[i * 4 + 1] = 255;
+        pixels[i * 4 + 2] = 255;
+    }
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
+}
+
 /* Override DisplayFramebufferScale after ImGui_ImplSDL3_NewFrame().
  * When a logical presentation is active, SDL already maps point-space
  * coordinates to native pixels.  ImGui_ImplSDL3_NewFrame() detects the

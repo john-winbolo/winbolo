@@ -1015,7 +1015,19 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
     frontEndUpdateTankStatusBars(sh, mi, ar, tr);
   }
   playersSetSelf(csPtr, &csPtr->sim, &csPtr->sim.plyrs, (playerNumbers) playerNum, playerName, FALSE);
-  frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, CLIENT_TYPE_UNKNOWN, 0);
+
+  /* Self is the local source of truth for client identity — PLAYER_JOINED
+   * and PLAYER_LIST receive paths skip self, so without this the local
+   * row would stay CLIENT_TYPE_UNKNOWN. */
+  uint8_t selfType  = bolo_detect_client_type();
+  uint8_t selfFlags = 0;
+#ifdef HAVE_STEAM
+  selfFlags |= PLAYER_FLAG_STEAM_BUILD;
+#endif
+  if (bolo_steam_has_supporter_dlc()) selfFlags |= PLAYER_FLAG_SUPPORTER;
+  playersSetClientType (&csPtr->sim.plyrs, csPtr->myPlayerNum, selfType);
+  playersSetClientFlags(&csPtr->sim.plyrs, csPtr->myPlayerNum, selfFlags);
+  frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, selfType, selfFlags);
 }
 
 /*********************************************************

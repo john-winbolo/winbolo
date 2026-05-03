@@ -361,7 +361,7 @@ BYTE lv_drawSetup(void) {
     width  = lv_screenGetSizeX() * TILE_SIZE_X;
     height = lv_screenGetSizeY() * TILE_SIZE_Y + IMGUI_MENU_BAR_HEIGHT;
 
-    sdlWindow = SDL_CreateWindow("Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
+    sdlWindow = SDL_CreateWindow("WinBolo Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
     if (sdlWindow == NULL) {
         TTF_Quit(); SDL_Quit();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating SDL window", NULL);
