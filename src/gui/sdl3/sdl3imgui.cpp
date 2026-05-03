@@ -288,14 +288,16 @@ static void ensurePlatformIconsLoaded(void) {
     if (s_platformIconsLoaded) return;
     s_platformIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    /* Force white so platform icons read against the dark ImGui background
+     * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
     s_iconPlatform[CLIENT_TYPE_UNKNOWN]   = nullptr;
-    s_iconPlatform[CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIcon(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_LINUX]     = imguiLoadSvgIcon(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_MACOS]     = imguiLoadSvgIcon(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_IOS]       = imguiLoadSvgIcon(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_ANDROID]   = imguiLoadSvgIcon(r, "data/ui/android.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIcon(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_WEB]       = imguiLoadSvgIcon(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
 }
 
 /* Settings panel state */

@@ -815,10 +815,10 @@ bool sdl3DrawSetup(int zoomFactor) {
          effective zoom for font sizing and tile loading. --- */
   if (uiModeIsTablet()) {
     /* Tablet mode: fullscreen window, no fixed-size chrome */
-    gWindow = SDL_CreateWindow("WinBolo SDL3", 0, 0,
+    gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
-    gWindow = SDL_CreateWindow("WinBolo SDL3",
+    gWindow = SDL_CreateWindow("WinBolo",
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
 #if defined(__EMSCRIPTEN__) || defined(__ANDROID__)

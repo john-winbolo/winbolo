@@ -226,7 +226,7 @@ void lv_efree(Generic object);
 /* Version number */
 #define STRVER "1.09"
 
-#define DIALOG_BOX_TITLE "Log Viewer"
+#define DIALOG_BOX_TITLE "WinBolo Log Viewer"
 
 #define MESSAGE_QUOTES "\""
 
