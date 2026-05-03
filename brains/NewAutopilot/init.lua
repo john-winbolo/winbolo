@@ -1295,37 +1295,30 @@ function Brain.think(info)
         idx, kind_str, danger_scale, max_cost, tmx, tmy, now))
     end
 
-    -- Short-range NORMAL: 1-second radar ping
-    do
-      refresh_slate(SLATE_SHORT)
-      local s0 = d.slates[SLATE_SHORT]
-      local age0 = now - (s0.started_tick or 0)
-      local nr = needs_restart(SLATE_SHORT, C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_RESTART_DIST)
-      if age0 > C.DIJKSTRA_SHORT_INTERVAL + 5 or (now % 50 == 0) then
-        print2(string.format("SLATE0_DBG t=%d age=%d active=%s done=%s started=%d interval=%d nr=%s",
-          now, age0, tostring(s0.active), tostring(s0.done),
-          s0.started_tick or 0, C.DIJKSTRA_SHORT_INTERVAL, tostring(nr)))
+    -- Paired slate restart: for each pair (short: 0+2, long: 1+3) always
+    -- restart the more stale slate so the other remains available for
+    -- lookups. This ensures at least one slate per pair is always complete.
+    local function restart_more_stale(a, b, interval, max_cost)
+      refresh_slate(a); refresh_slate(b)
+      local sa, sb = d.slates[a], d.slates[b]
+      local age_a = now - (sa.started_tick or 0)
+      local age_b = now - (sb.started_tick or 0)
+      -- Only restart if the more-stale one has exceeded the interval.
+      if age_a >= age_b then
+        if age_a >= interval then
+          start_slate(a, KIND_NORMAL, 1.0, max_cost)
+        end
+      else
+        if age_b >= interval then
+          start_slate(b, KIND_NORMAL, 1.0, max_cost)
+        end
       end
-      if nr then
-        start_slate(SLATE_SHORT, KIND_NORMAL, 1.0, C.DIJKSTRA_SHORT_MAX_COST)
-      end
     end
 
-    -- Long-range NORMAL: 5-second full map
-    if needs_restart(SLATE_LONG, C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_RESTART_DIST) then
-      start_slate(SLATE_LONG, KIND_NORMAL, 1.0, C.DIJKSTRA_MAX_COST)
-    end
-
-    -- Slate 2: extra KIND_NORMAL short-range (staggered offset from slate 0
-    -- so there's always a fresh short-range result even when slate 0 is mid-run)
-    if needs_restart(SLATE_PILL, C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_RESTART_DIST) then
-      start_slate(SLATE_PILL, KIND_NORMAL, 1.0, C.DIJKSTRA_SHORT_MAX_COST)
-    end
-
-    -- Slate 3: extra KIND_NORMAL long-range (staggered from slate 1)
-    if needs_restart(3, C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_RESTART_DIST) then
-      start_slate(3, KIND_NORMAL, 1.0, C.DIJKSTRA_MAX_COST)
-    end
+    restart_more_stale(SLATE_SHORT, SLATE_PILL, C.DIJKSTRA_SHORT_INTERVAL,
+                       C.DIJKSTRA_SHORT_MAX_COST)
+    restart_more_stale(SLATE_LONG,  3,          C.DIJKSTRA_RECOMPUTE_INTERVAL,
+                       C.DIJKSTRA_MAX_COST)
 
     -- Step every active slate by an even share of the per-tick budget.
     -- Each slate that's still running gets `budget_each` expansions.

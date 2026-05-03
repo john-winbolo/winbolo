@@ -1886,9 +1886,10 @@ float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
 }
 
 /* Sort slate indices for the given kind by started_tick descending
- * (newest first). Writes the sorted indices into out[] and returns
- * how many were written. Slates without matching kind or with no
- * g_cost yet are excluded. */
+ * (most recently started first). If the newest slate hasn't reached a
+ * tile yet, the caller falls through to the next-newest. Used for both
+ * lookup and trace so all operations prefer the freshest source position.
+ * Slates without matching kind or with no g_cost yet are excluded. */
 static int slate_indices_by_recency(BrainPathfinder *pf, int kind,
                                      int out[DIJKSTRA_NUM_SLATES]) {
   int n = 0;
@@ -1921,9 +1922,9 @@ float brainPathfinderDijkstraLookupByKind(BrainPathfinder *pf, int kind,
   int order[DIJKSTRA_NUM_SLATES];
   int n = slate_indices_by_recency(pf, kind, order);
 
-  /* Walk slates in newest-first order. Newer slates take priority even
-   * if still running; if the destination isn't in the closed set yet
-   * for the newest slate, fall through to the next-newest. */
+  /* Walk slates freshest-completed-first. If the freshest finished slate
+   * hasn't reached this tile, fall through to the next. Running slates
+   * (completed_tick=0) are last-resort fallback for tiles already expanded. */
   for (int i = 0; i < n; i++) {
     DijkstraSlate *s = &pf->dij_slates[order[i]];
     float land = s->g_cost[node_idx(x, y, 0)];

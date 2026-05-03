@@ -2617,7 +2617,7 @@ function M.update_attack_substate(goal, state, world, info)
         -- tile. Splits the rotation cleanly so steering doesn't
         -- have to slow down across the lock threshold while the
         -- finetune sim is also sampling the trajectory.
-        local PIX = 2.0 / 16.0    -- 2 game-pixels = 32 wu = 1/8 tile
+        local PIX = 3.0 / 16.0    -- 3 game-pixels = 48 wu = 3/16 tile
         local fx, fy = goal.aim_mx - pmx, goal.aim_my - pmy
         local pre_dx, pre_dy
         if fx < 0.5 - 1e-3 then
