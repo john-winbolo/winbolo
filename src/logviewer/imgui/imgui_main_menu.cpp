@@ -334,7 +334,9 @@ int lv_imgui_main_menu_bar(void) {
                 ImGui::EndMenu();
             }
 
-            if (ImGui::MenuItem(langGetText(STR_LV_USE_TEAM_COLOURS), NULL, s_lv->useTeamColours != 0)) {
+            if (ImGui::MenuItem(langGetText(STR_LV_USE_TEAM_COLOURS), NULL,
+                                s_lv->useTeamColours != 0,
+                                !s_lv->gameView)) {
                 s_lv->useTeamColours = s_lv->useTeamColours ? 0 : 1;
                 clicked = 1;
             }

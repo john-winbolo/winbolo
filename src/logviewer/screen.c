@@ -539,6 +539,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
         args.playerName[sizeof(args.playerName) - 1] = '\0';
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
       }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = true;
+        g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
+      }
       break;
     case log_PlayerQuit:
       logReadBytes(&opt1, 1);
@@ -549,6 +553,28 @@ void lv_screenProcessLog(unsigned short numEvents) {
         strncpy(args.playerName, str, sizeof(args.playerName) - 1);
         args.playerName[sizeof(args.playerName) - 1] = '\0';
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        if (g_lv->gameView && opt1 == g_lv->cameraSlot) {
+          /* Advance camera to next in-use slot. Mirrors Tab cycle in
+           * logviewer.c:651-660. The `next != opt1` guard skips the
+           * leaving player explicitly: lv_playersIsInUse(opt1) may still
+           * return TRUE here, and we don't want the camera to bounce
+           * back. */
+          BYTE start = g_lv->cameraSlot;
+          BYTE found = start;
+          BYTE i;
+          for (i = 1; i <= MAX_TANKS; i++) {
+            BYTE next = (BYTE)((start + i) % MAX_TANKS);
+            if (next != opt1 && lv_playersIsInUse(next)) {
+              found = next;
+              break;
+            }
+          }
+          g_lv->cameraSlot = found;
+          g_lv->wantScreenUpdate = TRUE;
+        }
       }
       break;
     case log_LostMan:
@@ -663,6 +689,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilGetNibbles(opt5, &frame, &onBoat);
       if (opt2 != 0) {
         lv_playersUpdateTank(opt1, opt2, opt3, px, py, frame, onBoat);
+        if (opt1 < MAX_TANKS && !g_lv->gameViewHud[opt1].alive) {
+          g_lv->gameViewHud[opt1].alive = true;
+          g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
+        }
       }
       break;
     case log_Shell:
@@ -780,7 +810,15 @@ void lv_screenProcessLog(unsigned short numEvents) {
         args.otherName[sizeof(args.otherName) - 1] = '\0';
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
+      if (opt1 < MAX_TANKS) g_lv->deaths[opt1]++;
+      if (opt2 != opt1 && opt2 != NEUTRAL && opt2 < MAX_TANKS) {
+        g_lv->kills[opt2]++;
+      }
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        g_lv->gameViewHud[opt1].deathTimeMs = g_lv->timeRunning;
+      }
       break;
     case log_PlayerRejoin:
       logReadBytes(&opt1, 1);
@@ -790,6 +828,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
         strncpy(args.playerName, str, sizeof(args.playerName) - 1);
         args.playerName[sizeof(args.playerName) - 1] = '\0';
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
+      }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = true;
+        g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
       }
       break;
     case log_PlayerLeaving:
@@ -801,10 +843,36 @@ void lv_screenProcessLog(unsigned short numEvents) {
         args.playerName[sizeof(args.playerName) - 1] = '\0';
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
       }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        if (g_lv->gameView && opt1 == g_lv->cameraSlot) {
+          /* Advance camera to next in-use slot. Mirrors Tab cycle in
+           * logviewer.c:651-660. The `next != opt1` guard skips the
+           * leaving player explicitly: lv_playersIsInUse(opt1) may still
+           * return TRUE here, and we don't want the camera to bounce
+           * back. */
+          BYTE start = g_lv->cameraSlot;
+          BYTE found = start;
+          BYTE i;
+          for (i = 1; i <= MAX_TANKS; i++) {
+            BYTE next = (BYTE)((start + i) % MAX_TANKS);
+            if (next != opt1 && lv_playersIsInUse(next)) {
+              found = next;
+              break;
+            }
+          }
+          g_lv->cameraSlot = found;
+          g_lv->wantScreenUpdate = TRUE;
+        }
+      }
       break;
     case log_PlayerDied:
       logReadBytes(&opt1, 1);
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        g_lv->gameViewHud[opt1].deathTimeMs = g_lv->timeRunning;
+      }
       break;
     case log_SaveMap:
       /* No-op — marker event with no visual effect on replay */
@@ -1195,6 +1263,9 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap = lv_snapshotCreate();
   g_lv->timeRunning = 0;
+  memset(g_lv->kills,        0, sizeof(g_lv->kills));
+  memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
+  memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
 
   returnValue = lv_blocksCreate(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
@@ -1308,6 +1379,9 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap = lv_snapshotCreate();
   g_lv->timeRunning = 0;
+  memset(g_lv->kills,        0, sizeof(g_lv->kills));
+  memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
+  memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
 
   returnValue = lv_blocksCreateFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
@@ -1674,8 +1748,6 @@ void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
    * runtime so each viewer sees its own language; switching languages
    * mid-replay does not retranslate prior entries (acceptable per the
    * Phase 1 caveat — the events panel stores rendered strings). */
-  (void)msgType;
-  (void)topId;
   char body[FILENAME_MAX];
   const char *rendered = langGetTextFmt(bodyId, args);
   body[0] = '\0';
@@ -1684,6 +1756,28 @@ void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
     body[sizeof(body) - 1] = '\0';
   }
   lv_windowAddEvent(0, body);
+
+  /* Feed the scrolling-marquee queue used by the trailer game view.
+   * Mirror the live game's clientMessageAdd: the channel header
+   * (topId — e.g. "Newswire:") goes on the top line on the first
+   * message of a run from a given source, and is blanked on
+   * consecutive messages of the same source so successive entries
+   * read as one continuing transcript. The queue is dormant when
+   * the game view isn't running (no consumer); the cost is one
+   * list-append per event. */
+  {
+    static messageType s_lastMessage = (messageType)-1;
+    const char *topRendered =
+        (s_lastMessage != msgType) ? langGetText(topId) : MESSAGE_EMPTY;
+    s_lastMessage = msgType;
+    char top[FILENAME_MAX];
+    top[0] = '\0';
+    if (topRendered) {
+      strncpy(top, topRendered, sizeof(top) - 1);
+      top[sizeof(top) - 1] = '\0';
+    }
+    lv_messageAddItem(top, body);
+  }
 }
 
 void lv_screenGetTime(char *dest) {

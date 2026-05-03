@@ -48,6 +48,15 @@ typedef enum {
   lv_lr_shortwait
 } lvLrStates;
 
+/* Per-player HUD state for game-view armour bar tracking. Logs do not
+ * carry tank armour, so the bar is binary (alive=full / dead=destroyed)
+ * and the timestamps drive any death/respawn animations. */
+typedef struct {
+  bool     alive;
+  uint32_t deathTimeMs;
+  uint32_t respawnTimeMs;
+} GameViewPlayerHud;
+
 /*********************************************************
  * LogViewerState — all viewer state in one struct.
  *
@@ -110,6 +119,14 @@ typedef struct LogViewerState {
   int          timerSleep;
   SDL_TimerID  timerGameID;
   SDL_TimerID  timerFrameID;
+
+  /* --- Game-view (trailer-capture) skin state --- */
+  bool         gameView;             /* gates the rendering branch */
+  BYTE         cameraSlot;           /* 0..MAX_TANKS-1, the spectated player */
+  bool         savedUseTeamColours;  /* restored when leaving game view mode */
+  uint16_t     kills[MAX_TANKS];     /* per-player kill tally */
+  uint16_t     deaths[MAX_TANKS];    /* per-player death tally */
+  GameViewPlayerHud gameViewHud[MAX_TANKS];
 
   /* --- FROM draw.c (SDL handles) --- */
   struct SDL_Window   *window;

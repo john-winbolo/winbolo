@@ -84,6 +84,20 @@ void lv_imgui_events_remove_after(unsigned int timeMs) {
     }
 }
 
+int lv_imgui_events_get_count(void) {
+    return (int)s_events.size();
+}
+
+const char *lv_imgui_events_get_text(int i) {
+    if (i < 0 || i >= (int)s_events.size()) return "";
+    return s_events[i].text.c_str();
+}
+
+uint32_t lv_imgui_events_get_time(int i) {
+    if (i < 0 || i >= (int)s_events.size()) return 0;
+    return s_events[i].timeMs;
+}
+
 /* Copy selected text to clipboard */
 static void copy_to_clipboard(const char* text) {
     ImGui::SetClipboardText(text);

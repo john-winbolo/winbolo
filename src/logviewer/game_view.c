@@ -1,0 +1,687 @@
+/*
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ * Name:          game_view
+ * Filename:      game_view.c
+ * Purpose:
+ *   Phase D of plans/ctrailer.md — drives the live game's
+ *   render path (mapview.c + sdl3draw_status.c) from the
+ *   standalone LogViewer's replayed state. Output is
+ *   pixel-identical to live-game footage of the same map.
+ *
+ *   This translation unit sees the bolo-side type names
+ *   (screen, screenTanks, ...) via mapview.h. It must NOT
+ *   include any logviewer / *.h that pulls in backend.h —
+ *   the two define the same struct names with different
+ *   layouts. State the file needs from LogViewerState
+ *   reaches it via a small set of accessor functions
+ *   declared `extern` below; the pointers they return are
+ *   ABI-safe because mapview.c only goes through accessors
+ *   (routed via bolo_shim.c) and never indexes the structs
+ *   directly.
+ *********************************************************/
+
+#include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
+#include <stdio.h>
+
+#include "../bolo/global.h"
+#include "../gui/sdl3/mapview.h"
+#include "../gui/sdl3/sdl3draw_status.h"
+#include "../gui/sdl3/sdl_bmp.h"
+#include "../gui/positions.h"
+#include "../gui/tiles.h"
+
+#include "game_view.h"
+
+/* Game-view window logical size (pre-zoom). Same constants the live game's
+ * sdl3draw.c uses; duplicated here to avoid pulling in sdl3draw.h's heavier
+ * client_sim transitive deps. */
+#define GV_SCREEN_W 515
+#define GV_SCREEN_H 325
+
+/* --- Logviewer-side accessors. Declared extern (no logviewer header
+ *     include) so this TU stays on bolo types. --- */
+extern void *lv_gameViewGetScreen(void);
+extern void *lv_gameViewGetMineView(void);
+extern void *lv_gameViewGetBases(void);
+extern void *lv_gameViewGetPills(void);
+extern BYTE  lv_gameViewGetCameraSlot(void);
+extern bool  lv_gameViewIsHudAlive(BYTE slot);
+extern uint16_t lv_gameViewGetKills(BYTE slot);
+extern uint16_t lv_gameViewGetDeaths(BYTE slot);
+
+extern SDL_Window   *lv_drawGetSDLWindow(void);
+extern SDL_Renderer *lv_drawGetSDLRenderer(void);
+extern SDL_Texture  *lv_drawGetTilesTexture(void);
+extern int           lv_drawGetSheetScale(void);
+
+extern bool  lv_playersIsInUse(BYTE playerNumber);
+extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
+                                      BYTE *px, BYTE *py, BYTE *frame,
+                                      bool *onBoat);
+extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest);
+extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
+
+extern BYTE         lv_basesGetNumBases(bases *value);
+extern baseAlliance lv_basesGetAlliancePos(bases *value, BYTE x, BYTE y);
+extern void         lv_basesGetBase(bases *value, base *item, BYTE baseNum);
+extern BYTE         lv_pillsGetNumPills(pillboxes *value);
+extern pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum);
+
+extern int          lv_imgui_events_get_count(void);
+extern const char  *lv_imgui_events_get_text(int i);
+
+/* Scrolling-marquee API. Declared inline (no #include "messages.h") so
+ * this TU stays clear of logviewer/global.h which conflicts with the
+ * bolo-side struct layouts mapview.h pulls in. MESSAGE_WIDTH mirrors
+ * messages.h's value (68) — the live game uses the same constant. */
+#define GV_MESSAGE_WIDTH 68
+extern void lv_messageCreate(void);
+extern void lv_messageDestroy(void);
+extern void lv_messageUpdate(void);
+extern void lv_messageGetMessage(char *top, char *bottom);
+
+/* logviewer's screen-size setters (parallel to logviewer/screen.c). The
+ * trailer view needs the screen buffer sized to MAIN_BACK_BUFFER_SIZE so
+ * mapView's 17×17 read pattern is fully populated and the existing
+ * lv_imgui_game_view_update_camera math (mx - screenSizeX/2) centres the
+ * camera tank in the visible 15-tile-wide main view. */
+extern void lv_screenSetSizeX(BYTE x);
+extern void lv_screenSetSizeY(BYTE y);
+extern BYTE lv_screenGetSizeX(void);
+extern BYTE lv_screenGetSizeY(void);
+
+/* Defined in logviewer/screen.c — viewport tile origin (top-left of
+ * the visible 16-tile window into the 256-tile map). Not declared in
+ * backend.h; extern'd here to avoid pulling in the logviewer's
+ * conflicting backend.h types. Used to convert tank map-space coords
+ * to viewport-relative screen-space for sdl3DrawTankLabel. */
+extern BYTE lv_screenGetXOffset(void);
+extern BYTE lv_screenGetYOffset(void);
+
+/* --- Module statics ----------------------------------------------- */
+
+/* Mirrors live-game openInGameFonts: 4 primary + 4 SlabK fallback. */
+#define GV_NUM_FONTS 8
+
+static SDL_Texture *s_backgroundTex = NULL;
+static SDL_Texture *s_tankBarsTex   = NULL;
+static SDL_Texture *s_baseBarsTex   = NULL;
+static TTF_Font    *s_fonts[GV_NUM_FONTS] = { NULL };
+static int          s_zoom          = 0;
+static int          s_savedWindowW  = 0;
+static int          s_savedWindowH  = 0;
+static BYTE         s_savedScreenSizeX = 0;
+static BYTE         s_savedScreenSizeY = 0;
+static bool         s_didTtfInit    = false;
+
+/* Scrolling-marquee tick. The live game advances the marquee every
+ * MESSAGE_SCROLL_TIME (4) display ticks, with the display tick running
+ * at GAME_TICK_LENGTH (10ms) — i.e. one column shift per 40ms of
+ * wall-clock time. Anchored to SDL_GetTicks (NOT timeRunning) so
+ * fast-forward / rewind / pause don't change scroll speed; only
+ * gameplay events fly by faster. Reset on setup. */
+#define GV_MESSAGE_TICK_MS 40
+static uint32_t     s_lastMessageTickMs = 0;
+
+/* Death-static effect — Bolo-style pixel noise drawn over the main view
+ * while the camera tank is dead (gameViewHud[camera].alive == false).
+ * Algorithm replicated from sdl3draw.c (live game's gStatic* state at
+ * sdl3draw.c:136-148 + render block at :1315-1367). The live game keys
+ * the throttle on tankGetDeathWait (per-tick countdown sourced from the
+ * deathcause); the log doesn't carry the deathcause, so we tick on
+ * SDL_GetTicks/GAME_TICK_LENGTH instead — same 10ms wall-clock cadence,
+ * just driven externally. */
+static SDL_Texture *s_deathStaticTex      = NULL;
+static int          s_deathStaticTexW     = 0;
+static int          s_deathStaticTexH     = 0;
+static uint32_t     s_deathStaticSeed     = 1;
+static uint32_t     s_deathStaticLastTick = 0;
+
+/* mapView's tile loop iterates MAIN_BACK_BUFFER_SIZE_X × MAIN_BACK_BUFFER_SIZE_Y
+ * (17×17, defined as MAIN_SCREEN_SIZE + 2 in bolo/screen.h). To populate
+ * exactly that footprint inside the logviewer's pointer-style screen buffer
+ * we want screenSizeX == screenSizeY == 16 (the loop in
+ * lv_screenUpdateView covers count=0..ssx, so ssx=16 fills the 17 columns
+ * mapView reads). */
+#define GV_SCREEN_TILES 16
+
+/* Tank-armour proxy — log doesn't carry tank shells / mines / trees /
+ * partial armour, so the tank bar is binary alive/dead. TANK_FULL_ARMOUR
+ * (40) is the same value the live game's screenGetTankStats clamps to. */
+#define GV_TANK_FULL_ARMOUR 40
+
+/* --- Font load (mirrors sdl3draw.c openInGameFonts) ----------------
+ *
+ * Standalone LogViewer links gamefront_stubs.c, whose
+ * gameFrontGetLanguageCode returns an empty string. sarasaMonoFontPath
+ * therefore falls through to data/fonts/SarasaMonoSlabJ-Regular.ttf —
+ * the trailer build is English-only, which is fine.
+ *
+ * We don't share openInGameFonts with the live game because that
+ * function mutates sdl3draw.c's own gFont* statics, which the
+ * standalone path doesn't (and shouldn't) own. Instead we open the
+ * fonts here and push them into sdl3draw_status's setter. */
+static const char *gv_sarasaMonoFontPath(const char *langCode) {
+  if (langCode && *langCode) {
+    if (SDL_strcasecmp(langCode, "ko")    == 0) return "data/fonts/SarasaMonoSlabK-Regular.ttf";
+    if (SDL_strcasecmp(langCode, "zh-CN") == 0) return "data/fonts/SarasaMonoSlabSC-Regular.ttf";
+    if (SDL_strcasecmp(langCode, "zh-TW") == 0) return "data/fonts/SarasaMonoSlabTC-Regular.ttf";
+  }
+  return "data/fonts/SarasaMonoSlabJ-Regular.ttf";
+}
+
+static void gv_loadInGameFonts(int zoomFactor) {
+  /* Standalone LogViewer never sets a language code, so this resolves to
+   * SlabJ. We still call gv_sarasaMonoFontPath so the fallback chain is
+   * structurally identical to the live game. */
+  const char *sarasaRel  = gv_sarasaMonoFontPath("");
+  const char *sarasaKRel = "data/fonts/SarasaMonoSlabK-Regular.ttf";
+
+  static char sarasaBuf[1024];
+  static char sarasaKBuf[1024];
+  const char *base = SDL_GetBasePath();
+  if (base) {
+    SDL_snprintf(sarasaBuf,  sizeof(sarasaBuf),  "%s%s", base, sarasaRel);
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s%s", base, sarasaKRel);
+  } else {
+    SDL_snprintf(sarasaBuf,  sizeof(sarasaBuf),  "%s", sarasaRel);
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s", sarasaKRel);
+  }
+
+  /* Same size table as openInGameFonts: msg=13, KD=13, tiny=8, label=10. */
+  s_fonts[0] = TTF_OpenFont(sarasaBuf,  8 * zoomFactor); /* tiny  */
+  s_fonts[1] = TTF_OpenFont(sarasaBuf, 13 * zoomFactor); /* msg   */
+  s_fonts[2] = TTF_OpenFont(sarasaBuf, 13 * zoomFactor); /* kd    */
+  s_fonts[3] = TTF_OpenFont(sarasaBuf, 10 * zoomFactor); /* label */
+
+  /* Hangul fallback — skip if primary IS SlabK. */
+  if (SDL_strcmp(sarasaBuf, sarasaKBuf) != 0) {
+    s_fonts[4] = TTF_OpenFont(sarasaKBuf,  8 * zoomFactor);
+    s_fonts[5] = TTF_OpenFont(sarasaKBuf, 13 * zoomFactor);
+    s_fonts[6] = TTF_OpenFont(sarasaKBuf, 13 * zoomFactor);
+    s_fonts[7] = TTF_OpenFont(sarasaKBuf, 10 * zoomFactor);
+    if (s_fonts[0] && s_fonts[4]) TTF_AddFallbackFont(s_fonts[0], s_fonts[4]);
+    if (s_fonts[1] && s_fonts[5]) TTF_AddFallbackFont(s_fonts[1], s_fonts[5]);
+    if (s_fonts[2] && s_fonts[6]) TTF_AddFallbackFont(s_fonts[2], s_fonts[6]);
+    if (s_fonts[3] && s_fonts[7]) TTF_AddFallbackFont(s_fonts[3], s_fonts[7]);
+  }
+
+  if (!s_fonts[1]) {
+    fprintf(stderr, "lv_drawGameViewSetup: failed to open primary font %s\n", sarasaBuf);
+  }
+}
+
+static void gv_closeInGameFonts(void) {
+  for (int i = 0; i < GV_NUM_FONTS; i++) {
+    if (s_fonts[i]) {
+      TTF_CloseFont(s_fonts[i]);
+      s_fonts[i] = NULL;
+    }
+  }
+}
+
+static SDL_Texture *gv_loadBackground(SDL_Renderer *renderer) {
+  /* Same path as live-game sdl3LoadBackground. SDL_GetBasePath prefix
+   * isn't strictly needed (sdlLoadBmpAsTexture handles cwd-relative
+   * paths) but try the prefixed path first to match live behaviour. */
+  SDL_Texture *tex = NULL;
+  const char *base = SDL_GetBasePath();
+  if (base) {
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%sdata/background.bmp", base);
+    tex = sdlLoadBmpAsTexture(renderer, path, false);
+  }
+  if (!tex) {
+    tex = sdlLoadBmpAsTexture(renderer, "data/background.bmp", false);
+  }
+  if (tex) {
+    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+  } else {
+    fprintf(stderr, "lv_drawGameViewSetup: data/background.bmp not loaded\n");
+  }
+  return tex;
+}
+
+/* xorshift32 PRNG matching sdl3draw.c's getRandomStaticNoiseSeed. Seeded
+ * non-zero; one shared sequence between the live game's gStaticSeed and
+ * our s_deathStaticSeed is unnecessary — they're independent visual
+ * effects in different windows. */
+static uint32_t gv_nextStaticNoise(void) {
+  s_deathStaticSeed ^= s_deathStaticSeed << 13;
+  s_deathStaticSeed ^= s_deathStaticSeed >> 17;
+  s_deathStaticSeed ^= s_deathStaticSeed << 5;
+  return s_deathStaticSeed;
+}
+
+/* Pixel-noise "TV static" overlay covering the main view rectangle.
+ * Mirrors sdl3draw.c:1328-1367 — recreate texture on size change, lock,
+ * scatter (w*h/3) random white/black pixels each tick, unlock, blit.
+ * `tick` is monotonic; the texture is updated only when it changes,
+ * matching the live game's tankGetDeathWait throttle. */
+static void gv_drawDeathStatic(SDL_Renderer *renderer, int originX, int originY,
+                               int gameW, int gameH, uint32_t tick) {
+  if (!renderer || gameW <= 0 || gameH <= 0) return;
+
+  const int staticW = gameW;
+  const int staticH = gameH;
+
+  if (!s_deathStaticTex || s_deathStaticTexW != gameW || s_deathStaticTexH != gameH) {
+    if (s_deathStaticTex) SDL_DestroyTexture(s_deathStaticTex);
+    s_deathStaticTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_STREAMING,
+                                         staticW, staticH);
+    if (s_deathStaticTex) {
+      SDL_SetTextureScaleMode(s_deathStaticTex, SDL_SCALEMODE_NEAREST);
+    }
+    s_deathStaticTexW = gameW;
+    s_deathStaticTexH = gameH;
+    s_deathStaticLastTick = 0;
+  }
+  if (!s_deathStaticTex) return;
+
+  if (tick != s_deathStaticLastTick) {
+    bool firstTick = (s_deathStaticLastTick == 0);
+    s_deathStaticLastTick = tick;
+    uint32_t *pixels;
+    int pitch;
+    if (SDL_LockTexture(s_deathStaticTex, NULL, (void **)&pixels, &pitch)) {
+      const int rowLen = pitch / 4;
+      if (firstTick) {
+        for (int y = 0; y < staticH; y++) {
+          for (int x = 0; x < staticW; x++) {
+            pixels[y * rowLen + x] = 0xFF000000u;
+          }
+        }
+      }
+      const int numPoints = staticW * staticH / 3;
+      int col = 0;
+      const uint32_t white = 0xFFFFFFFFu;
+      const uint32_t black = 0xFF000000u;
+      for (int i = 0; i < numPoints; i++) {
+        uint32_t rx = gv_nextStaticNoise();
+        uint32_t ry = gv_nextStaticNoise();
+        int px = (int)(rx % (uint32_t)staticW);
+        int py = (int)(ry % (uint32_t)staticH);
+        pixels[py * rowLen + px] = (col++ & 1) ? white : black;
+      }
+      SDL_UnlockTexture(s_deathStaticTex);
+    }
+  }
+
+  SDL_FRect dest = { (float)originX, (float)originY, (float)gameW, (float)gameH };
+  SDL_RenderTexture(renderer, s_deathStaticTex, NULL, &dest);
+}
+
+/* sdl3DrawStatusTankBars / sdl3DrawStatusBaseBars early-return when the
+ * bar render-target textures are NULL, so we have to allocate real ones
+ * to get visible bars. Mirrors sdl3draw.c:963-964 sizes. */
+static SDL_Texture *gv_createBarTarget(SDL_Renderer *renderer, int w, int h) {
+  SDL_Texture *t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                     SDL_TEXTUREACCESS_TARGET, w, h);
+  if (t) {
+    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+  }
+  return t;
+}
+
+/* --- Public API --------------------------------------------------- */
+
+int lv_drawGameViewGetZoom(void) {
+  return s_zoom;
+}
+
+void lv_drawGameViewSetup(int zoomFactor) {
+  SDL_Window   *window   = lv_drawGetSDLWindow();
+  SDL_Renderer *renderer = lv_drawGetSDLRenderer();
+  if (!window || !renderer) return;
+
+  s_zoom = zoomFactor;
+
+  SDL_GetWindowSize(window, &s_savedWindowW, &s_savedWindowH);
+  SDL_SetWindowSize(window, GV_SCREEN_W * zoomFactor,
+                            GV_SCREEN_H * zoomFactor);
+
+  /* Resize the logviewer's screen buffer to match mapView's read
+   * pattern. Saved here and restored on teardown so the normal
+   * logviewer UI returns to its previous tile count. */
+  s_savedScreenSizeX = lv_screenGetSizeX();
+  s_savedScreenSizeY = lv_screenGetSizeY();
+  lv_screenSetSizeX(GV_SCREEN_TILES);
+  lv_screenSetSizeY(GV_SCREEN_TILES);
+
+  if (!TTF_WasInit()) {
+    s_didTtfInit = TTF_Init();
+  } else {
+    s_didTtfInit = false;
+  }
+
+  gv_loadInGameFonts(zoomFactor);
+  s_backgroundTex = gv_loadBackground(renderer);
+  s_tankBarsTex   = gv_createBarTarget(renderer,
+                                       STATUS_TANK_BARS_TOTALWIDTH,
+                                       STATUS_TANK_BARS_HEIGHT);
+  s_baseBarsTex   = gv_createBarTarget(renderer,
+                                       STATUS_BASE_BARS_MAX_WIDTH,
+                                       STATUS_BASE_BARS_TOTALHEIGHT);
+
+  sdl3DrawStatusInit(renderer,
+                     lv_drawGetTilesTexture(),
+                     lv_drawGetSheetScale(),
+                     zoomFactor,
+                     /* tiny  */ s_fonts[0],
+                     /* msg   */ s_fonts[1],
+                     /* kd    */ s_fonts[2],
+                     /* label */ s_fonts[3],
+                     /* fallbacks */
+                     s_fonts[4], s_fonts[5], s_fonts[6], s_fonts[7],
+                     s_tankBarsTex,
+                     s_baseBarsTex);
+
+  /* No edge offset — replay never does sub-tile drag-pan. */
+  sdl3DrawStatusSetEdgeOffset(0, 0);
+
+  /* Scrolling-marquee init. screen.c has been feeding lv_messageAddItem
+   * for the whole replay, but the queue had no consumer; drain it first
+   * (lv_messageCreate just resets the head pointer and would leak the
+   * previously-accumulated nodes), then rebuild the visible-cells
+   * buffer fresh. Older events are dropped — option (a) backfill, see
+   * note in lv_drawGameViewFrame's step 12. */
+  lv_messageDestroy();
+  lv_messageCreate();
+  s_lastMessageTickMs = SDL_GetTicks();
+}
+
+void lv_drawGameViewTeardown(void) {
+  SDL_Window *window = lv_drawGetSDLWindow();
+
+  /* Drain any queued marquee items so they don't accumulate forever
+   * between game-view sessions. screen.c keeps appending in any mode. */
+  lv_messageDestroy();
+
+  sdl3DrawStatusShutdown();
+
+  if (s_tankBarsTex) { SDL_DestroyTexture(s_tankBarsTex); s_tankBarsTex = NULL; }
+  if (s_baseBarsTex) { SDL_DestroyTexture(s_baseBarsTex); s_baseBarsTex = NULL; }
+  if (s_backgroundTex) { SDL_DestroyTexture(s_backgroundTex); s_backgroundTex = NULL; }
+  if (s_deathStaticTex) { SDL_DestroyTexture(s_deathStaticTex); s_deathStaticTex = NULL; }
+  s_deathStaticTexW = 0;
+  s_deathStaticTexH = 0;
+  s_deathStaticSeed = 1;
+  s_deathStaticLastTick = 0;
+
+  gv_closeInGameFonts();
+
+  if (s_didTtfInit) {
+    TTF_Quit();
+    s_didTtfInit = false;
+  }
+
+  if (s_savedScreenSizeX > 0) lv_screenSetSizeX(s_savedScreenSizeX);
+  if (s_savedScreenSizeY > 0) lv_screenSetSizeY(s_savedScreenSizeY);
+  s_savedScreenSizeX = 0;
+  s_savedScreenSizeY = 0;
+
+  if (window && s_savedWindowW > 0 && s_savedWindowH > 0) {
+    SDL_SetWindowSize(window, s_savedWindowW, s_savedWindowH);
+  }
+  s_savedWindowW = 0;
+  s_savedWindowH = 0;
+  s_zoom = 0;
+}
+
+/* --- Frame assembly (mirrors sdl3DrawMainScreen step-for-step) ---- */
+
+void lv_drawGameViewFrame(void *screenView, void *mineView,
+                          void *tanks, void *bullets, void *lgms) {
+  SDL_Renderer *renderer = lv_drawGetSDLRenderer();
+  if (!renderer || s_zoom <= 0) return;
+
+  screen        *view    = (screen *)screenView;
+  screenMines   *mines   = (screenMines *)mineView;
+  screenTanks   *tks     = (screenTanks *)tanks;
+  screenBullets *shells  = (screenBullets *)bullets;
+  screenLgm     *lgmList = (screenLgm *)lgms;
+
+  const int zf       = s_zoom;
+  const int originX  = MAIN_OFFSET_X * zf;
+  const int originY  = MAIN_OFFSET_Y * zf;
+  const int tileW    = TILE_SIZE_X * zf;
+  const int tileH    = TILE_SIZE_Y * zf;
+  const BYTE camera  = lv_gameViewGetCameraSlot();
+
+  /* Sub-tile camera pan. lv_imgui_game_view_update_camera set
+   * xOffset = mx-8 / yOffset = my-8 (with screenSizeX = 16, that math
+   * already centres the tank tile in the visible 15-tile window).
+   * edgeX/edgeY apply the within-tile pixel offset on top of that so
+   * the tank visually slides smoothly across tile boundaries instead
+   * of jumping by a whole tile every time mx changes. */
+  int edgeX = 0, edgeY = 0;
+  if (lv_playersIsInUse(camera)) {
+    BYTE camMx = 0, camMy = 0, camPx = 0, camPy = 0, camFrame = 0;
+    bool camOnBoat = false;
+    lv_playersGetTankDetails(camera, &camMx, &camMy, &camPx, &camPy,
+                             &camFrame, &camOnBoat);
+    edgeX = (int)camPx * zf;
+    edgeY = (int)camPy * zf;
+  }
+
+  /* Step 1 — background. */
+  SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(renderer, NULL);
+  if (s_backgroundTex) {
+    SDL_FRect dst = { 0.0f, 0.0f,
+                      (float)(GV_SCREEN_W * zf),
+                      (float)(GV_SCREEN_H * zf) };
+    SDL_RenderTexture(renderer, s_backgroundTex, NULL, &dst);
+  }
+
+  /* Step 2 — MapViewCtx for the same atlas the rest of the LogViewer uses. */
+  MapViewCtx ctx;
+  ctx.renderer   = renderer;
+  ctx.tilesTex   = lv_drawGetTilesTexture();
+  ctx.zoomFactor = zf;
+  ctx.sheetScale = lv_drawGetSheetScale();
+
+  /* Set clip rect so the map render stays within the main view (no
+   * spillover into the surrounding chrome from the 1-tile mapView
+   * margin). Mirrors sdl3DrawMainScreen — without it the leading-edge
+   * margin tile (col 0 / row 0 of the buffer) paints over the side
+   * panels during sub-tile pan. */
+  {
+    SDL_Rect clip = {
+      originX, originY,
+      MAIN_SCREEN_SIZE_X * tileW,
+      MAIN_SCREEN_SIZE_Y * tileH
+    };
+    SDL_SetRenderClipRect(renderer, &clip);
+  }
+
+  /* Step 3 — tiles. */
+  mapViewDrawTiles(&ctx, view, mines,
+                   originX, originY, tileW, tileH,
+                   edgeX, edgeY);
+
+  /* Steps 4-5 — sprites. lv_screenUpdate already populated tks/shells/
+   * lgmList just before calling us via lv_drawMainScreen. */
+  mapViewDrawShells(&ctx, shells,  originX, originY, tileW, tileH, edgeX, edgeY);
+  mapViewDrawTanks (&ctx, tks,     originX, originY, tileW, tileH, edgeX, edgeY);
+  mapViewDrawLGMs  (&ctx, lgmList, originX, originY, tileW, tileH, edgeX, edgeY);
+
+  /* Death-static overlay. Painted INSIDE the step-3 clip rect so the
+   * noise stays within the main view rectangle and doesn't bleed into
+   * the surrounding chrome. The live game makes this branch exclusive
+   * with the map render (sdl3draw.c:1315 else-if) — drawing additively
+   * is simpler and visually equivalent since static covers the map
+   * fully. Tick rate: SDL_GetTicks/GAME_TICK_LENGTH gives one tick per
+   * 10ms wall clock, mirroring the live game's countdown cadence. */
+  if (!lv_gameViewIsHudAlive(camera)) {
+    gv_drawDeathStatic(renderer,
+                       originX, originY,
+                       MAIN_SCREEN_SIZE_X * tileW,
+                       MAIN_SCREEN_SIZE_Y * tileH,
+                       SDL_GetTicks() / GAME_TICK_LENGTH);
+  }
+
+  SDL_SetRenderClipRect(renderer, NULL);
+
+  /* Step 6 — push edge offset into the moved sdl3DrawTankLabel for this
+   * frame so labels track sub-tile pan along with the sprites. */
+  sdl3DrawStatusSetEdgeOffset(edgeX, edgeY);
+
+  /* Step 7 — self-perspective is now established by logviewer.c
+   * around lv_screenUpdate (see logviewer.c's `if (g_lv->wantScreenUpdate
+   * || g_lv->gameView)` block). Setting it there means tank sprite
+   * frame indices baked during lv_screenUpdate also see camera as
+   * self — without that, Tab updates the panels but not the map
+   * sprite colours. The save/set/restore that used to live here
+   * around just the panel renders is therefore redundant. */
+
+  /* Step 8 — bases. */
+  {
+    bases *bs = (bases *)lv_gameViewGetBases();
+    BYTE total = lv_basesGetNumBases(bs);
+    sdl3DrawSetBasesStatusClear();
+    for (BYTE i = 1; i <= total; i++) {
+      base item;
+      lv_basesGetBase(bs, &item, i);
+      baseAlliance ba = lv_basesGetAlliancePos(bs, item.x, item.y);
+      sdl3DrawStatusBase(i, ba, /* labels */ false);
+    }
+  }
+
+  /* Step 9 — pillboxes. */
+  {
+    pillboxes *pb = (pillboxes *)lv_gameViewGetPills();
+    BYTE total = lv_pillsGetNumPills(pb);
+    sdl3DrawSetPillsStatusClear();
+    for (BYTE i = 1; i <= total; i++) {
+      pillAlliance pa = lv_pillsGetAllianceNum(pb, i);
+      sdl3DrawStatusPillbox(i, pa, /* labels */ false);
+    }
+  }
+
+  /* Step 10 — tanks. Walk all 16 slots so dead/never-joined slots get
+   * cleared out of the panel (matches live game's MAX_TANKS loop). */
+  sdl3DrawSetTanksStatusClear();
+  for (BYTE i = 1; i <= MAX_TANKS; i++) {
+    tankAlliance ta = lv_playersScreenAllience((BYTE)(i - 1));
+    sdl3DrawStatusTank(i, ta);
+  }
+
+  /* Step 11 — bars. The log doesn't carry shells/mines/trees or
+   * partial armour, so the tank bar is binary alive/dead and the base
+   * bar is always empty. (Both documented out-of-scope.) */
+  {
+    BYTE armour = lv_gameViewIsHudAlive(camera) ? GV_TANK_FULL_ARMOUR : 0;
+    sdl3DrawStatusTankBars(0, 0, /* shells */ 0, /* mines */ 0, armour, /* trees */ 0);
+    sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0, FALSE);
+  }
+
+  /* Step 12 — scrolling newswire. Tick the marquee at the live game's
+   * 40ms wall-clock cadence (4 * GAME_TICK_LENGTH) so playback speed
+   * doesn't change scroll rate; render the current visible cells via
+   * lv_messageGetMessage. Backfill option (a): events that arrived
+   * before game-view activated are not replayed — only events from
+   * activation forward scroll across. */
+  {
+    uint32_t now = SDL_GetTicks();
+    /* SDL_GetTicks rolls over after ~49 days; if it appears to have
+     * jumped backwards, restart the cadence anchor. */
+    if (now < s_lastMessageTickMs) {
+      s_lastMessageTickMs = now;
+    }
+    while (now - s_lastMessageTickMs >= GV_MESSAGE_TICK_MS) {
+      lv_messageUpdate();
+      s_lastMessageTickMs += GV_MESSAGE_TICK_MS;
+    }
+
+    char top[GV_MESSAGE_WIDTH];
+    char bottom[GV_MESSAGE_WIDTH];
+    lv_messageGetMessage(top, bottom);
+    sdl3DrawMessages(0, 0, top, bottom);
+  }
+
+  /* Step 13 — kills/deaths text cache. */
+  sdl3DrawKillsDeaths(0, 0,
+                      (int)lv_gameViewGetKills(camera),
+                      (int)lv_gameViewGetDeaths(camera));
+
+  /* Step 14 — tank labels for every visible non-camera, in-use, alive
+   * tank (decision §2: "other tanks only" — camera tank's name is
+   * already in the tanks status panel). Strategy (i): walk
+   * lv_playersIsInUse + lv_playersGetTankDetails directly. The
+   * playerNum=0 hardcode in the bolo_shim screenTanksGetItem adapter
+   * does not affect this path. */
+  {
+    const BYTE viewOffX = lv_screenGetXOffset();
+    const BYTE viewOffY = lv_screenGetYOffset();
+    for (BYTE slot = 0; slot < MAX_TANKS; slot++) {
+      if (slot == camera) continue;
+      if (!lv_playersIsInUse(slot)) continue;
+      if (!lv_gameViewIsHudAlive(slot)) continue;
+
+      char name[PLAYER_NAME_LEN];
+      name[0] = '\0';
+      lv_playersGetPlayerName(slot, name);
+      if (name[0] == '\0') continue;
+
+      BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+      bool onBoat = false;
+      lv_playersGetTankDetails(slot, &mx, &my, &px, &py, &frame, &onBoat);
+
+      /* lv_playersGetTankDetails returns map-space (0..255), but
+       * sdl3DrawTankLabel computes `bbx = mx*TILE_SIZE_X+apx` and
+       * therefore expects viewport-relative screen-space (0..15).
+       * Subtract the viewport tile origin to convert; skip tanks
+       * outside the visible viewport — their labels would clip
+       * off-screen anyway. */
+      int sx = (int)mx - (int)viewOffX;
+      int sy = (int)my - (int)viewOffY;
+      if (sx < 0 || sx >= GV_SCREEN_TILES) continue;
+      if (sy < 0 || sy >= GV_SCREEN_TILES) continue;
+
+      sdl3DrawTankLabel(name, slot, (BYTE)sx, (BYTE)sy, px, py);
+    }
+  }
+
+  /* Step 15 — flush message + kills/deaths text caches. */
+  sdl3RenderCachedText();
+
+  /* Bar overlays. Mirrors sdl3draw.c sdl3RenderStatusPanels — the
+   * status renderers above wrote into s_tankBarsTex / s_baseBarsTex
+   * (render-target textures); blit those into the framebuffer at the
+   * fixed positions live-game uses. */
+  if (s_tankBarsTex) {
+    SDL_SetTextureBlendMode(s_tankBarsTex, SDL_BLENDMODE_NONE);
+    SDL_FRect d = { (float)(zf * STATUS_TANK_SHELLS),
+                    (float)(zf * STATUS_TANK_BARS_TOP),
+                    (float)(zf * STATUS_TANK_BARS_TOTALWIDTH),
+                    (float)(zf * STATUS_TANK_BARS_HEIGHT) };
+    SDL_RenderTexture(renderer, s_tankBarsTex, NULL, &d);
+  }
+  if (s_baseBarsTex) {
+    SDL_SetTextureBlendMode(s_baseBarsTex, SDL_BLENDMODE_NONE);
+    SDL_FRect d = { (float)(zf * STATUS_BASE_BARS_LEFT),
+                    (float)(zf * STATUS_BASE_BARS_TOP),
+                    (float)(zf * STATUS_BASE_BARS_MAX_WIDTH),
+                    (float)(zf * STATUS_BASE_BARS_TOTALHEIGHT) };
+    SDL_RenderTexture(renderer, s_baseBarsTex, NULL, &d);
+  }
+
+  /* Step 16 — self is restored by the wrapping block in logviewer.c
+   * after lv_screenUpdate returns; nothing to do here. */
+}
