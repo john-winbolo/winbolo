@@ -576,14 +576,18 @@ M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain
 -- spread that work across DIJKSTRA_SPREAD_TICKS to keep per-tick cost low,
 -- and rerun the search every DIJKSTRA_RECOMPUTE_INTERVAL ticks (or sooner
 -- if the tank moves more than DIJKSTRA_RESTART_DIST tiles).
-M.DIJKSTRA_SPREAD_TICKS         = 50    -- ticks to spread one search over (5 sec at 10 Hz)
-M.DIJKSTRA_RECOMPUTE_INTERVAL   = 50    -- ticks between recompute kickoffs for long-range slate.
+M.DIJKSTRA_SPREAD_TICKS         = 50    -- ticks to spread one search over (legacy; see per-range values below)
+M.DIJKSTRA_SHORT_SPREAD_TICKS   = 25    -- (unused with hard budget; kept for reference)
+M.DIJKSTRA_LONG_SPREAD_TICKS    = 125   -- half of RECOMPUTE_INTERVAL: long-range completes in ~2.5 s
+M.DIJKSTRA_RECOMPUTE_INTERVAL   = 250   -- ticks between recompute kickoffs for long-range slate (5 s @ 50 Hz).
 M.DIJKSTRA_RESTART_DIST         = 3     -- tank-moved threshold (tiles) to force restart
 M.DIJKSTRA_MAX_COST             = 0     -- 0 = unlimited; long-range covers the whole map
 
 -- Short-range "radar ping": fast local Dijkstra that restarts frequently
 -- for responsive nearby navigation. Falls through to long-range for distant tiles.
-M.DIJKSTRA_SHORT_INTERVAL       = 10    -- ticks between short-range restarts (1 sec)
+M.DIJKSTRA_SHORT_INTERVAL       = 10    -- ticks between short-range restarts (0.2 s @ 50 Hz)
+M.DIJKSTRA_SHORT_BUDGET         = 500   -- hard node-expansion cap per tick for short-range slates
+                                        -- (10 ticks × 500 = 5000 nodes ≈ 10-tile radius)
 M.DIJKSTRA_SHORT_MAX_COST       = 0     -- 0 = unlimited; expansion budget limits coverage, not cost cap
 M.DIJKSTRA_SHORT_RESTART_DIST   = 2     -- tank-moved threshold for short-range restart
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
