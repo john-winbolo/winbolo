@@ -2835,7 +2835,7 @@ function M.step_eval_queue(state, world, info)
           -- revert to 45 if step_eval_queue starts blowing its budget.
           diff_score, _spots, best_spot =
             attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                            5, state.phase, state)
+                                            5, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
