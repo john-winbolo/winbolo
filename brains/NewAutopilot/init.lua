@@ -1217,14 +1217,14 @@ function Brain.think(info)
     local KIND_NORMAL = 0
     local KIND_PILL   = 1
 
-    -- Fixed slate assignments:
-    --   0 = KIND_NORMAL short-range (1 sec ping, max_cost=100)
-    --   1 = KIND_NORMAL long-range  (5 sec, unlimited)
-    --   2 = KIND_PILL               (5 sec, low danger)
-    --   3 = spare (unused)
+    -- Fixed slate assignments (all KIND_NORMAL):
+    --   0 = short-range (1 sec ping, max_cost=100)
+    --   1 = long-range  (5 sec, unlimited)
+    --   2 = short-range extra (staggered from 0)
+    --   3 = long-range  extra (staggered from 1)
     local SLATE_SHORT = 0
     local SLATE_LONG  = 1
-    local SLATE_PILL  = 2
+    local SLATE_PILL  = 2  -- repurposed: extra KIND_NORMAL short-range
 
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
@@ -1316,14 +1316,15 @@ function Brain.think(info)
       start_slate(SLATE_LONG, KIND_NORMAL, 1.0, C.DIJKSTRA_MAX_COST)
     end
 
-    -- Short-range PILL: 1-second radar ping, low danger
+    -- Slate 2: extra KIND_NORMAL short-range (staggered offset from slate 0
+    -- so there's always a fresh short-range result even when slate 0 is mid-run)
     if needs_restart(SLATE_PILL, C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_RESTART_DIST) then
-      start_slate(SLATE_PILL, KIND_PILL, C.DIJKSTRA_PILL_DANGER_SCALE, C.DIJKSTRA_SHORT_MAX_COST)
+      start_slate(SLATE_PILL, KIND_NORMAL, 1.0, C.DIJKSTRA_SHORT_MAX_COST)
     end
 
-    -- Long-range PILL: 5-second full map, low danger
+    -- Slate 3: extra KIND_NORMAL long-range (staggered from slate 1)
     if needs_restart(3, C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_RESTART_DIST) then
-      start_slate(3, KIND_PILL, C.DIJKSTRA_PILL_DANGER_SCALE, C.DIJKSTRA_MAX_COST)
+      start_slate(3, KIND_NORMAL, 1.0, C.DIJKSTRA_MAX_COST)
     end
 
     -- Step every active slate by an even share of the per-tick budget.

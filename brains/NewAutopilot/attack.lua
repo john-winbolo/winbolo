@@ -14,7 +14,8 @@ local shield = require("attack_shield")
 local viz    = require("viz")
 
 local smart_cost = cpf.smart_cost
-local KIND_PILL  = cpf.KIND_PILL
+local KIND_PILL   = cpf.KIND_PILL
+local KIND_NORMAL = cpf.KIND_NORMAL
 
 local print2 = require("print2")
 
@@ -1518,14 +1519,31 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
     end
   end
 
-  -- A* to the best standoff position (not the enemy tank itself)
-  cpf.set_config("danger_scale", 0.1)
-  local path_cost = smart_cost(KIND_PILL, tmx, tmy, best_mx, best_my, 0,
-                               info.shells or 32, info.trees or 0,
-                               info.mines or 0, info.armour or 40)
-  cpf.set_config("danger_scale", 1.0)
+  -- Path cost to the best standoff position. Use KIND_NORMAL then subtract
+  -- 90% of danger along the traced path — equivalent to KIND_PILL's 0.1
+  -- danger scale but without a dedicated slate and without set_config global
+  -- state mutation. Falls back to a scaled estimate if trace returns nil.
+  local path_cost
+  do
+    local raw = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, best_mx, best_my, 0)
+    if raw < 1e29 then
+      local danger_adj = 0
+      local path = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL, best_mx, best_my)
+      if path then
+        for _, node in ipairs(path) do
+          local tt = U.ttype(node.x, node.y)
+          local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
+          if spd <= 0 then spd = 16 end
+          danger_adj = danger_adj + 0.9 * threat.at(node.x, node.y) * (16 / spd)
+        end
+      end
+      path_cost = math.max(0, raw - danger_adj)
+    else
+      path_cost = cpf.estimate_cost(tmx, tmy, best_mx, best_my, 0) * 0.1
+    end
+  end
 
-  local shells_on_arrival = cpf.dijkstra_shells_at(KIND_PILL, best_mx, best_my)
+  local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, best_mx, best_my)
                          or cpf.astar_shells_at(best_mx, best_my)
 
   print2(string.format("  attack_tank A* to (%d,%d): path_cost=%.1f shells_arr=%s",
