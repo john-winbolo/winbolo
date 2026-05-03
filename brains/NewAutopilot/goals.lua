@@ -107,7 +107,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
       wsim_dx, wsim_dy = spot_mx, spot_my
     else
       -- Fallback: cheapest adjacent tile to the pill
-      local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_PILL, gmx, gmy, 0)
+      local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, gmx, gmy, 0)
       if ax then wsim_dx, wsim_dy = ax, ay end
     end
   end
@@ -674,7 +674,7 @@ local function eval_capture_pill(state, world, info, tmx, tmy, boat, ammo)
   local pill, pid, pcost, pcands = nearest_where(world.pills, world, tmx, tmy,
     function(p) return (p.owner == "neutral" or p.owner == "friendly")
                        and p.health == 0 and not p.in_tank end,
-    boat, ammo, state, info, KIND_PILL, C.CAPTURE_THREAT_WEIGHT)
+    boat, ammo, state, info, KIND_NORMAL, C.CAPTURE_THREAT_WEIGHT)
   if not pill then return nil end
   local lm, lr = strategic_location_mult(pill.mx, pill.my, state, world, info, "capture_pill", pill)
 
@@ -849,9 +849,9 @@ local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
   if info.armour < min_armour then return nil end
   local pill, pid, pcost, pcands = nearest_where(world.pills, world, tmx, tmy,
     function(p) return (p.owner == "hostile" or p.owner == "neutral") and p.health > 0 end,
-    boat, ammo, state, info, KIND_PILL)
+    boat, ammo, state, info, KIND_NORMAL)
   if not pill then return nil end
-  local shells_on_arrival = cpf.dijkstra_shells_at(KIND_PILL, pill.mx, pill.my)
+  local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, pill.mx, pill.my)
                          or cpf.astar_shells_at(pill.mx, pill.my)
   local adj_cost, antic_desc = attack_pill_adjustments(pill, pcost, state, world)
   local lm, lr = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
@@ -2629,27 +2629,17 @@ function M.step_eval_queue(state, world, info)
       goto continue
     end
 
-    -- Use the appropriate dijkstra slate via smart_cost. The pill_pool
-    -- flag selects KIND_PILL (low-danger slate) for attack/capture pill
-    -- pools; everything else uses KIND_NORMAL.
-    --
-    -- Wrap the call in danger_scale = 0.1 for pill pools so the cost_to
-    -- FALLBACK (when the slate hasn't reached the destination yet) gets
-    -- the same treatment as the original code. The dijkstra fast-path
-    -- ignores the global danger_scale and uses each slate's baked-in
-    -- scale, so this set_config only affects the fallback branch.
-    -- Capture pools (3=base, 4=pill) use CAPTURE_THREAT_WEIGHT instead —
-    -- we're racing the opponent and want a more direct route.
+    -- All pools use KIND_NORMAL. Pool 6 (attack_pill) subtracts the target
+    -- pill's own danger contribution along the spot path via self_dr below —
+    -- that correction is more principled than discounting all danger 10x.
+    -- Capture pools (3=base, 4=pill) use CAPTURE_THREAT_WEIGHT for the A*
+    -- fallback danger scale.
     local pill_pool = (pool_idx == 4 or pool_idx == 6)
     local capture_pool = (pool_idx == 3 or pool_idx == 4)
-    local kind = pill_pool and KIND_PILL or KIND_NORMAL
-    local ds_override = nil
-    if capture_pool then ds_override = C.CAPTURE_THREAT_WEIGHT
-    elseif pill_pool then ds_override = 0.1 end
+    local ds_override = capture_pool and C.CAPTURE_THREAT_WEIGHT or nil
     -- Pool 4 (capture_pill) does its own distance calculation via
     -- compute_pool4_cost (8-neighbor sweep with KIND_NORMAL — the
-    -- pill is dead, so KIND_PILL would give a misleading low-danger
-    -- read). Skip the smart_cost block entirely for pool 4 to avoid
+    -- pill is dead). Skip the smart_cost block entirely for pool 4 to avoid
     -- a wasted A*/Dijkstra call per candidate per tick. raw_cost is
     -- backfilled from compute_pool4_cost's return below.
     local cost_dx, cost_dy = obj.mx, obj.my
@@ -2658,11 +2648,11 @@ function M.step_eval_queue(state, world, info)
       if ds_override then cpf.set_config("danger_scale", ds_override) end
       -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
       if obj.health and obj.health > 0 then
-        local _, ax, ay = cpf.cheapest_adjacent(kind, tmx, tmy,
+        local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
           obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
         if ax then cost_dx, cost_dy = ax, ay end
       end
-      raw_cost = smart_cost(kind, tmx, tmy, cost_dx, cost_dy, boat_flag,
+      raw_cost = smart_cost(KIND_NORMAL, tmx, tmy, cost_dx, cost_dy, boat_flag,
                              shells, trees, mines, armour)
       if ds_override then cpf.set_config("danger_scale", 1.0) end
     end
@@ -2672,7 +2662,7 @@ function M.step_eval_queue(state, world, info)
     -- when estimating mission shell needs.
     local cand_shells_on_arrival = nil
     if pool_idx == 6 or pool_idx == 7 then
-      cand_shells_on_arrival = cpf.dijkstra_shells_at(kind, obj.mx, obj.my)
+      cand_shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, obj.mx, obj.my)
                             or cpf.astar_shells_at(obj.mx, obj.my)
     end
     local _used_dij_for_raw = (raw_cost < 1e29) and C.DIJKSTRA_USE_FOR_GOALS
