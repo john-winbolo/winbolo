@@ -846,6 +846,28 @@ function Brain.think(info)
   viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
     "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
 
+  -- HUD: last attack-goal clear (set by attack.clear_attack_goal). Stays
+  -- visible for ~300 ticks after the abort so a silent "goal went to
+  -- none mid-finetune" leaves a breadcrumb pointing at the cause.
+  if state._last_attack_clear then
+    local lc  = state._last_attack_clear
+    local age = (state.tick or 0) - (lc.tick or 0)
+    if age >= 0 and age <= 300 then
+      local fade = math.max(80, 255 - math.floor(age * 0.5))
+      local sub_str = lc.sub_was and ("/" .. lc.sub_was) or ""
+      local pos_str = (lc.mx_was and lc.my_was)
+                      and string.format(" @(%d,%d)", lc.mx_was, lc.my_was)
+                      or  ""
+      viz.hud_text("attack_clear_reason", 10, 220,
+        string.format("CLEARED t=%d  %s%s%s",
+                      lc.tick or 0, lc.kind_was or "?", sub_str, pos_str),
+        "topleft", 255, 120, 80, fade)
+      viz.hud_text("attack_clear_reason", 10, 232,
+        "  why: " .. (lc.reason or "?"),
+        "topleft", 255, 200, 150, fade)
+    end
+  end
+
   -- HUD: click-cost panel — moved back to C side (braintest_main.c
   -- renderHUD) so it can use the live Dijkstra slate when not in
   -- playback (and show "N/A" when scrubbed). The brain-side
@@ -1806,7 +1828,21 @@ function Brain.think(info)
       print(string.format(TAG .. " t=%d GOAL INVALID: %s at (%d,%d) — replanning",
             now, gk, gmx, gmy))
       log.event("goal_invalid", string.format("%s@%d,%d", gk, gmx, gmy))
-      attack.clear_attack_goal(state)
+      -- Build a specific reason for the clear-overlay: for attack_pill
+      -- name WHICH check failed (the silent killer during finetune is
+      -- almost always one of these three).
+      local why = string.format("goal_invalid: %s@(%d,%d)", gk, gmx, gmy)
+      if gk == "attack_pill" and not state.capture_objective then
+        local p = W.pill_at(world, gmx, gmy)
+        if not p then
+          why = string.format("attack_pill@(%d,%d): pill_at returned nil (picked up / in_tank?)", gmx, gmy)
+        elseif p.owner == "friendly" then
+          why = string.format("attack_pill@(%d,%d): pill became friendly (we/ally captured)", gmx, gmy)
+        elseif p.health == 0 then
+          why = string.format("attack_pill@(%d,%d): pill HP=0 (killed externally)", gmx, gmy)
+        end
+      end
+      attack.clear_attack_goal(state, why)
     end
 
     t_goal0 = clock_us()

@@ -78,7 +78,8 @@ void shotSimPanelRender(bool visible,
                         ShotSimTankPosFn tankCb,
                         ShotSimTankAngleFn tankAngleCb,
                         ShotSimPoiPollFn poiCb,
-                        void *ud);
+                        void *ud,
+                        int follow_bot);
 
 /* Visibility toggle (host's 'S' hotkey calls Toggle). */
 void shotSimPanelToggle(void);

@@ -57,7 +57,8 @@ static PanelState s;
 static void endpointPickRow(const char *epLabel, bool isOrigin,
                             ShotSimTankPosFn tankCb,
                             ShotSimTankAngleFn tankAngleCb,
-                            ShotSimPoiPollFn poiCb, void *ud) {
+                            ShotSimPoiPollFn poiCb, void *ud,
+                            int follow_bot) {
     int  *destWX     = isOrigin ? &s.originWX  : &s.targetWX;
     int  *destWY     = isOrigin ? &s.originWY  : &s.targetWY;
     bool *destSet    = isOrigin ? &s.originSet : &s.targetSet;
@@ -165,6 +166,11 @@ static void endpointPickRow(const char *epLabel, bool isOrigin,
         Resolved cache[SHOTSIM_POI_REG_MAX];
         int liveCount = 0;
         for (int i = 0; i < npoi && i < SHOTSIM_POI_REG_MAX; i++) {
+            const ShotSimPoiEntry *e = shotSimPoiGet(i);
+            if (!e || e->bot_owner != follow_bot) {
+                cache[i].ok = false;
+                continue;
+            }
             int wx = 0, wy = 0;
             bool ok = poiCb && poiCb(i, &wx, &wy, ud);
             cache[i].wx = wx;
@@ -201,7 +207,8 @@ void shotSimPanelRender(bool visible, ShotSimRunFn runCb,
                         ShotSimClearFn clearCb,
                         ShotSimTankPosFn tankCb,
                         ShotSimTankAngleFn tankAngleCb,
-                        ShotSimPoiPollFn poiCb, void *ud) {
+                        ShotSimPoiPollFn poiCb, void *ud,
+                        int follow_bot) {
     if (!visible || !s.visible) {
         /* Honor either the host hint or the persistent toggle being
          * off. We track our own visible bool so the user can close
@@ -252,8 +259,8 @@ void shotSimPanelRender(bool visible, ShotSimRunFn runCb,
      * the user where the endpoint sits. Sections auto-collapse the
      * frame after a value gets set; click the disclosure triangle
      * to re-open and change. */
-    endpointPickRow("Origin", true,  tankCb, tankAngleCb, poiCb, ud);
-    endpointPickRow("Target", false, tankCb, tankAngleCb, poiCb, ud);
+    endpointPickRow("Origin", true,  tankCb, tankAngleCb, poiCb, ud, follow_bot);
+    endpointPickRow("Target", false, tankCb, tankAngleCb, poiCb, ud, follow_bot);
 
     /* Shooter type radio. Affects pill-center snap on origin click
      * + which physics brainPathfinderSimulateShot uses. */

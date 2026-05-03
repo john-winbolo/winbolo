@@ -466,9 +466,172 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     candidates[#candidates + 1] = make_candidate(cx, cy, deg, offset, "candidate")
   end
 
-  for _, c in ipairs(candidates) do
+  -- ── Nudge infrastructure ─────────────────────────────────────────────────
+  -- When simulate_shot from a candidate doesn't include the pill tile, we
+  -- move the origin forward (toward the pill) in small steps until it does.
+  -- The nudge amount is recorded per aim so other aims for the same candidate
+  -- are unaffected.  When the neighbor-bonus loop checks a neighbor for a
+  -- nudged aim, it uses the neighbor's position at the same nudge distance —
+  -- pre-computed here as a full ring so no trajectory is simulated more than
+  -- once per (nudge_wu, aim_idx) across all candidates.
+  local NUDGE_STEP_WU = 8    -- 0.03125 tiles per step (half a gu)
+  local NUDGE_MAX_STEPS = 32 -- cap at 256 wu = 1 tile forward
+
+  -- nudge_rings[nudge_wu][ai][ci] -> score_aim result table
+  local nudge_rings = {}
+  -- nudge_pos[nudge_wu][ci] -> {wx, wy}
+  local nudge_pos   = {}
+
+  -- Nudged world-unit position for candidate ci moved nudge_wu wu toward pill.
+  local function nudge_origin(ci, nudge_wu)
+    local row = nudge_pos[nudge_wu]
+    if row and row[ci] then return row[ci].wx, row[ci].wy end
+    if not row then row = {}; nudge_pos[nudge_wu] = row end
+    local c   = candidates[ci]
+    local dx  = pcx - c.cx
+    local dy  = pcy - c.cy
+    local d   = math.sqrt(dx * dx + dy * dy)
+    local wx, wy
+    if d > 0.001 then
+      local frac = (nudge_wu / 256.0) / d
+      wx = math.floor((c.cx + dx * frac) * 256 + 0.5)
+      wy = math.floor((c.cy + dy * frac) * 256 + 0.5)
+    else
+      wx = math.floor(c.cx * 256 + 0.5)
+      wy = math.floor(c.cy * 256 + 0.5)
+    end
+    row[ci] = { wx = wx, wy = wy }
+    return wx, wy
+  end
+
+  -- Build (or return cached) score_aim results for every candidate at
+  -- nudge_wu world-units forward, for aim index ai.  Building the whole
+  -- ring at once means each (nudge_wu, ai) pair costs O(N) simulate_shot
+  -- calls total — neighbors reuse the same cache entries.
+  local function ensure_nudge_ring(nudge_wu, ai)
+    local ring_d = nudge_rings[nudge_wu]
+    if not ring_d then ring_d = {}; nudge_rings[nudge_wu] = ring_d end
+    if ring_d[ai] then return ring_d[ai] end
+    local aim_ring = {}
+    for ci, c in ipairs(candidates) do
+      local nwx, nwy = nudge_origin(ci, nudge_wu)
+      local nmx = math.floor(nwx / 256)
+      local nmy = math.floor(nwy / 256)
+      -- Return fire from the nudged position (pill shoots toward tank).
+      local ret = cpf.simulate_shot(pill_wx, pill_wy, nwx, nwy, cpf.SHOT_PILL, 0)
+      -- Approach tile: same outward direction as original, but from nudged pos.
+      local lgm_omx, lgm_omy = nmx, nmy
+      local odx = c.cx - pcx
+      local ody = c.cy - pcy
+      local od  = math.sqrt(odx * odx + ody * ody)
+      if od > 0.01 then
+        local ux, uy = odx / od, ody / od
+        local ncx = nwx / 256.0
+        local ncy = nwy / 256.0
+        local afx = ncx + ux * (C.ATTACK_APPROACH_OFFSET or 1.5)
+        local afy = ncy + uy * (C.ATTACK_APPROACH_OFFSET or 1.5)
+        local amx = U.mclamp(math.floor(afx))
+        local amy = U.mclamp(math.floor(afy))
+        if U.in_map(amx, amy) then lgm_omx, lgm_omy = amx, amy end
+      end
+      local out, blk, act, pot, unr = score_aim(
+        nwx, nwy, lgm_omx, lgm_omy,
+        pmx, pmy, pill_wx, pill_wy,
+        AIM_OFFSETS[ai], nil, ret, world, no_builder)
+      aim_ring[ci] = {
+        tiles                = out,
+        blocked              = blk,
+        actual_blockers      = act or {},
+        potential_blockers   = pot or {},
+        unreachable_blockers = unr or {},
+      }
+    end
+    ring_d[ai] = aim_ring
+    return aim_ring
+  end
+
+  local function pill_in_tiles(tiles)
+    if not tiles then return false end
+    for _, t in ipairs(tiles) do
+      if t.mx == pmx and t.my == pmy then return true end
+    end
+    return false
+  end
+  -- ── End nudge infrastructure ─────────────────────────────────────────────
+
+  for ci, c in ipairs(candidates) do
     score_candidate(c, pill, world, pill_wx, pill_wy, no_builder)
   end
+
+  -- ── Nudge pass ───────────────────────────────────────────────────────────
+  -- For each aim where the pill tile is absent from the simulated trajectory,
+  -- find the smallest forward nudge that puts it in the path and replace the
+  -- aim's data with the nudged result.  Aims that still miss the pill at max
+  -- nudge are marked blocked.  Candidate scores are recalculated afterward.
+  for ci, c in ipairs(candidates) do
+    local rescore = false
+    for ai = 1, #AIM_OFFSETS do
+      local aim = c.aims and c.aims[ai]
+      if aim and not aim.blocked and not pill_in_tiles(aim.tiles) then
+        local found_wu = nil
+        for step = 1, NUDGE_MAX_STEPS do
+          local d     = step * NUDGE_STEP_WU
+          local ring  = ensure_nudge_ring(d, ai)
+          local entry = ring[ci]
+          if entry and pill_in_tiles(entry.tiles) then
+            found_wu = d
+            break
+          end
+        end
+        if found_wu then
+          local entry    = nudge_rings[found_wu][ai][ci]
+          local actual_n = #entry.actual_blockers
+          local pot_n    = #entry.potential_blockers
+          local sc = 0
+          if not entry.blocked then
+            sc = M.SCORE_PER_SLOT * (actual_n + pot_n)
+               + M.BUILT_BONUS    * actual_n
+          end
+          c.aims[ai] = {
+            tiles                = entry.tiles,
+            blocked              = entry.blocked,
+            blockers             = entry.actual_blockers,
+            potential_blockers   = entry.potential_blockers,
+            unreachable_blockers = entry.unreachable_blockers,
+            score                = sc,
+            nudge_wu             = found_wu,
+          }
+        else
+          -- Pill unreachable even at max nudge — discard this aim.
+          aim.blocked = true
+          aim.score   = 0
+        end
+        rescore = true
+      end
+    end
+    if rescore then
+      local best_sc, best_ai = 0, nil
+      for ai = 1, #AIM_OFFSETS do
+        local aim = c.aims and c.aims[ai]
+        if aim and not aim.blocked and (aim.score or 0) > best_sc then
+          best_sc = aim.score
+          best_ai = ai
+        end
+      end
+      c.score        = best_sc
+      c.best_aim_idx = best_ai
+      if best_ai then
+        local a = c.aims[best_ai]
+        c.score_actual    = (M.SCORE_PER_SLOT + M.BUILT_BONUS) * #a.blockers
+        c.score_potential = M.SCORE_PER_SLOT * #a.potential_blockers
+      else
+        c.score_actual    = 0
+        c.score_potential = 0
+      end
+      c.score_neighbor = 0
+    end
+  end
+  -- ── End nudge pass ───────────────────────────────────────────────────────
 
   -- Neighbor bonus: a candidate's BLOCKER SET (every tile on its
   -- chosen aim that contributes to its score — actual walls,
@@ -485,26 +648,34 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- itself many times over. Indexed [cand_idx][aim_idx] = set;
   -- nil = not yet built.
   local bk_cache = {}
-  local function blocker_keys_for(i, ai)
+  local function blocker_keys_for(i, ai, nudge_wu)
+    nudge_wu = nudge_wu or 0
+    -- Composite cache key: nudge_wu shifts into the high bits to avoid
+    -- aliasing with plain ai values (max AIM_OFFSETS is 5).
+    local ck  = ai + nudge_wu * 16
     local row = bk_cache[i]
-    if row and row[ai] then return row[ai] end
+    if row and row[ck] then return row[ck] end
     if not row then row = {}; bk_cache[i] = row end
     local set = {}
-    local c = candidates[i]
-    local a = c and c.aims and c.aims[ai]
-    if a then
-      if a.blockers then
-        for _, b in ipairs(a.blockers) do
-          set[b.my * 256 + b.mx] = true
-        end
+    local blockers, potentials
+    if nudge_wu > 0 then
+      local ring_ai = nudge_rings[nudge_wu] and nudge_rings[nudge_wu][ai]
+      local entry   = ring_ai and ring_ai[i]
+      if entry then
+        blockers  = entry.actual_blockers
+        potentials = entry.potential_blockers
       end
-      if a.potential_blockers then
-        for _, b in ipairs(a.potential_blockers) do
-          set[b.my * 256 + b.mx] = true
-        end
+    else
+      local c = candidates[i]
+      local a = c and c.aims and c.aims[ai]
+      if a then
+        blockers  = a.blockers
+        potentials = a.potential_blockers
       end
     end
-    row[ai] = set
+    for _, b in ipairs(blockers  or {}) do set[b.my * 256 + b.mx] = true end
+    for _, b in ipairs(potentials or {}) do set[b.my * 256 + b.mx] = true end
+    row[ck] = set
     return set
   end
   local function subset(a_set, b_set)
@@ -635,12 +806,22 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                 end
               end
               -- Score this subset against all neighbors.
+              -- If this aim was nudged, test each neighbor from the same
+              -- nudge distance (using the pre-built ring) so the geometry
+              -- is comparable.
+              local nudge = (c.aims[ai] and c.aims[ai].nudge_wu) or 0
               local function covers(j)
                 local nc = candidates[j]
                 if not nc or nc.kind ~= "candidate" then return false end
-                local n_a = nc.aims and nc.aims[ai]
-                if not n_a or n_a.blocked then return false end
-                return subset(subset_set, blocker_keys_for(j, ai))
+                if nudge > 0 then
+                  local re = nudge_rings[nudge] and nudge_rings[nudge][ai]
+                             and nudge_rings[nudge][ai][j]
+                  if not re or re.blocked then return false end
+                else
+                  local n_a = nc.aims and nc.aims[ai]
+                  if not n_a or n_a.blocked then return false end
+                end
+                return subset(subset_set, blocker_keys_for(j, ai, nudge))
               end
               -- Symmetric chain: only count out as far as BOTH
                -- sides extend. A 8-left/4-right run scores like 4+4,
@@ -817,6 +998,11 @@ function M.draw_overlay(scan, now_tick)
           c.best_aim_idx, aim_name))
         local a = c.aims and c.aims[c.best_aim_idx]
         if a then
+          if (a.nudge_wu or 0) > 0 then
+            viz.detail_text(did, string.format(
+              "  nudge: %d wu (%.3f tiles) — origin moved toward pill to hit it",
+              a.nudge_wu, a.nudge_wu / 256.0))
+          end
           local n_unreach = #(a.unreachable_blockers or {})
           viz.detail_text(did, string.format(
             "  blockers: actual=%d potential=%d  (LGM-unreachable dropped: %d)",
@@ -856,10 +1042,15 @@ function M.draw_overlay(scan, now_tick)
           if e.wounded_bias and e.wounded_bias ~= 0 then
             bias_str = string.format(" wbias=%+d", e.wounded_bias)
           end
+          local aim_data = c.aims and c.aims[e.aim]
+          local nudge_str = ""
+          if aim_data and (aim_data.nudge_wu or 0) > 0 then
+            nudge_str = string.format(" nudge=%dwu", aim_data.nudge_wu)
+          end
           viz.detail_text(did, string.format(
-            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s%s",
+            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s%s%s",
             e.aim, aim_name, e.actual_n, e.potential_n,
-            e.aim_score, e.chain, e.total, bias_str, marker))
+            e.aim_score, e.chain, e.total, bias_str, nudge_str, marker))
           if #blocker_strs > 0 then
             viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
           end
