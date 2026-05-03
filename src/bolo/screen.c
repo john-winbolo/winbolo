@@ -2280,6 +2280,11 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   BYTE ty;
   BYTE closeBase; /* The closest base to our current position */
 
+
+  if (MY_TANK(csPtr) == NULL) {
+    return;
+  }
+  
   tx = tankGetMX(&MY_TANK(csPtr));
   ty = tankGetMY(&MY_TANK(csPtr));
 
