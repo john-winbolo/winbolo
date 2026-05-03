@@ -195,12 +195,16 @@ end
 --- @return status integer  0=running, 1=done, -1=failed
 --- @return nx integer      next step x (-1 if no step yet)
 --- @return ny integer      next step y (-1 if no step yet)
-function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget)
+function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, skip_dijkstra)
   -- Try Dijkstra first — same cost surface, no duplicate A* search.
   -- Uses KIND_NORMAL (0) for general navigation.
   -- Passes current tank position so it finds the next step from HERE,
   -- not from the Dijkstra source (which may be stale).
-  if C.DIJKSTRA_USE_FOR_GOALS then
+  -- skip_dijkstra: set true when the slate is known-stale for the
+  -- destination tile (e.g. capture_pill targeting a pill that JUST
+  -- died — slate still treats it as alive/impassable). Forces a
+  -- fresh A* search every tick instead of trusting the cached slate.
+  if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
     local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy)
     if nx then
       print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
@@ -331,6 +335,55 @@ function M.estimate_cost(sx, sy, dx, dy, in_boat)
   return cpf_estimate_cost(sx, sy, dx, dy, in_boat)
 end
 
+--- 8-neighbor cheapest-adjacent sweep. Iterates the 8 tiles around
+--- (mx, my), runs smart_cost(kind, sx, sy, ax, ay, ...) for each
+--- in-map neighbor, and returns (best_cost, best_x, best_y) for
+--- the cheapest. Returns (math.huge, nil, nil) if all neighbors are
+--- out of map or unreachable. Centralises a pattern that was
+--- duplicated in goals.lua (3 sites) and attack.lua (1 site).
+---
+--- Kind selects the slate (KIND_NORMAL or KIND_PILL).
+local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
+local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
+function M.cheapest_adjacent(kind, sx, sy, mx, my, in_boat, shells, trees, mines, armour)
+  local best_cost = math.huge
+  local best_x, best_y = nil, nil
+  for d = 1, 8 do
+    local ax = mx + DX8[d]
+    local ay = my + DY8[d]
+    if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+      local ac = M.smart_cost(kind, sx, sy, ax, ay, in_boat or 0,
+                              shells or 32, trees or 0, mines or 0, armour or 40)
+      if ac < best_cost then
+        best_cost = ac
+        best_x, best_y = ax, ay
+      end
+    end
+  end
+  return best_cost, best_x, best_y
+end
+
+--- Same shape but uses dijkstra_lookup_by_kind (no smart_cost A*
+--- fallback). Returns (best_cost, best_x, best_y) where unreachable
+--- tiles produce math.huge. Use when you only want the slate's
+--- precomputed value and don't want to trigger an A* fallback.
+function M.cheapest_adjacent_dij(kind, mx, my, in_boat)
+  local best_cost = math.huge
+  local best_x, best_y = nil, nil
+  for d = 1, 8 do
+    local ax = mx + DX8[d]
+    local ay = my + DY8[d]
+    if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+      local ac = M.dijkstra_lookup_by_kind(kind, ax, ay, in_boat or 0)
+      if ac < best_cost then
+        best_cost = ac
+        best_x, best_y = ax, ay
+      end
+    end
+  end
+  return best_cost, best_x, best_y
+end
+
 --- Simulate a shell flight (real physics: SHELL_SPEED, SHELL_START_ADD,
 --- 24.8 fixed-point step) from origin world coords toward target world
 --- coords. Returns the unique tiles the shell would cross, in order,
@@ -352,14 +405,16 @@ function M.simulate_shot(ox, oy, tx, ty, shooter_type, sight_len)
 end
 
 --- Bit-exact shell trajectory simulation: pass the firing angle
---- directly (0..255 bradians) instead of inferring from a target
---- point. Use this when matching a real shell's path — the engine
---- fires from tank.direction (an int), so passing it skips the
---- atan2 + lroundf round-trip in the geometry-derived variant.
+--- directly (0..255 bradians, FLOAT) instead of inferring from a
+--- target point. Use this with info.tank_angle for a bit-exact
+--- match to the engine's actual shell flight — the engine stores
+--- tank.angle as a float and shellsAddItem fires at that exact
+--- value, so the BYTE-floored info.direction misses the actual
+--- flight path by up to one brad (~3 game pixels at gun_range 7).
 function M.simulate_shot_angle(ox, oy, angle, shooter_type, sight_len)
   return cpf_simulate_shot_angle(
     math.floor(ox + 0.5), math.floor(oy + 0.5),
-    math.floor(angle + 0.5),
+    angle,                              -- pass float through
     shooter_type or M.SHOT_TANK,
     sight_len or 0)
 end
@@ -402,6 +457,16 @@ function M.dijkstra_trace_path(kind, dx, dy)
   return cpf_dijkstra_trace_path(kind, dx, dy)
 end
 
+--- Multi-slate trace: walks slates of `kind` in started_tick descending
+--- order, returns the trace from the first slate where (dx, dy) is
+--- reachable. Use this when the cost was found via lookup_by_kind's
+--- older-slate fallback — the single-slate dijkstra_trace_path picks
+--- the "best" slate which may be a newer one that hasn't expanded to
+--- (dx, dy) yet, returning nil even though some other slate has it.
+function M.dijkstra_trace_path_by_kind(kind, dx, dy)
+  return cpf_dijkstra_trace_path_by_kind(kind, dx, dy)
+end
+
 function M.estimate_tank_travel_ticks(sx, sy, dx, dy, in_boat, max_ticks, stuck_ticks)
   return cpf_estimate_tank_travel_ticks(sx, sy, dx, dy, in_boat,
                                          max_ticks or 4000, stuck_ticks or 200)
@@ -430,6 +495,16 @@ end
 --- @return table  Array of {x=, y=} steps from src to dest.
 function M.trace_path()
   return cpf_trace_path()
+end
+
+--- Trace the most-recent A* search's path to (dx, dy) regardless of
+--- pf->status. Use immediately after cost_to() — its cleanup
+--- (status=-1, dest_x/y=-1) makes the regular trace_path() return
+--- empty even when the search reached dest, but the closed/parent
+--- state is still readable in the current epoch.
+--- @return table  Array of {x=, y=} steps, or empty if dest wasn't reached.
+function M.trace_last_search(dx, dy)
+  return cpf_trace_last_search(dx, dy)
 end
 
 return M

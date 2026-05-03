@@ -77,7 +77,8 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
                            tkExplosions, maxTkExplosions,
                            bases, maxBases,
                            pills, maxPills,
-                           events, maxEvents);
+                           events, maxEvents,
+                           false);
     return TRUE;
 }
 

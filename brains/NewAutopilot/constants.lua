@@ -154,7 +154,19 @@ M.TANK_FULL_SHELLS = 40
 -- Goal selection thresholds
 M.ARMOUR_CRITICAL  = 5    -- flee immediately
 M.ARMOUR_LOW       = 15   -- seek resupply
+M.ARMOUR_MODERATE  = 25   -- conditionally force PPT when standoff is hot
 M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
+
+-- PPT-force thresholds. PPT (Protected Pill Take) is normally only
+-- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let
+-- low-armour situations force PPT even on a soft pill, because the
+-- bot can't afford to take return fire while charging:
+--   - armour <= ARMOUR_LOW: always force PPT regardless of standoff
+--     danger (we're one or two hits from flee territory).
+--   - armour <= ARMOUR_MODERATE AND standoff danger >= ARMOUR_MOD_PPT_DANGER:
+--     mid-armour and the chosen standoff is hot — too risky to charge
+--     unshielded even on a low-HP pill.
+M.ARMOUR_MOD_PPT_DANGER = 75
 M.ARMOUR_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.SHELLS_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.ARMOUR_PER_PILL_HP = 2  -- estimated armour lost per pill HP when attacking
@@ -260,6 +272,29 @@ M.STALE_SKIP_TICKS       = 500   -- skip object entirely if unseen this long (~1
 M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shell range)
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
 M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take
+
+-- "Finish what you started" bias. When state.wounded_pill is set AND
+-- that pill's current HP is at or below WOUNDED_FINISH_THRESHOLD, the
+-- attack-pill cost evaluator scales the cost of OTHER pill takes by
+-- up to WOUNDED_FINISH_OTHER_PENALTY. The penalty fades linearly with
+-- ticks since wounded_pill was set (matches the 500-tick wounded
+-- expiry in init.lua) and scales with how close the wounded pill is
+-- to dead (1 HP gets the full penalty, threshold HP gets none). Self-
+-- defense (attack_tank, flee) is unaffected — only sibling pill
+-- takes get penalized so an enemy tank rush still wins priority.
+M.WOUNDED_FINISH_THRESHOLD     = 10
+M.WOUNDED_FINISH_DECAY_TICKS   = 15000  -- 5 min @ 50Hz
+M.WOUNDED_FINISH_OTHER_PENALTY = 3.0  -- max cost multiplier on other pills
+
+-- Cross-goal commit discount. Stacks with the existing 0.3x in-pool
+-- pill discount: when the wounded pill is in the active "finish_other"
+-- window, ALSO multiply the wounded-pill take's cost by this factor.
+-- The 0.3x already nudges it past sibling pills; this further tilts
+-- it past unrelated goals (capture_base, refuel, attack_tank when
+-- not urgent, etc.). Decays alongside finish_other via the same
+-- time_factor — fully active at age=0 (×0.5), back to ×1.0 once
+-- WOUNDED_FINISH_DECAY_TICKS expires.
+M.WOUNDED_COMMIT_DISCOUNT      = 0.5
 
 -- Protected pill take (PPT). When the target pill's health is at least
 -- PPT_HEALTH_THRESHOLD, the bot enters PPT mode: shorter standoff
@@ -541,14 +576,18 @@ M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain
 -- spread that work across DIJKSTRA_SPREAD_TICKS to keep per-tick cost low,
 -- and rerun the search every DIJKSTRA_RECOMPUTE_INTERVAL ticks (or sooner
 -- if the tank moves more than DIJKSTRA_RESTART_DIST tiles).
-M.DIJKSTRA_SPREAD_TICKS         = 50    -- ticks to spread one search over (5 sec at 10 Hz)
-M.DIJKSTRA_RECOMPUTE_INTERVAL   = 50    -- ticks between recompute kickoffs for long-range slate.
+M.DIJKSTRA_SPREAD_TICKS         = 50    -- ticks to spread one search over (legacy; see per-range values below)
+M.DIJKSTRA_SHORT_SPREAD_TICKS   = 25    -- (unused with hard budget; kept for reference)
+M.DIJKSTRA_LONG_SPREAD_TICKS    = 125   -- half of RECOMPUTE_INTERVAL: long-range completes in ~2.5 s
+M.DIJKSTRA_RECOMPUTE_INTERVAL   = 250   -- ticks between recompute kickoffs for long-range slate (5 s @ 50 Hz).
 M.DIJKSTRA_RESTART_DIST         = 3     -- tank-moved threshold (tiles) to force restart
 M.DIJKSTRA_MAX_COST             = 0     -- 0 = unlimited; long-range covers the whole map
 
 -- Short-range "radar ping": fast local Dijkstra that restarts frequently
 -- for responsive nearby navigation. Falls through to long-range for distant tiles.
-M.DIJKSTRA_SHORT_INTERVAL       = 10    -- ticks between short-range restarts (1 sec)
+M.DIJKSTRA_SHORT_INTERVAL       = 10    -- ticks between short-range restarts (0.2 s @ 50 Hz)
+M.DIJKSTRA_SHORT_BUDGET         = 500   -- hard node-expansion cap per tick for short-range slates
+                                        -- (10 ticks × 500 = 5000 nodes ≈ 10-tile radius)
 M.DIJKSTRA_SHORT_MAX_COST       = 0     -- 0 = unlimited; expansion budget limits coverage, not cost cap
 M.DIJKSTRA_SHORT_RESTART_DIST   = 2     -- tank-moved threshold for short-range restart
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra

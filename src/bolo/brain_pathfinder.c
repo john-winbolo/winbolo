@@ -2079,6 +2079,33 @@ const DijkstraSlate *brainPathfinderDijkstraGetSlate(BrainPathfinder *pf, int sl
   return &pf->dij_slates[slate];
 }
 
+/* Walks slates by recency, picks the first where (dx, dy) is reachable
+ * (cheaper boat layer < INF), then traces from that one. O(slates) for
+ * the slate selection (cheap; O(1) cost-at lookup per slate), O(path)
+ * for the trace. Mirrors LookupByKind's selection so the chosen slate
+ * is the same one that returned the cost. */
+int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
+                                            int dx, int dy,
+                                            int *path_x, int *path_y,
+                                            int max_steps) {
+  if (!pf) return 0;
+  if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
+  int order[DIJKSTRA_NUM_SLATES];
+  int n = slate_indices_by_recency(pf, kind, order);
+  for (int i = 0; i < n; i++) {
+    int slate = order[i];
+    DijkstraSlate *s = &pf->dij_slates[slate];
+    if (!s->active || !s->g_cost || !s->dir_at) continue;
+    float c_land = s->g_cost[node_idx(dx, dy, 0)];
+    float c_boat = s->g_cost[node_idx(dx, dy, 1)];
+    if (c_land >= COST_INF && c_boat >= COST_INF) continue;
+    int got = brainPathfinderDijkstraTracePath(pf, slate, dx, dy,
+                                                path_x, path_y, max_steps);
+    if (got > 0) return got;
+  }
+  return 0;
+}
+
 int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
                                       int dx, int dy,
                                       int *path_x, int *path_y,
@@ -2542,6 +2569,49 @@ int brainPathfinderTracePath(BrainPathfinder *pf,
   }
 }
 
+/* Variant of brainPathfinderTracePath that takes explicit (dx, dy) and
+ * walks the parent chain regardless of pf->status. Useful immediately
+ * after a one-shot cost_to call: cost_to leaves the closed/parent
+ * state in the current epoch but resets pf->status = -1 and
+ * pf->dest_x/y = -1 so the regular trace_path fails. The parent
+ * chain is still readable via the epoch-aware get_parent/get_closed
+ * helpers. Returns 0 if the dest tile isn't in the closed set
+ * (search didn't reach it). */
+int brainPathfinderTraceLastSearchPath(BrainPathfinder *pf,
+                                        int dx, int dy,
+                                        int *path_x, int *path_y,
+                                        int max_steps) {
+  int cur, count, i;
+  int stack_x[512], stack_y[512];
+
+  if (!pf) return 0;
+  if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
+
+  int dest_tile = dy * MAP_SIZE + dx;
+  int dest_ni = -1;
+  if (get_closed(pf, dest_tile)) dest_ni = dest_tile;
+  else if (get_closed(pf, dest_tile + BOAT_OFFSET)) dest_ni = dest_tile + BOAT_OFFSET;
+  if (dest_ni < 0) return 0;
+
+  cur = dest_ni;
+  count = 0;
+  while (cur >= 0 && cur < NODE_COUNT && count < 512) {
+    uint32_t p;
+    stack_x[count] = node_x(cur);
+    stack_y[count] = node_y(cur);
+    count++;
+    p = get_parent(pf, cur);
+    if (p == PARENT_NONE) break;
+    cur = (int)p;
+  }
+
+  for (i = 0; i < count && i < max_steps; i++) {
+    path_x[i] = stack_x[count - 1 - i];
+    path_y[i] = stack_y[count - 1 - i];
+  }
+  return count < max_steps ? count : max_steps;
+}
+
 /* ------------------------------------------------------------------ */
 /* Front line detection (influence sign-change boundaries)              */
 /* ------------------------------------------------------------------ */
@@ -2935,11 +3005,14 @@ int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
 /* Public entry: take the firing angle directly. Bit-exact match to a
  * real shell when called with the engine's tank.direction. */
 int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
-                                     int angle,
+                                     float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles) {
   if (out_tiles == NULL || max_tiles <= 0) return 0;
-  int a = ((angle % 256) + 256) % 256;
+  /* Wrap to [0, 256) keeping the fractional part — utilCalcDistance
+   * uses a 256-entry sin/cos table internally but interpolates at
+   * the call site for sub-brad accuracy. */
+  float a = fmodf(fmodf(angle, 256.0f) + 256.0f, 256.0f);
   return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);

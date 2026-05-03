@@ -16,6 +16,7 @@ local attack = require("attack")
 local print2 = require("print2")
 local threat = require("threat")
 local vizmod = require("viz")
+local json   = require("json")
 
 local M = {}
 
@@ -28,6 +29,32 @@ local last_strategic_goal = nil  -- track to avoid spamming logs
 -- Technique selection: which attack method to use against hostile pills.
 -- Priority: pill placement > wall-shield > hardline (bpc)
 -- Returns "pill_place", "wall_shield", or "hardline"
+-- TTK-vs-TTI intercept penalty: looks at every enemy tank, computes
+-- their time-to-arrive at (target_mx, target_my) and compares to our
+-- time-to-kill (= target_hp * TTK_TICKS_PER_HIT). If they can intercept
+-- with safety margin to spare, returns the largest penalty across all
+-- threats; otherwise 0. Centralises a loop that was duplicated in
+-- attack_pill_adjustments and compute_pool*_cost — drift risk was high
+-- since the same penalty curve was in two places.
+local function intercept_penalty_ttk(target_mx, target_my, target_hp, enemy_tanks)
+  if not enemy_tanks or #enemy_tanks == 0 then return 0 end
+  local ttk = target_hp * C.TTK_TICKS_PER_HIT
+  local worst = 0
+  for _, et in ipairs(enemy_tanks) do
+    local et_dist = U.mdist(et.mx, et.my, target_mx, target_my)
+    if et_dist <= C.INTERCEPT_MAX_RANGE then
+      local espeed = math.max(et.speed, 0.5)
+      local tti = et_dist / espeed
+      if ttk > tti * C.INTERCEPT_SAFETY_MARGIN then
+        local ratio = ttk / math.max(1, tti)
+        local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
+        if pen > worst then worst = pen end
+      end
+    end
+  end
+  return worst
+end
+
 local function pick_attack_technique(world, info, state)
   -- Pill placement is always preferred when pills are available
   if (info.carried_pills or 0) > 0 then
@@ -80,19 +107,8 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
       wsim_dx, wsim_dy = spot_mx, spot_my
     else
       -- Fallback: cheapest adjacent tile to the pill
-      local best_adj_cost = math.huge
-      for d = 0, 7 do
-        local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
-        local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
-        local ax, ay = gmx + DX[d+1], gmy + DY[d+1]
-        if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-          local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_PILL, ax, ay, 0)
-          if ac < best_adj_cost then
-            best_adj_cost = ac
-            wsim_dx, wsim_dy = ax, ay
-          end
-        end
-      end
+      local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_PILL, gmx, gmy, 0)
+      if ax then wsim_dx, wsim_dy = ax, ay end
     end
   end
 
@@ -219,20 +235,9 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
         -- onto a live pill; bases are expensive to stand on).
         local dx, dy = obj.mx, obj.my
         if obj.health and obj.health > 0 then
-          local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
-          local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
-          local adj_best = math.huge
-          for d = 1, 8 do
-            local ax, ay = obj.mx + DX8[d], obj.my + DY8[d]
-            if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-              local ac = smart_cost(kind, tmx, tmy, ax, ay, boat_flag,
-                                    shells, trees, mines, armour)
-              if ac < adj_best then
-                adj_best = ac
-                dx, dy = ax, ay
-              end
-            end
-          end
+          local _, ax, ay = cpf.cheapest_adjacent(kind, tmx, tmy,
+            obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+          if ax then dx, dy = ax, ay end
         end
         local c = smart_cost(kind, tmx, tmy, dx, dy, boat_flag,
                               shells, trees, mines, armour)
@@ -256,7 +261,9 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
       ::skip::
     end
   end
-  if danger_scale_override then cpf.set_config("danger_scale", 1.0) end
+  -- Always restore even if no override was set — defends against any
+  -- earlier code path leaving danger_scale in a non-default state.
+  cpf.set_config("danger_scale", 1.0)
   return best, best_id, best_cost, candidates
 end
 
@@ -640,8 +647,12 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   local desc = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost)
   if imminent then desc = desc .. " IMMINENT" end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+  -- race_mode is currently a single bool. The "or imminent" branch
+  -- is dead because CAPTURE_RACE_MODE_CAPTURE is always true; left
+  -- here as a single assignment from the global constant. If we ever
+  -- want to distinguish "always race" from "only race when imminent",
+  -- this needs to become two flags or a string.
   local race_mode = C.CAPTURE_RACE_MODE_CAPTURE
-                    or (imminent and C.CAPTURE_RACE_MODE_IMMINENT)
   return {
     cost = raw_cost,
     loc_mult = lm, loc_reason = lr,
@@ -679,8 +690,12 @@ local function eval_capture_pill(state, world, info, tmx, tmy, boat, ammo)
   local desc = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost)
   if imminent then desc = desc .. " IMMINENT" end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+  -- race_mode is currently a single bool. The "or imminent" branch
+  -- is dead because CAPTURE_RACE_MODE_CAPTURE is always true; left
+  -- here as a single assignment from the global constant. If we ever
+  -- want to distinguish "always race" from "only race when imminent",
+  -- this needs to become two flags or a string.
   local race_mode = C.CAPTURE_RACE_MODE_CAPTURE
-                    or (imminent and C.CAPTURE_RACE_MODE_IMMINENT)
   return {
     cost = raw_cost,
     loc_mult = lm, loc_reason = lr,
@@ -736,21 +751,8 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   end
 
   -- Enemy tank intercept (TTK vs TTI)
-  local ttk = pill.health * C.TTK_TICKS_PER_HIT
   local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-  local worst_intercept = 0
-  for _, et in ipairs(enemy_tanks) do
-    local et_dist = U.mdist(et.mx, et.my, pill.mx, pill.my)
-    if et_dist <= C.INTERCEPT_MAX_RANGE then
-      local espeed = math.max(et.speed, 0.5)
-      local tti = et_dist / espeed
-      if ttk > tti * C.INTERCEPT_SAFETY_MARGIN then
-        local ratio = ttk / math.max(1, tti)
-        local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
-        if pen > worst_intercept then worst_intercept = pen end
-      end
-    end
-  end
+  local worst_intercept = intercept_penalty_ttk(pill.mx, pill.my, pill.health, enemy_tanks)
   if worst_intercept > 0 then
     combat_cost = combat_cost + worst_intercept
     antic_desc = antic_desc .. string.format(" +intercept=%.0f", worst_intercept)
@@ -771,7 +773,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     end
   end
   if crossfire_pen > 0 then
-    adj_cost = adj_cost + crossfire_pen
+    combat_cost = combat_cost + crossfire_pen
     antic_desc = antic_desc .. string.format(" +xfire=%.0f", crossfire_pen)
   end
 
@@ -781,10 +783,51 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     antic_desc = antic_desc .. " *eLGMdead"
   end
 
-  -- Wounded pill: we already damaged it, finish the job
+  -- Wounded pill: we already damaged it, finish the job. 0.3x is the
+  -- in-pool discount (vs sibling pills). The cross-goal commit
+  -- discount layered on top scales by the same time_factor as the
+  -- finish_other penalty so all three wounded-pill effects expire
+  -- together.
   if state.wounded_pill and state.wounded_pill.mx == pill.mx and state.wounded_pill.my == pill.my then
     combat_cost = combat_cost * 0.3
     antic_desc = antic_desc .. string.format(" *wounded(hp=%d)", state.wounded_pill.hp)
+    local wp = state.wounded_pill
+    local age         = (state.tick or 0) - (wp.tick or 0)
+    local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+    if time_factor > 0 then
+      local commit = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
+      combat_cost = combat_cost * commit
+      antic_desc = antic_desc .. string.format(" *commit(x%.2f)", commit)
+    end
+  end
+
+  -- "Finish what you started" penalty: every OTHER pill take gets
+  -- more expensive while we have an in-progress wounded pill at low
+  -- HP. Encourages the bot to come back and close out a kill instead
+  -- of starting a fresh take elsewhere. Scales with (1 - hp/thresh)
+  -- so a 1-HP wounded pill gets the full penalty, a 10-HP one gets
+  -- none. Decays linearly to 0 over WOUNDED_FINISH_DECAY_TICKS so it
+  -- doesn't trap the bot if it can't actually get back to that pill.
+  -- Self-defense (attack_tank) is in a different evaluator — this
+  -- never bumps an enemy-tank response off the top.
+  if state.wounded_pill
+     and (state.wounded_pill.mx ~= pill.mx or state.wounded_pill.my ~= pill.my) then
+    local wp = state.wounded_pill
+    local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
+    local wp_hp  = wp_now and wp_now.health or wp.hp or 0
+    local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
+    if wp_hp > 0 and wp_hp <= thresh then
+      local hp_factor   = (thresh - wp_hp) / thresh        -- 0..1, low HP = stronger
+      local age         = (state.tick or 0) - (wp.tick or 0)
+      local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+      local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
+      local mult        = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
+      if mult > 1.001 then
+        combat_cost = combat_cost * mult
+        antic_desc  = antic_desc .. string.format(
+          " *finish_other(x%.2f hp=%d age=%d)", mult, wp_hp, age)
+      end
+    end
   end
 
   -- Base Killer Mode: deprioritize pill attacks in favor of bases
@@ -1700,7 +1743,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
 
   -- Don't defend if already attacking near this pill
   local gk = state.goal and state.goal.kind or "none"
-  if gk == "attack_pill" or gk == "attack_pill" or gk == "pill_place" then
+  if gk == "attack_pill" or gk == "attack_tank" or gk == "pill_place" then
     if state.goal.mx and U.mdist(state.goal.mx, state.goal.my, target.mx, target.my) <= 5 then
       return nil
     end
@@ -1827,6 +1870,30 @@ local POOL_NAMES = {
   [12] = "wait_for_lgm",
 }
 
+-- Substates during which a fresh attack_pill goal selection should
+-- LOCK ONTO the current pill instead of re-picking from the pool —
+-- protects in-progress takes from being yanked off-target.
+local LOCK_SUBS = {
+  gather_trees=true, approach=true, build_walls=true,
+  aim=true, detree=true, charge=true, engage=true, rush=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
+  ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true, ws_retreat=true, ws_rebuild=true,
+  swerve=true, post_engage=true, loiter=true,
+}
+
+-- Wall-shield investment substates; gain extra commitment penalty
+-- in goal_selection's hysteresis so we don't abandon a half-built
+-- shield setup just because another pill briefly looks cheaper.
+local WS_SUBS = {
+  ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true,   ws_retreat=true, ws_rebuild=true,
+  gather_trees=true, build_walls=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
+}
+
 -- Inject a low-cost wait_for_lgm candidate so the bot prefers to wait
 -- when the LGM is out (e.g. farming) and we'd otherwise wander off.
 -- Skipped during goals that ARE actively driving the LGM to do
@@ -1941,27 +2008,35 @@ local function filter_capture_base(obj, state)
   return true
 end
 
+-- filter_capture_pill: returns nil if the pill qualifies for scoring,
+-- or a reject descriptor table { reason = "<short>", remaining = <ticks> }
+-- when it should be SHOWN in the pool grid but greyed out (so the user can
+-- see "this pill exists, here's why we're not picking it"). The only
+-- truly-hard reject is "alive" (that's attack_pill's job, not ours).
 local function filter_capture_pill(obj, state)
-  -- Health == 0 + on the ground = capturable. Owner can be:
-  --   neutral  : freshly placed / never owned
-  --   friendly : an ally died carrying it (still claims it but worth 0)
-  --   hostile  : an enemy died carrying it (tank.c:1920 sets armour=0,
-  --              owner=dead-player). Without this branch the pill would
-  --              be invisible to capture_pill (only picks neutral/friendly)
-  --              and to attack_pill (requires health > 0), and so just
-  --              sit on the map ignored.
-  if not (obj.health == 0
-          and (obj.owner == "neutral" or obj.owner == "friendly"
-               or obj.owner == "hostile")) then return false end
-  -- Skip pills already in someone's tank — picked up, mx/my is stale.
-  if obj.in_tank then return false end
+  -- Alive pills aren't capturable — they belong in attack_pill. Hide
+  -- entirely (we don't want every alive pill cluttering pool 4).
+  if (obj.health or 0) > 0 then return { reason = "alive" } end
+  -- in_tank: someone picked it up. Show as rejected so the user can see
+  -- "yes the dead pill exists, but it's currently in flight."
+  if obj.in_tank then return { reason = "in_tank" } end
+  -- blocked: stuck/no-build cooldown on this tile.
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
-    if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end
+    local until_tick = state.blocked[bk]
+    if until_tick and (state.tick or 0) < until_tick then
+      return { reason = "blocked", remaining = until_tick - (state.tick or 0) }
+    end
   end
+  -- stale: bot hasn't observed this pill recently. Likely fog of war.
   local now = state and state.tick or 0
-  if obj.last_seen and now > 0 and (now - obj.last_seen) > C.STALE_SKIP_TICKS then return false end
-  return true
+  if obj.last_seen and now > 0 then
+    local age = now - obj.last_seen
+    if age > C.STALE_SKIP_TICKS then
+      return { reason = "stale", remaining = age - C.STALE_SKIP_TICKS }
+    end
+  end
+  return nil
 end
 
 local function filter_repair_pill(obj, state, info)
@@ -2009,6 +2084,49 @@ local POOL_FILTERS = {
 }
 
 -- =========================================================================
+-- compute_pool4_cost — the capture_pill cost formula extracted so it
+-- can be evaluated synchronously at queue-add time (high-priority
+-- "grab the pill we just killed" responsiveness) AND at the normal
+-- per-tick step_eval_queue cadence (refresh as conditions change).
+-- Returns (cost, dist_score, danger_val, intercept) so the caller
+-- can stash the components for the breakdown formula.
+local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
+  -- Distance to cheapest reachable adjacent tile (pill tile itself
+  -- carries an impassable overlay so we route to a neighbor). Uses
+  -- the dijkstra-only variant — no A* fallback because we want the
+  -- per-tick cost lookup to be cheap; A* cost is computed by the
+  -- step_eval_queue path if the slate misses.
+  local best_adj = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
+  -- Unreachable: bail with COST_INF instead of collapsing to 0.
+  -- The previous `or 0` made an unreachable pill score as a 0-distance
+  -- target, which is exactly the wrong direction (it'd dominate the
+  -- pool). 1e30 is the COST_INF convention used elsewhere here.
+  if best_adj >= math.huge then
+    return 1e30, 1e30, 1e30, 0
+  end
+  local dist_raw   = best_adj
+  local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
+  local danger_val = threat.at(obj.mx, obj.my)
+  -- Intercept: an enemy tank close enough to beat us to the pill
+  -- (Manhattan dist ratio scaled by safety margin) bumps the cost.
+  local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
+  local intercept = 0
+  local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
+  for _, et in ipairs(enemy_tanks) do
+    local et_dist = U.mdist(et.mx, et.my, obj.mx, obj.my)
+    if et_dist <= C.INTERCEPT_MAX_RANGE
+       and our_dist > et_dist * C.INTERCEPT_SAFETY_MARGIN then
+      local ratio = our_dist / math.max(1, et_dist)
+      local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
+      if pen > intercept then intercept = pen end
+    end
+  end
+  local c = C.CAPTURE_PILL_BASE_COST + dist_score
+          + danger_val * C.CAPTURE_PILL_DANGER_SCALE
+          + intercept
+  return c, dist_raw, dist_score, danger_val, intercept
+end
+
 -- build_eval_queue — called at the start of each replan cycle.
 -- Iterates all incremental pools, applies filters, and builds a flat
 -- work queue of candidates to evaluate (2 per tick).
@@ -2078,12 +2196,43 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Pool 4: capture_pill
-  local has_dead = not perc or (perc.dead_neutral_pill_count > 0)
-  if has_dead then
-    for id, obj in pairs(world.pills) do
-      if filter_capture_pill(obj, state) then
-        queue[#queue + 1] = { pool = 4, id = id, obj = obj }
+  -- Pool 4: capture_pill. Score brand-new candidates synchronously
+  -- so a pill we just killed shows up in the pool grid with a real
+  -- cost the same tick it appears (instead of "—" for the ticks
+  -- step_eval_queue takes to pop it). The eval is cheap (8 dijkstra
+  -- lookups + a threat lookup + an enemy-tank loop), so doing it at
+  -- add time has negligible cost. step_eval_queue still re-evaluates
+  -- on its normal cadence so the score stays current.
+  -- Pool 4 (capture_pill): no perception gate — every dead pill on the
+  -- map gets a row in the queue. Pills that can't actually be picked
+  -- (in_tank / blocked / stale) ride along with cost = INF and a
+  -- _reject tag so the pool grid can show them dimmed with the reason.
+  -- Hard reject only "alive" (that's attack_pill's territory).
+  if not state.cost_cache then state.cost_cache = {} end
+  for id, obj in pairs(world.pills) do
+    local reject = filter_capture_pill(obj, state)
+    if not reject or reject.reason ~= "alive" then
+      queue[#queue + 1] = { pool = 4, id = id, obj = obj, reject = reject }
+      local ck = "4:" .. id
+      if not state.cost_cache[ck] or (state.cost_cache[ck]._reject ~= nil) ~= (reject ~= nil) then
+        if reject then
+          -- Skip the cost compute — entry just exists so the row shows.
+          state.cost_cache[ck] = {
+            cost = 1e30, raw = 1e30, tick = now, _p = 4,
+            _mx = obj.mx, _my = obj.my,
+            _ds = 0, _dv = 0, _intcpt = 0,
+            _reject = reject.reason,
+            _reject_remaining = reject.remaining or 0,
+          }
+        else
+          local c, _draw, dscore, dval, intcpt =
+            compute_pool4_cost(state, world, info, obj, tmx, tmy)
+          state.cost_cache[ck] = {
+            cost = c, raw = _draw, tick = now, _p = 4,
+            _mx = obj.mx, _my = obj.my,
+            _ds = dscore, _dv = dval, _intcpt = intcpt,
+          }
+        end
       end
     end
   end
@@ -2098,9 +2247,14 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Pool 6: attack_pill (only if enough shells)
+  -- Pool 6: attack_pill. Always populate when hostile pills exist —
+  -- the per-candidate cost handles the "is it sane to attack with this
+  -- many shells?" question via penalties (COST_INF if shells < pill HP,
+  -- escalating ending-shells penalty once we'd dip below SHELLS_LOW).
+  -- The old has_shells gate cleared the entire pool the moment shells
+  -- crossed SHELLS_LOW, even mid-take.
   local has_hostile_pills = not perc or (perc.attackable_pill_count > 0)
-  if has_hostile_pills and has_shells then
+  if has_hostile_pills then
     for id, obj in pairs(world.pills) do
       if filter_attack_pill(obj, state) then
         queue[#queue + 1] = { pool = 6, id = id, obj = obj }
@@ -2118,9 +2272,8 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Sort queue by euclidean distance (closest evaluated first)
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  -- Sort queue by euclidean distance (closest evaluated first).
+  -- tmx/tmy already in scope from line 2110-2111.
   table.sort(queue, function(a, b)
     local da = (a.obj.mx - tmx)^2 + (a.obj.my - tmy)^2
     local db = (b.obj.mx - tmx)^2 + (b.obj.my - tmy)^2
@@ -2161,6 +2314,23 @@ function M.build_eval_queue(state, world, info)
   state.pool_partial = {}
   -- Cost cache persists across cycles (initialized once)
   if not state.cost_cache then state.cost_cache = {} end
+
+  -- Synchronously evaluate attack_tank at the START of the cycle so a
+  -- newly-spotted enemy tank shows up in the pool grid with a real
+  -- cost on the same tick it appears, instead of waiting for finalize
+  -- (which can be many ticks later for a long eval cycle). Same
+  -- spirit as the pool-4 capture_pill seeding above. attack_tank
+  -- doesn't go through the per-tick eval queue (it's in
+  -- FINALIZE_POOLS), so this is its analog of "evaluate at add time".
+  -- finalize_pools will re-run it again at decision tick to pick up
+  -- any updates from the intervening ticks; the redundant eval is
+  -- cheap (1 cost-scan over enemy_tanks) and the final value wins.
+  if not state.pool_cache then state.pool_cache = {} end
+  do
+    local ammo = (info.shells or 0) + (info.mines or 0)
+    state.pool_cache[9] = eval_attack_tank(state, world, info, tmx, tmy,
+                                            info.inboat, ammo)
+  end
 
   -- Incremental cost_to disabled (A* heuristic bias causes missing targets)
   -- TODO: switch to Dijkstra (heuristic=0) for incremental to work correctly
@@ -2230,18 +2400,101 @@ local function get_formula_inner(e)
       or string.format("anger=%.0f <= %.0f[ANGER_ATTACK_THRESHOLD] → 0",
         e._pa, C.ANGER_ATTACK_THRESHOLD)
     local _d_stale = fmt_stale_detail(e._age, e._stale)
-    local _wound_detail = e._wound < 1 and string.format("*wound{%.1f}", e._wound) or ""
+    -- _wound shows as *wound{0.30} on the wounded pill (discount); on
+    -- every OTHER pill it's the finish_other multiplier (>1, penalty),
+    -- because step_eval_queue folds finish_other into the same wound_mult
+    -- variable. Display them with distinct labels so it's obvious
+    -- which kind of adjustment is in play.
+    local _fin_mult = e._fin_mult or 1.0
+    local _wound_detail
+    if e._wound < 1 then
+      local _cm = e._commit_mult or 1.0
+      if _cm < 0.999 then
+        _wound_detail = string.format("*wound{%.2f}*commit{%.2f}", e._wound / _cm, _cm)
+      else
+        _wound_detail = string.format("*wound{%.2f}", e._wound)
+      end
+    elseif _fin_mult > 1.001 then
+      _wound_detail = string.format("*finish_other{%.2f}", _fin_mult)
+    else
+      _wound_detail = ""
+    end
+    local _d_finish_other = _fin_mult > 1.001
+      and string.format(
+        "wounded pill (id=%d, hp=%d, age=%d ticks) is at or below WOUNDED_FINISH_THRESHOLD=%d;"..
+        " mult = 1 + (%.1f-1) × (%d-%d)/%d × max(0, 1 - %d/%d) = %.2f",
+        e._fin_wpid or -1,
+        e._fin_wphp or 0, e._fin_age or 0,
+        C.WOUNDED_FINISH_THRESHOLD or 10,
+        C.WOUNDED_FINISH_OTHER_PENALTY or 3.0,
+        C.WOUNDED_FINISH_THRESHOLD or 10, e._fin_wphp or 0,
+        C.WOUNDED_FINISH_THRESHOLD or 10,
+        e._fin_age or 0, C.WOUNDED_FINISH_DECAY_TICKS or 500,
+        _fin_mult)
+      or  "1.00 (no wounded pill, or this IS the wounded pill, or HP > threshold, or decayed out)"
+    local _self_dr = e._self_dr or 0
+    local _d_self_dr
+    if _self_dr > 0 then
+      _d_self_dr = string.format("sum of target pill's danger contribution along spot path (HP-independent) = %.0f", _self_dr)
+    elseif e._self_dr_no_path then
+      _d_self_dr = "0 (NO PATH — dijkstra slate hadn't reached best_spot at eval time; trace returned nil)"
+    else
+      _d_self_dr = "0 (no path tile lands inside the target pill's range disk, or no contribution stamped)"
+    end
+    local _ammo = e._ammo or 0
+    local _sh_now = e._sh_now or 0
+    local _sh_end = e._sh_end or 0
+    local _ammo_str = (_ammo >= 1e29) and "INF" or string.format("%.0f", _ammo)
+    local _d_ammo
+    if _ammo >= 1e29 then
+      _d_ammo = string.format(
+        "shells=%d < pill_hp=%d → cannot finish; cost = INF (filtered)",
+        _sh_now, e._hpv)
+    elseif _ammo > 0 then
+      _d_ammo = string.format(
+        "shells=%d, pill_hp=%d, end=%d < SHELLS_LOW=%d → (%d-%d) × 5 = %d",
+        _sh_now, e._hpv, _sh_end, C.SHELLS_LOW,
+        C.SHELLS_LOW, _sh_end, _ammo)
+    else
+      _d_ammo = string.format(
+        "shells=%d - pill_hp=%d = %d ≥ SHELLS_LOW=%d → 0",
+        _sh_now, e._hpv, _sh_end, C.SHELLS_LOW)
+    end
+    -- "How spot was computed" detail. Method tag (dijkstra/astar/none),
+    -- slate index when dijkstra was used, the tick smart_cost ran on,
+    -- and the realized path tiles (truncated at 24 by the producer to
+    -- fit the 400-char per-segment cap in pool_grid.cpp's parser).
+    local _spot_method = e._spot_method or "?"
+    local _spot_slate  = e._spot_slate
+    local _spot_tick   = e._spot_tick
+    local _spot_path   = e._spot_path or "(no path captured)"
+    local _spot_pathlen= e._spot_path_len or 0
+    local _d_spot
+    if _spot_method == "dijkstra" then
+      _d_spot = string.format(
+        "method=dijkstra slate=%s tick=%s path_len=%d path=%s",
+        tostring(_spot_slate), tostring(_spot_tick), _spot_pathlen, _spot_path)
+    elseif _spot_method == "astar" then
+      _d_spot = string.format(
+        "method=astar (dijkstra slate hadn't reached spot) tick=%s path_len=%d path=%s",
+        tostring(_spot_tick), _spot_pathlen, _spot_path)
+    else
+      _d_spot = string.format(
+        "method=%s tick=%s — no path produced",
+        tostring(_spot_method), tostring(_spot_tick))
+    end
     f = string.format(
-      "spot{%.0f}@(%d,%d) + (A*{%.0f%s}@(%d,%d) + stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s"..
+      "spot{%.0f}@(%d,%d) + (A*{%.0f%s}@(%d,%d) + stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
       "||spot cost is NOT scaled by hp — only combat/travel terms are"..
-      "|hp:%s|anger:%s|stale:%s",
+      "|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       raw > 500 and string.format("/raw%s",
         raw >= 1e9 and "=INF" or string.format("=%.0f", raw)) or "",
       e._mx or 0, e._my or 0,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _d_hp, _d_anger, _d_stale)
+      e._hp, _wound_detail, _self_dr, _ammo_str,
+      _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2251,15 +2504,28 @@ local function get_formula_inner(e)
       "A*{%.0f}@(%d,%d) + base{%.0f} + threat{%.0f} + stale{%.0f}||base:%.0f[ATTACK_BASE_EXTRA_COST]|threat:%s|stale:%s",
       raw, e._mx or 0, e._my or 0, e._base, e._thr, e._stale, C.ATTACK_BASE_EXTRA_COST, _d_threat, _d_stale)
   elseif p == 4 then
-    local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
-    local _intcpt = e._intcpt or 0
-    local intcpt_tok = _intcpt > 0 and string.format(" + intcpt{%.0f}", _intcpt) or ""
-    local intcpt_det = _intcpt > 0 and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt) or ""
-    f = string.format(
-      "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f}%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
-      C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, intcpt_tok,
-      raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
-      e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
+    -- Rejected dead-pill rows: short-circuit with a "REJECT: <reason>"
+    -- formula so the breakdown panel makes clear why the row exists
+    -- with INF cost. Cost compute was skipped at queue-build time.
+    if e._reject then
+      local rem = e._reject_remaining or 0
+      local rem_tok = (e._reject == "blocked" or e._reject == "stale")
+                      and string.format(" %dt", rem) or ""
+      f = string.format(
+        "REJECT %s%s @(%d,%d)||reject:%s%s — pill exists on the map but cannot be picked this tick",
+        e._reject, rem_tok, e._mx or 0, e._my or 0,
+        e._reject, rem_tok)
+    else
+      local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
+      local _intcpt = e._intcpt or 0
+      local intcpt_tok = _intcpt > 0 and string.format(" + intcpt{%.0f}", _intcpt) or ""
+      local intcpt_det = _intcpt > 0 and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt) or ""
+      f = string.format(
+        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f}%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
+        C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, intcpt_tok,
+        raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
+        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
+    end
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
       raw, e._mx or 0, e._my or 0, e._stale, fmt_stale_detail(e._age, e._stale))
@@ -2340,6 +2606,29 @@ function M.step_eval_queue(state, world, info)
     end
     local pr = partial[pool_idx]
 
+    -- Rejected candidates (in_tank / blocked / stale dead pills): the
+    -- entry already exists in cost_cache with cost = INF and a _reject
+    -- tag. Skip the expensive cost compute — they're displayed as a
+    -- greyed-out row, not a real choice. Also recompute remaining-
+    -- ticks each tick so countdowns tick down in the panel.
+    if item.reject then
+      local ck = pool_idx .. ":" .. id
+      local entry = state.cost_cache[ck]
+      if entry then
+        if item.reject.reason == "blocked" and state.blocked then
+          local bk = U.mkey(obj.mx, obj.my)
+          local until_tick = state.blocked[bk]
+          entry._reject_remaining = (until_tick and (until_tick - now)) or 0
+          if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
+        elseif item.reject.reason == "stale" and obj.last_seen then
+          entry._reject_remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS
+          if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
+        end
+        entry.tick = now
+      end
+      goto continue
+    end
+
     -- Use the appropriate dijkstra slate via smart_cost. The pill_pool
     -- flag selects KIND_PILL (low-danger slate) for attack/capture pill
     -- pools; everything else uses KIND_NORMAL.
@@ -2357,25 +2646,26 @@ function M.step_eval_queue(state, world, info)
     local ds_override = nil
     if capture_pool then ds_override = C.CAPTURE_THREAT_WEIGHT
     elseif pill_pool then ds_override = 0.1 end
-    if ds_override then cpf.set_config("danger_scale", ds_override) end
-    -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
+    -- Pool 4 (capture_pill) does its own distance calculation via
+    -- compute_pool4_cost (8-neighbor sweep with KIND_NORMAL — the
+    -- pill is dead, so KIND_PILL would give a misleading low-danger
+    -- read). Skip the smart_cost block entirely for pool 4 to avoid
+    -- a wasted A*/Dijkstra call per candidate per tick. raw_cost is
+    -- backfilled from compute_pool4_cost's return below.
     local cost_dx, cost_dy = obj.mx, obj.my
-    if obj.health and obj.health > 0 then
-      local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
-      local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
-      local adj_best = math.huge
-      for d = 1, 8 do
-        local ax, ay = obj.mx + DX8[d], obj.my + DY8[d]
-        if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-          local ac = smart_cost(kind, tmx, tmy, ax, ay, boat_flag,
-                                shells, trees, mines, armour)
-          if ac < adj_best then adj_best = ac; cost_dx = ax; cost_dy = ay end
-        end
+    local raw_cost = 0
+    if pool_idx ~= 4 then
+      if ds_override then cpf.set_config("danger_scale", ds_override) end
+      -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
+      if obj.health and obj.health > 0 then
+        local _, ax, ay = cpf.cheapest_adjacent(kind, tmx, tmy,
+          obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+        if ax then cost_dx, cost_dy = ax, ay end
       end
+      raw_cost = smart_cost(kind, tmx, tmy, cost_dx, cost_dy, boat_flag,
+                             shells, trees, mines, armour)
+      if ds_override then cpf.set_config("danger_scale", 1.0) end
     end
-    local raw_cost = smart_cost(kind, tmx, tmy, cost_dx, cost_dy, boat_flag,
-                                 shells, trees, mines, armour)
-    if ds_override then cpf.set_config("danger_scale", 1.0) end
 
     -- For attack_pill / attack_base candidates, capture shells-on-arrival so
     -- strategy.compute_refuel_targets can account for wall-shoot consumption
@@ -2492,8 +2782,30 @@ function M.step_eval_queue(state, world, info)
       -- Extra costs for attack_pill (pool 6)
       local anger_cost, xfire_cost, intcpt_cost, wound_mult = 0, 0, 0, 1.0
       local diff_cost, spot_cost = 0, 0
+      local self_dr = 0  -- self-danger reduction: target pill's contribution
+                         -- along the spot path, scaled by missing HP. Subtracts
+                         -- from the final cost so the bot doesn't get scared off
+                         -- approaching a pill it's about to kill.
+      local _self_dr_no_path = false  -- true when trace_path returned nil
+      local ammo_cost = 0  -- shells gate: COST_INF if we can't finish the
+                           -- pill, otherwise 25 per shell under SHELLS_LOW
+                           -- the take would leave us at.
+      -- "Finish what you started" multiplier on this candidate (>1 only
+      -- when this is NOT the wounded pill AND the wounded pill is at
+      -- low HP within the decay window). 1.0 = no penalty, surfaced in
+      -- the per-pool detail formula via entry._fin_mult below.
+      local _finish_other_mult  = 1.0
+      local _finish_other_wp_hp = 0
+      local _finish_other_age   = 0
+      local _finish_other_wp_id = -1
       local spot_found_mx, spot_found_my = 0, 0  -- hoisted for formula
       local pill_anger, _ticks_to_calm = 0, 0  -- hoisted for formula detail
+      -- Spot-cost provenance for the detail panel (pool 6 only).
+      local goal_spot_method   = nil
+      local goal_spot_slate    = nil
+      local goal_spot_tick     = nil
+      local goal_spot_path_str = nil
+      local goal_spot_path_len = 0
       if pool_idx == 6 then
         -- Quick difficulty scan + best spot cost.
         -- Cache the scan per pill — result only changes when pill HP or
@@ -2503,19 +2815,38 @@ function M.step_eval_queue(state, world, info)
         if not diff_cache then diff_cache = {}; state._pill_diff_cache = diff_cache end
         local dck = obj.mx .. ":" .. obj.my .. ":" .. (state.phase or "")
         local dc = diff_cache[dck]
-        local diff_score, best_spot
-        if dc and dc.hp == (obj.health or 0) and (now - dc.tick) < 50 then
+        local diff_score, best_spot, _spots
+        -- When the all-pills viz toggle is on, force detailed=true so
+        -- the spots array comes back and we can emit per-pill candidate
+        -- overlays this tick. Cache hits without spots get
+        -- re-evaluated when the toggle is on so the user always sees
+        -- spots for the active pool-6 candidates.
+        local force_detailed = vizmod.is_on("attack_scan_spots_all_pills")
+        local just_evaluated = false
+        if dc and dc.hp == (obj.health or 0) and (now - dc.tick) < 50
+           and (not force_detailed or dc.spots) then
           diff_score = dc.score
           best_spot = dc.spot
+          _spots    = dc.spots
         else
           -- EXPERIMENTAL: full 5° scan in eval-queue ranking (was 45°).
           -- More accurate diff_score / best_spot but ~9x more spots
           -- evaluated per pill per cache miss. Watch the perf impact;
           -- revert to 45 if step_eval_queue starts blowing its budget.
-          diff_score, _, best_spot = attack.evaluate_pill_difficulty(obj, world, false, 5, state.phase)
+          diff_score, _spots, best_spot =
+            attack.evaluate_pill_difficulty(obj, world, force_detailed,
+                                            5, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
+                              spots = _spots,  -- nil unless force_detailed
+                              mx = obj.mx, my = obj.my,
                               hp = obj.health or 0, tick = now }
+          just_evaluated = true
         end
+        -- Per-pill candidate overlays now emit every tick from the
+        -- staged-reveal pass below (driven by state._pill_diff_cache),
+        -- not from the just_evaluated branch — so the all → bucket →
+        -- winner progression plays out across consecutive frames for
+        -- every cached pill.
         diff_cost = diff_score or 999
         local _diff_us = clock_us() - _t_diff
         local _spot_us = 0
@@ -2531,6 +2862,123 @@ function M.step_eval_queue(state, world, info)
                                  boat_flag, shells, trees, mines, armour)
           if spot_cost >= 1e9 then spot_cost = 500 end
           _spot_us = clock_us() - _t_spot
+
+          -- Capture which pathfinder produced spot_cost + the realized
+          -- path tiles, so the pool detail panel can show the user
+          -- exactly how this number was reached (mirrors smart_cost's
+          -- own dijkstra-then-A* fallback order).
+          -- Multi-slate Dijkstra trace: dijkstra_trace_path_by_kind
+          -- mirrors lookup_by_kind's slate-walk so we trace from the
+          -- exact slate that produced spot_cost. The single-slate
+          -- variant picks freshest-active and routinely misses when an
+          -- older slate is the one that actually reached dest. Then
+          -- only fall back to A* (cost_to) trace when no slate has it.
+          local _path_tiles = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL,
+                                                               best_spot.mx, best_spot.my)
+          local _spot_method, _spot_slate
+          if _path_tiles and #_path_tiles > 0 then
+            _spot_method = "dijkstra"
+            _spot_slate  = cpf.dijkstra_find_best(cpf.KIND_NORMAL)
+          else
+            -- smart_cost fell back to cost_to (one-shot A*). cost_to
+            -- resets pf->status/dest at the end so cpf.trace_path()
+            -- returns empty even when the search reached dest. Use
+            -- the explicit-dest variant which walks the parent chain
+            -- using the just-finished search's epoch state.
+            _path_tiles  = cpf.trace_last_search(best_spot.mx, best_spot.my)
+            _spot_method = (_path_tiles and #_path_tiles > 0) and "astar" or "(no path)"
+            _spot_slate  = nil
+          end
+          -- Serialize the path. Keep the first SPOT_PATH_FRONT tiles
+          -- (so the user sees how the bot leaves the tank) AND always
+          -- the last SPOT_PATH_TAIL=5 tiles (those are inside the
+          -- pill's range disk and matter most for the planner). For
+          -- long paths the middle is collapsed to "(... +N ...)" so
+          -- the segment stays under the renderer's per-segment cap.
+          local SPOT_PATH_FRONT = 14
+          local SPOT_PATH_TAIL  = 5
+          local spot_path_str
+          if not _path_tiles or #_path_tiles == 0 then
+            spot_path_str = "(empty)"
+          else
+            local n = #_path_tiles
+            local parts = {}
+            if n <= SPOT_PATH_FRONT + SPOT_PATH_TAIL then
+              for i = 1, n do
+                parts[#parts + 1] = string.format("(%d,%d)",
+                  _path_tiles[i].x, _path_tiles[i].y)
+              end
+            else
+              for i = 1, SPOT_PATH_FRONT do
+                parts[#parts + 1] = string.format("(%d,%d)",
+                  _path_tiles[i].x, _path_tiles[i].y)
+              end
+              parts[#parts + 1] = string.format("(... +%d ...)",
+                n - SPOT_PATH_FRONT - SPOT_PATH_TAIL)
+              for i = n - SPOT_PATH_TAIL + 1, n do
+                parts[#parts + 1] = string.format("(%d,%d)",
+                  _path_tiles[i].x, _path_tiles[i].y)
+              end
+            end
+            spot_path_str = table.concat(parts, " ")
+          end
+          goal_spot_method   = _spot_method
+          goal_spot_slate    = _spot_slate
+          goal_spot_tick     = now
+          goal_spot_path_str = spot_path_str
+          goal_spot_path_len = _path_tiles and #_path_tiles or 0
+
+          -- Self-danger reduction: subtract this pill's own contribution
+          -- to the spot-path cost, scaled linearly by missing HP. At full
+          -- HP we don't discount (pill is healthy and threatening); at 0
+          -- HP we discount fully (pill is about to die). Walks the
+          -- realized Dijkstra path and sums per-tile contributions in
+          -- cost-units (matches Dijkstra step formula:
+          -- danger * danger_scale * 16/speed, with danger_scale=1 here).
+          -- Self-danger reduction applies regardless of pill HP — the bot
+          -- is committed to attacking, so the target pill's contribution
+          -- to its own approach corridor shouldn't bully the planner even
+          -- at full HP. (Earlier this was scaled by missing HP; that
+          -- left the discount off precisely when it mattered most — the
+          -- first attack on a fresh pill.)
+          if spot_cost < 1e9 then
+            local pcontrib = threat.pill_contrib[obj.my * 256 + obj.mx]
+            if pcontrib then
+              -- Walk Dijkstra's parent chain when the slate reached the
+              -- spot; otherwise fall back to the A* search smart_cost
+              -- just ran. cpf.trace_path() returns the most-recent
+              -- cost_to result and stays valid until the next
+              -- cost_to/path_to call — nothing in this candidate's eval
+              -- runs another A* between smart_cost and here.
+              -- Use the multi-slate trace so we land on the same slate
+              -- smart_cost above used (lookup_by_kind walks all slates;
+              -- single-slate trace_path picks "best" which can be a
+              -- newer slate that hasn't reached best_spot yet, returning
+              -- nil even though the cost was found in an older slate).
+              -- No fallback to cpf.trace_path() — that would return
+              -- whatever the LAST cost_to ran (likely a different
+              -- candidate's path) and silently sum unrelated tiles.
+              local path = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL,
+                                                            best_spot.mx, best_spot.my)
+              if path then
+                for _, node in ipairs(path) do
+                  local k = node.y * 256 + node.x
+                  local p = pcontrib[k]
+                  if p then
+                    local tt = U.ttype(node.x, node.y)
+                    local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
+                    if spd <= 0 then spd = 16 end
+                    self_dr = self_dr + p * (16 / spd)
+                  end
+                end
+              else
+                -- Surface the trace failure on the entry so the formula
+                -- breakdown can show "self_dr=0 (no path)" instead of an
+                -- ambiguous 0 that could equally mean "path has no overlap".
+                _self_dr_no_path = true
+              end
+            end
+          end
         end
         if _diff_us > 1000 or _spot_us > 1000 then
           print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
@@ -2560,31 +3008,83 @@ function M.step_eval_queue(state, world, info)
           end
         end
         -- Intercept
-        local ttk = (obj.health or 0) * C.TTK_TICKS_PER_HIT
-        local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-        for _, et in ipairs(enemy_tanks) do
-          local et_dist = U.mdist(et.mx, et.my, obj.mx, obj.my)
-          if et_dist <= C.INTERCEPT_MAX_RANGE then
-            local espeed = math.max(et.speed, 0.5)
-            local tti = et_dist / espeed
-            if ttk > tti * C.INTERCEPT_SAFETY_MARGIN then
-              local ratio = ttk / math.max(1, tti)
-              local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
-              if pen > intcpt_cost then intcpt_cost = pen end
-            end
-          end
+        do
+          local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
+          intcpt_cost = intercept_penalty_ttk(obj.mx, obj.my, obj.health or 0, enemy_tanks)
         end
-        -- Wounded discount
+        -- Wounded discount. 0.3x is the in-pool (sibling-pill)
+        -- discount; commit-discount on top tilts vs unrelated goals.
+        -- Both are multiplied into wound_mult so the final pool-cost
+        -- visible to the cross-goal selector reflects the full bias.
+        local _commit_mult = 1.0
         if state.wounded_pill and state.wounded_pill.mx == obj.mx and state.wounded_pill.my == obj.my then
           wound_mult = 0.3
+          local wp = state.wounded_pill
+          local age         = (state.tick or 0) - (wp.tick or 0)
+          local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+          if time_factor > 0 then
+            _commit_mult = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
+            wound_mult = wound_mult * _commit_mult
+          end
+        end
+        -- Ammo penalty: COST_INF if we don't carry enough shells to
+        -- finish the pill at all (assumes 1 shell per HP). Otherwise
+        -- escalate by 5 per shell that the take would leave us under
+        -- SHELLS_LOW, assuming we use exactly pill.health shots. Replaces
+        -- the old has_shells gate that cleared the whole pool when
+        -- shells dropped below SHELLS_LOW (silently aborting in-flight
+        -- takes). The pool stays populated; weak-shell takes naturally
+        -- score themselves out of contention.
+        local pill_hp_now = obj.health or 0
+        if info.shells < pill_hp_now then
+          ammo_cost = 1e30
+        else
+          local ending = info.shells - pill_hp_now
+          if ending < C.SHELLS_LOW then
+            ammo_cost = (C.SHELLS_LOW - ending) * 5
+          end
+        end
+        -- "Finish what you started" penalty: every OTHER pill take
+        -- (i.e. NOT the wounded one) gets bumped by a multiplier
+        -- scaled by how close the wounded pill is to dead × time
+        -- decay. Mirrors attack_pill_adjustments's logic so the per-
+        -- tick eval queue stays consistent with the goal evaluator.
+        -- Stashed on the entry below so the breakdown formula can
+        -- show it explicitly.
+        if state.wounded_pill
+           and (state.wounded_pill.mx ~= obj.mx
+                or state.wounded_pill.my ~= obj.my) then
+          local wp = state.wounded_pill
+          local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
+          local wp_hp  = wp_now and wp_now.health or wp.hp or 0
+          local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
+          if wp_hp > 0 and wp_hp <= thresh then
+            local hp_factor   = (thresh - wp_hp) / thresh
+            local age         = (state.tick or 0) - (wp.tick or 0)
+            local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+            local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
+            local m           = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
+            if m > 1.001 then
+              wound_mult     = wound_mult * m
+              _finish_other_mult  = m
+              _finish_other_wp_hp = wp_hp
+              _finish_other_age   = age
+              _finish_other_wp_id = wp.id or -1
+            end
+          end
         end
       end
 
       -- Spot cost (path to firing position) stays fixed. A* and other combat
       -- terms scale with hp/wound — a nearly-dead pill is easier to fight
       -- but still costs the same to reach a good firing spot.
+      -- self_dr (pool 6 only) is the linear-by-HP discount on the spot path
+      -- for the target pill's own contribution; subtracted so the bot will
+      -- close in on a pill it's about to kill.
+      -- ammo_cost (pool 6 only) is the shells-budget penalty; goes to
+      -- COST_INF when we lack the shells to finish the pill at all.
       local combat = (travel + stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
-      local c = spot_cost + combat * capture_mult + base_extra + threat_cost
+      local c = spot_cost + combat * capture_mult + base_extra + threat_cost - self_dr + ammo_cost
 
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
@@ -2597,36 +3097,12 @@ function M.step_eval_queue(state, world, info)
       local _cpill_dist_score, _cpill_danger_val, _cpill_intcpt = 0, 0, 0
       local _cpill_dist_raw = raw_cost
       if pool_idx == 4 then
-        local best_adj = math.huge
-        for d = 0, 7 do
-          local DX = { 0, 1, 1, 1, 0, -1, -1, -1 }
-          local DY = { -1, -1, 0, 1, 1, 1, 0, -1 }
-          local ax, ay = obj.mx + DX[d+1], obj.my + DY[d+1]
-          if U.in_map(ax, ay) then
-            local ac = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, ax, ay, 0)
-            if ac < best_adj then best_adj = ac end
-          end
-        end
-        if best_adj < math.huge then _cpill_dist_raw = best_adj end
-        _cpill_dist_score  = (_cpill_dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
-        _cpill_danger_val  = threat.at(obj.mx, obj.my)
-        -- Intercept: mirror attack_pill's logic but use our own arrival distance
-        -- as the "completion time" (pill is already capturable, so TTC ~ travel).
-        -- Manhattan distance is a fair proxy since both tanks share speed rules.
-        local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
-        local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-        for _, et in ipairs(enemy_tanks) do
-          local et_dist = U.mdist(et.mx, et.my, obj.mx, obj.my)
-          if et_dist <= C.INTERCEPT_MAX_RANGE
-             and our_dist > et_dist * C.INTERCEPT_SAFETY_MARGIN then
-            local ratio = our_dist / math.max(1, et_dist)
-            local pen = C.INTERCEPT_PENALTY * math.min(2.0, ratio)
-            if pen > _cpill_intcpt then _cpill_intcpt = pen end
-          end
-        end
-        c = C.CAPTURE_PILL_BASE_COST + _cpill_dist_score
-            + _cpill_danger_val * C.CAPTURE_PILL_DANGER_SCALE
-            + _cpill_intcpt
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt =
+          compute_pool4_cost(state, world, info, obj, tmx, tmy)
+        -- Pool 4 skipped the smart_cost block (see above), so backfill
+        -- raw_cost from compute_pool4_cost's distance — keeps the panel
+        -- formula breakdown showing a meaningful raw value.
+        raw_cost = _cpill_dist_raw
       end
 
       -- Store raw components for lazy formula building (get_formula on cold path).
@@ -2641,6 +3117,21 @@ function M.step_eval_queue(state, world, info)
         entry._xfire=xfire_cost; entry._intcpt=intcpt_cost; entry._hp=hp_mult
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
+        entry._self_dr=self_dr
+        entry._spot_method=goal_spot_method
+        entry._spot_slate=goal_spot_slate
+        entry._spot_tick=goal_spot_tick
+        entry._spot_path=goal_spot_path_str
+        entry._spot_path_len=goal_spot_path_len
+        entry._self_dr_no_path=_self_dr_no_path
+        entry._ammo=ammo_cost
+        entry._sh_now=info.shells
+        entry._sh_end=(info.shells or 0) - (obj.health or 0)
+        entry._fin_mult=_finish_other_mult
+        entry._fin_wphp=_finish_other_wp_hp
+        entry._fin_age=_finish_other_age
+        entry._fin_wpid=_finish_other_wp_id
+        entry._commit_mult=_commit_mult
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._stale=stale_cost; entry._age=_gen_age
@@ -2671,6 +3162,7 @@ function M.step_eval_queue(state, world, info)
         pool_idx, tostring(id), _t_total / 1000, _t_raw / 1000,
         tostring(_used_dij_for_raw)))
     end
+    ::continue::
   end
 
   state.eval_queue_pos = pos
@@ -2801,8 +3293,8 @@ function M.finalize_pools(state, world, info)
     local desc3 = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost3)
     if imminent3 then desc3 = desc3 .. " IMMINENT" end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+    -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode3 = C.CAPTURE_RACE_MODE_CAPTURE
-                       or (imminent3 and C.CAPTURE_RACE_MODE_IMMINENT)
     pc[3] = {
       cost = raw_cost3,
       loc_mult = lm3, loc_reason = lr3,
@@ -2834,8 +3326,8 @@ function M.finalize_pools(state, world, info)
     local desc4 = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost4)
     if imminent4 then desc4 = desc4 .. " IMMINENT" end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
+    -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode4 = C.CAPTURE_RACE_MODE_CAPTURE
-                       or (imminent4 and C.CAPTURE_RACE_MODE_IMMINENT)
     pc[4] = {
       cost = raw_cost4,
       loc_mult = lm4, loc_reason = lr4,
@@ -2883,15 +3375,7 @@ function M.finalize_pools(state, world, info)
     -- current goal's pill so pool 6 surfaces THIS pill, not a cheaper
     -- one. Plan_position itself is not locked (we may legitimately
     -- want to switch before any real investment).
-    local LOCK_SUBS = {
-      gather_trees=true, approach=true, build_walls=true,
-      aim=true, detree=true, charge=true, engage=true, rush=true,
-      in_range_position=true, in_range_aim=true,
-      in_range_aim_finetune=true, shoot_pill=true,
-      ws_prebuild=true, ws_prewait=true, ws_advance=true,
-      ws_engage=true, ws_retreat=true, ws_rebuild=true,
-      swerve=true, post_engage=true, loiter=true,
-    }
+    -- LOCK_SUBS hoisted to module scope (see top of file).
     if state.goal and state.goal.kind == "attack_pill"
        and state.goal.mx and state.goal.my
        and LOCK_SUBS[state.goal.substate or ""] then
@@ -2997,6 +3481,30 @@ function M.update_pool_cache(state, world, info)
   -- The queue is built by init.lua after each replan decision,
   -- giving ~49 ticks to process before the next decision.
   M.step_eval_queue(state, world, info)
+
+  -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
+  -- Iterates the diff cache and emits each pill's spots with a mode
+  -- that depends on how many ticks have passed since its scan:
+  --   age 0 → all spots
+  --   age 1 → only in-bucket spots
+  --   age ≥ 2 → only the winner
+  -- Cache TTL is ~50 ticks, so the winner stays visible until the
+  -- next re-eval refreshes the entry and the cycle restarts.
+  if vizmod.is_on("attack_scan_spots_all_pills") and state._pill_diff_cache then
+    local now = state.tick or 0
+    for _, dc in pairs(state._pill_diff_cache) do
+      if dc.spots and dc.mx then
+        local age  = now - (dc.tick or 0)
+        local mode = (age <= 0) and "all"
+                  or (age == 1) and "bucket"
+                  or "winner"
+        local cdeg = dc.spot and dc.spot.deg or nil
+        attack.draw_pill_eval_spots(dc.spots, dc.mx, dc.my,
+                                    "attack_scan_spots_all_pills",
+                                    mode, cdeg)
+      end
+    end
+  end
 end
 
 -- =========================================================================
@@ -3045,26 +3553,10 @@ local function goal_selection(state, world, info, quiet)
 
   -- Helper: are we on a friendly base that can actually resupply us?
   -- Uses state.perc.base_supply (computed once per tick by perception.lua)
-  -- instead of re-reading info.base directly.
-  -- IMPORTANT: info.base reports the nearest friendly base within 7 tiles,
-  -- but the engine only refuels when the tank is ON the base tile.  We must
-  -- check that the tank map position matches the base map position.
-  local at_resupply_base = false
-  local bs = state.perc and state.perc.base_supply
-  if bs and info.base then
-    local on_base = (tmx == info.base.x and tmy == info.base.y)
-    if on_base then
-      -- Threshold must match the depleted-block check in init.lua
-      -- (LOW = 4). Otherwise a base with 1-3 units left fires Override 2
-      -- and the depleted-block fires next tick — infinite loop.
-      local LOW = 4
-      local need_arm = (info.armour < C.TANK_FULL_ARMOUR) and (bs.armour or 0) >= LOW
-      local need_sh  = (info.shells < C.TANK_FULL_SHELLS) and (bs.shells or 0) >= LOW
-      if need_arm or need_sh then
-        at_resupply_base = true
-      end
-    end
-  end
+  -- (Was: at_resupply_base computation — set but never read after
+  -- Override 2 was removed. Removed in this pass; if a future
+  -- re-introduction needs it, the bs/info.base reads + on-base
+  -- comparison were the entire body.)
 
   -- Dynamic flee threshold: when attacking a pill, account for escape cost.
   -- On slow terrain or far from a base the tank needs more armour buffer
@@ -3179,6 +3671,7 @@ local function goal_selection(state, world, info, quiet)
              or state.goal.substate == "ws_engage"
              or state.goal.substate == "aim"
              or state.goal.substate == "in_range_position"
+             or state.goal.substate == "in_range_aim_pre"
              or state.goal.substate == "in_range_aim"
              or state.goal.substate == "in_range_aim_finetune"
              or state.goal.substate == "shoot_pill"
@@ -3603,15 +4096,9 @@ local function goal_selection(state, world, info, quiet)
     -- pill-take substates introduced with PPT (gather_trees through
     -- shoot_pill — each represents real progress that resets if we
     -- swap targets).
-    local ws_subs = {
-      ws_prebuild=true, ws_prewait=true, ws_advance=true,
-      ws_engage=true,   ws_retreat=true, ws_rebuild=true,
-      gather_trees=true, build_walls=true,
-      in_range_position=true, in_range_aim=true,
-      in_range_aim_finetune=true, shoot_pill=true,
-    }
+    -- WS_SUBS hoisted to module scope (see top of file).
     local cur_sub = state.goal and state.goal.substate
-    if cur_sub and ws_subs[cur_sub] then
+    if cur_sub and WS_SUBS[cur_sub] then
       commitment = commitment + C.WALL_SHIELD_COMMITMENT
     end
     -- Track per-goal commitment bonuses. Bonuses stack on TOP of the capped
@@ -4364,770 +4851,175 @@ function M.get_queue_status(state)
   return table.concat(lines, "\n")
 end
 
--- =========================================================================
--- get_pool_breakdown — full per-pool candidate dump for the pool window.
--- Format (newline-separated):
---   =SECTION\t<idx>\t<name>\t<count>\t<winner_id>
---   ROW\t<id>\t<mx>\t<my>\t<cost>\t<weighted>\t<is_winner>\t<formula>
---   ROW\t...
---   =SECTION\t...
--- One section per pool 1..10. Section 10 is the cross-pool winners table.
--- =========================================================================
-function M.get_pool_breakdown(state)
-  local lines = {}
-  local function emit(s) lines[#lines + 1] = s end
 
+-- =========================================================================
+-- get_pool_breakdown_json — structured (JSON) version of the pool data
+-- consumed by BrainTest's pool_grid panel renderer. Builds the same
+-- per-pool candidate lists the text version emits, but as a Lua table
+-- the host parses with cJSON. Keeps the brain's data shape explicit and
+-- the host's renderer free of tab-delimited string parsing.
+--
+-- MVP shape — covers the essentials. The text version still has more
+-- detail (formula breakdown after ||, hyst suffixes, phase metrics);
+-- those land here as sub-fields when needed.
+--
+-- Schema:
+--   {
+--     phase: string,
+--     tick:  number,
+--     replan_left: number,
+--     sections: [
+--       { idx: number, name: string, weight: number, winner_id: number,
+--         layout_cell: [row, col],   -- 1-indexed for the 2x5 grid
+--         rows: [
+--           { id: number, mx: number, my: number,
+--             cost: number, weighted: number,
+--             is_winner: bool, formula: string },
+--           ...
+--         ]
+--       },
+--       ...
+--     ]
+--   }
+-- =========================================================================
+function M.get_pool_breakdown_json(state)
   local now = state.tick or 0
   local cache = state.cost_cache or {}
   local pc = state.pool_cache or {}
   local phase_weights = C.PHASE_WEIGHTS[state.phase]
 
-  -- Replan countdown: matches the HUD widget in init.lua. ticks_left=0
-  -- means THIS tick is the replan tick where the goal can change.
-  local ticks_left = 0
+  local replan_left = 0
   if state.replan_offset then
-    ticks_left = C.GOAL_REPLAN_INTERVAL - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
-    if ticks_left == C.GOAL_REPLAN_INTERVAL then ticks_left = 0 end
+    replan_left = C.GOAL_REPLAN_INTERVAL
+        - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
+    if replan_left == C.GOAL_REPLAN_INTERVAL then replan_left = 0 end
   end
-  local q6count = 0
-  for _, item in ipairs(state.eval_queue or {}) do
-    if item.pool == 6 then q6count = q6count + 1 end
-  end
-  local pc6cands = (pc[6] and pc[6].cands) and #pc[6].cands or 0
-  emit(string.format("=PHASE\t%s\t%d\tq6=%d\tpc6=%d\ttick=%d", state.phase or "?", ticks_left, q6count, pc6cands, state.tick or 0))
 
-  -- Group eval_queue items by pool index for incremental pools.
-  -- Uses the exact same iteration as get_queue_status so both windows
-  -- are guaranteed to see the same data.
+  -- Fixed 2x5 layout matching the optimize-branch poolwindow.
+  -- (Indexes 11/12 used by def_build/wait_for_lgm strips below the grid.)
+  local LAYOUT_CELL = {
+    [1] = {1,1}, [2] = {1,2}, [3] = {1,3}, [4] = {1,4}, [5] = {1,5},
+    [6] = {2,1}, [7] = {2,2}, [8] = {2,3}, [9] = {2,4}, [10]= {2,5},
+  }
+
+  -- Active-goal lookup. The renderer marks the row whose (pool, id)
+  -- matches the bot's currently-committed goal so the user can see at
+  -- a glance which candidate is actually being acted on (vs. just the
+  -- sort-winner). Pool index is derived from the goal kind name.
+  local KIND_TO_POOL = {}
+  for i, n in pairs(POOL_NAMES) do KIND_TO_POOL[n] = i end
+  local active_pool, active_id = nil, nil
+  if state.goal and state.goal.kind then
+    active_pool = KIND_TO_POOL[state.goal.kind]
+    active_id   = state.goal.target_id
+  end
+
+  -- Group eval_queue items by pool, same iteration as the text version.
+  -- Capture cached.tick so we can compute staleness per row.
   local by_pool = {}
-  local queue = state.eval_queue or {}
-  for _, item in ipairs(queue) do
+  for _, item in ipairs(state.eval_queue or {}) do
     local p = item.pool
     local obj = item.obj
-    if not obj then goto continue_bp end
-    by_pool[p] = by_pool[p] or {}
-    local cache_key = p .. ":" .. item.id
-    local cached = cache[cache_key]
-    local stale = cached and cached.tick and (now - cached.tick) or -1
-    by_pool[p][#by_pool[p] + 1] = {
-      id = item.id, mx = obj.mx or 0, my = obj.my or 0,
-      cost = cached and cached.cost or -1,
-      formula = cached and get_formula(cached) or "",
-      done = cached and true or false,
-      stale = stale,
-    }
-    ::continue_bp::
-  end
-
-  -- Collected winners (one per source pool, populated as each section
-  -- is written). The WINNERS section at the bottom reads this.
-  local winners = {}
-
-  -- Phase 0 scaffolding helper: append placeholder tokens for the new
-  -- location/density/pickup/wsim factors into a formula string. Each
-  -- token is skipped when its value equals its default, keeping rows
-  -- short until Phases 1–4 populate real values. Tokens are inserted
-  -- before the "||" detail separator so they render in the pool view.
-  local function inject_phase_factors(formula, gc)
-    if not gc then return formula end
-    local tokens = {}
-    local lm = gc.loc_mult or 1.0
-    if lm ~= 1.0 then
-      local lr = gc.loc_reason or ""
-      if lr ~= "" then
-        tokens[#tokens + 1] = string.format("×loc{%.2f}[%s]", lm, lr)
-      else
-        tokens[#tokens + 1] = string.format("×loc{%.2f}", lm)
-      end
-    end
-    local dm = gc.density_mult or 1.0
-    if dm ~= 1.0 then
-      tokens[#tokens + 1] = string.format("×dens{%.2f}(n=%d)",
-                                          dm, gc.density_n or 0)
-    end
-    local pv = gc.pickup_value or 0
-    if pv ~= 0 then
-      tokens[#tokens + 1] = string.format("-pickup{%.0f}", pv)
-    end
-    local wa = gc.wsim_add or 0
-    if gc.wsim_ran then
-      -- Always show wsim outcome when it ran, even at 0 damage, so we can
-      -- see "it survived but took N dmg" on the winner.
-      tokens[#tokens + 1] = string.format("+wsim{%.0f}", wa)
-    end
-    if gc.wsim_killed then
-      tokens[#tokens + 1] = "+KILL_REJECT{99999}"
-    end
-    if #tokens == 0 then return formula end
-    local extra = " " .. table.concat(tokens, " ")
-    -- Build wsim detail for the || section
-    local wsim_detail = ""
-    if gc.wsim_ran then
-      local parts = {}
-      parts[#parts + 1] = string.format("wsim: %ddmg arm=%d->%d (%.1fs) dmg_cost=%.0f (dmg × %d[WSIM_DAMAGE_COST_WEIGHT])",
-        gc.wsim_damage or 0,
-        gc.wsim_arm_before or 0,
-        gc.wsim_arm_after or 0,
-        (gc.wsim_ticks or 0) / 50.0,
-        wa, C.WSIM_DAMAGE_COST_WEIGHT)
-      if gc.wsim_killed then
-        parts[#parts + 1] = "wsim: PREDICTED DEATH → +99999 reject penalty"
-        parts[#parts + 1] = string.format("wsim: forward sim along straight line to (%d,%d), %s",
-          gc.mx or 0, gc.my or 0, gc.wsim_desc or "no detail")
-      end
-      wsim_detail = "|" .. table.concat(parts, "|")
-    end
-    local sep = formula:find("||", 1, true)
-    if sep then
-      return formula:sub(1, sep - 1) .. extra .. formula:sub(sep) .. wsim_detail
-    else
-      return formula .. extra .. "||" .. wsim_detail:sub(2)
+    if obj then
+      by_pool[p] = by_pool[p] or {}
+      local cached = cache[p .. ":" .. item.id]
+      by_pool[p][#by_pool[p] + 1] = {
+        id = item.id, mx = obj.mx or 0, my = obj.my or 0,
+        cost = (cached and cached.cost) or -1,
+        formula = (cached and get_formula(cached)) or "",
+        stale = (cached and cached.tick) and (now - cached.tick) or -1,
+        reject = cached and cached._reject or nil,
+        reject_remaining = cached and cached._reject_remaining or 0,
+      }
     end
   end
 
-  -- For each pool, write a section.
-  local function write_section(idx, rows, name_override)
-    local pname = name_override or POOL_NAMES[idx] or ("pool" .. idx)
-    local pw = phase_weights and phase_weights[pname] or 1.0
-
-    -- Compute weighted cost and look up hysteresis penalties for each row.
-    -- Match gc entries by (mx, my, kind) so two pools sharing a tile (e.g.
-    -- refuel and capture_base at the same base) don't steal each other's entry.
-    local gc_table = state.goal_competition or {}
-    local pool_kind = pc[idx] and pc[idx].goal and pc[idx].goal.kind
-    for _, r in ipairs(rows) do
-      r._weighted = r.cost >= 0 and (r.cost * pw) or math.huge
-      -- Find goal_competition entry by (mx, my). Only the raw-best of each
-      -- pool gets a gc entry (it's the one that went to cross-pool
-      -- competition). Other candidates in the same pool don't.
-      r._gc = nil
-      for _, e in ipairs(gc_table) do
-        if e.mx == r.mx and e.my == r.my
-           and (pool_kind == nil or e.kind == pool_kind) then
-          r._gc = e; break
-        end
-      end
+  -- Build a normal pool section. Used for indexes 1..9 and the
+  -- def_build (11) / wait_for_lgm (12) strips below the main grid.
+  local function build_section(idx)
+    local pname = POOL_NAMES[idx] or ("p"..idx)
+    local pw = (phase_weights and phase_weights[idx]) or 1.0
+    local rows_raw = by_pool[idx] or {}
+    table.sort(rows_raw, function(a, b)
+      local ac = (a.cost >= 0) and a.cost * pw or math.huge
+      local bc = (b.cost >= 0) and b.cost * pw or math.huge
+      return ac < bc
+    end)
+    local rows = {}
+    for i, r in ipairs(rows_raw) do
+      rows[i] = {
+        id = r.id, mx = r.mx, my = r.my,
+        cost = r.cost,
+        weighted = (r.cost >= 0) and (r.cost * pw) or -1,
+        is_winner = (i == 1 and r.cost >= 0 and not r.reject),
+        active_goal = (active_pool == idx and active_id == r.id),
+        stale = r.stale,
+        formula = r.formula,
+        reject = r.reject,
+        reject_remaining = r.reject_remaining,
+      }
     end
-    -- Sort ascending by RAW phase-weighted cost. This is what goal_selection
-    -- sees when picking each pool's raw minimum to send to cross-pool
-    -- competition. Sorting by post-hysteresis adjusted cost would mix
-    -- pre-hyst (candidates) vs post-hyst (the pool's one competitor)
-    -- and push the actual pool winner below its own losing siblings.
-    table.sort(rows, function(a, b) return a._weighted < b._weighted end)
-
-    -- Annotate the current-goal row and any rows that went through
-    -- cross-pool hysteresis. Only for non-WINNERS sections — WINNERS
-    -- has its own annotation path below.
-    if idx ~= 10 then
-      local cur_mx = state.goal and state.goal.mx
-      local cur_my = state.goal and state.goal.my
-      for _, r in ipairs(rows) do
-        if cur_mx and cur_my and r.mx == cur_mx and r.my == cur_my then
-          r.formula = (r.formula or "") .. " [current goal]"
-        end
-        local gc = r._gc
-        if gc then
-          r.formula = inject_phase_factors(r.formula or "", gc)
-        end
-        if gc and (gc.penalty or 0) ~= 0 then
-          local pen_reason = gc.hyst == "type" and "switch" or gc.hyst == "target" and "tgt-switch" or "hist"
-          r.formula = (r.formula or "") ..
-            string.format(" [+%.0f %s → adj=%.0f]", gc.penalty, pen_reason, gc.total)
-        end
-      end
-    end
-
-    -- The section display winner is the raw-cheapest (rows[1]). Mark it so
-    -- the C side can highlight it. But the WINNERS representative must be
-    -- the row that actually competed in cross-pool competition — identified
-    -- by having a _gc entry. These can differ when finalize_pools selected a
-    -- candidate that was cheapest at eval time but is no longer rows[1] by
-    -- the time get_pool_breakdown runs (incremental eval updates costs in the
-    -- background between the two calls).
     local winner_id = -1
-    if rows[1] and rows[1]._weighted < math.huge then
-      rows[1]._winner = true
-      winner_id = rows[1].id
-      -- Push into the winners collection unless this IS the winners
-      -- section (avoid recursion / self-listing).
-      if idx ~= 10 then
-        -- Use the phase-weighted cost so the WINNERS section sorts by
-        -- the same value that actually determines the goal winner.
-        -- Also look up the goal competition entry to show post-penalty cost.
-        local pw_tag = pw ~= 1.0 and string.format("×%.1f", pw) or "×1.0"
-        local pname2 = POOL_NAMES[idx] or ("p"..idx)
-        -- Find the row that actually competed cross-pool: the one with a _gc
-        -- entry. Fall back to rows[1] when all rows lack a gc entry (e.g.
-        -- the pool was never part of a replan yet, or goal_competition is empty).
-        local gc_row = nil
-        for _, r in ipairs(rows) do
-          if r._gc then gc_row = r; break end
-        end
-        local rep_row = gc_row or rows[1]
-        local gc = rep_row._gc  -- may be nil for the rows[1] fallback
-        -- Build competition suffix: show penalty if any.
-        local comp_suffix = ""
-        local comp_cost = rep_row._weighted   -- default: phase-weighted raw cost
-        if gc then
-          comp_cost = gc.total
-          if gc.penalty ~= 0 then
-            local pen_reason = gc.hyst == "type" and "switch" or gc.hyst == "target" and "tgt-switch" or "hist"
-            comp_suffix = string.format(" [+%.0f %s → total %.0f]",
-              gc.penalty, pen_reason, gc.total)
-          end
-          if gc.hist_t and gc.hist_t > 0 then
-            comp_suffix = comp_suffix .. string.format(" hist_t=%d", gc.hist_t)
-          end
-          if gc.hist_k and gc.hist_k > 0 then
-            comp_suffix = comp_suffix .. string.format(" hist_k=%d", gc.hist_k)
-          end
-        end
-        local base_formula = rep_row.formula or ""
-        if gc and gc.penalty ~= 0 then
-          local hyst_term = string.format("+hyst{%d}", math.floor(gc.penalty + 0.5))
-          -- Build "How computed" breakdown for the || detail section.
-          local parts = {}
-          local sw = gc.switch_flat or 0
-          local cv = gc.commit_val or 0
-          local hist_pen = gc.penalty - sw - cv
-          if sw > 0 then
-            local sw_label = (gc.hyst == "target") and "GOAL_TARGET_SWITCH_PENALTY" or "GOAL_SWITCH_PENALTY"
-            parts[#parts+1] = string.format("%d[%s]", sw, sw_label)
-          end
-          if cv > 0 then
-            local ticks = gc.ticks_on or 0
-            parts[#parts+1] = string.format("commit(%d ticks x %.1f = %d, cap=%d[GOAL_COMMITMENT_CAP])",
-              ticks, C.GOAL_COMMITMENT_PER_TICK, math.floor(cv + 0.5), C.GOAL_COMMITMENT_CAP)
-          end
-          if hist_pen > 0.5 then
-            parts[#parts+1] = string.format("hist_pen(t=%d k=%d)=%.0f",
-              gc.hist_t or 0, gc.hist_k or 0, hist_pen)
-          end
-          local hyst_compute = table.concat(parts, " + ")
-          -- Insert hyst term before || (if present), append detail after ||.
-          local sep = base_formula:find("||", 1, true)
-          if sep then
-            base_formula = base_formula:sub(1, sep - 1) .. hyst_term
-                        .. base_formula:sub(sep) .. "|hyst:" .. hyst_compute
-          else
-            base_formula = base_formula .. hyst_term .. "||hyst:" .. hyst_compute
-          end
-        end
-        winners[#winners + 1] = {
-          id = rep_row.id,
-          src_pool = idx,
-          mx = rep_row.mx, my = rep_row.my,
-          cost = comp_cost,   -- post-competition cost for correct ranking
-          formula = string.format("%s(%s)%s: %s",
-            pname2, pw_tag, comp_suffix, base_formula),
-        }
-      end
-    end
-
-    emit(string.format("=SECTION\t%d\t%s\t%d\t%d\t%.2f", idx, pname, #rows, winner_id, pw))
-    local cur_mx = state.goal and state.goal.mx
-    local cur_my = state.goal and state.goal.my
-    local cur_kind = state.goal and state.goal.kind
-    for _, r in ipairs(rows) do
-      local weighted = r._weighted < math.huge and r._weighted or -1
-      -- Flag bits: bit0 = section winner (sort position 1),
-      --            bit1 = active goal (matches state.goal).
-      -- Section-winner and active-goal are orthogonal: the active goal
-      -- may have moved to a lower position because another candidate's
-      -- raw cost is now lower, but the brain is still committed to it
-      -- until the next replan.
-      local flags = r._winner and 1 or 0
-      if cur_mx and cur_my and r.mx == cur_mx and r.my == cur_my then
-        -- Require kind match in ALL sections: two pools can share the same
-        -- tile (e.g. capture_base and attack_base on the same base tile),
-        -- so (mx,my) alone is not sufficient to identify the active goal.
-        -- For normal sections use pool_kind (the kind this pool's winner
-        -- produces); for WINNERS use the row's src_pool kind.
-        local match_kind
-        if idx == 10 then
-          match_kind = POOL_NAMES[r.src_pool or idx]
-        else
-          match_kind = pool_kind  -- pc[idx].goal.kind, nil if pool has no winner
-        end
-        if match_kind == cur_kind then
-          flags = flags + 2
-        end
-      end
-      if r._override then flags = flags + 4 end  -- ⚡ badge in C renderer
-      -- src_pool: which pool this row's color should come from. For
-      -- normal sections it's the section's own index; for the WINNERS
-      -- section the row carries its origin pool so the color matches
-      -- exactly how it would render in its native section.
-      local src_pool = r.src_pool or idx
-      local stale_ticks = r.stale or -1
-      emit(string.format("ROW\t%d\t%d\t%d\t%d\t%.1f\t%.1f\t%d\t%d\t%s",
-        r.id, src_pool, r.mx, r.my, r.cost, weighted, flags, stale_ticks, r.formula or ""))
-    end
+    if rows[1] and rows[1].is_winner then winner_id = rows[1].id end
+    return {
+      idx = idx, name = pname, weight = pw, winner_id = winner_id,
+      layout_cell = LAYOUT_CELL[idx], rows = rows,
+    }, rows[1]
   end
 
-  -- Pools 1, 3-7 from eval_queue (incremental).
-  -- If eval_queue had no items for a pool this cycle, fall back to
-  -- pc[idx].cands from the last finalize so the section is never blank.
-  for _, idx in ipairs({1, 3, 4, 5, 6, 7}) do
-    local rows = by_pool[idx]
-    if (not rows or #rows == 0) and pc[idx] and pc[idx].cands then
-      rows = {}
-      for _, cand in ipairs(pc[idx].cands) do
-        local cache_key = idx .. ":" .. cand.id
-        local cached = cache[cache_key]
-        local cstale = cached and cached.tick and (now - cached.tick) or -1
-        rows[#rows + 1] = {
-          id      = cand.id,
-          mx      = cand.mx or 0,
-          my      = cand.my or 0,
-          cost    = cand.cost or (cached and cached.cost) or -1,
-          formula = (cached and get_formula(cached)) or "",
-          stale   = cstale,
-        }
-      end
-    end
-    write_section(idx, rows or {})
-  end
-
-  -- Pool 2: defend_pill (single candidate or none).
-  do
-    local rows = {}
-    if pc[2] then
-      local g = pc[2].goal or {}
-      rows[#rows + 1] = {
-        id = 0, mx = g.mx or 0, my = g.my or 0,
-        cost = pc[2].cost or -1, formula = pc[2].desc or "",
-      }
-    end
-    write_section(2, rows)
-  end
-
-  -- Pool 8: place_strategic (winner only — strategic search internals
-  -- aren't currently captured into a candidate list).
-  do
-    local rows = {}
-    if pc[8] then
-      local g = pc[8].goal or {}
-      rows[#rows + 1] = {
-        id = 0, mx = g.mx or 0, my = g.my or 0,
-        cost = pc[8].cost or -1, formula = pc[8].desc or "",
-      }
-    end
-    write_section(8, rows)
-  end
-
-  -- Pool 9: attack_tank — use the per-tank breakdown captured by
-  -- eval_attack_tank. Falls back to pool_cache[9] alone if no breakdown
-  -- (e.g. attack_tank disabled and we only have a winner from somewhere).
-  do
-    local rows = {}
-    local bd = state.attack_tank_breakdown
-    if bd and #bd > 0 then
-      for i, b in ipairs(bd) do
-        rows[#rows + 1] = {
-          id = i, mx = b.mx, my = b.my, cost = b.cost or -1,
-          formula = (function()
-            if b.skipped then
-              return string.format("SKIP(%s) A*{%.0f} sh_arr=%s dist=%d spd=%.1f"..
-                                   "||skipped: %s (shells_on_arrival=%s < %d[TANK_COMBAT_MIN_SHELLS])",
-                b.skipped, b.path_cost or 0,
-                b.shells_on_arrival and tostring(math.floor(b.shells_on_arrival)) or "?",
-                b.dist or 0, b.speed or 0,
-                b.skipped,
-                b.shells_on_arrival and tostring(math.floor(b.shells_on_arrival)) or "?",
-                C.TANK_COMBAT_MIN_SHELLS)
-            end
-            if b.los_engage then
-              local bmult = b.boat_mult or 1.0
-              local raw = C.TANK_COMBAT_LOS_BASE_COST + (b.dist or 0) * C.TANK_COMBAT_LOS_COST_PER_TILE
-                          + (b.low_shells_penalty or 0)
-              local lsp = b.low_shells_penalty or 0
-              local d_boat = bmult < 1
-                and string.format("enemy on water → ×%.2f[%s]", bmult,
-                      bmult <= 0.25 and "DEEPSEA_MULT" or "BOAT_MULT")
-                or  "enemy on land → ×1.0"
-              return string.format(
-                "LOS{%.0f}+dist{%.0f×%.0f}%s%s dist=%d spd=%.1f"..
-                "||los_engage: clear LOS within %d[ENGAGE]+%d[LOS_EXTRA] tiles"..
-                "|cost: (%.0f[LOS_BASE] + %d × %.0f[LOS_PER_TILE]%s)%s = %.0f"..
-                "|boat:%s"..
-                "|shells_on_arrival=%s (no walls to clear)",
-                C.TANK_COMBAT_LOS_BASE_COST, b.dist or 0, C.TANK_COMBAT_LOS_COST_PER_TILE,
-                lsp > 0 and string.format("+lowsh{%.0f}", lsp) or "",
-                bmult < 1 and string.format("*boat{%.2f}", bmult) or "",
-                b.dist or 0, b.speed or 0,
-                C.TANK_COMBAT_ENGAGE_RANGE, C.TANK_COMBAT_LOS_EXTRA_RANGE,
-                C.TANK_COMBAT_LOS_BASE_COST, b.dist or 0, C.TANK_COMBAT_LOS_COST_PER_TILE,
-                lsp > 0 and string.format(" + %.0f[lowsh]", lsp) or "",
-                bmult < 1 and string.format(" × %.2f[boat]", bmult) or "",
-                (b.cost or 0),
-                d_boat,
-                b.shells_on_arrival and tostring(math.floor(b.shells_on_arrival)) or "?")
-            end
-            local aim_b   = b.aim_bonus   or 0
-            local xfire_b = b.crossfire   or 0
-            local aim_d   = b.aim_diff    or 0
-            local wall_p  = b.wall_penalty or 0
-            local whp     = b.wall_hp     or 0
-            local lsp     = b.low_shells_penalty or 0
-            local bmult   = b.boat_mult or 1.0
-            local so_mx = b.standoff_mx
-            local so_my = b.standoff_my
-            local so_sc = b.standoff_score or 0
-            local so_tag = so_mx and string.format("+standoff{%.0f@(%d,%d)}", so_sc * 0.5, so_mx, so_my) or ""
-            local disp = string.format("A*{%.0f}+base{%.0f}%s%s%s%s%s%s dist=%d spd=%.1f sh_arr=%s",
-              b.path_cost or 0, b.base or 0,
-              wall_p  > 0 and string.format("+wall{%.0f}", wall_p)  or "",
-              lsp     > 0 and string.format("+lowsh{%.0f}", lsp)    or "",
-              aim_b   > 0 and string.format("-aim{%.0f}", aim_b)    or "",
-              xfire_b > 0 and string.format("+xfire{%.0f}", xfire_b) or "",
-              bmult   < 1 and string.format("*boat{%.2f}", bmult)   or "",
-              so_tag,
-              b.dist or 0, b.speed or 0,
-              b.shells_on_arrival and tostring(math.floor(b.shells_on_arrival)) or "?")
-            local d_wall = wall_p > 0
-              and string.format("wall_hp=%d > %d[WALL_HP_FULL] → (%d-%d)×%d[WALL_PENALTY_PER_HP]=%.0f",
-                                whp, C.WALL_HP_FULL, whp, C.WALL_HP_FULL,
-                                C.TANK_COMBAT_WALL_PENALTY_PER_HP, wall_p)
-              or  string.format("wall_hp=%d <= %d[WALL_HP_FULL] (≤1 block) → 0", whp, C.WALL_HP_FULL)
-            local d_aim = aim_b > 0
-              and string.format("aim_diff=%.0f[deg] < %.0f[TANK_COMBAT_AIM_THRESHOLD]"..
-                                " → -%.0f[TANK_COMBAT_AIM_BONUS]",
-                                aim_d, C.TANK_COMBAT_AIM_THRESHOLD, C.TANK_COMBAT_AIM_BONUS)
-              or  string.format("aim_diff=%.0f[deg] >= %.0f[TANK_COMBAT_AIM_THRESHOLD] → 0",
-                                aim_d, C.TANK_COMBAT_AIM_THRESHOLD)
-            local d_xfire = xfire_b > 0
-              and string.format("tank within %.0f[TANK_COMBAT_NEAR_PILL_RANGE] tiles of hostile pill"..
-                                " → %.0f[TANK_COMBAT_NEAR_PILL_PENALTY]",
-                                C.TANK_COMBAT_NEAR_PILL_RANGE, C.TANK_COMBAT_NEAR_PILL_PENALTY)
-              or  string.format("no hostile pill within %.0f[TANK_COMBAT_NEAR_PILL_RANGE] tiles → 0",
-                                C.TANK_COMBAT_NEAR_PILL_RANGE)
-            local tshells = b.tank_shells or 0
-            local d_lowsh = lsp > 0
-              and string.format("shells=%d < %d[LOW_SHELLS_THRESHOLD] → (%d-%d)×%.1f=%.0f",
-                                tshells, C.TANK_COMBAT_LOW_SHELLS_THRESHOLD,
-                                C.TANK_COMBAT_LOW_SHELLS_THRESHOLD, tshells,
-                                C.TANK_COMBAT_LOW_SHELLS_COST_PER, lsp)
-              or  string.format("shells=%d >= %d[LOW_SHELLS_THRESHOLD] → 0",
-                                tshells, C.TANK_COMBAT_LOW_SHELLS_THRESHOLD)
-            local d_boat = bmult < 1
-              and string.format("enemy on water → ×%.2f[%s]", bmult,
-                    bmult <= 0.25 and "DEEPSEA_MULT" or "BOAT_MULT")
-              or  "enemy on land → ×1.0"
-            local d_standoff = so_mx
-              and string.format("standoff@(%d,%d) score=%.0f (×0.5=%.0f added to cost)",
-                                so_mx, so_my, so_sc, so_sc * 0.5)
-              or  "no standoff (LOS or direct)"
-            return disp .."||base:".. b.base .."[TANK_COMBAT_BASE_COST]"..
-                         "|A*: to standoff@(" .. (so_mx or "?") .. "," .. (so_my or "?") .. ") not enemy tile"..
-                         "|wall:".. d_wall ..
-                         "|lowsh:".. d_lowsh ..
-                         "|aim:".. d_aim ..
-                         "|xfire:".. d_xfire ..
-                         "|boat:".. d_boat ..
-                         "|standoff:".. d_standoff
-          end)(),
-        }
-      end
-    elseif pc[9] then
-      local g = pc[9].goal or {}
-      rows[#rows + 1] = {
-        id = 0, mx = g.mx or 0, my = g.my or 0,
-        cost = pc[9].cost or -1, formula = pc[9].desc or "",
-      }
-    end
-    write_section(9, rows)
-  end
-
-  -- WINNERS table — one row per pool that produced a candidate.
-  -- Built from the `winners` collection populated by write_section as
-  -- each per-pool section was emitted, so it tracks the live in-queue
-  -- best candidates rather than the stale post-finalize pool_cache.
-  do
-    -- Override goals bypass pool competition; inject them so the WINNERS
-    -- table reflects what the bot is actually doing.  Use cost=0 so the
-    -- sort puts them first and write_section marks them as the winner.
-    local gk = state.goal and state.goal.kind
-    if gk == "refuel_at_base" and state.refuel_override_breakdown then
-      local rb = state.refuel_override_breakdown
-      local why = rb.stay_for_lgm and "LGM returning" or "needs resupply"
+  local sections = {}
+  local winners = {}
+  for idx = 1, 9 do
+    local sec, w = build_section(idx)
+    sections[#sections + 1] = sec
+    if w then
+      -- Cross-pool WINNERS row carries src_pool so the renderer can
+      -- color it with its origin pool's hue.
+      local pname = POOL_NAMES[idx] or ("p"..idx)
+      local pw = (phase_weights and phase_weights[idx]) or 1.0
       winners[#winners + 1] = {
-        id = rb.bid, src_pool = 0,
-        mx = rb.mx, my = rb.my,
-        cost = 0,       -- force to top of sort
-        _override = true,  -- bypass marker → ⚡ badge in WINNERS
-        formula = string.format(
-          "Override2: refuel_at_base arm{%.0f} sh{%.0f} (%s)"..
-          "||Override 2 (tank on base): pool competition bypassed"..
-          "|arm:%.0f[armour]|sh:%.0f[shells]|reason:%s",
-          rb.armour, rb.shells, why,
-          rb.armour, rb.shells, why),
+        id = w.id, src_pool = idx,
+        mx = w.mx, my = w.my,
+        cost = w.weighted, weighted = w.weighted,
+        is_winner = false,
+        active_goal = w.active_goal,
+        stale = w.stale,
+        formula = string.format("%s(x%.1f): %s", pname, pw, w.formula),
       }
     end
-    -- flee_to_base no longer injected as ⚡ override — it now competes via
-    -- pool 1 with cost=1 (injected by the critical-armour block upstream).
-    -- It shows up as the normal pool-1 winner row in WINNERS.
-
-    -- LGM status row: always show when LGM is out on a mission so the user
-    -- can see whether the stay-for-LGM floor is affecting goal cost.
-    do
-      local b = state.builder or {}
-      local li = state._last_info or {}
-      local lgm_eta = b.lgm_eta
-      local now = state.tick or 0
-      local lgm_out = (li.man_status == C.LGM_MOVING)
-      if lgm_out or lgm_eta then
-        local tmx_here = li.tmx or 0
-        local tmy_here = li.tmy or 0
-        local at_base = li.at_base or false
-        local eta_ticks = lgm_eta and math.max(0, lgm_eta - now) or nil
-        local returning = lgm_eta and lgm_eta > now + C.LGM_ETA_DEPART_BUFFER
-        local floor_active = at_base and returning
-        local last_act = b.last_action and tostring(b.last_action) or "?"
-        local status
-        if floor_active then
-          status = string.format("WAITING: tank at base, LGM returning in %.1fs (cost floored at %d)",
-                                 (eta_ticks or 0) / 50.0, C.LGM_WAIT_COST)
-        elseif returning then
-          status = string.format("returning in %.1fs (tank not at base — no floor applied)",
-                                 (eta_ticks or 0) / 50.0)
-        elseif lgm_out then
-          status = string.format("out on %s (no eta yet)", last_act)
-        else
-          status = "eta known but departure buffer has passed"
-        end
-        winners[#winners + 1] = {
-          id = 0, src_pool = 0,
-          mx = tmx_here, my = tmy_here,
-          cost = floor_active and C.LGM_WAIT_COST or -1,
-          _override = not floor_active,
-          formula = string.format(
-            "LGM: %s"..
-            "||Stay-for-LGM status row"..
-            "|status:%s"..
-            "|last_action:%s"..
-            "|lgm_eta:%s|at_base:%s|returning:%s|floor_active:%s"..
-            "|LGM_WAIT_COST=%d  LGM_ETA_DEPART_BUFFER=%d",
-            status, status, last_act,
-            lgm_eta and tostring(lgm_eta) or "nil",
-            tostring(at_base), tostring(returning), tostring(floor_active),
-            C.LGM_WAIT_COST, C.LGM_ETA_DEPART_BUFFER),
-        }
-      end
-    end
-
-    -- Catch-all: if state.goal isn't represented in the winners collection
-    -- (e.g. explore, rescue_lgm, pill_place, auto-switch goal kinds that
-    -- bypass pool competition), inject a synthetic row so the user can
-    -- always see what the bot is actually doing.
-    if gk and gk ~= "none" then
-      local gmx = state.goal.mx or 0
-      local gmy = state.goal.my or 0
-      local already = false
-      for _, w in ipairs(winners) do
-        if w.mx == gmx and w.my == gmy then
-          already = true; break
-        end
-      end
-      if not already then
-        -- Look up the real cost from goal_competition (post-hysteresis,
-        -- post-phase-weight — the actual value used in the decision).
-        -- Fall back to phase-weighted pool_cache cost, then 0.
-        local real_cost = 0
-        local real_src_pool = 0
-        local gc_entry = nil
-        local pool_entry = nil
-        local gc_table = state.goal_competition or {}
-        for _, gc in ipairs(gc_table) do
-          if gc.kind == gk and gc.mx == gmx and gc.my == gmy then
-            gc_entry = gc
-            real_cost = gc.total or 0
-            break
-          end
-        end
-        -- Identify source pool (and apply phase weight to pool_cache cost)
-        for pi = 1, #POOL_NAMES do
-          local pce = pc[pi]
-          if pce and pce.goal and pce.goal.kind == gk
-             and pce.goal.mx == gmx and pce.goal.my == gmy then
-            real_src_pool = pi
-            pool_entry = pce
-            if not gc_entry then
-              local pname = POOL_NAMES[pi]
-              local pw_p = phase_weights and pname and phase_weights[pname] or 1.0
-              real_cost = (pce.cost or 0) * pw_p
-            end
-            break
-          end
-        end
-        -- Only goals that TRULY bypass pool competition get the ⚡ override
-        -- badge. Goals with a real pool entry (attack_tank, place_strategic,
-        -- etc.) are regular pool winners whose display row just wasn't
-        -- emitted by write_section — they aren't overrides.
-        local is_true_override = (pool_entry == nil and gc_entry == nil)
-        local formula_str
-        if gk == "explore" and state.explore_breakdown then
-          local eb = state.explore_breakdown
-          formula_str = string.format(
-            "explore@(%d,%d) dist{%d}"..
-            "||Exploration (no pool winner, no emergency override)"..
-            "|source:%s (frontier_size=%d)"..
-            "|dist:Manhattan dist from tank = %d tiles",
-            eb.mx, eb.my, eb.dist,
-            eb.source, eb.frontier_size, eb.dist)
-        elseif gc_entry then
-          local parts = {}
-          parts[#parts+1] = string.format("base=%.0f", gc_entry.base or 0)
-          if (gc_entry.penalty or 0) ~= 0 then
-            parts[#parts+1] = string.format("hyst=%.0f", gc_entry.penalty)
-          end
-          parts[#parts+1] = string.format("total=%.0f", gc_entry.total or 0)
-          formula_str = string.format(
-            "%s @(%d,%d) %s"..
-            "||Current goal (pool %d, injected — not in write_section winners)"..
-            "|%s",
-            gk, gmx, gmy, table.concat(parts, " "),
-            real_src_pool, table.concat(parts, "|"))
-        elseif pool_entry then
-          local pname = POOL_NAMES[real_src_pool] or ("p"..real_src_pool)
-          local pw_p = phase_weights and phase_weights[pname] or 1.0
-          formula_str = string.format(
-            "%s(×%.1f) @(%d,%d) pool=%s raw=%.0f weighted=%.0f"..
-            "||Pool-%d winner surfaced from state.pool_cache (no goal_competition entry — "..
-            "finalize-time pools like attack_tank/place_strategic don't go through hysteresis)"..
-            "|%s",
-            gk, pw_p, gmx, gmy, pname, pool_entry.cost or 0, real_cost,
-            real_src_pool,
-            pool_entry.desc or "no desc")
-        else
-          formula_str = string.format(
-            "%s @(%d,%d) raw=%.0f"..
-            "||OVERRIDE: goal bypassed pool competition entirely",
-            gk, gmx, gmy, real_cost)
-        end
-        winners[#winners + 1] = {
-          id = state.goal.target_id or 0, src_pool = real_src_pool,
-          mx = gmx, my = gmy,
-          cost = real_cost,
-          _override = is_true_override,
-          formula = formula_str,
-        }
-      end
-    end
-    write_section(10, winners, "WINNERS")
   end
 
-  -- Section 0: override goals (flee_to_base).  These bypass the pool
-  -- system entirely; we emit one row per candidate so the player can
-  -- see why each base was chosen or rejected.
-  do
-    local gk = state.goal and state.goal.kind
-    if gk == "flee_to_base" and state.flee_breakdown then
-      local fb = state.flee_breakdown
-      local cands = fb.cands or {}
-      -- Trigger header row (not a base): shows the critical-armour condition.
-      -- Included as row id=-1 so it sorts before real bases.
-      local trig = string.format(
-        "CRITICAL arm{%.0f} thr{%.0f}"..
-        "||arm:%.0f[armour] <= %.0f[flee_threshold] → CRITICAL OVERRIDE activates",
-        fb.armour, fb.threshold, fb.armour, fb.threshold)
-      emit(string.format("=SECTION\t0\toverride\t%d\t%d\t1.00",
-                         #cands + 1, fb.bid))
-      emit(string.format("ROW\t-1\t0\t%d\t%d\t%.1f\t%.1f\t0\t-1\t%s",
-                         fb.mx, fb.my, fb.armour, fb.armour, trig))
-      -- One row per candidate base.
-      for _, c in ipairs(cands) do
-        local is_win = (c.id == fb.bid) and 1 or 0
-        local formula, cost
-        if c.reject then
-          -- Rejected candidate: show reject reason.
-          cost = -1
-          formula = string.format("SKIP %s||reject:%s", c.reject, c.reject)
-        else
-          -- Valid candidate: travel + danger×dw ± adjustments.
-          cost = c.score or -1
-          local parts = string.format(
-            "travel{%.0f}+danger{%.1f}×dw{%.1f}",
-            c.travel or 0, c.danger or 0, c.dw or fb.dw or 0)
-          local detail = string.format(
-            "travel:%.0f[path cost]"..
-            "|danger:%.1f[threat.at(base)] x %.1f[FLEE_DANGER_WEIGHT] = %.1f",
-            c.travel or 0, c.danger or 0, c.dw or fb.dw or 0,
-            (c.danger or 0) * (c.dw or fb.dw or 0))
-          if (c.stale or 0) > 0 then
-            local stale_pen = math.max(0, (c.stale - C.STALE_PENALTY_START) * C.STALE_PENALTY_PER_TICK)
-            if stale_pen > 0 then
-              parts = parts .. string.format("+stale{%.0f}", stale_pen)
-              detail = detail .. string.format(
-                "|stale:max((%.0f[age]-%.0f[STALE_PENALTY_START])x%.2f[STALE_PENALTY_PER_TICK],0)=%.0f",
-                c.stale, C.STALE_PENALTY_START, C.STALE_PENALTY_PER_TICK, stale_pen)
-            end
-          end
-          if c.contested then
-            parts = parts .. string.format("+contest{%.0f}", C.CONTESTED_BASE_PENALTY)
-            detail = detail .. string.format("|contest:enemy tank near base → +%.0f[CONTESTED_BASE_PENALTY]",
-                                             C.CONTESTED_BASE_PENALTY)
-          end
-          if c.hyst then
-            parts = parts .. string.format("-hyst{%.0f}", C.REFUEL_SWITCH_THRESHOLD)
-            detail = detail .. string.format("|hyst:currently targeting this base → -%.0f[REFUEL_SWITCH_THRESHOLD]",
-                                             C.REFUEL_SWITCH_THRESHOLD)
-          end
-          formula = parts .. "||" .. detail
-        end
-        -- Use cost as both cost and weighted (no phase weight for overrides).
-        local disp_cost = c.score or -1
-        emit(string.format("ROW\t%d\t0\t%d\t%d\t%.1f\t%.1f\t%d\t-1\t%s",
-          c.id, c.mx or 0, c.my or 0, disp_cost, disp_cost, is_win, formula))
-      end
+  -- Cell 10 = cross-pool WINNERS table (ranked ascending).
+  table.sort(winners, function(a, b) return a.cost < b.cost end)
+  if winners[1] then winners[1].is_winner = true end
+  sections[#sections + 1] = {
+    idx = 10, name = "WINNERS", weight = 1.0,
+    winner_id = (winners[1] and winners[1].id) or -1,
+    layout_cell = LAYOUT_CELL[10], rows = winners,
+  }
+
+  -- Strips below the grid: def_build (11) and wait_for_lgm (12).
+  -- Only emit the section if the brain actually produced candidates
+  -- for that pool this tick — keeps the renderer from drawing empty
+  -- placeholders when the brain doesn't use the slot.
+  for _, idx in ipairs({11, 12}) do
+    if by_pool[idx] and #by_pool[idx] > 0 then
+      sections[#sections + 1] = (build_section(idx))
     end
   end
 
-  -- Section 11: builder defensive placement — shows what set_mode() decided
-  -- about a defensive pill drop during attack_tank.
-  do
-    local bd = state.builder and state.builder.defensive_debug
-    if bd then
-      local row_formula
-      if bd.found then
-        row_formula = string.format(
-          "def_place@(%d,%d) aim%d+%+d→%d dist=%d vs enemy@(%d,%d)"..
-          "||aim:%d[aim angle] offset:%+d[45deg offset] angle:%d|dist:%d tiles|enemy:(%d,%d)",
-          bd.mx, bd.my, bd.aim, bd.aoff, (bd.aim + bd.aoff) % 256, bd.dist,
-          bd.enemy_mx, bd.enemy_my,
-          bd.aim, bd.aoff, (bd.aim + bd.aoff) % 256, bd.dist,
-          bd.enemy_mx, bd.enemy_my)
-        emit(string.format("=SECTION\t11\tdef_build\t1\t1\t1.00"))
-        emit(string.format("ROW\t1\t0\t%d\t%d\t0.0\t0.0\t1\t-1\t%s",
-             bd.mx, bd.my, row_formula))
-      else
-        local reason = bd.reason or "n/a"
-        row_formula = "def_build: no target — " .. reason ..
-                      "||No defensive pill placement: " .. reason
-        emit(string.format("=SECTION\t11\tdef_build\t1\t-1\t1.00"))
-        emit(string.format("ROW\t-1\t0\t0\t0\t-1.0\t-1.0\t0\t-1\t%s", row_formula))
-      end
-    else
-      emit(string.format("=SECTION\t11\tdef_build\t0\t-1\t1.00"))
-    end
-  end
-
-  -- Pool 12: wait_for_lgm. Synthetic candidate (or none) — show it
-  -- explicitly so the user can see when it's gating goal selection.
-  do
-    if pc[12] then
-      local g = pc[12].goal or {}
-      emit(string.format("=SECTION\t12\twait_for_lgm\t1\t0\t1.00"))
-      emit(string.format("ROW\t0\t0\t%d\t%d\t%.1f\t%.1f\t1\t-1\t%s",
-        g.mx or 0, g.my or 0,
-        pc[12].cost or -1, pc[12].cost or -1,
-        pc[12].desc or "wait_for_lgm"))
-    else
-      emit(string.format("=SECTION\t12\twait_for_lgm\t0\t-1\t1.00"))
-    end
-  end
-
-  return table.concat(lines, "\n")
+  return json.encode({
+    -- Bump schema_version when the shape changes in a way that
+    -- breaks existing renderers / recorded snapshots. Renderers
+    -- check this and surface a warning for unknown versions
+    -- instead of silently misparsing.
+    schema_version = 1,
+    phase = state.phase or "?",
+    tick = now,
+    replan_left = replan_left,
+    bot = state.player_number or 0,
+    sections = sections,
+  })
 end
 
 -- Draw persistent wsim path overlays (called every tick from init.lua)

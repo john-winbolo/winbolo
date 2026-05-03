@@ -592,6 +592,22 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * dialog rows. Routes to a callback BrainTest sets at startup;
    * NULL when the brain runs under WinBolo client → no-op. */
   brainCoreRegisterVizRegister(L);
+  /* braintest_panel_register binding (sibling of viz register) for
+   * the Q-toggled panel window. Same NULL-callback behavior under
+   * the client. */
+  brainCoreRegisterPanelRegister(L);
+  /* braintest_shotsim_poi_register binding (sibling of panel register)
+   * for the shot-sim panel's POI buttons. Same NULL-callback behavior
+   * under the client. */
+  brainCoreRegisterShotSimPoiRegister(L);
+  /* viz_detail bindings (overlay_detail / _text / _clear) for the
+   * interactive inspector dialog. Same null-callback no-op behavior
+   * outside BrainTest. */
+  brainCoreRegisterVizDetail(L);
+  /* pill_contrib bindings (pillcontrib_clear / _begin_pill / _add_tile)
+   * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
+   * no-op outside BrainTest. */
+  brainCoreRegisterPillContrib(L);
 
   setup_brain_package_path(L, path);
 

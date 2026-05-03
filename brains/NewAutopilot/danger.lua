@@ -149,9 +149,31 @@ end
 -- This version samples at quarter-points and checks perpendicular offsets
 -- when midpoints hit impassable terrain.
 -- -------------------------------------------------------------------------
-function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world)
+-- excluded_pill_mx/my: optional. When set, the pill at (mx,my) has its
+-- own per-tile contribution subtracted from danger_at before the
+-- threshold check. Use when dispatching the LGM for a build that's IN
+-- this pill's danger footprint while we're committed to killing it
+-- (mirrors self_dr in goals.lua: the target shouldn't scare us off
+-- its own approach corridor).
+local function danger_at_excl(mx, my, tick, world, excl_pcontrib)
+  local d = M.danger_at(mx, my, tick, world)
+  if excl_pcontrib then
+    local contrib = excl_pcontrib[my * 256 + mx]
+    if contrib then d = d - contrib end
+    if d < 0 then d = 0 end
+  end
+  return d
+end
+
+function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world,
+                                   excluded_pill_mx, excluded_pill_my)
+  local excl_pcontrib = nil
+  if excluded_pill_mx and excluded_pill_my then
+    excl_pcontrib = threat.pill_contrib[excluded_pill_my * 256 + excluded_pill_mx]
+  end
+
   -- Quick check: destination
-  if M.danger_at(dest_mx, dest_my, tick, world) > threshold then
+  if danger_at_excl(dest_mx, dest_my, tick, world, excl_pcontrib) > threshold then
     return false
   end
 
@@ -162,7 +184,7 @@ function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world
   local dist = math.abs(ddx) + math.abs(ddy)
 
   if dist <= 1 then
-    return M.danger_at(tx, ty, tick, world) <= threshold
+    return danger_at_excl(tx, ty, tick, world, excl_pcontrib) <= threshold
   end
 
   -- Sample at fractions along the straight line
@@ -177,11 +199,11 @@ function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world
       local len = math.sqrt(ddx * ddx + ddy * ddy)
       local px = len > 0 and math.floor(-ddy / len + 0.5) or 0
       local py = len > 0 and math.floor(ddx / len + 0.5) or 0
-      local ok1 = M.danger_at(sx + px, sy + py, tick, world) <= threshold
-      local ok2 = M.danger_at(sx - px, sy - py, tick, world) <= threshold
+      local ok1 = danger_at_excl(sx + px, sy + py, tick, world, excl_pcontrib) <= threshold
+      local ok2 = danger_at_excl(sx - px, sy - py, tick, world, excl_pcontrib) <= threshold
       if not (ok1 or ok2) then return false end
     else
-      if M.danger_at(sx, sy, tick, world) > threshold then
+      if danger_at_excl(sx, sy, tick, world, excl_pcontrib) > threshold then
         return false
       end
     end

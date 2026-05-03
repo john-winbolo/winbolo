@@ -138,6 +138,32 @@ function M.is_water(tt)
   return tt == C.T_RIVER or tt == C.T_DEEPSEA
 end
 
+-- Aim-correction → key bits. For a correction (signed brads, +ve = need
+-- to turn right), returns (hold_bit, tap_bit) suitable for OR'ing onto
+-- the keys / taps masks. hold_thr is the magnitude above which we hold
+-- the turn key continuously; tap_thr is where we switch to a single tap;
+-- below tap_thr both bits are 0. Centralises a 4-line if-elseif-elseif-
+-- elseif pattern that appeared in 8+ sites in steering.lua.
+function M.aim_turn_bits(corr, hold_thr, tap_thr)
+  if     corr >  hold_thr then return KEY_TURNRIGHT, 0
+  elseif corr < -hold_thr then return KEY_TURNLEFT,  0
+  elseif corr >  tap_thr  then return 0,             KEY_TURNRIGHT
+  elseif corr < -tap_thr  then return 0,             KEY_TURNLEFT
+  end
+  return 0, 0
+end
+
+-- True if every intermediate tile between (x0,y0) and (x1,y1) is water.
+-- Lets a boat-shell traveling over the corridor reach (x1,y1) without
+-- being absorbed mid-flight by terrain. Hoisted from attack.lua and
+-- steering.lua where it was duplicated verbatim.
+function M.water_corridor_to(x0, y0, x1, y1)
+  local blocked = M.bresenham(x0, y0, x1, y1, function(cx, cy)
+    if not M.is_water(M.ttype(cx, cy)) then return true end
+  end)
+  return not blocked
+end
+
 -- Walk a Bresenham line from (x0,y0) to (x1,y1), calling fn(cx,cy) for each
 -- intermediate tile (excluding start and end points).
 -- If fn returns a non-nil, non-false value, stops early and returns that value.

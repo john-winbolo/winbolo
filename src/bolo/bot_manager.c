@@ -58,10 +58,20 @@ typedef struct {
     BYTE            playerNum;
     bool            active;
     aiType          ai;
+    /* Wall-clock duration of this bot's most recent brain.think call,
+     * in milliseconds. Updated every botManagerTick. Surfaced via
+     * botManagerGetLastThinkMs so HUDs / perf graphs can read it. */
+    double          lastThinkMs;
 } BotContext;
 
 static BotContext bots[MAX_TANKS];
 static int numBots = 0;
+
+static void (*g_preThinkHook)(int playerNum) = NULL;
+
+void botManagerSetPreThinkHook(void (*hook)(int playerNum)) {
+    g_preThinkHook = hook;
+}
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                    */
@@ -285,10 +295,13 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
         /* Run the brain */
         {
+            if (g_preThinkHook) g_preThinkHook((int)i);
             Uint64 t0 = SDL_GetPerformanceCounter();
             bool ok = luaBrainInstanceTick(&bot->brain);
             Uint64 t1 = SDL_GetPerformanceCounter();
+            if (g_preThinkHook) g_preThinkHook(-1);
             double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+            bot->lastThinkMs = ms;
             if (ms > 5.0) {
                 fprintf(stderr, "serverBrains: bot %d think took %.1fms\n", i, ms);
             }
@@ -403,6 +416,12 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum) {
     return &bots[playerNum].brain.overlay;
 }
 
+double botManagerGetLastThinkMs(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) return 0.0;
+    if (!bots[playerNum].active) return 0.0;
+    return bots[playerNum].lastThinkMs;
+}
+
 bool botManagerExecLua(BYTE playerNum, const char *src) {
     if (playerNum >= MAX_TANKS) return false;
     if (!bots[playerNum].active) return false;
@@ -421,6 +440,54 @@ bool botManagerExecLua(BYTE playerNum, const char *src) {
         return false;
     }
     return true;
+}
+
+char *botManagerEvalLuaString(BYTE playerNum, const char *src) {
+    if (playerNum >= MAX_TANKS) return NULL;
+    if (!bots[playerNum].active) return NULL;
+    if (!bots[playerNum].brain.running) return NULL;
+    lua_State *L = bots[playerNum].brain.L;
+    if (!L || !src) return NULL;
+    /* Caller-owned heap copy of whatever string the chunk returns.
+     * On any error path (compile fail, runtime fail, non-string
+     * result) we return NULL — the panel renderer treats that as
+     * "no fresh data, keep showing the previous text".
+     *
+     * Errors are logged with rate limiting so a recurring brain bug
+     * doesn't flood the console; without this the panel just goes
+     * silent and the user can't tell why. */
+    static Uint64 sLastErrLogMs = 0;
+    if (luaL_loadstring(L, src) != LUA_OK) {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastErrLogMs > 2000) {
+            SDL_Log("brain %d: panel eval compile error: %s",
+                    playerNum, lua_tostring(L, -1));
+            sLastErrLogMs = now;
+        }
+        lua_pop(L, 1);
+        return NULL;
+    }
+    if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastErrLogMs > 2000) {
+            SDL_Log("brain %d: panel eval runtime error: %s",
+                    playerNum, lua_tostring(L, -1));
+            sLastErrLogMs = now;
+        }
+        lua_pop(L, 1);
+        return NULL;
+    }
+    char *result = NULL;
+    if (lua_isstring(L, -1)) {
+        const char *s = lua_tostring(L, -1);
+        if (s) {
+            size_t n = strlen(s);
+            result = (char *)malloc(n + 1);
+            if (result) memcpy(result, s, n + 1);
+        }
+    }
+    lua_pop(L, 1);
+    return result;
 }
 
 /* ------------------------------------------------------------------ */

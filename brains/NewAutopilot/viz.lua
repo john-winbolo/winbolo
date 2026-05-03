@@ -57,12 +57,16 @@ M.IDS = {
                      long  = "Per-factor red/green labels by the LGM" },
   tank_position  = { short = "Tank position",
                      long  = "Tank wu/gu/tile readout + standoff wu" },
+  tank_angle     = { short = "Tank angle",
+                     long  = "Tank heading in brads (256 = full circle): integer info.direction + float info.tank_angle when present, plus turn-ramp counter (firstLeft/firstRight) value the engine reports." },
 
   -- HUD text (corners).
   hud_manual_control = { short = "HUD: manual control",
                          long  = "Top-left/right MANUAL CONTROL banner + key list" },
   hud_resources      = { short = "HUD: resources",
                          long  = "Shells/Mines/Armour/Trees/Speed/Boat counters" },
+  hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal)",
+                         long  = "Top-left line under the big TICK box. Brain-side timing via os.clock; color codes the think_ms cell green<5/yellow<10/orange<20/red>=20." },
   hud_replan         = { short = "HUD: replan + phase",
                          long  = "Replan countdown + phase + reason" },
   hud_goal           = { short = "HUD: current goal",
@@ -81,6 +85,8 @@ M.IDS = {
                          long  = "'BASE KILLER' mode label" },
   hud_stuck_counter  = { short = "HUD: stuck counter",
                          long  = "Stuck-detection countdown" },
+  -- (hud_click_cost removed — panel is rendered C-side again so it can
+  --  use the live Dijkstra slate / show "N/A" in playback.)
   hud_compass        = { short = "HUD: compass dirs",
                          long  = "Direction-text indicators" },
   hud_emergency_drop = { short = "HUD: emergency drop",
@@ -171,6 +177,8 @@ M.IDS = {
                              long  = "Orange outline around pills marked for repositioning" },
   wounded_pill_marker    = { short = "Wounded pill marker",
                              long  = "Marker on the wounded-pill carryover target" },
+  pool6_self_dr          = { short = "self_dr per pool-6 pill",
+                             long  = "Pool 6 (attack_pill) candidates labeled with their self-danger reduction value — the discount subtracted from the spot-path cost equal to that pill's own danger contribution × (1 - hp/15). Larger values = more committed to closing in despite the pill's own anger." },
 
   -- Shot tracker.
   shot_tracker_viz  = { short = "Shot tracker",
@@ -216,6 +224,11 @@ M.IDS = {
   hud_kill_attempt   = { short = "HUD: kill attempt",
                          long  = "Top-left KILL ATTEMPT/DAMAGE ONLY label + bullets_needed/pill_hp/fired counters" },
 
+  -- HUD: shoot_pill (PPT) live progress toward each of the three exit
+  -- triggers (kill / swerve-after-N-hits / no-progress abort).
+  hud_shoot_pill_progress = { short = "HUD: shoot_pill progress",
+                              long  = "PPT shoot_pill exit-trigger bars: kill (pill_hp), swerve (hits taken), abort (ticks since last hp drop)" },
+
   -- Floating "<in-flight>/<pill HP>" label above the target pill.
   pill_shot_count    = { short = "Pill shot count",
                          long  = "Cyan '<in-flight shots>/<pill HP>' label floating above the target pill" },
@@ -228,6 +241,39 @@ M.IDS = {
   -- legend, and standoff/approach markers for pill take planning.
   attack_scan_spots  = { short = "Attack scan spots",
                          long  = "Pill-take scan spots: per-spot LOS+score boxes, maneuver tiles, ellipses, legend, standoff/approach markers" },
+
+  -- When on, the pool-6 evaluator emits the full scan-spots overlay
+  -- (LOS, score, ellipse, maneuver tiles) for EVERY hostile/neutral
+  -- pill it considers — not just the one that won. Emission happens
+  -- on the tick `evaluate_pill_difficulty` ran for that pill (~once
+  -- per second per pill given the 50-tick diff cache), so the
+  -- recording carries the data and you can scrub onto a replan tick
+  -- in playback to see every pill's candidate spots.
+  -- Default off — when on, pool-6 evaluation runs in detailed mode
+  -- (~9× per-pill scan cost). Flip on when debugging a surprising
+  -- target/spot pick.
+  attack_scan_spots_all_pills = {
+    short = "Attack scan spots: ALL pills (pool 6)",
+    long  = "Per-pill candidate-spot overlay during pool 6 evaluation. Emits the scan-spot overlay (LOS, score, ellipse, maneuver tiles) for every hostile/neutral pill the goal selector considers, on the tick its eval ran. Diff cache TTL ~50 ticks so each pill emits once per ~1s. Heavier than the master attack_scan_spots toggle (forces detailed scan).",
+    default_on = false,
+  },
+
+  -- Last attack-goal clear reason: HUD line that names the substate
+  -- and the reason string passed to clear_attack_goal (or auto-derived
+  -- caller file:line if nothing was passed). Stays on screen for ~300
+  -- ticks after the clear, so you can scrub back from the moment goal
+  -- went to "none" and see exactly what killed it.
+  attack_clear_reason = {
+    short = "Attack clear reason",
+    long  = "Top-left HUD line showing the most recent clear_attack_goal call: tick, prior kind/substate, prior pill (mx,my), and the reason string. Visible for ~300 ticks after the clear." },
+
+  -- Persistent solid-beige disc + pill target_id label centered on the
+  -- chosen attack standoff. Drawn every tick the goal holds a standoff
+  -- so it stays visible until the standoff changes or the goal ends —
+  -- a low-noise marker for "this is the take we're committing to".
+  attack_chosen_standoff_marker = {
+    short = "Attack chosen standoff marker",
+    long  = "Persistent beige disc with the target pill's id at the chosen attack standoff. Stays visible while the goal holds a standoff." },
 
   -- Meta: when on, every overlay shape gets its viz_id labeled in tiny
   -- text at the bottom-right. Useful for "what overlay is THAT?" debugging.
@@ -333,6 +379,13 @@ local LABEL_SIZE = 0.25
 local function label(viz_id, x, y)
   if viz_id == "label_overlays" then return end
   if not overlay_text then return end
+  -- Don't emit the label when the parent viz is off — otherwise the
+  -- shape itself hides (filtered at render by its own viz_idx) but
+  -- its label keeps showing because the label is tagged with
+  -- label_overlays' idx, not the parent's. Trade-off: in playback,
+  -- frames captured while parent was off won't suddenly show labels
+  -- if you flip parent on. Acceptable for the common case.
+  if not M.is_on(viz_id) then return end
   overlay_text(x, y, viz_id, "topleft", 220, 220, 220, 200, LABEL_SIZE,
                vid("label_overlays"))
 end
@@ -385,9 +438,9 @@ function M.circle(viz_id, ...)
   assert_id(viz_id)
   if not overlay_circle then return end
   local idx = vid(viz_id)
-  -- overlay_circle args: cx, cy, radius, r, g, b, a, viz_idx
-  local cx, cy, radius, r, g, b, a = ...
-  local result = overlay_circle(cx, cy, radius, r, g, b, a, idx)
+  -- overlay_circle args: cx, cy, radius, r, g, b, a, viz_idx, subpixel
+  local cx, cy, radius, r, g, b, a, subpixel = ...
+  local result = overlay_circle(cx, cy, radius, r, g, b, a, idx, subpixel)
   if type(cx) == "number" and type(cy) == "number" and type(radius) == "number" then
     label(viz_id, cx + radius * 0.7071, cy + radius * 0.7071)
   end
@@ -401,6 +454,74 @@ function M.hud_text(viz_id, ...)
   -- overlay_hud_text args: x, y, text, anchor, r, g, b, a, viz_idx
   local x, y, text, anchor, r, g, b, a = ...
   return overlay_hud_text(x, y, text, anchor, r, g, b, a, idx)
+end
+
+-- =========================================================================
+-- viz_detail registry — per-tick clickable map regions with rich body
+-- text shown in BrainTest's "D" inspector dialog.
+--
+-- Lifecycle: brain calls M.detail_clear() at the top of think(), then
+-- per-primitive calls M.detail(detail_id, kind, ...geometry..., label)
+-- and zero-or-more M.detail_text(detail_id, line) to attach body lines.
+-- The registry is shared across all bots; the dialog filters/sorts
+-- by id. Each id is unique per primitive (brain decides naming).
+--
+-- All overlay_detail_* bindings are NULL-safe so brains running outside
+-- BrainTest skip the work transparently.
+-- =========================================================================
+
+function M.detail_clear()
+  -- DEPRECATED. The host (BrainTest) clears the viz_detail registry
+  -- ONCE per tick before any brain.think runs (see appTickBrain in
+  -- braintest_main.c). Brains that called this themselves were
+  -- wiping each other's entries because the registry is global —
+  -- last bot won, others lost. Kept as a no-op so existing brain
+  -- code that calls viz.detail_clear() still works without error.
+end
+
+--- Register a clickable rect spanning (x1,y1)-(x2,y2) in tile coords.
+--- detail_id must be unique per-primitive within a tick.
+function M.detail_rect(detail_id, x1, y1, x2, y2, label)
+  if not overlay_detail then return end
+  return overlay_detail(detail_id, "rect", x1, y1, x2, y2, label or "")
+end
+
+--- Register a clickable circle centered at (cx, cy) with given radius.
+function M.detail_circle(detail_id, cx, cy, radius, label)
+  if not overlay_detail then return end
+  return overlay_detail(detail_id, "circle", cx, cy, radius, 0, label or "")
+end
+
+--- Register a clickable text anchor at (x, y).
+function M.detail_text_anchor(detail_id, x, y, label)
+  if not overlay_detail then return end
+  return overlay_detail(detail_id, "text", x, y, 0, 0, label or "")
+end
+
+--- Append a body line to the entry for detail_id. Body lines are
+--- shown in a read-only multiline text field so the user can copy.
+function M.detail_text(detail_id, line)
+  if not overlay_detail_text then return end
+  return overlay_detail_text(detail_id, line)
+end
+
+--- Convenience: register + multiple body lines in one call.
+--- usage: M.detail("id", "rect", {x1,y1,x2,y2}, "label", {"line1","line2"})
+function M.detail(detail_id, kind, geometry, label, body_lines)
+  if not overlay_detail then return end
+  local x1, y1, x2, y2 = 0, 0, 0, 0
+  if geometry then
+    x1 = geometry[1] or 0
+    y1 = geometry[2] or 0
+    x2 = geometry[3] or 0
+    y2 = geometry[4] or 0
+  end
+  overlay_detail(detail_id, kind, x1, y1, x2, y2, label or "")
+  if body_lines and overlay_detail_text then
+    for i = 1, #body_lines do
+      overlay_detail_text(detail_id, body_lines[i])
+    end
+  end
 end
 
 return M

@@ -162,7 +162,8 @@ function M.update(state, world, info)
 
   -- ----- Enemy LGM tracking: detect parachutes (dead enemy LGM) -----
   local enemy_lgm_sightings = state._enemy_lgm_sightings or {}
-  local now = state.tick or 0
+  -- (was: redundant `local now = state.tick or 0` — outer `now` from
+  -- line 25 is in scope and identical when state.tick is set.)
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_PARACHUTE and (ob.info & OBJECT_HOSTILE) ~= 0 then
       local omx = ob.x >> 8
@@ -172,7 +173,16 @@ function M.update(state, world, info)
       }
     end
   end
-  -- Check if any enemy LGM is known dead recently
+  -- enemy_lgm_dead: TRUE while any parachute sighting is within the
+  -- ENEMY_LGM_RETURN_TICKS window (i.e. an enemy LGM was seen
+  -- parachuting recently and is presumed still respawning). This is
+  -- NOT a "currently dead" check — we never see the LGM resurrect,
+  -- so the flag is "saw a parachute in the last N ticks". A live LGM
+  -- being spotted again does NOT clear the flag; the flag clears only
+  -- when ENEMY_LGM_RETURN_TICKS elapses since the last sighting.
+  -- Consumers (notably eLGMdead discount on attack_pill cost) should
+  -- treat this as "LGM probably can't repair right now" not "definitely
+  -- dead".
   local enemy_lgm_dead = false
   local enemy_lgm_eta = math.huge
   for k, s in pairs(enemy_lgm_sightings) do

@@ -236,6 +236,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->tankx);          lua_setfield(L, -2, "tankx");
   lua_pushinteger(L, info->tanky);          lua_setfield(L, -2, "tanky");
   lua_pushinteger(L, info->direction);      lua_setfield(L, -2, "direction");
+  lua_pushnumber(L,  info->tank_angle);     lua_setfield(L, -2, "tank_angle");
   lua_pushinteger(L, info->speed);          lua_setfield(L, -2, "speed");
   lua_pushboolean(L, info->inboat);         lua_setfield(L, -2, "inboat");
   lua_pushboolean(L, info->hidden);         lua_setfield(L, -2, "hidden");
@@ -867,6 +868,33 @@ static int l_cpf_dijkstra_trace_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → array of {x=,y=} or nil.
+ * Multi-slate: walks slates of given kind in recency order, picks the
+ * first where (dx,dy) is reachable, traces from THAT slate. Use when
+ * the cost was found via lookup_by_kind's older-slate fallback — the
+ * single-slate trace_path picks "best" which may be a newer slate that
+ * hasn't reached (dx,dy) yet, returning nil. */
+static int l_cpf_dijkstra_trace_path_by_kind(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  int dx   = (int)luaL_checkinteger(L, 2);
+  int dy   = (int)luaL_checkinteger(L, 3);
+  int path_x[512], path_y[512];
+  int n = brainPathfinderDijkstraTracePathByKind(pf, kind, dx, dy,
+                                                  path_x, path_y, 512);
+  if (n <= 0) { lua_pushnil(L); return 1; }
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, path_x[i]);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, path_y[i]);
+    lua_setfield(L, -2, "y");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 /* cpf_dijkstra_pick_reuse_slate(kind)
  * Returns the slate index the brain should reuse next when starting a
  * search of the given kind. Picks an unused slate first, then the
@@ -927,7 +955,10 @@ static int l_cpf_rebuild_edge_costs(lua_State *L) {
  *                   shooter_type=TANK, sight_len=0)
  *   -> { {mx=..., my=...}, ... }
  * Stateless wrapper over brainPathfinderSimulateShot (no pf instance
- * needed — uses only static physics constants). */
+ * needed — uses only static physics constants). The angle is derived
+ * from origin → target via atan2 + lroundf. For sub-brad precision
+ * matching the engine's actual shell flight, use
+ * cpf_simulate_shot_angle with BrainInfo.tank_angle (a float). */
 static int l_cpf_simulate_shot(lua_State *L) {
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
@@ -953,13 +984,15 @@ static int l_cpf_simulate_shot(lua_State *L) {
  *                          shooter_type=TANK, sight_len=0)
  *   -> { {mx=..., my=...}, ... }
  * Same as cpf_simulate_shot but takes the firing angle directly
- * (0..255 bradians). Use this when you want a bit-exact match to a
- * real shell — pass info.direction so the sim doesn't have to
- * round-trip through atan2 + lroundf. */
+ * (0..255 bradians, FLOAT). Use this with BrainInfo.tank_angle
+ * for a bit-exact match to a real shell — the engine's
+ * shellsAddItem fires at the float tank.angle, so a brain that
+ * predicts using the BYTE-floored direction will be off by up to
+ * one brad. */
 static int l_cpf_simulate_shot_angle(lua_State *L) {
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
-  int angle    = (int)luaL_checkinteger(L, 3);
+  float angle  = (float)luaL_checknumber(L, 3);
   int shooter  = (int)luaL_optinteger(L, 4, BRAIN_SHOT_SHOOTER_TANK);
   int sight_len= (int)luaL_optinteger(L, 5, 0);
 
@@ -1135,6 +1168,29 @@ static int l_cpf_trace_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_trace_last_search(dx, dy) -> array of {x=, y=}
+ * Trace the most-recent A* search's parent chain to (dx, dy) without
+ * the status==1 gate. Use after cost_to() — its end-of-call cleanup
+ * zaps status/dest so cpf_trace_path() returns empty, but the
+ * closed/parent state is still good enough to reconstruct the path. */
+static int l_cpf_trace_last_search(lua_State *L) {
+  CPF_GET(L);
+  int dx = (int)luaL_checkinteger(L, 1);
+  int dy = (int)luaL_checkinteger(L, 2);
+  int path_x[64], path_y[64];
+  int count = brainPathfinderTraceLastSearchPath(pf, dx, dy, path_x, path_y, 64);
+  lua_createtable(L, count, 0);
+  for (int i = 0; i < count; i++) {
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, path_x[i]);
+    lua_setfield(L, -2, "x");
+    lua_pushinteger(L, path_y[i]);
+    lua_setfield(L, -2, "y");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 /* cpf_serialize() -> string
  * Returns binary blob of the full pathfinder state (grids + Dijkstra slates). */
 static int l_cpf_serialize(lua_State *L) {
@@ -1188,6 +1244,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
+    { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
     { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
     { "cpf_dijkstra_find_best",     l_cpf_dijkstra_find_best },
     { "cpf_dijkstra_status",        l_cpf_dijkstra_status },
@@ -1202,6 +1259,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
     { "cpf_astar_shells_at",       l_cpf_astar_shells_at },
     { "cpf_trace_path",            l_cpf_trace_path },
+    { "cpf_trace_last_search",     l_cpf_trace_last_search },
     { "shell_debug_hits",          l_shell_debug_hits },
     { "cpf_find_front_line",       l_cpf_find_front_line },
     { "cpf_serialize",             l_cpf_serialize },
@@ -1468,7 +1526,11 @@ static int l_overlay_rect(lua_State *L) {
   return 0;
 }
 
-/* overlay_circle(cx, cy, radius, r, g, b [, a]) */
+/* overlay_circle(cx, cy, radius, r, g, b [, a [, viz_idx [, subpixel]]])
+ * subpixel (optional, default false): if true the circle's center
+ * uses 1/256-tile precision instead of being floored to the game-pixel
+ * grid. Use for markers that pin to a sub-game-pixel position (e.g.
+ * shell hit dot) where the standard 1-gp quantization is visible. */
 static int l_overlay_circle(lua_State *L) {
   OVL_GET(L);
   float cx = (float)luaL_checknumber(L, 1);
@@ -1478,8 +1540,12 @@ static int l_overlay_circle(lua_State *L) {
   int g = luaL_checkinteger(L, 5);
   int b = luaL_checkinteger(L, 6);
   int a = luaL_optinteger(L, 7, 255);
-  int viz_idx = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
+  int viz_idx  = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
+  int subpixel = lua_toboolean(L, 9);
   overlayCmdCircle(buf, cx, cy, radius, r, g, b, a);
+  if (subpixel && buf && buf->count > 0) {
+    buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_SUBPIXEL;
+  }
   overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
   return 0;
 }
@@ -1563,6 +1629,129 @@ void brainCoreRegisterOverlay(lua_State *L, OverlayCmdBuffer **bufPtr) {
     lua_pushcclosure(L, funcs[i].func, 1);
     lua_setglobal(L, funcs[i].name);
   }
+}
+
+/* ── viz_detail registry hook ─────────────────────────────────────── */
+/*
+ * The brain calls overlay_detail / overlay_detail_text each tick to
+ * register clickable map primitives with rich text bodies. The host
+ * (BrainTest) implements the actual registry; under non-host runtimes
+ * (game client, headless server) the callbacks stay NULL and these
+ * bindings silently no-op so the brain doesn't have to gate on
+ * "am I in BrainTest". */
+
+static BrainVizDetailRegisterFunc g_vizDetailRegisterCb = NULL;
+static BrainVizDetailAppendBodyFunc g_vizDetailAppendBodyCb = NULL;
+static BrainVizDetailClearFunc g_vizDetailClearCb = NULL;
+
+void brainCoreSetVizDetailRegisterCallback(BrainVizDetailRegisterFunc cb) {
+  g_vizDetailRegisterCb = cb;
+}
+void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb) {
+  g_vizDetailAppendBodyCb = cb;
+}
+void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb) {
+  g_vizDetailClearCb = cb;
+}
+
+/* overlay_detail(detail_id, kind, x1, y1, x2, y2, label) */
+static int l_overlay_detail(lua_State *L) {
+  const char *id    = luaL_checkstring(L, 1);
+  const char *kind  = luaL_checkstring(L, 2);
+  float       x1    = (float)luaL_checknumber(L, 3);
+  float       y1    = (float)luaL_checknumber(L, 4);
+  float       x2    = (float)luaL_checknumber(L, 5);
+  float       y2    = (float)luaL_checknumber(L, 6);
+  const char *label = luaL_optstring(L, 7, "");
+  int idx = -1;
+  if (g_vizDetailRegisterCb) {
+    idx = g_vizDetailRegisterCb(id, kind, x1, y1, x2, y2, label);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+/* overlay_detail_text(detail_id, line) */
+static int l_overlay_detail_text(lua_State *L) {
+  const char *id   = luaL_checkstring(L, 1);
+  const char *line = luaL_checkstring(L, 2);
+  int idx = -1;
+  if (g_vizDetailAppendBodyCb) {
+    idx = g_vizDetailAppendBodyCb(id, line);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+/* overlay_detail_clear() — wipe the entire registry. Brains call
+ * once at the top of think() so each tick rebuilds from scratch. */
+static int l_overlay_detail_clear(lua_State *L) {
+  (void)L;
+  if (g_vizDetailClearCb) g_vizDetailClearCb();
+  return 0;
+}
+
+void brainCoreRegisterVizDetail(lua_State *L) {
+  lua_pushcfunction(L, l_overlay_detail);       lua_setglobal(L, "overlay_detail");
+  lua_pushcfunction(L, l_overlay_detail_text);  lua_setglobal(L, "overlay_detail_text");
+  lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
+}
+
+/* ------------------------------------------------------------------ */
+/* pill_contrib registry (per-pill, per-tile danger contributions)     */
+/* ------------------------------------------------------------------ */
+
+static BrainPillContribClearFunc      g_pillContribClearCb     = NULL;
+static BrainPillContribBeginPillFunc  g_pillContribBeginPillCb = NULL;
+static BrainPillContribAddTileFunc    g_pillContribAddTileCb   = NULL;
+
+void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb) {
+  g_pillContribClearCb = cb;
+}
+void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb) {
+  g_pillContribBeginPillCb = cb;
+}
+void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb) {
+  g_pillContribAddTileCb = cb;
+}
+
+/* pillcontrib_clear() — reset the per-tick registry. Brains call
+ * once before pushing this tick's pills. */
+static int l_pillcontrib_clear(lua_State *L) {
+  (void)L;
+  if (g_pillContribClearCb) g_pillContribClearCb();
+  return 0;
+}
+
+/* pillcontrib_begin_pill(pill_id, mx, my) -> slot (or -1 on overflow) */
+static int l_pillcontrib_begin_pill(lua_State *L) {
+  int pill_id = (int)luaL_checkinteger(L, 1);
+  int mx      = (int)luaL_checkinteger(L, 2);
+  int my      = (int)luaL_checkinteger(L, 3);
+  int slot = -1;
+  if (g_pillContribBeginPillCb) {
+    slot = g_pillContribBeginPillCb(pill_id, mx, my);
+  }
+  lua_pushinteger(L, slot);
+  return 1;
+}
+
+/* pillcontrib_add_tile(slot, tile_x, tile_y, value) */
+static int l_pillcontrib_add_tile(lua_State *L) {
+  int   slot  = (int)luaL_checkinteger(L, 1);
+  int   tx    = (int)luaL_checkinteger(L, 2);
+  int   ty    = (int)luaL_checkinteger(L, 3);
+  float value = (float)luaL_checknumber(L, 4);
+  if (g_pillContribAddTileCb) {
+    g_pillContribAddTileCb(slot, tx, ty, value);
+  }
+  return 0;
+}
+
+void brainCoreRegisterPillContrib(lua_State *L) {
+  lua_pushcfunction(L, l_pillcontrib_clear);      lua_setglobal(L, "pillcontrib_clear");
+  lua_pushcfunction(L, l_pillcontrib_begin_pill); lua_setglobal(L, "pillcontrib_begin_pill");
+  lua_pushcfunction(L, l_pillcontrib_add_tile);   lua_setglobal(L, "pillcontrib_add_tile");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1671,4 +1860,77 @@ static int l_braintest_viz_register(lua_State *L) {
 void brainCoreRegisterVizRegister(lua_State *L) {
   lua_pushcfunction(L, l_braintest_viz_register);
   lua_setglobal(L, "braintest_viz_register");
+}
+
+/* ── braintest_panel_register host hook (parallel of viz register) ── */
+static BrainPanelRegisterFunc g_panelRegisterCb = NULL;
+
+void brainCoreSetPanelRegisterCallback(BrainPanelRegisterFunc cb) {
+  g_panelRegisterCb = cb;
+}
+
+static int l_braintest_panel_register(lua_State *L) {
+  /* Signature: braintest_panel_register(name, type, lua_expr [, opts]).
+   *   `type`     — optional ("text" if nil); namespaced by host
+   *   `lua_expr` — required; Lua chunk that returns the body string
+   *   `opts`     — optional table; recognized keys:
+   *                  shortcut = "T"   → panel gets its own SDL window
+   *                                      toggled by this key. Empty /
+   *                                      missing → tab in the P window.
+   *
+   * Two-arg form (name, lua_expr) still supported for older brains:
+   * type defaults to "text", no opts. */
+  const char *name = luaL_checkstring(L, 1);
+  const char *type = NULL;
+  const char *lua_expr = NULL;
+  const char *shortcut = NULL;
+  int top = lua_gettop(L);
+  if (top >= 3) {
+    if (!lua_isnoneornil(L, 2)) type = luaL_checkstring(L, 2);
+    lua_expr = luaL_checkstring(L, 3);
+    if (top >= 4 && lua_istable(L, 4)) {
+      lua_getfield(L, 4, "shortcut");
+      if (lua_isstring(L, -1)) shortcut = lua_tostring(L, -1);
+      lua_pop(L, 1);
+    }
+  } else {
+    lua_expr = luaL_checkstring(L, 2);
+  }
+  int idx = -1;
+  if (g_panelRegisterCb) {
+    idx = g_panelRegisterCb(name, type, lua_expr, shortcut);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+void brainCoreRegisterPanelRegister(lua_State *L) {
+  lua_pushcfunction(L, l_braintest_panel_register);
+  lua_setglobal(L, "braintest_panel_register");
+}
+
+/* ── braintest_shotsim_poi_register host hook ─────────────────────── */
+static BrainShotSimPoiRegisterFunc g_shotSimPoiRegisterCb = NULL;
+
+void brainCoreSetShotSimPoiRegisterCallback(BrainShotSimPoiRegisterFunc cb) {
+  g_shotSimPoiRegisterCb = cb;
+}
+
+static int l_braintest_shotsim_poi_register(lua_State *L) {
+  /* Signature: braintest_shotsim_poi_register(name, lua_expr).
+   *   lua_expr — Lua chunk that returns (wx, wy) or nil.
+   * Returns the slot index, or -1 if the host isn't listening. */
+  const char *name     = luaL_checkstring(L, 1);
+  const char *lua_expr = luaL_checkstring(L, 2);
+  int idx = -1;
+  if (g_shotSimPoiRegisterCb) {
+    idx = g_shotSimPoiRegisterCb(name, lua_expr);
+  }
+  lua_pushinteger(L, idx);
+  return 1;
+}
+
+void brainCoreRegisterShotSimPoiRegister(lua_State *L) {
+  lua_pushcfunction(L, l_braintest_shotsim_poi_register);
+  lua_setglobal(L, "braintest_shotsim_poi_register");
 }

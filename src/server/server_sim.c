@@ -1515,7 +1515,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
-                            GameEvent *eventsOut, int maxEvents) {
+                            GameEvent *eventsOut, int maxEvents,
+                            bool noCull) {
     int i;
     int tankCount = 0;
     ViewportRect viewports[MAX_VIEWPORTS];
@@ -1525,8 +1526,9 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     hdr->serverTick = sim->tick;
     hdr->lastProcessedInput = sim->lastProcessedInput[clientIdx];
 
-    /* Primary viewport: client's tank position */
-    {
+    /* Primary viewport: client's tank position. Skipped under noCull so
+     * the fallback full-map viewport below covers everything. */
+    if (!noCull) {
         WORLD clientWX = 0, clientWY = 0;
         if (serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
             int centerMX = clientWX >> 8;
@@ -1541,7 +1543,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     }
 
     /* Additional viewports: pillboxes owned by this client (not in tank) */
-    if (sim->sim.pb != NULL) {
+    if (!noCull && sim->sim.pb != NULL) {
         int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
         BYTE np = pillsGetNumPills(&sim->sim.pb);
         BYTE p;
@@ -1556,7 +1558,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         }
     }
 
-    /* No viewports (dead/respawning with no placed pills) — send everything */
+    /* No viewports (dead/respawning with no placed pills, or noCull) —
+     * send everything. */
     if (numViewports == 0) {
         viewports[0].minMX = 0;  viewports[0].maxMX = 255;
         viewports[0].minMY = 0;  viewports[0].maxMY = 255;
