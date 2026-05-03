@@ -122,7 +122,7 @@ static bool exportFull(const char *filePath, ExportConfig *cfg,
             int startRow = strip * 16;
             SDL_SetRenderTarget(renderer, target);
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_RenderClear(renderer);
+            SDL_RenderFillRect(renderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
             for (int x = 0; x < mapSize; x++) {
                 for (int y = 0; y < 16; y++) {
@@ -238,7 +238,7 @@ static bool exportFull(const char *filePath, ExportConfig *cfg,
     /* Full render target succeeded — render everything in one pass */
     SDL_SetRenderTarget(renderer, target);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    SDL_RenderClear(renderer);
+    SDL_RenderFillRect(renderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
     /* Terrain tiles */
     for (int x = 0; x < mapSize; x++) {
