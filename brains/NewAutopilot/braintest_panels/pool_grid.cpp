@@ -676,10 +676,16 @@ void renderPoolGrid(int registry_idx, const char *body) {
         auto &flash = st.flashStart[si];
         for (int ri = 0; ri < sec->nrows; ri++) {
             Row *r = &sec->rows[ri];
-            auto it = prev.find(r->id);
+            /* Use a composite key to distinguish items with the same ID
+             * from different source pools (common in the WINNERS pool).
+             * Without this, two winners sharing an ID would clash in
+             * flashStart and prevRank, causing one to always think its
+             * rank changed and getting stuck in the white flash state. */
+            int key = (r->src_pool << 16) | r->id;
+            auto it = prev.find(key);
             bool rankChanged = (it == prev.end()) || (it->second != ri);
-            if (rankChanged) flash[r->id] = now;
-            auto fit = flash.find(r->id);
+            if (rankChanged) flash[key] = now;
+            auto fit = flash.find(key);
             if (fit != flash.end()) {
                 float elapsed = (float)(now - fit->second);
                 r->flashAlpha = 1.0f - elapsed / FLASH_DURATION_MS;
@@ -688,7 +694,8 @@ void renderPoolGrid(int registry_idx, const char *body) {
         }
         prev.clear();
         for (int ri = 0; ri < sec->nrows; ri++) {
-            prev[sec->rows[ri].id] = ri;
+            int key = (sec->rows[ri].src_pool << 16) | sec->rows[ri].id;
+            prev[key] = ri;
         }
     }
 
