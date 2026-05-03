@@ -136,6 +136,7 @@ function M.update(state, world, info)
       end
 
       local entry = { mx = omx, my = omy, dist = d, obj = ob,
+                       id = ob.idnum,
                        speed = ob.speed or 0,
                        wx = ob.x, wy = ob.y, vx = vx, vy = vy,
                        svx = svx, svy = svy }

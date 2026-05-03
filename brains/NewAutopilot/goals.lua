@@ -193,6 +193,7 @@ end
 -- Returns best, best_id, best_cost, candidates (array of all evaluated)
 local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo, state, info, kind, danger_scale_override)
   kind = kind or KIND_NORMAL
+
   local best_cost = math.huge
   local best_id, best = nil, nil
   local now = state and state.tick or 0
@@ -1023,11 +1024,16 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   if gate_reason then print2("eval_attack_tank: " .. gate_reason) end
 
   local perc = state.perc
-  if not perc or not perc.enemy_tanks or #perc.enemy_tanks == 0 then
+  local enemy_tanks = (perc and perc.enemy_tanks) or {}
+  if #enemy_tanks == 0 then
     print2(string.format("eval_attack_tank: no enemy tanks (perc=%s, et=%s)",
       perc and "yes" or "nil",
       (perc and perc.enemy_tanks) and tostring(#perc.enemy_tanks) or "nil"))
+    -- no return here: the pool panel still shows not_visible player rows.
+    if false then
     return nil  -- no tanks visible at all — nothing to show
+  end
+
   end
 
   local best_cost = math.huge
@@ -1035,8 +1041,10 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   -- Per-candidate breakdown for the pool window: every tank we
   -- considered with the sub-costs that make up its score.
   local breakdown = {}
+  local visible_enemy_ids = {}
 
-  for _, et in ipairs(perc.enemy_tanks) do
+  for _, et in ipairs(enemy_tanks) do
+    if et.id ~= nil then visible_enemy_ids[et.id] = true end
     -- Target in deep sea = enemy is in a boat = 1 shot to sink. Skip the
     -- low_shells gate so we can always harass a boat even with 1 shell.
     local target_tt = U.ttype(et.mx, et.my)
@@ -1048,22 +1056,11 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     end
     if local_gate then
       breakdown[#breakdown + 1] = {
-        mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
+        id = et.id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
         path_cost = 0, base = 0, aim_bonus = 0, aim_diff = 0,
         crossfire = 0, wall_penalty = 0, low_shells_penalty = 0,
         tank_shells = info.shells,
-        cost = math.huge, shells_on_arrival = 0, skipped = local_gate,
-      }
-      goto continue_tanks
-    end
-    if et.dist > C.TANK_COMBAT_MAX_RANGE then
-      breakdown[#breakdown + 1] = {
-        mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
-        path_cost = 0, base = 0, aim_bonus = 0, aim_diff = 0,
-        crossfire = 0, wall_penalty = 0, low_shells_penalty = 0,
-        tank_shells = info.shells,
-        cost = math.huge, shells_on_arrival = 0,
-        skipped = string.format("out_of_range(%d>%d)", et.dist, C.TANK_COMBAT_MAX_RANGE),
+        cost = 1e30, shells_on_arrival = 0, skipped = local_gate,
       }
       goto continue_tanks
     end
@@ -1123,12 +1120,12 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         if not so_mx then
           -- No valid standoff position (enemy surrounded by water/walls)
           breakdown[#breakdown + 1] = {
-            mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
+            id = et.id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
             path_cost = 0, base = C.TANK_COMBAT_BASE_COST,
             aim_bonus = 0, aim_diff = 0, crossfire = 0, wall_penalty = wall_penalty,
             low_shells_penalty = low_shells_penalty,
             tank_shells = info.shells,
-            cost = math.huge, shells_on_arrival = 0, skipped = "no_standoff",
+            cost = 1e30, shells_on_arrival = 0, skipped = "no_standoff",
           }
           goto continue_tanks
         end
@@ -1138,12 +1135,12 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         if shells_on_arrival and shells_on_arrival < C.TANK_COMBAT_MIN_SHELLS then
           -- Won't have enough shells left after clearing walls to fight effectively.
           breakdown[#breakdown + 1] = {
-            mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
+            id = et.id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
             path_cost = path_cost, base = C.TANK_COMBAT_BASE_COST,
             aim_bonus = 0, aim_diff = 0, crossfire = 0, wall_penalty = wall_penalty,
             low_shells_penalty = low_shells_penalty,
             tank_shells = info.shells,
-            cost = math.huge, shells_on_arrival = shells_on_arrival, skipped = "low_shells",
+            cost = 1e30, shells_on_arrival = shells_on_arrival, skipped = "low_shells",
           }
           goto continue_tanks
         end
@@ -1187,7 +1184,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
       cost = cost + tank_tile_threat
 
       breakdown[#breakdown + 1] = {
-        mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
+        id = et.id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
         path_cost = path_cost, base = los_engage and 0 or C.TANK_COMBAT_BASE_COST,
         aim_bonus = aim_bonus, aim_diff = aim_diff, crossfire = crossfire,
         wall_hp = wall_hp, wall_penalty = wall_penalty,
@@ -1205,6 +1202,32 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
       end
     end  -- do block
     ::continue_tanks::
+  end
+
+  -- Add inactive rows for enemy player slots whose tank is not currently
+  -- visible. We know the player exists, but not its tank position, so these
+  -- rows explain why the tank is not an actionable attack_tank candidate.
+  if info.player_names then
+    local allies = info.allies or 0
+    for pn = 0, (info.max_players or 0) - 1 do
+      if pn ~= info.player_number and not visible_enemy_ids[pn] then
+        local name = info.player_names[pn + 1]
+        local active = (type(name) == "string" and name ~= "")
+                    or pn < (info.num_players or 0)
+        local allied = (allies & (1 << pn)) ~= 0
+        if active and not allied then
+          if type(name) ~= "string" or name == "" then name = "player " .. tostring(pn) end
+          breakdown[#breakdown + 1] = {
+            id = pn, mx = -1, my = -1, dist = 0, speed = 0,
+            path_cost = 0, base = 0, aim_bonus = 0, aim_diff = 0,
+            crossfire = 0, wall_penalty = 0, low_shells_penalty = 0,
+            tank_shells = info.shells,
+            cost = 1e30, shells_on_arrival = 0,
+            skipped = "not_visible", player_name = name,
+          }
+        end
+      end
+    end
   end
 
   state.attack_tank_breakdown = breakdown
@@ -1231,6 +1254,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     cost = best_cost,
     goal = { kind = "attack_tank", mx = best_tank.mx, my = best_tank.my,
              wx = U.m2w(best_tank.mx), wy = U.m2w(best_tank.my),
+             target_id = best_tank.id,
              target_obj = best_tank.obj,
              substate = "close",
              tank_scan_spots = win_entry and win_entry.scan_spots or nil,
@@ -4584,6 +4608,12 @@ function M.pick_goal(state, world, info, quiet)
     tmx = info.tankx >> 8, tmy = info.tanky >> 8,
     at_base = (info.base and info.base.id and info.base.id > 0) or false,
     man_status = info.man_status,
+    inboat = info.inboat,
+    player_number = info.player_number,
+    num_players = info.num_players,
+    max_players = info.max_players,
+    allies = info.allies or 0,
+    player_names = info.player_names,
     armour = info.armour, shells = info.shells,
   }
   -- Command goal overrides everything
@@ -4924,6 +4954,98 @@ function M.get_pool_breakdown_json(state)
     end
   end
 
+  local function attack_tank_formula(b)
+    local reason = b.skipped
+    if reason then
+      local who = b.player_name and (" player=" .. b.player_name) or ""
+      return string.format(
+        "REJECT %s @(%d,%d)%s||reject:%s; dist=%d max=%d shells=%d armour=%d in_boat=%s%s",
+        reason, b.mx or 0, b.my or 0, who, reason,
+        b.dist or 0, C.TANK_COMBAT_MAX_RANGE,
+        b.tank_shells or 0, state._last_info and state._last_info.armour or 0,
+        tostring(state._last_info and state._last_info.inboat or false), who)
+    end
+    local los = b.los_engage and "LOS" or "standoff"
+    return string.format(
+      "%s A*{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f} + threat{%.0f} * boat{%.2f} = %.0f" ..
+      "||dist=%d; shells_now=%d; shells_arrival=%s; aim_diff=%.1f; wall_hp=%s; standoff=(%s,%s) deg=%s",
+      los, b.path_cost or 0, b.base or 0, b.wall_penalty or 0,
+      b.low_shells_penalty or 0, b.aim_bonus or 0, b.crossfire or 0,
+      b.tank_tile_threat or 0, b.boat_mult or 1.0, b.cost or 0,
+      b.dist or 0, b.tank_shells or 0, tostring(b.shells_on_arrival),
+      b.aim_diff or 0, tostring(b.wall_hp),
+      tostring(b.standoff_mx), tostring(b.standoff_my), tostring(b.standoff_deg))
+  end
+
+  local function append_attack_tank_breakdown()
+    local bd = state.attack_tank_breakdown or {}
+    by_pool[9] = {}
+    local seen_ids = {}
+
+    local function append_row(b)
+      local id = b.id
+      if id == nil or id < 0 then id = (b.my or 0) * 256 + (b.mx or 0) end
+      if id ~= nil then seen_ids[id] = true end
+      by_pool[9][#by_pool[9] + 1] = {
+        id = id, mx = b.mx or 0, my = b.my or 0,
+        cost = b.cost or 1e30,
+        formula = attack_tank_formula(b),
+        stale = b.stale or 0,
+        reject = b.skipped,
+        reject_remaining = 0,
+      }
+    end
+
+    for i, b in ipairs(bd) do
+      append_row(b)
+    end
+
+    -- eval_attack_tank only runs when the planner evaluates that pool, but
+    -- perception is refreshed every tick. Fill the panel from perception so
+    -- visible tanks appear even before/after a full attack_tank scoring pass.
+    local perc = state.perc
+    for _, et in ipairs((perc and perc.enemy_tanks) or {}) do
+      local id = et.id
+      if id == nil or not seen_ids[id] then
+        local skipped = "pending_eval"
+        append_row({
+          id = id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
+          tank_shells = state._last_info and state._last_info.shells or 0,
+          cost = 1e30, shells_on_arrival = 0, skipped = skipped,
+          stale = 0,
+        })
+      end
+    end
+
+    -- Also list every known enemy player slot whose tank is not currently
+    -- visible. This keeps the pool informative when no hostile tank object is
+    -- in perception range or line of sight.
+    local li = state._last_info
+    if li and li.player_names then
+      local allies = li.allies or 0
+      for pn = 0, (li.max_players or 0) - 1 do
+        if pn ~= li.player_number and not seen_ids[pn] then
+          local name = li.player_names[pn + 1]
+          local active = (type(name) == "string" and name ~= "")
+                      or pn < (li.num_players or 0)
+          local allied = (allies & (1 << pn)) ~= 0
+          if active and not allied then
+            if type(name) ~= "string" or name == "" then name = "player " .. tostring(pn) end
+            append_row({
+              id = pn, mx = -1, my = -1, dist = 0, speed = 0,
+              tank_shells = li.shells or 0,
+              cost = 1e30, shells_on_arrival = 0,
+              skipped = "not_visible", player_name = name,
+              stale = 0,
+            })
+          end
+        end
+      end
+    end
+  end
+
+  append_attack_tank_breakdown()
+
   -- Build a normal pool section. Used for indexes 1..9 and the
   -- def_build (11) / wait_for_lgm (12) strips below the main grid.
   local function build_section(idx)
@@ -4962,7 +5084,7 @@ function M.get_pool_breakdown_json(state)
   for idx = 1, 9 do
     local sec, w = build_section(idx)
     sections[#sections + 1] = sec
-    if w then
+    if w and w.cost >= 0 and w.cost < 1e29 and not w.reject then
       -- Cross-pool WINNERS row carries src_pool so the renderer can
       -- color it with its origin pool's hue.
       local pname = POOL_NAMES[idx] or ("p"..idx)

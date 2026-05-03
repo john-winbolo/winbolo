@@ -1826,11 +1826,8 @@ function Brain.think(info)
       -- Invalid if no enemy tanks visible (target escaped) or we're too weak
       local has_target = false
       if state.perc and state.perc.enemy_tanks then
-        for _, et in ipairs(state.perc.enemy_tanks) do
-          if et.dist <= C.TANK_COMBAT_MAX_RANGE then
-            has_target = true
-            break
-          end
+        if #state.perc.enemy_tanks > 0 then
+          has_target = true
         end
       end
       if not has_target then goal_valid = false end
@@ -1895,10 +1892,8 @@ function Brain.think(info)
     local tank_now_in_range = false
     if state.goal.kind ~= "attack_tank"
        and state.perc and state.perc.enemy_tanks then
-      for _, et in ipairs(state.perc.enemy_tanks) do
-        if et.dist <= C.TANK_COMBAT_MAX_RANGE then
-          tank_now_in_range = true; break
-        end
+      if #state.perc.enemy_tanks > 0 then
+        tank_now_in_range = true
       end
     end
     local tank_appeared = tank_now_in_range and not (state.prev_tank_in_range or false)
