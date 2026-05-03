@@ -541,6 +541,21 @@ function Brain.think(info)
     dbg.begin_trace(Brain.think)
   end
 
+  local function hud_builder_status(inf, st)
+    if inf.man_status == C.LGM_DEAD then
+      return ": dead", 255, 80, 80
+    elseif inf.man_status == C.LGM_INTANK then
+      return ": ready", 100, 220, 100
+    else
+      local eta = st.builder and st.builder.lgm_eta
+      local remaining = eta and (eta - now)
+      if remaining and remaining > 0 then
+        return string.format(": out (%dt)", remaining), 255, 200, 50
+      end
+      return ": out", 255, 200, 50
+    end
+  end
+
   -- Manual control: skip all AI, just show HUD. C side handles keys directly.
   if manual_active then
     -- Still update world knowledge so anger/danger reflect what we observe
@@ -583,12 +598,14 @@ function Brain.think(info)
     -- HUD: tank stats (offset up so the kill-attempt indicator can sit
     -- under it without overlap on shorter window heights).
     local y = 90
+    local bld_str, bld_r, bld_g, bld_b = hud_builder_status(info, state)
     viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
-    viz.hud_text("hud_resources", 10, y + 12, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
-    viz.hud_text("hud_resources", 10, y + 24, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
-    viz.hud_text("hud_resources", 10, y + 36, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
-    viz.hud_text("hud_resources", 10, y + 48, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
-    viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
+    viz.hud_text("hud_resources", 10, y + 12, string.format("Builder%s", bld_str), "bottomleft", bld_r, bld_g, bld_b)
+    viz.hud_text("hud_resources", 10, y + 24, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
+    viz.hud_text("hud_resources", 10, y + 36, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
+    viz.hud_text("hud_resources", 10, y + 48, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
+    viz.hud_text("hud_resources", 10, y + 60, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
+    viz.hud_text("hud_resources", 10, y + 72, string.format("Boat   %s", info.inboat and "YES" or "no"),
       "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
     -- Still draw crosshairs
     local twx, twy = info.tankx / 256.0, info.tanky / 256.0
@@ -838,12 +855,14 @@ function Brain.think(info)
   -- HUD: tank stats in bottom-left (offset up so the kill-attempt
   -- indicator can sit under it without overlap on shorter window heights).
   local y = 90
+  local bld_str, bld_r, bld_g, bld_b = hud_builder_status(info, state)
   viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
-  viz.hud_text("hud_resources", 10, y + 12, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
-  viz.hud_text("hud_resources", 10, y + 24, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
-  viz.hud_text("hud_resources", 10, y + 36, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
-  viz.hud_text("hud_resources", 10, y + 48, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
-  viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
+  viz.hud_text("hud_resources", 10, y + 12, string.format("Builder%s", bld_str), "bottomleft", bld_r, bld_g, bld_b)
+  viz.hud_text("hud_resources", 10, y + 24, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
+  viz.hud_text("hud_resources", 10, y + 36, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
+  viz.hud_text("hud_resources", 10, y + 48, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
+  viz.hud_text("hud_resources", 10, y + 60, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
+  viz.hud_text("hud_resources", 10, y + 72, string.format("Boat   %s", info.inboat and "YES" or "no"),
     "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
 
   -- HUD: last attack-goal clear (set by attack.clear_attack_goal). Stays

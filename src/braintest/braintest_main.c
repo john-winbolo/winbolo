@@ -124,7 +124,7 @@ time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
 #define MIN_ZOOM            1
 #define MAX_ZOOM           16
 #define CONTROL_BAR_HEIGHT 32   /* timeline scrubber strip at bottom */
-#define MAX_RECORDING_FRAMES 60000
+#define MAX_RECORDING_FRAMES 90000
 
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
