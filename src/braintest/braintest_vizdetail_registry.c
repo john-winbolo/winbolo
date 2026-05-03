@@ -43,11 +43,12 @@ static inline int active_count(void) {
     return g_count;
 }
 
-int vizDetailFindByID(const char *id) {
+int vizDetailFindByID(const char *id, int bot_owner) {
     if (!id) return -1;
     const VizDetailEntry *arr = active_arr();
     int n = active_count();
     for (int i = 0; i < n; i++) {
+        if (bot_owner >= 0 && arr[i].bot_owner != bot_owner) continue;
         if (strncmp(arr[i].id, id, VIZDETAIL_ID_MAX) == 0) return i;
     }
     return -1;
@@ -57,7 +58,7 @@ int vizDetailRegister(int bot_owner, const char *id, VizDetailKind kind,
                        float x1, float y1, float x2, float y2,
                        const char *label) {
     if (!id || !id[0]) return -1;
-    int idx = vizDetailFindByID(id);
+    int idx = vizDetailFindByID(id, bot_owner);
     if (idx < 0) {
         if (g_count >= VIZDETAIL_REG_MAX) return -1;
         idx = g_count++;
@@ -75,7 +76,7 @@ int vizDetailRegister(int bot_owner, const char *id, VizDetailKind kind,
 
 int vizDetailAppendBody(int bot_owner, const char *id, const char *line) {
     if (!id || !id[0]) return -1;
-    int idx = vizDetailFindByID(id);
+    int idx = vizDetailFindByID(id, bot_owner);
     if (idx < 0) {
         /* Body before geometry — create stub with no kind/geom so the
          * dialog still shows the body. label stays empty until a real
@@ -147,13 +148,14 @@ static bool entry_contains(const VizDetailEntry *e, float tx, float ty) {
     }
 }
 
-int vizDetailHitTest(float tx, float ty) {
+int vizDetailHitTest(float tx, float ty, int bot_owner) {
     const VizDetailEntry *arr = active_arr();
     int n = active_count();
     int best = -1;
     float best_area = 1e30f;
     for (int i = 0; i < n; i++) {
         const VizDetailEntry *e = &arr[i];
+        if (bot_owner >= 0 && e->bot_owner != bot_owner) continue;
         if (!entry_contains(e, tx, ty)) continue;
         float a = entry_area(e);
         if (a < best_area) {

@@ -66,13 +66,16 @@ int  vizDetailAppendBody(int bot_owner, const char *id, const char *line);
 int  vizDetailCount(void);
 const VizDetailEntry *vizDetailGet(int idx);
 
-/* Lookup by id (string). Returns the entry index, -1 if missing. */
-int  vizDetailFindByID(const char *id);
+/* Lookup by id (string). Returns the entry index, -1 if missing.
+ * Pass bot_owner >= 0 to restrict to that bot; -1 searches all bots
+ * and returns the first match. */
+int  vizDetailFindByID(const char *id, int bot_owner);
 
 /* Hit-test: returns the index of the smallest-area entry whose
  * geometry contains the tile-space point (tx, ty). Smallest-area-
- * wins so nested primitives surface the inner one. -1 if no hit. */
-int  vizDetailHitTest(float tx, float ty);
+ * wins so nested primitives surface the inner one. -1 if no hit.
+ * Pass bot_owner >= 0 to restrict hits to that bot; -1 for no filter. */
+int  vizDetailHitTest(float tx, float ty, int bot_owner);
 
 /* Playback override. While set, vizDetailCount/Get/FindByID/HitTest
  * read from the supplied frozen array instead of the live registry.

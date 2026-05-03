@@ -253,6 +253,10 @@ typedef struct {
      * freed in recordingFreeFrame. */
     PillContribEntry *pillContrib;
     int               pillContribCount;
+
+    /* Strategic placement heatmap text snapshotted when the [8]
+     * overlay is on; NULL otherwise (saves the Lua poll cost). */
+    char *stratPlaceText;
 } RecordingFrame;
 
 typedef struct {
@@ -317,6 +321,8 @@ typedef struct {
     int          regIdxDijkstra;
     int          regIdxCostTo;
     int          regIdxShellHitbox;
+    int          regIdxStratPlace;
+    char        *stratPlaceText;    /* cached Lua heatmap string; freed when overlay turns off */
     /* Dijkstra heatmap (7 key) — which slate the UI displays. The
      * brain runs up to DIJKSTRA_NUM_SLATES (4) parallel searches
      * with different parameters; Shift+7 cycles which one is on
@@ -531,6 +537,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->pathY);
     free(f->vizDetails);
     free(f->pillContrib);
+    SDL_free(f->stratPlaceText);
     memset(f, 0, sizeof(*f));
 }
 
@@ -1144,6 +1151,87 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     }
 }
 
+/* Strategic placement heatmap (key 8): scores from Lua's
+ * brain.get_strategic_place_heatmap(), rendered as a green→red tile
+ * overlay. Best tile highlighted in yellow. */
+static void renderStratPlaceHeatmap(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxStratPlace)) return;
+
+    const char *stratText = NULL;
+    if (app->playbackMode && app->playbackFrame < app->recording.count) {
+        stratText = app->recording.frames[app->playbackFrame].stratPlaceText;
+    } else {
+        static Uint64 sLastStratPoll = 0;
+        Uint64 nowMs = SDL_GetTicks();
+        if (!app->stratPlaceText || nowMs - sLastStratPoll > 500) {
+            sLastStratPoll = nowMs;
+            SDL_free(app->stratPlaceText);
+            app->stratPlaceText = botManagerEvalLuaString(app->followBot,
+                "return brain.get_strategic_place_heatmap()");
+        }
+        stratText = app->stratPlaceText;
+    }
+    if (!stratText) return;
+
+    int zf = app->zoomFactor;
+    int tp = 16 * zf;
+    int gameH = screenH - CONTROL_BAR_HEIGHT;
+    float scx = screenW / 2.0f;
+    float scy = gameH / 2.0f;
+    float moX = scx - (app->viewCenterX >> 8) * tp
+        - (float)(app->viewCenterX & 0xFF) * tp / 256.0f;
+    float moY = scy - (app->viewCenterY >> 8) * tp
+        - (float)(app->viewCenterY & 0xFF) * tp / 256.0f;
+
+    float minScore = 1e30f, maxScore = -1e30f;
+    int bestMX = -1, bestMY = -1;
+    float bestScore = -1e30f;
+    const char *scan = stratText;
+    while (scan && *scan) {
+        int mx, my; float sc;
+        if (sscanf(scan, "%d\t%d\t%f", &mx, &my, &sc) == 3 && mx >= 0) {
+            if (sc < minScore) minScore = sc;
+            if (sc > maxScore) maxScore = sc;
+            if (sc > bestScore) { bestScore = sc; bestMX = mx; bestMY = my; }
+        }
+        scan = strchr(scan, '\n');
+        if (scan) scan++;
+    }
+    float range = maxScore - minScore;
+    if (range < 1.0f) range = 1.0f;
+
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    scan = stratText;
+    while (scan && *scan) {
+        int mx, my; float sc;
+        if (sscanf(scan, "%d\t%d\t%f", &mx, &my, &sc) == 3 && mx >= 0) {
+            float t = (sc - minScore) / range;
+            int r = (int)((1.0f - t) * 255);
+            int g = (int)(t * 255);
+            int b = 0;
+            int a = 100;
+            if (mx == bestMX && my == bestMY) { r = 255; g = 255; b = 0; a = 200; }
+            float px = moX + mx * tp;
+            float py = moY + my * tp;
+            SDL_SetRenderDrawColor(app->renderer, r, g, b, a);
+            SDL_FRect rect = { px, py, (float)tp, (float)tp };
+            SDL_RenderFillRect(app->renderer, &rect);
+            if (zf >= 2) {
+                char numBuf[16];
+                SDL_snprintf(numBuf, sizeof(numBuf), "%.0f", sc);
+                int tw = (int)strlen(numBuf) * 8;
+                SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 200);
+                SDL_RenderDebugText(app->renderer,
+                    px + (tp - tw) * 0.5f, py + (tp - 8) * 0.5f, numBuf);
+            }
+        }
+        scan = strchr(scan, '\n');
+        if (scan) scan++;
+    }
+    SDL_SetRenderDrawColor(app->renderer, 255, 255, 0, 255);
+    SDL_RenderDebugText(app->renderer, 4, gameH - 20, "[8] Strategic Pill Placement");
+}
+
 /* ---------------- Viz registry callback + Lua state push ----------
  * The brain calls braintest_viz_register("id", ...) at brain.open().
  * Our callback adds the row to the registry. We also need to push
@@ -1162,6 +1250,13 @@ static void vizConfigPath(char *out, size_t n) {
         SDL_snprintf(out, n, "BrainTestViz.ini");
     }
     SDL_free(prefDir);
+}
+
+static void vizToggleSaveCallback(int idx) {
+    (void)idx;
+    char path[FILENAME_MAX];
+    vizConfigPath(path, sizeof(path));
+    vizRegistrySaveIni(path);
 }
 
 /* Push every entry's on/off state + the id→idx lookup table + the
@@ -1189,9 +1284,17 @@ static int vizRegisterCallback(const char *id, const char *label,
  * registration callback can tag the entry with the right owner +
  * namespace the type with the brain's name. Both reset to -1 / ""
  * after each bot's brain.open() returns so a stray Lua call
- * outside that window can't accidentally claim ownership. */
+ * outside that window can't accidentally claim ownership.
+ * Also set around each bot's brain.think via the preThinkHook so
+ * overlay_detail / shotsim_poi calls during think carry the correct
+ * bot_owner (they used to always get -1 because g_currentInitBot was
+ * only set during brain.open()). */
 static int  g_currentInitBot = -1;
 static char g_currentInitBrainName[64] = "";
+
+static void preThinkHook(int playerNum) {
+    g_currentInitBot = playerNum;  /* -1 signals think complete */
+}
 
 /* Keys BrainTest core already binds — bots can't claim these. The
  * check is one-letter-only (uppercase normalized) since shortcuts
@@ -1418,6 +1521,7 @@ static void printUsage(const char *prog) {
         "  Space            Pause / unpause\n"
         "  Tab              Cycle followed bot\n"
         "  1-4              Toggle overlays (influence/danger/frontline/path)\n"
+        "  8                Toggle strategic pill-placement heatmap\n"
         "  0                All overlays off\n"
         "  +/-/scroll       Zoom in/out\n"
         "  F                Toggle free camera / follow mode\n"
@@ -2298,6 +2402,15 @@ static void recordingCapture(BrainTestApp *app) {
             f->pillContrib = NULL;
             f->pillContribCount = 0;
         }
+    }
+
+    /* Strategic placement heatmap — only poll Lua when [8] is on so
+     * recordings don't pay the brain query cost on every tick. */
+    if (vizFlag(app->regIdxStratPlace) && botManagerIsBot(app->followBot)) {
+        f->stratPlaceText = botManagerEvalLuaString(app->followBot,
+            "return brain.get_strategic_place_heatmap()");
+    } else {
+        f->stratPlaceText = NULL;
     }
 
     rb->count++;
@@ -3563,6 +3676,9 @@ static void appRender(BrainTestApp *app) {
         /* Live Dijkstra heatmap from the followed bot's slate. */
         renderDijkstraHeatmap(app, screenW, screenH);
 
+        /* Strategic pill-placement heatmap from Lua (key 8). */
+        renderStratPlaceHeatmap(app, screenW, screenH);
+
         /* cost_to heatmap (filled in by background thread). */
         renderCostToHeatmap(app, screenW, screenH);
 
@@ -3746,7 +3862,7 @@ static void appRender(BrainTestApp *app) {
             const char *sel = vizDetailWindowGetSelected();
             if (sel && sel[0] && strncmp(sel, id, VIZDETAIL_ID_MAX) == 0) continue;
         }
-        int idx = vizDetailFindByID(id);
+        int idx = vizDetailFindByID(id, (int)app->followBot);
         const VizDetailEntry *e = (idx >= 0) ? vizDetailGet(idx) : NULL;
         if (!e) continue;
         /* Resolve geometry to a bounding screen rect. */
@@ -3824,9 +3940,10 @@ static void appRender(BrainTestApp *app) {
                        shotSimTankPosCallback,
                        shotSimTankAngleCallback,
                        shotSimPoiPollCallback,
-                       app);
+                       app,
+                       (int)app->followBot);
     mainImGuiRenderShortcuts(&app->showShortcuts);
-    vizDetailWindowRender();
+    vizDetailWindowRender((int)app->followBot);
     mainImGuiEndFrame(app->renderer);
     /* Drop the viz_detail playback override now that the dialog +
      * highlight pass have consumed it. Idempotent — safe to call
@@ -3842,7 +3959,7 @@ static void appRender(BrainTestApp *app) {
         && !(SDL_GetWindowFlags(app->vizWindow) & SDL_WINDOW_HIDDEN)) {
         int vw, vh;
         SDL_GetWindowSize(app->vizWindow, &vw, &vh);
-        vizWindowRender(app->vizRenderer, vw, vh, NULL);
+        vizWindowRender(app->vizRenderer, vw, vh, vizToggleSaveCallback);
     }
 
     /* Pre-set the panel poll bridge: in playback the callback
@@ -3938,15 +4055,22 @@ int main(int argc, char *argv[]) {
         "Clones the bot's pathfinder + map, runs cost_to in expanding "
         "rings on a worker thread. Shift+5 lowers danger scale to 0.1.",
         "5", false);
+    app.regIdxStratPlace = vizRegistryAddNative(
+        "Strat placement",
+        "Strategic pill-placement scores (green=bad, red=good, yellow=best)",
+        "Heatmap from brain.get_strategic_place_heatmap(): best tiles to "
+        "drop a pill given the current map control situation.",
+        "8", false);
     /* If any of these came back negative the registry is full or hit a
      * duplicate-id collision — vizFlag would silently no-op forever.
      * Surface it loudly at startup so it's obvious during dev. */
     {
-        int idxs[8] = { app.regIdxInfluence, app.regIdxDanger,
+        int idxs[9] = { app.regIdxInfluence, app.regIdxDanger,
                         app.regIdxFrontLine, app.regIdxPath,
                         app.regIdxFog, app.regIdxValues,
-                        app.regIdxDijkstra, app.regIdxCostTo };
-        for (int i = 0; i < 8; i++) {
+                        app.regIdxDijkstra, app.regIdxCostTo,
+                        app.regIdxStratPlace };
+        for (int i = 0; i < 9; i++) {
             if (idxs[i] < 0) {
                 SDL_Log("WARN: native viz registration %d failed; "
                         "the corresponding hotkey will be inert", i);
@@ -4011,6 +4135,7 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailRegisterCallback(vizDetailRegisterCallback);
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
+    botManagerSetPreThinkHook(preThinkHook);
     brainCoreSetPillContribClearCallback(pillContribClearCallback);
     brainCoreSetPillContribBeginPillCallback(pillContribBeginPillCallback);
     brainCoreSetPillContribAddTileCallback(pillContribAddTileCallback);
@@ -4318,18 +4443,28 @@ int main(int argc, char *argv[]) {
                         vizFlagFlip(app.regIdxDijkstra);
                     }
                     break;
+                case SDLK_8:
+                    vizFlagFlip(app.regIdxStratPlace);
+                    if (!vizFlag(app.regIdxStratPlace)) {
+                        SDL_free(app.stratPlaceText);
+                        app.stratPlaceText = NULL;
+                    }
+                    break;
                 case SDLK_9:
                     vizFlagFlip(app.regIdxValues);
                     break;
                 case SDLK_0: {
                     /* Clear every native row in one shot. */
-                    int natives[8] = {
+                    int natives[9] = {
                         app.regIdxInfluence, app.regIdxDanger,
                         app.regIdxFrontLine, app.regIdxPath,
                         app.regIdxFog,       app.regIdxValues,
                         app.regIdxDijkstra,  app.regIdxCostTo,
+                        app.regIdxStratPlace,
                     };
-                    for (int i = 0; i < 8; i++) {
+                    SDL_free(app.stratPlaceText);
+                    app.stratPlaceText = NULL;
+                    for (int i = 0; i < 9; i++) {
                         VizRegistryEntry *e = vizRegistryGetMutable(natives[i]);
                         if (e) e->is_on = false;
                     }
@@ -4702,7 +4837,7 @@ int main(int argc, char *argv[]) {
                                             sw, sh, &cwx, &cwy)) {
                                 float tx = cwx / 256.0f;
                                 float ty = cwy / 256.0f;
-                                int hit = vizDetailHitTest(tx, ty);
+                                int hit = vizDetailHitTest(tx, ty, (int)app.followBot);
                                 if (hit >= 0) {
                                     const VizDetailEntry *e = vizDetailGet(hit);
                                     if (e) vizDetailWindowSelectAndScroll(e->id);

@@ -74,6 +74,17 @@ bool botManagerAddBot(struct ServerSim *sim, BYTE playerNum,
 void botManagerTick(struct ServerSim *sim, aiType ai);
 
 /*********************************************************
+ *NAME:          botManagerSetPreThinkHook
+ *PURPOSE:
+ *  Register a callback invoked just before each bot's
+ *  brain.think runs. Called with the bot's playerNum.
+ *  Called with -1 immediately after each think completes.
+ *  Pass NULL to clear. Used by BrainTest to track which
+ *  bot is currently thinking (for overlay registration).
+ *********************************************************/
+void botManagerSetPreThinkHook(void (*hook)(int playerNum));
+
+/*********************************************************
  *NAME:          botManagerOnGameStart
  *PURPOSE:
  *  Called when a new round starts (countdown→running).

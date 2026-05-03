@@ -67,6 +67,12 @@ typedef struct {
 static BotContext bots[MAX_TANKS];
 static int numBots = 0;
 
+static void (*g_preThinkHook)(int playerNum) = NULL;
+
+void botManagerSetPreThinkHook(void (*hook)(int playerNum)) {
+    g_preThinkHook = hook;
+}
+
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -289,9 +295,11 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
         /* Run the brain */
         {
+            if (g_preThinkHook) g_preThinkHook((int)i);
             Uint64 t0 = SDL_GetPerformanceCounter();
             bool ok = luaBrainInstanceTick(&bot->brain);
             Uint64 t1 = SDL_GetPerformanceCounter();
+            if (g_preThinkHook) g_preThinkHook(-1);
             double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
             bot->lastThinkMs = ms;
             if (ms > 5.0) {

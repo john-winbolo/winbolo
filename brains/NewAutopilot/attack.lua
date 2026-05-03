@@ -124,6 +124,12 @@ local CORE_GOAL_FIELDS = {
   target_id = true,
 }
 local function clear_attack_goal(state, reason)
+  -- Snapshot what we're killing BEFORE we wipe it, so the overlay can
+  -- show "attack_pill/in_range_aim_finetune cleared at t=N because X".
+  local kind_was = state.goal and state.goal.kind or nil
+  local sub_was  = state.goal and state.goal.substate or nil
+  local mx_was   = state.goal and state.goal.mx or nil
+  local my_was   = state.goal and state.goal.my or nil
   if state.goal then
     for k in pairs(state.goal) do
       if not CORE_GOAL_FIELDS[k] then state.goal[k] = nil end
@@ -133,6 +139,21 @@ local function clear_attack_goal(state, reason)
     state.goal = { kind = "none" }
   end
   if state.pf then state.pf.status = "idle" end
+  -- Auto-derive a caller location if the call site didn't pass a reason,
+  -- so the overlay still tells you which line cleared the goal.
+  local r = reason
+  if not r then
+    local info = debug.getinfo(2, "Sl")
+    if info then r = string.format("(no reason) called from %s:%d",
+                                   info.short_src or "?", info.currentline or 0)
+    else r = "(no reason)" end
+  end
+  state._last_attack_clear = {
+    tick = state.tick or 0,
+    reason = r,
+    kind_was = kind_was, sub_was = sub_was,
+    mx_was = mx_was, my_was = my_was,
+  }
   if reason then
     print(string.format("[clear_attack_goal] %s", reason))
   end
@@ -252,6 +273,9 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
           if s.in_bucket then
             viz.text(viz_id, s.cx - 1, s.cy - 0.5, label,
                      "topleft", 60, 0, 100, 255)
+            local dij_label = string.format("dij=%.0f", s._dij or 0)
+            viz.text(viz_id, s.cx - 1, s.cy - 0.1, dij_label,
+                     "topleft", 60, 0, 100, 255, 0.6)
           end
         end
       end
@@ -272,6 +296,64 @@ end
 -- Check every intermediate tile between (x0,y0) and (x1,y1) is water.
 -- When true a boat shell travels over them and strikes the first land (the pill).
 local water_corridor_to = U.water_corridor_to
+
+-- Simulate the tank shot from the chosen standoff to the target pill and
+-- return a reason string if the path is blocked, or nil if it is clear.
+-- Blocking conditions:
+--   * any pill (friendly or enemy) other than the target on the path
+--   * more than one wall tile on the outgoing path
+-- Walls are allowed up to a count of 1 (one shield wall sitting on the
+-- path edge is acceptable; two means something went badly wrong with the
+-- setup).  Called every tick in the pre-fire substates so a newly-placed
+-- strategic pill that landed in the corridor triggers an immediate replan.
+local function standoff_shot_obstacle(goal, pill, world)
+  if not (goal.standoff_fx and goal.standoff_fy) then return nil end
+  local pmx, pmy = pill.mx, pill.my
+  -- Aim: winning PPT corner if available, otherwise pill center.
+  local target_wx, target_wy
+  if goal._shield_scan and goal._shield_scan.best then
+    local w   = goal._shield_scan.best
+    local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
+                or shield.AIM_OFFSETS_TILE_FIRE[1]
+    target_wx = (pmx << 8) + math.floor(off[1] * 256)
+    target_wy = (pmy << 8) + math.floor(off[2] * 256)
+  else
+    target_wx = (pmx << 8) | 128
+    target_wy = (pmy << 8) | 128
+  end
+  local spot_wx  = math.floor(goal.standoff_fx * 256 + 0.5)
+  local spot_wy  = math.floor(goal.standoff_fy * 256 + 0.5)
+  local origin_mx = spot_wx >> 8
+  local origin_my = spot_wy >> 8
+  local tiles = cpf.simulate_shot(spot_wx, spot_wy,
+                                  target_wx, target_wy,
+                                  cpf.SHOT_TANK, 0)
+  if not tiles then return nil end
+  local wall_n = 0
+  for _, t in ipairs(tiles) do
+    if t.mx == pmx and t.my == pmy then break end  -- reached target pill tile
+    if t.mx ~= origin_mx or t.my ~= origin_my then
+      -- Pill in path (other than target)?
+      local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+      if plist then
+        for _, e in ipairs(plist) do
+          if e.pill then
+            return string.format("pill at (%d,%d) in shot path", t.mx, t.my)
+          end
+        end
+      end
+      -- Wall count gate.
+      local tt = U.ttype(t.mx, t.my)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+        wall_n = wall_n + 1
+        if wall_n > 1 then
+          return string.format("2+ walls in shot path (at (%d,%d))", t.mx, t.my)
+        end
+      end
+    end
+  end
+  return nil
+end
 
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
 -- endpoints.  Each one would be destroyed by a shell fired along this path —
@@ -1202,9 +1284,9 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     local best_dij = math.huge
     for _, s in ipairs(all_valid) do
       if s.score >= bucket_floor and s.score < bucket_ceil then
-        if s.spot then s.spot.in_bucket = true end
         local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, s.mx, s.my, 0)
         if dij >= 1e29 then dij = U.mdist(pill.mx, pill.my, s.mx, s.my) * 10 end
+        if s.spot then s.spot.in_bucket = true; s.spot._dij = dij end
         if dij < best_dij then
           best_dij = dij
           best_spot = s
@@ -1910,6 +1992,44 @@ function M.update_attack_substate(goal, state, world, info)
   end
 
   -- ══════════════════════════════════════════════════════════════════
+  -- Per-tick standoff shot-path sanity check.
+  -- Runs for every pre-fire substate where the standoff is committed
+  -- but the shot hasn't been taken yet.  Catches pills placed in the
+  -- corridor (e.g. by build_pill_strategic racing with build_walls)
+  -- and ≥2-wall pile-ups without waiting for LGM to return to tank.
+  -- ══════════════════════════════════════════════════════════════════
+  do
+    local sub = goal.substate
+    if pill and goal.standoff_fx and
+       (sub == "approach"         or sub == "build_walls"       or
+        sub == "aim"              or sub == "in_range_position"  or
+        sub == "in_range_aim_pre" or sub == "in_range_aim"       or
+        sub == "in_range_aim_finetune") then
+      -- Rate-limit to once per ~0.5 s (25 ticks @ 50 Hz).
+      goal._sanity_check_tick = goal._sanity_check_tick or 0
+      local reason
+      if now - goal._sanity_check_tick >= 25 then
+        goal._sanity_check_tick = now
+        reason = standoff_shot_obstacle(goal, pill, world)
+      end
+      if reason then
+        print(string.format(TAG ..
+          " SANITY: shot path blocked (%s) in %s — replanning", reason, sub))
+        goal.substate                 = "plan_position"
+        goal.scan_spots               = nil
+        goal._shield_scan             = nil
+        goal._plan_show_tick          = nil
+        goal._plan_logged             = nil
+        goal._approach_start          = nil
+        goal._approach_last_progress  = nil
+        goal._approach_last_dist      = nil
+        goal._wall_build_list         = nil
+        goal._wall_build_idx          = nil
+      end
+    end
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
   -- approach: navigate to standoff position, brake to stop
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "approach" then
@@ -2402,13 +2522,17 @@ function M.update_attack_substate(goal, state, world, info)
       local swx = math.floor(sfx * 256 + 0.5)
       local swy = math.floor(sfy * 256 + 0.5)
       local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
-      -- 3-blocker takes need a tighter standoff: more walls means
-      -- the gun-line geometry is more sensitive to the tank's exact
-      -- world position. Default 16 wu (1 game-pixel) is enough for
-      -- 1-2 blocker setups; 3-blocker setups want 8 wu (½ pixel).
+      -- EXPERIMENT: use 16 wu for ALL takes, including 3-blocker. The
+      -- old rule tightened to 8 wu when 3+ blockers were in play, on the
+      -- theory that the gun-line geometry is more sensitive there. In
+      -- practice the tighter window stalled the transition more than it
+      -- helped accuracy.
+      -- Revert by restoring this line:
+      --   local DIST_TOL = (n_blockers >= 3) and 8 or 16
+      -- with n_blockers sourced from goal._shield_scan.best.blockers_count.
       local n_blockers = (goal._shield_scan and goal._shield_scan.best
                           and goal._shield_scan.best.blockers_count) or 0
-      local DIST_TOL  = (n_blockers >= 3) and 8 or 16
+      local DIST_TOL = 12
       local SPEED_TOL = 4
       -- Mirror to a goal field so steering can match the brake
       -- threshold to the same tolerance — without this, steering
@@ -2543,7 +2667,11 @@ function M.update_attack_substate(goal, state, world, info)
   --     plan is wrong and goal-selector should re-pick.
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "in_range_aim_finetune" then
-    local FINETUNE_MAX_TAPS = 16
+    -- 24 (was 16): _finetune_taps counts every brain tick in finetune,
+    -- including the forced-idle ticks from steering's 3-emit/1-idle
+    -- burst cap. 24 brain ticks ≈ 18 actual nudges, restoring the
+    -- pre-cap budget of ~12+ effective taps for stubborn geometries.
+    local FINETUNE_MAX_TAPS = 24
     local FINETUNE_TIMEOUT  = 100  -- ~2 s @ 50 Hz
     local angle_f = info.tank_angle or info.direction
     local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
@@ -2586,12 +2714,15 @@ function M.update_attack_substate(goal, state, world, info)
         angle_f, goal._finetune_taps or 0))
     elseif (goal._finetune_taps or 0) >= FINETUNE_MAX_TAPS
        or (now - (goal._finetune_start or now)) > FINETUNE_TIMEOUT then
+      local n_taps = goal._finetune_taps or 0
+      local n_ticks = now - (goal._finetune_start or now)
       print(string.format(TAG ..
         " ATTACK: finetune couldn't line up after %d taps / %d ticks (angle %.2f, pill@(%d,%d)) — aborting pill take",
-        goal._finetune_taps or 0,
-        now - (goal._finetune_start or now),
+        n_taps, n_ticks, angle_f, pmx, pmy))
+      clear_attack_goal(state, string.format(
+        "finetune timeout: taps=%d/%d ticks=%d/%d angle=%.2f pill@(%d,%d)",
+        n_taps, FINETUNE_MAX_TAPS, n_ticks, FINETUNE_TIMEOUT,
         angle_f, pmx, pmy))
-      clear_attack_goal(state)
     end
     -- Else: steering will tap one brad toward pill center this tick.
     -- Fall through to draw
@@ -2619,7 +2750,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- Threshold: 100 ticks (~2 s @ 50 Hz). Reload is ~0.5 s so we
     -- expect 4 shells fired in that window — none landing means
     -- something's actually wrong, not just bad luck.
-    local SHOOT_NO_PROGRESS_TICKS = 100
+    local SHOOT_NO_PROGRESS_TICKS = 150
     if not goal._shoot_progress_hp then
       goal._shoot_progress_hp   = pill_hp
       goal._shoot_progress_tick = now

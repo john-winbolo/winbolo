@@ -116,7 +116,7 @@ const char *vizDetailWindowGetHovered(void)  { return sHoveredID; }
 
 static const char *kKindNames[] = { "rect", "circle", "text" };
 
-static void renderIndexDialog(void) {
+static void renderIndexDialog(int follow_bot) {
     /* Reset hover regardless of whether the dialog is visible —
      * if the user closed it, the previous hover should NOT persist. */
     sHoveredID[0] = '\0';
@@ -130,7 +130,12 @@ static void renderIndexDialog(void) {
     }
 
     int n = vizDetailCount();
-    ImGui::Text("%d entries this tick", n);
+    int shown = 0;
+    for (int i = 0; i < n; i++) {
+        const VizDetailEntry *e = vizDetailGet(i);
+        if (e && e->bot_owner == follow_bot) shown++;
+    }
+    ImGui::Text("%d entries this tick", shown);
     ImGui::SameLine();
     ImGui::Checkbox("single window", &sSingleWindowMode);
     if (sSelectedID[0]) {
@@ -142,13 +147,14 @@ static void renderIndexDialog(void) {
     }
     ImGui::Separator();
 
-    if (n == 0) {
+    if (shown == 0) {
         ImGui::TextDisabled("(brain hasn't registered any this tick)");
     }
 
     for (int i = 0; i < n; i++) {
         const VizDetailEntry *e = vizDetailGet(i);
         if (!e) continue;
+        if (e->bot_owner != follow_bot) continue;
         const bool is_selected = (sSelectedID[0]
             && strncmp(sSelectedID, e->id, VIZDETAIL_ID_MAX) == 0);
 
@@ -187,10 +193,10 @@ static void renderIndexDialog(void) {
     if (!open) sVisible = false;
 }
 
-static void renderDetailWindow(int slot) {
+static void renderDetailWindow(int slot, int follow_bot) {
     OpenDetailWindow *w = &sOpenDetails[slot];
     if (!w->open) return;
-    int idx = vizDetailFindByID(w->id);
+    int idx = vizDetailFindByID(w->id, follow_bot);
     const VizDetailEntry *e = (idx >= 0) ? vizDetailGet(idx) : NULL;
 
     char title[VIZDETAIL_ID_MAX + 32];
@@ -288,12 +294,12 @@ static void renderDetailWindow(int slot) {
     ImGui::End();
 }
 
-void vizDetailWindowRender(void) {
+void vizDetailWindowRender(int follow_bot) {
     /* Index dialog */
-    renderIndexDialog();
+    renderIndexDialog(follow_bot);
     /* Per-id detail windows. Render even when the index dialog is
      * closed — they're independent, so the user can keep a few
      * entries pinned open while toggling D off. */
-    for (int i = 0; i < sOpenDetailCount; i++) renderDetailWindow(i);
+    for (int i = 0; i < sOpenDetailCount; i++) renderDetailWindow(i, follow_bot);
     compactClosedDetails();
 }

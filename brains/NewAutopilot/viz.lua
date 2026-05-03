@@ -258,6 +258,15 @@ M.IDS = {
     default_on = false,
   },
 
+  -- Last attack-goal clear reason: HUD line that names the substate
+  -- and the reason string passed to clear_attack_goal (or auto-derived
+  -- caller file:line if nothing was passed). Stays on screen for ~300
+  -- ticks after the clear, so you can scrub back from the moment goal
+  -- went to "none" and see exactly what killed it.
+  attack_clear_reason = {
+    short = "Attack clear reason",
+    long  = "Top-left HUD line showing the most recent clear_attack_goal call: tick, prior kind/substate, prior pill (mx,my), and the reason string. Visible for ~300 ticks after the clear." },
+
   -- Persistent solid-beige disc + pill target_id label centered on the
   -- chosen attack standoff. Drawn every tick the goal holds a standoff
   -- so it stays visible until the standoff changes or the goal ends —

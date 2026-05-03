@@ -21,8 +21,9 @@ void vizDetailWindowToggle(void);
 bool vizDetailWindowIsVisible(void);
 
 /* Render one ImGui frame. Caller must be inside the main ImGui
- * context's BeginFrame/EndFrame. */
-void vizDetailWindowRender(void);
+ * context's BeginFrame/EndFrame. Only entries whose bot_owner matches
+ * follow_bot are shown in the index and hit-testable on the map. */
+void vizDetailWindowRender(int follow_bot);
 
 /* External "highlight this id" — call from the main-map click
  * handler when the click hit-tests onto a registered detail. The
