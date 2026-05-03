@@ -988,7 +988,7 @@ do
   end
 end
 
-function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state)
+function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy)
   local pmx, pmy = pill.mx, pill.my
   local R = C.ATTACK_PILL_STANDOFF
   -- Banned-angle map for this pill (set by approach-timeout handler).
@@ -1266,32 +1266,66 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   end
 
   -- Two-pass selection: group valid spots by score in 50-buckets,
-  -- take the best bucket, then pick the one with lowest Dijkstra
-  -- cost (real travel distance) within that bucket.
+  -- take the best bucket, then pick the one with lowest travel cost.
+  --
+  -- Two-pass selection: group valid spots into 50-wide score buckets,
+  -- take the best bucket, then pick the closest spot by travel cost.
+  --
+  -- For the travel cost we need ONE slate that covers ALL bucket spots
+  -- so every comparison is within the same cost space. Try slates in
+  -- order (short-range first — most current — then long-range); the
+  -- first slate where every bucket spot has a finite cost wins. If no
+  -- single slate covers all spots, fall back to A* for each spot.
+  --   0 = KIND_NORMAL short-range   2 = KIND_PILL short-range
+  --   1 = KIND_NORMAL long-range    3 = KIND_PILL long-range
+  local COST_INF    = 1e29
+  local SLATE_ORDER = { 0, 1, 2, 3 }
+
   if #all_valid > 0 then
-    -- Find the lowest score bucket (floor to nearest 100)
     local min_score = math.huge
     for _, s in ipairs(all_valid) do
       if s.score < min_score then min_score = s.score end
     end
     local bucket_floor = math.floor(min_score / 50) * 50
-    local bucket_ceil = bucket_floor + 50
+    local bucket_ceil  = bucket_floor + 50
 
-    -- Among spots in the best bucket, pick the one with lowest
-    -- Dijkstra path cost (KIND_NORMAL, full danger). Mark in-bucket
-    -- spot refs so the overlay can dim/hide spots that lost on score
-    -- (vs. those that were tied and lost on travel cost).
-    local best_dij = math.huge
+    -- Collect bucket members once.
+    local bucket = {}
     for _, s in ipairs(all_valid) do
       if s.score >= bucket_floor and s.score < bucket_ceil then
-        local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, s.mx, s.my, 0)
-        if dij >= 1e29 then dij = U.mdist(pill.mx, pill.my, s.mx, s.my) * 10 end
-        if s.spot then s.spot.in_bucket = true; s.spot._dij = dij end
-        if dij < best_dij then
-          best_dij = dij
-          best_spot = s
-          best_score = s.score
-        end
+        bucket[#bucket + 1] = s
+      end
+    end
+
+    -- Find the first slate where every bucket spot has a finite cost.
+    local costs      = {}   -- costs[i] = travel cost for bucket[i]
+    local slate_used = nil
+    for _, sl in ipairs(SLATE_ORDER) do
+      local ok = true
+      for i, s in ipairs(bucket) do
+        local c = cpf.dijkstra_cost_at(sl, s.mx, s.my, 0)
+        if c >= COST_INF then ok = false; break end
+        costs[i] = c
+      end
+      if ok then slate_used = sl; break end
+    end
+
+    -- No slate covers all spots — fall back to A* per spot.
+    if not slate_used and tmx then
+      for i, s in ipairs(bucket) do
+        costs[i] = cpf.estimate_cost(tmx, tmy, s.mx, s.my, 0)
+      end
+    end
+
+    -- Pick the bucket spot with the lowest cost and mark viz state.
+    local best_dij = math.huge
+    for i, s in ipairs(bucket) do
+      local dij = costs[i] or math.huge
+      if s.spot then s.spot.in_bucket = true; s.spot._dij = dij end
+      if dij < best_dij then
+        best_dij   = dij
+        best_spot  = s
+        best_score = s.score
       end
     end
   end
@@ -1662,7 +1696,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal._scan_tank_mx = tmx
       goal._scan_tank_my = tmy
 
-      local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, nil, state.phase, state)
+      local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, nil, state.phase, state, tmx, tmy)
       goal.scan_spots = spots
 
       -- Step 1: apply influence bonus/penalty to all LOS spots.
