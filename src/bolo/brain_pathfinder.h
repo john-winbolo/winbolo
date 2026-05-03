@@ -286,6 +286,18 @@ int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
                                       int *path_x, int *path_y,
                                       int max_steps);
 
+/* Multi-slate trace: walks slates of `kind` in started_tick descending
+ * order, returns the trace from the first slate where (dx, dy) has a
+ * finite cost. Mirrors brainPathfinderDijkstraLookupByKind's slate
+ * selection so a cost found via fallback to an older slate is matched
+ * by a path traced from THAT slate. Use this instead of
+ * DijkstraTracePath(FindBest(...), ...) when consumers need the path
+ * to correspond to whichever slate actually has the destination. */
+int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
+                                            int dx, int dy,
+                                            int *path_x, int *path_y,
+                                            int max_steps);
+
 /* Precomputed neighbor edge cost grid. Recomputes the static portion of
  * compute_cost (terrain base + diagonal corner blocking) for every tile,
  * for every direction. Speeds up Dijkstra/A* inner loops by ~30-40%.
@@ -362,6 +374,17 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
 int brainPathfinderTracePath(BrainPathfinder *pf,
                               int *path_x, int *path_y, int max_steps);
 
+/* Like brainPathfinderTracePath but takes explicit destination and
+ * skips the pf->status check. Use this after a cost_to call: cost_to
+ * resets status/dest to -1 at the end (so the next path_to starts
+ * fresh) but the closed/parent state is still readable in the current
+ * epoch, which is enough to walk the path. Returns 0 if dest isn't in
+ * the closed set (i.e., the search didn't reach it). */
+int brainPathfinderTraceLastSearchPath(BrainPathfinder *pf,
+                                        int dx, int dy,
+                                        int *path_x, int *path_y,
+                                        int max_steps);
+
 /* Scan influence grid for front-line cells (where positive/negative neighbors meet).
  * Writes up to max_points pairs into out_x[], out_y[].
  * Skips cells where both values are 0 (unclaimed vs unclaimed).
@@ -406,14 +429,14 @@ int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
                                  BrainShotTile *out_tiles, int max_tiles);
 
 /* Same as brainPathfinderSimulateShot but takes the firing angle
- * directly (0..255 bradians) instead of deriving it from origin →
- * target geometry. Use this when you want a bit-exact match to a
- * real shell — the engine fires from tank.direction (an int), so
- * passing it in here skips any atan2 rounding ambiguity. The
- * (target_wx, target_wy) args are unused and exist only so the
- * Lua binding signature lines up with the inferred-angle call. */
+ * directly (0..255 bradians, FLOAT) instead of deriving it from
+ * origin → target geometry. Use this when you want a bit-exact
+ * match to a real shell — the engine stores tank.angle as a float
+ * and shellsAddItem fires at that exact value, so a brain that has
+ * the float angle (BrainInfo.tank_angle) gets sub-brad precision by
+ * passing it here. Integer callers can promote freely. */
 int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
-                                     int angle,
+                                     float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles);
 

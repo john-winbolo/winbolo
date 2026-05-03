@@ -74,6 +74,17 @@ bool botManagerAddBot(struct ServerSim *sim, BYTE playerNum,
 void botManagerTick(struct ServerSim *sim, aiType ai);
 
 /*********************************************************
+ *NAME:          botManagerSetPreThinkHook
+ *PURPOSE:
+ *  Register a callback invoked just before each bot's
+ *  brain.think runs. Called with the bot's playerNum.
+ *  Called with -1 immediately after each think completes.
+ *  Pass NULL to clear. Used by BrainTest to track which
+ *  bot is currently thinking (for overlay registration).
+ *********************************************************/
+void botManagerSetPreThinkHook(void (*hook)(int playerNum));
+
+/*********************************************************
  *NAME:          botManagerOnGameStart
  *PURPOSE:
  *  Called when a new round starts (countdown→running).
@@ -148,6 +159,36 @@ BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum);
  *  playerNum - Player slot to query
  *********************************************************/
 OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerGetLastThinkMs
+ *PURPOSE:
+ *  Wall-clock duration of the bot's most recent
+ *  brain.think() call, in milliseconds. Updated every
+ *  botManagerTick. Returns 0 if the slot is inactive.
+ *  Used by debug HUDs and perf graphs.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot to query
+ *********************************************************/
+double botManagerGetLastThinkMs(BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerEvalLuaString
+ *PURPOSE:
+ *  Compile + run a Lua chunk in the bot's state and return
+ *  the resulting string (NULL if the chunk doesn't produce
+ *  a string, the bot is inactive, or evaluation fails).
+ *  Caller owns the returned buffer and must free() it.
+ *
+ *  Used by BrainTest's panel system to poll
+ *  brain.get_pool_breakdown() etc. on demand.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot
+ *  src       - Lua chunk; should `return <something>`
+ *********************************************************/
+char *botManagerEvalLuaString(BYTE playerNum, const char *src);
 
 /*********************************************************
  *NAME:          botManagerExecLua

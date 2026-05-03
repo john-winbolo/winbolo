@@ -1130,7 +1130,8 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                    snapBases, MAX_SNAPSHOT_BASES,
                                    snapPills, MAX_SNAPSHOT_PILLS,
-                                   snapEvents, MAX_SNAPSHOT_EVENTS);
+                                   snapEvents, MAX_SNAPSHOT_EVENTS,
+                                   false);
             clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
                                    snapShells, snapHdr.shellCount,
                                    snapTkExplosions, snapHdr.tkExplosionCount,

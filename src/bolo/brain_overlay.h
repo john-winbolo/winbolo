@@ -11,6 +11,11 @@ typedef enum {
                                        game-pixel floor in mapToScreen,
                                        so sub-wu fractions render. */
     OVERLAY_CMD_CIRCLE,
+    OVERLAY_CMD_CIRCLE_SUBPIXEL,     /* same as CIRCLE but bypasses the
+                                       game-pixel floor — for markers
+                                       that need to land on a sub-game-
+                                       pixel position (e.g. shell hit
+                                       dot at WU precision). */
     OVERLAY_CMD_TEXT,
     OVERLAY_CMD_HUD_TEXT,
     OVERLAY_CMD_CLEAR

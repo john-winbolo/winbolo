@@ -33,12 +33,46 @@ local M = {}
 -- (14 each side, 0.5° steps).
 M.NUM_CANDIDATES        = 28
 M.STEP_DEG              = 0.5
-M.BLOCKER_MIN_DIST      = 2.0   -- excludes tank tile + 8 neighbors
-M.NEIGHBOR_BONUS        = 4   -- per match (max 6 matches = +24:
-                              -- left, left-2, left-3, right, right-2, right-3)
+M.BLOCKER_MIN_DIST      = 1.0   -- excludes only the standoff tile itself
+                                 -- (tank is 14 px in a 16 px tile so an
+                                 -- orthogonal-neighbor wall doesn't
+                                 -- collide with the tank body)
+M.NEIGHBOR_BONUS        = 4   -- per contiguous neighbor that "covers"
+                              -- the candidate. Walks left + right
+                              -- separately, stops on first gap, then
+                              -- counts only 2 * min(left, right) — the
+                              -- symmetric chain. A 8/4 run scores like
+                              -- a 4/4 run; favors positions with
+                              -- forgivable margin in both directions.
 M.SCORE_PER_SLOT        = 1   -- per protection slot (existing OR potential)
 M.BUILT_BONUS           = 1   -- extra per slot that already has a wall/pill
                               -- so: actual = 2, potential = 1
+
+-- Wounded-pill biasing for the (aim, subset) chooser. Goal: when
+-- the pill is already softened we don't need a heavy setup, so
+-- prefer fewer blockers. When it's still tough, prefer more.
+-- "Favored" subsets get WOUNDED_FAVOR_BONUS added to their total;
+-- subsets failing the chain-length floor are excluded entirely
+-- (set total = -inf so they never win).
+-- Tiered: full/near-full pills get a bigger bonus for a 3-blocker
+-- setup (worth the LGM time when the pill is going to take many
+-- shots anyway). Mid-wounded prefers 2 blockers. Low-HP rushes
+-- with 1 blocker.
+M.WOUNDED_HP_FULL_MAX           = 15  -- HP <= this AND >= FULL_MIN
+M.WOUNDED_HP_FULL_MIN           = 14
+M.WOUNDED_HP_FULL_FAV2_BLOCKERS = 2   -- 2-blocker bonus tier
+M.WOUNDED_HP_FULL_BONUS2        = 1000
+M.WOUNDED_HP_FULL_FAV3_BLOCKERS = 3   -- 3-blocker bonus tier (bigger)
+M.WOUNDED_HP_FULL_BONUS3        = 2000
+M.WOUNDED_HP_FULL_MIN_CHAIN     = 2
+M.WOUNDED_HP_HIGH_MAX           = 13  -- HP <= this AND >= MIN
+M.WOUNDED_HP_HIGH_MIN           = 11
+M.WOUNDED_HP_HIGH_FAV_BLOCKERS  = 2   -- favor subsets w/ this many (a+p)
+M.WOUNDED_HP_HIGH_MIN_CHAIN     = 2   -- HARD floor: chain (sym total) must be >= this
+M.WOUNDED_HP_LOW_MAX            = 10  -- HP <= this
+M.WOUNDED_HP_LOW_FAV_BLOCKERS   = 1
+M.WOUNDED_HP_LOW_MIN_CHAIN      = 0   -- no floor for the rush case
+M.WOUNDED_FAVOR_BONUS           = 1000  -- bonus for the high/low favored count
 
 -- Viz: hide losing candidates after this many ticks. Lets a human read
 -- the full grid right after scan, then de-clutters once they've seen it.
@@ -64,12 +98,18 @@ M.NONWINNER_FADE_TICKS  = 200  -- ~4 s at 50 Hz
 --                      already lands a bit inside the corner so a
 --                      sub-tile wobble at firing time still reads as
 --                      "the corner".
--- AIM_INSET_FIRE     : extra inset (on top of AIM_INSET) applied when
---                      we actually take the shot. Aiming a bit deeper
---                      than the scoring point gives the real shell
---                      another safety margin against drift.
-M.AIM_INSET      = 24   -- 1.5 gu (16 wu/gu) — scoring
-M.AIM_INSET_FIRE = 16   -- 1 gu — actual fire aim sits 1 gu inside the corner
+-- AIM_INSET_FIRE     : standalone (NOT stacked with AIM_INSET) inset
+--                      used when the shot actually fires. Scoring uses
+--                      AIM_INSET (deeper inside the tile) to reject
+--                      candidates whose corner aim is borderline; the
+--                      fire-time inset is smaller (closer to the edge,
+--                      more aggressive corner aim) so the shell has
+--                      maximum chance of clearing the wall corner.
+--                      Earlier comment claimed FIRE was "extra inset
+--                      on top of AIM_INSET" — wrong on both counts;
+--                      it's standalone AND smaller.
+M.AIM_INSET      = 24   -- 1.5 gu (16 wu/gu) — scoring (more conservative)
+M.AIM_INSET_FIRE = 16   -- 1 gu — fire-time aim (more aggressive corner)
 local AIM_OFFSETS = {
   { 128, 128 },                                -- 1: center
   { M.AIM_INSET,       M.AIM_INSET       },    -- 2: top-left
@@ -139,9 +179,18 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           outgoing_blocked_by_wall = true
         end
         -- Any non-target pill in the path = the shell hits it. Reject.
-        local pk = world.pill_at and world.pill_at[t.my * 256 + t.mx]
-        if pk and world.pills and world.pills[pk] then
-          outgoing_blocked_by_wall = true
+        -- pill_at[k] is a LIST of {id=, pill=} records (multiple pills
+        -- can briefly share a tile during pickup/replace), not a single
+        -- id — old code did `world.pills[<list>]` which is always nil
+        -- and never fired this reject. Walk the list and check each.
+        local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+              outgoing_blocked_by_wall = true
+              break
+            end
+          end
         end
       end
     end
@@ -153,16 +202,20 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
   --   - potential_blockers: tile is empty/passable but qualifies as a
   --                         protection slot (wall could be built here)
   -- Both lists are filtered identically: not on tank's outgoing path,
-  -- not too close to the tank, not the pill or tank tile, and NOT past
-  -- the tank from the pill's perspective. The simulated return path
-  -- continues until the shell expires; any tile further from the pill
-  -- than the tank is "behind" us and a wall built there would block
-  -- nothing real.
+  -- Pill-distance gate: a wall is only useful if it's strictly
+  -- between the pill and the standoff (i.e. closer to the pill than
+  -- the standoff is). We use the STANDOFF position (cand.cx/cy via
+  -- spot_wx/wy) as the reference, NOT origin_mx/my — origin_mx/my
+  -- is the LGM dispatch position (approach, ~1.5 tiles further from
+  -- pill than standoff), which would let walls behind the standoff
+  -- slip through as "in front of" the approach.
   local pill_cx, pill_cy = pmx + 0.5, pmy + 0.5
-  local tank_cx, tank_cy = origin_mx + 0.5, origin_my + 0.5
-  local pdtx, pdty = tank_cx - pill_cx, tank_cy - pill_cy
-  local pill_to_tank_d2 = pdtx * pdtx + pdty * pdty
+  local standoff_cx = spot_wx / 256.0
+  local standoff_cy = spot_wy / 256.0
+  local pdtx, pdty = standoff_cx - pill_cx, standoff_cy - pill_cy
+  local pill_to_standoff_d = math.sqrt(pdtx * pdtx + pdty * pdty)
   local actual_blockers, potential_blockers = {}, {}
+  local unreachable_blockers = {}  -- buildable tiles the LGM can't reach (viz only)
   if not outgoing_blocked_by_wall and return_tiles_list then
     for ti = 1, #return_tiles_list do
       local t = return_tiles_list[ti]
@@ -170,22 +223,31 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
       local skip = (t.mx == pmx and t.my == pmy) or
                    (t.mx == origin_mx and t.my == origin_my)
       if not skip and not outgoing_set[idx] and U.in_map(t.mx, t.my) then
-        local ddx = t.mx + 0.5 - tank_cx
-        local ddy = t.my + 0.5 - tank_cy
-        local d = math.sqrt(ddx * ddx + ddy * ddy)
-        -- Past-the-tank reject: tile's distance from the PILL exceeds
-        -- the pill→tank distance, so the pill's shell would have hit
-        -- the tank before reaching this tile. A wall here protects
-        -- nothing.
+        -- Distance from standoff (anti-clobber: tank body would
+        -- overlap an immediately-adjacent wall; BLOCKER_MIN_DIST=1.0
+        -- excludes only the standoff tile itself).
+        local sdx = t.mx + 0.5 - standoff_cx
+        local sdy = t.my + 0.5 - standoff_cy
+        local d_standoff = math.sqrt(sdx * sdx + sdy * sdy)
+        -- Distance from pill: must be strictly less than the
+        -- standoff-to-pill distance so the wall sits between us and
+        -- the pill rather than behind us.
         local pdx = t.mx + 0.5 - pill_cx
         local pdy = t.my + 0.5 - pill_cy
-        local past_tank = (pdx * pdx + pdy * pdy) > pill_to_tank_d2
-        if d >= M.BLOCKER_MIN_DIST and not past_tank then
+        local pdist = math.sqrt(pdx * pdx + pdy * pdy)
+        local in_front_of_standoff = pdist < pill_to_standoff_d
+        if d_standoff >= M.BLOCKER_MIN_DIST and in_front_of_standoff then
           local kind = nil
-          local pk = world.pill_at and world.pill_at[idx]
-          if pk and world.pills and world.pills[pk] then
-            if world.pills[pk].owner == "friendly" then
-              kind = "friendly_pill"
+          -- pill_at[k] is a list of {id=, pill=} (see world.lua:32) —
+          -- old code did world.pills[<list>] which is always nil, so
+          -- friendly pills were never recognised as blockers.
+          local plist = world.pill_at and world.pill_at[idx]
+          if plist then
+            for _, e in ipairs(plist) do
+              if e.pill and e.pill.owner == "friendly" then
+                kind = "friendly_pill"
+                break
+              end
             end
           end
           if not kind then
@@ -215,15 +277,39 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
             -- if the resulting score is 0 across all candidates.
             if no_builder then buildable = false end
             if buildable then
-              potential_blockers[#potential_blockers + 1] =
-                { mx = t.mx, my = t.my, kind = "empty" }
+              -- LGM-reachability: the tank parks on (origin_mx,origin_my)
+              -- during build_walls and dispatches the LGM from there.
+              -- If lgm_travel_ticks_map says no path exists, this
+              -- blocker is fictional — drop it. Skips the C call when
+              -- adjacent (always reachable, identical to lgm_can_reach
+              -- in builder.lua).
+              local reachable = true
+              if math.abs(t.mx - origin_mx) + math.abs(t.my - origin_my) > 1 then
+                local ticks = cpf.lgm_travel_ticks_map(
+                  origin_mx, origin_my, t.mx, t.my, 0, 0, 2000, 150)
+                reachable = ticks ~= -1
+              end
+              if reachable then
+                potential_blockers[#potential_blockers + 1] =
+                  { mx = t.mx, my = t.my, kind = "empty" }
+              else
+                -- Track separately so the viz_detail dialog can show
+                -- WHY a buildable tile didn't make the cut. Not used
+                -- by scoring (kept out of potential_blockers). Stash
+                -- the origin (the candidate standoff the LGM would
+                -- dispatch from) so the viz can show the failed
+                -- start→end pair, not just the destination.
+                unreachable_blockers[#unreachable_blockers + 1] =
+                  { mx = t.mx, my = t.my, kind = "unreachable",
+                    origin_mx = origin_mx, origin_my = origin_my }
+              end
             end
           end
         end
       end
     end
   end
-  return out_tiles, outgoing_blocked_by_wall, actual_blockers, potential_blockers
+  return out_tiles, outgoing_blocked_by_wall, actual_blockers, potential_blockers, unreachable_blockers
 end
 
 -- Score one candidate position fully (all 5 aims + return fire).
@@ -255,11 +341,34 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
                                          cpf.SHOT_PILL, 0)
   cand.return_fire = { tiles = return_tiles }
 
+  -- LGM dispatch origin during build_walls. The tank doesn't park on
+  -- the standoff tile during the build — it sits at the APPROACH
+  -- position (~1.5 tiles further from the pill, see attack.lua's
+  -- approach_fx/fy calc). So the LGM walks from there, not from
+  -- standoff. Compute the approach tile here using the same formula
+  -- attack.lua uses (ATTACK_APPROACH_OFFSET away from the pill along
+  -- the standoff→pill line) and pass into score_aim for the
+  -- LGM-reachability check.
+  local lgm_omx, lgm_omy = mx, my
+  do
+    local dx = cand.cx - (pmx + 0.5)
+    local dy = cand.cy - (pmy + 0.5)
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > 0.01 then
+      local ux, uy = dx / d, dy / d
+      local afx = cand.cx + ux * (C.ATTACK_APPROACH_OFFSET or 1.5)
+      local afy = cand.cy + uy * (C.ATTACK_APPROACH_OFFSET or 1.5)
+      local amx = U.mclamp(math.floor(afx))
+      local amy = U.mclamp(math.floor(afy))
+      if U.in_map(amx, amy) then lgm_omx, lgm_omy = amx, amy end
+    end
+  end
+
   local best_aim_idx = nil
   local best_score = 0
   for ai = 1, #AIM_OFFSETS do
-    local out_tiles, blocked, actual_blockers, potential_blockers = score_aim(
-      spot_wx, spot_wy, mx, my,
+    local out_tiles, blocked, actual_blockers, potential_blockers, unreachable_blockers = score_aim(
+      spot_wx, spot_wy, lgm_omx, lgm_omy,
       pmx, pmy, pill_wx, pill_wy,
       AIM_OFFSETS[ai], nil, return_tiles, world, no_builder)
     -- Score = 10 per protection slot (actual or potential) + small
@@ -278,6 +387,7 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
       blocked             = blocked,
       blockers            = actual_blockers,
       potential_blockers  = potential_blockers,
+      unreachable_blockers = unreachable_blockers,
       score               = aim_score,
     }
     if aim_score > best_score then
@@ -356,9 +466,172 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     candidates[#candidates + 1] = make_candidate(cx, cy, deg, offset, "candidate")
   end
 
-  for _, c in ipairs(candidates) do
+  -- ── Nudge infrastructure ─────────────────────────────────────────────────
+  -- When simulate_shot from a candidate doesn't include the pill tile, we
+  -- move the origin forward (toward the pill) in small steps until it does.
+  -- The nudge amount is recorded per aim so other aims for the same candidate
+  -- are unaffected.  When the neighbor-bonus loop checks a neighbor for a
+  -- nudged aim, it uses the neighbor's position at the same nudge distance —
+  -- pre-computed here as a full ring so no trajectory is simulated more than
+  -- once per (nudge_wu, aim_idx) across all candidates.
+  local NUDGE_STEP_WU = 8    -- 0.03125 tiles per step (half a gu)
+  local NUDGE_MAX_STEPS = 32 -- cap at 256 wu = 1 tile forward
+
+  -- nudge_rings[nudge_wu][ai][ci] -> score_aim result table
+  local nudge_rings = {}
+  -- nudge_pos[nudge_wu][ci] -> {wx, wy}
+  local nudge_pos   = {}
+
+  -- Nudged world-unit position for candidate ci moved nudge_wu wu toward pill.
+  local function nudge_origin(ci, nudge_wu)
+    local row = nudge_pos[nudge_wu]
+    if row and row[ci] then return row[ci].wx, row[ci].wy end
+    if not row then row = {}; nudge_pos[nudge_wu] = row end
+    local c   = candidates[ci]
+    local dx  = pcx - c.cx
+    local dy  = pcy - c.cy
+    local d   = math.sqrt(dx * dx + dy * dy)
+    local wx, wy
+    if d > 0.001 then
+      local frac = (nudge_wu / 256.0) / d
+      wx = math.floor((c.cx + dx * frac) * 256 + 0.5)
+      wy = math.floor((c.cy + dy * frac) * 256 + 0.5)
+    else
+      wx = math.floor(c.cx * 256 + 0.5)
+      wy = math.floor(c.cy * 256 + 0.5)
+    end
+    row[ci] = { wx = wx, wy = wy }
+    return wx, wy
+  end
+
+  -- Build (or return cached) score_aim results for every candidate at
+  -- nudge_wu world-units forward, for aim index ai.  Building the whole
+  -- ring at once means each (nudge_wu, ai) pair costs O(N) simulate_shot
+  -- calls total — neighbors reuse the same cache entries.
+  local function ensure_nudge_ring(nudge_wu, ai)
+    local ring_d = nudge_rings[nudge_wu]
+    if not ring_d then ring_d = {}; nudge_rings[nudge_wu] = ring_d end
+    if ring_d[ai] then return ring_d[ai] end
+    local aim_ring = {}
+    for ci, c in ipairs(candidates) do
+      local nwx, nwy = nudge_origin(ci, nudge_wu)
+      local nmx = math.floor(nwx / 256)
+      local nmy = math.floor(nwy / 256)
+      -- Return fire from the nudged position (pill shoots toward tank).
+      local ret = cpf.simulate_shot(pill_wx, pill_wy, nwx, nwy, cpf.SHOT_PILL, 0)
+      -- Approach tile: same outward direction as original, but from nudged pos.
+      local lgm_omx, lgm_omy = nmx, nmy
+      local odx = c.cx - pcx
+      local ody = c.cy - pcy
+      local od  = math.sqrt(odx * odx + ody * ody)
+      if od > 0.01 then
+        local ux, uy = odx / od, ody / od
+        local ncx = nwx / 256.0
+        local ncy = nwy / 256.0
+        local afx = ncx + ux * (C.ATTACK_APPROACH_OFFSET or 1.5)
+        local afy = ncy + uy * (C.ATTACK_APPROACH_OFFSET or 1.5)
+        local amx = U.mclamp(math.floor(afx))
+        local amy = U.mclamp(math.floor(afy))
+        if U.in_map(amx, amy) then lgm_omx, lgm_omy = amx, amy end
+      end
+      local out, blk, act, pot, unr = score_aim(
+        nwx, nwy, lgm_omx, lgm_omy,
+        pmx, pmy, pill_wx, pill_wy,
+        AIM_OFFSETS[ai], nil, ret, world, no_builder)
+      aim_ring[ci] = {
+        tiles                = out,
+        blocked              = blk,
+        actual_blockers      = act or {},
+        potential_blockers   = pot or {},
+        unreachable_blockers = unr or {},
+      }
+    end
+    ring_d[ai] = aim_ring
+    return aim_ring
+  end
+
+  local function pill_in_tiles(tiles)
+    if not tiles then return false end
+    for _, t in ipairs(tiles) do
+      if t.mx == pmx and t.my == pmy then return true end
+    end
+    return false
+  end
+  -- ── End nudge infrastructure ─────────────────────────────────────────────
+
+  for ci, c in ipairs(candidates) do
     score_candidate(c, pill, world, pill_wx, pill_wy, no_builder)
   end
+
+  -- ── Nudge pass ───────────────────────────────────────────────────────────
+  -- For each aim where the pill tile is absent from the simulated trajectory,
+  -- find the smallest forward nudge that puts it in the path and replace the
+  -- aim's data with the nudged result.  Aims that still miss the pill at max
+  -- nudge are marked blocked.  Candidate scores are recalculated afterward.
+  for ci, c in ipairs(candidates) do
+    local rescore = false
+    for ai = 1, #AIM_OFFSETS do
+      local aim = c.aims and c.aims[ai]
+      if aim and not aim.blocked and not pill_in_tiles(aim.tiles) then
+        local found_wu = nil
+        for step = 1, NUDGE_MAX_STEPS do
+          local d     = step * NUDGE_STEP_WU
+          local ring  = ensure_nudge_ring(d, ai)
+          local entry = ring[ci]
+          if entry and pill_in_tiles(entry.tiles) then
+            found_wu = d
+            break
+          end
+        end
+        if found_wu then
+          local entry    = nudge_rings[found_wu][ai][ci]
+          local actual_n = #entry.actual_blockers
+          local pot_n    = #entry.potential_blockers
+          local sc = 0
+          if not entry.blocked then
+            sc = M.SCORE_PER_SLOT * (actual_n + pot_n)
+               + M.BUILT_BONUS    * actual_n
+          end
+          c.aims[ai] = {
+            tiles                = entry.tiles,
+            blocked              = entry.blocked,
+            blockers             = entry.actual_blockers,
+            potential_blockers   = entry.potential_blockers,
+            unreachable_blockers = entry.unreachable_blockers,
+            score                = sc,
+            nudge_wu             = found_wu,
+          }
+        else
+          -- Pill unreachable even at max nudge — discard this aim.
+          aim.blocked = true
+          aim.score   = 0
+        end
+        rescore = true
+      end
+    end
+    if rescore then
+      local best_sc, best_ai = 0, nil
+      for ai = 1, #AIM_OFFSETS do
+        local aim = c.aims and c.aims[ai]
+        if aim and not aim.blocked and (aim.score or 0) > best_sc then
+          best_sc = aim.score
+          best_ai = ai
+        end
+      end
+      c.score        = best_sc
+      c.best_aim_idx = best_ai
+      if best_ai then
+        local a = c.aims[best_ai]
+        c.score_actual    = (M.SCORE_PER_SLOT + M.BUILT_BONUS) * #a.blockers
+        c.score_potential = M.SCORE_PER_SLOT * #a.potential_blockers
+      else
+        c.score_actual    = 0
+        c.score_potential = 0
+      end
+      c.score_neighbor = 0
+    end
+  end
+  -- ── End nudge pass ───────────────────────────────────────────────────────
 
   -- Neighbor bonus: a candidate's BLOCKER SET (every tile on its
   -- chosen aim that contributes to its score — actual walls,
@@ -368,23 +641,41 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- doesn't share that potential slot loses the planned cover too.
   -- Standoff is excluded both as a center and as a neighbor — only
   -- ring-to-ring relationships count.
-  local function blocker_keys(c)
+  -- Per-(candidate, aim) blocker_keys cache. Lazily filled on first
+  -- access. With per-subset chain evaluation the same neighbor's
+  -- key set is requested up to (2^MAX_SUBSET_BLOCKERS - 1) times
+  -- per candidate per aim, so memoizing this small table pays for
+  -- itself many times over. Indexed [cand_idx][aim_idx] = set;
+  -- nil = not yet built.
+  local bk_cache = {}
+  local function blocker_keys_for(i, ai, nudge_wu)
+    nudge_wu = nudge_wu or 0
+    -- Composite cache key: nudge_wu shifts into the high bits to avoid
+    -- aliasing with plain ai values (max AIM_OFFSETS is 5).
+    local ck  = ai + nudge_wu * 16
+    local row = bk_cache[i]
+    if row and row[ck] then return row[ck] end
+    if not row then row = {}; bk_cache[i] = row end
     local set = {}
-    if c and c.aims and c.best_aim_idx then
-      local a = c.aims[c.best_aim_idx]
+    local blockers, potentials
+    if nudge_wu > 0 then
+      local ring_ai = nudge_rings[nudge_wu] and nudge_rings[nudge_wu][ai]
+      local entry   = ring_ai and ring_ai[i]
+      if entry then
+        blockers  = entry.actual_blockers
+        potentials = entry.potential_blockers
+      end
+    else
+      local c = candidates[i]
+      local a = c and c.aims and c.aims[ai]
       if a then
-        if a.blockers then
-          for _, b in ipairs(a.blockers) do
-            set[b.my * 256 + b.mx] = true
-          end
-        end
-        if a.potential_blockers then
-          for _, b in ipairs(a.potential_blockers) do
-            set[b.my * 256 + b.mx] = true
-          end
-        end
+        blockers  = a.blockers
+        potentials = a.potential_blockers
       end
     end
+    for _, b in ipairs(blockers  or {}) do set[b.my * 256 + b.mx] = true end
+    for _, b in ipairs(potentials or {}) do set[b.my * 256 + b.mx] = true end
+    row[ck] = set
     return set
   end
   local function subset(a_set, b_set)
@@ -393,67 +684,224 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     end
     return true
   end
-  -- Chain bonus: +NEIGHBOR_BONUS if the immediate neighbor on a side
-  -- covers, and another +NEIGHBOR_BONUS per side if the NEXT-out
-  -- neighbor on that same side ALSO covers (guarded by the immediate
-  -- one — a chain only counts as long as it's contiguous). Encourages
-  -- candidates that sit deep inside a wide protected band rather than
-  -- right at its edge. Max bonus = NEIGHBOR_BONUS * 3
-  -- (1 base, +1 per side that extends).
+
+  -- Per-aim, per-SUBSET chain evaluation. For each candidate we
+  -- enumerate every non-empty subset of the aim's combined blocker
+  -- list (actual ∪ potential) and chain-walk neighbors that have
+  -- THIS subset as part of their own blocker set. The (aim, subset)
+  -- with the highest total wins — meaning a candidate with 3
+  -- blockers might win with subset {A} (cheap to set up + many
+  -- forgiving neighbors) over subset {A,B,C} (more cover but few
+  -- neighbors share the exact triple). Tunable via NEIGHBOR_BONUS
+  -- and SCORE_PER_SLOT / BUILT_BONUS.
+  --
+  -- Subset count cap MAX_SUBSET_BLOCKERS=3 → max 7 subsets per
+  -- corner per candidate (singletons 3, pairs 3, triple 1).
+  -- Above 3 blockers we degrade to "use the full set only" — no
+  -- known PPT geometry actually has >3 walls in a single setup.
+  -- Bitmask iteration: mask 1..(2^N - 1).
+  local MAX_SUBSET_BLOCKERS = 3
+
+  -- Wounded-pill bias setup (one-shot per scan). pill.armour is
+  -- the current HP; ranges chosen to bracket "soft / very-soft".
+  -- favored_blockers = 0 means "no preference" (don't apply bonus).
+  -- min_chain is a HARD floor: subsets with chain < this are
+  -- excluded outright.
+  local pill_hp = pill.health or 0
+  -- Map of subset_size -> bonus for the active tier. Allows multiple
+  -- favored sizes in one tier (e.g. full-HP gets 2-blocker AND
+  -- 3-blocker bonuses, with 3 being bigger).
+  local fav_bonus_by_size = {}
+  local min_chain = 0
+  local tier_label = "NONE"
+  if pill_hp >= M.WOUNDED_HP_FULL_MIN and pill_hp <= M.WOUNDED_HP_FULL_MAX then
+    fav_bonus_by_size[M.WOUNDED_HP_FULL_FAV2_BLOCKERS] = M.WOUNDED_HP_FULL_BONUS2
+    fav_bonus_by_size[M.WOUNDED_HP_FULL_FAV3_BLOCKERS] = M.WOUNDED_HP_FULL_BONUS3
+    min_chain  = M.WOUNDED_HP_FULL_MIN_CHAIN
+    tier_label = "FULL"
+  elseif pill_hp >= M.WOUNDED_HP_HIGH_MIN and pill_hp <= M.WOUNDED_HP_HIGH_MAX then
+    fav_bonus_by_size[M.WOUNDED_HP_HIGH_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
+    min_chain  = M.WOUNDED_HP_HIGH_MIN_CHAIN
+    tier_label = "HIGH"
+  elseif pill_hp <= M.WOUNDED_HP_LOW_MAX then
+    fav_bonus_by_size[M.WOUNDED_HP_LOW_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
+    min_chain  = M.WOUNDED_HP_LOW_MIN_CHAIN
+    tier_label = "LOW"
+  end
+  -- Largest bonus in the tier — drives the hard-exclusion magnitude
+  -- so an excluded subset always loses against any favored one.
+  local max_bonus = 0
+  for _, b in pairs(fav_bonus_by_size) do
+    if b > max_bonus then max_bonus = b end
+  end
+  if max_bonus == 0 then max_bonus = M.WOUNDED_FAVOR_BONUS end
+
   for i = 1, #candidates do
     local c = candidates[i]
-    if c.score > 0 and c.kind == "candidate" then
-      local cur_blockers = blocker_keys(c)
-      local cur_aim      = c.best_aim_idx
-      local function neighbor_covers(n)
-        if not n or n.kind ~= "candidate" or (n.score or 0) <= 0 then
-          return false
+    if c.kind == "candidate" then
+      local best_total           = -1
+      local best_aim             = nil
+      local best_chain           = 0
+      local best_subset_keys     = nil
+      local best_subset_actual   = nil
+      local best_subset_potential = nil
+      -- Per-eval log so the viz_detail dialog can surface every
+      -- (aim, subset) pair we considered with its chain count and
+      -- subtotal. The dialog formats these as body lines.
+      local chain_evals = {}
+      for ai = 1, #AIM_OFFSETS do
+        local a = c.aims and c.aims[ai]
+        if a and not a.blocked and (a.score or 0) > 0 then
+          -- Combined blocker list with kind tags so per-subset
+          -- score knows actual-vs-potential weights.
+          local all_blockers = {}
+          for _, b in ipairs(a.blockers or {}) do
+            all_blockers[#all_blockers + 1] =
+              { mx = b.mx, my = b.my, key = b.my * 256 + b.mx, actual = true,
+                ref = b }
+          end
+          for _, b in ipairs(a.potential_blockers or {}) do
+            all_blockers[#all_blockers + 1] =
+              { mx = b.mx, my = b.my, key = b.my * 256 + b.mx, actual = false,
+                ref = b }
+          end
+          local n = #all_blockers
+          if n > 0 then
+            local n_iter = math.min(n, MAX_SUBSET_BLOCKERS)
+            local fixed_count = n - n_iter   -- entries beyond the cap are
+                                             -- always included (degenerate
+                                             -- "use full set" behavior for
+                                             -- pathological N>3 cases)
+            local mask_max = (1 << n_iter) - 1
+            for mask = 1, mask_max do
+              local subset_set      = {}
+              local actual_n        = 0
+              local potential_n     = 0
+              local subset_actual   = {}
+              local subset_potential = {}
+              -- Bitmasked entries
+              for idx = 1, n_iter do
+                if (mask & (1 << (idx - 1))) ~= 0 then
+                  local b = all_blockers[idx]
+                  subset_set[b.key] = true
+                  if b.actual then
+                    actual_n = actual_n + 1
+                    subset_actual[#subset_actual + 1] = b.ref
+                  else
+                    potential_n = potential_n + 1
+                    subset_potential[#subset_potential + 1] = b.ref
+                  end
+                end
+              end
+              -- Always-included entries (only fires when n > MAX)
+              for idx = n_iter + 1, n do
+                local b = all_blockers[idx]
+                subset_set[b.key] = true
+                if b.actual then
+                  actual_n = actual_n + 1
+                  subset_actual[#subset_actual + 1] = b.ref
+                else
+                  potential_n = potential_n + 1
+                  subset_potential[#subset_potential + 1] = b.ref
+                end
+              end
+              -- Score this subset against all neighbors.
+              -- If this aim was nudged, test each neighbor from the same
+              -- nudge distance (using the pre-built ring) so the geometry
+              -- is comparable.
+              local nudge = (c.aims[ai] and c.aims[ai].nudge_wu) or 0
+              local function covers(j)
+                local nc = candidates[j]
+                if not nc or nc.kind ~= "candidate" then return false end
+                if nudge > 0 then
+                  local re = nudge_rings[nudge] and nudge_rings[nudge][ai]
+                             and nudge_rings[nudge][ai][j]
+                  if not re or re.blocked then return false end
+                else
+                  local n_a = nc.aims and nc.aims[ai]
+                  if not n_a or n_a.blocked then return false end
+                end
+                return subset(subset_set, blocker_keys_for(j, ai, nudge))
+              end
+              -- Symmetric chain: only count out as far as BOTH
+               -- sides extend. A 8-left/4-right run scores like 4+4,
+               -- not 12. Favors candidates with margin in both
+               -- directions — nudges off cliff-edges of the chain.
+              local left = 0
+              for j = i - 1, 1, -1 do
+                if not covers(j) then break end
+                left = left + 1
+              end
+              local right = 0
+              for j = i + 1, #candidates do
+                if not covers(j) then break end
+                right = right + 1
+              end
+              local sym = left < right and left or right
+              local chain = sym * 2
+              local subset_aim_score =
+                (M.SCORE_PER_SLOT + M.BUILT_BONUS) * actual_n
+                + M.SCORE_PER_SLOT * potential_n
+              local total = subset_aim_score + chain * M.NEIGHBOR_BONUS
+              -- Wounded-pill bias: bonus for the "favored" subset
+              -- size, exclusion if chain is below the floor. Stored
+              -- as bias on the eval row so the dialog shows it.
+              local bias = 0
+              local subset_size = actual_n + potential_n
+              local size_bonus = fav_bonus_by_size[subset_size]
+              if size_bonus then
+                bias = bias + size_bonus
+              end
+              if min_chain > 0 and chain < min_chain then
+                -- Hard exclusion: -inf-ish so this subset can never win.
+                bias = bias - max_bonus * 100
+              end
+              total = total + bias
+              chain_evals[#chain_evals + 1] = {
+                aim          = ai,
+                actual_n     = actual_n,
+                potential_n  = potential_n,
+                actual_list  = subset_actual,
+                potential_list = subset_potential,
+                aim_score    = subset_aim_score,
+                chain        = chain,
+                wounded_bias = bias,
+                total        = total,
+              }
+              if total > best_total then
+                best_total            = total
+                best_aim              = ai
+                best_chain            = chain
+                best_subset_keys      = subset_set
+                best_subset_actual    = subset_actual
+                best_subset_potential = subset_potential
+              end
+            end
+          end
         end
-        -- Same-corner clean-shot requirement: the neighbor must have
-        -- a non-blocked aim at the SAME aim_idx the current chose.
-        -- Otherwise drifting into the neighbor loses the firing lane
-        -- even if the cover blockers are still in play.
-        if not cur_aim then return false end
-        local n_aim = n.aims and n.aims[cur_aim]
-        if not n_aim or n_aim.blocked then return false end
-        return subset(cur_blockers, blocker_keys(n))
       end
-      local left1, left2, left3   = candidates[i - 1], candidates[i - 2], candidates[i - 3]
-      local right1, right2, right3 = candidates[i + 1], candidates[i + 2], candidates[i + 3]
-      local left_ok  = neighbor_covers(left1)
-      local right_ok = neighbor_covers(right1)
-      local left2_ok  = left_ok  and neighbor_covers(left2)
-      local right2_ok = right_ok and neighbor_covers(right2)
-      -- Each side gets its own +NEIGHBOR_BONUS at each chain depth:
-      --   +4 immediate left / right
-      --   +4 if left covers AND left-of-left also covers (depth 2)
-      --   +4 if depth-2 chain holds AND left-of-left-of-left covers (depth 3)
-      -- Same for right. Max +24 if both sides have a 3-deep run of
-      -- matching neighbors. Each level requires the previous to hold,
-      -- so a gap in the run breaks the chain at that point.
-      if left_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if right_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if left2_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if right2_ok then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if left2_ok and neighbor_covers(left3) then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
-      end
-      if right2_ok and neighbor_covers(right3) then
-        c.score = c.score + M.NEIGHBOR_BONUS
-        c.score_neighbor = c.score_neighbor + M.NEIGHBOR_BONUS
+      c._chain_evals = chain_evals   -- viz_detail reads this
+      if best_aim then
+        c.best_aim_idx   = best_aim
+        c.score          = best_total
+        c.score_neighbor = best_chain * M.NEIGHBOR_BONUS
+        c.best_chain_len = best_chain
+        c.score_actual   = (M.SCORE_PER_SLOT + M.BUILT_BONUS) * #best_subset_actual
+        c.score_potential = M.SCORE_PER_SLOT * #best_subset_potential
+        c.blockers_count = #best_subset_actual + #best_subset_potential
+        -- Store the winning subset so the wall-builder commits to
+        -- exactly those tiles (and doesn't waste LGM time building
+        -- potentials we decided weren't worth the rigid setup).
+        -- Overwrite the aim's potential_blockers list with the
+        -- chosen subset so downstream code that already reads
+        -- `aims[best_aim_idx].potential_blockers` automatically
+        -- uses the winning slice.
+        c.aims[best_aim].potential_blockers = best_subset_potential
+        -- Same for actual blockers (might also be a strict subset
+        -- of the original list when N > MAX_SUBSET_BLOCKERS — for
+        -- N <= 3 it'll be == the original).
+        c.aims[best_aim].blockers = best_subset_actual
+        c.aims[best_aim].subset_keys = best_subset_keys
       end
     end
   end
@@ -466,10 +914,14 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   end
 
   return {
-    candidates  = candidates,
-    best        = best,
-    standoff    = candidates[1],
-    pill        = pill,
+    candidates    = candidates,
+    best          = best,
+    standoff      = candidates[1],
+    pill          = pill,
+    pill_hp           = pill_hp,
+    fav_bonus_by_size = fav_bonus_by_size,
+    min_chain         = min_chain,
+    tier_label        = tier_label,
   }
 end
 
@@ -495,7 +947,123 @@ function M.draw_overlay(scan, now_tick)
   end
   local kept_target = scan.best or scan.standoff
 
-  -- Draw every candidate. Standoff gets a brighter outline + "S" label.
+  -- Pass A: register viz_detail entries for ALL candidates regardless
+  -- of the hide_losers fade. The fade only de-clutters the on-screen
+  -- markers + score labels; the inspector dialog should always have
+  -- every candidate available so the user can scrub the chain-eval
+  -- breakdown for losers too. Geometry mirrors the visible marker
+  -- (small circle at cx/cy), so a click on the marker still hit-tests
+  -- to its entry — but even after fade, clicking the spot will land
+  -- on the registered hit area.
+  if viz.detail_circle then
+    for ci, c in ipairs(scan.candidates) do
+      local did = string.format("shield_cand_%d", ci)
+      local kind_str = c.kind == "standoff" and "STANDOFF" or "candidate"
+      local hdr = string.format("%s score=%d @ deg=%.1f off=%+.1f  %d = %d + %d + %d[%d]",
+                                kind_str,
+                                math.floor(c.score or 0),
+                                c.deg or 0, c.offset_deg or 0,
+                                math.floor(c.score or 0),
+                                c.score_potential or 0,
+                                c.score_actual or 0,
+                                c.score_neighbor or 0,
+                                c.best_chain_len or 0)
+      viz.detail_circle(did, c.cx, c.cy, 0.04, hdr)
+      viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
+        math.floor(c.score or 0),
+        c.score_actual or 0, c.score_potential or 0, c.score_neighbor or 0))
+      if scan.fav_bonus_by_size and next(scan.fav_bonus_by_size) then
+        local parts = {}
+        local sizes = {}
+        for k, _ in pairs(scan.fav_bonus_by_size) do sizes[#sizes+1] = k end
+        table.sort(sizes)
+        for _, sz in ipairs(sizes) do
+          parts[#parts+1] = string.format("%d->+%d", sz, scan.fav_bonus_by_size[sz])
+        end
+        viz.detail_text(did, string.format(
+          "wounded bias: pill_hp=%d tier=%s min_chain=%d  blockers: %s",
+          scan.pill_hp or 0, scan.tier_label or "?", scan.min_chain or 0,
+          table.concat(parts, ", ")))
+      else
+        viz.detail_text(did, string.format(
+          "wounded bias: pill_hp=%d -> NONE (HP > %d)",
+          scan.pill_hp or 0, M.WOUNDED_HP_FULL_MAX))
+      end
+      viz.detail_text(did, string.format("position: cx=%.4f cy=%.4f wu=(%d,%d) tile=(%d,%d)",
+        c.cx, c.cy, math.floor(c.cx*256+0.5), math.floor(c.cy*256+0.5),
+        c.mx or 0, c.my or 0))
+      if c.best_aim_idx then
+        local aim_name = M.AIM_NAMES[c.best_aim_idx] or tostring(c.best_aim_idx)
+        viz.detail_text(did, string.format("winning aim: idx=%d (%s)",
+          c.best_aim_idx, aim_name))
+        local a = c.aims and c.aims[c.best_aim_idx]
+        if a then
+          if (a.nudge_wu or 0) > 0 then
+            viz.detail_text(did, string.format(
+              "  nudge: %d wu (%.3f tiles) — origin moved toward pill to hit it",
+              a.nudge_wu, a.nudge_wu / 256.0))
+          end
+          local n_unreach = #(a.unreachable_blockers or {})
+          viz.detail_text(did, string.format(
+            "  blockers: actual=%d potential=%d  (LGM-unreachable dropped: %d)",
+            #(a.blockers or {}), #(a.potential_blockers or {}), n_unreach))
+          for _, b in ipairs(a.blockers or {}) do
+            viz.detail_text(did, string.format("    actual      @ tile (%d,%d)", b.mx, b.my))
+          end
+          for _, b in ipairs(a.potential_blockers or {}) do
+            viz.detail_text(did, string.format("    potential   @ tile (%d,%d)", b.mx, b.my))
+          end
+          for _, b in ipairs(a.unreachable_blockers or {}) do
+            viz.detail_text(did, string.format(
+              "    UNREACHABLE @ tile (%d,%d) (LGM origin (%d,%d) -> dest unreachable per cpf.lgm_travel_ticks_map)",
+              b.mx, b.my, b.origin_mx or -1, b.origin_my or -1))
+          end
+        end
+      else
+        viz.detail_text(did, "no winning aim (all blocked or scored 0)")
+      end
+      local evals = c._chain_evals
+      if evals and #evals > 0 then
+        viz.detail_text(did, string.format("chain evals: %d (aim, subset) combos:", #evals))
+        local sorted = {}
+        for i, e in ipairs(evals) do sorted[i] = e end
+        table.sort(sorted, function(a, b) return (a.total or 0) > (b.total or 0) end)
+        for _, e in ipairs(sorted) do
+          local aim_name = M.AIM_NAMES[e.aim] or tostring(e.aim)
+          local marker = (e.aim == c.best_aim_idx and e.total == c.score) and " *WIN" or ""
+          local blocker_strs = {}
+          for _, b in ipairs(e.actual_list or {}) do
+            blocker_strs[#blocker_strs+1] = string.format("A(%d,%d)", b.mx, b.my)
+          end
+          for _, b in ipairs(e.potential_list or {}) do
+            blocker_strs[#blocker_strs+1] = string.format("P(%d,%d)", b.mx, b.my)
+          end
+          local bias_str = ""
+          if e.wounded_bias and e.wounded_bias ~= 0 then
+            bias_str = string.format(" wbias=%+d", e.wounded_bias)
+          end
+          local aim_data = c.aims and c.aims[e.aim]
+          local nudge_str = ""
+          if aim_data and (aim_data.nudge_wu or 0) > 0 then
+            nudge_str = string.format(" nudge=%dwu", aim_data.nudge_wu)
+          end
+          viz.detail_text(did, string.format(
+            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s%s%s",
+            e.aim, aim_name, e.actual_n, e.potential_n,
+            e.aim_score, e.chain, e.total, bias_str, nudge_str, marker))
+          if #blocker_strs > 0 then
+            viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
+          end
+        end
+      else
+        viz.detail_text(did, "no chain evals (no non-blocked aims with score>0)")
+      end
+    end
+  end
+
+  -- Pass B: visible markers + score labels. Honors the hide_losers
+  -- fade so the on-screen cluster stays clean a few seconds after
+  -- the scan is generated.
   for ci, c in ipairs(scan.candidates) do
     if hide_losers and c ~= kept_target then goto next_cand_draw end
     local color_r, color_g, color_b
@@ -547,6 +1115,9 @@ function M.draw_overlay(scan, now_tick)
     local lx = (ci % 2 == 0) and (c.cx + 0.06) or (c.cx - 0.06)
     viz.text("shield_scan_candidates", lx, c.cy - 0.04,
              label, side, color_r, color_g, color_b, 255, 0.18)
+
+    -- (viz_detail registration moved to Pass A above so loser
+     -- candidates still get inspector entries after the visual fade.)
     ::next_cand_draw::
   end
 
@@ -649,6 +1220,35 @@ function M.draw_overlay(scan, now_tick)
           for _, b in ipairs(a.potential_blockers) do
             border_box("shield_scan_blockers", b.mx, b.my, inset,
                        col[1], col[2], col[3], math.floor(col[4] * 0.55))
+          end
+        end
+        -- LGM-unreachable buildable tiles: red X-style cross + dim
+        -- border so the user can see why a candidate's score is lower
+        -- than expected (the slot exists geometrically but the LGM
+        -- can't get to it from the standoff).
+        if a.unreachable_blockers and #a.unreachable_blockers > 0 then
+          for _, b in ipairs(a.unreachable_blockers) do
+            viz.line("shield_scan_blockers",
+                     b.mx + 0.15, b.my + 0.15,
+                     b.mx + 0.85, b.my + 0.85,
+                     220, 60, 60, 230)
+            viz.line("shield_scan_blockers",
+                     b.mx + 0.85, b.my + 0.15,
+                     b.mx + 0.15, b.my + 0.85,
+                     220, 60, 60, 230)
+            viz.text("shield_scan_blockers",
+                     b.mx + 0.5, b.my + 0.95,
+                     string.format("LGM-unreach from (%d,%d)",
+                                   b.origin_mx or -1, b.origin_my or -1),
+                     "center", 220, 60, 60, 220, 0.3)
+            -- Faint dashed-ish line from origin to dest to make the
+            -- attempted route visible.
+            if b.origin_mx then
+              viz.line("shield_scan_blockers",
+                       b.origin_mx + 0.5, b.origin_my + 0.5,
+                       b.mx + 0.5, b.my + 0.5,
+                       220, 60, 60, 80)
+            end
           end
         end
       end

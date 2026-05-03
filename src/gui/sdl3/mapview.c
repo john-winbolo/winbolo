@@ -140,21 +140,25 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      static const int8_t kTipCol[16] = {
-        1, 2, 3, 3,   /* N   NNE  NE   ENE  */
-        3, 3, 3, 2,   /* E   ESE  SE   SSE  */
-        1, 0, 0, 0,   /* S   SSW  SW   WSW  */
-        0, 0, 0, 0    /* W   WNW  NW   NNW  */
+      /* Symmetric diamond, matching brains/NewAutopilot/init.lua's
+       * draw_shell_hitbox_viz mirror. Game-pixel offsets in 0..4
+       * range (4 = right/bottom edge of the 4-px sprite). Float so
+       * sub-pixel anchoring works at zoomFactor > 1. */
+      static const float kTipCol[16] = {
+        1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
+        4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
+        1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
+        0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
       };
-      static const int8_t kTipRow[16] = {
-        0, 0, 0, 0,   /* N   NNE  NE   ENE  */
-        1, 2, 3, 3,   /* E   ESE  SE   SSE  */
-        3, 3, 2, 2,   /* S   SSW  SW   WSW  */
-        1, 0, 0, 0    /* W   WNW  NW   NNW  */
+      static const float kTipRow[16] = {
+        0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
+        1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
+        4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
+        1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
       };
       int dir = frame - SHELL_DIR0;
-      sx -= (float)(kTipCol[dir] * ctx->zoomFactor);
-      sy -= (float)(kTipRow[dir] * ctx->zoomFactor);
+      sx -= kTipCol[dir] * (float)ctx->zoomFactor;
+      sy -= kTipRow[dir] * (float)ctx->zoomFactor;
     }
 
     int ss = ctx->sheetScale;
@@ -674,8 +678,26 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
           default: goto next_shell;
         }
 
-        float sx = (float)((spx - camMX * tileSize) * zf - edgeX + originX - (srcW * zf) / 2);
-        float sy = (float)((spy - camMY * tileSize) * zf - edgeY + originY - (srcH * zf) / 2);
+        /* Anchor sprite by its TIP pixel (not by center) so the
+         * leading-edge pixel lands on the shell's authoritative
+         * world position — same convention as mapViewDrawShells.
+         * Without this BrainTest's overlay (orange shell_hit_dot at
+         * world coords) sits on the sprite *center* instead of the
+         * tip pixel. */
+        static const float kTipCol[16] = {
+            1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
+            4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
+            1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
+            0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
+        };
+        static const float kTipRow[16] = {
+            0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
+            1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
+            4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
+            1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
+        };
+        float sx = (float)((spx - camMX * tileSize) * zf - edgeX + originX) - kTipCol[dir] * (float)zf;
+        float sy = (float)((spy - camMY * tileSize) * zf - edgeY + originY) - kTipRow[dir] * (float)zf;
 
         /* Cull off-screen */
         if (sx + srcW * zf >= originX && sx <= originX + viewW &&

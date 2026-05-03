@@ -187,4 +187,83 @@ typedef int (*BrainVizRegisterFunc)(const char *id,
 void brainCoreSetVizRegisterCallback(BrainVizRegisterFunc cb);
 void brainCoreRegisterVizRegister(lua_State *L);
 
+/*********************************************************
+ *NAME:          braintest_panel_register hook
+ *PURPOSE:
+ *  Lua binding `braintest_panel_register(name, lua_expr)`
+ *  lets brains advertise text panels for BrainTest's
+ *  Q-toggled side window. The host opens a tab per panel
+ *  and polls `lua_expr` periodically; whatever string the
+ *  expression returns is rendered as the tab body.
+ *
+ *  Same shape as the viz register callback: hosts wire up
+ *  via brainCoreSetPanelRegisterCallback; non-host runtimes
+ *  (game client, headless server) leave it NULL and the
+ *  binding silently no-ops.
+ *********************************************************/
+typedef int (*BrainPanelRegisterFunc)(const char *name,
+                                       const char *type,
+                                       const char *lua_expr,
+                                       const char *shortcut);
+
+void brainCoreSetPanelRegisterCallback(BrainPanelRegisterFunc cb);
+void brainCoreRegisterPanelRegister(lua_State *L);
+
+/*********************************************************
+ *NAME:          braintest_shotsim_poi_register hook
+ *
+ *  Lua binding `braintest_shotsim_poi_register(name, lua_expr)`
+ *  for surfacing brain-defined points of interest as
+ *  one-click endpoint sources in BrainTest's shot-sim
+ *  panel. The lua_expr returns either two integers (wx, wy)
+ *  when the POI is currently available, or nil. Callback is
+ *  set by the host via brainCoreSetShotSimPoiRegisterCallback;
+ *  non-host runtimes leave it NULL and the binding silently
+ *  no-ops.
+ *********************************************************/
+typedef int (*BrainShotSimPoiRegisterFunc)(const char *name,
+                                            const char *lua_expr);
+
+void brainCoreSetShotSimPoiRegisterCallback(BrainShotSimPoiRegisterFunc cb);
+void brainCoreRegisterShotSimPoiRegister(lua_State *L);
+
+/*********************************************************
+ *NAME:          viz_detail registry hook
+ *
+ *  Lua bindings overlay_detail / overlay_detail_text /
+ *  overlay_detail_clear let brains register clickable map
+ *  primitives with rich text bodies for an interactive
+ *  inspection dialog (BrainTest 'D' key). Host (BrainTest)
+ *  installs the callbacks; non-host runtimes leave them
+ *  NULL and the bindings silently no-op.
+ *********************************************************/
+typedef int  (*BrainVizDetailRegisterFunc)(const char *id, const char *kind,
+                                            float x1, float y1, float x2, float y2,
+                                            const char *label);
+typedef int  (*BrainVizDetailAppendBodyFunc)(const char *id, const char *line);
+typedef void (*BrainVizDetailClearFunc)(void);
+
+void brainCoreSetVizDetailRegisterCallback(BrainVizDetailRegisterFunc cb);
+void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb);
+void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
+void brainCoreRegisterVizDetail(lua_State *L);
+
+/*********************************************************
+ *NAME:          pill_contrib registry hook
+ *
+ *  Lua bindings pillcontrib_clear / pillcontrib_begin_pill /
+ *  pillcontrib_add_tile let brains push per-pill, per-tile
+ *  danger contribution data to BrainTest each tick. Host
+ *  uses it for an overlay (shift-2 cycles through pills).
+ *  Non-host runtimes leave callbacks NULL and bindings no-op.
+ *********************************************************/
+typedef void (*BrainPillContribClearFunc)(void);
+typedef int  (*BrainPillContribBeginPillFunc)(int pill_id, int mx, int my);
+typedef void (*BrainPillContribAddTileFunc)(int slot, int tx, int ty, float value);
+
+void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb);
+void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb);
+void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb);
+void brainCoreRegisterPillContrib(lua_State *L);
+
 #endif /* BRAINCORE_H */

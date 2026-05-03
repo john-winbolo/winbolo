@@ -40,6 +40,34 @@ local manual_keys = 0
 local AUTOSTART = true
 local ENABLE_LOGGING = false
 
+-- Hoisted lookup tables (don't realloc every tick of every Brain.think).
+-- Used by stuck detection / urgent-replan gating downstream — file-scope
+-- so the loop bodies just do membership checks.
+local ATTACK_STATIONARY_SUBS = {
+  plan_position=true, position=true, aim=true, approach=true, build_walls=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true,
+  rush=true, disengage=true, gather_trees=true,
+}
+local PP_STATIONARY_SUBS = {
+  dispatch=true, wait_place=true, prewait=true, advance=true,
+  shield_engage=true, engage=true, reposition=true, finish=true,
+  select_pill=true,
+}
+local TANK_COMBAT_STATIONARY_SUBS = {
+  engage=true, close=true, disengage=true,
+}
+-- Substates during which a goal-change should preserve standoff/wall
+-- state (so a re-target doesn't drop in-progress geometry).
+local ACTIVE_SUBS = {
+  plan_position=true, approach=true, build_walls=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true, charge=true, aim=true,
+  detree=true, engage=true, swerve=true, post_engage=true, loiter=true,
+  rush=true, ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true, ws_retreat=true, ws_rebuild=true, gather_trees=true,
+}
+
 -- Default initial substate for each goal kind.
 -- Enforced whenever a goal changes to prevent skipping positioning.
 local INITIAL_SUBSTATE = {
@@ -110,39 +138,77 @@ function Brain.get_queue_status()
   return goals.get_queue_status(state)
 end
 
-function Brain.get_pool_breakdown()
-  local ok, result = pcall(goals.get_pool_breakdown, state)
+function Brain.get_pool_breakdown_json()
+  -- Structured (JSON-encoded) version for the pool_grid panel.
+  -- Errors return a minimal valid JSON envelope so the host always
+  -- has something to parse (panel renders an empty grid).
+  local ok, result = pcall(goals.get_pool_breakdown_json, state)
   if ok then return result end
-  -- Error! Log to brain_errors.log with full stack trace, then return a
-  -- minimal valid breakdown containing the error so the UI still shows
-  -- something and we know what went wrong.
-  local err_msg = tostring(result)
-  local trace = debug.traceback(err_msg, 2)
-  local sdir = _G.DEBUG_SESSION_DIR or "."
-  local f = io.open(sdir .. "/brain_errors.log", "a")
-  if f then
-    f:write(string.format("[%s] tick=%d get_pool_breakdown: %s\n%s\n\n",
-      os.date("%Y-%m-%d %H:%M:%S"), state.tick or 0, err_msg, trace))
-    f:close()
-  end
-  -- Also print once per unique error to stderr so it's visible in console
-  _G._last_pool_err = _G._last_pool_err or {}
-  if not _G._last_pool_err[err_msg] then
-    _G._last_pool_err[err_msg] = true
-    io.stderr:write("BRAIN ERROR get_pool_breakdown: " .. err_msg .. "\n")
-    io.stderr:write(trace .. "\n")
-  end
-  local msg = err_msg:gsub("\n", " "):sub(1, 200)
+  io.stderr:write("BRAIN ERROR get_pool_breakdown_json: " .. tostring(result) .. "\n")
   return string.format(
-    "=PHASE\terror\t0\tq6=0\tpc6=0\ttick=%d\n"..
-    "=SECTION\t10\tWINNERS\t1\t0\t1.00\n"..
-    "ROW\t0\t0\t0\t0\t-1.0\t-1.0\t0\t-1\tget_pool_breakdown ERROR: %s",
-    state.tick or 0, msg)
+    '{"phase":"error","tick":%d,"replan_left":0,"sections":[]}',
+    state.tick or 0)
 end
 
 function Brain.get_strategic_place_heatmap()
   if not state._last_info then return nil end
   return goals.get_strategic_place_heatmap(state, world, state._last_info)
+end
+
+-- Shot-sim POI getters. Each returns (wx, wy) when the POI is
+-- currently meaningful, or nil. Nothing here mutates state — these
+-- are pure reads of whatever the brain happens to have decided this
+-- tick. Polled by BrainTest's shot-sim panel.
+local function _attack_pill_for_focus()
+  if not state.goal then return nil end
+  if state.goal.kind ~= "attack_pill" then return nil end
+  local id = state.goal.target_id
+  if not id then return nil end
+  return world.pills and world.pills[id] or nil
+end
+
+function Brain.shotsim_focused_pill_take_wu()
+  local p = _attack_pill_for_focus()
+  if not p then return nil end
+  -- Pill center in WU. Pills always sit at MAP_SQUARE_MIDDLE within
+  -- their tile so this matches the engine's pill firing geometry.
+  return (p.mx << 8) | 128, (p.my << 8) | 128
+end
+
+function Brain.shotsim_chosen_standoff_wu()
+  if not state.goal or not state.goal._shield_scan then return nil end
+  local s = state.goal._shield_scan.standoff
+  if not s then return nil end
+  -- Candidate cx/cy are tile-center floats (e.g. 12.5). Convert to
+  -- WU by multiplying by 256 (1 tile = 256 WU).
+  if not s.cx or not s.cy then return nil end
+  return math.floor(s.cx * 256 + 0.5), math.floor(s.cy * 256 + 0.5)
+end
+
+function Brain.shotsim_shield_candidate_wu(i)
+  if not state.goal or not state.goal._shield_scan then return nil end
+  local cands = state.goal._shield_scan.candidates
+  if not cands then return nil end
+  -- attack_shield builds the array as [1] = standoff, [2..N+1] =
+  -- ring candidates. The shot-sim button index is 1-based over the
+  -- ring candidates only, so shift by +1 to skip the standoff slot
+  -- (which already has its own dedicated POI button).
+  local c = cands[i + 1]
+  if not c or not c.cx or not c.cy then return nil end
+  return math.floor(c.cx * 256 + 0.5), math.floor(c.cy * 256 + 0.5)
+end
+
+-- Chosen pill-take aim point (which corner of the pill the brain
+-- decided to fire at — driven by attack_shield's best_aim_idx +
+-- the AIM_OFFSETS_TILE_FIRE table). attack.lua writes this as
+-- goal.aim_mx / aim_my in tile-fraction units; we just multiply by
+-- 256 to get WU. Returns nil when no aim is set (pre-PPT, between
+-- replans, or non-attack_pill goals).
+function Brain.shotsim_chosen_aim_wu()
+  if not state.goal then return nil end
+  local ax, ay = state.goal.aim_mx, state.goal.aim_my
+  if not ax or not ay then return nil end
+  return math.floor(ax * 256 + 0.5), math.floor(ay * 256 + 0.5)
 end
 
 function Brain.get_debug_info()
@@ -170,6 +236,57 @@ function Brain.open(info)
   -- client); the brain still emits overlay commands but they're
   -- never displayed.
   viz.register_all()
+  -- Advertise text panels for BrainTest's P-toggled side window.
+  -- Each call: panel name + Lua chunk that returns the body text
+  -- to display. Host polls the active tab at ~10Hz. Same NULL-
+  -- callback handling as braintest_viz_register: under WinBolo
+  -- client this binding is a no-op so the calls are harmless.
+  if braintest_panel_register then
+    -- Pool breakdown gets the bespoke 2x5 grid renderer (panel type
+    -- "pool_grid"). Brain emits structured JSON; host parses with
+    -- cJSON and walks the section/row tree. The 4th-arg opts table
+    -- requests its own SDL window with shortcut K (pooKs… alright,
+    -- "K" for Killset — pick any free letter).
+    braintest_panel_register("Pool breakdown", "pool_grid",
+      "return brain.get_pool_breakdown_json()",
+      { shortcut = "P" })
+    -- Queue status uses the generic text renderer (panel type "text").
+    -- No shortcut → appears as a tab in the main P window.
+    if Brain.get_queue_status then
+      braintest_panel_register("Queue status", "text",
+        "return brain.get_queue_status()")
+    end
+  end
+  -- Shot-sim points of interest. Each lua_expr returns (wx, wy) when
+  -- the POI is currently available, or nil. Polled every BrainTest
+  -- frame against the followed bot — keep the bodies cheap.
+  if braintest_shotsim_poi_register then
+    -- The currently-attacked pill (focused pill take target).
+    braintest_shotsim_poi_register("Focused pill take",
+      "return brain.shotsim_focused_pill_take_wu()")
+    -- Currently-chosen standoff (where the tank is heading for the
+    -- shot — driven by attack_shield's scan winner during PPT).
+    braintest_shotsim_poi_register("Chosen standoff",
+      "return brain.shotsim_chosen_standoff_wu()")
+    -- Chosen aim point — which corner of the focused pill we're
+    -- firing at (center / TL / TR / BL / BR, picked by the shield
+    -- scan). Useful as the shot-sim Target.
+    braintest_shotsim_poi_register("Pill take aim",
+      "return brain.shotsim_chosen_aim_wu()")
+    -- Every individual shield-scan candidate (±7° at 0.5° steps
+    -- around the standoff). Indexed 1..NUM_CANDIDATES; the brain's
+    -- helper returns nil for indices the live scan doesn't cover so
+    -- the panel buttons grey out outside the active scan.
+    -- Hardcoded 28 to match attack_shield.NUM_CANDIDATES — bumping
+    -- that constant means bumping this too. Worth the duplication
+    -- since the registration list is read at brain.open() and we
+    -- don't want to drag a runtime require here.
+    for i = 1, 28 do
+      braintest_shotsim_poi_register(
+        string.format("Shield candidate %d", i),
+        string.format("return brain.shotsim_shield_candidate_wu(%d)", i))
+    end
+  end
   -- Clear module-level caches from any previous game
   U.reset()
   PF.reset()
@@ -242,6 +359,13 @@ function Brain.open(info)
   -- Blocked destinations: mkey -> expiry tick
   state.blocked = {}
 
+  -- Banned approach angles per pill: { [pill_key] = { [deg_bucket] = expiry_tick } }
+  -- Populated when an attack_pill approach times out without reaching
+  -- the approach spot — bans that angle for 3 minutes so plan_position
+  -- doesn't pick the same unreachable spot on the next replan.
+  -- pill_key = my * 256 + mx (stationary while alive); deg_bucket = floor(deg/5)*5.
+  state.banned_pill_angles = {}
+
   -- Exploration
   state.visited      = {}
   state.frontier     = heap.new()
@@ -296,11 +420,94 @@ function Brain.open(info)
 end
 
 
+-- Shell-hitbox + own-tank-hitbox overlay. Factored out so it can run
+-- in BOTH manual mode AND autonomous mode — without this, shells the
+-- user fires while driving via M-mode wouldn't show their hit dots
+-- (the manual-mode early-return in Brain.think used to skip past
+-- the autonomous block where this lived).
+local function draw_shell_hitbox_viz(info)
+  if not info.objects then return end
+  local pill_live = {}
+  for i = 1, #info.objects do
+    local ob = info.objects[i]
+    if ob.type == 2 and (ob.direction or 0) > 0 then
+      local pmx = ob.x >> 8
+      local pmy = ob.y >> 8
+      pill_live[pmy * 256 + pmx] = true
+    end
+  end
+  for i = 1, #info.objects do
+    local ob = info.objects[i]
+    if ob.type == 1 then   -- OBJECT_SHOT
+      local smx = ob.x >> 8
+      local smy = ob.y >> 8
+      local on_live_pill = pill_live[smy * 256 + smx] or false
+      local DOT_WU = 4
+      local HALF = DOT_WU * 0.5
+      local tx1 = (ob.x - HALF) / 256.0
+      local ty1 = (ob.y - HALF) / 256.0
+      local tx2 = (ob.x + HALF) / 256.0
+      local cxt = ob.x / 256.0
+      local cyt = ob.y / 256.0
+      local r, g, b = 255, 140, 0
+      if on_live_pill then r, g, b = 255, 0, 0 end
+      -- 1/16-tile grid inside the shell's tile (gated by the
+      -- 'shot_tile_grid' viz toggle). Lets the user read off the
+      -- exact pixel position of the orange shell-hit dot.
+      do
+        local gr, gg, gb, ga = 80, 80, 200, 180
+        for ii = 0, 16 do
+          local f = ii / 16.0
+          viz.line("shot_tile_grid", smx + f, smy, smx + f, smy + 1, gr, gg, gb, ga)
+          viz.line("shot_tile_grid", smx, smy + f, smx + 1, smy + f, gr, gg, gb, ga)
+        end
+      end
+      -- Precise (sub-game-pixel) so the dot lands on the shell's
+      -- authoritative WU position instead of being floored to the
+      -- nearest game pixel.
+      viz.circle("shell_hit_dot", cxt, cyt, 3 / 256.0, r, g, b, 255, true)
+      -- Sprite-tip diagnostic (must mirror mapview.c kTipCol/Row).
+      local kTipCol = {1.5, 3.0, 4.0, 4.0,  4.0, 4.0, 4.0, 3.0,
+                       1.5, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0}
+      local kTipRow = {0.0, 0.0, 0.0, 0.0,  1.5, 3.0, 4.0, 4.0,
+                       4.0, 4.0, 3.0, 3.0,  1.5, 0.0, 0.0, 0.0}
+      local dir16 = (ob.direction or 0) >> 4
+      local tc = kTipCol[dir16 + 1]
+      local tr = kTipRow[dir16 + 1]
+      local x_tile = ob.x / 256.0
+      local y_tile = ob.y / 256.0
+      local tip_x_tile = tc / 16.0
+      local tip_y_tile = tr / 16.0
+      local render_x_tile = x_tile - tip_x_tile
+      local render_y_tile = y_tile - tip_y_tile
+      viz.text("shell_hitbox", tx2 + 0.2, ty1 - 0.05,
+        string.format("d=%d tip=(%.4f,%.4f) x=%.4f y=%.4f render=(%.4f,%.4f)",
+          dir16, tip_x_tile, tip_y_tile,
+          x_tile, y_tile,
+          render_x_tile, render_y_tile),
+        "topleft", 255, 220, 120, 255, 0.25)
+    end
+  end
+  -- Own-tank hitbox outline. Per tank.c:1089 a shell hits when
+  -- abs(tank.x-shell.x) < 128 && abs(tank.y-shell.y) < 128 — so
+  -- the hitbox is a 256x256 wu (1 tile) centered on the tank.
+  if info.tankx and info.tanky then
+    local htx1 = (info.tankx - 128) / 256.0
+    local hty1 = (info.tanky - 128) / 256.0
+    local htx2 = (info.tankx + 128) / 256.0
+    local hty2 = (info.tanky + 128) / 256.0
+    viz.rect("tank_hitbox", htx1, hty1, htx2, hty2, 255, 255, 0, 200, false)
+  end
+end
+
 -- =========================================================================
 -- THINK
 -- =========================================================================
 
 function Brain.think(info)
+  -- Capture wall clock at think entry; the matching exit-time
+  -- snapshot at the bottom drives the top-left tick-info HUD.
+  local _think_t0 = os.clock()
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
@@ -334,6 +541,21 @@ function Brain.think(info)
     dbg.begin_trace(Brain.think)
   end
 
+  local function hud_builder_status(inf, st)
+    if inf.man_status == C.LGM_DEAD then
+      return ": dead", 255, 80, 80
+    elseif inf.man_status == C.LGM_INTANK then
+      return ": ready", 100, 220, 100
+    else
+      local eta = st.builder and st.builder.lgm_eta
+      local remaining = eta and (eta - now)
+      if remaining and remaining > 0 then
+        return string.format(": out (%dt)", remaining), 255, 200, 50
+      end
+      return ": out", 255, 200, 50
+    end
+  end
+
   -- Manual control: skip all AI, just show HUD. C side handles keys directly.
   if manual_active then
     -- Still update world knowledge so anger/danger reflect what we observe
@@ -349,6 +571,9 @@ function Brain.think(info)
       metrics.inc("danger_skips")
     end
     if overlay_clear then overlay_clear() end
+    -- Same hitbox overlay as the autonomous path so shells the user
+    -- shoots while M-driving still get the orange dot + cyan tile.
+    draw_shell_hitbox_viz(info)
     -- Track our own fired shells in manual mode too, so the cyan/green/
     -- magenta sim circles render while the human is driving.
     shot_tracker.update(info, now)
@@ -370,14 +595,17 @@ function Brain.think(info)
     viz.hud_text("hud_manual_control", 10, 80, "Keys: " .. key_str, "topleft", 255, 255, 100)
     viz.hud_text("hud_manual_control", 10, 92, string.format("spd=%d dir=%d arm=%d sh=%d",
       info.speed, info.direction, info.armour, info.shells), "topleft", 200, 200, 200)
-    -- HUD: tank stats
-    local y = 10
+    -- HUD: tank stats (offset up so the kill-attempt indicator can sit
+    -- under it without overlap on shorter window heights).
+    local y = 90
+    local bld_str, bld_r, bld_g, bld_b = hud_builder_status(info, state)
     viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
-    viz.hud_text("hud_resources", 10, y + 12, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
-    viz.hud_text("hud_resources", 10, y + 24, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
-    viz.hud_text("hud_resources", 10, y + 36, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
-    viz.hud_text("hud_resources", 10, y + 48, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
-    viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
+    viz.hud_text("hud_resources", 10, y + 12, string.format("Builder%s", bld_str), "bottomleft", bld_r, bld_g, bld_b)
+    viz.hud_text("hud_resources", 10, y + 24, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
+    viz.hud_text("hud_resources", 10, y + 36, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
+    viz.hud_text("hud_resources", 10, y + 48, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
+    viz.hud_text("hud_resources", 10, y + 60, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
+    viz.hud_text("hud_resources", 10, y + 72, string.format("Boat   %s", info.inboat and "YES" or "no"),
       "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
     -- Still draw crosshairs
     local twx, twy = info.tankx / 256.0, info.tanky / 256.0
@@ -393,139 +621,43 @@ function Brain.think(info)
 
   -- Debug overlay
   if overlay_clear then overlay_clear() end
+  -- viz_detail registry rebuilds from scratch each think tick. Brain
+  -- code that wants to surface clickable map primitives in the D
+  -- inspector dialog calls viz.detail_rect/circle/text_anchor +
+  -- viz.detail_text after this clear.
+  viz.detail_clear()
   viz.hud_text("hud_version", 10, 4, "NewAutopilot " .. BOT_VERSION, "bottomright", 150, 150, 150)
 
-  -- SHELL_HITBOX_VIZ: pixel at each in-flight shell's hit-test position.
-  -- Drawn AFTER overlay_clear so it survives the wipe. Overlay commands
-  -- flow into per-frame recording → replay scrub shows correct per-tick
-  -- positions.
-  -- Colors: orange over normal terrain, red when the shell's tile has a
-  -- live pill (armour > 0) — i.e. pillsIsPillHit should return TRUE
-  -- next tick.
+  -- SHELL_HITBOX_VIZ + own-tank hitbox: drawn after overlay_clear so
+  -- it survives the wipe. Same call as manual mode runs above so the
+  -- two paths can't drift.
+  draw_shell_hitbox_viz(info)
+
+  -- Optional debug log — keeps the per-tick shell positions in
+  -- hitboxes.log for one-off bug hunts. Rendering is handled by
+  -- draw_shell_hitbox_viz above; this block ONLY writes the log.
   do
     local hb_log = io.open("hitboxes.log", "a")
-    if info.objects then
+    if hb_log and info.objects then
       local shell_count = 0
-      local pill_live = {}
       for i = 1, #info.objects do
         local ob = info.objects[i]
-        if ob.type == 2 and (ob.direction or 0) > 0 then
-          local pmx = ob.x >> 8
-          local pmy = ob.y >> 8
-          pill_live[pmy * 256 + pmx] = true
-        end
-      end
-      for i = 1, #info.objects do
-        local ob = info.objects[i]
-        if ob.type == 1 then   -- OBJECT_SHOT
+        if ob.type == 1 then
           shell_count = shell_count + 1
           local smx = ob.x >> 8
           local smy = ob.y >> 8
-          local on_live_pill = pill_live[smy * 256 + smx] or false
-          -- WinBolo: 1 tile = 256 wu = 16 game pixels. Draw the hit dot
-          -- at the shell's exact 1-wu position (1/256 of a tile). The
-          -- renderer (braintest_main.c renderBrainOverlay RECT_FILL
-          -- path) inflates any filled rect that would be smaller than
-          -- MIN_DOT_SCREEN_PX screen pixels up to that size, centered
-          -- on the original point — so the dot stays visible at low
-          -- zoom while at high zoom its center shows the real sub-wu
-          -- offset against the hitbox edge.
-          local px = ob.x >> 4     -- integer game pixel for log only
-          local py = ob.y >> 4
-          -- Hit dot size in wu. Smaller = closer to true 1/256-tile
-          -- precision but invisible at low zoom; larger = visible at low
-          -- zoom but obscures the sub-pixel offset against hitbox edges.
-          -- The renderBrainOverlay floor still inflates very small rects
-          -- to MIN_DOT_SCREEN_PX so we never lose it entirely.
-          -- Rect is centered on the shell's authoritative (x, y) — NOT
-          -- offset top-left at it — because the C inflate code centers
-          -- the visible dot on the rect's midpoint. If the rect spanned
-          -- [shell, shell+DOT_WU] the dot would end up DOT_WU/2 wu off
-          -- the true hit point (~1 screen pixel at high zoom).
-          local DOT_WU = 4
-          local HALF = DOT_WU * 0.5
-          local tx1 = (ob.x - HALF) / 256.0
-          local ty1 = (ob.y - HALF) / 256.0
-          local tx2 = (ob.x + HALF) / 256.0
-          local ty2 = (ob.y + HALF) / 256.0
-          local cxt = ob.x / 256.0
-          local cyt = ob.y / 256.0
-          local r, g, b = 255, 140, 0
-          if on_live_pill then r, g, b = 255, 0, 0 end
-          -- DIAG: outline the tile the shell is in, plus 1/16-tile grid
-          -- lines inside it so the orange hit pixel can be read off the
-          -- pixel grid directly. Gated by BrainTest's viz dialog
-          -- ("Shot tile grid"); BrainTest sets _BT_SHOW_SHOT_TILE_GRID.
-          -- Defaults to true for backward compat when running outside
-          -- BrainTest (the global is nil, so the `~= false` test passes).
-          do
-            local gr, gg, gb, ga = 80, 80, 200, 180
-            for i = 0, 16 do
-              local f = i / 16.0
-              viz.line("shot_tile_grid", smx + f, smy, smx + f, smy + 1, gr, gg, gb, ga)
-              viz.line("shot_tile_grid", smx, smy + f, smx + 1, smy + f, gr, gg, gb, ga)
-            end
-          end
-          -- Cyan-blue tile outline around the shell.
-          viz.rect("shell_hitbox", smx, smy, smx + 1, smy + 1, 120, 120, 255, 255, false)
-          -- Orange/red dot at the shell's exact wu position. Use a tiny
-          -- circle (outline rendered at float precision via SDL_RenderLine)
-          -- so the marker keeps full sub-wu accuracy regardless of zoom —
-          -- the rect path floors filled rects to the game-pixel grid
-          -- unless the subpixel flag is passed.
-          viz.circle("shell_hit_dot", cxt, cyt, 3 / 256.0, r, g, b, 255)
-          -- DIAG: print the sprite-tip offset that mapview applies for
-          -- this shell's direction so we can visually compare the orange
-          -- pixel position to where the sprite ought to be anchored.
-          -- Tables must mirror src/gui/sdl3/mapview.c kTipCol/kTipRow.
-          -- Float tip anchors matching src/gui/sdl3/mapview.c.
-          -- Symmetric diamond — must match mapview.c kTipCol/kTipRow.
-          local kTipCol = {1.5, 3.0, 4.0, 4.0,  4.0, 4.0, 4.0, 3.0,
-                           1.5, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0}
-          local kTipRow = {0.0, 0.0, 0.0, 0.0,  1.5, 3.0, 4.0, 4.0,
-                           4.0, 4.0, 3.0, 3.0,  1.5, 0.0, 0.0, 0.0}
-          -- ob.direction for shells is utilGet16Dir output: 0,16,32,...,240 (BRadians), not 0..15.
-          local dir16 = (ob.direction or 0) >> 4
-          local tc = kTipCol[dir16 + 1]
-          local tr = kTipRow[dir16 + 1]
-          do
-            -- All values in tile units (decimal).
-            local x_tile = ob.x / 256.0
-            local y_tile = ob.y / 256.0
-            local tip_x_tile = tc / 16.0
-            local tip_y_tile = tr / 16.0
-            local render_x_tile = x_tile - tip_x_tile
-            local render_y_tile = y_tile - tip_y_tile
-            viz.text("shell_hitbox", tx2 + 0.2, ty1 - 0.05,
-              string.format("d=%d tip=(%.4f,%.4f) x=%.4f y=%.4f render=(%.4f,%.4f)",
-                dir16, tip_x_tile, tip_y_tile,
-                x_tile, y_tile,
-                render_x_tile, render_y_tile),
-              "topleft", 255, 220, 120, 255, 0.25)
-          end
-          if hb_log then
-            hb_log:write(string.format(
-              "  t=%d SHELL wx=%d wy=%d tile=(%d,%d) px=(%d,%d) pill=%s\n",
-              state.tick, ob.x, ob.y, smx, smy, px, py, tostring(on_live_pill)))
-          end
+          local px  = ob.x >> 4
+          local py  = ob.y >> 4
+          hb_log:write(string.format(
+            "  t=%d SHELL wx=%d wy=%d tile=(%d,%d) px=(%d,%d)\n",
+            state.tick, ob.x, ob.y, smx, smy, px, py))
         end
       end
-      if hb_log and shell_count > 0 then
+      if shell_count > 0 then
         hb_log:write(string.format("t=%d shell_count=%d\n", state.tick, shell_count))
       end
     end
     if hb_log then hb_log:close() end
-    -- Own tank hitbox outline. Per tank.c:1089 a shell is considered a hit
-    -- when abs(tank.x - shell.x) < 128 AND abs(tank.y - shell.y) < 128, so
-    -- the hitbox is a 256x256 wu square (1 tile, ±8 game px) centered on
-    -- the tank's world position.
-    if info.tankx and info.tanky then
-      local htx1 = (info.tankx - 128) / 256.0
-      local hty1 = (info.tanky - 128) / 256.0
-      local htx2 = (info.tankx + 128) / 256.0
-      local hty2 = (info.tanky + 128) / 256.0
-      viz.rect("tank_hitbox", htx1, hty1, htx2, hty2, 255, 255, 0, 200, false)
-    end
 
     -- Tank position readout. Three lines next to the tank: world
     -- units (0..65535), game pixels (wu/16), and tile + sub-tile
@@ -549,6 +681,41 @@ function Brain.think(info)
       viz.text("tank_position", lx, ly + 0.8,
         string.format("tile=(%d+%d/256, %d+%d/256)", tile_x, sub_x, tile_y, sub_y),
         "topleft", 200, 220, 255, 255, 0.4)
+
+      -- Heading readout — integer info.direction (the brain-visible
+      -- coarse angle) plus the float info.tank_angle when present
+      -- (engine's actual sub-brad value, used for shot trajectory
+      -- sims). Cardinal letter helps when the number is 200ish and
+      -- you can't remember which way that's pointing.
+      do
+        local dir_int = info.direction or 0
+        local dir_f   = info.tank_angle  -- may be nil on older snapshots
+        local card
+        if     dir_int <  16 or dir_int > 240 then card = "N"
+        elseif dir_int <  48                  then card = "NE"
+        elseif dir_int <  80                  then card = "E"
+        elseif dir_int < 112                  then card = "SE"
+        elseif dir_int < 144                  then card = "S"
+        elseif dir_int < 176                  then card = "SW"
+        elseif dir_int < 208                  then card = "W"
+        else                                       card = "NW"
+        end
+        local fl = info.tank_first_left  or 0
+        local fr = info.tank_first_right or 0
+        local ramp_str = ""
+        if fl > 0 or fr > 0 then
+          ramp_str = string.format("  ramp_L=%d ramp_R=%d", fl, fr)
+        end
+        if dir_f then
+          viz.text("tank_angle", lx, ly + 1.2,
+            string.format("dir=%d (%.3f) %s%s", dir_int, dir_f, card, ramp_str),
+            "topleft", 255, 220, 140, 255, 0.4)
+        else
+          viz.text("tank_angle", lx, ly + 1.2,
+            string.format("dir=%d %s%s", dir_int, card, ramp_str),
+            "topleft", 255, 220, 140, 255, 0.4)
+        end
+      end
 
       local g = state.goal
       if g and g.kind == "attack_pill" and g.standoff_fx and g.standoff_fy then
@@ -685,15 +852,45 @@ function Brain.think(info)
     viz.rect("adjacent_tiles", pos[1], pos[2], pos[1]+1, pos[2]+1, 0, 255, 255, 180)
   end
 
-  -- HUD: tank stats in bottom-left
-  local y = 10
+  -- HUD: tank stats in bottom-left (offset up so the kill-attempt
+  -- indicator can sit under it without overlap on shorter window heights).
+  local y = 90
+  local bld_str, bld_r, bld_g, bld_b = hud_builder_status(info, state)
   viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
-  viz.hud_text("hud_resources", 10, y + 12, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
-  viz.hud_text("hud_resources", 10, y + 24, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
-  viz.hud_text("hud_resources", 10, y + 36, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
-  viz.hud_text("hud_resources", 10, y + 48, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
-  viz.hud_text("hud_resources", 10, y + 60, string.format("Boat   %s", info.inboat and "YES" or "no"),
+  viz.hud_text("hud_resources", 10, y + 12, string.format("Builder%s", bld_str), "bottomleft", bld_r, bld_g, bld_b)
+  viz.hud_text("hud_resources", 10, y + 24, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
+  viz.hud_text("hud_resources", 10, y + 36, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
+  viz.hud_text("hud_resources", 10, y + 48, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
+  viz.hud_text("hud_resources", 10, y + 60, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
+  viz.hud_text("hud_resources", 10, y + 72, string.format("Boat   %s", info.inboat and "YES" or "no"),
     "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
+
+  -- HUD: last attack-goal clear (set by attack.clear_attack_goal). Stays
+  -- visible for ~300 ticks after the abort so a silent "goal went to
+  -- none mid-finetune" leaves a breadcrumb pointing at the cause.
+  if state._last_attack_clear then
+    local lc  = state._last_attack_clear
+    local age = (state.tick or 0) - (lc.tick or 0)
+    if age >= 0 and age <= 300 then
+      local fade = math.max(80, 255 - math.floor(age * 0.5))
+      local sub_str = lc.sub_was and ("/" .. lc.sub_was) or ""
+      local pos_str = (lc.mx_was and lc.my_was)
+                      and string.format(" @(%d,%d)", lc.mx_was, lc.my_was)
+                      or  ""
+      viz.hud_text("attack_clear_reason", 10, 220,
+        string.format("CLEARED t=%d  %s%s%s",
+                      lc.tick or 0, lc.kind_was or "?", sub_str, pos_str),
+        "topleft", 255, 120, 80, fade)
+      viz.hud_text("attack_clear_reason", 10, 232,
+        "  why: " .. (lc.reason or "?"),
+        "topleft", 255, 200, 150, fade)
+    end
+  end
+
+  -- HUD: click-cost panel — moved back to C side (braintest_main.c
+  -- renderHUD) so it can use the live Dijkstra slate when not in
+  -- playback (and show "N/A" when scrubbed). The brain-side
+  -- state.click_inspect handler is no longer needed.
 
   -- HUD: replan countdown (left side, middle)
   do
@@ -800,8 +997,7 @@ function Brain.think(info)
     elseif msg == ASSIST_MSG_PILL_NO_REPAIR then
       -- Pill doesn't need repair: cancel repair goal
       if state.goal.kind == "repair_pill" then
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        attack.clear_attack_goal(state)
         log.event("assist_msg", "pill_no_repair")
       end
     elseif msg == ASSIST_MSG_MAN_DEAD then
@@ -813,9 +1009,28 @@ function Brain.think(info)
   -- Selective cache invalidation based on pill/terrain changes
   PF.begin_tick(now, world)
 
-  -- Expire wounded pill memory after 500 ticks (~10 seconds)
-  if state.wounded_pill and (now - state.wounded_pill.tick) > 500 then
-    state.wounded_pill = nil
+  -- Expire wounded pill memory:
+  --   1. After WOUNDED_FINISH_DECAY_TICKS (matches the cost-curve decay
+  --      so the marker disappears at the same tick the discounts hit 1.0x).
+  --   2. If the pill at that tile no longer matches the wounded entry —
+  --      either someone else captured it, we captured it, or the pill
+  --      was rebuilt with a different id. Without this, the 0.30x and
+  --      commit discount keep applying to a now-enemy-owned pill that
+  --      may already be healing back to full HP.
+  if state.wounded_pill then
+    local wp     = state.wounded_pill
+    local expire = (now - wp.tick) > (C.WOUNDED_FINISH_DECAY_TICKS or 1500)
+    local cur    = wp.id and world.pills and world.pills[wp.id] or nil
+    local owner_changed = wp.owner and cur and cur.owner ~= wp.owner
+    local pill_gone     = wp.id and not cur
+    -- Healed past where we left it: enemy LGM repaired it back up.
+    -- Compare to the recorded wp.hp (HP at the moment we tagged it,
+    -- typically at swerve / loiter timeout). Even a 1-HP rise means
+    -- someone is actively repairing — re-evaluate at normal cost.
+    local healed = cur and cur.health and (cur.health > (wp.hp or 0))
+    if expire or owner_changed or pill_gone or healed then
+      state.wounded_pill = nil
+    end
   end
 
   -- Update world knowledge
@@ -849,6 +1064,42 @@ function Brain.think(info)
     metrics.inc("danger_reloads")
   else
     metrics.inc("danger_skips")
+  end
+
+  -- Push per-pill contribution maps to the host (BrainTest reads
+  -- this for the shift-2 cycle-pill-overlay). Bindings no-op
+  -- under non-host runtimes (game client, headless server).
+  -- NOTE: clear is done host-side once per tick (BrainTest's
+  -- appTickBrain) so multi-bot games don't have one bot wipe
+  -- another's entries. We just append from here.
+  if pillcontrib_begin_pill then
+    -- Walk pills in id-stable order so the cycle index stays
+    -- consistent across ticks. Skip dead pills (no contribution).
+    if world.pills and threat.pill_contrib then
+      local pids = {}
+      for id, _ in pairs(world.pills) do pids[#pids+1] = id end
+      table.sort(pids)
+      for _, id in ipairs(pids) do
+        local p = world.pills[id]
+        if p and p.health and p.health > 0
+           and (p.owner == "hostile" or p.owner == "neutral") then
+          local pkey = p.my * 256 + p.mx
+          local contrib = threat.pill_contrib[pkey]
+          if contrib then
+            local slot = pillcontrib_begin_pill(id, p.mx, p.my)
+            if slot >= 0 then
+              for tkey, val in pairs(contrib) do
+                if val and val > 0 then
+                  local tx = tkey % 256
+                  local ty = (tkey - tx) / 256
+                  pillcontrib_add_tile(slot, tx, ty, val)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
   end
 
   -- Populate influence grid (friendly = positive, hostile = negative).
@@ -1036,9 +1287,12 @@ function Brain.think(info)
         max_cost, C.DIJKSTRA_EXACT,
         danger_scale, kind)
       refresh_slate(idx)
+      local kind_str = (kind == cpf.KIND_PILL) and "PILL"
+                    or (kind == cpf.KIND_NORMAL) and "NORMAL"
+                    or string.format("?(%d)", kind)
       print2(string.format(
-        "dij START slate=%d kind=%d ds=%.1f max_cost=%.0f src=(%d,%d) tick=%d",
-        idx, kind, danger_scale, max_cost, tmx, tmy, now))
+        "dij START slate=%d kind=%s ds=%.1f max_cost=%.0f src=(%d,%d) tick=%d",
+        idx, kind_str, danger_scale, max_cost, tmx, tmy, now))
     end
 
     -- Short-range NORMAL: 1-second radar ping
@@ -1082,25 +1336,35 @@ function Brain.think(info)
       end
     end
     if #active_slates > 0 then
-      -- Per-slate budget targets "complete a full ~70k-expansion search
-      -- in SPREAD_TICKS ticks". Independent of how many slates are
-      -- active — total per-tick cost scales linearly with active count.
-      local budget_each = math.max(500, math.ceil(70000 / C.DIJKSTRA_SPREAD_TICKS))
+      -- Per-slate budget: each slate targets completing ~70k expansions
+      -- in half its rebuild interval so it stays current for the back
+      -- half of the cycle.  Short-range slates (0, 2) spread over
+      -- SHORT_SPREAD_TICKS; long-range (1, 3) over LONG_SPREAD_TICKS.
+      local budget_short = C.DIJKSTRA_SHORT_BUDGET
+      local budget_long  = math.max(500, math.ceil(70000 / C.DIJKSTRA_LONG_SPREAD_TICKS))
       local t_step = clock_us()
+      local total_exp = 0
       for _, idx in ipairs(active_slates) do
-        local done, expanded, peak_open = cpf.dijkstra_step(idx, now, budget_each)
+        local budget = (idx == SLATE_SHORT or idx == SLATE_PILL)
+                       and budget_short or budget_long
+        local done, expanded, peak_open = cpf.dijkstra_step(idx, now, budget)
+        total_exp = total_exp + (expanded or 0)
         if done then
           refresh_slate(idx)
+          local k = d.slates[idx].kind
+          local kind_str = (k == cpf.KIND_PILL) and "PILL"
+                        or (k == cpf.KIND_NORMAL) and "NORMAL"
+                        or string.format("?(%d)", k)
           print2(string.format(
-            "dij DONE slate=%d kind=%d at_tick=%d (took %d, expanded=%d)",
-            idx, d.slates[idx].kind, now,
+            "dij DONE slate=%d kind=%s at_tick=%d (took %d, expanded=%d)",
+            idx, kind_str, now,
             now - (d.slates[idx].started_tick or now), expanded))
         end
       end
       local step_us = clock_us() - t_step
-      print2(string.format("dij STEP %.2f ms  active=%d  budget_each=%d  total_exp=%d",
-                           step_us / 1000, #active_slates, budget_each,
-                           #active_slates * budget_each))
+      print2(string.format("dij STEP %.2f ms  active=%d  budget(s/l=%d/%d)  total_exp=%d",
+                           step_us / 1000, #active_slates,
+                           budget_short, budget_long, total_exp))
     end
   end
 
@@ -1154,11 +1418,13 @@ function Brain.think(info)
     state.command_reply = nil
   end
 
-  -- Respawn handling
+  -- Respawn handling. Use clear_attack_goal so any in-progress
+  -- attack_pill / PPT state (substate, _shield_scan, _aim_locked,
+  -- _wall_build_list, etc.) doesn't leak through into the next
+  -- goal selection on the new tank.
   if info.newtank then
     state.stuck_for = 0
-    state.pf.status = "idle"
-    state.goal.kind = "none"
+    attack.clear_attack_goal(state)
     print(string.format(TAG .. " t=%d RESPAWN at (%d,%d)",
           now, info.tankx >> 8, info.tanky >> 8))
     log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
@@ -1175,13 +1441,10 @@ function Brain.think(info)
   -- build_walls: tank parks at approach point while LGM builds shield
   --              walls (can take many seconds, multi-trip).
   -- Without these, stuck detection fires flee_pill mid-attack.
-  local attack_stationary = { plan_position=true, position=true, aim=true, approach=true, build_walls=true, in_range_position=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true, rush=true, disengage=true, gather_trees=true }
-  local pp_stationary = { dispatch=true, wait_place=true, prewait=true, advance=true, shield_engage=true, engage=true, reposition=true, finish=true, select_pill=true }
-  local tank_combat_stationary = { engage=true, close=true, disengage=true }
   local intentionally_stationary =
-       (state.goal.kind == "attack_pill" and attack_stationary[state.goal.substate or ""])
-    or (state.goal.kind == "pill_place" and pp_stationary[state.goal.substate or ""])
-    or (state.goal.kind == "attack_tank" and tank_combat_stationary[state.goal.substate or ""])
+       (state.goal.kind == "attack_pill" and ATTACK_STATIONARY_SUBS[state.goal.substate or ""])
+    or (state.goal.kind == "pill_place" and PP_STATIONARY_SUBS[state.goal.substate or ""])
+    or (state.goal.kind == "attack_tank" and TANK_COMBAT_STATIONARY_SUBS[state.goal.substate or ""])
     -- refuel_at_base only counts as stationary when actually parked on the base
     or (state.goal.kind == "refuel_at_base" and W.tank_on_friendly_base(world, info))
     or state.goal.kind == "rescue_lgm"
@@ -1248,8 +1511,7 @@ function Brain.think(info)
           state.command_goal = nil
           print(TAG .. " CMD: cancelled due to stuck")
         end
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        attack.clear_attack_goal(state)
       end
       state.stuck_for = 0
     end
@@ -1263,6 +1525,18 @@ function Brain.think(info)
   if now % 200 == 0 then
     for k, until_t in pairs(state.blocked) do
       if now >= until_t then state.blocked[k] = nil end
+    end
+    -- Same cadence: sweep expired banned-approach-angle entries.
+    -- Per-pill sub-tables get GC'd when emptied.
+    if state.banned_pill_angles then
+      for pkey, bans in pairs(state.banned_pill_angles) do
+        local any_left = false
+        for bucket, exp in pairs(bans) do
+          if now >= exp then bans[bucket] = nil
+          else any_left = true end
+        end
+        if not any_left then state.banned_pill_angles[pkey] = nil end
+      end
     end
   end
 
@@ -1509,7 +1783,13 @@ function Brain.think(info)
           if e.pill.health == 0 and not e.pill.in_tank then p = e.pill; break end
         end
       end
-      if not p or p.owner == "hostile" then goal_valid = false end
+      -- A dead hostile pill is still capturable (engine sets owner to
+       -- dead-player when an enemy dies carrying it; tank.c:1920).
+       -- filter_capture_pill in goals.lua explicitly accepts hostile-
+       -- owned dead pills, so validation must too — otherwise the goal
+       -- gets invalidated the tick after selection and we ping-pong
+       -- into attack_pill on a different target.
+      if not p then goal_valid = false end
     elseif gk == "attack_pill" and not state.capture_objective then
       -- Autonomous attack (not cp command): invalid if pill died or changed side
       -- BUT NOT during swerve — swerve must complete to dodge damage,
@@ -1573,8 +1853,21 @@ function Brain.think(info)
       print(string.format(TAG .. " t=%d GOAL INVALID: %s at (%d,%d) — replanning",
             now, gk, gmx, gmy))
       log.event("goal_invalid", string.format("%s@%d,%d", gk, gmx, gmy))
-      state.goal.kind = "none"
-      state.pf.status = "idle"
+      -- Build a specific reason for the clear-overlay: for attack_pill
+      -- name WHICH check failed (the silent killer during finetune is
+      -- almost always one of these three).
+      local why = string.format("goal_invalid: %s@(%d,%d)", gk, gmx, gmy)
+      if gk == "attack_pill" and not state.capture_objective then
+        local p = W.pill_at(world, gmx, gmy)
+        if not p then
+          why = string.format("attack_pill@(%d,%d): pill_at returned nil (picked up / in_tank?)", gmx, gmy)
+        elseif p.owner == "friendly" then
+          why = string.format("attack_pill@(%d,%d): pill became friendly (we/ally captured)", gmx, gmy)
+        elseif p.health == 0 then
+          why = string.format("attack_pill@(%d,%d): pill HP=0 (killed externally)", gmx, gmy)
+        end
+      end
+      attack.clear_attack_goal(state, why)
     end
 
     t_goal0 = clock_us()
@@ -1673,8 +1966,7 @@ function Brain.think(info)
         if not getting_something then
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 200
-          state.goal.kind = "none"
-          state.pf.status = "idle"
+          attack.clear_attack_goal(state)
           print(string.format(TAG .. " t=%d REFUEL: base at (%d,%d) can't supply us (arm=%d sh=%d mn=%d), replanning",
                 now, state.goal.mx or 0, state.goal.my or 0,
                 info.base.armour or 0, info.base.shells or 0, info.base.mines or 0))
@@ -1773,9 +2065,17 @@ function Brain.think(info)
                              and new_goal.kind ~= "capture_pill" then
         new_goal = state.goal  -- keep current goal
       end
+      -- Compare on (kind, mx, my, target_id). Without target_id in
+      -- the comparison, a hostile pill that gets captured + replaced
+      -- at the same tile (different id) would keep the OLD goal's
+      -- _shield_scan / _wall_build_* state, which was computed against
+      -- a pill that no longer exists. target_id mismatch forces the
+      -- full goal-change path (cooldown + history + new state.goal).
       if new_goal.kind ~= state.goal.kind
          or new_goal.mx ~= state.goal.mx
-         or new_goal.my ~= state.goal.my then
+         or new_goal.my ~= state.goal.my
+         or (new_goal.target_id and state.goal.target_id
+             and new_goal.target_id ~= state.goal.target_id) then
         local old_kind = state.goal.kind
         local old_id   = state.goal.target_id
         -- Record abandoned goal on cooldown (prevent oscillation)
@@ -1817,135 +2117,24 @@ function Brain.think(info)
               info.carried_pills or 0, info.armour, info.shells, info.trees,
               state.player_name))
         log.event("goal", string.format("%s->%s@%d,%d", old_label, new_label, new_goal.mx, new_goal.my))
-      elseif new_goal.kind == "attack_pill" and state.goal.substate then
-        -- Same pill target: preserve substate and timing fields.
-        -- During engage/ws_ substates: keep the OLD standoff and wall positions.
-        -- Adopting new positions while fighting triggers spurious repositioning.
-        new_goal.substate        = state.goal.substate
-        new_goal.engage_tick     = state.goal.engage_tick
-        new_goal.reposition_tick = state.goal.reposition_tick
-        new_goal.first_hit_tick  = state.goal.first_hit_tick
-        new_goal.last_armour     = state.goal.last_armour
-        -- Preserve standoff/wall positions during active engage or ws_ substates
-        local active_sub = { plan_position=true, approach=true, build_walls=true, in_range_position=true, in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true, charge=true, aim=true, detree=true, engage=true, swerve=true, post_engage=true, loiter=true, rush=true, ws_prebuild=true, ws_prewait=true, ws_advance=true, ws_engage=true, ws_retreat=true, ws_rebuild=true, gather_trees=true }
-        if active_sub[state.goal.substate or ""] then
-          new_goal.scan_spots      = state.goal.scan_spots
-          new_goal.approach_mx     = state.goal.approach_mx
-          new_goal.approach_my     = state.goal.approach_my
-          -- Approach float coords were missing from the preservation
-          -- list; without them the goal-swap dropped sub-tile precision
-          -- after each tick and steering fell back to the tile center.
-          new_goal.approach_fx     = state.goal.approach_fx
-          new_goal.approach_fy     = state.goal.approach_fy
-          new_goal._chosen_deg     = state.goal._chosen_deg
-          new_goal._plan_show_tick = state.goal._plan_show_tick
-          new_goal._aim_locked      = state.goal._aim_locked
-          new_goal._charge_braking  = state.goal._charge_braking
-          new_goal._engage_aimed    = state.goal._engage_aimed
-          new_goal._plan_logged  = state.goal._plan_logged
-          new_goal._scan_tank_mx = state.goal._scan_tank_mx
-          new_goal._scan_tank_my = state.goal._scan_tank_my
-          new_goal.aim_tick      = state.goal.aim_tick
-          -- Shield-scan + build-walls state (attack_shield phase 1/2).
-          -- Without these, the per-tick goal-table swap wipes the scan
-          -- result computed in plan_position before approach completes.
-          new_goal._shield_scan             = state.goal._shield_scan
-          new_goal._wall_build_list         = state.goal._wall_build_list
-          new_goal._wall_build_idx          = state.goal._wall_build_idx
-          new_goal._wall_build_start        = state.goal._wall_build_start
-          new_goal._wall_build_last_progress = state.goal._wall_build_last_progress
-          new_goal._wall_build_prev_man     = state.goal._wall_build_prev_man
-          new_goal._wall_build_prev_idx     = state.goal._wall_build_prev_idx
-          new_goal._wall_idx_started        = state.goal._wall_idx_started
-          new_goal._build_decision_msg      = state.goal._build_decision_msg
-          new_goal._build_decision_until    = state.goal._build_decision_until
-          new_goal._build_timeout_total     = state.goal._build_timeout_total
-          new_goal._approach_start          = state.goal._approach_start
-          new_goal._approach_last_progress  = state.goal._approach_last_progress
-          new_goal._approach_last_dist      = state.goal._approach_last_dist
-          new_goal._approach_timeout_total  = state.goal._approach_timeout_total
-          -- Pre-flight tree gather (PPT). Must persist across the per-tick
-          -- goal-swap or the gather_trees handler loses its progress timer.
-          new_goal._trees_for_walls         = state.goal._trees_for_walls
-          new_goal._gather_start            = state.goal._gather_start
-          new_goal._gather_last_progress    = state.goal._gather_last_progress
-          new_goal._gather_last_trees       = state.goal._gather_last_trees
-          -- Trajectory finetune (in_range_aim_finetune) state.
-          new_goal._finetune_start          = state.goal._finetune_start
-          new_goal._finetune_taps           = state.goal._finetune_taps
-          new_goal._finetune_path           = state.goal._finetune_path
-          new_goal._finetune_on_pill        = state.goal._finetune_on_pill
-          new_goal.aim_mx                   = state.goal.aim_mx
-          new_goal.aim_my                   = state.goal.aim_my
-          new_goal._is_ppt                  = state.goal._is_ppt
-          new_goal._shoot_armour            = state.goal._shoot_armour
-          new_goal._shoot_shells            = state.goal._shoot_shells
-          new_goal._shoot_hits_total        = state.goal._shoot_hits_total
-          new_goal._shoot_start_tick        = state.goal._shoot_start_tick
-          -- Charge entry pill HP (drives short-swerve override for
-          -- low-HP pills at charge → swerve / engage → swerve).
-          new_goal._charge_start_hp         = state.goal._charge_start_hp
-          -- Swerve-completion extension counter (used to wait for
-          -- inbound on-target shells when swerve ends with the pill
-          -- still alive but a confirmed-kill in flight).
-          new_goal._swerve_extends          = state.goal._swerve_extends
-          -- Orbit detector (steering): no-progress counter + last
-          -- distance reading. Must persist or we never accumulate
-          -- enough ticks to trigger.
-          new_goal._orbit_stuck             = state.goal._orbit_stuck
-          new_goal._orbit_last_dist         = state.goal._orbit_last_dist
-          if state.goal.standoff_mx then
-            new_goal.standoff_mx = state.goal.standoff_mx
-            new_goal.standoff_my = state.goal.standoff_my
-            new_goal.standoff_fx = state.goal.standoff_fx
-            new_goal.standoff_fy = state.goal.standoff_fy
-          end
-          if state.goal.wall_mx then
-            new_goal.wall_shield = state.goal.wall_shield
-            new_goal.wall_mx     = state.goal.wall_mx
-            new_goal.wall_my     = state.goal.wall_my
-          end
-          if state.goal.prebuild_mx then
-            new_goal.prebuild_mx = state.goal.prebuild_mx
-            new_goal.prebuild_my = state.goal.prebuild_my
-          end
-        end
-        -- Preserve wall-shield timing fields
-        new_goal.ws_build_tick   = state.goal.ws_build_tick
-        new_goal.ws_wait_tick    = state.goal.ws_wait_tick
-        new_goal.ws_rebuild_tick = state.goal.ws_rebuild_tick
-        new_goal.ws_retreat_tick = state.goal.ws_retreat_tick
-        new_goal.lgm_return_tick = state.goal.lgm_return_tick
-        state.goal = new_goal
-      elseif new_goal.kind == "pill_place" and state.goal.substate then
-        -- Same pill_place target: preserve substate and all timing/position fields
-        new_goal.substate       = state.goal.substate
-        new_goal.source_mx      = state.goal.source_mx
-        new_goal.source_my      = state.goal.source_my
-        new_goal.source_id      = state.goal.source_id
-        new_goal.place_mx       = state.goal.place_mx
-        new_goal.place_my       = state.goal.place_my
-        new_goal.deploy_mx      = state.goal.deploy_mx
-        new_goal.deploy_my      = state.goal.deploy_my
-        new_goal.placed_mx      = state.goal.placed_mx
-        new_goal.placed_my      = state.goal.placed_my
-        -- Shield engage fields (shared with wall-shield pipeline)
-        new_goal.standoff_mx    = state.goal.standoff_mx
-        new_goal.standoff_my    = state.goal.standoff_my
-        new_goal.shield_mx      = state.goal.shield_mx
-        new_goal.shield_my      = state.goal.shield_my
-        new_goal.shield_type    = state.goal.shield_type
-        new_goal.lgm_return_tick = state.goal.lgm_return_tick
-        new_goal.reposition_tick = state.goal.reposition_tick
-        -- Timing fields
-        new_goal.dispatch_tick  = state.goal.dispatch_tick
-        new_goal.wait_tick      = state.goal.wait_tick
-        new_goal.engage_tick    = state.goal.engage_tick
-        new_goal.collect_tick   = state.goal.collect_tick
-        new_goal.finish_tick    = state.goal.finish_tick
-        new_goal.first_hit_tick = state.goal.first_hit_tick
-        new_goal.last_armour    = state.goal.last_armour
-        state.goal = new_goal
+      elseif (new_goal.kind == "attack_pill" or new_goal.kind == "pill_place")
+             and state.goal.substate then
+        -- Same target, same kind, mid-substate: keep state.goal table
+        -- intact rather than swap to new_goal. new_goal is essentially
+        -- a re-affirmation from the cost evaluator and carries only
+        -- the {kind, mx, my, target_id} core — all the substate
+        -- machinery (substate, engage_tick, _shield_scan, standoff_*,
+        -- _wall_build_*, _gather_*, _finetune_*, etc.) lives on
+        -- state.goal and would be wiped by an unconditional swap.
+        --
+        -- Previously this branch had ~100 lines of hand-written
+        -- "new_goal.X = state.goal.X" preservation copies — every
+        -- new field added to the goal table needed a corresponding
+        -- line or it'd silently drop after the next tick's swap.
+        -- Inverting the pattern (keep state.goal, ignore new_goal)
+        -- closes that maintenance hole. State.goal_cost is read but
+        -- never assigned anywhere in the codebase, so there's nothing
+        -- cost-related to carry across.
       -- (bpc_pill block removed — unified into attack_pill above)
       end
     end
@@ -1955,7 +2144,8 @@ function Brain.think(info)
       local gk = state.goal.kind
       local gid = state.goal.target_id
       if gid and gid >= 0 then
-        if gk == "attack_pill" or gk == "attack_pill" or gk == "capture_pill" then
+        if gk == "attack_pill" or gk == "capture_pill"
+           or gk == "defend_pill" or gk == "repair_pill" then
           send_msg = comms.format_pill_claim(gid, state.goal_cost or 0)
           msg_dest = 0xFFFF  -- broadcast to all
         elseif gk == "capture_base" or gk == "attack_base" then
@@ -1972,8 +2162,7 @@ function Brain.think(info)
         state.visited[gk] = true
         print(string.format(TAG .. " t=%d ARRIVED/FAILED explore (%d,%d) -- marking visited",
               now, state.goal.mx, state.goal.my))
-        state.goal.kind = "none"
-        state.pf.status = "idle"
+        attack.clear_attack_goal(state)
       elseif state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Can't reach attack position: flee away from the pill.
         -- No pf_fail_logged guard here — we always want to flee, not sit stuck.
@@ -2004,8 +2193,7 @@ function Brain.think(info)
           -- Block this destination so goal selection picks something else
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 600
-          state.goal.kind = "none"
-          state.pf.status = "idle"
+          attack.clear_attack_goal(state)
           state.pf_fail_count = 0
         else
           -- Retry: reset pf to idle so it tries again next tick
@@ -2161,7 +2349,8 @@ function Brain.think(info)
     local g = state.goal
     if g.mx and g.my then
       local gk = g.kind
-      if gk == "attack_pill" or gk == "attack_pill" or gk == "pill_place" then
+      if gk == "attack_pill" or gk == "defend_pill"
+         or gk == "repair_pill" or gk == "pill_place" then
         local pmx, pmy = g.mx + 0.5, g.my + 0.5
         -- Near-edge aim point (computed before steering)
         local aim_mx = g.aim_mx or pmx
@@ -2210,6 +2399,95 @@ function Brain.think(info)
     end
   end
 
+  -- Wounded pill marker: highlights the pill we should be finishing
+  -- (state.wounded_pill, set by post_engage refuel + swerve completion).
+  -- Shows three things at the pill location:
+  --   - pulsing red ring → eye-catching at the world position
+  --   - "WOUNDED hp=N" label → current HP read live from world.pills
+  --     (so we can see it ticking down as in-flight shells land) and
+  --     the bonus multiplier on this pill (always 0.30x — the existing
+  --     wounded discount in attack_pill_adjustments)
+  --   - "other pills x M.MM" label → the live finish_other multiplier
+  --     applied to every OTHER pill take this tick. Mirrors the math
+  --     in attack_pill_adjustments so the user can verify what the
+  --     pool grid will show. Greys out when the multiplier is 1.0
+  --     (HP > threshold or time decay finished).
+  -- Drawn every tick state.wounded_pill is set; cleared by the
+  -- 500-tick expiry in the housekeeping block above.
+  if state.wounded_pill then
+    local wp = state.wounded_pill
+    local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
+    local wp_hp  = wp_now and wp_now.health or wp.hp or 0
+    local wpx, wpy = wp.mx + 0.5, wp.my + 0.5
+    -- Pulse rate slows as the marker ages out — visual countdown so
+    -- you can see at a glance whether the wounded effects are about
+    -- to expire. Fresh: ~30-tick cycle (0.21 rad/tick). Fully
+    -- decayed: ~120-tick cycle (0.05 rad/tick), barely throbbing.
+    local age         = (state.tick or 0) - (wp.tick or 0)
+    local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
+    local pulse_speed = 0.05 + 0.16 * time_factor   -- 0.21 fresh -> 0.05 expired
+    local pulse = 0.5 + 0.35 * (0.5 + 0.5 * math.sin(now * pulse_speed))
+    viz.circle("wounded_pill_marker", wpx, wpy, pulse,        255, 80, 80, 220)
+    viz.circle("wounded_pill_marker", wpx, wpy, pulse + 0.04, 255, 80, 80, 120)
+    -- Header line shows the in-pool 0.30x AND the cross-goal commit
+    -- discount (decays alongside finish_other; 1.0x once expired).
+    local commit_mult = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
+    viz.text  ("wounded_pill_marker", wpx + 0.6, wpy - 0.6,
+               string.format("WOUNDED hp=%d (this pill x0.30 *commit x%.2f)",
+                             wp_hp, commit_mult),
+               "topleft", 255, 120, 120, 255, 0.35)
+    -- Live "finish_other" multiplier for OTHER pill takes.
+    local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
+    local mult, mr, mg, mb
+    if wp_hp > 0 and wp_hp <= thresh then
+      local hp_factor   = (thresh - wp_hp) / thresh
+      local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
+      mult = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
+      if mult > 1.001 then
+        mr, mg, mb = 255, 200, 80
+      else
+        mr, mg, mb = 150, 150, 150
+      end
+    else
+      mult = 1.0
+      mr, mg, mb = 150, 150, 150
+    end
+    viz.text("wounded_pill_marker", wpx + 0.6, wpy - 0.25,
+             string.format("other pills x%.2f", mult),
+             "topleft", mr, mg, mb, 255, 0.30)
+  end
+
+  -- Per-pill self_dr labels for pool 6 (attack_pill). Shows the
+  -- self-danger reduction the eval queue computed for each pill
+  -- candidate this tick — the discount subtracted from spot+combat
+  -- cost equal to (pill's own danger contribution along the spot
+  -- path) × (1 - hp/15). Higher values = more aggressive closing
+  -- in on a low-HP pill that would otherwise scare us off via its
+  -- own anger contribution to the danger grid.
+  --
+  -- Source: state.cost_cache, populated in goals.lua's eval queue.
+  -- Each pool-6 entry has _self_dr stashed alongside its position.
+  -- We render every entry whose value is non-zero; tiles with no
+  -- discount stay unannotated.
+  if state.cost_cache then
+    for _, e in pairs(state.cost_cache) do
+      if e._p == 6 and (e._self_dr or 0) > 0
+         and e._mx and e._my then
+        local px, py = e._mx + 0.5, e._my + 0.5
+        -- Color ramps with magnitude: faint blue at small discounts,
+        -- bright cyan at large ones. Cap perception around 200 cost-
+        -- units (typical pool-6 spot cost is in low hundreds).
+        local mag    = math.min(1.0, e._self_dr / 200.0)
+        local r      = math.floor(60 + 30  * mag)
+        local g      = math.floor(180 + 60 * mag)
+        local b      = math.floor(220 + 35 * mag)
+        viz.text("pool6_self_dr", px - 0.4, py + 0.7,
+                 string.format("self_dr=%.0f", e._self_dr),
+                 "topleft", r, g, b, 230, 0.30)
+      end
+    end
+  end
+
   -- Shift+click pill inspect overlay (computed once on click, toggle off/on to refresh)
   if state.inspect_pill then
     local ip = state.inspect_pill
@@ -2220,7 +2498,7 @@ function Brain.think(info)
     if ipill and (ipill.owner == "hostile" or ipill.owner == "neutral") and ipill.health > 0 then
       -- Compute on first display only; stored in inspect_pill table
       if not ip._spots then
-        local _, spots = attack.evaluate_pill_difficulty(ipill, world, true, nil, state.phase)
+        local _, spots = attack.evaluate_pill_difficulty(ipill, world, true, nil, state.phase, state)
         ip._spots = spots or {}
       end
       local spots = ip._spots
@@ -2635,22 +2913,31 @@ function Brain.think(info)
     dbg.end_trace(Brain.think)
   end
 
-  -- HUD: arrow key indicators in bottom-right corner (screen pixel coords)
+  -- HUD: arrow key indicators in bottom-right corner. Each arrow has
+  -- three states:
+  --   off  (dim grey)   — neither held nor tapped this tick
+  --   tap  (yellow)     — single-frame nudge in `taps`; the engine's
+  --                       slow-start ramps it to ~1/8 the held rate so
+  --                       this is the brain's fine-aim mode
+  --   hold (green)      — continuous turn in `keys`; full turn rate
   do
-    local fwd_on  = (keys & KEY_FASTER)    ~= 0
-    local back_on = (keys & KEY_SLOWER)    ~= 0
-    local left_on = (keys & KEY_TURNLEFT)  ~= 0
-    local right_on= (keys & KEY_TURNRIGHT) ~= 0
-    local function arrow(dx, dy, ch, on)
-      local r, g, b = on and 100 or 60, on and 255 or 60, on and 100 or 60
+    local function arrow(dx, dy, ch, k_on, t_on)
+      local r, g, b
+      if k_on then
+        r, g, b = 100, 255, 100         -- green = held
+      elseif t_on then
+        r, g, b = 255, 220,  60         -- yellow = tap
+      else
+        r, g, b =  60,  60,  60         -- dim = nothing this tick
+      end
       viz.hud_text("hud_compass", dx, dy, ch, "bottomright", r, g, b, 255)
     end
     -- Pixel offsets from bottom-right corner. Note bottomright anchor:
     -- (0,0) = bottom-right; positive x goes left, positive y goes up.
-    arrow(40, 80, "^", fwd_on)
-    arrow(60, 60, "<", left_on)
-    arrow(40, 60, "v", back_on)
-    arrow(20, 60, ">", right_on)
+    arrow(40, 80, "^", (keys & KEY_FASTER)    ~= 0, (taps & KEY_FASTER)    ~= 0)
+    arrow(60, 60, "<", (keys & KEY_TURNLEFT)  ~= 0, (taps & KEY_TURNLEFT)  ~= 0)
+    arrow(40, 60, "v", (keys & KEY_SLOWER)    ~= 0, (taps & KEY_SLOWER)    ~= 0)
+    arrow(20, 60, ">", (keys & KEY_TURNRIGHT) ~= 0, (taps & KEY_TURNRIGHT) ~= 0)
   end
 
   -- Flush print2 log for this tick
@@ -2684,6 +2971,28 @@ function Brain.think(info)
   -- later once better candidates finish evaluating.
   if now <= C.STARTUP_HOLD_TICKS then
     keys, taps, build_cmd = 0, 0, -1
+  end
+
+  -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
+  -- C-side already renders tick + think_ms; keep this line tight
+  -- with the brain-only bits: replan countdown, phase, current goal.
+  do
+    local _think_ms = (os.clock() - _think_t0) * 1000.0  -- unused but cheap; kept in case someone wants it
+    local replan_left = C.GOAL_REPLAN_INTERVAL
+        - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
+    if replan_left == C.GOAL_REPLAN_INTERVAL then replan_left = 0 end
+    local g = state.goal or {}
+    local goal_str = (g.kind or "none")
+    if g.target_id and g.target_id >= 0 then
+      goal_str = string.format("%s#%d(%d,%d)",
+        goal_str, g.target_id, g.mx or 0, g.my or 0)
+    elseif g.mx then
+      goal_str = string.format("%s(%d,%d)", goal_str, g.mx, g.my)
+    end
+    viz.hud_text("hud_tick_info", 8, 32,
+      string.format("replan:%d  phase:%s  goal:%s",
+        replan_left, state.phase or "?", goal_str),
+      "topleft", 200, 220, 200)
   end
 
   -- Output
@@ -2726,8 +3035,22 @@ function Brain.set_manual_mode(on)
   if not manual_active then manual_keys = 0 end
 end
 
+-- Manual key dispatcher. The host (BrainTest) sends ROLE NAMES
+-- ("forward", "backward", "left", "right", "shoot", "lay_mine")
+-- it derived from the user's Bolo key bindings, so the brain
+-- doesn't need to care which physical keys are configured. Legacy
+-- letter names ("w", "s", "a", "d", "space", "lshift") are kept
+-- as aliases so any other host that sends literal SDL key letters
+-- still works.
 function Brain.manual_key(name, down)
   local map = {
+    forward  = KEY_FASTER,
+    backward = KEY_SLOWER,
+    left     = KEY_TURNLEFT,
+    right    = KEY_TURNRIGHT,
+    shoot    = KEY_SHOOT,
+    lay_mine = KEY_DROPMINE,
+    -- Legacy literal-key aliases.
     w = KEY_FASTER, s = KEY_SLOWER, a = KEY_TURNLEFT, d = KEY_TURNRIGHT,
     space = KEY_SHOOT, lshift = KEY_DROPMINE,
   }
@@ -2806,6 +3129,13 @@ function Brain.on_click(mx, my, mods)
       end
     end
     rp(string.format(TAG .. " CLICK: no pill at (%d,%d)", mx, my))
+  else
+    -- Plain click: stash for the hud_click_cost overlay. Per-tick
+    -- think emits the actual text so the panel persists until the
+    -- next click. The C-side already drew the A* path overlay
+    -- itself (computeClickPath); we just supply the rich-info
+    -- label that the old C-side panel used to draw.
+    state.click_inspect = { mx = mx, my = my, tick = state.tick or 0 }
   end
 end
 

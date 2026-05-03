@@ -39,6 +39,13 @@ local M = {}
 -- them in snapshots and replays see the same threat grids.
 M.pill_grid = {}
 M.tank_grid = {}
+-- Per-pill contribution cache: M.pill_contrib[pill_pos_key][tile_key] =
+-- this pill's final stamped penalty at that tile, after tree/terrain/LOS
+-- reductions. Same units as pill_grid. Lets attack-side code subtract a
+-- specific pill's danger from cumulative cost when the bot is committed
+-- to killing it. Keyed by mkey(pm.mx, pm.my) since pills with health > 0
+-- and hostile/neutral owner are stationary.
+M.pill_contrib = {}
 -- Per-tile count of distinct hostile/neutral pills that can fire on this
 -- tile. Rebuilt only when pills change (via pill_dirty). Used by Scan A
 -- in attack.evaluate_pill_difficulty for pill-take maneuver scoring,
@@ -313,6 +320,13 @@ local function stamp_pill(pm, coverage)
   local disk_off = DISK_OFF
   local n        = DISK_LEN
 
+  -- Per-pill contribution table for this pill (keyed by position so
+  -- attack-side discount lookups don't need a pill id). Replaces any
+  -- prior entry for this position (full rebuild, no accumulation).
+  local pill_key = py * 256 + px
+  local contrib = {}
+  M.pill_contrib[pill_key] = contrib
+
   for i = 1, n do
     local nx = px + disk_dx[i]
     local ny = py + disk_dy[i]
@@ -345,6 +359,7 @@ local function stamp_pill(pm, coverage)
 
       if penalty > 0 then
         pill_grid[k] = (pill_grid[k] or 0) + penalty
+        contrib[k]   = penalty
       end
     end
   end
@@ -528,7 +543,15 @@ local function apply_occlusion_to_pill(pm, friendly_pill_set)
           local reduction = effective_walls * 0.20 + t_total * 0.03 + f_total * 0.40
           if reduction > 0.80 then reduction = 0.80 end
           if reduction > 0 then
-            M.pill_grid[k] = cur * (1.0 - reduction)
+            local factor = 1.0 - reduction
+            M.pill_grid[k] = cur * factor
+            -- Mirror the same LOS reduction onto this pill's per-tile
+            -- contribution cache so attack-side subtractions match the
+            -- value actually present in pill_grid.
+            local contrib = M.pill_contrib[py * 256 + px]
+            if contrib and contrib[k] then
+              contrib[k] = contrib[k] * factor
+            end
           end
         end
       end
@@ -772,6 +795,8 @@ function M.update(state, world, info)
     local _t0 = clock_us()
     -- Mutate in place so any cached references stay valid.
     for k in pairs(M.pill_grid) do M.pill_grid[k] = nil end
+    -- Clear per-pill contributions; stamp_pill repopulates them.
+    for k in pairs(M.pill_contrib) do M.pill_contrib[k] = nil end
     local _t_clear = clock_us() - _t0
     -- Pass 1: stamp raw danger from each pill AND build the coverage
     -- table in the same disk-walk pass. coverage[k] counts how many
@@ -897,6 +922,7 @@ function M.reset()
   for k in pairs(M.tank_grid)  do M.tank_grid[k]  = nil end
   for k in pairs(M.prev_pills) do M.prev_pills[k] = nil end
   for k in pairs(M.prev_friendly_pills) do M.prev_friendly_pills[k] = nil end
+  for k in pairs(M.prev_hostile_pills)  do M.prev_hostile_pills[k]  = nil end
   for k in pairs(M.prev_hostile_bases)  do M.prev_hostile_bases[k]  = nil end
   M.pill_dirty    = true  -- force rebuild on first tick
   M.overlay_dirty = true  -- force overlay rebuild on first tick

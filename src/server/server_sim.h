@@ -344,6 +344,11 @@ ServerSim *serverSimGetActive(void);
  *  maxPills      - Max entries in pillsOut
  *  eventsOut     - Output: GameEvent array
  *  maxEvents     - Max entries in eventsOut
+ *  noCull        - If true, skip viewport-based culling so the snapshot
+ *                  contains every tank, shell, explosion, base, pill,
+ *                  and event regardless of distance from clientIdx. Used
+ *                  by BrainTest's god-view recording; network paths pass
+ *                  false.
  *********************************************************/
 void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
@@ -352,7 +357,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
-                            GameEvent *eventsOut, int maxEvents);
+                            GameEvent *eventsOut, int maxEvents,
+                            bool noCull);
 
 /*********************************************************
  *NAME:          serverSimInformation
