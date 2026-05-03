@@ -3152,20 +3152,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
                                  WORLD tankX, WORLD tankY,
                                  WORLD shellX, WORLD shellY,
                                  TURNTYPE angle, BYTE owner) {
-	map *mp = &sim->mp;
-	pillboxes *pb = &sim->pb;
-	bases *bs = &sim->bs;
 	bool isServer = sim->isServer;
 	tankHit returnValue; /* Value to return */
-	WORLD conv;          /* Used in the conversion */
 	int newX;            /* Amount to add because the tank has been hit */
 	int newY;
-	WORLD newmx;
-	WORLD newmy;
-	BYTE bmx;
-	BYTE bmy;
-	BYTE newbmx;       /* Test locations to check for a collision */
-	BYTE newbmy;
 
 
 	returnValue = TH_MISSED;

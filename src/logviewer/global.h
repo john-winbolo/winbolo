@@ -36,12 +36,6 @@ typedef struct { long left, top, right, bottom; } RECT;
 /* Portable compile-time assertions and packed-struct macros */
 #include "../bolo/platform_types.h"
 
-/* Byte type def */
-typedef unsigned char  BYTE;
-typedef BYTE MAP_X, MAP_Y;
-typedef float TURNTYPE;
-typedef float SPEEDTYPE;
-
 /* Boolean type */
 #undef TRUE
 #define TRUE 1
@@ -53,20 +47,6 @@ typedef BYTE bool;
 #endif
 #endif
 typedef BYTE Bool;
-
-
-/* The world co-ordinate for tank - It is a 16 bit number*/
-/* Top 8 bits (or byte) represent position on the map */
-/* Next 2 bits represent the tanks sub-map position in pixels (0-15) */
-/* Last 2 bits sub 40 pixels */
-typedef unsigned short WORLD;
-
-/* WORD data type */
-typedef unsigned short WORD;
-
-
-
-typedef uint32_t PlayerBitMap;
 
 /* Strings of 36 charectors */
 #define MAP_STR_SIZE 36

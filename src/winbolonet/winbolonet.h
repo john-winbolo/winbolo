@@ -33,7 +33,10 @@
 #include "../bolo/global.h"
 
 /* Forward declaration — defined in server_sim.h */
+#ifndef BALANCEPROPOSAL_TYPEDEF
+#define BALANCEPROPOSAL_TYPEDEF
 typedef struct BalanceProposal BalanceProposal;
+#endif
 
 /* Size of key buffers (32-char hex string + null terminator) */
 #define WINBOLONET_KEY_LEN 33

@@ -106,17 +106,8 @@ A base bust have one armour unit or more to resist a shell --
 #ifdef _WIN32
 typedef unsigned char  u_char;
 typedef unsigned short u_short;
-/* u_long intentionally NOT defined here — use uint32_t for wire-format fields */
-typedef u_char  NIBBLE; /* to be interpreted as four bits */
-typedef u_char  BYTE;
-typedef u_short WORD;
-#else
-typedef unsigned char  u_char;
-typedef unsigned short u_short;
-typedef u_char  NIBBLE;
-typedef u_char  BYTE;
-typedef u_short WORD;
 #endif
+typedef u_char  NIBBLE; /* to be interpreted as four bits */
 #ifndef _GAMEID_DEFINED
 #define _GAMEID_DEFINED
 #pragma pack(push, 1)

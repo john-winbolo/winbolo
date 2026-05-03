@@ -36,9 +36,7 @@
 #define MAX_BASES 16
 
 
-/* Typedefs */
-
-typedef struct basesObj *bases;
+/* Typedefs — bases is defined in bolo/types.h */
 
 /* Determines the base type, good, neutral or evil */
 
