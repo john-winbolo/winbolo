@@ -1934,13 +1934,10 @@ static void updateCachedPath(BrainTestApp *app) {
          * brain rotates them via DijkstraPickReuseSlate — so a
          * hardcoded `0` would silently go stale whenever the brain
          * parked NORMAL elsewhere. */
-        int slate = brainPathfinderDijkstraFindBest(pf, /* KIND_NORMAL */ 0);
-        if (slate >= 0) {
-            n = brainPathfinderDijkstraTracePath(pf, slate,
-                                                  gi.mx, gi.my,
-                                                  app->cachedPath_x,
-                                                  app->cachedPath_y, 2048);
-        }
+        n = brainPathfinderDijkstraTracePathByKind(pf, /* KIND_NORMAL */ 0,
+                                                     gi.mx, gi.my,
+                                                     app->cachedPath_x,
+                                                     app->cachedPath_y, 2048);
     }
     if (n == 0) {
         n = brainPathfinderTracePath(pf, app->cachedPath_x,
