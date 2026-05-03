@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <memory.h>
 #include <SDL3/SDL.h>
+#include "../common/wb_log.h"
 #include "global.h"
 #include "players.h"
 #include "starts.h"
@@ -540,13 +541,13 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
 
     /* Skip positions near hostile units (tank, pill, or base) */
     if (hostileTankNearby == TRUE || hostilePillNearby == TRUE || hostileBaseNearby == TRUE) {
-      SDL_Log("[starts] start %d (%d,%d): HOSTILE (tank=%d pill=%d base=%d)", count, sx, sy,
+      WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] start %d (%d,%d): HOSTILE (tank=%d pill=%d base=%d)", count, sx, sy,
               hostileTankNearby, hostilePillNearby, hostileBaseNearby);
       fallbackCandidates[numFallback++] = count;
       continue;
     }
 
-    SDL_Log("[starts] start %d (%d,%d): safe (ownBase=%d neutralBase=%d anyTank=%d anyPill=%d)",
+    WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] start %d (%d,%d): safe (ownBase=%d neutralBase=%d anyTank=%d anyPill=%d)",
             count, sx, sy, hasOwnBase, hasNeutralBase, anyTankNearby, anyPillNearby);
 
     if (hasOwnBase == TRUE) {
@@ -564,7 +565,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   /* Pick the best available option, randomly within the chosen tier.
    * When neutral bases are still plentiful (>20%), own and neutral
    * are pooled and treated equally. Otherwise own is preferred. */
-  SDL_Log("[starts] player %d: neutralPref=%d own=%d neutral=%d safe=%d fallback=%d (neutralBases=%d/%d)",
+  WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] player %d: neutralPref=%d own=%d neutral=%d safe=%d fallback=%d (neutralBases=%d/%d)",
           playerNum, neutralPreferred, numOwn, numNeutral, numSafe, numFallback, neutralCount, numBases);
   idx = 0;
   if (neutralPreferred && (numOwn > 0 || numNeutral > 0)) {
@@ -584,7 +585,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
     idx = fallbackCandidates[rand() % numFallback];
   }
 
-  SDL_Log("[starts] chose start %d (%d,%d)", idx, (*value)->item[idx].x, (*value)->item[idx].y);
+  WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] chose start %d (%d,%d)", idx, (*value)->item[idx].x, (*value)->item[idx].y);
   startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y);
   bt = startsConvertDir((*value)->item[idx].dir);
   *dir = (TURNTYPE)(bt * START_TIMES_16);

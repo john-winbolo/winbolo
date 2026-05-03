@@ -37,6 +37,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include "../common/wb_log.h"
 #include "global.h"
 #include "bolo_map.h"
 #include "pillbox.h"
@@ -1503,6 +1504,8 @@ bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
       MessageArgs args;
       memset(&args, 0, sizeof(args));
       playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, args.playerName);
+      args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, csPtr->myPlayerNum);
+      playersGetCountryCode(&csPtr->sim.plyrs, csPtr->myPlayerNum, args.playerCountry);
       csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
     }
   }
@@ -3239,7 +3242,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
     playersSetWbnParticipant(&csPtr->sim.plyrs, pn, (tanks[i].accountFlags & 0x01) != 0);
     playersSetSteamParticipant(&csPtr->sim.plyrs, pn, (tanks[i].accountFlags & 0x02) != 0);
     if (tanks[i].accountFlags != 0) {
-      SDL_Log("[WBN] player %d accountFlags=0x%02x", pn, tanks[i].accountFlags);
+      WB_LOG_TRACE(WB_LOG_CAT_CLIENT, "[WBN] player %d accountFlags=0x%02x", pn, tanks[i].accountFlags);
     }
 
     if (pn == playerNum) {
@@ -3692,8 +3695,12 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           MessageArgs args;
           memset(&args, 0, sizeof(args));
           playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
+          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           if (events[i].data[1] != NEUTRAL) {
             playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
+            args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[1]);
+            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[1], args.otherCountry);
             csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
           } else {
             csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
@@ -3726,8 +3733,12 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           MessageArgs args;
           memset(&args, 0, sizeof(args));
           playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
+          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           if (events[i].data[1] != NEUTRAL) {
             playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
+            args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[1]);
+            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[1], args.otherCountry);
             csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
           } else {
             csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
@@ -3809,6 +3820,8 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           MessageArgs args;
           memset(&args, 0, sizeof(args));
           playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], args.playerName, FALSE);
+          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
         }
         /* Steam stats: LGM losses and kills */

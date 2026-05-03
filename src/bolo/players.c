@@ -38,6 +38,7 @@
 #include "messages.h"
 #include "pillbox.h"
 #include "players.h"
+#include "playername_validate.h"
 #include "screen.h"
 #include "client_sim.h"
 #include "screenlgm.h"
@@ -167,12 +168,21 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
       {
         MessageArgs args;
         memset(&args, 0, sizeof(args));
+        /* New name (playerName) and old name (otherName) refer to the
+         * same player, so both decoration sets come from playerNum. */
         strncpy(args.otherName, (*plrs)->item[playerNum].playerName, PLAYER_NAME_LEN - 1);
         strncpy(args.playerName, playerName, PLAYER_NAME_LEN - 1);
+        args.playerFlags = playersGetAccountFlags(plrs, playerNum);
+        playersGetCountryCode(plrs, playerNum, args.playerCountry);
+        args.otherFlags = args.playerFlags;
+        memcpy(args.otherCountry, args.playerCountry, sizeof(args.otherCountry));
         sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
       }
-      /* Update the name */
-      strcpy((*plrs)->item[playerNum].playerName, playerName);
+      /* Update the name. Defense-in-depth bound (Phase 9 / Phase 5):
+       * upstream validators cap names at the wire size, but harden the
+       * raw write against a future validator regression. */
+      strncpy((*plrs)->item[playerNum].playerName, playerName, PLAYER_NAME_LAST);
+      (*plrs)->item[playerNum].playerName[PLAYER_NAME_LAST] = '\0';
       utilCtoPString(playerName, (char *) (*plrs)->playerBrainNames[playerNum]);
       strcpy(temp, playerName);
       if (playerNum != selfPlayer) {
@@ -489,6 +499,15 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
   }
 }
 
+uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
+  uint8_t flags = 0;
+  if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
+    if ((*plrs)->item[playerNum].wbnParticipant)   flags |= MESSAGE_FLAG_WBN;
+    if ((*plrs)->item[playerNum].steamParticipant) flags |= MESSAGE_FLAG_STEAM;
+  }
+  return flags;
+}
+
 /*********************************************************
 *NAME:          playersMakeMessageName
 *AUTHOR:        John Morrison
@@ -631,7 +650,7 @@ bool playersNameTaken(players *plrs, char *checkName) {
 
   while (count<MAX_TANKS && returnValue == FALSE) {
     if ((*plrs)->item[count].inUse == TRUE) {
-      if (strcmp((*plrs)->item[count].playerName, checkName) == 0) {
+      if (playerNameCompare((*plrs)->item[count].playerName, checkName) == 0) {
         returnValue = TRUE;
       }
 
@@ -958,6 +977,8 @@ void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerN
       MessageArgs args;
       memset(&args, 0, sizeof(args));
       playersMakeMessageName(NULL, plrs, selfPlayer, playerNum, args.playerName);
+      args.playerFlags = playersGetAccountFlags(plrs, playerNum);
+      playersGetCountryCode(plrs, playerNum, args.playerCountry);
       (*plrs)->item[playerNum].inUse = FALSE;
       (*plrs)->item[playerNum].needUpdate = FALSE;
       (*plrs)->item[playerNum].isChecked = FALSE;

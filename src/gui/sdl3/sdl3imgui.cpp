@@ -37,6 +37,8 @@
 /* SDL3 before bolo headers — see note above */
 #include <SDL3/SDL.h>
 
+#include "../../common/wb_log.h"
+
 /* ImGui */
 #include "imgui.h"
 #include "../imgui_theme.h"
@@ -50,6 +52,7 @@ extern "C" {
 #include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
 #include "../../bolo/screen.h"   /* labelLen, lblNone/lblShort/lblLong */
 #include "../../bolo/client_sim.h"
+#include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -274,7 +277,7 @@ static void ensureWbnIconsLoaded(void) {
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
     s_iconGlobe = imguiLoadSvgIcon(r, "data/ui/globe.svg", WBN_ICON_SIZE);
     s_iconSteam = imguiLoadSvgIcon(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    SDL_Log("[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
@@ -324,7 +327,12 @@ static KeySetupField s_keySetupWaiting      = ksNone;
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
 static int    s_sendMsgRecipient  = kSendAll;
-static char   s_sendMsgBuf[101]   = "";
+/* Sized to match the wire payload cap (PACKET_MAX_CHAT_MESSAGE bytes) used by
+ * transportUdpClientSendChat / transport_udp_server PACKET_CHAT_MESSAGE,
+ * + 1 for NUL. ImGui's InputText caps insertions at sizeof(buf) and
+ * rejects a whole UTF-8 codepoint that would overflow rather than
+ * splitting it, so this is the limit users see in the dialog too. */
+static char   s_sendMsgBuf[PACKET_MAX_CHAT_MESSAGE + 1] = "";
 static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in cooldown */
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */
 #define SEND_MSG_WAIT_MS 2000
@@ -843,7 +851,9 @@ static void renderSendMsgContent(ClientSim *cs) {
             numSend == 1 ? STR_DLGMSG_SENDPLAYER : STR_DLGMSG_SENDPLAYERS, &args));
     }
 
-    /* Text input — max 100 chars, matching Win32 EM_LIMITTEXT */
+    /* Text input — capped by the buffer size to 128 bytes of content
+     * (matches the chat wire payload). For CJK that's ~42 visible chars
+     * (3 bytes each); for ASCII it's 128. */
     /* Auto-focus on window appear or when Ctrl+M re-pressed */
     bool wantSelectAll = false;
     if (ImGui::IsWindowAppearing() || s_sendMsgFocusInput) {
@@ -1254,6 +1264,8 @@ static void renderAllianceRequest(ClientSim *cs) {
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
+            args.playerFlags = playersGetAccountFlags(&cs->sim.plyrs, s_alliancePlayerNum);
+            playersGetCountryCode(&cs->sim.plyrs, s_alliancePlayerNum, args.playerCountry);
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
@@ -2071,13 +2083,11 @@ static void renderMenuBar(ClientSim *cs) {
 
                 /* Right-aligned WBN/Steam icons */
                 ImGui::SameLine(fullWidth - rightWidth);
-                if (s_playerWbn[i] && s_iconGlobe) {
-                    ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(iconW, iconW));
-                    ImGui::SameLine();
-                }
-                if (s_playerSteam[i] && s_iconSteam) {
-                    ImGui::Image((ImTextureID)s_iconSteam, ImVec2(iconW, iconW));
-                    ImGui::SameLine();
+                {
+                    uint8_t badgeFlags = 0;
+                    if (s_playerWbn[i])   badgeFlags |= MESSAGE_FLAG_WBN;
+                    if (s_playerSteam[i]) badgeFlags |= MESSAGE_FLAG_STEAM;
+                    renderPlayerName(NULL, badgeFlags, "", false);
                 }
 
                 /* Ping with color coding */
@@ -2448,12 +2458,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
         if (uiModeIsTablet()) {
             if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP) {
-                SDL_Log("TAP-DBG: FINGER %s x=%.2f y=%.2f",
+                WB_LOG_TRACE(WB_LOG_CAT_GUI, "TAP-DBG: FINGER %s x=%.2f y=%.2f",
                         ev.type == SDL_EVENT_FINGER_DOWN ? "DOWN" : "UP",
                         ev.tfinger.x, ev.tfinger.y);
             }
             if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-                SDL_Log("TAP-DBG: MOUSE %s btn=%d x=%.1f y=%.1f which=%u winID=%u",
+                WB_LOG_TRACE(WB_LOG_CAT_GUI, "TAP-DBG: MOUSE %s btn=%d x=%.1f y=%.1f which=%u winID=%u",
                         ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? "DOWN" : "UP",
                         ev.button.button, ev.button.x, ev.button.y,
                         ev.button.which, ev.button.windowID);
@@ -2757,7 +2767,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (ev.type == SDL_EVENT_DROP_FILE && ev.drop.data) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
-                SDL_Log("[URL] Received winbolo:// link while running: %s", url);
+                WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link while running: %s", url);
                 if (cs && cs->netStat == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
@@ -3208,10 +3218,10 @@ void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *c
         s_playerCountry[playerNum][0] = countryCode[0];
         s_playerCountry[playerNum][1] = countryCode[1];
         s_playerCountry[playerNum][2] = '\0';
-        SDL_Log("[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country='%s' (0x%02X 0x%02X)", playerNum, name, s_playerCountry[playerNum], (unsigned char)countryCode[0], (unsigned char)countryCode[1]);
+        WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country='%s' (0x%02X 0x%02X)", playerNum, name, s_playerCountry[playerNum], (unsigned char)countryCode[0], (unsigned char)countryCode[1]);
     } else {
         s_playerCountry[playerNum][0] = '\0';
-        SDL_Log("[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country=NULL", playerNum, name);
+        WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] sdl3ImguiSetPlayer: player=%d name='%s' country=NULL", playerNum, name);
     }
     s_playerEnabled[playerNum] = true;
 }
@@ -3242,6 +3252,35 @@ SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconSteam;
+}
+
+void renderPlayerName(const char *name, uint8_t flags,
+                      const char *countryCode, bool showCountry) {
+    ensureWbnIconsLoaded();
+    if ((flags & MESSAGE_FLAG_WBN) && s_iconGlobe) {
+        ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::SameLine();
+    }
+    if ((flags & MESSAGE_FLAG_STEAM) && s_iconSteam) {
+        ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::SameLine();
+    }
+    /* Icon-only mode: a NULL/empty name skips the text and trailing
+     * country flag so callers can use this helper to render just the
+     * WBN/Steam badges (the lobby table and players panel both render
+     * the name via their own widgets — Selectable/TextColored — and
+     * only need the badge sequence from here). */
+    if (name && name[0] != '\0') {
+        ImGui::TextUnformatted(name);
+        if (showCountry && countryCode && countryCode[0] != '\0' &&
+            !(countryCode[0] == 'X' && countryCode[1] == 'X')) {
+            SDL_Texture *flagTex = flagsGetTexture(countryCode);
+            if (flagTex) {
+                ImGui::SameLine();
+                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+            }
+        }
+    }
 }
 
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {

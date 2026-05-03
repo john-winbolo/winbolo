@@ -9,6 +9,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "../common/wb_log.h"
+
 #include "imgui.h"
 #include "../gui/imgui_theme.h"
 #include "imgui_impl_sdl3.h"
@@ -83,7 +85,7 @@ extern "C" int imguiWelcomeShow(void) {
     }
 
     SDL_ShowWindow(window);
-    SDL_Log("[Welcome] Screen: %dx%d", screenW, screenH);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[Welcome] Screen: %dx%d", screenW, screenH);
 
     /* Use shared background game (live bots playing) */
     BgGame *bg = bgGameGetShared();
@@ -110,15 +112,15 @@ extern "C" int imguiWelcomeShow(void) {
     float fontSize = 20.0f * uiScale;
     {
         int fontDataSize = 0;
-        unsigned char *fontData = loadFontFromAssets("data/fonts/CourierPrime-Regular.ttf", &fontDataSize);
+        unsigned char *fontData = loadFontFromAssets("data/fonts/InterVariable.ttf", &fontDataSize);
         if (!fontData) {
-            fontData = loadFontFromAssets("fonts/CourierPrime-Regular.ttf", &fontDataSize);
+            fontData = loadFontFromAssets("fonts/InterVariable.ttf", &fontDataSize);
         }
         if (fontData) {
-            SDL_Log("[Welcome] Loaded font, %d bytes, size=%.0f", fontDataSize, fontSize);
+            WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[Welcome] Loaded font, %d bytes, size=%.0f", fontDataSize, fontSize);
             io.Fonts->AddFontFromMemoryTTF(fontData, fontDataSize, fontSize);
         } else {
-            SDL_Log("[Welcome] Font load failed, using default font scaled to %.1f", uiScale);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "[Welcome] Font load failed, using default font scaled to %.1f", uiScale);
             ImFontConfig config;
             config.SizePixels = fontSize;
             config.OversampleH = 2;

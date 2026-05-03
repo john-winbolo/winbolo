@@ -1084,3 +1084,35 @@ STR_DLGSETTINGS_NETWORK=Netzwerk
 STR_DLGSETTINGS_NET_HELP=Die Einstellungen werden beim nächsten gehosteten Spiel wirksam.
 STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP für automatische Portweiterleitung verwenden
 STR_DLGSETTINGS_USE_NATTRAV=NAT-Traversal (Hole-Punching) über Tracker verwenden
+
+# Name validation errors (Phase 5)
+STR_NAME_INVALID_EMPTY=Der Spielername ist leer.
+STR_NAME_INVALID_CHARS=Der Spielername enthält unzulässige Zeichen.
+STR_NAME_INVALID_MIXED_SCRIPTS=Der Spielername mischt inkompatible Schriftsysteme.
+STR_NAME_INVALID_RESERVED_PREFIX=Der Spielername darf nicht mit „*“ beginnen.
+STR_NAME_INVALID_RESERVED_SUFFIX=Der Spielername darf nicht auf „-unverified“ enden.
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Länderflaggen im Chat anzeigen
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} wurde umbenannt, weil {other} als verifizierter Spieler beigetreten ist
+STR_NAME_TAKEN_BY_VERIFIED=Dieser Anzeigename gehört einem verifizierten Spieler. Bitte wählen Sie einen anderen.
+
+# Localized server→client messages (Phase 9d)
+STR_REJECT_INCORRECT_PASSWORD=Falsches Passwort
+STR_REJECT_GAME_LOCKED=Spiel ist gesperrt
+STR_REJECT_SERVER_FULL=Server voll
+STR_REJECT_NAME_POOL_EXHAUSTED=Server-Namenpool erschöpft
+STR_REJECT_INVALID_PLAYER_NAME=Ungültiger Spielername
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net-Verifizierung fehlgeschlagen: {string1}
+STR_KICK_ANNOUNCE={player} wurde vom Server gekickt.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Dieser Anzeigename wird bereits von einem anderen verifizierten Spieler verwendet. Bitte wählen Sie einen anderen.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Kommentare
+STR_LV_INFO_SIGNIN_TO_COMMENT=Melde dich über WinBolo (im Hauptspiel) an, um einen Kommentar zu verfassen
+STR_LV_INFO_NO_WBN_KEY=Öffne ein Log mit einem WinBolo.net-Schlüssel, um Kommentare anzuzeigen
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Aus WinBolo.net öffnen…

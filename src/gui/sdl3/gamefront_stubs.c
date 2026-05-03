@@ -29,3 +29,11 @@ void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   out[0] = '\0';
 }
+
+/* Pulled in transitively by imgui_dialog_utils.h's dialogSaveCurrentPosition /
+ * dialogRestorePosition. The real definitions live in gamefront.c (main game
+ * only). For LogViewer / MapEditor the values are unused at runtime — those
+ * binaries don't read or persist these elsewhere — but the linker needs the
+ * symbols to resolve. -1 means "no saved position", matching gamefront.c. */
+int gameFrontDialogX = -1;
+int gameFrontDialogY = -1;

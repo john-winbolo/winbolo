@@ -32,6 +32,7 @@
 #include "../../bolo/screentank.h"
 #include "../../bolo/screenlgm.h"
 #include "../../bolo/game_sim.h"
+#include "sprite_positions.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,6 +90,7 @@ void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
                             int originX, int originY,
                             int tileW, int tileH,
                             int edgeX, int edgeY);
+
 
 /* Draw pre-built tile buffer. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,

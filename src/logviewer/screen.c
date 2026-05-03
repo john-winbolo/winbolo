@@ -35,6 +35,7 @@
 #include "global.h"
 #include "backend.h"
 #include "bolo_map.h"
+#include "tiles.h"
 #include "pillbox.h"
 #include "bases.h"
 #include "screencalc.h"
@@ -105,7 +106,10 @@ BYTE lv_screenCalcSquare(BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
   BYTE below;
   BYTE belowRight;
 
-int a = (scrY*lv_screenGetSizeX())+scrX ;
+/* Stride is sizeX+1 (not sizeX) because the screen buffer carries a
+ * one-tile margin column/row beyond the visible viewport, used by the
+ * sub-tile-scrolling blit to avoid the trailing-edge bleed. */
+int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
 
   if (a > 1989) {
     above = 1;
@@ -282,9 +286,17 @@ void lv_screenUpdateView(updateType value) {
     }
   }
 
-  for (count=0;count < ssx; count++) {
-    for (count2=0;count2 < ssy; count2++) {
-      *((*g_lv->view).screenItem+(ssx*count2)+count) = lv_screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
+  /* Iterate sizeX+1 by sizeY+1 to populate one extra column and row
+   * beyond the visible viewport. The margin tile is shown when sub-tile
+   * scrolling shifts the final blit, eliminating the trailing-edge
+   * bleed. The margin coords reach 255 at the map boundary, which is
+   * still in-range for lv_mapGetPos; adjacency reads inside
+   * lv_screenCalcSquare wrap (BYTE +1 of 255 -> 0) but only when
+   * subPx == 0, in which case the blit's srcRect clips the margin
+   * tile from view, so the wrong adjacency is never user-visible. */
+  for (count=0;count <= ssx; count++) {
+    for (count2=0;count2 <= ssy; count2++) {
+      *((*g_lv->view).screenItem+((ssx+1)*count2)+count) = lv_screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
     }
   }
 }
@@ -311,6 +323,8 @@ void lv_screenSetup() {
   g_lv->logLoaded = FALSE;
   g_lv->xOffset = 127;
   g_lv->yOffset = 127;
+  g_lv->subPxX  = 0;
+  g_lv->subPxY  = 0;
   lv_mapCreate(&g_lv->mp);
   lv_pillsCreate(&g_lv->pb);
   lv_startsCreate(&g_lv->ss);
@@ -468,8 +482,10 @@ void lv_screenSetPos(BYTE xValue, BYTE yValue, BYTE terrain) {
 BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
-  if (xValue < lv_screenGetSizeX() && yValue < lv_screenGetSizeY()) {
-      returnValue = *((*g_lv->view).screenItem+(yValue*lv_screenGetSizeX()+xValue));
+  /* Buffer holds sizeX+1 by sizeY+1 tiles (visible + 1-tile margin for
+   * sub-tile scrolling). Stride is sizeX+1. */
+  if (xValue <= lv_screenGetSizeX() && yValue <= lv_screenGetSizeY()) {
+      returnValue = *((*g_lv->view).screenItem+(yValue*(lv_screenGetSizeX()+1)+xValue));
   }
   return returnValue;
 }
@@ -500,17 +516,23 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
       lv_utilPtoCString(mem, name);
-      if (g_lv->loadedLogVersion == LOG_VERSION_V0) {
-        /* Version 0: opt2-opt5 are IP address octets */
-        snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
-        lv_dnsLookup(mem, str, sizeof(str));
-        strncpy(mem, str, sizeof(mem) - 1);
-        mem[sizeof(mem) - 1] = '\0';
-      } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
-        /* Version 1: opt2-opt3 are 2-char country code, opt4-opt5 unused */
-        snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
+      {
+        BYTE accountFlags = 0;
+        if (g_lv->loadedLogVersion == LOG_VERSION_V0) {
+          /* Version 0: opt2-opt5 are IP address octets */
+          snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
+          lv_dnsLookup(mem, str, sizeof(str));
+          strncpy(mem, str, sizeof(mem) - 1);
+          mem[sizeof(mem) - 1] = '\0';
+        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
+          /* Version 1: opt2-opt3 are 2-char country code,
+           * opt4 is accountFlags (bit 0=WBN, bit 1=Steam),
+           * opt5 reserved (zero in current writers). */
+          snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
+          accountFlags = opt4;
+        }
+        lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE, accountFlags);
       }
-      lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE);
       {
         MessageArgs args = {0};
         strncpy(args.playerName, name, sizeof(args.playerName) - 1);
@@ -1144,7 +1166,10 @@ bool lv_processSnapshot() {
               returnValue = FALSE;
             } else {
               allies = data+pos;
-              lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE);
+              /* Snapshot wire format has no accountFlags; default to 0.
+               * The flags will be re-set by any subsequent log_PlayerJoined
+               * event for this slot. */
+              lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
               lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
             }
           }
@@ -1490,8 +1515,9 @@ bool lv_screenSetBase(BYTE x, BYTE y) {
 bool lv_screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
   bool returnValue = FALSE; /* Value to return */
 
-  if (xValue < lv_screenGetSizeX() && yValue < lv_screenGetSizeY()) {
-    returnValue = *((*value)->mineItem+(yValue*lv_screenGetSizeX()+xValue));
+  /* Same +1 margin geometry as the screen tile buffer; see lv_screenGetPos. */
+  if (xValue <= lv_screenGetSizeX() && yValue <= lv_screenGetSizeY()) {
+    returnValue = *((*value)->mineItem+(yValue*(lv_screenGetSizeX()+1)+xValue));
   }
   return returnValue;
 }
@@ -1589,16 +1615,55 @@ void lv_screenGetOffsets(BYTE *x, BYTE *y) {
   }
 }
 
-void lv_screenPanToOffsets(BYTE newXOffset, BYTE newYOffset) {
+void lv_screenGetSubOffset(int *x, int *y) {
+  if (x != NULL) *x = g_lv->subPxX;
+  if (y != NULL) *y = g_lv->subPxY;
+}
+
+void lv_screenSetSubOffset(int x, int y) {
+  g_lv->subPxX = x;
+  g_lv->subPxY = y;
+}
+
+/* Decompose a total pan position (in zoom-1 native pixels) into
+ * (xOffset,yOffset) tile + (subPxX,subPxY) pixel components, clamping
+ * to the map. The whole-tile range matches the existing resize-time
+ * clamp ([0, 255 - screenSize]); when the viewport reaches that edge
+ * we force sub-pixel to zero so the trailing edge has no bleed past
+ * the rendered tiles. */
+void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
   if (g_lv->logLoaded == FALSE) {
     return;
   }
-  if (newXOffset == g_lv->xOffset && newYOffset == g_lv->yOffset) {
-    return;
+
+  int sizeX = lv_screenGetSizeX();
+  int sizeY = lv_screenGetSizeY();
+  int maxOffX = 255 - sizeX; if (maxOffX < 0) maxOffX = 0;
+  int maxOffY = 255 - sizeY; if (maxOffY < 0) maxOffY = 0;
+  int maxPxX = maxOffX * TILE_SIZE_X;
+  int maxPxY = maxOffY * TILE_SIZE_Y;
+
+  if (totalPxX < 0) totalPxX = 0;
+  if (totalPxY < 0) totalPxY = 0;
+  if (totalPxX > maxPxX) totalPxX = maxPxX;
+  if (totalPxY > maxPxY) totalPxY = maxPxY;
+
+  int newOffX = totalPxX / TILE_SIZE_X;
+  int newOffY = totalPxY / TILE_SIZE_Y;
+  int newSubX = totalPxX - newOffX * TILE_SIZE_X;
+  int newSubY = totalPxY - newOffY * TILE_SIZE_Y;
+
+  bool wholeChanged = ((BYTE)newOffX != g_lv->xOffset) ||
+                      ((BYTE)newOffY != g_lv->yOffset);
+
+  g_lv->subPxX = newSubX;
+  g_lv->subPxY = newSubY;
+
+  if (wholeChanged) {
+    g_lv->xOffset = (BYTE)newOffX;
+    g_lv->yOffset = (BYTE)newOffY;
+    lv_screenUpdate(redraw);
   }
-  g_lv->xOffset = newXOffset;
-  g_lv->yOffset = newYOffset;
-  lv_screenUpdate(redraw);
 }
 
 void lv_messageAdd(messageType msgType, langid topId, langid bodyId,

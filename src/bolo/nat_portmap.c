@@ -7,6 +7,8 @@
 #include <SDL3/SDL.h>
 #include <plum/plum.h>
 
+#include "../common/wb_log.h"
+
 /* libplum's mapping callback receives only the int handle, so we keep a
  * small static side-table mapping handles back to their NatPortMap. */
 typedef struct {
@@ -42,7 +44,26 @@ static void plumInitOnce(void) {
 }
 
 static void plumLogCb(plum_log_level_t level, const char *message) {
-  SDL_Log("[libplum:%d] %s", (int)level, message ? message : "(null)");
+  const char *msg = message ? message : "(null)";
+  switch (level) {
+    case PLUM_LOG_LEVEL_FATAL:
+    case PLUM_LOG_LEVEL_ERROR:
+      WB_LOG_ERROR(WB_LOG_CAT_NET, "[libplum] %s", msg);
+      break;
+    case PLUM_LOG_LEVEL_WARN:
+      WB_LOG_WARN(WB_LOG_CAT_NET, "[libplum] %s", msg);
+      break;
+    case PLUM_LOG_LEVEL_INFO:
+      WB_LOG_INFO(WB_LOG_CAT_NET, "[libplum] %s", msg);
+      break;
+    case PLUM_LOG_LEVEL_DEBUG:
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "[libplum] %s", msg);
+      break;
+    case PLUM_LOG_LEVEL_VERBOSE:
+    default:
+      WB_LOG_TRACE(WB_LOG_CAT_NET, "[libplum] %s", msg);
+      break;
+  }
 }
 
 static PortMapSlot *findSlotByMappingId(int id) {

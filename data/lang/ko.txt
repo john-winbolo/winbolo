@@ -1084,3 +1084,35 @@ STR_DLGSETTINGS_NETWORK=네트워크
 STR_DLGSETTINGS_NET_HELP=설정은 다음 호스팅 게임부터 적용돼요.
 STR_DLGSETTINGS_USE_UPNP=UPnP / NAT-PMP로 자동 포트 포워딩 사용
 STR_DLGSETTINGS_USE_NATTRAV=트래커를 통한 NAT traversal(홀 펀칭) 사용
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=플레이어 이름이 비어 있어요.
+STR_NAME_INVALID_CHARS=플레이어 이름에 허용되지 않는 문자가 포함되어 있어요.
+STR_NAME_INVALID_MIXED_SCRIPTS=플레이어 이름에 호환되지 않는 문자 체계가 혼합되어 있어요.
+STR_NAME_INVALID_RESERVED_PREFIX=플레이어 이름은 '*'로 시작할 수 없어요.
+STR_NAME_INVALID_RESERVED_SUFFIX=플레이어 이름은 '-unverified'로 끝날 수 없어요.
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=채팅에 국가 기 표시
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={other}님이 인증된 플레이어로 참가해서 {player}님의 이름이 변경됐어요
+STR_NAME_TAKEN_BY_VERIFIED=해당 표시 이름은 인증된 플레이어의 것이에요. 다른 이름을 선택해 주세요.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=해당 표시 이름은 다른 인증된 플레이어가 사용 중이에요. 다른 이름을 선택해 주세요.
+
+# Localized server→client messages (Phase 9d)
+STR_REJECT_INCORRECT_PASSWORD=비밀번호가 틀렸어요
+STR_REJECT_GAME_LOCKED=게임이 잠겨 있어요
+STR_REJECT_SERVER_FULL=서버가 꽉 찼어요
+STR_REJECT_NAME_POOL_EXHAUSTED=서버 이름 풀이 소진됐어요
+STR_REJECT_INVALID_PLAYER_NAME=유효하지 않은 플레이어 이름이에요
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net 인증에 실패했어요: {string1}
+STR_KICK_ANNOUNCE={player}님이 서버에서 강제 퇴장됐어요.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=댓글
+STR_LV_INFO_SIGNIN_TO_COMMENT=댓글을 작성하려면 WinBolo(메인 게임)에서 로그인해 주세요
+STR_LV_INFO_NO_WBN_KEY=댓글을 보려면 WinBolo.net 키가 있는 로그를 열어 주세요
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=WinBolo.net에서 열기...

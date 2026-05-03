@@ -46,6 +46,7 @@
 #include <unistd.h>
 #endif
 
+#include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/frontend.h"
@@ -242,6 +243,9 @@ int main(int argc, char *argv[]) {
 #endif
 
   SDL_Init(0);
+
+  wb_log_init("WinBolo", "WinBolo", "winbolo.log");
+  atexit(wb_log_shutdown);
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
@@ -1534,7 +1538,7 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   cc[0] = countryCode[0];
   cc[1] = countryCode[1];
   cc[2] = '\0';
-  SDL_Log("[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
+  WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, wbnParticipant, steamParticipant);
 }

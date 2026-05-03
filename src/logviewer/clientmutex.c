@@ -26,6 +26,7 @@
 *********************************************************/
 
 #include <SDL3/SDL.h>
+#include "../common/wb_log.h"
 #include "global.h"
 #include "clientmutex.h"
 
@@ -78,7 +79,7 @@ void lv_clientMutexDestroy(void) {
 *********************************************************/
 void lv_clientMutexWaitFor(void) {
   if (hClientMutexHandle == NULL) {
-    SDL_Log("lv_clientMutexWaitFor: mutex is NULL, cannot lock");
+    WB_LOG_WARN(WB_LOG_CAT_LOGVIEWER, "lv_clientMutexWaitFor: mutex is NULL, cannot lock");
     return;
   }
   SDL_LockMutex(hClientMutexHandle);
@@ -98,7 +99,7 @@ void lv_clientMutexWaitFor(void) {
 *********************************************************/
 void lv_clientMutexRelease(void) {
   if (hClientMutexHandle == NULL) {
-    SDL_Log("lv_clientMutexRelease: mutex is NULL, cannot unlock");
+    WB_LOG_WARN(WB_LOG_CAT_LOGVIEWER, "lv_clientMutexRelease: mutex is NULL, cannot unlock");
     return;
   }
   SDL_UnlockMutex(hClientMutexHandle);

@@ -301,6 +301,20 @@ void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest);
 void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 
 /*********************************************************
+*NAME:          playersGetAccountFlags
+*PURPOSE:
+* Returns the player's account-flag byte: bit 0 = WBN
+* participant, bit 1 = Steam participant. Mirrors
+* MESSAGE_FLAG_WBN / MESSAGE_FLAG_STEAM in lang.h. Zero if
+* the slot is not in use.
+*
+*ARGUMENTS:
+* plrs - Pointer to the players object
+* playerNum - The player number
+*********************************************************/
+uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum);
+
+/*********************************************************
 *NAME:          playersMakeMessageName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99

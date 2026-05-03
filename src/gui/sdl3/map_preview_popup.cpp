@@ -36,10 +36,7 @@ extern "C" {
 #include "../tiles.h"
 #include "map_preview_popup.h"
 #include "macos_pinch.h"
-
-/* From mapview.h — declared directly to avoid pulling in game_sim.h */
-extern int mapViewPosX[256];
-extern int mapViewPosY[256];
+#include "sprite_positions.h"
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);

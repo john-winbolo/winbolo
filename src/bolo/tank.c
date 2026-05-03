@@ -1544,6 +1544,46 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
       }
 
+      /* Lookahead bank clamp: hold tank center TANK_MOVE_BOAT_SUB inside
+       * the river tile when an adjacent tile is soft land. Without this,
+       * the body extends ~half a tile into the bank before the center
+       * crosses and triggers the per-axis revert below. Skipped for
+       * road/halfbuilding (slow exit onto road still works) and for
+       * BOAT (allows pickup of an adjacent parked boat). Skipped at
+       * speed >= BOAT_FAST_EXIT_SPEED so deliberate fast exits work. */
+      if ((*value)->speed < BOAT_FAST_EXIT_SPEED &&
+          mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
+        WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
+        WORLD rMaxX = (((WORLD)newbmx + 1) << TANK_SHIFT_MAPSIZE) - 1;
+        WORLD rMinY = ((WORLD)newbmy) << TANK_SHIFT_MAPSIZE;
+        WORLD rMaxY = (((WORLD)newbmy + 1) << TANK_SHIFT_MAPSIZE) - 1;
+        BYTE adj;
+        if (newbmx > 0 && mapIsLand(mp, pb, bs, newbmx - 1, newbmy)) {
+          adj = mapGetPos(mp, newbmx - 1, newbmy);
+          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+            if ((*value)->x < rMinX + TANK_MOVE_BOAT_SUB) (*value)->x = rMinX + TANK_MOVE_BOAT_SUB;
+          }
+        }
+        if (newbmx < 255 && mapIsLand(mp, pb, bs, newbmx + 1, newbmy)) {
+          adj = mapGetPos(mp, newbmx + 1, newbmy);
+          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+            if ((*value)->x > rMaxX - TANK_MOVE_BOAT_SUB) (*value)->x = rMaxX - TANK_MOVE_BOAT_SUB;
+          }
+        }
+        if (newbmy > 0 && mapIsLand(mp, pb, bs, newbmx, newbmy - 1)) {
+          adj = mapGetPos(mp, newbmx, newbmy - 1);
+          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+            if ((*value)->y < rMinY + TANK_MOVE_BOAT_SUB) (*value)->y = rMinY + TANK_MOVE_BOAT_SUB;
+          }
+        }
+        if (newbmy < 255 && mapIsLand(mp, pb, bs, newbmx, newbmy + 1)) {
+          adj = mapGetPos(mp, newbmx, newbmy + 1);
+          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+            if ((*value)->y > rMaxY - TANK_MOVE_BOAT_SUB) (*value)->y = rMaxY - TANK_MOVE_BOAT_SUB;
+          }
+        }
+      }
+
       /* Center on land — leave boat */
       if ((*value)->boatState == BoatState_InBoat &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == TRUE) {

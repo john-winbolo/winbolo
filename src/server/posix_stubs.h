@@ -23,8 +23,16 @@
 
 #include "../bolo/global.h"  /* DWORD, FILENAME_MAX */
 
-/* Returns the platform config file path (e.g. ~/.config/winbolo/WinBolo.ini) */
+/* Returns the platform config file path. If preferencesSetPreferenceFileOverride
+ * has been called, returns that path; otherwise returns the headless default
+ * (~/.config/winbolo/WinBolo.ini). SDL-linked binaries should call the override
+ * with their SDL_GetPrefPath result during init so all INI access goes to the
+ * same file. */
 void preferencesGetPreferenceFile(char *dest);
+
+/* Sets the path that preferencesGetPreferenceFile will return. Pass NULL or
+ * empty string to clear the override. The path is copied; caller may free. */
+void preferencesSetPreferenceFileOverride(const char *path);
 
 /* Minimal INI reader — same signature as Win32 GetPrivateProfileString */
 DWORD GetPrivateProfileString(const char *section, const char *key,

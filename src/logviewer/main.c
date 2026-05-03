@@ -26,8 +26,12 @@
 #define SDL_MAIN_HANDLED
 #endif
 
+#include <stdlib.h>
 #include <SDL3/SDL.h>
 #include "logviewer.h"
+#include "../common/wb_log.h"
+#include "../winbolonet/http.h"
+#include "platform/platform_config.h"
 
 int main(int argc, char *argv[]);
 
@@ -40,8 +44,23 @@ int __stdcall WinMain(void *hInst, void *hPrev, char *lpCmd, int nShow) {
 
 int main(int argc, char *argv[]) {
     const char *logPath = (argc > 1) ? argv[1] : NULL;
+    SDL_Init(0);
+    wb_log_init("WinBolo", "LogViewer", "logviewer.log");
+    atexit(wb_log_shutdown);
+
+    /* Resolve WinBolo.ini path and pin posix_stubs to it before httpCreate
+     * reads [WINBOLO.NET] Host. */
+    lv_platform_config_init("LogViewer");
+
+    /* Smoke test: prove the WBN HTTP client links and initialises in the
+     * standalone LogViewer build. Read access (comments) and authenticated
+     * post will be added in a later step. */
+    httpCreate();
+
     /* NULL window/renderer signals standalone mode —
        logViewerRun() creates its own window */
     logViewerRun(NULL, NULL, logPath, false);
+
+    httpDestroy();
     return 0;
 }

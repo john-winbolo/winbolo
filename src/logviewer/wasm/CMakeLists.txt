@@ -84,6 +84,18 @@ target_include_directories(imgui_backends PUBLIC
 target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 ###
+# nanosvg + stb_image — vendored header-only libraries used by the
+# tile atlas builder (gui/sdl3/tileloader.c). Each provides a single
+# *_impl.c file that defines the implementation; everything else is
+# header-only.
+#
+add_library(nanosvg STATIC ${SRC_ROOT}/third_party/nanosvg/nanosvg_impl.c)
+target_include_directories(nanosvg SYSTEM PUBLIC ${SRC_ROOT}/third_party/nanosvg)
+
+add_library(stb_image STATIC ${SRC_ROOT}/third_party/stb/stb_image_impl.c)
+target_include_directories(stb_image SYSTEM PUBLIC ${SRC_ROOT}/third_party/stb)
+
+###
 # Gather LogViewer source files — same as main build, but swap out
 # main.c, clientmutex.c, dns.c, and platform/*.c for WASM versions.
 #
@@ -136,6 +148,9 @@ add_executable(logviewer
     ${LV_SOURCES}
     ${LV_IMGUI_SOURCES}
     ${LV_WASM_SOURCES}
+    ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
+    ${SRC_ROOT}/gui/sdl3/sprite_positions.c
+    ${SRC_ROOT}/gui/sdl3/tileloader.c
 )
 
 target_include_directories(logviewer PRIVATE
@@ -150,6 +165,8 @@ target_link_libraries(logviewer PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     imgui_backends
+    nanosvg
+    stb_image
 )
 
 ###

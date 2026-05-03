@@ -1109,13 +1109,47 @@
 #define STR_DLGSETTINGS_AS_MAX              1217
 #define STR_DLGSETTINGS_FORCESMOOTHSHELLS   1218
 #define STR_DLGSETTINGS_FORCESMOOTH_TIP     1219
-#define STR_DLGSETTINGS_SKINS_DISCLAIMER   1220
+#define STR_DLGSETTINGS_SKINS_DISCLAIMER    1220
 #define STR_DLGSETTINGS_SKIN                1221
 #define STR_DLGSETTINGS_PREVIEW             1222
 #define STR_DLGSETTINGS_INTERP              1223
 #define STR_DLGSETTINGS_INTERP_NEAREST      1224
 #define STR_DLGSETTINGS_INTERP_LINEAR       1225
 #define STR_DLGSETTINGS_INTERP_PIXELART     1226
+
+/* Player-name validation (Phase 2). */
+#define STR_NAME_INVALID_EMPTY              1227
+#define STR_NAME_INVALID_CHARS              1228
+#define STR_NAME_INVALID_MIXED_SCRIPTS      1229
+#define STR_NAME_INVALID_RESERVED_PREFIX    1230
+#define STR_NAME_INVALID_RESERVED_SUFFIX    1231
+
+/* Settings → Display: country-flag rendering preference (Phase 4). */
+#define STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS  1232
+
+/* Verified-priority collision policy (Phase 5). */
+#define STR_NAME_RENAMED_BY_VERIFIED        1233
+#define STR_NAME_TAKEN_BY_VERIFIED          1234
+#define STR_NAME_TAKEN_BY_OTHER_VERIFIED    1235
+
+/* Localized server→client messages (Phase 9d). Sent over the wire as
+ * langid + args by serverSendJoinReject / serverSendServerMessage so
+ * each client renders in its own locale. */
+#define STR_REJECT_INCORRECT_PASSWORD       1236
+#define STR_REJECT_GAME_LOCKED              1237
+#define STR_REJECT_SERVER_FULL              1238
+#define STR_REJECT_NAME_POOL_EXHAUSTED      1239
+#define STR_REJECT_INVALID_PLAYER_NAME      1240
+#define STR_REJECT_WBN_VERIFY_FAILED        1241
+#define STR_KICK_ANNOUNCE                   1242
+
+/* Log viewer comments panel */
+#define STR_LV_WIN_COMMENTS                 1243
+#define STR_LV_INFO_SIGNIN_TO_COMMENT       1244
+#define STR_LV_INFO_NO_WBN_KEY              1245
+
+/* Log viewer File menu — open log from WinBolo.net */
+#define STR_LV_MENU_OPEN_WBN                1246
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
@@ -1169,9 +1203,19 @@ typedef struct {
  * Substitution is non-recursive — braces inside a substituted value
  * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
 #define LANG_MSGARG_STRING_LEN 64
+
+/* Bit flags for MessageArgs::playerFlags / otherFlags. Mirrors the
+ * accountFlags byte in TankSnapshot (src/bolo/input_packet.h). */
+#define MESSAGE_FLAG_WBN   0x01
+#define MESSAGE_FLAG_STEAM 0x02
+
 typedef struct {
-    char playerName[PLAYER_NAME_LEN];
-    char otherName[PLAYER_NAME_LEN];
+    char    playerName[PLAYER_NAME_LEN];
+    uint8_t playerFlags;        /* MESSAGE_FLAG_WBN | MESSAGE_FLAG_STEAM */
+    char    playerCountry[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
+    char    otherName[PLAYER_NAME_LEN];
+    uint8_t otherFlags;
+    char    otherCountry[3];
     int  number;
     int  number2;
     int  number3;

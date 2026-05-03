@@ -19,6 +19,7 @@
 *********************************************************/
 
 #include "../lang.h"
+#include "../../common/wb_log.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1013,6 +1014,30 @@ static const LangEntry langTable[] = {
     {1206, "Settings take effect on the next hosted game."},
     {1207, "Use UPnP / NAT-PMP for automatic port forwarding"},
     {1208, "Use NAT traversal (hole-punching) via tracker"},
+    {1209, "Player name is empty."},
+    {1210, "Player name contains disallowed characters."},
+    {1211, "Player name mixes incompatible scripts."},
+    {1212, "Player name cannot start with '*'."},
+    {1213, "Player name cannot end with '-unverified'."},
+    {1214, "Show country flags in chat"},
+    {1215, "%s was renamed because %s joined verified"},
+    {1216, "That display name belongs to a verified player. Please pick another."},
+    {1217, "That display name is in use by another verified player. Please pick another."},
+    {1218, "Incorrect password"},
+    {1219, "Game is locked"},
+    {1220, "Server full"},
+    {1221, "Server name pool exhausted"},
+    {1222, "Invalid player name"},
+    {1223, "WinBolo.net verification failed: {string1}"},
+    {1224, "{player} has been server kicked."},
+
+    /* Log viewer comments panel */
+    {1225, "Comments"},
+    {1226, "Sign in via WinBolo (in the main game) to post a comment"},
+    {1227, "Open a log with a WinBolo.net key to view comments"},
+
+    /* Log viewer File menu — open log from WinBolo.net */
+    {1228, "Open from WinBolo.net..."},
 
     /* Graphics section: tile detail / animation smoothness / skin info */
     {1209, "All pixelation and animation settings do not affect "
@@ -1204,7 +1229,7 @@ bool langLoadFile(const char *path) {
 
     FILE *f = fopen(path, "rb");
     if (!f) {
-        SDL_Log("langLoadFile: could not open '%s'", path);
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: could not open '%s'", path);
         clearOverrides();
         return FALSE;
     }
@@ -1247,7 +1272,7 @@ bool langLoadFile(const char *path) {
 
         char *eq = strchr(t, '=');
         if (!eq) {
-            SDL_Log("langLoadFile: skipping malformed line: %s", t);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: skipping malformed line: %s", t);
             continue;
         }
         *eq = '\0';
@@ -1277,17 +1302,17 @@ bool langLoadFile(const char *path) {
 
         langid id = resolveName(key);
         if (id == 0) {
-            SDL_Log("langLoadFile: unknown ID '%s' — skipping", key);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: unknown ID '%s' — skipping", key);
             continue;
         }
 
         if (id < overrideTableSize && overrideTable && overrideTable[id]) {
-            SDL_Log("langLoadFile: duplicate ID '%s' — last one wins", key);
+            WB_LOG_WARN(WB_LOG_CAT_ASSET, "langLoadFile: duplicate ID '%s' — last one wins", key);
         }
 
         char *decoded = unescapeValue(value);
         if (!decoded) {
-            SDL_Log("langLoadFile: out of memory decoding '%s'", key);
+            WB_LOG_ERROR(WB_LOG_CAT_ASSET, "langLoadFile: out of memory decoding '%s'", key);
             continue;
         }
         setOverride(id, decoded);
@@ -1735,7 +1760,7 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
     }
 
     if (truncated) {
-        SDL_Log("langGetTextFmt: id=%u rendered output exceeded "
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "langGetTextFmt: id=%u rendered output exceeded "
                 "LANG_FMT_BUFFER_SIZE=%d; result was clipped",
                 (unsigned)id, LANG_FMT_BUFFER_SIZE);
     }

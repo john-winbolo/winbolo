@@ -34,6 +34,13 @@ if(APPLE AND NOT CMAKE_OSX_SYSROOT)
     )
 endif()
 
+# Build universal2 on macOS so the same .app runs natively on Apple Silicon
+# and Intel Macs. Override on the command line with -DCMAKE_OSX_ARCHITECTURES=arm64
+# for a single-arch build. iOS sets its own architectures via the toolchain.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures")
+endif()
+
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
 
 # Derive network protocol version bytes from WINBOLO_VERSION.
@@ -275,6 +282,17 @@ if(NOT MSVC)
     target_compile_options(stb_image PRIVATE -Wno-unused-function)
 endif()
 
+# utf8proc — Unicode normalization + property tables (vendored, MIT)
+# Compiled as a static lib to avoid duplicating its ~2MB Unicode table
+# across every target that links the bolo sources.
+add_library(utf8proc STATIC src/third_party/utf8proc/utf8proc.c)
+target_include_directories(utf8proc SYSTEM PUBLIC src/third_party/utf8proc)
+target_compile_definitions(utf8proc PUBLIC UTF8PROC_STATIC=1)
+set_target_properties(utf8proc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(utf8proc PRIVATE /wd4244 /wd4267)
+endif()
+
 # ImGui backends library for SDL3 + SDL Renderer
 add_library(imgui_backends STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -397,8 +415,9 @@ set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"
     "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
-set(IOS_DATA_FONT
-    ${CMAKE_SOURCE_DIR}/data/fonts/CourierPrime-Regular.ttf
+file(GLOB IOS_DATA_FONT
+    "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
+    "${CMAKE_SOURCE_DIR}/data/fonts/*.otf"
 )
 file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
@@ -415,7 +434,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/grass.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/labels.c src/bolo/lgm.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -446,7 +465,9 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl3draw.c
     src/gui/sdl3/mapview.c
     src/gui/sdl3/override_mode.c
+    src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/currentgames.c
@@ -585,7 +606,7 @@ target_include_directories(WinBoloIOS PRIVATE
 )
 
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image
+    nanosvg stb_image utf8proc
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -610,6 +631,7 @@ if(HAVE_SENTRY_IOS)
 endif()
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
+target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -669,6 +691,36 @@ endif()
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
+
+# wb_log compile-time level. Calls below this level expand to ((void)0)
+# and are stripped by the compiler. Empty = wb_log.h decides (DEBUG in
+# Debug builds, INFO in Release).
+set(WINBOLO_LOG_LEVEL "" CACHE STRING
+    "Compile-time log level for wb_log macros: TRACE/DEBUG/INFO/WARN/ERROR/OFF (empty = auto)")
+set_property(CACHE WINBOLO_LOG_LEVEL PROPERTY STRINGS
+    "" "TRACE" "DEBUG" "INFO" "WARN" "ERROR" "OFF")
+if(WINBOLO_LOG_LEVEL)
+    if(WINBOLO_LOG_LEVEL STREQUAL "TRACE")
+        set(_WB_LOG_LEVEL_NUM 1)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "DEBUG")
+        set(_WB_LOG_LEVEL_NUM 2)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "INFO")
+        set(_WB_LOG_LEVEL_NUM 3)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "WARN")
+        set(_WB_LOG_LEVEL_NUM 4)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "ERROR")
+        set(_WB_LOG_LEVEL_NUM 5)
+    elseif(WINBOLO_LOG_LEVEL STREQUAL "OFF")
+        set(_WB_LOG_LEVEL_NUM 6)
+    else()
+        message(FATAL_ERROR
+            "WINBOLO_LOG_LEVEL must be one of TRACE/DEBUG/INFO/WARN/ERROR/OFF (got '${WINBOLO_LOG_LEVEL}')")
+    endif()
+    add_compile_definitions(WB_LOG_LEVEL=${_WB_LOG_LEVEL_NUM})
+    message(STATUS "wb_log: compile-time level = ${WINBOLO_LOG_LEVEL} (${_WB_LOG_LEVEL_NUM})")
+else()
+    message(STATUS "wb_log: compile-time level = auto (DEBUG in Debug builds, INFO in Release)")
+endif()
 
 # ONNX Runtime — optional dependency for ML brain inference
 # Downloads prebuilt binaries via FetchContent when not already installed.
@@ -844,7 +896,7 @@ set(CLIENT_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -857,7 +909,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/override_mode.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/override_mode.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -872,7 +924,7 @@ set(CLIENT_SOURCES
     src/server/servermessages.c src/server/threads.c
     src/server/server_sim.c
     src/server/server_lifecycle.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -914,7 +966,6 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/global.c
     src/logviewer/labels.c
     src/logviewer/messages.c
-    src/logviewer/draw_setup_arrays.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
@@ -923,6 +974,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
 )
@@ -1014,7 +1066,7 @@ endif()
 
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
-    nanosvg stb_image cjson)
+    nanosvg stb_image utf8proc cjson)
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -1160,7 +1212,7 @@ set(SERVER_SOURCES
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screenbrainmap.c src/bolo/screenbullet.c src/bolo/screencalc.c
     src/bolo/shells.c src/bolo/starts.c
     src/bolo/swamp.c src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c
@@ -1175,7 +1227,7 @@ set(SERVER_SOURCES
     src/bolo/bot_manager.c
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
@@ -1225,7 +1277,7 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson)
+target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -1242,6 +1294,7 @@ endif()
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
+target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
@@ -1315,6 +1368,16 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_comments.cpp
+)
+
+# Reuse the SDL3 main-game WBN browser dialog. LogViewer provides stubs for
+# the few main-game-only symbols it pulls in (bg_game, gamefront token,
+# imgui_winbolonet sign-in section). The dialog is *not* added to
+# LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
+set(LOGVIEWER_WBN_BROWSER_SOURCES
+    src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
 set(LOGVIEWER_PLATFORM_SOURCES
@@ -1322,18 +1385,38 @@ set(LOGVIEWER_PLATFORM_SOURCES
     src/logviewer/platform/platform_dialogs.c
 )
 
+# WinBolo.net HTTP client + Ed25519 signing — shared with the SDL3 client and
+# servers. LogViewer uses it to fetch/post comments on logs that have a WBN key.
+set(LOGVIEWER_WBN_SOURCES
+    src/winbolonet/http.c
+    src/winbolonet/wbn_comments.cpp
+    src/third_party/tweetnacl/tweetnacl.c
+)
+
 add_executable(LogViewer
     ${LOGVIEWER_SOURCES}
     ${LOGVIEWER_IMGUI_SOURCES}
     ${LOGVIEWER_PLATFORM_SOURCES}
+    ${LOGVIEWER_WBN_SOURCES}
+    ${LOGVIEWER_WBN_BROWSER_SOURCES}
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
+    src/gui/sdl3/sdl_bmp.c
+    src/gui/sdl3/sprite_positions.c
+    src/gui/sdl3/tileloader.c
+    src/gui/ui_mode.c
 )
+if(NOT WIN32)
+    # posix_stubs provides preferencesGetPreferenceFile + GetPrivateProfileString /
+    # WritePrivateProfileString shared with the main game and map editor.
+    target_sources(LogViewer PRIVATE src/server/posix_stubs.c)
+endif()
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    PREFERENCE_FILE="WinBolo.ini"
 )
 
 if(WIN32)
@@ -1370,10 +1453,14 @@ target_include_directories(LogViewer PRIVATE
     ${CMAKE_SOURCE_DIR}/src/logviewer
     ${CMAKE_SOURCE_DIR}/src/logviewer/imgui
     ${CMAKE_SOURCE_DIR}/src/logviewer/platform
+    ${CMAKE_SOURCE_DIR}/src/winbolonet
+    ${CMAKE_SOURCE_DIR}/src/third_party/tweetnacl
+    ${cjson_SOURCE_DIR}
 )
 
 target_link_libraries(LogViewer PRIVATE
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
+    nanosvg stb_image CURL::libcurl cjson
 )
 
 if(WIN32)
@@ -1418,7 +1505,7 @@ set(HEADLESS_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1438,7 +1525,7 @@ set(HEADLESS_SOURCES
     src/server/server_sim.c
     src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1492,7 +1579,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
 # ONNX Runtime ML brain support for headless (optional)
 if(HAVE_ONNXRUNTIME)
@@ -1548,7 +1635,7 @@ set(GYM_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1568,7 +1655,7 @@ set(GYM_SOURCES
     src/server/server_sim.c
     src/server/server_lifecycle.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c
+    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
@@ -1624,7 +1711,7 @@ if(TARGET maxminddb)
 endif()
 
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
 if(OpenMP_C_FOUND)
     target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
@@ -1661,7 +1748,7 @@ set(BRAINTEST_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1669,7 +1756,7 @@ set(BRAINTEST_SOURCES
     src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_worldsim.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1722,7 +1809,7 @@ endif()
 
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
-    nanosvg stb_image
+    nanosvg stb_image utf8proc
 )
 
 # Copy shared libraries and assets next to BrainTest executable
@@ -1751,7 +1838,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playersrejoin.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
     src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1761,7 +1848,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/tileloader.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1800,6 +1887,7 @@ target_include_directories(MapEditor PRIVATE
 )
 
 if(WIN32)
+    target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
 else()
@@ -1812,13 +1900,29 @@ endif()
 
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
-    nanosvg stb_image
+    nanosvg stb_image utf8proc
 )
 
 # macOS trackpad pinch-to-zoom support
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
     target_link_libraries(MapEditor PRIVATE "-framework AppKit")
+endif()
+
+# macOS app bundle with icon
+if(APPLE)
+    set(MAPEDITOR_ICON "${CMAKE_SOURCE_DIR}/src/mapeditor/platform/AppIcon.icns")
+    if(EXISTS "${MAPEDITOR_ICON}")
+        target_sources(MapEditor PRIVATE "${MAPEDITOR_ICON}")
+        set_source_files_properties("${MAPEDITOR_ICON}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources")
+        set_target_properties(MapEditor PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_ICON_FILE "AppIcon.icns"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/mapeditor/platform/Info.plist.in"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.winbolo.mapeditor"
+            MACOSX_BUNDLE_BUNDLE_NAME "WinBolo Map Editor")
+    endif()
 endif()
 
 # Copy shared libraries and assets next to MapEditor executable

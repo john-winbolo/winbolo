@@ -1084,3 +1084,35 @@ STR_DLGSETTINGS_NETWORK=网络
 STR_DLGSETTINGS_NET_HELP=设置将在下一局托管游戏中生效。
 STR_DLGSETTINGS_USE_UPNP=使用 UPnP / NAT-PMP 自动转发端口
 STR_DLGSETTINGS_USE_NATTRAV=通过 tracker 使用 NAT 穿透（hole-punching）
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=玩家名称不能为空。
+STR_NAME_INVALID_CHARS=玩家名称包含不允许的字符。
+STR_NAME_INVALID_MIXED_SCRIPTS=玩家名称混用了不兼容的文字体系。
+STR_NAME_INVALID_RESERVED_PREFIX=玩家名称不能以"*"开头。
+STR_NAME_INVALID_RESERVED_SUFFIX=玩家名称不能以"-unverified"结尾。
+
+# Settings → Display: country-flag rendering preference
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=在聊天中显示国旗
+
+# Verified-priority collision policy
+STR_NAME_RENAMED_BY_VERIFIED={player} 的名称已被修改，因为已验证玩家 {other} 加入了游戏
+STR_NAME_TAKEN_BY_VERIFIED=该显示名称已被一位已验证玩家使用，请换一个。
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=该显示名称正被另一位已验证玩家使用，请换一个。
+
+# Connection rejection and kick messages
+STR_REJECT_INCORRECT_PASSWORD=密码不正确
+STR_REJECT_GAME_LOCKED=游戏已锁定
+STR_REJECT_SERVER_FULL=服务器已满
+STR_REJECT_NAME_POOL_EXHAUSTED=服务器名称池已耗尽
+STR_REJECT_INVALID_PLAYER_NAME=玩家名称无效
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net 验证失败：{string1}
+STR_KICK_ANNOUNCE={player} 已被服务器踢出。
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=评论
+STR_LV_INFO_SIGNIN_TO_COMMENT=请通过 WinBolo（主游戏中）登录后发表评论
+STR_LV_INFO_NO_WBN_KEY=请打开含有 WinBolo.net 密钥的日志以查看评论
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=从 WinBolo.net 打开...

@@ -44,6 +44,7 @@
 #include "imgui/imgui_game_info.h"
 #include "imgui/imgui_events.h"
 #include "imgui/imgui_item_info.h"
+#include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 
@@ -542,6 +543,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     lv_imgui_game_info_init();
     lv_imgui_events_init();
     lv_imgui_item_info_init();
+    lv_imgui_comments_init();
     lv_imgui_dialogs_init(g_lv);
     lv_imgui_game_viewport_init(g_lv);
 
@@ -554,24 +556,29 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     loadPreferences();
 
     /* Sync screen tile size to actual window dimensions so the game view
-     * fills the window on first frame (not just after a manual resize). */
+     * fills the window on first frame (not just after a manual resize).
+     * Tile counts are sized against the zoom-effective tile pixel
+     * size (TILE_SIZE * zoom), so this stays correct if a zoom level
+     * was restored from preferences. */
     {
         int initW, initH;
         SDL_GetWindowSize(g_lv->window, &initW, &initH);
         if (initW > 0 && initH > 0) {
             int menuH = (int)lv_imgui_get_menu_bar_height();
-            int tileW = ((initW + TILE_SIZE_X / 2) / TILE_SIZE_X) * TILE_SIZE_X;
-            int tileH = (((initH - menuH) + TILE_SIZE_Y / 2) / TILE_SIZE_Y) * TILE_SIZE_Y;
-            if (tileW < TILE_SIZE_X) tileW = TILE_SIZE_X;
-            if (tileH < TILE_SIZE_Y) tileH = TILE_SIZE_Y;
-            if (tileW > 255 * TILE_SIZE_X) tileW = 255 * TILE_SIZE_X;
-            if (tileH > 255 * TILE_SIZE_Y) tileH = 255 * TILE_SIZE_Y;
+            float zoom = lv_drawGetZoomLevel();
+            if (zoom <= 0.0f) zoom = 1.0f;
+            float tilePxX = (float)TILE_SIZE_X * zoom;
+            float tilePxY = (float)TILE_SIZE_Y * zoom;
+            int newTilesX = (int)(((float)initW + tilePxX * 0.5f) / tilePxX);
+            int newTilesY = (int)((((float)(initH - menuH)) + tilePxY * 0.5f) / tilePxY);
+            if (newTilesX < 1) newTilesX = 1;
+            if (newTilesY < 1) newTilesY = 1;
+            if (newTilesX > 255) newTilesX = 255;
+            if (newTilesY > 255) newTilesY = 255;
 
-            BYTE newTilesX = (BYTE)(tileW / TILE_SIZE_X);
-            BYTE newTilesY = (BYTE)(tileH / TILE_SIZE_Y);
-            if (newTilesX != lv_screenGetSizeX() || newTilesY != lv_screenGetSizeY()) {
-                lv_screenSetSizeX(newTilesX);
-                lv_screenSetSizeY(newTilesY);
+            if ((BYTE)newTilesX != lv_screenGetSizeX() || (BYTE)newTilesY != lv_screenGetSizeY()) {
+                lv_screenSetSizeX((BYTE)newTilesX);
+                lv_screenSetSizeY((BYTE)newTilesY);
                 lv_drawResizeRenderTarget();
                 lv_drawDirtyScreen();
             }
@@ -620,34 +627,57 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                 int w = sdlEvent.window.data1;
                 int h = sdlEvent.window.data2;
                 int menuH = (int)lv_imgui_get_menu_bar_height();
+                float zoom = lv_drawGetZoomLevel();
+                if (zoom <= 0.0f) zoom = 1.0f;
 
-                /* Snap width and height (minus menu bar) to nearest 16-pixel tile boundary */
-                int tileW = ((w + TILE_SIZE_X / 2) / TILE_SIZE_X) * TILE_SIZE_X;
-                int tileH = (((h - menuH) + TILE_SIZE_Y / 2) / TILE_SIZE_Y) * TILE_SIZE_Y;
-                if (tileW < TILE_SIZE_X) tileW = TILE_SIZE_X;
-                if (tileH < TILE_SIZE_Y) tileH = TILE_SIZE_Y;
-                /* Cap to map boundary (255 tiles * 16px) */
-                if (tileW > 255 * TILE_SIZE_X) tileW = 255 * TILE_SIZE_X;
-                if (tileH > 255 * TILE_SIZE_Y) tileH = 255 * TILE_SIZE_Y;
+                /* Snap to the nearest zoom-effective tile boundary so the
+                 * blit fills the window cleanly at the current zoom. */
+                float tilePxX = (float)TILE_SIZE_X * zoom;
+                float tilePxY = (float)TILE_SIZE_Y * zoom;
+                int newTilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
+                int newTilesY = (int)((((float)(h - menuH)) + tilePxY * 0.5f) / tilePxY);
+                if (newTilesX < 1) newTilesX = 1;
+                if (newTilesY < 1) newTilesY = 1;
+                if (newTilesX > 255) newTilesX = 255;
+                if (newTilesY > 255) newTilesY = 255;
 
-                SDL_SetWindowSize(g_lv->window, tileW, tileH + menuH);
+                int snappedW = (int)(newTilesX * tilePxX + 0.5f);
+                int snappedH = (int)(newTilesY * tilePxY + 0.5f);
+                SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
                 {
-                    BYTE newTilesX = (BYTE)(tileW / TILE_SIZE_X);
-                    BYTE newTilesY = (BYTE)(tileH / TILE_SIZE_Y);
-                    lv_screenSetSizeX(newTilesX);
-                    lv_screenSetSizeY(newTilesY);
-                    /* Clamp scroll offset so the viewport stays within the 255x255 map */
+                    lv_screenSetSizeX((BYTE)newTilesX);
+                    lv_screenSetSizeY((BYTE)newTilesY);
+                    /* Clamp scroll offset so the viewport stays within the 255x255 map.
+                     * Reset sub-pixel pan so the resized viewport snaps cleanly to
+                     * tile boundaries — there's no "in-flight drag" state to preserve
+                     * across a window resize. */
                     if (g_lv->isLoaded) {
                         BYTE ox, oy;
                         lv_screenGetOffsets(&ox, &oy);
                         if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
                         if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
                         lv_screenSetOffset(ox, oy);
+                        lv_screenSetSubOffset(0, 0);
                     }
                 }
                 lv_drawResizeRenderTarget();
                 lv_drawDirtyScreen();
                 g_lv->wantScreenUpdate = TRUE;
+            }
+            if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
+                /* Stepped zoom anchored on the cursor. Skip when ImGui is
+                 * using the wheel (cursor over a panel) so panel scrolling
+                 * still works. The wheel event carries the mouse position
+                 * in window coordinates (mouse_x / mouse_y). */
+                if (!lv_imgui_want_capture_mouse()) {
+                    int mx = (int)sdlEvent.wheel.mouse_x;
+                    int my = (int)sdlEvent.wheel.mouse_y;
+                    if (sdlEvent.wheel.y > 0.0f) {
+                        lv_drawZoomIn(mx, my);
+                    } else if (sdlEvent.wheel.y < 0.0f) {
+                        lv_drawZoomOut(mx, my);
+                    }
+                }
             }
             if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
@@ -681,6 +711,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         lv_imgui_game_info_window();
         lv_imgui_events_window();
         lv_imgui_item_info_window();
+        lv_imgui_comments_window();
         lv_g_reset_window_positions = false;
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
@@ -695,6 +726,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
      * ----------------------------------------------------------------------- */
     savePreferences();
     lv_windowStop(FALSE);
+    lv_imgui_comments_shutdown();
     lv_imgui_context_shutdown();
     lv_drawCleanupSplash();
     lv_soundCleanup();

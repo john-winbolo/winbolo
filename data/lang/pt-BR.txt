@@ -1084,3 +1084,35 @@ STR_DLGSETTINGS_NETWORK=Rede
 STR_DLGSETTINGS_NET_HELP=As configurações entram em vigor na próxima partida hospedada.
 STR_DLGSETTINGS_USE_UPNP=Usar UPnP / NAT-PMP para redirecionamento automático de porta
 STR_DLGSETTINGS_USE_NATTRAV=Usar travessia de NAT (hole-punching) via tracker
+
+# Player name validation errors (Phase 5)
+STR_NAME_INVALID_EMPTY=O nome do jogador está vazio.
+STR_NAME_INVALID_CHARS=O nome do jogador contém caracteres não permitidos.
+STR_NAME_INVALID_MIXED_SCRIPTS=O nome do jogador mistura scripts incompatíveis.
+STR_NAME_INVALID_RESERVED_PREFIX=O nome do jogador não pode começar com '*'.
+STR_NAME_INVALID_RESERVED_SUFFIX=O nome do jogador não pode terminar com '-unverified'.
+
+# Settings → Display: country-flag rendering preference (Phase 4)
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Mostrar bandeiras de países no chat
+
+# Verified-priority collision policy (Phase 5)
+STR_NAME_RENAMED_BY_VERIFIED={player} foi renomeado porque {other} entrou verificado
+STR_NAME_TAKEN_BY_VERIFIED=Esse nome de exibição pertence a um jogador verificado. Por favor, escolha outro.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Esse nome de exibição está sendo usado por outro jogador verificado. Por favor, escolha outro.
+
+# Server join rejection messages (Phase 5)
+STR_REJECT_INCORRECT_PASSWORD=Senha incorreta
+STR_REJECT_GAME_LOCKED=O jogo está bloqueado
+STR_REJECT_SERVER_FULL=Servidor cheio
+STR_REJECT_NAME_POOL_EXHAUSTED=Pool de nomes do servidor esgotado
+STR_REJECT_INVALID_PLAYER_NAME=Nome de jogador inválido
+STR_REJECT_WBN_VERIFY_FAILED=Falha na verificação do WinBolo.net: {string1}
+STR_KICK_ANNOUNCE={player} foi expulso pelo servidor.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Comentários
+STR_LV_INFO_SIGNIN_TO_COMMENT=Entre pelo WinBolo (no jogo principal) para postar um comentário
+STR_LV_INFO_NO_WBN_KEY=Abra um log com uma chave do WinBolo.net para ver os comentários
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Abrir do WinBolo.net…

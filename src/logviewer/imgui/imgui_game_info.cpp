@@ -11,6 +11,7 @@
 #include "imgui_game_info.h"
 #include "imgui_main_menu.h"
 #include "imgui_context.h"
+#include "imgui_comments.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 
@@ -156,6 +157,8 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
     } else {
         s_wbn_key[0] = '\0';
     }
+    /* Push to the comments panel so it can fetch when the user opens it */
+    lv_imgui_comments_set_key(s_wbn_key);
     
     /* Start time */
     if (startTime > 0) {
@@ -296,7 +299,7 @@ void lv_imgui_game_info_window(void) {
             if (ImGui::IsItemClicked()) {
                 /* Open URL in browser */
                 char url[128];
-                snprintf(url, sizeof(url), "http://www.winbolo.net/gamelog.php?key=%s", s_wbn_key);
+                snprintf(url, sizeof(url), "https://www.winbolo.net/gamelog/%s", s_wbn_key);
 #ifdef _WIN32
                 ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOW);
 #else

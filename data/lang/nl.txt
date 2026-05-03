@@ -1084,3 +1084,35 @@ STR_DLGSETTINGS_NETWORK=Netwerk
 STR_DLGSETTINGS_NET_HELP=Instellingen worden bij het volgende gehoste spel actief.
 STR_DLGSETTINGS_USE_UPNP=Gebruik UPnP / NAT-PMP voor automatische port forwarding
 STR_DLGSETTINGS_USE_NATTRAV=Gebruik NAT-traversal (hole-punching) via tracker
+
+# Player name validation errors
+STR_NAME_INVALID_EMPTY=Spelernaam is leeg.
+STR_NAME_INVALID_CHARS=Spelernaam bevat niet-toegestane tekens.
+STR_NAME_INVALID_MIXED_SCRIPTS=Spelernaam combineert incompatibele schriften.
+STR_NAME_INVALID_RESERVED_PREFIX=Spelernaam mag niet beginnen met '*'.
+STR_NAME_INVALID_RESERVED_SUFFIX=Spelernaam mag niet eindigen op '-unverified'.
+
+# Settings → Display: country-flag rendering preference
+STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Landenvlaggen tonen in chat
+
+# Verified-priority collision policy
+STR_NAME_RENAMED_BY_VERIFIED={player} is hernoemd omdat {other} geverifieerd heeft deelgenomen
+STR_NAME_TAKEN_BY_VERIFIED=Die weergavenaam is van een geverifieerde speler. Kies een andere naam.
+STR_NAME_TAKEN_BY_OTHER_VERIFIED=Die weergavenaam is in gebruik door een andere geverifieerde speler. Kies een andere naam.
+
+# Join rejection and kick messages
+STR_REJECT_INCORRECT_PASSWORD=Onjuist wachtwoord
+STR_REJECT_GAME_LOCKED=Spel is vergrendeld
+STR_REJECT_SERVER_FULL=Server vol
+STR_REJECT_NAME_POOL_EXHAUSTED=Naampool van server uitgeput
+STR_REJECT_INVALID_PLAYER_NAME=Ongeldige spelernaam
+STR_REJECT_WBN_VERIFY_FAILED=WinBolo.net-verificatie mislukt: {string1}
+STR_KICK_ANNOUNCE={player} is van de server verwijderd.
+
+# Log viewer comments panel
+STR_LV_WIN_COMMENTS=Reacties
+STR_LV_INFO_SIGNIN_TO_COMMENT=Meld je aan via WinBolo (in het hoofdspel) om een reactie te plaatsen
+STR_LV_INFO_NO_WBN_KEY=Open een log met een WinBolo.net-sleutel om reacties te bekijken
+
+# Log viewer File menu — open log from WinBolo.net
+STR_LV_MENU_OPEN_WBN=Openen vanuit WinBolo.net...

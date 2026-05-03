@@ -117,6 +117,18 @@ cmake -B build -S .
 cmake --build build -j$(sysctl -n hw.ncpu)
 ```
 
+By default, the macOS build is **universal2** (`arm64;x86_64`) so the resulting `.app` runs natively on both Apple Silicon and Intel Macs. Build time and binary size are roughly double a single-arch build. To produce a single-arch build (faster, smaller), override on the command line:
+
+```bash
+# Apple Silicon only
+cmake -B build -S . -DCMAKE_OSX_ARCHITECTURES=arm64
+
+# Intel only
+cmake -B build -S . -DCMAKE_OSX_ARCHITECTURES=x86_64
+```
+
+The minimum macOS deployment target is 11.0 (Big Sur).
+
 ## iOS
 
 ### Requirements

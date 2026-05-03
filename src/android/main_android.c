@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "../common/wb_log.h"
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/frontend.h"
@@ -259,7 +260,7 @@ int main(int argc, char *argv[]) {
   initWinboloTimer();
 
   if (clientMutexCreate() == FALSE) {
-    SDL_Log("[Android] Failed to create client mutex");
+    WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to create client mutex");
     return 1;
   }
 
@@ -269,7 +270,7 @@ int main(int argc, char *argv[]) {
     const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(disp);
     if (dm) {
       int h = dm->h;
-      SDL_Log("[Android] Display resolution: %dx%d", dm->w, h);
+      WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Display resolution: %dx%d", dm->w, h);
       if (h >= 1024) {
         zoomFactor = ZOOM_FACTOR_QUAD;
       } else if (h >= 512) {
@@ -277,22 +278,22 @@ int main(int argc, char *argv[]) {
       } else {
         zoomFactor = ZOOM_FACTOR_NORMAL;
       }
-      SDL_Log("[Android] Auto-selected zoom factor: %d", zoomFactor);
+      WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Auto-selected zoom factor: %d", zoomFactor);
     }
   }
 
   /* Use ImGui dialog backend with our Android-specific welcome/gamesetup */
   dialogBackendInit();
 
-  SDL_Log("[Android] Starting gameFrontStart...");
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Starting gameFrontStart...");
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
-    SDL_Log("[Android] gameFrontStart FAILED");
+    WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] gameFrontStart FAILED");
     endWinboloTimer();
     clientMutexDestroy();
     SDL_Quit();
     return 1;
   }
-  SDL_Log("[Android] gameFrontStart OK");
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] gameFrontStart OK");
 
   /* Set up ImGui and touch input */
   {
@@ -335,13 +336,13 @@ int main(int argc, char *argv[]) {
             safeRight  = safeRight  * tw / winW;
             safeBottom = safeBottom * th / winH;
           }
-          SDL_Log("[Android] Safe area insets: L=%d T=%d R=%d B=%d",
+          WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Safe area insets: L=%d T=%d R=%d B=%d",
                   safeLeft, safeTop, safeRight, safeBottom);
         }
       }
 
       touchInputSetup(tw, th, safeLeft, safeTop, safeRight, safeBottom);
-      SDL_Log("[Android] Touch coordinate space: %dx%d", tw, th);
+      WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Touch coordinate space: %dx%d", tw, th);
     }
   }
 
@@ -357,13 +358,13 @@ int main(int argc, char *argv[]) {
    * existing one first to avoid an assertion failure in ImGui_ImplSDL3_Init. */
   if (cs && cs->inLobby &&
       (cs->netStat == netLobby || cs->netStat == netLobbyCountdown)) {
-    SDL_Log("[Android] Entering lobby");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering lobby");
     sdl3ImguiCleanup();  /* Tear down existing ImGui — lobby creates its own */
     const DialogBackend *db = dialogBackendGet();
     int lobbyResult = db->lobbyShow(cs);
     if (lobbyResult == 0) {
       /* Player chose to leave or server shut down */
-      SDL_Log("[Android] Left lobby, cleaning up");
+      WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Left lobby, cleaning up");
       gameFrontEnd(&keys, FALSE, TRUE);
       endWinboloTimer();
       clientMutexDestroy();
@@ -374,7 +375,7 @@ int main(int argc, char *argv[]) {
     }
     /* lobbyResult == 1: game started — load the deferred map */
     if (!gameFrontLoadDeferredMap(cs)) {
-      SDL_Log("[Android] Failed to load deferred map");
+      WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to load deferred map");
       gameFrontEnd(&keys, FALSE, TRUE);
       endWinboloTimer();
       clientMutexDestroy();
@@ -384,7 +385,7 @@ int main(int argc, char *argv[]) {
       return 0;
     }
     cs->netStat = netRunning;
-    SDL_Log("[Android] Lobby complete, game starting");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Lobby complete, game starting");
     /* Re-initialize ImGui for the main game loop */
     {
       SDL_Window *win = sdl3DrawGetWindow();
@@ -422,7 +423,7 @@ int main(int argc, char *argv[]) {
 
   lastFrameTime = SDL_GetTicks();
 
-  SDL_Log("[Android] Starting main loop");
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Starting main loop");
 
   /* Main game loop */
 #define ANDROID_FRAME_CAP_MS 16
@@ -438,7 +439,7 @@ int main(int argc, char *argv[]) {
           if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
             winboloQuit = TRUE;
           } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-            SDL_Log("[Android] Resuming from background");
+            WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Resuming from background");
             paused = FALSE;
             lastFrameTime = SDL_GetTicks();
             gameTickAccum = 0.0;
@@ -467,11 +468,11 @@ int main(int argc, char *argv[]) {
         if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
           winboloQuit = TRUE;
         } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-          SDL_Log("[Android] Entering background, pausing");
+          WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering background, pausing");
           paused = TRUE;
           soundSetMuted(TRUE);
         } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-          SDL_Log("[Android] Resuming from background");
+          WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Resuming from background");
           paused = FALSE;
           lastFrameTime = SDL_GetTicks();
           gameTickAccum = 0.0;
@@ -524,7 +525,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  SDL_Log("[Android] Main loop ended, cleaning up");
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Main loop ended, cleaning up");
 
   /* Cleanup */
   gameFrontEnd(&keys, TRUE, TRUE);

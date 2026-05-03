@@ -35,9 +35,12 @@
 #include "tilenum.h"
 #include "positions.h"
 #include "draw.h"
-#include "draw_setup_arrays.h"
 #include "logviewer.h"
 #include "imgui/imgui_main_menu.h"
+#include "../gui/sdl3/sdl_bmp.h"
+#include "../gui/sdl3/sprite_positions.h"
+#include "../gui/sdl3/tileloader.h"
+#include "../third_party/stb/stb_image.h"
 
 /* Must be included after global.h to avoid bool type conflict */
 #include <SDL3/SDL.h>
@@ -47,11 +50,6 @@
 #define TEAM_IMAGE_SIZE_Y (17 * 16)
 #define ITEM_IMAGE_SIZE_X (17 * 16)
 #define ITEM_IMAGE_SIZE_Y (17 * 16)
-
-/* Color key for transparency (green) */
-#define COLOR_KEY_R 0
-#define COLOR_KEY_G 255
-#define COLOR_KEY_B 0
 
 /* SDL3 Renderer and Window */
 static SDL_Window *sdlWindow = NULL;
@@ -76,6 +74,21 @@ static TTF_Font *labelFont = NULL;
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
 
+/* Stepped zoom table — same values as the map editor (mapeditor.c).
+ * Below 1.0 the texture target grows so we can show more tiles, then
+ * the blit scales it down; at and above 1.0 the texture target stays
+ * sized to the visible tile count and the blit scales it up. */
+static const float g_zoomSteps[] = {
+    0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+    1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f
+};
+#define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
+#define ZOOM_STEP_1X    5
+
+static int   g_zoomStepIndex = ZOOM_STEP_1X;
+static float g_zoomLevel     = 1.0f;
+
 
 /* Last drawn map positions for dirty rect optimization.
  * Sized for the maximum map size (255 tiles in each direction). */
@@ -86,6 +99,7 @@ int lv_drawLast[256][256];
 /* Function prototypes */
 BYTE lv_screenGetPillTeam(BYTE x, BYTE y, BYTE *pillHealth);
 BYTE lv_screenGetBaseTeam(BYTE x, BYTE y);
+extern void lv_windowNeedRedraw(void);
 
 BYTE lv_windowGetZoomFactor(void) { return 1; }
 
@@ -98,39 +112,146 @@ void lv_drawDirtyScreen(void) {
     }
 }
 
-/* Load a BMP file from the filesystem and create an SDL texture.
- * Applies green (0,255,0) color key for sprite transparency. */
-static SDL_Texture *loadTextureFromFile(const char *filename, SDL_Renderer *renderer) {
-    SDL_Surface *surface;
-    SDL_Surface *converted;
-    SDL_Texture *texture;
-    const SDL_PixelFormatDetails *fmt;
-    Uint32 colorKey;
+float lv_drawGetZoomLevel(void) {
+    return g_zoomLevel;
+}
 
-    surface = SDL_LoadBMP(filename);
-    if (!surface) {
+/* Apply a stepped zoom change with the map tile under (mouseScreenX,
+ * mouseScreenY) anchored — that tile stays under the cursor. The screen
+ * coordinates are in window pixels (the same space SDL events report),
+ * so we subtract the ImGui menu bar height to reach the game area. */
+static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseScreenY) {
+    float oldZoom, newZoom;
+    int   windowW = 0, windowH = 0, gameH;
+    int   menuH;
+    BYTE  oldOffX = 0, oldOffY = 0;
+    int   curTilesX, curTilesY;
+    float gx, gy;
+    float oldEffective, newEffective;
+    float anchorTileX, anchorTileY;
+    int   newTilesX, newTilesY;
+    int   maxOffX, maxOffY, newOffX, newOffY;
+    float newOffXf, newOffYf;
+    BYTE  zf;
+    float maxGx, maxGy;
+    int   curTexW, curTexH;
+    int   gameW;
 
-        return NULL;
-    }
+    if (newStepIndex < 0) newStepIndex = 0;
+    if (newStepIndex >= ZOOM_STEP_COUNT) newStepIndex = ZOOM_STEP_COUNT - 1;
+    if (newStepIndex == g_zoomStepIndex) return;
 
-    /* Convert to ARGB8888 so color key transparency works with alpha blending */
-    converted = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_ARGB8888);
-    SDL_DestroySurface(surface);
-    if (!converted) {
-        return NULL;
-    }
+    oldZoom = g_zoomLevel;
+    newZoom = g_zoomSteps[newStepIndex];
 
-    fmt = SDL_GetPixelFormatDetails(converted->format);
-    colorKey = SDL_MapRGB(fmt, NULL, COLOR_KEY_R, COLOR_KEY_G, COLOR_KEY_B);
-    SDL_SetSurfaceColorKey(converted, true, colorKey);
+    if (sdlWindow != NULL) SDL_GetWindowSize(sdlWindow, &windowW, &windowH);
+    if (windowW < 1) windowW = TILE_SIZE_X;
+    if (windowH < 1) windowH = TILE_SIZE_Y;
+    menuH = (int)lv_imgui_get_menu_bar_height();
+    gameH = windowH - menuH;
+    if (gameH < 1) gameH = 1;
 
-    texture = SDL_CreateTextureFromSurface(renderer, converted);
-    SDL_DestroySurface(converted);
-    if (!texture) {
-        return NULL;
-    }
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    return texture;
+    /* Compute map tile under cursor at the OLD zoom. The blit width is
+     * curTilesX * TILE_SIZE_X * oldZoom, and the cursor screen X covers
+     * that same range, so each on-screen pixel == 1/oldZoom texture
+     * pixels. We clamp to the rendered game extents so the anchor stays
+     * within the loaded map even when the cursor sits outside it. */
+    zf = lv_windowGetZoomFactor();
+    curTilesX = lv_screenGetSizeX();
+    curTilesY = lv_screenGetSizeY();
+    lv_screenGetOffsets(&oldOffX, &oldOffY);
+    int oldSubX = 0, oldSubY = 0;
+    lv_screenGetSubOffset(&oldSubX, &oldSubY);
+
+    oldEffective = (float)(zf * TILE_SIZE_X) * oldZoom;
+    if (oldEffective <= 0.0f) oldEffective = (float)TILE_SIZE_X;
+
+    gx = (float)mouseScreenX;
+    gy = (float)mouseScreenY - (float)menuH;
+    if (gx < 0.0f) gx = 0.0f;
+    if (gy < 0.0f) gy = 0.0f;
+
+    /* Use the actual rendered area (texture target * oldZoom) to clamp. */
+    curTexW = targetWidth;
+    curTexH = targetHeight;
+    if (curTexW < 1) curTexW = curTilesX * TILE_SIZE_X;
+    if (curTexH < 1) curTexH = curTilesY * TILE_SIZE_Y;
+    maxGx = (float)curTexW * oldZoom;
+    maxGy = (float)curTexH * oldZoom;
+    if (gx > maxGx) gx = maxGx;
+    if (gy > maxGy) gy = maxGy;
+
+    /* Include the current sub-tile pan so the cursor anchors on the same
+     * map pixel even when a partial drag is in flight. */
+    anchorTileX = (float)oldOffX + (float)oldSubX / (float)TILE_SIZE_X + gx / oldEffective;
+    anchorTileY = (float)oldOffY + (float)oldSubY / (float)TILE_SIZE_Y + gy / oldEffective;
+
+    /* Compute new viewport tile count so the blit fills (approximately)
+     * the available window area at the new zoom. Use the same nearest-
+     * tile rounding the resize handler uses, just in zoomed pixel space. */
+    gameW = windowW;
+    newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
+    if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
+    newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
+    newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
+    if (newTilesX < 1) newTilesX = 1;
+    if (newTilesY < 1) newTilesY = 1;
+    if (newTilesX > 255) newTilesX = 255;
+    if (newTilesY > 255) newTilesY = 255;
+
+    /* Place the anchor tile back under the cursor at the new zoom. */
+    newOffXf = anchorTileX - gx / newEffective;
+    newOffYf = anchorTileY - gy / newEffective;
+
+    maxOffX = 255 - newTilesX;
+    maxOffY = 255 - newTilesY;
+    if (maxOffX < 0) maxOffX = 0;
+    if (maxOffY < 0) maxOffY = 0;
+    newOffX = (int)(newOffXf + 0.5f);
+    newOffY = (int)(newOffYf + 0.5f);
+    if (newOffX < 0) newOffX = 0;
+    if (newOffY < 0) newOffY = 0;
+    if (newOffX > maxOffX) newOffX = maxOffX;
+    if (newOffY > maxOffY) newOffY = maxOffY;
+
+    /* Commit. lv_screenSetSizeX/Y reallocate the screen buffer and call
+     * lv_drawResizeRenderTarget(); after that we set the new offset and
+     * request a full redraw so the texture target gets repopulated. */
+    g_zoomStepIndex = newStepIndex;
+    g_zoomLevel = newZoom;
+
+    if (newTilesX != curTilesX) lv_screenSetSizeX((BYTE)newTilesX);
+    if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
+
+    lv_screenSetOffset((BYTE)newOffX, (BYTE)newOffY);
+    /* Zoom anchors on the cursor's tile, not its sub-tile pixel; reset
+     * sub-pan so the new viewport doesn't carry an offset from the
+     * pre-zoom sub-pixel position. */
+    lv_screenSetSubOffset(0, 0);
+    lv_drawDirtyScreen();
+    lv_windowNeedRedraw();
+}
+
+void lv_drawZoomIn(int mouseScreenX, int mouseScreenY) {
+    lv_drawApplyZoomStep(g_zoomStepIndex + 1, mouseScreenX, mouseScreenY);
+}
+
+void lv_drawZoomOut(int mouseScreenX, int mouseScreenY) {
+    lv_drawApplyZoomStep(g_zoomStepIndex - 1, mouseScreenX, mouseScreenY);
+}
+
+/* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
+ * Returns NULL on failure. The log viewer always uses scale 1 — the
+ * blit-time scaling is in the texture target, not the source atlas. */
+static SDL_Texture *buildTileAtlas(SDL_Renderer *renderer) {
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
+    if (!sheet) return NULL;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, sheet);
+    SDL_DestroySurface(sheet);
+    if (!tex) return NULL;
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+    return tex;
 }
 
 /*********************************************************
@@ -149,29 +270,36 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
     sdlRenderer = renderer;
     ownsWindow = FALSE;
 
-    targetWidth  = lv_screenGetSizeX() * TILE_SIZE_X;
-    targetHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
+    /* +1 tile of margin in each dimension. The blit clips the margin
+     * with a srcRect so the visible window is sizeX*TILE_SIZE_X by
+     * sizeY*TILE_SIZE_Y; the margin only fills in the leading-edge
+     * pixels revealed by sub-tile scrolling. */
+    targetWidth  = (lv_screenGetSizeX() + 1) * TILE_SIZE_X;
+    targetHeight = (lv_screenGetSizeY() + 1) * TILE_SIZE_Y;
     textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
                                       SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
     if (!textureTarget) {
         return FALSE;
     }
+    /* Tile background uses the unified atlas (SVG/PNG with skin.bmp
+     * fallback) shared with the game and map editor. Tank, boat, and
+     * pill/base sprites stay on their own BMPs because they use the
+     * 16-row team-colour palette indexed via lv->tc[], which the
+     * unified atlas does not provide. */
+    textureTiles = buildTileAtlas(sdlRenderer);
     {
         const char *basePath = SDL_GetBasePath();
         if (!basePath) basePath = "./";
         char bmpPath[1024];
 
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
-        textureTiles = loadTextureFromFile(bmpPath, sdlRenderer);
-
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureBoats = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureItems = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
     }
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
@@ -181,11 +309,11 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
         const char *fontBase = SDL_GetBasePath();
         if (!fontBase) fontBase = "./";
         char fontPath[1024];
-        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/CourierPrime-Regular.ttf", fontBase);
+        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf", fontBase);
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
-    lv_drawSetupArrays(1);
+    mapViewInit();
     return TRUE;
 }
 
@@ -222,16 +350,37 @@ BYTE lv_drawSetup(void) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating SDL window", NULL);
         return FALSE;
     }
-    /* Set window icon from logo.bmp (used on Linux taskbar; macOS uses the .icns bundle) */
+    /* Set window icon from data/icons/logviewerr-icon.png (used on Linux/Windows
+       taskbar; macOS uses the .icns bundle). */
     {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char iconPath[1024];
-        SDL_snprintf(iconPath, sizeof(iconPath), "%sdata/logo.bmp", basePath);
-        SDL_Surface *icon = SDL_LoadBMP(iconPath);
-        if (icon) {
-            SDL_SetWindowIcon(sdlWindow, icon);
-            SDL_DestroySurface(icon);
+        SDL_IOStream *io = SDL_IOFromFile("data/icons/logviewerr-icon.png", "rb");
+        if (!io) {
+            const char *basePath = SDL_GetBasePath();
+            if (!basePath) basePath = "./";
+            char iconPath[1024];
+            SDL_snprintf(iconPath, sizeof(iconPath), "%sdata/icons/logviewerr-icon.png", basePath);
+            io = SDL_IOFromFile(iconPath, "rb");
+        }
+        if (io) {
+            Sint64 fileSize = SDL_GetIOSize(io);
+            if (fileSize > 0) {
+                unsigned char *buf = (unsigned char *)SDL_malloc((size_t)fileSize);
+                if (buf) {
+                    SDL_ReadIO(io, buf, (size_t)fileSize);
+                    int iw, ih, ch;
+                    unsigned char *pixels = stbi_load_from_memory(buf, (int)fileSize, &iw, &ih, &ch, 4);
+                    SDL_free(buf);
+                    if (pixels) {
+                        SDL_Surface *icon = SDL_CreateSurfaceFrom(iw, ih, SDL_PIXELFORMAT_RGBA32, pixels, iw * 4);
+                        if (icon) {
+                            SDL_SetWindowIcon(sdlWindow, icon);
+                            SDL_DestroySurface(icon);
+                        }
+                        stbi_image_free(pixels);
+                    }
+                }
+            }
+            SDL_CloseIO(io);
         }
     }
 
@@ -243,8 +392,9 @@ BYTE lv_drawSetup(void) {
     }
     SDL_SetRenderVSync(sdlRenderer, 1);
 
-    targetWidth  = lv_screenGetSizeX() * TILE_SIZE_X;
-    targetHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
+    /* See lv_drawSetupWithHandles for the +1 margin rationale. */
+    targetWidth  = (lv_screenGetSizeX() + 1) * TILE_SIZE_X;
+    targetHeight = (lv_screenGetSizeY() + 1) * TILE_SIZE_Y;
     textureTarget = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888,
                                       SDL_TEXTUREACCESS_TARGET, targetWidth, targetHeight);
     if (!textureTarget) {
@@ -252,22 +402,21 @@ BYTE lv_drawSetup(void) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating render target", NULL);
         return FALSE;
     }
+    /* See lv_drawSetupWithHandles for the tile-vs-tank/items split. */
+    textureTiles = buildTileAtlas(sdlRenderer);
     {
         const char *basePath = SDL_GetBasePath();
         if (!basePath) basePath = "./";
         char bmpPath[1024];
 
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tile.bmp", basePath);
-        textureTiles = loadTextureFromFile(bmpPath, sdlRenderer);
-
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureBoats = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = loadTextureFromFile(bmpPath, sdlRenderer);
+        textureItems = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
     }
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
@@ -280,11 +429,11 @@ BYTE lv_drawSetup(void) {
         const char *fontBase = SDL_GetBasePath();
         if (!fontBase) fontBase = "./";
         char fontPath[1024];
-        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/CourierPrime-Regular.ttf", fontBase);
+        SDL_snprintf(fontPath, sizeof(fontPath), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf", fontBase);
         labelFont = TTF_OpenFont(fontPath, 10);
     }
 
-    lv_drawSetupArrays(1);
+    mapViewInit();
     return TRUE;
 }
 
@@ -319,8 +468,8 @@ void lv_drawCleanup(void) {
 *  will scale the texture, causing coordinate drift.
 *********************************************************/
 void lv_drawResizeRenderTarget(void) {
-    int newWidth = lv_screenGetSizeX() * TILE_SIZE_X;
-    int newHeight = lv_screenGetSizeY() * TILE_SIZE_Y;
+    int newWidth = (lv_screenGetSizeX() + 1) * TILE_SIZE_X;
+    int newHeight = (lv_screenGetSizeY() + 1) * TILE_SIZE_Y;
     
     if (sdlRenderer == NULL) return;
     
@@ -386,11 +535,7 @@ void lv_drawSplashForImGui(void) {
         if (!basePath) basePath = "./";
         char splashPath[1024];
         SDL_snprintf(splashPath, sizeof(splashPath), "%sdata/splash.bmp", basePath);
-        SDL_Surface *surface = SDL_LoadBMP(splashPath);
-        if (surface) {
-            textureSplash = SDL_CreateTextureFromSurface(sdlRenderer, surface);
-            SDL_DestroySurface(surface);
-        }
+        textureSplash = sdlLoadBmpAsTexture(sdlRenderer, splashPath, false);
     }
     
     if (textureSplash) {
@@ -468,8 +613,8 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                 drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             } else {
-                outputX = lv_drawPosX[pos];
-                outputY = lv_drawPosY[pos];
+                outputX = mapViewPosX[pos];
+                outputY = mapViewPosY[pos];
                 drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
                     zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             }
@@ -482,7 +627,9 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
             }
         }
         
-        if (++x == lv_screenGetSizeX()) { x = 0; y++; if (y == lv_screenGetSizeY()) done = TRUE; }
+        /* Iterate sizeX+1 by sizeY+1 to paint the +1 margin column/row;
+         * clipped from view by the final-blit srcRect. */
+        if (++x > lv_screenGetSizeX()) { x = 0; y++; if (y > lv_screenGetSizeY()) done = TRUE; }
     }
     
     lv_drawShells(sBullets);
@@ -490,21 +637,37 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     lv_drawLGMs(lgms);
     
     SDL_SetRenderTarget(sdlRenderer, NULL);
-    
+
     /* Get ImGui menu bar height to offset game rendering below it.
      * This prevents the game from drawing over the menu bar. */
     float menuBarHeight = 0.0f;
     menuBarHeight = lv_imgui_get_menu_bar_height();
-    
+
     /* SDL expects client-area coordinates (0,0), not screen coordinates.
      * The rcWindow passed in contains screen coordinates which would offset
      * the drawing by the window position + title bar + menu bar.
-     * We offset by menuBarHeight to leave space for ImGui's menu bar. */
+     * We offset by menuBarHeight to leave space for ImGui's menu bar.
+     * Width/height are scaled by g_zoomLevel; texture target stays at
+     * native (1x) tile resolution.
+     *
+     * Sub-tile pan: the texture target is sized (sizeX+1, sizeY+1) tiles
+     * and gets painted with a 1-tile margin on every edge. The srcRect
+     * picks the visible (sizeX, sizeY)-tile slice starting at the
+     * sub-pixel offset, so the leading edge reveals the margin instead
+     * of empty pixels. */
+    float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
+    float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+    SDL_FRect srcRect = {
+        (float)lv->subPxX,
+        (float)lv->subPxY,
+        (float)(lv_screenGetSizeX() * TILE_SIZE_X),
+        (float)(lv_screenGetSizeY() * TILE_SIZE_Y),
+    };
     dstRect.x = 0.0f;
-    dstRect.y = menuBarHeight;  /* Offset below ImGui menu bar */
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X);
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y);
-    SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
+    dstRect.y = menuBarHeight;
+    dstRect.w = gameW;
+    dstRect.h = gameH;
+    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
     
     /* NOTE: Don't call SDL_RenderPresent here - ImGui needs to render after the game
      * and present once at the end. Calling present here causes the game to overwrite
@@ -669,18 +832,31 @@ void lv_drawBlitGameTexture(void) {
     SDL_FRect dstRect;
     float menuBarHeight = 0.0f;
     BYTE zoomFactor = lv_windowGetZoomFactor();
-    
+    LogViewerState *lv = lv_screenGetState();
+
     if (!textureTarget || !sdlRenderer) return;
-    
+
     /* Get ImGui menu bar height to offset game rendering below it */
     menuBarHeight = lv_imgui_get_menu_bar_height();
-    
-    /* Blit the game texture to the screen */
+
+    /* Blit the game texture to the screen, scaled by the user zoom level.
+     * Sub-tile pan: srcRect picks the visible (sizeX, sizeY)-tile slice
+     * starting at the sub-pixel offset within the (sizeX+1, sizeY+1)
+     * texture target — the +1 margin is what fills the leading edge.
+     * See lv_drawMainScreen for the matching paint. */
+    float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
+    float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+    SDL_FRect srcRect = {
+        (float)lv->subPxX,
+        (float)lv->subPxY,
+        (float)(lv_screenGetSizeX() * TILE_SIZE_X),
+        (float)(lv_screenGetSizeY() * TILE_SIZE_Y),
+    };
     dstRect.x = 0.0f;
     dstRect.y = menuBarHeight;
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X);
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y);
-    SDL_RenderTexture(sdlRenderer, textureTarget, NULL, &dstRect);
+    dstRect.w = gameW;
+    dstRect.h = gameH;
+    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
 }
 
 /*********************************************************

@@ -74,6 +74,11 @@ add_library(stb_image STATIC ${SRC_ROOT}/third_party/stb/stb_image_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC ${SRC_ROOT}/third_party/stb)
 target_compile_options(stb_image PRIVATE -Wno-unused-function)
 
+# utf8proc — Unicode normalization + property tables (vendored, MIT)
+add_library(utf8proc STATIC ${SRC_ROOT}/third_party/utf8proc/utf8proc.c)
+target_include_directories(utf8proc SYSTEM PUBLIC ${SRC_ROOT}/third_party/utf8proc)
+target_compile_definitions(utf8proc PUBLIC UTF8PROC_STATIC=1)
+
 ###
 # minizip (from zlib contrib)
 #
@@ -129,6 +134,7 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/gui_message.c
     ${SRC_ROOT}/bolo/pillbox.c
     ${SRC_ROOT}/bolo/players.c
+    ${SRC_ROOT}/bolo/playername_validate.c
     ${SRC_ROOT}/bolo/playersrejoin.c
     ${SRC_ROOT}/bolo/rubble.c
     ${SRC_ROOT}/bolo/screen.c
@@ -206,8 +212,10 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
+    ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
+    ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
     ${SRC_ROOT}/gui/sdl3/input.c
     ${SRC_ROOT}/gui/sdl3/input_touch.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
@@ -265,6 +273,7 @@ target_link_libraries(winbolo PRIVATE
     lua_static
     nanosvg
     stb_image
+    utf8proc
 )
 
 ###

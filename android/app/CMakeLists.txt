@@ -123,6 +123,15 @@ target_include_directories(stb_image PUBLIC ${PROJ_ROOT}/src/third_party/stb)
 target_compile_options(stb_image PRIVATE -Wno-unused-function)
 
 # ---------------------------------------------------------------------------
+# utf8proc — Unicode normalization + property tables (vendored, MIT)
+# ---------------------------------------------------------------------------
+
+add_library(utf8proc STATIC ${PROJ_ROOT}/src/third_party/utf8proc/utf8proc.c)
+target_include_directories(utf8proc PUBLIC ${PROJ_ROOT}/src/third_party/utf8proc)
+target_compile_definitions(utf8proc PUBLIC UTF8PROC_STATIC=1)
+set_target_properties(utf8proc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# ---------------------------------------------------------------------------
 # ImGui backends (SDL3 + SDL Renderer)
 # ---------------------------------------------------------------------------
 
@@ -181,6 +190,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/gui_message.c
     ${PROJ_ROOT}/src/bolo/pillbox.c
     ${PROJ_ROOT}/src/bolo/players.c
+    ${PROJ_ROOT}/src/bolo/playername_validate.c
     ${PROJ_ROOT}/src/bolo/playersrejoin.c
     ${PROJ_ROOT}/src/bolo/rubble.c
     ${PROJ_ROOT}/src/bolo/screen.c
@@ -236,8 +246,10 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/gamefront.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c
     ${PROJ_ROOT}/src/gui/sdl3/mapview.c
+    ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
     ${PROJ_ROOT}/src/gui/sdl3/tileloader.c
+    ${PROJ_ROOT}/src/gui/sdl3/sdl_bmp.c
     ${PROJ_ROOT}/src/gui/skins.c
     ${PROJ_ROOT}/src/gui/sdl3/input.c
     ${PROJ_ROOT}/src/gui/sdl3/input_touch.c
@@ -276,6 +288,7 @@ target_link_libraries(main PRIVATE
     minizip
     nanosvg
     stb_image
+    utf8proc
     lua_static
     zlibstatic
     maxminddb

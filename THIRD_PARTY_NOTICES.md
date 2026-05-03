@@ -72,6 +72,14 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/nothings/stb
 - Author: Sean Barrett
 
+### utf8proc
+- Location: src/third_party/utf8proc/
+- Version: 2.10.0
+- License: MIT
+- https://github.com/JuliaStrings/utf8proc
+- Authors: Steven G. Johnson, Jiahao Chen, Peter Colberg, Tony Kelman, Scott P. Jones, and other contributors; Public Software Group e. V.
+- Used for UTF-8 NFC normalization and codepoint property lookup in player-name validation
+
 ## Fonts
 
 ### Inter
@@ -80,20 +88,14 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/rsms/inter
 - Author: Rasmus Andersson
 
-### Courier Prime
-- Location: data/fonts/CourierPrime-Regular.ttf
-- License: SIL Open Font License 1.1
-- https://github.com/quoteunquoteapps/CourierPrime
-- Author: Alan Dague-Greene, Quote-Unquote Apps
-
 ### Noto Sans CJK
 - Location: data/fonts/NotoSansCJK{jp,kr,sc,tc}-Regular.otf
 - License: SIL Open Font License 1.1 (data/fonts/LICENSE)
 - https://github.com/notofonts/noto-cjk
 - Author: Google LLC, Adobe Inc.
 
-### Sarasa Mono
-- Location: data/fonts/SarasaMono{J,K,SC,TC}-Regular.ttf
+### Sarasa Mono Slab
+- Location: data/fonts/SarasaMonoSlab{J,K,SC,TC}-Regular.ttf
 - License: SIL Open Font License 1.1 (data/fonts/LICENSE)
 - https://github.com/be5invis/Sarasa-Gothic
 - Author: belleve invis (Renzhi Li)

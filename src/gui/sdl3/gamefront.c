@@ -48,6 +48,7 @@
 
 #include "tileloader.h"
 #include "gfx_settings.h"
+#include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/global.h"
@@ -73,6 +74,7 @@
 #include "../../bolo/everard_map.h"
 #include "../../bolo/bolo_map.h"
 #include "../../bolo/platform_net.h"
+#include "../../bolo/playername_validate.h"
 #include "../../bolo/transport_udp.h"
 #include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet.h"
@@ -95,6 +97,7 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
 /* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
 #ifndef _WIN32
 extern void preferencesGetPreferenceFile(char *dest);
+extern void preferencesSetPreferenceFileOverride(const char *path);
 extern DWORD GetPrivateProfileString(const char *section, const char *key,
                                       const char *def, char *dest,
                                       DWORD size, const char *file);
@@ -182,6 +185,11 @@ bool gameFrontUseNatTraversal = TRUE;
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
 static bool gameFrontShowTutorialButton = TRUE;
+
+/* Country-flag rendering in chat / newswire / players panels. Default
+ * TRUE; WBN and Steam badges are always shown when present and are not
+ * gated on this preference. */
+static bool gameFrontShowCountryFlagsInChat = TRUE;
 
 /* Persisted BCP-47 language code (e.g. "en", "de", "pt-br"). Empty
  * string means the user has not picked one yet — Phase 5 startup runs
@@ -345,6 +353,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   gameFrontName[0] = '\0';
   gameFrontUdpAddress[0] = '\0';
   wantRejoin = FALSE;
+
+  /* Pin posix_stubs / http.c / map editor / log viewer to the same WinBolo.ini
+   * the SDL3 client uses (SDL_GetPrefPath). Without this, http.c's
+   * preferencesGetPreferenceFile would hit posix_stubs' headless fallback
+   * (~/.config/winbolo/) and read [WINBOLO.NET] Host from a different file
+   * than where Token gets written. */
+#ifndef _WIN32
+  preferencesSetPreferenceFileOverride(getPreferenceFilePath());
+#endif
+
   langSetup();
 
   /* Read preferences */
@@ -362,7 +380,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       snprintf(langPath, sizeof(langPath), "data/lang/%s.txt",
                gameFrontLanguageCode);
       if (!langLoadFile(langPath)) {
-        SDL_Log("gameFrontStart: persisted language '%s' not found — "
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "gameFrontStart: persisted language '%s' not found — "
                 "falling back to English",
                 gameFrontLanguageCode);
       }
@@ -558,7 +576,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
         char *mapFiles[256];
         DIR *d = opendir(dir);
         if (!d) {
-            SDL_Log("[BgGame] pickRandomMap: opendir('%s') failed", dir);
+            WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: opendir('%s') failed", dir);
             return false;
         }
         struct dirent *ent;
@@ -573,19 +591,19 @@ static bool pickRandomMap(char *out, size_t outLen) {
         }
         closedir(d);
         if (count == 0) {
-            SDL_Log("[BgGame] pickRandomMap: no .map files in '%s'", dir);
+            WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no .map files in '%s'", dir);
             return false;
         }
         int idx = rand() % count;
         SDL_snprintf(out, outLen, "%s/%s", dir, mapFiles[idx]);
-        SDL_Log("[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
+        WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
         for (int i = 0; i < count; i++) SDL_free(mapFiles[i]);
         return true;
     }
 #else
     char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
     if (!list || count == 0) {
-        SDL_Log("[BgGame] pickRandomMap: SDL_GlobDirectory found 0 maps in '%s'", dir);
+        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: SDL_GlobDirectory found 0 maps in '%s'", dir);
         if (list) SDL_free(list);
         return false;
     }
@@ -598,13 +616,13 @@ static bool pickRandomMap(char *out, size_t outLen) {
         }
     }
     if (filtered == 0) {
-        SDL_Log("[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
+        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
         SDL_free(list);
         return false;
     }
     int idx = rand() % filtered;
     SDL_snprintf(out, outLen, "%s/%s", dir, list[idx]);
-    SDL_Log("[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
+    WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
     SDL_free(list);
     return true;
 #endif
@@ -614,7 +632,7 @@ static bool gameFrontDialogs(void) {
   bool done = FALSE;
   bool userQuit = FALSE;
 
-  SDL_Log("[BgGame] gameFrontDialogs entered, dlgState=%d", dlgState);
+  WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] gameFrontDialogs entered, dlgState=%d", dlgState);
 
   /* Disable render logical presentation during dialogs so that ImGui
    * touch/mouse coordinates match the rendering coordinates.  On Android
@@ -631,7 +649,7 @@ static bool gameFrontDialogs(void) {
       hasBg = bgGameCreate(&bg, mapPath, sdl3DrawGetRenderer());
     }
   }
-  SDL_Log("[BgGame] hasBg=%d", hasBg);
+  WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] hasBg=%d", hasBg);
   if (hasBg) bgGameSetShared(&bg);
 
   while (done == FALSE) {
@@ -747,7 +765,8 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     case openLogViewer: {
-      WbnBrowserResult wbnResult = imguiWbnBrowserShow();
+      WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
+                                                       sdl3DrawGetRenderer());
       switch (wbnResult.action) {
       case WBN_BROWSER_PLAY_FILE:
         logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);
@@ -819,11 +838,27 @@ static void gameFrontValidateWbnBeforeJoin(void) {
       if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, errorMsg)) {
         gameFrontSetWinbolonetToken(tokenOut, expiryOut);
         if (playerName[0] != '\0') {
-          gameFrontSetPlayerName(playerName);
+          char persisted[PLAYER_NAME_LEN];
+          persisted[0] = '\0';
+          gameFrontGetPlayerName(persisted);
+
+          if (persisted[0] == '\0') {
+            /* First-launch seed: persisted name is empty.  Run the Steam
+             * persona through Phase 2 validation; fall back to the app
+             * default name on rejection. */
+            char validated[PLAYER_NAME_LEN];
+            if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
+              gameFrontSetPlayerName(validated);
+            } else {
+              gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
+            }
+          }
+          /* Otherwise: keep the user's chosen name.  The Steam persona
+           * is NOT used to update an existing name (Phase 7 / Decision 3). */
         }
-        SDL_Log("[Steam] Authenticated with WinBolo.net via Steam");
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
       } else {
-        SDL_Log("[Steam] WBN Steam auth failed: %s", errorMsg);
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Steam] WBN Steam auth failed: %s", errorMsg);
       }
     }
     return;
@@ -1042,7 +1077,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
             const char *seedStr = fileName + 10;
             if (!mapGenSeedToConfig(seedStr, &cfg)) {
-                SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+                WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
             }
             cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
             cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
@@ -1316,6 +1351,17 @@ void gameFrontSetShowTutorialButton(bool show) {
                             getPreferenceFilePath());
 }
 
+bool gameFrontGetShowCountryFlagsInChat(void) {
+  return gameFrontShowCountryFlagsInChat;
+}
+
+void gameFrontSetShowCountryFlagsInChat(bool show) {
+  gameFrontShowCountryFlagsInChat = show;
+  WritePrivateProfileString("SETTINGS", "Show Country Flags In Chat",
+                            TRUEFALSE_TO_STR(show),
+                            getPreferenceFilePath());
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -1523,7 +1569,7 @@ bool gameFrontSetupServer(void) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
     if (!mapGenSeedToConfig(seedStr, &mcfg)) {
-      SDL_Log("Warning: failed to parse random map seed '%s', using defaults", seedStr);
+      WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
     }
     mcfg.x1 = MAP_MINE_EDGE_LEFT + 1; mcfg.y1 = MAP_MINE_EDGE_TOP + 1;
     mcfg.x2 = MAP_MINE_EDGE_RIGHT - 1; mcfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
@@ -1730,6 +1776,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Tutorial visibility — defaults to "Yes" (show on first run). */
   GetPrivateProfileString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Country-flag rendering in chat / newswire — defaults to "Yes". */
+  GetPrivateProfileString("SETTINGS", "Show Country Flags In Chat", "Yes", buff, FILENAME_MAX, prefsFile);
+  gameFrontShowCountryFlagsInChat = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
    * fresh install — startup walks SDL_GetPreferredLocales() in that

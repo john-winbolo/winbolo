@@ -12,6 +12,7 @@
  *********************************************************/
 
 #include "mapeditor.h"
+#include "../common/wb_log.h"
 #include "mapeditor_imgui.h"
 #include "mapeditor_generate.h"
 #include "mapeditor_maze.h"
@@ -46,11 +47,7 @@
 #include "../gui/tiles.h"
 #include "../gui/lang.h"
 #include "../gui/sdl3/minimap_render.h"
-
-/* From mapview.h — declared directly to avoid pulling in game_sim.h */
-extern int mapViewPosX[256];
-extern int mapViewPosY[256];
-extern void mapViewInit(void);
+#include "../gui/sdl3/sprite_positions.h"
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
@@ -58,6 +55,7 @@ extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
 /* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
 #ifndef _WIN32
 extern void preferencesGetPreferenceFile(char *dest);
+extern void preferencesSetPreferenceFileOverride(const char *path);
 extern DWORD GetPrivateProfileString(const char *section, const char *key,
                                       const char *def, char *dest,
                                       DWORD size, const char *file);
@@ -1772,6 +1770,11 @@ static const char *meGetPrefsPath(void) {
             snprintf(path, sizeof(path), "%s", "WinBolo.ini");
         }
         resolved = true;
+#ifndef _WIN32
+        /* Pin posix_stubs to this same file so any code that reaches via
+         * preferencesGetPreferenceFile lands on the same WinBolo.ini. */
+        preferencesSetPreferenceFileOverride(path);
+#endif
     }
     return path;
 }
@@ -1781,6 +1784,9 @@ static const char *meGetPrefsPath(void) {
  * Keys: Recent1 … Recent10
  * ------------------------------------------------------- */
 static void meLoadRecentFiles(MapEditorState *ed) {
+    /* Existence is verified lazily on click — see meLoadFromPath +
+     * meRemoveRecentFile. A startup fopen() on each entry blocks for
+     * seconds when a path points at an unreachable share / dead drive. */
     const char *ini = meGetPrefsPath();
     ed->numRecentFiles = 0;
     for (int i = 0; i < ME_MAX_RECENT_FILES; i++) {
@@ -1789,13 +1795,8 @@ static void meLoadRecentFiles(MapEditorState *ed) {
         char val[ME_PATH_MAX];
         GetPrivateProfileString("MAPEDITOR", key, "", val, ME_PATH_MAX, ini);
         if (val[0] == '\0') break;
-        /* Only add if the file still exists */
-        FILE *f = fopen(val, "rb");
-        if (f) {
-            fclose(f);
-            SDL_strlcpy(ed->recentFiles[ed->numRecentFiles], val, ME_PATH_MAX);
-            ed->numRecentFiles++;
-        }
+        SDL_strlcpy(ed->recentFiles[ed->numRecentFiles], val, ME_PATH_MAX);
+        ed->numRecentFiles++;
     }
 }
 
@@ -1808,6 +1809,19 @@ static void meSaveRecentFiles(MapEditorState *ed) {
             WritePrivateProfileString("MAPEDITOR", key, ed->recentFiles[i], ini);
         } else {
             WritePrivateProfileString("MAPEDITOR", key, "", ini);
+        }
+    }
+}
+
+static void meRemoveRecentFile(MapEditorState *ed, const char *path) {
+    for (int i = 0; i < ed->numRecentFiles; i++) {
+        if (strcmp(ed->recentFiles[i], path) == 0) {
+            for (int j = i; j < ed->numRecentFiles - 1; j++) {
+                SDL_strlcpy(ed->recentFiles[j], ed->recentFiles[j + 1], ME_PATH_MAX);
+            }
+            ed->numRecentFiles--;
+            meSaveRecentFiles(ed);
+            return;
         }
     }
 }
@@ -2177,6 +2191,7 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
         startsDestroy(&newSs);
         snprintf(ed->errorMessage, sizeof(ed->errorMessage),
                  "Failed to read map file:\n%s", path);
+        meRemoveRecentFile(ed, path);
         return false;
     }
 
@@ -3059,14 +3074,14 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Build tile atlas */
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
-        SDL_Log("mapEditorRun: tileLoaderBuildSheet failed");
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "mapEditorRun: tileLoaderBuildSheet failed");
         free(ed);
         return;
     }
     ed->tilesTex = SDL_CreateTextureFromSurface(renderer, sheet);
     SDL_DestroySurface(sheet);
     if (!ed->tilesTex) {
-        SDL_Log("mapEditorRun: SDL_CreateTextureFromSurface failed");
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "mapEditorRun: SDL_CreateTextureFromSurface failed");
         free(ed);
         return;
     }
@@ -3082,7 +3097,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         basesCreate(&ed->bs);
         startsCreate(&ed->ss);
         if (!mapRead((char *)mapPath, &ed->mp, &ed->pb, &ed->bs, &ed->ss)) {
-            SDL_Log("mapEditorRun: failed to load map '%s', creating blank", mapPath);
+            WB_LOG_WARN(WB_LOG_CAT_MAP, "mapEditorRun: failed to load map '%s', creating blank", mapPath);
             mapDestroy(&ed->mp);
             pillsDestroy(&ed->pb);
             basesDestroy(&ed->bs);

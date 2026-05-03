@@ -201,10 +201,30 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 /* Server -> Client */
 #define PACKET_STATE_SNAPSHOT  110   /* Tank positions + events */
 #define PACKET_JOIN_ACCEPT     111   /* Player number + map data */
-#define PACKET_JOIN_REJECT     112   /* Reason string */
+/* PACKET_JOIN_REJECT — server tells joiner why join failed.
+ * Wire format (Phase 9d, unversioned/lockstep):
+ *   [header 8] [langid 2 BE] [argCount 1] [per arg: lenByte (0..PLAYER_NAME_LEN-1) + bytes]
+ * argCount is 0..4. Arg slots map to MessageArgs in order:
+ *   #1 -> playerName, #2 -> otherName, #3 -> string1, #4 -> string2.
+ * Client renders via langGetTextFmt(langid, &args). */
+#define PACKET_JOIN_REJECT     112
 #define PACKET_PLAYER_JOINED   113   /* New player info */
 #define PACKET_PLAYER_LEFT     114   /* Player disconnected */
-#define PACKET_CHAT_BROADCAST  115   /* Chat to all */
+/* PACKET_CHAT_BROADCAST — server fan-out for chat AND server-source
+ * messages.  Wire format depends on the first byte after the header
+ * (fromPlayer):
+ *   fromPlayer < MAX_TANKS  : player chat — unchanged
+ *     [header 8] [fromPlayer 1] [destPlayer 1] [message N]
+ *   fromPlayer == 0xFF      : server-source localized (Phase 9d)
+ *     [header 8] [0xFF] [destPlayer=0xFF] [langid 2 BE] [argCount 1] [args...]
+ *     Same arg encoding as PACKET_JOIN_REJECT above.
+ *   fromPlayer == 0xFE      : server-source raw English (transitional)
+ *     [header 8] [0xFE] [destPlayer=0xFF] [message N]
+ *     Used by un-localized server-ops broadcasts (admin "say", lock
+ *     toggle, ping enforcement). Phase 9d only localized the join
+ *     reject + kick/rename announce paths; remaining ops messages stay
+ *     English on the wire and are migrated to 0xFF as new langids land. */
+#define PACKET_CHAT_BROADCAST  115
 #define PACKET_FULL_STATE      116   /* Periodic full reconciliation */
 #define PACKET_MAP_DELTA       117   /* Terrain changes */
 #define PACKET_BASE_STATE      118   /* Base ownership/stock change */
@@ -259,6 +279,20 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_PUNCH_PROBE_REQUEST  156   /* host → tracker, this commit */
 #define PACKET_PUNCH_PROBE_REPLY    157   /* tracker → host, this commit */
 
+/* Server -> Client: rejection for a PACKET_NAME_CHANGE attempt. Payload
+ * is a single reasonCode byte (NAME_REJECT_*). The accept path keeps
+ * broadcasting PACKET_NAME_CHANGE on success — this is only emitted on
+ * rejection. Wire format change is unversioned; server and client
+ * update in lockstep. */
+#define PACKET_NAME_CHANGE_REJECT   158
+
+#define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
+#define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */
+#define NAME_REJECT_RESERVED_PREFIX 3   /* leading '*' */
+#define NAME_REJECT_RESERVED_SUFFIX 4   /* -unverified */
+#define NAME_REJECT_MIXED_SCRIPTS   5   /* single-script rule */
+#define NAME_REJECT_EMPTY           6   /* empty after strip */
+
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
 #define ALLIANCE_EVENT_ACCEPT   1
@@ -269,7 +303,16 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define BOLO_NEW_MAGIC_1  'B'
 
 /* Max size of player name in join request */
-#define PACKET_MAX_PLAYER_NAME 32
+#define PACKET_MAX_PLAYER_NAME 64
+
+/* Max size of a chat message payload (PACKET_CHAT_MESSAGE /
+ * PACKET_CHAT_BROADCAST). Caps the bytes the client send buffer carries
+ * and the server-side truncation. UTF-8 fits transparently — the buffer
+ * is byte-sized — but visible character counts shrink for multi-byte
+ * scripts (~42 CJK chars vs 128 ASCII chars). The send-message dialog's
+ * input buffer is sized PACKET_MAX_CHAT_MESSAGE + 1 (NUL) so users see
+ * the same cap. */
+#define PACKET_MAX_CHAT_MESSAGE 128
 
 /* Map download chunk size — fits comfortably in a UDP datagram */
 #define MAP_DOWNLOAD_CHUNK_SIZE 900
