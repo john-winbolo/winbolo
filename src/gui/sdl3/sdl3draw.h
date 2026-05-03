@@ -43,6 +43,10 @@ extern "C" {
 #include "../../bolo/global.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
+/* Status / message / HUD renderers extracted in Phase C of
+ * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
+ * existing callers compile unchanged. */
+#include "sdl3draw_status.h"
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32
@@ -148,115 +152,9 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow);
  * Phase 4 — Status panel render-target functions
  * ------------------------------------------------------- */
 
-/*********************************************************
-*NAME:          sdl3DrawSetBasesStatusClear
-*PURPOSE:
-*  Clears the bases status render target to black and
-*  draws the centre base icon (BASE_GOOD tile).
-*********************************************************/
-void sdl3DrawSetBasesStatusClear(void);
-
-/*********************************************************
-*NAME:          sdl3DrawStatusBase
-*PURPOSE:
-*  Draws a single base status icon into the bases render
-*  target at the grid position for baseNum (1-16).
-*  ba selects the tile source; labels is ignored (Phase 5).
-*********************************************************/
-void sdl3DrawStatusBase(BYTE baseNum, baseAlliance ba, bool labels);
-
-/*********************************************************
-*NAME:          sdl3DrawCopyBasesStatus
-*PURPOSE:
-*  Blits the bases render target to the SDL3 window at
-*  the correct zoomed position.  x/y are ignored.
-*********************************************************/
-void sdl3DrawCopyBasesStatus(int x, int y);
-
-/*********************************************************
-*NAME:          sdl3DrawSetPillsStatusClear
-*PURPOSE:
-*  Clears the pills status render target to black and
-*  draws the centre pillbox icon (PILL_GOOD15 tile).
-*********************************************************/
-void sdl3DrawSetPillsStatusClear(void);
-
-/*********************************************************
-*NAME:          sdl3DrawStatusPillbox
-*PURPOSE:
-*  Draws a single pillbox status icon into the pills
-*  render target at the grid position for pillNum (1-16).
-*********************************************************/
-void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels);
-
-/*********************************************************
-*NAME:          sdl3DrawCopyPillsStatus
-*PURPOSE:
-*  Blits the pills render target to the SDL3 window.
-*  x/y are ignored.
-*********************************************************/
-void sdl3DrawCopyPillsStatus(int x, int y);
-
-/*********************************************************
-*NAME:          sdl3DrawSetTanksStatusClear
-*PURPOSE:
-*  Clears the tanks status render target to black and
-*  draws the centre tank icon (TANK_SELF_0 tile).
-*********************************************************/
-void sdl3DrawSetTanksStatusClear(void);
-
-/*********************************************************
-*NAME:          sdl3DrawStatusTank
-*PURPOSE:
-*  Draws a single tank status icon into the tanks render
-*  target at the grid position for tankNum (1-16).
-*********************************************************/
-void sdl3DrawStatusTank(BYTE tankNum, tankAlliance ta);
-
-/*********************************************************
-*NAME:          sdl3DrawCopyTanksStatus
-*PURPOSE:
-*  Blits the tanks render target to the SDL3 window.
-*  x/y are ignored.
-*********************************************************/
-void sdl3DrawCopyTanksStatus(int x, int y);
-
-/*********************************************************
-*NAME:          sdl3DrawStatusTankBars
-*PURPOSE:
-*  Draws green resource bars (shells/mines/armour/trees)
-*  into the tank-bars render target.
-*  x/y are ignored; the bars are drawn at the positions
-*  defined by STATUS_TANK_BARS_* constants.
-*********************************************************/
-void sdl3DrawStatusTankBars(int x, int y,
-                             BYTE shells, BYTE mines, BYTE armour, BYTE trees);
-
-/*********************************************************
-*NAME:          sdl3DrawCopyTankStatusBars
-*PURPOSE:
-*  Blits the tank-bars render target to the SDL3 window.
-*  x/y are ignored.
-*********************************************************/
-void sdl3DrawCopyTankStatusBars(int x, int y);
-
-/*********************************************************
-*NAME:          sdl3DrawStatusBaseBars
-*PURPOSE:
-*  Draws green resource bars (shells/mines/armour) into
-*  the base-bars render target.
-*  x/y and redraw are ignored.
-*********************************************************/
-void sdl3DrawStatusBaseBars(int x, int y,
-                             BYTE shells, BYTE mines, BYTE armour, bool redraw);
-
-/*********************************************************
-*NAME:          sdl3DrawCopyBasesStatusBars
-*PURPOSE:
-*  Blits the base-bars render target to the SDL3 window.
-*  x/y are ignored.
-*********************************************************/
-void sdl3DrawCopyBasesStatusBars(int x, int y);
+/* sdl3DrawSetBasesStatusClear / sdl3DrawStatusBase / sdl3DrawCopyBasesStatus
+ * and the pillbox / tank / *bars equivalents declared via
+ * sdl3draw_status.h (#included above). */
 
 /*********************************************************
 *NAME:          sdl3DrawSetManClear
@@ -337,50 +235,8 @@ void sdl3DrawNetFailed(void);
 *********************************************************/
 void sdl3DrawPillInView(void);
 
-/*********************************************************
-*NAME:          sdl3DrawResetCachedText
-*PURPOSE:
-*  Clears cached message strings, kills/deaths, and
-*  destroys their texture caches.  Call on game start so
-*  stale text from the previous round is not displayed.
-*********************************************************/
-void sdl3DrawResetCachedText(void);
-
-/*********************************************************
-*NAME:          sdl3DrawMessages
-*PURPOSE:
-*  Renders the two-line scrolling message box at the
-*  bottom of the screen using SDL_ttf.
-*  x/y are the window origin (ignored — SDL3 uses 0,0).
-*********************************************************/
-void sdl3DrawMessages(int x, int y, char *top, char *bottom);
-
-/*********************************************************
-*NAME:          sdl3DrawKillsDeaths
-*PURPOSE:
-*  Renders the kills and deaths numeric counters in the
-*  status area using SDL_ttf.
-*  x/y are the window origin (ignored — SDL3 uses 0,0).
-*********************************************************/
-void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
-
-/*********************************************************
-*NAME:          sdl3DrawTankLabel
-*PURPOSE:
-*  Renders the player name above the tank sprite using
-*  SDL_ttf (Phase 5).  A cached SDL_Texture is kept per
-*  player slot and rebuilt only when the name changes.
-*  Uses gCurrentEdgeX/Y set by sdl3DrawMainScreen so
-*  the label scrolls with the map.
-*
-*ARGUMENTS:
-*  str       - Player name string
-*  playerNum - Player slot (0-15)
-*  mx, my    - Map tile coordinates
-*  px, py    - Pixel offsets within the tile
-*********************************************************/
-void sdl3DrawTankLabel(char *str, BYTE playerNum,
-                       BYTE mx, BYTE my, BYTE px, BYTE py);
+/* sdl3DrawResetCachedText / sdl3DrawMessages / sdl3DrawKillsDeaths /
+ * sdl3DrawTankLabel declared via sdl3draw_status.h (#included above). */
 
 /*********************************************************
 *NAME:          sdl3DrawGetTabletViewport
@@ -420,14 +276,8 @@ void sdl3DrawSetStatusPanelOrigins(float tanksX, float tanksY,
 *********************************************************/
 void sdl3DrawTabletStatusGrids(struct ClientSim *cs);
 
-/*********************************************************
-*NAME:          sdl3DrawGetCachedMessages
-*PURPOSE:
-*  Returns pointers to the cached top and bottom message
-*  strings (set each frame by sdl3DrawMessages).
-*  Used by the tablet overlay to render messages via ImGui.
-*********************************************************/
-void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
+/* sdl3DrawGetCachedMessages declared via sdl3draw_status.h (#included
+ * above). The tablet overlay uses it to render messages via ImGui. */
 
 void sdl3DrawGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
 void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *hasBase);

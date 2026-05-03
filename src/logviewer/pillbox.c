@@ -170,6 +170,30 @@ BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
   return 0;
 }
 
+pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum) {
+  pillAlliance returnValue = pillNeutral;
+  BYTE self;
+
+  if (*value == NULL) return returnValue;
+  if (pillNum < 1 || pillNum > (*value)->numPills) return returnValue;
+  pillNum--;
+  self = lv_playersGetSelf();
+
+  if ((*value)->item[pillNum].armour == 0 && (*value)->item[pillNum].inTank == FALSE) {
+    return pillDead;
+  }
+  if ((*value)->item[pillNum].owner == self) {
+    return (*value)->item[pillNum].inTank ? pillTankGood : pillGood;
+  }
+  if (lv_playersIsAllie((*value)->item[pillNum].owner, self) == TRUE) {
+    return (*value)->item[pillNum].inTank ? pillTankAllie : pillAllie;
+  }
+  if ((*value)->item[pillNum].owner != NEUTRAL) {
+    return (*value)->item[pillNum].inTank ? pillTankEvil : pillEvil;
+  }
+  return returnValue;
+}
+
 
 /*********************************************************
 *NAME:          lv_pillsGetPill

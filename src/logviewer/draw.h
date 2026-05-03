@@ -228,6 +228,18 @@ struct SDL_Renderer* lv_drawGetSDLRenderer(void);
 struct SDL_Texture* lv_drawGetGameTexture(void);
 
 /*********************************************************
+*NAME:          lv_drawGetTilesTexture / lv_drawGetSheetScale
+*PURPOSE:
+*  Expose the unified SVG/PNG/BMP tile atlas (and its build
+*  scale) so the standalone game-view path (Phase D of
+*  plans/ctrailer.md) can construct a MapViewCtx pointing at
+*  the same atlas this module already maintains. Atlas scale
+*  is always 1.
+*********************************************************/
+struct SDL_Texture* lv_drawGetTilesTexture(void);
+int lv_drawGetSheetScale(void);
+
+/*********************************************************
 *NAME:          lv_drawBlitGameTexture
 *PURPOSE:
 *  Blits the game render texture to the screen without

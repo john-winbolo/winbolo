@@ -215,6 +215,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
+    ${SRC_ROOT}/gui/sdl3/sdl3draw_status.c
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
     ${SRC_ROOT}/gui/sdl3/input.c
     ${SRC_ROOT}/gui/sdl3/input_touch.c

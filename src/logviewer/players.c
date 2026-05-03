@@ -674,6 +674,41 @@ void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, B
   }
 }
 
+/*********************************************************
+*NAME:          lv_playersGetTankDetails
+*AUTHOR:        John Morrison
+*CREATION DATE: 31/8/99
+*LAST MODIFIED: 31/8/99
+*PURPOSE:
+* Gets the tank details for a player
+*
+*ARGUMENTS:
+*  playerNum - The player num to check
+*  mx        - Tank Map X Position
+*  my        - Tank Map Y Position
+*  px        - Tank Pixel X Position
+*  py        - Tank Pixel Y Position
+*  frame     - Tank Frame
+*  onBoat    - Whether the tank is on a boat
+*********************************************************/
+void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat) {
+  if (plrs.item[playerNumber].inUse == TRUE) {
+    *mx     = plrs.item[playerNumber].mapX;
+    *my     = plrs.item[playerNumber].mapY;
+    *px     = plrs.item[playerNumber].pixelX;
+    *py     = plrs.item[playerNumber].pixelY;
+    *frame  = plrs.item[playerNumber].frame;
+    *onBoat = plrs.item[playerNumber].onBoat;
+  } else {
+    *mx = 0;
+    *my = 0;
+    *px = 0;
+    *py = 0;
+    *frame = 0;
+    *onBoat = false;
+  }
+}
+
 
 /*********************************************************
 *NAME:          lv_playersLeaveAlliance

@@ -350,6 +350,25 @@ bool lv_playersIsInUse(BYTE playerNumber);
 *********************************************************/
 void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame);
 
+/*********************************************************
+*NAME:          lv_playersGetTankDetails
+*AUTHOR:        John Morrison
+*CREATION DATE: 31/8/99
+*LAST MODIFIED: 31/8/99
+*PURPOSE:
+* Gets the tank details for a player
+*
+*ARGUMENTS:
+*  playerNum - The player num to check
+*  mx        - Tank Map X Position
+*  my        - Tank Map Y Position
+*  px        - Tank Pixel X Position
+*  py        - Tank Pixel Y Position
+*  frame     - Tank Frame
+*  onBoat    - Whether the tank is on a boat
+*********************************************************/
+void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
+
 
 /*********************************************************
 *NAME:          lv_playersLeaveAlliance

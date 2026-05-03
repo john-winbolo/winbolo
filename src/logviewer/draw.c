@@ -26,7 +26,7 @@
 
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>  /* Already included, but needed for debug printf */
+#include <stdio.h>
 #include <string.h>
 
 #include "global.h"
@@ -36,6 +36,7 @@
 #include "positions.h"
 #include "draw.h"
 #include "logviewer.h"
+#include "game_view.h"
 #include "imgui/imgui_main_menu.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
@@ -598,6 +599,15 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     (void)isPillView; (void)edgeX; (void)edgeY; (void)useCursor;
     (void)cursorLeft; (void)cursorTop;
 
+    /* Phase D: standalone game-view path. Routes the same per-frame
+     * pointers lv_screenUpdate built into the live-game renderers.
+     * Embedded mode never enters here — gameView toggle is gated on
+     * ownsWindow in logviewer.c. */
+    if (lv->gameView && lv->ownsWindow) {
+        lv_drawGameViewFrame(value, mineView, tks, sBullets, lgms);
+        return;
+    }
+
     zoomFactor = lv_windowGetZoomFactor();
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
 
@@ -900,4 +910,17 @@ SDL_Renderer* lv_drawGetSDLRenderer(void) {
 *********************************************************/
 SDL_Texture* lv_drawGetGameTexture(void) {
     return textureTarget;
+}
+
+/* Tile atlas accessor — exposes the unified SVG/PNG/BMP atlas built by
+ * buildTileAtlas() so the standalone game-view path can route it through
+ * mapview.c's MapViewCtx. */
+SDL_Texture* lv_drawGetTilesTexture(void) {
+    return textureTiles;
+}
+
+/* Atlas is always built at scale 1 (see buildTileAtlas()) — the blit-time
+ * scaling is in the texture target, not the source atlas. */
+int lv_drawGetSheetScale(void) {
+    return 1;
 }

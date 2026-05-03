@@ -11,6 +11,8 @@
 #ifndef IMGUI_EVENTS_H
 #define IMGUI_EVENTS_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +34,12 @@ void lv_imgui_events_clear(void);
 
 /* Remove events with timestamp strictly after the given time (ms) */
 void lv_imgui_events_remove_after(unsigned int timeMs);
+
+/* Game-view newswire accessors. Lifetimes are valid only for the
+ * current frame; callers must not retain the returned pointer. */
+int          lv_imgui_events_get_count(void);
+const char  *lv_imgui_events_get_text(int i);
+uint32_t     lv_imgui_events_get_time(int i);
 
 #ifdef __cplusplus
 }
