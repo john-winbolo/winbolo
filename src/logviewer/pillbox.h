@@ -49,9 +49,7 @@ typedef enum {
 } pillAlliance;
 
 
-/* Typedefs */
-
-typedef struct pillsObj *pillboxes;
+/* Typedefs - pillboxes is already defined in bolo/types.h */
 
 /* Prototypes */
 

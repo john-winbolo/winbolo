@@ -38,7 +38,7 @@
 *  only to satisfy the linker.
 *
 *  This file MUST NOT enter the WinBolo target — it would
-*  collide with bolo/*.c definitions of the same symbols.
+*  collide with bolo/ *.c definitions of the same symbols.
 *  Lives only in LOGVIEWER_IMGUI_SOURCES per
 *  plans/ctrailer.md Phase B.
 *

@@ -63,14 +63,18 @@ typedef struct {
   bool isBot;          /* Managed by bot system, not by player packets */
 } LobbyPlayer;
 
-typedef struct BalanceProposal {
+#ifndef BALANCEPROPOSAL_TYPEDEF
+#define BALANCEPROPOSAL_TYPEDEF
+typedef struct BalanceProposal BalanceProposal;
+#endif
+struct BalanceProposal {
   uint8_t teamForSlot[MAX_TANKS]; /* Proposed team number per slot (0 = unassigned by WBN) */
   bool pending;                   /* True while proposal is active and hasn't been applied/dismissed */
   bool requestInFlight;           /* True while the HTTP call is running (prevents duplicate requests) */
   bool broadcastNeeded;           /* True when thread finishes; cleared after first broadcast */
   uint8_t teamSize;               /* Requested team size, passed through to WBN API */
   SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
-} BalanceProposal;
+};
 
 typedef struct ServerSim {
     GameSim      sim;    /* MUST be first member */

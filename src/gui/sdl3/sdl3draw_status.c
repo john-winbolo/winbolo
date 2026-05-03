@@ -190,7 +190,7 @@ void sdl3RenderCachedText(void) {
     SDL_Rect msgClip = {
       zf * MESSAGE_LEFT,
       zf * MESSAGE_TOP,
-      zf * MESSAGE_WIDTH,
+      zf * MESSAGE_BOX_WIDTH,
       zf * MESSAGE_HEIGHT
     };
     SDL_SetRenderClipRect(gRenderer, &msgClip);
@@ -200,7 +200,7 @@ void sdl3RenderCachedText(void) {
       size_t fitLen = 0;
       const char *topStr = gMsgTop;
       size_t topLen = SDL_strlen(gMsgTop);
-      TTF_MeasureString(gFontMsg, gMsgTop, topLen, zf * MESSAGE_WIDTH, NULL, &fitLen);
+      TTF_MeasureString(gFontMsg, gMsgTop, topLen, zf * MESSAGE_BOX_WIDTH, NULL, &fitLen);
       if (fitLen < topLen) {
         topStr = gMsgTop + (topLen - fitLen);
       }
@@ -223,7 +223,7 @@ void sdl3RenderCachedText(void) {
       size_t fitLen = 0;
       const char *botStr = gMsgBottom;
       size_t botLen = SDL_strlen(gMsgBottom);
-      TTF_MeasureString(gFontMsg, gMsgBottom, botLen, zf * MESSAGE_WIDTH, NULL, &fitLen);
+      TTF_MeasureString(gFontMsg, gMsgBottom, botLen, zf * MESSAGE_BOX_WIDTH, NULL, &fitLen);
       if (fitLen < botLen) {
         botStr = gMsgBottom + (botLen - fitLen);
       }
