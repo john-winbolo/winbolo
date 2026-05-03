@@ -1980,11 +1980,20 @@ add_custom_command(TARGET MapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:MapEditor>"
     COMMENT "Copying SDL3 and SDL3_ttf shared libraries to MapEditor output directory"
 )
-add_custom_command(TARGET MapEditor POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:MapEditor>/data"
-    COMMENT "Copying MapEditor data files to output directory"
-)
+if(APPLE)
+    add_custom_command(TARGET MapEditor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/data"
+            "$<TARGET_BUNDLE_CONTENT_DIR:MapEditor>/Resources/data"
+        COMMENT "Copying data files into MapEditor app bundle Resources"
+    )
+else()
+    add_custom_command(TARGET MapEditor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:MapEditor>/data"
+        COMMENT "Copying MapEditor data files to output directory"
+    )
+endif()
 
 # MinGW: statically link the GCC/C++ runtime so the executables don't need
 # libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
