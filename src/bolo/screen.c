@@ -2806,7 +2806,7 @@ bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
 *ARGUMENTS:
 *  messageStr - The message text
 *********************************************************/
-void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) {
+void screenNetStatusMessage(ClientSim *csPtr, const char *messageStr) {
   clientMessageAdd(&csPtr->messages, networkStatus, (char *) "Network Status", messageStr);
 }
 

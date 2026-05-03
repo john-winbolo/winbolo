@@ -306,7 +306,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         skinDirs.push_back("(default)");
 #ifdef _WIN32
         WIN32_FIND_DATAA findData;
-        HANDLE h = FindFirstFileA("data\\skin\\*", &findData);
+        HANDLE h = FindFirstFileA("data\\skins\\*", &findData);
         if (h != INVALID_HANDLE_VALUE) {
             do {
                 if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
@@ -371,23 +371,17 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
         const int kNum = 3;
         if (curTileDetail < 0 || curTileDetail >= kNum) curTileDetail = 0;
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_TILEDETAIL));
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(280);
-        if (ImGui::BeginCombo("##tiledetail", labels[curTileDetail])) {
-            for (int i = 0; i < kNum; ++i) {
-                bool sel = (i == curTileDetail);
-                if (ImGui::Selectable(labels[i], sel)) {
-                    gfxSettingsSetTileDetail((GfxTileDetail)i);
-                    sdl3DrawReloadTiles();
-                    extern void gameFrontSaveTileDetail(int);
-                    gameFrontSaveTileDetail(i);
-                    curTileDetail = i;
-                }
-                if (sel) ImGui::SetItemDefaultFocus();
+        for (int i = 0; i < kNum; ++i) {
+            if (ImGui::RadioButton(labels[i], curTileDetail == i)) {
+                curTileDetail = i;
+                gfxSettingsSetTileDetail((GfxTileDetail)i);
+                sdl3DrawReloadTiles();
+                extern void gameFrontSaveTileDetail(int);
+                gameFrontSaveTileDetail(i);
             }
-            ImGui::EndCombo();
         }
-        if (curTileDetail == GFX_TILE_DETAIL_MATCH_TO_ZOOM) {
+        if (curTileDetail == GFX_TILE_DETAIL_MATCH_TO_ZOOM ||
+            curTileDetail == GFX_TILE_DETAIL_HIGH_DETAIL) {
             ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_TD_MATCHZOOM_HINT));
         }
     }
@@ -434,6 +428,7 @@ extern "C" void imguiSettingsDrawGraphicsSection(struct SDL_Renderer *rendererAr
     }
 
     /* Texture interpolation — applied to the tile atlas at draw time. */
+    ImGui::Spacing();
     int curInterp = (int)gfxSettingsGetInterp();
     {
         const char *labels[] = {
@@ -1232,7 +1227,7 @@ extern "C" void imguiSettingsShow(void) {
                 skinDirs.push_back("(default)");
 #ifdef _WIN32
                 WIN32_FIND_DATAA findData;
-                HANDLE h = FindFirstFileA("data\\skin\\*", &findData);
+                HANDLE h = FindFirstFileA("data\\skins\\*", &findData);
                 if (h != INVALID_HANDLE_VALUE) {
                     do {
                         if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)

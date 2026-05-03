@@ -476,7 +476,7 @@ void utilPtoCString(char *src, char *dest) {
 *  src  - Source string
 *  dest - Destination string 
 *********************************************************/
-void utilCtoPString(char *src, char *dest) {
+void utilCtoPString(const char *src, char *dest) {
 	int count; /* Looping variable */
   int len;   /* Length of the string */
   

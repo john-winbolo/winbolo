@@ -206,7 +206,7 @@ static void messageQueuePush(MessageState *ms, uint32_t topCp, uint32_t botCp) {
 }
 
 
-void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) {
+void clientMessageAdd(MessageState *ms, messageType msgType, const char *top, const char *bottom) {
   switch (msgType) {
   case newsWireMessage:
     if (ms->showNewswire == TRUE) {
@@ -427,7 +427,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
 }
 
 
-void messageAddItem(MessageState *ms, char *top, char *bottom) {
+void messageAddItem(MessageState *ms, const char *top, const char *bottom) {
   /* Walk top and bottom in lockstep, but step by *visual columns* not
    * codepoints. A wide (full-width CJK) codepoint emits its leading
    * cell + a MESSAGE_CELL_CONT cell on its row's next iteration, so

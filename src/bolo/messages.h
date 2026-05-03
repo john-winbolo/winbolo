@@ -128,10 +128,10 @@ typedef struct MessageState {
 
 void messageCreate(MessageState *ms);
 void messageDestroy(MessageState *ms);
-void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom);
+void clientMessageAdd(MessageState *ms, messageType msgType, const char *top, const char *bottom);
 struct ServerSim;
 void serverMessageAdd(struct ServerSim *sim, messageType msgType, char *top, char *bottom);
-void messageAddItem(MessageState *ms, char *top, char *bottom);
+void messageAddItem(MessageState *ms, const char *top, const char *bottom);
 void messageUpdate(MessageState *ms);
 void messageGetMessage(MessageState *ms, char *top, char *bottom);
 void messageSetNewswire(MessageState *ms, bool isShown);

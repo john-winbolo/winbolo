@@ -1014,56 +1014,61 @@ static const LangEntry langTable[] = {
     {1206, "Settings take effect on the next hosted game."},
     {1207, "Use UPnP / NAT-PMP for automatic port forwarding"},
     {1208, "Use NAT traversal (hole-punching) via tracker"},
-    {1209, "Player name is empty."},
-    {1210, "Player name contains disallowed characters."},
-    {1211, "Player name mixes incompatible scripts."},
-    {1212, "Player name cannot start with '*'."},
-    {1213, "Player name cannot end with '-unverified'."},
-    {1214, "Show country flags in chat"},
-    {1215, "%s was renamed because %s joined verified"},
-    {1216, "That display name belongs to a verified player. Please pick another."},
-    {1217, "That display name is in use by another verified player. Please pick another."},
-    {1218, "Incorrect password"},
-    {1219, "Game is locked"},
-    {1220, "Server full"},
-    {1221, "Server name pool exhausted"},
-    {1222, "Invalid player name"},
-    {1223, "WinBolo.net verification failed: {string1}"},
-    {1224, "{player} has been server kicked."},
-
-    /* Log viewer comments panel */
-    {1225, "Comments"},
-    {1226, "Sign in via WinBolo (in the main game) to post a comment"},
-    {1227, "Open a log with a WinBolo.net key to view comments"},
-
-    /* Log viewer File menu — open log from WinBolo.net */
-    {1228, "Open from WinBolo.net..."},
-
-    /* Graphics section: tile detail / animation smoothness / skin info */
+    /* Graphics section disclaimer (shown at top of graphics section) */
     {1209, "All pixelation and animation settings do not affect "
            "gameplay. Internally, all tanks, shells and builders "
            "are stored with max precision and pixelation affects "
            "the visual display only."},
+    /* Tile Detail Level */
     {1210, "Tile Detail Level"},
     {1211, "Classic"},
-    {1212, "Match to zoom (if skin supports it)"},
-    {1213, "High Detail"},
-    {1214, "Match to zoom - Pixelation matches the window zoom,\n"
-           "if the skin provides that level of detail."},
+    {1212, "Highest Detail with Full Coverage (all game tiles are included in skin at that zoom level)"},
+    {1213, "Per Tile Best (use high detail for a tile regardless of if all game tiles have that detail level)"},
+    {1214, "Some skins may include only some tiles, such as only tanks."},
+    /* Animation Smoothness */
     {1215, "Animation Smoothness (Tanks, Shells, and Builders)"},
-    {1216, "Match to pixelation"},
+    {1216, "Match skin"},
     {1217, "Max - smoothest, ignores pixelation"},
-    {1218, "Force smooth path shells"},
+    /* Force smooth path shells */
+    {1218, "Force max smooth path shells"},
     {1219, "Cosmetic - shells appear to fly more directly and\n"
            "smoothly, but their position no longer snaps to the\n"
            "pixel grid."},
-    {1220, "All skins are cosmetic and do not affect game play."},
-    {1221, "Skin"},
-    {1222, "Preview"},
-    {1223, "Texture Interpolation"},
+    /* Texture Interpolation */
+    {1223, "Texture Interpolation when Scaling"},
     {1224, "Nearest (crisp pixels)"},
     {1225, "Linear (smooth)"},
     {1226, "Pixel Art (crisp + edge cleanup)"},
+    /* Skins */
+    {1220, "All skins are cosmetic and do not affect game play."},
+    {1221, "Skin"},
+    {1222, "Preview"},
+
+    /* Player-name validation */
+    {1227, "Player name is empty."},
+    {1228, "Player name contains disallowed characters."},
+    {1229, "Player name mixes incompatible scripts."},
+    {1230, "Player name cannot start with '*'."},
+    {1231, "Player name cannot end with '-unverified'."},
+    {1232, "Show country flags in chat"},
+    {1233, "%s was renamed because %s joined verified"},
+    {1234, "That display name belongs to a verified player. Please pick another."},
+    {1235, "That display name is in use by another verified player. Please pick another."},
+    {1236, "Incorrect password"},
+    {1237, "Game is locked"},
+    {1238, "Server full"},
+    {1239, "Server name pool exhausted"},
+    {1240, "Invalid player name"},
+    {1241, "WinBolo.net verification failed: {string1}"},
+    {1242, "{player} has been server kicked."},
+
+    /* Log viewer comments panel */
+    {1243, "Comments"},
+    {1244, "Sign in via WinBolo (in the main game) to post a comment"},
+    {1245, "Open a log with a WinBolo.net key to view comments"},
+
+    /* Log viewer File menu — open log from WinBolo.net */
+    {1246, "Open from WinBolo.net..."},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
