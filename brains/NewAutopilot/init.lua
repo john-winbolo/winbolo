@@ -1336,13 +1336,19 @@ function Brain.think(info)
       end
     end
     if #active_slates > 0 then
-      -- Per-slate budget targets "complete a full ~70k-expansion search
-      -- in SPREAD_TICKS ticks". Independent of how many slates are
-      -- active — total per-tick cost scales linearly with active count.
-      local budget_each = math.max(500, math.ceil(70000 / C.DIJKSTRA_SPREAD_TICKS))
+      -- Per-slate budget: each slate targets completing ~70k expansions
+      -- in half its rebuild interval so it stays current for the back
+      -- half of the cycle.  Short-range slates (0, 2) spread over
+      -- SHORT_SPREAD_TICKS; long-range (1, 3) over LONG_SPREAD_TICKS.
+      local budget_short = C.DIJKSTRA_SHORT_BUDGET
+      local budget_long  = math.max(500, math.ceil(70000 / C.DIJKSTRA_LONG_SPREAD_TICKS))
       local t_step = clock_us()
+      local total_exp = 0
       for _, idx in ipairs(active_slates) do
-        local done, expanded, peak_open = cpf.dijkstra_step(idx, now, budget_each)
+        local budget = (idx == SLATE_SHORT or idx == SLATE_PILL)
+                       and budget_short or budget_long
+        local done, expanded, peak_open = cpf.dijkstra_step(idx, now, budget)
+        total_exp = total_exp + (expanded or 0)
         if done then
           refresh_slate(idx)
           local k = d.slates[idx].kind
@@ -1356,9 +1362,9 @@ function Brain.think(info)
         end
       end
       local step_us = clock_us() - t_step
-      print2(string.format("dij STEP %.2f ms  active=%d  budget_each=%d  total_exp=%d",
-                           step_us / 1000, #active_slates, budget_each,
-                           #active_slates * budget_each))
+      print2(string.format("dij STEP %.2f ms  active=%d  budget(s/l=%d/%d)  total_exp=%d",
+                           step_us / 1000, #active_slates,
+                           budget_short, budget_long, total_exp))
     end
   end
 
