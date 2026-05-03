@@ -241,10 +241,6 @@ static bool s_suppressAutoCustom = false;
    and WM_EXITSIZEMOVE).  Suppresses auto-switch to Custom during drag. */
 static bool s_inModalResize = false;
 
-/* Saved custom window size — restored when switching back to Custom mode */
-static int s_customWindowW = 0;
-static int s_customWindowH = 0;
-
 /* Optional extra render callback (used by Android for players panel) */
 static sdl3ImguiExtraRenderFn s_extraRenderFn = nullptr;
 

@@ -28,7 +28,7 @@
 #define _SDL3_INPUT_H
 
 #include <SDL3/SDL.h>
-#include "../Input.h"
+#include "../input.h"
 
 /*********************************************************
 *NAME:          inputSetup

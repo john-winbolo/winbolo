@@ -58,7 +58,7 @@
 #include "../gamefront.h"
 #include "../../server/threads.h"
 #include "../../bolo/bot_manager.h"
-#include "../Input.h"
+#include "../input.h"
 #include "../lang.h"
 #include "../sound.h"
 #include "../winbolo.h"
