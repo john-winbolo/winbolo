@@ -796,9 +796,6 @@ static void mapGenTournament(struct mapObj *mp, struct basesObj *bs,
     /* Ensure land tiles exist along the symmetry boundary so mirrored
      * halves connect into one continuous island. */
     {
-        static const int bjdx[] = {0, 0, 1, -1};
-        static const int bjdy[] = {-1, 1, 0, 0};
-
         /* Determine which boundary edges need land: right edge for H mirrors,
          * bottom edge for V mirrors, both for 4-corner/rotate-90. */
         bool needRight = (symMode == MAPGEN_SYM_4CORNER ||
