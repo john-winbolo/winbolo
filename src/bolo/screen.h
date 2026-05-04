@@ -139,6 +139,8 @@ typedef enum {
 bool screenIsItemInTrees(struct GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy);
 void screenGetSubMapSquareOffset(int *xPos, int *yPos);
 void screenAddBrainObject(struct ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed);
+void screenMakeBrainViewDataCS(struct ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos);
+void clientCenterTankCS(struct ClientSim *csPtr);
 void screenNetStatusMessage(struct ClientSim *csPtr, char *messageStr);
 bool screenExtractPNBData(BYTE *buff, BYTE dataLen, bool isTcp);
 bool screenExtractMNTData(BYTE *buff, BYTE dataLen, bool isTcp);
