@@ -301,13 +301,20 @@ local function assert_id(viz_id)
   end
 end
 
--- Returns true if the viz is enabled. nil global = on (no BrainTest
--- around to push, treat as on so non-BrainTest brain runs are unaffected).
+-- Returns true if the viz is enabled.
 --
--- The X-key bare-screen flag (_BT_VIZ_SUPPRESS_ALL) short-circuits this
--- to false for every viz_id except hud_resources, without touching the
--- per-id checkbox state. Pressing X again clears the flag and the
--- regular per-id toggles drive the screen as before.
+-- Resolution order:
+--   1. _BT_VIZ_SUPPRESS_ALL (X-key bare-screen) → off, except hud_resources.
+--   2. Per-id global _BT_VIZ_<ID> (BrainTest pushes this on toggle) wins
+--      when set to true OR false.
+--   3. Otherwise honor IDS[viz_id].default_on. Toggles documented as
+--      default_on=false stay off in non-BrainTest runs (release client,
+--      headless server) where the C side never pushes a value. This
+--      matters for expensive gates like attack_scan_spots_all_pills
+--      that force detailed pool-6 evaluation when on.
+--   4. Fallback to ON for unspecified IDs (preserves the historical
+--      "any viz that forgot to declare default_on shows by default"
+--      contract for the BrainTest live-toggle workflow).
 --
 -- Used by brain code to gate EXPENSIVE precompute (e.g. trace data
 -- assembly) — the draw wrappers below no longer short-circuit on this
@@ -321,7 +328,10 @@ function M.is_on(viz_id)
     return false
   end
   local g = _G["_BT_VIZ_" .. viz_id:upper()]
-  return g ~= false
+  if g ~= nil then return g end
+  local entry = M.IDS[viz_id]
+  if entry and entry.default_on == false then return false end
+  return true
 end
 
 -- Register every entry in M.IDS with the host's V dialog. Called from
