@@ -990,6 +990,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
      * frozen position). Live mode keeps the previous behavior. */
     WORLD twx = 0, twy = 0;
     int in_boat = 0;
+    int res_shells = 40, res_trees = 20, res_mines = 20, res_armour = 40;
     bool haveOrigin = false;
     if (app->playbackMode &&
         app->playbackFrame >= 0 &&
@@ -999,7 +1000,11 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 twx = pf_->tanks[i].worldX;
                 twy = pf_->tanks[i].worldY;
-                in_boat = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat  = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                res_shells = pf_->tanks[i].shells;
+                res_trees  = pf_->tanks[i].trees;
+                res_mines  = pf_->tanks[i].mines;
+                res_armour = pf_->tanks[i].armour;
                 haveOrigin = true;
                 break;
             }
@@ -1007,8 +1012,12 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     }
     if (!haveOrigin) {
         if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
-        in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
-                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+        tank *t = &app->sim.sim.tanks[app->followBot];
+        in_boat    = tankIsOnBoat(t) ? 1 : 0;
+        res_shells = tankGetShells(t);
+        res_trees  = tankGetTrees(t);
+        res_mines  = tankGetMines(t);
+        res_armour = tankGetArmour(t);
     }
     int smx = twx >> 8;
     int smy = twy >> 8;
@@ -1063,13 +1072,10 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     ctx->tmx       = smx;
     ctx->tmy      = smy;
     ctx->in_boat  = in_boat;
-    /* Same defaults as computeClickPath — the live BrainInfo accessor
-     * isn't exposed in this branch and these match a typical mid-game
-     * resource load close enough for visualization purposes. */
-    ctx->shells   = 40;
-    ctx->trees    = 20;
-    ctx->mines    = 20;
-    ctx->armour   = 40;
+    ctx->shells   = res_shells;
+    ctx->trees    = res_trees;
+    ctx->mines    = res_mines;
+    ctx->armour   = res_armour;
     ctx->budget   = 16000;
     ctx->abort    = &app->costToAbort;
     app->costToAbort = false;
@@ -1751,6 +1757,7 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
      * this, a playback click would show a path from the live tank
      * (which has moved on by many ticks), not the one on screen. */
     int smx, smy, in_boat = 0;
+    int res_shells = 40, res_trees = 20, res_mines = 20, res_armour = 40;
     bool got_origin = false;
     if (app->playbackMode
         && app->playbackFrame >= 0
@@ -1760,7 +1767,11 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 smx = pf_->tanks[i].worldX >> 8;
                 smy = pf_->tanks[i].worldY >> 8;
-                in_boat = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat    = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                res_shells = pf_->tanks[i].shells;
+                res_trees  = pf_->tanks[i].trees;
+                res_mines  = pf_->tanks[i].mines;
+                res_armour = pf_->tanks[i].armour;
                 got_origin = true;
                 break;
             }
@@ -1771,8 +1782,12 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
         if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
         smx = twx >> 8;
         smy = twy >> 8;
-        in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
-                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+        tank *t = &app->sim.sim.tanks[app->followBot];
+        in_boat    = tankIsOnBoat(t) ? 1 : 0;
+        res_shells = tankGetShells(t);
+        res_trees  = tankGetTrees(t);
+        res_mines  = tankGetMines(t);
+        res_armour = tankGetArmour(t);
     }
 
     /* Reset the debug PF search state by changing destination */
@@ -1785,7 +1800,7 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     int status = 0;
     for (int iter = 0; iter < 20 && status == 0; iter++) {
         status = brainPathfinderPathTo(dpf, smx, smy, dmx, dmy,
-                                        in_boat, 40, 20, 20, 40,
+                                        in_boat, res_shells, res_trees, res_mines, res_armour,
                                         100000, &nx, &ny);
     }
 

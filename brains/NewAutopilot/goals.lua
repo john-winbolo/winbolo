@@ -4950,6 +4950,7 @@ function M.get_pool_breakdown_json(state)
         stale = (cached and cached.tick) and (now - cached.tick) or -1,
         reject = cached and cached._reject or nil,
         reject_remaining = cached and cached._reject_remaining or 0,
+        imminent = (cached and cached.imminent) or false,
       }
     end
   end
@@ -5069,6 +5070,7 @@ function M.get_pool_breakdown_json(state)
         formula = r.formula,
         reject = r.reject,
         reject_remaining = r.reject_remaining,
+        imminent = r.imminent or false,
       }
     end
     local winner_id = -1
@@ -5077,6 +5079,31 @@ function M.get_pool_breakdown_json(state)
       idx = idx, name = pname, weight = pw, winner_id = winner_id,
       layout_cell = LAYOUT_CELL[idx], rows = rows,
     }, rows[1]
+  end
+
+  -- Group by-pool results with 'imminent' awareness for the winners section.
+  -- The by_pool data from eval_queue is augmented with results from finalize_pools
+  -- (which calculates imminent floor costs).
+  for idx = 1, 9 do
+    local winner_data = pc[idx]
+    if winner_data and winner_data.imminent then
+      local rows = by_pool[idx] or {}
+      for _, r in ipairs(rows) do
+        if r.id == winner_data.goal.target_id then
+          r.imminent = true
+          break
+        end
+      end
+    end
+  end
+
+  -- Fetch the post-penalty competition results from the last goal_selection
+  -- pass so we can show why a winner was or wasn't picked (switch penalties,
+  -- commitment, oscillation history).
+  local comp = {}
+  for _, gc in ipairs(state.goal_competition or {}) do
+    local k = string.format("%s@%d,%d", gc.kind, gc.mx or 0, gc.my or 0)
+    comp[k] = gc
   end
 
   local sections = {}
@@ -5089,14 +5116,150 @@ function M.get_pool_breakdown_json(state)
       -- color it with its origin pool's hue.
       local pname = POOL_NAMES[idx] or ("p"..idx)
       local pw = (phase_weights and phase_weights[idx]) or 1.0
+
+      -- Look up the actual post-penalty total used by goal_selection.
+      -- Goal kinds often differ from UI pool names (e.g. refuel_at_base vs refuel).
+      local k = string.format("%s@%d,%d", pname, w.mx or 0, w.my or 0)
+      local gc = comp[k]
+
+      -- Fallback: try mapping pname to goal kind
+      if not gc then
+        local kind_map = {
+          refuel = "refuel_at_base",
+          place_strategic = "place_pill_strategic",
+        }
+        local alt_k = string.format("%s@%d,%d", kind_map[pname] or "??", w.mx or 0, w.my or 0)
+        gc = comp[alt_k]
+      end
+
+      -- Second fallback: try fuzzy kind match (if mx/my match)
+      if not gc then
+        for _, entry in pairs(comp) do
+          if (entry.mx == w.mx and entry.my == w.my) then
+            -- Check if entry.kind "contains" pname or vice-versa
+            if (entry.kind and entry.kind:find(pname)) or pname:find(entry.kind or "??") then
+              gc = entry; break
+            end
+          end
+        end
+      end
+
+      local final_cost = gc and gc.total or w.weighted
+      local penalty = gc and gc.penalty or 0   -- additive penalties BEFORE wsim
+      local wsim_add = gc and gc.wsim_add or 0  -- wsim is tracked separately
+
+      -- gc.base is the phase-weighted cost actually used by goal_selection
+      -- (may differ from w.cost*pw for pools with extra adjustments like refuel).
+      -- Fall back to w.weighted when no gc match was found.
+      local base_cost = gc and gc.base or w.weighted
+
+      -- hist = whatever is left of penalty after removing the named components.
+      -- NOTE: do NOT subtract wsim_add here — wsim is not inside gc.penalty
+      -- (penalty is captured before wsim runs). Subtracting it would make
+      -- hist go negative and drop wsim_add from the displayed sum.
+      local switch_flat = gc and gc.switch_flat or 0
+      local commit_val  = gc and gc.commit_val  or 0
+      local hist_pen    = penalty - switch_flat - commit_val
+
+      -- Build a rich formula for the detail popup
+      local detail_formula = string.format("%s(x%.1f): %s", pname, pw, w.formula)
+      local detail_map = {}
+
+      detail_map[#detail_map + 1] = string.format("base:%.0f (raw=%.0f x pw=%.1f, %s phase)",
+        base_cost, w.cost or 0, pw, state.phase or "unknown")
+
+      if w.imminent then
+        detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
+      end
+
+      if (penalty > 0 or wsim_add > 0) then
+        local parts = {}
+        if switch_flat > 0 then
+          parts[#parts + 1] = string.format("hyst{%.0f}", switch_flat)
+        end
+        if commit_val > 0 then
+          parts[#parts + 1] = string.format("hyst{%.0f}", commit_val)
+        end
+        if hist_pen > 1 then
+          parts[#parts + 1] = string.format("hist{%.0f}", hist_pen)
+        end
+        if wsim_add > 0 then
+          parts[#parts + 1] = string.format("wsim{%.0f}", wsim_add)
+        end
+
+        if #parts > 0 then
+          detail_formula = string.format("%s + %s = %.0f", detail_formula, table.concat(parts, "+"), final_cost)
+        end
+
+        if switch_flat > 0 or commit_val > 0 then
+          local hparts = {}
+          if switch_flat > 0 then hparts[#hparts + 1] = string.format("switch(%.0f)", switch_flat) end
+          if commit_val  > 0 then hparts[#hparts + 1] = string.format("commit(%.0f)", commit_val)  end
+          detail_map[#detail_map + 1] = "hyst:" .. table.concat(hparts, " + ")
+        end
+        if hist_pen > 1 then
+          detail_map[#detail_map + 1] = string.format("hist:recurrence_penalty(%.0f)", hist_pen)
+        end
+        if wsim_add > 0 then
+          detail_map[#detail_map + 1] = string.format("wsim:damage_prediction(%.0f)", wsim_add)
+        end
+      end
+
+      if gc and gc.hyst then
+        detail_formula = string.format("%s (must be < cur*%.1f)", detail_formula, C.GOAL_SWITCH_RATIO)
+      end
+
+      -- Row second line: base + penalties = total (all numbers must balance).
+      -- Use base_cost (from gc.base) so the equation holds even for pools
+      -- like refuel where goal_selection adds constants before phase-weighting.
+      local phase_abbrev = ({
+        opening = "OP", early = "EA", middle = "MD", late = "LT",
+        endgame = "EG", unknown = "??"
+      })[(state.phase or "unknown")] or (state.phase or "??"):sub(1,2):upper()
+      local row_summary = string.format("%.0f %s@%.2f", base_cost, phase_abbrev, pw)
+
+      if penalty > 0 or wsim_add > 0 or w.imminent then
+        local parts = {}
+        if w.imminent then
+          parts[#parts + 1] = "IM"
+        end
+        if switch_flat > 0 then
+          parts[#parts + 1] = string.format("%.0f SW", switch_flat)
+        end
+        if commit_val > 0 then
+          parts[#parts + 1] = string.format("%.0f CM", commit_val)
+        end
+        if hist_pen > 1 then
+          parts[#parts + 1] = string.format("%.0f HT", hist_pen)
+        end
+        if wsim_add > 0 then
+          parts[#parts + 1] = string.format("%.0f WS", wsim_add)
+        end
+        if #parts > 0 then
+          row_summary = row_summary .. " +" .. table.concat(parts, " +")
+        end
+        row_summary = row_summary .. " =" .. string.format("%.0f", final_cost)
+      end
+
+      -- Final formula format: "RowSummary !! FullDisplayFormula || TermMapping"
+      local final_formula = string.format("%s !! %s", row_summary, detail_formula)
+      if #detail_map > 0 then
+        final_formula = final_formula .. " || " .. table.concat(detail_map, "|")
+      end
+
+      -- Generate a unique synthetic ID for the WINNERS pool to avoid collisions
+      -- between different source pools (e.g. attack_pill #0 and attack_base #0).
+      -- Use src_pool in the high bits.
+      local synthetic_id = (idx << 16) | (w.id or 0)
+
       winners[#winners + 1] = {
-        id = w.id, src_pool = idx,
+        id = synthetic_id, src_pool = idx,
         mx = w.mx, my = w.my,
-        cost = w.weighted, weighted = w.weighted,
+        cost = final_cost, weighted = final_cost,
         is_winner = false,
         active_goal = w.active_goal,
         stale = w.stale,
-        formula = string.format("%s(x%.1f): %s", pname, pw, w.formula),
+        formula = final_formula,
       }
     end
   end
