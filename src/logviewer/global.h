@@ -191,9 +191,12 @@ void lv_efree(Generic object);
 /* Game time is set to -1 if it an untimed game */
 #define UNLIMITED_GAME_TIME -1
 
-/* Player Name string lengths */
-#define PLAYER_NAME_LEN 33
-#define PLAYER_NAME_LAST 32
+/* Player Name string lengths — must match bolo/global.h. The value is
+ * baked into the layout of MessageArgs (gui/lang.h), so a mismatch
+ * shifts every field after playerName and silently breaks lang
+ * substitution across the TU boundary. */
+#define PLAYER_NAME_LEN 65
+#define PLAYER_NAME_LAST 64
 
 /* 0xFF is neutral */
 #define NEUTRAL 0xFF

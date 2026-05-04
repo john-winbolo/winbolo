@@ -29,14 +29,31 @@ extern "C" {
  * doesn't pull in game_view.c's bolo-typed headers). */
 static const int GV_SCREEN_TILES = 16;
 
+/* Tile width in unzoomed pixels — must match TILE_SIZE_X (16). The
+ * camera works in unzoomed pixel units; lv_screenPanToTotalPixels
+ * decomposes a total pan into (xOffset,yOffset) tiles + (subPxX,subPxY)
+ * sub-tile pixels. */
+static const int GV_TILE_PX = 16;
+static const int GV_VIEWPORT_PX = GV_SCREEN_TILES * GV_TILE_PX;  /* 256 */
+
 /* Dead-zone scroll margin: the inner 8×8 region of the 16×16 viewport is
  * the "safe zone"; the tank must leave it before the camera nudges. */
-static const int GV_SCROLL_MARGIN = 4;
+static const int GV_SCROLL_MARGIN_TILES = 4;
+static const int GV_SCROLL_MARGIN_PX = GV_SCROLL_MARGIN_TILES * GV_TILE_PX;  /* 64 */
 
-/* One-shot: centre xOffset/yOffset on the camera tank, clamped to map
- * bounds. Called from logviewer.c on game-view enter and on Tab cycle.
- * Frame-to-frame tracking is the dead-zone update below — this is for
- * cases where the new target may be far outside the current viewport. */
+/* Easing for the dead-zone follow. Each frame the camera moves
+ * `delta/GV_EASE_DIVISOR` pixels toward the target, capped at
+ * GV_MAX_STEP_PX so a teleport (e.g. fast-forward catch-up) doesn't
+ * snap visibly. The min-step-of-1 floor keeps the camera converging
+ * on the final pixel instead of stalling near the target. */
+static const int GV_EASE_DIVISOR = 4;
+static const int GV_MAX_STEP_PX = 16;
+
+/* One-shot: centre the viewport on the camera tank's pixel-precise
+ * world position, clamped to map bounds. Called from logviewer.c on
+ * game-view enter and on Tab cycle (where the new target may be far
+ * outside the current viewport). Frame-to-frame tracking is the
+ * eased dead-zone update below. */
 void lv_imgui_game_view_init_camera(LogViewerState *lv) {
     if (lv == nullptr || !lv->isLoaded) {
         return;
@@ -58,23 +75,23 @@ void lv_imgui_game_view_init_camera(LogViewerState *lv) {
     bool onBoat;
     lv_playersGetTankDetails(lv->cameraSlot, &mx, &my, &px, &py, &frame, &onBoat);
 
-    int targetTileX = (int)mx - GV_SCREEN_TILES / 2;
-    int targetTileY = (int)my - GV_SCREEN_TILES / 2;
+    int tankWorldPxX = (int)mx * GV_TILE_PX + (int)px;
+    int tankWorldPxY = (int)my * GV_TILE_PX + (int)py;
+    int targetPxX = tankWorldPxX - GV_VIEWPORT_PX / 2;
+    int targetPxY = tankWorldPxY - GV_VIEWPORT_PX / 2;
 
-    if (targetTileX < 0) targetTileX = 0;
-    if (targetTileY < 0) targetTileY = 0;
-    if (targetTileX > 256 - GV_SCREEN_TILES) targetTileX = 256 - GV_SCREEN_TILES;
-    if (targetTileY > 256 - GV_SCREEN_TILES) targetTileY = 256 - GV_SCREEN_TILES;
-
-    lv->xOffset = (BYTE)targetTileX;
-    lv->yOffset = (BYTE)targetTileY;
+    /* lv_screenPanToTotalPixels handles map-bound clamping and the
+     * (xOffset,yOffset)/(subPxX,subPxY) decomposition. */
+    lv_screenPanToTotalPixels(targetPxX, targetPxY);
     lv->wantScreenUpdate = TRUE;
 }
 
-/* Dead-zone autoscroll. Tank inside the inner 8×8 safe zone — leave the
- * camera alone (so manual arrow-key scroll is preserved). Tank outside —
- * nudge xOffset/yOffset by 1 tile toward the tank, then clamp to map
- * bounds and re-clamp so the tank can never sit fully off-screen. */
+/* Pixel-precise dead-zone autoscroll. Tank screen-pixel position inside
+ * the inner 128×128 safe zone — camera sits still, tank slides on
+ * screen. Tank outside — ease the camera toward a target that puts the
+ * tank just inside the safe-zone boundary on that side. Final hard
+ * re-clamp guarantees the tank never sits fully off-screen even if
+ * easing falls behind a teleport. */
 void lv_imgui_game_view_update_camera(LogViewerState *lv) {
     if (lv == nullptr || !lv->isLoaded) {
         return;
@@ -83,8 +100,7 @@ void lv_imgui_game_view_update_camera(LogViewerState *lv) {
         return;
     }
     /* Same alive guard as init_camera: dead tanks' map coords are zeroed,
-     * which would pull the camera to (0,0) one tile per frame. Freeze
-     * here until respawn. */
+     * which would pull the camera to (0,0). Freeze here until respawn. */
     if (lv->cameraSlot < MAX_TANKS && !lv->gameViewHud[lv->cameraSlot].alive) {
         return;
     }
@@ -93,27 +109,54 @@ void lv_imgui_game_view_update_camera(LogViewerState *lv) {
     bool onBoat;
     lv_playersGetTankDetails(lv->cameraSlot, &mx, &my, &px, &py, &frame, &onBoat);
 
-    int xOff = (int)lv->xOffset;
-    int yOff = (int)lv->yOffset;
+    int tankWorldPxX = (int)mx * GV_TILE_PX + (int)px;
+    int tankWorldPxY = (int)my * GV_TILE_PX + (int)py;
+    int currentPxX = (int)lv->xOffset * GV_TILE_PX + lv->subPxX;
+    int currentPxY = (int)lv->yOffset * GV_TILE_PX + lv->subPxY;
 
-    if      ((int)mx <  xOff + GV_SCROLL_MARGIN)                       xOff--;
-    else if ((int)mx >= xOff + GV_SCREEN_TILES - GV_SCROLL_MARGIN)     xOff++;
-    if      ((int)my <  yOff + GV_SCROLL_MARGIN)                       yOff--;
-    else if ((int)my >= yOff + GV_SCREEN_TILES - GV_SCROLL_MARGIN)     yOff++;
+    int tankScreenPxX = tankWorldPxX - currentPxX;
+    int tankScreenPxY = tankWorldPxY - currentPxY;
 
-    if (xOff < 0) xOff = 0;
-    if (yOff < 0) yOff = 0;
-    if (xOff > 256 - GV_SCREEN_TILES) xOff = 256 - GV_SCREEN_TILES;
-    if (yOff > 256 - GV_SCREEN_TILES) yOff = 256 - GV_SCREEN_TILES;
+    int targetPxX = currentPxX;
+    int targetPxY = currentPxY;
 
-    if      ((int)mx <  xOff)                    xOff = (int)mx;
-    else if ((int)mx >= xOff + GV_SCREEN_TILES)  xOff = (int)mx - GV_SCREEN_TILES + 1;
-    if      ((int)my <  yOff)                    yOff = (int)my;
-    else if ((int)my >= yOff + GV_SCREEN_TILES)  yOff = (int)my - GV_SCREEN_TILES + 1;
+    if (tankScreenPxX < GV_SCROLL_MARGIN_PX) {
+        targetPxX = tankWorldPxX - GV_SCROLL_MARGIN_PX;
+    } else if (tankScreenPxX >= GV_VIEWPORT_PX - GV_SCROLL_MARGIN_PX) {
+        targetPxX = tankWorldPxX - (GV_VIEWPORT_PX - GV_SCROLL_MARGIN_PX);
+    }
+    if (tankScreenPxY < GV_SCROLL_MARGIN_PX) {
+        targetPxY = tankWorldPxY - GV_SCROLL_MARGIN_PX;
+    } else if (tankScreenPxY >= GV_VIEWPORT_PX - GV_SCROLL_MARGIN_PX) {
+        targetPxY = tankWorldPxY - (GV_VIEWPORT_PX - GV_SCROLL_MARGIN_PX);
+    }
 
-    if (xOff != (int)lv->xOffset || yOff != (int)lv->yOffset) {
-        lv->xOffset = (BYTE)xOff;
-        lv->yOffset = (BYTE)yOff;
+    int dx = targetPxX - currentPxX;
+    int dy = targetPxY - currentPxY;
+    int stepX = dx / GV_EASE_DIVISOR;
+    int stepY = dy / GV_EASE_DIVISOR;
+    if (stepX == 0 && dx != 0) stepX = (dx > 0) ?  1 : -1;
+    if (stepY == 0 && dy != 0) stepY = (dy > 0) ?  1 : -1;
+    if (stepX >  GV_MAX_STEP_PX) stepX =  GV_MAX_STEP_PX;
+    if (stepX < -GV_MAX_STEP_PX) stepX = -GV_MAX_STEP_PX;
+    if (stepY >  GV_MAX_STEP_PX) stepY =  GV_MAX_STEP_PX;
+    if (stepY < -GV_MAX_STEP_PX) stepY = -GV_MAX_STEP_PX;
+
+    int newPxX = currentPxX + stepX;
+    int newPxY = currentPxY + stepY;
+
+    /* Hard re-clamp: tank must never sit fully off-screen. Catches the
+     * case where easing can't keep up with a teleport (e.g. cameraSlot
+     * change without going through init_camera, or extreme fast-forward). */
+    int afterScreenX = tankWorldPxX - newPxX;
+    int afterScreenY = tankWorldPxY - newPxY;
+    if (afterScreenX < 0)                    newPxX = tankWorldPxX;
+    else if (afterScreenX >= GV_VIEWPORT_PX) newPxX = tankWorldPxX - GV_VIEWPORT_PX + 1;
+    if (afterScreenY < 0)                    newPxY = tankWorldPxY;
+    else if (afterScreenY >= GV_VIEWPORT_PX) newPxY = tankWorldPxY - GV_VIEWPORT_PX + 1;
+
+    if (newPxX != currentPxX || newPxY != currentPxY) {
+        lv_screenPanToTotalPixels(newPxX, newPxY);
         lv->wantScreenUpdate = TRUE;
     }
 }

@@ -140,10 +140,8 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
   {
     MessageArgs args = {0};
     lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
-    strncpy(args.otherName, label, sizeof(args.otherName) - 1);
-    args.otherName[sizeof(args.otherName) - 1] = '\0';
-    strncpy(args.playerName, playerName, sizeof(args.playerName) - 1);
-    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    snprintf(args.otherName, sizeof(args.otherName), "%s", label);
+    snprintf(args.playerName, sizeof(args.playerName), "%s", playerName);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
   }
 
@@ -324,11 +322,9 @@ void lv_playersGetLgmStatus(BYTE playerNum, bool *isOut, bool *isDead) {
 *********************************************************/
 void lv_playersGetPlayerName(BYTE playerNum, char *dest) {
   if (plrs.item[playerNum].inUse == TRUE) {
-    strncpy(dest, plrs.item[playerNum].playerName, PLAYER_NAME_LEN - 1);
-    dest[PLAYER_NAME_LEN - 1] = '\0';
+    snprintf(dest, PLAYER_NAME_LEN, "%s", plrs.item[playerNum].playerName);
   } else {
-    strncpy(dest, NO_TANK, PLAYER_NAME_LEN - 1);
-    dest[PLAYER_NAME_LEN - 1] = '\0';
+    snprintf(dest, PLAYER_NAME_LEN, "%s", NO_TANK);
   }
 }
 
@@ -349,8 +345,7 @@ void lv_playersMakeMessageName(BYTE playerNum, char *dest) {
 
   label[0] = '\0';
   lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
-  strncpy(dest, label, FILENAME_MAX - 1);
-  dest[FILENAME_MAX - 1] = '\0';
+  snprintf(dest, FILENAME_MAX, "%s", label);
 }
 
 /*********************************************************
@@ -371,8 +366,7 @@ void lv_playersMakeScreenName(BYTE playerNum, char *dest) {
   label[0] = '\0';
   if (plrs.item[playerNum].inUse == TRUE) {
     lv_labelMakeTankLabel(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location, FALSE);
-    strncpy(dest, label, FILENAME_MAX - 1);
-    dest[FILENAME_MAX - 1] = '\0';
+    snprintf(dest, FILENAME_MAX, "%s", label);
   }
 }
 
@@ -646,8 +640,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
       name[0] = '\0';
       lv_playersMakeMessageName(playerNum, name);
       MessageArgs args = {0};
-      strncpy(args.playerName, name, sizeof(args.playerName) - 1);
-      args.playerName[sizeof(args.playerName) - 1] = '\0';
+      snprintf(args.playerName, sizeof(args.playerName), "%s", name);
       lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
   }

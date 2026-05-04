@@ -724,12 +724,13 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             }
 
             /* Manual arrow-key viewport scroll while game view is active.
-             * Shifts xOffset/yOffset by 1 tile per key event (SDL fires
-             * SDL_EVENT_KEY_DOWN repeatedly while a key is held, so no
-             * auto-repeat logic needed). The viewport is clamped to the
-             * map and to keep the camera tank on-screen — the dead-zone
-             * tracker on the next frame may pull it back if the tank's
-             * left the safe zone. */
+             * Pans by kArrowStep unzoomed pixels per key event (SDL fires
+             * SDL_EVENT_KEY_DOWN repeatedly while held), going through
+             * lv_screenPanToTotalPixels so the pan accumulates at sub-tile
+             * granularity into (xOffset,subPxX) instead of snapping a
+             * whole tile per repeat. The dead-zone tracker on the next
+             * frame may ease the camera back if the pan moved the tank
+             * out of the safe zone. */
             if (g_lv->gameView && sdlEvent.type == SDL_EVENT_KEY_DOWN) {
                 int dx = 0, dy = 0;
                 switch (sdlEvent.key.key) {
@@ -740,25 +741,27 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                     default: break;
                 }
                 if (dx || dy) {
-                    const int kViewTiles = 16; /* mirrors GV_SCREEN_TILES */
-                    int newX = (int)g_lv->xOffset + dx;
-                    int newY = (int)g_lv->yOffset + dy;
-                    if (newX < 0) newX = 0;
-                    if (newY < 0) newY = 0;
-                    if (newX > 256 - kViewTiles) newX = 256 - kViewTiles;
-                    if (newY > 256 - kViewTiles) newY = 256 - kViewTiles;
+                    const int kViewTiles  = 16; /* mirrors GV_SCREEN_TILES */
+                    const int kTilePx     = 16; /* TILE_SIZE_X */
+                    const int kArrowStep  = 8;  /* unzoomed px per repeat */
+                    int totalPxX = (int)g_lv->xOffset * kTilePx + g_lv->subPxX
+                                 + dx * kArrowStep;
+                    int totalPxY = (int)g_lv->yOffset * kTilePx + g_lv->subPxY
+                                 + dy * kArrowStep;
                     if (lv_playersIsInUse(g_lv->cameraSlot)) {
                         BYTE camMx, camMy, camPx, camPy, camFr;
                         bool camBoat;
                         lv_playersGetTankDetails(g_lv->cameraSlot,
                             &camMx, &camMy, &camPx, &camPy, &camFr, &camBoat);
-                        if      ((int)camMx <  newX)              newX = (int)camMx;
-                        else if ((int)camMx >= newX + kViewTiles) newX = (int)camMx - kViewTiles + 1;
-                        if      ((int)camMy <  newY)              newY = (int)camMy;
-                        else if ((int)camMy >= newY + kViewTiles) newY = (int)camMy - kViewTiles + 1;
+                        int tankWorldPxX = (int)camMx * kTilePx + (int)camPx;
+                        int tankWorldPxY = (int)camMy * kTilePx + (int)camPy;
+                        int viewportPx   = kViewTiles * kTilePx;
+                        if      (tankWorldPxX <  totalPxX)              totalPxX = tankWorldPxX;
+                        else if (tankWorldPxX >= totalPxX + viewportPx) totalPxX = tankWorldPxX - viewportPx + 1;
+                        if      (tankWorldPxY <  totalPxY)              totalPxY = tankWorldPxY;
+                        else if (tankWorldPxY >= totalPxY + viewportPx) totalPxY = tankWorldPxY - viewportPx + 1;
                     }
-                    g_lv->xOffset = (BYTE)newX;
-                    g_lv->yOffset = (BYTE)newY;
+                    lv_screenPanToTotalPixels(totalPxX, totalPxY);
                     g_lv->wantScreenUpdate = TRUE;
                     continue;
                 }
