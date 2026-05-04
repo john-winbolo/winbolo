@@ -1499,6 +1499,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local R = C.STRATEGIC_PLACE_SEARCH_RADIUS
   local best_score = -math.huge
   local best_mx, best_my = nil, nil
+  local all_cands = {}
 
   for dy = -R, R do
     for dx = -R, R do
@@ -1506,22 +1507,26 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       local cy = U.mclamp(search_my + dy)
       if U.is_placeable(cx, cy, world) then
         local score = 0
+        local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10 = 0,0,0,0,0,0,0,0,0,0
 
         -- 1. Base proximity
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
         if base_dist > C.STRATEGIC_PLACE_MAX_BASE_DIST then goto skip_cell end
-        score = score + (C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * C.STRATEGIC_PLACE_BASE_WEIGHT
+        sc1 = (C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * C.STRATEGIC_PLACE_BASE_WEIGHT
+        score = score + sc1
 
         -- 2. Base defense need
         do
           local base_pill_count = count_pills_near(world, cx, cy, C.STRATEGIC_PLACE_DEFENSE_RADIUS, "friendly")
           if base_pill_count < 2 then
-            score = score + C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS * (2 - base_pill_count)
+            sc2 = C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS * (2 - base_pill_count)
+            score = score + sc2
           end
         end
 
         -- 3. Influence-aware front line proximity
         do
+          local s0 = score
           local influence = cpf.influence_at(cx, cy)
           if influence < 0 then
             score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
@@ -1529,43 +1534,51 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
                    * C.STRATEGIC_PLACE_FRONT_PROX_WEIGHT
           end
+          sc3 = score - s0
         end
 
         -- 4. Pill spacing
         do
+          local s0 = score
           local pill_dist = nearest_friendly_pill_dist(world, cx, cy)
           if pill_dist < C.STRATEGIC_PLACE_PILL_SPACING then
             score = score - C.STRATEGIC_PLACE_PILL_PENALTY
           elseif pill_dist >= 2 and pill_dist <= 4 then
             score = score + C.STRATEGIC_PLACE_SPACING_BONUS
           end
+          sc4 = score - s0
         end
 
         -- 5. LOS coverage
         do
           local los = U.los_coverage(cx, cy, C.STRATEGIC_PLACE_LOS_DIRS, C.STRATEGIC_PLACE_LOS_MAX_RANGE)
-          score = score + los * C.STRATEGIC_PLACE_LOS_WEIGHT
+          sc5 = los * C.STRATEGIC_PLACE_LOS_WEIGHT
+          score = score + sc5
         end
 
         -- 6. Threat penalty
         do
           local thr = threat.at(cx, cy)
-          score = score - thr * C.STRATEGIC_PLACE_THREAT_WEIGHT
+          sc6 = -thr * C.STRATEGIC_PLACE_THREAT_WEIGHT
+          score = score + sc6
         end
 
         -- 7. Distance from tank
-        score = score - U.mdist(tmx, tmy, cx, cy) * 0.5
+        sc7 = -U.mdist(tmx, tmy, cx, cy) * 0.5
+        score = score + sc7
 
         -- 8. Offensive spike bonus
         if spike_base then
           local hb_dist = U.mdist(cx, cy, spike_base.mx, spike_base.my)
           if hb_dist <= 2 then
-            score = score + C.STRATEGIC_PLACE_SPIKE_BONUS
+            sc8 = C.STRATEGIC_PLACE_SPIKE_BONUS
+            score = score + sc8
           end
         end
 
         -- 9. Enemy pill proximity (NEW)
         do
+          local s0 = score
           local ep_mx, ep_my, ep_dist = nearest_hostile_pill_pos(world, cx, cy)
           if ep_mx then
             if ep_dist <= C.STRATEGIC_PLACE_ENEMY_PILL_DANGER_RANGE then
@@ -1577,16 +1590,23 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
               score = score + C.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS
             end
           end
+          sc9 = score - s0
         end
 
         -- 10. Pill war zone reinforcement (NEW)
         if wz_mx then
           local wz_dist = U.mdist(cx, cy, wz_mx, wz_my)
           if wz_dist <= 5 then
-            score = score + C.STRATEGIC_PLACE_WAR_ZONE_BONUS * (1.0 - wz_dist / 6.0)
+            sc10 = C.STRATEGIC_PLACE_WAR_ZONE_BONUS * (1.0 - wz_dist / 6.0)
+            score = score + sc10
           end
         end
 
+        all_cands[#all_cands + 1] = {
+          mx = cx, my = cy, score = score,
+          sc1=sc1, sc2=sc2, sc3=sc3, sc4=sc4, sc5=sc5,
+          sc6=sc6, sc7=sc7, sc8=sc8, sc9=sc9, sc10=sc10,
+        }
         if score > best_score then
           best_score = score; best_mx = cx; best_my = cy
         end
@@ -1604,6 +1624,26 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST + carry_value_penalty - carry_discount
   local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
 
+  -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
+  table.sort(all_cands, function(a, b) return a.score > b.score end)
+  local cands = {}
+  for _, c in ipairs(all_cands) do
+    local is_win = (c.mx == best_mx and c.my == best_my)
+    local cand_cost = is_win and cost or math.max(0.01, cost + (best_score - c.score))
+    local fmt = string.format(
+      "score{%.0f}: prx{%.0f} def{%.0f} inf{%.0f} spc{%.0f} los{%.0f} thr{%.0f} dst{%.0f} spk{%.0f} ep{%.0f} wz{%.0f}%s",
+      c.score, c.sc1, c.sc2, c.sc3, c.sc4, c.sc5, c.sc6, c.sc7, c.sc8, c.sc9, c.sc10,
+      is_win and string.format(" path{%.0f}", path_cost) or "")
+    cands[#cands + 1] = {
+      id = c.my * 256 + c.mx,
+      mx = c.mx, my = c.my,
+      cost = cand_cost,
+      formula = fmt,
+      stale = 0,
+      reject_remaining = 0,
+    }
+  end
+
   return {
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
@@ -1611,6 +1651,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     desc = string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f} center=%s score=%.0f",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, search_reason, best_score),
+    cands = cands,
   }
 end
 
@@ -2507,18 +2548,18 @@ local function get_formula_inner(e)
         "method=%s tick=%s — no path produced",
         tostring(_spot_method), tostring(_spot_tick))
     end
+    local _tw = e._travel_wound or 1.0
     f = string.format(
-      "spot{%.0f}@(%d,%d) + (A*{%.0f%s}@(%d,%d) + stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
-      "||spot cost is NOT scaled by hp — only combat/travel terms are"..
-      "|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
+      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
+      "||spot cost is NOT scaled by hp or wound"..
+      "|pickup=dead-pill walk estimate from spot to pill tile; wound_x2=min(1,wound*2)=%.2f|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
-      raw > 500 and string.format("/raw%s",
-        raw >= 1e9 and "=INF" or string.format("=%.0f", raw)) or "",
-      e._mx or 0, e._my or 0,
+      e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
+      _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
       e._hp, _wound_detail, _self_dr, _ammo_str,
-      _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
+      _tw, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2670,14 +2711,33 @@ function M.step_eval_queue(state, world, info)
     local raw_cost = 0
     if pool_idx ~= 4 then
       if ds_override then cpf.set_config("danger_scale", ds_override) end
-      -- For live pills, use cheapest adjacent tile (can't drive onto the pill)
       if obj.health and obj.health > 0 then
-        local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
-          obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
-        if ax then cost_dx, cost_dy = ax, ay end
+        if pool_idx == 6 then
+          -- attack_pill: route to cheapest adjacent tile (pill is still an
+          -- obstacle) but subtract the target pill's own danger contribution
+          -- from the path — the bot will neutralise it en-route so its fire
+          -- field shouldn't inflate the approach cost.
+          local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
+            obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+          if ax then cost_dx, cost_dy = ax, ay end
+          local pcontrib = threat.pill_contrib and
+                           threat.pill_contrib[obj.my * 256 + obj.mx]
+          raw_cost = cpf.smart_cost_minus_pill_danger(
+            KIND_NORMAL, tmx, tmy, cost_dx, cost_dy,
+            pcontrib, obj.mx, obj.my,
+            boat_flag, shells, trees, mines, armour)
+        else
+          -- For other live pills/bases, route to cheapest adjacent tile.
+          local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
+            obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+          if ax then cost_dx, cost_dy = ax, ay end
+          raw_cost = smart_cost(KIND_NORMAL, tmx, tmy, cost_dx, cost_dy, boat_flag,
+                                 shells, trees, mines, armour)
+        end
+      else
+        raw_cost = smart_cost(KIND_NORMAL, tmx, tmy, cost_dx, cost_dy, boat_flag,
+                               shells, trees, mines, armour)
       end
-      raw_cost = smart_cost(KIND_NORMAL, tmx, tmy, cost_dx, cost_dy, boat_flag,
-                             shells, trees, mines, armour)
       if ds_override then cpf.set_config("danger_scale", 1.0) end
     end
 
@@ -2786,11 +2846,6 @@ function M.step_eval_queue(state, world, info)
         hp_mult = (hp / C.PILLS_MAX_HEALTH) ^ 2  -- squared: 0.11 for 5hp, 0.44 for 10hp, 1.0 for 15hp
       end
       local travel = raw_cost
-      -- Cap travel cost for attack_pill: use estimate as fallback for distant/water pills
-      if pool_idx == 6 and raw_cost > 500 then
-        local est = cpf.estimate_cost(tmx, tmy, obj.mx, obj.my, boat_flag)
-        travel = 500 + est / 10
-      end
       local capture_mult = 1.0  -- pool 4 uses its own formula below
 
       -- Extra costs for attack_pill (pool 6)
@@ -2870,11 +2925,26 @@ function M.step_eval_queue(state, world, info)
           local _t_spot = clock_us()
           -- Use KIND_NORMAL (full danger) for the spot — it's a real
           -- position the tank must navigate to while the pill is still
-          -- alive and shooting. KIND_PILL is only for estimating the
-          -- cost to pick up the dead pill afterward.
+          -- alive and shooting.
           spot_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_spot.mx, best_spot.my,
                                  boat_flag, shells, trees, mines, armour)
           if spot_cost >= 1e9 then spot_cost = 500 end
+          -- Travel = spot → dead pill (pill will be dead by the time we
+          -- reach the spot, so this is a short capture walk).
+          -- Estimate is accurate here: spot has LOS to the pill and the
+          -- distance is within PILL_FIRE_RANGE tiles.
+          -- pickup: walk from spot to dead pill.
+          -- Delegate to the helper which picks the best available slate
+          -- and falls back to A* (cost_to) if Dijkstra misses.
+          -- Subtracts pill overlay (32767) and the pill's danger contrib.
+          do
+            local pck = obj.my * 256 + obj.mx
+            local pc  = threat.pill_contrib and threat.pill_contrib[pck]
+            travel = cpf.smart_cost_minus_pill_danger(
+              KIND_NORMAL, best_spot.mx, best_spot.my, obj.mx, obj.my,
+              pc, obj.mx, obj.my,
+              boat_flag, shells, trees, mines, armour)
+          end
           _spot_us = clock_us() - _t_spot
 
           -- Capture which pathfinder produced spot_cost + the realized
@@ -3092,13 +3162,17 @@ function M.step_eval_queue(state, world, info)
       -- Spot cost (path to firing position) stays fixed. A* and other combat
       -- terms scale with hp/wound — a nearly-dead pill is easier to fight
       -- but still costs the same to reach a good firing spot.
+      -- travel (dp, pool 6 only) gets its own wound factor at 2x the wound
+      -- discount (clamped to 1): heavily wounded pill → big travel discount,
+      -- fresh pill → no discount. Separate from hp*wound to avoid stacking.
       -- self_dr (pool 6 only) is the linear-by-HP discount on the spot path
       -- for the target pill's own contribution; subtracted so the bot will
       -- close in on a pill it's about to kill.
       -- ammo_cost (pool 6 only) is the shells-budget penalty; goes to
       -- COST_INF when we lack the shells to finish the pill at all.
-      local combat = (travel + stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
-      local c = spot_cost + combat * capture_mult + base_extra + threat_cost - self_dr + ammo_cost
+      local travel_wound = (pool_idx == 6) and math.min(1.0, wound_mult * 2) or 1.0
+      local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
+      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost - self_dr + ammo_cost
 
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
@@ -3124,7 +3198,7 @@ function M.step_eval_queue(state, world, info)
       -- avoid an extra Lua table allocation per candidate per tick.
       local entry = { cost = c, raw = raw_cost, tick = now, _p = pool_idx, _mx = obj.mx, _my = obj.my }
       if pool_idx == 6 then
-        entry._travel=travel; entry._stale=stale_cost; entry._age=_gen_age
+        entry._travel=travel; entry._travel_wound=travel_wound; entry._stale=stale_cost; entry._age=_gen_age
         entry._diff=diff_cost; entry._spot=spot_cost
         entry._spot_mx=spot_found_mx; entry._spot_my=spot_found_my
         entry._anger=anger_cost
@@ -3491,6 +3565,14 @@ end
 -- Subsequent ticks: process 2 candidates from the queue.
 -- =========================================================================
 function M.update_pool_cache(state, world, info)
+  -- Keep pool-8 stub fields fresh so get_pool_breakdown_json sees current state
+  -- even between replans (e.g. tank just picked up a pill mid-cycle).
+  if state._last_info then
+    state._last_info.carried_pills = info.carried_pills or 0
+    state._last_info.man_status    = info.man_status
+    state._last_info.inboat        = info.inboat
+  end
+
   -- Process candidates from the eval queue (2 per tick).
   -- The queue is built by init.lua after each replan decision,
   -- giving ~49 ticks to process before the next decision.
@@ -4609,6 +4691,7 @@ function M.pick_goal(state, world, info, quiet)
     at_base = (info.base and info.base.id and info.base.id > 0) or false,
     man_status = info.man_status,
     inboat = info.inboat,
+    carried_pills = info.carried_pills or 0,
     player_number = info.player_number,
     num_players = info.num_players,
     max_players = info.max_players,
@@ -5046,6 +5129,32 @@ function M.get_pool_breakdown_json(state)
   end
 
   append_attack_tank_breakdown()
+
+  -- Inject place_strategic (pool 8) candidates from finalize_pools result.
+  -- When not evaluated, inject a single stub row explaining why.
+  if pc[8] and pc[8].cands then
+    by_pool[8] = pc[8].cands
+  else
+    local li = state._last_info
+    local reason
+    if not li or (li.carried_pills or 0) < 1 then
+      reason = "no_pill_in_tank"
+    elseif li.inboat then
+      reason = "in_boat"
+    elseif li.man_status ~= C.LGM_INTANK then
+      reason = "lgm_not_in_tank"
+    else
+      reason = "not_evaluated"
+    end
+    by_pool[8] = {{
+      id = 0, mx = 0, my = 0,
+      cost = -1,
+      formula = "SKIP " .. reason .. "||" .. reason,
+      stale = 0,
+      reject = reason,
+      reject_remaining = 0,
+    }}
+  end
 
   -- Build a normal pool section. Used for indexes 1..9 and the
   -- def_build (11) / wait_for_lgm (12) strips below the main grid.

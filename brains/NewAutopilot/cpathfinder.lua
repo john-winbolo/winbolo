@@ -353,6 +353,12 @@ function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armou
 end
 
 -- Convenience constants for the kind parameter.
+-- KIND_NORMAL: standard danger-weighted path cost.
+-- KIND_PILL:   path cost with a specific pill's local danger contribution
+--              subtracted — used when the bot will neutralise that pill
+--              en-route, so its fire field shouldn't inflate the cost.
+--              Implemented via smart_cost_minus_pill_danger(); the caller
+--              supplies the pill's per-tile contrib map from threat.pill_contrib.
 M.KIND_NORMAL = 0
 M.KIND_PILL   = 1
 
@@ -539,6 +545,48 @@ end
 --- @return table  Array of {x=, y=} steps, or empty if dest wasn't reached.
 function M.trace_last_search(dx, dy)
   return cpf_trace_last_search(dx, dy)
+end
+
+--- smart_cost with a specific pill's local danger contribution removed.
+--- Use for attack_pill travel estimates: the bot will neutralise the target
+--- pill on the way, so its stamped danger field shouldn't inflate the path.
+---
+---   pill_contrib: threat.pill_contrib[pill_my*256+pill_mx] — per-tile
+---     danger values stamped by that pill (nil = no contribution, returns raw).
+---
+--- Traces the Dijkstra path (falling back to the last A* trace) and sums
+--- pill_contrib[tile] * (16/terrain_speed) for each path tile, then
+--- subtracts from raw cost.  Same formula as the Dijkstra step:
+---   danger * danger_scale * (16/speed)  with danger_scale = 1.
+function M.smart_cost_minus_pill_danger(kind, sx, sy, dx, dy,
+                                         pill_contrib, pill_mx, pill_my,
+                                         in_boat, shells, trees, mines, armour)
+  local raw = M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
+  if raw >= 1e29 then return raw end
+
+  local path = M.dijkstra_trace_path_by_kind(kind, dx, dy)
+  if not path or #path == 0 then
+    path = M.trace_last_search(dx, dy)
+  end
+  if not path or #path == 0 then return raw end
+
+  local reduction = 0
+  local ts        = C.TERRAIN_SPEED
+  for _, node in ipairs(path) do
+    if pill_mx and node.x == pill_mx and node.y == pill_my then
+      reduction = reduction + 32767
+    end
+    if pill_contrib then
+      local p = pill_contrib[node.y * 256 + node.x]
+      if p then
+        local tt  = get_terrain(node.x, node.y) & 0x0F
+        local spd = (ts and ts[tt]) or 16
+        if spd <= 0 then spd = 16 end
+        reduction = reduction + p * (16 / spd)
+      end
+    end
+  end
+  return math.max(0, raw - reduction)
 end
 
 return M
