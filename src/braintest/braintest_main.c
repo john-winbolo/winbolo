@@ -1461,11 +1461,15 @@ static char *panelPollCallback(int panel_idx) {
         && panel_idx < PANEL_REG_MAX) {
         const char *rec = g_panelPollRecording->frames[g_panelPollFrame]
                           .recordedPanels[panel_idx];
-        if (!rec) return NULL;
-        size_t n = strlen(rec);
-        char *copy = (char *)malloc(n + 1);
-        if (copy) memcpy(copy, rec, n + 1);
-        return copy;
+        if (rec) {
+            size_t n = strlen(rec);
+            char *copy = (char *)malloc(n + 1);
+            if (copy) memcpy(copy, rec, n + 1);
+            return copy;
+        }
+        /* No recorded data for this frame/panel (e.g. followBot was different
+         * during recording, or bot just registered it). Fall through to
+         * poll the live brain so the panel doesn't blank out. */
     }
     char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
@@ -1787,10 +1791,19 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
 
     /* A* cost: real path cost if A* completed, sentinel otherwise so
      * the HUD can render "unreached" without conflating with the
-     * estimate. */
-    app->clickCost = (status == 1)
-        ? dpf->g_cost[dmy * 256 + dmx]
-        : 1e30f;
+     * estimate. Node space is doubled for boat/land: land nodes at
+     * y*256+x, boat nodes at 65536+y*256+x. Take the minimum so water
+     * tiles (only reachable in boat mode) show the correct cost rather
+     * than reading the uninitialized land-mode slot (which is 0). */
+    if (status == 1) {
+        int ni_land = dmy * 256 + dmx;
+        int ni_boat = 65536 + ni_land;
+        float c_land = dpf->g_cost[ni_land];
+        float c_boat = dpf->g_cost[ni_boat];
+        app->clickCost = (c_land < c_boat) ? c_land : c_boat;
+    } else {
+        app->clickCost = 1e30f;
+    }
     app->clickEstCost = brainPathfinderEstimateCost(dpf, smx, smy, dmx, dmy, in_boat);
 
     /* Trace the path */
@@ -2328,16 +2341,14 @@ static void recordingCapture(BrainTestApp *app) {
     }
 
     /* ── Per-panel JSON capture ── one poll per registered panel
-     * for the followed bot. Pays the brain-eval cost only for
-     * panels the user actually has registered, not visible — so
-     * no need for "is the window open" gating. */
+     * for every bot. Pays the brain-eval cost for all panels so
+     * playback for any bot remains valid even after switching. */
     int totalN = panelRegistryCount();
     for (int pi = 0; pi < totalN && pi < PANEL_REG_MAX; pi++) {
         const PanelRegistryEntry *e = panelRegistryGet(pi);
-        if (!e || e->bot_owner != app->followBot) continue;
-        if (!e->lua_expr[0]) continue;
+        if (!e || !e->lua_expr[0]) continue;
         f->recordedPanels[pi] =
-            botManagerEvalLuaString(app->followBot, e->lua_expr);
+            botManagerEvalLuaString(e->bot_owner, e->lua_expr);
     }
 
     /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
@@ -2748,9 +2759,10 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
                            tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
             float dij = 1e30f;
             if (s && s->g_cost) {
-                int ni = (in_boat ? 65536 : 0)
-                       + app->clickMY * 256 + app->clickMX;
-                dij = s->g_cost[ni];
+                int ni_base = app->clickMY * 256 + app->clickMX;
+                float c_land = s->g_cost[ni_base];
+                float c_boat = s->g_cost[65536 + ni_base];
+                dij = (c_land < c_boat) ? c_land : c_boat;
             }
             if (dij >= 1e29f) {
                 dijStr = "unreached";
