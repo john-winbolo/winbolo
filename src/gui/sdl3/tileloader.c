@@ -395,6 +395,10 @@ static void scanDensityCoverage(void) {
                 break;
             }
         }
+        if (s_spriteDensities[i].maxDensity > 1) {
+            SDL_Log("tileLoader: sprite '%s' maxDensity=%d",
+                    gTileMap[i].name, s_spriteDensities[i].maxDensity);
+        }
     }
 
     SDL_Log("tileLoader: density coverage for skin '%s': "
@@ -667,29 +671,35 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             break;
         case GFX_TILE_DETAIL_HIGH_DETAIL:
             targetDensity = tileLoaderGetSpriteMaxDensity(e->name);
-            /* Atlas slot is `scale` game-pixels wide — anything above
-             * that just gets nearest-downscaled to fit, so cap. */
-            if (targetDensity > scale) targetDensity = scale;
+            /* No cap: HIGH_DETAIL loads the best available image and
+             * downscales it into the atlas slot.  A high-res source
+             * downscaled looks better than a low-res source stretched. */
             break;
         }
 
         /* Try N-<name>.png prefix at the chosen density, in the
          * skin dir first then the default.  tryLoadSizedPNG
          * already handles exact / smaller / larger fallback. */
+        SDL_Log("tileLoader[HD] sprite='%s' detail=%d scale=%d targetDensity=%d w=%d h=%d skin='%s'",
+                e->name, (int)detail, scale, targetDensity, w, h, s_skinName);
         if (targetDensity > 1) {
             int targetPx = targetDensity * TILE_SIZE_X * (e->width / TILE_SIZE_X);
             (void)targetPx;
             char dir[256];
             if (s_skinName[0]) {
                 SDL_snprintf(dir, sizeof(dir), "data/skins/%s", s_skinName);
-                if (tryLoadSizedPNG(dir, e->name, w, w, h, tmpBuf)) {
+                bool skinHit = tryLoadSizedPNG(dir, e->name, w, w, h, tmpBuf);
+                SDL_Log("tileLoader[HD]   tryLoadSizedPNG skin dir='%s' -> %s", dir, skinHit ? "HIT" : "miss");
+                if (skinHit) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                     loaded = true;
                     pngCount++;
                 }
             }
             if (!loaded) {
-                if (tryLoadSizedPNG("data/svg", e->name, w, w, h, tmpBuf)) {
+                bool svgHit = tryLoadSizedPNG("data/svg", e->name, w, w, h, tmpBuf);
+                SDL_Log("tileLoader[HD]   tryLoadSizedPNG data/svg -> %s", svgHit ? "HIT" : "miss");
+                if (svgHit) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
                     loaded = true;
                     pngCount++;
