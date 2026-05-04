@@ -84,6 +84,7 @@ static SDL_Texture  *gTilesTex      = NULL;
 static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center pixel (8,8) is aim point */
 static int           gZoomFactor    = 1;
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
+static bool          gPendingTileReload = false; /* deferred reload requested mid-frame */
 
 /* Phase 4 render-target textures.
    Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -294,11 +295,18 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
 /* (old sdl3SetupDrawArrays body removed — now in mapview.c) */
 static bool sdl3LoadTiles(void); /* forward */
 
-/* Public reload: drop the cached tile texture and immediately rebuild
- * it so the new skin / SVG-allow setting is available right away —
- * needed for the splash-mode Settings dialog where the world isn't
- * rendering between frames to lazily rebuild for us. */
+/* Public reload: defer the atlas rebuild to the top of the next frame
+ * so it never happens mid-render (which would corrupt gSheetScale for
+ * any draw calls that already sampled it earlier in the same frame). */
 void sdl3DrawReloadTiles(void) {
+  gPendingTileReload = true;
+}
+
+/* Flush a pending tile reload.  Called at the very start of each frame
+ * before any draw calls read gSheetScale or gTilesTex. */
+static void sdl3FlushPendingTileReload(void) {
+  if (!gPendingTileReload) return;
+  gPendingTileReload = false;
   if (gTilesTex != NULL) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
@@ -1362,6 +1370,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     return;
   }
 
+  sdl3FlushPendingTileReload();
   sdl3DrawAdaptRenderTarget();
 
   bool tabletMode = uiModeIsTablet();
@@ -1892,6 +1901,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   (void)rcWindow;
   if (gRenderer == NULL) return;
 
+  sdl3FlushPendingTileReload();
   sdl3DrawAdaptRenderTarget();
 
   bool tabletMode = uiModeIsTablet();

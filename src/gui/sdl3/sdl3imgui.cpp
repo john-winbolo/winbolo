@@ -1822,8 +1822,34 @@ static void renderSettingsPanel(ClientSim *cs) {
         float avail = ImGui::GetContentRegionAvail().x;
         if (avail > btnW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW) * 0.5f);
         if (ImGui::Button("Close", ImVec2(btnW, 0))) {
+            if (imguiSettingsHasUnappliedSkinPreview()) {
+                ImGui::OpenPopup("##applySkinIngame");
+            } else {
+                s_showSettings = false;
+            }
+        }
+    }
+
+    if (ImGui::BeginPopupModal("##applySkinIngame", nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Do you want to apply the skin currently being previewed (%s)?",
+                    imguiSettingsGetPreviewedSkinName());
+        ImGui::Spacing();
+        if (ImGui::Button("Yes", ImVec2(80, 0))) {
+            imguiSettingsApplyPreviewedSkin();
+            ImGui::CloseCurrentPopup();
             s_showSettings = false;
         }
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(80, 0))) {
+            ImGui::CloseCurrentPopup();
+            s_showSettings = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::End();
