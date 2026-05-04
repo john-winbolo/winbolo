@@ -346,10 +346,14 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1),
         "(%3d,%3d)", r->mx, r->my);
     ImGui::SameLine();
-    if (r->weighted < 0) {
+    if (r->weighted <= -1e9f) {
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1), "cost=   ?   ");
     } else if (r->weighted >= 1e9f) {
         ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "cost=  INF  ");
+    } else if (r->weighted < 0) {
+        /* Negative: active-goal discount drove total below zero. */
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1),
+            "cost= %-6.0f", r->weighted);
     } else {
         ImGui::TextColored(ImVec4(1, 1, 0.4f, 1),
             "cost= %-6.0f", r->weighted);
