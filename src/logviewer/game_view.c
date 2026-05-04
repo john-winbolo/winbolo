@@ -116,6 +116,12 @@ extern BYTE lv_screenGetSizeY(void);
 extern BYTE lv_screenGetXOffset(void);
 extern BYTE lv_screenGetYOffset(void);
 
+/* Sub-tile pan within (xOffset,yOffset), in unzoomed pixels [0,16).
+ * Drives edgeX/edgeY so the camera moves at pixel granularity rather
+ * than snapping by tiles. The dead-zone autoscroll and arrow-key pan
+ * both update this via lv_screenPanToTotalPixels. */
+extern void lv_screenGetSubOffset(int *x, int *y);
+
 /* --- Module statics ----------------------------------------------- */
 
 /* Mirrors live-game openInGameFonts: 4 primary + 4 SlabK fallback. */
@@ -138,12 +144,15 @@ static BYTE         s_savedScreenSizeY = 0;
 static bool         s_didTtfInit    = false;
 
 /* Scrolling-marquee tick. The live game advances the marquee every
- * MESSAGE_SCROLL_TIME (4) display ticks, with the display tick running
- * at GAME_TICK_LENGTH (10ms) — i.e. one column shift per 40ms of
- * wall-clock time. Anchored to SDL_GetTicks (NOT timeRunning) so
- * fast-forward / rewind / pause don't change scroll speed; only
- * gameplay events fly by faster. Reset on setup. */
-#define GV_MESSAGE_TICK_MS 40
+ * MESSAGE_SCROLL_TIME (4) display ticks. Display ticks run every OTHER
+ * GAME_TICK_LENGTH iteration of the live client's main loop (the
+ * justKeysFlag alternation in winbolo.c — only the "game tick" branch
+ * calls clientSimDisplayTick), so they fire every 20ms wall, not 10ms.
+ * That gives one column shift per 4 × 20ms = 80ms wall-clock at 1×
+ * speed. Anchored to SDL_GetTicks (NOT timeRunning) so fast-forward /
+ * rewind / pause don't change scroll speed; only gameplay events fly
+ * by faster. Reset on setup. */
+#define GV_MESSAGE_TICK_MS 80
 static uint32_t     s_lastMessageTickMs = 0;
 
 /* Death-static effect — Bolo-style pixel noise drawn over the main view
@@ -604,21 +613,18 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   const int tileH    = TILE_SIZE_Y * zf;
   const BYTE camera  = lv_gameViewGetCameraSlot();
 
-  /* Sub-tile camera pan. lv_imgui_game_view_update_camera set
-   * xOffset = mx-8 / yOffset = my-8 (with screenSizeX = 16, that math
-   * already centres the tank tile in the visible 15-tile window).
-   * edgeX/edgeY apply the within-tile pixel offset on top of that so
-   * the tank visually slides smoothly across tile boundaries instead
-   * of jumping by a whole tile every time mx changes. */
-  int edgeX = 0, edgeY = 0;
-  if (lv_playersIsInUse(camera)) {
-    BYTE camMx = 0, camMy = 0, camPx = 0, camPy = 0, camFrame = 0;
-    bool camOnBoat = false;
-    lv_playersGetTankDetails(camera, &camMx, &camMy, &camPx, &camPy,
-                             &camFrame, &camOnBoat);
-    edgeX = (int)camPx * zf;
-    edgeY = (int)camPy * zf;
-  }
+  /* Sub-tile camera pan from the viewport's pixel-precise position.
+   * lv_imgui_game_view_update_camera maintains (xOffset,yOffset) in
+   * whole tiles and (subPxX,subPxY) in sub-tile pixels. Deriving edgeX
+   * from subPxX (rather than the camera tank's camPx) decouples the
+   * world shift from the tank's intra-tile motion: in the dead-zone
+   * safe area the camera sits still and the tank slides on screen,
+   * and at tile boundaries there is no 16-px snap because the camera
+   * never tracked camPx in the first place. */
+  int subX = 0, subY = 0;
+  lv_screenGetSubOffset(&subX, &subY);
+  const int edgeX = subX * zf;
+  const int edgeY = subY * zf;
 
   /* Step 1 — background. */
   SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -807,16 +813,29 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
       lv_playersGetPlayerName(slot, name);
       if (name[0] == '\0') continue;
 
-      BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+      BYTE rawMx = 0, rawMy = 0, rawPx = 0, rawPy = 0, frame = 0;
       bool onBoat = false;
-      lv_playersGetTankDetails(slot, &mx, &my, &px, &py, &frame, &onBoat);
+      lv_playersGetTankDetails(slot, &rawMx, &rawMy, &rawPx, &rawPy, &frame, &onBoat);
 
-      /* lv_playersGetTankDetails returns map-space (0..255), but
-       * sdl3DrawTankLabel computes `bbx = mx*TILE_SIZE_X+apx` and
-       * therefore expects viewport-relative screen-space (0..15).
-       * Subtract the viewport tile origin to convert; skip tanks
-       * outside the visible viewport — their labels would clip
-       * off-screen anyway. */
+      /* Apply the same TANK_SUBTRACT (128) adjustment that
+       * lv_playersMakeScreenTanks (players.c:506-514) bakes into
+       * screenTanks before mapView renders the sprite. The tank's
+       * sprite anchor sits 8 unzoomed px (½ tile) up-and-left of the
+       * raw mapX/pixelX/mapY/pixelY the log carries; without this the
+       * label drifts ½ tile south-east of the sprite. The encoded
+       * position is (mx<<8)+(px<<4) in 12-bit world units. */
+      uint16_t encX = (uint16_t)(((uint16_t)rawMx << 8) + ((uint16_t)rawPx << 4) - 128);
+      uint16_t encY = (uint16_t)(((uint16_t)rawMy << 8) + ((uint16_t)rawPy << 4) - 128);
+      BYTE mx = (BYTE)(encX >> 8);
+      BYTE my = (BYTE)(encY >> 8);
+      BYTE px = (BYTE)((encX & 0xF0) >> 4);
+      BYTE py = (BYTE)((encY & 0xF0) >> 4);
+
+      /* mx/my are now in map-space (0..255); sdl3DrawTankLabel computes
+       * `bbx = mx*TILE_SIZE_X+apx` and expects viewport-relative
+       * screen-space (0..15). Subtract the viewport tile origin to
+       * convert; skip tanks outside the visible viewport — their labels
+       * would clip off-screen anyway. */
       int sx = (int)mx - (int)viewOffX;
       int sy = (int)my - (int)viewOffY;
       if (sx < 0 || sx >= GV_SCREEN_TILES) continue;
