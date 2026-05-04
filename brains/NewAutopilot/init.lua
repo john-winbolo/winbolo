@@ -1206,9 +1206,11 @@ function Brain.think(info)
   --
   -- KIND_NORMAL = 0 — standard danger weighting, used for refuel,
   --                   capture, exploration, etc.
-  -- KIND_PILL   = 1 — danger downscaled (DIJKSTRA_PILL_DANGER_SCALE),
-  --                   used for attack_pill / capture_pill cost ranking
-  --                   where we expect to drive into danger.
+  -- KIND_PILL   = 1 — path cost with a specific pill's local danger
+  --                   contribution subtracted.  No dedicated Dijkstra slate;
+  --                   implemented via cpf.smart_cost_minus_pill_danger()
+  --                   which runs KIND_NORMAL then walks the traced path and
+  --                   removes that pill's per-tile contrib from the total.
   --
   -- state.dij.slates is a Lua-side mirror of slate metadata for
   -- inspection / debugging. Each entry tracks the parameters used to
