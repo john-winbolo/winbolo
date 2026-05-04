@@ -204,6 +204,15 @@ void lv_efree(Generic object);
 /* Everytime something gets hit armour is decreased by this amount */
 #define DAMAGE 5
 
+/* Mine explosion damage (mirrors bolo/tank.h MINE_DAMAGE) */
+#define MINE_DAMAGE 10
+
+/* Tank inventory caps (mirror bolo/gametype.h) */
+#define TANK_FULL_ARMOUR 40
+#define TANK_FULL_SHELLS 40
+#define TANK_FULL_MINES  40
+#define TANK_FULL_TREES  40
+
 #define M_W_SHIFT_SIZE 8
 
 /* Version number */

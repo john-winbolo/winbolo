@@ -201,6 +201,23 @@ void lv_messageAddItem(char *top, char *bottom);
 void lv_messageUpdate(void);
 
 /*********************************************************
+*NAME:          lv_messageDrainQueue
+*PURPOSE:
+*  Pops every pending cell straight into the visible row,
+*  leaving the marquee with the queue empty and the visible
+*  cells holding the tail of whatever was queued. Used by
+*  the seek path so jumping forward doesn't dump tens of
+*  seconds of accumulated text to scroll past at wall-clock
+*  pace — instead the most recent message lands in the
+*  visible cells and the next live message starts scrolling
+*  in from the right normally.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+void lv_messageDrainQueue(void);
+
+/*********************************************************
 *NAME:          lv_messageGetMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/1/98

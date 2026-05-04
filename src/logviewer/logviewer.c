@@ -87,6 +87,19 @@ uint32_t lv_gameViewGetDeathTimeMs(BYTE slot) {
   if (slot >= MAX_TANKS) return 0;
   return g_lv->gameViewHud[slot].deathTimeMs;
 }
+void lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
+  if (slot >= MAX_TANKS) {
+    if (shells) *shells = 0;
+    if (mines)  *mines  = 0;
+    if (armour) *armour = 0;
+    if (trees)  *trees  = 0;
+    return;
+  }
+  if (shells) *shells = g_lv->tankInv[slot].shells;
+  if (mines)  *mines  = g_lv->tankInv[slot].mines;
+  if (armour) *armour = g_lv->tankInv[slot].armour;
+  if (trees)  *trees  = g_lv->tankInv[slot].trees;
+}
 
 /* Pending memory-based log load (set by logViewerRunFromMemory) */
 static uint8_t *s_pendingZipData = NULL;
@@ -512,6 +525,11 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     memset(g_lv->kills, 0, sizeof(g_lv->kills));
     memset(g_lv->deaths, 0, sizeof(g_lv->deaths));
     memset(g_lv->gameViewHud, 0, sizeof(g_lv->gameViewHud));
+    memset(g_lv->tankInv, 0, sizeof(g_lv->tankInv));
+    memset(g_lv->prevBaseShells, 0, sizeof(g_lv->prevBaseShells));
+    memset(g_lv->prevBaseMines, 0, sizeof(g_lv->prevBaseMines));
+    memset(g_lv->prevBaseArmour, 0, sizeof(g_lv->prevBaseArmour));
+    memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
     lv_screenSetState(g_lv);
 
@@ -765,6 +783,47 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                     g_lv->wantScreenUpdate = TRUE;
                     continue;
                 }
+            }
+
+            /* ',' / '<' jump back, '.' / '>' jump forward, 10s each.
+             * SDL3 reports key.key as the unmodified keycode by default,
+             * so Shift+',' arrives as SDLK_COMMA — match both physical
+             * keys regardless of shift state. Re-centres the camera
+             * after the seek because a 10s jump can leave the followed
+             * tank far outside the viewport, and the dead-zone tracker
+             * would otherwise scroll one tile per frame to catch up. */
+            if (g_lv->gameView && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+                g_lv->isLoaded &&
+                (sdlEvent.key.key == SDLK_COMMA  || sdlEvent.key.key == SDLK_LESS ||
+                 sdlEvent.key.key == SDLK_PERIOD || sdlEvent.key.key == SDLK_GREATER)) {
+                size_t curPos, totSize;
+                uint32_t curTime, totTime;
+                lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+                if (totTime > 0) {
+                    const uint32_t kStepMs = 10000;
+                    bool back = (sdlEvent.key.key == SDLK_COMMA ||
+                                 sdlEvent.key.key == SDLK_LESS);
+                    uint32_t targetMs;
+                    if (back) {
+                        targetMs = (curTime > kStepMs) ? curTime - kStepMs : 0;
+                    } else {
+                        targetMs = curTime + kStepMs;
+                        if (targetMs > totTime) targetMs = totTime;
+                    }
+                    float ratio = (float)targetMs / (float)totTime;
+                    unsigned char wasPlaying = g_lv->playIsPlaying;
+                    if (wasPlaying) lv_windowPause();
+                    lv_clientMutexWaitFor();
+                    lv_drawDirtyScreen();
+                    lv_screenSeekToPosition(ratio);
+                    lv_drawDirtyScreen();
+                    lv_clientMutexRelease();
+                    lv_imgui_game_view_init_camera(g_lv);
+                    lv_windowNeedRedraw();
+                    if (wasPlaying) lv_windowPlay();
+                    g_lv->wantScreenUpdate = TRUE;
+                }
+                continue;
             }
 
             lv_imgui_context_handle_event(&sdlEvent);
