@@ -26,18 +26,12 @@
 *********************************************************/
 
 #include <stdio.h>
-#ifdef _WIN32
-#include <winsock2.h>
-#else
-#include "../bolo/platform_net.h"
 #include <SDL3/SDL.h>
-typedef SDL_Mutex *HANDLE;
-#endif
 #include "../bolo/global.h"
 #include "server_sim.h"
 #include "threads.h"
 
-HANDLE hMutexHandle = NULL;
+SDL_Mutex *hMutexHandle = NULL;
 bool threadStarted = FALSE;
 
 /*********************************************************
@@ -60,11 +54,7 @@ bool threadsCreate(bool context) {
     return TRUE;
   }
   serverSimConsoleMessage("Thread Manager Startup");
-#ifdef _WIN32
-  hMutexHandle = CreateMutex(NULL, FALSE, "WinBoloDS");
-#else
   hMutexHandle = SDL_CreateMutex();
-#endif
   if (hMutexHandle == NULL) {
     returnValue = FALSE;
     fprintf(stderr, "Error Creating Mutex\n");
@@ -91,12 +81,7 @@ void threadsDestroy(void) {
   }
   threadStarted = FALSE;
   serverSimConsoleMessage("Thread Manager Shutdown");
-  /* TCP Listener */
-#ifdef _WIN32
-  CloseHandle(hMutexHandle);
-#else
   SDL_DestroyMutex(hMutexHandle);
-#endif
   hMutexHandle = NULL;
    
 }
@@ -113,19 +98,11 @@ void threadsDestroy(void) {
 *
 *********************************************************/
 void threadsWaitForMutex(void) {
-#ifdef _WIN32
-  WaitForSingleObject(hMutexHandle, INFINITE);
-#else
   SDL_LockMutex(hMutexHandle);
-#endif
 }
 
 bool threadsTryWaitForMutex(void) {
-#ifdef _WIN32
-  return WaitForSingleObject(hMutexHandle, 0) == WAIT_OBJECT_0;
-#else
-  return SDL_TryLockMutex(hMutexHandle) == 0;
-#endif
+  return SDL_TryLockMutex(hMutexHandle);
 }
 
 /*********************************************************
@@ -140,10 +117,6 @@ bool threadsTryWaitForMutex(void) {
 *
 *********************************************************/
 void threadsReleaseMutex(void) {
-#ifdef _WIN32
-  ReleaseMutex(hMutexHandle);
-#else
   SDL_UnlockMutex(hMutexHandle);
-#endif
 }
 
