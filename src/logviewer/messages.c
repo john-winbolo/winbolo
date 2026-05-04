@@ -233,6 +233,24 @@ void lv_messageUpdate(void) {
 }
 
 /*********************************************************
+*NAME:          lv_messageDrainQueue
+*PURPOSE:
+*  Drains every pending cell into the visible row in one go.
+*  Each lv_messageUpdate call pops one cell and shifts left,
+*  so looping until the queue is empty leaves the visible
+*  cells holding the tail of whatever was queued — which is
+*  exactly what continuous play would have eventually shown.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+void lv_messageDrainQueue(void) {
+  while (NonEmpty(msg)) {
+    lv_messageUpdate();
+  }
+}
+
+/*********************************************************
 *NAME:          lv_messageGetMessage
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/1/98

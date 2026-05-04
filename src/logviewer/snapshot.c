@@ -289,6 +289,30 @@ bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePo
   return FALSE;
 }
 
+bool lv_snapshotFindByTime(snapshot *value, uint32_t targetTime, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
+  snapshot prev = NULL;
+  snapshot q = *value;
+
+  while (q != NULL && q->time <= targetTime) {
+    prev = q;
+    q = q->next;
+  }
+
+  /* If targetTime is before the first snapshot, use the first snapshot */
+  if (prev == NULL && *value != NULL) {
+    prev = *value;
+  }
+
+  if (prev != NULL) {
+    *filePos = prev->filePos;
+    *time = prev->time;
+    *key = prev->key;
+    *pTeams = prev->pTeams;
+    return TRUE;
+  }
+  return FALSE;
+}
+
 bool lv_snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
   bool returnValue = FALSE;
   snapshot prev;

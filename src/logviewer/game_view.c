@@ -63,6 +63,7 @@ extern BYTE  lv_gameViewGetCameraSlot(void);
 extern bool  lv_gameViewIsHudAlive(BYTE slot);
 extern uint16_t lv_gameViewGetKills(BYTE slot);
 extern uint16_t lv_gameViewGetDeaths(BYTE slot);
+extern void  lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
 
 extern SDL_Window   *lv_drawGetSDLWindow(void);
 extern SDL_Renderer *lv_drawGetSDLRenderer(void);
@@ -176,11 +177,6 @@ static uint32_t     s_deathStaticLastTick = 0;
  * lv_screenUpdateView covers count=0..ssx, so ssx=16 fills the 17 columns
  * mapView reads). */
 #define GV_SCREEN_TILES 16
-
-/* Tank-armour proxy — log doesn't carry tank shells / mines / trees /
- * partial armour, so the tank bar is binary alive/dead. TANK_FULL_ARMOUR
- * (40) is the same value the live game's screenGetTankStats clamps to. */
-#define GV_TANK_FULL_ARMOUR 40
 
 /* --- Font load (mirrors sdl3draw.c openInGameFonts) ----------------
  *
@@ -729,12 +725,17 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     sdl3DrawStatusTank(i, ta);
   }
 
-  /* Step 11 — bars. The log doesn't carry shells/mines/trees or
-   * partial armour, so the tank bar is binary alive/dead and the base
-   * bar is always empty. (Both documented out-of-scope.) */
+  /* Step 11 — tank stat bars. Legacy logs don't carry tank inventory,
+   * so the values are inferred by walking the event stream (see
+   * inv_setSpawn / inv_findTankAtTile in screen.c). Approximate but
+   * tracks roughly correctly between snapshot anchors. Base bars stay
+   * empty — the camera tank's view doesn't spectate a specific base. */
   {
-    BYTE armour = lv_gameViewIsHudAlive(camera) ? GV_TANK_FULL_ARMOUR : 0;
-    sdl3DrawStatusTankBars(0, 0, /* shells */ 0, /* mines */ 0, armour, /* trees */ 0);
+    BYTE shells = 0, mines = 0, armour = 0, trees = 0;
+    if (lv_gameViewIsHudAlive(camera)) {
+      lv_gameViewGetInventory(camera, &shells, &mines, &armour, &trees);
+    }
+    sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
     sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0, FALSE);
   }
 
