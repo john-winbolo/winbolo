@@ -1798,8 +1798,9 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     if (status == 1) {
         int ni_land = dmy * 256 + dmx;
         int ni_boat = 65536 + ni_land;
-        float c_land = dpf->g_cost[ni_land];
-        float c_boat = dpf->g_cost[ni_boat];
+        uint32_t ep  = dpf->current_epoch;
+        float c_land = (dpf->epoch[ni_land] == ep) ? dpf->g_cost[ni_land] : 1e30f;
+        float c_boat = (dpf->epoch[ni_boat] == ep) ? dpf->g_cost[ni_boat] : 1e30f;
         app->clickCost = (c_land < c_boat) ? c_land : c_boat;
     } else {
         app->clickCost = 1e30f;
