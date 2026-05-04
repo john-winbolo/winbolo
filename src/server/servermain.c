@@ -295,6 +295,8 @@ void processKeys(bool isQuiet) {
 					threadsWaitForMutex();
 					transportUdpServerKickPlayer(&serverSim, playerKick);
 					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "quit", 4) == 0) {
+					/* Loop's while-condition will exit on next check */
 				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
 					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
 				}
@@ -380,6 +382,8 @@ void processKeys(bool isQuiet) {
         threadsWaitForMutex();
         transportUdpServerKickPlayer(&serverSim, playerKick);
         threadsReleaseMutex();
+      } else if (strncmp(keyBuff, "quit", 4) == 0) {
+        /* Loop's while-condition will exit on next check */
       } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
         fprintf(stderr, "Unknown command - Type \"help\" for help\n");
       }
@@ -1248,8 +1252,10 @@ int main(int argc, char **argv) {
 
   serverInstanceShutdown(&serverSim);
 
+  if (isLogging == TRUE) {
+    logStop(); /* Finalize zip — must run regardless of WBN upload */
+  }
   if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
-    logStop(); /* Flush and close the zip so the file has content before upload */
     serverMessageConsoleMessage(&serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
     httpSendLogFile(fileName, key, FALSE);

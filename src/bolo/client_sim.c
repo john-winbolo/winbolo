@@ -203,7 +203,6 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
     cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
   }
   pillsCreate(&cs->sim.pb);
-  logCreate();
   screenBrainMapCreate(cs);
   
   /* Initialize brain state (now per-instance in the struct).
@@ -255,7 +254,6 @@ void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
  *  cs - Pointer to the ClientSim to destroy
  *********************************************************/
 void clientSimDestroy(ClientSim *cs) {
-  logDestroy();
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
   tankDestroy(&cs->sim, &MY_TANK(cs));
