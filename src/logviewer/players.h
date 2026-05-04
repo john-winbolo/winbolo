@@ -71,6 +71,11 @@ typedef struct {
   BYTE lgmPixelX;                   /* LGM Pixel X and Y positions */
   BYTE lgmPixelY;
   BYTE lgmFrame;                    /* LGM Frame */
+  /* Server emits log_LgmLocation only while the LGM is out, so a
+   * per-tick wipe followed by per-event set yields presence. lgmIsDead
+   * is sticky from log_LostMan until the next log_LgmLocation. */
+  bool lgmIsOut;
+  bool lgmIsDead;
   /* Misc */
   bool isChecked;                   /* Is this item checked */
   bool needUpdate;
@@ -398,6 +403,16 @@ void lv_playersLeaveAlliance(BYTE playerNum);
 void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember);
 
 void lv_playersLgmZero();
+
+/* Marks the LGM dead for the given slot. Cleared by the next
+ * lv_playersUpdateLgm (i.e. the LGM has respawned and is out again). */
+void lv_playersSetLgmDead(BYTE playerNum);
+
+/* Reports the camera-display state of an LGM. Both flags are FALSE for
+ * unused slots. isOut means a log_LgmLocation arrived in the current
+ * tick batch; isDead means a log_LostMan arrived since the last
+ * log_LgmLocation for this slot. */
+void lv_playersGetLgmStatus(BYTE playerNum, bool *isOut, bool *isDead);
 
 bool lv_playersChooseView(int x, int y);
 

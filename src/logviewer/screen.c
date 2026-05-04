@@ -579,6 +579,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_LostMan:
       logReadBytes(&opt1, 1);
+      lv_playersSetLgmDead(opt1);
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};

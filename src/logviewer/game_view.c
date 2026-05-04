@@ -35,6 +35,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <math.h>
 #include <stdio.h>
 
 #include "../bolo/global.h"
@@ -72,6 +73,9 @@ extern bool  lv_playersIsInUse(BYTE playerNumber);
 extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                       BYTE *px, BYTE *py, BYTE *frame,
                                       bool *onBoat);
+extern void  lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
+                                     BYTE *px, BYTE *py, BYTE *frame);
+extern void  lv_playersGetLgmStatus(BYTE playerNumber, bool *isOut, bool *isDead);
 extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest);
 extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
 
@@ -120,6 +124,11 @@ extern BYTE lv_screenGetYOffset(void);
 static SDL_Texture *s_backgroundTex = NULL;
 static SDL_Texture *s_tankBarsTex   = NULL;
 static SDL_Texture *s_baseBarsTex   = NULL;
+/* Camera tank's LGM status circle. Owned here (not in sdl3draw_status)
+ * so the live game's gManStatusTex remains untouched. Mirrors
+ * sdl3draw.c:1885 sdl3DrawSetManStatus drawing exactly. */
+static SDL_Texture *s_manStatusTex  = NULL;
+static bool         s_manStatusReady = false;
 static TTF_Font    *s_fonts[GV_NUM_FONTS] = { NULL };
 static int          s_zoom          = 0;
 static int          s_savedWindowW  = 0;
@@ -338,6 +347,131 @@ static SDL_Texture *gv_createBarTarget(SDL_Renderer *renderer, int w, int h) {
   return t;
 }
 
+/* Local copy of bolo/util.c utilCalcAngle. The LogViewer links its own
+ * logviewer/util.c instead of bolo/util.c, so the symbol isn't
+ * available. Self-contained math; no shared state. */
+static TURNTYPE gv_calcAngle(WORLD object1X, WORLD object1Y, WORLD object2X, WORLD object2Y) {
+  TURNTYPE returnValue;
+  double angle;
+  double gapX, gapY;
+
+  if (object2X - object1X < 0) {
+    gapX = object1X - object2X;
+  } else {
+    gapX = object2X - object1X;
+  }
+  if (object2Y - object1Y < 0) {
+    gapY = object1Y - object2Y;
+  } else {
+    gapY = object2Y - object1Y;
+  }
+
+  angle = atan((gapX / gapY));
+  angle = (angle / RADIANS_MAX) * DEGREES_MAX;
+  returnValue = (TURNTYPE)((BRADIANS_MAX / DEGREES_MAX) * angle);
+
+  if (object2X - object1X <= 0 && object2Y - object1Y <= 0) {
+    returnValue = (TURNTYPE)(BRADIANS_MAX - returnValue);
+  } else if (object2X - object1X > 0 && object2Y - object1Y >= 0) {
+    returnValue = (TURNTYPE)(BRADIANS_SOUTH - returnValue);
+  } else if (object2X - object1X <= 0 && object2Y - object1Y >= 0) {
+    returnValue += BRADIANS_SOUTH;
+  }
+  return returnValue;
+}
+
+static void gv_setManClear(SDL_Renderer *renderer) {
+  s_manStatusReady = false;
+  if (!renderer || !s_manStatusTex) return;
+  SDL_SetRenderTarget(renderer, s_manStatusTex);
+  SDL_SetTextureBlendMode(s_manStatusTex, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(renderer, NULL);
+  SDL_SetRenderTarget(renderer, NULL);
+}
+
+/* Mirrors sdl3draw.c:1885 sdl3DrawSetManStatus. The circle/arrow math
+ * is duplicated rather than shared so this TU stays independent of the
+ * live game's gManStatusTex globals. */
+static void gv_setManStatus(SDL_Renderer *renderer, bool isDead, TURNTYPE angle) {
+  if (!renderer || !s_manStatusTex) return;
+
+  double dbAngle, dbTemp;
+  int addX, addY;
+  int cx = MAN_STATUS_CENTER_X;
+  int cy = MAN_STATUS_CENTER_Y;
+
+  TURNTYPE a = angle + BRADIANS_SOUTH;
+  if (a >= BRADIANS_MAX) a -= BRADIANS_MAX;
+
+  if (a >= BRADIANS_NORTH && a < BRADIANS_EAST) {
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
+  } else if (a >= BRADIANS_EAST && a < BRADIANS_SOUTH) {
+    a = (float)BRADIANS_SOUTH - a;
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
+  } else if (a >= BRADIANS_SOUTH && a < BRADIANS_WEST) {
+    a = (float)BRADIANS_WEST - a;
+    a = (float)BRADIANS_EAST - a;
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
+  } else {
+    a = (float)BRADIANS_MAX - a;
+    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
+    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
+    addX = cx; addY = cy;
+    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
+    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
+  }
+
+  int zf = s_zoom;
+  int scx = (MAN_STATUS_CENTER_X + 1) * zf;
+  int scy = (MAN_STATUS_CENTER_Y + 1) * zf;
+  int r   = (MAN_STATUS_RADIUS - 1) * zf;
+  int sAddX = addX * zf;
+  int sAddY = addY * zf;
+
+  SDL_SetRenderTarget(renderer, s_manStatusTex);
+  SDL_SetTextureBlendMode(s_manStatusTex, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(renderer, NULL);
+
+  if (isDead) {
+    SDL_SetRenderDrawColor(renderer, 200, 80, 0, 255);
+    for (int dy = -r; dy <= r; dy++) {
+      int dx = (int)sqrtf((float)(r * r - dy * dy));
+      SDL_RenderLine(renderer,
+                     (float)(scx - dx), (float)(scy + dy),
+                     (float)(scx + dx), (float)(scy + dy));
+    }
+  } else {
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    int steps = 4 * r * 4;
+    if (steps < 64) steps = 64;
+    for (int i = 0; i < steps; i++) {
+      double a1 = (RADIANS_MAX * i) / steps;
+      double a2 = (RADIANS_MAX * (i + 1)) / steps;
+      SDL_RenderLine(renderer,
+                     (float)(scx + r * cos(a1)), (float)(scy + r * sin(a1)),
+                     (float)(scx + r * cos(a2)), (float)(scy + r * sin(a2)));
+    }
+    SDL_RenderLine(renderer, (float)scx, (float)scy, (float)sAddX, (float)sAddY);
+  }
+
+  SDL_SetRenderTarget(renderer, NULL);
+  s_manStatusReady = true;
+}
+
 /* --- Public API --------------------------------------------------- */
 
 int lv_drawGameViewGetZoom(void) {
@@ -377,6 +511,11 @@ void lv_drawGameViewSetup(int zoomFactor) {
   s_baseBarsTex   = gv_createBarTarget(renderer,
                                        STATUS_BASE_BARS_MAX_WIDTH,
                                        STATUS_BASE_BARS_TOTALHEIGHT);
+  /* +2 for the 1px outline padding live-game uses (sdl3draw.c:961). */
+  s_manStatusTex  = gv_createBarTarget(renderer,
+                                       (MAN_STATUS_WIDTH  + 2) * zoomFactor,
+                                       (MAN_STATUS_HEIGHT + 2) * zoomFactor);
+  s_manStatusReady = false;
 
   sdl3DrawStatusInit(renderer,
                      lv_drawGetTilesTexture(),
@@ -416,6 +555,8 @@ void lv_drawGameViewTeardown(void) {
 
   if (s_tankBarsTex) { SDL_DestroyTexture(s_tankBarsTex); s_tankBarsTex = NULL; }
   if (s_baseBarsTex) { SDL_DestroyTexture(s_baseBarsTex); s_baseBarsTex = NULL; }
+  if (s_manStatusTex) { SDL_DestroyTexture(s_manStatusTex); s_manStatusTex = NULL; }
+  s_manStatusReady = false;
   if (s_backgroundTex) { SDL_DestroyTexture(s_backgroundTex); s_backgroundTex = NULL; }
   if (s_deathStaticTex) { SDL_DestroyTexture(s_deathStaticTex); s_deathStaticTex = NULL; }
   s_deathStaticTexW = 0;
@@ -591,6 +732,33 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0, FALSE);
   }
 
+  /* Step 11b — man-status circle. Mirrors live game's screen.c:4042-4051:
+   * lgmGetStatus → frontEndManStatus/Clear. Source data is the camera
+   * slot's lgmIsOut/lgmIsDead (set by log_LgmLocation / log_LostMan
+   * during replay), with the arrow angle pointing from LGM toward tank
+   * — same utilCalcAngle the live game uses. */
+  {
+    bool isOut = false, isDead = false;
+    lv_playersGetLgmStatus(camera, &isOut, &isDead);
+    if (!isOut) {
+      gv_setManClear(renderer);
+    } else if (isDead) {
+      gv_setManStatus(renderer, true, 0.0f);
+    } else {
+      BYTE tmx = 0, tmy = 0, tpx = 0, tpy = 0, tframe = 0;
+      bool tOnBoat = false;
+      BYTE lmx = 0, lmy = 0, lpx = 0, lpy = 0, lframe = 0;
+      lv_playersGetTankDetails(camera, &tmx, &tmy, &tpx, &tpy, &tframe, &tOnBoat);
+      lv_playersGetLgmDetails(camera, &lmx, &lmy, &lpx, &lpy, &lframe);
+      WORLD lgmWX  = ((WORLD)lmx << TANK_SHIFT_MAPSIZE) | ((WORLD)lpx << TANK_SHIFT_RIGHT2);
+      WORLD lgmWY  = ((WORLD)lmy << TANK_SHIFT_MAPSIZE) | ((WORLD)lpy << TANK_SHIFT_RIGHT2);
+      WORLD tankWX = ((WORLD)tmx << TANK_SHIFT_MAPSIZE) | ((WORLD)tpx << TANK_SHIFT_RIGHT2);
+      WORLD tankWY = ((WORLD)tmy << TANK_SHIFT_MAPSIZE) | ((WORLD)tpy << TANK_SHIFT_RIGHT2);
+      TURNTYPE angle = gv_calcAngle(lgmWX, lgmWY, tankWX, tankWY);
+      gv_setManStatus(renderer, false, angle);
+    }
+  }
+
   /* Step 12 — scrolling newswire. Tick the marquee at the live game's
    * 40ms wall-clock cadence (4 * GAME_TICK_LENGTH) so playback speed
    * doesn't change scroll rate; render the current visible cells via
@@ -680,6 +848,14 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
                     (float)(zf * STATUS_BASE_BARS_MAX_WIDTH),
                     (float)(zf * STATUS_BASE_BARS_TOTALHEIGHT) };
     SDL_RenderTexture(renderer, s_baseBarsTex, NULL, &d);
+  }
+  if (s_manStatusTex && s_manStatusReady) {
+    SDL_SetTextureBlendMode(s_manStatusTex, SDL_BLENDMODE_BLEND);
+    SDL_FRect d = { (float)(zf * MAN_STATUS_X),
+                    (float)(zf * MAN_STATUS_Y),
+                    (float)(zf * (MAN_STATUS_WIDTH  + 2)),
+                    (float)(zf * (MAN_STATUS_HEIGHT + 2)) };
+    SDL_RenderTexture(renderer, s_manStatusTex, NULL, &d);
   }
 
   /* Step 16 — self is restored by the wrapping block in logviewer.c

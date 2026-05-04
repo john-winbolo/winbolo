@@ -83,6 +83,10 @@ uint16_t lv_gameViewGetDeaths(BYTE slot) {
   if (slot >= MAX_TANKS) return 0;
   return g_lv->deaths[slot];
 }
+uint32_t lv_gameViewGetDeathTimeMs(BYTE slot) {
+  if (slot >= MAX_TANKS) return 0;
+  return g_lv->gameViewHud[slot].deathTimeMs;
+}
 
 /* Pending memory-based log load (set by logViewerRunFromMemory) */
 static uint8_t *s_pendingZipData = NULL;
