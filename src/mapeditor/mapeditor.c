@@ -1827,6 +1827,12 @@ static void meRemoveRecentFile(MapEditorState *ed, const char *path) {
 }
 
 static void meAddRecentFile(MapEditorState *ed, const char *path) {
+    /* Caller may pass a pointer into ed->recentFiles itself (e.g. open-recent
+     * menu). The shifts below would corrupt that aliased memory mid-update,
+     * so snapshot the path first. */
+    char pathCopy[ME_PATH_MAX];
+    SDL_strlcpy(pathCopy, path, ME_PATH_MAX);
+    path = pathCopy;
     /* Remove existing entry for this path (if any) */
     for (int i = 0; i < ed->numRecentFiles; i++) {
         if (strcmp(ed->recentFiles[i], path) == 0) {
