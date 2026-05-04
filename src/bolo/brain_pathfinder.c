@@ -1590,7 +1590,7 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
                                    int sx, int sy, int in_boat,
                                    int shells, int trees, int mines, int armour,
                                    float max_cost, int exact,
-                                   float danger_scale, int kind) {
+                                   float danger_scale, int kind, int allow_boat) {
   (void)trees; (void)mines; (void)armour;
   if (!pf || !pf->map) return;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return;
@@ -1631,7 +1631,6 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
       fprintf(dijkstra_log, "START slate=%d: ALLOC FAILED\n", slate);
       fflush(dijkstra_log);
     }
-    s->active = 0;
     return;
   }
 
@@ -1653,9 +1652,9 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
   slate_heap_clear(s);
   slate_heap_push(s, 0.0f, (uint16_t)sx, (uint16_t)sy, (uint8_t)in_boat);
 
-  s->active         = 1;
   s->done           = 0;
   s->exact          = exact ? 1 : 0;
+  s->allow_boat     = allow_boat ? 1 : 0;
   s->kind           = kind;
   s->src_x          = sx;
   s->src_y          = sy;
@@ -1682,7 +1681,7 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
   if (!pf) return 1;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return 1;
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active || s->done) return 1;
+  if (!s->g_cost || s->done) return 1;
   if (!s->g_cost || !s->closed || !s->dir_at || !s->heap || !s->heap_pos) return 1;
 
   int expanded_this_step = 0;
@@ -1752,6 +1751,7 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       int nm = ny * MAP_SIZE + nx;
       int n_type = map[nm] & 0x0F;
       int next_boat = next_boat_state(cur_boat, n_type);
+      if (!s->allow_boat && (next_boat || n_type == TT_DEEPSEA)) continue;
       int new_shells = cur_shells;
 
       float tc;
@@ -1880,9 +1880,58 @@ float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
   if (!pf) return COST_INF;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return COST_INF;
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active || !s->g_cost) return COST_INF;
+  if (!s->g_cost) return COST_INF;
   if (x < 0 || x > 255 || y < 0 || y > 255) return COST_INF;
   return s->g_cost[node_idx(x, y, boat ? 1 : 0)];
+}
+
+/* Copy src slate's cost arrays and metadata to dst so dst can serve as a
+ * read-only fallback while src is being recomputed.  dst is marked done=1
+ * so the step loop never advances it.  The heap is not copied — dst is
+ * purely a lookup snapshot. */
+void brainPathfinderDijkstraCopySlate(BrainPathfinder *pf, int src, int dst) {
+  if (!pf) return;
+  if (src < 0 || src >= DIJKSTRA_NUM_SLATES) return;
+  if (dst < 0 || dst >= DIJKSTRA_NUM_SLATES) return;
+  if (src == dst) return;
+
+  DijkstraSlate *s = &pf->dij_slates[src];
+  DijkstraSlate *d = &pf->dij_slates[dst];
+  if (!s->g_cost) return; /* nothing to copy */
+
+  /* Lazy-allocate dst arrays */
+  if (!d->g_cost)   d->g_cost = (float *)malloc(sizeof(float) * NODE_COUNT);
+  if (!d->closed)   d->closed = (uint8_t *)malloc(NODE_COUNT / 8);
+  if (!d->dir_at)   d->dir_at = (uint8_t *)malloc(NODE_COUNT);
+  if (!d->g_cost || !d->closed || !d->dir_at) return;
+
+  memcpy(d->g_cost,  s->g_cost,  sizeof(float) * NODE_COUNT);
+  memcpy(d->closed,  s->closed,  NODE_COUNT / 8);
+  memcpy(d->dir_at,  s->dir_at,  NODE_COUNT);
+
+  if (s->shells_at) {
+    if (!d->shells_at) d->shells_at = (int16_t *)malloc(sizeof(int16_t) * NODE_COUNT);
+    if (d->shells_at) memcpy(d->shells_at, s->shells_at, sizeof(int16_t) * NODE_COUNT);
+  }
+
+  d->done           = 1; /* backup is never stepped */
+  d->exact          = s->exact;
+  d->allow_boat     = s->allow_boat;
+  d->kind           = s->kind;
+  d->src_x          = s->src_x;
+  d->src_y          = s->src_y;
+  d->in_boat        = s->in_boat;
+  d->src_shells     = s->src_shells;
+  d->expanded       = s->expanded;
+  d->peak_open      = s->peak_open;
+  d->max_cost       = s->max_cost;
+  d->danger_scale   = s->danger_scale;
+  d->version        = s->version;
+  d->started_tick   = s->started_tick;
+  d->completed_tick = s->completed_tick;
+
+  /* Clear the heap — dst won't be stepped so we don't need it */
+  slate_heap_clear(d);
 }
 
 /* Sort slate indices for the given kind by started_tick descending
@@ -1895,8 +1944,7 @@ static int slate_indices_by_recency(BrainPathfinder *pf, int kind,
   int n = 0;
   for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
     DijkstraSlate *s = &pf->dij_slates[i];
-    if (!s->active || !s->g_cost) continue;
-    if (s->kind != kind) continue;
+    if (!s->g_cost || s->kind != kind) continue;
     out[n++] = i;
   }
   /* Insertion sort by started_tick descending — n is at most 4. */
@@ -2037,7 +2085,7 @@ int brainPathfinderDijkstraFindBest(BrainPathfinder *pf, int kind) {
   uint32_t best_tick = 0;
   for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
     DijkstraSlate *s = &pf->dij_slates[i];
-    if (!s->active || s->kind != kind) continue;
+    if (!s->g_cost || s->kind != kind) continue;
     if (best < 0 || s->started_tick > best_tick) {
       best = i;
       best_tick = s->started_tick;
@@ -2048,9 +2096,9 @@ int brainPathfinderDijkstraFindBest(BrainPathfinder *pf, int kind) {
 
 int brainPathfinderDijkstraPickReuseSlate(BrainPathfinder *pf, int kind) {
   if (!pf) return 0;
-  /* First preference: an inactive slate (never used). */
+  /* First preference: a never-used slate (no g_cost allocated). */
   for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
-    if (!pf->dij_slates[i].active) return i;
+    if (!pf->dij_slates[i].g_cost) return i;
   }
   /* Second: the OLDEST slate of matching kind (preserves the freshest
    * same-kind slate as a fallback for in-flight lookups). */
@@ -2096,7 +2144,7 @@ int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
   for (int i = 0; i < n; i++) {
     int slate = order[i];
     DijkstraSlate *s = &pf->dij_slates[slate];
-    if (!s->active || !s->g_cost || !s->dir_at) continue;
+    if (!s->g_cost || !s->dir_at) continue;
     float c_land = s->g_cost[node_idx(dx, dy, 0)];
     float c_boat = s->g_cost[node_idx(dx, dy, 1)];
     if (c_land >= COST_INF && c_boat >= COST_INF) continue;
@@ -2114,7 +2162,7 @@ int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
   if (!pf) return 0;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return 0;
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active || !s->g_cost || !s->dir_at) return 0;
+  if (!s->g_cost || !s->dir_at) return 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
   if (max_steps <= 0) return 0;
 
@@ -2167,7 +2215,7 @@ int brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
     return 0;
   }
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active) {
+  if (!s->g_cost) {
     if (out_expanded)  *out_expanded = 0;
     if (out_peak_open) *out_peak_open = 0;
     if (out_done)      *out_done = 0;

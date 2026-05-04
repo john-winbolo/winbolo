@@ -757,7 +757,9 @@ static int l_cpf_dijkstra_from(lua_State *L) {
 }
 
 /* cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
- *                    max_cost, exact, danger_scale, kind) */
+ *                    max_cost, exact, danger_scale, kind[, allow_boat])
+ * allow_boat defaults to 1 (boat transitions enabled). Pass 0 to restrict
+ * the search to land nodes only (no T_BOAT pickup, no water expansion). */
 static int l_cpf_dijkstra_start(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -780,9 +782,10 @@ static int l_cpf_dijkstra_start(lua_State *L) {
   }
   float danger_scale = (float)luaL_optnumber(L, 12, 1.0);
   int kind = (int)luaL_optinteger(L, 13, 0);
+  int allow_boat = (int)luaL_optinteger(L, 14, 1);
   brainPathfinderDijkstraStart(pf, slate, tick, sx, sy, in_boat,
                                 shells, trees, mines, armour,
-                                max_cost, exact, danger_scale, kind);
+                                max_cost, exact, danger_scale, kind, allow_boat);
   return 0;
 }
 
@@ -915,8 +918,10 @@ static int l_cpf_dijkstra_find_best(lua_State *L) {
 }
 
 /* cpf_dijkstra_status(slate)
- * Returns: active, done, kind, started_tick, completed_tick,
- *          expanded, peak_open, src_x, src_y, in_boat, danger_scale. */
+ * Returns: has_data, done, kind, started_tick, completed_tick,
+ *          expanded, peak_open, src_x, src_y, in_boat, danger_scale.
+ * has_data replaces the old 'active' flag: true once the slate has been
+ * started at least once (g_cost allocated). */
 static int l_cpf_dijkstra_status(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -926,7 +931,7 @@ static int l_cpf_dijkstra_status(lua_State *L) {
     for (int i = 0; i < 11; i++) lua_pushnil(L);
     return 11;
   }
-  lua_pushboolean(L, s->active);
+  lua_pushboolean(L, s->g_cost != NULL);
   lua_pushboolean(L, s->done);
   lua_pushinteger(L, s->kind);
   lua_pushinteger(L, s->started_tick);
@@ -938,6 +943,16 @@ static int l_cpf_dijkstra_status(lua_State *L) {
   lua_pushinteger(L, s->in_boat);
   lua_pushnumber(L, s->danger_scale);
   return 11;
+}
+
+/* cpf_dijkstra_copy_slate(src, dst) — copy src's cost arrays + metadata to
+ * dst so dst can serve as a read-only fallback while src recomputes. */
+static int l_cpf_dijkstra_copy_slate(lua_State *L) {
+  CPF_GET(L);
+  int src = (int)luaL_checkinteger(L, 1);
+  int dst = (int)luaL_checkinteger(L, 2);
+  brainPathfinderDijkstraCopySlate(pf, src, dst);
+  return 0;
 }
 
 /* cpf_rebuild_edge_costs()
@@ -1248,6 +1263,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
     { "cpf_dijkstra_find_best",     l_cpf_dijkstra_find_best },
     { "cpf_dijkstra_status",        l_cpf_dijkstra_status },
+    { "cpf_dijkstra_copy_slate",    l_cpf_dijkstra_copy_slate },
     { "cpf_rebuild_edge_costs", l_cpf_rebuild_edge_costs },
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },

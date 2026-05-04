@@ -78,6 +78,23 @@ local DEFAULT_TERRAIN_SPEED = {
   [C.T_PILLBOX]   = 16,
 }
 
+-- Default boat-mode terrain costs (matching constants.lua TERRAIN_COST_BOAT)
+local DEFAULT_TERRAIN_COST_BOAT = {
+  [C.T_BUILDING]  = 9999,
+  [C.T_RIVER]     = 2,
+  [C.T_SWAMP]     = 8,
+  [C.T_CRATER]    = 8,
+  [C.T_ROAD]      = 1,
+  [C.T_FOREST]    = 3,
+  [C.T_RUBBLE]    = 8,
+  [C.T_GRASS]     = 2,
+  [C.T_HALFBUILD] = 9999,
+  [C.T_BOAT]      = 2,
+  [C.T_DEEPSEA]   = 2,
+  [C.T_REFBASE]   = 1,
+  [C.T_PILLBOX]   = 1,
+}
+
 -- Default config scalars
 local DEFAULT_CONFIG = {
   turn_cost         = 2,
@@ -99,9 +116,10 @@ local DEFAULT_CONFIG = {
 
 --- Configure the C pathfinder with defaults, optionally overridden.
 --- @param opts table|nil Optional overrides:
----   opts.terrain_cost  = { [type] = cost, ... }  -- sparse overrides
----   opts.terrain_speed = { [type] = speed, ... } -- sparse overrides
----   opts.<config_key>  = value                   -- any config scalar
+---   opts.terrain_cost       = { [type] = cost, ... }  -- sparse overrides
+---   opts.terrain_cost_boat  = { [type] = cost, ... }  -- sparse overrides
+---   opts.terrain_speed      = { [type] = speed, ... } -- sparse overrides
+---   opts.<config_key>       = value                   -- any config scalar
 function M.configure(opts)
   opts = opts or {}
 
@@ -114,6 +132,17 @@ function M.configure(opts)
   for type, cost in pairs(tc) do
     if DEFAULT_TERRAIN_COST[type] == nil then
       cpf_set_terrain_cost(type, cost)
+    end
+  end
+
+  -- Boat costs
+  local btc = opts.terrain_cost_boat or {}
+  for type, cost in pairs(DEFAULT_TERRAIN_COST_BOAT) do
+    cpf_set_boat_cost(type, btc[type] or cost)
+  end
+  for type, cost in pairs(btc) do
+    if DEFAULT_TERRAIN_COST_BOAT[type] == nil then
+      cpf_set_boat_cost(type, cost)
     end
   end
 
@@ -255,10 +284,15 @@ end
 ---   danger_scale: per-slate danger weighting (1.0 = standard)
 ---   kind: matcher tag — lookups search slates with the same kind
 function M.dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
-                          max_cost, exact, danger_scale, kind)
+                          max_cost, exact, danger_scale, kind, allow_boat)
   if exact == nil then exact = true end
+  if allow_boat == nil then allow_boat = 1 end
   cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
-                     max_cost or 0, exact, danger_scale or 1.0, kind or 0)
+                     max_cost or 0, exact, danger_scale or 1.0, kind or 0, allow_boat)
+end
+
+function M.dijkstra_copy_slate(src, dst)
+  cpf_dijkstra_copy_slate(src, dst)
 end
 
 --- Resume the slate's Dijkstra. tick lets C record completed_tick when

@@ -1214,17 +1214,17 @@ function Brain.think(info)
   -- inspection / debugging. Each entry tracks the parameters used to
   -- start it so the brain can reason about what's in each slot.
   do
-    local KIND_NORMAL = 0
-    local KIND_PILL   = 1
-
-    -- Fixed slate assignments (all KIND_NORMAL):
-    --   0 = short-range (1 sec ping, max_cost=100)
-    --   1 = long-range  (5 sec, unlimited)
-    --   2 = short-range extra (staggered from 0)
-    --   3 = long-range  extra (staggered from 1)
-    local SLATE_SHORT = 0
-    local SLATE_LONG  = 1
-    local SLATE_PILL  = 2  -- repurposed: extra KIND_NORMAL short-range
+    -- Slate layout (all KIND_NORMAL):
+    --   0 = short-range main    (restarts every DIJKSTRA_SHORT_INTERVAL)
+    --   1 = short-range backup  (snapshot of 0 taken at each restart)
+    --   2 = long-range main     (restarts every DIJKSTRA_RECOMPUTE_INTERVAL)
+    --   3 = long-range backup   (snapshot of 2 taken at each restart)
+    -- Lookups prefer the freshest slate that has a finite cost for the tile,
+    -- so during recomputation the backup provides full coverage seamlessly.
+    local SLATE_SHORT_MAIN   = 0
+    local SLATE_SHORT_BACKUP = 1
+    local SLATE_LONG_MAIN    = 2
+    local SLATE_LONG_BACKUP  = 3
 
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
@@ -1238,7 +1238,7 @@ function Brain.think(info)
           started_tick = 0, completed_tick = 0,
           src_mx = -1, src_my = -1, in_boat = 0,
           danger_scale = 1.0, exact = true,
-          done = false,
+          done = false, active = false,
         }
       end
       state.dij = d
@@ -1249,116 +1249,86 @@ function Brain.think(info)
       local active, done, kind, started, completed, expanded, peak_open,
             sx, sy, sb, danger_scale = cpf.dijkstra_status(idx)
       local s = d.slates[idx]
-      s.active        = active
-      s.done          = done
-      s.kind          = kind
-      s.started_tick  = started or 0
+      s.active         = active
+      s.done           = done
+      s.kind           = kind
+      s.started_tick   = started or 0
       s.completed_tick = completed or 0
-      s.expanded      = expanded or 0
-      s.peak_open     = peak_open or 0
-      s.src_mx        = sx or -1
-      s.src_my        = sy or -1
-      s.in_boat       = sb or 0
-      s.danger_scale  = danger_scale or 1.0
+      s.expanded       = expanded or 0
+      s.peak_open      = peak_open or 0
+      s.src_mx         = sx or -1
+      s.src_my         = sy or -1
+      s.in_boat        = sb or 0
+      s.danger_scale   = danger_scale or 1.0
     end
 
-    -- Helper: check if a slate needs restart based on age.
-    -- NOTE: tank-movement restart temporarily disabled — slates restart
-    -- on their regular interval cycles instead. The short-range slate
-    -- (1 sec) provides responsive local data; the long-range slate
-    -- (5 sec) provides full-map coverage. Re-enable restart_dist check
-    -- if navigation feels stale after the tank moves quickly.
-    local function needs_restart(slate_idx, interval, restart_dist)
-      refresh_slate(slate_idx)
-      local s = d.slates[slate_idx]
-      if not s.active then return true end
-      local age = now - (s.started_tick or 0)
-      -- local moved = math.max(math.abs(tmx - s.src_mx), math.abs(tmy - s.src_my))
-      -- return age >= interval or moved >= restart_dist
-      return age >= interval
-    end
-
-    -- Helper: start a slate with given parameters.
-    local function start_slate(idx, kind, danger_scale, max_cost)
+    -- Start a slate.
+    local function start_slate(idx, max_cost, boat, allow_boat)
+      if boat == nil then boat = in_boat end
+      if allow_boat == nil then allow_boat = 1 end
       cpf.dijkstra_start(
-        idx, now, tmx, tmy, in_boat,
+        idx, now, tmx, tmy, boat,
         info.shells or 32, info.trees or 0,
         info.mines or 0, info.armour or 40,
         max_cost, C.DIJKSTRA_EXACT,
-        danger_scale, kind)
+        1.0, 0 --[[KIND_NORMAL]], allow_boat)
       refresh_slate(idx)
-      local kind_str = (kind == cpf.KIND_PILL) and "PILL"
-                    or (kind == cpf.KIND_NORMAL) and "NORMAL"
-                    or string.format("?(%d)", kind)
       print2(string.format(
-        "dij START slate=%d kind=%s ds=%.1f max_cost=%.0f src=(%d,%d) tick=%d",
-        idx, kind_str, danger_scale, max_cost, tmx, tmy, now))
+        "dij START slate=%d max_cost=%.0f src=(%d,%d) boat=%d allow_boat=%d tick=%d",
+        idx, max_cost, tmx, tmy, boat, allow_boat, now))
     end
 
-    -- Paired slate restart: for each pair (short: 0+2, long: 1+3) always
-    -- restart the more stale slate so the other remains available for
-    -- lookups. This ensures at least one slate per pair is always complete.
-    local function restart_more_stale(a, b, interval, max_cost)
-      refresh_slate(a); refresh_slate(b)
-      local sa, sb = d.slates[a], d.slates[b]
-      local age_a = now - (sa.started_tick or 0)
-      local age_b = now - (sb.started_tick or 0)
-      -- Only restart if the more-stale one has exceeded the interval.
-      if age_a >= age_b then
-        if age_a >= interval then
-          start_slate(a, KIND_NORMAL, 1.0, max_cost)
+    -- Double-buffer restart: at each interval, snapshot the main slate into
+    -- the backup so lookups always have complete coverage, then restart main.
+    local function maybe_copy_and_restart(main_idx, backup_idx, interval, max_cost, boat, allow_boat)
+      refresh_slate(main_idx)
+      local s = d.slates[main_idx]
+      local age = now - s.started_tick
+      if not s.active or age >= interval then
+        if s.active then
+          cpf.dijkstra_copy_slate(main_idx, backup_idx)
+          refresh_slate(backup_idx)
+          print2(string.format("dij COPY %d->%d at tick=%d age=%d", main_idx, backup_idx, now, age))
         end
-      else
-        if age_b >= interval then
-          start_slate(b, KIND_NORMAL, 1.0, max_cost)
-        end
+        start_slate(main_idx, max_cost, boat, allow_boat)
       end
     end
 
-    restart_more_stale(SLATE_SHORT, SLATE_PILL, C.DIJKSTRA_SHORT_INTERVAL,
-                       C.DIJKSTRA_SHORT_MAX_COST)
-    restart_more_stale(SLATE_LONG,  3,          C.DIJKSTRA_RECOMPUTE_INTERVAL,
-                       C.DIJKSTRA_MAX_COST)
+    -- Short: land-only unless on a boat. Long: always allow boat.
+    maybe_copy_and_restart(SLATE_SHORT_MAIN, SLATE_SHORT_BACKUP,
+                           C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_MAX_COST,
+                           in_boat, in_boat)
+    maybe_copy_and_restart(SLATE_LONG_MAIN, SLATE_LONG_BACKUP,
+                           C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_MAX_COST,
+                           in_boat, 1)
 
-    -- Step every active slate by an even share of the per-tick budget.
-    -- Each slate that's still running gets `budget_each` expansions.
+    -- Step only the main slates (backups are frozen snapshots, done=true).
+    local budget_short = C.DIJKSTRA_SHORT_BUDGET
+    local budget_long  = math.max(500, math.ceil(70000 / C.DIJKSTRA_LONG_SPREAD_TICKS))
     local active_slates = {}
-    for i = 0, 3 do
-      refresh_slate(i)
-      if d.slates[i].active and not d.slates[i].done then
-        active_slates[#active_slates + 1] = i
+    for _, idx in ipairs({ SLATE_SHORT_MAIN, SLATE_LONG_MAIN }) do
+      refresh_slate(idx)
+      if d.slates[idx].active and not d.slates[idx].done then
+        active_slates[#active_slates + 1] = idx
       end
     end
     if #active_slates > 0 then
-      -- Per-slate budget: each slate targets completing ~70k expansions
-      -- in half its rebuild interval so it stays current for the back
-      -- half of the cycle.  Short-range slates (0, 2) spread over
-      -- SHORT_SPREAD_TICKS; long-range (1, 3) over LONG_SPREAD_TICKS.
-      local budget_short = C.DIJKSTRA_SHORT_BUDGET
-      local budget_long  = math.max(500, math.ceil(70000 / C.DIJKSTRA_LONG_SPREAD_TICKS))
       local t_step = clock_us()
       local total_exp = 0
       for _, idx in ipairs(active_slates) do
-        local budget = (idx == SLATE_SHORT or idx == SLATE_PILL)
-                       and budget_short or budget_long
-        local done, expanded, peak_open = cpf.dijkstra_step(idx, now, budget)
+        local budget = (idx == SLATE_SHORT_MAIN) and budget_short or budget_long
+        local done, expanded = cpf.dijkstra_step(idx, now, budget)
         total_exp = total_exp + (expanded or 0)
         if done then
           refresh_slate(idx)
-          local k = d.slates[idx].kind
-          local kind_str = (k == cpf.KIND_PILL) and "PILL"
-                        or (k == cpf.KIND_NORMAL) and "NORMAL"
-                        or string.format("?(%d)", k)
           print2(string.format(
-            "dij DONE slate=%d kind=%s at_tick=%d (took %d, expanded=%d)",
-            idx, kind_str, now,
-            now - (d.slates[idx].started_tick or now), expanded))
+            "dij DONE slate=%d at_tick=%d (took %d ticks, expanded=%d)",
+            idx, now, now - d.slates[idx].started_tick, expanded))
         end
       end
       local step_us = clock_us() - t_step
       print2(string.format("dij STEP %.2f ms  active=%d  budget(s/l=%d/%d)  total_exp=%d",
-                           step_us / 1000, #active_slates,
-                           budget_short, budget_long, total_exp))
+                           step_us / 1000, #active_slates, budget_short, budget_long, total_exp))
     end
   end
 

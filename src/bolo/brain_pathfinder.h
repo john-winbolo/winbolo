@@ -61,9 +61,9 @@ typedef struct {
   int       heap_capacity;
   int       open_count;
 
-  int   active;       /* 1 if Start has been called and Step hasn't been reset */
   int   done;         /* 1 if the search has emptied its heap */
   int   exact;        /* 1 = track per-node shell budget for wall_shoot */
+  int   allow_boat;   /* 0 = never transition to boat nodes (land-only search) */
   int   kind;         /* user-defined tag for the freshness/lookup matcher */
   int   src_x, src_y;
   int   in_boat;
@@ -242,13 +242,14 @@ void  brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick
                                     int sx, int sy, int in_boat,
                                     int shells, int trees, int mines, int armour,
                                     float max_cost, int exact,
-                                    float danger_scale, int kind);
+                                    float danger_scale, int kind, int allow_boat);
 int   brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget);
 float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
                                      int x, int y, int boat);
 int   brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
                                      int *out_expanded, int *out_peak_open,
                                      int *out_done);
+void  brainPathfinderDijkstraCopySlate(BrainPathfinder *pf, int src, int dst);
 
 /* High-level lookup: iterate all active slates of matching kind in
  * started_tick descending order, return the first one that has a finite
