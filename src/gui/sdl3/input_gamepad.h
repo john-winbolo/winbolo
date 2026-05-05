@@ -43,6 +43,7 @@ bool inputGamepadIsViewToggleEdge(void);       /* Y press, consumed on read */
 bool inputGamepadIsBuilderConfirmEdge(void);   /* X press, consumed on read */
 bool inputGamepadIsPauseEdge(void);            /* Start press, consumed on read */
 bool inputGamepadIsQuickChatEdge(void);        /* D-pad UP press, consumed on read */
+bool inputGamepadConsumeActiveDisconnect(void);  /* Active controller disconnect, consumed on read */
 
 /* Right-stick scroll sensitivity multiplier (clamped 0.25..4.0 by UI). */
 extern float g_gamepadScrollSensitivity;

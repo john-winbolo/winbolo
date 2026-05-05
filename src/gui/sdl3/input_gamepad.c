@@ -52,6 +52,7 @@ static bool s_viewToggleEdge     = false;
 static bool s_builderConfirmEdge = false;
 static bool s_pauseEdge          = false;
 static bool s_quickChatEdge      = false;
+static bool s_activeDisconnectedEdge = false;
 
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
 float g_gamepadScrollSensitivity = 1.0f;
@@ -97,6 +98,7 @@ void inputGamepadInit(void) {
   s_builderConfirmEdge = false;
   s_pauseEdge          = false;
   s_quickChatEdge      = false;
+  s_activeDisconnectedEdge = false;
 
   /* Steam Deck built-in controller HIDAPI access. With a real Steam
      App ID, Steam Input handles this automatically; this hint covers
@@ -133,6 +135,7 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
       if (s_activeGamepad && e->gdevice.which == s_activeId) {
         SDL_CloseGamepad(s_activeGamepad);
         clearActive();
+        s_activeDisconnectedEdge = true;
         promoteNextGamepad();
       }
       break;
@@ -297,6 +300,12 @@ bool inputGamepadIsPauseEdge(void) {
 bool inputGamepadIsQuickChatEdge(void) {
   bool v = s_quickChatEdge;
   s_quickChatEdge = false;
+  return v;
+}
+
+bool inputGamepadConsumeActiveDisconnect(void) {
+  bool v = s_activeDisconnectedEdge;
+  s_activeDisconnectedEdge = false;
   return v;
 }
 

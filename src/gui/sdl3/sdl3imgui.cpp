@@ -2888,6 +2888,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (inputGamepadIsPauseEdge() && uiModeIsSteamDeck()) {
         deckPauseOpen();
     }
+    /* Active-controller-disconnect open trigger: open pause overlay so the
+       player can recover (battery dies, dongle drops).  Deck-only for V1;
+       skip in lobby (keyboard UI) and when overlay is already open. */
+    if (inputGamepadConsumeActiveDisconnect() &&
+        uiModeIsSteamDeck() && cs && !cs->inLobby &&
+        !deckPauseIsOpen()) {
+        deckPauseOpen();
+    }
     /* Quick-chat open trigger: D-pad UP, in-game only.  Gamepad-universal
        (not Deck-gated) — desktop gamepad players also benefit.  Skipped
        in lobby because the lobby has its own chat UI, and skipped while
