@@ -398,6 +398,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *useAutoslow, bool *useAutohide);
 void gameFrontPutPrefs(keyItems *keys);
 
 /*********************************************************
+*NAME:          gameFrontSaveCurrentPrefs
+*PURPOSE:
+* Convenience wrapper: snapshot the current key bindings via
+* windowGetKeys and write the full prefs file. Use from
+* user-driven toggle handlers so changes persist immediately
+* instead of only on shutdown.
+*********************************************************/
+void gameFrontSaveCurrentPrefs(void);
+
+/*********************************************************
 *NAME:          gameFrontSaveWindowSettings
 *AUTHOR:        Andrew Roth
 *CREATION DATE: 19/4/26

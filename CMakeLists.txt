@@ -1178,6 +1178,20 @@ if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
                 "$<TARGET_FILE_DIR:WinBolo>"
             COMMENT "Copying steam_api64.dll to WinBolo output directory"
         )
+    elseif(APPLE)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying libsteam_api.dylib to WinBolo output directory"
+        )
+    else()
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying libsteam_api.so to WinBolo output directory"
+        )
     endif()
     add_custom_command(TARGET WinBolo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
