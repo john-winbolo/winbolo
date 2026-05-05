@@ -219,6 +219,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
     ${SRC_ROOT}/gui/sdl3/input.c
     ${SRC_ROOT}/gui/sdl3/input_touch.c
+    ${SRC_ROOT}/gui/sdl3/input_joystick.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/currentgames.c
     ${SRC_ROOT}/gui/sdl3/lang.c

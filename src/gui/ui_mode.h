@@ -22,8 +22,9 @@ extern "C" {
 #endif
 
 typedef enum {
-  UI_MODE_DESKTOP = 0,
-  UI_MODE_TABLET  = 1
+  UI_MODE_DESKTOP    = 0,
+  UI_MODE_TABLET     = 1,
+  UI_MODE_STEAM_DECK = 2
 } UIMode;
 
 /*********************************************************
@@ -52,9 +53,17 @@ void uiModeSet(UIMode m);
 /*********************************************************
 *NAME:          uiModeIsTablet
 *PURPOSE:
-*  Convenience: returns true if current mode is tablet.
+*  Convenience: returns true if current mode is tablet
+*  OR Steam Deck (both share the fullscreen overlay UI).
 *********************************************************/
 bool uiModeIsTablet(void);
+
+/*********************************************************
+*NAME:          uiModeIsSteamDeck
+*PURPOSE:
+*  Convenience: returns true if current mode is Steam Deck.
+*********************************************************/
+bool uiModeIsSteamDeck(void);
 
 #ifdef __cplusplus
 }

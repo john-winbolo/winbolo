@@ -300,7 +300,7 @@ static const DevicePreset s_devicePresets[] = {
   { "iPad Pro 12.9\"",      2732, 2048,  UI_MODE_TABLET  },
   { "Samsung Galaxy Tab S9", 2560, 1600, UI_MODE_TABLET  },
   /* Handheld (landscape) */
-  { "Steam Deck",           1280,  800,  UI_MODE_TABLET  },
+  { "Steam Deck",           1280,  800,  UI_MODE_STEAM_DECK },
   /* Back to desktop */
   { "Desktop",                 0,    0,  UI_MODE_DESKTOP },
 };
@@ -364,6 +364,7 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
     }
 
     WB_LOG_INFO(WB_LOG_CAT_GUI, "Device preset: %s (%dx%d, %s)", p->name, p->w, p->h,
+            p->mode == UI_MODE_STEAM_DECK ? "STEAM_DECK" :
             p->mode == UI_MODE_TABLET ? "TABLET" : "DESKTOP");
 }
 

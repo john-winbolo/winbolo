@@ -254,6 +254,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/skins.c
     ${PROJ_ROOT}/src/gui/sdl3/input.c
     ${PROJ_ROOT}/src/gui/sdl3/input_touch.c
+    ${PROJ_ROOT}/src/gui/sdl3/input_joystick.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/currentgames.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c

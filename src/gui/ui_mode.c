@@ -41,11 +41,11 @@ UIMode uiModeDetect(void) {
     /* Check for Steam Deck */
     const char *hint = SDL_GetHint("SteamDeck");
     if (hint && SDL_strcmp(hint, "1") == 0) {
-      mode = UI_MODE_TABLET;
+      mode = UI_MODE_STEAM_DECK;
     }
     const char *env = SDL_getenv("SteamDeck");
     if (env && SDL_strcmp(env, "1") == 0) {
-      mode = UI_MODE_TABLET;
+      mode = UI_MODE_STEAM_DECK;
     }
   }
 
@@ -85,5 +85,10 @@ void uiModeSet(UIMode m) {
 }
 
 bool uiModeIsTablet(void) {
-  return uiModeGet() == UI_MODE_TABLET;
+  UIMode m = uiModeGet();
+  return m == UI_MODE_TABLET || m == UI_MODE_STEAM_DECK;
+}
+
+bool uiModeIsSteamDeck(void) {
+  return uiModeGet() == UI_MODE_STEAM_DECK;
 }
