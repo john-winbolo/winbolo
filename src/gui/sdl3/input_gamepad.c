@@ -50,6 +50,7 @@ static int s_gunsightPending = 0;
 static int  s_buildSelectChange  = 0;
 static bool s_viewToggleEdge     = false;
 static bool s_builderConfirmEdge = false;
+static bool s_pauseEdge          = false;
 
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
 float g_gamepadScrollSensitivity = 1.0f;
@@ -93,6 +94,7 @@ void inputGamepadInit(void) {
   s_buildSelectChange  = 0;
   s_viewToggleEdge     = false;
   s_builderConfirmEdge = false;
+  s_pauseEdge          = false;
 
   /* Steam Deck built-in controller HIDAPI access. With a real Steam
      App ID, Steam Input handles this automatically; this hint covers
@@ -155,6 +157,9 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
             /* X = builder-confirm. Kept off SOUTH (A) so it doesn't
                double-fire alongside the fire button. */
             s_builderConfirmEdge = true;
+            break;
+          case SDL_GAMEPAD_BUTTON_START:
+            s_pauseEdge = true;
             break;
           default:
             break;
@@ -274,6 +279,12 @@ bool inputGamepadIsViewToggleEdge(void) {
 bool inputGamepadIsBuilderConfirmEdge(void) {
   bool v = s_builderConfirmEdge;
   s_builderConfirmEdge = false;
+  return v;
+}
+
+bool inputGamepadIsPauseEdge(void) {
+  bool v = s_pauseEdge;
+  s_pauseEdge = false;
   return v;
 }
 

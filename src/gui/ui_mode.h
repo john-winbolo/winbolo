@@ -68,6 +68,17 @@ bool uiModeIsTablet(void);
 *********************************************************/
 bool uiModeIsSteamDeck(void);
 
+/*********************************************************
+*NAME:          uiModeIsSteamDeckHardware
+*PURPOSE:
+*  Hardware-only check: true if running on Steam Deck
+*  hardware (SteamDeck=1 hint/env, or /etc/os-release ID
+*  starts with "steamos"). Independent of the current UI
+*  mode, so callers can branch on real hardware before
+*  uiModeDetect() finalises s_currentMode.
+*********************************************************/
+bool uiModeIsSteamDeckHardware(void);
+
 #ifdef __cplusplus
 }
 #endif

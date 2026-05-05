@@ -13,6 +13,7 @@
 *********************************************************/
 
 #include <SDL3/SDL.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,6 +28,44 @@ static bool   s_initialized = false;
 
 /* Shared device preset index for Ctrl+T cycling (-1 = desktop, no preset) */
 int g_currentDevicePreset = -1;
+
+/*********************************************************
+ * ui_isSteamOS — read /etc/os-release and return true if
+ * ID starts with "steamos" (case-insensitive, with or
+ * without surrounding quotes). Linux-only file; absent on
+ * macOS/Windows so this just returns false there.
+ *********************************************************/
+static bool ui_isSteamOS(void) {
+  FILE *f = fopen("/etc/os-release", "r");
+  if (!f) return false;
+  char line[256];
+  bool found = false;
+  while (fgets(line, sizeof(line), f)) {
+    if (line[0] != 'I' || line[1] != 'D' || line[2] != '=') continue;
+    const char *val = line + 3;
+    if (*val == '"') val++;
+    if ((val[0] == 's' || val[0] == 'S') &&
+        (val[1] == 't' || val[1] == 'T') &&
+        (val[2] == 'e' || val[2] == 'E') &&
+        (val[3] == 'a' || val[3] == 'A') &&
+        (val[4] == 'm' || val[4] == 'M') &&
+        (val[5] == 'o' || val[5] == 'O') &&
+        (val[6] == 's' || val[6] == 'S')) {
+      found = true;
+    }
+    break;
+  }
+  fclose(f);
+  return found;
+}
+
+bool uiModeIsSteamDeckHardware(void) {
+  const char *hint = SDL_GetHint("SteamDeck");
+  if (hint && SDL_strcmp(hint, "1") == 0) return true;
+  const char *env = SDL_getenv("SteamDeck");
+  if (env && SDL_strcmp(env, "1") == 0) return true;
+  return ui_isSteamOS();
+}
 
 UIMode uiModeDetect(void) {
   UIMode mode = UI_MODE_DESKTOP;
@@ -45,6 +84,10 @@ UIMode uiModeDetect(void) {
     }
     const char *env = SDL_getenv("SteamDeck");
     if (env && SDL_strcmp(env, "1") == 0) {
+      mode = UI_MODE_STEAM_DECK;
+    }
+    /* Fallback: SteamOS hardware, regardless of launch path. */
+    if (mode == UI_MODE_DESKTOP && ui_isSteamOS()) {
       mode = UI_MODE_STEAM_DECK;
     }
   }

@@ -61,6 +61,7 @@
 #include "../input.h"
 #include "../lang.h"
 #include "../sound.h"
+#include "../ui_mode.h"
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
@@ -1683,11 +1684,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   char def[FILENAME_MAX];
   const char *prefsFile = getPreferenceFilePath();
 
-  /* Steam Deck detection: Steam sets SteamDeck=1 in the env. Used below
-     to flip a few defaults ON (gunsight, autoscroll, autoslow, autohide)
-     for first-launch UX on the Deck. Saved values still override. */
-  const char *steamDeckEnv = SDL_getenv("SteamDeck");
-  bool isSteamDeck = (steamDeckEnv && SDL_strcmp(steamDeckEnv, "1") == 0);
+  /* Steam Deck detection: prefer the SteamDeck=1 hint/env Steam sets,
+     falling back to /etc/os-release for launch paths (Desktop-mode,
+     non-Steam) where the env var isn't propagated. Used below to flip
+     a few defaults ON (gunsight, autoscroll, autoslow, autohide) for
+     first-launch UX on the Deck. Saved values still override. */
+  bool isSteamDeck = uiModeIsSteamDeckHardware();
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   const char *gunsightDefault   = "Yes";
   const char *autoScrollDefault = "Yes";

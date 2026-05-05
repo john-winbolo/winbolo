@@ -34,6 +34,7 @@ extern "C" {
 #include "../input.h"
 #include "../../winbolo.h"
 #include "../../lang.h"
+#include "../../ui_mode.h"
 #include "imgui_keysetup.h"
 
 extern bool useAutoslow;
@@ -144,9 +145,14 @@ extern "C" int imguiKeySetupShow(void) {
     float s = dialogComputeScale(screenW, screenH);
 
 #if !BOLO_MOBILE
-    dialogSetWindowSize(window, 1024, 768);
+    if (!uiModeIsSteamDeck()) {
+        dialogSetWindowSize(window, 1024, 768);
+        SDL_SetWindowResizable(window, true);
+    }
+    /* On Deck: keep the existing fullscreen 1280×800 window — the
+       panel sizes itself via dialogComputeScale + the SetNextWindowSize
+       calls below, with a 95% clamp that fits 800px height. */
     dialogSetWindowTitle(window, langGetText(STR_DLGKEYSETUP_WINTITLE));
-    SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
     SDL_ShowWindow(window);

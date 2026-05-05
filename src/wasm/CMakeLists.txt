@@ -209,6 +209,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c

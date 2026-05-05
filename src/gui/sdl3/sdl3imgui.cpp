@@ -82,6 +82,7 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_deck_pause.h"
 
 extern "C" void windowSetQuitting(void);
 
@@ -2394,6 +2395,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename  = nullptr; /* no imgui.ini — avoid filesystem clutter */
 
     ImGui::StyleColorsDark();
@@ -2853,10 +2855,19 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
+    /* Pause-overlay open trigger: Start button in Deck mode. */
+    if (inputGamepadIsPauseEdge() && uiModeIsSteamDeck()) {
+        deckPauseOpen();
+    }
+
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
     } else {
-        renderMenuBar(cs);
+        if (!uiModeIsSteamDeck()) {
+            renderMenuBar(cs);
+        }
+        /* Pause overlay (no-op when closed). */
+        deckPauseRender(cs);
     }
 
     /* Detect when a menu-bar dropdown (child menu popup) just closed.
