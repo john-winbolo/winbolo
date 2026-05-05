@@ -1762,6 +1762,18 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
 
 
 # ---------------------------------------------------------------------------
+# lua_strip — generic tool: strips named call-statement patterns from Lua
+# source files and syntax-checks the result via luaL_loadfile.
+# Brains use this to produce a debug-free opt/ copy; see each brain's
+# strip.bat / strip.sh for the per-bot invocation.
+# ---------------------------------------------------------------------------
+add_executable(lua_strip src/tools/lua_strip.c)
+target_link_libraries(lua_strip PRIVATE lua_static)
+if(WIN32)
+    target_link_libraries(lua_strip PRIVATE winmm)
+endif()
+
+# ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
 # ---------------------------------------------------------------------------
 
@@ -1875,6 +1887,7 @@ add_custom_command(TARGET BrainTest POST_BUILD
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
 )
+
 
 # ---------------------------------------------------------------------------
 # MapEditor (standalone map editor)

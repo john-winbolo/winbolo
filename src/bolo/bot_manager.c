@@ -219,7 +219,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
 
     /* Create the Lua brain instance */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                &bot->cs, ai)) {
+                                &bot->cs, ai, false)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         transportLocalDestroy(&bot->transport);
         clientSimDestroy(&bot->cs);
