@@ -298,9 +298,11 @@ pillAlliance screenPillAllianceCS(struct ClientSim *csPtr, BYTE pillNum);
 void screenGetTankStatsCS(struct ClientSim *csPtr, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void screenGunsightRangeCS(struct ClientSim *csPtr, bool increase);
 void screenSetGunsightCS(struct ClientSim *csPtr, bool shown);
+void screenGetGunsightTileCS(struct ClientSim *csPtr, BYTE *xMap, BYTE *yMap);
 void screenSetupTankCS(struct ClientSim *csPtr, char *playerName, BYTE playerNum);
 void screenGetKillsDeathsCS(struct ClientSim *csPtr, int *kills, int *deaths);
 void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
+void screenManMoveToMapCS(struct ClientSim *csPtr, BYTE mapX, BYTE mapY, buildSelect buildS);
 void screenLgmDropPillCS(struct ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pillNum);
 void screenTankLayMineCS(struct ClientSim *csPtr);
 void screenCheckTankMineDamageCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
@@ -369,5 +371,6 @@ void screenDestroyCS(struct ClientSim *csPtr);
 void screenSimDisplayTickCS(struct ClientSim *csPtr, bool isBrain);
 buildSelect getBuildCurrentSelectCS(struct ClientSim *csPtr);
 void setBuildCurrentSelectCS(struct ClientSim *csPtr, buildSelect bs);
+void cycleBuildSelectCS(struct ClientSim *csPtr, int delta);
 void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);
 #endif /* SCREEN_H */

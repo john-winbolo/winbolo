@@ -1492,6 +1492,8 @@ static void renderKeySetupModal(ClientSim *cs) {
         windowSetKeys(&s_keySetupKeys);
         screenSetTankAutoSlowdownCS(cs, s_keySetupAutoSlowdown);
         screenSetTankAutoHideGunsightCS(cs, s_keySetupAutoGunsight);
+        gameFrontSaveTankPrefs(cs);   /* sync globals from tank */
+        gameFrontSaveCurrentPrefs();  /* persist to disk now */
         s_keySetupWaiting = ksNone;
         ImGui::CloseCurrentPopup();
     }
@@ -1671,13 +1673,25 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
-        if (uiModeIsTablet()) {
+        if (uiModeIsTablet() || inputGamepadIsConnected()) {
             bool relSteering = !inputTouchGetAbsoluteSteering();
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
                 inputTouchSetAbsoluteSteering(!relSteering);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
+            }
+        }
+
+        if (inputGamepadIsConnected()) {
+            ImGui::Separator();
+            ImGui::Text("Gamepad: connected");
+
+            float s = g_gamepadScrollSensitivity;
+            if (ImGui::SliderFloat("Scroll sensitivity", &s, 0.25f, 4.0f, "%.2fx")) {
+                if (s < 0.25f) s = 0.25f;
+                if (s > 4.0f)  s = 4.0f;
+                g_gamepadScrollSensitivity = s;
             }
         }
 

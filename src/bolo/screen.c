@@ -936,6 +936,11 @@ void screenSetGunsightCS(ClientSim *csPtr, bool shown) {
   tankSetGunsight(&MY_TANK(csPtr), shown);
 }
 
+void screenGetGunsightTileCS(ClientSim *csPtr, BYTE *xMap, BYTE *yMap) {
+  BYTE px, py;
+  tankGetGunsight(&MY_TANK(csPtr), xMap, yMap, &px, &py);
+}
+
 
 /*********************************************************
 *NAME:          screenReCalc
@@ -1099,6 +1104,16 @@ void screenManMoveCS(ClientSim *csPtr, buildSelect buildS) {
     csPtr->pendingBuildAction = (BYTE) buildS + 1;  /* 1-based in InputPacket (0=none) */
     csPtr->pendingBuildX = (BYTE) (csPtr->cursorPosX + csPtr->xOffset);
     csPtr->pendingBuildY = (BYTE) (csPtr->cursorPosY + csPtr->yOffset);
+  }
+}
+
+void screenManMoveToMapCS(ClientSim *csPtr, BYTE mapX, BYTE mapY, buildSelect buildS) {
+  if (tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR && csPtr->netStat != netFailed) {
+    /* Same as screenManMoveCS but accepts absolute map coords directly,
+       bypassing the cursor + xOffset flow that mouse/touch paths use. */
+    csPtr->pendingBuildAction = (BYTE) buildS + 1;  /* 1-based; 0 = none */
+    csPtr->pendingBuildX = mapX;
+    csPtr->pendingBuildY = mapY;
   }
 }
 
@@ -2846,6 +2861,18 @@ void setBuildCurrentSelectCS(ClientSim *csPtr, buildSelect bs) {
     return;
   }
   csPtr->currentBuildSelect = bs;
+}
+
+void cycleBuildSelectCS(ClientSim *csPtr, int delta) {
+  static const buildSelect order[] = { BsTrees, BsRoad, BsBuilding, BsPillbox, BsMine };
+  const int N = (int)(sizeof(order) / sizeof(order[0]));
+  buildSelect cur = getBuildCurrentSelectCS(csPtr);
+  int idx = 0;
+  for (int i = 0; i < N; i++) {
+    if (order[i] == cur) { idx = i; break; }
+  }
+  idx = ((idx + delta) % N + N) % N;
+  setBuildCurrentSelectCS(csPtr, order[idx]);
 }
 
 

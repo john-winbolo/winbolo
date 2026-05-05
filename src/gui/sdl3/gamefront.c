@@ -64,6 +64,7 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "input_gamepad.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -484,6 +485,14 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
     useAutoslow = screenGetTankAutoSlowdownCS(cs);
     useAutohide = screenGetTankAutoHideGunsightCS(cs);
   }
+}
+
+/* Snapshot the current key bindings via the winbolo.c global and
+   write the full prefs file. Cheap enough for toggle-handler use. */
+void gameFrontSaveCurrentPrefs(void) {
+  keyItems k;
+  windowGetKeys(&k);
+  gameFrontPutPrefs(&k);
 }
 
 /* -------------------------------------------------------
@@ -1674,6 +1683,23 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   char def[FILENAME_MAX];
   const char *prefsFile = getPreferenceFilePath();
 
+  /* Steam Deck detection: Steam sets SteamDeck=1 in the env. Used below
+     to flip a few defaults ON (gunsight, autoscroll, autoslow, autohide)
+     for first-launch UX on the Deck. Saved values still override. */
+  const char *steamDeckEnv = SDL_getenv("SteamDeck");
+  bool isSteamDeck = (steamDeckEnv && SDL_strcmp(steamDeckEnv, "1") == 0);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  const char *gunsightDefault   = "Yes";
+  const char *autoScrollDefault = "Yes";
+  const char *autoSlowDefault   = "Yes";
+  const char *autoHideDefault   = "Yes";
+#else
+  const char *gunsightDefault   = isSteamDeck ? "Yes" : "No";
+  const char *autoScrollDefault = isSteamDeck ? "Yes" : "No";
+  const char *autoSlowDefault   = isSteamDeck ? "Yes" : "No";
+  const char *autoHideDefault   = isSteamDeck ? "Yes" : "No";
+#endif
+
   /* Player Name */
   strcpy(def, langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
   GetPrivateProfileString("SETTINGS", "Player Name", def, gameFrontName, sizeof(gameFrontName), prefsFile);
@@ -1768,6 +1794,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("KEYS", "Quick Mine", def, buff, FILENAME_MAX, prefsFile);
   keys->kiQuickMine = atoi(buff);
 
+  /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
+  GetPrivateProfileString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX, prefsFile);
+  {
+    float gs = (float)atof(buff);
+    if (!(gs >= 0.25f && gs <= 4.0f)) gs = 1.0f;
+    g_gamepadScrollSensitivity = gs;
+  }
+
   /* Remember */
   GetPrivateProfileString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontRemeber = YESNO_TO_TRUEFALSE(buff[0]);
@@ -1799,13 +1833,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   longToStr(UNLIMITED_GAME_TIME, def, sizeof(def));
   GetPrivateProfileString("GAME OPTIONS", "Time Length", def, buff, FILENAME_MAX, prefsFile);
   timeLen = (int32_t)atol(buff);
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
-  GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", "Yes", buff, FILENAME_MAX, prefsFile);
-#else
-  GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", "No", buff, FILENAME_MAX, prefsFile);
-#endif
+  GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX, prefsFile);
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", "No", buff, FILENAME_MAX, prefsFile);
+  GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX, prefsFile);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
   GetPrivateProfileString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX, prefsFile);
@@ -1825,11 +1855,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(FRAME_RATE_30, def, sizeof(def));
   GetPrivateProfileString("MENU", "Frame Rate", def, buff, FILENAME_MAX, prefsFile);
   frameRate = atoi(buff);
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
-  GetPrivateProfileString("MENU", "Show Gunsight", "Yes", buff, FILENAME_MAX, prefsFile);
-#else
-  GetPrivateProfileString("MENU", "Show Gunsight", "No", buff, FILENAME_MAX, prefsFile);
-#endif
+  GetPrivateProfileString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX, prefsFile);
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX, prefsFile);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
@@ -1847,11 +1873,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showNetworkStatusMessages = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Network Debug Messages", "No", buff, FILENAME_MAX, prefsFile);
   showNetworkDebugMessages = YESNO_TO_TRUEFALSE(buff[0]);
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
-  GetPrivateProfileString("MENU", "Autoscroll Enabled", "Yes", buff, FILENAME_MAX, prefsFile);
-#else
-  GetPrivateProfileString("MENU", "Autoscroll Enabled", "No", buff, FILENAME_MAX, prefsFile);
-#endif
+  GetPrivateProfileString("MENU", "Autoscroll Enabled", autoScrollDefault, buff, FILENAME_MAX, prefsFile);
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX, prefsFile);
   smoothScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
@@ -1986,6 +2008,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("KEYS", "Quick Pillbox", buff, prefsFile);
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
   WritePrivateProfileString("KEYS", "Quick Mine", buff, prefsFile);
+
+  /* Gamepad — right-stick scroll sensitivity multiplier. */
+  snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
+  WritePrivateProfileString("SETTINGS", "Gamepad Scroll Sens", buff, prefsFile);
 
   /* Remember */
   WritePrivateProfileString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber), prefsFile);

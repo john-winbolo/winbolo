@@ -37,6 +37,14 @@ bool inputGamepadIsMineHeld(void);
 int  inputGamepadGetGunsightChange(void);  /* -1, 0, +1; edge-triggered, consumed on read */
 bool inputGamepadGetScrollDirection(float *dx, float *dy);
 
+/* Builder UX edge-triggered getters (consume on read). */
+int  inputGamepadGetBuildSelectChange(void);  /* -1 (D-pad LEFT), +1 (D-pad RIGHT), 0 */
+bool inputGamepadIsViewToggleEdge(void);       /* Y press, consumed on read */
+bool inputGamepadIsBuilderConfirmEdge(void);   /* X press, consumed on read */
+
+/* Right-stick scroll sensitivity multiplier (clamped 0.25..4.0 by UI). */
+extern float g_gamepadScrollSensitivity;
+
 SDL_Gamepad     *inputGamepadGetActiveHandle(void);  /* may be NULL */
 SDL_GamepadType  inputGamepadGetActiveType(void);
 void             inputGamepadRumble(float strength, Uint32 durationMs);

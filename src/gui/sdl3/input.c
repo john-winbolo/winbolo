@@ -37,6 +37,7 @@
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
 #include "../ui_mode.h"
+#include "../clientmutex.h"
 
 extern bool smoothScrollingEnabled;
 
@@ -161,51 +162,43 @@ static int smoothScrollGetStepPx(void) {
 }
 
 /*********************************************************
-*NAME:          smoothScrollTickKeyboard
+*NAME:          smoothScrollTick
 *PURPOSE:
-*  Reads the keyboard scroll keys and feeds the resulting
-*  dx/dy into smoothScrollAccumulate.
+*  Sums keyboard and gamepad scroll contributions and feeds
+*  a single (dx, dy) into smoothScrollAccumulate per call.
+*  Unifying the two prevents the keyboard path's snap-to-tile
+*  branch from clearing a sub-tile accumulator that the
+*  gamepad path is still building up.
 *********************************************************/
-static void smoothScrollTickKeyboard(ClientSim *cs, keyItems *setKeys) {
+static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   int dx = 0, dy = 0;
+  int step = smoothScrollGetStepPx();
+
+  /* Keyboard contribution (dx/dy in {-1, 0, +1}). */
   if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
   if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
   if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
   if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
+  dx *= step;
+  dy *= step;
 
-  int step = smoothScrollGetStepPx();
-  smoothScrollAccumulate(cs, dx * step, dy * step);
-}
-
-/*********************************************************
-*NAME:          smoothScrollTickGamepad
-*PURPOSE:
-*  Reads the gamepad right stick (if connected and
-*  deflected past the deadzone) and feeds the resulting
-*  pixel deltas into the smooth-scroll accumulator. No-op
-*  when no gamepad is connected or stick is centred — the
-*  keyboard path's snap-to-tile behaviour is unaffected.
-*********************************************************/
-static void smoothScrollTickGamepad(ClientSim *cs) {
-  if (!inputGamepadIsConnected()) return;
-
-  float fdx = 0.0f, fdy = 0.0f;
-  if (!inputGamepadGetScrollDirection(&fdx, &fdy)) return;
-
-  int step = smoothScrollGetStepPx();
-  int gx = (int)(fdx * (float)step);
-  int gy = (int)(fdy * (float)step);
-
-  /* Stick deflected past deadzone but quantises to zero — bias to a
-     minimum 1px nudge so the tile commits eventually. */
-  if (gx == 0 && fdx >  0.0f) gx =  1;
-  if (gx == 0 && fdx <  0.0f) gx = -1;
-  if (gy == 0 && fdy >  0.0f) gy =  1;
-  if (gy == 0 && fdy <  0.0f) gy = -1;
-
-  if (gx != 0 || gy != 0) {
-    smoothScrollAccumulate(cs, gx, gy);
+  /* Gamepad contribution (right stick, normalised). */
+  if (inputGamepadIsConnected()) {
+    float fdx = 0.0f, fdy = 0.0f;
+    if (inputGamepadGetScrollDirection(&fdx, &fdy)) {
+      int gx = (int)(fdx * (float)step);
+      int gy = (int)(fdy * (float)step);
+      /* Min 1px nudge so deadzone-grazing input still moves. */
+      if (gx == 0 && fdx >  0.0f) gx =  1;
+      if (gx == 0 && fdx <  0.0f) gx = -1;
+      if (gy == 0 && fdy >  0.0f) gy =  1;
+      if (gy == 0 && fdy <  0.0f) gy = -1;
+      dx += gx;
+      dy += gy;
+    }
   }
+
+  smoothScrollAccumulate(cs, dx, dy);
 }
 
 /*********************************************************
@@ -275,6 +268,26 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     tb = inputTouchGetMovement();
   }
 
+  /* Gamepad-only actions: build-type cycle, builder confirm, view toggle. */
+  if (inputGamepadIsConnected()) {
+    int delta = inputGamepadGetBuildSelectChange();
+    if (delta != 0) cycleBuildSelectCS(cs, delta);
+
+    if (inputGamepadIsBuilderConfirmEdge()) {
+      BYTE gsX, gsY;
+      screenGetGunsightTileCS(cs, &gsX, &gsY);
+      clientMutexWaitFor();
+      screenManMoveToMapCS(cs, gsX, gsY, getBuildCurrentSelectCS(cs));
+      clientMutexRelease();
+    }
+
+    if (inputGamepadIsViewToggleEdge()) {
+      static bool inPillView = false;
+      if (inPillView) { screenTankViewCS(cs); inPillView = false; }
+      else            { screenPillViewCS(cs, 0, 0); inPillView = true; }
+    }
+  }
+
   /* Mine laying is now handled via InputPacket — see inputIsMineKeyPressed() */
 
   if (KEY_DOWN(setKeys->kiQuickTree)) {
@@ -305,8 +318,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   }
 
   if (smoothScrollingEnabled) {
-    smoothScrollTickKeyboard(cs, setKeys);
-    smoothScrollTickGamepad(cs);
+    smoothScrollTick(cs, setKeys);
   } else {
     /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
     smoothScrollAccumX = 0;
@@ -355,8 +367,7 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   }
 
   if (smoothScrollingEnabled) {
-    smoothScrollTickKeyboard(cs, setKeys);
-    smoothScrollTickGamepad(cs);
+    smoothScrollTick(cs, setKeys);
     return;
   }
 

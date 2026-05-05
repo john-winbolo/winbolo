@@ -1152,11 +1152,13 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
   screenSetGunsightCS(cs, showGunsight);
+  gameFrontSaveCurrentPrefs();
 }
 
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
   if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
+  gameFrontSaveCurrentPrefs();
 }
 
 void windowSmoothScrolling_toggle(void) {

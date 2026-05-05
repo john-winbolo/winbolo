@@ -46,6 +46,14 @@ static bool s_moveWasActive = false;
 /* Edge-triggered gunsight delta: -1/+1 set by button-down, consumed on read. */
 static int s_gunsightPending = 0;
 
+/* Builder UX edge-triggered state, consumed on read. */
+static int  s_buildSelectChange  = 0;
+static bool s_viewToggleEdge     = false;
+static bool s_builderConfirmEdge = false;
+
+/* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
+float g_gamepadScrollSensitivity = 1.0f;
+
 /* --- Helpers --- */
 
 static void openGamepadById(SDL_JoystickID id) {
@@ -80,8 +88,11 @@ static void promoteNextGamepad(void) {
 
 void inputGamepadInit(void) {
   clearActive();
-  s_moveWasActive   = false;
-  s_gunsightPending = 0;
+  s_moveWasActive      = false;
+  s_gunsightPending    = 0;
+  s_buildSelectChange  = 0;
+  s_viewToggleEdge     = false;
+  s_builderConfirmEdge = false;
 
   /* Steam Deck built-in controller HIDAPI access. With a real Steam
      App ID, Steam Input handles this automatically; this hint covers
@@ -130,6 +141,20 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
             break;
           case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
             s_gunsightPending = 1;
+            break;
+          case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+            s_buildSelectChange  = -1;
+            break;
+          case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+            s_buildSelectChange  = +1;
+            break;
+          case SDL_GAMEPAD_BUTTON_NORTH:
+            s_viewToggleEdge     = true;
+            break;
+          case SDL_GAMEPAD_BUTTON_WEST:
+            /* X = builder-confirm. Kept off SOUTH (A) so it doesn't
+               double-fire alongside the fire button. */
+            s_builderConfirmEdge = true;
             break;
           default:
             break;
@@ -229,10 +254,29 @@ bool inputGamepadGetScrollDirection(float *dx, float *dy) {
   float reach = (clampDist - SCROLL_DEADZONE) / (SCROLL_MAX_REACH - SCROLL_DEADZONE);
   float scale = reach / dist;  /* re-scale unit vector by reach */
 
-  if (dx) *dx = x * scale;
-  if (dy) *dy = y * scale;
+  if (dx) *dx = x * scale * g_gamepadScrollSensitivity;
+  if (dy) *dy = y * scale * g_gamepadScrollSensitivity;
   return true;
 }
+
+int inputGamepadGetBuildSelectChange(void) {
+  int v = s_buildSelectChange;
+  s_buildSelectChange = 0;
+  return v;
+}
+
+bool inputGamepadIsViewToggleEdge(void) {
+  bool v = s_viewToggleEdge;
+  s_viewToggleEdge = false;
+  return v;
+}
+
+bool inputGamepadIsBuilderConfirmEdge(void) {
+  bool v = s_builderConfirmEdge;
+  s_builderConfirmEdge = false;
+  return v;
+}
+
 
 void inputGamepadRumble(float strength, Uint32 durationMs) {
   if (!s_activeGamepad) return;
