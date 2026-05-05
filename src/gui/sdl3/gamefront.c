@@ -413,6 +413,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       OKStart = FALSE;
     }
 
+    /* Bring up the gamepad subsystem now (before any dialogs run) so the
+       ImGui SDL3 backend can enumerate gamepads in the welcome / lobby /
+       settings / etc. dialogs and route D-pad + face buttons through nav.
+       inputGamepadInit() is still called later (when the game window is
+       set up) to register edge-trigger state for the in-game input path —
+       that second call is a no-op for the subsystem (ref-counted). */
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1");
+    SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+
     {
       /* For custom mode, use ceiling integer zoom so render target >= window.
          sdl3DrawAdaptRenderTarget will adjust dynamically on resize. */

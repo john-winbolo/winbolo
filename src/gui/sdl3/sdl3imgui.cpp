@@ -83,6 +83,7 @@ extern "C" {
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_quickchat.h"
 
 extern "C" void windowSetQuitting(void);
 
@@ -176,6 +177,8 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
+extern "C" void windowSuspendBackground(void);
+extern "C" void windowResumeForeground(struct ClientSim *cs);
 
 /* Backend functions called directly from menu */
 extern "C" void screenRequestAllianceCS(struct ClientSim *csPtr);
@@ -407,11 +410,12 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
-    imguiLoadBoloFont(18.0f);
+    imguiLoadBoloFont(18.0f * dialogDeckFontMul());
     ImGui_ImplSDL3_InitForSDLRenderer(pw->window, pw->renderer);
     ImGui_ImplSDLRenderer3_Init(pw->renderer);
 
@@ -2400,7 +2404,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
-    imguiLoadBoloFont(18.0f);
+    imguiLoadBoloFont(18.0f * dialogDeckFontMul());
 
     /* Tablet mode: scale up ImGui for touch targets.
        Scale proportionally to the logical coordinate space height.
@@ -2415,6 +2419,16 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
         style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
         style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
         style.ScrollbarSize     = 24.0f * ps;
+    } else if (uiModeIsSteamDeck()) {
+        /* Match the bumped font size with proportionally bumped layout
+           metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
+           in-game dialogs (Settings / Players / Send Message / pause
+           overlay) don't clip text or overlap.  No touch padding —
+           Deck uses desktop hover/click feel. */
+        const float deckMul = dialogDeckFontMul();
+        if (deckMul > 1.0f) {
+            ImGui::GetStyle().ScaleAllSizes(deckMul);
+        }
     }
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
@@ -2560,6 +2574,20 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (soundEffects) {
                 soundSetMuted(false);
             }
+            continue;
+        }
+
+        /* Suspend / resume — Steam Deck Verified requirement.  Fires on
+           sleep, home-button overlay, and other backgrounding.  In a
+           network game, resume drops back to menu via the standard
+           "you have been disconnected" flow.  In single-player it just
+           resets the catchup-loop wallclock baseline. */
+        if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
+            windowSuspendBackground();
+            continue;
+        }
+        if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+            windowResumeForeground(cs);
             continue;
         }
 
@@ -2829,12 +2857,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     ImGui_ImplSDL3_NewFrame();
     dialogResetTextInputArea(s_window);
 
-    /* Override ImGui's DisplaySize for tablet mode only.
-       In tablet mode, SDL logical presentation scales the whole window,
-       so ImGui needs to render in that coordinate space.
+    /* Override ImGui's DisplaySize for tablet and Deck modes.
+       In both, SDL logical presentation scales the whole window, so ImGui
+       needs to render in that coordinate space — otherwise dialogs draw
+       at native pixel coords inside a logical surface and scale wrong.
        In desktop mode, ImGui renders at native window coordinates (no override)
        because the game is blitted to a scaled rect, not the whole window. */
-    if (uiModeIsTablet()) {
+    if (uiModeIsTablet() || uiModeIsSteamDeck()) {
         int logW = 0, logH = 0;
         SDL_RendererLogicalPresentation logMode;
         SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &logMode);
@@ -2859,6 +2888,40 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (inputGamepadIsPauseEdge() && uiModeIsSteamDeck()) {
         deckPauseOpen();
     }
+    /* Quick-chat open trigger: D-pad UP, in-game only.  Gamepad-universal
+       (not Deck-gated) — desktop gamepad players also benefit.  Skipped
+       in lobby because the lobby has its own chat UI, and skipped while
+       any in-game panel / overlay is open (settings, players, send-msg,
+       pause, popups) so D-pad nav inside those windows isn't also
+       interpreted as a quick-chat open. */
+    if (inputGamepadIsQuickChatEdge() && cs && !cs->inLobby &&
+        !sdl3ImguiIsDialogOpen() && !quickChatIsOpen()) {
+        quickChatOpen();
+    }
+
+    /* B button — close the topmost open in-game panel.  Modal popups
+       (pause, quick-chat) close themselves via the p_open passed to
+       BeginPopupModal; ImGui's NavCancel only closes non-modal popups.
+       Regular ImGui windows (Settings, Players, Send Message, etc.)
+       aren't auto-closed by anything, so handle them here.  Skipped
+       while a popup is on the stack or a text input is active — those
+       want B for popup-close / clear-text first. */
+    {
+        ImGuiContext *ctx = ImGui::GetCurrentContext();
+        bool anyPopup = (ctx && ctx->OpenPopupStack.Size > 0);
+        if (inputGamepadIsConnected() && !anyPopup &&
+            !ImGui::GetIO().WantTextInput &&
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            if      (s_showSettings)       s_showSettings = false;
+            else if (s_showSendMsg)        s_showSendMsg = false;
+            else if (s_showPlayersPanel)   s_showPlayersPanel = false;
+            else if (s_brainSettingsOpen)  s_brainSettingsOpen = false;
+            else if (s_allianceVisible)    s_allianceVisible = false;
+            else if (s_showSysInfo)        s_showSysInfo = false;
+            else if (s_showNetInfo)        s_showNetInfo = false;
+            else if (s_showGameInfo)       s_showGameInfo = false;
+        }
+    }
 
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
@@ -2866,8 +2929,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         if (!uiModeIsSteamDeck()) {
             renderMenuBar(cs);
         }
-        /* Pause overlay (no-op when closed). */
+        /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
+        quickChatRender(cs);
     }
 
     /* Detect when a menu-bar dropdown (child menu popup) just closed.

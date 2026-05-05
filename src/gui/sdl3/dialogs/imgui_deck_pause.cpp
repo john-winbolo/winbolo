@@ -18,6 +18,7 @@
 #include "imgui_deck_pause.h"
 #include "../../lang.h"
 #include "../sdl3imgui.h"
+#include "../../../bolo/client_sim.h"
 
 extern "C" void windowSetQuitting(void);
 extern "C" void windowNewGame(void);
@@ -34,8 +35,6 @@ bool deckPauseIsOpen(void) {
 }
 
 void deckPauseRender(struct ClientSim *cs) {
-    (void)cs;
-
     if (s_pendingOpen) {
         ImGui::OpenPopup("Pause");
         s_pendingOpen = false;
@@ -52,7 +51,23 @@ void deckPauseRender(struct ClientSim *cs) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_AlwaysAutoResize;
 
-    if (ImGui::BeginPopupModal("Pause", nullptr, flags)) {
+    /* In the lobby, Players / Send Message / Leave Game don't apply —
+       the lobby has its own player list + chat, and there's no game to
+       leave.  Collapse to Resume / Settings / Configure Keys / Quit. */
+    const bool inLobby = (cs != nullptr && cs->inLobby);
+
+    /* &s_open gives the modal a title-bar X close button.  ImGui's
+       NavCancel does NOT auto-close modals (imgui.cpp line ~14949 — it
+       skips windows with the Modal flag), so we also detect B/Escape
+       inside the popup and close it manually. */
+    if (ImGui::BeginPopupModal("Pause", &s_open, flags)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ImGui::CloseCurrentPopup();
+            s_open = false;
+            ImGui::EndPopup();
+            return;
+        }
         const ImVec2 btnSize(320.0f, 0.0f);
         ImGuiStyle &style = ImGui::GetStyle();
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
@@ -72,20 +87,22 @@ void deckPauseRender(struct ClientSim *cs) {
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
-        if (ImGui::Button(langGetText(STR_MENU_PLAYERS), btnSize)) {
-            sdl3ImguiShowPlayersPanel(true);
-            ImGui::CloseCurrentPopup();
-            s_open = false;
-        }
-        if (ImGui::Button(langGetText(STR_MENU_SEND_MESSAGE), btnSize)) {
-            sdl3ImguiShowSendMsg(true);
-            ImGui::CloseCurrentPopup();
-            s_open = false;
-        }
-        if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), btnSize)) {
-            windowNewGame();
-            ImGui::CloseCurrentPopup();
-            s_open = false;
+        if (!inLobby) {
+            if (ImGui::Button(langGetText(STR_MENU_PLAYERS), btnSize)) {
+                sdl3ImguiShowPlayersPanel(true);
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
+            if (ImGui::Button(langGetText(STR_MENU_SEND_MESSAGE), btnSize)) {
+                sdl3ImguiShowSendMsg(true);
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
+            if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), btnSize)) {
+                windowNewGame();
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
         }
         if (ImGui::Button(langGetText(STR_MENU_EXIT), btnSize)) {
             windowSetQuitting();

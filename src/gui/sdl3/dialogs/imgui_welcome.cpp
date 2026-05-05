@@ -125,6 +125,7 @@ extern "C" int imguiWelcomeShow(void) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -177,6 +178,7 @@ extern "C" int imguiWelcomeShow(void) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (dialogHandleUrlDropEvent(&ev)) { result = 16; running = false; continue; } /* openInternetManual */
@@ -331,6 +333,11 @@ extern "C" int imguiWelcomeShow(void) {
                     result = miniModes[i].code;
                     running = false;
                 }
+                /* Default keyboard / gamepad focus on Single Player so D-pad
+                   navigation lands somewhere sensible (not Quit). */
+                if (miniModes[i].code == RESULT_SINGLEPLAYER) {
+                    ImGui::SetItemDefaultFocus();
+                }
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -456,6 +463,11 @@ extern "C" int imguiWelcomeShow(void) {
                 if (ImGui::Button(langGetText(modes[i].labelId), ImVec2(btnW, btnH))) {
                     result = modes[i].code;
                     running = false;
+                }
+                /* Default keyboard / gamepad focus on Single Player so D-pad
+                   navigation lands somewhere sensible (not Quit). */
+                if (modes[i].code == RESULT_SINGLEPLAYER) {
+                    ImGui::SetItemDefaultFocus();
                 }
                 ImGui::Spacing();
             }

@@ -166,6 +166,10 @@ static bool doingTutorial = FALSE;
 static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 
+/* Set on SDL_EVENT_WILL_ENTER_BACKGROUND, cleared by
+ * windowResumeForeground.  See windowSuspendBackground for details. */
+static bool s_suspended = FALSE;
+
 /* Tick counters */
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
@@ -574,6 +578,10 @@ static void windowRunGameTick(ClientSim *cs) {
   bool brainRunning;
   Transport *transport;
 
+  /* App is in the background (Deck home button / sleep) — skip all
+     tick work.  windowResumeForeground resets the wallclock baseline. */
+  if (s_suspended) return;
+
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
   tb = 0;
@@ -782,6 +790,49 @@ void *windowWnd(void) {
 void windowSetQuitting(void) {
   winboloQuit = TRUE;
   finishedLoop = TRUE;
+}
+
+/* -------------------------------------------------------
+ * Suspend / resume — Steam Deck Verified requirement.
+ * Driven by SDL_EVENT_WILL_ENTER_BACKGROUND (sleep / home
+ * button / overlay) and SDL_EVENT_DID_ENTER_FOREGROUND.
+ * s_suspended declared near other main-loop state above.
+ * ------------------------------------------------------- */
+void windowSuspendBackground(void) {
+  /* Pause local sim (windowRunGameTick early-outs on s_suspended) and
+     mute audio.  Network state is left as-is; UDP will time out on its
+     own.  Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL
+     are safe. */
+  s_suspended = TRUE;
+  soundSetMuted(TRUE);
+}
+
+void windowResumeForeground(ClientSim *cs) {
+  if (!s_suspended) return;
+  s_suspended = FALSE;
+
+  if (cs != NULL && cs->networkGameType == netUdp) {
+    /* Network game: UDP timeout has almost certainly killed the
+       session and the server has moved on.  Disconnect cleanly via
+       the same flow as the in-tick connection-lost handler — show the
+       standard "you have been disconnected" message and drop back to
+       menu via finishedLoop=TRUE.  No reconnect, no state freeze. */
+    screenConnectionLostCS(cs);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      "You have lost your connection to the server.\n"
+                      "Returning to menu.",
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    finishedLoop = TRUE;
+    winboloQuit = FALSE;
+  } else {
+    /* Single-player / tutorial / main menu: reset the catchup-loop
+       wallclock baseline so the while ((ttick - oldTick) > GAME_TICK_LENGTH)
+       loop in windowRunGameTick doesn't try to simulate every frame
+       of the suspend duration in one go. */
+    oldTick = winboloTimer();
+    ttick = oldTick;
+  }
+  soundSetMuted(FALSE);
 }
 
 /* -------------------------------------------------------

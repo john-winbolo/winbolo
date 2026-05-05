@@ -186,6 +186,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -212,6 +213,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                  ev.window.windowID == SDL_GetWindowID(window))) {

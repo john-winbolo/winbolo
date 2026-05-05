@@ -51,6 +51,7 @@ static int  s_buildSelectChange  = 0;
 static bool s_viewToggleEdge     = false;
 static bool s_builderConfirmEdge = false;
 static bool s_pauseEdge          = false;
+static bool s_quickChatEdge      = false;
 
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
 float g_gamepadScrollSensitivity = 1.0f;
@@ -95,6 +96,7 @@ void inputGamepadInit(void) {
   s_viewToggleEdge     = false;
   s_builderConfirmEdge = false;
   s_pauseEdge          = false;
+  s_quickChatEdge      = false;
 
   /* Steam Deck built-in controller HIDAPI access. With a real Steam
      App ID, Steam Input handles this automatically; this hint covers
@@ -160,6 +162,9 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
             break;
           case SDL_GAMEPAD_BUTTON_START:
             s_pauseEdge = true;
+            break;
+          case SDL_GAMEPAD_BUTTON_DPAD_UP:
+            s_quickChatEdge = true;
             break;
           default:
             break;
@@ -232,8 +237,9 @@ bool inputGamepadIsFireHeld(void) {
 bool inputGamepadIsMineHeld(void) {
   if (!s_activeGamepad) return false;
 
-  if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_EAST)) return true;
-
+  /* Mine = LT only.  B (EAST) is reserved for ImGui nav-cancel / dialog
+     close — overlapping it with mine made every cancel-press also lay
+     a mine.  See controller plan §6.2: LT mine, B cancel/close menu. */
   float lt = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * AXIS_NORM;
   return lt > TRIGGER_THRESHOLD;
 }
@@ -285,6 +291,12 @@ bool inputGamepadIsBuilderConfirmEdge(void) {
 bool inputGamepadIsPauseEdge(void) {
   bool v = s_pauseEdge;
   s_pauseEdge = false;
+  return v;
+}
+
+bool inputGamepadIsQuickChatEdge(void) {
+  bool v = s_quickChatEdge;
+  s_quickChatEdge = false;
   return v;
 }
 

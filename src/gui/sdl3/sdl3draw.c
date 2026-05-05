@@ -853,6 +853,29 @@ bool sdl3DrawSetup(int zoomFactor) {
 
   SDL_SetRenderVSync(gRenderer, 1);
 
+  /* Steam Deck: scale the desktop view via SDL logical presentation, the
+     same path mobile uses — picks an integer zoom that fits the 1280x800
+     screen, then SDL upscales the entire 515x325 desktop layout (chrome,
+     status panels, playfield, text) in one consistent step.  Fonts open
+     below at gZoomFactor so glyphs rasterize crisply rather than being
+     LINEAR-upscaled from a 1x render. */
+  if (uiModeIsSteamDeck()) {
+    int ww, wh;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    int zoomH = wh / SDL3_SCREEN_H;   /* 800 / 325 = 2 */
+    int zoomW = ww / SDL3_SCREEN_W;   /* 1280 / 515 = 2 */
+    int bestZoom = (zoomH < zoomW) ? zoomH : zoomW;
+    if (bestZoom < 1) bestZoom = 1;
+    SDL_SetRenderLogicalPresentation(gRenderer,
+        SDL3_SCREEN_W * bestZoom, SDL3_SCREEN_H * bestZoom,
+        SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    gZoomFactor = bestZoom;
+    sdl3DrawStatusSetZoom(gZoomFactor);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+        "sdl3DrawSetup: deck logical presentation %dx%d (zoom %d, render output %dx%d)",
+        SDL3_SCREEN_W * bestZoom, SDL3_SCREEN_H * bestZoom, bestZoom, ww, wh);
+  }
+
   /* macOS trackpad pinch-to-zoom */
   macOSPinchZoomInit();
 
@@ -984,8 +1007,10 @@ bool sdl3DrawSetup(int zoomFactor) {
   /* Desktop resizable: create a render target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
-     while the game scales. */
-  if (!uiModeIsTablet()) {
+     while the game scales.  Skipped on Deck — logical presentation
+     already upscales the whole layout, an extra RT would re-introduce a
+     1x rasterization step that defeats the font sharpness. */
+  if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
     gGameRTWidth  = gZoomFactor * SDL3_SCREEN_W;
     gGameRTHeight = gZoomFactor * SDL3_SCREEN_H;
     gGameRenderTarget = SDL_CreateTexture(gRenderer,
@@ -1077,6 +1102,11 @@ static void sdl3DrawAdaptRenderTarget(void) {
   if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
+  /* Deck is fullscreen 1280x800 with logical presentation already set in
+     sdl3DrawSetup.  No resizes ever fire here; even if they did, this
+     function would recompute gZoomFactor and stomp the value the Deck
+     branch picked. */
+  if (uiModeIsSteamDeck()) return;
 
   int winW, winH;
   SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
