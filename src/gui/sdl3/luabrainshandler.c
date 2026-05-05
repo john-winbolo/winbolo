@@ -539,12 +539,16 @@ static void setup_brain_package_path(lua_State *L, const char *path) {
     lua_pushstring(L, newPath);
     lua_setfield(L, -2, "path");
     lua_pop(L, 1); /* pop package */
+
+    /* Expose the brain directory so the brain can locate opt/ at runtime. */
+    lua_pushstring(L, brainDir);
+    lua_setglobal(L, "BRAIN_DIR");
   }
 }
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
-                            aiType aiMode) {
+                            aiType aiMode, bool debug_mode) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
@@ -566,6 +570,13 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
   luaL_openlibs(L);
   brainCoreRegisterConstants(L);
+
+  /* Signal to the brain whether it's running under BrainTest (debug) or
+   * a release host (WinBolo / WinBoloDS).  Brains use this to skip debug
+   * output and overlay calls when running in production. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "BRAIN_DEBUG_MODE");
+
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 
   /* Create C pathfinder and register cpf_* globals */
@@ -609,26 +620,56 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * no-op outside BrainTest. */
   brainCoreRegisterPillContrib(L);
 
+  /* Compute brain directory once at function scope so it can be reused for
+   * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */
+  char brainDir[LUA_BRAINS_PATH_MAX];
+  if (!extract_brain_dir(path, brainDir, sizeof(brainDir))) {
+    const char *lastSlash = SDL_strrchr(path, '/');
+    if (!lastSlash) lastSlash = SDL_strrchr(path, '\\');
+    if (lastSlash) {
+      size_t dlen = (size_t)(lastSlash - path);
+      if (dlen >= sizeof(brainDir)) dlen = sizeof(brainDir) - 1;
+      memcpy(brainDir, path, dlen);
+      brainDir[dlen] = '\0';
+    } else {
+      SDL_strlcpy(brainDir, ".", sizeof(brainDir));
+    }
+  }
+
+  /* If not in debug mode and opt/init.lua exists, treat opt/ as the
+   * effective brain directory — require() and the init load both use it.
+   * Any brain that ships an opt/ directory gets this automatically. */
+  char effectiveDir[LUA_BRAINS_PATH_MAX];
+  SDL_strlcpy(effectiveDir, brainDir, sizeof(effectiveDir));
+  if (!debug_mode) {
+    char optInit[LUA_BRAINS_PATH_MAX];
+    SDL_snprintf(optInit, sizeof(optInit), "%s/opt/init.lua", brainDir);
+    SDL_IOStream *check = SDL_IOFromFile(optInit, "r");
+    if (check) {
+      SDL_CloseIO(check);
+      SDL_snprintf(effectiveDir, sizeof(effectiveDir), "%s/opt", brainDir);
+    }
+  }
+
   setup_brain_package_path(L, path);
+
+  /* Override package.path to load from effectiveDir first. */
+  {
+    lua_getglobal(L, "package");
+    lua_getfield(L, -1, "path");
+    const char *curPath = lua_tostring(L, -1);
+    char newPath[LUA_BRAINS_PATH_MAX * 2];
+    SDL_snprintf(newPath, sizeof(newPath), "%s/?.lua;%s", effectiveDir, curPath);
+    lua_pop(L, 1);
+    lua_pushstring(L, newPath);
+    lua_setfield(L, -2, "path");
+    lua_pop(L, 1);
+  }
 
   /* Install SDL-based searcher so require() works on Android assets.
    * Insert it at position 2 in package.searchers (before the default
    * file searcher at position 3). */
   {
-    char brainDir[LUA_BRAINS_PATH_MAX];
-    if (!extract_brain_dir(path, brainDir, sizeof(brainDir))) {
-      /* Not a directory-based brain; derive dir from last slash */
-      const char *lastSlash = SDL_strrchr(path, '/');
-      if (!lastSlash) lastSlash = SDL_strrchr(path, '\\');
-      if (lastSlash) {
-        size_t dlen = (size_t)(lastSlash - path);
-        if (dlen >= sizeof(brainDir)) dlen = sizeof(brainDir) - 1;
-        memcpy(brainDir, path, dlen);
-        brainDir[dlen] = '\0';
-      } else {
-        SDL_strlcpy(brainDir, ".", sizeof(brainDir));
-      }
-    }
     lua_getglobal(L, "package");
     lua_getfield(L, -1, "searchers");
     int nSearchers = (int)lua_rawlen(L, -1);
@@ -637,7 +678,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       lua_rawgeti(L, -1, i);
       lua_rawseti(L, -2, i + 1);
     }
-    lua_pushstring(L, brainDir);
+    lua_pushstring(L, effectiveDir);
     lua_pushcclosure(L, sdl_lua_searcher, 1);
     lua_rawseti(L, -2, 2);
     lua_pop(L, 2); /* pop searchers + package */
@@ -653,10 +694,17 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     char resolvedPath[LUA_BRAINS_PATH_MAX];
     SDL_strlcpy(resolvedPath, path, sizeof(resolvedPath));
 
-    /* If path ends with / or \, append init.lua */
+    /* If path ends with / or \, load init.lua from effectiveDir. */
     size_t plen = SDL_strlen(resolvedPath);
     if (plen > 0 && (resolvedPath[plen-1] == '/' || resolvedPath[plen-1] == '\\')) {
-      SDL_snprintf(resolvedPath, sizeof(resolvedPath), "%sinit.lua", path);
+      SDL_snprintf(resolvedPath, sizeof(resolvedPath), "%s/init.lua", effectiveDir);
+    } else if (effectiveDir[0] != brainDir[0] ||
+               SDL_strcmp(effectiveDir, brainDir) != 0) {
+      /* Non-directory path: rebase onto effectiveDir if it differs. */
+      const char *fname = SDL_strrchr(path, '/');
+      if (!fname) fname = SDL_strrchr(path, '\\');
+      fname = fname ? fname + 1 : path;
+      SDL_snprintf(resolvedPath, sizeof(resolvedPath), "%s/%s", effectiveDir, fname);
     }
 
     src = sdl_load_file(resolvedPath, &srcLen);
@@ -1113,7 +1161,7 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   clientMutexWaitFor();
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              cs->allowComputerTanks)) {
+                              cs->allowComputerTanks, false)) {
     clientMutexRelease();
     return false;
   }
