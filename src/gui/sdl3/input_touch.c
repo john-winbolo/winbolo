@@ -18,6 +18,7 @@
 #include <math.h>
 #include "input_touch.h"
 #include "input_joystick.h"
+#include "input_gamepad.h"
 
 /* Joystick deadzone in pixels */
 #define JOYSTICK_DEADZONE 20.0f
@@ -448,19 +449,7 @@ void inputTouchGetJoystickState(float *anchorX, float *anchorY,
 /* --- Haptic --- */
 
 void inputTouchTriggerHaptic(float strength, Uint32 durationMs) {
-  /* TODO Phase 1B: cache handle from input_gamepad to avoid per-call open/close. */
-  int count = 0;
-  SDL_JoystickID *joysticks = SDL_GetGamepads(&count);
-  if (joysticks && count > 0) {
-    SDL_Gamepad *gp = SDL_OpenGamepad(joysticks[0]);
-    if (gp) {
-      Uint16 lo = (Uint16)(strength * 65535.0f);
-      Uint16 hi = lo;
-      SDL_RumbleGamepad(gp, lo, hi, durationMs);
-      SDL_CloseGamepad(gp);
-    }
-    SDL_free(joysticks);
-  }
+  inputGamepadRumble(strength, durationMs);
 }
 
 /* --- Legacy API --- */

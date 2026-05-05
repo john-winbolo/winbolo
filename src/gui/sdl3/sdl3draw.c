@@ -813,7 +813,13 @@ bool sdl3DrawSetup(int zoomFactor) {
 
   /* --- Create window and renderer first, so we can compute the
          effective zoom for font sizing and tile loading. --- */
-  if (uiModeIsTablet()) {
+  if (uiModeIsSteamDeck()) {
+    /* Steam Deck: fullscreen at native 1280x800, no DPI scaling.
+       Uses desktop UI baseline so menu bar / dialogs render
+       normally inside the fullscreen surface. */
+    gWindow = SDL_CreateWindow("WinBolo", 1280, 800,
+                               SDL_WINDOW_FULLSCREEN);
+  } else if (uiModeIsTablet()) {
     /* Tablet mode: fullscreen window, no fixed-size chrome */
     gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);

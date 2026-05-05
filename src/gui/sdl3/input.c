@@ -33,6 +33,7 @@
 #include "../tiles.h"
 #include "input.h"
 #include "input_touch.h"
+#include "input_gamepad.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
 #include "../ui_mode.h"
@@ -103,33 +104,24 @@ bool inputSetup(void) {
 }
 
 /*********************************************************
-*NAME:          smoothScrollTick
+*NAME:          smoothScrollAccumulate
 *PURPOSE:
-*  Smooth (pixel-level) arrow-key scrolling.  Advances a
-*  sub-tile pixel accumulator each call; commits full-tile
-*  crossings to the engine via screenUpdateCS and pushes
-*  the remainder to sdl3DrawSetDragOffset for sub-tile
-*  rendering.
+*  Pure accumulator: feeds pixel deltas (in zoomed pixels)
+*  into the smooth-scroll sub-tile accumulator. Commits
+*  whole-tile crossings to the engine via screenUpdateCS
+*  and pushes the remainder to sdl3DrawSetDragOffset for
+*  sub-tile rendering.
 *
-*  When no scroll key is held, snaps the accumulator to
-*  the nearest tile boundary so the view comes to rest
-*  cleanly.
+*  When called with dx=dy=0 and no key/stick was held,
+*  snaps the accumulator to the nearest tile boundary so
+*  the view comes to rest cleanly.
 *********************************************************/
-static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
-  int dx = 0, dy = 0;
-  if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
-  if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
-  if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
-  if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
-
+static void smoothScrollAccumulate(ClientSim *cs, int dx, int dy) {
   int zoom = sdl3DrawGetZoomFactor();
   if (zoom < 1) zoom = 1;
   int tileW = TILE_SIZE_X * zoom;
   int tileH = TILE_SIZE_Y * zoom;
-  int stepZoomed = smoothScrollSpeedPx * zoom;
-  if (stepZoomed < 1) stepZoomed = 1;
 
-  /* No direction held: snap to nearest tile boundary. */
   if (dx == 0 && dy == 0) {
     if (smoothScrollAccumX != 0 || smoothScrollAccumY != 0) {
       if (smoothScrollAccumX >  tileW / 2) screenUpdateCS(cs, right);
@@ -143,8 +135,8 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
     return;
   }
 
-  smoothScrollAccumX += dx * stepZoomed;
-  smoothScrollAccumY += dy * stepZoomed;
+  smoothScrollAccumX += dx;
+  smoothScrollAccumY += dy;
 
   while (smoothScrollAccumX >= tileW)  { screenUpdateCS(cs, right); smoothScrollAccumX -= tileW; }
   while (smoothScrollAccumX <= -tileW) { screenUpdateCS(cs, left);  smoothScrollAccumX += tileW; }
@@ -152,6 +144,68 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   while (smoothScrollAccumY <= -tileH) { screenUpdateCS(cs, up);    smoothScrollAccumY += tileH; }
 
   sdl3DrawSetDragOffset(smoothScrollAccumX, smoothScrollAccumY);
+}
+
+/*********************************************************
+*NAME:          smoothScrollGetStepPx
+*PURPOSE:
+*  Returns the per-frame zoomed pixel step for one unit
+*  of input (keyboard direction or full-deflection stick).
+*********************************************************/
+static int smoothScrollGetStepPx(void) {
+  int zoom = sdl3DrawGetZoomFactor();
+  if (zoom < 1) zoom = 1;
+  int stepZoomed = smoothScrollSpeedPx * zoom;
+  if (stepZoomed < 1) stepZoomed = 1;
+  return stepZoomed;
+}
+
+/*********************************************************
+*NAME:          smoothScrollTickKeyboard
+*PURPOSE:
+*  Reads the keyboard scroll keys and feeds the resulting
+*  dx/dy into smoothScrollAccumulate.
+*********************************************************/
+static void smoothScrollTickKeyboard(ClientSim *cs, keyItems *setKeys) {
+  int dx = 0, dy = 0;
+  if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
+  if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
+  if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
+  if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
+
+  int step = smoothScrollGetStepPx();
+  smoothScrollAccumulate(cs, dx * step, dy * step);
+}
+
+/*********************************************************
+*NAME:          smoothScrollTickGamepad
+*PURPOSE:
+*  Reads the gamepad right stick (if connected and
+*  deflected past the deadzone) and feeds the resulting
+*  pixel deltas into the smooth-scroll accumulator. No-op
+*  when no gamepad is connected or stick is centred — the
+*  keyboard path's snap-to-tile behaviour is unaffected.
+*********************************************************/
+static void smoothScrollTickGamepad(ClientSim *cs) {
+  if (!inputGamepadIsConnected()) return;
+
+  float fdx = 0.0f, fdy = 0.0f;
+  if (!inputGamepadGetScrollDirection(&fdx, &fdy)) return;
+
+  int step = smoothScrollGetStepPx();
+  int gx = (int)(fdx * (float)step);
+  int gy = (int)(fdy * (float)step);
+
+  /* Stick deflected past deadzone but quantises to zero — bias to a
+     minimum 1px nudge so the tile commits eventually. */
+  if (gx == 0 && fdx >  0.0f) gx =  1;
+  if (gx == 0 && fdx <  0.0f) gx = -1;
+  if (gy == 0 && fdy >  0.0f) gy =  1;
+  if (gy == 0 && fdy <  0.0f) gy = -1;
+
+  if (gx != 0 || gy != 0) {
+    smoothScrollAccumulate(cs, gx, gy);
+  }
 }
 
 /*********************************************************
@@ -210,7 +264,12 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     tb = TRIGHT;
   }
 
-  /* Combine with touch joystick input in tablet mode */
+  /* Movement priority: keyboard -> gamepad -> touch.
+     Gamepad outranks touch on devices that have both
+     (e.g. Steam Deck in dock with touchscreen monitor + pad). */
+  if (tb == TNONE && inputGamepadIsConnected()) {
+    tb = inputGamepadGetMovement(screenGetTank256DirCS(cs));
+  }
   if (tb == TNONE && uiModeIsTablet()) {
     inputTouchSetTankAngle(screenGetTank256DirCS(cs));
     tb = inputTouchGetMovement();
@@ -246,7 +305,8 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   }
 
   if (smoothScrollingEnabled) {
-    smoothScrollTick(cs, setKeys);
+    smoothScrollTickKeyboard(cs, setKeys);
+    smoothScrollTickGamepad(cs);
   } else {
     /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
     smoothScrollAccumX = 0;
@@ -263,10 +323,13 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   gunsightKeyCount++;
   if (gunsightKeyCount >= INPUT_GUNSIGHT_WAIT_TIME) {
-    if (KEY_DOWN(setKeys->kiGunIncrease)) {
+    /* Consume the gamepad edge once; merge with keyboard so a sub-rate
+       gamepad press isn't dropped by the WAIT_TIME branch. */
+    int padDelta = inputGamepadGetGunsightChange();
+    if (KEY_DOWN(setKeys->kiGunIncrease) || padDelta > 0) {
       lastGunsightAdj = 1;  /* increase — flows through InputPacket */
       gunsightKeyCount = 0;
-    } else if (KEY_DOWN(setKeys->kiGunDecrease)) {
+    } else if (KEY_DOWN(setKeys->kiGunDecrease) || padDelta < 0) {
       lastGunsightAdj = 2;  /* decrease — flows through InputPacket */
       gunsightKeyCount = 0;
     } else if (gunsightKeyCount > (INPUT_GUNSIGHT_WAIT_TIME + 1)) {
@@ -292,7 +355,8 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   }
 
   if (smoothScrollingEnabled) {
-    smoothScrollTick(cs, setKeys);
+    smoothScrollTickKeyboard(cs, setKeys);
+    smoothScrollTickGamepad(cs);
     return;
   }
 
@@ -322,7 +386,9 @@ bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
     return uiModeIsTablet() ? inputTouchIsFirePressed() : FALSE;
   }
-  return KEY_DOWN(setKeys->kiShoot) || (uiModeIsTablet() && inputTouchIsFirePressed());
+  return KEY_DOWN(setKeys->kiShoot)
+      || (uiModeIsTablet() && inputTouchIsFirePressed())
+      || (inputGamepadIsConnected() && inputGamepadIsFireHeld());
 }
 
 /*********************************************************
@@ -342,8 +408,9 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
     return uiModeIsTablet() ? inputTouchIsMinePressed() : FALSE;
   }
 
-  bool touchMine = uiModeIsTablet() ? inputTouchIsMinePressed() : false;
-  return KEY_DOWN(setKeys->kiLayMine) || touchMine;
+  bool touchMine   = uiModeIsTablet() ? inputTouchIsMinePressed() : false;
+  bool gamepadMine = inputGamepadIsConnected() ? inputGamepadIsMineHeld() : false;
+  return KEY_DOWN(setKeys->kiLayMine) || touchMine || gamepadMine;
 }
 
 /*********************************************************

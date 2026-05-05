@@ -85,8 +85,7 @@ void uiModeSet(UIMode m) {
 }
 
 bool uiModeIsTablet(void) {
-  UIMode m = uiModeGet();
-  return m == UI_MODE_TABLET || m == UI_MODE_STEAM_DECK;
+  return uiModeGet() == UI_MODE_TABLET;
 }
 
 bool uiModeIsSteamDeck(void) {

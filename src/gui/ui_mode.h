@@ -53,8 +53,11 @@ void uiModeSet(UIMode m);
 /*********************************************************
 *NAME:          uiModeIsTablet
 *PURPOSE:
-*  Convenience: returns true if current mode is tablet
-*  OR Steam Deck (both share the fullscreen overlay UI).
+*  Returns true ONLY for UI_MODE_TABLET (iOS, Android,
+*  small touchscreens). Steam Deck uses the desktop UI
+*  as its baseline and does NOT inherit tablet behaviour
+*  (touch widgets, fullscreen overlay, no menu bar).
+*  Deck-specific divergences gate on uiModeIsSteamDeck().
 *********************************************************/
 bool uiModeIsTablet(void);
 

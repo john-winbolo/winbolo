@@ -74,6 +74,7 @@ extern "C" {
 extern "C" {
 #include "input.h"
 #include "input_touch.h"
+#include "input_gamepad.h"
 #include "../ui_mode.h"
 }
 
@@ -2404,6 +2405,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     if (!ImGui_ImplSDLRenderer3_Init(renderer))               return false;
 
     flagsCreate(renderer);
+    inputGamepadInit();
     return true;
 }
 
@@ -2630,6 +2632,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             keyItems ki;
             windowGetKeys(&ki);
             inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
+        }
+
+        /* Route gamepad connect/disconnect and button-edge events to the
+         * gamepad input module. Axis state is polled via SDL_GetGamepadAxis
+         * each frame, so axis events don't need explicit dispatch. */
+        if (ev.type == SDL_EVENT_GAMEPAD_ADDED       ||
+            ev.type == SDL_EVENT_GAMEPAD_REMOVED     ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+            inputGamepadProcessEvent(&ev);
         }
 
         /* While the Key Setup modal is open, swallow all mouse + keyboard events
@@ -3196,6 +3208,7 @@ void sdl3ImguiShowKeySetup(void) {
 
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
+    inputGamepadShutdown();
     popOutDestroy(&s_popSysInfo);
     popOutDestroy(&s_popNetInfo);
     popOutDestroy(&s_popGameInfo);
