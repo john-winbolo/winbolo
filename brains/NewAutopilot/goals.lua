@@ -3052,9 +3052,16 @@ function M.step_eval_queue(state, world, info)
             -- inflate the pickup cost estimate. All restored immediately after.
             cpf.set_overlay(obj.mx, obj.my, 0)
             local _stuck_bl = state.stuck_blacklist
+            -- Pickup leg is a hypothetical post-kill walk for goal ranking only.
+            -- Disable armour drain so a beat-up tank can still evaluate reachability
+            -- (the caller decides separately if the tank can survive the approach).
+            -- Use a large budget: high pill danger makes h << actual cost, degrading
+            -- A* toward Dijkstra, which would exhaust the default 16k node budget.
+            local _pickup_budget = 131072
+            cpf.set_config("armour_drain_rate", 0)
             -- raw_stuck: cost with stuck penalties in place (baseline)
             local raw_stuck = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
-                                          boat_flag, shells, trees, mines, armour)
+                                          boat_flag, shells, trees, mines, armour, _pickup_budget)
             -- raw: cost with stuck penalties cleared (what we actually use)
             if _stuck_bl then
               for k in pairs(_stuck_bl) do
@@ -3062,7 +3069,8 @@ function M.step_eval_queue(state, world, info)
               end
             end
             local raw = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
-                                    boat_flag, shells, trees, mines, armour)
+                                    boat_flag, shells, trees, mines, armour, _pickup_budget)
+            cpf.set_config("armour_drain_rate", 0.02)
             cpf.set_overlay(obj.mx, obj.my, 32767)
             if _stuck_bl then
               -- 1500 = STUCK_PENALTY from steering.lua
@@ -3070,28 +3078,8 @@ function M.step_eval_queue(state, world, info)
                 cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 1500)
               end
             end
-            -- Log suspicious cases to picked_inf.log
-            if raw > 500 or raw >= 1e29 then
-              local _dx = best_spot.mx - obj.mx
-              local _dy = best_spot.my - obj.my
-              local _pill_tt = (get_terrain(obj.mx, obj.my) or 0) & 0x0F
-              local _sub = tostring(state._attack_substate_name or "?")
-              local _bl_str = ""
-              if _stuck_bl then
-                local _bl_parts = {}
-                for k in pairs(_stuck_bl) do
-                  _bl_parts[#_bl_parts+1] = string.format("(%d,%d)", U.mkey_x(k), U.mkey_y(k))
-                end
-                _bl_str = table.concat(_bl_parts, " ")
-              end
-              opt.append("picked_inf.log", string.format(
-                "t=%d sub=%s spot(%d,%d)->pill(%d,%d) dist=%.1f pill_tt=%d raw=%.1f raw_stuck=%.1f boat=%d sh=%d tr=%d mn=%d arm=%d stuck_tiles=[%s]",
-                now, _sub,
-                best_spot.mx, best_spot.my, obj.mx, obj.my,
-                math.sqrt(_dx*_dx + _dy*_dy), _pill_tt,
-                raw, raw_stuck,
-                boat_flag, shells, trees, mines, armour, _bl_str))
-            end
+            -- Trace immediately after raw cost_to — diagnostic adj/rev calls below
+            -- each bump the A* epoch, which would corrupt the trace if done first.
             local reduction = 0
             local path = nil
             if raw < 1e29 then
@@ -3110,6 +3098,40 @@ function M.step_eval_queue(state, world, info)
                   end
                 end
               end
+            end
+            -- Log suspicious cases to picked_inf.log
+            if raw > 500 or raw >= 1e29 then
+              local _dx = best_spot.mx - obj.mx
+              local _dy = best_spot.my - obj.my
+              local _pill_tt  = (get_terrain(obj.mx, obj.my) or 0) & 0x0F
+              local _spot_tt  = (get_terrain(best_spot.mx, best_spot.my) or 0) & 0x0F
+              local _sub = tostring(state._attack_substate_name or "?")
+              local _bl_str = ""
+              if _stuck_bl then
+                local _bl_parts = {}
+                for k in pairs(_stuck_bl) do
+                  _bl_parts[#_bl_parts+1] = string.format("(%d,%d)", U.mkey_x(k), U.mkey_y(k))
+                end
+                _bl_str = table.concat(_bl_parts, " ")
+              end
+              -- Test if the pill tile itself is impassable: cost from directly above it
+              cpf.set_overlay(obj.mx, obj.my, 0)
+              local _adj_cost = cpf.cost_to(obj.mx, obj.my - 1, obj.mx, obj.my,
+                                            boat_flag, shells, trees, mines, armour, _pickup_budget)
+              cpf.set_overlay(obj.mx, obj.my, 32767)
+              -- Test reversed: pill→spot
+              cpf.set_overlay(obj.mx, obj.my, 0)
+              local _rev_cost = cpf.cost_to(obj.mx, obj.my, best_spot.mx, best_spot.my,
+                                            boat_flag, shells, trees, mines, armour, _pickup_budget)
+              cpf.set_overlay(obj.mx, obj.my, 32767)
+              opt.append("picked_inf.log", string.format(
+                "t=%d sub=%s spot(%d,%d)[tt=%d]->pill(%d,%d)[tt=%d] dist=%.1f raw=%.1f raw_stuck=%.1f adj=%.1f rev=%.1f boat=%d sh=%d tr=%d mn=%d arm=%d stuck=[%s]",
+                now, _sub,
+                best_spot.mx, best_spot.my, _spot_tt,
+                obj.mx, obj.my, _pill_tt,
+                math.sqrt(_dx*_dx + _dy*_dy),
+                raw, raw_stuck, _adj_cost, _rev_cost,
+                boat_flag, shells, trees, mines, armour, _bl_str))
             end
             travel = math.max(0, raw - reduction)
 
