@@ -21,6 +21,8 @@
 #include <SDL3/SDL.h>
 #include "input_gamepad.h"
 #include "input_joystick.h"
+#include "../../steam/steam_wrapper.h"
+#include "../../steam/steam_input_actions.h"
 
 /* Axis normalisation: int16 range to -1..1 */
 #define AXIS_NORM (1.0f / 32767.0f)
@@ -56,6 +58,56 @@ static bool s_activeDisconnectedEdge = false;
 
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
 float g_gamepadScrollSensitivity = 1.0f;
+
+/* --- Path A (Steam Input) state --- */
+
+/* Tracks whether Steam Input was driving the controller last frame.
+   On a transition (B->A or A->B) we reset edge state so a held button
+   doesn't synthesize a spurious rising edge after the switch. */
+static bool s_path_a_was_active = false;
+
+/* Latched on a Path A active->inactive transition so the auto-pause
+   trigger surfaces it via inputGamepadConsumeActiveDisconnect.  Steam
+   Input doesn't fire SDL_EVENT_GAMEPAD_REMOVED, so this is the
+   equivalent signal for the Path A side. */
+static bool s_path_a_just_disconnected = false;
+
+/* Path A last-frame button states.  Steam Input only exposes bState
+   (current pressed/not), so we synthesize rising edges by comparing
+   to the previous frame.  All cleared by reset_path_a_edges(). */
+static bool s_path_a_last_pause           = false;
+static bool s_path_a_last_quickchat       = false;
+static bool s_path_a_last_view            = false;
+static bool s_path_a_last_builder_confirm = false;
+static bool s_path_a_last_gunsight_dec    = false;
+static bool s_path_a_last_gunsight_inc    = false;
+static bool s_path_a_last_build_prev      = false;
+static bool s_path_a_last_build_next      = false;
+
+static void reset_path_a_edges(void) {
+  s_path_a_last_pause           = false;
+  s_path_a_last_quickchat       = false;
+  s_path_a_last_view            = false;
+  s_path_a_last_builder_confirm = false;
+  s_path_a_last_gunsight_dec    = false;
+  s_path_a_last_gunsight_inc    = false;
+  s_path_a_last_build_prev      = false;
+  s_path_a_last_build_next      = false;
+}
+
+static bool path_a_active(void) {
+  bool now = steam_input_has_active_controller();
+  if (now != s_path_a_was_active) {
+    if (s_path_a_was_active && !now) {
+      /* Path A just lost its controller — surface as a disconnect
+         so auto-pause-on-disconnect works on Steam launches too. */
+      s_path_a_just_disconnected = true;
+    }
+    reset_path_a_edges();
+    s_path_a_was_active = now;
+  }
+  return now;
+}
 
 /* --- Helpers --- */
 
@@ -99,6 +151,11 @@ void inputGamepadInit(void) {
   s_pauseEdge          = false;
   s_quickChatEdge      = false;
   s_activeDisconnectedEdge = false;
+  /* Reset Path A edge tracking so first-frame reads start from a
+     known zero state regardless of which path eventually drives. */
+  s_path_a_was_active        = false;
+  s_path_a_just_disconnected = false;
+  reset_path_a_edges();
 
   /* Steam Deck built-in controller HIDAPI access. With a real Steam
      App ID, Steam Input handles this automatically; this hint covers
@@ -187,18 +244,48 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
 /* --- Queries --- */
 
 bool inputGamepadIsConnected(void) {
+  if (path_a_active()) return true;
   return s_activeGamepad != NULL;
 }
 
+/* Path B only: Steam Input doesn't expose an SDL_Gamepad handle.
+   Returns NULL on Path A (callers that need raw SDL handles should
+   gate on inputGamepadIsConnected and degrade gracefully). */
 SDL_Gamepad *inputGamepadGetActiveHandle(void) {
   return s_activeGamepad;
 }
 
+/* Path B only for V1.  Phase 7B will translate Path A's
+   ESteamInputType to a glyph atlas selector via a separate lookup;
+   no need to forge an SDL_GamepadType here. */
 SDL_GamepadType inputGamepadGetActiveType(void) {
   return s_activeType;
 }
 
 tankButton inputGamepadGetMovement(BYTE tankAngle) {
+  if (path_a_active()) {
+    float x = 0.0f, y = 0.0f;
+    steam_input_get_analog_action(SI_ANALOG_TANK_MOVE, &x, &y);
+    /* Steam Input's joystick_move convention: +Y = up.  SDL_Gamepad
+       and the joystickGetMovement* helpers treat +Y = down.  Negate
+       to match.  If movement turns out flipped on first Deck test,
+       remove this negation. */
+    y = -y;
+    float dist = sqrtf(x * x + y * y);
+    if (dist < MOVE_DEADZONE) {
+      if (s_moveWasActive) {
+        joystickResetState();
+        s_moveWasActive = false;
+      }
+      return TNONE;
+    }
+    s_moveWasActive = true;
+    if (joystickGetAbsoluteSteering()) {
+      return joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle);
+    }
+    return joystickGetMovementRelative(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH);
+  }
+
   if (!s_activeGamepad) {
     if (s_moveWasActive) {
       joystickResetState();
@@ -229,6 +316,10 @@ tankButton inputGamepadGetMovement(BYTE tankAngle) {
 }
 
 bool inputGamepadIsFireHeld(void) {
+  if (path_a_active()) {
+    return steam_input_is_action_pressed(SI_ACTION_FIRE);
+  }
+
   if (!s_activeGamepad) return false;
 
   if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_SOUTH)) return true;
@@ -238,6 +329,10 @@ bool inputGamepadIsFireHeld(void) {
 }
 
 bool inputGamepadIsMineHeld(void) {
+  if (path_a_active()) {
+    return steam_input_is_action_pressed(SI_ACTION_MINE);
+  }
+
   if (!s_activeGamepad) return false;
 
   /* Mine = LT only.  B (EAST) is reserved for ImGui nav-cancel / dialog
@@ -248,6 +343,17 @@ bool inputGamepadIsMineHeld(void) {
 }
 
 int inputGamepadGetGunsightChange(void) {
+  if (path_a_active()) {
+    bool now_dec = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_DEC);
+    bool now_inc = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_INC);
+    int delta = 0;
+    if (now_dec && !s_path_a_last_gunsight_dec) delta -= 1;
+    if (now_inc && !s_path_a_last_gunsight_inc) delta += 1;
+    s_path_a_last_gunsight_dec = now_dec;
+    s_path_a_last_gunsight_inc = now_inc;
+    return delta;
+  }
+
   int v = s_gunsightPending;
   s_gunsightPending = 0;
   return v;
@@ -256,10 +362,23 @@ int inputGamepadGetGunsightChange(void) {
 bool inputGamepadGetScrollDirection(float *dx, float *dy) {
   if (dx) *dx = 0.0f;
   if (dy) *dy = 0.0f;
-  if (!s_activeGamepad) return false;
 
-  float x = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTX) * AXIS_NORM;
-  float y = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTY) * AXIS_NORM;
+  float x, y;
+  if (path_a_active()) {
+    x = 0.0f;
+    y = 0.0f;
+    steam_input_get_analog_action(SI_ANALOG_MAP_SCROLL, &x, &y);
+    /* Steam Input joystick_camera convention: +Y = up.  Path B (and
+       the smooth-scroll consumers downstream) use +Y = down.  Negate
+       to match.  Flip if scroll direction is inverted on first Deck
+       test. */
+    y = -y;
+  } else {
+    if (!s_activeGamepad) return false;
+    x = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTX) * AXIS_NORM;
+    y = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTY) * AXIS_NORM;
+  }
+
   float dist = sqrtf(x * x + y * y);
   if (dist < SCROLL_DEADZONE) return false;
 
@@ -274,36 +393,82 @@ bool inputGamepadGetScrollDirection(float *dx, float *dy) {
 }
 
 int inputGamepadGetBuildSelectChange(void) {
+  if (path_a_active()) {
+    bool now_prev = steam_input_is_action_pressed(SI_ACTION_BUILD_PREV);
+    bool now_next = steam_input_is_action_pressed(SI_ACTION_BUILD_NEXT);
+    int delta = 0;
+    if (now_prev && !s_path_a_last_build_prev) delta -= 1;
+    if (now_next && !s_path_a_last_build_next) delta += 1;
+    s_path_a_last_build_prev = now_prev;
+    s_path_a_last_build_next = now_next;
+    return delta;
+  }
+
   int v = s_buildSelectChange;
   s_buildSelectChange = 0;
   return v;
 }
 
 bool inputGamepadIsViewToggleEdge(void) {
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_VIEW_CYCLE);
+    bool edge = now && !s_path_a_last_view;
+    s_path_a_last_view = now;
+    return edge;
+  }
+
   bool v = s_viewToggleEdge;
   s_viewToggleEdge = false;
   return v;
 }
 
 bool inputGamepadIsBuilderConfirmEdge(void) {
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_BUILD_CONFIRM);
+    bool edge = now && !s_path_a_last_builder_confirm;
+    s_path_a_last_builder_confirm = now;
+    return edge;
+  }
+
   bool v = s_builderConfirmEdge;
   s_builderConfirmEdge = false;
   return v;
 }
 
 bool inputGamepadIsPauseEdge(void) {
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_PAUSE);
+    bool edge = now && !s_path_a_last_pause;
+    s_path_a_last_pause = now;
+    return edge;
+  }
+
   bool v = s_pauseEdge;
   s_pauseEdge = false;
   return v;
 }
 
 bool inputGamepadIsQuickChatEdge(void) {
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_QUICK_CHAT);
+    bool edge = now && !s_path_a_last_quickchat;
+    s_path_a_last_quickchat = now;
+    return edge;
+  }
+
   bool v = s_quickChatEdge;
   s_quickChatEdge = false;
   return v;
 }
 
 bool inputGamepadConsumeActiveDisconnect(void) {
+  /* Path A latch is checked first so the disconnect surfaces even
+     after path_a_active() has flipped to false this frame. */
+  if (s_path_a_just_disconnected) {
+    s_path_a_just_disconnected = false;
+    return true;
+  }
+
   bool v = s_activeDisconnectedEdge;
   s_activeDisconnectedEdge = false;
   return v;
@@ -311,9 +476,18 @@ bool inputGamepadConsumeActiveDisconnect(void) {
 
 
 void inputGamepadRumble(float strength, Uint32 durationMs) {
-  if (!s_activeGamepad) return;
   if (strength < 0.0f) strength = 0.0f;
   if (strength > 1.0f) strength = 1.0f;
   Uint16 mag = (Uint16)(strength * 65535.0f);
+
+  if (path_a_active()) {
+    /* Steam Input vibration takes no duration — Steam decides based
+       on the binding config's haptic settings.  durationMs ignored. */
+    (void)durationMs;
+    steam_input_trigger_vibration(mag, mag);
+    return;
+  }
+
+  if (!s_activeGamepad) return;
   SDL_RumbleGamepad(s_activeGamepad, mag, mag, durationMs);
 }

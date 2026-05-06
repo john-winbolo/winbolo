@@ -53,6 +53,7 @@
 #include "../ui_mode.h"
 #include "tileloader.h"
 #include "sdl_bmp.h"
+#include "glyphs.h"
 #include "../../bolo/global.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
@@ -947,6 +948,12 @@ bool sdl3DrawSetup(int zoomFactor) {
      first sdl3DrawMainScreen call. */
   sdl3LoadTiles();
 
+  /* Glyphs module — Path A controller-icon cache.  Steam Input is
+     already initialised in winbolo.c before sdl3DrawSetup runs, so
+     glyphForAction() will resolve correctly once a controller binds.
+     No-op (returns NULL) when Steam Input isn't active. */
+  glyphsInit(gRenderer);
+
   /* Load custom crosshair (17×17 PNG, center pixel (8,8) = aim point). */
   {
     const char *basePath = SDL_GetBasePath();
@@ -1047,6 +1054,9 @@ void sdl3DrawCleanup(void) {
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
   if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
   TTF_Quit();
+
+  /* Glyph cache textures must be destroyed before the renderer. */
+  glyphsShutdown();
 
   if (gManStatusTex)     { SDL_DestroyTexture(gManStatusTex);     gManStatusTex     = NULL; }
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }

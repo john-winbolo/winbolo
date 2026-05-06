@@ -18,7 +18,9 @@
 #include "imgui_deck_pause.h"
 #include "../../lang.h"
 #include "../sdl3imgui.h"
+#include "../glyphs.h"
 #include "../../../bolo/client_sim.h"
+#include "../../../steam/steam_input_actions.h"
 
 extern "C" void windowSetQuitting(void);
 extern "C" void windowNewGame(void);
@@ -32,6 +34,30 @@ void deckPauseOpen(void) {
 
 bool deckPauseIsOpen(void) {
     return s_open;
+}
+
+/* Pause-overlay button with optional glyph icon (Path A only).  When
+   action_name is NULL or no glyph is bound, falls back to plain text.
+   The button itself is the hit area; the glyph image is decoration on
+   the same row to the left.  Width adjusted so the row total matches
+   `size.x`. */
+static bool pauseButton(const char *action_name,
+                        const char *label,
+                        ImVec2 size) {
+    SDL_Texture *glyph = action_name ? glyphForAction(action_name) : NULL;
+    ImGui::PushID(label);
+    bool clicked = false;
+    if (glyph) {
+        const float h = ImGui::GetFrameHeight();
+        ImGui::Image((ImTextureID)glyph, ImVec2(h, h));
+        ImGui::SameLine();
+        const float remain = size.x - h - ImGui::GetStyle().ItemSpacing.x;
+        clicked = ImGui::Button(label, ImVec2(remain, size.y));
+    } else {
+        clicked = ImGui::Button(label, size);
+    }
+    ImGui::PopID();
+    return clicked;
 }
 
 void deckPauseRender(struct ClientSim *cs) {
@@ -73,38 +99,42 @@ void deckPauseRender(struct ClientSim *cs) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(style.FramePadding.x, 8.0f));
 
-        if (ImGui::Button("Resume", btnSize)) {
+        /* Resume gets the Pause/Start glyph — same physical button that
+           opened the menu, the one the player most needs to identify. */
+        if (pauseButton(SI_ACTION_PAUSE, "Resume", btnSize)) {
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
-        if (ImGui::Button(langGetText(STR_MENU_SETTINGS), btnSize)) {
+        if (pauseButton(NULL, langGetText(STR_MENU_SETTINGS), btnSize)) {
             sdl3ImguiShowSettings();
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
-        if (ImGui::Button(langGetText(STR_MENU_SETKEYS), btnSize)) {
+        if (pauseButton(NULL, langGetText(STR_MENU_SETKEYS), btnSize)) {
             sdl3ImguiShowKeySetup();
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
         if (!inLobby) {
-            if (ImGui::Button(langGetText(STR_MENU_PLAYERS), btnSize)) {
+            if (pauseButton(NULL, langGetText(STR_MENU_PLAYERS), btnSize)) {
                 sdl3ImguiShowPlayersPanel(true);
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }
-            if (ImGui::Button(langGetText(STR_MENU_SEND_MESSAGE), btnSize)) {
+            /* Send Message inherits the QuickChat glyph — same intent. */
+            if (pauseButton(SI_ACTION_QUICK_CHAT,
+                            langGetText(STR_MENU_SEND_MESSAGE), btnSize)) {
                 sdl3ImguiShowSendMsg(true);
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }
-            if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), btnSize)) {
+            if (pauseButton(NULL, langGetText(STR_MENU_LEAVE_GAME), btnSize)) {
                 windowNewGame();
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }
         }
-        if (ImGui::Button(langGetText(STR_MENU_EXIT), btnSize)) {
+        if (pauseButton(NULL, langGetText(STR_MENU_EXIT), btnSize)) {
             windowSetQuitting();
             ImGui::CloseCurrentPopup();
             s_open = false;

@@ -1,0 +1,41 @@
+/*
+ * steam_input_actions.h — string constants for Steam Input actions.
+ *
+ * These names MUST exactly match the actions and action-sets declared
+ * in controller_config/game_actions_4672140.vdf.  Steam Input does
+ * string-based lookup; mismatches silently yield no input.
+ */
+#ifndef STEAM_INPUT_ACTIONS_H
+#define STEAM_INPUT_ACTIONS_H
+
+/* Action sets */
+#define SI_SET_IN_GAME    "InGame"
+#define SI_SET_MENU       "Menu"
+#define SI_SET_BUILD      "Build"
+
+/* Digital actions — InGame set */
+#define SI_ACTION_FIRE          "fire"
+#define SI_ACTION_MINE          "mine"
+#define SI_ACTION_BUILD_CONFIRM "build_confirm"   /* X — send LGM to gunsight */
+#define SI_ACTION_VIEW_CYCLE    "view_cycle"      /* Y — tank/pillbox/ally/LGM/base */
+#define SI_ACTION_GUNSIGHT_DEC  "gunsight_dec"    /* LB — range -1 */
+#define SI_ACTION_GUNSIGHT_INC  "gunsight_inc"    /* RB — range +1 */
+#define SI_ACTION_BUILD_PREV    "build_prev"      /* D-pad LEFT — cycle build type backward */
+#define SI_ACTION_BUILD_NEXT    "build_next"      /* D-pad RIGHT — cycle forward */
+#define SI_ACTION_QUICK_CHAT    "quick_chat"      /* D-pad UP */
+#define SI_ACTION_PAUSE         "pause"           /* Start */
+#define SI_ACTION_STATUS_TOGGLE "status_toggle"   /* Select */
+
+/* Analog actions — InGame set */
+#define SI_ANALOG_TANK_MOVE     "tank_move"       /* Left stick */
+#define SI_ANALOG_MAP_SCROLL    "map_scroll"      /* Right stick */
+
+/* Digital actions — Menu set (used by ImGui dialogs and the pause overlay) */
+#define SI_ACTION_MENU_ACCEPT   "menu_accept"     /* A */
+#define SI_ACTION_MENU_CANCEL   "menu_cancel"     /* B */
+#define SI_ACTION_MENU_NAV_UP   "menu_nav_up"
+#define SI_ACTION_MENU_NAV_DOWN "menu_nav_down"
+#define SI_ACTION_MENU_NAV_LEFT "menu_nav_left"
+#define SI_ACTION_MENU_NAV_RIGHT "menu_nav_right"
+
+#endif /* STEAM_INPUT_ACTIONS_H */

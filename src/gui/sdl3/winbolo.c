@@ -53,6 +53,7 @@
 #include "../../bolo/tutorial.h"
 #include "../../bolo/players.h"
 #include "../../steam/steam_wrapper.h"
+#include "../../steam/steam_input_actions.h"
 #include "../../bolo/transport.h"
 #include "../../bolo/transport_udp.h"
 #include "../../server/server_sim.h"
@@ -252,6 +253,11 @@ int main(int argc, char *argv[]) {
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
+  /* Steam Input (Path A): start in Menu set — game launches into the
+     main menu / lobby UI.  In-game switch handled per-frame in
+     sdl3ImguiPumpAndRender.  No-op when running without the SDK. */
+  steam_input_init();
+  steam_input_activate_action_set(SI_SET_MENU);
 
   /* Set working directory to the executable's location so that relative
      paths like "data/svg/..." resolve correctly.  On macOS this is
@@ -440,6 +446,7 @@ int main(int argc, char *argv[]) {
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
+        steam_input_run_frame();
 
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
@@ -536,6 +543,9 @@ int main(int argc, char *argv[]) {
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
+  /* Tear down Steam Input before the parent Steam API — Shutdown
+     calls into ISteamInput which requires the SteamAPI to be alive. */
+  steam_input_shutdown();
   steam_shutdown();
   SDL_Quit();
   sentryClose();

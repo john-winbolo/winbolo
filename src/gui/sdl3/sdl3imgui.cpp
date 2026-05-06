@@ -53,6 +53,8 @@ extern "C" {
 #include "../../bolo/screen.h"   /* labelLen, lblNone/lblShort/lblLong */
 #include "../../bolo/client_sim.h"
 #include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "../../steam/steam_wrapper.h"
+#include "../../steam/steam_input_actions.h"
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -2849,8 +2851,58 @@ bool sdl3ImguiIsDialogOpen(void) {
            (g && g->OpenPopupStack.Size > 0);
 }
 
+/* Steam Input action-set follower.  Keeps the active set in sync with
+   gameplay context — Menu while no cs or in lobby/main menu, InGame
+   once gameplay starts.  Compare is pointer-equality against the
+   static-storage SI_SET_* literals from steam_input_actions.h, so
+   steady-state cost is one pointer compare per frame. */
+static const char *s_steam_input_current_set = nullptr;
+
+static void update_steam_input_action_set(ClientSim *cs) {
+    const char *desired =
+        (cs && !cs->inLobby) ? SI_SET_IN_GAME : SI_SET_MENU;
+    if (desired != s_steam_input_current_set) {
+        steam_input_activate_action_set(desired);
+        s_steam_input_current_set = desired;
+    }
+}
+
+/* ImGui's SDL3 backend polls SDL_Gamepad directly to drive nav, but
+   Steam Input intercepts SDL_Gamepad on Steam launches — the backend
+   sees nothing.  Inject the equivalent key events from the Menu
+   action set so dialogs remain navigable on Path A.  No-op when
+   Path A isn't active; Path B nav comes from the SDL backend as
+   normal.  Standalone dialogs run their own ImGui contexts and are
+   not fed here — known V1 gap for lobby flow on Steam launch. */
+static void feed_imgui_gamepad_nav_from_steam_input(void) {
+    if (!steam_input_has_active_controller()) return;
+
+    ImGuiIO &io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiKey_GamepadFaceDown,
+                   steam_input_is_action_pressed(SI_ACTION_MENU_ACCEPT));
+    io.AddKeyEvent(ImGuiKey_GamepadFaceRight,
+                   steam_input_is_action_pressed(SI_ACTION_MENU_CANCEL));
+    io.AddKeyEvent(ImGuiKey_GamepadDpadUp,
+                   steam_input_is_action_pressed(SI_ACTION_MENU_NAV_UP));
+    io.AddKeyEvent(ImGuiKey_GamepadDpadDown,
+                   steam_input_is_action_pressed(SI_ACTION_MENU_NAV_DOWN));
+    io.AddKeyEvent(ImGuiKey_GamepadDpadLeft,
+                   steam_input_is_action_pressed(SI_ACTION_MENU_NAV_LEFT));
+    io.AddKeyEvent(ImGuiKey_GamepadDpadRight,
+                   steam_input_is_action_pressed(SI_ACTION_MENU_NAV_RIGHT));
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
+
+    /* Sync Steam Input action set to current gameplay context.  Must
+       run before any consumer of action data (edge triggers below,
+       and Phase 7A.3 input wiring). */
+    update_steam_input_action_set(cs);
+
+    /* Feed ImGui gamepad nav from Steam Input on Path A — must run
+       before NewFrame so the events are visible to ImGui this frame. */
+    feed_imgui_gamepad_nav_from_steam_input();
 
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();

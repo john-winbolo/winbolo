@@ -1,6 +1,8 @@
 /*
  * steam_wrapper_stub.c — no-op stubs when the Steamworks SDK is absent.
  */
+#include <stddef.h>
+
 #include "steam_wrapper.h"
 
 bool steam_init(void)          { return false; }
@@ -33,3 +35,36 @@ void steam_set_join_callback(SteamJoinCallback cb) {
 }
 
 bool steam_is_steam_deck(void) { return false; }
+
+/* -------- Steam Input stubs -------- */
+
+bool steam_input_init(void)             { return false; }
+void steam_input_shutdown(void)         {}
+void steam_input_run_frame(void)        {}
+
+void steam_input_activate_action_set(const char *set_name) {
+  (void)set_name;
+}
+
+bool steam_input_is_action_pressed(const char *action_name) {
+  (void)action_name;
+  return false;
+}
+
+void steam_input_get_analog_action(const char *action_name, float *x, float *y) {
+  (void)action_name;
+  if (x) *x = 0.0f;
+  if (y) *y = 0.0f;
+}
+
+const char *steam_input_get_glyph_path(const char *action_name) {
+  (void)action_name;
+  return NULL;
+}
+
+bool steam_input_has_active_controller(void) { return false; }
+
+void steam_input_trigger_vibration(uint16_t left_speed, uint16_t right_speed) {
+  (void)left_speed;
+  (void)right_speed;
+}

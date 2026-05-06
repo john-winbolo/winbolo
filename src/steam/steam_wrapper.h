@@ -31,4 +31,52 @@ void     steam_store_stats(void);
 typedef void (*SteamJoinCallback)(const char *connect_str);
 void     steam_set_join_callback(SteamJoinCallback cb);
 
+/* -------- Steam Input (controller actions + glyphs) --------
+ * Path A of the two-path input model.  Returns false / null in the
+ * stub build, so callers should always have a Path B (raw SDL_Gamepad)
+ * fallback.  Action and set names match the strings in the action
+ * manifest VDF — see steam_input_actions.h. */
+
+bool steam_input_init(void);
+void steam_input_shutdown(void);
+void steam_input_run_frame(void);
+
+/* Activate one action set on the active controller.  Action sets group
+ * actions by context — e.g. "InGame" enables fire/move/build, "Menu"
+ * enables nav, "Build" overlays builder-specific bindings.  Game code
+ * calls this on context transitions. */
+void steam_input_activate_action_set(const char *set_name);
+
+/* Digital action: returns true if the player is currently pressing
+ * any input mapped to this action.  Returns false if Steam Input is
+ * uninitialised, no controller is connected, or the action name is
+ * unknown to the manifest. */
+bool steam_input_is_action_pressed(const char *action_name);
+
+/* Analog action: writes -1.0..+1.0 components to *x, *y.  Both are
+ * set to 0.0 if Steam Input is uninitialised, no controller is
+ * connected, or the action is unknown.  Pass NULL for components
+ * you don't care about. */
+void steam_input_get_analog_action(const char *action_name, float *x, float *y);
+
+/* Glyph lookup: returns an absolute filesystem path to a PNG of the
+ * appropriate icon for the action's currently-bound origin (e.g.
+ * "A button" on Xbox, "Cross" on PS5, "Steam Deck A" on Deck).  The
+ * path is owned by Steam and remains valid until the next call to
+ * steam_input_run_frame.  Returns NULL if no controller is connected
+ * or the action is unknown. */
+const char *steam_input_get_glyph_path(const char *action_name);
+
+/* True iff Steam Input is initialised AND has an active connected
+ * controller.  Single source of truth for the Path A / Path B
+ * selector in the input layer.  Returns false in stub builds. */
+bool steam_input_has_active_controller(void);
+
+/* Route haptic rumble through Steam Input's vibration API.  When
+ * Steam Input is intercepting the controller, SDL_RumbleGamepad
+ * is silent — this lets us still feel the rumble on Path A.
+ * Magnitudes are 0..65535.  No-op in stub builds and when no
+ * controller is active. */
+void steam_input_trigger_vibration(uint16_t left_speed, uint16_t right_speed);
+
 #endif /* STEAM_WRAPPER_H */

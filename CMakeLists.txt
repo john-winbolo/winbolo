@@ -481,6 +481,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/input_touch.c
     src/gui/sdl3/input_joystick.c
     src/gui/sdl3/input_gamepad.c
+    src/gui/sdl3/glyphs.c
     src/gui/sdl3/tutorial_text.c
     src/gui/ui_mode.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -911,7 +912,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -1138,6 +1139,17 @@ add_custom_command(TARGET WinBolo POST_BUILD
         "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
         "${WINBOLO_DATA_DIR}/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to output Brains/ directory"
+)
+
+# Steam Input action manifest — Steam reads it from
+# <install dir>/controller_config/game_actions_<appid>.vdf at runtime.
+# Production also uploads to Steamworks; this local copy is the dev path.
+add_custom_command(TARGET WinBolo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/controller_config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/controller_config/game_actions_4672140.vdf"
+        "${WINBOLO_DATA_DIR}/controller_config/game_actions_4672140.vdf"
+    COMMENT "Copying Steam Input action manifest to controller_config/"
 )
 
 # Copy shared libraries next to WinBolo executable (all platforms).
@@ -2078,6 +2090,9 @@ add_custom_target(dist
 
     # Data assets (includes data/lang)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
+
+    # Steam Input action manifest (Steam reads from controller_config/)
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/controller_config" "${DIST_DIR}/controller_config"
 
     # Brain scripts
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/NewAutopilot" "${DIST_DIR}/Brains/NewAutopilot"
