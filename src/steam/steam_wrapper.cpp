@@ -27,11 +27,15 @@ static SteamJoinCallback s_join_callback = nullptr;
 
 extern "C" bool steam_init(void) {
   if (s_initialized) return true;
-  SteamAPI_ManualDispatch_Init();
   if (!SteamAPI_Init()) {
     fprintf(stderr, "steam_init: SteamAPI_Init failed\n");
     return false;
   }
+  /* ManualDispatch_Init must follow SteamAPI_Init — the dispatcher
+     needs the library live before it can hook in.  Inverting these
+     causes SteamAPI_Init() to fail on Steam Deck (silent breakage
+     of Steam Input, achievements, and rich presence). */
+  SteamAPI_ManualDispatch_Init();
   s_initialized = true;
   return true;
 }
