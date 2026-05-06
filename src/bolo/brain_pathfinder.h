@@ -83,9 +83,10 @@ typedef struct {
   const BYTE *map;
 
   /* Spatial grids */
-  uint16_t danger_grid[65536];   /* pill danger values */
-  int16_t  overlay_grid[65536];  /* modder-extensible custom cost layer */
-  int16_t  influence_grid[65536]; /* territorial influence: +friendly, -hostile */
+  uint16_t danger_grid[65536];        /* pill danger values */
+  int16_t  overlay_grid[65536];       /* modder-extensible custom cost layer */
+  int16_t  influence_grid[65536];     /* territorial influence: +friendly, -hostile */
+  int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
 
   /* Per-terrain-type tables (indexed 0..15) */
   float terrain_cost_table[16];      /* land mode costs */
@@ -343,6 +344,12 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);
 void brainPathfinderClearOverlay(BrainPathfinder *pf);
+
+/* Per-search danger offset — subtracted from danger on the fly during A*.
+ * Use to model a specific pill as dead without touching the danger grid.
+ * Set negative values to reduce effective danger; clear after the search. */
+void brainPathfinderSetDangerOffset(BrainPathfinder *pf, int x, int y, int16_t value);
+void brainPathfinderClearDangerOffset(BrainPathfinder *pf);
 
 /* Pathfinding — returns: 0=running, 1=done, -1=failed */
 int brainPathfinderPathTo(BrainPathfinder *pf,

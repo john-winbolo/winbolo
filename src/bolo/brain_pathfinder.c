@@ -746,6 +746,15 @@ void brainPathfinderSetDanger(BrainPathfinder *pf, int x, int y, float value) {
 /* Custom overlay                                                      */
 /* ------------------------------------------------------------------ */
 
+void brainPathfinderSetDangerOffset(BrainPathfinder *pf, int x, int y, int16_t value) {
+  if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE)
+    pf->danger_offset_grid[y * MAP_SIZE + x] = value;
+}
+
+void brainPathfinderClearDangerOffset(BrainPathfinder *pf) {
+  if (pf) memset(pf->danger_offset_grid, 0, sizeof(pf->danger_offset_grid));
+}
+
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value) {
   if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
     int v = (int)value;
@@ -820,7 +829,8 @@ static float compute_cost(BrainPathfinder *pf, int nx, int ny,
   /* Danger scaling by terrain speed.
    * In a boat on water, we move at full speed (like road), so danger
    * exposure time is much lower than the base terrain speed suggests. */
-  danger = (float)pf->danger_grid[midx];
+  danger = (float)pf->danger_grid[midx] + (float)pf->danger_offset_grid[midx];
+  if (danger < 0.0f) danger = 0.0f;
   speed = pf->terrain_speed_table[type];
   if (onBoat && is_water_tile(type)) {
     speed = 16.0f; /* boat speed matches road speed */
@@ -1817,7 +1827,8 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       } else {
         /* Normal tile: add danger * scale * (16/speed) + overlay +
          * mine penalty. Same formula as compute_cost(). */
-        float danger = (float)danger_grid[nm];
+        float danger = (float)danger_grid[nm] + (float)pf->danger_offset_grid[nm];
+        if (danger < 0.0f) danger = 0.0f;
         float inv_spd = next_boat ? inv_speed_boat[n_type] : inv_speed_foot[n_type];
         float overlay = (float)overlay_grid[nm];
         float dynamic_extra = danger * danger_scale * inv_spd + overlay;

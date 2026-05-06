@@ -3046,128 +3046,49 @@ function M.step_eval_queue(state, world, info)
           do
             local pck = obj.my * 256 + obj.mx
             local pc  = threat.pill_contrib and threat.pill_contrib[pck]
-            -- Temporarily zero the target pill's overlay so A* can path
-            -- straight onto it (modeling the post-kill walk). Also clear
-            -- stuck-blacklist overlays so stalled-at-spot penalties don't
-            -- inflate the pickup cost estimate. All restored immediately after.
+            -- Pickup leg: model the pill as dead for the A* search.
+            -- 1. Zero the pill's overlay (it's dead, no longer impassable).
+            -- 2. Load negative danger offsets for this pill's contribution so
+            --    the A* naturally finds the cheapest path as if the pill's fire
+            --    field were gone — no post-hoc subtraction needed.
+            -- 3. Clear stuck-blacklist overlays (stalled-at-spot penalties
+            --    shouldn't inflate a hypothetical post-kill walk estimate).
+            -- 4. Disable armour drain: this is for goal ranking only; the
+            --    caller decides separately whether the tank can survive.
+            -- 5. Use a large budget: high residual danger (from other pills)
+            --    makes h << actual cost, degrading A* toward Dijkstra.
+            -- All modifications are restored immediately after the search.
             cpf.set_overlay(obj.mx, obj.my, 0)
+            if pc then cpf.load_danger_offset(pc, -1) end
             local _stuck_bl = state.stuck_blacklist
-            -- Pickup leg is a hypothetical post-kill walk for goal ranking only.
-            -- Disable armour drain so a beat-up tank can still evaluate reachability
-            -- (the caller decides separately if the tank can survive the approach).
-            -- Use a large budget: high pill danger makes h << actual cost, degrading
-            -- A* toward Dijkstra, which would exhaust the default 16k node budget.
-            local _pickup_budget = 131072
-            cpf.set_config("armour_drain_rate", 0)
-            -- raw_stuck: cost with stuck penalties in place (baseline)
-            local raw_stuck = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
-                                          boat_flag, shells, trees, mines, armour, _pickup_budget)
-            -- raw: cost with stuck penalties cleared (what we actually use)
             if _stuck_bl then
               for k in pairs(_stuck_bl) do
                 cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 0)
               end
             end
+            cpf.set_config("armour_drain_rate", 0)
             local raw = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
-                                    boat_flag, shells, trees, mines, armour, _pickup_budget)
+                                    boat_flag, shells, trees, mines, armour, 131072)
             cpf.set_config("armour_drain_rate", 0.02)
+            cpf.clear_danger_offset()
             cpf.set_overlay(obj.mx, obj.my, 32767)
             if _stuck_bl then
-              -- 1500 = STUCK_PENALTY from steering.lua
               for k in pairs(_stuck_bl) do
                 cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 1500)
               end
             end
-            -- Trace immediately after raw cost_to — diagnostic adj/rev calls below
-            -- each bump the A* epoch, which would corrupt the trace if done first.
-            local reduction = 0
-            local path = nil
-            if raw < 1e29 then
-              path = cpf.trace_last_search(obj.mx, obj.my)
-              if path then
-                local ts = C.TERRAIN_SPEED
-                for _, node in ipairs(path) do
-                  if pc then
-                    local p = pc[node.y * 256 + node.x]
-                    if p then
-                      local tt  = (get_terrain(node.x, node.y) or 0) & 0x0F
-                      local spd = (ts and ts[tt]) or 16
-                      if spd <= 0 then spd = 16 end
-                      reduction = reduction + p * (16 / spd)
-                    end
-                  end
-                end
-              end
-            end
-            -- Log suspicious cases to picked_inf.log
-            if raw > 500 or raw >= 1e29 then
-              local _dx = best_spot.mx - obj.mx
-              local _dy = best_spot.my - obj.my
-              local _pill_tt  = (get_terrain(obj.mx, obj.my) or 0) & 0x0F
-              local _spot_tt  = (get_terrain(best_spot.mx, best_spot.my) or 0) & 0x0F
-              local _sub = tostring(state._attack_substate_name or "?")
-              local _bl_str = ""
-              if _stuck_bl then
-                local _bl_parts = {}
-                for k in pairs(_stuck_bl) do
-                  _bl_parts[#_bl_parts+1] = string.format("(%d,%d)", U.mkey_x(k), U.mkey_y(k))
-                end
-                _bl_str = table.concat(_bl_parts, " ")
-              end
-              -- Test if the pill tile itself is impassable: cost from directly above it
-              cpf.set_overlay(obj.mx, obj.my, 0)
-              local _adj_cost = cpf.cost_to(obj.mx, obj.my - 1, obj.mx, obj.my,
-                                            boat_flag, shells, trees, mines, armour, _pickup_budget)
-              cpf.set_overlay(obj.mx, obj.my, 32767)
-              -- Test reversed: pill→spot
-              cpf.set_overlay(obj.mx, obj.my, 0)
-              local _rev_cost = cpf.cost_to(obj.mx, obj.my, best_spot.mx, best_spot.my,
-                                            boat_flag, shells, trees, mines, armour, _pickup_budget)
-              cpf.set_overlay(obj.mx, obj.my, 32767)
-              opt.append("picked_inf.log", string.format(
-                "t=%d sub=%s spot(%d,%d)[tt=%d]->pill(%d,%d)[tt=%d] dist=%.1f raw=%.1f raw_stuck=%.1f adj=%.1f rev=%.1f boat=%d sh=%d tr=%d mn=%d arm=%d stuck=[%s]",
-                now, _sub,
-                best_spot.mx, best_spot.my, _spot_tt,
-                obj.mx, obj.my, _pill_tt,
-                math.sqrt(_dx*_dx + _dy*_dy),
-                raw, raw_stuck, _adj_cost, _rev_cost,
-                boat_flag, shells, trees, mines, armour, _bl_str))
-            end
-            travel = math.max(0, raw - reduction)
+            travel = math.max(0, raw)
 
-            -- Per-tile detail: total A* cost then each path tile (x,y).
-            if not path or #path == 0 then
+            if raw >= 1e29 then
               local _dx = best_spot.mx - obj.mx
               local _dy = best_spot.my - obj.my
-              local _pill_tt = (get_terrain(obj.mx, obj.my) or 0) & 0x0F
               goal_pickup_detail = string.format(
-                "no path: cost_to(%d,%d)->(%d,%d) dist=%.1f raw=%.1f pill_tt=%d boat=%d sh=%d tr=%d mn=%d arm=%d trace=%s",
+                "no path: spot(%d,%d)->pill(%d,%d) dist=%.1f boat=%d sh=%d tr=%d mn=%d arm=%d",
                 best_spot.mx, best_spot.my, obj.mx, obj.my,
-                math.sqrt(_dx*_dx + _dy*_dy), raw,
-                _pill_tt, boat_flag, shells, trees, mines, armour,
-                path == nil and "nil" or "empty")
-            end
-            if path and #path > 0 then
-              -- trace_last_search occasionally emits a phantom leading
-              -- (0,0) from the source node's uninitialized parent slot.
-              -- Trim leading tiles until we hit the actual firing spot.
-              local start_i = 1
-              for i = 1, #path do
-                if path[i].x == best_spot.mx and path[i].y == best_spot.my then
-                  start_i = i; break
-                end
-              end
-              local tiles = {}
-              local viz_path = {}
-              for i = start_i, #path do
-                local t = path[i]
-                local p = pc and pc[t.y * 256 + t.x] or 0
-                tiles[#tiles + 1] = string.format("(%d, %d [%.0f])", t.x, t.y, p)
-                viz_path[#viz_path + 1] = { x = t.x, y = t.y }
-              end
-              goal_pickup_detail = string.format("%.0f (a-star cost) - %s",
-                                                 raw, table.concat(tiles, ", "))
-              goal_pickup_path = viz_path
+                math.sqrt(_dx*_dx + _dy*_dy),
+                boat_flag, shells, trees, mines, armour)
+            else
+              goal_pickup_detail = string.format("%.0f (pill-dead A* cost)", raw)
             end
           end
           _spot_us = clock_us() - _t_spot

@@ -220,6 +220,25 @@ function M.clear_overlay()
   cpf_clear_overlay()
 end
 
+--- Set a per-tile danger offset applied on-the-fly during A*.
+--- Use negative values to subtract a pill's danger contribution,
+--- modelling it as dead without touching the actual danger grid.
+--- Must call clear_danger_offset() after the search.
+function M.set_danger_offset(x, y, value)
+  cpf_set_danger_offset(x, y, value)
+end
+
+function M.clear_danger_offset()
+  cpf_clear_danger_offset()
+end
+
+--- Bulk-load danger offsets from a mkey-keyed table (my*256+mx -> value).
+--- Optional scale multiplier (default 1.0); pass -1 to subtract a pill
+--- contrib table. Clears first.
+function M.load_danger_offset(tbl, scale)
+  cpf_load_danger_offset(tbl, scale or 1)
+end
+
 --- Run incremental A* toward (dx, dy).
 --- @return status integer  0=running, 1=done, -1=failed
 --- @return nx integer      next step x (-1 if no step yet)

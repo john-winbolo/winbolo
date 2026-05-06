@@ -642,6 +642,47 @@ static int l_cpf_clear_overlay(lua_State *L) {
   return 0;
 }
 
+/* cpf_set_danger_offset(x, y, value) — set per-tile danger offset (negative = subtract) */
+static int l_cpf_set_danger_offset(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  int v = (int)luaL_checknumber(L, 3);
+  if (v < -32768) v = -32768;
+  if (v >  32767) v =  32767;
+  brainPathfinderSetDangerOffset(pf, x, y, (int16_t)v);
+  return 0;
+}
+
+/* cpf_clear_danger_offset() — zero all danger offsets */
+static int l_cpf_clear_danger_offset(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearDangerOffset(pf);
+  return 0;
+}
+
+/* cpf_load_danger_offset(table [, scale]) — bulk-load offsets from mkey-keyed
+ * Lua table. Optional scale multiplier (default 1.0); pass -1 to subtract a
+ * pill contrib table. Clears first. */
+static int l_cpf_load_danger_offset(lua_State *L) {
+  CPF_GET(L);
+  luaL_checktype(L, 1, LUA_TTABLE);
+  float scale = (float)luaL_optnumber(L, 2, 1.0);
+  brainPathfinderClearDangerOffset(pf);
+  lua_pushnil(L);
+  while (lua_next(L, 1) != 0) {
+    lua_Integer k = luaL_checkinteger(L, -2);
+    int v = (int)((float)luaL_checknumber(L, -1) * scale);
+    int x = (int)(k & 255);
+    int y = (int)((k >> 8) & 255);
+    if (v < -32768) v = -32768;
+    if (v >  32767) v =  32767;
+    brainPathfinderSetDangerOffset(pf, x, y, (int16_t)v);
+    lua_pop(L, 1);
+  }
+  return 0;
+}
+
 static int l_cpf_clear_influence(lua_State *L) {
   CPF_GET(L);
   brainPathfinderClearInfluence(pf);
@@ -1259,8 +1300,11 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_stamp_pill",        l_cpf_stamp_pill },
     { "cpf_set_danger",        l_cpf_set_danger },
     { "cpf_load_danger",       l_cpf_load_danger },
-    { "cpf_set_overlay",       l_cpf_set_overlay },
-    { "cpf_clear_overlay",     l_cpf_clear_overlay },
+    { "cpf_set_overlay",          l_cpf_set_overlay },
+    { "cpf_clear_overlay",        l_cpf_clear_overlay },
+    { "cpf_set_danger_offset",    l_cpf_set_danger_offset },
+    { "cpf_clear_danger_offset",  l_cpf_clear_danger_offset },
+    { "cpf_load_danger_offset",   l_cpf_load_danger_offset },
     { "cpf_clear_influence",   l_cpf_clear_influence },
     { "cpf_stamp_influence",   l_cpf_stamp_influence },
     { "cpf_influence_at",      l_cpf_influence_at },
