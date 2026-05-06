@@ -89,6 +89,7 @@
 #include "braintest_vizdetail_registry.h"
 #include "braintest_vizdetailwindow.h"
 #include "braintest_pillcontrib_registry.h"
+#include "na_overlay_pillcontrib.h"
 #include "../bolo/brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
@@ -1512,6 +1513,10 @@ static int  optNumPlayers = 1;
 static int  optFollow     = 0;
 static aiType  optAI      = aiFull;
 static gameType optGame   = gameOpen;
+/* --opt: load the brain from its stripped opt/ subdirectory and start
+ * with BRAIN_DEBUG_MODE=false. Used to feel true production perf
+ * without leaving BrainTest. Default false → un-stripped, debug=true. */
+static bool optProduction  = false;
 
 static void printUsage(const char *prog) {
     fprintf(stderr,
@@ -1524,7 +1529,8 @@ static void printUsage(const char *prog) {
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
-        "  --record-panels      Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --record-panels  Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -1571,6 +1577,10 @@ static bool parseArgs(int argc, char **argv) {
              * no rotation yet so a long session creates many files.
              * Use when you want to inspect / replay later. */
             g_panelRecordEnabled = true;
+        } else if (strcmp(argv[i], "--opt") == 0) {
+            /* Load brain from the stripped opt/ subdirectory with
+             * BRAIN_DEBUG_MODE=false — true production-mode feel. */
+            optProduction = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);
@@ -4019,6 +4029,12 @@ static void appRender(BrainTestApp *app) {
 int main(int argc, char *argv[]) {
     srand((unsigned int)(time(NULL) ^ getpid()));
 
+    /* Clear optimize.log from any previous run so each BrainTest session
+     * starts with a fresh diagnostic log. Lua-side writers open with "a"
+     * and fall back to cwd when DEBUG_SESSION_DIR is unset, so removing
+     * "./optimize.log" matches their target path. */
+    remove("optimize.log");
+
     BrainTestApp app;
     memset(&app, 0, sizeof(app));
     app.zoomFactor = 2;
@@ -4117,6 +4133,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "  Map:     %s\n", optMap[0] ? optMap : "(built-in Everard Island)");
     fprintf(stderr, "  AI:      %s\n", aiNames[optAI]);
     fprintf(stderr, "  Game:    %s\n", gameNames[optGame]);
+    fprintf(stderr, "  Opt:     %s\n", optProduction ? "yes (opt/, debug=false)" : "no (source, debug=true)");
 
     /* Initialize SDL */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -4161,9 +4178,9 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
     botManagerSetPreThinkHook(preThinkHook);
-    brainCoreSetPillContribClearCallback(pillContribClearCallback);
-    brainCoreSetPillContribBeginPillCallback(pillContribBeginPillCallback);
-    brainCoreSetPillContribAddTileCallback(pillContribAddTileCallback);
+    naPillContribSetClearCallback(pillContribClearCallback);
+    naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
+    naPillContribSetAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
      * dump. Defined in braintest_panelwindow.cpp so it can call
      * ImGui directly. Per-bot panel modules in
@@ -4229,6 +4246,13 @@ int main(int argc, char *argv[]) {
 
     /* Add bots */
     botManagerInit();
+    /* BrainTest defaults to debug-mode brains: viz-supporting code
+     * runs, brain loads from un-stripped source. Toggle with 'B' at
+     * runtime to feel production perf without reloading.
+     *
+     * --opt CLI flag flips the default off so bots load from stripped
+     * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
+    botManagerSetDefaultDebugMode(!optProduction);
     char brainPath[1024];
     /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
      * once at startup. We use a timestamped subdir so multiple BrainTest
@@ -4406,6 +4430,21 @@ int main(int argc, char *argv[]) {
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
                     break;
+                case SDLK_B: {
+                    /* Toggle BRAIN_DEBUG_MODE on every active bot. Lets
+                     * the user feel production perf without reloading
+                     * the brain. Notes:
+                     *   - Brain source loaded at construction stays
+                     *     un-stripped in BrainTest, so this only flips
+                     *     the runtime gate around `if BRAIN_DEBUG_MODE`
+                     *     blocks (and any code branching on the global).
+                     *   - Stripped allocations / overlays in opt/ are
+                     *     not reachable from this build at all. */
+                    bool now_on = botManagerToggleAllBrainDebugMode();
+                    fprintf(stderr, "BRAIN_DEBUG_MODE = %s\n",
+                            now_on ? "true" : "false");
+                    break;
+                }
                 case SDLK_H:
                     app.showHUD = !app.showHUD;
                     break;

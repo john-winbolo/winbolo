@@ -190,6 +190,18 @@ BrainPathfinder *brainPathfinderCreate(void);
 void brainPathfinderDestroy(BrainPathfinder *pf);
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map);
 
+/*
+ * Eagerly allocate the per-slate working arrays for every slate AND touch
+ * every page so the OS commits backing pages now instead of lazy-faulting
+ * them on the first dijkstra_start call. Without this, tick 1 of the
+ * first dijkstra_start pays ~1-2 ms of page-fault cost on a fresh process.
+ *
+ * Idempotent: arrays already allocated are left in place. Safe to call
+ * multiple times. Call once after brainPathfinderCreate() at brain
+ * instance setup.
+ */
+void brainPathfinderDijkstraPreheat(BrainPathfinder *pf);
+
 /* Debug logging — writes detailed A* info to astar_costto.log */
 void brainPathfinderEnableLog(int enable);
 /* Independent toggle for the per-step incremental Dijkstra log

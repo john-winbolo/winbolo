@@ -60,7 +60,7 @@ static const TermDoc kTermDocs[] = {
     {"wall",    "Wall obstruction penalty — blocks between you and target beyond 1; 2 blocks=+100, 5 blocks=+400"},
     {"loc",     "Strategic location multiplier — Phase 2; scales cost by terrain/position (e.g. deep_hostile). 1.0 = neutral."},
     {"dens",    "Density discount multiplier — Phase 4; lower when many friendly candidates of the same kind cluster nearby (n = neighbor count). 1.0 = no discount."},
-    {"pickup",  "Pickup value — Phase 3; dead-pill bonus subtracted from travel cost when a pickup lies along the way."},
+    {"pickup",  "A-star cost of spot to pill, minus this pill's danger contribution."},
     { "wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block." },
     { "hist",    "Oscillation history penalty — increases when the bot repeatedly picks/abandons the same goal to break loops." },
     { NULL, NULL }
@@ -117,7 +117,7 @@ struct Row {
      * the last carries the realized path tiles which alone can be
      * 300+ chars). Truncation here cuts off the trailing segments
      * and the parser then prints "?" in the affected rows. */
-    char   formula[2048];
+    char   formula[6144];
     /* Reject info (capture_pill: dead pill that exists on the map but
      * can't be picked this tick — in_tank / blocked / stale). When
      * non-empty, the row renders dimmed with a colored chip. */
@@ -359,12 +359,16 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
             "cost= %-6.0f", r->weighted);
     }
     ImGui::SameLine();
+    /* Thresholds match step_eval_queue's tiered re-eval TTLs: close pills
+     * refresh every 50 ticks, mid-range every 150, far pills every 500
+     * (~10 s). Color green up to the close-tier TTL, fade yellow→orange
+     * across the far-tier window, red beyond. */
     if (r->staleTicks < 0) {
         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1), "~");
-    } else if (r->staleTicks < 10) {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1), "%dt", r->staleTicks);
     } else if (r->staleTicks < 50) {
-        float t = (float)(r->staleTicks - 10) / 40.0f;
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1), "%dt", r->staleTicks);
+    } else if (r->staleTicks < 500) {
+        float t = (float)(r->staleTicks - 50) / 450.0f;
         ImGui::TextColored(ImVec4(1.0f, 1.0f - t * 0.5f, 0.3f, 1),
                            "%dt", r->staleTicks);
     } else {
@@ -523,7 +527,7 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
 
     /* Parse the per-term computation map from the || section.
      * Format: "name:computation|name:computation|..." */
-    struct TermCompute { char name[32]; char compute[400]; };
+    struct TermCompute { char name[32]; char compute[2048]; };
     TermCompute computes[24];
     int nComputes = 0;
     if (detailSep) {
@@ -535,7 +539,7 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
             if (colon) {
                 int nlen = (int)(colon - dp);
                 int clen = (int)(segEnd - colon - 1);
-                if (nlen > 0 && nlen < 32 && clen > 0 && clen < 400) {
+                if (nlen > 0 && nlen < 32 && clen > 0 && clen < 2048) {
                     SDL_strlcpy(computes[nComputes].name,    dp,        nlen + 1);
                     SDL_strlcpy(computes[nComputes].compute, colon + 1, clen + 1);
                     nComputes++;

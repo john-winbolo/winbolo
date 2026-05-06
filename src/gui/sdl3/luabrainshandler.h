@@ -358,6 +358,25 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst);
 void luaBrainInstanceDestroy(LuaBrainInstance *inst);
 
 /*********************************************************
+*NAME:          luaBrainInstanceSetDebugMode
+*PURPOSE:
+*  Updates the BRAIN_DEBUG_MODE Lua global on this instance's
+*  VM. Lets BrainTest toggle between "viz-supporting work
+*  active" and "production-mode skip" at runtime, so the user
+*  can feel the perf cost of debug-only allocations without
+*  reloading the brain.
+*
+*  Note: the brain source itself is whichever was loaded at
+*  construction (brains/<bot>/init.lua for debug=true,
+*  brains/<bot>/opt/init.lua for debug=false). This setter
+*  only flips the runtime gate — `if BRAIN_DEBUG_MODE then`
+*  blocks in the un-stripped source will start/stop executing.
+*  In stripped opt/ source those blocks were removed by
+*  lua_strip and the toggle has no effect.
+*********************************************************/
+void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled);
+
+/*********************************************************
 *NAME:          luaBrainInstanceGetSettings
 *PURPOSE:
 *  Calls brain.settings() on this instance's Lua VM.

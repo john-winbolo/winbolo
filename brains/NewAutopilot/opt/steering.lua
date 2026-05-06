@@ -56,6 +56,9 @@ local STUCK_LOOKAHEAD_COLLAPSE_TICKS = 30
 local _ap_stationary = {
   plan_position=true, position=true, aim=true, engage=true,
   curve_away=true, rush=true, disengage=true,
+  in_range_position=true, in_range_aim_pre=true,
+  in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true,
+  build_walls=true,
 }
 local _pp_stationary = {
   dispatch=true, wait_place=true, prewait=true, advance=true,

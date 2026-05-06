@@ -371,6 +371,25 @@ function(set_flat_output TARGET OUTDIR)
     endif()
 endfunction()
 
+# ─────────────────────────────────────────────────────────────────────
+# Per-bot C bindings. Each bot may ship its own bot-specific Lua
+# bindings under brains/<bot>/c/*.c (e.g. NewAutopilot's pillcontrib
+# overlay). Only binaries that link luabrainshandler.c need these
+# files — that's where the per-tick registrations happen.
+#
+# Glob is build-time: adding a new .c under brains/<bot>/c/ requires
+# a CMake re-run. Include dirs are derived from the source list so
+# consumers (luabrainshandler.c, braintest_main.c) can #include the
+# bot-specific headers without long relative paths.
+# ─────────────────────────────────────────────────────────────────────
+file(GLOB BOT_C_SOURCES "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
+set(BOT_C_INCLUDE_DIRS "")
+foreach(_bot_c_src ${BOT_C_SOURCES})
+    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
+    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
+endforeach()
+list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
+
 # ===========================================================================
 # Platform targets: iOS vs Desktop
 # ===========================================================================
@@ -497,6 +516,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/map_preview_popup.cpp
 )
+list(APPEND IOS_GUI_SOURCES ${BOT_C_SOURCES})
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
 set(IOS_MOBILE_SOURCES
@@ -603,6 +623,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/bolo
     src/server
     src/mapeditor
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
@@ -925,6 +946,7 @@ set(CLIENT_SOURCES
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
+list(APPEND CLIENT_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers (compiled as .c but really just declarations)
@@ -1033,6 +1055,7 @@ target_include_directories(WinBolo PRIVATE
     src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 if(WIN32)
@@ -1236,6 +1259,7 @@ set(SERVER_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
+list(APPEND SERVER_SOURCES ${BOT_C_SOURCES})
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
@@ -1255,6 +1279,7 @@ target_include_directories(WinBoloDS PRIVATE
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 if(WIN32)
@@ -1552,6 +1577,7 @@ set(HEADLESS_SOURCES
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
+list(APPEND HEADLESS_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers
@@ -1584,6 +1610,7 @@ target_include_directories(WinBoloHeadless PRIVATE
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 if(WIN32)
@@ -1683,6 +1710,7 @@ set(GYM_SOURCES
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
+list(APPEND GYM_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers
@@ -1716,6 +1744,7 @@ target_include_directories(winbolo_gym PRIVATE
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 if(WIN32)
@@ -1812,6 +1841,7 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_vizdetailwindow.cpp
     src/braintest/braintest_pillcontrib_registry.c
 )
+list(APPEND BRAINTEST_SOURCES ${BOT_C_SOURCES})
 
 # Per-bot BrainTest panel modules. Each bot may ship its own set of
 # C++ panel renderers under brains/<bot>/braintest_panels/*.cpp; they
@@ -1851,6 +1881,7 @@ target_include_directories(BrainTest PRIVATE
     src/braintest
     src/mapeditor
     ${cjson_SOURCE_DIR}
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 # braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
@@ -1920,6 +1951,7 @@ set(MAPEDITOR_SOURCES
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
 )
+list(APPEND MAPEDITOR_SOURCES ${BOT_C_SOURCES})
 
 file(GLOB MAPEDITOR_BSD_SOURCES src/bsd/*.c)
 list(APPEND MAPEDITOR_SOURCES ${MAPEDITOR_BSD_SOURCES})
@@ -1946,6 +1978,7 @@ target_include_directories(MapEditor PRIVATE
     src/bolo
     src/server
     src/mapeditor
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 if(WIN32)

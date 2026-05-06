@@ -85,6 +85,8 @@
 #include "../../bolo/client_sim.h"
 #include "../../bolo/util.h"
 #include "../../bolo/braincore.h"
+#include "na_overlay_pillcontrib.h"
+#include "na_threat.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -582,6 +584,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   /* Create C pathfinder and register cpf_* globals */
   inst->pathfinder = brainPathfinderCreate();
   if (inst->pathfinder) {
+    /* Preheat slate arrays: malloc + page-commit so the first
+     * dijkstra_start (typically tick 1) doesn't pay ~1-2 ms of
+     * lazy page-fault cost on a fresh process. */
+    brainPathfinderDijkstraPreheat(inst->pathfinder);
     brainCoreRegisterPathfinder(L, &inst->pathfinder);
   }
 
@@ -617,8 +623,14 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   brainCoreRegisterVizDetail(L);
   /* pill_contrib bindings (pillcontrib_clear / _begin_pill / _add_tile)
    * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
-   * no-op outside BrainTest. */
-  brainCoreRegisterPillContrib(L);
+   * no-op outside BrainTest. NewAutopilot-specific — lives in the bot's
+   * own C directory so the engine's brain runtime stays generic. */
+  naPillContribRegister(L);
+  /* na_threat — NewAutopilot threat-grid C kernel. Provides terrain
+   * factor cache + pill stamping. Tunables are set from Lua via
+   * na_threat.configure so cloners can tweak constants without
+   * recompiling. */
+  naThreatRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for
    * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */
@@ -816,6 +828,12 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   lua_close(inst->L);
   inst->L = NULL;
   inst->running = false;
+}
+
+void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
+  if (!inst || !inst->L) return;
+  lua_pushboolean(inst->L, enabled);
+  lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,

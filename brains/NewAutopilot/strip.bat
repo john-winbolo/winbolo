@@ -21,7 +21,7 @@ if not exist "%LUA_STRIP%" (
     --strip print2 ^
     --strip "viz." ^
     --strip overlay_ ^
-    --strip "io.open" ^
+    --strip-block "if BRAIN_DEBUG_MODE then" ^
     "%SCRIPT_DIR%opt" ^
     "%SCRIPT_DIR%*.lua"
 

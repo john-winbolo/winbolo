@@ -189,6 +189,18 @@ void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr) {
   lua_pushlightuserdata(L, (void *)worldPtr);
   lua_pushcclosure(L, l_get_terrain_upvalue, 1);
   lua_setglobal(L, "get_terrain");
+  /* Also stash the worldPtr-pointer in the Lua registry under a known
+   * key so other C modules (e.g. brains/<bot>/c/*) can read raw terrain
+   * without going through the get_terrain Lua closure. */
+  lua_pushlightuserdata(L, (void *)worldPtr);
+  lua_setfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+}
+
+const BYTE **brainCoreGetWorldPtrPtr(lua_State *L) {
+  lua_getfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+  const BYTE **p = (const BYTE **)lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  return p;
 }
 
 /* ------------------------------------------------------------------ */
@@ -918,10 +930,14 @@ static int l_cpf_dijkstra_find_best(lua_State *L) {
 }
 
 /* cpf_dijkstra_status(slate)
- * Returns: has_data, done, kind, started_tick, completed_tick,
+ * Returns: started, done, kind, started_tick, completed_tick,
  *          expanded, peak_open, src_x, src_y, in_boat, danger_scale.
- * has_data replaces the old 'active' flag: true once the slate has been
- * started at least once (g_cost allocated). */
+ * started: true iff brainPathfinderDijkstraStart has been called at
+ * least once on this slate. (Pre-preheat this was equivalent to
+ * "g_cost allocated"; after preheat that allocation happens at brain
+ * creation time, so we use started_tick > 0 instead — otherwise Lua
+ * code that checks `if not active then start() end` skips the very
+ * first start because preheat already allocated g_cost.) */
 static int l_cpf_dijkstra_status(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -931,7 +947,7 @@ static int l_cpf_dijkstra_status(lua_State *L) {
     for (int i = 0; i < 11; i++) lua_pushnil(L);
     return 11;
   }
-  lua_pushboolean(L, s->g_cost != NULL);
+  lua_pushboolean(L, s->started_tick > 0);
   lua_pushboolean(L, s->done);
   lua_pushinteger(L, s->kind);
   lua_pushinteger(L, s->started_tick);
@@ -1713,62 +1729,9 @@ void brainCoreRegisterVizDetail(lua_State *L) {
   lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
 }
 
-/* ------------------------------------------------------------------ */
-/* pill_contrib registry (per-pill, per-tile danger contributions)     */
-/* ------------------------------------------------------------------ */
-
-static BrainPillContribClearFunc      g_pillContribClearCb     = NULL;
-static BrainPillContribBeginPillFunc  g_pillContribBeginPillCb = NULL;
-static BrainPillContribAddTileFunc    g_pillContribAddTileCb   = NULL;
-
-void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb) {
-  g_pillContribClearCb = cb;
-}
-void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb) {
-  g_pillContribBeginPillCb = cb;
-}
-void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb) {
-  g_pillContribAddTileCb = cb;
-}
-
-/* pillcontrib_clear() — reset the per-tick registry. Brains call
- * once before pushing this tick's pills. */
-static int l_pillcontrib_clear(lua_State *L) {
-  (void)L;
-  if (g_pillContribClearCb) g_pillContribClearCb();
-  return 0;
-}
-
-/* pillcontrib_begin_pill(pill_id, mx, my) -> slot (or -1 on overflow) */
-static int l_pillcontrib_begin_pill(lua_State *L) {
-  int pill_id = (int)luaL_checkinteger(L, 1);
-  int mx      = (int)luaL_checkinteger(L, 2);
-  int my      = (int)luaL_checkinteger(L, 3);
-  int slot = -1;
-  if (g_pillContribBeginPillCb) {
-    slot = g_pillContribBeginPillCb(pill_id, mx, my);
-  }
-  lua_pushinteger(L, slot);
-  return 1;
-}
-
-/* pillcontrib_add_tile(slot, tile_x, tile_y, value) */
-static int l_pillcontrib_add_tile(lua_State *L) {
-  int   slot  = (int)luaL_checkinteger(L, 1);
-  int   tx    = (int)luaL_checkinteger(L, 2);
-  int   ty    = (int)luaL_checkinteger(L, 3);
-  float value = (float)luaL_checknumber(L, 4);
-  if (g_pillContribAddTileCb) {
-    g_pillContribAddTileCb(slot, tx, ty, value);
-  }
-  return 0;
-}
-
-void brainCoreRegisterPillContrib(lua_State *L) {
-  lua_pushcfunction(L, l_pillcontrib_clear);      lua_setglobal(L, "pillcontrib_clear");
-  lua_pushcfunction(L, l_pillcontrib_begin_pill); lua_setglobal(L, "pillcontrib_begin_pill");
-  lua_pushcfunction(L, l_pillcontrib_add_tile);   lua_setglobal(L, "pillcontrib_add_tile");
-}
+/* NOTE: pill_contrib bindings moved to brains/NewAutopilot/c/
+ * na_overlay_pillcontrib.c — they were specific to NewAutopilot's
+ * BrainTest overlay and shouldn't live in the generic brain runtime. */
 
 /* ------------------------------------------------------------------ */
 /* Print capture (override Lua's print to also call a callback)        */
