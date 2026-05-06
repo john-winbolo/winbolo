@@ -65,6 +65,20 @@ void brainCoreRegisterConstants(lua_State *L);
 void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr);
 
 /*********************************************************
+ *NAME:          brainCoreGetWorldPtrPtr
+ *PURPOSE:
+ *  Retrieve the worldPtr-pointer stashed by brainCoreRegisterGetTerrain.
+ *  Lets bot-specific C modules read raw terrain without going through
+ *  the Lua get_terrain closure (avoiding ~50 ns overhead per tile in
+ *  hot loops like terrain-factor / pill-stamp builds).
+ *
+ *  Returns NULL if brainCoreRegisterGetTerrain was never called on
+ *  this lua_State. Otherwise the returned pointer-to-pointer dereferences
+ *  to the host's currently-active 256×256 BYTE map.
+ *********************************************************/
+const BYTE **brainCoreGetWorldPtrPtr(lua_State *L);
+
+/*********************************************************
  *NAME:          brainCorePushInfo
  *PURPOSE:
  *  Marshals a BrainInfo struct into a Lua table and pushes
@@ -248,22 +262,11 @@ void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb);
 void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
 void brainCoreRegisterVizDetail(lua_State *L);
 
-/*********************************************************
- *NAME:          pill_contrib registry hook
- *
- *  Lua bindings pillcontrib_clear / pillcontrib_begin_pill /
- *  pillcontrib_add_tile let brains push per-pill, per-tile
- *  danger contribution data to BrainTest each tick. Host
- *  uses it for an overlay (shift-2 cycles through pills).
- *  Non-host runtimes leave callbacks NULL and bindings no-op.
- *********************************************************/
-typedef void (*BrainPillContribClearFunc)(void);
-typedef int  (*BrainPillContribBeginPillFunc)(int pill_id, int mx, int my);
-typedef void (*BrainPillContribAddTileFunc)(int slot, int tx, int ty, float value);
-
-void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb);
-void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb);
-void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb);
-void brainCoreRegisterPillContrib(lua_State *L);
+/* NOTE: pill_contrib bindings used to live here. They were specific to
+ * NewAutopilot's BrainTest overlay (shift-2 cycle-through-pills), so they
+ * moved to brains/NewAutopilot/c/na_overlay_pillcontrib.h to keep this
+ * header generic. Hosts that want the overlay should also
+ *   #include "na_overlay_pillcontrib.h"
+ * and call naPillContribRegister(L) after brainCore* registrations. */
 
 #endif /* BRAINCORE_H */

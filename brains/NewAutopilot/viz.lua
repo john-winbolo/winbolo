@@ -275,6 +275,13 @@ M.IDS = {
     short = "Attack chosen standoff marker",
     long  = "Persistent beige disc with the target pill's id at the chosen attack standoff. Stays visible while the goal holds a standoff." },
 
+  -- Pickup path: per-attack_pill candidate, the spot→pill A* path the
+  -- planner uses to estimate the post-kill walk-on cost. Magenta polyline
+  -- traced from the firing spot to the pill tile, computed by step_eval_queue.
+  attack_pill_pickup_path = {
+    short = "Attack pickup path",
+    long  = "Magenta polyline tracing the active attack_pill goal's spot→pill A* path (the post-kill walk leg used to compute the pickup cost)." },
+
   -- Meta: when on, every overlay shape gets its viz_id labeled in tiny
   -- text at the bottom-right. Useful for "what overlay is THAT?" debugging.
   label_overlays     = { short = "Label overlays",
@@ -315,7 +322,31 @@ end
 -- viz_id tagged in) so the BrainTest renderer can filter at draw time
 -- AND so toggling V checkboxes during playback updates the recorded
 -- frame's visible overlays.
+-- Per-tick cache: refresh() snapshots the host's _BT_VIZ_* globals into a
+-- flat table so call-site `if viz.is_on("foo") then ... end` guards reduce
+-- to a single table lookup. Skips the per-call string concat + :upper() +
+-- assert_id work the slow path does. think() must call viz.refresh() at
+-- the top of each tick to keep this in sync with V-dialog toggles.
+M._on = {}
+local _on = M._on  -- closure-local alias for the fast path
+
+function M.refresh()
+  local suppress_all = _G._BT_VIZ_SUPPRESS_ALL
+  for id in pairs(M.IDS) do
+    local g = _G["_BT_VIZ_" .. id:upper()]
+    if suppress_all and id ~= "hud_resources" then
+      _on[id] = false
+    else
+      _on[id] = (g ~= false)
+    end
+  end
+end
+
 function M.is_on(viz_id)
+  -- Fast path: if refresh() has populated the cache, answer in O(1).
+  local cached = _on[viz_id]
+  if cached ~= nil then return cached end
+  -- Cold path: cache not populated yet (first tick / non-BrainTest run).
   assert_id(viz_id)
   if _G._BT_VIZ_SUPPRESS_ALL and viz_id ~= "hud_resources" then
     return false

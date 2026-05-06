@@ -3,6 +3,7 @@
 -- =========================================================================
 
 local C      = require("constants")
+local opt    = require("optimize")
 local TAG    = "[" .. C.BRAIN_NAME .. "]"
 local U      = require("util")
 local heap   = require("heap")
@@ -1616,24 +1617,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
 
   -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
-  table.sort(all_cands, function(a, b) return a.score > b.score end)
+  -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
   local cands = {}
-  for _, c in ipairs(all_cands) do
-    local is_win = (c.mx == best_mx and c.my == best_my)
-    local cand_cost = is_win and cost or math.max(0.01, cost + (best_score - c.score))
-    local fmt = string.format(
-      "score{%.0f}: prx{%.0f} def{%.0f} inf{%.0f} spc{%.0f} los{%.0f} thr{%.0f} dst{%.0f} spk{%.0f} ep{%.0f} wz{%.0f}%s",
-      c.score, c.sc1, c.sc2, c.sc3, c.sc4, c.sc5, c.sc6, c.sc7, c.sc8, c.sc9, c.sc10,
-      is_win and string.format(" path{%.0f}", path_cost) or "")
-    cands[#cands + 1] = {
-      id = c.my * 256 + c.mx,
-      mx = c.mx, my = c.my,
-      cost = cand_cost,
-      formula = fmt,
-      stale = 0,
-      reject_remaining = 0,
-    }
-  end
 
   return {
     cost = cost,
@@ -2232,10 +2217,24 @@ function M.build_eval_queue(state, world, info)
     needs_refuel = (info.armour <= C.ARMOUR_COMBAT or info.shells <= C.SHELLS_COMBAT)
   end
 
+  -- Diagnostic: log the first time each base shows up in a pool. Goes
+  -- to optimize.log directly so we don't need print2 enabled.
+  if not state._base_in_pool then state._base_in_pool = {} end
+  local function _diag_log_first_pool_add(pool_idx, pool_name, id, obj)
+    local key = pool_idx .. ":" .. id
+    if state._base_in_pool[key] then return end
+    state._base_in_pool[key] = state.tick or 0
+    opt.append("optimize.log", string.format(
+      "  [diag] base #%d at (%d,%d) owner=%s ADDED to pool %d (%s) tick=%d",
+      id, obj.mx or -1, obj.my or -1, tostring(obj.owner),
+      pool_idx, pool_name, state.tick or 0))
+  end
+
   if needs_refuel then
     for id, obj in pairs(world.bases) do
       if filter_refuel(obj, state, info) then
         queue[#queue + 1] = { pool = 1, id = id, obj = obj }
+        _diag_log_first_pool_add(1, "refuel", id, obj)
       end
     end
   end
@@ -2248,6 +2247,7 @@ function M.build_eval_queue(state, world, info)
     for id, obj in pairs(world.bases) do
       if filter_capture_base(obj, state) then
         queue[#queue + 1] = { pool = 3, id = id, obj = obj }
+        _diag_log_first_pool_add(3, "capture_base", id, obj)
       end
     end
   end
@@ -2535,17 +2535,18 @@ local function get_formula_inner(e)
         tostring(_spot_method), tostring(_spot_tick))
     end
     local _tw = e._travel_wound or 1.0
+    local _d_pickup = e._pickup_detail or "(no path captured)"
     f = string.format(
       "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
       "||spot cost is NOT scaled by hp or wound"..
-      "|pickup=dead-pill walk estimate from spot to pill tile; wound_x2=min(1,wound*2)=%.2f|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
+      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
       e._hp, _wound_detail, _self_dr, _ammo_str,
-      _tw, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
+      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2682,11 +2683,11 @@ function M.step_eval_queue(state, world, info)
     -- All pools use KIND_NORMAL. Pool 6 (attack_pill) subtracts the target
     -- pill's own danger contribution along the spot path via self_dr below —
     -- that correction is more principled than discounting all danger 10x.
-    -- Capture pools (3=base, 4=pill) use CAPTURE_THREAT_WEIGHT for the A*
-    -- fallback danger scale.
-    local pill_pool = (pool_idx == 4 or pool_idx == 6)
-    local capture_pool = (pool_idx == 3 or pool_idx == 4)
-    local ds_override = capture_pool and C.CAPTURE_THREAT_WEIGHT or nil
+    --
+    -- Note: capture_pool / CAPTURE_THREAT_WEIGHT used to scale the A*
+    -- fallback's danger weighting. With dij-only there's no fallback,
+    -- and Dijkstra weights are baked into the slate at start time —
+    -- so the capture-pool override is no longer applicable here.
     -- Pool 4 (capture_pill) does its own distance calculation via
     -- compute_pool4_cost (8-neighbor sweep with KIND_NORMAL — the
     -- pill is dead). Skip the smart_cost block entirely for pool 4 to avoid
@@ -2694,36 +2695,64 @@ function M.step_eval_queue(state, world, info)
     -- backfilled from compute_pool4_cost's return below.
     local cost_dx, cost_dy = obj.mx, obj.my
     local raw_cost = 0
+    local _t_adj = 0
+    local _t_smart = 0
     if pool_idx ~= 4 then
-      if ds_override then cpf.set_config("danger_scale", ds_override) end
+      -- Dijkstra-only path: no A* fallback. The cold-start window
+      -- (~14 ticks until long Dijkstra completes) used to pay 7-10 ms
+      -- per A*-fallback candidate; deferring is free since
+      -- STARTUP_HOLD_TICKS prevents the bot from moving anyway. After
+      -- Dijkstra is done, every reachable tile resolves in O(1).
+      -- Truly unreachable tiles (small islands without a boat) keep
+      -- returning math.huge — the pool selector treats them as
+      -- non-selectable, same as before.
+      --
+      -- ds_override (capture pools) used to scale the A* fallback's
+      -- danger weighting. Dijkstra weights are baked into the slate
+      -- at start time, so the override is a no-op here — left out.
       if obj.health and obj.health > 0 then
         if pool_idx == 6 then
           -- attack_pill: route to cheapest adjacent tile (pill is still an
           -- obstacle) but subtract the target pill's own danger contribution
           -- from the path — the bot will neutralise it en-route so its fire
           -- field shouldn't inflate the approach cost.
-          local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
-            obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+          local _ta = clock_us()
+          local _, ax, ay = cpf.cheapest_adjacent_dij(KIND_NORMAL,
+            obj.mx, obj.my, boat_flag)
+          _t_adj = clock_us() - _ta
           if ax then cost_dx, cost_dy = ax, ay end
           local pcontrib = threat.pill_contrib and
                            threat.pill_contrib[obj.my * 256 + obj.mx]
-          raw_cost = cpf.smart_cost_minus_pill_danger(
-            KIND_NORMAL, tmx, tmy, cost_dx, cost_dy,
-            pcontrib, obj.mx, obj.my,
-            boat_flag, shells, trees, mines, armour)
+          local _ts = clock_us()
+          raw_cost = cpf.smart_cost_minus_pill_danger_dij_only(
+            KIND_NORMAL, cost_dx, cost_dy,
+            pcontrib, obj.mx, obj.my, boat_flag)
+          _t_smart = clock_us() - _ts
         else
           -- For other live pills/bases, route to cheapest adjacent tile.
-          local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
-            obj.mx, obj.my, boat_flag, shells, trees, mines, armour)
+          local _ta = clock_us()
+          local _, ax, ay = cpf.cheapest_adjacent_dij(KIND_NORMAL,
+            obj.mx, obj.my, boat_flag)
+          _t_adj = clock_us() - _ta
           if ax then cost_dx, cost_dy = ax, ay end
-          raw_cost = smart_cost(KIND_NORMAL, tmx, tmy, cost_dx, cost_dy, boat_flag,
-                                 shells, trees, mines, armour)
+          local _ts = clock_us()
+          raw_cost = cpf.smart_cost_dij_only(KIND_NORMAL, cost_dx, cost_dy, boat_flag)
+          _t_smart = clock_us() - _ts
+          -- Diag: log pool 3 (capture_base) cost lookups so we can see
+          -- whether Dijkstra is returning finite values yet.
+          if pool_idx == 3 then
+            local rc = (raw_cost == math.huge) and "INF" or string.format("%.1f", raw_cost)
+            opt.append("optimize.log", string.format(
+              "  [diag] update_pool_cache pool=3 id=%s obj=(%d,%d) cheapest_adj=(%s,%s) raw_cost=%s tick=%d",
+              tostring(id), obj.mx, obj.my,
+              tostring(ax), tostring(ay), rc, now))
+          end
         end
       else
-        raw_cost = smart_cost(KIND_NORMAL, tmx, tmy, cost_dx, cost_dy, boat_flag,
-                               shells, trees, mines, armour)
+        local _ts = clock_us()
+        raw_cost = cpf.smart_cost_dij_only(KIND_NORMAL, cost_dx, cost_dy, boat_flag)
+        _t_smart = clock_us() - _ts
       end
-      if ds_override then cpf.set_config("danger_scale", 1.0) end
     end
 
     -- For attack_pill / attack_base candidates, capture shells-on-arrival so
@@ -2858,6 +2887,8 @@ function M.step_eval_queue(state, world, info)
       local goal_spot_tick     = nil
       local goal_spot_path_str = nil
       local goal_spot_path_len = 0
+      local goal_pickup_detail = nil
+      local goal_pickup_path   = nil  -- list of {x,y} for viz
       if pool_idx == 6 then
         -- Quick difficulty scan + best spot cost.
         -- Cache the scan per pill — result only changes when pill HP or
@@ -2868,30 +2899,82 @@ function M.step_eval_queue(state, world, info)
         local dck = obj.mx .. ":" .. obj.my .. ":" .. (state.phase or "")
         local dc = diff_cache[dck]
         local diff_score, best_spot, _spots
-        -- When the all-pills viz toggle is on, force detailed=true so
-        -- the spots array comes back and we can emit per-pill candidate
-        -- overlays this tick. Cache hits without spots get
-        -- re-evaluated when the toggle is on so the user always sees
-        -- spots for the active pool-6 candidates.
-        local force_detailed = vizmod.is_on("attack_scan_spots_all_pills")
+        -- In BrainTest (BRAIN_DEBUG_MODE=true) we ALWAYS populate the
+        -- spots array so any viz toggle can render instantly without
+        -- forcing a re-evaluation. In opt/ (BRAIN_DEBUG_MODE=false)
+        -- spots stay nil — no per-spot table allocation, no GC churn,
+        -- ~2 ms saved per pill per cache miss.
+        local force_detailed = BRAIN_DEBUG_MODE
         local just_evaluated = false
-        if dc and dc.hp == (obj.health or 0) and (now - dc.tick) < 50
-           and (not force_detailed or dc.spots) then
-          diff_score = dc.score
-          best_spot = dc.spot
-          _spots    = dc.spots
+
+        -- ── Distance-tiered TTL ──
+        --
+        -- evaluate_pill_difficulty is the dominant pool-6 cost (~1.5–3 ms
+        -- per cache miss) and runs once per pill per TTL. Tank-relative
+        -- distance determines how stale a re-evaluation can be:
+        --
+        --   Tier 1 (close, sqdist <  100 ≈ 10 tiles): TTL  50 ticks
+        --   Tier 2 (mid,   sqdist <  900 ≈ 30 tiles): TTL 150 ticks
+        --   Tier 3 (far,   sqdist >= 900            ): TTL 500 ticks
+        --
+        -- Distant pills aren't viable attack targets in the next second
+        -- anyway; their score doesn't need to be fresh. When the tank
+        -- closes in, the tier shrinks and we force an immediate re-eval
+        -- (covered below).
+        --
+        -- FIRST evaluations always run — the queue already rate-limits
+        -- to GOAL_CANDS_PER_TICK candidates/tick, so all 16 pills get
+        -- their first score in roughly 16 ticks before any one re-evals.
+        -- This stops the bot from picking a "strange" first attack_pill
+        -- target based on partial-tier data while distant candidates
+        -- haven't been scored yet. Earlier we deferred first eval of
+        -- distant pills to smooth startup CPU; that's now handled by
+        -- startup_mode (no pool eval runs at all in ticks 1-10).
+        local _dx_t = obj.mx - tmx
+        local _dy_t = obj.my - tmy
+        local _sqdist = _dx_t * _dx_t + _dy_t * _dy_t
+        local tier_ttl, tier_idx
+        if     _sqdist < 100 then tier_ttl, tier_idx = 50,  1
+        elseif _sqdist < 900 then tier_ttl, tier_idx = 150, 2
+        else                       tier_ttl, tier_idx = 500, 3
+        end
+
+        local needs_eval
+        if not dc then
+          needs_eval = true                              -- first eval, no defer
+        elseif dc.hp ~= (obj.health or 0) then
+          needs_eval = true                              -- HP changed
+        elseif dc.tier and tier_idx < dc.tier then
+          needs_eval = true                              -- moved closer; refresh
+        elseif force_detailed and not dc.spots then
+          needs_eval = true                              -- viz wants spots
+        elseif (now - dc.tick) >= tier_ttl then
+          needs_eval = true                              -- TTL expired
         else
-          -- EXPERIMENTAL: full 5° scan in eval-queue ranking (was 45°).
-          -- More accurate diff_score / best_spot but ~9x more spots
-          -- evaluated per pill per cache miss. Watch the perf impact;
-          -- revert to 45 if step_eval_queue starts blowing its budget.
+          needs_eval = false
+        end
+
+        if not needs_eval then
+          if dc then
+            diff_score = dc.score
+            best_spot  = dc.spot
+            _spots     = dc.spots
+          else
+            -- First-eval deferred. Stub keeps the candidate parked
+            -- without paying for a scan.
+            diff_score = 999
+            best_spot  = nil
+            _spots     = nil
+          end
+        else
           diff_score, _spots, best_spot =
             attack.evaluate_pill_difficulty(obj, world, force_detailed,
                                             5, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
-                              hp = obj.health or 0, tick = now }
+                              hp = obj.health or 0, tick = now,
+                              tier = tier_idx }
           just_evaluated = true
         end
         -- Per-pill candidate overlays now emit every tick from the
@@ -2918,15 +3001,116 @@ function M.step_eval_queue(state, world, info)
           -- distance is within PILL_FIRE_RANGE tiles.
           -- pickup: walk from spot to dead pill.
           -- Delegate to the helper which picks the best available slate
-          -- and falls back to A* (cost_to) if Dijkstra misses.
-          -- Subtracts pill overlay (32767) and the pill's danger contrib.
+          -- One-shot A* from spot → pill so the cost reflects the actual
+          -- "walk after the pill is dead" leg (Dijkstra slates are tank-
+          -- rooted and would give tank→pill instead). Then walk the
+          -- returned path and subtract this pill's own danger contrib +
+          -- the 32767 overlay on its tile, matching what the planner
+          -- would experience post-kill.
           do
             local pck = obj.my * 256 + obj.mx
             local pc  = threat.pill_contrib and threat.pill_contrib[pck]
-            travel = cpf.smart_cost_minus_pill_danger(
-              KIND_NORMAL, best_spot.mx, best_spot.my, obj.mx, obj.my,
-              pc, obj.mx, obj.my,
-              boat_flag, shells, trees, mines, armour)
+            -- Temporarily zero the target pill's overlay so A* can path
+            -- straight onto it (modeling the post-kill walk). Also clear
+            -- stuck-blacklist overlays so stalled-at-spot penalties don't
+            -- inflate the pickup cost estimate. All restored immediately after.
+            cpf.set_overlay(obj.mx, obj.my, 0)
+            local _stuck_bl = state.stuck_blacklist
+            -- raw_stuck: cost with stuck penalties in place (baseline)
+            local raw_stuck = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
+                                          boat_flag, shells, trees, mines, armour)
+            -- raw: cost with stuck penalties cleared (what we actually use)
+            if _stuck_bl then
+              for k in pairs(_stuck_bl) do
+                cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 0)
+              end
+            end
+            local raw = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
+                                    boat_flag, shells, trees, mines, armour)
+            cpf.set_overlay(obj.mx, obj.my, 32767)
+            if _stuck_bl then
+              -- 1500 = STUCK_PENALTY from steering.lua
+              for k in pairs(_stuck_bl) do
+                cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 1500)
+              end
+            end
+            -- Log suspicious cases to picked_inf.log
+            if raw > 500 or raw >= 1e29 then
+              local _dx = best_spot.mx - obj.mx
+              local _dy = best_spot.my - obj.my
+              local _pill_tt = (get_terrain(obj.mx, obj.my) or 0) & 0x0F
+              local _sub = tostring(state._attack_substate_name or "?")
+              local _bl_str = ""
+              if _stuck_bl then
+                local _bl_parts = {}
+                for k in pairs(_stuck_bl) do
+                  _bl_parts[#_bl_parts+1] = string.format("(%d,%d)", U.mkey_x(k), U.mkey_y(k))
+                end
+                _bl_str = table.concat(_bl_parts, " ")
+              end
+              opt.append("picked_inf.log", string.format(
+                "t=%d sub=%s spot(%d,%d)->pill(%d,%d) dist=%.1f pill_tt=%d raw=%.1f raw_stuck=%.1f boat=%d sh=%d tr=%d mn=%d arm=%d stuck_tiles=[%s]",
+                now, _sub,
+                best_spot.mx, best_spot.my, obj.mx, obj.my,
+                math.sqrt(_dx*_dx + _dy*_dy), _pill_tt,
+                raw, raw_stuck,
+                boat_flag, shells, trees, mines, armour, _bl_str))
+            end
+            local reduction = 0
+            local path = nil
+            if raw < 1e29 then
+              path = cpf.trace_last_search(obj.mx, obj.my)
+              if path then
+                local ts = C.TERRAIN_SPEED
+                for _, node in ipairs(path) do
+                  if pc then
+                    local p = pc[node.y * 256 + node.x]
+                    if p then
+                      local tt  = (get_terrain(node.x, node.y) or 0) & 0x0F
+                      local spd = (ts and ts[tt]) or 16
+                      if spd <= 0 then spd = 16 end
+                      reduction = reduction + p * (16 / spd)
+                    end
+                  end
+                end
+              end
+            end
+            travel = math.max(0, raw - reduction)
+
+            -- Per-tile detail: total A* cost then each path tile (x,y).
+            if not path or #path == 0 then
+              local _dx = best_spot.mx - obj.mx
+              local _dy = best_spot.my - obj.my
+              local _pill_tt = (get_terrain(obj.mx, obj.my) or 0) & 0x0F
+              goal_pickup_detail = string.format(
+                "no path: cost_to(%d,%d)->(%d,%d) dist=%.1f raw=%.1f pill_tt=%d boat=%d sh=%d tr=%d mn=%d arm=%d trace=%s",
+                best_spot.mx, best_spot.my, obj.mx, obj.my,
+                math.sqrt(_dx*_dx + _dy*_dy), raw,
+                _pill_tt, boat_flag, shells, trees, mines, armour,
+                path == nil and "nil" or "empty")
+            end
+            if path and #path > 0 then
+              -- trace_last_search occasionally emits a phantom leading
+              -- (0,0) from the source node's uninitialized parent slot.
+              -- Trim leading tiles until we hit the actual firing spot.
+              local start_i = 1
+              for i = 1, #path do
+                if path[i].x == best_spot.mx and path[i].y == best_spot.my then
+                  start_i = i; break
+                end
+              end
+              local tiles = {}
+              local viz_path = {}
+              for i = start_i, #path do
+                local t = path[i]
+                local p = pc and pc[t.y * 256 + t.x] or 0
+                tiles[#tiles + 1] = string.format("(%d, %d [%.0f])", t.x, t.y, p)
+                viz_path[#viz_path + 1] = { x = t.x, y = t.y }
+              end
+              goal_pickup_detail = string.format("%.0f (a-star cost) - %s",
+                                                 raw, table.concat(tiles, ", "))
+              goal_pickup_path = viz_path
+            end
           end
           _spot_us = clock_us() - _t_spot
 
@@ -3048,6 +3232,10 @@ function M.step_eval_queue(state, world, info)
           end
         end
         if _diff_us > 1000 or _spot_us > 1000 then
+          opt.append("optimize.log", string.format(
+            "  [diag] pool6 cand id=%s diff=%.2f spot=%.2f just_evaluated=%s force_detailed=%s",
+            tostring(id), _diff_us / 1000, _spot_us / 1000,
+            tostring(just_evaluated), tostring(force_detailed)))
         end
         -- Anger
         pill_anger = obj.anger or 0
@@ -3187,6 +3375,8 @@ function M.step_eval_queue(state, world, info)
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
         entry._self_dr=self_dr
+        entry._pickup_detail=goal_pickup_detail
+        entry._pickup_path=goal_pickup_path
         entry._spot_method=goal_spot_method
         entry._spot_slate=goal_spot_slate
         entry._spot_tick=goal_spot_tick
@@ -3226,6 +3416,19 @@ function M.step_eval_queue(state, world, info)
     -- Per-candidate timing summary so we can see what's slow.
     local _t_total = clock_us() - _t0
     if _t_total > 2000 then
+    end
+    -- Direct optimize.log diag for slow candidates so we can see them
+    -- without needing print2 enabled. Threshold: 0.5 ms (anything that
+    -- shows up on the per-tick summary). Includes sub-timings for the
+    -- 8-neighbor adjacent sweep + smart_cost call so we can identify
+    -- which inner step dominates.
+    if _t_total > 500 then
+      opt.append("optimize.log", string.format(
+        "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f cost=%.0f obj=(%d,%d) hp=%s",
+        pool_idx, tostring(id),
+        _t_total / 1000, _t_raw / 1000,
+        _t_adj / 1000, _t_smart / 1000,
+        raw_cost, obj.mx or -1, obj.my or -1, tostring(obj.health)))
     end
     ::continue::
   end
@@ -3552,7 +3755,9 @@ function M.update_pool_cache(state, world, info)
   -- Process candidates from the eval queue (2 per tick).
   -- The queue is built by init.lua after each replan decision,
   -- giving ~49 ticks to process before the next decision.
+  local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
+  opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000))
 
   -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
   -- Iterates the diff cache and emits each pill's spots with a mode
@@ -4251,43 +4456,7 @@ local function goal_selection(state, world, info, quiet)
     -- through with safe defaults; Phases 1–4 will populate them on `c`
     -- before we reach this point. wsim_add is patched in after the wsim
     -- pass below since wsim runs later in the pipeline.
-    state.goal_competition = {}
-    for _, c in ipairs(pool) do
-      local penalty = c.cost - (c._base_cost or c.cost)
-      -- DIAGNOSTIC: dump everything we know when cost is suspiciously high
-      if (c.cost or 0) > 99999 then
-        print(string.format(
-          "[HIGH-COST gc populate] kind=%s @(%d,%d) cost=%.1f base=%.1f penalty=%.1f hyst=%s switch_flat=%.1f commit_val=%.1f hist_t=%s hist_k=%s wsim_add=%.1f wsim_ran=%s wsim_killed=%s phase_weight=%s loc_mult=%s loc_reason=%s desc=%s",
-          c.goal and c.goal.kind or "?",
-          c.goal and c.goal.mx or -1, c.goal and c.goal.my or -1,
-          c.cost or 0, c._base_cost or -1, penalty,
-          tostring(c.hysteresis), c.switch_flat or 0, c.commit_val or 0,
-          tostring(c.hist_target), tostring(c.hist_kind),
-          c.wsim_add or 0, tostring(c.wsim_ran), tostring(c.wsim_killed),
-          tostring(c.phase_weight), tostring(c.loc_mult),
-          tostring(c.loc_reason), tostring(c.desc)))
-      end
-      state.goal_competition[#state.goal_competition + 1] = {
-        kind    = c.goal and c.goal.kind,
-        mx      = c.goal and c.goal.mx,
-        my      = c.goal and c.goal.my,
-        base    = c._base_cost or c.cost,
-        penalty = penalty,
-        total   = c.cost,
-        hyst       = c.hysteresis,
-        hist_t     = c.hist_target,
-        hist_k     = c.hist_kind,
-        switch_flat = c.switch_flat or 0,
-        commit_val  = c.commit_val or 0,
-        ticks_on    = ticks_on_goal,
-        loc_mult     = c.loc_mult or 1.0,
-        loc_reason   = c.loc_reason or "",
-        density_mult = c.density_mult or 1.0,
-        density_n    = c.density_n or 0,
-        pickup_value = c.pickup_value or 0,
-        wsim_add     = 0,
-      }
-    end
+    -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
     if not quiet and #pool > 0 then
       for i = 1, math.min(5, #pool) do
         local c = pool[i]
@@ -4440,120 +4609,14 @@ local function goal_selection(state, world, info, quiet)
     -- Phase 0 scaffolding: patch wsim_add + final total back into the
     -- goal_competition entries built pre-wsim so the pool window shows
     -- post-wsim totals and the +wsim{N} breakdown row.
-    if state.goal_competition then
-      for _, gc in ipairs(state.goal_competition) do
-        for _, c in ipairs(pool) do
-          if c.goal and c.goal.kind == gc.kind
-             and c.goal.mx == gc.mx and c.goal.my == gc.my then
-            local prev_total = gc.total
-            gc.wsim_add = c.wsim_add or 0
-            gc.wsim_killed = c.wsim_killed or false
-            gc.wsim_desc = c.desc and c.desc:match("wsim:(.+)$") or nil
-            gc.wsim_path = c.wsim_path  -- for visualization
-            gc.wsim_ran = c.wsim_ran or false
-            gc.wsim_damage = c.wsim_damage or 0
-            gc.wsim_arm_before = c.wsim_arm_before
-            gc.wsim_arm_after  = c.wsim_arm_after
-            gc.wsim_ticks = c.wsim_ticks or 0
-            gc.total    = c.cost
-            -- DIAGNOSTIC: high-cost watch at post-wsim patch
-            if (c.cost or 0) > 99999 then
-              print(string.format(
-                "[HIGH-COST post-wsim patch] kind=%s @(%d,%d) prev_gc_total=%.1f new_total=%.1f wsim_add=%.1f wsim_damage=%d wsim_arm=%s->%s wsim_killed=%s wsim_desc=%s",
-                gc.kind, gc.mx, gc.my,
-                prev_total or -1, c.cost, gc.wsim_add,
-                gc.wsim_damage, tostring(gc.wsim_arm_before), tostring(gc.wsim_arm_after),
-                tostring(gc.wsim_killed), tostring(gc.wsim_desc)))
-            end
-            break
-          end
-        end
-      end
-    end
-
-    -- DIAGNOSTIC: also catch any goal_competition entries that end up with
-    -- total > 99999 regardless of which pool they come from, so we see the
-    -- mismatch if one exists across kinds at the same tile.
-    if state.goal_competition then
-      local high = {}
-      for _, gc in ipairs(state.goal_competition) do
-        if (gc.total or 0) > 99999 then
-          high[#high + 1] = gc
-        end
-      end
-      if #high > 0 then
-        print(string.format("[HIGH-COST summary] %d entries with total>99999:", #high))
-        for _, gc in ipairs(high) do
-          print(string.format(
-            "  kind=%s @(%d,%d) base=%.1f penalty=%.1f total=%.1f wsim_add=%.1f wsim_killed=%s hist_t=%s hist_k=%s",
-            gc.kind, gc.mx, gc.my,
-            gc.base or -1, gc.penalty or 0, gc.total or 0,
-            gc.wsim_add or 0, tostring(gc.wsim_killed),
-            tostring(gc.hist_t), tostring(gc.hist_k)))
-        end
-      end
-    end
-
-    -- Store wsim paths on state for persistent drawing every tick.
-    -- Replaced each replan so stale paths don't linger.
-    state._wsim_viz_paths = {}
-    for _, c in ipairs(pool) do
-      if c.wsim_path and #c.wsim_path > 1 then
-        state._wsim_viz_paths[#state._wsim_viz_paths + 1] = {
-          path = c.wsim_path,
-          killed = c.wsim_killed or false,
-          kind = c.goal and c.goal.kind or "?",
-          mx = c.goal and c.goal.mx or 0,
-          my = c.goal and c.goal.my or 0,
-          detail = c.wsim_detail or "",
-          hits = c.wsim_hits,
-        }
-      end
-    end
+    -- Pool-grid panel data + diagnostic prints + viz paths — wrapped so
+    -- lua_strip removes it from opt/.
 
     if #pool > 0 then
       local winner = pool[1]
 
-      -- Log all competing candidates for debugging
-      local pool_log = {}
-      for i, c in ipairs(pool) do
-        local d = c.desc
-        if c.hysteresis then d = d .. " [" .. c.hysteresis .. "]" end
-        if c.wsim_killed then d = d .. " [KILL]" end
-        pool_log[i] = { desc = d, cost = c.cost, hysteresis = c.hysteresis,
-                        winner = (i == 1), wsim_killed = c.wsim_killed,
-                        phase_weight = c.phase_weight,
-                        loc_mult     = c.loc_mult or 1.0,
-                        loc_reason   = c.loc_reason or "",
-                        density_mult = c.density_mult or 1.0,
-                        density_n    = c.density_n or 0,
-                        pickup_value = c.pickup_value or 0,
-                        wsim_add     = c.wsim_add or 0 }
-      end
-      -- Persist for C-side debug viewer (BrainTest overlay)
-      state.last_goal_pool = pool_log
-
-      -- Include candidates from the winning pool entry so we can see
-      -- why a particular base/pill was chosen over alternatives.
-      local winner_cands = nil
-      if winner.cands then
-        winner_cands = {}
-        for _, cd in ipairs(winner.cands) do
-          winner_cands[#winner_cands + 1] = {
-            id = cd.id, mx = cd.mx, my = cd.my, cost = cd.cost,
-            own = cd.own, hp = cd.hp, stale = cd.stale,
-            reject = cd.reject,
-          }
-        end
-      end
-
-      log.reason("goal", {
-        pick = "cost_competition",
-        winner = winner.desc,
-        winner_cost = winner.cost,
-        pool = pool_log,
-        cands = winner_cands,
-      })
+      -- Pool log + winner_cands + log.reason are debug/log-only — wrapped
+      -- so lua_strip removes them from opt/.
 
       -- If attack pill won, resolve technique (standoff, wall-shield, etc.)
       if winner._pill then
@@ -4641,6 +4704,28 @@ local function goal_selection(state, world, info, quiet)
       pick = "none", why = "no strategic goal (pool empty)",
       skips = table.concat(skip_reasons, "; "),
     })
+    -- Echo to optimize.log so we can debug "stuck on explore" without
+    -- needing print2 enabled. Includes which pools had cached winners
+    -- so we can see whether pool_cache was empty or just got filtered
+    -- out (blocked / cooldown / phase weight zero).
+    do
+      local pc_summary = {}
+      local pc = state.pool_cache or {}
+      for idx, e in pairs(pc) do
+        if e then
+          pc_summary[#pc_summary + 1] = string.format(
+            "p%d:%s@(%d,%d)cost=%.0f",
+            idx, e.goal and e.goal.kind or "?",
+            e.goal and e.goal.mx or 0, e.goal and e.goal.my or 0,
+            e.cost or -1)
+        end
+      end
+      opt.append("optimize.log", string.format(
+        "  [diag] goal_selection returned nil tick=%d skips=[%s] pool_cache=[%s]",
+        state.tick or 0,
+        table.concat(skip_reasons, "; "),
+        table.concat(pc_summary, " | ")))
+    end
   end
 
   return result
@@ -4992,7 +5077,9 @@ function M.get_pool_breakdown_json(state)
       local cached = cache[p .. ":" .. item.id]
       by_pool[p][#by_pool[p] + 1] = {
         id = item.id, mx = obj.mx or 0, my = obj.my or 0,
-        cost = (cached and cached.cost) or -1,
+        -- 1e30 (≥ renderer's 1e9 INF threshold) for candidates not yet
+        -- evaluated, so the panel shows INF rather than a misleading -1.
+        cost = (cached and cached.cost) or 1e30,
         formula = (cached and get_formula(cached)) or "",
         stale = (cached and cached.tick) and (now - cached.tick) or -1,
         reject = cached and cached._reject or nil,
@@ -5137,7 +5224,7 @@ function M.get_pool_breakdown_json(state)
         id = r.id, mx = r.mx, my = r.my,
         cost = r.cost,
         weighted = (r.cost >= 0) and (r.cost * pw) or -1,
-        is_winner = (i == 1 and r.cost >= 0 and not r.reject),
+        is_winner = (i == 1 and r.cost >= 0 and r.cost < 1e29 and not r.reject),
         active_goal = (active_pool == idx and active_id == r.id),
         stale = r.stale,
         formula = r.formula,

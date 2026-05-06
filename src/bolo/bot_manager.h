@@ -41,6 +41,21 @@ struct ServerSim;
 void botManagerInit(void);
 
 /*********************************************************
+ *NAME:          botManagerSetDefaultDebugMode
+ *PURPOSE:
+ *  Set the BRAIN_DEBUG_MODE value bots inherit at creation.
+ *  BrainTest calls this with true at startup so its bots
+ *  load with viz-supporting code active. The release game
+ *  doesn't call it — default stays false, bots load from
+ *  stripped opt/ source.
+ *
+ *  Affects bots created AFTER this call. Live bots are
+ *  unchanged; use botManagerToggleAllBrainDebugMode to flip
+ *  the runtime global on existing brains.
+ *********************************************************/
+void botManagerSetDefaultDebugMode(bool enabled);
+
+/*********************************************************
  *NAME:          botManagerAddBot
  *PURPOSE:
  *  Creates a bot with its own ClientSim, passive transport,
@@ -203,6 +218,21 @@ char *botManagerEvalLuaString(BYTE playerNum, const char *src);
  *  src       - Lua source string (NUL-terminated)
  *********************************************************/
 bool botManagerExecLua(BYTE playerNum, const char *src);
+
+/*********************************************************
+ *NAME:          botManagerToggleAllBrainDebugMode
+ *PURPOSE:
+ *  Flip the BRAIN_DEBUG_MODE Lua global on every active bot.
+ *  Used by BrainTest's debug-toggle hotkey so the user can
+ *  feel production perf without reloading the bot. Returns
+ *  the new value (true = debug now on).
+ *
+ *  Note: only affects un-stripped Lua source. For brains
+ *  loaded from stripped opt/, the lua_strip pass already
+ *  removed `if BRAIN_DEBUG_MODE then ... end` blocks at
+ *  build time, so toggling has no runtime effect there.
+ *********************************************************/
+bool botManagerToggleAllBrainDebugMode(void);
 
 /* ------------------------------------------------------------------ */
 /* Goal info for debug viewer (BrainTest)                              */

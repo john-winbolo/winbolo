@@ -254,115 +254,82 @@ end
 local _terrain_mult  = nil  -- mkey -> number (multiplier per tile)
 local _terrain_trees = nil  -- mkey -> true (sparse — absent = not in trees)
 
--- Recompute the cached factors for one tile. Reads the live terrain
--- via raw_tt — caller must invoke this for every tile whose terrain
--- changed AND for each of that tile's 4 cardinal neighbors.
-local function compute_terrain_factor_at(mx, my)
-  local tt = raw_tt(mx, my)
-  local spd = C.TERRAIN_SPEED[tt] or 3
-  local m = 1.0
-  if spd > 0 then m = 16 / spd end
-  -- Forest: override speed-based danger. Trees are slow but provide
-  -- cover (pills can't see you) and destroy to grass (fast). Treat
-  -- forest danger exposure like slightly-worse-than-grass, not 2.67×.
-  if tt == C.T_FOREST then m = 1.5 end
-  if (mx > 0   and HAZARD_TERRAIN[raw_tt(mx - 1, my)])
-     or (mx < 255 and HAZARD_TERRAIN[raw_tt(mx + 1, my)])
-     or (my > 0   and HAZARD_TERRAIN[raw_tt(mx, my - 1)])
-     or (my < 255 and HAZARD_TERRAIN[raw_tt(mx, my + 1)]) then
-    m = m * 1.5
-  end
-  local k = my * 256 + mx
-  _terrain_mult[k] = m
-  if tile_in_trees(mx, my) then
-    _terrain_trees[k] = true
-  else
-    _terrain_trees[k] = nil
-  end
+-- Terrain factor cache lives entirely on the C side (na_threat).
+-- We keep these locals as truthy/nil sentinels so the existing
+-- "lazy first build" check (`if _terrain_mult == nil then rebuild`)
+-- still works — but the actual data lookups happen via na_threat
+-- inside stamp_pill (also in C).
+--
+-- Configure runs once and caches every tunable + the disk geometry
+-- on the C side. Cloners tweaking constants.lua just rerun configure
+-- (called automatically on first rebuild_terrain_factors).
+local function na_threat_configure_once()
+  na_threat.configure({
+    PILL_RANGE_MAP           = C.PILL_RANGE_MAP,
+    MIN_TREEHIDE_DIST_MAP    = C.MIN_TREEHIDE_DIST_MAP,
+    PILL_DANGER_EDGE_FALLOFF = C.PILL_DANGER_EDGE_FALLOFF,
+    PILL_DANGER_BASE         = C.PILL_DANGER_BASE,
+    PILL_DANGER_ANGER        = C.PILL_DANGER_ANGER,
+    LOW_HP1_MULT             = 0.8,
+    LOW_HP2_MULT             = 0.9,
+    TREE_FULL_HIDE_MULT      = 0.1,
+    TREE_PARTIAL_HIDE_MULT   = 0.7,
+    FOREST_TERRAIN_MULT      = 1.5,
+    HAZARD_NEIGHBOR_MULT     = 1.5,
+    T_BUILDING  = C.T_BUILDING,
+    T_RIVER     = C.T_RIVER,
+    T_SWAMP     = C.T_SWAMP,
+    T_FOREST    = C.T_FOREST,
+    T_RUBBLE    = C.T_RUBBLE,
+    T_HALFBUILD = C.T_HALFBUILD,
+    T_DEEPSEA   = C.T_DEEPSEA,
+    TERRAIN_SPEED  = C.TERRAIN_SPEED,
+    HAZARD_TERRAIN = HAZARD_TERRAIN,
+  })
 end
 
--- Full first-time build: walk the entire map once. Only called on the
--- very first M.update (or after M.reset). After that the incremental
--- 5-tile updates in M.update keep the grids in sync.
+-- Single-tile recompute — passes through to C, which handles the
+-- 5-tile cross update internally. Caller no longer needs to invoke
+-- this once per cardinal neighbor.
+local function compute_terrain_factor_at(mx, my)
+  na_threat.terrain_update_around(mx, my)
+end
+
+-- Full first-time build runs on the C side: ~0.5 ms instead of ~20 ms.
 local function rebuild_terrain_factors()
-  _terrain_mult  = {}
-  _terrain_trees = {}
-  for my = 0, 255 do
-    for mx = 0, 255 do
-      compute_terrain_factor_at(mx, my)
+  local _t0 = clock_us()
+  na_threat_configure_once()
+  local _t1 = clock_us()
+  na_threat.terrain_rebuild()
+  local _t2 = clock_us()
+  do
+    local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
+    if f then
+      f:write(string.format(
+        "  [diag] rebuild_terrain_factors: configure=%.2f ms rebuild=%.2f ms\n",
+        (_t1 - _t0) / 1000, (_t2 - _t1) / 1000))
+      f:close()
     end
   end
+  -- Truthy sentinels so `if _terrain_mult == nil` skips re-running.
+  _terrain_mult  = true
+  _terrain_trees = true
 end
 
 -- Stamp one pill into pill_grid AND simultaneously update the coverage
--- table (one entry per disk tile, regardless of penalty value) so the
--- separate cov pass in M.update can be skipped.
+-- table. The hot path (~314 disk tiles per pill) lives in C; this
+-- wrapper only marshals arguments + records the returned contrib.
+--
+-- The C kernel reads its terrain factor cache directly from C-side
+-- arrays (built by na_threat.terrain_rebuild), so there's no per-tile
+-- Lua-to-C boundary cost beyond the raw set/get the kernel does on
+-- pill_grid and coverage.
 local function stamp_pill(pm, coverage)
-  local px, py = pm.mx, pm.my
-  local anger = pm.anger or 0
-  local base_strength = C.PILL_DANGER_BASE + C.PILL_DANGER_ANGER * anger
-  -- Low-HP pills hit less hard (one or two more shots and they're
-  -- gone) — discount their stamped danger across the whole disk so
-  -- the bot is willing to push closer when an easy kill is in reach.
-  local hp = pm.health or 0
-  if hp == 1 then
-    base_strength = base_strength * 0.8
-  elseif hp == 2 then
-    base_strength = base_strength * 0.9
-  end
-  local pill_grid = M.pill_grid
-  local mult_grid = _terrain_mult
-  local tree_grid = _terrain_trees
-  local prox_cache = _proximity_cache
-  local fullhide   = _tree_fullhide_cache
-  local disk_dx  = DISK_DX
-  local disk_dy  = DISK_DY
-  local disk_off = DISK_OFF
-  local n        = DISK_LEN
-
-  -- Per-pill contribution table for this pill (keyed by position so
-  -- attack-side discount lookups don't need a pill id). Replaces any
-  -- prior entry for this position (full rebuild, no accumulation).
-  local pill_key = py * 256 + px
-  local contrib = {}
-  M.pill_contrib[pill_key] = contrib
-
-  for i = 1, n do
-    local nx = px + disk_dx[i]
-    local ny = py + disk_dy[i]
-    if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255 then
-      local k = ny * 256 + nx
-
-      -- Coverage: count this pill regardless of terrain/penalty value.
-      -- coverage_at() consumers want raw "how many pills can fire here".
-      coverage[k] = (coverage[k] or 0) + 1
-
-      local off = disk_off[i]
-      local penalty = base_strength * prox_cache[off]
-
-      -- Tree cover: reduce penalty if this tile is in trees. Whether
-      -- the offset is "far enough" for full cover is a pure function
-      -- of (dx, dy), so it's a precomputed lookup.
-      if tree_grid[k] then
-        if fullhide[off] then
-          penalty = penalty * 0.1
-        else
-          penalty = penalty * 0.7
-        end
-      end
-
-      -- LOS occlusion is applied in a second pass below (apply_occlusion_to_pill).
-
-      -- Precomputed terrain multiplier:
-      --   (16 / terrain_speed) * (1.5 if any cardinal hazard neighbor)
-      penalty = penalty * mult_grid[k]
-
-      if penalty > 0 then
-        pill_grid[k] = (pill_grid[k] or 0) + penalty
-        contrib[k]   = penalty
-      end
-    end
-  end
+  local pill_key = pm.my * 256 + pm.mx
+  M.pill_contrib[pill_key] = na_threat.stamp_pill(
+    M.pill_grid, coverage,
+    pm.mx, pm.my,
+    pm.anger or 0, pm.health or 0)
 end
 
 -- ── Precomputed Bresenham predecessor table ──
@@ -772,20 +739,15 @@ function M.update(state, world, info)
   end
 
   -- Consume terrain changes (must happen regardless of dirty flag).
-  -- For every changed tile, recompute its cached factors plus those of
-  -- its 4 cardinal neighbors — the only other tiles whose values can
-  -- depend on the changed tile. Cost is ~5 tile recomputes per change
-  -- instead of a 65k full-grid rebuild.
+  -- na_threat.terrain_update_around handles the 5-tile cross internally
+  -- (changed tile + 4 cardinal neighbors), so one call per change tile
+  -- is enough. Cost is ~5 raw_tt + write per change, all C-side.
   local tc = changes.terrain
   for idx = 1, #tc do
     local key = tc[idx]
     local tx = key % 256
     local ty = key // 256
-    compute_terrain_factor_at(tx, ty)
-    if tx > 0   then compute_terrain_factor_at(tx - 1, ty) end
-    if tx < 255 then compute_terrain_factor_at(tx + 1, ty) end
-    if ty > 0   then compute_terrain_factor_at(tx, ty - 1) end
-    if ty < 255 then compute_terrain_factor_at(tx, ty + 1) end
+    na_threat.terrain_update_around(tx, ty)
   end
   for idx = #tc, 1, -1 do tc[idx] = nil end
 
@@ -805,13 +767,25 @@ function M.update(state, world, info)
     -- for attack.evaluate_pill_difficulty (Scan A).
     local coverage = {}
     local _t_stamp0 = clock_us()
+    local _stamp_pills = 0
     for _, pm in pairs(world.pills) do
       if (pm.owner == "hostile" or pm.owner == "neutral") and pm.health > 0 then
         stamp_pill(pm, coverage)
+        _stamp_pills = _stamp_pills + 1
       end
     end
     M.coverage_grid = coverage
     local _t_stamp = clock_us() - _t_stamp0
+    -- Direct diagnostic line: write to optimize.log so we can see the
+    -- subsection breakdown without needing print2 enabled.
+    do
+      local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
+      if f then
+        f:write(string.format("  [diag] threat REBUILD pills=%d clear=%.2f stamp=%.2f\n",
+          _stamp_pills, _t_clear / 1000, _t_stamp / 1000))
+        f:close()
+      end
+    end
     -- Build set of friendly pill tile keys for occlusion check
     local friendly_pill_set = {}
     for _, pm in pairs(world.pills) do
@@ -829,6 +803,13 @@ function M.update(state, world, info)
       end
     end
     local _t_occl = clock_us() - _t_occl0
+    do
+      local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
+      if f then
+        f:write(string.format("  [diag] threat REBUILD occl=%.2f cov_pass coming\n", _t_occl / 1000))
+        f:close()
+      end
+    end
 
     -- Pass 3 (xfire only): apply crossfire multiplier using the
     -- coverage table that was built in pass 1.

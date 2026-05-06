@@ -1336,6 +1336,7 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   stamp_node(pf, src_ni);
   pf->g_cost[src_ni] = 0.0f;
   pf->dir_at[src_ni] = 0xFF;
+  pf->parent[src_ni] = PARENT_NONE;
 
   /* Track resources per-node using the existing arrays */
   {
@@ -1447,6 +1448,7 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
       pf->mines_at[ni] = (int16_t)(cur_mines - mines_used);
       pf->armour_at[ni] = (int16_t)(cur_armour - armour_used);
       pf->dir_at[ni] = (uint8_t)d;
+      pf->parent[ni] = (uint32_t)ci;
 
       f = new_g + heuristic(nx, ny, dx, dy);
       heap_push(pf, f, (uint16_t)nx, (uint16_t)ny, (uint8_t)onBoat);
@@ -1585,6 +1587,44 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
  * Note: shares the per-pf working arrays with the regular cost_to and
  * path_to searches. Calling Start clobbers any in-progress A* search.
  */
+
+void brainPathfinderDijkstraPreheat(BrainPathfinder *pf) {
+  if (!pf) return;
+  for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
+    DijkstraSlate *s = &pf->dij_slates[i];
+    /* Same allocation set as brainPathfinderDijkstraStart's lazy block,
+     * but unconditionally — call sites won't pay the malloc on tick 1. */
+    if (!s->g_cost)    s->g_cost    = (float *)  malloc(sizeof(float)  * NODE_COUNT);
+    if (!s->closed)    s->closed    = (uint8_t *)malloc(NODE_COUNT / 8);
+    if (!s->dir_at)    s->dir_at    = (uint8_t *)malloc(NODE_COUNT);
+    if (!s->heap) {
+      s->heap_capacity = HEAP_INITIAL_CAPACITY;
+      s->heap          = (BrainPFHeapEntry *)
+                          malloc(sizeof(BrainPFHeapEntry) * s->heap_capacity);
+    }
+    if (!s->heap_pos)  s->heap_pos  = (int32_t *)malloc(sizeof(int32_t) * NODE_COUNT);
+    /* Allocate the exact (shells_at) array too — most callers pass exact=1
+     * (DIJKSTRA_EXACT), so eagerly reserve it. ~256 KB per slate. */
+    if (!s->shells_at) s->shells_at = (int16_t *)malloc(sizeof(int16_t) * NODE_COUNT);
+
+    /* Touch every page so the OS commits backing memory now. The other
+     * arrays can stay zero (their default is meaningful: closed=0=not
+     * closed, heap_pos=0=invalid pos, dir_at=0=no direction). g_cost
+     * MUST initialize to COST_INF instead of zero, otherwise unstarted
+     * backup slates would report "cost = 0" for every tile the moment
+     * they show up in dijkstra_lookup_by_kind's slate walk — that's a
+     * "this destination is free" lie that wrecks pool cost compares. */
+    if (s->g_cost) {
+      for (int j = 0; j < NODE_COUNT; j++) s->g_cost[j] = COST_INF;
+    }
+    if (s->closed)    memset(s->closed,   0, NODE_COUNT / 8);
+    if (s->dir_at)    memset(s->dir_at,   0, NODE_COUNT);
+    if (s->heap_pos)  memset(s->heap_pos, 0, sizeof(int32_t) * NODE_COUNT);
+    if (s->shells_at) memset(s->shells_at,0, sizeof(int16_t) * NODE_COUNT);
+    /* heap is small (HEAP_INITIAL_CAPACITY * 12 bytes ≈ 1.5 MB), let
+     * dijkstra_start populate it lazily — most heap entries land in cache. */
+  }
+}
 
 void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
                                    int sx, int sy, int in_boat,
@@ -1882,7 +1922,16 @@ float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
   DijkstraSlate *s = &pf->dij_slates[slate];
   if (!s->g_cost) return COST_INF;
   if (x < 0 || x > 255 || y < 0 || y > 255) return COST_INF;
-  return s->g_cost[node_idx(x, y, boat ? 1 : 0)];
+  /* Source tile is stored as g_cost = 0 by construction — required by
+   * Dijkstra so the algorithm has a starting node. But external
+   * lookups treating "the tile we're standing on" as cheapest skews
+   * goal selection (any candidate at the source position wins on
+   * cost = 0). Return COST_INF for the source tile so cost-comparison
+   * code sees it as not-a-target. Internal expansion is unaffected;
+   * it reads g_cost directly. */
+  int b = boat ? 1 : 0;
+  if (x == s->src_x && y == s->src_y && b == s->in_boat) return COST_INF;
+  return s->g_cost[node_idx(x, y, b)];
 }
 
 /* Copy src slate's cost arrays and metadata to dst so dst can serve as a
@@ -1975,6 +2024,11 @@ float brainPathfinderDijkstraLookupByKind(BrainPathfinder *pf, int kind,
    * (completed_tick=0) are last-resort fallback for tiles already expanded. */
   for (int i = 0; i < n; i++) {
     DijkstraSlate *s = &pf->dij_slates[order[i]];
+    /* Same source-tile rationale as DijkstraCostAt: don't report 0 for
+     * the slate's own start position. If this tile IS the source, treat
+     * it as not-a-target on this slate and try the next slate
+     * (different src_x/src_y might give a real cost). */
+    if (x == s->src_x && y == s->src_y) continue;
     float land = s->g_cost[node_idx(x, y, 0)];
     float boatv = s->g_cost[node_idx(x, y, 1)];
     float c = (boatv < land) ? boatv : land;

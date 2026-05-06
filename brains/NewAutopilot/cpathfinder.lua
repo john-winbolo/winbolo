@@ -352,6 +352,21 @@ function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armou
   return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
 end
 
+--- Same as smart_cost but NO A* fallback. Returns math.huge when no
+--- Dijkstra slate has reached the destination yet. Used by the goal
+--- evaluator during the cold-start window: an A* fallback per
+--- candidate per tick costs ~7-10 ms and stacks across the warmup
+--- interval; better to defer the candidate and let the next
+--- build_eval_queue cycle pick it up after Dijkstra completes.
+---
+--- Truly unreachable tiles (small islands without a boat etc.) keep
+--- returning math.huge forever, which is fine — the pool selector
+--- treats inf-cost candidates as not selectable.
+function M.smart_cost_dij_only(kind, dx, dy, in_boat)
+  if not C.DIJKSTRA_USE_FOR_GOALS then return math.huge end
+  return cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0)
+end
+
 -- Convenience constants for the kind parameter.
 -- KIND_NORMAL: standard danger-weighted path cost.
 -- KIND_PILL:   path cost with a specific pill's local danger contribution
@@ -558,6 +573,38 @@ end
 --- pill_contrib[tile] * (16/terrain_speed) for each path tile, then
 --- subtracts from raw cost.  Same formula as the Dijkstra step:
 ---   danger * danger_scale * (16/speed)  with danger_scale = 1.
+--- Same as smart_cost_minus_pill_danger but NO A* fallback. Returns
+--- math.huge when Dijkstra hasn't reached the destination — caller
+--- (typically update_pool_cache) treats this as "defer; recompute
+--- next replan cycle."
+function M.smart_cost_minus_pill_danger_dij_only(kind, dx, dy,
+                                                  pill_contrib, pill_mx, pill_my,
+                                                  in_boat)
+  local raw = M.smart_cost_dij_only(kind, dx, dy, in_boat)
+  if raw >= 1e29 then return raw end
+
+  local path = M.dijkstra_trace_path_by_kind(kind, dx, dy)
+  if not path or #path == 0 then return raw end
+
+  local reduction = 0
+  local ts        = C.TERRAIN_SPEED
+  for _, node in ipairs(path) do
+    if pill_mx and node.x == pill_mx and node.y == pill_my then
+      reduction = reduction + 32767
+    end
+    if pill_contrib then
+      local p = pill_contrib[node.y * 256 + node.x]
+      if p then
+        local tt  = get_terrain(node.x, node.y) & 0x0F
+        local spd = (ts and ts[tt]) or 16
+        if spd <= 0 then spd = 16 end
+        reduction = reduction + p * (16 / spd)
+      end
+    end
+  end
+  return math.max(0, raw - reduction)
+end
+
 function M.smart_cost_minus_pill_danger(kind, sx, sy, dx, dy,
                                          pill_contrib, pill_mx, pill_my,
                                          in_boat, shells, trees, mines, armour)
