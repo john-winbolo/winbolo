@@ -1542,12 +1542,9 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   -- don't flood optimize.log with cheap cache-hit-tier calls.
   do
     local _t_total = clock_us() - _t_func0
-    if _t_total > 100 then
+    if _t_total > 1000 then
       local _pf = _t_prefetch_us or -1
       local _t_other = _t_total - _t_los - _t_scan_a - _t_scan_b - _pf
-      io.stderr:write(string.format("[attack diag] pill=(%d,%d) total=%.2f pf=%.2f dir=%s\n", pmx, pmy, _t_total/1000, _pf/1000, tostring(_G.DEBUG_SESSION_DIR)))
-      local _pf2 = io.open("D:/Development/winbolo/build/prefetch.log", "a")
-      if _pf2 then _pf2:write(string.format("pill=(%d,%d) pf=%.2f\n", pmx, pmy, _pf/1000)); _pf2:close() end
       opt.append("optimize.log", string.format(
         "  [diag] eval_pill_difficulty pill=(%d,%d) total=%.2f prefetch=%.2f los=%.2f scan_a=%.2f scan_b=%.2f other=%.2f angles=%d/%d/%d step=%s detailed=%s",
         pmx, pmy,
