@@ -23,6 +23,7 @@ if not exist "%LUA_STRIP%" (
     --strip overlay_ ^
     --strip-block "if BRAIN_DEBUG_MODE then" ^
     --exclude los_stamp_cache.lua ^
+    --exclude shield_stamp_cache.lua ^
     "%SCRIPT_DIR%opt" ^
     "%SCRIPT_DIR%*.lua"
 

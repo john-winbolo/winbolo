@@ -339,6 +339,16 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             aiType aiMode, bool debug_mode);
 
 /*********************************************************
+*NAME:          luaBrainsSetRunScript
+*PURPOSE:
+*  Sets a Lua script path for --run-script mode.
+*  When non-empty, RUN_SCRIPT_PATH is injected as a Lua
+*  global so Brain.open can dofile() the script and exit.
+*  Call before any brain instance is created.
+*********************************************************/
+void luaBrainsSetRunScript(const char *path);
+
+/*********************************************************
 *NAME:          luaBrainInstanceTick
 *PURPOSE:
 *  Runs one brain think cycle: populates BrainInfo from
