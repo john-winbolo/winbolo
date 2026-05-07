@@ -694,6 +694,25 @@ bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out) {
             SDL_strcasecmp(out->brainName + blen - 4, ".lua") == 0) {
             out->brainName[blen - 4] = '\0';
         }
+        /* Brains in this repo are conventionally laid out as
+         * brains/<Name>/init.lua. The bare basename in that case is
+         * "init", which is unhelpful — walk up to the parent directory
+         * for the actual brain identity. */
+        if (sep != NULL && SDL_strcmp(out->brainName, "init") == 0) {
+            const char *parentEnd   = sep;
+            const char *parentStart = bot->brainPath;
+            for (const char *p = bot->brainPath; p < parentEnd; p++) {
+                if (*p == '/' || *p == '\\') parentStart = p + 1;
+            }
+            size_t parentLen = (size_t)(parentEnd - parentStart);
+            if (parentLen > 0 && parentLen < sizeof(out->brainName)) {
+                memcpy(out->brainName, parentStart, parentLen);
+                out->brainName[parentLen] = '\0';
+            }
+            /* If the parent-dir lookup fails (e.g. just "init.lua" with
+             * no parent), leave brainName as "init" — still better than
+             * blank. */
+        }
     } else {
         SDL_strlcpy(out->brainName, "(none)", sizeof(out->brainName));
     }

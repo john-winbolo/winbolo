@@ -230,8 +230,11 @@ void botManagerRecordSerialMs(double ms);
 typedef struct {
     bool     isBot;
     bool     hasBrain;          /* aiFull with a live brain */
-    char     brainName[64];     /* basename of the brain script path
-                                 * (e.g. "NewAutopilot"), or "(none)" */
+    char     brainName[64];     /* brain identity: basename of the brain
+                                 * script path, with .lua stripped and
+                                 * "init" replaced by the parent directory
+                                 * name (e.g. "NewAutopilot" for
+                                 * brains/NewAutopilot/init.lua) */
     double   lastThinkMs;       /* most recent brain tick */
     double   targetMs;          /* target the next tick will use */
     uint32_t overrunCount;      /* cumulative since session start */
