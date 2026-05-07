@@ -95,9 +95,9 @@ static struct {
 
 static int workerThreadFn(void *data) {
     BotWorker *w = (BotWorker *)data;
-    char name[32];
-    SDL_snprintf(name, sizeof(name), "botpool-%d", w->id);
-    SDL_SetCurrentThreadName(name);
+    /* The OS-level thread name is set by the `name` argument we pass
+     * to SDL_CreateThread below; SDL_SetCurrentThreadName would be
+     * redundant and isn't available on older SDL3 builds. */
 
     for (;;) {
         SDL_WaitSemaphore(w->go);
