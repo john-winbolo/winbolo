@@ -28,6 +28,10 @@
 
 #include <SDL3/SDL.h>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include "global.h"
 #include "bolo_map.h"
 #include "pillbox.h"
@@ -179,15 +183,12 @@ bool botManagerInit(int threads) {
         threads = MAX_TANKS;
     }
 
-#if defined(__APPLE__)
-#  include <TargetConditionals.h>
-#  if defined(TARGET_OS_IOS) && TARGET_OS_IOS
+#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
     /* Leave headroom for the GPU/rendering thread on small devices:
      * cap at 4 total runners (3 workers + producer). */
     if (threads > 4) {
         threads = 4;
     }
-#  endif
 #endif
 
     /* `threads` counts total runners including the producer; the pool
