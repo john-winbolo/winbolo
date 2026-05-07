@@ -498,6 +498,8 @@ void printArgs() {
   fprintf(stderr, "-log          - Create game log file (filename optional)\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
+  fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
@@ -1161,12 +1163,19 @@ int main(int argc, char **argv) {
   }
 
   /* Initialize and add bot players */
-  if (!botManagerInit(0)) {
-    fprintf(stderr, "Error initializing bot manager\n");
+  {
+    int threadsArg = 0;
+    int argNum = findArg(argc, argv, "threads");
+    if (argNum != ARG_NOT_FOUND) {
+      threadsArg = atoi((char *)argv[argNum]);
+    }
+    if (!botManagerInit(threadsArg)) {
+      fprintf(stderr, "Error initializing bot manager\n");
 #ifdef USING_SDL
-    SDL_Quit();
+      SDL_Quit();
 #endif
-    return 0;
+      return 0;
+    }
   }
   {
     int numBots = 0;
