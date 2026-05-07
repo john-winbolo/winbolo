@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <SDL3/SDL.h>
+
 #include "../bolo/global.h"
 #include "../bolo/gametype.h"
 #include "../bolo/nat_portmap.h"
@@ -60,6 +62,27 @@ static int              manualProbeWaitTicks = 0;
 static int trackerTime = 5500;
 static int wbnTime = 0;
 static int natKeepaliveTime = 0;
+
+/* Wall-clock duration of the most recent tick (ms) and its EWMA. Both
+ * stay 0 until the first tick has been recorded; the EWMA is seeded
+ * from that first measurement so it doesn't bias toward zero. */
+static double s_lastTickMs = 0.0;
+static double s_tickMsEwma = 0.0;
+static const  double kTickAlpha = 0.1;
+
+void serverLifecycleRecordTickMs(double ms) {
+  s_lastTickMs = ms;
+  if (s_tickMsEwma <= 0.0) {
+    s_tickMsEwma = ms;
+  } else {
+    s_tickMsEwma = kTickAlpha * ms + (1.0 - kTickAlpha) * s_tickMsEwma;
+  }
+}
+
+void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs) {
+  if (outLastMs)  *outLastMs  = s_lastTickMs;
+  if (outEwmaMs)  *outEwmaMs  = s_tickMsEwma;
+}
 
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
@@ -122,6 +145,11 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
 }
 
 void serverInstanceTick(ServerSim *sim) {
+  /* Measure the entire tick wall-clock — outside the mutex acquire so
+   * the EWMA captures contention wait time too. Single bottom-of-function
+   * end measurement; the function has no early-return paths. */
+  Uint64 tickStart = SDL_GetPerformanceCounter();
+
   trackerTime++;
   wbnTime++;
 
@@ -397,6 +425,11 @@ void serverInstanceTick(ServerSim *sim) {
       manualProbeState = MANUAL_PROBE_TIMEOUT;
     }
   }
+
+  Uint64 tickEnd = SDL_GetPerformanceCounter();
+  double freq = (double)SDL_GetPerformanceFrequency();
+  double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
+  serverLifecycleRecordTickMs(tickMs);
 }
 
 void serverInstanceShutdown(ServerSim *sim) {

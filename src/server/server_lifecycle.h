@@ -134,4 +134,14 @@ void serverInstanceTriggerManualProbe(void);
  * manual test has run since startup or shutdown. */
 ManualProbeState serverInstanceGetManualProbeState(void);
 
+/* Last tick / EWMA wall-clock in ms. Both 0 until the first tick has
+ * been recorded. Producer-thread only — caller must hold the server
+ * mutex; reads file-statics without synchronisation. */
+void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs);
+
+/* Feed the EWMA with the wall-clock cost of the tick that just
+ * completed. Producer-thread only — called from inside
+ * serverInstanceTick after the final mutex release. */
+void serverLifecycleRecordTickMs(double ms);
+
 #endif /* SERVER_LIFECYCLE_H */

@@ -56,9 +56,11 @@
 #include "../bolo/sounddist.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/playersrejoin.h"
+#include "../bolo/bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "../winbolonet/http.h"
 #include "server_sim.h"
+#include "server_lifecycle.h"
 #include "../bolo/interpolation.h"
 #include "../bolo/position_history.h"
 #include "../bolo/screenbullet.h"
@@ -1792,8 +1794,65 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
                     sim->playerPing[count],
                     sim->jitterTarget[count]);
+
+            /* For bot slots, append a 4-space-indented [BOT] line with
+             * the brain's most recent timing. Mute fields suppressed
+             * when zero — see commit message. */
+            BotInfo bi;
+            if (botManagerGetBotInfo(count, &bi)) {
+                if (bi.hasBrain) {
+                    if (bi.overrunCount == 0) {
+                        fprintf(stdout,
+                                "    [BOT] brain=%s last=%.1fms target=%.1fms\n",
+                                bi.brainName, bi.lastThinkMs, bi.targetMs);
+                    } else {
+                        fprintf(stdout,
+                                "    [BOT] brain=%s last=%.1fms target=%.1fms overruns=%u\n",
+                                bi.brainName, bi.lastThinkMs, bi.targetMs,
+                                bi.overrunCount);
+                    }
+                } else {
+                    fprintf(stdout, "    [BOT]\n");
+                }
+            }
         }
     }
+
+    /* Bot pool summary block — only when at least one bot slot is
+     * active. Shows the per-bot budget against the 20ms server tick
+     * plus full-tick and brain-dispatch wall-clock so operators can
+     * see at a glance whether the server is keeping up. */
+    if (botManagerHasAnyBot()) {
+        BotPoolStats ps;
+        botManagerGetPoolStats(&ps);
+        if (ps.workerCount == 0) {
+            fprintf(stdout,
+                    "Bot pool: single-thread (%d active bots), target=%.1fms/bot\n",
+                    ps.activeBots, ps.currentTargetMs);
+        } else {
+            fprintf(stdout,
+                    "Bot pool: %d workers (%d active bots), target=%.1fms/bot\n",
+                    ps.workerCount, ps.activeBots, ps.currentTargetMs);
+        }
+
+        double tickLast = 0.0, tickEwma = 0.0;
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        if (tickLast > 0.0) {
+            fprintf(stdout,
+                    "  Tick:  last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
+                    tickLast, tickEwma);
+        }
+        if (ps.totalOverruns == 0) {
+            fprintf(stdout,
+                    "  Brain: last=%.1fms  serial-stage EWMA=%.1fms\n",
+                    ps.lastBrainPhaseMs, ps.ewmaSerialMs);
+        } else {
+            fprintf(stdout,
+                    "  Brain: last=%.1fms  serial-stage EWMA=%.1fms  total overruns=%u\n",
+                    ps.lastBrainPhaseMs, ps.ewmaSerialMs, ps.totalOverruns);
+        }
+    }
+
     fprintf(stdout, "\n");
 }
 
