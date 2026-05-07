@@ -65,7 +65,7 @@ function M.set_tick(t)
 end
 
 local function log_msg(...)
-  if debug_mode() then return end
+  if not perf_log_enabled() then return end
   local elapsed_ms = (clock() - tick_start) * 1000
   local parts = {}
   for i = 1, select("#", ...) do

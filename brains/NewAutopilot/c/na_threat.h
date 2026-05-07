@@ -31,4 +31,14 @@
  * once per lua_State during brain instance creation. */
 void naThreatRegister(lua_State *L);
 
+/* C-side accessors for the pill_grid and coverage_grid mirrors.
+ * Used by na_attack.c to read grid data with no Lua API overhead.
+ * Valid after na_threat.sync_grids() has been called. */
+float *naThreatGetPillGrid(void);
+float *naThreatGetCovGrid (void);
+
+/* Raw terrain type for tile (mx, my).  Returns 0 if world not loaded.
+ * Used by na_shield_stamp.c for in-C blocker classification. */
+int naThreatRawTT(int mx, int my);
+
 #endif /* NA_THREAT_H */

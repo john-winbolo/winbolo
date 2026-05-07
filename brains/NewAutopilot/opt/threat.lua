@@ -405,6 +405,14 @@ local _occ_walls  = {}
 local _occ_trees  = {}
 local _occ_fpills = {}
 
+-- Pre-allocated scratch lists for passing pill positions to
+-- na_threat.apply_occlusion_all. Sized to max pills (16); avoids
+-- per-rebuild table allocation.
+local _hp_mx = {}
+local _hp_my = {}
+local _fp_mx = {}
+local _fp_my = {}
+
 -- -------------------------------------------------------------------------
 -- Internal: apply LOS occlusion reduction to all tiles in a pill's radius.
 --
@@ -768,10 +776,15 @@ function M.update(state, world, info)
     local coverage = {}
     local _t_stamp0 = clock_us()
     local _stamp_pills = 0
+    local hp_n = 0
+    local fp_n = 0
     for _, pm in pairs(world.pills) do
       if (pm.owner == "hostile" or pm.owner == "neutral") and pm.health > 0 then
         stamp_pill(pm, coverage)
         _stamp_pills = _stamp_pills + 1
+        hp_n = hp_n + 1; _hp_mx[hp_n] = pm.mx; _hp_my[hp_n] = pm.my
+      elseif pm.owner == "friendly" and pm.health > 0 then
+        fp_n = fp_n + 1; _fp_mx[fp_n] = pm.mx; _fp_my[fp_n] = pm.my
       end
     end
     M.coverage_grid = coverage
@@ -786,22 +799,12 @@ function M.update(state, world, info)
         f:close()
       end
     end
-    -- Build set of friendly pill tile keys for occlusion check
-    local friendly_pill_set = {}
-    for _, pm in pairs(world.pills) do
-      if pm.owner == "friendly" and pm.health > 0 then
-        friendly_pill_set[U.mkey(pm.mx, pm.my)] = true
-      end
-    end
-    -- Pass 2: apply LOS occlusion (walls + trees + friendly pills)
+    -- Pass 2: apply LOS occlusion (walls + trees + friendly pills) in C.
+    -- Lua fallback: apply_occlusion_to_pill (kept below) can replace the
+    -- na_threat call if needed for debugging.
     local _t_occl0 = clock_us()
-    local _occl_pills = 0
-    for _, pm in pairs(world.pills) do
-      if (pm.owner == "hostile" or pm.owner == "neutral") and pm.health > 0 then
-        apply_occlusion_to_pill(pm, friendly_pill_set)
-        _occl_pills = _occl_pills + 1
-      end
-    end
+    na_threat.apply_occlusion_all(M.pill_grid, M.pill_contrib,
+      _fp_mx, _fp_my, fp_n, _hp_mx, _hp_my, hp_n)
     local _t_occl = clock_us() - _t_occl0
     do
       local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
@@ -827,6 +830,8 @@ function M.update(state, world, info)
     snapshot_pills(world)
     M.pill_dirty = false
     M.rebuilt_this_tick = true
+    if na_threat  then na_threat.sync_grids(M.pill_grid, M.coverage_grid) end
+    if na_attack  then na_attack.sync_grids(M.pill_grid, M.coverage_grid) end
 
     -- Per-section timing breakdown for diagnosing slow rebuilds. Only
     -- prints when the total exceeded ~5 ms (otherwise too noisy).

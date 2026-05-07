@@ -9,6 +9,7 @@ local cpf = require("cpathfinder")
 local log = require("logger")
 local bpc = require("bpc")
 local viz = require("viz")
+local opt = require("optimize")
 
 local M = {}
 
