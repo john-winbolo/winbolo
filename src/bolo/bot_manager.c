@@ -62,6 +62,11 @@ typedef struct {
     ClientSim       cs;
     Transport       transport;
     LuaBrainInstance brain;
+    /* Filesystem path to the brain script for this bot. Captured at
+     * botManagerAddBot time so botManagerGetBotInfo can surface the
+     * brain identity without confusing it with the player display
+     * name (multiple bots commonly share one brain script). */
+    char            brainPath[256];
     BYTE            playerNum;
     bool            active;
     aiType          ai;
@@ -274,6 +279,9 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     memset(bot, 0, sizeof(BotContext));
     bot->playerNum = playerNum;
     bot->ai = ai;
+    if (brainPath != NULL) {
+        SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    }
 
     /* Register the player in the server (creates tank + lgm) */
     serverSimAddPlayer(sim, playerNum, brainName, false);
@@ -637,6 +645,79 @@ double botManagerGetLastThinkMs(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0.0;
     if (!bots[playerNum].active) return 0.0;
     return bots[playerNum].lastThinkMs;
+}
+
+bool botManagerHasAnyBot(void) {
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (bots[i].active) return true;
+    }
+    return false;
+}
+
+bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out) {
+    if (out == NULL) return false;
+    if (playerNum >= MAX_TANKS || !bots[playerNum].active) {
+        memset(out, 0, sizeof(*out));
+        return false;
+    }
+
+    BotContext *bot = &bots[playerNum];
+
+    /* Active count drives the per-bot target the next tick will use.
+     * The console command is rare; recompute on each call rather than
+     * caching. */
+    int active = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (bots[i].active) active++;
+    }
+
+    out->isBot        = true;
+    out->hasBrain     = (bot->ai == aiFull) && bot->brain.running;
+    out->lastThinkMs  = bot->lastThinkMs;
+    out->targetMs     = botManagerComputePerBotTargetMs(active);
+    out->overrunCount = bot->overrunCount;
+
+    /* Brain identity: basename of the brain script path (multiple bots
+     * commonly share one brain, so the player display name is the wrong
+     * source — bot->brainPath was captured at botManagerAddBot time). */
+    if (out->hasBrain && bot->brainPath[0] != '\0') {
+        const char *fwd  = strrchr(bot->brainPath, '/');
+        const char *bwd  = strrchr(bot->brainPath, '\\');
+        const char *sep  = fwd;
+        if (bwd != NULL && (sep == NULL || bwd > sep)) {
+            sep = bwd;
+        }
+        const char *base = (sep != NULL) ? sep + 1 : bot->brainPath;
+        SDL_strlcpy(out->brainName, base, sizeof(out->brainName));
+        size_t blen = SDL_strlen(out->brainName);
+        if (blen >= 4 &&
+            SDL_strcasecmp(out->brainName + blen - 4, ".lua") == 0) {
+            out->brainName[blen - 4] = '\0';
+        }
+    } else {
+        SDL_strlcpy(out->brainName, "(none)", sizeof(out->brainName));
+    }
+    return true;
+}
+
+void botManagerGetPoolStats(BotPoolStats *out) {
+    if (out == NULL) return;
+
+    int      active        = 0;
+    uint32_t totalOverruns = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (bots[i].active) {
+            active++;
+            totalOverruns += bots[i].overrunCount;
+        }
+    }
+
+    out->workerCount      = botWorkerPoolGetSize();
+    out->activeBots       = active;
+    out->ewmaSerialMs     = s_serialMsEwma;
+    out->currentTargetMs  = botManagerComputePerBotTargetMs(active);
+    out->lastBrainPhaseMs = s_lastBrainPhaseMs;
+    out->totalOverruns    = totalOverruns;
 }
 
 bool botManagerExecLua(BYTE playerNum, const char *src) {
