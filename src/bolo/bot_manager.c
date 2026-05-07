@@ -42,6 +42,7 @@
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"
+#include "bot_worker_pool.h"
 #include "brain_worldsim.h"
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
@@ -157,12 +158,34 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-void botManagerInit(void) {
+bool botManagerInit(int threads) {
     memset(bots, 0, sizeof(bots));
     numBots = 0;
     /* Eager-init the shared sin/cos tables before any worker thread
      * could touch them. Single-threaded context here. */
     wsim_init_tables();
+
+    int cores = SDL_GetNumLogicalCPUCores();
+    if (threads <= 0) {
+        threads = cores;
+    }
+    if (threads > cores) {
+        WB_LOG_ERROR(WB_LOG_CAT_PLATFORM,
+                     "botManagerInit: threads=%d exceeds %d logical cores",
+                     threads, cores);
+        return false;
+    }
+    if (threads > MAX_TANKS) {
+        threads = MAX_TANKS;
+    }
+
+    /* `threads` counts total runners including the producer; the pool
+     * holds threads-1 workers and the producer runs one job inline. */
+    int workers = threads - 1;
+    if (workers > 0 && !botWorkerPoolCreate(workers)) {
+        return false;
+    }
+    return true;
 }
 
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
@@ -245,52 +268,114 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
-void botManagerTick(ServerSim *sim, aiType ai) {
-    BYTE i;
-    SnapshotHeader hdr;
-    TankSnapshot tanks[MAX_TANKS];
-    ShellSnapshot shells[MAX_SNAPSHOT_SHELLS];
-    BaseSnapshot bases[MAX_SNAPSHOT_BASES];
-    PillSnapshot pills[MAX_SNAPSHOT_PILLS];
-    GameEvent events[MAX_SNAPSHOT_EVENTS];
-    InputPacket pkt;
+/* Per-bot scratch carried across the three within-tick stages
+ * (snapshot/sync, brain tick, input dispatch). One instance per bot
+ * slot lives in s_jobs[] so the worker thread sees only its own
+ * indexed entry — packets and the needRemove flag stay thread-local
+ * to that bot. */
+typedef struct {
+    BotContext *bot;
+    ServerSim  *sim;
+    SnapshotHeader      hdr;
+    TankSnapshot        tanks[MAX_TANKS];
+    ShellSnapshot       shells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bases[MAX_SNAPSHOT_BASES];
+    PillSnapshot        pills[MAX_SNAPSHOT_PILLS];
+    GameEvent           events[MAX_SNAPSHOT_EVENTS];
+    InputPacket         pkt1, pkt2;
+    bool                needRemove;  /* worker → producer: brain tick failed */
+    bool                hasInput;    /* worker → producer: pkt1/pkt2 valid */
+} BotJobCtx;
 
-    for (i = 0; i < MAX_TANKS; i++) {
+static BotJobCtx s_jobs[MAX_TANKS];
+static int       s_jobIndices[MAX_TANKS];
+
+static void runBotThinkJob(int botIndex, void *userData) {
+    (void)userData;
+    BotJobCtx *j = &s_jobs[botIndex];
+    BotContext *bot = j->bot;
+    ServerSim  *sim = j->sim;
+
+    /* Optional pre-think hook (BrainTest viz). NULL in WinBoloDS.
+     * Set once at host init and never modified after, so reading the
+     * function pointer here from a worker thread is safe. */
+    if (g_preThinkHook) g_preThinkHook(botIndex);
+
+    Uint64 t0 = SDL_GetPerformanceCounter();
+    bool ok = luaBrainInstanceTick(&bot->brain);
+    Uint64 t1 = SDL_GetPerformanceCounter();
+
+    if (g_preThinkHook) g_preThinkHook(-1);
+
+    bot->lastThinkMs = (double)(t1 - t0) * 1000.0
+                       / (double)SDL_GetPerformanceFrequency();
+
+    if (!ok) {
+        /* Producer handles botManagerRemoveBot in the input-send stage —
+         * never call it from a worker thread. */
+        j->needRemove = true;
+        return;
+    }
+
+    if (MY_TANK(&bot->cs) != NULL) {
+        MY_TANK(&bot->cs)->newTank = FALSE;
+    }
+
+    /* Build both InputPackets into per-bot scratch — packets are
+     * thread-local to this ctx so two workers cannot collide. */
+    bool firstIsGame = (sim->tick % 2) == 0;
+    screenBuildInputPacketCS(&bot->cs, &j->pkt1, 0, FALSE, FALSE,
+                             TRUE, firstIsGame, bot->playerNum,
+                             sim->tick);
+    screenBuildInputPacketCS(&bot->cs, &j->pkt2, 0, FALSE, FALSE,
+                             TRUE, !firstIsGame, bot->playerNum,
+                             sim->tick + 1);
+    j->hasInput = true;
+}
+
+void botManagerTick(ServerSim *sim, aiType ai) {
+    int activeCount = 0;
+
+    /* ---- Stage 1: snapshot/sync (serial, on producer thread) ---- */
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &bots[i];
-        TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
         if (!bot->active) continue;
         if (sim->sim.tanks[i] == NULL) continue;
 
-        /* Get snapshot from server for this bot's player */
-        bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
-                                   &hdr, tanks, MAX_TANKS,
-                                   shells, MAX_SNAPSHOT_SHELLS,
-                                   tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                   bases, MAX_SNAPSHOT_BASES,
-                                   pills, MAX_SNAPSHOT_PILLS,
-                                   events, MAX_SNAPSHOT_EVENTS);
+        BotJobCtx *j = &s_jobs[i];
+        j->bot = bot;
+        j->sim = sim;
+        j->needRemove = false;
+        j->hasInput   = false;
 
-        /* Sync the bot's ClientSim from the snapshot */
-        clientSimSyncFromSnapshot(&bot->cs, &hdr,
-                                  tanks, hdr.tankCount,
-                                  shells, hdr.shellCount,
-                                  tkExplosions, hdr.tkExplosionCount,
-                                  bases, hdr.baseCount,
-                                  pills, hdr.pillCount,
-                                  events, hdr.reliableEventCount,
+        bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
+                                   &j->hdr, j->tanks, MAX_TANKS,
+                                   j->shells, MAX_SNAPSHOT_SHELLS,
+                                   j->tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                                   j->bases, MAX_SNAPSHOT_BASES,
+                                   j->pills, MAX_SNAPSHOT_PILLS,
+                                   j->events, MAX_SNAPSHOT_EVENTS);
+
+        clientSimSyncFromSnapshot(&bot->cs, &j->hdr,
+                                  j->tanks, j->hdr.tankCount,
+                                  j->shells, j->hdr.shellCount,
+                                  j->tkExplosions, j->hdr.tkExplosionCount,
+                                  j->bases, j->hdr.baseCount,
+                                  j->pills, j->hdr.pillCount,
+                                  j->events, j->hdr.reliableEventCount,
                                   bot->playerNum);
 
-        /* Update brain map (fog-of-war) from server's authoritative map.
-         * The bot's ClientSim map doesn't receive terrain change events
-         * (boat placements, building destruction, etc.) so we must read
-         * from the ServerSim. */
         if (bot->ai == aiFull && bot->brain.isFirst) {
             /* Full map on first tick */
             screenBrainMapFillFromMap(&bot->cs, &sim->sim.mp, &sim->sim.mns);
         }
         botUpdateBrainMap(bot, sim);
 
-        /* Skip brain while tank is dead (waiting to respawn) */
+        /* Skip brain while tank is dead (waiting to respawn). Excluding
+         * dead bots here keeps the worker job branch-free on liveness
+         * and stops a respawning bot from inheriting another bot's queue
+         * slot mid-dispatch. */
         if (MY_TANK(&bot->cs) != NULL &&
             tankGetDeathWait(&MY_TANK(&bot->cs)) > 0) {
             continue;
@@ -303,54 +388,65 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             bot->cs.brainBuildInfo->action = 0;
         }
 
-        /* Run the brain */
-        {
-            if (g_preThinkHook) g_preThinkHook((int)i);
-            Uint64 t0 = SDL_GetPerformanceCounter();
-            bool ok = luaBrainInstanceTick(&bot->brain);
-            Uint64 t1 = SDL_GetPerformanceCounter();
-            if (g_preThinkHook) g_preThinkHook(-1);
-            double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
-            bot->lastThinkMs = ms;
-            if (ms > 5.0 && (sim->tick - lastWarnTick[i]) > 50) {
-                WB_LOG_WARN(WB_LOG_CAT_LUA,
-                            "bot %d think took %.1fms (tick %u)", i, ms, sim->tick);
-                lastWarnTick[i] = sim->tick;
-            }
-            if (!ok) {
-                fprintf(stderr, "botManager: bot %d brain tick failed, removing\n", i);
-                botManagerRemoveBot(sim, i);
-                continue;
-            }
-        }
+        s_jobIndices[activeCount++] = i;
+    }
 
-        /* Clear newTank on the bot's ClientSim tank after the brain has
-         * seen it.  The snapshot sync doesn't carry newTank, so without
-         * this the flag stays TRUE forever and the brain sees perpetual
-         * respawns. */
-        if (MY_TANK(&bot->cs) != NULL) {
-            MY_TANK(&bot->cs)->newTank = FALSE;
-        }
-
-        /* Build and send 2 input packets (keys tick + game tick).
-         * sim->tick is the first tick about to be processed. The parity
-         * determines keys-only vs full-game processing:
-         *   even tick → game tick
-         *   odd tick  → keys tick */
-        {
-            bool firstIsGame = (sim->tick % 2) == 0;
-
-            screenBuildInputPacketCS(&bot->cs, &pkt, 0, FALSE, FALSE,
-                                    TRUE, firstIsGame, bot->playerNum,
-                                    sim->tick);
-            bot->transport.sendInput(bot->transport.ctx, &pkt);
-
-            screenBuildInputPacketCS(&bot->cs, &pkt, 0, FALSE, FALSE,
-                                    TRUE, !firstIsGame, bot->playerNum,
-                                    sim->tick + 1);
-            bot->transport.sendInput(bot->transport.ctx, &pkt);
+    /* ---- Stage 2: brain tick (parallel via pool, serial on first tick) ----
+     * BrainTest first-tick rule: if any bot's brain hasn't run yet,
+     * registration callbacks (panel / overlay_detail / shotsim_poi) may
+     * fire during this tick, and they read globals that are only safe to
+     * touch from one thread at a time. Run all jobs serially on this
+     * tick to give those callbacks a deterministic, single-threaded
+     * registration window. */
+    bool anyFirstTick = false;
+    for (int k = 0; k < activeCount; k++) {
+        if (bots[s_jobIndices[k]].brain.isFirst) {
+            anyFirstTick = true;
+            break;
         }
     }
+    if (anyFirstTick) {
+        for (int k = 0; k < activeCount; k++) {
+            runBotThinkJob(s_jobIndices[k], NULL);
+        }
+    } else {
+        botWorkerPoolRun(s_jobIndices, activeCount, runBotThinkJob, NULL);
+    }
+
+    /* ---- Stage 3: input dispatch (serial, on producer thread) ----
+     * The pool's signal/wait pair on each worker's done semaphore acts
+     * as a release/acquire, so every per-bot field a worker wrote
+     * (j->pkt1, j->pkt2, j->needRemove, j->hasInput, bot->lastThinkMs)
+     * is visible here without explicit barriers. */
+    for (int k = 0; k < activeCount; k++) {
+        int i = s_jobIndices[k];
+        BotJobCtx *j = &s_jobs[i];
+
+        if (j->needRemove) {
+            WB_LOG_WARN(WB_LOG_CAT_LUA,
+                        "bot %d brain tick failed, removing", i);
+            botManagerRemoveBot(sim, (BYTE)i);
+            continue;
+        }
+        if (!j->hasInput) {
+            continue;
+        }
+
+        bots[i].transport.sendInput(bots[i].transport.ctx, &j->pkt1);
+        bots[i].transport.sendInput(bots[i].transport.ctx, &j->pkt2);
+
+        /* Slow-tick warning: now reads bot->lastThinkMs (worker-written,
+         * visible via the pool's release/acquire), so logging never
+         * happens on a worker thread. Same 5.0 ms threshold and 50-tick
+         * rate limit as the previous serial path. */
+        double ms = bots[i].lastThinkMs;
+        if (ms > 5.0 && (sim->tick - lastWarnTick[i]) > 50) {
+            WB_LOG_WARN(WB_LOG_CAT_LUA,
+                        "bot %d think took %.1fms (tick %u)", i, ms, sim->tick);
+            lastWarnTick[i] = sim->tick;
+        }
+    }
+    (void)ai;
 }
 
 void botManagerOnGameStart(ServerSim *sim) {
@@ -401,6 +497,8 @@ void botManagerDestroy(ServerSim *sim) {
             botManagerRemoveBot(sim, i);
         }
     }
+    /* No-op when no pool was created (single-thread or alloc-failed). */
+    botWorkerPoolDestroy();
 }
 
 BYTE botManagerGetNumBots(void) {

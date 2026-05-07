@@ -36,9 +36,22 @@ struct ServerSim;
 /*********************************************************
  *NAME:          botManagerInit
  *PURPOSE:
- *  Zeros the bot array. Call once at startup.
+ *  Zeros the bot array, eager-inits the worldsim trig
+ *  tables, and creates the bot worker pool. Call once at
+ *  startup.
+ *
+ *  `threads` is the total number of concurrent brain-tick
+ *  runners including the producer (main) thread; the pool
+ *  is sized to threads-1 since the producer runs one job
+ *  inline. Pass 0 to auto-size from logical CPU cores.
+ *  threads > logical cores is a fatal config error and
+ *  returns false. threads > MAX_TANKS clamps silently.
+ *
+ *RETURNS:
+ *  true on success. false if `threads` exceeds the logical
+ *  core count, or if pool creation fails.
  *********************************************************/
-void botManagerInit(void);
+bool botManagerInit(int threads);
 
 /*********************************************************
  *NAME:          botManagerAddBot

@@ -207,7 +207,14 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
 
     /* Add brain bots with randomized count and teams */
-    botManagerInit();
+    if (!botManagerInit(0)) {
+        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] botManagerInit failed");
+        SDL_DestroyTexture(bg->tilesTex);
+        bg->tilesTex = NULL;
+        serverSimDestroy(&bg->sim);
+        bg->valid = false;
+        return false;
+    }
     char brainPath[512];
     if (findBrainPath(brainPath, sizeof(brainPath))) {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Found brain: %s", brainPath);

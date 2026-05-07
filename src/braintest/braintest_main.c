@@ -4203,7 +4203,10 @@ int main(int argc, char *argv[]) {
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
     /* Add bots */
-    botManagerInit();
+    if (!botManagerInit(0)) {
+        fprintf(stderr, "botManagerInit failed\n");
+        return 1;
+    }
     char brainPath[1024];
     /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
      * once at startup. We use a timestamped subdir so multiple BrainTest
