@@ -139,6 +139,11 @@ ManualProbeState serverInstanceGetManualProbeState(void);
  * mutex; reads file-statics without synchronisation. */
 void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs);
 
+/* Last serverSimTick × 2 / EWMA wall-clock in ms. Both 0 until the
+ * first running-state tick has been recorded. Producer-thread only —
+ * same locking rules as serverLifecycleGetTickStats. */
+void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs);
+
 /* Feed the EWMA with the wall-clock cost of the tick that just
  * completed. Producer-thread only — called from inside
  * serverInstanceTick after the final mutex release. */

@@ -248,6 +248,8 @@ typedef struct {
     double   ewmaSerialMs;      /* serial-stage EWMA */
     double   currentTargetMs;   /* per-bot budget for next tick */
     double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
+    double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
+    double   lastSerialMs;      /* last serial-stage cost (ms) */
     uint32_t totalOverruns;     /* sum of overrunCount across bots */
 } BotPoolStats;
 

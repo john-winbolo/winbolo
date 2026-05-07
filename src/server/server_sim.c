@@ -1820,8 +1820,8 @@ void serverSimInformation(ServerSim *sim, bool locked) {
 
     /* Bot pool summary block — only when at least one bot slot is
      * active. Shows the per-bot budget against the 20ms server tick
-     * plus full-tick and brain-dispatch wall-clock so operators can
-     * see at a glance whether the server is keeping up. */
+     * plus per-stage last + EWMA wall-clock so operators can spot
+     * spikes against averages at a glance. */
     if (botManagerHasAnyBot()) {
         BotPoolStats ps;
         botManagerGetPoolStats(&ps);
@@ -1837,19 +1837,34 @@ void serverSimInformation(ServerSim *sim, bool locked) {
 
         double tickLast = 0.0, tickEwma = 0.0;
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        double simLast = 0.0, simEwma = 0.0;
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+
         if (tickLast > 0.0) {
             fprintf(stdout,
-                    "  Tick:  last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    tickLast, tickEwma);
+                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma);
         }
+        fprintf(stdout,
+                "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs);
+        if (simLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Simulation:", simLast, simEwma);
+        }
+        /* "Bot prep" labels the non-brain serial parts of
+         * botManagerTick: snapshot/sync + input send. Distinct from
+         * "Simulation:" above which times the two serverSimTick calls. */
         if (ps.totalOverruns == 0) {
             fprintf(stdout,
-                    "  Brain: last=%.1fms  serial-stage EWMA=%.1fms\n",
-                    ps.lastBrainPhaseMs, ps.ewmaSerialMs);
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs);
         } else {
             fprintf(stdout,
-                    "  Brain: last=%.1fms  serial-stage EWMA=%.1fms  total overruns=%u\n",
-                    ps.lastBrainPhaseMs, ps.ewmaSerialMs, ps.totalOverruns);
+                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u\n",
+                    "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs,
+                    ps.totalOverruns);
         }
     }
 

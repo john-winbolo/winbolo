@@ -93,12 +93,18 @@ static int g_threadsConfig = 1;
 /* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
  * first call to botManagerRecordSerialMs to avoid biasing toward zero. */
 static double s_serialMsEwma = 0.0;
+/* Last serial-stage cost (ms). Companion to s_serialMsEwma so the
+ * server `info` summary can show last + EWMA together. */
+static double s_lastSerialMs = 0.0;
 
 /* Wall-clock cost of the most recent dispatched brain-think stage, in
  * milliseconds. Set per-tick at the end of botManagerTick; reserved
  * for future refinements (e.g. computing the EWMA from the full
  * serverInstanceTick instead of approximating it via kReservedSimMs). */
 static double s_lastBrainPhaseMs = 0.0;
+/* EWMA of the brain-think stage cost (ms). Display-only — the budget
+ * formula reads s_serialMsEwma, not this. */
+static double s_brainPhaseMsEwma = 0.0;
 
 /* Per-bot brain-tick budget computed for the current tick. Set per-tick
  * before dispatch so the input-send overrun check and any future server
@@ -557,8 +563,15 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     Uint64 sendEnd = SDL_GetPerformanceCounter();
     double freq = (double)SDL_GetPerformanceFrequency();
     s_lastBrainPhaseMs = (double)(brainEnd - brainStart) * 1000.0 / freq;
+    if (s_brainPhaseMsEwma <= 0.0) {
+        s_brainPhaseMsEwma = s_lastBrainPhaseMs;
+    } else {
+        s_brainPhaseMsEwma = kAlpha * s_lastBrainPhaseMs
+                             + (1.0 - kAlpha) * s_brainPhaseMsEwma;
+    }
     double serialMs = ((double)(brainStart - setupStart)
                        + (double)(sendEnd - brainEnd)) * 1000.0 / freq;
+    s_lastSerialMs = serialMs;
     botManagerRecordSerialMs(serialMs);
 
     (void)ai;
@@ -736,6 +749,8 @@ void botManagerGetPoolStats(BotPoolStats *out) {
     out->ewmaSerialMs     = s_serialMsEwma;
     out->currentTargetMs  = botManagerComputePerBotTargetMs(active);
     out->lastBrainPhaseMs = s_lastBrainPhaseMs;
+    out->ewmaBrainPhaseMs = s_brainPhaseMsEwma;
+    out->lastSerialMs     = s_lastSerialMs;
     out->totalOverruns    = totalOverruns;
 }
 
