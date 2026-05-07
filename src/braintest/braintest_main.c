@@ -1519,6 +1519,8 @@ static gameType optGame   = gameOpen;
 static bool optProduction   = false;
 static char optRunScript[1024] = "";
 static int  optPerfLog = 0;
+static int  optAutoStart = 0;
+static int  optMaxTicks = 0;   /* 0 = run forever */
 
 static void printUsage(const char *prog) {
     fprintf(stderr,
@@ -1536,6 +1538,8 @@ static void printUsage(const char *prog) {
         "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
         "                     then exit. The script has full access to cpf, world, etc.\n"
         "  --perf-log         Enable optimize.log performance timing (off by default).\n"
+        "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
+        "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -1588,6 +1592,10 @@ static bool parseArgs(int argc, char **argv) {
             optProduction = true;
         } else if (strcmp(argv[i], "--perf-log") == 0) {
             optPerfLog = 1;
+        } else if (strcmp(argv[i], "--auto-start") == 0) {
+            optAutoStart = 1;
+        } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
+            optMaxTicks = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
             strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -2527,8 +2535,12 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
 
         /* viz_idx filter — skip if the matching row is off, or if
          * the X-key suppress flag is set (hud_resources stays on
-         * because the user always wants the resource counters). */
-        if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE) {
+         * because the user always wants the resource counters).
+         * OVERLAY_VIZ_IDX_NONE means unregistered viz — skip in
+         * production mode, draw unconditionally in debug mode. */
+        if (cmd->viz_idx == OVERLAY_VIZ_IDX_NONE) {
+            if (optProduction || app->vizSuppressActive) continue;
+        } else {
             const VizRegistryEntry *e = vizRegistryGet(cmd->viz_idx);
             if (e) {
                 if (app->vizSuppressActive
@@ -2909,7 +2921,7 @@ static void appTickBrain(BrainTestApp *app) {
 
     app->sim.sim.isInMenu = isInMenu;
 
-    pushVizStateToBots(app->vizSuppressActive);
+    pushVizStateToBots(app->vizSuppressActive || optProduction);
 
     /* Clear the viz_detail registry ONCE before any bot's think runs.
      * The registry is global, so if each bot called overlay_detail_clear
@@ -4036,6 +4048,8 @@ static void appRender(BrainTestApp *app) {
 /* ------------------------------------------------------------------ */
 
 int main(int argc, char *argv[]) {
+    if (!parseArgs(argc, argv)) return 1;
+
     srand((unsigned int)(time(NULL) ^ getpid()));
 
     /* Clear optimize.log from any previous run so each BrainTest session
@@ -4081,7 +4095,7 @@ int main(int argc, char *argv[]) {
         "Green polyline of the bot's currently-followed nav path",
         "Traces the active Dijkstra slate (KIND_NORMAL) to the bot's "
         "current goal; falls back to the last A* search.",
-        "4", true);
+        "4", !optProduction);
     app.regIdxFog = vizRegistryAddNative(
         "Fog of war",
         "Dark tint on tiles the bot hasn't observed",
@@ -4128,7 +4142,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (!parseArgs(argc, argv)) return 1;
     app.followBot = (BYTE)optFollow;
 
     signal(SIGINT, signalHandler);
@@ -4179,13 +4192,16 @@ int main(int argc, char *argv[]) {
 
     /* Wire the brain → registry callback BEFORE the first bot's
      * Lua state is created (otherwise braintest_viz_register
-     * calls during brain.open() are silent no-ops). */
-    brainCoreSetVizRegisterCallback(vizRegisterCallback);
+     * calls during brain.open() are silent no-ops).
+     * In production mode (--opt), skip viz registration so the brain's
+     * viz.register_all() becomes a no-op and overlays don't render. */
+    if (!optProduction) brainCoreSetVizRegisterCallback(vizRegisterCallback);
     brainCoreSetPanelRegisterCallback(panelRegisterCallback);
     brainCoreSetShotSimPoiRegisterCallback(shotSimPoiRegisterCallback);
     brainCoreSetVizDetailRegisterCallback(vizDetailRegisterCallback);
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
+    brainCoreSetYieldCallback(SDL_PumpEvents);
     botManagerSetPreThinkHook(preThinkHook);
     naPillContribSetClearCallback(pillContribClearCallback);
     naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
@@ -4205,8 +4221,10 @@ int main(int argc, char *argv[]) {
     /* Initialize map view lookup tables */
     mapViewInit();
 
-    /* Build tile atlas */
+    /* Build tile atlas — keep the window responsive while SVG tiles rasterize */
+    SDL_PumpEvents();
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
+    SDL_PumpEvents();
     if (!sheet) {
         fprintf(stderr, "tileLoaderBuildSheet failed\n");
         SDL_DestroyRenderer(app.renderer);
@@ -4229,6 +4247,7 @@ int main(int argc, char *argv[]) {
         SDL_SetTextureScaleMode(app.overlayTex, SDL_SCALEMODE_NEAREST);
 
     /* Load map */
+    SDL_PumpEvents();
     bool mapLoaded = false;
     if (optMap[0]) {
         mapLoaded = serverSimCreate(&app.sim, optMap, optGame, false, 0, -1);
@@ -4323,8 +4342,10 @@ int main(int argc, char *argv[]) {
             g_currentInitBot = i;
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
+            SDL_PumpEvents(); /* keep window responsive during brain.open() */
             bool ok = botManagerAddBot(&app.sim, (BYTE)i, brainPath, name,
                                        optAI, optGame, false);
+            SDL_PumpEvents();
             g_currentInitBot = -1;
             g_currentInitBrainName[0] = '\0';
             if (ok) app.numBots++;
@@ -4332,6 +4353,15 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  Added %d bots\n", app.numBots);
     } else {
         fprintf(stderr, "  WARNING: Brain script not found: %s\n", optBrain);
+    }
+
+    /* In production mode (--opt), force all overlays off regardless of
+     * what imgui.ini persisted from previous debug sessions. */
+    if (optProduction) {
+        for (int i = 0; i < vizRegistryCount(); i++) {
+            VizRegistryEntry *e = vizRegistryGetMutable(i);
+            if (e) e->is_on = false;
+        }
     }
 
     /* Create debug pathfinder for click-to-cost queries */
@@ -5038,9 +5068,13 @@ int main(int argc, char *argv[]) {
                     recordingCapture(&app);
                     firstBrainSeeded = true;
                     if (!autoPauseDone && app.sim.tick >= 4) {
-                        app.paused = true;
+                        if (!optAutoStart) app.paused = true;
                         autoPauseDone = true;
                         lastTickTime += tickMs;
+                        break;
+                    }
+                    if (optMaxTicks > 0 && (int)app.sim.tick >= optMaxTicks) {
+                        appQuit = TRUE;
                         break;
                     }
                 }

@@ -39,9 +39,21 @@
 #include "braincore.h"
 #include "brain_pathfinder.h"
 
+/* C-side pill_grid from the na_threat brain module (same link unit). */
+extern float *naThreatGetPillGrid(void);
+
 /* ------------------------------------------------------------------ */
 /* clock_us — high-resolution timer for Lua profiling                  */
 /* ------------------------------------------------------------------ */
+
+/* bt_yield — calls host event-pump callback; no-op if not set. */
+static void (*g_yield_cb)(void) = NULL;
+void brainCoreSetYieldCallback(void (*cb)(void)) { g_yield_cb = cb; }
+static int l_bt_yield(lua_State *L) {
+  (void)L;
+  if (g_yield_cb) g_yield_cb();
+  return 0;
+}
 
 static int l_clock_us(lua_State *L) {
   Uint64 now  = SDL_GetPerformanceCounter();
@@ -183,6 +195,11 @@ void brainCoreRegisterConstants(lua_State *L) {
 
   /* High-resolution timer for profiling */
   lua_pushcfunction(L, l_clock_us);       lua_setglobal(L, "clock_us");
+
+  /* bt_yield() — calls the host event-pump callback if set.
+   * BrainTest registers SDL_PumpEvents so Brain.open() stays responsive.
+   * Non-BrainTest hosts leave the callback NULL; bt_yield() is a no-op. */
+  lua_pushcfunction(L, l_bt_yield);       lua_setglobal(L, "bt_yield");
 }
 
 void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr) {
@@ -605,6 +622,24 @@ static int l_cpf_set_danger(lua_State *L) {
   int y = (int)luaL_checkinteger(L, 2);
   float value = (float)luaL_checknumber(L, 3);
   brainPathfinderSetDanger(pf, x, y, value);
+  return 0;
+}
+
+/* cpf_load_pill_danger_from_threat() — C-to-C danger load.
+ * Reads naThreatGetPillGrid() directly (no Lua table iteration).
+ * Replaces cpf_load_danger(threat.pill_grid) now that pill_grid lives in C. */
+static int l_cpf_load_pill_danger_from_threat(lua_State *L) {
+  CPF_GET(L);
+  float *pg = naThreatGetPillGrid();
+  brainPathfinderClearDanger(pf);
+  if (!pg) return 0;
+  for (int k = 0; k < 65536; k++) {
+    if (pg[k] > 0.0f) {
+      int x = k & 255;
+      int y = (k >> 8) & 255;
+      brainPathfinderSetDanger(pf, x, y, pg[k]);
+    }
+  }
   return 0;
 }
 
@@ -1291,7 +1326,8 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_danger",      l_cpf_clear_danger },
     { "cpf_stamp_pill",        l_cpf_stamp_pill },
     { "cpf_set_danger",        l_cpf_set_danger },
-    { "cpf_load_danger",       l_cpf_load_danger },
+    { "cpf_load_danger",                    l_cpf_load_danger },
+    { "cpf_load_pill_danger_from_threat",   l_cpf_load_pill_danger_from_threat },
     { "cpf_set_overlay",          l_cpf_set_overlay },
     { "cpf_clear_overlay",        l_cpf_clear_overlay },
     { "cpf_set_danger_offset",    l_cpf_set_danger_offset },

@@ -89,6 +89,7 @@
 #include "na_threat.h"
 #include "na_shield_stamp.h"
 #include "na_opt_log.h"
+#include "na_attack.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -661,6 +662,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   naThreatRegister(L);
   naShieldStampRegister(L);
   naOptLogRegister(L);
+  naAttackRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for
    * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */

@@ -429,6 +429,20 @@ function Brain.open(info)
 
   -- Load precomputed shield stamp cache (C binary via na_shield.load).
   shield.load_stamp_bin()
+  if na_shield then
+    na_shield.configure_scan({
+      T_BUILDING       = C.T_BUILDING,
+      T_HALFBUILD      = C.T_HALFBUILD,
+      NON_BUILDABLE    = { C.T_DEEPSEA, C.T_RIVER, C.T_SWAMP,
+                           C.T_PILLBOX, C.T_REFBASE, C.T_BOAT },
+      APPROACH_OFFSET  = C.ATTACK_APPROACH_OFFSET,
+      BLOCKER_MIN_DIST = shield.BLOCKER_MIN_DIST,
+      SCORE_PER_SLOT   = shield.SCORE_PER_SLOT,
+      BUILT_BONUS      = shield.BUILT_BONUS,
+      NEIGHBOR_BONUS   = shield.NEIGHBOR_BONUS,
+    })
+    na_shield.set_lgm_func(cpf.lgm_travel_ticks_map)
+  end
 
   print(string.format(TAG .. " open: player=%d name='%s' map=%s ai_advantage=%s debug_log=%s",
         info.player_number, state.player_name, info.gameinfo.mapname,
@@ -769,7 +783,7 @@ function Brain.think(info)
     -- Sync C danger grid so the cost heatmap stays accurate in manual mode.
     -- Batch-load only when threat actually rebuilt this tick.
     if threat.rebuilt_this_tick then
-      cpf.load_danger(threat.pill_grid)
+      cpf.load_pill_danger_from_threat()
       metrics.inc("danger_reloads")
     else
       metrics.inc("danger_skips")
@@ -1292,7 +1306,7 @@ function Brain.think(info)
   -- truth). Batch-load the whole grid in one C call instead of ~13K per-tile
   -- cpf.set_danger calls, and only when threat.update actually rebuilt it.
   if threat.rebuilt_this_tick then
-    cpf.load_danger(threat.pill_grid)
+    cpf.load_pill_danger_from_threat()
     metrics.inc("danger_reloads")
   else
     metrics.inc("danger_skips")
@@ -1323,11 +1337,15 @@ function Brain.think(info)
           if contrib then
             local slot = pillcontrib_begin_pill(id, p.mx, p.my)
             if slot >= 0 then
-              for tkey, val in pairs(contrib) do
-                if val and val > 0 then
-                  local tx = tkey % 256
-                  local ty = (tkey - tx) / 256
-                  pillcontrib_add_tile(slot, tx, ty, val)
+              if pillcontrib_add_all then
+                pillcontrib_add_all(slot, contrib)
+              else
+                for tkey, val in pairs(contrib) do
+                  if val and val > 0 then
+                    local tx = tkey % 256
+                    local ty = (tkey - tx) / 256
+                    pillcontrib_add_tile(slot, tx, ty, val)
+                  end
                 end
               end
             end
@@ -2996,7 +3014,8 @@ function Brain.think(info)
   -- Green=1, gradient to red=5+. Circle outlines show each pill's stamp radius.
   if _G._SHOW_COVERAGE then
     if viz.is_on("coverage_grid") then
-      for k, cov in pairs(threat.coverage_grid) do
+      for k = 0, 65535 do
+        local cov = na_threat.cov_grid_at(k)
         if cov > 0 then
           local tx = k % 256
           local ty = k // 256
@@ -3464,6 +3483,7 @@ function Brain.close(info)
   print(TAG .. " closed after " .. state.tick .. " ticks")
   log.dump_world(world)
   log.close()
+  opt.close()
   metrics.close_files()
 
   -- Restore real print so other code isn't affected

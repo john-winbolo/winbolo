@@ -51,8 +51,31 @@ static int l_pillcontrib_add_tile(lua_State *L) {
   return 0;
 }
 
+/* pillcontrib_add_all(slot, contrib_table)
+ * Batch variant: iterates the contrib table (tkey->val map where
+ * tkey = ty*256+tx) in C, calling g_addTileCb for each entry
+ * with val > 0.  Replaces a Lua loop of pillcontrib_add_tile calls,
+ * reducing Lua→C boundary crossings from N_tiles to 1. */
+static int l_pillcontrib_add_all(lua_State *L) {
+  int slot = (int)luaL_checkinteger(L, 1);
+  if (!g_addTileCb || !lua_istable(L, 2)) return 0;
+  lua_pushnil(L);
+  while (lua_next(L, 2) != 0) {
+    float val = (float)lua_tonumber(L, -1);
+    if (val > 0.0f) {
+      lua_Integer tkey = lua_tointeger(L, -2);
+      int tx = (int)(tkey % 256);
+      int ty = (int)(tkey / 256);
+      g_addTileCb(slot, tx, ty, val);
+    }
+    lua_pop(L, 1);
+  }
+  return 0;
+}
+
 void naPillContribRegister(lua_State *L) {
   lua_pushcfunction(L, l_pillcontrib_clear);      lua_setglobal(L, "pillcontrib_clear");
   lua_pushcfunction(L, l_pillcontrib_begin_pill); lua_setglobal(L, "pillcontrib_begin_pill");
   lua_pushcfunction(L, l_pillcontrib_add_tile);   lua_setglobal(L, "pillcontrib_add_tile");
+  lua_pushcfunction(L, l_pillcontrib_add_all);    lua_setglobal(L, "pillcontrib_add_all");
 }

@@ -196,6 +196,10 @@ function M.load_danger(tbl)
   cpf_load_danger(tbl)
 end
 
+function M.load_pill_danger_from_threat()
+  cpf_load_pill_danger_from_threat()
+end
+
 function M.danger_at(x, y)
   return cpf_danger_at(x, y)
 end

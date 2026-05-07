@@ -479,6 +479,7 @@ end
 function M.hud_text(viz_id, ...)
   assert_id(viz_id)
   if not overlay_hud_text then return end
+  if not M.is_on(viz_id) then return end
   local idx = vid(viz_id)
   -- overlay_hud_text args: x, y, text, anchor, r, g, b, a, viz_idx
   local x, y, text, anchor, r, g, b, a = ...

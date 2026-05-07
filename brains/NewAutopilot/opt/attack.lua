@@ -229,11 +229,16 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
        and (mode ~= "winner" or s.deg == chosen_deg) then
       -- Inner box: green=LOS, red=no LOS
       local cr, cg = s.has_los and 0 or 200, s.has_los and 200 or 0
+      viz.rect(viz_id, s.cx - 0.15, s.cy - 0.15,
+                       s.cx + 0.15, s.cy + 0.15, cr, cg, 0, a(200))
       if s.has_los then
         local sr, sg = (s.total_score or 999) < 10 and 0 or 255,
                        (s.total_score or 999) < 10 and 200 or 165
+        viz.rect(viz_id, s.cx - 0.25, s.cy - 0.25,
+                         s.cx + 0.25, s.cy + 0.25, sr, sg, 0, a(120))
         if s.maneuver_tiles then
           for _, t in ipairs(s.maneuver_tiles) do
+            viz.rect(viz_id, t.x, t.y, t.x + 1, t.y + 1, 255, 255, 0, a(80))
           end
         end
         -- Maneuver ellipse outline. Radii match score_attack_spot
@@ -258,6 +263,7 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
             if px then
               local er, eg = (s.total_score or 999) < 10 and 0 or 255,
                              (s.total_score or 999) < 10 and 200 or 165
+              viz.line(viz_id, px, py, nx, ny, er, eg, 0, a(80))
             end
             px, py = nx, ny
           end
@@ -269,8 +275,14 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
           local label = string.format("A%.0f+B%.0f+D%.0f+E%.0f=%.0f",
             s.score_a or 0, s.score_b or 0, s.score_d or 0,
             s.score_e or 0, s.total_score or 0)
+          viz.text(viz_id, s.cx - 1, s.cy - 0.5, label,
+                   "topleft", 255, 0, 255, a(200))
           if s.in_bucket then
+            viz.text(viz_id, s.cx - 1, s.cy - 0.5, label,
+                     "topleft", 60, 0, 100, 255)
             local dij_label = string.format("dij=%.0f", s._dij or 0)
+            viz.text(viz_id, s.cx - 1, s.cy - 0.1, dij_label,
+                     "topleft", 60, 0, 100, 255, 0.6)
           end
         end
       end
@@ -362,6 +374,8 @@ local function forest_tiles_on_path(x0, y0, x1, y1, do_viz)
     if U.ttype(cx, cy) == C.T_FOREST then
       count = count + 1
       if do_viz then
+        viz.rect("forest_path_tiles", cx,        cy,        cx + 1,    cy + 1,    255, 255, 255, 220)
+        viz.rect("forest_path_tiles", cx + 0.05, cy + 0.05, cx + 0.95, cy + 0.95, 255, 255, 255, 220)
       end
     end
   end)
@@ -656,6 +670,7 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
         if v_take then
           if score >= math.huge then
             -- Unreachable: dim red
+            viz.rect("pill_take_target", cx, cy, cx + 1, cy + 1, 100, 0, 0, 60)
           elseif score == best_score then
             -- Currently best: bright green (will be overwritten by final pick)
           else
@@ -663,6 +678,7 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
             local rel = math.min(1.0, score / math.max(1, best_score * 3))
             local r = math.floor(255 * rel)
             local g = math.floor(255 * (1 - rel))
+            viz.rect("pill_take_target", cx, cy, cx + 1, cy + 1, r, g, 0, 50)
           end
         end
       end
@@ -674,7 +690,9 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   if smx then
     if v_take then
       -- Overlay: mark chosen standoff with bright green circle
+      viz.circle("pill_take_target", smx + 0.5, smy + 0.5, 0.45, 0, 255, 0, 220)
       -- Line from pill to chosen standoff (green)
+      viz.line("pill_take_target", pill.mx + 0.5, pill.my + 0.5, smx + 0.5, smy + 0.5, 0, 255, 0, 100)
     end
     print(string.format(TAG .. " ATTACK PLAN: pill@(%d,%d) standoff=(%d,%d) score=%s",
           pill.mx, pill.my, smx, smy,
@@ -1040,6 +1058,7 @@ do
     local aim_wy = { 128,   1,   1, 254, 254 }
     local stamps = {}
     for deg = 0, 355, 5 do
+      if deg % 100 == 0 and bt_yield then bt_yield() end
       local rad = math.rad(deg)
       local cx  = 0.5 + math.sin(rad) * R   -- spot center, tile units (pill at 0.5,0.5)
       local cy  = 0.5 - math.cos(rad) * R
@@ -1133,6 +1152,12 @@ do
   end
 end
 
+-- Copy precomputed stamps into the C evaluate_pill_difficulty module.
+if na_attack then
+  na_attack.init_stamps(LOS_STAMPS_5DEG, ELLIPSE_STAMPS_5DEG)
+  print("[attack] na_attack C module initialized")
+end
+
 -- Module-level constants hoisted out of the per-angle loop.
 -- sample_offsets and tile_in_ellipse are only used in the stamp fallback
 -- path, but were previously allocated fresh every LOS-passing angle.
@@ -1154,6 +1179,26 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   local _angles_los   = 0
   local _angles_pass  = 0
   local pmx, pmy = pill.mx, pill.my
+  local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
+
+  -- C fast path: skip the per-tile Lua overhead entirely.
+  -- Only activates for the non-detailed hot path (step=5, no banned angles).
+  if not detailed and na_attack and step_deg == 5
+      and not (state and state.banned_pill_angles
+               and state.banned_pill_angles[pmy * 256 + pmx]) then
+    na_attack.sync_pill_at(world.pill_at, pmx, pmy)
+    local phase_not_opening = (phase and phase ~= "opening") and true or false
+    local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
+    local c_score, c_mx, c_my, c_deg = na_attack.evaluate_pill_difficulty(
+      pmx, pmy, step_deg, phase_not_opening,
+      tmx or -1, tmy or -1, self_contrib)
+    if c_mx >= 0 then
+      return c_score, nil, { mx = c_mx, my = c_my, deg = c_deg, score = c_score }
+    else
+      return math.huge, nil, nil
+    end
+  end
+
   local R = C.ATTACK_PILL_STANDOFF
   -- Banned-angle map for this pill (set by approach-timeout handler).
   -- nil if state isn't passed (legacy callers / unit tests) or this
@@ -1164,7 +1209,6 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     banned_for_pill = state.banned_pill_angles[pmy * 256 + pmx]
     now_for_ban = state.tick or 0
   end
-  local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
   local safe_r = C.ATTACK_SAFE_RADIUS
   -- Pick the right precomputed stamp set for this scan resolution.
   -- Falls back to nil for other step values (the runtime then uses
@@ -1180,8 +1224,8 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- Cache frequently-accessed tables as locals — single table index per
   -- tile in the stamp loops, no function call overhead, no GC pressure.
-  local _pill_grid   = threat.pill_grid
-  local _cov_grid    = threat.coverage_grid
+  local _pill_grid_at = na_threat and na_threat.pill_grid_at
+  local _cov_grid_at  = na_threat and na_threat.cov_grid_at
   local _base_at     = world.base_at
   local _pill_at     = world.pill_at
   local _ttype       = U.ttype
@@ -1306,7 +1350,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
         for i = 1, #stamp do
           local off = stamp[i]
           if off.proj <= 0 then
-            local cov = _cov_grid[_base_key + off.key_offset] or 0
+            local cov = _cov_grid_at and _cov_grid_at(_base_key + off.key_offset) or 0
             if cov > max_coverage then max_coverage = cov end
           end
         end
@@ -1317,7 +1361,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
             if proj <= 0 then
               local sx2, sy2 = mx + dx2, my + dy2
               if tile_in_ellipse(sx2, sy2) and _in_map(sx2, sy2) then
-                local cov = _cov_grid[sy2 * 256 + sx2] or 0
+                local cov = _cov_grid_at and _cov_grid_at(sy2 * 256 + sx2) or 0
                 if cov > max_coverage then max_coverage = cov end
               end
             end
@@ -1338,7 +1382,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
           if off.proj > 0 then goto next_scan_b_tile end
           local sx, sy = mx + off.dx, my + off.dy
           local key = _base_key + off.key_offset
-          local d = _pill_grid[key] or 0
+          local d = _pill_grid_at and _pill_grid_at(key) or 0
           if _self_pcontrib then
             local sd = _self_pcontrib[key]
             if sd then d = math.max(0, d - sd) end
@@ -1363,6 +1407,10 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
               end
             end
           end
+          if BRAIN_DEBUG_MODE then
+            if not maneuver_tiles then maneuver_tiles = {} end
+            maneuver_tiles[#maneuver_tiles + 1] = { val = math.floor(d + 0.5), x = sx, y = sy }
+          end
           ::next_scan_b_tile::
         end
       else
@@ -1373,7 +1421,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
             local sx, sy = mx + dx, my + dy
             if tile_in_ellipse(sx, sy) and _in_map(sx, sy) then
               local key = sy * 256 + sx
-              local d = _pill_grid[key] or 0
+              local d = _pill_grid_at and _pill_grid_at(key) or 0
               if _self_pcontrib then
                 local sd = _self_pcontrib[key]
                 if sd then d = math.max(0, d - sd) end
@@ -1397,6 +1445,10 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
                     end
                   end
                 end
+              end
+              if BRAIN_DEBUG_MODE then
+                if not maneuver_tiles then maneuver_tiles = {} end
+                maneuver_tiles[#maneuver_tiles + 1] = { val = math.floor(d + 0.5), x = sx, y = sy }
               end
             end
             ::next_scan_b_fb::
@@ -1544,6 +1596,8 @@ end
 --          or nil if no valid standoff position found.
 -- =========================================================================
 function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
+  print2(string.format("attack_tank standoff: evaluating enemy@(%d,%d) from tank@(%d,%d) R=%d",
+    et.mx, et.my, tmx, tmy, C.TANK_COMBAT_STANDOFF_RANGE))
   local R = C.TANK_COMBAT_STANDOFF_RANGE
   local safe_r = C.ATTACK_SAFE_RADIUS
   local stamps = ELLIPSE_STAMPS_45DEG
@@ -1567,6 +1621,7 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
     local tt = U.ttype(mx, my)
     local passable = (C.TERRAIN_COST_LAND[tt] or 9999) < 9999 and not U.is_water(tt)
     if not passable then
+      print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: impassable tt=%d", deg, mx, my, tt))
       scan_spots[#scan_spots + 1] = {
         cx = cx, cy = cy, mx = mx, my = my, deg = deg,
         has_los = false, total_score = 999, reason = "impassable",
@@ -1578,6 +1633,7 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
     -- Wall check: need clear shot to the enemy tank from this position
     local wall_hp = PF.wall_hp_between(mx, my, et.mx, et.my)
     if wall_hp > 0 then
+      print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: wall_hp=%d", deg, mx, my, wall_hp))
       scan_spots[#scan_spots + 1] = {
         cx = cx, cy = cy, mx = mx, my = my, deg = deg,
         has_los = false, total_score = 999, reason = "wall_blocked",
@@ -1639,12 +1695,15 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
       maneuver_tiles = maneuver_tiles,
     }
 
+    print2(string.format("  attack_tank cand deg=%d @(%d,%d) danger=%.1f xfire=%.0f terrain=%.0f approach=%.0f total=%.0f",
+      deg, mx, my, score_danger, score_crossfire, terrain_penalty, score_approach, score))
 
     -- Overlay: color-coded candidate positions
     if v_scan and score >= best_score then
       local rel = math.min(1.0, score / math.max(1, best_score * 3))
       local cr = math.floor(255 * rel)
       local cg = math.floor(255 * (1 - rel))
+      viz.rect("tank_combat_standoff_scan", cx - 0.15, cy - 0.15, cx + 0.15, cy + 0.15, cr, cg, 0, 120)
     end
 
     if score < best_score then
@@ -1658,11 +1717,15 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   end
 
   if not best_mx then
+    print2("  attack_tank: NO valid standoff position found")
     return nil
   end
+  print2(string.format("  attack_tank WINNER: deg=%d @(%d,%d) score=%.1f", best_deg, best_mx, best_my, best_score))
 
   if v_scan then
     -- Overlay: mark chosen standoff with green circle + line to enemy
+    viz.circle("tank_combat_standoff_scan", best_mx + 0.5, best_my + 0.5, 0.45, 0, 255, 0, 220)
+    viz.line("tank_combat_standoff_scan", et.mx + 0.5, et.my + 0.5, best_mx + 0.5, best_my + 0.5, 0, 255, 0, 100)
 
     -- Draw ellipse outline on winner
     local best_spot = nil
@@ -1688,6 +1751,7 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
         local nx = best_spot.cx + eu * ux + ev * vx
         local ny = best_spot.cy + eu * uy + ev * vy
         if px then
+          viz.line("tank_combat_standoff_scan", px, py, nx, ny, 0, 200, 0, 100)
         end
         px, py = nx, ny
       end
@@ -1699,7 +1763,9 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
         local label = string.format("D%.0f+X%.0f+T%.0f+A%.0f=%.0f",
           s.score_danger, s.score_crossfire, s.score_terrain, s.score_approach,
           s.total_score)
+        viz.text("tank_combat_standoff_scan", s.cx - 1, s.cy - 0.5, label, "topleft", 255, 0, 255, 255)
       elseif not s.has_los then
+        viz.text("tank_combat_standoff_scan", s.cx, s.cy - 0.3, s.reason or "blocked", "center", 200, 0, 0, 180)
       end
     end
   end
@@ -1732,6 +1798,9 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, best_mx, best_my)
                          or cpf.astar_shells_at(best_mx, best_my)
 
+  print2(string.format("  attack_tank A* to (%d,%d): path_cost=%.1f shells_arr=%s",
+    best_mx, best_my, path_cost,
+    shells_on_arrival and tostring(math.floor(shells_on_arrival)) or "nil"))
 
   return best_mx, best_my, best_score, path_cost, shells_on_arrival, scan_spots, best_deg
 end
@@ -1831,6 +1900,20 @@ function M.update_attack_substate(goal, state, world, info)
     local r, g, b = goal._kill_attempt and 100 or 255,
                     goal._kill_attempt and 255 or 200,
                     goal._kill_attempt and 100 or 50
+    viz.hud_text("hud_kill_attempt", 10, 160, label, "topleft", r, g, b, 255)
+    viz.hud_text("hud_kill_attempt", 10, 175,
+      string.format("bullets_needed=%d pill_hp=%d", goal._bullets_needed or 0,
+                    goal.target_id and (function()
+                      local p = world.pills[goal.target_id]
+                      return p and p.health or 0
+                    end)() or 0),
+      "topleft", 200, 200, 200, 255)
+    viz.hud_text("hud_kill_attempt", 10, 190,
+      string.format("fired=%d on_pill=%d misses=%d",
+                    goal._fired or 0,
+                    goal._on_target_fired or 0,
+                    goal._on_target_misses or 0),
+      "topleft", 0, 255, 255, 255)
   end
 
   -- Floating count above the target pill:
@@ -1844,6 +1927,9 @@ function M.update_attack_substate(goal, state, world, info)
       local p = world.pills[goal.target_id]
       pill_hp = p and p.health or 0
     end
+    viz.text("pill_shot_count", goal.mx + 0.5, goal.my - 0.6,
+      string.format("%d/%d", goal._on_target_in_flight or 0, pill_hp),
+      "center", 0, 255, 255, 255)
   end
 
   local tmx = info.tankx >> 8
@@ -2306,6 +2392,12 @@ function M.update_attack_substate(goal, state, world, info)
         local speed_ok = info.speed <= SPEED_TOL
         local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
         local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
+        viz.text("approach_dist", twx + 1.0, twy - 1.0,
+          string.format("dist=%d/%d", adist, DIST_TOL),
+          "topleft", dr, dg, db, 255)
+        viz.text("approach_dist", twx + 1.0, twy - 0.4,
+          string.format("spd=%d/%d", info.speed, SPEED_TOL),
+          "topleft", sr, sg, sb, 255)
       end
 
       if adist <= DIST_TOL and
@@ -2705,6 +2797,9 @@ function M.update_attack_substate(goal, state, world, info)
     local fired = (goal._detree_shells_at_start or info.shells) - info.shells
     -- HUD: detree progress above the tank
     if viz.is_on("detree_progress") then
+      viz.text("detree_progress", tmx + 0.5, tmy - 1.2,
+        string.format("DETREE %d/%d (left=%d)", fired, needed, trees_left),
+        "center", 255, 255, 100, 255)
     end
     if fired >= needed or fired >= 6 then
       if goal._is_ppt then
@@ -2770,6 +2865,12 @@ function M.update_attack_substate(goal, state, world, info)
         local speed_ok = info.speed <= SPEED_TOL
         local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
         local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
+        viz.text("approach_dist", twx + 1.0, twy - 1.0,
+          string.format("dist=%d/%d", sdist, DIST_TOL),
+          "topleft", dr, dg, db, 255)
+        viz.text("approach_dist", twx + 1.0, twy - 0.4,
+          string.format("spd=%d/%d", info.speed, SPEED_TOL),
+          "topleft", sr, sg, sb, 255)
       end
 
       if sdist <= DIST_TOL and
@@ -3006,6 +3107,20 @@ function M.update_attack_substate(goal, state, world, info)
       local stale_ticks = now - (goal._shoot_progress_tick or now)
       local kill_frac   = (init_hp > 0) and (1.0 - pill_hp / init_hp) or 1.0
 
+      viz.hud_text("hud_shoot_pill_progress", 10, 210,
+        "PPT shoot_pill exits:", "topleft", 255, 220, 100, 255)
+      viz.hud_text("hud_shoot_pill_progress", 10, 225,
+        string.format(" kill   [%s] hp=%d/%d", bar(kill_frac), pill_hp, init_hp),
+        "topleft", 100, 255, 100, 255)
+      viz.hud_text("hud_shoot_pill_progress", 10, 240,
+        string.format(" swerve [%s] hits=%d/%d",
+          bar(hits_total / curve_after), hits_total, curve_after),
+        "topleft", 255, 180, 80, 255)
+      viz.hud_text("hud_shoot_pill_progress", 10, 255,
+        string.format(" abort  [%s] %d/%d ticks since last hp drop",
+          bar(stale_ticks / SHOOT_NO_PROGRESS_TICKS),
+          stale_ticks, SHOOT_NO_PROGRESS_TICKS),
+        "topleft", 255, 120, 120, 255)
     end
 
     local should_swerve = false
@@ -3261,6 +3376,10 @@ function M.update_attack_substate(goal, state, world, info)
     end
     -- HUD overlay: show raw swerve goal._* values (screen-relative)
     if viz.is_on("hud_swerve_debug") then
+      viz.hud_text("hud_swerve_debug", 10, 80,  "SWERVE", "topleft", 255, 255, 100, 255)
+      viz.hud_text("hud_swerve_debug", 10, 100, "_swerve_ticks_left=" .. tostring(goal._swerve_ticks_left), "topleft", 255, 255, 100, 255)
+      viz.hud_text("hud_swerve_debug", 10, 120, "_swerve_turn_ticks_left=" .. tostring(goal._swerve_turn_ticks_left), "topleft", 255, 255, 100, 255)
+      viz.hud_text("hud_swerve_debug", 10, 140, "_swerve_pill_dead=" .. tostring(goal._swerve_pill_dead), "topleft", 255, 255, 100, 255)
     end
     -- During swerve: do NOT check pill health or allow any interrupts.
     -- Swerve MUST complete to minimize damage taken.
@@ -3322,12 +3441,18 @@ function M.update_attack_substate(goal, state, world, info)
                        (sv.chosen == -1) and 255 or 50,
                        50
     -- Mark the sample point with a small dot circle
+    viz.circle("swerve_dir_choice", sv.lfx, sv.lfy, 0.25, lr, lg, lb, 220)
+    viz.circle("swerve_dir_choice", sv.rfx, sv.rfy, 0.25, rr, rg, rb, 220)
     -- Blue outlines around each tile considered for cover (re-walk for viz)
     local function noop() end
     U.line_walk(sv.lfx, sv.lfy, sv.pcx, sv.pcy, noop, {50, 100, 255, 200}, "bpc_cover_samples")
     U.line_walk(sv.rfx, sv.rfy, sv.pcx, sv.pcy, noop, {50, 100, 255, 200}, "bpc_cover_samples")
     -- Draw the LOS line from each sample to the pill
+    viz.line("swerve_dir_choice", sv.lfx, sv.lfy, sv.pcx, sv.pcy, lr, lg, lb, 200)
+    viz.line("swerve_dir_choice", sv.rfx, sv.rfy, sv.pcx, sv.pcy, rr, rg, rb, 200)
     -- Cover scores at each sample
+    viz.text("swerve_dir_choice", sv.lfx, sv.lfy - 0.3, "L=" .. sv.left_cover,  "center", lr, lg, lb, 255)
+    viz.text("swerve_dir_choice", sv.rfx, sv.rfy - 0.3, "R=" .. sv.right_cover, "center", rr, rg, rb, 255)
   end
 
   -- Shield-scan overlay: 8 candidate spots + winner blocker tiles.
@@ -3350,6 +3475,13 @@ function M.update_attack_substate(goal, state, world, info)
       -- 0.45-tile radius, ~85% of the rings extended outside the tile
       -- when the aim was a corner (pmx+0.06, pmy+0.06), making the
       -- marker look like it was sitting OUTSIDE the pill.
+      viz.circle("pill_take_target", ax, ay, 0.10, 255, 0, 255, 230)
+      viz.circle("pill_take_target", ax, ay, 0.06, 255, 0, 255, 240)
+      viz.circle("pill_take_target", ax, ay, 0.03, 255, 0, 255, 255)
+      viz.line("pill_take_target", ax - 0.18, ay,        ax + 0.18, ay,        255, 0, 255, 255)
+      viz.line("pill_take_target", ax,         ay - 0.18, ax,         ay + 0.18, 255, 0, 255, 255)
+      viz.text("pill_take_target", ax + 0.12, ay - 0.18, "TARGET",
+                   "topleft", 255, 100, 255, 255, 0.35)
       -- Live aim accuracy: how many bradians the tank's current
       -- direction is off from a perfect aim at (ax, ay), and the
       -- finetune verdict (does cpf.simulate_shot say the trajectory
@@ -3370,6 +3502,9 @@ function M.update_attack_substate(goal, state, world, info)
       local cr, cg, cb = 255, 100, 255
       if on_pill then cr, cg, cb = 80, 255, 120 end
       if on_pill == false then cr, cg, cb = 255, 200, 80 end
+      viz.text("pill_take_target", ax + 0.12, ay + 0.04,
+               string.format("corr=%.2f<=1%s", corr, on_str),
+               "topleft", cr, cg, cb, 255, 0.30)
 
       -- Substate progress indicator. Surfaces:
       --   in_range_aim_pre       → PRE-AIM rotating to the right
@@ -3434,6 +3569,8 @@ function M.update_attack_substate(goal, state, world, info)
       else
         mode_str = "(awaiting aim lock)"
       end
+      viz.text("pill_take_target", ax + 0.12, ay + 0.16, mode_str,
+               "topleft", mr, mg, mb, 255, 0.28)
     end
   end
 
@@ -3444,6 +3581,8 @@ function M.update_attack_substate(goal, state, world, info)
      now < goal._build_decision_until and viz.is_on("build_decision_banner") then
     local twx = info.tankx / 256.0
     local twy = info.tanky / 256.0
+    viz.text("build_decision_banner", twx, twy - 2.0, goal._build_decision_msg,
+                 "center", 255, 240, 100, 255, 0.5)
   end
 
   -- Build-walls status / timeout countdown. Drawn at TWO positions so
@@ -3547,6 +3686,10 @@ function M.update_attack_substate(goal, state, world, info)
       local twx = info.tankx / 256.0
       local twy = info.tanky / 256.0
       for i, lbl in ipairs(labels) do
+        viz.text(lbl[5],
+                     twx + 1.0,
+                     twy + 1.5 + (i - 1) * 0.6,
+                     lbl[1], "topleft", lbl[2], lbl[3], lbl[4], 255, 0.5)
       end
     end
   end
@@ -3554,6 +3697,68 @@ function M.update_attack_substate(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   -- DRAW scan results every tick (persisted in goal.scan_spots)
   -- ══════════════════════════════════════════════════════════════════
+  if BRAIN_DEBUG_MODE then
+  if goal.scan_spots and viz.is_on("attack_scan_spots") then
+    -- To see candidate spots for ALL pills (not just the goal), enable
+    -- attack_scan_spots_all_pills — the pool-6 evaluator emits per-pill
+    -- overlays on its eval tick.
+    -- Staged reveal: ticks since the scan completed control how much
+    -- of the candidate set is shown.
+    --   age 0 → all spots (full scoring grid)
+    --   age 1 → only spots in the winning score bucket
+    --   age ≥ 2 → only the chosen winner
+    -- Falls back to all-then-winner if no scan tick was stamped.
+    local now_tick = state and state.tick or 0
+    local age = goal._scan_tick and (now_tick - goal._scan_tick) or math.huge
+    local mode
+    if age <= 0 then mode = "all"
+    elseif age == 1 then mode = "bucket"
+    else mode = "winner" end
+    -- Goal pill renders bolder than pool-6 candidates (alpha_scale 1.5)
+    -- via the shared renderer, so any spot-overlay style change happens
+    -- in one place.
+    M.draw_pill_eval_spots(goal.scan_spots, pmx, pmy,
+                           "attack_scan_spots", mode, goal._chosen_deg, 1.5)
+    -- Legend for scoring components (only on the all-spots frame)
+    if mode == "all" then
+      local lx, ly = pmx + 12, pmy - 6
+      viz.text("attack_scan_spots", lx, ly,       "Position Score Legend:", "topleft", 255, 200, 0, 255)
+      viz.text("attack_scan_spots", lx, ly + 0.7, "A = avg danger in maneuver area", "topleft", 255, 0, 255, 255)
+      viz.text("attack_scan_spots", lx, ly + 1.4, "B = hotspot penalty (any tile >= " .. C.ATTACK_DANGER_HOTSPOT .. ")", "topleft", 255, 0, 255, 255)
+      viz.text("attack_scan_spots", lx, ly + 2.1, "D = terrain penalty", "topleft", 255, 0, 255, 255)
+      viz.text("attack_scan_spots", lx, ly + 2.8, "E = crossfire 10*(N-1) pills", "topleft", 255, 0, 255, 255)
+    end
+
+    -- Draw line from scan-time tank position to chosen standoff
+    -- (C scores are relative to this position, not current tank position)
+    local stmx = goal._scan_tank_mx or tmx
+    local stmy = goal._scan_tank_my or tmy
+    if goal.standoff_mx then
+      viz.line("attack_scan_spots", stmx + 0.5, stmy + 0.5,
+                   goal.standoff_mx + 0.5, goal.standoff_my + 0.5, 0, 255, 100, 200)
+    end
+    -- Mark scan-time tank position (small white square)
+    viz.rect("attack_scan_spots", stmx + 0.2, stmy + 0.2, stmx + 0.8, stmy + 0.8, 255, 255, 255, 150)
+    -- Mark chosen standoff spot (green) at precise position
+    if goal.standoff_fx then
+      viz.circle("attack_scan_spots", goal.standoff_fx, goal.standoff_fy, 0.3, 0, 255, 100, 255)
+    elseif goal.standoff_mx then
+      viz.circle("attack_scan_spots", goal.standoff_mx + 0.5, goal.standoff_my + 0.5, 0.3, 0, 255, 100, 255)
+    end
+    -- Mark approach point (purple) at the precise float position.
+    -- Falls back to tile center if only the integer fields are present.
+    if (goal.approach_fx or goal.approach_mx) then
+      local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+      local afy = goal.approach_fy or (goal.approach_my + 0.5)
+      viz.circle("attack_scan_spots", afx, afy, 0.3, 180, 0, 255, 200)
+      -- Line from standoff (or pill) through the approach point so the
+      -- geometry is visible end-to-end without any tile-snapping.
+      local sfx = goal.standoff_fx or (goal.standoff_mx and (goal.standoff_mx + 0.5)) or (goal.mx + 0.5)
+      local sfy = goal.standoff_fy or (goal.standoff_my and (goal.standoff_my + 0.5)) or (goal.my + 0.5)
+      viz.line("attack_scan_spots", sfx, sfy, afx, afy, 180, 0, 255, 180)
+    end
+  end
+  end -- BRAIN_DEBUG_MODE
 
   -- ══════════════════════════════════════════════════════════════════
   -- Persistent chosen-standoff marker: solid beige disc + pill id label.
@@ -3567,8 +3772,13 @@ function M.update_attack_substate(goal, state, world, info)
     local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
     local R, G, B = 245, 222, 179   -- beige
     for i = 0, 10 do
+      viz.circle("attack_chosen_standoff_marker",
+                 sfx, sfy, 0.45 - i * 0.04, R, G, B, 230)
     end
     if goal.target_id then
+      viz.text("attack_chosen_standoff_marker",
+               sfx, sfy, tostring(goal.target_id),
+               "center", 0, 0, 0, 255)
     end
   end
 
