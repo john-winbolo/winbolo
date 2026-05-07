@@ -1133,6 +1133,15 @@ do
   end
 end
 
+-- Module-level constants hoisted out of the per-angle loop.
+-- sample_offsets and tile_in_ellipse are only used in the stamp fallback
+-- path, but were previously allocated fresh every LOS-passing angle.
+local _TILE_SAMPLE_OFFSETS = {
+  {0, 0}, {1, 0}, {0, 1}, {1, 1}, {0.5, 0.5},
+}
+-- Slate order for two-pass spot selection: short-range before long-range.
+local _SLATE_ORDER = { 0, 1, 2, 3 }
+
 function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy)
   -- Per-section diagnostic accumulators. Sub-µs to update; enables
   -- breakdown of where the ~2 ms first-eval cost lives. Logged via
@@ -1232,7 +1241,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     _t_los = _t_los + (clock_us() - _t_los0)
 
     local score_a, score_b, score_d, score_e, total_score = 0, 0, 0, 0, 999
-    local maneuver_tiles = detailed and {} or nil
+    local maneuver_tiles = nil  -- only populated in BRAIN_DEBUG_MODE
     if has_los then
       local total_danger = 0
       local safe_tiles = 0
@@ -1257,35 +1266,30 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       -- Iterate up to ceil(r_long) + 1 to cover the long axis (buffer for the
       -- offset between integer tile mx,my and the precise float spot cx,cy).
       local iter_r = math.ceil(r_long) + 1
-      -- Tile (sx, sy) is "inside" the ellipse if its center OR any of its 4
-      -- corners falls inside.  Offsets are corner positions on the tile:
-      local sample_offsets = {
-        {0,   0},    -- top-left corner
-        {1,   0},    -- top-right corner
-        {0,   1},    -- bottom-left corner
-        {1,   1},    -- bottom-right corner
-        {0.5, 0.5},  -- center
-      }
-      local function tile_in_ellipse(sx, sy)
-        for _, off in ipairs(sample_offsets) do
-          -- Position relative to the precise ellipse center (cx, cy)
-          local rel_x = (sx + off[1]) - cx
-          local rel_y = (sy + off[2]) - cy
-          local pu = rel_x * ux + rel_y * uy
-          local pv = rel_x * vx + rel_y * vy
-          if (pu * pu) / (r_long * r_long) + (pv * pv) / (r_short * r_short) <= 1.0 then
-            return true
-          end
-        end
-        return false
-      end
-
       -- Use the precomputed ellipse stamp for this angle if available;
       -- otherwise fall back to the slower nested-loop + tile_in_ellipse
       -- path. The stamp is a flat list of (dx, dy) offsets relative to
       -- the spot tile (mx, my) — exactly the tiles inside the ellipse
       -- for this angle.
       local stamp = stamps and stamps[deg] or nil
+
+      -- Build tile_in_ellipse only when the stamp fallback is needed.
+      -- Hoisted here so both scan A and scan B else-branches can share it.
+      local tile_in_ellipse = nil
+      if not stamp then
+        tile_in_ellipse = function(sx, sy)
+          for _, off in ipairs(_TILE_SAMPLE_OFFSETS) do
+            local rel_x = (sx + off[1]) - cx
+            local rel_y = (sy + off[2]) - cy
+            local pu = rel_x * ux + rel_y * uy
+            local pv = rel_x * vx + rel_y * vy
+            if (pu*pu)/(r_long*r_long) + (pv*pv)/(r_short*r_short) <= 1.0 then
+              return true
+            end
+          end
+          return false
+        end
+      end
 
       _angles_los = _angles_los + 1
 
@@ -1359,9 +1363,6 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
               end
             end
           end
-          if detailed then
-            maneuver_tiles[#maneuver_tiles + 1] = { val = math.floor(d + 0.5), x = sx, y = sy }
-          end
           ::next_scan_b_tile::
         end
       else
@@ -1397,9 +1398,6 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
                   end
                 end
               end
-              if detailed then
-                maneuver_tiles[#maneuver_tiles + 1] = { val = math.floor(d + 0.5), x = sx, y = sy }
-              end
             end
             ::next_scan_b_fb::
           end
@@ -1410,15 +1408,8 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       end
       score_a = safe_tiles > 0 and (total_danger / safe_tiles) or 999
       score_b = 0
-      if detailed then
-        for _, t in ipairs(maneuver_tiles) do
-          if t.val >= C.ATTACK_DANGER_HOTSPOT then score_b = 10; break end
-        end
-      else
-        -- Lightweight hotspot check: recompute from max_danger
-        if total_danger / math.max(1, safe_tiles) >= C.ATTACK_DANGER_HOTSPOT then
-          score_b = 10
-        end
+      if total_danger / math.max(1, safe_tiles) >= C.ATTACK_DANGER_HOTSPOT then
+        score_b = 10
       end
       score_d = terrain_penalty
       total_score = score_a + score_b + score_d + score_e
@@ -1440,7 +1431,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
           has_los = has_los,
           score_a = score_a, score_b = score_b, score_d = score_d, score_e = score_e,
           total_score = total_score, deg = deg,
-          maneuver_tiles = maneuver_tiles,
+          maneuver_tiles = BRAIN_DEBUG_MODE and maneuver_tiles or nil,
         }
         spots[#spots + 1] = spot_ref
       end
@@ -1469,7 +1460,6 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   --   0 = KIND_NORMAL short-range   2 = KIND_PILL short-range
   --   1 = KIND_NORMAL long-range    3 = KIND_PILL long-range
   local COST_INF    = 1e29
-  local SLATE_ORDER = { 0, 1, 2, 3 }
 
   if #all_valid > 0 then
     local min_score = math.huge
@@ -1490,7 +1480,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     -- Find the first slate where every bucket spot has a finite cost.
     local costs      = {}   -- costs[i] = travel cost for bucket[i]
     local slate_used = nil
-    for _, sl in ipairs(SLATE_ORDER) do
+    for _, sl in ipairs(_SLATE_ORDER) do
       local ok = true
       for i, s in ipairs(bucket) do
         local c = cpf.dijkstra_cost_at(sl, s.mx, s.my, 0)
@@ -1725,11 +1715,12 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
       local danger_adj = 0
       local path = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL, best_mx, best_my)
       if path then
-        for _, node in ipairs(path) do
-          local tt = U.ttype(node.x, node.y)
+        for i = 1, #path, 2 do
+          local px, py = path[i], path[i+1]
+          local tt = U.ttype(px, py)
           local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
           if spd <= 0 then spd = 16 end
-          danger_adj = danger_adj + 0.9 * threat.at(node.x, node.y) * (16 / spd)
+          danger_adj = danger_adj + 0.9 * threat.at(px, py) * (16 / spd)
         end
       end
       path_cost = math.max(0, raw - danger_adj)

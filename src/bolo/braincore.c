@@ -901,7 +901,7 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_trace_path(kind, dx, dy) → array of {x=, y=} or nil */
+/* cpf_dijkstra_trace_path(kind, dx, dy) → flat array {x1,y1,x2,y2,...} or nil */
 static int l_cpf_dijkstra_trace_path(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
@@ -909,22 +909,20 @@ static int l_cpf_dijkstra_trace_path(lua_State *L) {
   int dy = (int)luaL_checkinteger(L, 3);
   int slate = brainPathfinderDijkstraFindBest(pf, kind);
   if (slate < 0) { lua_pushnil(L); return 1; }
-  int path_x[512], path_y[512];
-  int n = brainPathfinderDijkstraTracePath(pf, slate, dx, dy, path_x, path_y, 512);
+  int path_x[64], path_y[64];
+  int n = brainPathfinderDijkstraTracePath(pf, slate, dx, dy, path_x, path_y, 64);
   if (n <= 0) { lua_pushnil(L); return 1; }
-  lua_createtable(L, n, 0);
+  lua_createtable(L, n * 2, 0);
   for (int i = 0; i < n; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
 
-/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → array of {x=,y=} or nil.
+/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → flat array {x1,y1,...} or nil.
  * Multi-slate: walks slates of given kind in recency order, picks the
  * first where (dx,dy) is reachable, traces from THAT slate. Use when
  * the cost was found via lookup_by_kind's older-slate fallback — the
@@ -935,18 +933,16 @@ static int l_cpf_dijkstra_trace_path_by_kind(lua_State *L) {
   int kind = (int)luaL_checkinteger(L, 1);
   int dx   = (int)luaL_checkinteger(L, 2);
   int dy   = (int)luaL_checkinteger(L, 3);
-  int path_x[512], path_y[512];
+  int path_x[64], path_y[64];
   int n = brainPathfinderDijkstraTracePathByKind(pf, kind, dx, dy,
-                                                  path_x, path_y, 512);
+                                                  path_x, path_y, 64);
   if (n <= 0) { lua_pushnil(L); return 1; }
-  lua_createtable(L, n, 0);
+  lua_createtable(L, n * 2, 0);
   for (int i = 0; i < n; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
@@ -1228,19 +1224,17 @@ static int l_cpf_trace_path(lua_State *L) {
   CPF_GET(L);
   int path_x[64], path_y[64];
   int count = brainPathfinderTracePath(pf, path_x, path_y, 64);
-  lua_createtable(L, count, 0);
+  lua_createtable(L, count * 2, 0);
   for (int i = 0; i < count; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
 
-/* cpf_trace_last_search(dx, dy) -> array of {x=, y=}
+/* cpf_trace_last_search(dx, dy) -> flat array {x1,y1,x2,y2,...}
  * Trace the most-recent A* search's parent chain to (dx, dy) without
  * the status==1 gate. Use after cost_to() — its end-of-call cleanup
  * zaps status/dest so cpf_trace_path() returns empty, but the
@@ -1251,14 +1245,12 @@ static int l_cpf_trace_last_search(lua_State *L) {
   int dy = (int)luaL_checkinteger(L, 2);
   int path_x[64], path_y[64];
   int count = brainPathfinderTraceLastSearchPath(pf, dx, dy, path_x, path_y, 64);
-  lua_createtable(L, count, 0);
+  lua_createtable(L, count * 2, 0);
   for (int i = 0; i < count; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
@@ -1400,26 +1392,24 @@ static int l_wsim_add_tank(lua_State *L) {
 
 static int l_wsim_set_path(lua_State *L) {
   WSimPathPoint pts[WSIM_MAX_PATH];
-  int count = 0;
   int i;
   WSIM_GET(L);
 
   luaL_checktype(L, 1, LUA_TTABLE);
-  count = (int)lua_rawlen(L, 1);
-  if (count > WSIM_MAX_PATH) count = WSIM_MAX_PATH;
+  int total = (int)lua_rawlen(L, 1);  /* flat: x1,y1,x2,y2,... */
+  int npts = total / 2;
+  if (npts > WSIM_MAX_PATH) npts = WSIM_MAX_PATH;
 
-  for (i = 0; i < count; i++) {
-    lua_rawgeti(L, 1, i + 1);
-    lua_getfield(L, -1, "x");
+  for (i = 0; i < npts; i++) {
+    lua_rawgeti(L, 1, 2 * i + 1);
     pts[i].mx = (uint8_t)lua_tointeger(L, -1);
     lua_pop(L, 1);
-    lua_getfield(L, -1, "y");
+    lua_rawgeti(L, 1, 2 * i + 2);
     pts[i].my = (uint8_t)lua_tointeger(L, -1);
     lua_pop(L, 1);
-    lua_pop(L, 1); /* pop the sub-table */
   }
 
-  brainWorldSimSetPath(ws, pts, count);
+  brainWorldSimSetPath(ws, pts, npts);
   return 0;
 }
 

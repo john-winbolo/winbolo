@@ -120,22 +120,24 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
     -- Dijkstra path starts at the Dijkstra source, which may not be
     -- our exact current position. Trim leading waypoints we've already
     -- passed (tiles before or at our current position).
+    local nwp = #path // 2
     local start_idx = 1
-    for i = 1, #path do
-      if path[i].x == tmx and path[i].y == tmy then
+    for i = 1, nwp do
+      if path[2*i-1] == tmx and path[2*i] == tmy then
         start_idx = i + 1
         break
       end
     end
-    if start_idx > 1 and start_idx <= #path then
+    if start_idx > 1 and start_idx <= nwp then
       local trimmed = {}
-      for i = start_idx, math.min(#path, start_idx + 249) do
-        trimmed[#trimmed + 1] = path[i]
+      for i = start_idx, math.min(nwp, start_idx + 249) do
+        trimmed[#trimmed + 1] = path[2*i-1]
+        trimmed[#trimmed + 1] = path[2*i]
       end
       path = trimmed
-    elseif #path > 250 then
+    elseif nwp > 250 then
       local trimmed = {}
-      for i = 1, 250 do trimmed[i] = path[i] end
+      for i = 1, 500 do trimmed[i] = path[i] end
       path = trimmed
     end
   end
@@ -150,7 +152,8 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
     path = {}
     for i = 1, steps do
       local t = i / steps
-      path[i] = { x = math.floor(tmx + dx * t + 0.5), y = math.floor(tmy + dy * t + 0.5) }
+      path[2*i-1] = math.floor(tmx + dx * t + 0.5)
+      path[2*i]   = math.floor(tmy + dy * t + 0.5)
     end
   end
 
@@ -3131,23 +3134,23 @@ function M.step_eval_queue(state, world, info)
           if not _path_tiles or #_path_tiles == 0 then
             spot_path_str = "(empty)"
           else
-            local n = #_path_tiles
+            local n = #_path_tiles // 2  -- waypoint count
             local parts = {}
             if n <= SPOT_PATH_FRONT + SPOT_PATH_TAIL then
               for i = 1, n do
                 parts[#parts + 1] = string.format("(%d,%d)",
-                  _path_tiles[i].x, _path_tiles[i].y)
+                  _path_tiles[2*i-1], _path_tiles[2*i])
               end
             else
               for i = 1, SPOT_PATH_FRONT do
                 parts[#parts + 1] = string.format("(%d,%d)",
-                  _path_tiles[i].x, _path_tiles[i].y)
+                  _path_tiles[2*i-1], _path_tiles[2*i])
               end
               parts[#parts + 1] = string.format("(... +%d ...)",
                 n - SPOT_PATH_FRONT - SPOT_PATH_TAIL)
               for i = n - SPOT_PATH_TAIL + 1, n do
                 parts[#parts + 1] = string.format("(%d,%d)",
-                  _path_tiles[i].x, _path_tiles[i].y)
+                  _path_tiles[2*i-1], _path_tiles[2*i])
               end
             end
             spot_path_str = table.concat(parts, " ")
@@ -3156,7 +3159,7 @@ function M.step_eval_queue(state, world, info)
           goal_spot_slate    = _spot_slate
           goal_spot_tick     = now
           goal_spot_path_str = spot_path_str
-          goal_spot_path_len = _path_tiles and #_path_tiles or 0
+          goal_spot_path_len = _path_tiles and #_path_tiles // 2 or 0
 
           -- Self-danger reduction: subtract this pill's own contribution
           -- to the spot-path cost, scaled linearly by missing HP. At full
@@ -3191,11 +3194,12 @@ function M.step_eval_queue(state, world, info)
               local path = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL,
                                                             best_spot.mx, best_spot.my)
               if path then
-                for _, node in ipairs(path) do
-                  local k = node.y * 256 + node.x
+                for i = 1, #path, 2 do
+                  local nx, ny = path[i], path[i+1]
+                  local k = ny * 256 + nx
                   local p = pcontrib[k]
                   if p then
-                    local tt = U.ttype(node.x, node.y)
+                    local tt = U.ttype(nx, ny)
                     local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
                     if spd <= 0 then spd = 16 end
                     self_dr = self_dr + p * (16 / spd)
@@ -3427,6 +3431,7 @@ end
 -- Also runs cheap evaluators that don't need incremental evaluation.
 -- =========================================================================
 function M.finalize_pools(state, world, info)
+  local _t0 = clock_us()
   local tmx  = info.tankx >> 8
   local tmy  = info.tanky >> 8
   local boat = info.inboat
@@ -3481,6 +3486,8 @@ function M.finalize_pools(state, world, info)
     end
   end
 
+  opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000))
+  local _t1 = clock_us()
   -- Fresh cache each cycle (don't carry stale entries from last cycle)
   state.pool_cache = {}
   local pc = state.pool_cache
@@ -3696,12 +3703,16 @@ function M.finalize_pools(state, world, info)
     pc[7] = nil
   end
 
+  opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000))
+  local _t2 = clock_us()
   -- Run cheap evaluators directly
   for _, idx in ipairs(FINALIZE_POOLS) do
+    local _te = clock_us()
     local evaluator = POOL_EVALUATORS[idx]
     if evaluator then
       pc[idx] = evaluator(state, world, info, tmx, tmy, boat, ammo)
     end
+    opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000))
   end
 
   -- Summary: which pools got finalized
@@ -4707,7 +4718,7 @@ local function goal_selection(state, world, info, quiet)
     -- Replaced each replan so stale paths don't linger.
     state._wsim_viz_paths = {}
     for _, c in ipairs(pool) do
-      if c.wsim_path and #c.wsim_path > 1 then
+      if c.wsim_path and #c.wsim_path > 2 then
         state._wsim_viz_paths[#state._wsim_viz_paths + 1] = {
           path = c.wsim_path,
           killed = c.wsim_killed or false,
@@ -5614,10 +5625,11 @@ function M.draw_wsim_paths(state)
   for _, vp in ipairs(state._wsim_viz_paths) do
     local pr, pg, pb = 255, 100, 0  -- orange = high damage
     if vp.killed then pr, pg, pb = 255, 0, 0 end  -- red = kill reject
-    for j = 2, #vp.path do
-      local p1 = vp.path[j - 1]
-      local p2 = vp.path[j]
-      vizmod.line("wsim_paths", p1.x + 0.5, p1.y + 0.5, p2.x + 0.5, p2.y + 0.5, pr, pg, pb, 150)
+    local nwp = #vp.path // 2
+    for j = 2, nwp do
+      local p1x, p1y = vp.path[2*j-3], vp.path[2*j-2]
+      local p2x, p2y = vp.path[2*j-1], vp.path[2*j]
+      vizmod.line("wsim_paths", p1x + 0.5, p1y + 0.5, p2x + 0.5, p2y + 0.5, pr, pg, pb, 150)
     end
     -- Draw hit markers: red squares with total hits and final armour per tile.
     -- Deduplicate by tile so overlapping hits don't produce unreadable text.
@@ -5642,13 +5654,13 @@ function M.draw_wsim_paths(state)
           label, "center", 255, 50, 50, 255)
       end
     end
-    local last = vp.path[#vp.path]
+    local last_x, last_y = vp.path[#vp.path - 1], vp.path[#vp.path]
     if vp.killed then
-      vizmod.text("wsim_paths", last.x + 0.5, last.y - 0.8,
+      vizmod.text("wsim_paths", last_x + 0.5, last_y - 0.8,
         string.format("DEATH %s@(%d,%d)", vp.kind, vp.mx, vp.my),
         "center", 255, 0, 0, 255)
       if vp.detail and #vp.detail > 0 then
-        vizmod.text("wsim_paths", last.x + 0.5, last.y - 0.2,
+        vizmod.text("wsim_paths", last_x + 0.5, last_y - 0.2,
           vp.detail, "center", 255, 80, 80, 255)
       end
     end

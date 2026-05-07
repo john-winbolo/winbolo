@@ -410,6 +410,17 @@ function Brain.open(info)
   local t_open_wupd = clock_us()
   opt(string.format("  W.update (initial) done %.2f ms", (t_open_wupd - t_open_wreset) / 1000))
 
+  -- Pre-build edge costs + pre-warm threat so tick-1 doesn't pay for them.
+  -- pf->map is set by the C host before brain.open() is called.
+  cpf.rebuild_edge_costs()
+  opt(string.format("  rebuild_edge_costs done %.2f ms", (clock_us() - t_open_wupd) / 1000))
+  local _t_open_danger = clock_us()
+  danger.update(info, 0)
+  opt(string.format("  danger.update done %.2f ms", (clock_us() - _t_open_danger) / 1000))
+  local _t_open_threat = clock_us()
+  threat.update(state, world, info)
+  opt(string.format("  threat.update done %.2f ms", (clock_us() - _t_open_threat) / 1000))
+
   -- Strategy phase detection
   strategy.init(state)
   opt(string.format("  strategy.init done %.2f ms", (clock_us() - t_open_wupd) / 1000))
@@ -604,9 +615,11 @@ function Brain.think(info)
   -- per-tick work (threat rebuild, long Dijkstra, pool eval, etc.) so
   -- tick-1 cost falls from ~11 ms to ~2 ms.
   if state.startup_mode then
+    local _t_su = clock_us()
     -- Fresh world data so world.bases / world.pills are populated.
     W.process_events(world, info, state)
     W.update(world, info, now)
+    opt(string.format("  [startup] W.update %.2f ms", (clock_us() - _t_su) / 1000))
 
     local tmx_s     = info.tankx >> 8
     local tmy_s     = info.tanky >> 8
@@ -615,10 +628,15 @@ function Brain.think(info)
     -- Pre-warm the threat grid during startup so tick-11 (first normal tick)
     -- doesn't pay the full 4-5 ms rebuild cost. danger + threat are cheap
     -- on repeat calls once the grid is built; only the first call rebuilds.
+    local _t_danger = clock_us()
     danger.update(info, now)
+    opt(string.format("  [startup] danger.update %.2f ms", (clock_us() - _t_danger) / 1000))
+    local _t_threat = clock_us()
     threat.update(state, world, info)
+    opt(string.format("  [startup] threat.update %.2f ms", (clock_us() - _t_threat) / 1000))
 
     -- Step (or first-time start) the short slate.
+    local _t_dij = clock_us()
     local active_s, _, _, _, _, _, _, _, _, _, _ = cpf.dijkstra_status(0)
     if not active_s then
       cpf.dijkstra_start(
@@ -629,6 +647,7 @@ function Brain.think(info)
         1.0, 0 --[[KIND_NORMAL]], in_boat_s)
     end
     cpf.dijkstra_step(0, now, C.DIJKSTRA_SHORT_BUDGET)
+    opt(string.format("  [startup] dijkstra_step %.2f ms", (clock_us() - _t_dij) / 1000))
     _diag_log_dij_base_discoveries(now, 0, in_boat_s)
 
     -- Look for the closest reachable neutral base. Only set the goal
@@ -1845,6 +1864,7 @@ function Brain.think(info)
     local goal_valid = true
     local gk = state.goal.kind
     local gmx, gmy = state.goal.mx, state.goal.my
+    local t_gv1 = clock_us()
     if gk == "capture_base" then
       local b = W.base_at(world, gmx, gmy)
       -- Accept neutral (normal capture) and hostile (weakened base drive-over capture)
@@ -1968,6 +1988,14 @@ function Brain.think(info)
     end
 
     t_goal0 = clock_us()
+    if t_goal0 - t_gv0 > 1000 then
+      opt.append("optimize.log", string.format(
+        "  [gv] SLOW total=%.3f ms pre=%.3f ms body=%.3f ms gk=%s",
+        (t_goal0 - t_gv0) / 1000,
+        (t_gv1 - t_gv0) / 1000,
+        (t_goal0 - t_gv1) / 1000,
+        tostring(gk)))
+    end
     opt(string.format("  goal-validation chain done %.2f ms (gk=%s)", (t_goal0 - t_gv0) / 1000, tostring(gk)))
     opt(string.format("water+goal_invalid done %.2f ms", (t_goal0 - t_water0) / 1000))
 
@@ -2436,6 +2464,13 @@ function Brain.think(info)
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
   opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
+  if t_steer1 - t_steer0 > 5000 then
+    opt.append("optimize.log", string.format(
+      "  [steer] SLOW %.2f ms goal=%s sub=%s",
+      (t_steer1 - t_steer0) / 1000,
+      tostring(state.goal and state.goal.kind),
+      tostring(state.goal and state.goal.substate)))
+  end
 
   -- Always-on crosshairs (drawn after steering so they show every tick)
   -- Yellow crosshairs: ALWAYS on

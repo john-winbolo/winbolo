@@ -60,6 +60,9 @@ static const char *g_patterns[MAX_PATTERNS];
 static int         g_npatterns = 0;
 
 static const char *g_block_patterns[MAX_PATTERNS];
+
+static const char *g_excludes[MAX_PATTERNS];
+static int         g_nexcludes = 0;
 static int         g_nblock_patterns = 0;
 
 /* Returns 1 if line (after leading whitespace) starts with any pattern. */
@@ -272,6 +275,14 @@ int main(int argc, char **argv) {
             if (g_nblock_patterns < MAX_PATTERNS)
                 g_block_patterns[g_nblock_patterns++] = argv[i + 1];
             i += 2;
+        } else if (strcmp(argv[i], "--exclude") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "lua_strip: --exclude requires an argument\n");
+                return 1;
+            }
+            if (g_nexcludes < MAX_PATTERNS)
+                g_excludes[g_nexcludes++] = argv[i + 1];
+            i += 2;
         } else {
             break;
         }
@@ -302,6 +313,13 @@ int main(int argc, char **argv) {
         const char *fname2 = strrchr(inpath, '\\');
         if (fname2 > fname) fname = fname2;
         fname = fname ? fname + 1 : inpath;
+
+        /* Skip excluded filenames. */
+        int excluded = 0;
+        for (int j = 0; j < g_nexcludes; j++) {
+            if (strcmp(fname, g_excludes[j]) == 0) { excluded = 1; break; }
+        }
+        if (excluded) continue;
 
         char outpath[MAX_PATH];
         snprintf(outpath, sizeof(outpath), "%s%c%s", outdir, PATH_SEP, fname);
