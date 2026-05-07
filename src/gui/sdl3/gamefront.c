@@ -1150,8 +1150,9 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
           }
           /* Add bot brains for local game if AI is enabled */
-          botManagerInit();
-          {
+          if (!botManagerInit(0)) {
+            fprintf(stderr, "[gameFront] botManagerInit failed; bots disabled for this session\n");
+          } else {
             /* Resolve brain path for lobby "Add Bot" support and initial bots */
             char brainPath[FILENAME_MAX];
             bool haveBrain = false;

@@ -1161,7 +1161,13 @@ int main(int argc, char **argv) {
   }
 
   /* Initialize and add bot players */
-  botManagerInit();
+  if (!botManagerInit(0)) {
+    fprintf(stderr, "Error initializing bot manager\n");
+#ifdef USING_SDL
+    SDL_Quit();
+#endif
+    return 0;
+  }
   {
     int numBots = 0;
     char brainPath[MAX_PATH];
