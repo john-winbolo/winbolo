@@ -3007,7 +3007,7 @@ function M.step_eval_queue(state, world, info)
             diff_score  = dc.score
             best_spot   = dc.spot
             _spots      = dc.spots
-            travel      = dc.pickup_travel  -- cached pickup walk; nil forces recompute
+            if dc.pickup_travel ~= nil then travel = dc.pickup_travel end  -- nil = not yet computed
           else
             -- First-eval deferred. Stub keeps the candidate parked
             -- without paying for a scan.
@@ -3799,7 +3799,15 @@ end
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
 local function goal_selection(state, world, info, quiet)
-  local _tgs0 = clock_us()
+  local _tgs_t = 0
+  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PERF_LOG; set by pick_goal
+  if _tgs_buf then _tgs_t = clock_us() end
+  local function _tgs_log(label)
+    if not _tgs_buf then return end
+    local now = clock_us()
+    _tgs_buf[#_tgs_buf + 1] = string.format("      [pick_goal] %s %.2fms", label, (now - _tgs_t) / 1000)
+    _tgs_t = now
+  end
   local tmx    = info.tankx >> 8
   local tmy    = info.tanky >> 8
   local boat   = info.inboat
@@ -3899,6 +3907,7 @@ local function goal_selection(state, world, info, quiet)
     if held then needs_resupply = false end
   end
 
+  _tgs_log("flee_threshold+resupply")
   -- ════════════════════════════════════════════════════════════════════
   -- Override 0: Rescue stranded LGM — highest priority
   -- (LGM_DEAD means parachuting/dead — unreachable, ignore it)
@@ -4109,6 +4118,7 @@ local function goal_selection(state, world, info, quiet)
     end
   end
 
+  _tgs_log("override_0_1")
   -- Override 2 was removed in favour of dynamic cost shaping on pool 1:
   -- refuel_at_base now competes naturally (see REFUEL_BASE_COST /
   -- REFUEL_DEFICIT_BONUS application during cost competition). base_shield
@@ -4208,6 +4218,7 @@ local function goal_selection(state, world, info, quiet)
     end
   end
 
+  _tgs_log("override_3_4")
   -- ════════════════════════════════════════════════════════════════════
   -- Cost-based goal competition
   -- Pool results are pre-evaluated by update_pool_cache() one per tick
@@ -4215,6 +4226,7 @@ local function goal_selection(state, world, info, quiet)
   -- the cached results, apply hysteresis, and pick the winner.
   -- ════════════════════════════════════════════════════════════════════
   local _tgs_pre_pool = clock_us()
+  _tgs_log("pre_pool")
   if not result then
     local pc = state.pool_cache or {}
     -- Build pool with copies so hysteresis doesn't mutate cached costs
@@ -4567,6 +4579,7 @@ local function goal_selection(state, world, info, quiet)
       wsim_active = false
     end
     local _tgs_pre_wsim = clock_us()
+    _tgs_log("pool_build")
     if wsim_active then
       for _, c in ipairs(pool) do
         -- Only sim goals that travel through danger (skip refuel/explore)
@@ -4649,6 +4662,7 @@ local function goal_selection(state, world, info, quiet)
       table.sort(pool, function(a, b) return a.cost < b.cost end)
     end
     local _tgs_post_wsim = clock_us()
+    _tgs_log("wsim")
     if (_tgs_post_wsim - _tgs0) > 500 then
       opt.append("optimize.log", string.format(
         "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
@@ -4794,6 +4808,7 @@ local function goal_selection(state, world, info, quiet)
     end
   end
 
+  _tgs_log("post_wsim_winner")
   -- ── Log strategic goal changes ──
   -- Compare on stable key (kind+target) so wsim tick changes don't spam
   local goal_key = result and string.format("%s@%d,%d", result.kind, result.mx or 0, result.my or 0) or nil
@@ -4808,6 +4823,7 @@ local function goal_selection(state, world, info, quiet)
     last_strategic_goal = goal_key
   end
 
+  _tgs_log("goal_log")
   -- Base shield: if refuel_at_base won and we're standing on the base, try
   -- to have the LGM build a wall between us and a nearby hostile pill so it
   -- can't shoot us while we sit. Two triggers: calm pill in range (proactive),
@@ -4852,6 +4868,7 @@ local function goal_selection(state, world, info, quiet)
     end
   end
 
+  _tgs_log("base_shield")
   -- Log why no strategic goal was found
   if not result then
     local skip_reasons = {}
@@ -4892,6 +4909,7 @@ local function goal_selection(state, world, info, quiet)
     end
   end
 
+  _tgs_log("no_result_log")
   return result
 end
 
@@ -4982,7 +5000,8 @@ function M.pick_goal(state, world, info, quiet)
     end
   end
 
-  -- Strategic goal selection
+  -- Strategic goal selection (timing buf populated only when perf-log is active)
+  state._pick_goal_timing = _G.BRAIN_PERF_LOG and {} or nil
   local strategic = goal_selection(state, world, info, quiet)
   if strategic then return strategic end
 
