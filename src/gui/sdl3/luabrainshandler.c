@@ -87,6 +87,7 @@
 #include "../../bolo/braincore.h"
 #include "na_overlay_pillcontrib.h"
 #include "na_threat.h"
+#include "na_shield_stamp.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -95,6 +96,16 @@
 /* ------------------------------------------------------------------ */
 /* Module state                                                        */
 /* ------------------------------------------------------------------ */
+
+/* Path passed by --run-script; injected as RUN_SCRIPT_PATH Lua global. */
+static char s_run_script_path[1024] = "";
+
+void luaBrainsSetRunScript(const char *path) {
+    if (path && path[0])
+        SDL_strlcpy(s_run_script_path, path, sizeof(s_run_script_path));
+    else
+        s_run_script_path[0] = '\0';
+}
 
 static LuaBrainInstance singletonInst;           /* The GUI client's brain  */
 static int        brainsNum          = 0;        /* Discovered brain count  */
@@ -579,6 +590,14 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
 
+  /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
+  if (s_run_script_path[0]) {
+    lua_pushstring(L, s_run_script_path);
+  } else {
+    lua_pushnil(L);
+  }
+  lua_setglobal(L, "RUN_SCRIPT_PATH");
+
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 
   /* Create C pathfinder and register cpf_* globals */
@@ -631,6 +650,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * na_threat.configure so cloners can tweak constants without
    * recompiling. */
   naThreatRegister(L);
+  naShieldStampRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for
    * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */

@@ -24,6 +24,7 @@ local wsim    = require("cworldsim")
 local cmds    = require("commands")
 local goals   = require("goals")
 local attack  = require("attack")
+local shield  = require("attack_shield")
 local steer   = require("steering")
 -- local bpc  = require("bpc")  -- removed: unified into attack_pill
 local log     = require("logger")
@@ -426,6 +427,9 @@ function Brain.open(info)
   strategy.init(state)
   opt(string.format("  strategy.init done %.2f ms", (clock_us() - t_open_wupd) / 1000))
 
+  -- Load precomputed shield stamp cache (C binary via na_shield.load).
+  shield.load_stamp_bin()
+
   print(string.format(TAG .. " open: player=%d name='%s' map=%s ai_advantage=%s debug_log=%s",
         info.player_number, state.player_name, info.gameinfo.mapname,
         tostring(state.ai_advantage), tostring(state.debug_log)))
@@ -469,6 +473,15 @@ function Brain.open(info)
   end
   opt(string.format("END Brain.open total=%.2f ms", (clock_us() - t_open0) / 1000))
   opt.flush()
+
+  -- --run-script mode: run the specified Lua file in this brain's VM then exit.
+  -- The script has full access to all brain globals (cpf, shield, world, etc.).
+  if RUN_SCRIPT_PATH then
+    print("[brain] --run-script: " .. RUN_SCRIPT_PATH)
+    local ok, err = pcall(dofile, RUN_SCRIPT_PATH)
+    if not ok then print("[brain] script error: " .. tostring(err)) end
+    os.exit(ok and 0 or 1)
+  end
 end
 
 

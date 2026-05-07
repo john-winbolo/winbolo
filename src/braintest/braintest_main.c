@@ -1516,7 +1516,8 @@ static gameType optGame   = gameOpen;
 /* --opt: load the brain from its stripped opt/ subdirectory and start
  * with BRAIN_DEBUG_MODE=false. Used to feel true production perf
  * without leaving BrainTest. Default false → un-stripped, debug=true. */
-static bool optProduction  = false;
+static bool optProduction   = false;
+static char optRunScript[1024] = "";
 
 static void printUsage(const char *prog) {
     fprintf(stderr,
@@ -1531,6 +1532,8 @@ static void printUsage(const char *prog) {
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
         "  --record-panels  Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
         "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
+        "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
+        "                     then exit. The script has full access to cpf, world, etc.\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -1581,6 +1584,8 @@ static bool parseArgs(int argc, char **argv) {
             /* Load brain from the stripped opt/ subdirectory with
              * BRAIN_DEBUG_MODE=false — true production-mode feel. */
             optProduction = true;
+        } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
+            strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);
@@ -4253,6 +4258,8 @@ int main(int argc, char *argv[]) {
      * --opt CLI flag flips the default off so bots load from stripped
      * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
     botManagerSetDefaultDebugMode(!optProduction);
+    if (optRunScript[0])
+        luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];
     /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
      * once at startup. We use a timestamped subdir so multiple BrainTest

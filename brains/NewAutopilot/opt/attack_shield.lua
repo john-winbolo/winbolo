@@ -22,6 +22,8 @@ local C   = require("constants")
 local U   = require("util")
 local cpf = require("cpathfinder")
 local viz = require("viz")
+local opt      = require("optimize")
+local clock_us = clock_us or function() return 0 end
 
 local M = {}
 
@@ -145,18 +147,37 @@ M.AIM_COLORS = {
   { 230, 110, 230, 220 },  -- 5: magenta
 }
 
+-- ── Shield stamp cache — must be declared before score_aim/score_candidate ───
+-- Precomputed shot-path tile offsets (relative to pill) for every 0.25°
+-- angle, 5 nudge levels, and 6 aims (0=return fire, 1-5=outgoing).
+-- angle_key = math.floor((deg % 360) * 4)  →  integer 0..1439
+-- C-side stamp module registered by naShieldStampRegister in luabrainshandler.c.
+local na_shield = na_shield
+
+-- Flat boolean table built by C after na_shield.load(): index =
+-- (angle_key * N_NUDGES + nudge_idx) * N_AIMS + aim_idx + 1  (1-based)
+-- N_NUDGES=5 (wu 0,8,16,24,32), N_AIMS=6 (0=ret-fire, 1-5=outgoing).
+-- Set by M.load_stamp_bin(); nil until then → fallback to ensure_nudge_ring.
+local _pill_hit = nil
+local _PH_NUDGES = 5   -- must match binary file
+local _PH_AIMS   = 6
+local _PH_STRIDE = _PH_NUDGES * _PH_AIMS  -- 30: per-angle stride
+-- Maps nudge_wu (world-units) → 0-based nudge_idx in the stamp table.
+-- Only covers the precomputed range (wu 0..32 at step 8); returns nil beyond that.
+local _NUDGE_IDX = { [0]=0, [8]=1, [16]=2, [24]=3, [32]=4 }
+
 -- Score one (candidate_pos, aim_i) pair.
 -- Returns: outgoing_tiles, outgoing_blocked_by_wall,
 --          per_aim_blockers (filtered list), per_aim_score
 local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
                           pmx, pmy, pill_wx, pill_wy,
                           aim_offset, return_tiles_set, return_tiles_list,
-                          world, no_builder)
+                          world, no_builder, precomp_out)
   local target_wx = (pmx << 8) + aim_offset[1]
   local target_wy = (pmy << 8) + aim_offset[2]
-  local out_tiles = cpf.simulate_shot(spot_wx, spot_wy,
-                                      target_wx, target_wy,
-                                      cpf.SHOT_TANK, 0)
+  local out_tiles = precomp_out or cpf.simulate_shot(spot_wx, spot_wy,
+                                                      target_wx, target_wy,
+                                                      cpf.SHOT_TANK, 0)
 
   -- Outgoing path: walk up to the pill, reject the aim if it crosses
   -- a wall OR any pill (friendly or enemy) other than the target. The
@@ -334,11 +355,9 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
   local spot_wx = math.floor(cand.cx * 256 + 0.5)
   local spot_wy = math.floor(cand.cy * 256 + 0.5)
 
-  -- Compute return fire ONCE — the pill shoots toward the tank's
-  -- precise position regardless of which aim the tank uses.
-  local return_tiles = cpf.simulate_shot(pill_wx, pill_wy,
-                                         spot_wx, spot_wy,
-                                         cpf.SHOT_PILL, 0)
+  -- Compute return fire ONCE via C shot simulation.
+  local return_tiles = cpf.simulate_shot(pill_wx, pill_wy, spot_wx, spot_wy,
+                                          cpf.SHOT_PILL, 0)
   cand.return_fire = { tiles = return_tiles }
 
   -- LGM dispatch origin during build_walls. The tank doesn't park on
@@ -517,7 +536,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       local nwx, nwy = nudge_origin(ci, nudge_wu)
       local nmx = math.floor(nwx / 256)
       local nmy = math.floor(nwy / 256)
-      -- Return fire from the nudged position (pill shoots toward tank).
+      -- Return fire from the nudged position.
       local ret = cpf.simulate_shot(pill_wx, pill_wy, nwx, nwy, cpf.SHOT_PILL, 0)
       -- Approach tile: same outward direction as original, but from nudged pos.
       local lgm_omx, lgm_omy = nmx, nmy
@@ -538,13 +557,28 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
         nwx, nwy, lgm_omx, lgm_omy,
         pmx, pmy, pill_wx, pill_wy,
         AIM_OFFSETS[ai], nil, ret, world, no_builder)
+      local a_list = act or {}
+      local p_list = pot or {}
       aim_ring[ci] = {
         tiles                = out,
         blocked              = blk,
-        actual_blockers      = act or {},
-        potential_blockers   = pot or {},
+        actual_blockers      = a_list,
+        potential_blockers   = p_list,
         unreachable_blockers = unr or {},
       }
+      -- Populate slate nudge slot for this (ci, nudge, ai).
+      if na_shield then
+        local ni = nudge_wu // NUDGE_STEP_WU
+        na_shield.slate_set(ci, ni, ai - 1, blk and true or false,
+          #a_list,
+          a_list[1] and a_list[1].mx - pmx or 0, a_list[1] and a_list[1].my - pmy or 0,
+          a_list[2] and a_list[2].mx - pmx or 0, a_list[2] and a_list[2].my - pmy or 0,
+          a_list[3] and a_list[3].mx - pmx or 0, a_list[3] and a_list[3].my - pmy or 0,
+          #p_list,
+          p_list[1] and p_list[1].mx - pmx or 0, p_list[1] and p_list[1].my - pmy or 0,
+          p_list[2] and p_list[2].mx - pmx or 0, p_list[2] and p_list[2].my - pmy or 0,
+          p_list[3] and p_list[3].mx - pmx or 0, p_list[3] and p_list[3].my - pmy or 0)
+      end
     end
     ring_d[ai] = aim_ring
     return aim_ring
@@ -559,9 +593,31 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   end
   -- ── End nudge infrastructure ─────────────────────────────────────────────
 
+  if na_shield then na_shield.slate_clear(#candidates) end
+
+  local _t_score_cands = clock_us()
   for ci, c in ipairs(candidates) do
     score_candidate(c, pill, world, pill_wx, pill_wy, no_builder)
+    -- Populate slate with base (nudge=0) blocker data for neighbor bonus.
+    if na_shield then
+      for ai = 1, #AIM_OFFSETS do
+        local a = c.aims and c.aims[ai]
+        if a then
+          local act, pot = a.blockers or {}, a.potential_blockers or {}
+          na_shield.slate_set(ci, 0, ai - 1, a.blocked and true or false,
+            #act,
+            act[1] and act[1].mx - pmx or 0, act[1] and act[1].my - pmy or 0,
+            act[2] and act[2].mx - pmx or 0, act[2] and act[2].my - pmy or 0,
+            act[3] and act[3].mx - pmx or 0, act[3] and act[3].my - pmy or 0,
+            #pot,
+            pot[1] and pot[1].mx - pmx or 0, pot[1] and pot[1].my - pmy or 0,
+            pot[2] and pot[2].mx - pmx or 0, pot[2] and pot[2].my - pmy or 0,
+            pot[3] and pot[3].mx - pmx or 0, pot[3] and pot[3].my - pmy or 0)
+        end
+      end
+    end
   end
+  local _t_nudge_start = clock_us()
 
   -- ── Nudge pass ───────────────────────────────────────────────────────────
   -- For each aim where the pill tile is absent from the simulated trajectory,
@@ -569,21 +625,37 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- aim's data with the nudged result.  Aims that still miss the pill at max
   -- nudge are marked blocked.  Candidate scores are recalculated afterward.
   for ci, c in ipairs(candidates) do
+    -- Precompute per-candidate pill_hit base index (angle stride).
+    -- _pill_hit[(base + nudge_idx * _PH_AIMS + aim_idx + 1)] = true/false
+    local _ph_base
+    if _pill_hit then
+      local deg = c.deg % 360
+      if deg < 0 then deg = deg + 360 end
+      _ph_base = math.floor(deg * 4) * _PH_STRIDE
+    end
     local rescore = false
     for ai = 1, #AIM_OFFSETS do
       local aim = c.aims and c.aims[ai]
       if aim and not aim.blocked and not pill_in_tiles(aim.tiles) then
         local found_wu = nil
         for step = 1, NUDGE_MAX_STEPS do
-          local d     = step * NUDGE_STEP_WU
-          local ring  = ensure_nudge_ring(d, ai)
-          local entry = ring[ci]
-          if entry and pill_in_tiles(entry.tiles) then
-            found_wu = d
-            break
+          local d = step * NUDGE_STEP_WU
+          -- Fast pill-hit check: direct Lua table read, no C call overhead.
+          -- _NUDGE_IDX[d] is nil for wu beyond stamp range → fall back.
+          local hit
+          if _ph_base then
+            local ni = _NUDGE_IDX[d]
+            if ni then hit = _pill_hit[_ph_base + ni * _PH_AIMS + ai + 1] end
           end
+          if hit == nil then
+            local ring  = ensure_nudge_ring(d, ai)
+            local entry = ring[ci]
+            hit = entry and pill_in_tiles(entry.tiles)
+          end
+          if hit then found_wu = d; break end
         end
         if found_wu then
+          ensure_nudge_ring(found_wu, ai)  -- build ring for scoring (cached if already built)
           local entry    = nudge_rings[found_wu][ai][ci]
           local actual_n = #entry.actual_blockers
           local pot_n    = #entry.potential_blockers
@@ -601,6 +673,10 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
             score                = sc,
             nudge_wu             = found_wu,
           }
+          -- Record which nudge slot to use in the neighbor check.
+          if na_shield then
+            na_shield.slate_set_nudge_used(ci, ai - 1, found_wu // NUDGE_STEP_WU)
+          end
         else
           -- Pill unreachable even at max nudge — discard this aim.
           aim.blocked = true
@@ -632,21 +708,87 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     end
   end
   -- ── End nudge pass ───────────────────────────────────────────────────────
+  local _t_neighbor_start = clock_us()
 
-  -- Neighbor bonus: a candidate's BLOCKER SET (every tile on its
-  -- chosen aim that contributes to its score — actual walls,
-  -- friendly pills, AND potential build slots) must be a subset of
-  -- a neighbor's blocker set. Potentials count because they're tiles
-  -- the LGM is going to wall in — drifting to a neighbor that
-  -- doesn't share that potential slot loses the planned cover too.
-  -- Standoff is excluded both as a center and as a neighbor — only
-  -- ring-to-ring relationships count.
-  -- Per-(candidate, aim) blocker_keys cache. Lazily filled on first
-  -- access. With per-subset chain evaluation the same neighbor's
-  -- key set is requested up to (2^MAX_SUBSET_BLOCKERS - 1) times
-  -- per candidate per aim, so memoizing this small table pays for
-  -- itself many times over. Indexed [cand_idx][aim_idx] = set;
-  -- nil = not yet built.
+  -- Hoisted so the scan() return can include them for viz regardless of path.
+  local pill_hp         = pill.health or 0
+  local fav_bonus_by_size = {}
+  local min_chain       = 0
+  local tier_label      = "NONE"
+
+  if na_shield then
+    -- ── C neighbor bonus ─────────────────────────────────────────────────
+    if pill_hp >= M.WOUNDED_HP_FULL_MIN and pill_hp <= M.WOUNDED_HP_FULL_MAX then
+      fav_bonus_by_size[M.WOUNDED_HP_FULL_FAV2_BLOCKERS] = M.WOUNDED_HP_FULL_BONUS2
+      fav_bonus_by_size[M.WOUNDED_HP_FULL_FAV3_BLOCKERS] = M.WOUNDED_HP_FULL_BONUS3
+      min_chain  = M.WOUNDED_HP_FULL_MIN_CHAIN
+      tier_label = "FULL"
+    elseif pill_hp >= M.WOUNDED_HP_HIGH_MIN and pill_hp <= M.WOUNDED_HP_HIGH_MAX then
+      fav_bonus_by_size[M.WOUNDED_HP_HIGH_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
+      min_chain  = M.WOUNDED_HP_HIGH_MIN_CHAIN
+      tier_label = "HIGH"
+    elseif pill_hp <= M.WOUNDED_HP_LOW_MAX then
+      fav_bonus_by_size[M.WOUNDED_HP_LOW_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
+      min_chain  = M.WOUNDED_HP_LOW_MIN_CHAIN
+      tier_label = "LOW"
+    end
+    local max_bonus = M.WOUNDED_FAVOR_BONUS
+    for _, b in pairs(fav_bonus_by_size) do if b > max_bonus then max_bonus = b end end
+    -- Flatten fav_bonus_by_size into up to 2 (size, bonus) pairs for C.
+    local n_fav, fs1, fb1, fs2, fb2 = 0, 0, 0.0, 0, 0.0
+    for sz, bon in pairs(fav_bonus_by_size) do
+      if n_fav == 0 then fs1, fb1 = sz, bon
+      else fs2, fb2 = sz, bon end
+      n_fav = n_fav + 1
+    end
+
+    local nb = na_shield.run_neighbor_bonus(
+      #candidates, #AIM_OFFSETS,
+      M.SCORE_PER_SLOT, M.BUILT_BONUS, M.NEIGHBOR_BONUS,
+      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus)
+
+    local RS = 21  -- RESULT_STRIDE
+    for ci = 1, #candidates do
+      local c    = candidates[ci]
+      local base = (ci - 1) * RS
+      local bai  = nb[base + 1]   -- best aim idx (1-based), 0 = no winner
+      if bai > 0 then
+        c.best_aim_idx    = bai
+        c.score           = nb[base + 2]
+        c.score_neighbor  = nb[base + 3]
+        c.best_chain_len  = nb[base + 4]
+        c.score_actual    = nb[base + 5]
+        c.score_potential = nb[base + 6]
+        c.blockers_count  = nb[base + 7]
+        -- Reconstruct winning blocker tables from relative offsets.
+        local n_act = nb[base + 8]
+        local n_pot = nb[base + 9]
+        local act, pot = {}, {}
+        for k = 0, n_act - 1 do
+          act[k+1] = { mx = pmx + nb[base + 10 + k*2], my = pmy + nb[base + 11 + k*2] }
+        end
+        for k = 0, n_pot - 1 do
+          pot[k+1] = { mx = pmx + nb[base + 16 + k*2], my = pmy + nb[base + 17 + k*2] }
+        end
+        c.aims[bai].blockers           = act
+        c.aims[bai].potential_blockers = pot
+      else
+        c.best_aim_idx    = nil
+        c.score           = 0
+        c.score_neighbor  = 0
+        c.best_chain_len  = 0
+        c.score_actual    = 0
+        c.score_potential = 0
+        c.blockers_count  = 0
+      end
+    end
+
+  else
+  -- ── Lua neighbor bonus (fallback when C slate not available) ─────────
+  local fav_bonus_by_size = {}
+  local min_chain = 0
+  local tier_label = "NONE"
+
   local bk_cache = {}
   local function blocker_keys_for(i, ai, nudge_wu)
     nudge_wu = nudge_wu or 0
@@ -905,6 +1047,18 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       end
     end
   end
+  end  -- end else (Lua neighbor bonus fallback)
+
+  local _t_end = clock_us()
+  if _t_end - _t_score_cands > 3000 then
+    opt.append("optimize.log", string.format(
+      "  [shield] scan total=%.2f ms  score_cands=%.2f ms  nudge=%.2f ms  neighbor=%.2f ms  stamp=%s",
+      (_t_end - _t_score_cands) / 1000,
+      (_t_nudge_start - _t_score_cands) / 1000,
+      (_t_neighbor_start - _t_nudge_start) / 1000,
+      (_t_end - _t_neighbor_start) / 1000,
+      _pill_hit and "yes" or "no"))
+  end
 
   local best
   for _, c in ipairs(candidates) do
@@ -923,6 +1077,178 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     min_chain         = min_chain,
     tier_label        = tier_label,
   }
+end
+
+function M.load_stamp_bin(path)
+  if not na_shield then
+    print("[shield] na_shield C module not available")
+    return false
+  end
+  local dirs = { _G.BRAIN_DIR, _G.DEBUG_SESSION_DIR, "." }
+  local tried = {}
+  local paths = path and { path } or (function()
+    local seen, out = {}, {}
+    for _, dir in ipairs(dirs) do
+      if dir and not seen[dir] then
+        seen[dir] = true
+        out[#out + 1] = dir .. "/shield_stamp_cache.bin"
+      end
+    end
+    return out
+  end)()
+  for _, p in ipairs(paths) do
+    tried[#tried + 1] = p
+    if na_shield.load(p) then
+      _pill_hit = na_shield.pill_hit  -- direct table reference; nil if C didn't build it
+      print("[shield] stamp cache loaded (binary): " .. p)
+      return true
+    end
+  end
+  print("[shield] no binary stamp cache found, cpf.simulate_shot fallback active")
+  return false
+end
+
+function M.compute_shield_stamps()
+  local STEP_WU   = 8
+  local MAX_STEPS = 4
+  local R         = C.ATTACK_PILL_STANDOFF
+  local pmx, pmy  = 128, 128
+  local pill_wx   = (pmx << 8) | 128
+  local pill_wy   = (pmy << 8) | 128
+
+  print("[shield] computing " .. 1440 .. " × " .. (MAX_STEPS + 1) ..
+        " × 6 stamp entries …")
+  local stamps = {}
+
+  for ak = 0, 1439 do
+    local deg = ak / 4.0
+    local rad = math.rad(deg)
+    local scx = pmx + 0.5 + math.sin(rad) * R
+    local scy = pmy + 0.5 - math.cos(rad) * R
+
+    local by_nudge = {}
+    stamps[ak] = by_nudge
+
+    for nudge_step = 0, MAX_STEPS do
+      local nudge_wu = nudge_step * STEP_WU
+      local spot_wx, spot_wy
+      if nudge_wu == 0 then
+        spot_wx = math.floor(scx * 256 + 0.5)
+        spot_wy = math.floor(scy * 256 + 0.5)
+      else
+        local dx   = (pmx + 0.5) - scx
+        local dy   = (pmy + 0.5) - scy
+        local d    = math.sqrt(dx * dx + dy * dy)
+        local frac = (nudge_wu / 256.0) / d
+        spot_wx = math.floor((scx + dx * frac) * 256 + 0.5)
+        spot_wy = math.floor((scy + dy * frac) * 256 + 0.5)
+      end
+
+      local by_aim = {}
+      by_nudge[nudge_wu] = by_aim
+
+      -- aim_idx 0 = return fire: pill → standoff
+      local ret = cpf.simulate_shot(pill_wx, pill_wy, spot_wx, spot_wy, cpf.SHOT_PILL, 0)
+      local flat = {}
+      if ret then
+        for _, t in ipairs(ret) do
+          flat[#flat + 1] = t.mx - pmx
+          flat[#flat + 1] = t.my - pmy
+        end
+      end
+      by_aim[0] = flat
+
+      -- aim_idx 1..5 = outgoing: standoff → pill aim point
+      for ai, aim in ipairs(AIM_OFFSETS) do
+        local twx = (pmx << 8) + aim[1]
+        local twy = (pmy << 8) + aim[2]
+        local out = cpf.simulate_shot(spot_wx, spot_wy, twx, twy, cpf.SHOT_TANK, 0)
+        local f2  = {}
+        if out then
+          for _, t in ipairs(out) do
+            f2[#f2 + 1] = t.mx - pmx
+            f2[#f2 + 1] = t.my - pmy
+          end
+        end
+        by_aim[ai] = f2
+      end
+    end
+
+    if ak % 144 == 0 then
+      print(string.format("[shield] stamp progress: %d/1440 (%.0f%%)", ak, ak / 14.4))
+    end
+  end
+
+  print("[shield] stamp computation done.")
+  return {
+    standoff        = R,
+    aim_inset       = M.AIM_INSET,
+    step_deg        = M.STEP_DEG,
+    nudge_step_wu   = STEP_WU,
+    max_nudge_steps = MAX_STEPS,
+    stamps          = stamps,
+  }
+end
+
+-- Binary format matches ShieldStampHeader / ShieldStampEntry in na_shield_stamp.c.
+-- Header: magic(I4) version(I4) n_angles(I4) n_nudges(I4) n_aims(I4) max_tiles(I4)
+--         nudge_wu[8](I4×8) standoff(f) aim_inset(f) step_deg(f)  = 56 bytes
+-- Entry:  n_tiles(B) has_pill(B) dx[32](b×32) dy[32](b×32)       = 66 bytes
+function M.save_shield_stamps_bin(data, outpath)
+  local path   = outpath or "shield_stamp_cache.bin"
+  local N_ANGLES  = 1440
+  local MAX_TILES = 32
+  local STEP_WU   = data.nudge_step_wu
+  local N_NUDGES  = data.max_nudge_steps + 1   -- 0..max_nudge_steps inclusive
+  local N_AIMS    = #AIM_OFFSETS + 1            -- 0=return fire, 1..#AIM_OFFSETS=outgoing
+  -- Header nudge_wu table is padded to 8 slots (STAMP_MAX_NUDGES in C)
+  local HDR_NUDGE_SLOTS = 8
+
+  local f, err = io.open(path, "wb")
+  if not f then
+    print("[shield] cannot write binary stamp: " .. tostring(err))
+    return false
+  end
+
+  -- Header (56 bytes)
+  f:write(string.pack("<I4I4I4I4I4I4",
+    0x444C4853, 1, N_ANGLES, N_NUDGES, N_AIMS, MAX_TILES))
+  for i = 0, HDR_NUDGE_SLOTS - 1 do
+    local wu = (i < N_NUDGES) and (i * STEP_WU) or 0
+    f:write(string.pack("<I4", wu))
+  end
+  f:write(string.pack("<fff",
+    data.standoff or 0.0, data.aim_inset or 0.0, data.step_deg or 0.0))
+
+  -- Entries
+  local fmt_entry = "<BB" .. string.rep("b", MAX_TILES * 2)
+  local vals = {}
+  for ak = 0, N_ANGLES - 1 do
+    for step = 0, data.max_nudge_steps do
+      local nudge_wu  = step * STEP_WU
+      local by_aim    = data.stamps[ak] and data.stamps[ak][nudge_wu]
+      for ai = 0, N_AIMS - 1 do
+        local flat     = by_aim and by_aim[ai]
+        local n        = flat and math.min(#flat // 2, MAX_TILES) or 0
+        local has_pill = 0
+        -- dx[0..MAX_TILES-1] at vals[1..32], dy[0..MAX_TILES-1] at vals[33..64]
+        for i = 1, MAX_TILES * 2 do vals[i] = 0 end
+        for i = 1, n do
+          local dx = flat[2*i - 1]
+          local dy = flat[2*i]
+          vals[i]             = dx
+          vals[MAX_TILES + i] = dy
+          if dx == 0 and dy == 0 then has_pill = 1 end
+        end
+        f:write(string.pack(fmt_entry, n, has_pill, table.unpack(vals)))
+      end
+    end
+  end
+
+  f:close()
+  print(string.format("[shield] binary stamp written: %s  (%d angles × %d nudges × %d aims)",
+    path, N_ANGLES, N_NUDGES, N_AIMS))
+  return true
 end
 
 -- Draw helpers --------------------------------------------------------------
