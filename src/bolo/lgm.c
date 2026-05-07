@@ -30,7 +30,6 @@
 #include "bases.h"
 #include "bolo_map.h"
 #include "building.h"
-#include "debug_file_output.h"
 #include "explosions.h"
 #include "floodfill.h"
 #include "frontend.h"
@@ -168,23 +167,6 @@ void lgmUpdate(GameSim *sim, lgm *lgman, tank *tnk) {
 
 			/* Check his not waiting */
 			(*lgman)->obstructed = LGM_BRAIN_FREE;
-
-
-			/* The deathWait indicator is not reaching us properly here
-			 * the tank's x and y will sometimes be around 65528 or 65533
-			 * while it's tankDeath will be zero, which isn't right.
-			 */
-
-			sprintf(streamText,"Tank Coords: (%u,%u) ... ",(*tnk)->x,(*tnk)->y);
-			writeDebugFile(streamText);
-			streamText[0] = '\0';
-			sprintf(streamText,"LGM State: %d ... ", (*lgman)->state);
-			writeDebugFile(streamText);
-			streamText[0] = '\0';
-			sprintf(streamText,"DeathWait: %d ... \n", (*tnk)->deathWait);
-			writeDebugFile(streamText);
-			streamText[0] = '\0';
-
 
 			if ((*lgman)->waitTime > 0) {
 				/* LGM is currently building something (at a destination) */

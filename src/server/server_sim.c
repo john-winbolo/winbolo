@@ -941,7 +941,6 @@ void serverSimTick(ServerSim *sim) {
                     sim->sim.lagCompTicks = compTicks;
                 }
                 tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
-                lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
 
                 /* Handle mine laying */
                 if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
@@ -982,6 +981,17 @@ void serverSimTick(ServerSim *sim) {
 
     /* World systems: run on even server ticks (game ticks) */
     if (!isKeysTick) {
+        /* Update LGMs every game tick — server-authoritative state must
+         * not depend on per-player input arrival.  Without this, parachute
+         * descent, walking back to tank, and build progress freeze whenever
+         * a player isn't sending fresh inputs (notably while dead). */
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.lgmen[count] != NULL
+                && sim->sim.tanks[count] != NULL) {
+                lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
+            }
+        }
+
         /* Record tank positions for lag compensation history */
         for (count = 0; count < MAX_TANKS; count++) {
             if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
