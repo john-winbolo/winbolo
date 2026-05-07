@@ -1500,6 +1500,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
       }
 
+
       /* Sprites via mapview */
       gCurrentEdgeX = edgeX;
       gCurrentEdgeY = edgeY;

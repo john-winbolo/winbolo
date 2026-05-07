@@ -34,6 +34,7 @@
 #include "input.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
+#include "build_cursor.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
 #include "../ui_mode.h"
@@ -101,6 +102,7 @@ bool inputSetup(void) {
   scrollKeyCount = 0;
   smoothScrollAccumX = 0;
   smoothScrollAccumY = 0;
+  buildCursorReset();
   return TRUE;
 }
 
@@ -182,7 +184,10 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   dx *= step;
   dy *= step;
 
-  /* Gamepad contribution (right stick, normalised). */
+  /* Gamepad contribution (right stick, normalised).  When the free
+     build cursor is active the right stick steers the cursor instead
+     of scrolling — buildCursorTick handles its own camera follow, so
+     the scroll path gets no contribution from the stick that frame. */
   if (inputGamepadIsConnected()) {
     float fdx = 0.0f, fdy = 0.0f;
     if (inputGamepadGetScrollDirection(&fdx, &fdy)) {
@@ -193,8 +198,12 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
       if (gx == 0 && fdx <  0.0f) gx = -1;
       if (gy == 0 && fdy >  0.0f) gy =  1;
       if (gy == 0 && fdy <  0.0f) gy = -1;
-      dx += gx;
-      dy += gy;
+      if (buildCursorIsActive()) {
+        buildCursorTick(cs, gx, gy);
+      } else {
+        dx += gx;
+        dy += gy;
+      }
     }
   }
 
@@ -280,12 +289,31 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
       sdl3DrawSelectIndentsOn(getBuildCurrentSelectCS(cs), 0, 0);
     }
 
+    if (inputGamepadIsBuildCursorToggleEdge()) {
+      buildCursorToggle(cs);
+    }
+
+    if (inputGamepadIsStatusToggleEdge()) {
+      sdl3ImguiTogglePlayersPanel();
+    }
+
     if (inputGamepadIsBuilderConfirmEdge()) {
-      BYTE gsX, gsY;
-      screenGetGunsightTileCS(cs, &gsX, &gsY);
-      clientMutexWaitFor();
-      screenManMoveToMapCS(cs, gsX, gsY, getBuildCurrentSelectCS(cs));
-      clientMutexRelease();
+      BYTE bx, by;
+      if (buildCursorGetTile(&bx, &by)) {
+        /* Free build cursor active — dispatch to the cursor tile.
+           The cursor stays on (and at the same absolute tile) so the
+           player can fire repeated builds at the same spot, mirroring
+           how the mouse cursor outline persists between clicks. */
+        clientMutexWaitFor();
+        screenManMoveToMapCS(cs, bx, by, getBuildCurrentSelectCS(cs));
+        clientMutexRelease();
+      } else {
+        BYTE gsX, gsY;
+        screenGetGunsightTileCS(cs, &gsX, &gsY);
+        clientMutexWaitFor();
+        screenManMoveToMapCS(cs, gsX, gsY, getBuildCurrentSelectCS(cs));
+        clientMutexRelease();
+      }
     }
 
     if (inputGamepadIsViewToggleEdge()) {

@@ -96,6 +96,7 @@ void sdl3ImguiShowNetInfo(bool open);
 void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
 void sdl3ImguiShowPlayersPanel(bool open);
+void sdl3ImguiTogglePlayersPanel(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiShowAllianceRequest

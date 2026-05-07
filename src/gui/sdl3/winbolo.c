@@ -66,6 +66,7 @@
 #include "../draw.h"
 #include "../gamefront.h"
 #include "input.h"
+#include "build_cursor.h"
 #include "../lang.h"
 #include "../sound.h"
 #include "../winbolo.h"
@@ -1470,6 +1471,28 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     bool showCursor;
 
     showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
+
+    /* When the gamepad-driven free build cursor is active, override
+       the mouse cursor's screen position so the existing build-mode
+       reticle render does double-duty.  The build cursor stores an
+       absolute map tile; convert to the 1-based screen tile by
+       subtracting the camera offset.  Off-screen tiles hide the
+       reticle (matching how the mouse cursor hides when it leaves
+       the play area). */
+    BYTE bcX, bcY;
+    if (buildCursorGetTile(&bcX, &bcY)) {
+      int sx = (int)bcX - (int)cs->xOffset;
+      int sy = (int)bcY - (int)cs->yOffset;
+      if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
+          sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
+        showCursor = true;
+        cursorX    = (BYTE)sx;
+        cursorY    = (BYTE)sy;
+      } else {
+        showCursor = false;
+      }
+    }
+
     sdl3DrawSetNetFailed(cs->netStat == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,

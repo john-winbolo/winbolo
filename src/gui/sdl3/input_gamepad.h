@@ -34,15 +34,17 @@ bool inputGamepadIsConnected(void);
 tankButton inputGamepadGetMovement(BYTE tankAngle);
 bool inputGamepadIsFireHeld(void);
 bool inputGamepadIsMineHeld(void);
-int  inputGamepadGetGunsightChange(void);  /* -1, 0, +1; edge-triggered, consumed on read */
+int  inputGamepadGetGunsightChange(void);  /* -1, 0, +1; live held state — caller rate-limits */
 bool inputGamepadGetScrollDirection(float *dx, float *dy);
 
 /* Builder UX edge-triggered getters (consume on read). */
-int  inputGamepadGetBuildSelectChange(void);  /* -1 (D-pad LEFT), +1 (D-pad RIGHT), 0 */
+int  inputGamepadGetBuildSelectChange(void);  /* -1 (D-pad UP), +1 (D-pad DOWN), 0 */
 bool inputGamepadIsViewToggleEdge(void);       /* Y press, consumed on read */
 bool inputGamepadIsBuilderConfirmEdge(void);   /* X press, consumed on read */
 bool inputGamepadIsPauseEdge(void);            /* Start press, consumed on read */
-bool inputGamepadIsQuickChatEdge(void);        /* D-pad UP press, consumed on read */
+bool inputGamepadIsQuickChatEdge(void);        /* D-pad LEFT press, consumed on read */
+bool inputGamepadIsBuildCursorToggleEdge(void); /* R3 press, consumed on read */
+bool inputGamepadIsStatusToggleEdge(void);     /* Back/Select press, consumed on read */
 bool inputGamepadConsumeActiveDisconnect(void);  /* Active controller disconnect, consumed on read */
 
 /* Right-stick scroll sensitivity multiplier (clamped 0.25..4.0 by UI). */

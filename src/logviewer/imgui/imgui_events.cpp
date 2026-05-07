@@ -141,6 +141,12 @@ void lv_imgui_events_window(void) {
             if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
         }
 
+        /* In-panel Auto Scroll toggle — always visible, mirrors the
+         * right-click menu item below.  Reachable from controller/touch
+         * where right-click is unavailable. */
+        ImGui::Checkbox(langGetText(STR_LV_AUTO_SCROLL), &s_auto_scroll);
+        ImGui::Separator();
+
         /* List box for events */
         ImGui::BeginChild("EventsList", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
         

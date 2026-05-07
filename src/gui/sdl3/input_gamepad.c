@@ -45,15 +45,14 @@ static SDL_GamepadType  s_activeType    = SDL_GAMEPAD_TYPE_UNKNOWN;
 /* Latch so joystickResetState() fires once per stick-centred transition. */
 static bool s_moveWasActive = false;
 
-/* Edge-triggered gunsight delta: -1/+1 set by button-down, consumed on read. */
-static int s_gunsightPending = 0;
-
 /* Builder UX edge-triggered state, consumed on read. */
 static int  s_buildSelectChange  = 0;
 static bool s_viewToggleEdge     = false;
 static bool s_builderConfirmEdge = false;
 static bool s_pauseEdge          = false;
 static bool s_quickChatEdge      = false;
+static bool s_buildCursorToggleEdge = false;
+static bool s_statusToggleEdge   = false;
 static bool s_activeDisconnectedEdge = false;
 
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
@@ -79,20 +78,20 @@ static bool s_path_a_last_pause           = false;
 static bool s_path_a_last_quickchat       = false;
 static bool s_path_a_last_view            = false;
 static bool s_path_a_last_builder_confirm = false;
-static bool s_path_a_last_gunsight_dec    = false;
-static bool s_path_a_last_gunsight_inc    = false;
 static bool s_path_a_last_build_prev      = false;
 static bool s_path_a_last_build_next      = false;
+static bool s_path_a_last_build_cursor_toggle = false;
+static bool s_path_a_last_status_toggle   = false;
 
 static void reset_path_a_edges(void) {
   s_path_a_last_pause           = false;
   s_path_a_last_quickchat       = false;
   s_path_a_last_view            = false;
   s_path_a_last_builder_confirm = false;
-  s_path_a_last_gunsight_dec    = false;
-  s_path_a_last_gunsight_inc    = false;
   s_path_a_last_build_prev      = false;
   s_path_a_last_build_next      = false;
+  s_path_a_last_build_cursor_toggle = false;
+  s_path_a_last_status_toggle   = false;
 }
 
 static bool path_a_active(void) {
@@ -144,12 +143,13 @@ static void promoteNextGamepad(void) {
 void inputGamepadInit(void) {
   clearActive();
   s_moveWasActive      = false;
-  s_gunsightPending    = 0;
   s_buildSelectChange  = 0;
   s_viewToggleEdge     = false;
   s_builderConfirmEdge = false;
   s_pauseEdge          = false;
   s_quickChatEdge      = false;
+  s_buildCursorToggleEdge = false;
+  s_statusToggleEdge   = false;
   s_activeDisconnectedEdge = false;
   /* Reset Path A edge tracking so first-frame reads start from a
      known zero state regardless of which path eventually drives. */
@@ -200,16 +200,10 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
       if (s_activeGamepad && e->gbutton.which == s_activeId) {
         switch (e->gbutton.button) {
-          case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
-            s_gunsightPending = -1;
-            break;
-          case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
-            s_gunsightPending = 1;
-            break;
-          case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+          case SDL_GAMEPAD_BUTTON_DPAD_UP:
             s_buildSelectChange  = -1;
             break;
-          case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+          case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
             s_buildSelectChange  = +1;
             break;
           case SDL_GAMEPAD_BUTTON_NORTH:
@@ -223,8 +217,17 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
           case SDL_GAMEPAD_BUTTON_START:
             s_pauseEdge = true;
             break;
-          case SDL_GAMEPAD_BUTTON_DPAD_UP:
+          case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
             s_quickChatEdge = true;
+            break;
+          case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
+            /* R3 — toggle free build cursor mode.  See build_cursor.c. */
+            s_buildCursorToggleEdge = true;
+            break;
+          case SDL_GAMEPAD_BUTTON_BACK:
+            /* Back/Select — toggle status overlay (currently the
+               Players panel; will grow as more state moves into it). */
+            s_statusToggleEdge = true;
             break;
           default:
             break;
@@ -343,20 +346,22 @@ bool inputGamepadIsMineHeld(void) {
 }
 
 int inputGamepadGetGunsightChange(void) {
+  /* Return live held state (-1/0/+1) on both paths so holding LB/RB
+     repeats at the caller's rate (INPUT_GUNSIGHT_WAIT_TIME), matching
+     keyboard behavior.  Inc wins if both are held. */
+  bool dec, inc;
   if (path_a_active()) {
-    bool now_dec = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_DEC);
-    bool now_inc = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_INC);
-    int delta = 0;
-    if (now_dec && !s_path_a_last_gunsight_dec) delta -= 1;
-    if (now_inc && !s_path_a_last_gunsight_inc) delta += 1;
-    s_path_a_last_gunsight_dec = now_dec;
-    s_path_a_last_gunsight_inc = now_inc;
-    return delta;
+    dec = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_DEC);
+    inc = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_INC);
+  } else if (s_activeGamepad) {
+    dec = SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    inc = SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+  } else {
+    return 0;
   }
-
-  int v = s_gunsightPending;
-  s_gunsightPending = 0;
-  return v;
+  if (inc) return 1;
+  if (dec) return -1;
+  return 0;
 }
 
 bool inputGamepadGetScrollDirection(float *dx, float *dy) {
@@ -458,6 +463,32 @@ bool inputGamepadIsQuickChatEdge(void) {
 
   bool v = s_quickChatEdge;
   s_quickChatEdge = false;
+  return v;
+}
+
+bool inputGamepadIsBuildCursorToggleEdge(void) {
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_BUILD_CURSOR_TOGGLE);
+    bool edge = now && !s_path_a_last_build_cursor_toggle;
+    s_path_a_last_build_cursor_toggle = now;
+    return edge;
+  }
+
+  bool v = s_buildCursorToggleEdge;
+  s_buildCursorToggleEdge = false;
+  return v;
+}
+
+bool inputGamepadIsStatusToggleEdge(void) {
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_STATUS_TOGGLE);
+    bool edge = now && !s_path_a_last_status_toggle;
+    s_path_a_last_status_toggle = now;
+    return edge;
+  }
+
+  bool v = s_statusToggleEdge;
+  s_statusToggleEdge = false;
   return v;
 }
 

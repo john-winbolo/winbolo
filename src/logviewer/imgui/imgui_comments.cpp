@@ -247,9 +247,9 @@ extern "C" void lv_imgui_comments_window(void) {
         if (!loggedIn) {
             ImGui::TextWrapped("%s", langGetText(STR_LV_INFO_SIGNIN_TO_COMMENT));
         } else {
-            ImGui::SetNextItemWidth(60);
-            ImGui::Combo("##cmtRating", &s_comment_rating,
-                         "None\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
+            ImGui::SetNextItemWidth(140);
+            ImGui::SliderInt("##cmtRating", &s_comment_rating, 0, 10,
+                             "Rating: %d/10");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputTextWithHint("##cmtText", langGetText(STR_DLGWBN_HINT_COMMENT),

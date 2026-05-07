@@ -5,7 +5,6 @@
         "InGame"
         {
             "title"    "#in_game"
-            "legacy_set" "0"
 
             "StickPadGyro"
             {
@@ -17,14 +16,12 @@
                 "map_scroll"
                 {
                     "title"       "#act_map_scroll"
-                    "input_mode"  "joystick_camera"
+                    "input_mode"  "joystick_move"
                 }
             }
 
             "AnalogTrigger"
             {
-                "fire"   "trigger_right"
-                "mine"   "trigger_left"
             }
 
             "Button"
@@ -37,6 +34,7 @@
                 "gunsight_inc"   "#act_gunsight_inc"
                 "build_prev"     "#act_build_prev"
                 "build_next"     "#act_build_next"
+                "build_cursor_toggle" "#act_build_cursor_toggle"
                 "quick_chat"     "#act_quick_chat"
                 "pause"          "#act_pause"
                 "status_toggle"  "#act_status_toggle"
@@ -46,7 +44,6 @@
         "Menu"
         {
             "title"    "#menu"
-            "legacy_set" "0"
 
             "Button"
             {
@@ -58,14 +55,6 @@
                 "menu_nav_right"  "#act_menu_nav_right"
             }
         }
-
-        "Build"
-        {
-            "title"    "#build"
-            "legacy_set" "0"
-
-            "Button" { }
-        }
     }
 
     "localization"
@@ -74,18 +63,18 @@
         {
             "in_game"           "In Game"
             "menu"              "Menus"
-            "build"             "Build (reserved)"
 
             "act_tank_move"     "Drive Tank"
             "act_map_scroll"    "Scroll Map"
             "act_fire"          "Fire"
             "act_mine"          "Lay Mine"
-            "act_build_confirm" "Send LGM (build at gunsight)"
+            "act_build_confirm" "Build"
             "act_view_cycle"    "Cycle View"
-            "act_gunsight_dec"  "Gunsight Range -1"
-            "act_gunsight_inc"  "Gunsight Range +1"
+            "act_gunsight_dec"  "Decrease Gunsight Range"
+            "act_gunsight_inc"  "Increase Gunsight Range"
             "act_build_prev"    "Previous Build Type"
             "act_build_next"    "Next Build Type"
+            "act_build_cursor_toggle" "Toggle Build Cursor"
             "act_quick_chat"    "Quick Chat"
             "act_pause"         "Pause Menu"
             "act_status_toggle" "Toggle Status Overlay"

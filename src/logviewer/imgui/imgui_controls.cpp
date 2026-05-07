@@ -14,6 +14,7 @@
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
+#include "../../gui/ui_mode.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -204,10 +205,19 @@ void lv_imgui_controls_window(void) {
                 format_time(remaining_str, sizeof(remaining_str), remaining);
             }
 
-            /* Seek slider - full width */
+            /* Seek slider - full width.  Always-visible in-slider time
+             * label so controller / touch users can read progress without
+             * a hover tooltip. */
             ImGui::PushItemWidth(-1);
 
-            if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, "")) {
+            char seek_fmt[64];
+            if (totalTime > 0) {
+                snprintf(seek_fmt, sizeof(seek_fmt), "%s / %s  (%.1f%%)",
+                         s_current_time, total_time_str, displayRatio * 100.0f);
+            } else {
+                snprintf(seek_fmt, sizeof(seek_fmt), "%s", s_current_time);
+            }
+            if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt)) {
                 s_is_seeking = true;
             }
 
@@ -231,18 +241,19 @@ void lv_imgui_controls_window(void) {
 
             ImGui::PopItemWidth();
 
-            /* Time display row */
-            {
+            /* Desktop keeps the existing time display row.  In compact
+             * (tablet/Deck) mode the in-slider label above already shows
+             * elapsed/total/percent, so suppress this row to avoid
+             * double-display. */
+            if (!(uiModeIsTablet() || uiModeIsSteamDeck())) {
                 MessageArgs args = {};
                 strncpy(args.string1, s_current_time, sizeof(args.string1) - 1);
                 strncpy(args.string2, total_time_str, sizeof(args.string2) - 1);
                 ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIME_FMT, &args));
-            }
-            ImGui::SameLine(0, 15);
-            {
-                MessageArgs args = {};
-                strncpy(args.string1, remaining_str, sizeof(args.string1) - 1);
-                ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TIME_REMAINING, &args));
+                ImGui::SameLine(0, 15);
+                MessageArgs args2 = {};
+                strncpy(args2.string1, remaining_str, sizeof(args2.string1) - 1);
+                ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TIME_REMAINING, &args2));
             }
         } else {
             ImGui::TextUnformatted(langGetText(STR_LV_NO_LOG_LOADED));

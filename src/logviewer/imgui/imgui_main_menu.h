@@ -49,6 +49,10 @@ void lv_imgui_cache_menu_bar_height(void);
  * Returns true if Information mode, false if Select Team mode. */
 int lv_imgui_get_mode_information(void);
 
+/* Open the WinBolo.net log browser as a blocking modal.  Reused by the
+ * compact-mode popup menu; same flow as the desktop File menu. */
+void lv_imgui_open_wbn_browser(void);
+
 #ifdef __cplusplus
 }
 #endif

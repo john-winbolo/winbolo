@@ -44,8 +44,9 @@ static LogViewerState *s_lv = nullptr;
 /* Open the WinBolo.net log browser as a blocking modal. The dialog creates
  * its own ImGui context, takes over the window, and returns the user's
  * choice. We save/restore LogViewer's ImGui context, window size+title,
- * and re-init HTTP (the dialog destroys it on close). */
-static void open_wbn_browser_modal(void) {
+ * and re-init HTTP (the dialog destroys it on close). Exposed (non-static)
+ * so the compact-mode popup menu can reuse the same flow. */
+extern "C" void lv_imgui_open_wbn_browser(void) {
     if (!s_lv || !s_lv->window || !s_lv->renderer) return;
 
     ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
@@ -232,7 +233,7 @@ int lv_imgui_main_menu_bar(void) {
         /* File Menu */
         if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
             if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN))) {
-                open_wbn_browser_modal();
+                lv_imgui_open_wbn_browser();
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN), "Ctrl+O")) {

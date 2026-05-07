@@ -3215,6 +3215,10 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 #endif
 }
 
+void sdl3ImguiTogglePlayersPanel(void) {
+    sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
+}
+
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
     return ImGui::GetIO().WantCaptureKeyboard;

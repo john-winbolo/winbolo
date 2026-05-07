@@ -11,7 +11,6 @@
 /* Action sets */
 #define SI_SET_IN_GAME    "InGame"
 #define SI_SET_MENU       "Menu"
-#define SI_SET_BUILD      "Build"
 
 /* Digital actions — InGame set */
 #define SI_ACTION_FIRE          "fire"
@@ -20,9 +19,10 @@
 #define SI_ACTION_VIEW_CYCLE    "view_cycle"      /* Y — tank/pillbox/ally/LGM/base */
 #define SI_ACTION_GUNSIGHT_DEC  "gunsight_dec"    /* LB — range -1 */
 #define SI_ACTION_GUNSIGHT_INC  "gunsight_inc"    /* RB — range +1 */
-#define SI_ACTION_BUILD_PREV    "build_prev"      /* D-pad LEFT — cycle build type backward */
-#define SI_ACTION_BUILD_NEXT    "build_next"      /* D-pad RIGHT — cycle forward */
-#define SI_ACTION_QUICK_CHAT    "quick_chat"      /* D-pad UP */
+#define SI_ACTION_BUILD_PREV    "build_prev"      /* D-pad UP — cycle build type backward */
+#define SI_ACTION_BUILD_NEXT    "build_next"      /* D-pad DOWN — cycle forward */
+#define SI_ACTION_BUILD_CURSOR_TOGGLE "build_cursor_toggle" /* R3 — enter/exit free build cursor */
+#define SI_ACTION_QUICK_CHAT    "quick_chat"      /* D-pad LEFT */
 #define SI_ACTION_PAUSE         "pause"           /* Start */
 #define SI_ACTION_STATUS_TOGGLE "status_toggle"   /* Select */
 
