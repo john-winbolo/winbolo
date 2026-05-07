@@ -442,6 +442,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c
     src/bolo/treegrow.c src/bolo/udppackets.c src/bolo/util.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
     src/bolo/discovery.c
     src/bolo/obs_builder.c
@@ -917,6 +918,7 @@ set(CLIENT_SOURCES
     src/bolo/nat_portmap.c
     src/bolo/discovery.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
@@ -1230,6 +1232,7 @@ set(SERVER_SOURCES
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
@@ -1543,6 +1546,7 @@ set(HEADLESS_SOURCES
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
@@ -1673,6 +1677,7 @@ set(GYM_SOURCES
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
@@ -1763,6 +1768,19 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
 
 
 # ---------------------------------------------------------------------------
+# bot_worker_pool_test (unit test for the SDL3 worker pool primitive)
+# ---------------------------------------------------------------------------
+enable_testing()
+
+add_executable(bot_worker_pool_test
+    tests/bot_worker_pool_test.c
+    src/bolo/bot_worker_pool.c
+)
+target_link_libraries(bot_worker_pool_test PRIVATE SDL3::SDL3)
+
+add_test(NAME bot_worker_pool_test COMMAND bot_worker_pool_test)
+
+# ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
 # ---------------------------------------------------------------------------
 
@@ -1784,6 +1802,7 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
