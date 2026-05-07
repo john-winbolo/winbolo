@@ -65,7 +65,7 @@ function M.set_tick(t)
 end
 
 local function log_msg(...)
-  if debug_mode() then return end
+  if not perf_log_enabled() then return end
   local elapsed_ms = (clock() - tick_start) * 1000
   local parts = {}
   for i = 1, select("#", ...) do
@@ -75,7 +75,7 @@ local function log_msg(...)
 end
 
 function M.flush()
-  if debug_mode() or not perf_log_enabled() or #buffer == 0 then return end
+  if not perf_log_enabled() or #buffer == 0 then return end
   if na_opt_log then
     -- Threaded path: build full tick block in memory, enqueue for background write.
     local dir = pick_dir()

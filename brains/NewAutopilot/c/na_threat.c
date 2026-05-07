@@ -41,6 +41,7 @@
  * is plenty of headroom — current PILL_RANGE_MAP is 9. */
 #define MAX_DISK_R   15
 #define MAX_DISK_LEN ((2*MAX_DISK_R + 1) * (2*MAX_DISK_R + 1))
+/* MAX_DISK_LEN also used as the occlusion DP bounding-box size. */
 
 /* ── Module state ─────────────────────────────────────────────────── */
 static float   g_terrain_mult[MAP_TILES];
@@ -90,6 +91,42 @@ static uint8_t g_fullhide_cache[MAX_DISK_LEN];
 static int g_disk_built = 0;
 static int g_terrain_built = 0;
 
+/* ── Occlusion DP tables (built in build_disk alongside disk geometry) ──
+ *
+ * Indexed by the bounding-box flat slot = (dx+R)*size + (dy+R)
+ * (column-major, matching threat.lua's PRED_OFF_DX/PRED_ORDER convention).
+ *
+ * g_pred_order[]  — disk slots in Chebyshev-distance ascending order so
+ *                   each tile's predecessor is already filled when visited.
+ * g_pred_off_dx/dy[] — predecessor offset for each slot. Computed by the
+ *                   same Bresenham convention as the Lua PRED_OFF_DX/DY:
+ *                   the SECOND-TO-LAST intermediate point on the line from
+ *                   (0,0) to (dx,dy) (i.e. line[#line-1] in Lua), matching
+ *                   the Lua implementation exactly so occlusion values agree.
+ *
+ * g_occ_walls/trees/fpills[] — scratch accumulators reused across pills.
+ *   The Chebyshev ordering guarantees each slot is written before read as
+ *   a predecessor, so no clearing is needed between pills (stale data is
+ *   always overwritten first). */
+static int16_t g_pred_order[MAX_DISK_LEN];
+static int8_t  g_pred_off_dx[MAX_DISK_LEN];
+static int8_t  g_pred_off_dy[MAX_DISK_LEN];
+static int     g_pred_len = 0;
+
+static int16_t g_occ_walls [MAX_DISK_LEN];
+static int16_t g_occ_trees [MAX_DISK_LEN];
+static int16_t g_occ_fpills[MAX_DISK_LEN];
+
+/* Flat friendly-pill boolean map. Populated before the occlusion sweep and
+ * cleared after by iterating only the positions that were set. */
+static uint8_t g_friendly_set[MAP_TILES];
+
+/* C-side mirrors of the Lua pill_grid and coverage_grid tables.
+ * Populated by na_threat.sync_grids() after each full pill rebuild so
+ * na_attack.evaluate_pill_difficulty can read them with no Lua API overhead. */
+static float s_pill_grid_c[MAP_TILES];
+static float s_cov_grid_c[MAP_TILES];
+
 /* Cached host worldPtr-pointer (lazy-fetched on first read). */
 static const unsigned char **g_world_ptr_ptr = NULL;
 
@@ -131,6 +168,36 @@ static void compute_terrain_factor_at_c(int mx, int my) {
     g_terrain_in_trees[k] = (uint8_t)tile_in_trees_c(mx, my);
 }
 
+/* Runs Bresenham from (0,0) to (tx,ty), collecting intermediate points
+ * (neither start nor end — matching U.bresenham's convention).
+ * Returns the SECOND-TO-LAST intermediate point in *pdx/*pdy, which is
+ * Lua's line[#line-1].  Falls back to (0,0) if fewer than 2 intermediates.
+ * This exactly replicates the predecessor selection in threat.lua's PRED
+ * table construction so occlusion values agree between Lua and C. */
+static void bresenham_second_to_last(int tx, int ty, int *pdx, int *pdy) {
+    int ax = tx < 0 ? -tx : tx;
+    int ay = ty < 0 ? -ty : ty;
+    int sx = tx > 0 ? 1 : (tx < 0 ? -1 : 0);
+    int sy = ty > 0 ? 1 : (ty < 0 ? -1 : 0);
+    int err = ax - ay;
+    int cx = 0, cy = 0;
+    int prev_x = 0, prev_y = 0;
+    int pprev_x = 0, pprev_y = 0;
+    int count = 0;
+    for (;;) {
+        if (cx == tx && cy == ty) break;
+        int e2 = 2 * err;
+        if (e2 > -ay) { err -= ay; cx += sx; }
+        if (e2 <  ax) { err += ax; cy += sy; }
+        if (cx == tx && cy == ty) break;  /* end not yielded */
+        pprev_x = prev_x; pprev_y = prev_y;
+        prev_x  = cx;     prev_y  = cy;
+        count++;
+    }
+    if (count >= 2) { *pdx = pprev_x; *pdy = pprev_y; }
+    else            { *pdx = 0;       *pdy = 0; }
+}
+
 static void build_disk(void) {
     int R = g_pill_range_map;
     if (R < 0) R = 0;
@@ -166,6 +233,45 @@ static void build_disk(void) {
             g_disk_off[slot] = idx;
         }
     }
+    /* ── Occlusion DP predecessor tables ────────────────────────────────
+     *
+     * Slot indexing is COLUMN-MAJOR: slot = (dx+R)*size + (dy+R), matching
+     * threat.lua's PRED_OFF_DX/PRED_ORDER convention so values agree.
+     *
+     * For each in-disk tile, compute its Bresenham predecessor using
+     * bresenham_second_to_last (= Lua's line[#line-1]).  Then build
+     * g_pred_order as the disk indices in Chebyshev-distance ascending order
+     * so each tile's predecessor is already filled when it is visited. */
+
+    /* Step 1: predecessor offsets for every in-disk slot. */
+    for (int dx = -R; dx <= R; dx++) {
+        for (int dy = -R; dy <= R; dy++) {
+            if (dx * dx + dy * dy > R2) continue;
+            int slot = (dx + R) * size + (dy + R);   /* column-major */
+            int pdx, pdy;
+            if (dx == 0 && dy == 0) { pdx = pdy = 0; }
+            else { bresenham_second_to_last(dx, dy, &pdx, &pdy); }
+            g_pred_off_dx[slot] = (int8_t)pdx;
+            g_pred_off_dy[slot] = (int8_t)pdy;
+        }
+    }
+
+    /* Step 2: Chebyshev-distance ascending traversal order. */
+    g_pred_len = 0;
+    for (int d = 0; d <= R; d++) {
+        for (int dx = -R; dx <= R; dx++) {
+            int adx = dx < 0 ? -dx : dx;
+            for (int dy = -R; dy <= R; dy++) {
+                int ady = dy < 0 ? -dy : dy;
+                int cheby = adx > ady ? adx : ady;
+                if (cheby == d && dx * dx + dy * dy <= R2) {
+                    int slot = (dx + R) * size + (dy + R);
+                    g_pred_order[g_pred_len++] = (int16_t)slot;
+                }
+            }
+        }
+    }
+
     g_disk_built = 1;
 }
 
@@ -369,15 +475,194 @@ static int l_naThreatIsTerrainBuilt(lua_State *L) {
     return 1;
 }
 
+/* na_threat.apply_occlusion_all(pill_grid, pill_contrib,
+ *                                fp_mx, fp_my, fp_n,
+ *                                hp_mx, hp_my, hp_n)
+ *
+ * C replacement for threat.lua's per-pill apply_occlusion_to_pill loop.
+ * Applies LOS wall/tree/friendly-pill occlusion to pill_grid and the
+ * matching per-pill pill_contrib sub-tables for every hostile/neutral pill.
+ *
+ * Uses the precomputed PRED tables from build_disk (Bresenham second-to-last
+ * predecessor convention, Chebyshev traversal order) and pre-allocated C
+ * scratch arrays — zero Lua table allocations during the sweep.
+ *
+ * fp_mx/fp_my are integer arrays (1-indexed Lua) of friendly pill positions.
+ * hp_mx/hp_my are integer arrays (1-indexed Lua) of hostile/neutral pill
+ * positions. fp_n / hp_n are their counts. */
+static int l_naThreatApplyOcclusionAll(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TTABLE);  /* pill_grid   */
+    luaL_checktype(L, 2, LUA_TTABLE);  /* pill_contrib */
+    luaL_checktype(L, 3, LUA_TTABLE);  /* fp_mx       */
+    luaL_checktype(L, 4, LUA_TTABLE);  /* fp_my       */
+    int fp_n = (int)luaL_checkinteger(L, 5);
+    luaL_checktype(L, 6, LUA_TTABLE);  /* hp_mx       */
+    luaL_checktype(L, 7, LUA_TTABLE);  /* hp_my       */
+    int hp_n = (int)luaL_checkinteger(L, 8);
+
+    if (!g_disk_built) build_disk();
+    if (!g_world_ptr_ptr) g_world_ptr_ptr = brainCoreGetWorldPtrPtr(L);
+
+    int R    = g_pill_range_map;
+    int size = 2 * R + 1;
+
+    /* Populate friendly-pill flat set from fp_mx/fp_my arrays. */
+    for (int i = 1; i <= fp_n; i++) {
+        lua_rawgeti(L, 3, i); int fx = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 4, i); int fy = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        if (in_map(fx, fy)) g_friendly_set[fy * MAP_W + fx] = 1;
+    }
+
+    /* Process each hostile/neutral pill. */
+    for (int hi = 1; hi <= hp_n; hi++) {
+        lua_rawgeti(L, 6, hi); int px = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 7, hi); int py = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+
+        int pill_key = py * MAP_W + px;
+
+        /* Get this pill's contrib sub-table (may be nil if stamp was skipped). */
+        lua_rawgeti(L, 2, pill_key);
+        int contrib_tbl = lua_gettop(L);
+        int has_contrib = lua_istable(L, contrib_tbl);
+
+        /* Occlusion DP sweep in Chebyshev order.
+         * g_occ_walls/trees/fpills are reused without clearing — the
+         * traversal order guarantees each slot is written before it is
+         * read as a predecessor (same technique as Lua _occ_walls). */
+        for (int oi = 0; oi < g_pred_len; oi++) {
+            int slot = (int)g_pred_order[oi];
+            /* Decode dx/dy from column-major slot. */
+            int dx = slot / size - R;
+            int dy = slot % size - R;
+
+            int w_total, t_total, f_total;
+            if (dx == 0 && dy == 0) {
+                w_total = t_total = f_total = 0;
+            } else {
+                int pdx = (int)g_pred_off_dx[slot];
+                int pdy = (int)g_pred_off_dy[slot];
+                int pred_slot = (pdx + R) * size + (pdy + R);
+                int prev_w = (int)g_occ_walls [pred_slot];
+                int prev_t = (int)g_occ_trees [pred_slot];
+                int prev_f = (int)g_occ_fpills[pred_slot];
+
+                int pnx = px + pdx;
+                int pny = py + pdy;
+                int add_w = 0, add_t = 0, add_f = 0;
+                if (in_map(pnx, pny)) {
+                    int tt = raw_tt(pnx, pny);
+                    if (tt == g_t_building || tt == g_t_halfbuild) { add_w = 1; }
+                    else if (tt == g_t_forest)                      { add_t = 1; }
+                    if (!(pdx == 0 && pdy == 0)) {
+                        if (g_friendly_set[pny * MAP_W + pnx]) add_f = 1;
+                    }
+                }
+                w_total = prev_w + add_w;
+                t_total = prev_t + add_t;
+                f_total = prev_f + add_f;
+            }
+
+            g_occ_walls [slot] = (int16_t)w_total;
+            g_occ_trees [slot] = (int16_t)t_total;
+            g_occ_fpills[slot] = (int16_t)f_total;
+
+            /* Apply reduction only if d^2 >= 4 (matches Lua `d2 >= 4` skip). */
+            int d2 = dx * dx + dy * dy;
+            if (d2 < 4) continue;
+            int nx = px + dx;
+            int ny = py + dy;
+            if (!in_map(nx, ny)) continue;
+            int k = ny * MAP_W + nx;
+
+            lua_rawgeti(L, 1, k);
+            double cur = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            if (cur <= 0.0) continue;
+
+            int eff_walls = w_total;
+            /* Front-most wall: exposed directly to pill, no self-occlusion. */
+            if (w_total == 0) {
+                int tt = raw_tt(nx, ny);
+                if (tt == g_t_building || tt == g_t_halfbuild) eff_walls = 0;
+            }
+            double reduction = eff_walls * 0.20 + t_total * 0.03 + f_total * 0.40;
+            if (reduction > 0.80) reduction = 0.80;
+            if (reduction <= 0.0) continue;
+
+            double factor = 1.0 - reduction;
+            lua_pushnumber(L, cur * factor);
+            lua_rawseti(L, 1, k);
+
+            if (has_contrib) {
+                lua_rawgeti(L, contrib_tbl, k);
+                if (!lua_isnil(L, -1)) {
+                    double cv = lua_tonumber(L, -1);
+                    lua_pop(L, 1);
+                    lua_pushnumber(L, cv * factor);
+                    lua_rawseti(L, contrib_tbl, k);
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+        }
+
+        lua_pop(L, 1);  /* pop contrib sub-table */
+    }
+
+    /* Clear friendly-pill set (only the positions we set). */
+    for (int i = 1; i <= fp_n; i++) {
+        lua_rawgeti(L, 3, i); int fx = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 4, i); int fy = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        if (in_map(fx, fy)) g_friendly_set[fy * MAP_W + fx] = 0;
+    }
+
+    return 0;
+}
+
+/* na_threat.sync_grids(pill_grid_table, cov_grid_table)
+ * Copies the Lua pill_grid and coverage_grid tables into the C-side flat
+ * arrays so na_attack.evaluate_pill_difficulty can read them without any
+ * Lua API overhead.  Called once after each full pill-grid rebuild. */
+static int l_naThreatSyncGrids(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    memset(s_pill_grid_c, 0, sizeof(s_pill_grid_c));
+    memset(s_cov_grid_c,  0, sizeof(s_cov_grid_c));
+    /* Copy pill_grid */
+    lua_pushnil(L);
+    while (lua_next(L, 1) != 0) {
+        lua_Integer k = lua_tointeger(L, -2);
+        if (k >= 0 && k < MAP_TILES)
+            s_pill_grid_c[(int)k] = (float)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    }
+    /* Copy cov_grid */
+    lua_pushnil(L);
+    while (lua_next(L, 2) != 0) {
+        lua_Integer k = lua_tointeger(L, -2);
+        if (k >= 0 && k < MAP_TILES)
+            s_cov_grid_c[(int)k] = (float)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/* C accessors used by na_attack.c */
+float *naThreatGetPillGrid(void) { return s_pill_grid_c; }
+float *naThreatGetCovGrid (void) { return s_cov_grid_c;  }
+int    naThreatRawTT(int mx, int my) { return raw_tt(mx, my); }
+
 /* ── Module registration ─────────────────────────────────────────── */
 
 static const luaL_Reg na_threat_lib[] = {
-    { "configure",            l_naThreatConfigure },
-    { "terrain_rebuild",      l_naThreatTerrainRebuild },
+    { "configure",             l_naThreatConfigure },
+    { "terrain_rebuild",       l_naThreatTerrainRebuild },
     { "terrain_update_around", l_naThreatTerrainUpdateAround },
-    { "terrain_factor_at",    l_naThreatTerrainFactorAt },
-    { "stamp_pill",           l_naThreatStampPill },
-    { "is_terrain_built",     l_naThreatIsTerrainBuilt },
+    { "terrain_factor_at",     l_naThreatTerrainFactorAt },
+    { "stamp_pill",            l_naThreatStampPill },
+    { "is_terrain_built",      l_naThreatIsTerrainBuilt },
+    { "sync_grids",            l_naThreatSyncGrids },
+    { "apply_occlusion_all",   l_naThreatApplyOcclusionAll },
     { NULL, NULL }
 };
 
