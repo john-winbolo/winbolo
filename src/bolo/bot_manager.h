@@ -187,6 +187,44 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
 double botManagerGetLastThinkMs(BYTE playerNum);
 
 /*********************************************************
+ *NAME:          botManagerComputePerBotTargetMs
+ *PURPOSE:
+ *  Returns the per-bot brain-tick budget for the next
+ *  tick, in milliseconds, given the currently active bot
+ *  count. Folds in an EWMA of recent serial-stage cost so
+ *  the budget tightens when the rest of the tick gets
+ *  busier and loosens when it doesn't.
+ *
+ *  Producer-thread only — reads the EWMA file-static
+ *  without synchronisation. Returns the full tick target
+ *  if the EWMA hasn't been seeded yet or no bots are
+ *  active.
+ *
+ *ARGUMENTS:
+ *  activeBots - Number of bots that will dispatch this tick
+ *********************************************************/
+double botManagerComputePerBotTargetMs(int activeBots);
+
+/*********************************************************
+ *NAME:          botManagerRecordSerialMs
+ *PURPOSE:
+ *  Feed the EWMA with the serial-stage cost of the tick
+ *  that just completed (the parts of botManagerTick that
+ *  are not the parallel brain-think dispatch). The next
+ *  call to botManagerComputePerBotTargetMs uses the
+ *  updated EWMA.
+ *
+ *  Producer-thread only — writes the EWMA file-static
+ *  without synchronisation. The first call seeds the
+ *  EWMA directly to avoid an init bias toward zero.
+ *
+ *ARGUMENTS:
+ *  ms - Wall-clock milliseconds spent in the tick's
+ *       serial stages (snapshot/sync + input send).
+ *********************************************************/
+void botManagerRecordSerialMs(double ms);
+
+/*********************************************************
  *NAME:          botManagerEvalLuaString
  *PURPOSE:
  *  Compile + run a Lua chunk in the bot's state and return

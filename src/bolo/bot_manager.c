@@ -69,15 +69,48 @@ typedef struct {
      * in milliseconds. Updated every botManagerTick. Surfaced via
      * botManagerGetLastThinkMs so HUDs / perf graphs can read it. */
     double          lastThinkMs;
+    /* Number of ticks this bot's think exceeded targetMs * 1.5. Counts
+     * every overrun; see lastOverrunWarnTick for the rate-limited log. */
+    Uint32          overrunCount;
+    /* Last tick at which a budget-overrun warning was logged for this
+     * bot. Limits the warning to at most one per ~50 ticks. */
+    Uint32          lastOverrunWarnTick;
 } BotContext;
 
 static BotContext bots[MAX_TANKS];
 static int numBots = 0;
 
-/* Per-bot last tick at which a slow-think warning was emitted, used to
- * rate-limit the warning to at most once per ~50 ticks. Type matches
- * ServerSim::tick (uint32_t) so the subtraction is well-defined. */
-static uint32_t lastWarnTick[MAX_TANKS] = {0};
+/* Total concurrent brain-tick runners including the producer thread.
+ * Saved by botManagerInit after validation; read by the budget formula
+ * to scale per-bot time when more bots than runners are active. */
+static int g_threadsConfig = 1;
+
+/* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
+ * first call to botManagerRecordSerialMs to avoid biasing toward zero. */
+static double s_serialMsEwma = 0.0;
+
+/* Wall-clock cost of the most recent dispatched brain-think stage, in
+ * milliseconds. Set per-tick at the end of botManagerTick; reserved
+ * for future refinements (e.g. computing the EWMA from the full
+ * serverInstanceTick instead of approximating it via kReservedSimMs). */
+static double s_lastBrainPhaseMs = 0.0;
+
+/* Per-bot brain-tick budget computed for the current tick. Set per-tick
+ * before dispatch so the input-send overrun check and any future server
+ * info command can read the same number the brains were given. */
+static double s_lastTargetMs = 0.0;
+
+/* EWMA smoothing factor — ~10-tick (200 ms) window. */
+static const double kAlpha = 0.1;
+/* Server tick target: 50 Hz → 20 ms. */
+static const double kTickMs = 1000.0 / 50.0;
+/* Conservative reserve for serverSimTick × 2 plus mutex acquire/release.
+ * The EWMA only measures the serial stages inside botManagerTick itself,
+ * so this fills in for the rest of serverInstanceTick. Refine via direct
+ * measurement from server_lifecycle.c if profiling shows a mismatch. */
+static const double kReservedSimMs = 6.0;
+/* Headroom subtracted from the per-tick budget. */
+static const double kSafetyMs = 2.0;
 
 static void (*g_preThinkHook)(int playerNum) = NULL;
 
@@ -162,6 +195,30 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+double botManagerComputePerBotTargetMs(int activeBots) {
+    if (activeBots <= 0) {
+        return kTickMs;
+    }
+    double brainBudget = kTickMs - s_serialMsEwma - kReservedSimMs - kSafetyMs;
+    if (brainBudget < 1.0) {
+        brainBudget = 1.0;
+    }
+    double perBot = brainBudget * (double)g_threadsConfig
+                    / (double)activeBots;
+    if (perBot > brainBudget) {
+        perBot = brainBudget;
+    }
+    return perBot;
+}
+
+void botManagerRecordSerialMs(double ms) {
+    if (s_serialMsEwma <= 0.0) {
+        s_serialMsEwma = ms;
+    } else {
+        s_serialMsEwma = kAlpha * ms + (1.0 - kAlpha) * s_serialMsEwma;
+    }
+}
+
 bool botManagerInit(int threads) {
     memset(bots, 0, sizeof(bots));
     numBots = 0;
@@ -197,6 +254,7 @@ bool botManagerInit(int threads) {
     if (workers > 0 && !botWorkerPoolCreate(workers)) {
         return false;
     }
+    g_threadsConfig = threads;
     return true;
 }
 
@@ -349,6 +407,12 @@ static void runBotThinkJob(int botIndex, void *userData) {
 void botManagerTick(ServerSim *sim, aiType ai) {
     int activeCount = 0;
 
+    /* Capture the start of the serial setup stage. The EWMA of serial
+     * cost is (brainStart - setupStart) + (sendEnd - brainEnd), i.e.
+     * everything inside this function that is not the dispatched
+     * brain-think stage. */
+    Uint64 setupStart = SDL_GetPerformanceCounter();
+
     /* ---- Stage 1: snapshot/sync (serial, on producer thread) ---- */
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &bots[i];
@@ -403,6 +467,19 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         s_jobIndices[activeCount++] = i;
     }
 
+    /* Compute this tick's per-bot brain budget once, before dispatch.
+     * Saved into s_lastTargetMs so the input-send overrun check below
+     * (and any future server info command) reads the same value the
+     * brains were given. */
+    s_lastTargetMs = botManagerComputePerBotTargetMs(activeCount);
+    for (int k = 0; k < activeCount; k++) {
+        int i = s_jobIndices[k];
+        luaBrainSetTickInputs(&bots[i].brain,
+                              bots[i].lastThinkMs,
+                              s_lastTargetMs,
+                              false /* wasKilled — no kill enforcement yet */);
+    }
+
     /* ---- Stage 2: brain tick (parallel via pool, serial on first tick) ----
      * BrainTest first-tick rule: if any bot's brain hasn't run yet,
      * registration callbacks (panel / overlay_detail / shotsim_poi) may
@@ -417,6 +494,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             break;
         }
     }
+    Uint64 brainStart = SDL_GetPerformanceCounter();
     if (anyFirstTick) {
         for (int k = 0; k < activeCount; k++) {
             runBotThinkJob(s_jobIndices[k], NULL);
@@ -424,6 +502,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     } else {
         botWorkerPoolRun(s_jobIndices, activeCount, runBotThinkJob, NULL);
     }
+    Uint64 brainEnd = SDL_GetPerformanceCounter();
 
     /* ---- Stage 3: input dispatch (serial, on producer thread) ----
      * The pool's signal/wait pair on each worker's done semaphore acts
@@ -447,17 +526,33 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         bots[i].transport.sendInput(bots[i].transport.ctx, &j->pkt1);
         bots[i].transport.sendInput(bots[i].transport.ctx, &j->pkt2);
 
-        /* Slow-tick warning: now reads bot->lastThinkMs (worker-written,
-         * visible via the pool's release/acquire), so logging never
-         * happens on a worker thread. Same 5.0 ms threshold and 50-tick
-         * rate limit as the previous serial path. */
+        /* Budget-overrun telemetry: every overrun bumps the per-bot
+         * counter; logging is rate-limited to once per ~50 ticks per
+         * bot so a chronically slow bot doesn't flood. Reads
+         * bot->lastThinkMs which the worker wrote — visible here via
+         * the pool's release/acquire on the done semaphore. */
         double ms = bots[i].lastThinkMs;
-        if (ms > 5.0 && (sim->tick - lastWarnTick[i]) > 50) {
-            WB_LOG_WARN(WB_LOG_CAT_LUA,
-                        "bot %d think took %.1fms (tick %u)", i, ms, sim->tick);
-            lastWarnTick[i] = sim->tick;
+        if (ms > s_lastTargetMs * 1.5) {
+            bots[i].overrunCount++;
+            if ((sim->tick - bots[i].lastOverrunWarnTick) > 50) {
+                WB_LOG_WARN(WB_LOG_CAT_LUA,
+                            "bot %d think %.1fms over target %.1fms (overruns=%u)",
+                            i, ms, s_lastTargetMs, bots[i].overrunCount);
+                bots[i].lastOverrunWarnTick = sim->tick;
+            }
         }
     }
+
+    /* End of the input-send stage. Feed the EWMA with the serial cost
+     * (everything in this function except the dispatched brain-think
+     * stage), and stash that stage's wall-clock for future use. */
+    Uint64 sendEnd = SDL_GetPerformanceCounter();
+    double freq = (double)SDL_GetPerformanceFrequency();
+    s_lastBrainPhaseMs = (double)(brainEnd - brainStart) * 1000.0 / freq;
+    double serialMs = ((double)(brainStart - setupStart)
+                       + (double)(sendEnd - brainEnd)) * 1000.0 / freq;
+    botManagerRecordSerialMs(serialMs);
+
     (void)ai;
 }
 

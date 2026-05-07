@@ -751,6 +751,33 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   return ok;
 }
 
+void luaBrainSetTickInputs(LuaBrainInstance *inst,
+                           double lastThinkMs,
+                           double targetMs,
+                           bool   wasKilled) {
+    lua_State *L;
+    int top;
+
+    if (inst == NULL || !inst->running || inst->L == NULL) {
+        return;
+    }
+    L = inst->L;
+    top = lua_gettop(L);
+
+    lua_getglobal(L, "brain");
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushnumber(L, lastThinkMs);
+    lua_setfield(L, -2, "lastThinkMs");
+    lua_pushnumber(L, targetMs);
+    lua_setfield(L, -2, "targetMs");
+    lua_pushboolean(L, wasKilled ? 1 : 0);
+    lua_setfield(L, -2, "wasKilled");
+    lua_settop(L, top);
+}
+
 void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   if (!inst->running || inst->L == NULL) {
     return;
