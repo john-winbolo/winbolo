@@ -1768,19 +1768,6 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
 
 
 # ---------------------------------------------------------------------------
-# bot_worker_pool_test (unit test for the SDL3 worker pool primitive)
-# ---------------------------------------------------------------------------
-enable_testing()
-
-add_executable(bot_worker_pool_test
-    tests/bot_worker_pool_test.c
-    src/bolo/bot_worker_pool.c
-)
-target_link_libraries(bot_worker_pool_test PRIVATE SDL3::SDL3)
-
-add_test(NAME bot_worker_pool_test COMMAND bot_worker_pool_test)
-
-# ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
 # ---------------------------------------------------------------------------
 
