@@ -160,8 +160,16 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   -- Don't set attack_target — wsim evaluates travel survivability only,
   -- not prolonged combat. Setting it makes the bot shoot at the pill
   -- during travel, angering it and unrealistically accelerating fire rate.
+  local _tw0 = clock_us()
   wsim.snapshot(world, info, path, nil)
+  local _tw1 = clock_us()
   local r = wsim.run(C.WSIM_MAX_TICKS)
+  local _tw2 = clock_us()
+  if (_tw2 - _tw0) > 200 then
+    opt.append("optimize.log", string.format(
+      "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
+      goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
+  end
 
   local extra_cost = r.damage * C.WSIM_DAMAGE_COST_WEIGHT
   local sim_desc = string.format(" wsim:%ddmg %.1fs arm=%d->%d",
@@ -2687,6 +2695,8 @@ function M.step_eval_queue(state, world, info)
     local pool_idx = item.pool
     local obj = item.obj
     local id = item.id
+    local _diff_us = 0  -- pool-6 eval_pill_difficulty timing
+    local _spot_us = 0  -- pool-6 spot+travel timing
 
     -- Initialize partial result for this pool if needed
     if not partial[pool_idx] then
@@ -2938,11 +2948,10 @@ function M.step_eval_queue(state, world, info)
         local dck = obj.mx .. ":" .. obj.my .. ":" .. (state.phase or "")
         local dc = diff_cache[dck]
         local diff_score, best_spot, _spots
-        -- In BrainTest (BRAIN_DEBUG_MODE=true) we ALWAYS populate the
-        -- spots array so any viz toggle can render instantly without
-        -- forcing a re-evaluation. In opt/ (BRAIN_DEBUG_MODE=false)
-        -- spots stay nil — no per-spot table allocation, no GC churn,
-        -- ~2 ms saved per pill per cache miss.
+        -- Never request detailed spots here — the C fast path requires
+        -- detailed=false, and spots are only used for viz overlays.
+        -- The attack_scan_spots_all_pills viz reads from plan_position's
+        -- own detailed evaluation instead.
         local force_detailed = BRAIN_DEBUG_MODE
         local just_evaluated = false
 
@@ -2995,9 +3004,10 @@ function M.step_eval_queue(state, world, info)
 
         if not needs_eval then
           if dc then
-            diff_score = dc.score
-            best_spot  = dc.spot
-            _spots     = dc.spots
+            diff_score  = dc.score
+            best_spot   = dc.spot
+            _spots      = dc.spots
+            travel      = dc.pickup_travel  -- cached pickup walk; nil forces recompute
           else
             -- First-eval deferred. Stub keeps the candidate parked
             -- without paying for a scan.
@@ -3046,21 +3056,10 @@ function M.step_eval_queue(state, world, info)
           -- returned path and subtract this pill's own danger contrib +
           -- the 32767 overlay on its tile, matching what the planner
           -- would experience post-kill.
+          if travel == nil then  -- not yet cached for this spot
           do
             local pck = obj.my * 256 + obj.mx
             local pc  = threat.pill_contrib and threat.pill_contrib[pck]
-            -- Pickup leg: model the pill as dead for the A* search.
-            -- 1. Zero the pill's overlay (it's dead, no longer impassable).
-            -- 2. Load negative danger offsets for this pill's contribution so
-            --    the A* naturally finds the cheapest path as if the pill's fire
-            --    field were gone — no post-hoc subtraction needed.
-            -- 3. Clear stuck-blacklist overlays (stalled-at-spot penalties
-            --    shouldn't inflate a hypothetical post-kill walk estimate).
-            -- 4. Disable armour drain: this is for goal ranking only; the
-            --    caller decides separately whether the tank can survive.
-            -- 5. Use a large budget: high residual danger (from other pills)
-            --    makes h << actual cost, degrading A* toward Dijkstra.
-            -- All modifications are restored immediately after the search.
             cpf.set_overlay(obj.mx, obj.my, 0)
             if pc then cpf.load_danger_offset(pc, -1) end
             local _stuck_bl = state.stuck_blacklist
@@ -3071,7 +3070,7 @@ function M.step_eval_queue(state, world, info)
             end
             cpf.set_config("armour_drain_rate", 0)
             local raw = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
-                                    boat_flag, shells, trees, mines, armour, 131072)
+                                    boat_flag, shells, trees, mines, armour, 4096)
             cpf.set_config("armour_drain_rate", 0.02)
             cpf.clear_danger_offset()
             cpf.set_overlay(obj.mx, obj.my, 32767)
@@ -3081,19 +3080,11 @@ function M.step_eval_queue(state, world, info)
               end
             end
             travel = math.max(0, raw)
-
-            if raw >= 1e29 then
-              local _dx = best_spot.mx - obj.mx
-              local _dy = best_spot.my - obj.my
-              goal_pickup_detail = string.format(
-                "no path: spot(%d,%d)->pill(%d,%d) dist=%.1f boat=%d sh=%d tr=%d mn=%d arm=%d",
-                best_spot.mx, best_spot.my, obj.mx, obj.my,
-                math.sqrt(_dx*_dx + _dy*_dy),
-                boat_flag, shells, trees, mines, armour)
-            else
-              goal_pickup_detail = string.format("%.0f (pill-dead A* cost)", raw)
-            end
-          end
+            -- Cache pickup travel so subsequent queue pops skip the A*.
+            -- Same TTL as diff_cache (spot only changes on re-eval).
+            if diff_cache[dck] then diff_cache[dck].pickup_travel = travel end
+          end  -- end pickup A* do-block
+          end  -- end if travel == nil
           _spot_us = clock_us() - _t_spot
 
           -- Capture which pathfinder produced spot_cost + the realized
@@ -3413,10 +3404,11 @@ function M.step_eval_queue(state, world, info)
     -- which inner step dominates.
     if _t_total > 500 then
       opt.append("optimize.log", string.format(
-        "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f cost=%.0f obj=(%d,%d) hp=%s",
+        "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
         _t_total / 1000, _t_raw / 1000,
         _t_adj / 1000, _t_smart / 1000,
+        _diff_us / 1000, _spot_us / 1000,
         raw_cost, obj.mx or -1, obj.my or -1, tostring(obj.health)))
     end
     ::continue::
@@ -3807,6 +3799,7 @@ end
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
 local function goal_selection(state, world, info, quiet)
+  local _tgs0 = clock_us()
   local tmx    = info.tankx >> 8
   local tmy    = info.tanky >> 8
   local boat   = info.inboat
@@ -4221,6 +4214,7 @@ local function goal_selection(state, world, info, quiet)
   -- in the ticks leading up to the decision.  Here we just assemble
   -- the cached results, apply hysteresis, and pick the winner.
   -- ════════════════════════════════════════════════════════════════════
+  local _tgs_pre_pool = clock_us()
   if not result then
     local pc = state.pool_cache or {}
     -- Build pool with copies so hysteresis doesn't mutate cached costs
@@ -4572,6 +4566,7 @@ local function goal_selection(state, world, info, quiet)
        and C.WSIM_OPENING_ENABLED == false then
       wsim_active = false
     end
+    local _tgs_pre_wsim = clock_us()
     if wsim_active then
       for _, c in ipairs(pool) do
         -- Only sim goals that travel through danger (skip refuel/explore)
@@ -4652,6 +4647,13 @@ local function goal_selection(state, world, info, quiet)
       end
       -- Re-sort after sim adjustments
       table.sort(pool, function(a, b) return a.cost < b.cost end)
+    end
+    local _tgs_post_wsim = clock_us()
+    if (_tgs_post_wsim - _tgs0) > 500 then
+      opt.append("optimize.log", string.format(
+        "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
+        (_tgs_post_wsim-_tgs0)/1000, (_tgs_pre_pool-_tgs0)/1000,
+        (_tgs_pre_wsim-_tgs_pre_pool)/1000, (_tgs_post_wsim-_tgs_pre_wsim)/1000, #pool))
     end
 
     -- Phase 0 scaffolding: patch wsim_add + final total back into the

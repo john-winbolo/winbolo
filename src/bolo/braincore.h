@@ -260,6 +260,12 @@ typedef void (*BrainVizDetailClearFunc)(void);
 void brainCoreSetVizDetailRegisterCallback(BrainVizDetailRegisterFunc cb);
 void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb);
 void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
+
+/* bt_yield() — host event-pump hook.
+ * When set, the Lua global bt_yield() calls this so long-running Brain.open()
+ * operations (LOS computation, stamp caches) can keep the window responsive.
+ * Non-BrainTest hosts leave this NULL; bt_yield() becomes a no-op. */
+void brainCoreSetYieldCallback(void (*cb)(void));
 void brainCoreRegisterVizDetail(lua_State *L);
 
 /* NOTE: pill_contrib bindings used to live here. They were specific to

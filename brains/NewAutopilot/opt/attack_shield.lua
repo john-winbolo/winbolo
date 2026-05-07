@@ -153,63 +153,85 @@ M.AIM_COLORS = {
 -- angle_key = math.floor((deg % 360) * 4)  →  integer 0..1439
 -- C-side stamp module registered by naShieldStampRegister in luabrainshandler.c.
 local na_shield = na_shield
+-- Fast flat tile lookup: na_shield.get_flat(angle_key, nudge_wu, aim_idx)
+-- Returns flat {dx1,dy1,...} relative to pill. nil when not loaded / OOB.
+local _get_flat = na_shield and na_shield.get_flat or nil
 
 -- Flat boolean table built by C after na_shield.load(): index =
 -- (angle_key * N_NUDGES + nudge_idx) * N_AIMS + aim_idx + 1  (1-based)
 -- N_NUDGES=5 (wu 0,8,16,24,32), N_AIMS=6 (0=ret-fire, 1-5=outgoing).
 -- Set by M.load_stamp_bin(); nil until then → fallback to ensure_nudge_ring.
 local _pill_hit = nil
-local _PH_NUDGES = 5   -- must match binary file
-local _PH_AIMS   = 6
-local _PH_STRIDE = _PH_NUDGES * _PH_AIMS  -- 30: per-angle stride
--- Maps nudge_wu (world-units) → 0-based nudge_idx in the stamp table.
--- Only covers the precomputed range (wu 0..32 at step 8); returns nil beyond that.
-local _NUDGE_IDX = { [0]=0, [8]=1, [16]=2, [24]=3, [32]=4 }
+local _PH_NUDGES = 33   -- 0..32 inclusive (33 nudge slots)
+local _PH_AIMS   = 6    -- 0=return-fire + 5 outgoing aims (#AIM_OFFSETS+1)
+local _PH_STRIDE = _PH_NUDGES * _PH_AIMS  -- 198: per-angle stride
+local _NUDGE_IDX = {}
+for _ni = 0, 32 do _NUDGE_IDX[_ni * 8] = _ni end
 
 -- Score one (candidate_pos, aim_i) pair.
 -- Returns: outgoing_tiles, outgoing_blocked_by_wall,
 --          per_aim_blockers (filtered list), per_aim_score
+-- precomp_out:   {mx=,my=} table list (from simulate_shot), or nil
+-- precomp_flat:  flat {dx1,dy1,...} relative to (pmx,pmy) for outgoing shot, or nil
+-- return_flat:   flat {dx1,dy1,...} relative to (pmx,pmy) for return-fire path, or nil
 local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
                           pmx, pmy, pill_wx, pill_wy,
                           aim_offset, return_tiles_set, return_tiles_list,
-                          world, no_builder, precomp_out)
+                          world, no_builder, precomp_out, precomp_flat, return_flat)
   local target_wx = (pmx << 8) + aim_offset[1]
   local target_wy = (pmy << 8) + aim_offset[2]
-  local out_tiles = precomp_out or cpf.simulate_shot(spot_wx, spot_wy,
-                                                      target_wx, target_wy,
-                                                      cpf.SHOT_TANK, 0)
 
   -- Outgoing path: walk up to the pill, reject the aim if it crosses
-  -- a wall OR any pill (friendly or enemy) other than the target. The
-  -- pill-rejection is the important one for shield aiming — without
-  -- it, an aim that physically slams the shell into a friendly blocker
-  -- pill gets accepted because the score filter ALSO doesn't count
-  -- tiles that are on the outgoing path. We'd then prefer that aim
-  -- thinking it's "clean", and at runtime the real shell hits the
-  -- blocker pill instead of the target.
+  -- a wall OR any pill (friendly or enemy) other than the target.
   local outgoing_blocked_by_wall = false
   local outgoing_set = {}
-  if out_tiles then
-    for ti = 1, #out_tiles do
-      local t = out_tiles[ti]
-      if t.mx == pmx and t.my == pmy then break end
-      if not (t.mx == origin_mx and t.my == origin_my) then
-        outgoing_set[t.my * 256 + t.mx] = true
-        local tt = U.ttype(t.mx, t.my)
+  local out_tiles_result = nil  -- returned; nil when using stamp (not needed)
+
+  if precomp_flat then
+    -- Fast path: stamp flat dx/dy array — no Lua {mx,my} table per tile
+    for i = 1, #precomp_flat, 2 do
+      local tmx = pmx + precomp_flat[i]
+      local tmy = pmy + precomp_flat[i + 1]
+      if tmx == pmx and tmy == pmy then break end
+      if not (tmx == origin_mx and tmy == origin_my) then
+        outgoing_set[tmy * 256 + tmx] = true
+        local tt = U.ttype(tmx, tmy)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
           outgoing_blocked_by_wall = true
         end
-        -- Any non-target pill in the path = the shell hits it. Reject.
-        -- pill_at[k] is a LIST of {id=, pill=} records (multiple pills
-        -- can briefly share a tile during pickup/replace), not a single
-        -- id — old code did `world.pills[<list>]` which is always nil
-        -- and never fired this reject. Walk the list and check each.
-        local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        local plist = world.pill_at and world.pill_at[tmy * 256 + tmx]
         if plist then
           for _, e in ipairs(plist) do
             if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
               outgoing_blocked_by_wall = true
               break
+            end
+          end
+        end
+      end
+    end
+  else
+    local out_tiles = precomp_out or cpf.simulate_shot(spot_wx, spot_wy,
+                                                        target_wx, target_wy,
+                                                        cpf.SHOT_TANK, 0)
+    out_tiles_result = out_tiles
+    if out_tiles then
+      for ti = 1, #out_tiles do
+        local t = out_tiles[ti]
+        if t.mx == pmx and t.my == pmy then break end
+        if not (t.mx == origin_mx and t.my == origin_my) then
+          outgoing_set[t.my * 256 + t.mx] = true
+          local tt = U.ttype(t.mx, t.my)
+          if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+            outgoing_blocked_by_wall = true
+          end
+          local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+          if plist then
+            for _, e in ipairs(plist) do
+              if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+                outgoing_blocked_by_wall = true
+                break
+              end
             end
           end
         end
@@ -237,31 +259,32 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
   local pill_to_standoff_d = math.sqrt(pdtx * pdtx + pdty * pdty)
   local actual_blockers, potential_blockers = {}, {}
   local unreachable_blockers = {}  -- buildable tiles the LGM can't reach (viz only)
-  if not outgoing_blocked_by_wall and return_tiles_list then
-    for ti = 1, #return_tiles_list do
-      local t = return_tiles_list[ti]
-      local idx = t.my * 256 + t.mx
-      local skip = (t.mx == pmx and t.my == pmy) or
-                   (t.mx == origin_mx and t.my == origin_my)
-      if not skip and not outgoing_set[idx] and U.in_map(t.mx, t.my) then
-        -- Distance from standoff (anti-clobber: tank body would
-        -- overlap an immediately-adjacent wall; BLOCKER_MIN_DIST=1.0
-        -- excludes only the standoff tile itself).
-        local sdx = t.mx + 0.5 - standoff_cx
-        local sdy = t.my + 0.5 - standoff_cy
+  local _ret_src = return_flat or return_tiles_list
+  if not outgoing_blocked_by_wall and _ret_src then
+    local _ret_is_flat = (return_flat ~= nil)
+    for _ri = 1, #_ret_src, (_ret_is_flat and 2 or 1) do
+      local tmx, tmy
+      if _ret_is_flat then
+        tmx = pmx + _ret_src[_ri]
+        tmy = pmy + _ret_src[_ri + 1]
+      else
+        local t = _ret_src[_ri]
+        tmx, tmy = t.mx, t.my
+      end
+      local idx = tmy * 256 + tmx
+      local skip = (tmx == pmx and tmy == pmy) or
+                   (tmx == origin_mx and tmy == origin_my)
+      -- replace all t.mx/t.my uses below with tmx/tmy
+      if not skip and not outgoing_set[idx] and U.in_map(tmx, tmy) then
+        local sdx = tmx + 0.5 - standoff_cx
+        local sdy = tmy + 0.5 - standoff_cy
         local d_standoff = math.sqrt(sdx * sdx + sdy * sdy)
-        -- Distance from pill: must be strictly less than the
-        -- standoff-to-pill distance so the wall sits between us and
-        -- the pill rather than behind us.
-        local pdx = t.mx + 0.5 - pill_cx
-        local pdy = t.my + 0.5 - pill_cy
+        local pdx = tmx + 0.5 - pill_cx
+        local pdy = tmy + 0.5 - pill_cy
         local pdist = math.sqrt(pdx * pdx + pdy * pdy)
         local in_front_of_standoff = pdist < pill_to_standoff_d
         if d_standoff >= M.BLOCKER_MIN_DIST and in_front_of_standoff then
           local kind = nil
-          -- pill_at[k] is a list of {id=, pill=} (see world.lua:32) —
-          -- old code did world.pills[<list>] which is always nil, so
-          -- friendly pills were never recognised as blockers.
           local plist = world.pill_at and world.pill_at[idx]
           if plist then
             for _, e in ipairs(plist) do
@@ -272,56 +295,34 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
             end
           end
           if not kind then
-            local tt = U.ttype(t.mx, t.my)
+            local tt = U.ttype(tmx, tmy)
             if tt == C.T_BUILDING then kind = "wall_full"
             elseif tt == C.T_HALFBUILD then kind = "wall_half"
             end
           end
           if kind then
             actual_blockers[#actual_blockers + 1] =
-              { mx = t.mx, my = t.my, kind = kind }
+              { mx = tmx, my = tmy, kind = kind }
           else
-            -- Empty terrain that COULD be a wall. Only consider tiles
-            -- that are buildable land (no water, no pill, no base, no
-            -- existing wall). Note: bases use T_REFBASE in constants
-            -- (was previously written as the non-existent C.T_BASE,
-            -- which silently passed every tile and let the LGM try
-            -- to build on a friendly refuel base).
-            local tt = U.ttype(t.mx, t.my)
+            local tt = U.ttype(tmx, tmy)
             local buildable =
               tt ~= C.T_DEEPSEA and tt ~= C.T_RIVER and
               tt ~= C.T_SWAMP   and tt ~= C.T_PILLBOX and
               tt ~= C.T_REFBASE and tt ~= C.T_BOAT
-            -- No LGM available to build (dead/parachuting): potentials
-            -- are imaginary cover, drop them so the score reflects only
-            -- what's already there. attack.lua will demote to no-shield
-            -- if the resulting score is 0 across all candidates.
             if no_builder then buildable = false end
             if buildable then
-              -- LGM-reachability: the tank parks on (origin_mx,origin_my)
-              -- during build_walls and dispatches the LGM from there.
-              -- If lgm_travel_ticks_map says no path exists, this
-              -- blocker is fictional — drop it. Skips the C call when
-              -- adjacent (always reachable, identical to lgm_can_reach
-              -- in builder.lua).
               local reachable = true
-              if math.abs(t.mx - origin_mx) + math.abs(t.my - origin_my) > 1 then
+              if math.abs(tmx - origin_mx) + math.abs(tmy - origin_my) > 1 then
                 local ticks = cpf.lgm_travel_ticks_map(
-                  origin_mx, origin_my, t.mx, t.my, 0, 0, 2000, 150)
+                  origin_mx, origin_my, tmx, tmy, 0, 0, 2000, 150)
                 reachable = ticks ~= -1
               end
               if reachable then
                 potential_blockers[#potential_blockers + 1] =
-                  { mx = t.mx, my = t.my, kind = "empty" }
+                  { mx = tmx, my = tmy, kind = "empty" }
               else
-                -- Track separately so the viz_detail dialog can show
-                -- WHY a buildable tile didn't make the cut. Not used
-                -- by scoring (kept out of potential_blockers). Stash
-                -- the origin (the candidate standoff the LGM would
-                -- dispatch from) so the viz can show the failed
-                -- start→end pair, not just the destination.
                 unreachable_blockers[#unreachable_blockers + 1] =
-                  { mx = t.mx, my = t.my, kind = "unreachable",
+                  { mx = tmx, my = tmy, kind = "unreachable",
                     origin_mx = origin_mx, origin_my = origin_my }
               end
             end
@@ -330,7 +331,7 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
       end
     end
   end
-  return out_tiles, outgoing_blocked_by_wall, actual_blockers, potential_blockers, unreachable_blockers
+  return out_tiles_result, outgoing_blocked_by_wall, actual_blockers, potential_blockers, unreachable_blockers
 end
 
 -- Score one candidate position fully (all 5 aims + return fire).
@@ -355,9 +356,15 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
   local spot_wx = math.floor(cand.cx * 256 + 0.5)
   local spot_wy = math.floor(cand.cy * 256 + 0.5)
 
-  -- Compute return fire ONCE via C shot simulation.
-  local return_tiles = cpf.simulate_shot(pill_wx, pill_wy, spot_wx, spot_wy,
-                                          cpf.SHOT_PILL, 0)
+  -- Compute return fire ONCE: use stamp cache if loaded, else simulate_shot.
+  local _ak = _get_flat and math.floor((cand.deg % 360) * 4) or nil
+  cand._ak = _ak  -- store for nudge ring reuse
+  local _ret_flat = _ak and _get_flat(_ak, 0, 0)  -- aim_idx 0 = return fire
+  local return_tiles = nil
+  if not _ret_flat then
+    return_tiles = cpf.simulate_shot(pill_wx, pill_wy, spot_wx, spot_wy,
+                                     cpf.SHOT_PILL, 0)
+  end
   cand.return_fire = { tiles = return_tiles }
 
   -- LGM dispatch origin during build_walls. The tank doesn't park on
@@ -386,10 +393,12 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
   local best_aim_idx = nil
   local best_score = 0
   for ai = 1, #AIM_OFFSETS do
+    -- Use precomputed stamp tiles when available (aim_idx 1..N for outgoing).
+    local _out_flat = _ak and _get_flat(_ak, 0, ai)
     local out_tiles, blocked, actual_blockers, potential_blockers, unreachable_blockers = score_aim(
       spot_wx, spot_wy, lgm_omx, lgm_omy,
       pmx, pmy, pill_wx, pill_wy,
-      AIM_OFFSETS[ai], nil, return_tiles, world, no_builder)
+      AIM_OFFSETS[ai], nil, return_tiles, world, no_builder, nil, _out_flat, _ret_flat)
     -- Score = 10 per protection slot (actual or potential) + small
     -- bonus per already-built slot. So ranking is driven by the total
     -- protection geometry, with a tiebreaker that favors spots whose
@@ -468,6 +477,92 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- Standoff candidate first, then 8 around.
   local sx = standoff_cx or (standoff_mx + 0.5)
   local sy = standoff_cy or (standoff_my + 0.5)
+
+  -- ── C scan path ───────────────────────────────────────────────────────────
+  if na_shield and na_shield.scan_c and _pill_hit then
+    local pill_hp = pill.health or 0
+    -- HP-dependent neighbor bonus params (passed to scan_c as args 13..19).
+    local n_fav, fs1, fb1, fs2, fb2 = 0, 0, 0.0, 0, 0.0
+    local min_chain, max_bonus = 0, M.WOUNDED_FAVOR_BONUS
+    local fav_bonus_by_size, tier_label = {}, "NONE"
+    if pill_hp >= M.WOUNDED_HP_FULL_MIN and pill_hp <= M.WOUNDED_HP_FULL_MAX then
+      n_fav = 2
+      fs1, fb1 = M.WOUNDED_HP_FULL_FAV2_BLOCKERS, M.WOUNDED_HP_FULL_BONUS2
+      fs2, fb2 = M.WOUNDED_HP_FULL_FAV3_BLOCKERS, M.WOUNDED_HP_FULL_BONUS3
+      min_chain = M.WOUNDED_HP_FULL_MIN_CHAIN
+      max_bonus = math.max(M.WOUNDED_HP_FULL_BONUS2, M.WOUNDED_HP_FULL_BONUS3)
+      fav_bonus_by_size[fs1] = fb1; fav_bonus_by_size[fs2] = fb2
+      tier_label = "FULL"
+    elseif pill_hp >= M.WOUNDED_HP_HIGH_MIN and pill_hp <= M.WOUNDED_HP_HIGH_MAX then
+      n_fav = 1; fs1 = M.WOUNDED_HP_HIGH_FAV_BLOCKERS; fb1 = M.WOUNDED_FAVOR_BONUS
+      min_chain = M.WOUNDED_HP_HIGH_MIN_CHAIN; max_bonus = M.WOUNDED_FAVOR_BONUS
+      fav_bonus_by_size[fs1] = fb1; tier_label = "HIGH"
+    elseif pill_hp <= M.WOUNDED_HP_LOW_MAX then
+      n_fav = 1; fs1 = M.WOUNDED_HP_LOW_FAV_BLOCKERS; fb1 = M.WOUNDED_FAVOR_BONUS
+      min_chain = M.WOUNDED_HP_LOW_MIN_CHAIN; max_bonus = M.WOUNDED_FAVOR_BONUS
+      fav_bonus_by_size[fs1] = fb1; tier_label = "LOW"
+    end
+
+    local pill_table = {}
+    if world.pill_at then
+      for _, plist in pairs(world.pill_at) do
+        for _, e in ipairs(plist) do
+          if e.pill then
+            local p = e.pill
+            pill_table[#pill_table+1] = p.mx
+            pill_table[#pill_table+1] = p.my
+            pill_table[#pill_table+1] = (p.owner == "friendly") and 1 or 0
+          end
+        end
+      end
+    end
+
+    local r = na_shield.scan_c(
+      pmx, pmy, pill_wx, pill_wy,
+      standoff_deg, sx, sy, R,
+      pill_table,
+      standoff_mx or math.floor(sx), standoff_my or math.floor(sy),
+      no_builder and true or false,
+      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus)
+
+    if r then
+      local standoff_cand = { cx = sx, cy = sy,
+                               mx = standoff_mx or math.floor(sx),
+                               my = standoff_my or math.floor(sy) }
+      if r[1] == 0 then
+        return { best = nil, pill = pill, standoff = standoff_cand,
+                 pill_hp = pill_hp, fav_bonus_by_size = fav_bonus_by_size,
+                 min_chain = min_chain, tier_label = tier_label }
+      end
+      local bai   = r[8]
+      local n_act = r[10]
+      local n_pot = r[21]
+      local act, pot = {}, {}
+      for k = 0, n_act - 1 do
+        act[k+1] = { mx = pmx + r[11+k], my = pmy + r[16+k] }
+      end
+      for k = 0, n_pot - 1 do
+        pot[k+1] = { mx = pmx + r[22+k], my = pmy + r[27+k] }
+      end
+      local best = {
+        kind = "candidate",
+        cx = r[2], cy = r[3], mx = r[4], my = r[5], deg = r[6],
+        score = r[7], best_aim_idx = bai,
+        score_actual = r[32], score_potential = r[33], score_neighbor = r[34],
+        valid_tile = true, aims = {}, return_fire = { tiles = nil },
+      }
+      best.aims[bai] = {
+        blocked = false,
+        blockers = act, potential_blockers = pot, unreachable_blockers = {},
+        nudge_wu = r[9], score = r[32] + r[33],
+      }
+      return { best = best, pill = pill, standoff = standoff_cand,
+               pill_hp = pill_hp, fav_bonus_by_size = fav_bonus_by_size,
+               min_chain = min_chain, tier_label = tier_label }
+    end
+  end
+  -- ── End C scan path ───────────────────────────────────────────────────────
+
   local candidates = {}
   candidates[1] = make_candidate(sx, sy, standoff_deg, 0, "standoff")
   -- Force the standoff's tile to the integer one we were handed (in case
@@ -553,10 +648,21 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
         local amy = U.mclamp(math.floor(afy))
         if U.in_map(amx, amy) then lgm_omx, lgm_omy = amx, amy end
       end
-      local out, blk, act, pot, unr = score_aim(
-        nwx, nwy, lgm_omx, lgm_omy,
-        pmx, pmy, pill_wx, pill_wy,
-        AIM_OFFSETS[ai], nil, ret, world, no_builder)
+      local out, blk, act, pot, unr
+      local _cak = _get_flat and c._ak
+      local _pf = _cak and _get_flat(_cak, nudge_wu, ai)
+      if _pf then
+        -- Fast path: use stamp for outgoing (avoids simulate_shot in score_aim).
+        out, blk, act, pot, unr = score_aim(
+          nwx, nwy, lgm_omx, lgm_omy,
+          pmx, pmy, pill_wx, pill_wy,
+          AIM_OFFSETS[ai], nil, ret, world, no_builder, nil, _pf, nil)
+      else
+        out, blk, act, pot, unr = score_aim(
+          nwx, nwy, lgm_omx, lgm_omy,
+          pmx, pmy, pill_wx, pill_wy,
+          AIM_OFFSETS[ai], nil, ret, world, no_builder)
+      end
       local a_list = act or {}
       local p_list = pot or {}
       aim_ring[ci] = {
@@ -574,10 +680,14 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
           a_list[1] and a_list[1].mx - pmx or 0, a_list[1] and a_list[1].my - pmy or 0,
           a_list[2] and a_list[2].mx - pmx or 0, a_list[2] and a_list[2].my - pmy or 0,
           a_list[3] and a_list[3].mx - pmx or 0, a_list[3] and a_list[3].my - pmy or 0,
+          a_list[4] and a_list[4].mx - pmx or 0, a_list[4] and a_list[4].my - pmy or 0,
+          a_list[5] and a_list[5].mx - pmx or 0, a_list[5] and a_list[5].my - pmy or 0,
           #p_list,
           p_list[1] and p_list[1].mx - pmx or 0, p_list[1] and p_list[1].my - pmy or 0,
           p_list[2] and p_list[2].mx - pmx or 0, p_list[2] and p_list[2].my - pmy or 0,
-          p_list[3] and p_list[3].mx - pmx or 0, p_list[3] and p_list[3].my - pmy or 0)
+          p_list[3] and p_list[3].mx - pmx or 0, p_list[3] and p_list[3].my - pmy or 0,
+          p_list[4] and p_list[4].mx - pmx or 0, p_list[4] and p_list[4].my - pmy or 0,
+          p_list[5] and p_list[5].mx - pmx or 0, p_list[5] and p_list[5].my - pmy or 0)
       end
     end
     ring_d[ai] = aim_ring
@@ -609,10 +719,14 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
             act[1] and act[1].mx - pmx or 0, act[1] and act[1].my - pmy or 0,
             act[2] and act[2].mx - pmx or 0, act[2] and act[2].my - pmy or 0,
             act[3] and act[3].mx - pmx or 0, act[3] and act[3].my - pmy or 0,
+            act[4] and act[4].mx - pmx or 0, act[4] and act[4].my - pmy or 0,
+            act[5] and act[5].mx - pmx or 0, act[5] and act[5].my - pmy or 0,
             #pot,
             pot[1] and pot[1].mx - pmx or 0, pot[1] and pot[1].my - pmy or 0,
             pot[2] and pot[2].mx - pmx or 0, pot[2] and pot[2].my - pmy or 0,
-            pot[3] and pot[3].mx - pmx or 0, pot[3] and pot[3].my - pmy or 0)
+            pot[3] and pot[3].mx - pmx or 0, pot[3] and pot[3].my - pmy or 0,
+            pot[4] and pot[4].mx - pmx or 0, pot[4] and pot[4].my - pmy or 0,
+            pot[5] and pot[5].mx - pmx or 0, pot[5] and pot[5].my - pmy or 0)
         end
       end
     end
@@ -636,7 +750,12 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     local rescore = false
     for ai = 1, #AIM_OFFSETS do
       local aim = c.aims and c.aims[ai]
-      if aim and not aim.blocked and not pill_in_tiles(aim.tiles) then
+      -- Check if base position already hits the pill.
+      local aim_hits = aim and aim.tiles and pill_in_tiles(aim.tiles)
+      if not aim_hits and _ph_base then
+        aim_hits = _pill_hit[_ph_base + ai + 1]  -- ni=0: no nudge
+      end
+      if aim and not aim.blocked and not aim_hits then
         local found_wu = nil
         for step = 1, NUDGE_MAX_STEPS do
           local d = step * NUDGE_STEP_WU
@@ -747,7 +866,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       M.SCORE_PER_SLOT, M.BUILT_BONUS, M.NEIGHBOR_BONUS,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus)
 
-    local RS = 21  -- RESULT_STRIDE
+    local RS = 29  -- RESULT_STRIDE (9 scalars + 5*2 actual + 5*2 potential)
     for ci = 1, #candidates do
       local c    = candidates[ci]
       local base = (ci - 1) * RS
@@ -761,6 +880,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
         c.score_potential = nb[base + 6]
         c.blockers_count  = nb[base + 7]
         -- Reconstruct winning blocker tables from relative offsets.
+        -- Layout: positions 10..19 = interleaved act dx/dy (5 pairs),
+        --         positions 20..29 = interleaved pot dx/dy (5 pairs).
         local n_act = nb[base + 8]
         local n_pot = nb[base + 9]
         local act, pot = {}, {}
@@ -768,7 +889,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
           act[k+1] = { mx = pmx + nb[base + 10 + k*2], my = pmy + nb[base + 11 + k*2] }
         end
         for k = 0, n_pot - 1 do
-          pot[k+1] = { mx = pmx + nb[base + 16 + k*2], my = pmy + nb[base + 17 + k*2] }
+          pot[k+1] = { mx = pmx + nb[base + 20 + k*2], my = pmy + nb[base + 21 + k*2] }
         end
         c.aims[bai].blockers           = act
         c.aims[bai].potential_blockers = pot
@@ -1110,7 +1231,8 @@ end
 
 function M.compute_shield_stamps()
   local STEP_WU   = 8
-  local MAX_STEPS = 4
+  local MAX_STEPS = 32   -- 0..32 = 33 nudge slots (up from 4)
+  local MAX_TILES = 15   -- matches ShieldShotPath.tiles[15]
   local R         = C.ATTACK_PILL_STANDOFF
   local pmx, pmy  = 128, 128
   local pill_wx   = (pmx << 8) | 128
@@ -1120,17 +1242,31 @@ function M.compute_shield_stamps()
         " × 6 stamp entries …")
   local stamps = {}
 
+  local function make_path(sim, src_x, src_y, tgt_x, tgt_y)
+    local p = { source_x = src_x, source_y = src_y,
+                target_x = tgt_x, target_y = tgt_y,
+                has_pill = false, tiles = {} }
+    if sim then
+      for _, t in ipairs(sim) do
+        local dx, dy = t.mx - pmx, t.my - pmy
+        if dx == 0 and dy == 0 then p.has_pill = true end
+        if #p.tiles < MAX_TILES then p.tiles[#p.tiles+1] = {dx, dy} end
+      end
+    end
+    return p
+  end
+
   for ak = 0, 1439 do
     local deg = ak / 4.0
     local rad = math.rad(deg)
     local scx = pmx + 0.5 + math.sin(rad) * R
     local scy = pmy + 0.5 - math.cos(rad) * R
 
-    local by_nudge = {}
-    stamps[ak] = by_nudge
+    local by_step = {}
+    stamps[ak] = by_step
 
-    for nudge_step = 0, MAX_STEPS do
-      local nudge_wu = nudge_step * STEP_WU
+    for step = 0, MAX_STEPS do
+      local nudge_wu = step * STEP_WU
       local spot_wx, spot_wy
       if nudge_wu == 0 then
         spot_wx = math.floor(scx * 256 + 0.5)
@@ -1144,33 +1280,22 @@ function M.compute_shield_stamps()
         spot_wy = math.floor((scy + dy * frac) * 256 + 0.5)
       end
 
-      local by_aim = {}
-      by_nudge[nudge_wu] = by_aim
+      local entry = { aim = {} }
+      by_step[step] = entry
 
-      -- aim_idx 0 = return fire: pill → standoff
-      local ret = cpf.simulate_shot(pill_wx, pill_wy, spot_wx, spot_wy, cpf.SHOT_PILL, 0)
-      local flat = {}
-      if ret then
-        for _, t in ipairs(ret) do
-          flat[#flat + 1] = t.mx - pmx
-          flat[#flat + 1] = t.my - pmy
-        end
-      end
-      by_aim[0] = flat
+      -- Return fire: pill → standoff (source = pill at offset 0,0)
+      entry.pill_to_tank = make_path(
+        cpf.simulate_shot(pill_wx, pill_wy, spot_wx, spot_wy, cpf.SHOT_PILL, 0),
+        0, 0, spot_wx - pill_wx, spot_wy - pill_wy)
 
-      -- aim_idx 1..5 = outgoing: standoff → pill aim point
+      -- Outgoing aims 1..5: standoff → pill aim point
       for ai, aim in ipairs(AIM_OFFSETS) do
         local twx = (pmx << 8) + aim[1]
         local twy = (pmy << 8) + aim[2]
-        local out = cpf.simulate_shot(spot_wx, spot_wy, twx, twy, cpf.SHOT_TANK, 0)
-        local f2  = {}
-        if out then
-          for _, t in ipairs(out) do
-            f2[#f2 + 1] = t.mx - pmx
-            f2[#f2 + 1] = t.my - pmy
-          end
-        end
-        by_aim[ai] = f2
+        entry.aim[ai] = make_path(
+          cpf.simulate_shot(spot_wx, spot_wy, twx, twy, cpf.SHOT_TANK, 0),
+          spot_wx - pill_wx, spot_wy - pill_wy,
+          twx - pill_wx, twy - pill_wy)
       end
     end
 
@@ -1190,19 +1315,18 @@ function M.compute_shield_stamps()
   }
 end
 
--- Binary format matches ShieldStampHeader / ShieldStampEntry in na_shield_stamp.c.
--- Header: magic(I4) version(I4) n_angles(I4) n_nudges(I4) n_aims(I4) max_tiles(I4)
---         nudge_wu[8](I4×8) standoff(f) aim_inset(f) step_deg(f)  = 56 bytes
--- Entry:  n_tiles(B) has_pill(B) dx[32](b×32) dy[32](b×32)       = 66 bytes
+-- Binary format v2 matches ShieldStampHeader / ShieldStampEntry in na_shield_stamp.c.
+-- Header (32 bytes): magic(I4) version(I4) n_angles(I4) n_nudges(I4) nudge_step_wu(I4)
+--                    standoff(f) aim_inset(f) step_deg(f)
+-- Entry (240 bytes): aim[5] ShieldShotPath + pill_to_tank ShieldShotPath
+-- ShieldShotPath (40 bytes): source_x(i2) source_y(i2) target_x(i2) target_y(i2)
+--                            has_pill(B) n_tiles(B) tiles[15] pairs(b,b)
 function M.save_shield_stamps_bin(data, outpath)
-  local path   = outpath or "shield_stamp_cache.bin"
+  local path      = outpath or "shield_stamp_cache.bin"
   local N_ANGLES  = 1440
-  local MAX_TILES = 32
+  local MAX_TILES = 15   -- ShieldShotPath.tiles[15]
   local STEP_WU   = data.nudge_step_wu
-  local N_NUDGES  = data.max_nudge_steps + 1   -- 0..max_nudge_steps inclusive
-  local N_AIMS    = #AIM_OFFSETS + 1            -- 0=return fire, 1..#AIM_OFFSETS=outgoing
-  -- Header nudge_wu table is padded to 8 slots (STAMP_MAX_NUDGES in C)
-  local HDR_NUDGE_SLOTS = 8
+  local N_NUDGES  = data.max_nudge_steps + 1  -- 0..max inclusive
 
   local f, err = io.open(path, "wb")
   if not f then
@@ -1210,44 +1334,45 @@ function M.save_shield_stamps_bin(data, outpath)
     return false
   end
 
-  -- Header (56 bytes)
-  f:write(string.pack("<I4I4I4I4I4I4",
-    0x444C4853, 1, N_ANGLES, N_NUDGES, N_AIMS, MAX_TILES))
-  for i = 0, HDR_NUDGE_SLOTS - 1 do
-    local wu = (i < N_NUDGES) and (i * STEP_WU) or 0
-    f:write(string.pack("<I4", wu))
-  end
-  f:write(string.pack("<fff",
+  -- Header (32 bytes)
+  f:write(string.pack("<I4I4I4I4I4fff",
+    0x444C4853, 2, N_ANGLES, N_NUDGES, STEP_WU,
     data.standoff or 0.0, data.aim_inset or 0.0, data.step_deg or 0.0))
 
-  -- Entries
-  local fmt_entry = "<BB" .. string.rep("b", MAX_TILES * 2)
-  local vals = {}
+  local path_fmt = "<i2i2i2i2BB" .. string.rep("b", MAX_TILES * 2)
+  local tile_buf = {}
+
+  local function write_path(p)
+    local n = p and math.min(#p.tiles, MAX_TILES) or 0
+    for i = 1, MAX_TILES * 2 do tile_buf[i] = 0 end
+    for i = 1, n do
+      tile_buf[2*i-1] = p.tiles[i][1]   -- dx
+      tile_buf[2*i]   = p.tiles[i][2]   -- dy
+    end
+    f:write(string.pack(path_fmt,
+      p and p.source_x or 0, p and p.source_y or 0,
+      p and p.target_x or 0, p and p.target_y or 0,
+      (p and p.has_pill) and 1 or 0, n,
+      table.unpack(tile_buf)))
+  end
+
+  -- Entries: laid out as [angle_key * n_nudges + nudge_idx], each 240 bytes.
+  -- aim[0..4] = outgoing AIM_OFFSETS[1..5], then pill_to_tank = return fire.
   for ak = 0, N_ANGLES - 1 do
+    local by_step = data.stamps[ak]
     for step = 0, data.max_nudge_steps do
-      local nudge_wu  = step * STEP_WU
-      local by_aim    = data.stamps[ak] and data.stamps[ak][nudge_wu]
-      for ai = 0, N_AIMS - 1 do
-        local flat     = by_aim and by_aim[ai]
-        local n        = flat and math.min(#flat // 2, MAX_TILES) or 0
-        local has_pill = 0
-        -- dx[0..MAX_TILES-1] at vals[1..32], dy[0..MAX_TILES-1] at vals[33..64]
-        for i = 1, MAX_TILES * 2 do vals[i] = 0 end
-        for i = 1, n do
-          local dx = flat[2*i - 1]
-          local dy = flat[2*i]
-          vals[i]             = dx
-          vals[MAX_TILES + i] = dy
-          if dx == 0 and dy == 0 then has_pill = 1 end
-        end
-        f:write(string.pack(fmt_entry, n, has_pill, table.unpack(vals)))
+      local entry = by_step and by_step[step]
+      for ai = 1, 5 do
+        write_path(entry and entry.aim and entry.aim[ai])
       end
+      write_path(entry and entry.pill_to_tank)
     end
   end
 
   f:close()
-  print(string.format("[shield] binary stamp written: %s  (%d angles × %d nudges × %d aims)",
-    path, N_ANGLES, N_NUDGES, N_AIMS))
+  print(string.format(
+    "[shield] binary stamp v2 written: %s  (%d angles × %d nudges × 6 paths)",
+    path, N_ANGLES, N_NUDGES))
   return true
 end
 
@@ -1256,6 +1381,8 @@ end
 -- Per-tile thin colored border via two stacked rects (slight inset for the
 -- inner one). Useful for layering multiple aim borders on the same tile.
 local function border_box(viz_id, mx, my, inset, r, g, b, a)
+  viz.rect(viz_id, mx + inset, my + inset, mx + 1 - inset, my + 1 - inset,
+           r, g, b, a, false)
 end
 
 function M.draw_overlay(scan, now_tick)
@@ -1292,6 +1419,10 @@ function M.draw_overlay(scan, now_tick)
                                 c.score_actual or 0,
                                 c.score_neighbor or 0,
                                 c.best_chain_len or 0)
+      viz.detail_circle(did, c.cx, c.cy, 0.04, hdr)
+      viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
+        math.floor(c.score or 0),
+        c.score_actual or 0, c.score_potential or 0, c.score_neighbor or 0))
       if scan.fav_bonus_by_size and next(scan.fav_bonus_by_size) then
         local parts = {}
         local sizes = {}
@@ -1300,26 +1431,51 @@ function M.draw_overlay(scan, now_tick)
         for _, sz in ipairs(sizes) do
           parts[#parts+1] = string.format("%d->+%d", sz, scan.fav_bonus_by_size[sz])
         end
+        viz.detail_text(did, string.format(
+          "wounded bias: pill_hp=%d tier=%s min_chain=%d  blockers: %s",
+          scan.pill_hp or 0, scan.tier_label or "?", scan.min_chain or 0,
+          table.concat(parts, ", ")))
       else
+        viz.detail_text(did, string.format(
+          "wounded bias: pill_hp=%d -> NONE (HP > %d)",
+          scan.pill_hp or 0, M.WOUNDED_HP_FULL_MAX))
       end
+      viz.detail_text(did, string.format("position: cx=%.4f cy=%.4f wu=(%d,%d) tile=(%d,%d)",
+        c.cx, c.cy, math.floor(c.cx*256+0.5), math.floor(c.cy*256+0.5),
+        c.mx or 0, c.my or 0))
       if c.best_aim_idx then
         local aim_name = M.AIM_NAMES[c.best_aim_idx] or tostring(c.best_aim_idx)
+        viz.detail_text(did, string.format("winning aim: idx=%d (%s)",
+          c.best_aim_idx, aim_name))
         local a = c.aims and c.aims[c.best_aim_idx]
         if a then
           if (a.nudge_wu or 0) > 0 then
+            viz.detail_text(did, string.format(
+              "  nudge: %d wu (%.3f tiles) — origin moved toward pill to hit it",
+              a.nudge_wu, a.nudge_wu / 256.0))
           end
           local n_unreach = #(a.unreachable_blockers or {})
+          viz.detail_text(did, string.format(
+            "  blockers: actual=%d potential=%d  (LGM-unreachable dropped: %d)",
+            #(a.blockers or {}), #(a.potential_blockers or {}), n_unreach))
           for _, b in ipairs(a.blockers or {}) do
+            viz.detail_text(did, string.format("    actual      @ tile (%d,%d)", b.mx, b.my))
           end
           for _, b in ipairs(a.potential_blockers or {}) do
+            viz.detail_text(did, string.format("    potential   @ tile (%d,%d)", b.mx, b.my))
           end
           for _, b in ipairs(a.unreachable_blockers or {}) do
+            viz.detail_text(did, string.format(
+              "    UNREACHABLE @ tile (%d,%d) (LGM origin (%d,%d) -> dest unreachable per cpf.lgm_travel_ticks_map)",
+              b.mx, b.my, b.origin_mx or -1, b.origin_my or -1))
           end
         end
       else
+        viz.detail_text(did, "no winning aim (all blocked or scored 0)")
       end
       local evals = c._chain_evals
       if evals and #evals > 0 then
+        viz.detail_text(did, string.format("chain evals: %d (aim, subset) combos:", #evals))
         local sorted = {}
         for i, e in ipairs(evals) do sorted[i] = e end
         table.sort(sorted, function(a, b) return (a.total or 0) > (b.total or 0) end)
@@ -1342,10 +1498,16 @@ function M.draw_overlay(scan, now_tick)
           if aim_data and (aim_data.nudge_wu or 0) > 0 then
             nudge_str = string.format(" nudge=%dwu", aim_data.nudge_wu)
           end
+          viz.detail_text(did, string.format(
+            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s%s%s",
+            e.aim, aim_name, e.actual_n, e.potential_n,
+            e.aim_score, e.chain, e.total, bias_str, nudge_str, marker))
           if #blocker_strs > 0 then
+            viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
           end
         end
       else
+        viz.detail_text(did, "no chain evals (no non-blocked aims with score>0)")
       end
     end
   end
@@ -1373,7 +1535,13 @@ function M.draw_overlay(scan, now_tick)
     -- cluster.
     local R = 1 / 256.0   -- 1 wu radius
     if c.kind == "standoff" then
+      viz.circle("shield_scan_candidates", c.cx, c.cy, 0.04,
+                 255, 255, 255, 255)
+      viz.circle("shield_scan_candidates", c.cx, c.cy, R,
+                 color_r, color_g, color_b, 255)
     else
+      viz.circle("shield_scan_candidates", c.cx, c.cy, R,
+                 color_r, color_g, color_b, 255)
     end
     -- Score directly on top of the marker, tiny. Format as
     -- "total (A+B+C)" where:
@@ -1396,6 +1564,8 @@ function M.draw_overlay(scan, now_tick)
     -- arc. Even index = right side, odd = left side.
     local side = (ci % 2 == 0) and "topleft" or "topright"
     local lx = (ci % 2 == 0) and (c.cx + 0.06) or (c.cx - 0.06)
+    viz.text("shield_scan_candidates", lx, c.cy - 0.04,
+             label, side, color_r, color_g, color_b, 255, 0.18)
 
     -- (viz_detail registration moved to Pass A above so loser
      -- candidates still get inspector entries after the visual fade.)
@@ -1411,6 +1581,9 @@ function M.draw_overlay(scan, now_tick)
     -- Bright green halo around the chosen target. Sized to be visible
     -- WITHOUT swamping the new 1-gu candidate markers — used to be
     -- 0.9 tile wide which was 14x the new marker size.
+    viz.rect("shield_scan_candidates", viz_target.cx - 0.08, viz_target.cy - 0.08,
+             viz_target.cx + 0.08, viz_target.cy + 0.08,
+             50, 255, 50, 255, false)
 
     -- Trajectory viz so the user can read the geometry directly:
     --   green CIRCLE on every tile in the tank -> pill-CENTER aim
@@ -1430,6 +1603,8 @@ function M.draw_overlay(scan, now_tick)
     local show_aim = viz_target.aims[show_idx]
     if show_aim and show_aim.tiles then
       for _, t in ipairs(show_aim.tiles) do
+        viz.circle("shield_scan_trajectory", t.mx + 0.5, t.my + 0.5, 0.42,
+                   60, 220, 60, 200)
       end
     end
     -- Specific line from the winner spot center to the exact aim point
@@ -1439,9 +1614,18 @@ function M.draw_overlay(scan, now_tick)
     if show_aim and not show_aim.blocked then
       local off = M.AIM_OFFSETS_TILE[show_idx] or M.AIM_OFFSETS_TILE[1]
       local col = M.AIM_COLORS[show_idx] or { 60, 220, 60, 255 }
+      viz.line("shield_scan_trajectory", viz_target.cx, viz_target.cy,
+               pmx + off[1], pmy + off[2],
+               col[1], col[2], col[3], 230)
     end
     if viz_target.return_fire and viz_target.return_fire.tiles then
       for _, t in ipairs(viz_target.return_fire.tiles) do
+        viz.rect("shield_scan_trajectory", t.mx + 0.08, t.my + 0.08,
+                 t.mx + 0.92, t.my + 0.92,
+                 230, 60, 60, 90)
+        viz.rect("shield_scan_trajectory", t.mx + 0.08, t.my + 0.08,
+                 t.mx + 0.92, t.my + 0.92,
+                 230, 60, 60, 230, false)
       end
     end
     -- Inner circle on each actual already-built blocker tile (across
@@ -1456,6 +1640,8 @@ function M.draw_overlay(scan, now_tick)
             local key = b.my * 256 + b.mx
             if not seen[key] then
               seen[key] = true
+              viz.circle("shield_scan_blockers", b.mx + 0.5, b.my + 0.5, 0.25,
+                         60, 255, 60, 255)
             end
           end
         end
@@ -1475,6 +1661,9 @@ function M.draw_overlay(scan, now_tick)
         local inset = border_inset_step * ai
         if a.blockers and #a.blockers > 0 then
           for _, b in ipairs(a.blockers) do
+            viz.rect("shield_scan_blockers", b.mx + 0.12, b.my + 0.12,
+                     b.mx + 0.88, b.my + 0.88,
+                     col[1], col[2], col[3], 110)
             border_box("shield_scan_blockers", b.mx, b.my, inset, col[1], col[2], col[3], col[4])
           end
         end
@@ -1490,9 +1679,26 @@ function M.draw_overlay(scan, now_tick)
         -- can't get to it from the standoff).
         if a.unreachable_blockers and #a.unreachable_blockers > 0 then
           for _, b in ipairs(a.unreachable_blockers) do
+            viz.line("shield_scan_blockers",
+                     b.mx + 0.15, b.my + 0.15,
+                     b.mx + 0.85, b.my + 0.85,
+                     220, 60, 60, 230)
+            viz.line("shield_scan_blockers",
+                     b.mx + 0.85, b.my + 0.15,
+                     b.mx + 0.15, b.my + 0.85,
+                     220, 60, 60, 230)
+            viz.text("shield_scan_blockers",
+                     b.mx + 0.5, b.my + 0.95,
+                     string.format("LGM-unreach from (%d,%d)",
+                                   b.origin_mx or -1, b.origin_my or -1),
+                     "center", 220, 60, 60, 220, 0.3)
             -- Faint dashed-ish line from origin to dest to make the
             -- attempted route visible.
             if b.origin_mx then
+              viz.line("shield_scan_blockers",
+                       b.origin_mx + 0.5, b.origin_my + 0.5,
+                       b.mx + 0.5, b.my + 0.5,
+                       220, 60, 60, 80)
             end
           end
         end
@@ -1509,6 +1715,9 @@ function M.draw_overlay(scan, now_tick)
       local a = viz_target.aims[ai]
       local n_act = (a and a.blockers) and #a.blockers or 0
       local n_pot = (a and a.potential_blockers) and #a.potential_blockers or 0
+      viz.text("shield_scan_legend", lx, ly + (ai - 1) * 0.3,
+               string.format("%s:%d+%d", M.AIM_NAMES[ai], n_act, n_pot),
+               "topleft", col[1], col[2], col[3], 255, 0.35)
     end
 
     -- Build-queue highlight: thick orange outline + 1-based build order
@@ -1533,6 +1742,15 @@ function M.draw_overlay(scan, now_tick)
         for i, b in ipairs(sorted) do
           -- Two stacked outlines = visibly thick on both low and high
           -- zoom (overlay_rect doesn't take a stroke width).
+          viz.rect("wall_build_queue", b.mx - 0.02, b.my - 0.02,
+                   b.mx + 1.02, b.my + 1.02,
+                   255, 140, 0, 255, false)
+          viz.rect("wall_build_queue", b.mx + 0.04, b.my + 0.04,
+                   b.mx + 0.96, b.my + 0.96,
+                   255, 140, 0, 255, false)
+          viz.text("wall_build_queue", b.mx + 0.5, b.my + 0.5,
+                   tostring(i),
+                   "center", 255, 200, 80, 255, 0.8)
         end
       end
     end

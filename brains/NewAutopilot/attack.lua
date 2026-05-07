@@ -1058,6 +1058,7 @@ do
     local aim_wy = { 128,   1,   1, 254, 254 }
     local stamps = {}
     for deg = 0, 355, 5 do
+      if deg % 100 == 0 and bt_yield then bt_yield() end
       local rad = math.rad(deg)
       local cx  = 0.5 + math.sin(rad) * R   -- spot center, tile units (pill at 0.5,0.5)
       local cy  = 0.5 - math.cos(rad) * R
@@ -1151,6 +1152,12 @@ do
   end
 end
 
+-- Copy precomputed stamps into the C evaluate_pill_difficulty module.
+if na_attack then
+  na_attack.init_stamps(LOS_STAMPS_5DEG, ELLIPSE_STAMPS_5DEG)
+  print("[attack] na_attack C module initialized")
+end
+
 -- Module-level constants hoisted out of the per-angle loop.
 -- sample_offsets and tile_in_ellipse are only used in the stamp fallback
 -- path, but were previously allocated fresh every LOS-passing angle.
@@ -1172,6 +1179,26 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   local _angles_los   = 0
   local _angles_pass  = 0
   local pmx, pmy = pill.mx, pill.my
+  local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
+
+  -- C fast path: skip the per-tile Lua overhead entirely.
+  -- Only activates for the non-detailed hot path (step=5, no banned angles).
+  if not detailed and na_attack and step_deg == 5
+      and not (state and state.banned_pill_angles
+               and state.banned_pill_angles[pmy * 256 + pmx]) then
+    na_attack.sync_pill_at(world.pill_at, pmx, pmy)
+    local phase_not_opening = (phase and phase ~= "opening") and true or false
+    local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
+    local c_score, c_mx, c_my, c_deg = na_attack.evaluate_pill_difficulty(
+      pmx, pmy, step_deg, phase_not_opening,
+      tmx or -1, tmy or -1, self_contrib)
+    if c_mx >= 0 then
+      return c_score, nil, { mx = c_mx, my = c_my, deg = c_deg, score = c_score }
+    else
+      return math.huge, nil, nil
+    end
+  end
+
   local R = C.ATTACK_PILL_STANDOFF
   -- Banned-angle map for this pill (set by approach-timeout handler).
   -- nil if state isn't passed (legacy callers / unit tests) or this
@@ -1182,7 +1209,6 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     banned_for_pill = state.banned_pill_angles[pmy * 256 + pmx]
     now_for_ban = state.tick or 0
   end
-  local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
   local safe_r = C.ATTACK_SAFE_RADIUS
   -- Pick the right precomputed stamp set for this scan resolution.
   -- Falls back to nil for other step values (the runtime then uses
@@ -1198,8 +1224,8 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- Cache frequently-accessed tables as locals — single table index per
   -- tile in the stamp loops, no function call overhead, no GC pressure.
-  local _pill_grid   = threat.pill_grid
-  local _cov_grid    = threat.coverage_grid
+  local _pill_grid_at = na_threat and na_threat.pill_grid_at
+  local _cov_grid_at  = na_threat and na_threat.cov_grid_at
   local _base_at     = world.base_at
   local _pill_at     = world.pill_at
   local _ttype       = U.ttype
@@ -1324,7 +1350,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
         for i = 1, #stamp do
           local off = stamp[i]
           if off.proj <= 0 then
-            local cov = _cov_grid[_base_key + off.key_offset] or 0
+            local cov = _cov_grid_at and _cov_grid_at(_base_key + off.key_offset) or 0
             if cov > max_coverage then max_coverage = cov end
           end
         end
@@ -1335,7 +1361,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
             if proj <= 0 then
               local sx2, sy2 = mx + dx2, my + dy2
               if tile_in_ellipse(sx2, sy2) and _in_map(sx2, sy2) then
-                local cov = _cov_grid[sy2 * 256 + sx2] or 0
+                local cov = _cov_grid_at and _cov_grid_at(sy2 * 256 + sx2) or 0
                 if cov > max_coverage then max_coverage = cov end
               end
             end
@@ -1356,7 +1382,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
           if off.proj > 0 then goto next_scan_b_tile end
           local sx, sy = mx + off.dx, my + off.dy
           local key = _base_key + off.key_offset
-          local d = _pill_grid[key] or 0
+          local d = _pill_grid_at and _pill_grid_at(key) or 0
           if _self_pcontrib then
             local sd = _self_pcontrib[key]
             if sd then d = math.max(0, d - sd) end
@@ -1395,7 +1421,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
             local sx, sy = mx + dx, my + dy
             if tile_in_ellipse(sx, sy) and _in_map(sx, sy) then
               local key = sy * 256 + sx
-              local d = _pill_grid[key] or 0
+              local d = _pill_grid_at and _pill_grid_at(key) or 0
               if _self_pcontrib then
                 local sd = _self_pcontrib[key]
                 if sd then d = math.max(0, d - sd) end

@@ -394,21 +394,28 @@ static int l_naThreatTerrainFactorAt(lua_State *L) {
     return 2;
 }
 
-/* na_threat.stamp_pill(pill_grid, coverage, px, py, anger, hp) -> contrib_table
+/* na_threat.pill_rebuild_begin()
+ * Zero s_pill_grid_c and s_cov_grid_c before a pill rebuild.
+ * Called from threat.lua instead of the Lua clear loop so no Lua table
+ * entries are set to nil — eliminating the GC pressure from that pass. */
+static int l_naThreatPillRebuildBegin(lua_State *L) {
+    (void)L;
+    memset(s_pill_grid_c, 0, sizeof(s_pill_grid_c));
+    memset(s_cov_grid_c,  0, sizeof(s_cov_grid_c));
+    return 0;
+}
+
+/* na_threat.stamp_pill(px, py, anger, hp) -> contrib_table
  *
- * Stamps the pill at (px, py) into pill_grid (Lua table) and increments
- * coverage[k] (Lua table) for each disk tile. Returns a fresh contrib
- * table mapping tile_key -> penalty for this pill so the caller can
- * store it into M.pill_contrib[pill_pos_key]. Matches Lua stamp_pill's
- * semantics exactly except it skips occlusion (occlusion stays in Lua).
- */
+ * Stamps the pill at (px, py) directly into the C-side s_pill_grid_c and
+ * s_cov_grid_c flat arrays (no Lua table I/O for pill_grid or coverage).
+ * Returns a fresh contrib table (tile_key -> penalty) for M.pill_contrib.
+ * Call na_threat.pill_rebuild_begin() before the first stamp each rebuild. */
 static int l_naThreatStampPill(lua_State *L) {
-    luaL_checktype(L, 1, LUA_TTABLE);  /* pill_grid */
-    luaL_checktype(L, 2, LUA_TTABLE);  /* coverage  */
-    int px    = (int)luaL_checkinteger(L, 3);
-    int py    = (int)luaL_checkinteger(L, 4);
-    float anger = (float)luaL_checknumber(L, 5);
-    int hp    = (int)luaL_checkinteger(L, 6);
+    int px    = (int)luaL_checkinteger(L, 1);
+    int py    = (int)luaL_checkinteger(L, 2);
+    float anger = (float)luaL_checknumber(L, 3);
+    int hp    = (int)luaL_checkinteger(L, 4);
 
     if (!g_disk_built) build_disk();
 
@@ -420,13 +427,6 @@ static int l_naThreatStampPill(lua_State *L) {
     lua_createtable(L, 0, g_disk_len);
     int contrib_idx = lua_gettop(L);
 
-    /* Stack layout:
-     *   1 = pill_grid
-     *   2 = coverage
-     *   contrib_idx (top) = contrib */
-    int pg = 1;
-    int cv = 2;
-
     for (int i = 0; i < g_disk_len; i++) {
         int dx = g_disk_dx[i];
         int dy = g_disk_dy[i];
@@ -436,12 +436,8 @@ static int l_naThreatStampPill(lua_State *L) {
         int k = ny * MAP_W + nx;
         int off = g_disk_off[i];
 
-        /* coverage[k] = (coverage[k] or 0) + 1 */
-        lua_rawgeti(L, cv, k);
-        int prev_cov = (int)lua_tointegerx(L, -1, NULL);
-        lua_pop(L, 1);
-        lua_pushinteger(L, prev_cov + 1);
-        lua_rawseti(L, cv, k);
+        /* coverage: direct C write — no Lua API call */
+        s_cov_grid_c[k] += 1.0f;
 
         float penalty = base * g_prox_cache[off];
 
@@ -453,14 +449,10 @@ static int l_naThreatStampPill(lua_State *L) {
         penalty *= g_terrain_mult[k];
 
         if (penalty > 0.0f) {
-            /* pill_grid[k] = (pill_grid[k] or 0) + penalty */
-            lua_rawgeti(L, pg, k);
-            double prev_pg = lua_tonumberx(L, -1, NULL);
-            lua_pop(L, 1);
-            lua_pushnumber(L, prev_pg + (double)penalty);
-            lua_rawseti(L, pg, k);
+            /* pill_grid: direct C write — no Lua API call */
+            s_pill_grid_c[k] += penalty;
 
-            /* contrib[k] = penalty */
+            /* contrib[k] = penalty — still a Lua table for pill_contrib */
             lua_pushnumber(L, (double)penalty);
             lua_rawseti(L, contrib_idx, k);
         }
@@ -475,30 +467,23 @@ static int l_naThreatIsTerrainBuilt(lua_State *L) {
     return 1;
 }
 
-/* na_threat.apply_occlusion_all(pill_grid, pill_contrib,
+/* na_threat.apply_occlusion_all(pill_contrib,
  *                                fp_mx, fp_my, fp_n,
  *                                hp_mx, hp_my, hp_n)
  *
  * C replacement for threat.lua's per-pill apply_occlusion_to_pill loop.
- * Applies LOS wall/tree/friendly-pill occlusion to pill_grid and the
- * matching per-pill pill_contrib sub-tables for every hostile/neutral pill.
+ * Reads and writes s_pill_grid_c directly (no Lua table I/O for pill_grid).
+ * Still updates pill_contrib Lua sub-tables so attack-side subtraction works.
  *
- * Uses the precomputed PRED tables from build_disk (Bresenham second-to-last
- * predecessor convention, Chebyshev traversal order) and pre-allocated C
- * scratch arrays — zero Lua table allocations during the sweep.
- *
- * fp_mx/fp_my are integer arrays (1-indexed Lua) of friendly pill positions.
- * hp_mx/hp_my are integer arrays (1-indexed Lua) of hostile/neutral pill
- * positions. fp_n / hp_n are their counts. */
+ * pill_rebuild_begin() + stamp_pill() must be called before this. */
 static int l_naThreatApplyOcclusionAll(lua_State *L) {
-    luaL_checktype(L, 1, LUA_TTABLE);  /* pill_grid   */
-    luaL_checktype(L, 2, LUA_TTABLE);  /* pill_contrib */
-    luaL_checktype(L, 3, LUA_TTABLE);  /* fp_mx       */
-    luaL_checktype(L, 4, LUA_TTABLE);  /* fp_my       */
-    int fp_n = (int)luaL_checkinteger(L, 5);
-    luaL_checktype(L, 6, LUA_TTABLE);  /* hp_mx       */
-    luaL_checktype(L, 7, LUA_TTABLE);  /* hp_my       */
-    int hp_n = (int)luaL_checkinteger(L, 8);
+    luaL_checktype(L, 1, LUA_TTABLE);  /* pill_contrib */
+    luaL_checktype(L, 2, LUA_TTABLE);  /* fp_mx       */
+    luaL_checktype(L, 3, LUA_TTABLE);  /* fp_my       */
+    int fp_n = (int)luaL_checkinteger(L, 4);
+    luaL_checktype(L, 5, LUA_TTABLE);  /* hp_mx       */
+    luaL_checktype(L, 6, LUA_TTABLE);  /* hp_my       */
+    int hp_n = (int)luaL_checkinteger(L, 7);
 
     if (!g_disk_built) build_disk();
     if (!g_world_ptr_ptr) g_world_ptr_ptr = brainCoreGetWorldPtrPtr(L);
@@ -508,20 +493,20 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
 
     /* Populate friendly-pill flat set from fp_mx/fp_my arrays. */
     for (int i = 1; i <= fp_n; i++) {
-        lua_rawgeti(L, 3, i); int fx = (int)lua_tointeger(L, -1); lua_pop(L, 1);
-        lua_rawgeti(L, 4, i); int fy = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 2, i); int fx = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 3, i); int fy = (int)lua_tointeger(L, -1); lua_pop(L, 1);
         if (in_map(fx, fy)) g_friendly_set[fy * MAP_W + fx] = 1;
     }
 
     /* Process each hostile/neutral pill. */
     for (int hi = 1; hi <= hp_n; hi++) {
-        lua_rawgeti(L, 6, hi); int px = (int)lua_tointeger(L, -1); lua_pop(L, 1);
-        lua_rawgeti(L, 7, hi); int py = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 5, hi); int px = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 6, hi); int py = (int)lua_tointeger(L, -1); lua_pop(L, 1);
 
         int pill_key = py * MAP_W + px;
 
         /* Get this pill's contrib sub-table (may be nil if stamp was skipped). */
-        lua_rawgeti(L, 2, pill_key);
+        lua_rawgeti(L, 1, pill_key);
         int contrib_tbl = lua_gettop(L);
         int has_contrib = lua_istable(L, contrib_tbl);
 
@@ -574,9 +559,8 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
             if (!in_map(nx, ny)) continue;
             int k = ny * MAP_W + nx;
 
-            lua_rawgeti(L, 1, k);
-            double cur = lua_tonumber(L, -1);
-            lua_pop(L, 1);
+            /* Direct C read — no Lua API call for pill_grid. */
+            double cur = (double)s_pill_grid_c[k];
             if (cur <= 0.0) continue;
 
             int eff_walls = w_total;
@@ -590,8 +574,8 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
             if (reduction <= 0.0) continue;
 
             double factor = 1.0 - reduction;
-            lua_pushnumber(L, cur * factor);
-            lua_rawseti(L, 1, k);
+            /* Direct C write — no Lua API call for pill_grid. */
+            s_pill_grid_c[k] = (float)(cur * factor);
 
             if (has_contrib) {
                 lua_rawgeti(L, contrib_tbl, k);
@@ -611,38 +595,69 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
 
     /* Clear friendly-pill set (only the positions we set). */
     for (int i = 1; i <= fp_n; i++) {
-        lua_rawgeti(L, 3, i); int fx = (int)lua_tointeger(L, -1); lua_pop(L, 1);
-        lua_rawgeti(L, 4, i); int fy = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 2, i); int fx = (int)lua_tointeger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 3, i); int fy = (int)lua_tointeger(L, -1); lua_pop(L, 1);
         if (in_map(fx, fy)) g_friendly_set[fy * MAP_W + fx] = 0;
     }
 
     return 0;
 }
 
-/* na_threat.sync_grids(pill_grid_table, cov_grid_table)
- * Copies the Lua pill_grid and coverage_grid tables into the C-side flat
- * arrays so na_attack.evaluate_pill_difficulty can read them without any
- * Lua API overhead.  Called once after each full pill-grid rebuild. */
+/* na_threat.sync_grids() — kept for backwards compatibility, now a no-op.
+ * s_pill_grid_c and s_cov_grid_c are written directly by stamp_pill and
+ * apply_occlusion_all; no copy from Lua tables is needed. */
 static int l_naThreatSyncGrids(lua_State *L) {
-    luaL_checktype(L, 1, LUA_TTABLE);
-    luaL_checktype(L, 2, LUA_TTABLE);
-    memset(s_pill_grid_c, 0, sizeof(s_pill_grid_c));
-    memset(s_cov_grid_c,  0, sizeof(s_cov_grid_c));
-    /* Copy pill_grid */
-    lua_pushnil(L);
-    while (lua_next(L, 1) != 0) {
-        lua_Integer k = lua_tointeger(L, -2);
-        if (k >= 0 && k < MAP_TILES)
-            s_pill_grid_c[(int)k] = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
+    (void)L;
+    return 0;
+}
+
+/* na_threat.apply_crossfire()
+ * Multiply each non-zero pill_grid tile by its coverage count when > 1.
+ * Replaces the Lua crossfire loop — operates on s_pill_grid_c directly. */
+static int l_naThreatApplyCrossfire(lua_State *L) {
+    (void)L;
+    for (int k = 0; k < MAP_TILES; k++) {
+        if (s_pill_grid_c[k] > 0.0f) {
+            float cov = s_cov_grid_c[k];
+            if (cov > 1.0f) s_pill_grid_c[k] *= cov;
+        }
     }
-    /* Copy cov_grid */
-    lua_pushnil(L);
-    while (lua_next(L, 2) != 0) {
-        lua_Integer k = lua_tointeger(L, -2);
-        if (k >= 0 && k < MAP_TILES)
-            s_cov_grid_c[(int)k] = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
+    return 0;
+}
+
+/* na_threat.pill_grid_at(k) -> number
+ * Returns s_pill_grid_c[k] (0 if out of range). Replaces M.pill_grid[k]
+ * reads in Lua now that pill_grid is stored exclusively in C. */
+static int l_naThreatPillGridAt(lua_State *L) {
+    lua_Integer k = luaL_checkinteger(L, 1);
+    float v = (k >= 0 && k < MAP_TILES) ? s_pill_grid_c[(int)k] : 0.0f;
+    lua_pushnumber(L, (double)v);
+    return 1;
+}
+
+/* na_threat.cov_grid_at(k) -> integer
+ * Returns s_cov_grid_c[k] (0 if out of range). Replaces M.coverage_grid[k]. */
+static int l_naThreatCovGridAt(lua_State *L) {
+    lua_Integer k = luaL_checkinteger(L, 1);
+    float v = (k >= 0 && k < MAP_TILES) ? s_cov_grid_c[(int)k] : 0.0f;
+    lua_pushinteger(L, (lua_Integer)(int)v);
+    return 1;
+}
+
+/* na_threat.for_each_pill_danger(callback)
+ * Iterates all non-zero s_pill_grid_c entries, calling callback(mx, my, v).
+ * Replaces M.for_each_pill_danger which iterated the Lua pill_grid table. */
+static int l_naThreatForEachPillDanger(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    for (int k = 0; k < MAP_TILES; k++) {
+        float v = s_pill_grid_c[k];
+        if (v > 0.0f) {
+            lua_pushvalue(L, 1);
+            lua_pushinteger(L, k & 255);         /* mx */
+            lua_pushinteger(L, (k >> 8) & 255);  /* my */
+            lua_pushnumber(L, (double)v);
+            lua_call(L, 3, 0);
+        }
     }
     return 0;
 }
@@ -659,10 +674,15 @@ static const luaL_Reg na_threat_lib[] = {
     { "terrain_rebuild",       l_naThreatTerrainRebuild },
     { "terrain_update_around", l_naThreatTerrainUpdateAround },
     { "terrain_factor_at",     l_naThreatTerrainFactorAt },
+    { "pill_rebuild_begin",    l_naThreatPillRebuildBegin },
     { "stamp_pill",            l_naThreatStampPill },
+    { "apply_occlusion_all",   l_naThreatApplyOcclusionAll },
+    { "apply_crossfire",       l_naThreatApplyCrossfire },
+    { "pill_grid_at",          l_naThreatPillGridAt },
+    { "cov_grid_at",           l_naThreatCovGridAt },
+    { "for_each_pill_danger",  l_naThreatForEachPillDanger },
     { "is_terrain_built",      l_naThreatIsTerrainBuilt },
     { "sync_grids",            l_naThreatSyncGrids },
-    { "apply_occlusion_all",   l_naThreatApplyOcclusionAll },
     { NULL, NULL }
 };
 
