@@ -31,8 +31,15 @@ local clock      = os.clock
 local file     = nil
 local file_dir = nil
 
+-- C threaded writer; nil if not available (falls back to synchronous I/O).
+local na_opt_log = na_opt_log
+
 local function debug_mode()
   return _G.BRAIN_DEBUG_MODE
+end
+
+local function perf_log_enabled()
+  return _G.BRAIN_PERF_LOG
 end
 
 local function pick_dir()
@@ -68,29 +75,52 @@ local function log_msg(...)
 end
 
 function M.flush()
-  if debug_mode() or #buffer == 0 then return end
-  local dir = pick_dir()
-  if not file or dir ~= file_dir then
-    if file then pcall(function() file:close() end); file = nil end
-    try_open(dir)
-  end
-  if not file then return end
-  local ok = pcall(function()
-    file:write("===TICK ", tick, "===\n")
-    for _, msg in ipairs(buffer) do
-      file:write(msg, "\n")
+  if debug_mode() or not perf_log_enabled() or #buffer == 0 then return end
+  if na_opt_log then
+    -- Threaded path: build full tick block in memory, enqueue for background write.
+    local dir = pick_dir()
+    if not file_dir or dir ~= file_dir then
+      -- Start background thread on first flush (lazy, same as before).
+      local path = dir .. "/optimize.log"
+      if na_opt_log.open(path) then
+        file_dir = dir
+      end
     end
-    file:flush()
-  end)
-  if not ok then
-    pcall(function() file:close() end)
-    file     = nil
-    file_dir = nil
+    if file_dir then
+      local parts = { "===TICK ", tostring(tick), "===\n" }
+      for i = 1, #buffer do
+        parts[#parts + 1] = buffer[i]
+        parts[#parts + 1] = "\n"
+      end
+      na_opt_log.write(table.concat(parts))
+    end
+  else
+    -- Synchronous fallback.
+    local dir = pick_dir()
+    if not file or dir ~= file_dir then
+      if file then pcall(function() file:close() end); file = nil end
+      try_open(dir)
+    end
+    if not file then return end
+    local ok = pcall(function()
+      file:write("===TICK ", tick, "===\n")
+      for _, msg in ipairs(buffer) do
+        file:write(msg, "\n")
+      end
+      file:flush()
+    end)
+    if not ok then
+      pcall(function() file:close() end)
+      file     = nil
+      file_dir = nil
+    end
   end
 end
 
 function M.close()
+  if na_opt_log then na_opt_log.close() end
   if file then file:close(); file = nil; file_dir = nil end
+  file_dir = nil
 end
 
 -- Append a single line to an arbitrary log file (relative to DEBUG_SESSION_DIR).
@@ -99,10 +129,15 @@ end
 -- both debug and production runs. Only the tick timing log (log_msg/flush)
 -- is suppressed in debug mode since debug overhead skews the measurements.
 function M.append(filename, text)
-  local dir = pick_dir()
+  if not perf_log_enabled() then return end
+  local dir  = pick_dir()
   local path = dir .. "/" .. filename
-  local f = io.open(path, "a")
-  if f then f:write(text, "\n"); f:close() end
+  if na_opt_log then
+    na_opt_log.append(path, text)
+  else
+    local f = io.open(path, "a")
+    if f then f:write(text, "\n"); f:close() end
+  end
 end
 
 setmetatable(M, { __call = function(_, ...) log_msg(...) end })

@@ -88,6 +88,7 @@
 #include "na_overlay_pillcontrib.h"
 #include "na_threat.h"
 #include "na_shield_stamp.h"
+#include "na_opt_log.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -99,6 +100,11 @@
 
 /* Path passed by --run-script; injected as RUN_SCRIPT_PATH Lua global. */
 static char s_run_script_path[1024] = "";
+
+/* Set by --perf-log; enables optimize.log writing in the brain. */
+static int s_perf_log = 0;
+
+void luaBrainsSetPerfLog(int enable) { s_perf_log = enable ? 1 : 0; }
 
 void luaBrainsSetRunScript(const char *path) {
     if (path && path[0])
@@ -590,6 +596,9 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
 
+  lua_pushboolean(L, s_perf_log);
+  lua_setglobal(L, "BRAIN_PERF_LOG");
+
   /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
   if (s_run_script_path[0]) {
     lua_pushstring(L, s_run_script_path);
@@ -651,6 +660,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * recompiling. */
   naThreatRegister(L);
   naShieldStampRegister(L);
+  naOptLogRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for
    * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */
