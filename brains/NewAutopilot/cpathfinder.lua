@@ -607,14 +607,15 @@ function M.smart_cost_minus_pill_danger_dij_only(kind, dx, dy,
 
   local reduction = 0
   local ts        = C.TERRAIN_SPEED
-  for _, node in ipairs(path) do
-    if pill_mx and node.x == pill_mx and node.y == pill_my then
+  for i = 1, #path, 2 do
+    local nx, ny = path[i], path[i+1]
+    if pill_mx and nx == pill_mx and ny == pill_my then
       reduction = reduction + 32767
     end
     if pill_contrib then
-      local p = pill_contrib[node.y * 256 + node.x]
+      local p = pill_contrib[ny * 256 + nx]
       if p then
-        local tt  = get_terrain(node.x, node.y) & 0x0F
+        local tt  = get_terrain(nx, ny) & 0x0F
         local spd = (ts and ts[tt]) or 16
         if spd <= 0 then spd = 16 end
         reduction = reduction + p * (16 / spd)
@@ -638,14 +639,15 @@ function M.smart_cost_minus_pill_danger(kind, sx, sy, dx, dy,
 
   local reduction = 0
   local ts        = C.TERRAIN_SPEED
-  for _, node in ipairs(path) do
-    if pill_mx and node.x == pill_mx and node.y == pill_my then
+  for i = 1, #path, 2 do
+    local nx, ny = path[i], path[i+1]
+    if pill_mx and nx == pill_mx and ny == pill_my then
       reduction = reduction + 32767
     end
     if pill_contrib then
-      local p = pill_contrib[node.y * 256 + node.x]
+      local p = pill_contrib[ny * 256 + nx]
       if p then
-        local tt  = get_terrain(node.x, node.y) & 0x0F
+        local tt  = get_terrain(nx, ny) & 0x0F
         local spd = (ts and ts[tt]) or 16
         if spd <= 0 then spd = 16 end
         reduction = reduction + p * (16 / spd)

@@ -763,6 +763,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   /* Call brain.open(info) */
   screenMakeBrainInfoCS(cs, &inst->bInfo, true, aiMode);
   inst->worldPtr = inst->bInfo.theWorld;
+  /* Set the map pointer now so Brain.open can pre-warm the edge-cost table
+   * via cpf.rebuild_edge_costs() — same map pointer set each tick. */
+  if (inst->pathfinder) {
+    brainPathfinderSetMap(inst->pathfinder, inst->bInfo.theWorld);
+  }
   if (!brainCoreCallMethod(L, &inst->bInfo, "open")) {
     screenExtractBrainInfoCS(cs, &inst->bInfo);
     lua_close(L);

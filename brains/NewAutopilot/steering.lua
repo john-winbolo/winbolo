@@ -212,28 +212,30 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
       pf.next_my = ny
       log_pf_next(state, info, "cpf_path_to:running", nx, ny,
         string.format("dest=(%d,%d)", dest_mx, dest_my))
-    elseif pf.path_chain and #pf.path_chain >= 2 then
+    elseif pf.path_chain and #pf.path_chain >= 4 then
       -- A* restarted (nx=-1) but we have the green path from the last
       -- completed search. Walk it to find our current position and use
       -- the next point as the waypoint.
       local best_i = nil
       local best_d = math.huge
-      for i = 1, #pf.path_chain do
-        local dx = pf.path_chain[i].x - tmx
-        local dy = pf.path_chain[i].y - tmy
+      local nwp = #pf.path_chain // 2
+      for i = 1, nwp do
+        local dx = pf.path_chain[2*i-1] - tmx
+        local dy = pf.path_chain[2*i] - tmy
         local d = dx * dx + dy * dy
         if d < best_d then
           best_d = d
           best_i = i
         end
       end
-      if best_i and best_i < #pf.path_chain then
-        local nxt = pf.path_chain[best_i + 1]
-        pf.next_mx = nxt.x
-        pf.next_my = nxt.y
-        log_pf_next(state, info, "cpf_path_to:chain_fallback", nxt.x, nxt.y,
+      if best_i and best_i < nwp then
+        local nxt_mx = pf.path_chain[2*best_i+1]
+        local nxt_my = pf.path_chain[2*best_i+2]
+        pf.next_mx = nxt_mx
+        pf.next_my = nxt_my
+        log_pf_next(state, info, "cpf_path_to:chain_fallback", nxt_mx, nxt_my,
           string.format("best_i=%d chain#=%d dest=(%d,%d)",
-                        best_i, #pf.path_chain, dest_mx, dest_my))
+                        best_i, nwp, dest_mx, dest_my))
       end
     end
     pf.age = (pf.age or 0) + 1
@@ -341,7 +343,7 @@ end
 local function path_lookahead(state, info, nx, ny)
   local pf = state.pf
   local chain = pf.path_chain
-  if not chain or #chain < 2 then
+  if not chain or #chain < 4 then
     sdbg("lookahead: no chain or chain<2, return nx=%d ny=%d", nx, ny)
     return nx, ny
   end
@@ -349,7 +351,7 @@ local function path_lookahead(state, info, nx, ny)
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
 
-  sdbg("lookahead: tank=(%d,%d) nx=(%d,%d) chain#=%d", tmx, tmy, nx, ny, #chain)
+  sdbg("lookahead: tank=(%d,%d) nx=(%d,%d) chain#=%d", tmx, tmy, nx, ny, #chain // 2)
 
   if info.inboat then
     sdbg("lookahead: in boat, return nx=%d ny=%d", nx, ny)
@@ -401,8 +403,8 @@ local function path_lookahead(state, info, nx, ny)
 
   -- Find nx,ny in the chain
   local start_idx = nil
-  for i = 1, #chain do
-    if chain[i].x == nx and chain[i].y == ny then
+  for i = 1, #chain // 2 do
+    if chain[2*i-1] == nx and chain[2*i] == ny then
       start_idx = i
       break
     end
@@ -446,8 +448,8 @@ local function path_lookahead(state, info, nx, ny)
   local on_path_chain = pf._on_path_cache
   if pf._on_path_chain ~= chain or not on_path_chain then
     on_path_chain = {}
-    for i = 1, #chain do
-      on_path_chain[U.mkey(chain[i].x, chain[i].y)] = true
+    for i = 1, #chain // 2 do
+      on_path_chain[U.mkey(chain[2*i-1], chain[2*i])] = true
     end
     pf._on_path_cache = on_path_chain
     pf._on_path_chain = chain
@@ -457,9 +459,10 @@ local function path_lookahead(state, info, nx, ny)
     return on_path_chain[key] or key == tank_key
   end
 
+  local chain_nwp = #chain // 2
   local best_x, best_y = nx, ny
-  for i = start_idx + 1, #chain do
-    local cx, cy = chain[i].x, chain[i].y
+  for i = start_idx + 1, chain_nwp do
+    local cx, cy = chain[2*i-1], chain[2*i]
     -- Must-visit: BOAT or water tile when on foot
     if U.in_map(cx, cy) then
       local tt = U.ttype(cx, cy)
@@ -472,11 +475,11 @@ local function path_lookahead(state, info, nx, ny)
       end
     end
     -- Check if next chain entry is water/unknown
-    if i + 1 <= #chain then
-      local nx_chain = chain[i + 1]
-      if U.in_map(nx_chain.x, nx_chain.y) then
-        local ntt = U.ttype(nx_chain.x, nx_chain.y)
-        sdbg("lookahead: next_chain=(%d,%d) ttype=%d", nx_chain.x, nx_chain.y, ntt)
+    if i + 1 <= chain_nwp then
+      local ncx, ncy = chain[2*i+1], chain[2*i+2]
+      if U.in_map(ncx, ncy) then
+        local ntt = U.ttype(ncx, ncy)
+        sdbg("lookahead: next_chain=(%d,%d) ttype=%d", ncx, ncy, ntt)
         if ntt == C.T_DEEPSEA or ntt == C.T_RIVER or ntt == C.T_UNKNOWN then
           best_x, best_y = cx, cy
           sdbg("lookahead: STOP next-is-water at (%d,%d) next_tt=%d", cx, cy, ntt)
@@ -1564,6 +1567,7 @@ local function tank_combat_steer(state, world, info, goal)
 end
 
 function M.steer(state, world, info, goal)
+  local _t_steer_start = clock_us()
   local keys = 0
   local taps = 0
   local tmx  = info.tankx >> 8
@@ -1574,6 +1578,7 @@ function M.steer(state, world, info, goal)
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.
   stuck_recovery(state, info, goal)
+  local _t_after_stuck = clock_us()
 
   -- ── Global cliff safety: runs BEFORE any goal-specific self-contained
   -- steering so no goal can drive us off a deep-sea edge at speed.
@@ -1853,7 +1858,17 @@ function M.steer(state, world, info, goal)
     end
 
     -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
+    local _t_pre_path = clock_us()
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
+    local _t_post_path = clock_us()
+    if _t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000 then
+      opt.append("optimize.log", string.format(
+        "  [steer-detail] tick=%d goal=%s stuck_r=%.2fms path_to=%.2fms dest=(%d,%d)",
+        state.tick or 0, goal.kind or "?",
+        (_t_after_stuck - _t_steer_start) / 1000,
+        (_t_post_path - _t_pre_path) / 1000,
+        nav_mx or -1, nav_my or -1))
+    end
 
     if nx then
       -- Skip ahead on the path when the straight line is clear
