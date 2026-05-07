@@ -42,9 +42,11 @@
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"
+#include "brain_worldsim.h"
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
 #include "transport_udp.h"
+#include "../common/wb_log.h"
 #include "../server/server_sim.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
@@ -66,6 +68,11 @@ typedef struct {
 
 static BotContext bots[MAX_TANKS];
 static int numBots = 0;
+
+/* Per-bot last tick at which a slow-think warning was emitted, used to
+ * rate-limit the warning to at most once per ~50 ticks. Type matches
+ * ServerSim::tick (uint32_t) so the subtraction is well-defined. */
+static uint32_t lastWarnTick[MAX_TANKS] = {0};
 
 static void (*g_preThinkHook)(int playerNum) = NULL;
 
@@ -153,6 +160,9 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
 void botManagerInit(void) {
     memset(bots, 0, sizeof(bots));
     numBots = 0;
+    /* Eager-init the shared sin/cos tables before any worker thread
+     * could touch them. Single-threaded context here. */
+    wsim_init_tables();
 }
 
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
@@ -302,8 +312,10 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             if (g_preThinkHook) g_preThinkHook(-1);
             double ms = (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
             bot->lastThinkMs = ms;
-            if (ms > 5.0) {
-                fprintf(stderr, "serverBrains: bot %d think took %.1fms\n", i, ms);
+            if (ms > 5.0 && (sim->tick - lastWarnTick[i]) > 50) {
+                WB_LOG_WARN(WB_LOG_CAT_LUA,
+                            "bot %d think took %.1fms (tick %u)", i, ms, sim->tick);
+                lastWarnTick[i] = sim->tick;
             }
             if (!ok) {
                 fprintf(stderr, "botManager: bot %d brain tick failed, removing\n", i);

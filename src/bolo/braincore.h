@@ -162,6 +162,16 @@ void brainCoreSetGlobalPrintCapture(BrainPrintCaptureFunc cb, void *ud,
                                      const uint32_t *tickPtr);
 
 /*********************************************************
+ *NAME:          Worker-pool threading rule (host callbacks)
+ *PURPOSE:
+ *  The host-callback setters below must be invoked before
+ *  the first parallel brain tick. The bot worker pool runs
+ *  the first per-bot tick serially so registration bindings
+ *  populate host-side registries in a known order. After
+ *  init, callbacks must not be modified while workers run.
+ *********************************************************/
+
+/*********************************************************
  *NAME:          braintest_viz_register hook
  *PURPOSE:
  *  Lua binding `braintest_viz_register(id, label, short,
