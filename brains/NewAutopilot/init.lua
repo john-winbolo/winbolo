@@ -2278,6 +2278,9 @@ function Brain.think(info)
       metrics.inc("goal_replan")
       local t_pg0 = clock_us()
       local new_goal = goals.pick_goal(state, world, info)
+      if state._pick_goal_timing then
+        for _, entry in ipairs(state._pick_goal_timing) do opt(entry) end
+      end
       opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
       print2("pick_goal -> ", new_goal and new_goal.kind or "nil",
              " mx=", new_goal and new_goal.mx, " sub=", new_goal and new_goal.substate)

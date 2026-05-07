@@ -387,7 +387,7 @@ end
 --- treats inf-cost candidates as not selectable.
 function M.smart_cost_dij_only(kind, dx, dy, in_boat)
   if not C.DIJKSTRA_USE_FOR_GOALS then return math.huge end
-  return cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0)
+  return cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0) or math.huge
 end
 
 -- Convenience constants for the kind parameter.
