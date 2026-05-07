@@ -349,6 +349,16 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 void luaBrainsSetRunScript(const char *path);
 
 /*********************************************************
+*NAME:          luaBrainsSetPerfLog
+*PURPOSE:
+*  Enables or disables performance logging (optimize.log)
+*  in the brain. When disabled (default), BRAIN_PERF_LOG
+*  is false and optimize.lua writes nothing. Pass enable=1
+*  to activate via --perf-log in BrainTest.
+*********************************************************/
+void luaBrainsSetPerfLog(int enable);
+
+/*********************************************************
 *NAME:          luaBrainInstanceTick
 *PURPOSE:
 *  Runs one brain think cycle: populates BrainInfo from
