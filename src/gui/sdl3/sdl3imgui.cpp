@@ -532,8 +532,7 @@ static void renderSysInfoContent(void) {
     ImGui::Text("  %s %.2f %%", langGetText(STR_DLGSYSINFO_TOTAL), totalPct);
 
     /* Server-side bot/sim telemetry. Only present when a local
-     * server sim is ticking (single-player or local listen-server).
-     * Hardcoded English labels — lang support can be added later. */
+     * server sim is ticking (single-player or local listen-server). */
     ServerSim *spSim = gameFrontGetServerSim();
     if (spSim != NULL) {
         BotPoolStats ps = {};
@@ -559,14 +558,16 @@ static void renderSysInfoContent(void) {
         sysInfoGraphSample(tickLast, ps.lastBrainPhaseMs);
 
         ImGui::Separator();
-        ImGui::TextUnformatted("Server");
+        ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_SERVER));
 
         if (hasBots) {
             if (ps.workerCount == 0) {
-                ImGui::Text("Bot pool: single-thread (%d active bots), target=%.1fms/bot",
+                ImGui::Text("%s: single-thread (%d active bots), target=%.1fms/bot",
+                            langGetText(STR_DLGSYSINFO_BOTPOOL),
                             ps.activeBots, ps.currentTargetMs);
             } else {
-                ImGui::Text("Bot pool: %d workers (%d active bots), target=%.1fms/bot",
+                ImGui::Text("%s: %d workers (%d active bots), target=%.1fms/bot",
+                            langGetText(STR_DLGSYSINFO_BOTPOOL),
                             ps.workerCount, ps.activeBots, ps.currentTargetMs);
             }
         }
@@ -587,7 +588,8 @@ static void renderSysInfoContent(void) {
             }
             float avgTick = sumTick / (float)s_sysHistoryCount;
             float plotMax = (maxTick > 25.0f) ? maxTick * 1.2f : 25.0f;
-            ImGui::Text("Tick: min=%.1fms avg=%.1fms max=%.1fms (budget=20ms)",
+            ImGui::Text("%s: min=%.1fms avg=%.1fms max=%.1fms (budget=20ms)",
+                        langGetText(STR_DLGSYSINFO_TICK),
                         minTick, avgTick, maxTick);
             ImGui::PlotLines("##tick", s_tickHistory, s_sysHistoryCount,
                              s_sysHistoryOffset, nullptr,
@@ -602,7 +604,9 @@ static void renderSysInfoContent(void) {
                 if (s_brainHistory[i] > maxBrain) maxBrain = s_brainHistory[i];
             }
             if (maxBrain < 1.0f) maxBrain = 1.0f;
-            ImGui::Text("Brain: EWMA=%.1fms", ps.ewmaBrainPhaseMs);
+            ImGui::Text("%s: EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_BRAIN),
+                        ps.ewmaBrainPhaseMs);
             ImGui::PlotLines("##brain", s_brainHistory, s_sysHistoryCount,
                              s_sysHistoryOffset, nullptr,
                              0.0f, maxBrain * 1.2f,
@@ -610,7 +614,9 @@ static void renderSysInfoContent(void) {
         }
 
         if (hasBots) {
-            ImGui::Text("Brain overruns: %u", ps.totalOverruns);
+            ImGui::Text("%s: %u",
+                        langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
+                        ps.totalOverruns);
             if (ps.totalOverruns > 0) {
                 for (int i = 0; i < MAX_TANKS; i++) {
                     if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
@@ -624,10 +630,13 @@ static void renderSysInfoContent(void) {
          * means at least one running-state tick has happened —
          * suppress the line otherwise. */
         if (simLast > 0.0) {
-            ImGui::Text("Simulation: last=%.1fms EWMA=%.1fms", simLast, simEwma);
+            ImGui::Text("%s: last=%.1fms EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_SIMULATION),
+                        simLast, simEwma);
         }
         if (hasBots) {
-            ImGui::Text("Bot prep: last=%.1fms EWMA=%.1fms",
+            ImGui::Text("%s: last=%.1fms EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_BOTPREP),
                         ps.lastSerialMs, ps.ewmaSerialMs);
         }
     }
