@@ -38,9 +38,9 @@ void naThreatRegister(lua_State *L);
 float *naThreatGetPillGrid(lua_State *L);
 float *naThreatGetCovGrid (lua_State *L);
 
-/* Raw terrain type for tile (mx, my).  Returns 0 if world not loaded.
- * Used by na_shield_stamp.c for in-C blocker classification. Reads
- * a process-wide cached host worldPtr; safe without a lua_State. */
-int naThreatRawTT(int mx, int my);
+/* Raw terrain type for tile (mx, my). Returns 0 if world not loaded.
+ * Used by na_shield_stamp.c for in-C blocker classification. Looks up
+ * the per-state ctx via L to read this brain's worldPtr-pointer. */
+int naThreatRawTT(lua_State *L, int mx, int my);
 
 #endif /* NA_THREAT_H */
