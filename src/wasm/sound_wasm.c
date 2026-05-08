@@ -86,8 +86,7 @@ EM_JS(void, wb_audio_init, (void), {
 
   var ctx = new Ctx();
   var gain = ctx.createGain();
-  gain.gain.value = 0.5;  /* Master volume; matches SDL path's 0.25 stereo
-                             with the loudness boost mono naturally gives. */
+  gain.gain.value = 0.25;  /* Match SDL path's SDL_SetAudioStreamGain(0.25). */
   gain.connect(ctx.destination);
 
   Module.WB_audio = {
