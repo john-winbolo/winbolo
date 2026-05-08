@@ -2490,11 +2490,54 @@ local function get_formula_inner(e)
       and string.format("supply_ratio=%.2f (fully stocked) → 0", e._ratio)
       or  string.format("(1 - %.2f[supply_ratio]) x %.0f[REFUEL_DEPLETION_PENALTY] = %.0f",
             e._ratio, C.REFUEL_DEPLETION_PENALTY, e._dep)
+
+    -- Live cost shape stashed by goal_selection's pool-1 cost competition.
+    -- All five fields are populated together; if _urgency is nil the stash
+    -- hasn't run yet (first tick / pool-1 cache built but not yet shaped).
+    local _has_shape = e._urgency ~= nil
+    local _shape_head = ""
+    local _shape_detail = ""
+    if _has_shape then
+      local _u = e._urgency or 1
+      local _bf = e._base_floor or 0
+      local _db = e._defic_bonus or 0
+      local _fm = e._fill_mult or 1
+      local _lgm = e._lgm_wait_floor
+      _shape_head = string.format(
+        " × ur{%.2f} + base{%.0f} - def{%.0f} × fill{%.2f}%s",
+        _u, _bf, _db, _fm,
+        _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
+      local _arm     = e._arm or 0
+      local _sh      = e._sh or 0
+      local _arm_def = e._arm_def or 0
+      local _sh_def  = e._sh_def or 0
+      local _fill    = e._fill or 0
+      local _d_urgency = string.format(
+        "armour=%d/%d→%.2f, shells=%d/%d→%.2f → min=%.2f, clamped(min=%.2f)=%.2f",
+        _arm, C.ARMOUR_LOW, math.min(1.0, _arm / C.ARMOUR_LOW),
+        _sh,  C.SHELLS_LOW, math.min(1.0, _sh  / C.SHELLS_LOW),
+        math.min(math.min(1.0, _arm / C.ARMOUR_LOW), math.min(1.0, _sh / C.SHELLS_LOW)),
+        C.REFUEL_URGENCY_MIN, _u)
+      local _d_def   = string.format(
+        "arm_def=%.2f, sh_def=%.2f → max=%.2f × %.0f[REFUEL_DEFICIT_BONUS] = %.0f",
+        _arm_def, _sh_def, math.max(_arm_def, _sh_def), C.REFUEL_DEFICIT_BONUS, _db)
+      local _d_fill  = (_fm > 1.0)
+        and string.format(
+          "fill=%.2f (above LOW) → 1 + %.2f x (%.2f[FULL_MULT]-1) = %.2f",
+          _fill, _fill, C.REFUEL_FULL_COST_MULT, _fm)
+        or  "fill=0 (at/below LOW thresholds) → 1.00"
+      local _d_lgm   = _lgm
+        and string.format("LGM returning, at this base → floor=%.0f (cost capped)", _lgm)
+        or  "no LGM-wait active → no floor"
+      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|lgm:%s",
+        _d_urgency, _d_def, _d_fill, _d_lgm)
+    end
+
     f = string.format(
-      "A*{%.0f}@(%d,%d) + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}"..
-      "||danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s",
-      raw, e._mx or 0, e._my or 0, e._dang, e._stale, e._contest, e._hyst, e._dep,
-      _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete)
+      "A*{%.0f}@(%d,%d) + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s"..
+      "||danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s",
+      raw, e._mx or 0, e._my or 0, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head,
+      _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "(%.0f[hp] / %.0f[PILLS_MAX_HEALTH])^2 = (%.2f)^2 = %.2f",
@@ -2834,14 +2877,16 @@ function M.step_eval_queue(state, world, info)
       local danger_val = threat.at(obj.mx, obj.my)
       local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT
 
-      -- Depletion penalty: penalize bases with low observed stock
+      -- Depletion penalty: penalize bases that can't get us above LOW thresholds.
+      -- need_* anchored at LOW (not TANK_FULL) so supply_ratio=1 once the base
+      -- can cover the minimum needed to escape the danger zone.
       local depletion_cost = 0
       local obs_arm = obj.obs_armour or 90
       local obs_sh  = obj.obs_shells or 90
-      -- How much we need
-      local need_arm = math.max(0, C.TANK_FULL_ARMOUR - info.armour)
-      local need_sh  = math.max(0, C.TANK_FULL_SHELLS - info.shells)
-      -- Ratio of what the base can provide vs what we need (0=empty, 1=fully stocked)
+      -- How much we need to reach the LOW threshold (not to top off)
+      local need_arm = math.max(0, C.ARMOUR_LOW - info.armour)
+      local need_sh  = math.max(0, C.SHELLS_LOW  - info.shells)
+      -- Ratio of what the base can provide vs what we need (0=empty, 1=covers LOW)
       local supply_ratio = 1.0
       if need_arm > 0 then supply_ratio = math.min(supply_ratio, obs_arm / need_arm) end
       if need_sh  > 0 then supply_ratio = math.min(supply_ratio, obs_sh  / need_sh)  end
@@ -4280,6 +4325,50 @@ local function goal_selection(state, world, info, quiet)
       end
       print2("goal_selection: pool_cache has ", pc_count, " entries: ", table.concat(pc_names, ","))
     end
+    -- ── Refuel live cost-shape (pool 1) ─────────────────────────────────
+    -- Compute once per tick. The same values feed (a) the pool-1 cost
+    -- competition shaping below and (b) the Term Breakdown panel via a
+    -- stash onto every per-base pool-1 cost_cache entry. eval_refuel
+    -- already baked the multiplicative urgency into pool_cache[1].cost,
+    -- so we recompute it here purely for the breakdown display.
+    local _ref_arm_def = math.max(0, (C.ARMOUR_LOW - info.armour) / C.ARMOUR_LOW)
+    local _ref_sh_def  = math.max(0, (C.SHELLS_LOW  - info.shells) / C.SHELLS_LOW)
+    local _ref_deficit = math.max(_ref_arm_def, _ref_sh_def)
+    local _ref_bonus   = C.REFUEL_DEFICIT_BONUS * _ref_deficit
+    local _ref_mult    = 1.0
+    local _ref_fill    = 0.0
+    if info.armour > C.ARMOUR_LOW and info.shells > C.SHELLS_LOW then
+      local _fa = (info.armour - C.ARMOUR_LOW)
+                  / math.max(1, state.armour_target - C.ARMOUR_LOW)
+      local _fs = (info.shells - C.SHELLS_LOW)
+                  / math.max(1, state.shell_target  - C.SHELLS_LOW)
+      _ref_fill = math.min(_fa, _fs)
+      _ref_mult = 1.0 + _ref_fill * (C.REFUEL_FULL_COST_MULT - 1.0)
+    end
+    local _ref_arm_u   = math.min(1.0, info.armour / C.ARMOUR_LOW)
+    local _ref_sh_u    = math.min(1.0, info.shells / C.SHELLS_LOW)
+    local _ref_urgency = math.max(C.REFUEL_URGENCY_MIN, math.min(_ref_arm_u, _ref_sh_u))
+    -- Stash on every pool-1 cache entry so the panel sees the same shape
+    -- it'd see if it called the live computation itself. _lgm_wait_floor
+    -- starts as nil and only gets set on the at-this-base entry below.
+    if BRAIN_POOL_VIZ and state.cost_cache then
+      for _, e in pairs(state.cost_cache) do
+        if e._p == 1 then
+          e._urgency        = _ref_urgency
+          e._base_floor     = C.REFUEL_BASE_COST
+          e._defic_bonus    = _ref_bonus
+          e._fill_mult      = _ref_mult
+          e._fill           = _ref_fill
+          e._arm            = info.armour
+          e._sh             = info.shells
+          e._arm_def        = _ref_arm_def
+          e._sh_def         = _ref_sh_def
+          e._lgm_wait_floor = nil
+          e.formula         = nil  -- invalidate cached formula so live shape re-renders
+        end
+      end
+    end
+
     for idx, entry in pairs(pc) do
       if entry then
         -- Skip entries whose destination is blocked (e.g. by goal lookahead)
@@ -4321,21 +4410,10 @@ local function goal_selection(state, world, info, quiet)
              and not lgm_wait_here then
             goto continue_pool   -- at dynamic target and no LGM waiting: don't compete
           end
-          -- Deficit ratio (0 = at/above low thresholds, 1 = fully depleted).
-          local arm_def = math.max(0, (C.ARMOUR_LOW - info.armour) / C.ARMOUR_LOW)
-          local sh_def  = math.max(0, (C.SHELLS_LOW  - info.shells) / C.SHELLS_LOW)
-          local deficit = math.max(arm_def, sh_def)
-          local bonus   = C.REFUEL_DEFICIT_BONUS * deficit
-          -- Fullness multiplier (only applies above both low thresholds).
-          local mult = 1.0
-          if info.armour > C.ARMOUR_LOW and info.shells > C.SHELLS_LOW then
-            local fill_a = (info.armour - C.ARMOUR_LOW)
-                         / math.max(1, state.armour_target - C.ARMOUR_LOW)
-            local fill_s = (info.shells - C.SHELLS_LOW)
-                         / math.max(1, state.shell_target  - C.SHELLS_LOW)
-            local fill   = math.min(fill_a, fill_s)
-            mult = 1.0 + fill * (C.REFUEL_FULL_COST_MULT - 1.0)
-          end
+          -- Reuse the live shape computed above (also stashed on cost_cache
+          -- for the breakdown panel).
+          local bonus = _ref_bonus
+          local mult  = _ref_mult
           local base_cost = (entry.cost or 0) + C.REFUEL_BASE_COST - bonus
           local final_cost = base_cost * mult
           -- LGM-wait floor: clamp cost down when waiting for LGM.
@@ -4350,6 +4428,10 @@ local function goal_selection(state, world, info, quiet)
               + (C.LGM_WAIT_COST - C.LGM_WAIT_COST_SAFE) * danger_frac
             if final_cost > wait_floor then
               final_cost = wait_floor
+            end
+            if BRAIN_POOL_VIZ and entry.goal.target_id and state.cost_cache then
+              local ce = state.cost_cache["1:" .. entry.goal.target_id]
+              if ce then ce._lgm_wait_floor = wait_floor end
             end
           end
           entry = { goal = entry.goal, desc = entry.desc,

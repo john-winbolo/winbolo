@@ -178,7 +178,7 @@ M.REFUEL_BASELINE_SHELLS         = 25   -- minimum shell target, above offense g
 M.REFUEL_PER_ENEMY_TANK          = 6    -- shells budgeted per nearby hostile tank
 M.REFUEL_ENEMY_TANK_RANGE        = 40   -- tiles: hostile tank counts toward combat target
 M.REFUEL_MAX_ENEMY_TANKS_COUNTED = 2    -- cap on tanks counted in combat target
-M.REFUEL_DEPLETION_PENALTY = 200  -- max penalty for a base that can't supply what we need
+M.REFUEL_DEPLETION_PENALTY = 80   -- max penalty for a base that can't get us above LOW thresholds
 M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (base regenerates)
 -- When true, suppress goal-replan while traveling to or topping up at a
 -- refuel base. Prevents thrash where the goal scorer flips back to
