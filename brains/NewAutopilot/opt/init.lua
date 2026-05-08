@@ -399,7 +399,7 @@ function Brain.open(info)
 
   -- Exploration
   state.visited      = {}
-  state.frontier     = heap.new()
+  state.frontier     = expl.new_frontier()
   state.frontier_set = {}
 
   local t_open_state = clock_us()

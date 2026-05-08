@@ -4814,7 +4814,7 @@ function M.pick_goal(state, world, info, quiet)
     local nk = U.mkey(fx, fy)
     state.visited[nk]      = true
     state.frontier_set[nk] = nil
-    heap.pop(state.frontier)
+    expl.frontier_pop(state.frontier)
     fx, fy = expl.best_frontier(state)
   end
 
@@ -4862,9 +4862,7 @@ function M.pick_goal(state, world, info, quiet)
     local nk = U.mkey(best_fx, best_fy)
     if not state.frontier_set[nk] then
       state.frontier_set[nk] = true
-      heap.push(state.frontier, {
-        cost = best_dist, mx = best_fx, my = best_fy
-      })
+      expl.frontier_push(state.frontier, best_dist, best_fx, best_fy)
     end
     state.explore_breakdown = {
       mx = best_fx, my = best_fy, dist = best_dist,
