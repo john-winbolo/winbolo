@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <SDL3/SDL.h>
+
 #include "../bolo/global.h"
 #include "../bolo/gametype.h"
 #include "../bolo/nat_portmap.h"
@@ -60,6 +62,46 @@ static int              manualProbeWaitTicks = 0;
 static int trackerTime = 5500;
 static int wbnTime = 0;
 static int natKeepaliveTime = 0;
+
+/* Wall-clock duration of the most recent tick (ms) and its EWMA. Both
+ * stay 0 until the first tick has been recorded; the EWMA is seeded
+ * from that first measurement so it doesn't bias toward zero. */
+static double s_lastTickMs = 0.0;
+static double s_tickMsEwma = 0.0;
+static const  double kTickAlpha = 0.1;
+
+/* Wall-clock cost (ms) of the two serverSimTick calls combined for the
+ * most recent tick, plus its EWMA. Same seeding rule as above. */
+static double s_lastSimMs = 0.0;
+static double s_simMsEwma = 0.0;
+
+void serverLifecycleRecordTickMs(double ms) {
+  s_lastTickMs = ms;
+  if (s_tickMsEwma <= 0.0) {
+    s_tickMsEwma = ms;
+  } else {
+    s_tickMsEwma = kTickAlpha * ms + (1.0 - kTickAlpha) * s_tickMsEwma;
+  }
+}
+
+void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs) {
+  if (outLastMs)  *outLastMs  = s_lastTickMs;
+  if (outEwmaMs)  *outEwmaMs  = s_tickMsEwma;
+}
+
+static void serverLifecycleRecordSimMs(double ms) {
+  s_lastSimMs = ms;
+  if (s_simMsEwma <= 0.0) {
+    s_simMsEwma = ms;
+  } else {
+    s_simMsEwma = kTickAlpha * ms + (1.0 - kTickAlpha) * s_simMsEwma;
+  }
+}
+
+void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
+  if (outLastMs)  *outLastMs  = s_lastSimMs;
+  if (outEwmaMs)  *outEwmaMs  = s_simMsEwma;
+}
 
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
@@ -122,6 +164,11 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
 }
 
 void serverInstanceTick(ServerSim *sim) {
+  /* Measure the entire tick wall-clock — outside the mutex acquire so
+   * the EWMA captures contention wait time too. Single bottom-of-function
+   * end measurement; the function has no early-return paths. */
+  Uint64 tickStart = SDL_GetPerformanceCounter();
+
   trackerTime++;
   wbnTime++;
 
@@ -143,10 +190,19 @@ void serverInstanceTick(ServerSim *sim) {
     /* Run two sim ticks per 20ms callback to match the client's
      * 100Hz rate (alternating keys tick + game tick).
      * Drain events after each tick so they're captured before
-     * the next tick clears the event buffer. */
+     * the next tick clears the event buffer.
+     *
+     * Two timing pairs (sim1Start/End, sim2Start/End) summed into
+     * simMs — the bookkeeping between the ticks (drain + memcpy +
+     * any game-over broadcast) stays where it is but is excluded
+     * from the simulation cost. */
+    Uint64 sim1Start = 0, sim1End = 0;
+    Uint64 sim2Start = 0, sim2End = 0;
     {
       ServerState preTickState = sim->state;
+      sim1Start = SDL_GetPerformanceCounter();
       serverSimTick(sim);
+      sim1End = SDL_GetPerformanceCounter();
       /* If game ended during this tick, broadcast game-over */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
@@ -176,7 +232,9 @@ void serverInstanceTick(ServerSim *sim) {
                savedCount * sizeof(GameEvent));
       }
       preTickState = sim->state;
+      sim2Start = SDL_GetPerformanceCounter();
       serverSimTick(sim);
+      sim2End = SDL_GetPerformanceCounter();
       /* If game ended during this tick, broadcast game-over */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
@@ -199,6 +257,10 @@ void serverInstanceTick(ServerSim *sim) {
         }
       }
     }
+    double simFreq = (double)SDL_GetPerformanceFrequency();
+    double simMs = ((double)(sim1End - sim1Start)
+                    + (double)(sim2End - sim2Start)) * 1000.0 / simFreq;
+    serverLifecycleRecordSimMs(simMs);
     /* Send snapshots only if still running */
     if (sim->state == serverStateRunning) {
       transportUdpServerSend(sim);
@@ -397,6 +459,11 @@ void serverInstanceTick(ServerSim *sim) {
       manualProbeState = MANUAL_PROBE_TIMEOUT;
     }
   }
+
+  Uint64 tickEnd = SDL_GetPerformanceCounter();
+  double freq = (double)SDL_GetPerformanceFrequency();
+  double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
+  serverLifecycleRecordTickMs(tickMs);
 }
 
 void serverInstanceShutdown(ServerSim *sim) {

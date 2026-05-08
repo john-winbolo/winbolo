@@ -174,6 +174,14 @@ typedef struct {
   void *astarLog;  /* FILE* — void* to avoid stdio include in header */
   const uint32_t *astarLogTickPtr;  /* pointer to current tick counter */
 
+  /* Cooperative abort flag (SDL_AtomicInt *). When non-NULL, A* /
+   * Dijkstra inner loops poll it at outer-iteration checkpoints; on
+   * non-zero they break and return whatever they've computed so far.
+   * Set once at bot creation by botManagerAddBot to point at the
+   * BotContext's abort_flag. void * so this header doesn't pull in
+   * SDL3 — the .c file casts on read. */
+  void *abort_flag;
+
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
    * can use them however it wants — typical pattern is double-buffered
@@ -190,6 +198,11 @@ typedef struct {
 BrainPathfinder *brainPathfinderCreate(void);
 void brainPathfinderDestroy(BrainPathfinder *pf);
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map);
+
+/* Set the cooperative abort flag the inner A* / Dijkstra loops poll.
+ * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
+ * available don't need to depend on it). NULL disables polling. */
+void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag);
 
 /*
  * Eagerly allocate the per-slate working arrays for every slate AND touch

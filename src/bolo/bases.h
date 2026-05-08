@@ -252,6 +252,40 @@ baseAlliance basesGetStatusNum(struct GameSim *sim, BYTE baseNum);
 void basesUpdate(struct GameSim *sim, tank *tnk);
 
 /*********************************************************
+*NAME:          basesEnqueueCaptureMessage
+*PURPOSE:
+*  Client-side: emits or debounces a STOLE_BASE/CAPTURE_BASE
+*  newswire message in response to EVENT_BASE_CAPTURED.
+*  STOLE_BASE messages are debounced per (newOwner, prevOwner)
+*  pair (leading + trailing edge) so two players flipping a
+*  base back and forth produces one message at the start and
+*  one once the burst settles, instead of hundreds.
+*  CAPTURE_BASE (from neutral) is never debounced.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the client's GameSim
+*  cs        - Pointer to the ClientSim (for player-name resolution)
+*  newOwner  - Player who took the base
+*  prevOwner - Previous owner (NEUTRAL for capture-from-neutral)
+*********************************************************/
+void basesEnqueueCaptureMessage(struct GameSim *sim, struct ClientSim *cs,
+                                BYTE newOwner, BYTE prevOwner);
+
+/*********************************************************
+*NAME:          basesTickMessageQueue
+*PURPOSE:
+*  Client-side per-tick maintenance for the steal-message
+*  debounce table. Ages slot counters and flushes any pending
+*  message whose quiet period has elapsed. Call once per
+*  client frame.
+*
+*ARGUMENTS:
+*  sim - Pointer to the client's GameSim
+*  cs  - Pointer to the ClientSim (for player-name resolution)
+*********************************************************/
+void basesTickMessageQueue(struct GameSim *sim, struct ClientSim *cs);
+
+/*********************************************************
 *NAME:          basesUpdateStock
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99

@@ -40,7 +40,7 @@
 #include "brain_pathfinder.h"
 
 /* C-side pill_grid from the na_threat brain module (same link unit). */
-extern float *naThreatGetPillGrid(void);
+extern float *naThreatGetPillGrid(lua_State *L);
 
 /* ------------------------------------------------------------------ */
 /* clock_us — high-resolution timer for Lua profiling                  */
@@ -207,7 +207,7 @@ void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr) {
   lua_pushcclosure(L, l_get_terrain_upvalue, 1);
   lua_setglobal(L, "get_terrain");
   /* Also stash the worldPtr-pointer in the Lua registry under a known
-   * key so other C modules (e.g. brains/<bot>/c/*) can read raw terrain
+   * key so other C modules (e.g. brains/<bot>/c / *) can read raw terrain
    * without going through the get_terrain Lua closure. */
   lua_pushlightuserdata(L, (void *)worldPtr);
   lua_setfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
@@ -472,8 +472,10 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
 /* Brain method invocation                                             */
 /* ------------------------------------------------------------------ */
 
-bool brainCoreCallThink(lua_State *L, BrainInfo *info) {
+bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   int top = lua_gettop(L);
+
+  if (out_killed) *out_killed = false;
 
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {
@@ -495,6 +497,21 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info) {
 
   if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
     const char *errMsg = lua_tostring(L, -1);
+    /* Budget-hook sentinel: Lua prepends "<chunkname>:<line>: " to
+     * luaL_error messages, so the suffix is the stable match point.
+     * On a kill we report the abort to the producer (returns false
+     * with *out_killed = true) but do NOT log to brain_error.log or
+     * pipe through Lua print() — the bot is going to keep running,
+     * and a chronically slow brain would otherwise flood the log
+     * with the same line every tick. The producer's rate-limited
+     * overrun warning covers operator visibility. */
+    bool killed = (out_killed != NULL && errMsg != NULL &&
+                   strstr(errMsg, "tick_budget_exceeded") != NULL);
+    if (killed) {
+      *out_killed = true;
+      lua_settop(L, top);
+      return false;
+    }
     fprintf(stderr, "brainCore: brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
     /* Write to brain_error.log so errors are never lost */
     {
@@ -630,7 +647,7 @@ static int l_cpf_set_danger(lua_State *L) {
  * Replaces cpf_load_danger(threat.pill_grid) now that pill_grid lives in C. */
 static int l_cpf_load_pill_danger_from_threat(lua_State *L) {
   CPF_GET(L);
-  float *pg = naThreatGetPillGrid();
+  float *pg = naThreatGetPillGrid(L);
   brainPathfinderClearDanger(pf);
   if (!pg) return 0;
   for (int k = 0; k < 65536; k++) {

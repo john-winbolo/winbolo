@@ -323,6 +323,13 @@ typedef struct {
     OverlayCmdBuffer  overlay;
     OverlayCmdBuffer *overlayPtr;
     BrainInfo bInfo;            /* Per-instance BrainInfo */
+    /* True iff the most recent luaBrainInstanceTick aborted via the
+     * tick-budget count hook (Lua error suffix
+     * "tick_budget_exceeded"). The producer reads this after the
+     * worker returns to decide between the survive-with-wasKilled
+     * path and the real-error remove-the-bot path. Reset to false at
+     * the top of each tick. */
+    bool wasKilled;
 } LuaBrainInstance;
 
 /*********************************************************
@@ -345,6 +352,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 *  When non-empty, RUN_SCRIPT_PATH is injected as a Lua
 *  global so Brain.open can dofile() the script and exit.
 *  Call before any brain instance is created.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. The path is captured into the per-brain
+*  RUN_SCRIPT_PATH Lua global at luaBrainInstanceCreate()
+*  time; modification after the first instance exists has no
+*  effect on already-created brains.
 *********************************************************/
 void luaBrainsSetRunScript(const char *path);
 
@@ -355,6 +368,12 @@ void luaBrainsSetRunScript(const char *path);
 *  in the brain. When disabled (default), BRAIN_PERF_LOG
 *  is false and optimize.lua writes nothing. Pass enable=1
 *  to activate via --perf-log in BrainTest.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. The flag is captured into the per-brain
+*  BRAIN_PERF_LOG Lua global at luaBrainInstanceCreate()
+*  time; modification after the first instance exists has no
+*  effect on already-created brains.
 *********************************************************/
 void luaBrainsSetPerfLog(int enable);
 
@@ -376,6 +395,29 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst);
 *  instance.
 *********************************************************/
 void luaBrainInstanceDestroy(LuaBrainInstance *inst);
+
+/*********************************************************
+*NAME:          luaBrainSetTickInputs
+*PURPOSE:
+*  Writes the per-tick host-provided inputs onto the brain's
+*  Lua table:
+*    brain.lastThinkMs - wall-clock cost of the previous tick
+*    brain.targetMs    - per-bot budget for the current tick
+*    brain.wasKilled   - set when the previous tick was forced
+*                        to abort (always false today; see plan
+*                        for the kill-on-overrun follow-up)
+*  Brains may read these to scale their work voluntarily; they
+*  are not required to do so.
+*
+*  Producer-thread only — pushes / pops on the brain's own
+*  lua_State while the bot's worker thread is idle, so no
+*  cross-thread Lua access happens. Stack-balanced (pops every
+*  value it pushes).
+*********************************************************/
+void luaBrainSetTickInputs(LuaBrainInstance *inst,
+                           double lastThinkMs,
+                           double targetMs,
+                           bool   wasKilled);
 
 /*********************************************************
 *NAME:          luaBrainInstanceSetDebugMode

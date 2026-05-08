@@ -1121,3 +1121,12 @@ STR_LV_MENU_OPEN_WBN=WinBolo.net'ten Aç...
 STR_LV_ZOOM=Yakınlaştır
 STR_LV_ZOOM_IN=Yakınlaştır
 STR_LV_ZOOM_OUT=Uzaklaştır
+
+# System Info panel — server-side bot/sim telemetry labels
+STR_DLGSYSINFO_SERVER=Sunucu
+STR_DLGSYSINFO_BOTPOOL=Bot havuzu
+STR_DLGSYSINFO_TICK=Adım
+STR_DLGSYSINFO_BRAIN=Brain
+STR_DLGSYSINFO_SIMULATION=Simülasyon
+STR_DLGSYSINFO_BOTPREP=Bot hazırlık
+STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain aşımları

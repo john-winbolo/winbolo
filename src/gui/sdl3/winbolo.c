@@ -673,11 +673,20 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
           transport->sendInput(transport->ctx, &pkt);
-          /* Tick bot brains before the sim tick (local game only) */
+          /* Tick bot brains before the sim tick (local game only).
+           * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
+           * line reflects bot processing — brainHandlerRun below only
+           * covers the human's local autopilot. Advance ttick by the same
+           * duration so dwSysGame (computed as winboloTimer() - ttick at
+           * the bottom of the loop) doesn't also count it as sim time. */
           {
             ServerSim *serverSim = gameFrontGetServerSim();
             if (serverSim != NULL && botManagerGetNumBots() > 0) {
+              DWORD bttick = winboloTimer();
               botManagerTick(serverSim, screenGetAiTypeCS(cs));
+              DWORD botDur = winboloTimer() - bttick;
+              dwSysBrain += botDur;
+              ttick += botDur;
             }
           }
           transport->tick(transport->ctx);

@@ -85,7 +85,7 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.2
+    GIT_TAG        release-3.4.8
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
@@ -377,12 +377,13 @@ endfunction()
 # overlay). Only binaries that link luabrainshandler.c need these
 # files — that's where the per-tick registrations happen.
 #
-# Glob is build-time: adding a new .c under brains/<bot>/c/ requires
-# a CMake re-run. Include dirs are derived from the source list so
+# CONFIGURE_DEPENDS makes CMake re-glob on every build, so adding a new
+# .c under brains/<bot>/c/ is picked up automatically without a manual
+# reconfigure. Include dirs are derived from the source list so
 # consumers (luabrainshandler.c, braintest_main.c) can #include the
 # bot-specific headers without long relative paths.
 # ─────────────────────────────────────────────────────────────────────
-file(GLOB BOT_C_SOURCES "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
+file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
 set(BOT_C_INCLUDE_DIRS "")
 foreach(_bot_c_src ${BOT_C_SOURCES})
     get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
@@ -452,15 +453,16 @@ set(IOS_BOLO_SOURCES
     src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/labels.c src/bolo/lgm.c
-    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c
     src/bolo/treegrow.c src/bolo/udppackets.c src/bolo/util.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
     src/bolo/discovery.c
     src/bolo/obs_builder.c
@@ -913,10 +915,10 @@ set(CLIENT_SOURCES
     src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
@@ -938,6 +940,7 @@ set(CLIENT_SOURCES
     src/bolo/nat_portmap.c
     src/bolo/discovery.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/server/geolookup.c
     src/server/servermessages.c src/server/threads.c
@@ -1238,9 +1241,9 @@ set(SERVER_SOURCES
     src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mathWinbolo.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c
     src/bolo/screenbrainmap.c src/bolo/screenbullet.c src/bolo/screencalc.c
     src/bolo/shells.c src/bolo/starts.c
     src/bolo/swamp.c src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c
@@ -1253,6 +1256,7 @@ set(SERVER_SOURCES
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/gui/sdl3/luabrainshandler.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
@@ -1553,10 +1557,10 @@ set(HEADLESS_SOURCES
     src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
@@ -1568,6 +1572,7 @@ set(HEADLESS_SOURCES
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
@@ -1685,10 +1690,10 @@ set(GYM_SOURCES
     src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
@@ -1700,6 +1705,7 @@ set(GYM_SOURCES
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/geolookup.c
@@ -1812,10 +1818,10 @@ set(BRAINTEST_SOURCES
     src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
@@ -1825,6 +1831,7 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
@@ -1930,10 +1937,10 @@ set(MAPEDITOR_SOURCES
     src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mathWinbolo.c src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
+    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
     src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_io.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
+    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
     src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
@@ -1945,6 +1952,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
     src/bolo/bot_manager.c
+    src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
