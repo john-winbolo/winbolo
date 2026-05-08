@@ -674,7 +674,6 @@ local function attack_pill_steer(state, world, info, goal)
       goal.aim_tick = state.tick
       goal._aim_locked = nil
       if info.speed > 0 then keys = keys | KEY_SLOWER end
-      charge_phase = "REARM corr=" .. math.floor(corr)
       return keys, taps
     end
 
@@ -711,7 +710,6 @@ local function attack_pill_steer(state, world, info, goal)
       end
       if hits_pill then
         keys = keys | KEY_SHOOT
-        charge_phase = charge_phase .. " FIRE"
       else
       end
     end
@@ -720,10 +718,8 @@ local function attack_pill_steer(state, world, info, goal)
       if info.speed <= 1 then
         goal.substate = "engage"
         goal.engage_tick = state.tick
-        charge_phase = "ENGAGE"
       else
         keys = keys | KEY_SLOWER
-        charge_phase = string.format("BRAKING spd=%d", info.speed)
       end
       return keys, taps
     end
@@ -742,16 +738,13 @@ local function attack_pill_steer(state, world, info, goal)
       local brake = C.PPT_CHARGE_BRAKE_DIST or 32
       if sdist <= brake then
         if info.speed > 0 then keys = keys | KEY_SLOWER end
-        charge_phase = string.format("PPT-BRAKE spd=%d dist=%d", info.speed, sdist)
       elseif info.speed >= cap then
         -- Hold at cap by pulsing the slower key; KEY_FASTER would push
         -- us past it. The natural drag won't drop us below cap quickly
         -- so we stay close to it.
         keys = keys | KEY_SLOWER
-        charge_phase = string.format("PPT-HOLD spd=%d cap=%d dist=%d", info.speed, cap, sdist)
       else
         keys = keys | KEY_FASTER
-        charge_phase = string.format("PPT-CREEP spd=%d cap=%d dist=%d", info.speed, cap, sdist)
       end
       return keys, taps
     end
@@ -764,13 +757,12 @@ local function attack_pill_steer(state, world, info, goal)
     if goal._charge_braking and info.speed == 0 and sdist > 80 then
       goal._charge_braking = nil
     end
-    if stop_dist >= sdist or goal._charge_braking then
+    local _deceling = stop_dist >= sdist or goal._charge_braking
+    if _deceling then
       goal._charge_braking = true
       keys = keys | KEY_SLOWER
-      charge_phase = string.format("DECEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
     else
       keys = keys | KEY_FASTER
-      charge_phase = string.format("ACCEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
     end
 
 
@@ -990,19 +982,6 @@ local function attack_pill_steer(state, world, info, goal)
       end
 
       -- Visualization: state machine status near the tank.
-      do
-        local twx = info.tankx / 256.0
-        local twy = info.tanky / 256.0
-        local stop_dist_now = info.speed * 2 + 4
-        local gap = sdist - close_enough
-        -- Color by branch: green=at_spot/creep, yellow=brake, red=stuck
-        local r, g, b = 100, 255, 100
-        if branch == "BRAKE"          then r, g, b = 255, 220, 80
-        elseif branch == "FRICTION_STUCK" then r, g, b = 255, 80,  80
-        end
-        -- Standoff target marker (small magenta dot) so we can see the
-        -- spot the brake/creep is aiming at.
-      end
 
       return keys, taps
     end
@@ -1295,7 +1274,7 @@ local function tank_combat_steer(state, world, info, goal)
   local twy = target.wy
 
   -- ── Draw persistent scan spots from standoff evaluation ──
-  if goal.tank_scan_spots then
+  if BRAIN_DEBUG_MODE and goal.tank_scan_spots then
     local safe_r = C.ATTACK_SAFE_RADIUS
     for _, s in ipairs(goal.tank_scan_spots) do
       if s.has_los then
@@ -1532,7 +1511,7 @@ local function tank_combat_steer(state, world, info, goal)
 end
 
 function M.steer(state, world, info, goal)
-  local _t_steer_start = clock_us()
+  local _t_steer_start = BRAIN_PERF_LOG and clock_us() or 0
   local keys = 0
   local taps = 0
   local tmx  = info.tankx >> 8
@@ -1543,7 +1522,7 @@ function M.steer(state, world, info, goal)
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.
   stuck_recovery(state, info, goal)
-  local _t_after_stuck = clock_us()
+  local _t_after_stuck = BRAIN_PERF_LOG and clock_us() or 0
 
   -- ── Global cliff safety: runs BEFORE any goal-specific self-contained
   -- steering so no goal can drive us off a deep-sea edge at speed.
@@ -1685,21 +1664,6 @@ function M.steer(state, world, info, goal)
       goal_dist = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
 
       -- Nav debug overlay (same as the generic navigate branch below)
-      do
-        local pf = state.pf
-        local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-        if pf.next_mx and pf.next_mx >= 0 then
-        end
-        if state._steer_lx then
-        end
-        if move_dir and state._steer_lx then
-        end
-        -- Nav destination (white circle at the base tile)
-        if state.next_goal and state.next_goal.wx and state.next_goal.wy then
-          local ngx = state.next_goal.wx / 256.0
-          local ngy = state.next_goal.wy / 256.0
-        end
-      end
     end
 
   elseif goal.kind ~= "none" then
@@ -1795,10 +1759,10 @@ function M.steer(state, world, info, goal)
     end
 
     -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
-    local _t_pre_path = clock_us()
+    local _t_pre_path = BRAIN_PERF_LOG and clock_us() or 0
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
-    local _t_post_path = clock_us()
-    if _t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000 then
+    local _t_post_path = BRAIN_PERF_LOG and clock_us() or 0
+    if BRAIN_PERF_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
       opt.append("optimize.log", string.format(
         "  [steer-detail] tick=%d goal=%s stuck_r=%.2fms path_to=%.2fms dest=(%d,%d)",
         state.tick or 0, goal.kind or "?",
@@ -1827,87 +1791,6 @@ function M.steer(state, world, info, goal)
     goal_dist = U.wdist(info.tankx, info.tanky, nav_wx, nav_wy)
 
     -- Steering debug overlays (always draw when we have nav data)
-    do
-      local pf = state.pf
-      local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-
-      -- Raw A* next step (yellow square outline + coord label). The
-      -- yellow rect itself stays on the same gate as the labels —
-      -- consistent with "every drawn thing has a checkbox".
-      if pf.next_mx and pf.next_mx >= 0 then
-        local dmx = math.abs(pf.next_mx - tmx)
-        local dmy = math.abs(pf.next_my - tmy)
-        local cheb = math.max(dmx, dmy)
-        local pf_status = pf.status or "?"
-        -- Detailed info at top: coords + chebyshev + status.
-        -- Tiny "pf.next" tag at bottom, paired with the cliff-safety
-        -- tag on the scan squares so the two yellows are distinguishable.
-      end
-
-      -- Lookahead target (magenta circle) — where steering actually aims
-      if state._steer_lx then
-      end
-
-      -- Line from tank to lookahead target (magenta)
-      if move_dir and state._steer_lx then
-      end
-
-      -- Navigation destination (white circle, or thick purple if plowing)
-      if plow_through then
-        -- Thick purple ring: plow mode on — no braking at destination
-      else
-      end
-
-      -- Next-goal line: deep purple line from the current nav destination to
-      -- the next goal tile, so it's visible when the lookahead override will
-      -- kick in and swing steering early.
-      if state.next_goal and state.next_goal.wx and state.next_goal.wy then
-        local ngx = state.next_goal.wx / 256.0
-        local ngy = state.next_goal.wy / 256.0
-      end
-
-      -- Wall-shoot precondition viz: if the next A* step is a wall tile,
-      -- label it with OK/X markers so we can see which preconditions fail.
-      -- Fires here (in the nav overlay block) so it doesn't get skipped by
-      -- later early returns.
-      if pf.next_mx and pf.next_mx >= 0 then
-        local ntt = U.ttype(pf.next_mx, pf.next_my)
-        if ntt == C.T_BUILDING or ntt == C.T_HALFBUILD then
-          local wdist_wall = U.wdist(info.tankx, info.tanky,
-                                     U.m2w(pf.next_mx), U.m2w(pf.next_my))
-          local under_fire_here = state.perc and state.perc.under_fire or false
-          local allow_wall = not under_fire_here
-                             or (goal.kind == "attack_pill" and goal.substate == "approach")
-                             or goal.kind == "rescue_lgm"
-                             or goal.kind == "refuel_at_base"
-                             or goal.kind == "flee_to_base"
-                             or goal.kind == "capture_base"
-                             or goal.kind == "capture_pill"
-          local c_shells = info.shells > C.SHELL_RESERVE
-          local c_move   = move_dir ~= nil
-          local c_allow  = allow_wall
-          local c_dist   = wdist_wall < 768
-          local function mark(ok) return ok and "OK" or "X" end
-          local lbl = string.format(
-            "wall@(%d,%d) %s  dist=%.1ft(%s<3)  shells=%d>%d(%s)  allow=%s  nav=%s",
-            pf.next_mx, pf.next_my,
-            ntt == C.T_BUILDING and "FULL" or "HALF",
-            wdist_wall / 256.0, mark(c_dist),
-            info.shells, C.SHELL_RESERVE, mark(c_shells),
-            mark(c_allow),
-            mark(c_move))
-          local all_ok = c_shells and c_move and c_allow and c_dist
-          local r, g = (all_ok and 100 or 255), (all_ok and 255 or 120)
-          if not all_ok then
-            local reasons = {}
-            if not c_dist   then reasons[#reasons+1] = string.format("too far (%.1ft >= 3t)", wdist_wall/256.0) end
-            if not c_shells then reasons[#reasons+1] = string.format("low shells (%d <= %d)", info.shells, C.SHELL_RESERVE) end
-            if not c_allow  then reasons[#reasons+1] = string.format("under_fire + goal=%s not in allowlist", goal.kind or "?") end
-            if not c_move   then reasons[#reasons+1] = "no move_dir (on destination tile)" end
-          end
-        end
-      end
-    end
   end
 
   -- Attack_pill in range with clear LOS: stop navigating and stand to fight.
@@ -2223,7 +2106,7 @@ function M.steer(state, world, info, goal)
         end
       end
     end
-    if cliff then
+    if cliff and BRAIN_DEBUG_MODE then
       -- Orange outline on the deep-sea tile that triggered the stop
     end
 
@@ -2305,7 +2188,7 @@ function M.steer(state, world, info, goal)
     --   turn_max_speed: final cap used for speed control while turning. In
     --                   plow with a far target this goes back to 256.
     -- ───────────────────────────────────────────────────────────────────────
-    if plow_through then
+    if BRAIN_DEBUG_MODE and plow_through then
       local twx, twy = info.tankx / 256.0, info.tanky / 256.0
       local deg = correction * (360.0 / 256.0)
       local target_kind = lookahead_active and "next_goal" or "current nav dest"
@@ -2416,11 +2299,6 @@ function M.steer(state, world, info, goal)
       -- Viz: yellow ring around tank when facing-away brake is active, plus
       -- the correction angle (in degrees) under the rings so we can tell
       -- what triggered it — lookahead override, next_goal behind us, etc.
-      do
-        local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-        local deg = correction * (360.0 / 256.0)
-        local tag = lookahead_active and "lookahead" or "nav"
-      end
       -- Under fire or race_mode: tolerate higher speed even when facing away —
       -- momentum helps escape the threat zone or win the capture race faster
       -- than braking and re-accelerating.

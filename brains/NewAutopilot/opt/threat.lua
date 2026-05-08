@@ -46,7 +46,7 @@ M.tank_grid = {}
 -- specific pill's danger from cumulative cost when the bot is committed
 -- to killing it. Keyed by mkey(pm.mx, pm.my) since pills with health > 0
 -- and hostile/neutral owner are stationary.
-M.pill_contrib = {}
+M.pill_contrib = {}  -- per-pill contribution sub-tables (still Lua, used by pillcontrib_add_all)
 -- Per-tile count of distinct hostile/neutral pills that can fire on this
 -- tile. Rebuilt only when pills change (via pill_dirty). Used by Scan A
 -- in attack.evaluate_pill_difficulty for pill-take maneuver scoring,
@@ -318,14 +318,9 @@ local function rebuild_terrain_factors()
   _terrain_trees = true
 end
 
--- Stamp one pill into pill_grid AND simultaneously update the coverage
--- table. The hot path (~314 disk tiles per pill) lives in C; this
--- wrapper only marshals arguments + records the returned contrib.
---
--- The C kernel reads its terrain factor cache directly from C-side
--- arrays (built by na_threat.terrain_rebuild), so there's no per-tile
--- Lua-to-C boundary cost beyond the raw set/get the kernel does on
--- pill_grid and coverage.
+-- Stamp one pill directly into C-side s_pill_grid_c and s_cov_grid_c.
+-- No Lua table I/O for pill_grid or coverage — zero GC pressure.
+-- Returns a contrib table stored in M.pill_contrib for attack-side use.
 local function stamp_pill(pm)
   local pill_key = pm.my * 256 + pm.mx
   M.pill_contrib[pill_key] = na_threat.stamp_pill(
@@ -770,6 +765,7 @@ function M.update(state, world, info)
     for k in pairs(M.pill_contrib) do M.pill_contrib[k] = nil end
     local _t_clear = clock_us() - _t0
     -- Pass 1: stamp raw danger from each pill into C-side arrays.
+    -- coverage is now also C-side (s_cov_grid_c) — no Lua table needed.
     local _t_stamp0 = clock_us()
     local _stamp_pills = 0
     local hp_n = 0
@@ -795,6 +791,7 @@ function M.update(state, world, info)
       end
     end
     -- Pass 2: apply LOS occlusion in C (reads/writes s_pill_grid_c directly).
+    -- Lua fallback: apply_occlusion_to_pill (kept below) for debugging.
     local _t_occl0 = clock_us()
     na_threat.apply_occlusion_all(M.pill_contrib,
       _fp_mx, _fp_my, fp_n, _hp_mx, _hp_my, hp_n)
@@ -807,7 +804,8 @@ function M.update(state, world, info)
       end
     end
 
-    -- Pass 3: crossfire multiplier — done in C on s_pill_grid_c.
+    -- Pass 3: crossfire multiplier — multiply each tile by its coverage count.
+    -- Done in C on s_pill_grid_c; no Lua table iteration.
     local _t_cov0 = clock_us()
     if C.CROSSFIRE_MULTIPLIER_ENABLED then
       na_threat.apply_crossfire()
@@ -817,13 +815,11 @@ function M.update(state, world, info)
     snapshot_pills(world)
     M.pill_dirty = false
     M.rebuilt_this_tick = true
+    -- Sync C-side pill_grid/cov_grid into na_attack's arrays (memcpy).
     if na_attack then na_attack.sync_grids() end
 
     -- Per-section timing breakdown for diagnosing slow rebuilds. Only
     -- prints when the total exceeded ~5 ms (otherwise too noisy).
-    local _t_total = clock_us() - _t0
-    if _t_total > 5000 then
-    end
   end
 
   -- Always rebuild tank grid (cheap, tanks move every tick).
@@ -887,7 +883,8 @@ end
 -- M.reset() — clear all state (called on Brain.open)
 -- -------------------------------------------------------------------------
 function M.reset()
-  -- pill_grid and coverage_grid live in C; pill_rebuild_begin() zeroes them.
+  -- pill_grid and coverage_grid live in C (s_pill_grid_c / s_cov_grid_c);
+  -- pill_rebuild_begin() will zero them at the next rebuild.
   for k in pairs(M.tank_grid)  do M.tank_grid[k]  = nil end
   for k in pairs(M.prev_pills) do M.prev_pills[k] = nil end
   for k in pairs(M.prev_friendly_pills) do M.prev_friendly_pills[k] = nil end

@@ -674,8 +674,10 @@ local function attack_pill_steer(state, world, info, goal)
       goal.aim_tick = state.tick
       goal._aim_locked = nil
       if info.speed > 0 then keys = keys | KEY_SLOWER end
-      charge_phase = "REARM corr=" .. math.floor(corr)
-      viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 100, 100)
+      if BRAIN_DEBUG_MODE then
+        charge_phase = "REARM corr=" .. math.floor(corr)
+        viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 100, 100)
+      end
       return keys, taps
     end
 
@@ -697,9 +699,11 @@ local function attack_pill_steer(state, world, info, goal)
     -- tile lateral error — wider than the pill). Sim is bit-exact
     -- with the engine.
     local dist_to_pill = tank_to_pill
-    viz.hud_text("charge_status", 10, 75, string.format("   dist_to_pill=%d <= %d corr=%.1f",
-                                                         dist_to_pill, math.floor(C.ATTACK_PILL_STANDOFF * 256), corr),
-                 "topleft", 255, 255, 0)
+    if BRAIN_DEBUG_MODE then
+      viz.hud_text("charge_status", 10, 75, string.format("   dist_to_pill=%d <= %d corr=%.1f",
+                                                           dist_to_pill, math.floor(C.ATTACK_PILL_STANDOFF * 256), corr),
+                   "topleft", 255, 255, 0)
+    end
     if dist_to_pill <= C.ATTACK_PILL_STANDOFF * 256
        and math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
       -- Pre-gate: rough corr check first (cheap) to avoid the sim
@@ -715,12 +719,16 @@ local function attack_pill_steer(state, world, info, goal)
       end
       if hits_pill then
         keys = keys | KEY_SHOOT
-        charge_phase = charge_phase .. " FIRE"
-        viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, FIRE (sim hits)",
-                     "topleft", 255, 255, 0)
+        if BRAIN_DEBUG_MODE then
+          charge_phase = charge_phase .. " FIRE"
+          viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, FIRE (sim hits)",
+                       "topleft", 255, 255, 0)
+        end
       else
-        viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, hold (sim misses)",
-                     "topleft", 255, 180, 100, 255)
+        if BRAIN_DEBUG_MODE then
+          viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, hold (sim misses)",
+                       "topleft", 255, 180, 100, 255)
+        end
       end
     end
 
@@ -728,12 +736,17 @@ local function attack_pill_steer(state, world, info, goal)
       if info.speed <= 1 then
         goal.substate = "engage"
         goal.engage_tick = state.tick
-        charge_phase = "ENGAGE"
       else
         keys = keys | KEY_SLOWER
-        charge_phase = string.format("BRAKING spd=%d", info.speed)
       end
-      viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 255, 0)
+      if BRAIN_DEBUG_MODE then
+        if info.speed <= 1 then
+          charge_phase = "ENGAGE"
+        else
+          charge_phase = string.format("BRAKING spd=%d", info.speed)
+        end
+        viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 255, 0)
+      end
       return keys, taps
     end
 
@@ -751,18 +764,24 @@ local function attack_pill_steer(state, world, info, goal)
       local brake = C.PPT_CHARGE_BRAKE_DIST or 32
       if sdist <= brake then
         if info.speed > 0 then keys = keys | KEY_SLOWER end
-        charge_phase = string.format("PPT-BRAKE spd=%d dist=%d", info.speed, sdist)
       elseif info.speed >= cap then
         -- Hold at cap by pulsing the slower key; KEY_FASTER would push
         -- us past it. The natural drag won't drop us below cap quickly
         -- so we stay close to it.
         keys = keys | KEY_SLOWER
-        charge_phase = string.format("PPT-HOLD spd=%d cap=%d dist=%d", info.speed, cap, sdist)
       else
         keys = keys | KEY_FASTER
-        charge_phase = string.format("PPT-CREEP spd=%d cap=%d dist=%d", info.speed, cap, sdist)
       end
-      viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 200, 220, 100)
+      if BRAIN_DEBUG_MODE then
+        if sdist <= brake then
+          charge_phase = string.format("PPT-BRAKE spd=%d dist=%d", info.speed, sdist)
+        elseif info.speed >= cap then
+          charge_phase = string.format("PPT-HOLD spd=%d cap=%d dist=%d", info.speed, cap, sdist)
+        else
+          charge_phase = string.format("PPT-CREEP spd=%d cap=%d dist=%d", info.speed, cap, sdist)
+        end
+        viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 200, 220, 100)
+      end
       return keys, taps
     end
 
@@ -774,16 +793,22 @@ local function attack_pill_steer(state, world, info, goal)
     if goal._charge_braking and info.speed == 0 and sdist > 80 then
       goal._charge_braking = nil
     end
-    if stop_dist >= sdist or goal._charge_braking then
+    local _deceling = stop_dist >= sdist or goal._charge_braking
+    if _deceling then
       goal._charge_braking = true
       keys = keys | KEY_SLOWER
-      charge_phase = string.format("DECEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
     else
       keys = keys | KEY_FASTER
-      charge_phase = string.format("ACCEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
     end
 
-    viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 255, 0)
+    if BRAIN_DEBUG_MODE then
+      if _deceling then
+        charge_phase = string.format("DECEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
+      else
+        charge_phase = string.format("ACCEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
+      end
+      viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 255, 0)
+    end
 
     return keys, taps
   end
@@ -1001,7 +1026,7 @@ local function attack_pill_steer(state, world, info, goal)
       end
 
       -- Visualization: state machine status near the tank.
-      do
+      if BRAIN_DEBUG_MODE then
         local twx = info.tankx / 256.0
         local twy = info.tanky / 256.0
         local stop_dist_now = info.speed * 2 + 4
@@ -1316,7 +1341,7 @@ local function tank_combat_steer(state, world, info, goal)
   local twy = target.wy
 
   -- ── Draw persistent scan spots from standoff evaluation ──
-  if goal.tank_scan_spots then
+  if BRAIN_DEBUG_MODE and goal.tank_scan_spots then
     local safe_r = C.ATTACK_SAFE_RADIUS
     for _, s in ipairs(goal.tank_scan_spots) do
       if s.has_los then
@@ -1507,10 +1532,12 @@ local function tank_combat_steer(state, world, info, goal)
   local pred_wy = twy + svy * shell_travel_ticks
 
   -- Debug: lead prediction overlay (red = target, orange = predicted)
-  viz.circle("tank_combat_viz", twx / 256.0, twy / 256.0, 0.3, 255, 50, 50, 180)
-  viz.circle("tank_combat_viz", pred_wx / 256.0, pred_wy / 256.0, 0.3, 255, 165, 0, 200)
-  viz.line("tank_combat_viz", twx / 256.0, twy / 256.0,
-               pred_wx / 256.0, pred_wy / 256.0, 255, 165, 0, 140)
+  if BRAIN_DEBUG_MODE then
+    viz.circle("tank_combat_viz", twx / 256.0, twy / 256.0, 0.3, 255, 50, 50, 180)
+    viz.circle("tank_combat_viz", pred_wx / 256.0, pred_wy / 256.0, 0.3, 255, 165, 0, 200)
+    viz.line("tank_combat_viz", twx / 256.0, twy / 256.0,
+                 pred_wx / 256.0, pred_wy / 256.0, 255, 165, 0, 140)
+  end
 
   local aim_dir = U.aim_at(info.tankx, info.tanky, pred_wx, pred_wy)
   local aim_corr = U.adiff(info.direction, aim_dir)
@@ -1568,7 +1595,7 @@ local function tank_combat_steer(state, world, info, goal)
 end
 
 function M.steer(state, world, info, goal)
-  local _t_steer_start = clock_us()
+  local _t_steer_start = BRAIN_PERF_LOG and clock_us() or 0
   local keys = 0
   local taps = 0
   local tmx  = info.tankx >> 8
@@ -1579,7 +1606,7 @@ function M.steer(state, world, info, goal)
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.
   stuck_recovery(state, info, goal)
-  local _t_after_stuck = clock_us()
+  local _t_after_stuck = BRAIN_PERF_LOG and clock_us() or 0
 
   -- ── Global cliff safety: runs BEFORE any goal-specific self-contained
   -- steering so no goal can drive us off a deep-sea edge at speed.
@@ -1608,28 +1635,32 @@ function M.steer(state, world, info, goal)
       end
       -- Pale yellow square for scanned-clear tiles + small label so
       -- they're not confused with the bright pf.next overlay.
-      viz.rect("cliff_safety",
-               amx + 0.15, amy + 0.15, amx + 0.85, amy + 0.85,
-               255, 255, 150, 50)
-      viz.text("cliff_safety",
-               amx + 0.5, amy + 0.95, "cliff safety",
-               "center", 255, 255, 150, 180, 0.5)
+      if BRAIN_DEBUG_MODE then
+        viz.rect("cliff_safety",
+                 amx + 0.15, amy + 0.15, amx + 0.85, amy + 0.85,
+                 255, 255, 150, 50)
+        viz.text("cliff_safety",
+                 amx + 0.5, amy + 0.95, "cliff safety",
+                 "center", 255, 255, 150, 180, 0.5)
+      end
     end
     if trigger_step then
       -- Trigger viz: orange tile + line from tank + CLIFF BRAKE label.
       -- The braking BEHAVIOR still fires (return KEY_SLOWER below) —
       -- only the visual markers are gated.
-      viz.rect("cliff_safety",
-               trigger_mx, trigger_my, trigger_mx + 1, trigger_my + 1,
-               255, 140, 0, 230)
-      viz.line("cliff_safety",
-               twx, twy, trigger_mx + 0.5, trigger_my + 0.5,
-               255, 140, 0, 200)
-      viz.text("cliff_safety",
-               trigger_mx + 0.5, trigger_my - 0.4,
-               string.format("CLIFF BRAKE  step=%d  speed=%d  look=%.1ft",
-                             trigger_step, info.speed, look_wu / 256.0),
-               "center", 255, 160, 40, 255)
+      if BRAIN_DEBUG_MODE then
+        viz.rect("cliff_safety",
+                 trigger_mx, trigger_my, trigger_mx + 1, trigger_my + 1,
+                 255, 140, 0, 230)
+        viz.line("cliff_safety",
+                 twx, twy, trigger_mx + 0.5, trigger_my + 0.5,
+                 255, 140, 0, 200)
+        viz.text("cliff_safety",
+                 trigger_mx + 0.5, trigger_my - 0.4,
+                 string.format("CLIFF BRAKE  step=%d  speed=%d  look=%.1ft",
+                               trigger_step, info.speed, look_wu / 256.0),
+                 "center", 255, 160, 40, 255)
+      end
       log.reason("steer", {
         mode = "global_cliff_brake", goal_kind = goal.kind,
         tile_mx = trigger_mx, tile_my = trigger_my,
@@ -1654,8 +1685,10 @@ function M.steer(state, world, info, goal)
         local amy = (info.tanky - cdir * 2) >> 8
         if U.ttype(amx, amy) == C.T_DEEPSEA then
           k = (k & ~KEY_FASTER) | KEY_SLOWER
-          viz.rect("cliff_safety", amx + 0.1, amy + 0.1, amx + 0.9, amy + 0.9,
-                       255, 140, 0, 180)
+          if BRAIN_DEBUG_MODE then
+            viz.rect("cliff_safety", amx + 0.1, amy + 0.1, amx + 0.9, amy + 0.9,
+                         255, 140, 0, 180)
+          end
         end
       end
       return k, t
@@ -1740,7 +1773,7 @@ function M.steer(state, world, info, goal)
       goal_dist = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
 
       -- Nav debug overlay (same as the generic navigate branch below)
-      do
+      if BRAIN_DEBUG_MODE then
         local pf = state.pf
         local twx, twy = info.tankx / 256.0, info.tanky / 256.0
         if pf.next_mx and pf.next_mx >= 0 then
@@ -1859,10 +1892,10 @@ function M.steer(state, world, info, goal)
     end
 
     -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
-    local _t_pre_path = clock_us()
+    local _t_pre_path = BRAIN_PERF_LOG and clock_us() or 0
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
-    local _t_post_path = clock_us()
-    if _t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000 then
+    local _t_post_path = BRAIN_PERF_LOG and clock_us() or 0
+    if BRAIN_PERF_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
       opt.append("optimize.log", string.format(
         "  [steer-detail] tick=%d goal=%s stuck_r=%.2fms path_to=%.2fms dest=(%d,%d)",
         state.tick or 0, goal.kind or "?",
@@ -1891,7 +1924,7 @@ function M.steer(state, world, info, goal)
     goal_dist = U.wdist(info.tankx, info.tanky, nav_wx, nav_wy)
 
     -- Steering debug overlays (always draw when we have nav data)
-    do
+    if BRAIN_DEBUG_MODE then
       local pf = state.pf
       local twx, twy = info.tankx / 256.0, info.tanky / 256.0
 
@@ -2313,7 +2346,7 @@ function M.steer(state, world, info, goal)
         end
       end
     end
-    if cliff then
+    if cliff and BRAIN_DEBUG_MODE then
       -- Orange outline on the deep-sea tile that triggered the stop
       viz.rect("cliff_safety", cliff_hit_mx, cliff_hit_my, cliff_hit_mx + 1, cliff_hit_my + 1,
                    255, 140, 0, 220)
@@ -2397,7 +2430,7 @@ function M.steer(state, world, info, goal)
     --   turn_max_speed: final cap used for speed control while turning. In
     --                   plow with a far target this goes back to 256.
     -- ───────────────────────────────────────────────────────────────────────
-    if plow_through then
+    if BRAIN_DEBUG_MODE and plow_through then
       local twx, twy = info.tankx / 256.0, info.tanky / 256.0
       local deg = correction * (360.0 / 256.0)
       local target_kind = lookahead_active and "next_goal" or "current nav dest"
@@ -2510,7 +2543,7 @@ function M.steer(state, world, info, goal)
       -- Viz: yellow ring around tank when facing-away brake is active, plus
       -- the correction angle (in degrees) under the rings so we can tell
       -- what triggered it — lookahead override, next_goal behind us, etc.
-      do
+      if BRAIN_DEBUG_MODE then
         local twx, twy = info.tankx / 256.0, info.tanky / 256.0
         viz.circle("facing_away_brake", twx, twy, 0.7, 255, 230, 0, 220)
         viz.circle("facing_away_brake", twx, twy, 0.6, 255, 230, 0, 220)
@@ -2603,8 +2636,10 @@ function M.steer(state, world, info, goal)
             if math.abs(U.adiff(info.direction, aim)) < 8 then
               taps = taps | KEY_SHOOT
               shot_fired = true
-              viz.line("tank_combat_viz", info.tankx / 256.0, info.tanky / 256.0,
-                et.mx + 0.5, et.my + 0.5, 255, 255, 0, 120)
+              if BRAIN_DEBUG_MODE then
+                viz.line("tank_combat_viz", info.tankx / 256.0, info.tanky / 256.0,
+                  et.mx + 0.5, et.my + 0.5, 255, 255, 0, 120)
+              end
               break
             end
           end

@@ -1171,14 +1171,16 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   end  -- end else (Lua neighbor bonus fallback)
 
   local _t_end = clock_us()
-  if _t_end - _t_score_cands > 3000 then
-    opt.append("optimize.log", string.format(
-      "  [shield] scan total=%.2f ms  score_cands=%.2f ms  nudge=%.2f ms  neighbor=%.2f ms  stamp=%s",
-      (_t_end - _t_score_cands) / 1000,
-      (_t_nudge_start - _t_score_cands) / 1000,
-      (_t_neighbor_start - _t_nudge_start) / 1000,
-      (_t_end - _t_neighbor_start) / 1000,
-      _pill_hit and "yes" or "no"))
+  if BRAIN_PERF_LOG then
+    if _t_end - _t_score_cands > 3000 then
+      opt.append("optimize.log", string.format(
+        "  [shield] scan total=%.2f ms  score_cands=%.2f ms  nudge=%.2f ms  neighbor=%.2f ms  stamp=%s",
+        (_t_end - _t_score_cands) / 1000,
+        (_t_nudge_start - _t_score_cands) / 1000,
+        (_t_neighbor_start - _t_nudge_start) / 1000,
+        (_t_end - _t_neighbor_start) / 1000,
+        _pill_hit and "yes" or "no"))
+    end
   end
 
   local best
@@ -1386,6 +1388,7 @@ local function border_box(viz_id, mx, my, inset, r, g, b, a)
 end
 
 function M.draw_overlay(scan, now_tick)
+  if not BRAIN_DEBUG_MODE then return end
   if not scan or not scan.candidates then return end
 
   -- After NONWINNER_FADE_TICKS, hide everything but the chosen viz

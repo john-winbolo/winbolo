@@ -820,12 +820,14 @@ function M.update(state, world, info)
 
     -- Per-section timing breakdown for diagnosing slow rebuilds. Only
     -- prints when the total exceeded ~5 ms (otherwise too noisy).
-    local _t_total = clock_us() - _t0
-    if _t_total > 5000 then
-      print2(string.format(
-        "  threat REBUILD %.2f ms  pills=%d  clear=%.2f stamp=%.2f occl=%.2f cov+xfire=%.2f",
-        _t_total / 1000, hp_n,
-        _t_clear / 1000, _t_stamp / 1000, _t_occl / 1000, _t_cov / 1000))
+    if BRAIN_DEBUG_MODE then
+      local _t_total = clock_us() - _t0
+      if _t_total > 5000 then
+        print2(string.format(
+          "  threat REBUILD %.2f ms  pills=%d  clear=%.2f stamp=%.2f occl=%.2f cov+xfire=%.2f",
+          _t_total / 1000, hp_n,
+          _t_clear / 1000, _t_stamp / 1000, _t_occl / 1000, _t_cov / 1000))
+      end
     end
   end
 

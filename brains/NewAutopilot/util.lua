@@ -213,7 +213,7 @@ function M.line_walk(fx0, fy0, fx1, fy1, fn, viz_color, viz_id)
     local k = by * 256 + bx
     if not visited[k] then
       visited[k] = true
-      if viz_color then
+      if BRAIN_DEBUG_MODE and viz_color then
         local r, g, b, a = viz_color[1], viz_color[2], viz_color[3], viz_color[4] or 200
         -- Draw two nested outlines for thickness
         viz.rect(viz_id, bx,         by,         bx + 1,    by + 1,    r, g, b, a)
