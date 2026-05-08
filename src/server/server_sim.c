@@ -1587,8 +1587,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         /* Always include the client's own tank; cull others by viewport.
          * Also check LGM position — a parachuting LGM can be far from its
          * tank (starts at a random spawn), so we need to send updates when
-         * the LGM is visible even if the tank is not. */
-        if (i != clientIdx) {
+         * the LGM is visible even if the tank is not.  Out-of-view tanks
+         * are emitted as 1-byte stubs (TANK_SNAPSHOT_HIDDEN_FLAG) rather
+         * than skipped, so the client can clear stale ghost positions for
+         * tanks that have driven off screen.  noCull bypasses this so
+         * recording paths capture every tank in full. */
+        if (i != clientIdx && !noCull) {
             bool inView = inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8);
             if (!inView && sim->sim.lgmen[i] != NULL && lgmIsOut(&sim->sim.lgmen[i])) {
                 BYTE lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
@@ -1598,6 +1602,10 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 }
             }
             if (!inView) {
+                ts = &tanksOut[tankCount];
+                memset(ts, 0, sizeof(*ts));
+                ts->playerNum = (uint8_t)(i | TANK_SNAPSHOT_HIDDEN_FLAG);
+                tankCount++;
                 continue;
             }
         }

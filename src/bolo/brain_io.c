@@ -666,7 +666,22 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
   /* Update other players via interpolation */
   csPtr->interpCtx.localPlayer = playerNum;
   for (i = 0; i < tankCount; i++) {
-    BYTE pn = tanks[i].playerNum;
+    BYTE pn = (BYTE)(tanks[i].playerNum & TANK_SNAPSHOT_PLAYER_MASK);
+
+    /* Hidden stub: this slot is connected but its tank/LGM are outside our
+     * viewport.  Mark the slot missing for interp and clear the players
+     * struct entry so the renderer doesn't keep drawing the last in-view
+     * position as a ghost. */
+    if (tanks[i].playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
+      if (pn != playerNum && pn < MAX_TANKS) {
+        interpMarkMissing(&csPtr->interpCtx, pn);
+        if (csPtr->sim.plyrs != NULL && playersIsInUse(&csPtr->sim.plyrs, pn)) {
+          playersUpdate(&csPtr->sim.plyrs, pn, 0, 0, 0, 0, 0, FALSE,
+                        0, 0, 0, 0, 0);
+        }
+      }
+      continue;
+    }
 
     /* Update ping and client flags for all players from snapshot */
     playersSetPing(&csPtr->sim.plyrs, pn, tanks[i].pingMs);
@@ -954,14 +969,18 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
     }
   }
 
-  /* Mark players NOT in the snapshot as missing */
+  /* Mark players NOT in the snapshot as missing.  With per-tick stubs the
+   * server emits one entry per connected slot, so reaching here means the
+   * slot is truly absent (disconnect, never-yet-seen, packet drop on first
+   * snapshot).  Mask the stub flag when comparing slot indices. */
   {
     BYTE p;
     for (p = 0; p < MAX_TANKS; p++) {
       bool found = FALSE;
       if (p == playerNum) continue;
       for (i = 0; i < tankCount; i++) {
-        if (tanks[i].playerNum == p) { found = TRUE; break; }
+        BYTE entryPn = (BYTE)(tanks[i].playerNum & TANK_SNAPSHOT_PLAYER_MASK);
+        if (entryPn == p) { found = TRUE; break; }
       }
       if (!found) {
         interpMarkMissing(&csPtr->interpCtx, p);
