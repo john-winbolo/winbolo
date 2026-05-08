@@ -113,7 +113,7 @@ const char *packetTypeName(uint8_t type);
 int packInputPacket(uint8_t *buf, const InputPacket *pkt);
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts);
-void unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts);
+int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts);
 int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss);
 void unpackShellSnapshot(const uint8_t *buf, ShellSnapshot *ss);
 int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke);
