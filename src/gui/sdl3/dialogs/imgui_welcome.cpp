@@ -354,7 +354,7 @@ extern "C" int imguiWelcomeShow(void) {
 
         /* Centered dialog panel — only when visible or animating */
         if (dialogAlpha > 0.01f) {
-            float panelW = 500.0f * s, panelH = 480.0f * s;
+            float panelW = 500.0f * s, panelH = 570.0f * s;
             if (panelW > (float)winW * 0.9f) panelW = (float)winW * 0.9f;
             if (panelH > (float)winH * 0.9f) panelH = (float)winH * 0.9f;
 

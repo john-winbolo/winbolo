@@ -63,7 +63,11 @@ struct BrainEntry {
 
 static int discoverBrains(BrainEntry *brains, int maxBrains) {
     int count = 0;
-    const char *dirs[] = { "brains", "Brains", "data/Brains" };
+    /* Order matches findBrainPath() in bg_game.c / gamefront.c so every
+     * path resolver returns the same casing on case-insensitive filesystems
+     * (Windows/WSL DrvFs). Diverging casings break na_shield_stamp's
+     * loaded-path check, which is shared process-wide. */
+    const char *dirs[] = { "Brains", "brains", "data/Brains" };
     int numDirs = 3;
 
     /* Also search relative to the executable base path (needed on iOS where

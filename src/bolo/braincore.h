@@ -65,6 +65,20 @@ void brainCoreRegisterConstants(lua_State *L);
 void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr);
 
 /*********************************************************
+ *NAME:          brainCoreGetWorldPtrPtr
+ *PURPOSE:
+ *  Retrieve the worldPtr-pointer stashed by brainCoreRegisterGetTerrain.
+ *  Lets bot-specific C modules read raw terrain without going through
+ *  the Lua get_terrain closure (avoiding ~50 ns overhead per tile in
+ *  hot loops like terrain-factor / pill-stamp builds).
+ *
+ *  Returns NULL if brainCoreRegisterGetTerrain was never called on
+ *  this lua_State. Otherwise the returned pointer-to-pointer dereferences
+ *  to the host's currently-active 256×256 BYTE map.
+ *********************************************************/
+const BYTE **brainCoreGetWorldPtrPtr(lua_State *L);
+
+/*********************************************************
  *NAME:          brainCorePushInfo
  *PURPOSE:
  *  Marshals a BrainInfo struct into a Lua table and pushes
@@ -86,8 +100,16 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info);
  *PURPOSE:
  *  Calls brain.think(info) and processes the return table.
  *  Returns false on error.
+ *
+ *  When out_killed is non-NULL, sets *out_killed = true iff
+ *  the pcall failed with the budget-hook sentinel
+ *  "tick_budget_exceeded" (Lua prepends <chunk>:<line>:  to
+ *  luaL_error messages, so we suffix-match). This lets the
+ *  caller distinguish a recoverable budget abort from a real
+ *  Lua bug; when out_killed is NULL the caller doesn't care
+ *  and gets the legacy false-on-any-error contract.
  *********************************************************/
-bool brainCoreCallThink(lua_State *L, BrainInfo *info);
+bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed);
 
 /*********************************************************
  *NAME:          brainCoreCallMethod
@@ -160,6 +182,16 @@ void brainCoreRegisterPrintCapture(lua_State *L, BrainPrintCaptureFunc cb,
  * Call before creating any brain instances. */
 void brainCoreSetGlobalPrintCapture(BrainPrintCaptureFunc cb, void *ud,
                                      const uint32_t *tickPtr);
+
+/*********************************************************
+ *NAME:          Worker-pool threading rule (host callbacks)
+ *PURPOSE:
+ *  The host-callback setters below must be invoked before
+ *  the first parallel brain tick. The bot worker pool runs
+ *  the first per-bot tick serially so registration bindings
+ *  populate host-side registries in a known order. After
+ *  init, callbacks must not be modified while workers run.
+ *********************************************************/
 
 /*********************************************************
  *NAME:          braintest_viz_register hook
@@ -246,24 +278,24 @@ typedef void (*BrainVizDetailClearFunc)(void);
 void brainCoreSetVizDetailRegisterCallback(BrainVizDetailRegisterFunc cb);
 void brainCoreSetVizDetailAppendBodyCallback(BrainVizDetailAppendBodyFunc cb);
 void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
+
+/* bt_yield() — host event-pump hook.
+ * When set, the Lua global bt_yield() calls this so long-running Brain.open()
+ * operations (LOS computation, stamp caches) can keep the window responsive.
+ * Non-BrainTest hosts leave this NULL; bt_yield() becomes a no-op.
+ *
+ * Threading: set once at startup, before any brain instance is created. The
+ * callback pointer is read unsynchronized from worker threads during
+ * brain.think() / brain.open() (Lua brain code can invoke bt_yield()), so
+ * runtime modification after the first brain instance exists is undefined. */
+void brainCoreSetYieldCallback(void (*cb)(void));
 void brainCoreRegisterVizDetail(lua_State *L);
 
-/*********************************************************
- *NAME:          pill_contrib registry hook
- *
- *  Lua bindings pillcontrib_clear / pillcontrib_begin_pill /
- *  pillcontrib_add_tile let brains push per-pill, per-tile
- *  danger contribution data to BrainTest each tick. Host
- *  uses it for an overlay (shift-2 cycles through pills).
- *  Non-host runtimes leave callbacks NULL and bindings no-op.
- *********************************************************/
-typedef void (*BrainPillContribClearFunc)(void);
-typedef int  (*BrainPillContribBeginPillFunc)(int pill_id, int mx, int my);
-typedef void (*BrainPillContribAddTileFunc)(int slot, int tx, int ty, float value);
-
-void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb);
-void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb);
-void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb);
-void brainCoreRegisterPillContrib(lua_State *L);
+/* NOTE: pill_contrib bindings used to live here. They were specific to
+ * NewAutopilot's BrainTest overlay (shift-2 cycle-through-pills), so they
+ * moved to brains/NewAutopilot/c/na_overlay_pillcontrib.h to keep this
+ * header generic. Hosts that want the overlay should also
+ *   #include "na_overlay_pillcontrib.h"
+ * and call naPillContribRegister(L) after brainCore* registrations. */
 
 #endif /* BRAINCORE_H */

@@ -80,8 +80,8 @@
 /* Forward declaration — implemented in gui/sdl3/cursor.c */
 extern void moveMousePointer(updateType value);
 
-/* clientCenterTankCS is declared in screen.h (extern) so brain_io.c can
- * call it; the bot path never invokes it (guarded by isHuman/keypress
+/* clientCenterTankCS is declared in screen.h (extern) so client_snapshot.c
+ * can call it; the bot path never invokes it (guarded by isHuman/keypress
  * checks) but the linker still needs to resolve the symbol. */
 
 /* Module Level Variables */

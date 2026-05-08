@@ -61,9 +61,9 @@ typedef struct {
   int       heap_capacity;
   int       open_count;
 
-  int   active;       /* 1 if Start has been called and Step hasn't been reset */
   int   done;         /* 1 if the search has emptied its heap */
   int   exact;        /* 1 = track per-node shell budget for wall_shoot */
+  int   allow_boat;   /* 0 = never transition to boat nodes (land-only search) */
   int   kind;         /* user-defined tag for the freshness/lookup matcher */
   int   src_x, src_y;
   int   in_boat;
@@ -83,9 +83,10 @@ typedef struct {
   const BYTE *map;
 
   /* Spatial grids */
-  uint16_t danger_grid[65536];   /* pill danger values */
-  int16_t  overlay_grid[65536];  /* modder-extensible custom cost layer */
-  int16_t  influence_grid[65536]; /* territorial influence: +friendly, -hostile */
+  uint16_t danger_grid[65536];        /* pill danger values */
+  int16_t  overlay_grid[65536];       /* modder-extensible custom cost layer */
+  int16_t  influence_grid[65536];     /* territorial influence: +friendly, -hostile */
+  int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
 
   /* Per-terrain-type tables (indexed 0..15) */
   float terrain_cost_table[16];      /* land mode costs */
@@ -173,6 +174,14 @@ typedef struct {
   void *astarLog;  /* FILE* — void* to avoid stdio include in header */
   const uint32_t *astarLogTickPtr;  /* pointer to current tick counter */
 
+  /* Cooperative abort flag (SDL_AtomicInt *). When non-NULL, A* /
+   * Dijkstra inner loops poll it at outer-iteration checkpoints; on
+   * non-zero they break and return whatever they've computed so far.
+   * Set once at bot creation by botManagerAddBot to point at the
+   * BotContext's abort_flag. void * so this header doesn't pull in
+   * SDL3 — the .c file casts on read. */
+  void *abort_flag;
+
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
    * can use them however it wants — typical pattern is double-buffered
@@ -189,6 +198,23 @@ typedef struct {
 BrainPathfinder *brainPathfinderCreate(void);
 void brainPathfinderDestroy(BrainPathfinder *pf);
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map);
+
+/* Set the cooperative abort flag the inner A* / Dijkstra loops poll.
+ * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
+ * available don't need to depend on it). NULL disables polling. */
+void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag);
+
+/*
+ * Eagerly allocate the per-slate working arrays for every slate AND touch
+ * every page so the OS commits backing pages now instead of lazy-faulting
+ * them on the first dijkstra_start call. Without this, tick 1 of the
+ * first dijkstra_start pays ~1-2 ms of page-fault cost on a fresh process.
+ *
+ * Idempotent: arrays already allocated are left in place. Safe to call
+ * multiple times. Call once after brainPathfinderCreate() at brain
+ * instance setup.
+ */
+void brainPathfinderDijkstraPreheat(BrainPathfinder *pf);
 
 /* Debug logging — writes detailed A* info to astar_costto.log */
 void brainPathfinderEnableLog(int enable);
@@ -242,13 +268,14 @@ void  brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick
                                     int sx, int sy, int in_boat,
                                     int shells, int trees, int mines, int armour,
                                     float max_cost, int exact,
-                                    float danger_scale, int kind);
+                                    float danger_scale, int kind, int allow_boat);
 int   brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget);
 float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
                                      int x, int y, int boat);
 int   brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
                                      int *out_expanded, int *out_peak_open,
                                      int *out_done);
+void  brainPathfinderDijkstraCopySlate(BrainPathfinder *pf, int src, int dst);
 
 /* High-level lookup: iterate all active slates of matching kind in
  * started_tick descending order, return the first one that has a finite
@@ -330,6 +357,12 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);
 void brainPathfinderClearOverlay(BrainPathfinder *pf);
+
+/* Per-search danger offset — subtracted from danger on the fly during A*.
+ * Use to model a specific pill as dead without touching the danger grid.
+ * Set negative values to reduce effective danger; clear after the search. */
+void brainPathfinderSetDangerOffset(BrainPathfinder *pf, int x, int y, int16_t value);
+void brainPathfinderClearDangerOffset(BrainPathfinder *pf);
 
 /* Pathfinding — returns: 0=running, 1=done, -1=failed */
 int brainPathfinderPathTo(BrainPathfinder *pf,

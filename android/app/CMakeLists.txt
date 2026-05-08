@@ -183,7 +183,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/labels.c
     ${PROJ_ROOT}/src/bolo/lgm.c
     ${PROJ_ROOT}/src/bolo/log.c
-    ${PROJ_ROOT}/src/bolo/mathWinbolo.c
     ${PROJ_ROOT}/src/bolo/messages.c
     ${PROJ_ROOT}/src/bolo/mines.c
     ${PROJ_ROOT}/src/bolo/minesexp.c

@@ -57,10 +57,13 @@
 #define MESSAGE_SCROLL_TIME 4 /* Was 5 prior to 1.09 */
 
 /* Pending codepoint pairs awaiting the next messageUpdate tick. Ring buffer
- * sized for ~15 typical messages of scroll-in (1024 cells * 8 bytes/pair =
- * 8 KB per stream). When full, the oldest pending cells are dropped so
- * producers never block. */
-#define MESSAGE_QUEUE_CAP 1024
+ * sized for ~150 typical messages of scroll-in (10240 cells * 8 bytes/pair =
+ * 80 KB per stream). Sized to absorb bursts where many parallel bots emit
+ * newswire events in the same tick — the queue drains at ~12.5 cells/sec
+ * (one per MESSAGE_SCROLL_TIME × game tick), so a smaller cap overflows
+ * during base-capture floods and drops chars mid-message. When full, the
+ * oldest pending cells are dropped so producers never block. */
+#define MESSAGE_QUEUE_CAP 10240
 
 /* Offset to a player message */
 #define PLAYER_MESSAGE_OFFSET 5

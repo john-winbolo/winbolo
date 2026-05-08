@@ -125,10 +125,21 @@ bool gameFrontWbnUse;
 /* Dialog states */
 openingStates dlgState = openStart;
 
+/* Saved dialog position (-1 = no saved position). The wasm build never
+ * reads or persists these, but the shared SDL3 dialog code references
+ * the symbols. */
+int gameFrontDialogX = -1;
+int gameFrontDialogY = -1;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;
 bool wantRejoin;
+
+/* NAT/UPnP toggles — wasm client never hosts a server, but the shared
+ * settings dialog references these globals. */
+bool gameFrontUseUpnp = FALSE;
+bool gameFrontUseNatTraversal = FALSE;
 
 /* Server-authoritative state */
 static ServerSim *wasmServerSim = NULL;
@@ -487,11 +498,29 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     {
       BYTE compressedMap[65536];
       int compLen = serverSimGetCompressedMap(wasmServerSim, compressedMap);
+      printf("[WASM] serverSimGetCompressedMap returned %d bytes\n", compLen);
       if (compLen > 0) {
         clientSimDestroy(humanSim);
-        screenLoadCompressedMapCS(humanSim, compressedMap, compLen, "Local Game",
+        bool mapOk = screenLoadCompressedMapCS(humanSim, compressedMap, compLen, "Local Game",
                                  gametype, hiddenMines, startDelay,
                                  timeLen, gameFrontName, 0, FALSE);
+        printf("[WASM] screenLoadCompressedMapCS returned %s\n", mapOk ? "TRUE" : "FALSE");
+        if (!mapOk) {
+          printf("[WASM] Map load failed; humanSim has been destroyed by screenLoadCompressedMapCS\n");
+          transportLocalDestroy(&wasmTransport);
+          wasmTransportActive = FALSE;
+          free(wasmServerSim);
+          wasmServerSim = NULL;
+          return FALSE;
+        }
+      } else {
+        printf("[WASM] serverSimGetCompressedMap returned no data\n");
+        transportLocalDestroy(&wasmTransport);
+        wasmTransportActive = FALSE;
+        free(wasmServerSim);
+        wasmServerSim = NULL;
+        clientSimDestroy(humanSim);
+        return FALSE;
       }
     }
 
@@ -715,4 +744,42 @@ void gameFrontHandleUrlOpen(char *url) {
 
 void gameFrontUpdateSteamPresence(ClientSim *cs) {
   (void)cs;
+}
+
+void gameFrontGetLanguageCode(char *out, int outSize) {
+  if (!out || outSize <= 0) return;
+  out[0] = '\0';
+}
+
+void gameFrontSetLanguageCode(const char *code) {
+  (void)code;
+}
+
+bool gameFrontGetShowCountryFlagsInChat(void) {
+  return FALSE;
+}
+
+void gameFrontSetShowCountryFlagsInChat(bool show) {
+  (void)show;
+}
+
+void gameFrontRequestPlayTutorial(void) {
+}
+
+void gameFrontSaveWindowSettings(void) {
+}
+
+void gameFrontSaveTankPrefs(ClientSim *cs) {
+  if (cs != NULL) {
+    useAutoslow = screenGetTankAutoSlowdownCS(cs);
+    useAutohide = screenGetTankAutoHideGunsightCS(cs);
+  }
+}
+
+bool gameFrontGetShowTutorialButton(void) {
+  return FALSE;
+}
+
+void gameFrontSetShowTutorialButton(bool show) {
+  (void)show;
 }

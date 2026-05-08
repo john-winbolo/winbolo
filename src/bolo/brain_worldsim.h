@@ -114,6 +114,11 @@ typedef struct {
   int           attack_target;       /* pill index we're shooting, or -1 */
   int           tank_shoot_interval; /* ticks between our shots (default 8) */
   int           shell_damage;        /* armor per hit (default 5) */
+
+  /* Cooperative abort flag (SDL_AtomicInt *). Polled at the per-tick
+   * checkpoint in brainWorldSimRun. NULL disables polling. void * so
+   * this header doesn't pull in SDL3 — the .c file casts on read. */
+  void *abort_flag;
 } BrainWorldSim;
 
 /*********************************************************
@@ -133,6 +138,11 @@ void brainWorldSimDestroy(BrainWorldSim *sim);
 void brainWorldSimClear(BrainWorldSim *sim);
 void brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map);
 void brainWorldSimSetTerrainSpeed(BrainWorldSim *sim, int type, float speed);
+
+/* Set the cooperative abort flag the per-tick sim loop polls.
+ * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
+ * available don't need to depend on it). NULL disables polling. */
+void brainWorldSimSetAbortFlag(BrainWorldSim *sim, void *flag);
 
 void brainWorldSimAddPill(BrainWorldSim *sim, int mx, int my,
                           int health, float anger, int owner, int pill_id);
