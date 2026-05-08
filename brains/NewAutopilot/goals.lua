@@ -623,15 +623,15 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
   -- the current refuel target's score is being discounted to keep us
   -- committed to it. Find the chosen candidate's hyst flag.
   local hyst_str = ""
-  if cur_mx and base.mx == cur_mx and base.my == cur_my then
+  if BRAIN_POOL_VIZ and cur_mx and base.mx == cur_mx and base.my == cur_my then
     hyst_str = string.format(" hyst{-%d}", C.REFUEL_SWITCH_THRESHOLD)
   end
   return {
     cost = cost,
     goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d%s",
-           bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells, hyst_str),
+    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d%s",
+           bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells, hyst_str) or "",
     cands = bcands,
   }
 end
@@ -657,8 +657,11 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     imminent = true
   end
 
-  local desc = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost)
-  if imminent then desc = desc .. " IMMINENT" end
+  local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
+  if BRAIN_POOL_VIZ then
+    desc = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost)
+    if imminent then desc = desc .. " IMMINENT" end
+  end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
   -- race_mode is currently a single bool. The "or imminent" branch
   -- is dead because CAPTURE_RACE_MODE_CAPTURE is always true; left
@@ -668,7 +671,7 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   local race_mode = C.CAPTURE_RACE_MODE_CAPTURE
   return {
     cost = raw_cost,
-    loc_mult = lm, loc_reason = lr,
+    loc_mult = lm, loc_reason = BRAIN_POOL_VIZ and lr or nil,
     imminent = imminent,
     goal = { kind = "capture_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid,
@@ -700,8 +703,11 @@ local function eval_capture_pill(state, world, info, tmx, tmy, boat, ammo)
     imminent = true
   end
 
-  local desc = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost)
-  if imminent then desc = desc .. " IMMINENT" end
+  local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
+  if BRAIN_POOL_VIZ then
+    desc = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost)
+    if imminent then desc = desc .. " IMMINENT" end
+  end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
   -- race_mode is currently a single bool. The "or imminent" branch
   -- is dead because CAPTURE_RACE_MODE_CAPTURE is always true; left
@@ -711,7 +717,7 @@ local function eval_capture_pill(state, world, info, tmx, tmy, boat, ammo)
   local race_mode = C.CAPTURE_RACE_MODE_CAPTURE
   return {
     cost = raw_cost,
-    loc_mult = lm, loc_reason = lr,
+    loc_mult = lm, loc_reason = BRAIN_POOL_VIZ and lr or nil,
     imminent = imminent,
     goal = { kind = "capture_pill", mx = pill.mx, my = pill.my,
              wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid,
@@ -736,8 +742,8 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     cost = adj_cost,
     goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
              wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid },
-    desc = string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
-           pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS),
+    desc = BRAIN_POOL_VIZ and string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
+           pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS) or "",
     cands = pcands,
   }
 end
@@ -873,13 +879,13 @@ local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
 
   return {
     cost = adj_cost,
-    loc_mult = lm, loc_reason = lr,
+    loc_mult = lm, loc_reason = BRAIN_POOL_VIZ and lr or nil,
     _pill = pill, _pill_id = pid,
     _shells_on_arrival = shells_on_arrival,
     goal = { kind = "attack_pill", mx = pill.mx, my = pill.my,
              wx = U.m2w(pill.mx), wy = U.m2w(pill.my) },
-    desc = string.format("attack_pill#%d@(%d,%d) cost=%.0f (path=%.0f +hp=%d×%d%s)",
-           pid, pill.mx, pill.my, adj_cost, pcost, pill.health, C.PILL_HEALTH_WEIGHT, antic_desc or ""),
+    desc = BRAIN_POOL_VIZ and string.format("attack_pill#%d@(%d,%d) cost=%.0f (path=%.0f +hp=%d×%d%s)",
+           pid, pill.mx, pill.my, adj_cost, pcost, pill.health, C.PILL_HEALTH_WEIGHT, antic_desc or "") or "",
     cands = pcands,
   }
 end
@@ -905,13 +911,13 @@ local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
   local lm, lr = strategic_location_mult(base.mx, base.my, state, world, info, "attack_base", nil)
   return {
     cost = adj_cost,
-    loc_mult = lm, loc_reason = lr,
+    loc_mult = lm, loc_reason = BRAIN_POOL_VIZ and lr or nil,
     _shells_on_arrival = shells_on_arrival,
     goal = { kind = "attack_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
+    desc = BRAIN_POOL_VIZ and string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
            bid, base.mx, base.my, adj_cost, bcost, C.ATTACK_BASE_EXTRA_COST,
-           threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT),
+           threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT) or "",
     cands = bcands,
   }
 end
@@ -1277,8 +1283,8 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
              tank_standoff_deg = win_entry and win_entry.standoff_deg or nil,
              tank_standoff_mx = win_entry and win_entry.standoff_mx or nil,
              tank_standoff_my = win_entry and win_entry.standoff_my or nil, },
-    desc = string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f",
-           best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed),
+    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f",
+           best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed) or "",
   }
 end
 
@@ -1329,9 +1335,9 @@ local function eval_place_pill_fallback(state, world, info, tmx, tmy, boat, ammo
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
              wx = U.m2w(best_mx), wy = U.m2w(best_my), fallback = true },
-    desc = string.format("(A*{%.0f}+base{%.0f}-carry{%.0f})*mult{%.2f} fbk",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}-carry{%.0f})*mult{%.2f} fbk",
            path_cost, C.STRATEGIC_PLACE_FALLBACK_COST, carry_discount,
-           C.STRATEGIC_PLACE_COST_MULT),
+           C.STRATEGIC_PLACE_COST_MULT) or "",
   }
 end
 
@@ -1428,9 +1434,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           cost = cost,
           goal = { kind = "place_pill_strategic", mx = best_cx, my = best_cy,
                    wx = U.m2w(best_cx), wy = U.m2w(best_cy) },
-          desc = string.format("def_build@(%d,%d) cost=%.0f tank@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
+          desc = BRAIN_POOL_VIZ and string.format("def_build@(%d,%d) cost=%.0f tank@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
                  best_cx, best_cy, cost, closest_et.mx, closest_et.my,
-                 path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_discount, C.STRATEGIC_PLACE_COST_MULT),
+                 path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_discount, C.STRATEGIC_PLACE_COST_MULT) or "",
         }
       end
     end
@@ -1667,9 +1673,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
              wx = U.m2w(best_mx), wy = U.m2w(best_my) },
-    desc = string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f} center=%s score=%.0f",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f} center=%s score=%.0f",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
-           C.STRATEGIC_PLACE_COST_MULT, search_reason, best_score),
+           C.STRATEGIC_PLACE_COST_MULT, search_reason, best_score) or "",
     cands = cands,
   }
 end
@@ -1849,8 +1855,8 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
     goal = { kind = "defend_pill", mx = target.mx, my = target.my,
              wx = U.m2w(target.mx), wy = U.m2w(target.my),
              pill_id = target.id },
-    desc = string.format("A*{%.0f}+base{%.0f}-urgency{%.0f} dmg=%d",
-           travel, C.DEFEND_PILL_BASE_COST, urgency, target.damage),
+    desc = BRAIN_POOL_VIZ and string.format("A*{%.0f}+base{%.0f}-urgency{%.0f} dmg=%d",
+           travel, C.DEFEND_PILL_BASE_COST, urgency, target.damage) or "",
   }
 end
 
@@ -1925,8 +1931,8 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
     goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
              wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
              target_id = best_pid, reposition = true },
-    desc = string.format("reposition_pill#%d@(%d,%d) cost=%.0f badness=%.0f",
-           best_pid, best_pill.mx, best_pill.my, cost, best_badness),
+    desc = BRAIN_POOL_VIZ and string.format("reposition_pill#%d@(%d,%d) cost=%.0f badness=%.0f",
+           best_pid, best_pill.mx, best_pill.my, cost, best_badness) or "",
   }
 end
 
@@ -2007,9 +2013,9 @@ local function eval_wait_for_lgm(state, info)
     cost = cost,
     goal = { kind = "wait_for_lgm", mx = tmx, my = tmy,
              wx = info.tankx, wy = info.tanky },
-    desc = string.format("wait_for_lgm@(%d,%d) lgm=(%d,%d) cost=%d",
+    desc = BRAIN_POOL_VIZ and string.format("wait_for_lgm@(%d,%d) lgm=(%d,%d) cost=%d",
                          tmx, tmy,
-                         (info.man_x or 0) >> 8, (info.man_y or 0) >> 8, cost),
+                         (info.man_x or 0) >> 8, (info.man_y or 0) >> 8, cost) or "",
     cands = {
       { id = 0, mx = tmx, my = tmy, cost = cost,
         own = "self", hp = 0, stale = 0 },
@@ -3527,8 +3533,8 @@ function M.finalize_pools(state, world, info)
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
-             bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells),
+      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
+             bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells) or "",
       cands = pr1.candidates,
     }
   else
@@ -3549,14 +3555,17 @@ function M.finalize_pools(state, world, info)
       imminent3 = true
     end
     local lm3, lr3 = strategic_location_mult(base.mx, base.my, state, world, info, "capture_base", nil)
-    local desc3 = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost3)
-    if imminent3 then desc3 = desc3 .. " IMMINENT" end
+    local desc3 = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
+    if BRAIN_POOL_VIZ then
+      desc3 = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost3)
+      if imminent3 then desc3 = desc3 .. " IMMINENT" end
+    end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
     -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode3 = C.CAPTURE_RACE_MODE_CAPTURE
     pc[3] = {
       cost = raw_cost3,
-      loc_mult = lm3, loc_reason = lr3,
+      loc_mult = lm3, loc_reason = BRAIN_POOL_VIZ and lr3 or nil,
       imminent = imminent3,
       goal = { kind = "capture_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid,
@@ -3582,14 +3591,17 @@ function M.finalize_pools(state, world, info)
       imminent4 = true
     end
     local lm4, lr4 = strategic_location_mult(pill.mx, pill.my, state, world, info, "capture_pill", pill)
-    local desc4 = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost4)
-    if imminent4 then desc4 = desc4 .. " IMMINENT" end
+    local desc4 = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
+    if BRAIN_POOL_VIZ then
+      desc4 = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost4)
+      if imminent4 then desc4 = desc4 .. " IMMINENT" end
+    end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
     -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode4 = C.CAPTURE_RACE_MODE_CAPTURE
     pc[4] = {
       cost = raw_cost4,
-      loc_mult = lm4, loc_reason = lr4,
+      loc_mult = lm4, loc_reason = BRAIN_POOL_VIZ and lr4 or nil,
       imminent = imminent4,
       goal = { kind = "capture_pill", mx = pill.mx, my = pill.my,
                wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid,
@@ -3613,8 +3625,8 @@ function M.finalize_pools(state, world, info)
       cost = adj_cost,
       goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
                wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid },
-      desc = string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
-             pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS),
+      desc = BRAIN_POOL_VIZ and string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
+             pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS) or "",
       cands = pr5.candidates,
     }
   else
@@ -3665,12 +3677,12 @@ function M.finalize_pools(state, world, info)
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
     pc[6] = {
       cost = pcost,
-      loc_mult = lm6, loc_reason = lr6,
+      loc_mult = lm6, loc_reason = BRAIN_POOL_VIZ and lr6 or nil,
       _pill = pill, _pill_id = pid,
       _shells_on_arrival = pr6.best_shells_on_arrival,
       goal = { kind = "attack_pill", mx = pill.mx, my = pill.my,
                wx = U.m2w(pill.mx), wy = U.m2w(pill.my) },
-      desc = string.format("attack_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, pcost),
+      desc = BRAIN_POOL_VIZ and string.format("attack_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, pcost) or "",
       cands = pr6.candidates,
     }
   else
@@ -3689,13 +3701,13 @@ function M.finalize_pools(state, world, info)
     local lm7, lr7 = strategic_location_mult(base.mx, base.my, state, world, info, "attack_base", nil)
     pc[7] = {
       cost = adj_cost,
-      loc_mult = lm7, loc_reason = lr7,
+      loc_mult = lm7, loc_reason = BRAIN_POOL_VIZ and lr7 or nil,
       _shells_on_arrival = pr7.best_shells_on_arrival,
       goal = { kind = "attack_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
+      desc = BRAIN_POOL_VIZ and string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
              bid, base.mx, base.my, adj_cost, bcost, C.ATTACK_BASE_EXTRA_COST,
-             threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT),
+             threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT) or "",
       cands = pr7.candidates,
     }
   else
@@ -4079,8 +4091,8 @@ local function goal_selection(state, world, info, quiet)
       -- skips normal pool-1 shaping so BASE_COST/DEFICIT/LGM_WAIT don't
       -- layer on top. `cands` seeded so the display has a real row (not
       -- (pending)) and the WINNERS section picks the right representative.
-      local flee_desc = string.format("CRITICAL flee_to_base#%d arm=%.0f<%d dist=%.0f",
-                                       bid, info.armour, flee_threshold, bdist)
+      local flee_desc = BRAIN_POOL_VIZ and string.format("CRITICAL flee_to_base#%d arm=%.0f<%d dist=%.0f",
+                                       bid, info.armour, flee_threshold, bdist) or ""
       state.pool_cache[1] = {
         goal = {
           kind = "flee_to_base", mx = base.mx, my = base.my,
@@ -4645,7 +4657,7 @@ local function goal_selection(state, world, info, quiet)
           end
           c.wsim_add = (c.wsim_add or 0) + extra
           c.cost = c.cost + extra
-          c.desc = c.desc .. sdesc
+          if BRAIN_POOL_VIZ then c.desc = c.desc .. sdesc end
           c.wsim_ran = true
           c.wsim_damage = wsim_result and wsim_result.damage or 0
           c.wsim_arm_before = info.armour
@@ -4767,20 +4779,25 @@ local function goal_selection(state, world, info, quiet)
       -- so lua_strip removes them from opt/.
       if BRAIN_DEBUG_MODE then
       -- Log all competing candidates for debugging
-      local pool_log = {}
-      for i, c in ipairs(pool) do
-        local d = c.desc
-        if c.hysteresis then d = d .. " [" .. c.hysteresis .. "]" end
-        if c.wsim_killed then d = d .. " [KILL]" end
-        pool_log[i] = { desc = d, cost = c.cost, hysteresis = c.hysteresis,
-                        winner = (i == 1), wsim_killed = c.wsim_killed,
-                        phase_weight = c.phase_weight,
-                        loc_mult     = c.loc_mult or 1.0,
-                        loc_reason   = c.loc_reason or "",
-                        density_mult = c.density_mult or 1.0,
-                        density_n    = c.density_n or 0,
-                        pickup_value = c.pickup_value or 0,
-                        wsim_add     = c.wsim_add or 0 }
+      local pool_log = nil
+      if BRAIN_POOL_VIZ then
+        pool_log = {}
+        for i, c in ipairs(pool) do
+          local d = c.desc
+          if c.hysteresis then d = d .. " [" .. c.hysteresis .. "]" end
+          if c.wsim_killed then d = d .. " [KILL]" end
+          pool_log[i] = { desc = d, cost = c.cost, hysteresis = c.hysteresis,
+                          winner = (i == 1), wsim_killed = c.wsim_killed,
+                          phase_weight = c.phase_weight,
+                          loc_mult     = c.loc_mult or 1.0,
+                          loc_reason   = c.loc_reason or "",
+                          density_mult = c.density_mult or 1.0,
+                          density_n    = c.density_n or 0,
+                          pickup_value = c.pickup_value or 0,
+                          wsim_add     = c.wsim_add or 0 }
+        end
+      else
+        pool_log = { { desc = "[BRAIN_POOL_VIZ is off — set global to enable]" } }
       end
       -- Persist for C-side debug viewer (BrainTest overlay)
       state.last_goal_pool = pool_log
@@ -5232,6 +5249,11 @@ end
 --   }
 -- =========================================================================
 function M.get_pool_breakdown_json(state)
+  if not BRAIN_POOL_VIZ then
+    return string.format(
+      '{"phase":"%s","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"off","label":"Pool viz","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"BRAIN_POOL_VIZ is off","stale":-1,"active":false,"imminent":false,"reject":null}]}]}',
+      state.phase or "?", state.tick or 0, state.player_number or 0)
+  end
   local now = state.tick or 0
   local cache = state.cost_cache or {}
   local pc = state.pool_cache or {}
