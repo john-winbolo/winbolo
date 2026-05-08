@@ -345,6 +345,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 *  When non-empty, RUN_SCRIPT_PATH is injected as a Lua
 *  global so Brain.open can dofile() the script and exit.
 *  Call before any brain instance is created.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. The path is captured into the per-brain
+*  RUN_SCRIPT_PATH Lua global at luaBrainInstanceCreate()
+*  time; modification after the first instance exists has no
+*  effect on already-created brains.
 *********************************************************/
 void luaBrainsSetRunScript(const char *path);
 
@@ -355,6 +361,12 @@ void luaBrainsSetRunScript(const char *path);
 *  in the brain. When disabled (default), BRAIN_PERF_LOG
 *  is false and optimize.lua writes nothing. Pass enable=1
 *  to activate via --perf-log in BrainTest.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. The flag is captured into the per-brain
+*  BRAIN_PERF_LOG Lua global at luaBrainInstanceCreate()
+*  time; modification after the first instance exists has no
+*  effect on already-created brains.
 *********************************************************/
 void luaBrainsSetPerfLog(int enable);
 
