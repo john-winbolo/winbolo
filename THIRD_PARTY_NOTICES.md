@@ -87,7 +87,7 @@ WinBolo uses the following third-party libraries and code.
 - License: CC0 1.0 (public domain)
 - https://thoseawesomeguys.com/prompts/
 - Author: Nicolae (Xelu) Berbece
-- Xbox, PlayStation 5, and Nintendo Switch controller-button glyph atlases used as the Path B (non-Steam-Input) glyph fallback for on-screen button hints
+- Xbox, PlayStation 5, Nintendo Switch, and keyboard/mouse glyph atlases used as the Path B (non-Steam-Input) glyph fallback for on-screen button hints
 
 ## Fonts
 
