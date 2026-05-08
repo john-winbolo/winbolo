@@ -315,6 +315,23 @@ bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out);
 void botManagerGetPoolStats(BotPoolStats *out);
 
 /*********************************************************
+ *NAME:          botManagerGetActiveBotCount
+ *PURPOSE:
+ *  Returns the count of currently-active bot slots.
+ *
+ *  Worker-thread safe. Reads only bots[i].active, which the
+ *  producer thread mutates between ticks (add/remove run
+ *  producer-side), so worker-thread reads during brain.think
+ *  see a stable count. Worst case on a 1→2 transition is
+ *  the new bot's first tick observes the new count one tick
+ *  early — fine for safety guards.
+ *
+ *  The heavier botManagerGetPoolStats remains producer-only;
+ *  use this when only the active-bot count is needed.
+ *********************************************************/
+int botManagerGetActiveBotCount(void);
+
+/*********************************************************
  *NAME:          botManagerEvalLuaString
  *PURPOSE:
  *  Compile + run a Lua chunk in the bot's state and return

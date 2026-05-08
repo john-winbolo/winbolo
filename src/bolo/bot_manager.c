@@ -765,6 +765,14 @@ void botManagerGetPoolStats(BotPoolStats *out) {
     out->totalOverruns    = totalOverruns;
 }
 
+int botManagerGetActiveBotCount(void) {
+    int active = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (bots[i].active) active++;
+    }
+    return active;
+}
+
 void botManagerSetDefaultDebugMode(bool enabled) {
     s_default_debug_mode = enabled;
     s_brain_debug_mode   = enabled;
