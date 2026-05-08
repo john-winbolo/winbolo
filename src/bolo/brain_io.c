@@ -1151,19 +1151,8 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_BASE_CAPTURED:
         /* data: [newOwner, previousOwner] */
         if (isHuman) {
-          MessageArgs args;
-          memset(&args, 0, sizeof(args));
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
-          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
-          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
-          if (events[i].data[1] != NEUTRAL) {
-            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
-            args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[1]);
-            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[1], args.otherCountry);
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
-          } else {
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
-          }
+          basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
+                                     events[i].data[0], events[i].data[1]);
         }
         /* Steam stat: base captures */
         if (events[i].data[0] == playerNum) {
