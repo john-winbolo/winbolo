@@ -484,10 +484,13 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
     if (!ok) {
         /* Distinguish a budget abort (recoverable: bot stays, brain.wasKilled
          * fires next tick) from a real Lua error (existing path: producer
-         * removes the bot in Phase 3). The hook stamps abort_flag before
-         * raising, and brainCoreCallThink also matches on the error suffix
-         * so non-hook luaL_errors can never spoof the kill code path. */
-        if (bot->brain.wasKilled) {
+         * removes the bot in Phase 3). Both signals must agree: the
+         * suffix match on the error string is brain-spoofable (a brain
+         * could raise error("tick_budget_exceeded") to dodge removal),
+         * but the atomic flag is only ever stamped by brainBudgetHook.
+         * AND-ing them proves the count hook actually ran. */
+        if (bot->brain.wasKilled &&
+            SDL_GetAtomicInt(&bot->abort_flag) != 0) {
             j->wasKilled = true;
         } else {
             /* Producer handles botManagerRemoveBot in the input-send stage —
