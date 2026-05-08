@@ -83,6 +83,15 @@ typedef struct {
 } BotContext;
 
 static BotContext bots[MAX_TANKS];
+
+/* Default debug mode for newly-created bots. Hosts override via
+ * botManagerSetDefaultDebugMode (BrainTest sets true at startup;
+ * release game leaves false). */
+static bool s_default_debug_mode = false;
+
+/* Runtime debug mode tracker. Flipped by botManagerToggleAllBrainDebugMode
+ * so the toggle alternates correctly across calls. */
+static bool s_brain_debug_mode   = false;
 static int numBots = 0;
 
 /* Total concurrent brain-tick runners including the producer thread.
@@ -334,9 +343,11 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * which sets brainMap to TERRAIN_UNKNOWN. The bot's sim.brainMap
      * pointer is already set. */
 
-    /* Create the Lua brain instance */
+    /* Create the Lua brain instance. debug_mode comes from the static
+     * default (host-controlled): BrainTest sets it to true; the release
+     * game leaves it false so brains load from stripped opt/ source. */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                &bot->cs, ai)) {
+                                &bot->cs, ai, s_default_debug_mode)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         transportLocalDestroy(&bot->transport);
         clientSimDestroy(&bot->cs);
@@ -752,6 +763,21 @@ void botManagerGetPoolStats(BotPoolStats *out) {
     out->ewmaBrainPhaseMs = s_brainPhaseMsEwma;
     out->lastSerialMs     = s_lastSerialMs;
     out->totalOverruns    = totalOverruns;
+}
+
+void botManagerSetDefaultDebugMode(bool enabled) {
+    s_default_debug_mode = enabled;
+    s_brain_debug_mode   = enabled;
+}
+
+bool botManagerToggleAllBrainDebugMode(void) {
+    s_brain_debug_mode = !s_brain_debug_mode;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (bots[i].active && bots[i].brain.running) {
+            luaBrainInstanceSetDebugMode(&bots[i].brain, s_brain_debug_mode);
+        }
+    }
+    return s_brain_debug_mode;
 }
 
 bool botManagerExecLua(BYTE playerNum, const char *src) {

@@ -336,7 +336,27 @@ typedef struct {
 *********************************************************/
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
-                            aiType aiMode);
+                            aiType aiMode, bool debug_mode);
+
+/*********************************************************
+*NAME:          luaBrainsSetRunScript
+*PURPOSE:
+*  Sets a Lua script path for --run-script mode.
+*  When non-empty, RUN_SCRIPT_PATH is injected as a Lua
+*  global so Brain.open can dofile() the script and exit.
+*  Call before any brain instance is created.
+*********************************************************/
+void luaBrainsSetRunScript(const char *path);
+
+/*********************************************************
+*NAME:          luaBrainsSetPerfLog
+*PURPOSE:
+*  Enables or disables performance logging (optimize.log)
+*  in the brain. When disabled (default), BRAIN_PERF_LOG
+*  is false and optimize.lua writes nothing. Pass enable=1
+*  to activate via --perf-log in BrainTest.
+*********************************************************/
+void luaBrainsSetPerfLog(int enable);
 
 /*********************************************************
 *NAME:          luaBrainInstanceTick
@@ -379,6 +399,25 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
                            bool   wasKilled);
+
+/*********************************************************
+*NAME:          luaBrainInstanceSetDebugMode
+*PURPOSE:
+*  Updates the BRAIN_DEBUG_MODE Lua global on this instance's
+*  VM. Lets BrainTest toggle between "viz-supporting work
+*  active" and "production-mode skip" at runtime, so the user
+*  can feel the perf cost of debug-only allocations without
+*  reloading the brain.
+*
+*  Note: the brain source itself is whichever was loaded at
+*  construction (brains/<bot>/init.lua for debug=true,
+*  brains/<bot>/opt/init.lua for debug=false). This setter
+*  only flips the runtime gate — `if BRAIN_DEBUG_MODE then`
+*  blocks in the un-stripped source will start/stop executing.
+*  In stripped opt/ source those blocks were removed by
+*  lua_strip and the toggle has no effect.
+*********************************************************/
+void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled);
 
 /*********************************************************
 *NAME:          luaBrainInstanceGetSettings

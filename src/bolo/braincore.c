@@ -39,9 +39,21 @@
 #include "braincore.h"
 #include "brain_pathfinder.h"
 
+/* C-side pill_grid from the na_threat brain module (same link unit). */
+extern float *naThreatGetPillGrid(void);
+
 /* ------------------------------------------------------------------ */
 /* clock_us — high-resolution timer for Lua profiling                  */
 /* ------------------------------------------------------------------ */
+
+/* bt_yield — calls host event-pump callback; no-op if not set. */
+static void (*g_yield_cb)(void) = NULL;
+void brainCoreSetYieldCallback(void (*cb)(void)) { g_yield_cb = cb; }
+static int l_bt_yield(lua_State *L) {
+  (void)L;
+  if (g_yield_cb) g_yield_cb();
+  return 0;
+}
 
 static int l_clock_us(lua_State *L) {
   Uint64 now  = SDL_GetPerformanceCounter();
@@ -183,12 +195,29 @@ void brainCoreRegisterConstants(lua_State *L) {
 
   /* High-resolution timer for profiling */
   lua_pushcfunction(L, l_clock_us);       lua_setglobal(L, "clock_us");
+
+  /* bt_yield() — calls the host event-pump callback if set.
+   * BrainTest registers SDL_PumpEvents so Brain.open() stays responsive.
+   * Non-BrainTest hosts leave the callback NULL; bt_yield() is a no-op. */
+  lua_pushcfunction(L, l_bt_yield);       lua_setglobal(L, "bt_yield");
 }
 
 void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr) {
   lua_pushlightuserdata(L, (void *)worldPtr);
   lua_pushcclosure(L, l_get_terrain_upvalue, 1);
   lua_setglobal(L, "get_terrain");
+  /* Also stash the worldPtr-pointer in the Lua registry under a known
+   * key so other C modules (e.g. brains/<bot>/c/*) can read raw terrain
+   * without going through the get_terrain Lua closure. */
+  lua_pushlightuserdata(L, (void *)worldPtr);
+  lua_setfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+}
+
+const BYTE **brainCoreGetWorldPtrPtr(lua_State *L) {
+  lua_getfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+  const BYTE **p = (const BYTE **)lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  return p;
 }
 
 /* ------------------------------------------------------------------ */
@@ -596,6 +625,24 @@ static int l_cpf_set_danger(lua_State *L) {
   return 0;
 }
 
+/* cpf_load_pill_danger_from_threat() — C-to-C danger load.
+ * Reads naThreatGetPillGrid() directly (no Lua table iteration).
+ * Replaces cpf_load_danger(threat.pill_grid) now that pill_grid lives in C. */
+static int l_cpf_load_pill_danger_from_threat(lua_State *L) {
+  CPF_GET(L);
+  float *pg = naThreatGetPillGrid();
+  brainPathfinderClearDanger(pf);
+  if (!pg) return 0;
+  for (int k = 0; k < 65536; k++) {
+    if (pg[k] > 0.0f) {
+      int x = k & 255;
+      int y = (k >> 8) & 255;
+      brainPathfinderSetDanger(pf, x, y, pg[k]);
+    }
+  }
+  return 0;
+}
+
 /* Batch-load the entire danger grid from a Lua table keyed by mkey
  * (my*256 + mx) -> value. Clears the grid first. One C call replaces
  * the per-entry cpf_set_danger loop driven from Lua. */
@@ -627,6 +674,47 @@ static int l_cpf_set_overlay(lua_State *L) {
 static int l_cpf_clear_overlay(lua_State *L) {
   CPF_GET(L);
   brainPathfinderClearOverlay(pf);
+  return 0;
+}
+
+/* cpf_set_danger_offset(x, y, value) — set per-tile danger offset (negative = subtract) */
+static int l_cpf_set_danger_offset(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  int v = (int)luaL_checknumber(L, 3);
+  if (v < -32768) v = -32768;
+  if (v >  32767) v =  32767;
+  brainPathfinderSetDangerOffset(pf, x, y, (int16_t)v);
+  return 0;
+}
+
+/* cpf_clear_danger_offset() — zero all danger offsets */
+static int l_cpf_clear_danger_offset(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearDangerOffset(pf);
+  return 0;
+}
+
+/* cpf_load_danger_offset(table [, scale]) — bulk-load offsets from mkey-keyed
+ * Lua table. Optional scale multiplier (default 1.0); pass -1 to subtract a
+ * pill contrib table. Clears first. */
+static int l_cpf_load_danger_offset(lua_State *L) {
+  CPF_GET(L);
+  luaL_checktype(L, 1, LUA_TTABLE);
+  float scale = (float)luaL_optnumber(L, 2, 1.0);
+  brainPathfinderClearDangerOffset(pf);
+  lua_pushnil(L);
+  while (lua_next(L, 1) != 0) {
+    lua_Integer k = luaL_checkinteger(L, -2);
+    int v = (int)((float)luaL_checknumber(L, -1) * scale);
+    int x = (int)(k & 255);
+    int y = (int)((k >> 8) & 255);
+    if (v < -32768) v = -32768;
+    if (v >  32767) v =  32767;
+    brainPathfinderSetDangerOffset(pf, x, y, (int16_t)v);
+    lua_pop(L, 1);
+  }
   return 0;
 }
 
@@ -757,7 +845,9 @@ static int l_cpf_dijkstra_from(lua_State *L) {
 }
 
 /* cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
- *                    max_cost, exact, danger_scale, kind) */
+ *                    max_cost, exact, danger_scale, kind[, allow_boat])
+ * allow_boat defaults to 1 (boat transitions enabled). Pass 0 to restrict
+ * the search to land nodes only (no T_BOAT pickup, no water expansion). */
 static int l_cpf_dijkstra_start(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -780,9 +870,10 @@ static int l_cpf_dijkstra_start(lua_State *L) {
   }
   float danger_scale = (float)luaL_optnumber(L, 12, 1.0);
   int kind = (int)luaL_optinteger(L, 13, 0);
+  int allow_boat = (int)luaL_optinteger(L, 14, 1);
   brainPathfinderDijkstraStart(pf, slate, tick, sx, sy, in_boat,
                                 shells, trees, mines, armour,
-                                max_cost, exact, danger_scale, kind);
+                                max_cost, exact, danger_scale, kind, allow_boat);
   return 0;
 }
 
@@ -845,7 +936,7 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_trace_path(kind, dx, dy) → array of {x=, y=} or nil */
+/* cpf_dijkstra_trace_path(kind, dx, dy) → flat array {x1,y1,x2,y2,...} or nil */
 static int l_cpf_dijkstra_trace_path(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
@@ -853,22 +944,20 @@ static int l_cpf_dijkstra_trace_path(lua_State *L) {
   int dy = (int)luaL_checkinteger(L, 3);
   int slate = brainPathfinderDijkstraFindBest(pf, kind);
   if (slate < 0) { lua_pushnil(L); return 1; }
-  int path_x[512], path_y[512];
-  int n = brainPathfinderDijkstraTracePath(pf, slate, dx, dy, path_x, path_y, 512);
+  int path_x[64], path_y[64];
+  int n = brainPathfinderDijkstraTracePath(pf, slate, dx, dy, path_x, path_y, 64);
   if (n <= 0) { lua_pushnil(L); return 1; }
-  lua_createtable(L, n, 0);
+  lua_createtable(L, n * 2, 0);
   for (int i = 0; i < n; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
 
-/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → array of {x=,y=} or nil.
+/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → flat array {x1,y1,...} or nil.
  * Multi-slate: walks slates of given kind in recency order, picks the
  * first where (dx,dy) is reachable, traces from THAT slate. Use when
  * the cost was found via lookup_by_kind's older-slate fallback — the
@@ -879,18 +968,16 @@ static int l_cpf_dijkstra_trace_path_by_kind(lua_State *L) {
   int kind = (int)luaL_checkinteger(L, 1);
   int dx   = (int)luaL_checkinteger(L, 2);
   int dy   = (int)luaL_checkinteger(L, 3);
-  int path_x[512], path_y[512];
+  int path_x[64], path_y[64];
   int n = brainPathfinderDijkstraTracePathByKind(pf, kind, dx, dy,
-                                                  path_x, path_y, 512);
+                                                  path_x, path_y, 64);
   if (n <= 0) { lua_pushnil(L); return 1; }
-  lua_createtable(L, n, 0);
+  lua_createtable(L, n * 2, 0);
   for (int i = 0; i < n; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
@@ -915,8 +1002,14 @@ static int l_cpf_dijkstra_find_best(lua_State *L) {
 }
 
 /* cpf_dijkstra_status(slate)
- * Returns: active, done, kind, started_tick, completed_tick,
- *          expanded, peak_open, src_x, src_y, in_boat, danger_scale. */
+ * Returns: started, done, kind, started_tick, completed_tick,
+ *          expanded, peak_open, src_x, src_y, in_boat, danger_scale.
+ * started: true iff brainPathfinderDijkstraStart has been called at
+ * least once on this slate. (Pre-preheat this was equivalent to
+ * "g_cost allocated"; after preheat that allocation happens at brain
+ * creation time, so we use started_tick > 0 instead — otherwise Lua
+ * code that checks `if not active then start() end` skips the very
+ * first start because preheat already allocated g_cost.) */
 static int l_cpf_dijkstra_status(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -926,7 +1019,7 @@ static int l_cpf_dijkstra_status(lua_State *L) {
     for (int i = 0; i < 11; i++) lua_pushnil(L);
     return 11;
   }
-  lua_pushboolean(L, s->active);
+  lua_pushboolean(L, s->started_tick > 0);
   lua_pushboolean(L, s->done);
   lua_pushinteger(L, s->kind);
   lua_pushinteger(L, s->started_tick);
@@ -938,6 +1031,16 @@ static int l_cpf_dijkstra_status(lua_State *L) {
   lua_pushinteger(L, s->in_boat);
   lua_pushnumber(L, s->danger_scale);
   return 11;
+}
+
+/* cpf_dijkstra_copy_slate(src, dst) — copy src's cost arrays + metadata to
+ * dst so dst can serve as a read-only fallback while src recomputes. */
+static int l_cpf_dijkstra_copy_slate(lua_State *L) {
+  CPF_GET(L);
+  int src = (int)luaL_checkinteger(L, 1);
+  int dst = (int)luaL_checkinteger(L, 2);
+  brainPathfinderDijkstraCopySlate(pf, src, dst);
+  return 0;
 }
 
 /* cpf_rebuild_edge_costs()
@@ -1156,19 +1259,17 @@ static int l_cpf_trace_path(lua_State *L) {
   CPF_GET(L);
   int path_x[64], path_y[64];
   int count = brainPathfinderTracePath(pf, path_x, path_y, 64);
-  lua_createtable(L, count, 0);
+  lua_createtable(L, count * 2, 0);
   for (int i = 0; i < count; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
 
-/* cpf_trace_last_search(dx, dy) -> array of {x=, y=}
+/* cpf_trace_last_search(dx, dy) -> flat array {x1,y1,x2,y2,...}
  * Trace the most-recent A* search's parent chain to (dx, dy) without
  * the status==1 gate. Use after cost_to() — its end-of-call cleanup
  * zaps status/dest so cpf_trace_path() returns empty, but the
@@ -1179,14 +1280,12 @@ static int l_cpf_trace_last_search(lua_State *L) {
   int dy = (int)luaL_checkinteger(L, 2);
   int path_x[64], path_y[64];
   int count = brainPathfinderTraceLastSearchPath(pf, dx, dy, path_x, path_y, 64);
-  lua_createtable(L, count, 0);
+  lua_createtable(L, count * 2, 0);
   for (int i = 0; i < count; i++) {
-    lua_createtable(L, 0, 2);
     lua_pushinteger(L, path_x[i]);
-    lua_setfield(L, -2, "x");
+    lua_rawseti(L, -2, 2 * i + 1);
     lua_pushinteger(L, path_y[i]);
-    lua_setfield(L, -2, "y");
-    lua_rawseti(L, -2, i + 1);
+    lua_rawseti(L, -2, 2 * i + 2);
   }
   return 1;
 }
@@ -1227,9 +1326,13 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_danger",      l_cpf_clear_danger },
     { "cpf_stamp_pill",        l_cpf_stamp_pill },
     { "cpf_set_danger",        l_cpf_set_danger },
-    { "cpf_load_danger",       l_cpf_load_danger },
-    { "cpf_set_overlay",       l_cpf_set_overlay },
-    { "cpf_clear_overlay",     l_cpf_clear_overlay },
+    { "cpf_load_danger",                    l_cpf_load_danger },
+    { "cpf_load_pill_danger_from_threat",   l_cpf_load_pill_danger_from_threat },
+    { "cpf_set_overlay",          l_cpf_set_overlay },
+    { "cpf_clear_overlay",        l_cpf_clear_overlay },
+    { "cpf_set_danger_offset",    l_cpf_set_danger_offset },
+    { "cpf_clear_danger_offset",  l_cpf_clear_danger_offset },
+    { "cpf_load_danger_offset",   l_cpf_load_danger_offset },
     { "cpf_clear_influence",   l_cpf_clear_influence },
     { "cpf_stamp_influence",   l_cpf_stamp_influence },
     { "cpf_influence_at",      l_cpf_influence_at },
@@ -1248,6 +1351,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
     { "cpf_dijkstra_find_best",     l_cpf_dijkstra_find_best },
     { "cpf_dijkstra_status",        l_cpf_dijkstra_status },
+    { "cpf_dijkstra_copy_slate",    l_cpf_dijkstra_copy_slate },
     { "cpf_rebuild_edge_costs", l_cpf_rebuild_edge_costs },
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },
@@ -1324,26 +1428,24 @@ static int l_wsim_add_tank(lua_State *L) {
 
 static int l_wsim_set_path(lua_State *L) {
   WSimPathPoint pts[WSIM_MAX_PATH];
-  int count = 0;
   int i;
   WSIM_GET(L);
 
   luaL_checktype(L, 1, LUA_TTABLE);
-  count = (int)lua_rawlen(L, 1);
-  if (count > WSIM_MAX_PATH) count = WSIM_MAX_PATH;
+  int total = (int)lua_rawlen(L, 1);  /* flat: x1,y1,x2,y2,... */
+  int npts = total / 2;
+  if (npts > WSIM_MAX_PATH) npts = WSIM_MAX_PATH;
 
-  for (i = 0; i < count; i++) {
-    lua_rawgeti(L, 1, i + 1);
-    lua_getfield(L, -1, "x");
+  for (i = 0; i < npts; i++) {
+    lua_rawgeti(L, 1, 2 * i + 1);
     pts[i].mx = (uint8_t)lua_tointeger(L, -1);
     lua_pop(L, 1);
-    lua_getfield(L, -1, "y");
+    lua_rawgeti(L, 1, 2 * i + 2);
     pts[i].my = (uint8_t)lua_tointeger(L, -1);
     lua_pop(L, 1);
-    lua_pop(L, 1); /* pop the sub-table */
   }
 
-  brainWorldSimSetPath(ws, pts, count);
+  brainWorldSimSetPath(ws, pts, npts);
   return 0;
 }
 
@@ -1697,62 +1799,9 @@ void brainCoreRegisterVizDetail(lua_State *L) {
   lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
 }
 
-/* ------------------------------------------------------------------ */
-/* pill_contrib registry (per-pill, per-tile danger contributions)     */
-/* ------------------------------------------------------------------ */
-
-static BrainPillContribClearFunc      g_pillContribClearCb     = NULL;
-static BrainPillContribBeginPillFunc  g_pillContribBeginPillCb = NULL;
-static BrainPillContribAddTileFunc    g_pillContribAddTileCb   = NULL;
-
-void brainCoreSetPillContribClearCallback(BrainPillContribClearFunc cb) {
-  g_pillContribClearCb = cb;
-}
-void brainCoreSetPillContribBeginPillCallback(BrainPillContribBeginPillFunc cb) {
-  g_pillContribBeginPillCb = cb;
-}
-void brainCoreSetPillContribAddTileCallback(BrainPillContribAddTileFunc cb) {
-  g_pillContribAddTileCb = cb;
-}
-
-/* pillcontrib_clear() — reset the per-tick registry. Brains call
- * once before pushing this tick's pills. */
-static int l_pillcontrib_clear(lua_State *L) {
-  (void)L;
-  if (g_pillContribClearCb) g_pillContribClearCb();
-  return 0;
-}
-
-/* pillcontrib_begin_pill(pill_id, mx, my) -> slot (or -1 on overflow) */
-static int l_pillcontrib_begin_pill(lua_State *L) {
-  int pill_id = (int)luaL_checkinteger(L, 1);
-  int mx      = (int)luaL_checkinteger(L, 2);
-  int my      = (int)luaL_checkinteger(L, 3);
-  int slot = -1;
-  if (g_pillContribBeginPillCb) {
-    slot = g_pillContribBeginPillCb(pill_id, mx, my);
-  }
-  lua_pushinteger(L, slot);
-  return 1;
-}
-
-/* pillcontrib_add_tile(slot, tile_x, tile_y, value) */
-static int l_pillcontrib_add_tile(lua_State *L) {
-  int   slot  = (int)luaL_checkinteger(L, 1);
-  int   tx    = (int)luaL_checkinteger(L, 2);
-  int   ty    = (int)luaL_checkinteger(L, 3);
-  float value = (float)luaL_checknumber(L, 4);
-  if (g_pillContribAddTileCb) {
-    g_pillContribAddTileCb(slot, tx, ty, value);
-  }
-  return 0;
-}
-
-void brainCoreRegisterPillContrib(lua_State *L) {
-  lua_pushcfunction(L, l_pillcontrib_clear);      lua_setglobal(L, "pillcontrib_clear");
-  lua_pushcfunction(L, l_pillcontrib_begin_pill); lua_setglobal(L, "pillcontrib_begin_pill");
-  lua_pushcfunction(L, l_pillcontrib_add_tile);   lua_setglobal(L, "pillcontrib_add_tile");
-}
+/* NOTE: pill_contrib bindings moved to brains/NewAutopilot/c/
+ * na_overlay_pillcontrib.c — they were specific to NewAutopilot's
+ * BrainTest overlay and shouldn't live in the generic brain runtime. */
 
 /* ------------------------------------------------------------------ */
 /* Print capture (override Lua's print to also call a callback)        */
