@@ -61,8 +61,10 @@ typedef struct {
 typedef struct {
   ScrollItem items[SCROLL_ITEM_LIST_MAX_SIZE];
   int count;
-  TURNTYPE tankAngle;  /* Tank facing direction for directional scoring */
-  BYTE tankSpeed;      /* Tank speed — 0 means no directional penalty */
+  TURNTYPE tankAngle;  /* Tank facing direction for directional scoring/veto */
+  BYTE tankSpeed;      /* Tank speed — 0 disables directional logic */
+  WORLD tankWX;        /* Tank world X — used by the directional veto in process */
+  WORLD tankWY;        /* Tank world Y */
 } ScrollItemList;
 
 /*********************************************************
@@ -135,15 +137,20 @@ void scrollItemListSort(ScrollItemList *list);
 *  higher-priority item was pushed off-screen. If conflict,
 *  reverts and marks the item as ignored.
 *
+*  Directional veto: when the tank is moving and there is
+*  an important non-special item ahead, items *behind* the
+*  tank cannot pull the target *against* the facing
+*  direction on a given axis. This prevents trailing items
+*  from fighting the lead bias on that axis.
+*
 *ARGUMENTS:
 *  list       - Pointer to sorted ScrollItemList
 *  targetX    - In/out: target viewport X (world coords)
 *  targetY    - In/out: target viewport Y (world coords)
-*  driveScroll - Out: set to TRUE if a special item caused scrolling
 *RETURNS:
 *  TRUE if targetX or targetY was modified
 *********************************************************/
-bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY, bool *driveScroll);
+bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY);
 
 /*********************************************************
 *NAME:          calculateProjectedPosition

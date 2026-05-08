@@ -4273,7 +4273,10 @@ int main(int argc, char *argv[]) {
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
     /* Add bots */
-    botManagerInit();
+    if (!botManagerInit(0)) {
+        fprintf(stderr, "botManagerInit failed\n");
+        return 1;
+    }
     /* BrainTest defaults to debug-mode brains: viz-supporting code
      * runs, brain loads from un-stripped source. Toggle with 'B' at
      * runtime to feel production perf without reloading.

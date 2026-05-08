@@ -17,10 +17,18 @@
  *   has_pill (uint8)   — shot reaches the pill tile
  *   n_tiles  (uint8)   — entries used in tiles[] (max 15)
  *   tiles[15] (int8 x,y) — path tile offsets from pill tile (signed)
+ *
+ * Per-brain working state lives in NaShieldStampCtx, allocated as a
+ * Lua userdata in naShieldStampRegister and looked up via getCtx(L)
+ * at the top of each binding. The disk-loaded entries[] table is
+ * shared read-only across brains; first caller into l_load wins a
+ * CAS and performs the read, losers spin until a result flag flips.
  */
 
 #include "na_shield_stamp.h"
 #include "na_threat.h"
+#include "../../../src/bolo/bot_manager.h"
+#include <SDL3/SDL.h>
 #include <lauxlib.h>
 #include <math.h>
 #include <stdint.h>
@@ -69,12 +77,160 @@ typedef struct {
 } ShieldStampHeader;
 #pragma pack(pop)
 
-/* ── Module state ─────────────────────────────────────────────────── */
+/* ── Slate / scan working types ───────────────────────────────────── */
+#define SLATE_MAX_CANDS    32
+#define SLATE_MAX_NUDGES   33   /* 0=base, 1..32=nudge steps */
+#define SLATE_MAX_AIMS      5
+#define SLATE_MAX_BLOCKERS  5
+#define RESULT_STRIDE      29   /* per candidate: 9 scalars + 5*2 actual + 5*2 potential */
+
+typedef struct {
+    uint8_t n_actual;
+    uint8_t n_potential;
+    uint8_t blocked;
+    uint8_t _pad;
+    int8_t  actual_dx[SLATE_MAX_BLOCKERS];
+    int8_t  actual_dy[SLATE_MAX_BLOCKERS];
+    int8_t  potential_dx[SLATE_MAX_BLOCKERS];
+    int8_t  potential_dy[SLATE_MAX_BLOCKERS];
+    /* = 4 + 10 + 10 = 24 bytes */
+} SlateEntry;
+
+typedef struct {
+    int    best_aim;       /* 1-based, 0 = none */
+    double best_total;
+    double best_score_nb, best_score_act, best_score_pot;
+    int    best_chain, best_bcnt, best_n_act, best_n_pot;
+    int8_t best_adx[SLATE_MAX_BLOCKERS], best_ady[SLATE_MAX_BLOCKERS];
+    int8_t best_pdx[SLATE_MAX_BLOCKERS], best_pdy[SLATE_MAX_BLOCKERS];
+} NbResult;
+
+#define SCAN_MAX_CANDS   32   /* 1 standoff + 28 ring + headroom */
+#define SCAN_N_AIMS       5
+#define SCAN_MAX_BLOCKERS 5
+
+typedef struct {
+    int8_t dx[SCAN_MAX_BLOCKERS];
+    int8_t dy[SCAN_MAX_BLOCKERS];
+    int     n;
+} BlockerList;
+
+typedef struct {
+    int8_t  dx[STAMP_MAX_TILES];
+    int8_t  dy[STAMP_MAX_TILES];
+    int      n;
+} OutgoingSet;
+
+typedef struct {
+    float   cx, cy;    /* tile-space float position */
+    int     mx, my;    /* tile coords */
+    float   deg;
+    int     ak;        /* angle key */
+    int     valid;
+} ScanCand;
+
+typedef struct {
+    int          blocked;
+    int          nudge_step;   /* 0=no nudge, 1..32 */
+    float        score;
+    BlockerList  actual;
+    BlockerList  potential;
+} ScanAimResult;
+
+typedef struct {
+    ScanCand      cand;
+    ScanAimResult aims[SCAN_N_AIMS];
+    int           best_aim;   /* 0-based, -1=none */
+    float         best_score;
+} ScanResult;
+
+/* Per-call HP-dependent neighbor-bonus tunables. Built on the stack
+ * inside l_scan_c / l_run_neighbor_bonus and threaded by const-pointer
+ * into run_nb_for_cand — never stored on the ctx, never global. */
+typedef struct {
+    int    n_fav;
+    int    fav_size[2];
+    double fav_bon[2];
+    int    min_chain;
+    double max_bonus;
+} ScanCfg;
+
+/* ── Per-brain state ──────────────────────────────────────────────── */
+typedef struct NaShieldStampCtx {
+    int cfg_done;
+
+    /* Tunables — set by configure_scan(). */
+    int     t_building;
+    int     t_halfbuild;
+    uint8_t non_build[16];      /* non_build[tt] = 1 if non-buildable terrain */
+    float   approach_offset;
+    float   blocker_min_dist;
+    double  score_per_slot;
+    double  built_bonus;
+    double  neighbor_bonus;
+
+    /* Stored Lua ref to cpf.lgm_travel_ticks_map for LGM reachability check.
+     * Per-state because a LUA_REGISTRYINDEX ref is only valid in the
+     * lua_State that issued it. */
+    int     lgm_ref;
+
+    /* Per-scan slate state — filled by scan_c / slate_set, read by
+     * run_nb_for_cand. */
+    SlateEntry slate[SLATE_MAX_CANDS][SLATE_MAX_NUDGES][SLATE_MAX_AIMS];
+    uint8_t    slate_ni_used[SLATE_MAX_CANDS][SLATE_MAX_AIMS];
+    int        slate_ncands;
+
+    /* Per-scan candidate scoring buffer. memset at the top of every
+     * l_scan_c so prior content is overwritten before any read. */
+    ScanResult scan_buf[SCAN_MAX_CANDS];
+} NaShieldStampCtx;
+
+/* ── Shared read-only stamp data ──────────────────────────────────── */
+/* Loaded once from disk via the atomic-guarded l_load below. After
+ * s_entries_state observes 1, these are read-only for the rest of
+ * process lifetime. */
 static ShieldStampEntry *s_entries    = NULL;
-static int               s_loaded     = 0;
 static int               s_n_angles   = 0;
 static int               s_n_nudges   = 0;
 static int               s_nudge_step = 0;  /* wu per nudge index */
+static char              s_loaded_path[512];
+
+/* Atomic guards for the one-shot disk load.
+ *   s_entries_loading: 0 = unclaimed, 1 = a thread won the CAS and is loading.
+ *   s_entries_state:   0 = pending, 1 = loaded successfully, 2 = load failed. */
+static SDL_AtomicInt s_entries_loading = { 0 };
+static SDL_AtomicInt s_entries_state   = { 0 };
+
+static int entries_ready(void) {
+    return SDL_GetAtomicInt(&s_entries_state) == 1;
+}
+
+/* ── Ctx lookup ───────────────────────────────────────────────────── */
+
+static int naShieldStampCtxGc(lua_State *L) {
+    NaShieldStampCtx *ctx = (NaShieldStampCtx *)lua_touserdata(L, 1);
+    if (ctx && ctx->lgm_ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, ctx->lgm_ref);
+        ctx->lgm_ref = LUA_NOREF;
+    }
+    return 0;
+}
+
+static NaShieldStampCtx *getCtx(lua_State *L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "na_shield_stamp_ctx");
+    NaShieldStampCtx *ctx = (NaShieldStampCtx *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if (!ctx) luaL_error(L, "na_shield_stamp: ctx not initialized");
+    return ctx;
+}
+
+static NaShieldStampCtx *requireConfigured(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
+    if (!ctx->cfg_done) luaL_error(L, "na_shield_stamp: configure_scan() must be called first");
+    return ctx;
+}
+
+/* ── Helpers ──────────────────────────────────────────────────────── */
 
 static int nudge_wu_to_idx(int wu) {
     if (s_nudge_step <= 0) return -1;
@@ -92,49 +248,17 @@ static int clamp_angle_key(int ak) {
 
 /* ── Load ─────────────────────────────────────────────────────────── */
 
-static int l_load(lua_State *L) {
-    const char *path = luaL_checkstring(L, 1);
-    FILE *f = fopen(path, "rb");
-    if (!f) { lua_pushboolean(L, 0); return 1; }
+/* Build the per-lua_State na_shield.pill_hit lookup table from the
+ * already-loaded shared s_entries[]. Caller has confirmed entries_ready(). */
+static void publish_pill_hit_table(lua_State *L) {
+    size_t n = (size_t)s_n_angles * (size_t)s_n_nudges;
 
-    ShieldStampHeader hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
-        fclose(f); lua_pushboolean(L, 0); return 1;
-    }
-    if (hdr.magic   != STAMP_MAGIC   ||
-        hdr.version != STAMP_VERSION ||
-        hdr.n_angles == 0 || hdr.n_nudges == 0 ||
-        hdr.n_angles > STAMP_MAX_ANGLES ||
-        hdr.n_nudges > STAMP_MAX_NUDGES) {
-        fclose(f); lua_pushboolean(L, 0); return 1;
-    }
-
-    size_t n = (size_t)hdr.n_angles * hdr.n_nudges;
-    ShieldStampEntry *buf = (ShieldStampEntry *)malloc(n * sizeof(ShieldStampEntry));
-    if (!buf) { fclose(f); lua_pushboolean(L, 0); return 1; }
-
-    if (fread(buf, sizeof(ShieldStampEntry), n, f) != n) {
-        free(buf); fclose(f); lua_pushboolean(L, 0); return 1;
-    }
-    fclose(f);
-
-    free(s_entries);
-    s_entries    = buf;
-    s_n_angles   = (int)hdr.n_angles;
-    s_n_nudges   = (int)hdr.n_nudges;
-    s_nudge_step = (int)hdr.nudge_step_wu;
-    s_loaded     = 1;
-
-    /* Build pill_hit flat Lua table.
-     * Lua convention: aim_idx 0=return fire, 1..5=outgoing aims.
-     * Index (1-based): (angle_key * n_nudges + nudge_idx) * STAMP_N_PATHS + aim_idx + 1
-     * Position base+1 = pill_to_tank.has_pill (aim_idx 0 = return fire)
-     * Position base+2..6 = aim[0..4].has_pill  (aim_idx 1..5 = outgoing) */
+    /* Lua convention: aim_idx 0=return fire, 1..5=outgoing aims.
+     * Index (1-based): (angle_key * n_nudges + nudge_idx) * STAMP_N_PATHS + aim_idx + 1 */
     lua_Integer total = (lua_Integer)n * STAMP_N_PATHS;
     lua_createtable(L, (int)total, 0);
     for (size_t ei = 0; ei < n; ei++) {
-        const ShieldStampEntry *e = &buf[ei];
+        const ShieldStampEntry *e = &s_entries[ei];
         lua_Integer base = (lua_Integer)ei * STAMP_N_PATHS;
         lua_pushboolean(L, e->pill_to_tank.has_pill);
         lua_rawseti(L, -2, base + 1);
@@ -147,20 +271,94 @@ static int l_load(lua_State *L) {
     lua_insert(L, -2);
     lua_setfield(L, -2, "pill_hit");
     lua_pop(L, 1);
+}
 
+/* Disk read for the winner of the load CAS. Returns 1 on success
+ * (s_entries / sizes populated), 0 on failure (sizes left at 0). */
+static int do_disk_load(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+
+    ShieldStampHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1) { fclose(f); return 0; }
+    if (hdr.magic   != STAMP_MAGIC   ||
+        hdr.version != STAMP_VERSION ||
+        hdr.n_angles == 0 || hdr.n_nudges == 0 ||
+        hdr.n_angles > STAMP_MAX_ANGLES ||
+        hdr.n_nudges > STAMP_MAX_NUDGES) {
+        fclose(f); return 0;
+    }
+
+    size_t n = (size_t)hdr.n_angles * hdr.n_nudges;
+    ShieldStampEntry *buf = (ShieldStampEntry *)malloc(n * sizeof(ShieldStampEntry));
+    if (!buf) { fclose(f); return 0; }
+
+    if (fread(buf, sizeof(ShieldStampEntry), n, f) != n) {
+        free(buf); fclose(f); return 0;
+    }
+    fclose(f);
+
+    s_entries    = buf;
+    s_n_angles   = (int)hdr.n_angles;
+    s_n_nudges   = (int)hdr.n_nudges;
+    s_nudge_step = (int)hdr.nudge_step_wu;
+    return 1;
+}
+
+static int l_load(lua_State *L) {
+    const char *path = luaL_checkstring(L, 1);
+
+    int state = SDL_GetAtomicInt(&s_entries_state);
+    if (state == 0) {
+        if (SDL_CompareAndSwapAtomicInt(&s_entries_loading, 0, 1)) {
+            /* Winner: do the actual disk read, then publish the result.
+             * Losers are spinning on s_entries_state; we MUST set it
+             * before returning so they can make progress. */
+            int ok = do_disk_load(path);
+            if (ok) SDL_strlcpy(s_loaded_path, path, sizeof(s_loaded_path));
+            SDL_SetAtomicInt(&s_entries_state, ok ? 1 : 2);
+        } else {
+            /* Loser: spin until the winner publishes a terminal result. */
+            do {
+                state = SDL_GetAtomicInt(&s_entries_state);
+            } while (state == 0);
+        }
+        state = SDL_GetAtomicInt(&s_entries_state);
+    }
+
+    if (state != 1) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    /* Case-insensitive: callers reach this load via several path resolvers
+     * (findBrainPath, discoverBrains, BRAIN_DIR-derived paths) that don't
+     * agree on casing. On case-insensitive filesystems (Windows, macOS HFS+,
+     * WSL DrvFs) "Brains/..." and "brains/..." refer to the same file, and
+     * we want to accept the second caller rather than hard-erroring. */
+    if (SDL_strcasecmp(path, s_loaded_path) != 0) {
+        return luaL_error(L,
+            "na_shield_stamp.load: already loaded with a different path '%s'; got '%s'",
+            s_loaded_path, path);
+    }
+
+    /* The pill_hit Lua table is per-lua_State (it lives on this state's
+     * na_shield global), so build it here for every successful caller. */
+    publish_pill_hit_table(L);
     lua_pushboolean(L, 1);
     return 1;
 }
 
 static int l_is_loaded(lua_State *L) {
-    lua_pushboolean(L, s_loaded);
+    lua_pushboolean(L, entries_ready());
     return 1;
 }
 
 /* na_shield.get_flat(angle_key, nudge_wu, aim_idx) -> flat {dx1,dy1,...} or nil
  * aim_idx: 0..4 = outgoing, 5 = return fire (pill_to_tank) */
 static int l_get_flat(lua_State *L) {
-    if (!s_loaded) { lua_pushnil(L); return 1; }
+    if (!entries_ready()) { lua_pushnil(L); return 1; }
     int angle_key = (int)luaL_checkinteger(L, 1);
     int nudge_wu  = (int)luaL_checkinteger(L, 2);
     int aim_idx   = (int)luaL_checkinteger(L, 3);
@@ -185,35 +383,15 @@ static int l_get_flat(lua_State *L) {
     return 1;
 }
 
-/* ── Blocker slate ────────────────────────────────────────────────── */
-#define SLATE_MAX_CANDS    32
-#define SLATE_MAX_NUDGES   33   /* 0=base, 1..32=nudge steps */
-#define SLATE_MAX_AIMS      5
-#define SLATE_MAX_BLOCKERS  5
-#define RESULT_STRIDE      29   /* per candidate: 9 scalars + 5*2 actual + 5*2 potential */
-
-typedef struct {
-    uint8_t n_actual;
-    uint8_t n_potential;
-    uint8_t blocked;
-    uint8_t _pad;
-    int8_t  actual_dx[SLATE_MAX_BLOCKERS];
-    int8_t  actual_dy[SLATE_MAX_BLOCKERS];
-    int8_t  potential_dx[SLATE_MAX_BLOCKERS];
-    int8_t  potential_dy[SLATE_MAX_BLOCKERS];
-    /* = 4 + 10 + 10 = 24 bytes */
-} SlateEntry;
-
-static SlateEntry s_slate[SLATE_MAX_CANDS][SLATE_MAX_NUDGES][SLATE_MAX_AIMS];
-static uint8_t    s_slate_ni_used[SLATE_MAX_CANDS][SLATE_MAX_AIMS];
-static int        s_slate_ncands = 0;
+/* ── Slate ────────────────────────────────────────────────────────── */
 
 static int l_slate_clear(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
     int n = (int)luaL_checkinteger(L, 1);
     if (n > SLATE_MAX_CANDS) n = SLATE_MAX_CANDS;
-    s_slate_ncands = n;
-    memset(s_slate,         0, sizeof(s_slate));
-    memset(s_slate_ni_used, 0, sizeof(s_slate_ni_used));
+    ctx->slate_ncands = n;
+    memset(ctx->slate,         0, sizeof(ctx->slate));
+    memset(ctx->slate_ni_used, 0, sizeof(ctx->slate_ni_used));
     return 0;
 }
 
@@ -221,13 +399,14 @@ static int l_slate_clear(lua_State *L) {
  *   n_act, dx1,dy1, dx2,dy2, dx3,dy3, dx4,dy4, dx5,dy5,
  *   n_pot, pdx1,pdy1, pdx2,pdy2, pdx3,pdy3, pdx4,pdy4, pdx5,pdy5) */
 static int l_slate_set(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
     int ci = (int)luaL_checkinteger(L, 1) - 1;
     int ni = (int)luaL_checkinteger(L, 2);
     int ai = (int)luaL_checkinteger(L, 3);
     if (ci < 0 || ci >= SLATE_MAX_CANDS ||
         ni < 0 || ni >= SLATE_MAX_NUDGES ||
         ai < 0 || ai >= SLATE_MAX_AIMS) return 0;
-    SlateEntry *e = &s_slate[ci][ni][ai];
+    SlateEntry *e = &ctx->slate[ci][ni][ai];
     e->blocked    = (uint8_t)lua_toboolean(L, 4);
     e->n_actual   = (uint8_t)luaL_checkinteger(L, 5);
     for (int k = 0; k < SLATE_MAX_BLOCKERS; k++) {
@@ -244,20 +423,21 @@ static int l_slate_set(lua_State *L) {
 }
 
 static int l_slate_set_nudge_used(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
     int ci = (int)luaL_checkinteger(L, 1) - 1;
     int ai = (int)luaL_checkinteger(L, 2);
     int ni = (int)luaL_checkinteger(L, 3);
     if (ci >= 0 && ci < SLATE_MAX_CANDS &&
         ai >= 0 && ai < SLATE_MAX_AIMS  &&
         ni >= 0 && ni < SLATE_MAX_NUDGES)
-        s_slate_ni_used[ci][ai] = (uint8_t)ni;
+        ctx->slate_ni_used[ci][ai] = (uint8_t)ni;
     return 0;
 }
 
-static int covers_subset(int j, int ni, int ai,
+static int covers_subset(const NaShieldStampCtx *ctx, int j, int ni, int ai,
                           const int8_t *sub_dx, const int8_t *sub_dy, int sub_n) {
-    if (j < 0 || j >= s_slate_ncands) return 0;
-    const SlateEntry *e = &s_slate[j][ni][ai];
+    if (j < 0 || j >= ctx->slate_ncands) return 0;
+    const SlateEntry *e = &ctx->slate[j][ni][ai];
     if (e->blocked) return 0;
     for (int k = 0; k < sub_n; k++) {
         int found = 0;
@@ -272,20 +452,10 @@ static int covers_subset(int j, int ni, int ai,
 
 /* Internal neighbor bonus used by both l_run_neighbor_bonus and scan_c.
  * Writes RESULT_STRIDE values per candidate into out[] (caller provides). */
-typedef struct {
-    int    best_aim;       /* 1-based, 0 = none */
-    double best_total;
-    double best_score_nb, best_score_act, best_score_pot;
-    int    best_chain, best_bcnt, best_n_act, best_n_pot;
-    int8_t best_adx[SLATE_MAX_BLOCKERS], best_ady[SLATE_MAX_BLOCKERS];
-    int8_t best_pdx[SLATE_MAX_BLOCKERS], best_pdy[SLATE_MAX_BLOCKERS];
-} NbResult;
-
-static void run_nb_for_cand(int i, int n_cands, int n_aims,
+static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
+                             int i, int n_cands, int n_aims,
                              double score_per_slot, double built_bonus,
                              double neighbor_bonus,
-                             int n_fav, const int *fav_size, const double *fav_bon,
-                             int min_chain, double max_bonus,
                              NbResult *out) {
     out->best_aim   = 0;
     out->best_total = -1.0;
@@ -298,8 +468,8 @@ static void run_nb_for_cand(int i, int n_cands, int n_aims,
     memset(out->best_pdy, 0, sizeof(out->best_pdy));
 
     for (int ai = 0; ai < n_aims; ai++) {
-        int ni = (int)s_slate_ni_used[i][ai];
-        const SlateEntry *e = &s_slate[i][ni][ai];
+        int ni = (int)ctx->slate_ni_used[i][ai];
+        const SlateEntry *e = &ctx->slate[i][ni][ai];
         if (e->blocked) continue;
         int na = (int)e->n_actual, np = (int)e->n_potential;
         int n_tot = na + np;
@@ -338,12 +508,12 @@ static void run_nb_for_cand(int i, int n_cands, int n_aims,
 
             int left = 0;
             for (int j = i - 1; j >= 0; j--) {
-                if (!covers_subset(j, ni, ai, sub_dx, sub_dy, sub_n)) break;
+                if (!covers_subset(ctx, j, ni, ai, sub_dx, sub_dy, sub_n)) break;
                 left++;
             }
             int right = 0;
             for (int j = i + 1; j < n_cands; j++) {
-                if (!covers_subset(j, ni, ai, sub_dx, sub_dy, sub_n)) break;
+                if (!covers_subset(ctx, j, ni, ai, sub_dx, sub_dy, sub_n)) break;
                 right++;
             }
             int sym   = left < right ? left : right;
@@ -351,10 +521,10 @@ static void run_nb_for_cand(int i, int n_cands, int n_aims,
 
             double bias = 0.0;
             int    sz   = sub_na + sub_np;
-            for (int fi = 0; fi < n_fav && fi < 2; fi++)
-                if (sz == fav_size[fi]) bias += fav_bon[fi];
-            if (min_chain > 0 && chain < min_chain)
-                bias -= max_bonus * 100.0;
+            for (int fi = 0; fi < cfg->n_fav && fi < 2; fi++)
+                if (sz == cfg->fav_size[fi]) bias += cfg->fav_bon[fi];
+            if (cfg->min_chain > 0 && chain < cfg->min_chain)
+                bias -= cfg->max_bonus * 100.0;
 
             double total = aim_score + chain * neighbor_bonus + bias;
             if (total > out->best_total) {
@@ -386,16 +556,21 @@ static void run_nb_for_cand(int i, int n_cands, int n_aims,
 }
 
 static int l_run_neighbor_bonus(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
     int    n_cands        = (int)luaL_checkinteger(L, 1);
     int    n_aims         = (int)luaL_checkinteger(L, 2);
     double score_per_slot = luaL_checknumber(L, 3);
     double built_bonus    = luaL_checknumber(L, 4);
     double neighbor_bonus = luaL_checknumber(L, 5);
-    int    n_fav          = (int)luaL_checkinteger(L, 6);
-    int    fav_size[2]    = { (int)luaL_checkinteger(L, 7), (int)luaL_checkinteger(L, 9) };
-    double fav_bon[2]     = { luaL_checknumber(L, 8), luaL_checknumber(L, 10) };
-    int    min_chain      = (int)luaL_checkinteger(L, 11);
-    double max_bonus      = luaL_checknumber(L, 12);
+
+    ScanCfg cfg;
+    cfg.n_fav        = (int)luaL_checkinteger(L, 6);
+    cfg.fav_size[0]  = (int)luaL_checkinteger(L, 7);
+    cfg.fav_bon[0]   = luaL_checknumber(L, 8);
+    cfg.fav_size[1]  = (int)luaL_checkinteger(L, 9);
+    cfg.fav_bon[1]   = luaL_checknumber(L, 10);
+    cfg.min_chain    = (int)luaL_checkinteger(L, 11);
+    cfg.max_bonus    = luaL_checknumber(L, 12);
 
     if (n_cands > SLATE_MAX_CANDS) n_cands = SLATE_MAX_CANDS;
     if (n_aims  > SLATE_MAX_AIMS)  n_aims  = SLATE_MAX_AIMS;
@@ -405,9 +580,15 @@ static int l_run_neighbor_bonus(lua_State *L) {
     NbResult r;
 
     for (int i = 0; i < n_cands; i++) {
-        run_nb_for_cand(i, n_cands, n_aims, score_per_slot, built_bonus,
-                        neighbor_bonus, n_fav, fav_size, fav_bon,
-                        min_chain, max_bonus, &r);
+        /* Cooperative abort. Per-candidate is the natural checkpoint —
+         * each run_nb_for_cand is self-contained (writes RESULT_STRIDE
+         * values to `out` for one candidate). On hit we stop early; the
+         * Lua side sees a shorter result table than expected and treats
+         * it as "scoring incomplete", same shape as if scan_c had
+         * picked fewer candidates. */
+        if (botManagerShouldAbort(L)) break;
+        run_nb_for_cand(ctx, &cfg, i, n_cands, n_aims,
+                        score_per_slot, built_bonus, neighbor_bonus, &r);
 
         lua_pushinteger(L, r.best_aim);                               lua_rawseti(L,-2,out++);
         lua_pushnumber (L, r.best_aim ? r.best_total : 0.0);         lua_rawseti(L,-2,out++);
@@ -431,36 +612,55 @@ static int l_run_neighbor_bonus(lua_State *L) {
 }
 
 /* ── scan_c configuration ─────────────────────────────────────────── */
-static int    s_t_building  = 1;
-static int    s_t_halfbuild = 2;
-/* Non-buildable terrain types — LGM cannot place walls here */
-static uint8_t s_non_build[16];      /* s_non_build[tt] = 1 if non-buildable */
-static float   s_approach_offset = 1.5f;  /* ATTACK_APPROACH_OFFSET in tiles */
-static float   s_blocker_min_dist = 1.0f; /* BLOCKER_MIN_DIST in tiles */
-static double  s_score_per_slot  = 10.0;
-static double  s_built_bonus     = 3.0;
-static double  s_neighbor_bonus  = 2.0;
-static int     s_n_fav           = 0;
-static int     s_fav_size[2]     = {0, 0};
-static double  s_fav_bon[2]      = {0.0, 0.0};
-static int     s_min_chain       = 0;
-static double  s_max_bonus       = 0.0;
-
-/* Stored Lua ref to cpf.lgm_travel_ticks_map for LGM reachability check */
-static int s_lgm_ref = LUA_NOREF;
 
 /* na_shield.set_lgm_func(fn) — store reference to lgm path function */
 static int l_set_lgm_func(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
     luaL_checktype(L, 1, LUA_TFUNCTION);
-    if (s_lgm_ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, s_lgm_ref);
+    if (ctx->lgm_ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, ctx->lgm_ref);
     lua_pushvalue(L, 1);
-    s_lgm_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctx->lgm_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     return 0;
+}
+
+static void reset_ctx_state(lua_State *L, NaShieldStampCtx *ctx) {
+    /* Tunables — back to the same defaults as the original file-static
+     * initializers so a reconfigure starts from a known baseline. */
+    ctx->t_building       = 1;
+    ctx->t_halfbuild      = 2;
+    memset(ctx->non_build, 0, sizeof(ctx->non_build));
+    ctx->approach_offset  = 1.5f;
+    ctx->blocker_min_dist = 1.0f;
+    ctx->score_per_slot   = 10.0;
+    ctx->built_bonus      = 3.0;
+    ctx->neighbor_bonus   = 2.0;
+
+    /* Working state — slate is filled per-scan; scan_buf is memset at
+     * the top of every l_scan_c, so it's effectively self-clearing.
+     * Zero them here too so a hot-reload starts from a clean slate
+     * in case the reload happens between scans. */
+    memset(ctx->slate,         0, sizeof(ctx->slate));
+    memset(ctx->slate_ni_used, 0, sizeof(ctx->slate_ni_used));
+    ctx->slate_ncands = 0;
+    memset(ctx->scan_buf, 0, sizeof(ctx->scan_buf));
+
+    /* Drop any registered lgm callback — the brain will re-register
+     * via set_lgm_func after a fresh configure_scan. */
+    if (ctx->lgm_ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, ctx->lgm_ref);
+        ctx->lgm_ref = LUA_NOREF;
+    }
 }
 
 /* na_shield.configure_scan(tbl) — set terrain/scoring constants */
 static int l_configure_scan(lua_State *L) {
+    NaShieldStampCtx *ctx = getCtx(L);
     luaL_checktype(L, 1, LUA_TTABLE);
+
+    /* Reset every per-brain field before applying the new config so
+     * second-and-later calls produce the same end state as a first call. */
+    reset_ctx_state(L, ctx);
+
 #define READ_INT(k, dst) \
     lua_getfield(L, 1, k); if (!lua_isnil(L,-1)) dst = (int)lua_tointeger(L,-1); lua_pop(L,1)
 #define READ_FLT(k, dst) \
@@ -468,28 +668,15 @@ static int l_configure_scan(lua_State *L) {
 #define READ_DBL(k, dst) \
     lua_getfield(L, 1, k); if (!lua_isnil(L,-1)) dst = (double)lua_tonumber(L,-1); lua_pop(L,1)
 
-    READ_INT("T_BUILDING",  s_t_building);
-    READ_INT("T_HALFBUILD", s_t_halfbuild);
-    READ_FLT("APPROACH_OFFSET",   s_approach_offset);
-    READ_FLT("BLOCKER_MIN_DIST",  s_blocker_min_dist);
-    READ_DBL("SCORE_PER_SLOT",    s_score_per_slot);
-    READ_DBL("BUILT_BONUS",       s_built_bonus);
-    READ_DBL("NEIGHBOR_BONUS",    s_neighbor_bonus);
-    READ_INT("N_FAV",             s_n_fav);
-    READ_DBL("FAV_BON1",          s_fav_bon[0]);
-    READ_DBL("FAV_BON2",          s_fav_bon[1]);
-    READ_INT("MIN_CHAIN",         s_min_chain);
-    READ_DBL("MAX_BONUS",         s_max_bonus);
+    READ_INT("T_BUILDING",  ctx->t_building);
+    READ_INT("T_HALFBUILD", ctx->t_halfbuild);
+    READ_FLT("APPROACH_OFFSET",   ctx->approach_offset);
+    READ_FLT("BLOCKER_MIN_DIST",  ctx->blocker_min_dist);
+    READ_DBL("SCORE_PER_SLOT",    ctx->score_per_slot);
+    READ_DBL("BUILT_BONUS",       ctx->built_bonus);
+    READ_DBL("NEIGHBOR_BONUS",    ctx->neighbor_bonus);
 
-    lua_getfield(L, 1, "FAV_SIZE1");
-    if (!lua_isnil(L,-1)) s_fav_size[0] = (int)lua_tointeger(L,-1);
-    lua_pop(L,1);
-    lua_getfield(L, 1, "FAV_SIZE2");
-    if (!lua_isnil(L,-1)) s_fav_size[1] = (int)lua_tointeger(L,-1);
-    lua_pop(L,1);
-
-    /* NON_BUILDABLE_TYPES: array of terrain type ints */
-    memset(s_non_build, 0, sizeof(s_non_build));
+    /* NON_BUILDABLE: array of terrain type ints */
     lua_getfield(L, 1, "NON_BUILDABLE");
     if (lua_istable(L, -1)) {
         int len = (int)lua_rawlen(L, -1);
@@ -497,25 +684,19 @@ static int l_configure_scan(lua_State *L) {
             lua_rawgeti(L, -1, i);
             int tt = (int)lua_tointeger(L, -1);
             lua_pop(L, 1);
-            if (tt >= 0 && tt < 16) s_non_build[tt] = 1;
+            if (tt >= 0 && tt < 16) ctx->non_build[tt] = 1;
         }
     }
     lua_pop(L, 1);
 #undef READ_INT
 #undef READ_FLT
 #undef READ_DBL
+
+    ctx->cfg_done = 1;
     return 0;
 }
 
 /* ── scan_c internals ─────────────────────────────────────────────── */
-#define SCAN_MAX_CANDS   32   /* 1 standoff + 28 ring + headroom */
-#define SCAN_N_AIMS       5
-#define SCAN_MAX_BLOCKERS 5
-
-/* Lazy 17×17 LGM reachability cache centred on the pill.
- * Indexed by (dx+8)*17+(dy+8) where dx,dy in [-8,8].
- * Values: -1=unchecked, 0=unreachable, 1=reachable. */
-static int8_t s_lgm_reach[17 * 17];
 
 static int lgm_cache_idx(int dx, int dy) {
     int x = dx + 8, y = dy + 8;
@@ -523,20 +704,24 @@ static int lgm_cache_idx(int dx, int dy) {
     return x * 17 + y;
 }
 
-/* Check LGM reachability with lazy cache.
- * smx/smy = LGM origin tile, tmx/tmy = target tile, pmx/pmy = pill tile. */
-static int lgm_reachable(lua_State *L, int smx, int smy,
+/* Check LGM reachability with lazy cache (caller-owned).
+ * smx/smy = LGM origin tile, tmx/tmy = target tile, pmx/pmy = pill tile.
+ * lgm_reach[17*17] is the per-scan reachability cache; -1=unchecked,
+ * 0=unreachable, 1=reachable. */
+static int lgm_reachable(lua_State *L, const NaShieldStampCtx *ctx,
+                         int8_t *lgm_reach,
+                         int smx, int smy,
                          int tmx, int tmy, int pmx, int pmy) {
     /* Adjacent to origin: always reachable */
     if (abs(tmx - smx) + abs(tmy - smy) <= 1) return 1;
 
     int ci = lgm_cache_idx(tmx - pmx, tmy - pmy);
-    if (ci >= 0 && s_lgm_reach[ci] != -1) return s_lgm_reach[ci];
+    if (ci >= 0 && lgm_reach[ci] != -1) return lgm_reach[ci];
 
     /* Call stored Lua function */
     int result = 1;  /* default: reachable if function not set */
-    if (s_lgm_ref != LUA_NOREF) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, s_lgm_ref);
+    if (ctx->lgm_ref != LUA_NOREF) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->lgm_ref);
         lua_pushinteger(L, smx);  lua_pushinteger(L, smy);
         lua_pushinteger(L, tmx);  lua_pushinteger(L, tmy);
         lua_pushinteger(L, 0);    lua_pushinteger(L, 0);   /* blessX, blessY */
@@ -546,21 +731,9 @@ static int lgm_reachable(lua_State *L, int smx, int smy,
         lua_pop(L, 1);
     }
 
-    if (ci >= 0) s_lgm_reach[ci] = (int8_t)result;
+    if (ci >= 0) lgm_reach[ci] = (int8_t)result;
     return result;
 }
-
-typedef struct {
-    int8_t dx[SCAN_MAX_BLOCKERS];
-    int8_t dy[SCAN_MAX_BLOCKERS];
-    int     n;
-} BlockerList;
-
-typedef struct {
-    int8_t  dx[STAMP_MAX_TILES];
-    int8_t  dy[STAMP_MAX_TILES];
-    int      n;
-} OutgoingSet;
 
 static int in_outgoing(const OutgoingSet *os, int8_t dx, int8_t dy) {
     for (int i = 0; i < os->n; i++)
@@ -568,37 +741,14 @@ static int in_outgoing(const OutgoingSet *os, int8_t dx, int8_t dy) {
     return 0;
 }
 
-typedef struct {
-    float   cx, cy;    /* tile-space float position */
-    int     mx, my;    /* tile coords */
-    float   deg;
-    int     ak;        /* angle key */
-    int     valid;
-} ScanCand;
-
-typedef struct {
-    int          blocked;
-    int          nudge_step;   /* 0=no nudge, 1..32 */
-    float        score;
-    BlockerList  actual;
-    BlockerList  potential;
-} ScanAimResult;
-
-typedef struct {
-    ScanCand      cand;
-    ScanAimResult aims[SCAN_N_AIMS];
-    int           best_aim;   /* 0-based, -1=none */
-    float         best_score;
-} ScanResult;
-
-static ScanResult s_scan_buf[SCAN_MAX_CANDS];
-
 /* Score one aim for one candidate using stamp tiles.
  * Returns 1 if this aim is usable (not blocked), 0 if blocked.
  * approach_mx/my = LGM dispatch origin for reachability check.
  * pmx/pmy = pill tile. pill_wx/wy = pill world position.
  * pill_map[17*17]: 0=none, 1=hostile/neutral, 2=friendly (centred on pill). */
 static void score_one_aim(lua_State *L,
+                          const NaShieldStampCtx *ctx,
+                          int8_t *lgm_reach,
                           const ShieldShotPath *out_path,
                           const ShieldShotPath *ret_path,
                           int pmx, int pmy,
@@ -619,8 +769,8 @@ static void score_one_aim(lua_State *L,
         int8_t dy = out_path->tiles[i].y;
         if (dx == 0 && dy == 0) break;  /* reached pill tile */
         int tx = pmx + dx, ty = pmy + dy;
-        int tt = naThreatRawTT(tx, ty);
-        if (tt == s_t_building || tt == s_t_halfbuild) { res->blocked = 1; return; }
+        int tt = naThreatRawTT(L, tx, ty);
+        if (tt == ctx->t_building || tt == ctx->t_halfbuild) { res->blocked = 1; return; }
         /* Non-target pill in outgoing path blocks the aim */
         int ci = lgm_cache_idx(dx, dy);
         if (ci >= 0) {
@@ -660,7 +810,7 @@ static void score_one_aim(lua_State *L,
         /* Minimum standoff distance */
         float sdx = tx + 0.5f - scx, sdy = ty + 0.5f - scy;
         float d_standoff = sqrtf(sdx * sdx + sdy * sdy);
-        if (d_standoff < s_blocker_min_dist) continue;
+        if (d_standoff < ctx->blocker_min_dist) continue;
 
         /* Classify: actual (friendly pill or wall) vs potential (buildable) */
         int ci = lgm_cache_idx(dx, dy);
@@ -675,16 +825,17 @@ static void score_one_aim(lua_State *L,
             }
             continue;
         }
-        int tt = naThreatRawTT(tx, ty);
-        if (tt == s_t_building || tt == s_t_halfbuild) {
+        int tt = naThreatRawTT(L, tx, ty);
+        if (tt == ctx->t_building || tt == ctx->t_halfbuild) {
             if (res->actual.n < SCAN_MAX_BLOCKERS) {
                 res->actual.dx[res->actual.n] = dx;
                 res->actual.dy[res->actual.n] = dy;
                 res->actual.n++;
             }
-        } else if (!no_builder && !s_non_build[tt & 0x0F]) {
+        } else if (!no_builder && !ctx->non_build[tt & 0x0F]) {
             /* Potentially buildable — check LGM reachability */
-            if (lgm_reachable(L, approach_mx, approach_my, tx, ty, pmx, pmy)) {
+            if (lgm_reachable(L, ctx, lgm_reach, approach_mx, approach_my,
+                              tx, ty, pmx, pmy)) {
                 if (res->potential.n < SCAN_MAX_BLOCKERS) {
                     res->potential.dx[res->potential.n] = dx;
                     res->potential.dy[res->potential.n] = dy;
@@ -695,8 +846,8 @@ static void score_one_aim(lua_State *L,
     }
 
     /* Compute score */
-    res->score = (float)(s_score_per_slot * (res->actual.n + res->potential.n)
-                       + s_built_bonus    *  res->actual.n);
+    res->score = (float)(ctx->score_per_slot * (res->actual.n + res->potential.n)
+                       + ctx->built_bonus    *  res->actual.n);
 }
 
 /* na_shield.scan_c(
@@ -719,7 +870,8 @@ static void score_one_aim(lua_State *L,
  *  [32] score_actual  [33] score_potential  [34] score_neighbor
  */
 static int l_scan_c(lua_State *L) {
-    if (!s_loaded) { lua_pushnil(L); return 1; }
+    if (!entries_ready()) { lua_pushnil(L); return 1; }
+    NaShieldStampCtx *ctx = requireConfigured(L);
 
     int   pmx        = (int)luaL_checkinteger(L, 1);
     int   pmy        = (int)luaL_checkinteger(L, 2);
@@ -734,20 +886,22 @@ static int l_scan_c(lua_State *L) {
     int   app_my     = (int)luaL_checkinteger(L, 11);
     int   no_builder = lua_toboolean(L, 12);
 
-    /* Optional HP-dependent neighbor bonus params (args 13..19).
-     * Passed per-scan since they depend on live pill HP. */
+    /* Per-call HP-dependent neighbor-bonus tunables (args 13..19).
+     * Stack-local so concurrent scans on different brains don't trample
+     * each other's bonuses. */
+    ScanCfg cfg = { 0, {0, 0}, {0.0, 0.0}, 0, 0.0 };
     if (lua_gettop(L) >= 19) {
-        s_n_fav       = (int)luaL_checkinteger(L, 13);
-        s_fav_size[0] = (int)luaL_checkinteger(L, 14);
-        s_fav_bon[0]  = luaL_checknumber(L, 15);
-        s_fav_size[1] = (int)luaL_checkinteger(L, 16);
-        s_fav_bon[1]  = luaL_checknumber(L, 17);
-        s_min_chain   = (int)luaL_checkinteger(L, 18);
-        s_max_bonus   = luaL_checknumber(L, 19);
+        cfg.n_fav        = (int)luaL_checkinteger(L, 13);
+        cfg.fav_size[0]  = (int)luaL_checkinteger(L, 14);
+        cfg.fav_bon[0]   = luaL_checknumber(L, 15);
+        cfg.fav_size[1]  = (int)luaL_checkinteger(L, 16);
+        cfg.fav_bon[1]   = luaL_checknumber(L, 17);
+        cfg.min_chain    = (int)luaL_checkinteger(L, 18);
+        cfg.max_bonus    = luaL_checknumber(L, 19);
     }
 
-    /* Build 17×17 local pill map centred on pill tile */
-    static uint8_t pill_map[17 * 17];
+    /* Stack-local 17×17 local pill map centred on pill tile */
+    uint8_t pill_map[17 * 17];
     memset(pill_map, 0, sizeof(pill_map));
     if (lua_istable(L, 9)) {
         int len = (int)lua_rawlen(L, 9);
@@ -761,16 +915,18 @@ static int l_scan_c(lua_State *L) {
         }
     }
 
-    /* Reset LGM cache */
-    memset(s_lgm_reach, -1, sizeof(s_lgm_reach));
+    /* Stack-local 17×17 LGM reachability cache for this scan only.
+     * -1=unchecked, 0=unreachable, 1=reachable. */
+    int8_t lgm_reach[17 * 17];
+    memset(lgm_reach, -1, sizeof(lgm_reach));
 
     /* ── Generate candidates ──────────────────────────────────────── */
     int n_cands = 0;
-    memset(s_scan_buf, 0, sizeof(s_scan_buf));
+    memset(ctx->scan_buf, 0, sizeof(ctx->scan_buf));
 
     /* Candidate 0: the chosen standoff */
     {
-        ScanCand *c = &s_scan_buf[0].cand;
+        ScanCand *c = &ctx->scan_buf[0].cand;
         c->cx  = standoff_cx; c->cy  = standoff_cy;
         c->mx  = (int)floorf(standoff_cx);
         c->my  = (int)floorf(standoff_cy);
@@ -794,7 +950,7 @@ static int l_scan_c(lua_State *L) {
         float cy     = pcy - cosf(rad) * R;
         float deg_n  = (float)fmod((double)deg, 360.0);
         if (deg_n < 0) deg_n += 360.0f;
-        ScanCand *c  = &s_scan_buf[n_cands].cand;
+        ScanCand *c  = &ctx->scan_buf[n_cands].cand;
         c->cx  = cx; c->cy = cy;
         c->mx  = (int)floorf(cx); c->my = (int)floorf(cy);
         c->deg = deg;
@@ -805,13 +961,19 @@ static int l_scan_c(lua_State *L) {
 
     /* ── Score candidates ─────────────────────────────────────────── */
     /* Prepare slate */
-    s_slate_ncands = n_cands;
-    memset(s_slate,         0, sizeof(s_slate));
-    memset(s_slate_ni_used, 0, sizeof(s_slate_ni_used));
+    ctx->slate_ncands = n_cands;
+    memset(ctx->slate,         0, sizeof(ctx->slate));
+    memset(ctx->slate_ni_used, 0, sizeof(ctx->slate_ni_used));
 
     for (int ci = 0; ci < n_cands; ci++) {
-        ScanCand *cand = &s_scan_buf[ci].cand;
-        ScanResult *sr = &s_scan_buf[ci];
+        /* Cooperative abort. Per-candidate is the natural checkpoint
+         * for the scoring sweep — each candidate is independent and
+         * writes its own slate row. Stopping early leaves untouched
+         * rows zeroed (memset above), which the neighbor-bonus pass
+         * below treats as "blocked" and skips. */
+        if (botManagerShouldAbort(L)) { n_cands = ci; break; }
+        ScanCand *cand = &ctx->scan_buf[ci].cand;
+        ScanResult *sr = &ctx->scan_buf[ci];
         sr->best_aim   = -1;
         sr->best_score = -1.0f;
 
@@ -824,8 +986,8 @@ static int l_scan_c(lua_State *L) {
         int   lgm_mx = app_mx, lgm_my = app_my;
         if (dist > 0.01f) {
             float ux = dx2p / dist, uy = dy2p / dist;
-            float afx = cx + ux * s_approach_offset;
-            float afy = cy + uy * s_approach_offset;
+            float afx = cx + ux * ctx->approach_offset;
+            float afy = cy + uy * ctx->approach_offset;
             int amx = (int)floorf(afx), amy = (int)floorf(afy);
             if (amx >= 0 && amx <= 255 && amy >= 0 && amy <= 255) {
                 lgm_mx = amx; lgm_my = amy;
@@ -837,7 +999,8 @@ static int l_scan_c(lua_State *L) {
         for (int ai = 0; ai < SCAN_N_AIMS; ai++) {
             ScanAimResult *ar = &sr->aims[ai];
             ar->nudge_step = 0;
-            score_one_aim(L, &e0->aim[ai], &e0->pill_to_tank,
+            score_one_aim(L, ctx, lgm_reach,
+                          &e0->aim[ai], &e0->pill_to_tank,
                           pmx, pmy, cx, cy, lgm_mx, lgm_my,
                           pill_map, 1 /*target_is_pill*/, no_builder, ar);
 
@@ -862,13 +1025,14 @@ static int l_scan_c(lua_State *L) {
                     int nlgm_mx = lgm_mx, nlgm_my = lgm_my;
                     if (nd > 0.01f) {
                         float ux = ndx / nd, uy = ndy / nd;
-                        int amx = (int)floorf(ncx + ux * s_approach_offset);
-                        int amy = (int)floorf(ncy + uy * s_approach_offset);
+                        int amx = (int)floorf(ncx + ux * ctx->approach_offset);
+                        int amy = (int)floorf(ncy + uy * ctx->approach_offset);
                         if (amx >= 0 && amx <= 255 && amy >= 0 && amy <= 255) {
                             nlgm_mx = amx; nlgm_my = amy;
                         }
                     }
-                    score_one_aim(L, &en->aim[ai], &en->pill_to_tank,
+                    score_one_aim(L, ctx, lgm_reach,
+                                  &en->aim[ai], &en->pill_to_tank,
                                   pmx, pmy, ncx, ncy,
                                   nlgm_mx, nlgm_my,
                                   pill_map, 1, no_builder, ar);
@@ -882,7 +1046,7 @@ static int l_scan_c(lua_State *L) {
             /* Populate slate */
             int ni_slate = ar->nudge_step;
             if (ni_slate >= SLATE_MAX_NUDGES) ni_slate = SLATE_MAX_NUDGES - 1;
-            SlateEntry *se = &s_slate[ci][ni_slate][ai];
+            SlateEntry *se = &ctx->slate[ci][ni_slate][ai];
             se->blocked    = (uint8_t)ar->blocked;
             se->n_actual   = (uint8_t)(ar->actual.n < SLATE_MAX_BLOCKERS
                                         ? ar->actual.n : SLATE_MAX_BLOCKERS);
@@ -894,7 +1058,7 @@ static int l_scan_c(lua_State *L) {
                 se->potential_dx[k] = k < ar->potential.n ? ar->potential.dx[k] : 0;
                 se->potential_dy[k] = k < ar->potential.n ? ar->potential.dy[k] : 0;
             }
-            s_slate_ni_used[ci][ai] = (uint8_t)ni_slate;
+            ctx->slate_ni_used[ci][ai] = (uint8_t)ni_slate;
 
             if (!ar->blocked && ar->score > sr->best_score) {
                 sr->best_score = ar->score;
@@ -905,11 +1069,14 @@ static int l_scan_c(lua_State *L) {
 
     /* ── Neighbor bonus ───────────────────────────────────────────── */
     NbResult nb_results[SCAN_MAX_CANDS];
+    memset(nb_results, 0, sizeof(NbResult) * (size_t)n_cands);
     for (int ci = 0; ci < n_cands; ci++) {
-        run_nb_for_cand(ci, n_cands, SCAN_N_AIMS,
-                        s_score_per_slot, s_built_bonus, s_neighbor_bonus,
-                        s_n_fav, s_fav_size, s_fav_bon,
-                        s_min_chain, s_max_bonus,
+        /* Cooperative abort. Skipped candidates keep their zero-init
+         * NbResult (best_aim = 0), which the best-pick loop below
+         * filters out via `best_aim > 0`. */
+        if (botManagerShouldAbort(L)) break;
+        run_nb_for_cand(ctx, &cfg, ci, n_cands, SCAN_N_AIMS,
+                        ctx->score_per_slot, ctx->built_bonus, ctx->neighbor_bonus,
                         &nb_results[ci]);
     }
 
@@ -930,11 +1097,11 @@ static int l_scan_c(lua_State *L) {
         return 1;
     }
 
-    const ScanCand   *bc  = &s_scan_buf[best_ci].cand;
+    const ScanCand   *bc  = &ctx->scan_buf[best_ci].cand;
     const NbResult   *nbr = &nb_results[best_ci];
     int best_ai_0 = nbr->best_aim - 1;  /* 0-based */
     int nudge_wu  = (best_ai_0 >= 0 && best_ai_0 < SCAN_N_AIMS)
-                    ? s_scan_buf[best_ci].aims[best_ai_0].nudge_step * s_nudge_step
+                    ? ctx->scan_buf[best_ci].aims[best_ai_0].nudge_step * s_nudge_step
                     : 0;
 
     lua_pushinteger(L, 1);                           lua_rawseti(L,-2,  1);
@@ -978,6 +1145,21 @@ static const luaL_Reg na_shield_lib[] = {
 };
 
 void naShieldStampRegister(lua_State *L) {
+    /* Allocate the ctx as a Lua-managed userdata (the userdata storage
+     * IS the ctx). Lua frees it on lua_State close; the __gc metatable
+     * unrefs the held lgm_ref so its registry slot can be reused. */
+    NaShieldStampCtx *ctx = (NaShieldStampCtx *)lua_newuserdata(L, sizeof(NaShieldStampCtx));
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->lgm_ref = LUA_NOREF;
+
+    if (luaL_newmetatable(L, "na_shield_stamp_ctx_mt")) {
+        lua_pushcfunction(L, naShieldStampCtxGc);
+        lua_setfield(L, -2, "__gc");
+    }
+    lua_setmetatable(L, -2);
+
+    lua_setfield(L, LUA_REGISTRYINDEX, "na_shield_stamp_ctx");
+
     luaL_newlib(L, na_shield_lib);
     lua_setglobal(L, "na_shield");
 }

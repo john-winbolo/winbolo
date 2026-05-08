@@ -588,6 +588,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     return false;
   }
 
+  /* Zero the BotContext* slot before any C binding can run. Lua does not
+   * zero-init extraspace, and brain.open() below can reach botFromLua via
+   * na_threat / cpf bindings. botManagerAddBot writes the real pointer
+   * after this function returns. */
+  *(void **)lua_getextraspace(L) = NULL;
+
   luaL_openlibs(L);
   brainCoreRegisterConstants(L);
 
@@ -847,10 +853,42 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   if (inst->worldsim) {
     brainWorldSimSetMap(inst->worldsim, inst->bInfo.theWorld);
   }
-  ok = brainCoreCallThink(inst->L, &inst->bInfo);
+  /* wasKilled is recorded on the instance so the caller (bot_manager
+   * runBotThinkJobImpl) can disambiguate the budget-abort recovery
+   * path from a real Lua error after the call returns. Reset to false
+   * here so a successful tick clears stale state from a prior abort. */
+  inst->wasKilled = false;
+  ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
   screenExtractBrainInfoCS(inst->cs, &inst->bInfo);
 
   return ok;
+}
+
+void luaBrainSetTickInputs(LuaBrainInstance *inst,
+                           double lastThinkMs,
+                           double targetMs,
+                           bool   wasKilled) {
+    lua_State *L;
+    int top;
+
+    if (inst == NULL || !inst->running || inst->L == NULL) {
+        return;
+    }
+    L = inst->L;
+    top = lua_gettop(L);
+
+    lua_getglobal(L, "brain");
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushnumber(L, lastThinkMs);
+    lua_setfield(L, -2, "lastThinkMs");
+    lua_pushnumber(L, targetMs);
+    lua_setfield(L, -2, "targetMs");
+    lua_pushboolean(L, wasKilled ? 1 : 0);
+    lua_setfield(L, -2, "wasKilled");
+    lua_settop(L, top);
 }
 
 void luaBrainInstanceDestroy(LuaBrainInstance *inst) {

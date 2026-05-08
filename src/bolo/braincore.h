@@ -100,8 +100,16 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info);
  *PURPOSE:
  *  Calls brain.think(info) and processes the return table.
  *  Returns false on error.
+ *
+ *  When out_killed is non-NULL, sets *out_killed = true iff
+ *  the pcall failed with the budget-hook sentinel
+ *  "tick_budget_exceeded" (Lua prepends <chunk>:<line>:  to
+ *  luaL_error messages, so we suffix-match). This lets the
+ *  caller distinguish a recoverable budget abort from a real
+ *  Lua bug; when out_killed is NULL the caller doesn't care
+ *  and gets the legacy false-on-any-error contract.
  *********************************************************/
-bool brainCoreCallThink(lua_State *L, BrainInfo *info);
+bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed);
 
 /*********************************************************
  *NAME:          brainCoreCallMethod
@@ -174,6 +182,16 @@ void brainCoreRegisterPrintCapture(lua_State *L, BrainPrintCaptureFunc cb,
  * Call before creating any brain instances. */
 void brainCoreSetGlobalPrintCapture(BrainPrintCaptureFunc cb, void *ud,
                                      const uint32_t *tickPtr);
+
+/*********************************************************
+ *NAME:          Worker-pool threading rule (host callbacks)
+ *PURPOSE:
+ *  The host-callback setters below must be invoked before
+ *  the first parallel brain tick. The bot worker pool runs
+ *  the first per-bot tick serially so registration bindings
+ *  populate host-side registries in a known order. After
+ *  init, callbacks must not be modified while workers run.
+ *********************************************************/
 
 /*********************************************************
  *NAME:          braintest_viz_register hook
@@ -264,7 +282,12 @@ void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
 /* bt_yield() — host event-pump hook.
  * When set, the Lua global bt_yield() calls this so long-running Brain.open()
  * operations (LOS computation, stamp caches) can keep the window responsive.
- * Non-BrainTest hosts leave this NULL; bt_yield() becomes a no-op. */
+ * Non-BrainTest hosts leave this NULL; bt_yield() becomes a no-op.
+ *
+ * Threading: set once at startup, before any brain instance is created. The
+ * callback pointer is read unsynchronized from worker threads during
+ * brain.think() / brain.open() (Lua brain code can invoke bt_yield()), so
+ * runtime modification after the first brain instance exists is undefined. */
 void brainCoreSetYieldCallback(void (*cb)(void));
 void brainCoreRegisterVizDetail(lua_State *L);
 

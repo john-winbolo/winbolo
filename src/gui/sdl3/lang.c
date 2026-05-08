@@ -1044,6 +1044,15 @@ static const LangEntry langTable[] = {
     {1230, "Zoom In"},
     {1231, "Zoom Out"},
 
+    /* System Info panel — server-side bot/sim telemetry labels */
+    {1232, "Server"},
+    {1233, "Bot pool"},
+    {1234, "Tick"},
+    {1235, "Brain"},
+    {1236, "Simulation"},
+    {1237, "Bot prep"},
+    {1238, "Brain overruns"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

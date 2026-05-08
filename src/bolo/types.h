@@ -46,9 +46,30 @@ typedef struct {
 
 typedef struct basesObj *bases;
 
+/* Per-(newOwner, prevOwner) debounce slot for client-side STOLE_BASE
+ * newswire messages. Suppresses oscillation spam (e.g. two bots flipping
+ * a base back and forth) while preserving leading and trailing edges.
+ * Lives past SIZEOF_BASES so it's never serialized. */
+#define BASE_STEAL_TABLE_SIZE 16
+
+typedef struct {
+  BYTE active;
+  BYTE newOwner;
+  BYTE prevOwner;
+  BYTE pendingActive;
+  uint16_t lastEmitTicks;
+  uint16_t pendingAge;
+} baseStealDebounceSlot;
+
 struct basesObj {
   base item[MAX_BASES];
   BYTE numBases;
+  /* Wire format ends here at SIZEOF_BASES (260 bytes). The 3 trailing
+   * pad bytes that round numBases up to 4-byte alignment are made
+   * explicit so subsequent fields land safely past the wire region and
+   * are not clobbered by basesSetBaseCompressData's memcpy. */
+  BYTE _wirePad[3];
+  baseStealDebounceSlot stealDebounce[BASE_STEAL_TABLE_SIZE];
 };
 
 #define MAP_ARRAY_SIZE 256 /* maps are 256x256 units square */
@@ -211,6 +232,10 @@ struct startsObj {
  */
 BOLO_STATIC_ASSERT(sizeof(base) == 16,   base_must_be_16_bytes);
 BOLO_STATIC_ASSERT(sizeof(pillbox) == 9, pillbox_must_be_9_bytes);
+/* basesObj's first SIZEOF_BASES bytes are the wire format; debounce
+ * fields must sit strictly past that boundary. */
+BOLO_STATIC_ASSERT(offsetof(struct basesObj, stealDebounce) == SIZEOF_BASES,
+                   bases_steal_debounce_after_wire_format);
 BOLO_STATIC_ASSERT(sizeof(start) == 3,   start_must_be_3_bytes);
 
 #endif

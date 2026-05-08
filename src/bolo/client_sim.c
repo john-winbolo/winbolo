@@ -393,6 +393,7 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
   screenSimDisplayTickCS(cs, isBrain);
+  basesTickMessageQueue(&cs->sim, cs);
 }
 
 /*********************************************************

@@ -500,6 +500,17 @@ void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
   }
 }
 
+void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag) {
+  if (pf) pf->abort_flag = flag;
+}
+
+/* One-line check used by the inner search loops. NULL flag → never
+ * abort. The cast lets the header stay SDL3-free. Polled per outer
+ * iteration only — never inside per-neighbour loops, where the cost
+ * adds up. */
+#define BRAIN_PF_ABORTED(pf) \
+  ((pf)->abort_flag && SDL_GetAtomicInt((SDL_AtomicInt *)(pf)->abort_flag))
+
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */
 /* ------------------------------------------------------------------ */
@@ -1053,6 +1064,12 @@ do_search:
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
 
+    /* Cooperative abort: poll once per node-expand. The brain's count
+     * hook fires within ~1000 instructions of returning to Lua, so a
+     * partial path here is acceptable — same shape as a budget-
+     * exhausted search (status = -1 below if we don't hit dest). */
+    if (BRAIN_PF_ABORTED(pf)) break;
+
     if (get_closed(pf, ci)) continue;
     closed_set(pf->closed, ci);
     expanded++;
@@ -1379,6 +1396,11 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
     int ci = node_idx(cx, cy, cur_boat);
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
+
+    /* Cooperative abort: same checkpoint as PathTo's main A* loop. On
+     * hit we fall through to the post-loop block which returns the
+     * best partial cost we found (or COST_INF if we never reached). */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     n_pops++;
     if (get_closed(pf, ci)) { n_stale_pops++; continue; }
@@ -1776,6 +1798,12 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
     int cy = entry.y;
     int cur_boat = entry.boat;
     int ci = node_idx(cx, cy, cur_boat);
+
+    /* Cooperative abort: incremental Dijkstra is already designed to
+     * stop mid-search and resume next call, so an early break here is
+     * exactly the existing budget-exhausted path. s->done stays 0 so
+     * the brain sees an in-progress slate next tick. */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     if (closed_test(closed, ci)) continue;
     closed_set(closed, ci);
@@ -2414,6 +2442,14 @@ double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
 
+    /* Cooperative abort. The full-Dijkstra loop has no budget and
+     * walks the whole reachable map; without this poll a brain that
+     * calls dijkstra_from on a wide-open map spends its entire budget
+     * here. On hit we return the partially-filled g_cost array — the
+     * brain sees COST_INF for any tile we didn't reach, same as today
+     * for genuinely-unreachable tiles. */
+    if (BRAIN_PF_ABORTED(pf)) break;
+
     if (closed_test(pf->closed, ci)) continue;
     closed_set(pf->closed, ci);
     expanded++;
@@ -2549,6 +2585,13 @@ float brainPathfinderCostToIncremental(BrainPathfinder *pf,
     int cur_boat = entry.boat;
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
+
+    /* Cooperative abort. Incremental cost_to is designed to be called
+     * across multiple ticks; an early break leaves the open set in a
+     * resumable state — same shape as `expanded == budget`. The
+     * destination check below returns COST_INF if we never reached
+     * it, which the brain handles. */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     ci = node_idx(cx, cy, cur_boat);
     if (closed_test(pf->closed, ci)) continue;
@@ -2898,6 +2941,10 @@ int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
     BYTE newbmx, newbmy;
     int wasOnBlessed;
 
+    /* Cooperative abort. -1 means "couldn't determine within budget";
+     * brains already handle that as "use the straight-line estimate". */
+    if (BRAIN_PF_ABORTED(pf)) return -1;
+
     bmx = (BYTE)(x >> TANK_SHIFT_MAPSIZE);
     bmy = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
     wasOnBlessed = (localBlessX != 0 || localBlessY != 0) &&
@@ -3039,6 +3086,11 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
     int speed;
     TURNTYPE angle;
     int xAdd, yAdd;
+
+    /* Cooperative abort. -1 fits the existing "blocked/stuck" return
+     * contract — brains already treat it as a non-fatal "couldn't
+     * estimate" signal and either pick a different goal or wait. */
+    if (BRAIN_PF_ABORTED(pf)) return -1;
 
     bmx  = (BYTE)(x >> TANK_SHIFT_MAPSIZE);
     bmy  = (BYTE)(y >> TANK_SHIFT_MAPSIZE);

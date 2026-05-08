@@ -32,13 +32,27 @@
 
 /* Forward declarations */
 struct ServerSim;
+struct lua_State;
 
 /*********************************************************
  *NAME:          botManagerInit
  *PURPOSE:
- *  Zeros the bot array. Call once at startup.
+ *  Zeros the bot array, eager-inits the worldsim trig
+ *  tables, and creates the bot worker pool. Call once at
+ *  startup.
+ *
+ *  `threads` is the total number of concurrent brain-tick
+ *  runners including the producer (main) thread; the pool
+ *  is sized to threads-1 since the producer runs one job
+ *  inline. Pass 0 to auto-size from logical CPU cores.
+ *  threads > logical cores is a fatal config error and
+ *  returns false. threads > MAX_TANKS clamps silently.
+ *
+ *RETURNS:
+ *  true on success. false if `threads` exceeds the logical
+ *  core count, or if pool creation fails.
  *********************************************************/
-void botManagerInit(void);
+bool botManagerInit(int threads);
 
 /*********************************************************
  *NAME:          botManagerSetDefaultDebugMode
@@ -189,6 +203,136 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
 double botManagerGetLastThinkMs(BYTE playerNum);
 
 /*********************************************************
+ *NAME:          botManagerComputePerBotTargetMs
+ *PURPOSE:
+ *  Returns the per-bot brain-tick budget for the next
+ *  tick, in milliseconds, given the currently active bot
+ *  count. Folds in an EWMA of recent serial-stage cost so
+ *  the budget tightens when the rest of the tick gets
+ *  busier and loosens when it doesn't.
+ *
+ *  Producer-thread only — reads the EWMA file-static
+ *  without synchronisation. Returns the full tick target
+ *  if the EWMA hasn't been seeded yet or no bots are
+ *  active.
+ *
+ *ARGUMENTS:
+ *  activeBots - Number of bots that will dispatch this tick
+ *********************************************************/
+double botManagerComputePerBotTargetMs(int activeBots);
+
+/*********************************************************
+ *NAME:          botManagerRecordSerialMs
+ *PURPOSE:
+ *  Feed the EWMA with the serial-stage cost of the tick
+ *  that just completed (the parts of botManagerTick that
+ *  are not the parallel brain-think dispatch). The next
+ *  call to botManagerComputePerBotTargetMs uses the
+ *  updated EWMA.
+ *
+ *  Producer-thread only — writes the EWMA file-static
+ *  without synchronisation. The first call seeds the
+ *  EWMA directly to avoid an init bias toward zero.
+ *
+ *ARGUMENTS:
+ *  ms - Wall-clock milliseconds spent in the tick's
+ *       serial stages (snapshot/sync + input send).
+ *********************************************************/
+void botManagerRecordSerialMs(double ms);
+
+/* Per-bot info populated by botManagerGetBotInfo. POD; no
+ * allocations or ownership. brainName is fixed-size: the
+ * bot's registered display name copied via SDL_strlcpy. */
+typedef struct {
+    bool     isBot;
+    bool     hasBrain;          /* aiFull with a live brain */
+    char     brainName[64];     /* brain identity: basename of the brain
+                                 * script path, with .lua stripped and
+                                 * "init" replaced by the parent directory
+                                 * name (e.g. "NewAutopilot" for
+                                 * brains/NewAutopilot/init.lua) */
+    double   lastThinkMs;       /* most recent brain tick */
+    double   targetMs;          /* target the next tick will use */
+    uint32_t overrunCount;      /* cumulative since session start */
+} BotInfo;
+
+/* Bot pool snapshot populated by botManagerGetPoolStats. POD;
+ * no allocations or ownership. */
+typedef struct {
+    int      workerCount;       /* botWorkerPoolGetSize() */
+    int      activeBots;        /* currently-active bot count */
+    double   ewmaSerialMs;      /* serial-stage EWMA */
+    double   currentTargetMs;   /* per-bot budget for next tick */
+    double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
+    double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
+    double   lastSerialMs;      /* last serial-stage cost (ms) */
+    uint32_t totalOverruns;     /* sum of overrunCount across bots */
+} BotPoolStats;
+
+/*********************************************************
+ *NAME:          botManagerHasAnyBot
+ *PURPOSE:
+ *  Returns whether any bot slot is currently active. Used
+ *  by the server `info` command to decide whether to print
+ *  the bot pool summary block. Producer-thread only — caller
+ *  must hold the server mutex; reads bots[] without
+ *  synchronisation.
+ *********************************************************/
+bool botManagerHasAnyBot(void);
+
+/*********************************************************
+ *NAME:          botManagerGetBotInfo
+ *PURPOSE:
+ *  Fills `out` with telemetry for the given bot slot.
+ *  Returns false (and zeros `out`) when the slot is not an
+ *  active bot.
+ *
+ *  Producer-thread only — caller must hold the server mutex
+ *  so no brain tick is in flight; the accessor reads the
+ *  bot's lastThinkMs / overrunCount and walks bots[] without
+ *  synchronisation.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot to query
+ *  out       - Output struct to fill
+ *********************************************************/
+bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out);
+
+/*********************************************************
+ *NAME:          botManagerGetPoolStats
+ *PURPOSE:
+ *  Fills `out` with pool-wide telemetry: worker count,
+ *  active bots, serial-stage EWMA, the per-bot target the
+ *  next tick will use, the most recent brain-dispatch
+ *  wall-clock, and the sum of per-bot overrun counters.
+ *
+ *  Producer-thread only — caller must hold the server mutex;
+ *  reads file-static EWMAs and walks bots[] without
+ *  synchronisation.
+ *
+ *ARGUMENTS:
+ *  out - Output struct to fill (must not be NULL)
+ *********************************************************/
+void botManagerGetPoolStats(BotPoolStats *out);
+
+/*********************************************************
+ *NAME:          botManagerGetActiveBotCount
+ *PURPOSE:
+ *  Returns the count of currently-active bot slots.
+ *
+ *  Worker-thread safe. Reads only bots[i].active, which the
+ *  producer thread mutates between ticks (add/remove run
+ *  producer-side), so worker-thread reads during brain.think
+ *  see a stable count. Worst case on a 1→2 transition is
+ *  the new bot's first tick observes the new count one tick
+ *  early — fine for safety guards.
+ *
+ *  The heavier botManagerGetPoolStats remains producer-only;
+ *  use this when only the active-bot count is needed.
+ *********************************************************/
+int botManagerGetActiveBotCount(void);
+
+/*********************************************************
  *NAME:          botManagerEvalLuaString
  *PURPOSE:
  *  Compile + run a Lua chunk in the bot's state and return
@@ -255,6 +399,23 @@ typedef struct {
     } candidates[BRAIN_GOAL_MAX_CANDIDATES];
     int num_candidates;
 } BrainGoalInfo;
+
+/*********************************************************
+ *NAME:          botManagerShouldAbort
+ *PURPOSE:
+ *  Returns true if the bot whose lua_State this is has had
+ *  its tick-budget exceeded for the current tick. Inner C
+ *  loops invoked from cpf_/wsim_/NA bindings poll this at
+ *  their natural checkpoint and break out with a partial
+ *  result; the count hook then raises tick_budget_exceeded
+ *  on the Lua side once control returns to the VM.
+ *
+ *  Works because botManagerAddBot stashes BotContext * in
+ *  lua_getextraspace(L). Returns false if the lua_State has
+ *  no associated bot (e.g. the singleton GUI brain) so loops
+ *  outside the worker pool stay unbounded.
+ *********************************************************/
+bool botManagerShouldAbort(struct lua_State *L);
 
 /*********************************************************
  *NAME:          botManagerGetGoalInfo

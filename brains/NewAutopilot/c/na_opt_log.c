@@ -77,6 +77,11 @@ static na_thread_t s_thread;
 static int         s_running  = 0;
 static char        s_main_path[2048] = "";
 
+/* Serializes l_open / l_close so concurrent brains can't race the
+   writer-thread lifecycle (s_running, s_thread, s_mutex, s_cond). */
+static na_mutex_t  s_open_mutex;
+static int         s_open_mutex_inited = 0;
+
 /* Push one entry onto the queue (called from main thread, mutex NOT held). */
 static void queue_push(char *path, char *text) {
     QEntry *e = (QEntry *)malloc(sizeof(QEntry));
@@ -150,7 +155,12 @@ static void *writer_thread_fn(void *arg) {
 /* na_opt_log.open(path) -- open main log, start writer thread */
 static int l_open(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
-    if (s_running) { lua_pushboolean(L, 0); return 1; }
+    na_mutex_lock(&s_open_mutex);
+    if (s_running) {
+        na_mutex_unlock(&s_open_mutex);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
 
     strncpy(s_main_path, path, sizeof(s_main_path) - 1);
     s_main_path[sizeof(s_main_path) - 1] = '\0';
@@ -161,6 +171,7 @@ static int l_open(lua_State *L) {
     na_cond_init(&s_cond);
     na_thread_start(&s_thread);
     s_running = 1;
+    na_mutex_unlock(&s_open_mutex);
 
     lua_pushboolean(L, 1);
     return 1;
@@ -196,7 +207,11 @@ static int l_append(lua_State *L) {
 /* na_opt_log.close() -- drain remaining queue, stop thread */
 static int l_close(lua_State *L) {
     (void)L;
-    if (!s_running) return 0;
+    na_mutex_lock(&s_open_mutex);
+    if (!s_running) {
+        na_mutex_unlock(&s_open_mutex);
+        return 0;
+    }
     na_mutex_lock(&s_mutex);
     s_shutdown = 1;
     na_cond_signal(&s_cond);
@@ -207,6 +222,7 @@ static int l_close(lua_State *L) {
     s_running  = 0;
     s_shutdown = 0;
     s_head = s_tail = NULL;
+    na_mutex_unlock(&s_open_mutex);
     return 0;
 }
 
@@ -220,6 +236,20 @@ static const luaL_Reg na_opt_log_lib[] = {
 };
 
 void naOptLogRegister(lua_State *L) {
+    /* Lazy-init s_open_mutex on first registration.
+     *
+     * CONTRACT: this function is called only from luaBrainInstanceCreate,
+     * which runs single-threaded on the producer thread before any brain
+     * ticks. The check-then-write below is unsynchronized by design and
+     * relies on that serialization — without it, two concurrent registers
+     * race (double na_mutex_init on the same mutex, leaked native handle
+     * and undefined behaviour). If a future caller invokes this from any
+     * other context, replace the bool guard with a once-flag (pthread_once
+     * or SDL_CompareAndSwapAtomicInt) before merging that change. */
+    if (!s_open_mutex_inited) {
+        na_mutex_init(&s_open_mutex);
+        s_open_mutex_inited = 1;
+    }
     luaL_newlib(L, na_opt_log_lib);
     lua_setglobal(L, "na_opt_log");
 }
