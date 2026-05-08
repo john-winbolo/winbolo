@@ -2198,8 +2198,19 @@ function Brain.think(info)
                             and dead_pill_count > (state.prev_dead_pill_count or 0)
                             and state.goal.kind ~= "capture_pill"
     state.prev_dead_pill_count = dead_pill_count
+    -- Trigger a one-shot urgent replan the first tick a brand-new base
+    -- enters world.bases. world.bases is monotonic (entries persist once
+    -- seen), so a count bump means we just spotted one we hadn't seen
+    -- before. Lets refuel/capture_base/attack_base candidates show in the
+    -- pool grid the next tick instead of waiting up to GOAL_REPLAN_INTERVAL
+    -- for the regular timer fire to rebuild the eval queue.
+    local base_count = 0
+    for _ in pairs(world.bases) do base_count = base_count + 1 end
+    local new_base_appeared = base_count > (state.prev_known_base_count or 0)
+    state.prev_known_base_count = base_count
     local urgent_replan = state.goal.kind == "none" or attack_tank_done
                        or tank_appeared or dead_pill_appeared
+                       or new_base_appeared
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -2207,6 +2218,7 @@ function Brain.think(info)
       local reason
       if tank_appeared        then reason = "TANK APPEARED"
       elseif dead_pill_appeared then reason = "DEAD PILL"
+      elseif new_base_appeared  then reason = "BASE DISCOVERED"
       elseif attack_tank_done  then reason = "ATTACK_TANK DONE"
       else                          reason = "GOAL=NONE"
       end

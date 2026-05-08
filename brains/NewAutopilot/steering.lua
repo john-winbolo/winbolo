@@ -1550,11 +1550,13 @@ local function tank_combat_steer(state, world, info, goal)
   local jink_offset = jink_phase == 0 and C.TANK_COMBAT_JINK_ANGLE
                                        or -C.TANK_COMBAT_JINK_ANGLE
 
-  -- Turn toward predicted target position
+  -- Turn toward predicted target position. Inner deadband tightened
+  -- from ±2° to ±1° so small residual aim errors get tap-corrected
+  -- before lead prediction grows them back next tick.
   if     aim_corr >  10 then keys = keys | KEY_TURNRIGHT
   elseif aim_corr < -10 then keys = keys | KEY_TURNLEFT
-  elseif aim_corr >   2 then taps = taps | KEY_TURNRIGHT
-  elseif aim_corr <  -2 then taps = taps | KEY_TURNLEFT
+  elseif aim_corr >   1 then taps = taps | KEY_TURNRIGHT
+  elseif aim_corr <  -1 then taps = taps | KEY_TURNLEFT
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates
