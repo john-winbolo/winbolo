@@ -274,7 +274,12 @@ void brainCoreSetVizDetailClearCallback(BrainVizDetailClearFunc cb);
 /* bt_yield() — host event-pump hook.
  * When set, the Lua global bt_yield() calls this so long-running Brain.open()
  * operations (LOS computation, stamp caches) can keep the window responsive.
- * Non-BrainTest hosts leave this NULL; bt_yield() becomes a no-op. */
+ * Non-BrainTest hosts leave this NULL; bt_yield() becomes a no-op.
+ *
+ * Threading: set once at startup, before any brain instance is created. The
+ * callback pointer is read unsynchronized from worker threads during
+ * brain.think() / brain.open() (Lua brain code can invoke bt_yield()), so
+ * runtime modification after the first brain instance exists is undefined. */
 void brainCoreSetYieldCallback(void (*cb)(void));
 void brainCoreRegisterVizDetail(lua_State *L);
 
