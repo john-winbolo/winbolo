@@ -40,7 +40,7 @@
 #include "brain_pathfinder.h"
 
 /* C-side pill_grid from the na_threat brain module (same link unit). */
-extern float *naThreatGetPillGrid(void);
+extern float *naThreatGetPillGrid(lua_State *L);
 
 /* ------------------------------------------------------------------ */
 /* clock_us — high-resolution timer for Lua profiling                  */
@@ -630,7 +630,7 @@ static int l_cpf_set_danger(lua_State *L) {
  * Replaces cpf_load_danger(threat.pill_grid) now that pill_grid lives in C. */
 static int l_cpf_load_pill_danger_from_threat(lua_State *L) {
   CPF_GET(L);
-  float *pg = naThreatGetPillGrid();
+  float *pg = naThreatGetPillGrid(L);
   brainPathfinderClearDanger(pf);
   if (!pg) return 0;
   for (int k = 0; k < 65536; k++) {
