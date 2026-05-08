@@ -20,3 +20,16 @@ void serverInstanceRecordProbeReply(const char *reflexiveIp,
   (void)reflexiveIp;
   (void)reflexivePort;
 }
+
+/* server_sim.c references these from serverSimInformation. The full
+ * implementations live in server_lifecycle.c, which BrainTest doesn't
+ * link — report zero so the diagnostic prints fall through cleanly. */
+void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs) {
+  if (outLastMs) *outLastMs = 0.0;
+  if (outEwmaMs) *outEwmaMs = 0.0;
+}
+
+void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
+  if (outLastMs) *outLastMs = 0.0;
+  if (outEwmaMs) *outEwmaMs = 0.0;
+}
