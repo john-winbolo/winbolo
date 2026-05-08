@@ -124,6 +124,19 @@ static int numBots = 0;
  * to scale per-bot time when more bots than runners are active. */
 static int g_threadsConfig = 1;
 
+/* Diagnostic toggle for the per-tick brain budget kill path. When 1
+ * (default) the count hook is installed for every brain.think(), fires
+ * tick_budget_exceeded on overrun, and C bindings poll the abort flag
+ * for partial returns. When 0 the hook is never installed, abort_flag
+ * is never stamped, and brain.think runs to completion regardless of
+ * how long it takes — the producer's post-tick overrun telemetry
+ * (overrunCount, rate-limited slow-tick warning) still fires, so
+ * operators still see overruns, just without the truncation. Flip to
+ * 0 when investigating whether kill enforcement is causing fallout. */
+#ifndef BRAIN_BUDGET_ENFORCE
+#define BRAIN_BUDGET_ENFORCE 0
+#endif
+
 /* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
  * first call to botManagerRecordSerialMs to avoid biasing toward zero. */
 static double s_serialMsEwma = 0.0;
@@ -536,18 +549,22 @@ static void runBotThinkJob(int botIndex, void *userData) {
 
     /* Install for brain.think() only — brain.open() (one-time init,
      * called from luaBrainInstanceCreate) is allowed to be unbounded. */
+#if BRAIN_BUDGET_ENFORCE
     if (bot->brain.L != NULL) {
         lua_sethook(bot->brain.L, brainBudgetHook, LUA_MASKCOUNT, 1000);
     }
+#endif
 
     runBotThinkJobImpl(j, bot, t0);
 
     /* Single uninstall point. Leaking the hook into the next tick would
      * fire against a stale deadline and abort spuriously, so this must
      * run on the success path AND the error/budget-kill path. */
+#if BRAIN_BUDGET_ENFORCE
     if (bot->brain.L != NULL) {
         lua_sethook(bot->brain.L, NULL, 0, 0);
     }
+#endif
 
     if (g_preThinkHook) g_preThinkHook(-1);
 }
