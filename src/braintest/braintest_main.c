@@ -89,6 +89,7 @@
 #include "braintest_vizdetail_registry.h"
 #include "braintest_vizdetailwindow.h"
 #include "braintest_pillcontrib_registry.h"
+#include "na_overlay_pillcontrib.h"
 #include "../bolo/brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
@@ -990,6 +991,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
      * frozen position). Live mode keeps the previous behavior. */
     WORLD twx = 0, twy = 0;
     int in_boat = 0;
+    int res_shells = 40, res_trees = 20, res_mines = 20, res_armour = 40;
     bool haveOrigin = false;
     if (app->playbackMode &&
         app->playbackFrame >= 0 &&
@@ -999,7 +1001,11 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 twx = pf_->tanks[i].worldX;
                 twy = pf_->tanks[i].worldY;
-                in_boat = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat  = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                res_shells = pf_->tanks[i].shells;
+                res_trees  = pf_->tanks[i].trees;
+                res_mines  = pf_->tanks[i].mines;
+                res_armour = pf_->tanks[i].armour;
                 haveOrigin = true;
                 break;
             }
@@ -1007,8 +1013,12 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     }
     if (!haveOrigin) {
         if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
-        in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
-                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+        tank *t = &app->sim.sim.tanks[app->followBot];
+        in_boat    = tankIsOnBoat(t) ? 1 : 0;
+        res_shells = tankGetShells(t);
+        res_trees  = tankGetTrees(t);
+        res_mines  = tankGetMines(t);
+        res_armour = tankGetArmour(t);
     }
     int smx = twx >> 8;
     int smy = twy >> 8;
@@ -1063,13 +1073,10 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     ctx->tmx       = smx;
     ctx->tmy      = smy;
     ctx->in_boat  = in_boat;
-    /* Same defaults as computeClickPath — the live BrainInfo accessor
-     * isn't exposed in this branch and these match a typical mid-game
-     * resource load close enough for visualization purposes. */
-    ctx->shells   = 40;
-    ctx->trees    = 20;
-    ctx->mines    = 20;
-    ctx->armour   = 40;
+    ctx->shells   = res_shells;
+    ctx->trees    = res_trees;
+    ctx->mines    = res_mines;
+    ctx->armour   = res_armour;
     ctx->budget   = 16000;
     ctx->abort    = &app->costToAbort;
     app->costToAbort = false;
@@ -1461,11 +1468,15 @@ static char *panelPollCallback(int panel_idx) {
         && panel_idx < PANEL_REG_MAX) {
         const char *rec = g_panelPollRecording->frames[g_panelPollFrame]
                           .recordedPanels[panel_idx];
-        if (!rec) return NULL;
-        size_t n = strlen(rec);
-        char *copy = (char *)malloc(n + 1);
-        if (copy) memcpy(copy, rec, n + 1);
-        return copy;
+        if (rec) {
+            size_t n = strlen(rec);
+            char *copy = (char *)malloc(n + 1);
+            if (copy) memcpy(copy, rec, n + 1);
+            return copy;
+        }
+        /* No recorded data for this frame/panel (e.g. followBot was different
+         * during recording, or bot just registered it). Fall through to
+         * poll the live brain so the panel doesn't blank out. */
     }
     char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
@@ -1502,6 +1513,14 @@ static int  optNumPlayers = 1;
 static int  optFollow     = 0;
 static aiType  optAI      = aiFull;
 static gameType optGame   = gameOpen;
+/* --opt: load the brain from its stripped opt/ subdirectory and start
+ * with BRAIN_DEBUG_MODE=false. Used to feel true production perf
+ * without leaving BrainTest. Default false → un-stripped, debug=true. */
+static bool optProduction   = false;
+static char optRunScript[1024] = "";
+static int  optPerfLog = 0;
+static int  optAutoStart = 0;
+static int  optMaxTicks = 0;   /* 0 = run forever */
 
 static void printUsage(const char *prog) {
     fprintf(stderr,
@@ -1514,7 +1533,13 @@ static void printUsage(const char *prog) {
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
-        "  --record-panels      Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --record-panels  Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
+        "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
+        "                     then exit. The script has full access to cpf, world, etc.\n"
+        "  --perf-log         Enable optimize.log performance timing (off by default).\n"
+        "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
+        "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -1561,6 +1586,18 @@ static bool parseArgs(int argc, char **argv) {
              * no rotation yet so a long session creates many files.
              * Use when you want to inspect / replay later. */
             g_panelRecordEnabled = true;
+        } else if (strcmp(argv[i], "--opt") == 0) {
+            /* Load brain from the stripped opt/ subdirectory with
+             * BRAIN_DEBUG_MODE=false — true production-mode feel. */
+            optProduction = true;
+        } else if (strcmp(argv[i], "--perf-log") == 0) {
+            optPerfLog = 1;
+        } else if (strcmp(argv[i], "--auto-start") == 0) {
+            optAutoStart = 1;
+        } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
+            optMaxTicks = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
+            strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);
@@ -1747,6 +1784,7 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
      * this, a playback click would show a path from the live tank
      * (which has moved on by many ticks), not the one on screen. */
     int smx, smy, in_boat = 0;
+    int res_shells = 40, res_trees = 20, res_mines = 20, res_armour = 40;
     bool got_origin = false;
     if (app->playbackMode
         && app->playbackFrame >= 0
@@ -1756,7 +1794,11 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 smx = pf_->tanks[i].worldX >> 8;
                 smy = pf_->tanks[i].worldY >> 8;
-                in_boat = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat    = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                res_shells = pf_->tanks[i].shells;
+                res_trees  = pf_->tanks[i].trees;
+                res_mines  = pf_->tanks[i].mines;
+                res_armour = pf_->tanks[i].armour;
                 got_origin = true;
                 break;
             }
@@ -1767,8 +1809,12 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
         if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
         smx = twx >> 8;
         smy = twy >> 8;
-        in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
-                   tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+        tank *t = &app->sim.sim.tanks[app->followBot];
+        in_boat    = tankIsOnBoat(t) ? 1 : 0;
+        res_shells = tankGetShells(t);
+        res_trees  = tankGetTrees(t);
+        res_mines  = tankGetMines(t);
+        res_armour = tankGetArmour(t);
     }
 
     /* Reset the debug PF search state by changing destination */
@@ -1781,16 +1827,26 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     int status = 0;
     for (int iter = 0; iter < 20 && status == 0; iter++) {
         status = brainPathfinderPathTo(dpf, smx, smy, dmx, dmy,
-                                        in_boat, 40, 20, 20, 40,
+                                        in_boat, res_shells, res_trees, res_mines, res_armour,
                                         100000, &nx, &ny);
     }
 
     /* A* cost: real path cost if A* completed, sentinel otherwise so
      * the HUD can render "unreached" without conflating with the
-     * estimate. */
-    app->clickCost = (status == 1)
-        ? dpf->g_cost[dmy * 256 + dmx]
-        : 1e30f;
+     * estimate. Node space is doubled for boat/land: land nodes at
+     * y*256+x, boat nodes at 65536+y*256+x. Take the minimum so water
+     * tiles (only reachable in boat mode) show the correct cost rather
+     * than reading the uninitialized land-mode slot (which is 0). */
+    if (status == 1) {
+        int ni_land = dmy * 256 + dmx;
+        int ni_boat = 65536 + ni_land;
+        uint32_t ep  = dpf->current_epoch;
+        float c_land = (dpf->epoch[ni_land] == ep) ? dpf->g_cost[ni_land] : 1e30f;
+        float c_boat = (dpf->epoch[ni_boat] == ep) ? dpf->g_cost[ni_boat] : 1e30f;
+        app->clickCost = (c_land < c_boat) ? c_land : c_boat;
+    } else {
+        app->clickCost = 1e30f;
+    }
     app->clickEstCost = brainPathfinderEstimateCost(dpf, smx, smy, dmx, dmy, in_boat);
 
     /* Trace the path */
@@ -1934,13 +1990,10 @@ static void updateCachedPath(BrainTestApp *app) {
          * brain rotates them via DijkstraPickReuseSlate — so a
          * hardcoded `0` would silently go stale whenever the brain
          * parked NORMAL elsewhere. */
-        int slate = brainPathfinderDijkstraFindBest(pf, /* KIND_NORMAL */ 0);
-        if (slate >= 0) {
-            n = brainPathfinderDijkstraTracePath(pf, slate,
-                                                  gi.mx, gi.my,
-                                                  app->cachedPath_x,
-                                                  app->cachedPath_y, 2048);
-        }
+        n = brainPathfinderDijkstraTracePathByKind(pf, /* KIND_NORMAL */ 0,
+                                                     gi.mx, gi.my,
+                                                     app->cachedPath_x,
+                                                     app->cachedPath_y, 2048);
     }
     if (n == 0) {
         n = brainPathfinderTracePath(pf, app->cachedPath_x,
@@ -2331,16 +2384,14 @@ static void recordingCapture(BrainTestApp *app) {
     }
 
     /* ── Per-panel JSON capture ── one poll per registered panel
-     * for the followed bot. Pays the brain-eval cost only for
-     * panels the user actually has registered, not visible — so
-     * no need for "is the window open" gating. */
+     * for every bot. Pays the brain-eval cost for all panels so
+     * playback for any bot remains valid even after switching. */
     int totalN = panelRegistryCount();
     for (int pi = 0; pi < totalN && pi < PANEL_REG_MAX; pi++) {
         const PanelRegistryEntry *e = panelRegistryGet(pi);
-        if (!e || e->bot_owner != app->followBot) continue;
-        if (!e->lua_expr[0]) continue;
+        if (!e || !e->lua_expr[0]) continue;
         f->recordedPanels[pi] =
-            botManagerEvalLuaString(app->followBot, e->lua_expr);
+            botManagerEvalLuaString(e->bot_owner, e->lua_expr);
     }
 
     /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
@@ -2484,8 +2535,12 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
 
         /* viz_idx filter — skip if the matching row is off, or if
          * the X-key suppress flag is set (hud_resources stays on
-         * because the user always wants the resource counters). */
-        if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE) {
+         * because the user always wants the resource counters).
+         * OVERLAY_VIZ_IDX_NONE means unregistered viz — skip in
+         * production mode, draw unconditionally in debug mode. */
+        if (cmd->viz_idx == OVERLAY_VIZ_IDX_NONE) {
+            if (optProduction || app->vizSuppressActive) continue;
+        } else {
             const VizRegistryEntry *e = vizRegistryGet(cmd->viz_idx);
             if (e) {
                 if (app->vizSuppressActive
@@ -2751,9 +2806,10 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
                            tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
             float dij = 1e30f;
             if (s && s->g_cost) {
-                int ni = (in_boat ? 65536 : 0)
-                       + app->clickMY * 256 + app->clickMX;
-                dij = s->g_cost[ni];
+                int ni_base = app->clickMY * 256 + app->clickMX;
+                float c_land = s->g_cost[ni_base];
+                float c_boat = s->g_cost[65536 + ni_base];
+                dij = (c_land < c_boat) ? c_land : c_boat;
             }
             if (dij >= 1e29f) {
                 dijStr = "unreached";
@@ -2865,7 +2921,7 @@ static void appTickBrain(BrainTestApp *app) {
 
     app->sim.sim.isInMenu = isInMenu;
 
-    pushVizStateToBots(app->vizSuppressActive);
+    pushVizStateToBots(app->vizSuppressActive || optProduction);
 
     /* Clear the viz_detail registry ONCE before any bot's think runs.
      * The registry is global, so if each bot called overlay_detail_clear
@@ -3992,7 +4048,15 @@ static void appRender(BrainTestApp *app) {
 /* ------------------------------------------------------------------ */
 
 int main(int argc, char *argv[]) {
+    if (!parseArgs(argc, argv)) return 1;
+
     srand((unsigned int)(time(NULL) ^ getpid()));
+
+    /* Clear optimize.log from any previous run so each BrainTest session
+     * starts with a fresh diagnostic log. Lua-side writers open with "a"
+     * and fall back to cwd when DEBUG_SESSION_DIR is unset, so removing
+     * "./optimize.log" matches their target path. */
+    remove("optimize.log");
 
     BrainTestApp app;
     memset(&app, 0, sizeof(app));
@@ -4031,7 +4095,7 @@ int main(int argc, char *argv[]) {
         "Green polyline of the bot's currently-followed nav path",
         "Traces the active Dijkstra slate (KIND_NORMAL) to the bot's "
         "current goal; falls back to the last A* search.",
-        "4", true);
+        "4", !optProduction);
     app.regIdxFog = vizRegistryAddNative(
         "Fog of war",
         "Dark tint on tiles the bot hasn't observed",
@@ -4078,7 +4142,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (!parseArgs(argc, argv)) return 1;
     app.followBot = (BYTE)optFollow;
 
     signal(SIGINT, signalHandler);
@@ -4092,6 +4155,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "  Map:     %s\n", optMap[0] ? optMap : "(built-in Everard Island)");
     fprintf(stderr, "  AI:      %s\n", aiNames[optAI]);
     fprintf(stderr, "  Game:    %s\n", gameNames[optGame]);
+    fprintf(stderr, "  Opt:     %s\n", optProduction ? "yes (opt/, debug=false)" : "no (source, debug=true)");
 
     /* Initialize SDL */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -4128,17 +4192,20 @@ int main(int argc, char *argv[]) {
 
     /* Wire the brain → registry callback BEFORE the first bot's
      * Lua state is created (otherwise braintest_viz_register
-     * calls during brain.open() are silent no-ops). */
-    brainCoreSetVizRegisterCallback(vizRegisterCallback);
+     * calls during brain.open() are silent no-ops).
+     * In production mode (--opt), skip viz registration so the brain's
+     * viz.register_all() becomes a no-op and overlays don't render. */
+    if (!optProduction) brainCoreSetVizRegisterCallback(vizRegisterCallback);
     brainCoreSetPanelRegisterCallback(panelRegisterCallback);
     brainCoreSetShotSimPoiRegisterCallback(shotSimPoiRegisterCallback);
     brainCoreSetVizDetailRegisterCallback(vizDetailRegisterCallback);
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
+    brainCoreSetYieldCallback(SDL_PumpEvents);
     botManagerSetPreThinkHook(preThinkHook);
-    brainCoreSetPillContribClearCallback(pillContribClearCallback);
-    brainCoreSetPillContribBeginPillCallback(pillContribBeginPillCallback);
-    brainCoreSetPillContribAddTileCallback(pillContribAddTileCallback);
+    naPillContribSetClearCallback(pillContribClearCallback);
+    naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
+    naPillContribSetAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
      * dump. Defined in braintest_panelwindow.cpp so it can call
      * ImGui directly. Per-bot panel modules in
@@ -4154,8 +4221,10 @@ int main(int argc, char *argv[]) {
     /* Initialize map view lookup tables */
     mapViewInit();
 
-    /* Build tile atlas */
+    /* Build tile atlas — keep the window responsive while SVG tiles rasterize */
+    SDL_PumpEvents();
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
+    SDL_PumpEvents();
     if (!sheet) {
         fprintf(stderr, "tileLoaderBuildSheet failed\n");
         SDL_DestroyRenderer(app.renderer);
@@ -4178,6 +4247,7 @@ int main(int argc, char *argv[]) {
         SDL_SetTextureScaleMode(app.overlayTex, SDL_SCALEMODE_NEAREST);
 
     /* Load map */
+    SDL_PumpEvents();
     bool mapLoaded = false;
     if (optMap[0]) {
         mapLoaded = serverSimCreate(&app.sim, optMap, optGame, false, 0, -1);
@@ -4203,7 +4273,20 @@ int main(int argc, char *argv[]) {
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
     /* Add bots */
-    botManagerInit();
+    if (!botManagerInit(0)) {
+        fprintf(stderr, "botManagerInit failed\n");
+        return 1;
+    }
+    /* BrainTest defaults to debug-mode brains: viz-supporting code
+     * runs, brain loads from un-stripped source. Toggle with 'B' at
+     * runtime to feel production perf without reloading.
+     *
+     * --opt CLI flag flips the default off so bots load from stripped
+     * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
+    botManagerSetDefaultDebugMode(!optProduction);
+    luaBrainsSetPerfLog(optPerfLog);
+    if (optRunScript[0])
+        luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];
     /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
      * once at startup. We use a timestamped subdir so multiple BrainTest
@@ -4262,8 +4345,10 @@ int main(int argc, char *argv[]) {
             g_currentInitBot = i;
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
+            SDL_PumpEvents(); /* keep window responsive during brain.open() */
             bool ok = botManagerAddBot(&app.sim, (BYTE)i, brainPath, name,
                                        optAI, optGame, false);
+            SDL_PumpEvents();
             g_currentInitBot = -1;
             g_currentInitBrainName[0] = '\0';
             if (ok) app.numBots++;
@@ -4271,6 +4356,15 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  Added %d bots\n", app.numBots);
     } else {
         fprintf(stderr, "  WARNING: Brain script not found: %s\n", optBrain);
+    }
+
+    /* In production mode (--opt), force all overlays off regardless of
+     * what imgui.ini persisted from previous debug sessions. */
+    if (optProduction) {
+        for (int i = 0; i < vizRegistryCount(); i++) {
+            VizRegistryEntry *e = vizRegistryGetMutable(i);
+            if (e) e->is_on = false;
+        }
     }
 
     /* Create debug pathfinder for click-to-cost queries */
@@ -4381,6 +4475,21 @@ int main(int argc, char *argv[]) {
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
                     break;
+                case SDLK_B: {
+                    /* Toggle BRAIN_DEBUG_MODE on every active bot. Lets
+                     * the user feel production perf without reloading
+                     * the brain. Notes:
+                     *   - Brain source loaded at construction stays
+                     *     un-stripped in BrainTest, so this only flips
+                     *     the runtime gate around `if BRAIN_DEBUG_MODE`
+                     *     blocks (and any code branching on the global).
+                     *   - Stripped allocations / overlays in opt/ are
+                     *     not reachable from this build at all. */
+                    bool now_on = botManagerToggleAllBrainDebugMode();
+                    fprintf(stderr, "BRAIN_DEBUG_MODE = %s\n",
+                            now_on ? "true" : "false");
+                    break;
+                }
                 case SDLK_H:
                     app.showHUD = !app.showHUD;
                     break;
@@ -4962,9 +5071,13 @@ int main(int argc, char *argv[]) {
                     recordingCapture(&app);
                     firstBrainSeeded = true;
                     if (!autoPauseDone && app.sim.tick >= 4) {
-                        app.paused = true;
+                        if (!optAutoStart) app.paused = true;
                         autoPauseDone = true;
                         lastTickTime += tickMs;
+                        break;
+                    }
+                    if (optMaxTicks > 0 && (int)app.sim.tick >= optMaxTicks) {
+                        appQuit = TRUE;
                         break;
                     }
                 }

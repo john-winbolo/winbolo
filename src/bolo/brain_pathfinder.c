@@ -500,6 +500,17 @@ void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
   }
 }
 
+void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag) {
+  if (pf) pf->abort_flag = flag;
+}
+
+/* One-line check used by the inner search loops. NULL flag → never
+ * abort. The cast lets the header stay SDL3-free. Polled per outer
+ * iteration only — never inside per-neighbour loops, where the cost
+ * adds up. */
+#define BRAIN_PF_ABORTED(pf) \
+  ((pf)->abort_flag && SDL_GetAtomicInt((SDL_AtomicInt *)(pf)->abort_flag))
+
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */
 /* ------------------------------------------------------------------ */
@@ -746,6 +757,15 @@ void brainPathfinderSetDanger(BrainPathfinder *pf, int x, int y, float value) {
 /* Custom overlay                                                      */
 /* ------------------------------------------------------------------ */
 
+void brainPathfinderSetDangerOffset(BrainPathfinder *pf, int x, int y, int16_t value) {
+  if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE)
+    pf->danger_offset_grid[y * MAP_SIZE + x] = value;
+}
+
+void brainPathfinderClearDangerOffset(BrainPathfinder *pf) {
+  if (pf) memset(pf->danger_offset_grid, 0, sizeof(pf->danger_offset_grid));
+}
+
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value) {
   if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
     int v = (int)value;
@@ -820,7 +840,8 @@ static float compute_cost(BrainPathfinder *pf, int nx, int ny,
   /* Danger scaling by terrain speed.
    * In a boat on water, we move at full speed (like road), so danger
    * exposure time is much lower than the base terrain speed suggests. */
-  danger = (float)pf->danger_grid[midx];
+  danger = (float)pf->danger_grid[midx] + (float)pf->danger_offset_grid[midx];
+  if (danger < 0.0f) danger = 0.0f;
   speed = pf->terrain_speed_table[type];
   if (onBoat && is_water_tile(type)) {
     speed = 16.0f; /* boat speed matches road speed */
@@ -1042,6 +1063,12 @@ do_search:
     int ci = node_idx(cx, cy, cur_boat);
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
+
+    /* Cooperative abort: poll once per node-expand. The brain's count
+     * hook fires within ~1000 instructions of returning to Lua, so a
+     * partial path here is acceptable — same shape as a budget-
+     * exhausted search (status = -1 below if we don't hit dest). */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     if (get_closed(pf, ci)) continue;
     closed_set(pf->closed, ci);
@@ -1336,6 +1363,7 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   stamp_node(pf, src_ni);
   pf->g_cost[src_ni] = 0.0f;
   pf->dir_at[src_ni] = 0xFF;
+  pf->parent[src_ni] = PARENT_NONE;
 
   /* Track resources per-node using the existing arrays */
   {
@@ -1368,6 +1396,11 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
     int ci = node_idx(cx, cy, cur_boat);
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
+
+    /* Cooperative abort: same checkpoint as PathTo's main A* loop. On
+     * hit we fall through to the post-loop block which returns the
+     * best partial cost we found (or COST_INF if we never reached). */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     n_pops++;
     if (get_closed(pf, ci)) { n_stale_pops++; continue; }
@@ -1447,6 +1480,7 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
       pf->mines_at[ni] = (int16_t)(cur_mines - mines_used);
       pf->armour_at[ni] = (int16_t)(cur_armour - armour_used);
       pf->dir_at[ni] = (uint8_t)d;
+      pf->parent[ni] = (uint32_t)ci;
 
       f = new_g + heuristic(nx, ny, dx, dy);
       heap_push(pf, f, (uint16_t)nx, (uint16_t)ny, (uint8_t)onBoat);
@@ -1586,11 +1620,49 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
  * path_to searches. Calling Start clobbers any in-progress A* search.
  */
 
+void brainPathfinderDijkstraPreheat(BrainPathfinder *pf) {
+  if (!pf) return;
+  for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
+    DijkstraSlate *s = &pf->dij_slates[i];
+    /* Same allocation set as brainPathfinderDijkstraStart's lazy block,
+     * but unconditionally — call sites won't pay the malloc on tick 1. */
+    if (!s->g_cost)    s->g_cost    = (float *)  malloc(sizeof(float)  * NODE_COUNT);
+    if (!s->closed)    s->closed    = (uint8_t *)malloc(NODE_COUNT / 8);
+    if (!s->dir_at)    s->dir_at    = (uint8_t *)malloc(NODE_COUNT);
+    if (!s->heap) {
+      s->heap_capacity = HEAP_INITIAL_CAPACITY;
+      s->heap          = (BrainPFHeapEntry *)
+                          malloc(sizeof(BrainPFHeapEntry) * s->heap_capacity);
+    }
+    if (!s->heap_pos)  s->heap_pos  = (int32_t *)malloc(sizeof(int32_t) * NODE_COUNT);
+    /* Allocate the exact (shells_at) array too — most callers pass exact=1
+     * (DIJKSTRA_EXACT), so eagerly reserve it. ~256 KB per slate. */
+    if (!s->shells_at) s->shells_at = (int16_t *)malloc(sizeof(int16_t) * NODE_COUNT);
+
+    /* Touch every page so the OS commits backing memory now. The other
+     * arrays can stay zero (their default is meaningful: closed=0=not
+     * closed, heap_pos=0=invalid pos, dir_at=0=no direction). g_cost
+     * MUST initialize to COST_INF instead of zero, otherwise unstarted
+     * backup slates would report "cost = 0" for every tile the moment
+     * they show up in dijkstra_lookup_by_kind's slate walk — that's a
+     * "this destination is free" lie that wrecks pool cost compares. */
+    if (s->g_cost) {
+      for (int j = 0; j < NODE_COUNT; j++) s->g_cost[j] = COST_INF;
+    }
+    if (s->closed)    memset(s->closed,   0, NODE_COUNT / 8);
+    if (s->dir_at)    memset(s->dir_at,   0, NODE_COUNT);
+    if (s->heap_pos)  memset(s->heap_pos, 0, sizeof(int32_t) * NODE_COUNT);
+    if (s->shells_at) memset(s->shells_at,0, sizeof(int16_t) * NODE_COUNT);
+    /* heap is small (HEAP_INITIAL_CAPACITY * 12 bytes ≈ 1.5 MB), let
+     * dijkstra_start populate it lazily — most heap entries land in cache. */
+  }
+}
+
 void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
                                    int sx, int sy, int in_boat,
                                    int shells, int trees, int mines, int armour,
                                    float max_cost, int exact,
-                                   float danger_scale, int kind) {
+                                   float danger_scale, int kind, int allow_boat) {
   (void)trees; (void)mines; (void)armour;
   if (!pf || !pf->map) return;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return;
@@ -1631,7 +1703,6 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
       fprintf(dijkstra_log, "START slate=%d: ALLOC FAILED\n", slate);
       fflush(dijkstra_log);
     }
-    s->active = 0;
     return;
   }
 
@@ -1653,9 +1724,9 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
   slate_heap_clear(s);
   slate_heap_push(s, 0.0f, (uint16_t)sx, (uint16_t)sy, (uint8_t)in_boat);
 
-  s->active         = 1;
   s->done           = 0;
   s->exact          = exact ? 1 : 0;
+  s->allow_boat     = allow_boat ? 1 : 0;
   s->kind           = kind;
   s->src_x          = sx;
   s->src_y          = sy;
@@ -1682,7 +1753,7 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
   if (!pf) return 1;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return 1;
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active || s->done) return 1;
+  if (!s->g_cost || s->done) return 1;
   if (!s->g_cost || !s->closed || !s->dir_at || !s->heap || !s->heap_pos) return 1;
 
   int expanded_this_step = 0;
@@ -1728,6 +1799,12 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
     int cur_boat = entry.boat;
     int ci = node_idx(cx, cy, cur_boat);
 
+    /* Cooperative abort: incremental Dijkstra is already designed to
+     * stop mid-search and resume next call, so an early break here is
+     * exactly the existing budget-exhausted path. s->done stays 0 so
+     * the brain sees an in-progress slate next tick. */
+    if (BRAIN_PF_ABORTED(pf)) break;
+
     if (closed_test(closed, ci)) continue;
     closed_set(closed, ci);
     expanded_this_step++;
@@ -1752,6 +1829,7 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       int nm = ny * MAP_SIZE + nx;
       int n_type = map[nm] & 0x0F;
       int next_boat = next_boat_state(cur_boat, n_type);
+      if (!s->allow_boat && (next_boat || n_type == TT_DEEPSEA)) continue;
       int new_shells = cur_shells;
 
       float tc;
@@ -1777,7 +1855,8 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       } else {
         /* Normal tile: add danger * scale * (16/speed) + overlay +
          * mine penalty. Same formula as compute_cost(). */
-        float danger = (float)danger_grid[nm];
+        float danger = (float)danger_grid[nm] + (float)pf->danger_offset_grid[nm];
+        if (danger < 0.0f) danger = 0.0f;
         float inv_spd = next_boat ? inv_speed_boat[n_type] : inv_speed_foot[n_type];
         float overlay = (float)overlay_grid[nm];
         float dynamic_extra = danger * danger_scale * inv_spd + overlay;
@@ -1880,22 +1959,80 @@ float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
   if (!pf) return COST_INF;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return COST_INF;
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active || !s->g_cost) return COST_INF;
+  if (!s->g_cost) return COST_INF;
   if (x < 0 || x > 255 || y < 0 || y > 255) return COST_INF;
-  return s->g_cost[node_idx(x, y, boat ? 1 : 0)];
+  /* Source tile is stored as g_cost = 0 by construction — required by
+   * Dijkstra so the algorithm has a starting node. But external
+   * lookups treating "the tile we're standing on" as cheapest skews
+   * goal selection (any candidate at the source position wins on
+   * cost = 0). Return COST_INF for the source tile so cost-comparison
+   * code sees it as not-a-target. Internal expansion is unaffected;
+   * it reads g_cost directly. */
+  int b = boat ? 1 : 0;
+  if (x == s->src_x && y == s->src_y && b == s->in_boat) return COST_INF;
+  return s->g_cost[node_idx(x, y, b)];
+}
+
+/* Copy src slate's cost arrays and metadata to dst so dst can serve as a
+ * read-only fallback while src is being recomputed.  dst is marked done=1
+ * so the step loop never advances it.  The heap is not copied — dst is
+ * purely a lookup snapshot. */
+void brainPathfinderDijkstraCopySlate(BrainPathfinder *pf, int src, int dst) {
+  if (!pf) return;
+  if (src < 0 || src >= DIJKSTRA_NUM_SLATES) return;
+  if (dst < 0 || dst >= DIJKSTRA_NUM_SLATES) return;
+  if (src == dst) return;
+
+  DijkstraSlate *s = &pf->dij_slates[src];
+  DijkstraSlate *d = &pf->dij_slates[dst];
+  if (!s->g_cost) return; /* nothing to copy */
+
+  /* Lazy-allocate dst arrays */
+  if (!d->g_cost)   d->g_cost = (float *)malloc(sizeof(float) * NODE_COUNT);
+  if (!d->closed)   d->closed = (uint8_t *)malloc(NODE_COUNT / 8);
+  if (!d->dir_at)   d->dir_at = (uint8_t *)malloc(NODE_COUNT);
+  if (!d->g_cost || !d->closed || !d->dir_at) return;
+
+  memcpy(d->g_cost,  s->g_cost,  sizeof(float) * NODE_COUNT);
+  memcpy(d->closed,  s->closed,  NODE_COUNT / 8);
+  memcpy(d->dir_at,  s->dir_at,  NODE_COUNT);
+
+  if (s->shells_at) {
+    if (!d->shells_at) d->shells_at = (int16_t *)malloc(sizeof(int16_t) * NODE_COUNT);
+    if (d->shells_at) memcpy(d->shells_at, s->shells_at, sizeof(int16_t) * NODE_COUNT);
+  }
+
+  d->done           = 1; /* backup is never stepped */
+  d->exact          = s->exact;
+  d->allow_boat     = s->allow_boat;
+  d->kind           = s->kind;
+  d->src_x          = s->src_x;
+  d->src_y          = s->src_y;
+  d->in_boat        = s->in_boat;
+  d->src_shells     = s->src_shells;
+  d->expanded       = s->expanded;
+  d->peak_open      = s->peak_open;
+  d->max_cost       = s->max_cost;
+  d->danger_scale   = s->danger_scale;
+  d->version        = s->version;
+  d->started_tick   = s->started_tick;
+  d->completed_tick = s->completed_tick;
+
+  /* Clear the heap — dst won't be stepped so we don't need it */
+  slate_heap_clear(d);
 }
 
 /* Sort slate indices for the given kind by started_tick descending
- * (newest first). Writes the sorted indices into out[] and returns
- * how many were written. Slates without matching kind or with no
- * g_cost yet are excluded. */
+ * (most recently started first). If the newest slate hasn't reached a
+ * tile yet, the caller falls through to the next-newest. Used for both
+ * lookup and trace so all operations prefer the freshest source position.
+ * Slates without matching kind or with no g_cost yet are excluded. */
 static int slate_indices_by_recency(BrainPathfinder *pf, int kind,
                                      int out[DIJKSTRA_NUM_SLATES]) {
   int n = 0;
   for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
     DijkstraSlate *s = &pf->dij_slates[i];
-    if (!s->active || !s->g_cost) continue;
-    if (s->kind != kind) continue;
+    if (!s->g_cost || s->kind != kind) continue;
     out[n++] = i;
   }
   /* Insertion sort by started_tick descending — n is at most 4. */
@@ -1921,11 +2058,16 @@ float brainPathfinderDijkstraLookupByKind(BrainPathfinder *pf, int kind,
   int order[DIJKSTRA_NUM_SLATES];
   int n = slate_indices_by_recency(pf, kind, order);
 
-  /* Walk slates in newest-first order. Newer slates take priority even
-   * if still running; if the destination isn't in the closed set yet
-   * for the newest slate, fall through to the next-newest. */
+  /* Walk slates freshest-completed-first. If the freshest finished slate
+   * hasn't reached this tile, fall through to the next. Running slates
+   * (completed_tick=0) are last-resort fallback for tiles already expanded. */
   for (int i = 0; i < n; i++) {
     DijkstraSlate *s = &pf->dij_slates[order[i]];
+    /* Same source-tile rationale as DijkstraCostAt: don't report 0 for
+     * the slate's own start position. If this tile IS the source, treat
+     * it as not-a-target on this slate and try the next slate
+     * (different src_x/src_y might give a real cost). */
+    if (x == s->src_x && y == s->src_y) continue;
     float land = s->g_cost[node_idx(x, y, 0)];
     float boatv = s->g_cost[node_idx(x, y, 1)];
     float c = (boatv < land) ? boatv : land;
@@ -2036,7 +2178,7 @@ int brainPathfinderDijkstraFindBest(BrainPathfinder *pf, int kind) {
   uint32_t best_tick = 0;
   for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
     DijkstraSlate *s = &pf->dij_slates[i];
-    if (!s->active || s->kind != kind) continue;
+    if (!s->g_cost || s->kind != kind) continue;
     if (best < 0 || s->started_tick > best_tick) {
       best = i;
       best_tick = s->started_tick;
@@ -2047,9 +2189,9 @@ int brainPathfinderDijkstraFindBest(BrainPathfinder *pf, int kind) {
 
 int brainPathfinderDijkstraPickReuseSlate(BrainPathfinder *pf, int kind) {
   if (!pf) return 0;
-  /* First preference: an inactive slate (never used). */
+  /* First preference: a never-used slate (no g_cost allocated). */
   for (int i = 0; i < DIJKSTRA_NUM_SLATES; i++) {
-    if (!pf->dij_slates[i].active) return i;
+    if (!pf->dij_slates[i].g_cost) return i;
   }
   /* Second: the OLDEST slate of matching kind (preserves the freshest
    * same-kind slate as a fallback for in-flight lookups). */
@@ -2095,7 +2237,7 @@ int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
   for (int i = 0; i < n; i++) {
     int slate = order[i];
     DijkstraSlate *s = &pf->dij_slates[slate];
-    if (!s->active || !s->g_cost || !s->dir_at) continue;
+    if (!s->g_cost || !s->dir_at) continue;
     float c_land = s->g_cost[node_idx(dx, dy, 0)];
     float c_boat = s->g_cost[node_idx(dx, dy, 1)];
     if (c_land >= COST_INF && c_boat >= COST_INF) continue;
@@ -2113,7 +2255,7 @@ int brainPathfinderDijkstraTracePath(BrainPathfinder *pf, int slate,
   if (!pf) return 0;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return 0;
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active || !s->g_cost || !s->dir_at) return 0;
+  if (!s->g_cost || !s->dir_at) return 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
   if (max_steps <= 0) return 0;
 
@@ -2166,7 +2308,7 @@ int brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
     return 0;
   }
   DijkstraSlate *s = &pf->dij_slates[slate];
-  if (!s->active) {
+  if (!s->g_cost) {
     if (out_expanded)  *out_expanded = 0;
     if (out_peak_open) *out_peak_open = 0;
     if (out_done)      *out_done = 0;
@@ -2223,6 +2365,14 @@ double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
     int ci = node_idx(cx, cy, cur_boat);
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
+
+    /* Cooperative abort. The full-Dijkstra loop has no budget and
+     * walks the whole reachable map; without this poll a brain that
+     * calls dijkstra_from on a wide-open map spends its entire budget
+     * here. On hit we return the partially-filled g_cost array — the
+     * brain sees COST_INF for any tile we didn't reach, same as today
+     * for genuinely-unreachable tiles. */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     if (closed_test(pf->closed, ci)) continue;
     closed_set(pf->closed, ci);
@@ -2359,6 +2509,13 @@ float brainPathfinderCostToIncremental(BrainPathfinder *pf,
     int cur_boat = entry.boat;
     int cur_dir, cur_shells, cur_trees, cur_mines, cur_armour;
     int d;
+
+    /* Cooperative abort. Incremental cost_to is designed to be called
+     * across multiple ticks; an early break leaves the open set in a
+     * resumable state — same shape as `expanded == budget`. The
+     * destination check below returns COST_INF if we never reached
+     * it, which the brain handles. */
+    if (BRAIN_PF_ABORTED(pf)) break;
 
     ci = node_idx(cx, cy, cur_boat);
     if (closed_test(pf->closed, ci)) continue;
@@ -2708,6 +2865,10 @@ int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
     BYTE newbmx, newbmy;
     int wasOnBlessed;
 
+    /* Cooperative abort. -1 means "couldn't determine within budget";
+     * brains already handle that as "use the straight-line estimate". */
+    if (BRAIN_PF_ABORTED(pf)) return -1;
+
     bmx = (BYTE)(x >> TANK_SHIFT_MAPSIZE);
     bmy = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
     wasOnBlessed = (localBlessX != 0 || localBlessY != 0) &&
@@ -2849,6 +3010,11 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
     int speed;
     TURNTYPE angle;
     int xAdd, yAdd;
+
+    /* Cooperative abort. -1 fits the existing "blocked/stuck" return
+     * contract — brains already treat it as a non-fatal "couldn't
+     * estimate" signal and either pick a different goal or wait. */
+    if (BRAIN_PF_ABORTED(pf)) return -1;
 
     bmx  = (BYTE)(x >> TANK_SHIFT_MAPSIZE);
     bmy  = (BYTE)(y >> TANK_SHIFT_MAPSIZE);

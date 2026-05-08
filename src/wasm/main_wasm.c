@@ -63,6 +63,7 @@ bool showNetworkStatusMessages = TRUE;
 bool showNetworkDebugMessages = FALSE;
 
 bool autoScrollingEnabled = FALSE;
+bool smoothScrollingEnabled = FALSE;  /* WASM: arrow-key smooth scroll inactive */
 BYTE zoomFactor = ZOOM_FACTOR_DOUBLE;
 
 bool showPillLabels = FALSE;
@@ -244,17 +245,37 @@ static void main_loop_iteration(void) {
   /* Process events */
   sdl3ImguiProcessEvents(cs);
 
-  /* Game tick accumulation (replaces SDL_AddTimer) */
+  /* Game tick accumulation (replaces SDL_AddTimer).
+   *
+   * After a JS GC pause or tab throttle, `elapsed` can spike to hundreds of
+   * ms.  Running every backlogged sim tick in a single render frame causes
+   * a visible hitch — but dropping ticks outright would lose
+   * transport->tick() calls (UDP packet send/recv) and break multiplayer.
+   *
+   * Compromise: cap per-frame sim ticks at MAX_CATCHUP so no single render
+   * frame stalls, and let leftover backlog stay in gameTickAccum to drain
+   * naturally over the following frames.  Each subsequent frame runs up to
+   * MAX_CATCHUP ticks until the debt clears, so windowRunGameTick (and the
+   * transport->tick inside it) eventually fire for every missed tick.
+   *
+   * Only MAX_ELAPSED_MS itself is hard-capped — a multi-second tab
+   * suspension shouldn't trigger an unbounded catch-up sequence. */
   if (gameFrontGetTransport() != NULL) {
+    const double MAX_ELAPSED_MS = 200.0;  /* hard limit on accumulated debt */
+    const int    MAX_CATCHUP    = 4;      /* at most 4 sim ticks per render frame */
     double now = emscripten_get_now();
     double elapsed = now - lastFrameTime;
     lastFrameTime = now;
+    if (elapsed > MAX_ELAPSED_MS) elapsed = MAX_ELAPSED_MS;
     gameTickAccum += elapsed;
 
-    while (gameTickAccum >= GAME_TICK_LENGTH) {
+    int ticksThisFrame = 0;
+    while (gameTickAccum >= GAME_TICK_LENGTH && ticksThisFrame < MAX_CATCHUP) {
       gameTickAccum -= GAME_TICK_LENGTH;
       windowRunGameTick(cs);
+      ticksThisFrame++;
     }
+    /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
   /* Render */
@@ -341,7 +362,12 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 1;
   }
-  printf("[WASM] gameFrontStart OK\n");
+  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
+         (void*)humanSim,
+         humanSim ? (void*)humanSim->sim.plyrs : NULL,
+         humanSim ? (void*)humanSim->sim.mp : NULL,
+         humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
+  fflush(stderr);
 
   /* Apply player name from URL after gameFrontStart sets defaults.
    * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
@@ -409,7 +435,12 @@ int main(int argc, char *argv[]) {
   oldTick = winboloTimer();
   lastFrameTime = emscripten_get_now();
 
-  printf("[WASM] Starting main loop\n");
+  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
+         (void*)humanSim,
+         humanSim ? (void*)humanSim->sim.plyrs : NULL,
+         humanSim ? (void*)humanSim->sim.mp : NULL,
+         humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
+  fflush(stderr);
   emscripten_set_main_loop(main_loop_iteration, 0, 1);
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */
@@ -596,6 +627,22 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
   (void)xWin; (void)yWin; (void)xPos; (void)yPos;
 }
 void windowStartTutorial(void) { doingTutorial = TRUE; }
+
+/* Desktop-only window helpers — wasm has no native window position/size to
+ * persist or aspect-correct, so these are no-ops. */
+void windowSmoothScrolling_toggle(void) { smoothScrollingEnabled = !smoothScrollingEnabled; }
+void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
+                                    int *saveW, int *saveH, int *saveX, int *saveY) {
+  if (saveW) *saveW = actualW;
+  if (saveH) *saveH = actualH;
+  if (saveX) *saveX = actualX;
+  if (saveY) *saveY = actualY;
+}
+void windowGetSavedPosition(int *x, int *y) { if (x) *x = -1; if (y) *y = -1; }
+void windowSetSavedPosition(int x, int y) { (void)x; (void)y; }
+void windowGetCustomSize(int *w, int *h) { if (w) *w = 0; if (h) *h = 0; }
+void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
+void windowSaveCurrentPosition(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
 /* -------------------------------------------------------

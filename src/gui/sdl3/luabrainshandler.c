@@ -85,6 +85,11 @@
 #include "../../bolo/client_sim.h"
 #include "../../bolo/util.h"
 #include "../../bolo/braincore.h"
+#include "na_overlay_pillcontrib.h"
+#include "na_threat.h"
+#include "na_shield_stamp.h"
+#include "na_opt_log.h"
+#include "na_attack.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -93,6 +98,21 @@
 /* ------------------------------------------------------------------ */
 /* Module state                                                        */
 /* ------------------------------------------------------------------ */
+
+/* Path passed by --run-script; injected as RUN_SCRIPT_PATH Lua global. */
+static char s_run_script_path[1024] = "";
+
+/* Set by --perf-log; enables optimize.log writing in the brain. */
+static int s_perf_log = 0;
+
+void luaBrainsSetPerfLog(int enable) { s_perf_log = enable ? 1 : 0; }
+
+void luaBrainsSetRunScript(const char *path) {
+    if (path && path[0])
+        SDL_strlcpy(s_run_script_path, path, sizeof(s_run_script_path));
+    else
+        s_run_script_path[0] = '\0';
+}
 
 static LuaBrainInstance singletonInst;           /* The GUI client's brain  */
 static int        brainsNum          = 0;        /* Discovered brain count  */
@@ -539,12 +559,16 @@ static void setup_brain_package_path(lua_State *L, const char *path) {
     lua_pushstring(L, newPath);
     lua_setfield(L, -2, "path");
     lua_pop(L, 1); /* pop package */
+
+    /* Expose the brain directory so the brain can locate opt/ at runtime. */
+    lua_pushstring(L, brainDir);
+    lua_setglobal(L, "BRAIN_DIR");
   }
 }
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
-                            aiType aiMode) {
+                            aiType aiMode, bool debug_mode) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
@@ -564,13 +588,46 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     return false;
   }
 
+  /* Zero the BotContext* slot before any C binding can run. Lua does not
+   * zero-init extraspace, and brain.open() below can reach botFromLua via
+   * na_threat / cpf bindings. botManagerAddBot writes the real pointer
+   * after this function returns. */
+  *(void **)lua_getextraspace(L) = NULL;
+
   luaL_openlibs(L);
   brainCoreRegisterConstants(L);
+
+  /* Signal to the brain whether it's running under BrainTest (debug) or
+   * a release host (WinBolo / WinBoloDS).  Brains use this to skip debug
+   * output and overlay calls when running in production. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "BRAIN_DEBUG_MODE");
+
+  lua_pushboolean(L, s_perf_log);
+  lua_setglobal(L, "BRAIN_PERF_LOG");
+
+  /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
+   * off in --opt production mode to eliminate GC pressure. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "BRAIN_POOL_VIZ");
+
+  /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
+  if (s_run_script_path[0]) {
+    lua_pushstring(L, s_run_script_path);
+  } else {
+    lua_pushnil(L);
+  }
+  lua_setglobal(L, "RUN_SCRIPT_PATH");
+
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 
   /* Create C pathfinder and register cpf_* globals */
   inst->pathfinder = brainPathfinderCreate();
   if (inst->pathfinder) {
+    /* Preheat slate arrays: malloc + page-commit so the first
+     * dijkstra_start (typically tick 1) doesn't pay ~1-2 ms of
+     * lazy page-fault cost on a fresh process. */
+    brainPathfinderDijkstraPreheat(inst->pathfinder);
     brainCoreRegisterPathfinder(L, &inst->pathfinder);
   }
 
@@ -613,29 +670,68 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   brainCoreRegisterVizDetail(L);
   /* pill_contrib bindings (pillcontrib_clear / _begin_pill / _add_tile)
    * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
-   * no-op outside BrainTest. */
-  brainCoreRegisterPillContrib(L);
+   * no-op outside BrainTest. NewAutopilot-specific — lives in the bot's
+   * own C directory so the engine's brain runtime stays generic. */
+  naPillContribRegister(L);
+  /* na_threat — NewAutopilot threat-grid C kernel. Provides terrain
+   * factor cache + pill stamping. Tunables are set from Lua via
+   * na_threat.configure so cloners can tweak constants without
+   * recompiling. */
+  naThreatRegister(L);
+  naShieldStampRegister(L);
+  naOptLogRegister(L);
+  naAttackRegister(L);
+
+  /* Compute brain directory once at function scope so it can be reused for
+   * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */
+  char brainDir[LUA_BRAINS_PATH_MAX];
+  if (!extract_brain_dir(path, brainDir, sizeof(brainDir))) {
+    const char *lastSlash = SDL_strrchr(path, '/');
+    if (!lastSlash) lastSlash = SDL_strrchr(path, '\\');
+    if (lastSlash) {
+      size_t dlen = (size_t)(lastSlash - path);
+      if (dlen >= sizeof(brainDir)) dlen = sizeof(brainDir) - 1;
+      memcpy(brainDir, path, dlen);
+      brainDir[dlen] = '\0';
+    } else {
+      SDL_strlcpy(brainDir, ".", sizeof(brainDir));
+    }
+  }
+
+  /* If not in debug mode and opt/init.lua exists, treat opt/ as the
+   * effective brain directory — require() and the init load both use it.
+   * Any brain that ships an opt/ directory gets this automatically. */
+  char effectiveDir[LUA_BRAINS_PATH_MAX];
+  SDL_strlcpy(effectiveDir, brainDir, sizeof(effectiveDir));
+  if (!debug_mode) {
+    char optInit[LUA_BRAINS_PATH_MAX];
+    SDL_snprintf(optInit, sizeof(optInit), "%s/opt/init.lua", brainDir);
+    SDL_IOStream *check = SDL_IOFromFile(optInit, "r");
+    if (check) {
+      SDL_CloseIO(check);
+      SDL_snprintf(effectiveDir, sizeof(effectiveDir), "%s/opt", brainDir);
+    }
+  }
 
   setup_brain_package_path(L, path);
+
+  /* Override package.path to load from effectiveDir first. */
+  {
+    lua_getglobal(L, "package");
+    lua_getfield(L, -1, "path");
+    const char *curPath = lua_tostring(L, -1);
+    char newPath[LUA_BRAINS_PATH_MAX * 2];
+    SDL_snprintf(newPath, sizeof(newPath), "%s/?.lua;%s", effectiveDir, curPath);
+    lua_pop(L, 1);
+    lua_pushstring(L, newPath);
+    lua_setfield(L, -2, "path");
+    lua_pop(L, 1);
+  }
 
   /* Install SDL-based searcher so require() works on Android assets.
    * Insert it at position 2 in package.searchers (before the default
    * file searcher at position 3). */
   {
-    char brainDir[LUA_BRAINS_PATH_MAX];
-    if (!extract_brain_dir(path, brainDir, sizeof(brainDir))) {
-      /* Not a directory-based brain; derive dir from last slash */
-      const char *lastSlash = SDL_strrchr(path, '/');
-      if (!lastSlash) lastSlash = SDL_strrchr(path, '\\');
-      if (lastSlash) {
-        size_t dlen = (size_t)(lastSlash - path);
-        if (dlen >= sizeof(brainDir)) dlen = sizeof(brainDir) - 1;
-        memcpy(brainDir, path, dlen);
-        brainDir[dlen] = '\0';
-      } else {
-        SDL_strlcpy(brainDir, ".", sizeof(brainDir));
-      }
-    }
     lua_getglobal(L, "package");
     lua_getfield(L, -1, "searchers");
     int nSearchers = (int)lua_rawlen(L, -1);
@@ -644,7 +740,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       lua_rawgeti(L, -1, i);
       lua_rawseti(L, -2, i + 1);
     }
-    lua_pushstring(L, brainDir);
+    lua_pushstring(L, effectiveDir);
     lua_pushcclosure(L, sdl_lua_searcher, 1);
     lua_rawseti(L, -2, 2);
     lua_pop(L, 2); /* pop searchers + package */
@@ -660,10 +756,17 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     char resolvedPath[LUA_BRAINS_PATH_MAX];
     SDL_strlcpy(resolvedPath, path, sizeof(resolvedPath));
 
-    /* If path ends with / or \, append init.lua */
+    /* If path ends with / or \, load init.lua from effectiveDir. */
     size_t plen = SDL_strlen(resolvedPath);
     if (plen > 0 && (resolvedPath[plen-1] == '/' || resolvedPath[plen-1] == '\\')) {
-      SDL_snprintf(resolvedPath, sizeof(resolvedPath), "%sinit.lua", path);
+      SDL_snprintf(resolvedPath, sizeof(resolvedPath), "%s/init.lua", effectiveDir);
+    } else if (effectiveDir[0] != brainDir[0] ||
+               SDL_strcmp(effectiveDir, brainDir) != 0) {
+      /* Non-directory path: rebase onto effectiveDir if it differs. */
+      const char *fname = SDL_strrchr(path, '/');
+      if (!fname) fname = SDL_strrchr(path, '\\');
+      fname = fname ? fname + 1 : path;
+      SDL_snprintf(resolvedPath, sizeof(resolvedPath), "%s/%s", effectiveDir, fname);
     }
 
     src = sdl_load_file(resolvedPath, &srcLen);
@@ -710,6 +813,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   /* Call brain.open(info) */
   screenMakeBrainInfoCS(cs, &inst->bInfo, true, aiMode);
   inst->worldPtr = inst->bInfo.theWorld;
+  /* Set the map pointer now so Brain.open can pre-warm the edge-cost table
+   * via cpf.rebuild_edge_costs() — same map pointer set each tick. */
+  if (inst->pathfinder) {
+    brainPathfinderSetMap(inst->pathfinder, inst->bInfo.theWorld);
+  }
   if (!brainCoreCallMethod(L, &inst->bInfo, "open")) {
     screenExtractBrainInfoCS(cs, &inst->bInfo);
     lua_close(L);
@@ -745,10 +853,42 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   if (inst->worldsim) {
     brainWorldSimSetMap(inst->worldsim, inst->bInfo.theWorld);
   }
-  ok = brainCoreCallThink(inst->L, &inst->bInfo);
+  /* wasKilled is recorded on the instance so the caller (bot_manager
+   * runBotThinkJobImpl) can disambiguate the budget-abort recovery
+   * path from a real Lua error after the call returns. Reset to false
+   * here so a successful tick clears stale state from a prior abort. */
+  inst->wasKilled = false;
+  ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
   screenExtractBrainInfoCS(inst->cs, &inst->bInfo);
 
   return ok;
+}
+
+void luaBrainSetTickInputs(LuaBrainInstance *inst,
+                           double lastThinkMs,
+                           double targetMs,
+                           bool   wasKilled) {
+    lua_State *L;
+    int top;
+
+    if (inst == NULL || !inst->running || inst->L == NULL) {
+        return;
+    }
+    L = inst->L;
+    top = lua_gettop(L);
+
+    lua_getglobal(L, "brain");
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushnumber(L, lastThinkMs);
+    lua_setfield(L, -2, "lastThinkMs");
+    lua_pushnumber(L, targetMs);
+    lua_setfield(L, -2, "targetMs");
+    lua_pushboolean(L, wasKilled ? 1 : 0);
+    lua_setfield(L, -2, "wasKilled");
+    lua_settop(L, top);
 }
 
 void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
@@ -775,6 +915,12 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   lua_close(inst->L);
   inst->L = NULL;
   inst->running = false;
+}
+
+void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
+  if (!inst || !inst->L) return;
+  lua_pushboolean(inst->L, enabled);
+  lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
@@ -1120,7 +1266,7 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   clientMutexWaitFor();
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              cs->allowComputerTanks)) {
+                              cs->allowComputerTanks, false)) {
     clientMutexRelease();
     return false;
   }

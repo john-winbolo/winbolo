@@ -37,6 +37,10 @@
 
 void scrollItemListCreate(ScrollItemList *list) {
   list->count = 0;
+  list->tankAngle = 0;
+  list->tankSpeed = 0;
+  list->tankWX = 0;
+  list->tankWY = 0;
 }
 
 
@@ -136,35 +140,87 @@ static bool scrollItemIsBelow(WORLD itemWY, int targetY, int margin) {
 }
 
 
-bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY, bool *driveScroll) {
+bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY) {
   int i, j;
   ScrollItem *item;
   int stashX, stashY;
   bool modified;
   bool anyModified;
+  float facingX = 0.0f;
+  float facingY = 0.0f;
+  bool hasForwardImportant = FALSE;
 
   anyModified = FALSE;
-  *driveScroll = FALSE;
+
+  /* The directional veto activates only when the tank is moving AND
+   * there is a non-special item meaningfully ahead. With nothing
+   * important ahead, behind items can still pull the viewport so
+   * trailing threats stay visible — matches user-stated preference. */
+  if (list->tankSpeed > 0) {
+    float rad = list->tankAngle * (float)BRADIAN_TO_RADIAN_FACTOR;
+    facingX = (float)sin(rad);
+    facingY = -(float)cos(rad);
+
+    for (i = 0; i < list->count; i++) {
+      float toX, toY, dot;
+      if (list->items[i].special == TRUE) {
+        continue;
+      }
+      toX = (float)((int)list->items[i].wx - (int)list->tankWX);
+      toY = (float)((int)list->items[i].wy - (int)list->tankWY);
+      dot = toX * facingX + toY * facingY;
+      if (dot > (float)(1 << 8)) {  /* > 1 tile ahead */
+        hasForwardImportant = TRUE;
+        break;
+      }
+    }
+  }
 
   for (i = 0; i < list->count; i++) {
+    bool isBehind;
+    bool vetoLeftAdj, vetoRightAdj, vetoUpAdj, vetoDownAdj;
+
     item = &list->items[i];
     stashX = *targetX;
     stashY = *targetY;
 
-    /* Adjust target to bring this item on screen using minimum
-     * movement. This maximizes the chance that both this item and
-     * all higher-priority items fit in the viewport together.
-     * The actual scroll at the end is clamped to 1 tile per tick. */
+    isBehind = FALSE;
+    if (list->tankSpeed > 0 && hasForwardImportant && item->special == FALSE) {
+      float toX = (float)((int)item->wx - (int)list->tankWX);
+      float toY = (float)((int)item->wy - (int)list->tankWY);
+      float dot = toX * facingX + toY * facingY;
+      if (dot < 0.0f) {
+        isBehind = TRUE;
+      }
+    }
+
+    /* Per-axis veto: if facing X is strongly +/-, behind items can't
+     * pull the target the opposite way on that axis. Threshold of 0.3
+     * skips veto for nearly-perpendicular facing where the axis isn't
+     * really the tank's direction of travel. */
+    vetoLeftAdj  = (isBehind && facingX >  0.3f) ? TRUE : FALSE;
+    vetoRightAdj = (isBehind && facingX < -0.3f) ? TRUE : FALSE;
+    vetoUpAdj    = (isBehind && facingY >  0.3f) ? TRUE : FALSE;
+    vetoDownAdj  = (isBehind && facingY < -0.3f) ? TRUE : FALSE;
+
     if (scrollItemIsLeft(item->wx, *targetX, 0)) {
-      *targetX = (int)item->wx;
+      if (vetoLeftAdj == FALSE) {
+        *targetX = (int)item->wx;
+      }
     } else if (scrollItemIsRight(item->wx, *targetX, 0)) {
-      *targetX = (int)item->wx - SCREEN_WORLD_W;
+      if (vetoRightAdj == FALSE) {
+        *targetX = (int)item->wx - SCREEN_WORLD_W;
+      }
     }
 
     if (scrollItemIsAbove(item->wy, *targetY, 0)) {
-      *targetY = (int)item->wy;
+      if (vetoUpAdj == FALSE) {
+        *targetY = (int)item->wy;
+      }
     } else if (scrollItemIsBelow(item->wy, *targetY, 0)) {
-      *targetY = (int)item->wy - SCREEN_WORLD_H;
+      if (vetoDownAdj == FALSE) {
+        *targetY = (int)item->wy - SCREEN_WORLD_H;
+      }
     }
 
     if (*targetX == stashX && *targetY == stashY) {
@@ -178,16 +234,14 @@ bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY, boo
       if (list->items[j].ignore == TRUE) {
         continue;
       }
-      /* Special items (gunsight, look-ahead, drivescroll) are soft —
-       * they can trigger scrolling but don't block hard items
-       * (tank, pills, bases, other tanks) from adjusting the viewport. */
+      /* Special items (gunsight) are soft — they can trigger scrolling
+       * but don't block hard items from adjusting the viewport. */
       if (list->items[j].special == TRUE && item->special == FALSE) {
         continue;
       }
       /* When a special item adjusts the viewport, use a wider margin
-       * against hard items. This prevents oscillation: without it,
-       * the 1-tile-per-tick scroll can push a hard item just past
-       * the trigger threshold, causing a snap-back next tick. */
+       * against hard items to prevent the 1-tile-per-tick scroll from
+       * pushing a hard item just past the trigger threshold. */
       margin = AUTO_SCROLL_MARGIN;
       if (item->special == TRUE && list->items[j].special == FALSE) {
         margin = AUTO_SCROLL_MARGIN * 2;
@@ -196,7 +250,6 @@ bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY, boo
           scrollItemIsRight(list->items[j].wx, *targetX, margin) ||
           scrollItemIsAbove(list->items[j].wy, *targetY, margin) ||
           scrollItemIsBelow(list->items[j].wy, *targetY, margin)) {
-        /* Conflict — revert and mark this item as ignored */
         item->ignore = TRUE;
         *targetX = stashX;
         *targetY = stashY;
@@ -207,9 +260,6 @@ bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY, boo
 
     if (modified == TRUE) {
       anyModified = TRUE;
-      if (item->special == TRUE) {
-        *driveScroll = TRUE;
-      }
     }
   }
 

@@ -68,6 +68,9 @@ extern "C" {
 #include "../../bolo/players.h"
 #include "../../bolo/transport.h"
 #include "../../bolo/transport_udp.h"
+#include "../../bolo/bot_manager.h"
+#include "../../server/server_lifecycle.h"
+#include "../../server/threads.h"
 }
 
 /* Include input.h for keyItems — SDL3 already included, safe here */
@@ -479,6 +482,38 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h) {
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
+
+/* Tick / brain timing graph state — only populated while
+ * the System Info dialog is open. Sampled once per second
+ * to match the ping graph's cadence. */
+#define SYS_GRAPH_SIZE 120   /* ~2 minutes at 1 sample/sec */
+static float    s_tickHistory[SYS_GRAPH_SIZE];
+static float    s_brainHistory[SYS_GRAPH_SIZE];
+static int      s_sysHistoryOffset = 0;
+static int      s_sysHistoryCount  = 0;
+static uint32_t s_sysLastSampleTick = 0;
+
+static void sysInfoGraphReset(void) {
+    memset(s_tickHistory, 0, sizeof(s_tickHistory));
+    memset(s_brainHistory, 0, sizeof(s_brainHistory));
+    s_sysHistoryOffset = 0;
+    s_sysHistoryCount  = 0;
+    s_sysLastSampleTick = 0;
+}
+
+/* Sample once per second. tickMs and brainPhaseMs are the
+ * "last" values from server_lifecycle / bot_manager — already
+ * updated each tick by the server timer thread. */
+static void sysInfoGraphSample(double tickMs, double brainPhaseMs) {
+    uint32_t now = SDL_GetTicks();
+    if (now - s_sysLastSampleTick < 1000 && s_sysHistoryCount > 0) return;
+    s_sysLastSampleTick = now;
+    s_tickHistory[s_sysHistoryOffset]  = (float)tickMs;
+    s_brainHistory[s_sysHistoryOffset] = (float)brainPhaseMs;
+    s_sysHistoryOffset = (s_sysHistoryOffset + 1) % SYS_GRAPH_SIZE;
+    if (s_sysHistoryCount < SYS_GRAPH_SIZE) s_sysHistoryCount++;
+}
+
 static void renderSysInfoContent(void) {
     float drawPct  = (windowGetDrawTime() / 1000.0f) * 100.0f;
     float simPct   = (windowGetSimTime()  / 1000.0f) * 100.0f;
@@ -495,12 +530,122 @@ static void renderSysInfoContent(void) {
     ImGui::Text("  %s %.2f %%", langGetText(STR_DLGSYSINFO_AITANKS), aiPct);
     ImGui::Separator();
     ImGui::Text("  %s %.2f %%", langGetText(STR_DLGSYSINFO_TOTAL), totalPct);
+
+    /* Server-side bot/sim telemetry. Only present when a local
+     * server sim is ticking (single-player or local listen-server). */
+    ServerSim *spSim = gameFrontGetServerSim();
+    if (spSim != NULL) {
+        BotPoolStats ps = {};
+        BotInfo  botInfos[MAX_TANKS] = {};
+        bool     botInfoValid[MAX_TANKS] = {};
+        double tickLast = 0.0, tickEwma = 0.0;
+        double simLast  = 0.0, simEwma  = 0.0;
+        bool   hasBots  = false;
+
+        /* The server timer thread writes these file-statics every
+         * tick. Take the same mutex serverInstanceTick uses so the
+         * snapshot is consistent. Cheap — these are quick reads. */
+        threadsWaitForMutex();
+        hasBots = botManagerHasAnyBot();
+        botManagerGetPoolStats(&ps);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+        }
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+        threadsReleaseMutex();
+
+        sysInfoGraphSample(tickLast, ps.lastBrainPhaseMs);
+
+        ImGui::Separator();
+        ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_SERVER));
+
+        if (hasBots) {
+            if (ps.workerCount == 0) {
+                ImGui::Text("%s: single-thread (%d active bots), target=%.1fms/bot",
+                            langGetText(STR_DLGSYSINFO_BOTPOOL),
+                            ps.activeBots, ps.currentTargetMs);
+            } else {
+                ImGui::Text("%s: %d workers (%d active bots), target=%.1fms/bot",
+                            langGetText(STR_DLGSYSINFO_BOTPOOL),
+                            ps.workerCount, ps.activeBots, ps.currentTargetMs);
+            }
+        }
+
+        /* Tick wall-clock chart. Show min/avg/max over the
+         * sample window above the plot, like the ping graph
+         * does. Y-axis capped so the 20ms budget is visible
+         * within frame even when ticks are well under it. */
+        if (s_sysHistoryCount > 1) {
+            float minTick = s_tickHistory[0];
+            float maxTick = s_tickHistory[0];
+            float sumTick = 0;
+            for (int i = 0; i < s_sysHistoryCount; i++) {
+                float v = s_tickHistory[i];
+                if (v < minTick) minTick = v;
+                if (v > maxTick) maxTick = v;
+                sumTick += v;
+            }
+            float avgTick = sumTick / (float)s_sysHistoryCount;
+            float plotMax = (maxTick > 25.0f) ? maxTick * 1.2f : 25.0f;
+            ImGui::Text("%s: min=%.1fms avg=%.1fms max=%.1fms (budget=20ms)",
+                        langGetText(STR_DLGSYSINFO_TICK),
+                        minTick, avgTick, maxTick);
+            ImGui::PlotLines("##tick", s_tickHistory, s_sysHistoryCount,
+                             s_sysHistoryOffset, nullptr,
+                             0.0f, plotMax,
+                             ImVec2(ImGui::GetContentRegionAvail().x, 60));
+        }
+
+        /* Brain phase chart — only when there are bots. */
+        if (hasBots && s_sysHistoryCount > 1) {
+            float maxBrain = 0;
+            for (int i = 0; i < s_sysHistoryCount; i++) {
+                if (s_brainHistory[i] > maxBrain) maxBrain = s_brainHistory[i];
+            }
+            if (maxBrain < 1.0f) maxBrain = 1.0f;
+            ImGui::Text("%s: EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_BRAIN),
+                        ps.ewmaBrainPhaseMs);
+            ImGui::PlotLines("##brain", s_brainHistory, s_sysHistoryCount,
+                             s_sysHistoryOffset, nullptr,
+                             0.0f, maxBrain * 1.2f,
+                             ImVec2(ImGui::GetContentRegionAvail().x, 40));
+        }
+
+        if (hasBots) {
+            ImGui::Text("%s: %u",
+                        langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
+                        ps.totalOverruns);
+            if (ps.totalOverruns > 0) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
+                        ImGui::Text("  bot[%d]: %u", i, botInfos[i].overrunCount);
+                    }
+                }
+            }
+        }
+
+        /* Text-only stats for the remaining metrics. simLast > 0
+         * means at least one running-state tick has happened —
+         * suppress the line otherwise. */
+        if (simLast > 0.0) {
+            ImGui::Text("%s: last=%.1fms EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_SIMULATION),
+                        simLast, simEwma);
+        }
+        if (hasBots) {
+            ImGui::Text("%s: last=%.1fms EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_BOTPREP),
+                        ps.lastSerialMs, ps.ewmaSerialMs);
+        }
+    }
 }
 
 static void renderSysInfoPanel(void) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(300, 210), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(440, 600), ImGuiCond_FirstUseEver);
     char title[128];
     snprintf(title, sizeof(title), "%s###sysinfo", langGetText(STR_DLGSYSINFO_TITLE));
     if (!ImGui::Begin(title, &s_showSysInfo)) {
@@ -1825,12 +1970,12 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  300, 210);
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  440, 600);
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo,  langGetText(STR_DLGNETINFO_TITLE),  360, 420);
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   s_showSysInfo   = !s_showSysInfo;
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_showNetInfo))   { if (!s_showNetInfo) pingGraphReset(); s_showNetInfo = !s_showNetInfo; }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
@@ -3012,6 +3157,7 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn) {
 }
 
 void sdl3ImguiShowSysInfo(bool open) {
+    if (open && !s_showSysInfo) sysInfoGraphReset();
     s_showSysInfo = open;
 }
 void sdl3ImguiShowNetInfo(bool open) {
