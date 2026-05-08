@@ -396,6 +396,22 @@ function M.smart_cost_dij_only(kind, dx, dy, in_boat)
   return cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0) or math.huge
 end
 
+--- Dijkstra lookup that ALSO subtracts a target pill's per-tile
+--- contribution along the realized path. pcontrib_table is the map
+--- the brain already builds at threat.pill_contrib[pill_key] (tile_key
+--- → penalty). The C side walks the slate's parent chain, scales each
+--- non-source tile's contribution by the slate's danger_scale and the
+--- per-tile inv_speed (matching the slate's expansion formula), and
+--- subtracts the sum from the slate cost. Result is the exact "as-if-
+--- target-pill-were-dead" cost — replaces the prior smart_cost +
+--- self_dr-walk approximation. Pass pcontrib_table=nil to fall through
+--- to plain lookup. No A* fallback (returns math.huge when no slate
+--- has the destination).
+function M.dijkstra_lookup_subtract_by_kind(kind, dx, dy, in_boat, pcontrib_table)
+  if not C.DIJKSTRA_USE_FOR_GOALS then return math.huge end
+  return cpf_dijkstra_lookup_subtract_by_kind(kind, dx, dy, in_boat or 0, pcontrib_table) or math.huge
+end
+
 -- Convenience constants for the kind parameter.
 -- KIND_NORMAL: standard danger-weighted path cost.
 -- KIND_PILL:   path cost with a specific pill's local danger contribution

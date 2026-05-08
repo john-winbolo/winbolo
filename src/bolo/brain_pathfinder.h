@@ -272,6 +272,23 @@ void  brainPathfinderDijkstraCopySlate(BrainPathfinder *pf, int src, int dst);
 float brainPathfinderDijkstraLookupByKind(BrainPathfinder *pf, int kind,
                                            int x, int y, int boat);
 
+/* Same as above, but subtracts a target pill's danger contribution along
+ * the slate's realized path. After picking a slate (same recency rule
+ * as LookupByKind), walks the parent chain from (x,y) back toward the
+ * source. For each non-source tile, calls pcontrib_lookup(user, tile_key)
+ * to get the pill's per-tile danger contribution, scales it by the
+ * slate's danger_scale and the per-tile inv_speed (matching the slate's
+ * own expansion formula), and accumulates a subtraction from the
+ * returned cost. Result is the "as-if-the-target-pill-were-dead" cost
+ * for the realized path — exact, no path-walk approximation in Lua.
+ * Returns COST_INF if no slate has the destination, or the unmodified
+ * lookup cost if pcontrib_lookup is NULL. Result is clamped at 0. */
+typedef float (*BrainPFTileLookupFn)(void *user, int tile_key);
+float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
+                                                   int x, int y, int boat,
+                                                   BrainPFTileLookupFn pcontrib_lookup,
+                                                   void *user);
+
 /* Trace the Dijkstra parent chain from (dx,dy) back to the source.
  * Returns the first step on the optimal path.
  * Returns 1 on success (out_next_x/y populated), 0 if unreachable. */
