@@ -627,13 +627,8 @@ static void renderSysInfoContent(void) {
             ImGui::Text("Simulation: last=%.1fms EWMA=%.1fms", simLast, simEwma);
         }
         if (hasBots) {
-            if (ps.totalOverruns == 0) {
-                ImGui::Text("Bot prep: last=%.1fms EWMA=%.1fms",
-                            ps.lastSerialMs, ps.ewmaSerialMs);
-            } else {
-                ImGui::Text("Bot prep: last=%.1fms EWMA=%.1fms total overruns=%u",
-                            ps.lastSerialMs, ps.ewmaSerialMs, ps.totalOverruns);
-            }
+            ImGui::Text("Bot prep: last=%.1fms EWMA=%.1fms",
+                        ps.lastSerialMs, ps.ewmaSerialMs);
         }
     }
 }
