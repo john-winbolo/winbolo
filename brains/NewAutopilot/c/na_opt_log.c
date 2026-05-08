@@ -236,10 +236,16 @@ static const luaL_Reg na_opt_log_lib[] = {
 };
 
 void naOptLogRegister(lua_State *L) {
-    /* Lazy-init s_open_mutex on first registration. luaBrainInstanceCreate
-       calls this serially on the producer thread before any brain ticks,
-       so a plain non-atomic guard is sufficient. Concurrent registration
-       would break this assumption and require a real once-flag. */
+    /* Lazy-init s_open_mutex on first registration.
+     *
+     * CONTRACT: this function is called only from luaBrainInstanceCreate,
+     * which runs single-threaded on the producer thread before any brain
+     * ticks. The check-then-write below is unsynchronized by design and
+     * relies on that serialization — without it, two concurrent registers
+     * race (double na_mutex_init on the same mutex, leaked native handle
+     * and undefined behaviour). If a future caller invokes this from any
+     * other context, replace the bool guard with a once-flag (pthread_once
+     * or SDL_CompareAndSwapAtomicInt) before merging that change. */
     if (!s_open_mutex_inited) {
         na_mutex_init(&s_open_mutex);
         s_open_mutex_inited = 1;
