@@ -1187,9 +1187,12 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     countsPos = pos;
     pos += 17; /* 7 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum */
 
-    /* Pack tank snapshots */
+    /* Pack tank snapshots — variable length: stubs are 1 byte, full
+     * entries are TANK_SNAPSHOT_WIRE_SIZE bytes. */
     for (i = 0; i < hdr.tankCount; i++) {
-        if (pos + TANK_SNAPSHOT_WIRE_SIZE > (int)sizeof(buf)) {
+        bool isStub = (tankSnaps[i].playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) != 0;
+        int needed = isStub ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
+        if (pos + needed > (int)sizeof(buf)) {
             hdr.tankCount = (uint8_t)i;
             break;
         }
