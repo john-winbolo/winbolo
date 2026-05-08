@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <SDL3/SDL.h>
 
 /* Game constants matching tank.h / global.h */
 #define WSIM_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
@@ -228,6 +229,10 @@ void brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map) {
   sim->map = map;
 }
 
+void brainWorldSimSetAbortFlag(BrainWorldSim *sim, void *flag) {
+  if (sim) sim->abort_flag = flag;
+}
+
 void brainWorldSimSetTerrainSpeed(BrainWorldSim *sim, int type, float speed) {
   if (type >= 0 && type < 16) {
     sim->terrain_speed[type] = speed;
@@ -336,6 +341,18 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
   for (tick = 1; tick <= max_ticks; tick++) {
     int i;
     int our_wx, our_wy;
+
+    /* Cooperative abort. Per-tick header is the natural checkpoint —
+     * the rest of the body assumes a complete tick. Jumping to `done`
+     * lets the existing post-loop block fill in result.armour /
+     * pill_final_health from whatever state we already simulated; the
+     * brain sees a shorter prediction (smaller ticks_simulated, no
+     * arrival_tick) which is exactly the existing "ran out of budget"
+     * shape callers already handle. */
+    if (sim->abort_flag &&
+        SDL_GetAtomicInt((SDL_AtomicInt *)sim->abort_flag)) {
+      goto done;
+    }
 
     /* ============================================================= */
     /* 1. MOVE OUR TANK along path waypoints at terrain speed        */

@@ -1136,6 +1136,17 @@
 #define STR_LV_ZOOM_IN                      1230
 #define STR_LV_ZOOM_OUT                     1231
 
+/* System Info panel — server-side bot/sim telemetry labels.
+ * Bare nouns (no trailing colon, no format specifiers); colons and
+ * numeric format specifiers stay literal in the C format strings. */
+#define STR_DLGSYSINFO_SERVER               1232
+#define STR_DLGSYSINFO_BOTPOOL              1233
+#define STR_DLGSYSINFO_TICK                 1234
+#define STR_DLGSYSINFO_BRAIN                1235
+#define STR_DLGSYSINFO_SIMULATION           1236
+#define STR_DLGSYSINFO_BOTPREP              1237
+#define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

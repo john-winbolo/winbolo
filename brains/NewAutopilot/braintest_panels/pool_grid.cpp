@@ -60,10 +60,11 @@ static const TermDoc kTermDocs[] = {
     {"wall",    "Wall obstruction penalty — blocks between you and target beyond 1; 2 blocks=+100, 5 blocks=+400"},
     {"loc",     "Strategic location multiplier — Phase 2; scales cost by terrain/position (e.g. deep_hostile). 1.0 = neutral."},
     {"dens",    "Density discount multiplier — Phase 4; lower when many friendly candidates of the same kind cluster nearby (n = neighbor count). 1.0 = no discount."},
-    {"pickup",  "Pickup value — Phase 3; dead-pill bonus subtracted from travel cost when a pickup lies along the way."},
-    {"wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block."},
-    {NULL, NULL}
-};
+    {"pickup",  "A-star cost of spot to pill, minus this pill's danger contribution."},
+    { "wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block." },
+    { "hist",    "Oscillation history penalty — increases when the bot repeatedly picks/abandons the same goal to break loops." },
+    { NULL, NULL }
+    };
 
 /* ── cJSON helpers ─────────────────────────────────── */
 double getNum(const cJSON *o, const char *k, double d) {
@@ -116,7 +117,7 @@ struct Row {
      * the last carries the realized path tiles which alone can be
      * 300+ chars). Truncation here cuts off the trailing segments
      * and the parser then prints "?" in the affected rows. */
-    char   formula[2048];
+    char   formula[6144];
     /* Reject info (capture_pill: dead pill that exists on the map but
      * can't be picked this tick — in_tank / blocked / stale). When
      * non-empty, the row renders dimmed with a colored chip. */
@@ -167,6 +168,9 @@ struct PanelState {
 
     /* Double-click detail popup. */
     DetailRow detail = {};
+
+    /* Winners legend window. */
+    bool showLegend = false;
 };
 
 /* Lookup-by-idx so each (registry_idx → PanelState) pair survives
@@ -255,14 +259,18 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         st.selectedSection        = s->idx;
         st.selectedRowId          = r->id;
         st.anyRowClickedThisFrame = true;
-        if (r->cost >= 1e9f)
+
+        /* For the copy buffer, use the original ID and the final weighted cost. */
+        int displayId = (s->idx == 10) ? (r->id & 0xFFFF) : r->id;
+
+        if (r->weighted >= 1e9f)
             SDL_snprintf(st.copyBuf, sizeof(st.copyBuf),
-                "#%d (%d,%d) cost=INF wt=%.0f  %s",
-                r->id, r->mx, r->my, r->weighted, r->formula);
+                "#%d (%d,%d) cost=INF  %s",
+                displayId, r->mx, r->my, r->formula);
         else
             SDL_snprintf(st.copyBuf, sizeof(st.copyBuf),
-                "#%d (%d,%d) cost=%.0f wt=%.0f  %s",
-                r->id, r->mx, r->my, r->cost, r->weighted, r->formula);
+                "#%d (%d,%d) cost=%.0f  %s",
+                displayId, r->mx, r->my, r->weighted, r->formula);
     }
     if (ImGui::IsItemHovered() &&
         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -331,31 +339,36 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "\xe2\x9a\xa1");
         ImGui::SameLine();
     }
-    ImGui::TextColored(rowCol, "#%-3d", r->id);
+
+    int displayId = (s->idx == 10) ? (r->id & 0xFFFF) : r->id;
+    ImGui::TextColored(rowCol, "#%-3d", displayId);
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1),
         "(%3d,%3d)", r->mx, r->my);
     ImGui::SameLine();
-    if (r->cost < 0) {
+    if (r->weighted <= -1e9f) {
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1), "cost=   ?   ");
-    } else if (r->cost >= 1e9f) {
+    } else if (r->weighted >= 1e9f) {
         ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "cost=  INF  ");
+    } else if (r->weighted < 0) {
+        /* Negative: active-goal discount drove total below zero. */
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1),
+            "cost= %-6.0f", r->weighted);
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.85f, 1, 1),
-            "cost= %-6.0f", r->cost);
-    }
-    if (r->weighted >= 0 && r->weighted < 1e9f) {
-        ImGui::SameLine();
         ImGui::TextColored(ImVec4(1, 1, 0.4f, 1),
-            "wt= %-6.0f", r->weighted);
+            "cost= %-6.0f", r->weighted);
     }
     ImGui::SameLine();
+    /* Thresholds match step_eval_queue's tiered re-eval TTLs: close pills
+     * refresh every 50 ticks, mid-range every 150, far pills every 500
+     * (~10 s). Color green up to the close-tier TTL, fade yellow→orange
+     * across the far-tier window, red beyond. */
     if (r->staleTicks < 0) {
         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1), "~");
-    } else if (r->staleTicks < 10) {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1), "%dt", r->staleTicks);
     } else if (r->staleTicks < 50) {
-        float t = (float)(r->staleTicks - 10) / 40.0f;
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1), "%dt", r->staleTicks);
+    } else if (r->staleTicks < 500) {
+        float t = (float)(r->staleTicks - 50) / 450.0f;
         ImGui::TextColored(ImVec4(1.0f, 1.0f - t * 0.5f, 0.3f, 1),
                            "%dt", r->staleTicks);
     } else {
@@ -382,21 +395,23 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
                             ImGui::GetStyle().Alpha * 0.45f);
     }
 
-    /* Line 2: dim formula (truncate at "||" detail separator) */
+    /* Line 2: dim formula.
+     * Use "!!" as a row-display override separator: "Simplified !! Full || Detail"
+     * If "!!" is present, show only what's before it.
+     * Otherwise show what's before "||". */
     if (r->formula[0]) {
         ImVec4 fcol = ImVec4(rowCol.x * 0.7f, rowCol.y * 0.7f,
                              rowCol.z * 0.7f, 1);
-        const char *sep = strstr(r->formula, "||");
-        if (sep) {
-            int dispLen = (int)(sep - r->formula);
-            char dispBuf[512];
-            if (dispLen >= (int)sizeof(dispBuf)) dispLen = (int)sizeof(dispBuf) - 1;
-            memcpy(dispBuf, r->formula, dispLen);
-            dispBuf[dispLen] = '\0';
-            ImGui::TextColored(fcol, "    %s", dispBuf);
-        } else {
-            ImGui::TextColored(fcol, "    %s", r->formula);
-        }
+        const char *rowSep = strstr(r->formula, "!!");
+        const char *detailSep = strstr(r->formula, "||");
+        const char *end = rowSep ? rowSep : (detailSep ? detailSep : (r->formula + strlen(r->formula)));
+
+        int dispLen = (int)(end - r->formula);
+        char dispBuf[512];
+        if (dispLen >= (int)sizeof(dispBuf)) dispLen = (int)sizeof(dispBuf) - 1;
+        memcpy(dispBuf, r->formula, dispLen);
+        dispBuf[dispLen] = '\0';
+        ImGui::TextColored(fcol, "    %s", dispBuf);
     }
     if (isRej) ImGui::PopStyleVar();
     ImGui::Spacing();
@@ -415,6 +430,12 @@ static void renderSection(PanelState &st, Section *s) {
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1),
         "(%d  x%.1f)", s->count, s->phase_weight);
+    if (isWinners) {
+        float avail = ImGui::GetContentRegionAvail().x;
+        ImGui::SameLine(ImGui::GetCursorPosX() + avail - 22.0f);
+        if (ImGui::SmallButton("?##legend"))
+            st.showLegend = !st.showLegend;
+    }
     ImGui::Separator();
 
     if (s->nrows == 0) {
@@ -474,8 +495,11 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
     }
     ImGui::Separator();
 
+    /* Mask synthetic ID for display in WINNERS pool. */
+    int displayId = (sDetail.sectionIdx == 10) ? (sDetail.rowId & 0xFFFF) : sDetail.rowId;
+
     ImGui::Text("ID: #%d    Location: (%d, %d)",
-                sDetail.rowId, sDetail.mx, sDetail.my);
+                displayId, sDetail.mx, sDetail.my);
     /* ASCII dashes (not em-dash) so the glyph always renders in the
      * default ImGui font. The em-dash showed as "?" otherwise. */
     if (sDetail.cost < 0)
@@ -487,23 +511,23 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
                     sDetail.cost, sDetail.weighted);
     ImGui::Separator();
 
-    /* Split the formula at the "||" detail separator. */
-    const char *detailSep = strstr(sDetail.formula, "||");
-    /* dispFormula only holds the half before "||"; that side is short
-     * (~150 chars). 512 is plenty here — the long part is the detail
-     * map after "||" which the parser walks directly off sDetail.formula. */
+    /* Split the formula into [RowOverride!!]DisplayHalf||ComputationHalf. */
+    const char *rowSep = strstr(sDetail.formula, "!!");
+    const char *start = rowSep ? (rowSep + 2) : sDetail.formula;
+    const char *detailSep = strstr(start, "||");
+
     char dispFormula[512] = {0};
     if (detailSep) {
-        int dlen = (int)(detailSep - sDetail.formula);
+        int dlen = (int)(detailSep - start);
         if (dlen >= (int)sizeof(dispFormula)) dlen = (int)sizeof(dispFormula) - 1;
-        memcpy(dispFormula, sDetail.formula, dlen);
+        memcpy(dispFormula, start, dlen);
     } else {
-        SDL_strlcpy(dispFormula, sDetail.formula, sizeof(dispFormula));
+        SDL_strlcpy(dispFormula, start, sizeof(dispFormula));
     }
 
     /* Parse the per-term computation map from the || section.
      * Format: "name:computation|name:computation|..." */
-    struct TermCompute { char name[32]; char compute[400]; };
+    struct TermCompute { char name[32]; char compute[2048]; };
     TermCompute computes[24];
     int nComputes = 0;
     if (detailSep) {
@@ -515,7 +539,7 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
             if (colon) {
                 int nlen = (int)(colon - dp);
                 int clen = (int)(segEnd - colon - 1);
-                if (nlen > 0 && nlen < 32 && clen > 0 && clen < 400) {
+                if (nlen > 0 && nlen < 32 && clen > 0 && clen < 2048) {
                     SDL_strlcpy(computes[nComputes].name,    dp,        nlen + 1);
                     SDL_strlcpy(computes[nComputes].compute, colon + 1, clen + 1);
                     nComputes++;
@@ -676,10 +700,16 @@ void renderPoolGrid(int registry_idx, const char *body) {
         auto &flash = st.flashStart[si];
         for (int ri = 0; ri < sec->nrows; ri++) {
             Row *r = &sec->rows[ri];
-            auto it = prev.find(r->id);
+            /* Use a composite key to distinguish items with the same ID
+             * from different source pools (common in the WINNERS pool).
+             * Without this, two winners sharing an ID would clash in
+             * flashStart and prevRank, causing one to always think its
+             * rank changed and getting stuck in the white flash state. */
+            int key = (r->src_pool << 16) | r->id;
+            auto it = prev.find(key);
             bool rankChanged = (it == prev.end()) || (it->second != ri);
-            if (rankChanged) flash[r->id] = now;
-            auto fit = flash.find(r->id);
+            if (rankChanged) flash[key] = now;
+            auto fit = flash.find(key);
             if (fit != flash.end()) {
                 float elapsed = (float)(now - fit->second);
                 r->flashAlpha = 1.0f - elapsed / FLASH_DURATION_MS;
@@ -688,7 +718,8 @@ void renderPoolGrid(int registry_idx, const char *body) {
         }
         prev.clear();
         for (int ri = 0; ri < sec->nrows; ri++) {
-            prev[sec->rows[ri].id] = ri;
+            int key = (sec->rows[ri].src_pool << 16) | sec->rows[ri].id;
+            prev[key] = ri;
         }
     }
 
@@ -811,6 +842,52 @@ void renderPoolGrid(int registry_idx, const char *body) {
     int winW = (int)ImGui::GetWindowWidth();
     int winH = (int)ImGui::GetWindowHeight();
     renderDetailPopup(st, winW, winH);
+
+    /* Winners formula legend window. */
+    if (st.showLegend) {
+        ImGui::SetNextWindowSize(ImVec2(340, 260), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(
+            ImVec2((float)winW * 0.5f - 170, (float)winH * 0.5f - 130),
+            ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Winners Formula Legend###winnersLegend",
+                         &st.showLegend,
+                         ImGuiWindowFlags_NoCollapse)) {
+            ImGui::TextColored(ImVec4(1,1,0.5f,1), "Second-line abbreviations");
+            ImGui::Separator();
+            if (ImGui::BeginTable("##leg", 2,
+                    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                    ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableSetupColumn("Short",   ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                ImGui::TableSetupColumn("Meaning", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+                static const struct { const char *abbr; const char *desc; } kLegend[] = {
+                    { "OP@w",  "Base cost in Opening phase  (w = phase weight)" },
+                    { "EA@w",  "Base cost in Early phase" },
+                    { "MD@w",  "Base cost in Middle phase" },
+                    { "LT@w",  "Base cost in Late phase" },
+                    { "EG@w",  "Base cost in Endgame phase" },
+                    { "SW",    "Switch penalty (goal-type change)" },
+                    { "CM",    "Commitment penalty (ticks on current goal)" },
+                    { "HT",    "History/oscillation penalty" },
+                    { "WS",    "Wsim forward-sim damage cost" },
+                    { "IM",    "Imminent capture (cost floored)" },
+                    { NULL, NULL },
+                };
+                for (int i = 0; kLegend[i].abbr; i++) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextColored(ImVec4(1,1,0.5f,1), "%s", kLegend[i].abbr);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(kLegend[i].desc);
+                }
+                ImGui::EndTable();
+            }
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.6f,0.6f,0.6f,1),
+                "Format:  base PHASE@w +penalties =total");
+        }
+        ImGui::End();
+    }
 
     freeSections(sections, nSections);
     cJSON_Delete(root);

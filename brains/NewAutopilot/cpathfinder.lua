@@ -78,6 +78,23 @@ local DEFAULT_TERRAIN_SPEED = {
   [C.T_PILLBOX]   = 16,
 }
 
+-- Default boat-mode terrain costs (matching constants.lua TERRAIN_COST_BOAT)
+local DEFAULT_TERRAIN_COST_BOAT = {
+  [C.T_BUILDING]  = 9999,
+  [C.T_RIVER]     = 2,
+  [C.T_SWAMP]     = 8,
+  [C.T_CRATER]    = 8,
+  [C.T_ROAD]      = 1,
+  [C.T_FOREST]    = 3,
+  [C.T_RUBBLE]    = 8,
+  [C.T_GRASS]     = 2,
+  [C.T_HALFBUILD] = 9999,
+  [C.T_BOAT]      = 2,
+  [C.T_DEEPSEA]   = 2,
+  [C.T_REFBASE]   = 1,
+  [C.T_PILLBOX]   = 1,
+}
+
 -- Default config scalars
 local DEFAULT_CONFIG = {
   turn_cost         = 2,
@@ -99,9 +116,10 @@ local DEFAULT_CONFIG = {
 
 --- Configure the C pathfinder with defaults, optionally overridden.
 --- @param opts table|nil Optional overrides:
----   opts.terrain_cost  = { [type] = cost, ... }  -- sparse overrides
----   opts.terrain_speed = { [type] = speed, ... } -- sparse overrides
----   opts.<config_key>  = value                   -- any config scalar
+---   opts.terrain_cost       = { [type] = cost, ... }  -- sparse overrides
+---   opts.terrain_cost_boat  = { [type] = cost, ... }  -- sparse overrides
+---   opts.terrain_speed      = { [type] = speed, ... } -- sparse overrides
+---   opts.<config_key>       = value                   -- any config scalar
 function M.configure(opts)
   opts = opts or {}
 
@@ -114,6 +132,17 @@ function M.configure(opts)
   for type, cost in pairs(tc) do
     if DEFAULT_TERRAIN_COST[type] == nil then
       cpf_set_terrain_cost(type, cost)
+    end
+  end
+
+  -- Boat costs
+  local btc = opts.terrain_cost_boat or {}
+  for type, cost in pairs(DEFAULT_TERRAIN_COST_BOAT) do
+    cpf_set_boat_cost(type, btc[type] or cost)
+  end
+  for type, cost in pairs(btc) do
+    if DEFAULT_TERRAIN_COST_BOAT[type] == nil then
+      cpf_set_boat_cost(type, cost)
     end
   end
 
@@ -167,6 +196,10 @@ function M.load_danger(tbl)
   cpf_load_danger(tbl)
 end
 
+function M.load_pill_danger_from_threat()
+  cpf_load_pill_danger_from_threat()
+end
+
 function M.danger_at(x, y)
   return cpf_danger_at(x, y)
 end
@@ -191,6 +224,25 @@ function M.clear_overlay()
   cpf_clear_overlay()
 end
 
+--- Set a per-tile danger offset applied on-the-fly during A*.
+--- Use negative values to subtract a pill's danger contribution,
+--- modelling it as dead without touching the actual danger grid.
+--- Must call clear_danger_offset() after the search.
+function M.set_danger_offset(x, y, value)
+  cpf_set_danger_offset(x, y, value)
+end
+
+function M.clear_danger_offset()
+  cpf_clear_danger_offset()
+end
+
+--- Bulk-load danger offsets from a mkey-keyed table (my*256+mx -> value).
+--- Optional scale multiplier (default 1.0); pass -1 to subtract a pill
+--- contrib table. Clears first.
+function M.load_danger_offset(tbl, scale)
+  cpf_load_danger_offset(tbl, scale or 1)
+end
+
 --- Run incremental A* toward (dx, dy).
 --- @return status integer  0=running, 1=done, -1=failed
 --- @return nx integer      next step x (-1 if no step yet)
@@ -207,15 +259,21 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
     local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy)
     if nx then
-      print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
+      if BRAIN_DEBUG_MODE then
+        print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
+      end
       return 1, nx, ny  -- status=done, next step
     end
-    print2(string.format("nav: dij MISS (%d,%d)->(%d,%d) — falling back to A*", sx, sy, dx, dy))
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("nav: dij MISS (%d,%d)->(%d,%d) — falling back to A*", sx, sy, dx, dy))
+    end
   end
   -- Fallback to A* if Dijkstra hasn't reached the destination yet
   local status, nx, ny = cpf_path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget)
-  print2(string.format("nav: A* (%d,%d)->(%d,%d) status=%d next=(%s,%s)",
-    sx, sy, dx, dy, status, tostring(nx), tostring(ny)))
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("nav: A* (%d,%d)->(%d,%d) status=%d next=(%s,%s)",
+      sx, sy, dx, dy, status, tostring(nx), tostring(ny)))
+  end
   return status, nx, ny
 end
 
@@ -255,10 +313,15 @@ end
 ---   danger_scale: per-slate danger weighting (1.0 = standard)
 ---   kind: matcher tag — lookups search slates with the same kind
 function M.dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
-                          max_cost, exact, danger_scale, kind)
+                          max_cost, exact, danger_scale, kind, allow_boat)
   if exact == nil then exact = true end
+  if allow_boat == nil then allow_boat = 1 end
   cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
-                     max_cost or 0, exact, danger_scale or 1.0, kind or 0)
+                     max_cost or 0, exact, danger_scale or 1.0, kind or 0, allow_boat)
+end
+
+function M.dijkstra_copy_slate(src, dst)
+  cpf_dijkstra_copy_slate(src, dst)
 end
 
 --- Resume the slate's Dijkstra. tick lets C record completed_tick when
@@ -318,7 +381,28 @@ function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armou
   return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
 end
 
+--- Same as smart_cost but NO A* fallback. Returns math.huge when no
+--- Dijkstra slate has reached the destination yet. Used by the goal
+--- evaluator during the cold-start window: an A* fallback per
+--- candidate per tick costs ~7-10 ms and stacks across the warmup
+--- interval; better to defer the candidate and let the next
+--- build_eval_queue cycle pick it up after Dijkstra completes.
+---
+--- Truly unreachable tiles (small islands without a boat etc.) keep
+--- returning math.huge forever, which is fine — the pool selector
+--- treats inf-cost candidates as not selectable.
+function M.smart_cost_dij_only(kind, dx, dy, in_boat)
+  if not C.DIJKSTRA_USE_FOR_GOALS then return math.huge end
+  return cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0) or math.huge
+end
+
 -- Convenience constants for the kind parameter.
+-- KIND_NORMAL: standard danger-weighted path cost.
+-- KIND_PILL:   path cost with a specific pill's local danger contribution
+--              subtracted — used when the bot will neutralise that pill
+--              en-route, so its fire field shouldn't inflate the cost.
+--              Implemented via smart_cost_minus_pill_danger(); the caller
+--              supplies the pill's per-tile contrib map from threat.pill_contrib.
 M.KIND_NORMAL = 0
 M.KIND_PILL   = 1
 
@@ -505,6 +589,82 @@ end
 --- @return table  Array of {x=, y=} steps, or empty if dest wasn't reached.
 function M.trace_last_search(dx, dy)
   return cpf_trace_last_search(dx, dy)
+end
+
+--- smart_cost with a specific pill's local danger contribution removed.
+--- Use for attack_pill travel estimates: the bot will neutralise the target
+--- pill on the way, so its stamped danger field shouldn't inflate the path.
+---
+---   pill_contrib: threat.pill_contrib[pill_my*256+pill_mx] — per-tile
+---     danger values stamped by that pill (nil = no contribution, returns raw).
+---
+--- Traces the Dijkstra path (falling back to the last A* trace) and sums
+--- pill_contrib[tile] * (16/terrain_speed) for each path tile, then
+--- subtracts from raw cost.  Same formula as the Dijkstra step:
+---   danger * danger_scale * (16/speed)  with danger_scale = 1.
+--- Same as smart_cost_minus_pill_danger but NO A* fallback. Returns
+--- math.huge when Dijkstra hasn't reached the destination — caller
+--- (typically update_pool_cache) treats this as "defer; recompute
+--- next replan cycle."
+function M.smart_cost_minus_pill_danger_dij_only(kind, dx, dy,
+                                                  pill_contrib, pill_mx, pill_my,
+                                                  in_boat)
+  local raw = M.smart_cost_dij_only(kind, dx, dy, in_boat)
+  if raw >= 1e29 then return raw end
+
+  local path = M.dijkstra_trace_path_by_kind(kind, dx, dy)
+  if not path or #path == 0 then return raw end
+
+  local reduction = 0
+  local ts        = C.TERRAIN_SPEED
+  for i = 1, #path, 2 do
+    local nx, ny = path[i], path[i+1]
+    if pill_mx and nx == pill_mx and ny == pill_my then
+      reduction = reduction + 32767
+    end
+    if pill_contrib then
+      local p = pill_contrib[ny * 256 + nx]
+      if p then
+        local tt  = get_terrain(nx, ny) & 0x0F
+        local spd = (ts and ts[tt]) or 16
+        if spd <= 0 then spd = 16 end
+        reduction = reduction + p * (16 / spd)
+      end
+    end
+  end
+  return math.max(0, raw - reduction)
+end
+
+function M.smart_cost_minus_pill_danger(kind, sx, sy, dx, dy,
+                                         pill_contrib, pill_mx, pill_my,
+                                         in_boat, shells, trees, mines, armour)
+  local raw = M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
+  if raw >= 1e29 then return raw end
+
+  local path = M.dijkstra_trace_path_by_kind(kind, dx, dy)
+  if not path or #path == 0 then
+    path = M.trace_last_search(dx, dy)
+  end
+  if not path or #path == 0 then return raw end
+
+  local reduction = 0
+  local ts        = C.TERRAIN_SPEED
+  for i = 1, #path, 2 do
+    local nx, ny = path[i], path[i+1]
+    if pill_mx and nx == pill_mx and ny == pill_my then
+      reduction = reduction + 32767
+    end
+    if pill_contrib then
+      local p = pill_contrib[ny * 256 + nx]
+      if p then
+        local tt  = get_terrain(nx, ny) & 0x0F
+        local spd = (ts and ts[tt]) or 16
+        if spd <= 0 then spd = 16 end
+        reduction = reduction + p * (16 / spd)
+      end
+    end
+  end
+  return math.max(0, raw - reduction)
 end
 
 return M

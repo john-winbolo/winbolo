@@ -127,7 +127,6 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/labels.c
     ${SRC_ROOT}/bolo/lgm.c
     ${SRC_ROOT}/bolo/log.c
-    ${SRC_ROOT}/bolo/mathWinbolo.c
     ${SRC_ROOT}/bolo/messages.c
     ${SRC_ROOT}/bolo/mines.c
     ${SRC_ROOT}/bolo/minesexp.c
@@ -155,17 +154,23 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/udppackets.c
     ${SRC_ROOT}/bolo/util.c
     ${SRC_ROOT}/bolo/braincore.c
+    ${SRC_ROOT}/bolo/brain_data.c
+    ${SRC_ROOT}/bolo/brain_overlay.c
     ${SRC_ROOT}/bolo/brain_pathfinder.c
+    ${SRC_ROOT}/bolo/brain_pathfinder_serial.c
     ${SRC_ROOT}/bolo/brain_worldsim.c
     ${SRC_ROOT}/bolo/transport_local.c
     ${SRC_ROOT}/bolo/transport_udp_common.c
     ${SRC_ROOT}/bolo/transport_udp_client.c
     ${SRC_ROOT}/bolo/transport_udp_server.c
     ${SRC_ROOT}/bolo/client_state.c
+    ${SRC_ROOT}/bolo/client_snapshot.c
     ${SRC_ROOT}/bolo/interpolation.c
     ${SRC_ROOT}/bolo/position_history.c
     ${SRC_ROOT}/bolo/client_sim.c
     ${SRC_ROOT}/bolo/bot_manager.c
+    ${SRC_ROOT}/bolo/bot_worker_pool.c
+    ${SRC_ROOT}/bolo/tutorial.c
     ${SRC_ROOT}/bolo/discovery.c
 )
 
@@ -182,19 +187,27 @@ set(SERVER_SOURCES
 # LZW compression
 file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
 
+# Map editor sources reachable from shared dialogs (map chooser pulls in
+# the procedural generator + its imgui controls + maze generator).
+set(MAPEDITOR_SOURCES
+    ${SRC_ROOT}/mapeditor/mapeditor_generate.c
+    ${SRC_ROOT}/mapeditor/mapeditor_maze.c
+    ${SRC_ROOT}/mapeditor/mapgen_imgui.cpp
+)
+
 # WinBoloNet — replaced by a no-op stub (libcurl not available in Emscripten)
 set(WBN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/winbolonet_wasm.c)
 
-# GUI sources (SDL3) — excluding files we replace (gamefront.c, netclient.c, clientmutex.c, dns_lookups.c)
+# GUI sources (SDL3) — excluding files we replace (winbolo.c, gamefront.c, sound.c, netclient.c, clientmutex.c, dns_lookups.c)
 set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
     ${SRC_ROOT}/gui/skins.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
     ${SRC_ROOT}/gui/sdl3/luabrainshandler.c
+    ${SRC_ROOT}/gui/sdl3/minimap_render.c
     ${SRC_ROOT}/gui/sdl3/cursor.c
     ${SRC_ROOT}/gui/sdl3/flags.c
-    ${SRC_ROOT}/gui/sdl3/winbolo.c
     ${SRC_ROOT}/gui/sdl3/dialog_backend.c
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_welcome.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamesetup.cpp
@@ -222,7 +235,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/currentgames.c
     ${SRC_ROOT}/gui/sdl3/lang.c
-    ${SRC_ROOT}/gui/sdl3/sound.c
 )
 
 # WASM replacement sources
@@ -232,9 +244,24 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/clientmutex_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/threads_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
+    ${SRC_ROOT}/common/wb_log.c
 )
+
+# Per-bot C bindings under brains/<bot>/c/*.c (e.g. NewAutopilot's
+# pillcontrib overlay). luabrainshandler.c #includes these headers and
+# calls into their per-tick registrations, so they must be compiled in
+# and their directories added to the include path.
+file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${REPO_ROOT}/brains/*/c/*.c")
+set(BOT_C_INCLUDE_DIRS "")
+foreach(_bot_c_src ${BOT_C_SOURCES})
+    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
+    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
+endforeach()
+list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
 
 ###
 # Build the WASM executable
@@ -245,7 +272,9 @@ add_executable(winbolo
     ${LZW_SOURCES}
     ${WBN_SOURCES}
     ${GUI_SOURCES}
+    ${MAPEDITOR_SOURCES}
     ${WASM_SOURCES}
+    ${BOT_C_SOURCES}
 )
 
 target_include_directories(winbolo PRIVATE
@@ -253,6 +282,8 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/bolo
     ${SRC_ROOT}/server
+    ${SRC_ROOT}/mapeditor
+    ${BOT_C_INCLUDE_DIRS}
 )
 
 target_compile_definitions(winbolo PRIVATE
@@ -299,6 +330,7 @@ target_link_options(winbolo PRIVATE
     "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
     -sALLOW_MEMORY_GROWTH=1
     "-sINITIAL_MEMORY=67108864"
+    "-sSTACK_SIZE=1048576"
     "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
     -sFORCE_FILESYSTEM=1
     -sASYNCIFY=1

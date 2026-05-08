@@ -172,7 +172,7 @@ unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size) {
     for (int s = 0; s < DIJKSTRA_NUM_SLATES; s++) {
         DijkstraSlate *sl = &pf->dij_slates[s];
         SlateHeader sh;
-        sh.active = sl->active;
+        sh.active = (sl->g_cost != NULL) ? 1 : 0;
         sh.done = sl->done;
         sh.exact = sl->exact;
         sh.kind = sl->kind;
@@ -191,7 +191,7 @@ unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size) {
         bufAppend(&b, &sh, sizeof(sh));
 
         /* Only serialize arrays if the slate has been allocated and used */
-        int hasData = sl->active && sl->g_cost != NULL;
+        int hasData = sl->g_cost != NULL;
         bufAppendU32(&b, hasData ? 1 : 0);
 
         if (hasData) {
@@ -287,7 +287,8 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
         SlateHeader sh;
         if (!curRead(&c, &sh, sizeof(sh))) return 0;
 
-        sl->active = sh.active;
+        /* sh.active is kept in wire format for compatibility but ignored —
+         * has_data is determined by whether g_cost gets allocated below. */
         sl->done = sh.done;
         sl->exact = sh.exact;
         sl->kind = sh.kind;

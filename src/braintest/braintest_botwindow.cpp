@@ -45,6 +45,49 @@ static BotWindowState g_slots[PANEL_REG_MAX];
 
 static const Uint64 kPollIntervalMs = PANEL_POLL_INTERVAL_MS;
 
+static int findMatchingPanelForBot(const PanelRegistryEntry *src,
+                                   int followBot) {
+    if (!src) return -1;
+    int total = panelRegistryCount();
+    for (int i = 0; i < total; i++) {
+        const PanelRegistryEntry *e = panelRegistryGet(i);
+        if (!e) continue;
+        if (e->bot_owner != followBot) continue;
+        if (strcmp(e->name, src->name) != 0) continue;
+        if (strcmp(e->type, src->type) != 0) continue;
+        if (strcmp(e->shortcut, src->shortcut) != 0) continue;
+        return i;
+    }
+    return -1;
+}
+
+static void moveWindowSlot(int fromIdx, int toIdx) {
+    if (fromIdx == toIdx) return;
+    BotWindowState *from = &g_slots[fromIdx];
+    BotWindowState *to   = &g_slots[toIdx];
+    if (!from->initialized || !from->window) return;
+
+    if (to->initialized) {
+        if (to->ctx) {
+            ImGuiContext *prev = ImGui::GetCurrentContext();
+            ImGui::SetCurrentContext(to->ctx);
+            ImGui_ImplSDLRenderer3_Shutdown();
+            ImGui_ImplSDL3_Shutdown();
+            ImGui::DestroyContext(to->ctx);
+            if (prev && prev != to->ctx) ImGui::SetCurrentContext(prev);
+        }
+        if (to->renderer) SDL_DestroyRenderer(to->renderer);
+        if (to->window)   SDL_DestroyWindow(to->window);
+        free(to->cachedText);
+    }
+
+    *to = *from;
+    memset(from, 0, sizeof(*from));
+    free(to->cachedText);
+    to->cachedText = NULL;
+    to->lastPollMs = 0;
+}
+
 static bool ensureCreated(int idx, const PanelRegistryEntry *e) {
     BotWindowState *s = &g_slots[idx];
     if (s->initialized) return s->window != NULL;
@@ -135,8 +178,9 @@ bool botWindowWantsTextInput(void) {
 void botWindowRenderAll(int followBot,
                         char *(*onPollPanel)(int registry_idx)) {
     /* First pass: reconcile visibility against followBot.
-     *  - Owner mismatch + currently visible → hide but keep userWanted
-     *    so we restore on switch-back.
+     *  - Owner mismatch + currently visible → hide. If the followed bot
+     *    registered the same shortcut panel, transfer userWanted there so
+     *    Tab keeps the tool open for the newly-followed bot.
      *  - Owner match + userWanted + currently hidden → re-show.
      * This runs over every initialized slot so swap-state is consistent
      * even for windows the user hasn't pressed the shortcut for this
@@ -147,9 +191,30 @@ void botWindowRenderAll(int followBot,
         const PanelRegistryEntry *e = panelRegistryGet(i);
         if (!e) continue;
         if (e->bot_owner != followBot) {
+            if (s->userWanted) {
+                int nextIdx = findMatchingPanelForBot(e, followBot);
+                if (nextIdx >= 0 && nextIdx != i) {
+                    moveWindowSlot(i, nextIdx);
+                    BotWindowState *ns = &g_slots[nextIdx];
+                    const PanelRegistryEntry *next = panelRegistryGet(nextIdx);
+                    if (ns->window && next) {
+                        char title[160];
+                        SDL_snprintf(title, sizeof(title),
+                                     "BrainTest - %s (bot %d)  [%s]",
+                                     next->name, next->bot_owner,
+                                     next->shortcut);
+                        SDL_SetWindowTitle(ns->window, title);
+                        ns->visible = true;
+                        ns->userWanted = true;
+                        SDL_ShowWindow(ns->window);
+                        SDL_RaiseWindow(ns->window);
+                    }
+                    continue;
+                }
+            }
             if (s->visible) {
                 SDL_HideWindow(s->window);
-                s->visible = false; /* userWanted preserved */
+                s->visible = false;
             }
         } else if (s->userWanted && !s->visible) {
             SDL_ShowWindow(s->window);

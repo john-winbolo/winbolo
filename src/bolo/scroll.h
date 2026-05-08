@@ -35,10 +35,6 @@
 #include "game_sim.h"
 #include "scroll_item_list.h"
 
-/* Define to use priority-based scroll item list system.
- * Undefine to use the original weighted-centroid scrollEnemyAwareness(). */
-#define USE_SCROLL_ITEM_LIST 1
-
 /* Defines */
 
 /* Center Offset from left edge of the screen is 4 map units */
@@ -57,12 +53,7 @@ typedef struct ScrollState {
   bool autoScrollOverRide;
   bool mods;
   bool stickyX, stickyXDir, stickyY, stickyYDir;
-#ifdef USE_SCROLL_ITEM_LIST
   ScrollItemList itemList;
-  bool driveScroll;
-  int lastScrollDirX;  /* -1, 0, or 1: direction we scrolled last tick */
-  int lastScrollDirY;
-#endif
 } ScrollState;
 
 /* Prototypes */

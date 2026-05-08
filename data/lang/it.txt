@@ -1121,3 +1121,12 @@ STR_LV_MENU_OPEN_WBN=Apri da WinBolo.net...
 STR_LV_ZOOM=Zoom
 STR_LV_ZOOM_IN=Zoom avanti
 STR_LV_ZOOM_OUT=Zoom indietro
+
+# System Info panel — server-side bot/sim telemetry labels
+STR_DLGSYSINFO_SERVER=Server
+STR_DLGSYSINFO_BOTPOOL=Pool bot
+STR_DLGSYSINFO_TICK=Tick
+STR_DLGSYSINFO_BRAIN=Brain
+STR_DLGSYSINFO_SIMULATION=Simulazione
+STR_DLGSYSINFO_BOTPREP=Preparazione bot
+STR_DLGSYSINFO_BRAIN_OVERRUNS=Sforamenti Brain
