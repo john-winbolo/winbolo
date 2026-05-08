@@ -121,6 +121,11 @@ typedef struct NaThreatCtx {
     uint8_t friendly_set[MAP_TILES];      /*  64 KB — occlusion working set     */
     float   pill_grid_c[MAP_TILES];       /* 256 KB — pill-danger accumulator   */
     float   cov_grid_c[MAP_TILES];        /* 256 KB — coverage accumulator      */
+
+    /* Per-state pointer-to-pointer at the host's authoritative byte map.
+     * Set in naThreatRegister; each brain owns its own worldPtr (the
+     * host swaps in this brain's fog-of-war discovered map every tick). */
+    const unsigned char **world_ptr_ptr;
 } NaThreatCtx;
 
 /* ── Process-wide read-only state ─────────────────────────────────── */
@@ -134,9 +139,6 @@ static int g_terrain_speed[16];
  * neighbor hazard multiplier (river / deepsea / rubble / swamp). Same
  * race-but-equivalent rationale as g_terrain_speed. */
 static uint8_t g_hazard_terrain[16];
-
-/* Cached host worldPtr-pointer. Every brain caches the same host pointer-to-pointer; concurrent writes write the identical value, so racing double-init is benign. */
-static const unsigned char **g_world_ptr_ptr = NULL;
 
 /* ── Registry-backed ctx lookup ───────────────────────────────────── */
 
@@ -166,32 +168,32 @@ static inline int in_map(int x, int y) {
     return (unsigned)x < MAP_W && (unsigned)y < MAP_W;
 }
 
-static inline int raw_tt(int x, int y) {
-    if (!g_world_ptr_ptr || !*g_world_ptr_ptr) return 0;
-    return (*g_world_ptr_ptr)[y * MAP_W + x] & TERRAIN_MASK;
+static inline int raw_tt(const NaThreatCtx *ctx, int x, int y) {
+    if (!ctx->world_ptr_ptr || !*ctx->world_ptr_ptr) return 0;
+    return (*ctx->world_ptr_ptr)[y * MAP_W + x] & TERRAIN_MASK;
 }
 
 static inline int tile_in_trees_c(const NaThreatCtx *ctx, int mx, int my) {
-    if (raw_tt(mx, my) != ctx->t_forest) return 0;
-    if (mx <= 0       || raw_tt(mx - 1, my) != ctx->t_forest) return 0;
-    if (mx >= MAP_W-1 || raw_tt(mx + 1, my) != ctx->t_forest) return 0;
-    if (my <= 0       || raw_tt(mx, my - 1) != ctx->t_forest) return 0;
-    if (my >= MAP_W-1 || raw_tt(mx, my + 1) != ctx->t_forest) return 0;
+    if (raw_tt(ctx, mx, my) != ctx->t_forest) return 0;
+    if (mx <= 0       || raw_tt(ctx, mx - 1, my) != ctx->t_forest) return 0;
+    if (mx >= MAP_W-1 || raw_tt(ctx, mx + 1, my) != ctx->t_forest) return 0;
+    if (my <= 0       || raw_tt(ctx, mx, my - 1) != ctx->t_forest) return 0;
+    if (my >= MAP_W-1 || raw_tt(ctx, mx, my + 1) != ctx->t_forest) return 0;
     return 1;
 }
 
 static void compute_terrain_factor_at_c(NaThreatCtx *ctx, int mx, int my) {
-    int tt = raw_tt(mx, my);
+    int tt = raw_tt(ctx, mx, my);
     int spd = g_terrain_speed[tt & 0x0F];
     if (spd <= 0) spd = 3; /* fallback matches Lua */
     float m = 16.0f / (float)spd;
     if (tt == ctx->t_forest) m = ctx->forest_terrain_mult;
     /* Hazard-neighbor check: any cardinal neighbor in the hazard set */
     int hazard = 0;
-    if (mx > 0       && g_hazard_terrain[raw_tt(mx - 1, my) & 0x0F]) hazard = 1;
-    if (!hazard && mx < MAP_W-1 && g_hazard_terrain[raw_tt(mx + 1, my) & 0x0F]) hazard = 1;
-    if (!hazard && my > 0       && g_hazard_terrain[raw_tt(mx, my - 1) & 0x0F]) hazard = 1;
-    if (!hazard && my < MAP_W-1 && g_hazard_terrain[raw_tt(mx, my + 1) & 0x0F]) hazard = 1;
+    if (mx > 0       && g_hazard_terrain[raw_tt(ctx, mx - 1, my) & 0x0F]) hazard = 1;
+    if (!hazard && mx < MAP_W-1 && g_hazard_terrain[raw_tt(ctx, mx + 1, my) & 0x0F]) hazard = 1;
+    if (!hazard && my > 0       && g_hazard_terrain[raw_tt(ctx, mx, my - 1) & 0x0F]) hazard = 1;
+    if (!hazard && my < MAP_W-1 && g_hazard_terrain[raw_tt(ctx, mx, my + 1) & 0x0F]) hazard = 1;
     if (hazard) m *= ctx->hazard_neighbor_mult;
 
     int k = my * MAP_W + mx;
@@ -415,8 +417,7 @@ static int l_naThreatConfigure(lua_State *L) {
 /* na_threat.terrain_rebuild() — full 65k-tile sweep. */
 static int l_naThreatTerrainRebuild(lua_State *L) {
     NaThreatCtx *ctx = requireConfigured(L);
-    if (!g_world_ptr_ptr) g_world_ptr_ptr = brainCoreGetWorldPtrPtr(L);
-    if (!g_world_ptr_ptr || !*g_world_ptr_ptr) {
+    if (!ctx->world_ptr_ptr || !*ctx->world_ptr_ptr) {
         return luaL_error(L, "na_threat.terrain_rebuild: world pointer not available");
     }
     for (int my = 0; my < MAP_W; my++) {
@@ -434,8 +435,7 @@ static int l_naThreatTerrainUpdateAround(lua_State *L) {
     NaThreatCtx *ctx = requireConfigured(L);
     int mx = (int)luaL_checkinteger(L, 1);
     int my = (int)luaL_checkinteger(L, 2);
-    if (!g_world_ptr_ptr) g_world_ptr_ptr = brainCoreGetWorldPtrPtr(L);
-    if (!g_world_ptr_ptr || !*g_world_ptr_ptr) return 0;
+    if (!ctx->world_ptr_ptr || !*ctx->world_ptr_ptr) return 0;
     if (in_map(mx, my))         compute_terrain_factor_at_c(ctx, mx, my);
     if (in_map(mx - 1, my))     compute_terrain_factor_at_c(ctx, mx - 1, my);
     if (in_map(mx + 1, my))     compute_terrain_factor_at_c(ctx, mx + 1, my);
@@ -556,7 +556,6 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
     int hp_n = (int)luaL_checkinteger(L, 7);
 
     if (!ctx->disk_built) build_disk(ctx);
-    if (!g_world_ptr_ptr) g_world_ptr_ptr = brainCoreGetWorldPtrPtr(L);
 
     int R    = ctx->pill_range_map;
     int size = 2 * R + 1;
@@ -605,7 +604,7 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
                 int pny = py + pdy;
                 int add_w = 0, add_t = 0, add_f = 0;
                 if (in_map(pnx, pny)) {
-                    int tt = raw_tt(pnx, pny);
+                    int tt = raw_tt(ctx, pnx, pny);
                     if (tt == ctx->t_building || tt == ctx->t_halfbuild) { add_w = 1; }
                     else if (tt == ctx->t_forest)                         { add_t = 1; }
                     if (!(pdx == 0 && pdy == 0)) {
@@ -636,7 +635,7 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
             int eff_walls = w_total;
             /* Front-most wall: exposed directly to pill, no self-occlusion. */
             if (w_total == 0) {
-                int tt = raw_tt(nx, ny);
+                int tt = raw_tt(ctx, nx, ny);
                 if (tt == ctx->t_building || tt == ctx->t_halfbuild) eff_walls = 0;
             }
             double reduction = eff_walls * 0.20 + t_total * 0.03 + f_total * 0.40;
@@ -750,7 +749,10 @@ float *naThreatGetCovGrid(lua_State *L) {
     return ctx->cov_grid_c;
 }
 
-int naThreatRawTT(int mx, int my) { return raw_tt(mx, my); }
+int naThreatRawTT(lua_State *L, int mx, int my) {
+    NaThreatCtx *ctx = getCtx(L);
+    return raw_tt(ctx, mx, my);
+}
 
 /* ── Module registration ─────────────────────────────────────────── */
 
@@ -778,6 +780,14 @@ void naThreatRegister(lua_State *L) {
      * the ctx might grow later. */
     NaThreatCtx *ctx = (NaThreatCtx *)lua_newuserdata(L, sizeof(NaThreatCtx));
     memset(ctx, 0, sizeof(*ctx));
+
+    /* Cache this brain's per-state worldPtr-pointer. brainCoreRegisterGetTerrain
+     * must have been called on L before naThreatRegister; if not, the caller
+     * has wired the brain up incorrectly. */
+    ctx->world_ptr_ptr = brainCoreGetWorldPtrPtr(L);
+    if (!ctx->world_ptr_ptr) {
+        luaL_error(L, "na_threat: brainCoreRegisterGetTerrain not called on this lua_State");
+    }
 
     if (luaL_newmetatable(L, "na_threat_ctx_mt")) {
         lua_pushcfunction(L, naThreatCtxGc);

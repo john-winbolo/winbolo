@@ -748,7 +748,7 @@ static void score_one_aim(lua_State *L,
         int8_t dy = out_path->tiles[i].y;
         if (dx == 0 && dy == 0) break;  /* reached pill tile */
         int tx = pmx + dx, ty = pmy + dy;
-        int tt = naThreatRawTT(tx, ty);
+        int tt = naThreatRawTT(L, tx, ty);
         if (tt == ctx->t_building || tt == ctx->t_halfbuild) { res->blocked = 1; return; }
         /* Non-target pill in outgoing path blocks the aim */
         int ci = lgm_cache_idx(dx, dy);
@@ -804,7 +804,7 @@ static void score_one_aim(lua_State *L,
             }
             continue;
         }
-        int tt = naThreatRawTT(tx, ty);
+        int tt = naThreatRawTT(L, tx, ty);
         if (tt == ctx->t_building || tt == ctx->t_halfbuild) {
             if (res->actual.n < SCAN_MAX_BLOCKERS) {
                 res->actual.dx[res->actual.n] = dx;
