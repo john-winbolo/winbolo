@@ -244,9 +244,8 @@ static int l_sync_pill_at(lua_State *L) {
  * apply_occlusion_all, so this is a plain memcpy — no Lua table iteration.
  */
 static int l_sync_grids(lua_State *L) {
-    (void)L;
-    float *pg = naThreatGetPillGrid();
-    float *cg = naThreatGetCovGrid();
+    float *pg = naThreatGetPillGrid(L);
+    float *cg = naThreatGetCovGrid(L);
     if (pg) memcpy(s_pill_grid, pg, MAP_TILES * sizeof(float));
     else    memset(s_pill_grid, 0, sizeof(s_pill_grid));
     if (cg) memcpy(s_cov_grid,  cg, MAP_TILES * sizeof(float));
