@@ -165,7 +165,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local _tw1 = clock_us()
   local r = wsim.run(C.WSIM_MAX_TICKS)
   local _tw2 = clock_us()
-  if (_tw2 - _tw0) > 200 then
+  if BRAIN_PERF_LOG and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
       goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
@@ -399,9 +399,6 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
         if cur_mx and b.mx == cur_mx and b.my == cur_my then
           score = score - C.REFUEL_SWITCH_THRESHOLD
           hysteresis = true
-          print2("refuel hysteresis: base#", id, "@(", b.mx, ",", b.my,
-                 ") score ", score + C.REFUEL_SWITCH_THRESHOLD,
-                 " → ", score, " (-", C.REFUEL_SWITCH_THRESHOLD, ")")
         end
         -- Oscillation penalty: if this base has appeared recently in the
         -- goal history, penalize it exponentially to break flee cycles.
@@ -750,7 +747,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   -- Path cost stays fixed — a nearly-dead pill across the map shouldn't
   -- have its travel cost slashed.
   local combat_cost = pill.health * C.PILL_HEALTH_WEIGHT
-  local antic_desc = ""
+  local antic_desc = BRAIN_POOL_VIZ and "" or nil
 
   -- Pill anger cooldown
   local pill_anger = pill.anger or 0
@@ -759,7 +756,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     if ticks_to_calm < C.ANGER_WAIT_MAX then
       local anger_cost = ticks_to_calm * C.ANGER_COST_PER_TICK
       combat_cost = combat_cost + anger_cost
-      antic_desc = antic_desc .. string.format(" +anger=%.0f", anger_cost)
+      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" +anger=%.0f", anger_cost) end
     end
   end
 
@@ -768,7 +765,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   local worst_intercept = intercept_penalty_ttk(pill.mx, pill.my, pill.health, enemy_tanks)
   if worst_intercept > 0 then
     combat_cost = combat_cost + worst_intercept
-    antic_desc = antic_desc .. string.format(" +intercept=%.0f", worst_intercept)
+    if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" +intercept=%.0f", worst_intercept) end
   end
 
   -- Crossfire penalty
@@ -787,13 +784,13 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   end
   if crossfire_pen > 0 then
     combat_cost = combat_cost + crossfire_pen
-    antic_desc = antic_desc .. string.format(" +xfire=%.0f", crossfire_pen)
+    if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" +xfire=%.0f", crossfire_pen) end
   end
 
   -- Enemy LGM dead: pill can't be repaired, attack is more valuable
   if pill.owner == "hostile" and state.perc and state.perc.enemy_lgm_dead then
     combat_cost = combat_cost * C.ENEMY_LGM_DEAD_ATTACK_DISCOUNT
-    antic_desc = antic_desc .. " *eLGMdead"
+    if BRAIN_POOL_VIZ then antic_desc = antic_desc .. " *eLGMdead" end
   end
 
   -- Wounded pill: we already damaged it, finish the job. 0.3x is the
@@ -803,14 +800,14 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   -- together.
   if state.wounded_pill and state.wounded_pill.mx == pill.mx and state.wounded_pill.my == pill.my then
     combat_cost = combat_cost * 0.3
-    antic_desc = antic_desc .. string.format(" *wounded(hp=%d)", state.wounded_pill.hp)
+    if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *wounded(hp=%d)", state.wounded_pill.hp) end
     local wp = state.wounded_pill
     local age         = (state.tick or 0) - (wp.tick or 0)
     local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
     if time_factor > 0 then
       local commit = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
       combat_cost = combat_cost * commit
-      antic_desc = antic_desc .. string.format(" *commit(x%.2f)", commit)
+      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *commit(x%.2f)", commit) end
     end
   end
 
@@ -837,8 +834,10 @@ local function attack_pill_adjustments(pill, pcost, state, world)
       local mult        = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
       if mult > 1.001 then
         combat_cost = combat_cost * mult
-        antic_desc  = antic_desc .. string.format(
-          " *finish_other(x%.2f hp=%d age=%d)", mult, wp_hp, age)
+        if BRAIN_POOL_VIZ then
+          antic_desc  = antic_desc .. string.format(
+            " *finish_other(x%.2f hp=%d age=%d)", mult, wp_hp, age)
+        end
       end
     end
   end
@@ -846,7 +845,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   -- Base Killer Mode: deprioritize pill attacks in favor of bases
   if state.perc and state.perc.base_killer_mode then
     combat_cost = combat_cost * C.BASE_KILLER_PILL_PENALTY
-    antic_desc = antic_desc .. " *bkiller"
+    if BRAIN_POOL_VIZ then antic_desc = antic_desc .. " *bkiller" end
   end
 
   -- Final cost = fixed path cost + scaled combat cost
@@ -877,7 +876,7 @@ local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
     goal = { kind = "attack_pill", mx = pill.mx, my = pill.my,
              wx = U.m2w(pill.mx), wy = U.m2w(pill.my) },
     desc = string.format("attack_pill#%d@(%d,%d) cost=%.0f (path=%.0f +hp=%d×%d%s)",
-           pid, pill.mx, pill.my, adj_cost, pcost, pill.health, C.PILL_HEALTH_WEIGHT, antic_desc),
+           pid, pill.mx, pill.my, adj_cost, pcost, pill.health, C.PILL_HEALTH_WEIGHT, antic_desc or ""),
     cands = pcands,
   }
 end
@@ -1033,14 +1032,11 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   elseif info.inboat then gate_reason = "in_boat"
   end
   local low_shells_global = info.shells < C.TANK_COMBAT_MIN_SHELLS
-  if gate_reason then print2("eval_attack_tank: " .. gate_reason) end
+  if gate_reason and BRAIN_DEBUG_MODE then print2("eval_attack_tank: " .. gate_reason) end
 
   local perc = state.perc
   local enemy_tanks = (perc and perc.enemy_tanks) or {}
   if #enemy_tanks == 0 then
-    print2(string.format("eval_attack_tank: no enemy tanks (perc=%s, et=%s)",
-      perc and "yes" or "nil",
-      (perc and perc.enemy_tanks) and tostring(#perc.enemy_tanks) or "nil"))
     -- no return here: the pool panel still shows not_visible player rows.
     if false then
     return nil  -- no tanks visible at all — nothing to show
@@ -1244,11 +1240,8 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
 
   state.attack_tank_breakdown = breakdown
   if not best_tank then
-    print2(string.format("eval_attack_tank: no best_tank (%d candidates examined)", #breakdown))
     return nil
   end
-  print2(string.format("eval_attack_tank: WINNER @(%d,%d) cost=%.1f dist=%d",
-    best_tank.mx, best_tank.my, best_cost, best_tank.dist))
 
   -- Mark the winning entry for the pool window display.
   for _, b in ipairs(breakdown) do
@@ -1639,25 +1632,6 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
   -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
   local cands = {}
-  if BRAIN_DEBUG_MODE then
-    table.sort(all_cands, function(a, b) return a.score > b.score end)
-    for _, c in ipairs(all_cands) do
-      local is_win = (c.mx == best_mx and c.my == best_my)
-      local cand_cost = is_win and cost or math.max(0.01, cost + (best_score - c.score))
-      local fmt = string.format(
-        "score{%.0f}: prx{%.0f} def{%.0f} inf{%.0f} spc{%.0f} los{%.0f} thr{%.0f} dst{%.0f} spk{%.0f} ep{%.0f} wz{%.0f}%s",
-        c.score, c.sc1, c.sc2, c.sc3, c.sc4, c.sc5, c.sc6, c.sc7, c.sc8, c.sc9, c.sc10,
-        is_win and string.format(" path{%.0f}", path_cost) or "")
-      cands[#cands + 1] = {
-        id = c.my * 256 + c.mx,
-        mx = c.mx, my = c.my,
-        cost = cand_cost,
-        formula = fmt,
-        stale = 0,
-        reject_remaining = 0,
-      }
-    end
-  end
 
   return {
     cost = cost,
@@ -2260,6 +2234,7 @@ function M.build_eval_queue(state, world, info)
   -- to optimize.log directly so we don't need print2 enabled.
   if not state._base_in_pool then state._base_in_pool = {} end
   local function _diag_log_first_pool_add(pool_idx, pool_name, id, obj)
+    if not BRAIN_PERF_LOG then return end
     local key = pool_idx .. ":" .. id
     if state._base_in_pool[key] then return end
     state._base_in_pool[key] = state.tick or 0
@@ -2393,15 +2368,6 @@ function M.build_eval_queue(state, world, info)
   end
 
   -- Count candidates per pool for diagnostics
-  local pool_counts = {}
-  for _, q in ipairs(queue) do
-    pool_counts[q.pool] = (pool_counts[q.pool] or 0) + 1
-  end
-  print2(string.format("build_eval_queue: %d total  p1=%d p3=%d p4=%d p5=%d p6=%d p7=%d  shells=%d has_shells=%s",
-    #queue,
-    pool_counts[1] or 0, pool_counts[3] or 0, pool_counts[4] or 0,
-    pool_counts[5] or 0, pool_counts[6] or 0, pool_counts[7] or 0,
-    info.shells, tostring(has_shells)))
 
   state.eval_queue = queue
   state.eval_queue_pos = 1
@@ -2651,7 +2617,6 @@ function M.step_eval_queue(state, world, info)
   if not queue then return end
   local pos = state.eval_queue_pos or 1
   if pos > #queue then
-    print2(string.format("eval_queue EXHAUSTED at pos=%d (queue had %d)", pos, #queue))
     -- Queue exhausted — rebuild only when sitting on a base refueling
     -- and only if the freshest cache entry is stale enough to be worth it
     if state.goal and state.goal.kind == "refuel_at_base" and info.base then
@@ -2787,7 +2752,7 @@ function M.step_eval_queue(state, world, info)
           _t_smart = clock_us() - _ts
           -- Diag: log pool 3 (capture_base) cost lookups so we can see
           -- whether Dijkstra is returning finite values yet.
-          if pool_idx == 3 then
+          if BRAIN_PERF_LOG and pool_idx == 3 then
             local rc = (raw_cost == math.huge) and "INF" or string.format("%.1f", raw_cost)
             opt.append("optimize.log", string.format(
               "  [diag] update_pool_cache pool=3 id=%s obj=(%d,%d) cheapest_adj=(%s,%s) raw_cost=%s tick=%d",
@@ -2867,8 +2832,6 @@ function M.step_eval_queue(state, world, info)
       if (gk == "flee_to_base" or gk == "refuel_at_base")
          and obj.mx == state.goal.mx and obj.my == state.goal.my then
         hysteresis_cost = -C.REFUEL_SWITCH_THRESHOLD
-        print2("pool1 refuel hysteresis: base#", id, "@(", obj.mx, ",", obj.my,
-               ") -", C.REFUEL_SWITCH_THRESHOLD)
       end
       local score = raw_cost + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
 
@@ -3205,13 +3168,11 @@ function M.step_eval_queue(state, world, info)
             end
           end
         end
-        if _diff_us > 1000 or _spot_us > 1000 then
-          print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
-                               tostring(id), _diff_us / 1000, _spot_us / 1000))
-          opt.append("optimize.log", string.format(
+        if (_diff_us > 1000 or _spot_us > 1000) then
+          if BRAIN_PERF_LOG then opt.append("optimize.log", string.format(
             "  [diag] pool6 cand id=%s diff=%.2f spot=%.2f just_evaluated=%s force_detailed=%s",
             tostring(id), _diff_us / 1000, _spot_us / 1000,
-            tostring(just_evaluated), tostring(force_detailed)))
+            tostring(just_evaluated), tostring(force_detailed))) end
         end
         -- Anger
         pill_anger = obj.anger or 0
@@ -3391,18 +3352,14 @@ function M.step_eval_queue(state, world, info)
 
     -- Per-candidate timing summary so we can see what's slow.
     local _t_total = clock_us() - _t0
-    if _t_total > 2000 then
-      print2(string.format(
-        "  step_eval_queue cand: pool=%d id=%s total=%.2fms raw=%.2fms (dij=%s)",
-        pool_idx, tostring(id), _t_total / 1000, _t_raw / 1000,
-        tostring(_used_dij_for_raw)))
+    if BRAIN_DEBUG_MODE and _t_total > 2000 then
     end
     -- Direct optimize.log diag for slow candidates so we can see them
     -- without needing print2 enabled. Threshold: 0.5 ms (anything that
     -- shows up on the per-tick summary). Includes sub-timings for the
     -- 8-neighbor adjacent sweep + smart_cost call so we can identify
     -- which inner step dominates.
-    if _t_total > 500 then
+    if BRAIN_PERF_LOG and _t_total > 500 then
       opt.append("optimize.log", string.format(
         "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
@@ -3478,7 +3435,7 @@ function M.finalize_pools(state, world, info)
     end
   end
 
-  opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000))
+  if BRAIN_PERF_LOG then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
   local _t1 = clock_us()
   -- Fresh cache each cycle (don't carry stale entries from last cycle)
   state.pool_cache = {}
@@ -3695,7 +3652,7 @@ function M.finalize_pools(state, world, info)
     pc[7] = nil
   end
 
-  opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000))
+  if BRAIN_PERF_LOG then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
   local _t2 = clock_us()
   -- Run cheap evaluators directly
   for _, idx in ipairs(FINALIZE_POOLS) do
@@ -3704,22 +3661,10 @@ function M.finalize_pools(state, world, info)
     if evaluator then
       pc[idx] = evaluator(state, world, info, tmx, tmy, boat, ammo)
     end
-    opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000))
+    if BRAIN_PERF_LOG then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
   end
 
   -- Summary: which pools got finalized
-  do
-    local names = {}
-    local n = 0
-    for i = 1, 12 do
-      if pc[i] then
-        n = n + 1
-        names[#names + 1] = (POOL_NAMES[i] or ("p" .. i)) .. "(" ..
-          string.format("%.0f", pc[i].cost or -1) .. ")"
-      end
-    end
-    print2("finalize_pools: ", n, "/12 pools — ", table.concat(names, ", "))
-  end
   -- wait_for_lgm: extra "park and wait for the LGM" candidate at a
   -- fixed low cost so it competes with normal pool winners. See
   -- eval_wait_for_lgm for suppression conditions (won't fire while a
@@ -3746,7 +3691,7 @@ function M.update_pool_cache(state, world, info)
   -- giving ~49 ticks to process before the next decision.
   local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
-  opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000))
+  if BRAIN_PERF_LOG then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
 
   -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
   -- Iterates the diff cache and emits each pill's spots with a mode
@@ -3756,7 +3701,7 @@ function M.update_pool_cache(state, world, info)
   --   age ≥ 2 → only the winner
   -- Cache TTL is ~50 ticks, so the winner stays visible until the
   -- next re-eval refreshes the entry and the cycle restarts.
-  if vizmod.is_on("attack_scan_spots_all_pills") and state._pill_diff_cache then
+  if BRAIN_DEBUG_MODE and vizmod.is_on("attack_scan_spots_all_pills") and state._pill_diff_cache then
     local now = state.tick or 0
     for _, dc in pairs(state._pill_diff_cache) do
       if dc.spots and dc.mx then
@@ -3799,10 +3744,10 @@ end
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
 local function goal_selection(state, world, info, quiet)
-  local _tgs0 = clock_us()
+  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PERF_LOG)
   local _tgs_t = 0
-  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PERF_LOG
-  if _tgs_buf then _tgs_t = clock_us() end
+  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PERF_LOG; set by pick_goal
+  if _tgs_buf then _tgs_t = _tgs0 end
   local function _tgs_log(label)
     if not _tgs_buf then return end
     local now = clock_us()
@@ -4235,7 +4180,7 @@ local function goal_selection(state, world, info, quiet)
     local pool = {}
     local now = state.tick or 0
     -- Count pools available (verbose summary, suppressed in quiet mode)
-    if not quiet then
+    if not quiet and BRAIN_DEBUG_MODE then
       local pc_count = 0
       local pc_names = {}
       for idx, entry in pairs(pc) do
@@ -4244,7 +4189,6 @@ local function goal_selection(state, world, info, quiet)
           pc_names[#pc_names + 1] = (POOL_NAMES[idx] or ("pool" .. idx))
         end
       end
-      print2("goal_selection: pool_cache has ", pc_count, " entries: ", table.concat(pc_names, ","))
     end
     for idx, entry in pairs(pc) do
       if entry then
@@ -4452,8 +4396,7 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
-    if not quiet then
-      print2("goal_selection: pool size=", #pool, " cur_group=", cur_group, " commitment=", commitment)
+    if not quiet and BRAIN_DEBUG_MODE then
     end
     -- ── Sort by cost, pick winner ──
     table.sort(pool, function(a, b) return a.cost < b.cost end)
@@ -4463,46 +4406,7 @@ local function goal_selection(state, world, info, quiet)
     -- before we reach this point. wsim_add is patched in after the wsim
     -- pass below since wsim runs later in the pipeline.
     -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
-    if BRAIN_DEBUG_MODE then
-    state.goal_competition = {}
-    for _, c in ipairs(pool) do
-      local penalty = c.cost - (c._base_cost or c.cost)
-      -- DIAGNOSTIC: dump everything we know when cost is suspiciously high
-      if (c.cost or 0) > 99999 then
-        print(string.format(
-          "[HIGH-COST gc populate] kind=%s @(%d,%d) cost=%.1f base=%.1f penalty=%.1f hyst=%s switch_flat=%.1f commit_val=%.1f hist_t=%s hist_k=%s wsim_add=%.1f wsim_ran=%s wsim_killed=%s phase_weight=%s loc_mult=%s loc_reason=%s desc=%s",
-          c.goal and c.goal.kind or "?",
-          c.goal and c.goal.mx or -1, c.goal and c.goal.my or -1,
-          c.cost or 0, c._base_cost or -1, penalty,
-          tostring(c.hysteresis), c.switch_flat or 0, c.commit_val or 0,
-          tostring(c.hist_target), tostring(c.hist_kind),
-          c.wsim_add or 0, tostring(c.wsim_ran), tostring(c.wsim_killed),
-          tostring(c.phase_weight), tostring(c.loc_mult),
-          tostring(c.loc_reason), tostring(c.desc)))
-      end
-      state.goal_competition[#state.goal_competition + 1] = {
-        kind    = c.goal and c.goal.kind,
-        mx      = c.goal and c.goal.mx,
-        my      = c.goal and c.goal.my,
-        base    = c._base_cost or c.cost,
-        penalty = penalty,
-        total   = c.cost,
-        hyst       = c.hysteresis,
-        hist_t     = c.hist_target,
-        hist_k     = c.hist_kind,
-        switch_flat = c.switch_flat or 0,
-        commit_val  = c.commit_val or 0,
-        ticks_on    = ticks_on_goal,
-        loc_mult     = c.loc_mult or 1.0,
-        loc_reason   = c.loc_reason or "",
-        density_mult = c.density_mult or 1.0,
-        density_n    = c.density_n or 0,
-        pickup_value = c.pickup_value or 0,
-        wsim_add     = 0,
-      }
-    end
-    end -- BRAIN_DEBUG_MODE
-    if not quiet and #pool > 0 then
+    if not quiet and BRAIN_DEBUG_MODE and #pool > 0 then
       for i = 1, math.min(5, #pool) do
         local c = pool[i]
         local hist_str = ""
@@ -4510,9 +4414,6 @@ local function goal_selection(state, world, info, quiet)
           hist_str = string.format(" hist(t=%d k=%d)",
                                    c.hist_target or 0, c.hist_kind or 0)
         end
-        print2("  pool[", i, "] ", c.goal.kind, "@", c.goal.mx or 0, ",", c.goal.my or 0,
-               " cost=", string.format("%.0f", c.cost), " hyst=", c.hysteresis or "-",
-               hist_str)
       end
     end
 
@@ -4540,13 +4441,6 @@ local function goal_selection(state, world, info, quiet)
           end
         end
         if cur_entry and winner.cost > cur_entry.cost * C.GOAL_SWITCH_RATIO then
-          print2("  hysteresis(mult): winner ", winner.goal.kind,
-                 " cost=", string.format("%.0f", winner.cost),
-                 " > current ", cur_entry.goal.kind,
-                 " cost=", string.format("%.0f", cur_entry.cost),
-                 " * ", C.GOAL_SWITCH_RATIO,
-                 " (", string.format("%.0f", cur_entry.cost * C.GOAL_SWITCH_RATIO),
-                 ") — sticking with current")
           -- Promote current to position 1 so the rest of the pipeline
           -- (wsim adjustment, picking pool[1]) chooses it.
           for i, c in ipairs(pool) do
@@ -4664,7 +4558,7 @@ local function goal_selection(state, world, info, quiet)
     end
     local _tgs_post_wsim = clock_us()
     _tgs_log("wsim")
-    if (_tgs_post_wsim - _tgs0) > 500 then
+    if BRAIN_PERF_LOG and (_tgs_post_wsim - _tgs0) > 500 then
       opt.append("optimize.log", string.format(
         "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
         (_tgs_post_wsim-_tgs0)/1000, (_tgs_pre_pool-_tgs0)/1000,
@@ -4676,126 +4570,12 @@ local function goal_selection(state, world, info, quiet)
     -- post-wsim totals and the +wsim{N} breakdown row.
     -- Pool-grid panel data + diagnostic prints + viz paths — wrapped so
     -- lua_strip removes it from opt/.
-    if BRAIN_DEBUG_MODE then
-    if state.goal_competition then
-      for _, gc in ipairs(state.goal_competition) do
-        for _, c in ipairs(pool) do
-          if c.goal and c.goal.kind == gc.kind
-             and c.goal.mx == gc.mx and c.goal.my == gc.my then
-            local prev_total = gc.total
-            gc.wsim_add = c.wsim_add or 0
-            gc.wsim_killed = c.wsim_killed or false
-            gc.wsim_desc = c.desc and c.desc:match("wsim:(.+)$") or nil
-            gc.wsim_path = c.wsim_path  -- for visualization
-            gc.wsim_ran = c.wsim_ran or false
-            gc.wsim_damage = c.wsim_damage or 0
-            gc.wsim_arm_before = c.wsim_arm_before
-            gc.wsim_arm_after  = c.wsim_arm_after
-            gc.wsim_ticks = c.wsim_ticks or 0
-            gc.total    = c.cost
-            -- DIAGNOSTIC: high-cost watch at post-wsim patch
-            if (c.cost or 0) > 99999 then
-              print(string.format(
-                "[HIGH-COST post-wsim patch] kind=%s @(%d,%d) prev_gc_total=%.1f new_total=%.1f wsim_add=%.1f wsim_damage=%d wsim_arm=%s->%s wsim_killed=%s wsim_desc=%s",
-                gc.kind, gc.mx, gc.my,
-                prev_total or -1, c.cost, gc.wsim_add,
-                gc.wsim_damage, tostring(gc.wsim_arm_before), tostring(gc.wsim_arm_after),
-                tostring(gc.wsim_killed), tostring(gc.wsim_desc)))
-            end
-            break
-          end
-        end
-      end
-    end
-
-    -- DIAGNOSTIC: also catch any goal_competition entries that end up with
-    -- total > 99999 regardless of which pool they come from, so we see the
-    -- mismatch if one exists across kinds at the same tile.
-    if state.goal_competition then
-      local high = {}
-      for _, gc in ipairs(state.goal_competition) do
-        if (gc.total or 0) > 99999 then
-          high[#high + 1] = gc
-        end
-      end
-      if #high > 0 then
-        print(string.format("[HIGH-COST summary] %d entries with total>99999:", #high))
-        for _, gc in ipairs(high) do
-          print(string.format(
-            "  kind=%s @(%d,%d) base=%.1f penalty=%.1f total=%.1f wsim_add=%.1f wsim_killed=%s hist_t=%s hist_k=%s",
-            gc.kind, gc.mx, gc.my,
-            gc.base or -1, gc.penalty or 0, gc.total or 0,
-            gc.wsim_add or 0, tostring(gc.wsim_killed),
-            tostring(gc.hist_t), tostring(gc.hist_k)))
-        end
-      end
-    end
-
-    -- Store wsim paths on state for persistent drawing every tick.
-    -- Replaced each replan so stale paths don't linger.
-    state._wsim_viz_paths = {}
-    for _, c in ipairs(pool) do
-      if c.wsim_path and #c.wsim_path > 2 then
-        state._wsim_viz_paths[#state._wsim_viz_paths + 1] = {
-          path = c.wsim_path,
-          killed = c.wsim_killed or false,
-          kind = c.goal and c.goal.kind or "?",
-          mx = c.goal and c.goal.mx or 0,
-          my = c.goal and c.goal.my or 0,
-          detail = c.wsim_detail or "",
-          hits = c.wsim_hits,
-        }
-      end
-    end
-    end -- BRAIN_DEBUG_MODE
 
     if #pool > 0 then
       local winner = pool[1]
 
       -- Pool log + winner_cands + log.reason are debug/log-only — wrapped
       -- so lua_strip removes them from opt/.
-      if BRAIN_DEBUG_MODE then
-      -- Log all competing candidates for debugging
-      local pool_log = {}
-      for i, c in ipairs(pool) do
-        local d = c.desc
-        if c.hysteresis then d = d .. " [" .. c.hysteresis .. "]" end
-        if c.wsim_killed then d = d .. " [KILL]" end
-        pool_log[i] = { desc = d, cost = c.cost, hysteresis = c.hysteresis,
-                        winner = (i == 1), wsim_killed = c.wsim_killed,
-                        phase_weight = c.phase_weight,
-                        loc_mult     = c.loc_mult or 1.0,
-                        loc_reason   = c.loc_reason or "",
-                        density_mult = c.density_mult or 1.0,
-                        density_n    = c.density_n or 0,
-                        pickup_value = c.pickup_value or 0,
-                        wsim_add     = c.wsim_add or 0 }
-      end
-      -- Persist for C-side debug viewer (BrainTest overlay)
-      state.last_goal_pool = pool_log
-
-      -- Include candidates from the winning pool entry so we can see
-      -- why a particular base/pill was chosen over alternatives.
-      local winner_cands = nil
-      if winner.cands then
-        winner_cands = {}
-        for _, cd in ipairs(winner.cands) do
-          winner_cands[#winner_cands + 1] = {
-            id = cd.id, mx = cd.mx, my = cd.my, cost = cd.cost,
-            own = cd.own, hp = cd.hp, stale = cd.stale,
-            reject = cd.reject,
-          }
-        end
-      end
-
-      log.reason("goal", {
-        pick = "cost_competition",
-        winner = winner.desc,
-        winner_cost = winner.cost,
-        pool = pool_log,
-        cands = winner_cands,
-      })
-      end -- BRAIN_DEBUG_MODE
 
       -- If attack pill won, resolve technique (standoff, wall-shield, etc.)
       if winner._pill then
@@ -4890,23 +4670,25 @@ local function goal_selection(state, world, info, quiet)
     -- needing print2 enabled. Includes which pools had cached winners
     -- so we can see whether pool_cache was empty or just got filtered
     -- out (blocked / cooldown / phase weight zero).
-    do
-      local pc_summary = {}
-      local pc = state.pool_cache or {}
-      for idx, e in pairs(pc) do
-        if e then
-          pc_summary[#pc_summary + 1] = string.format(
-            "p%d:%s@(%d,%d)cost=%.0f",
-            idx, e.goal and e.goal.kind or "?",
-            e.goal and e.goal.mx or 0, e.goal and e.goal.my or 0,
-            e.cost or -1)
+    if BRAIN_PERF_LOG then
+      do
+        local pc_summary = {}
+        local pc = state.pool_cache or {}
+        for idx, e in pairs(pc) do
+          if e then
+            pc_summary[#pc_summary + 1] = string.format(
+              "p%d:%s@(%d,%d)cost=%.0f",
+              idx, e.goal and e.goal.kind or "?",
+              e.goal and e.goal.mx or 0, e.goal and e.goal.my or 0,
+              e.cost or -1)
+          end
         end
+        opt.append("optimize.log", string.format(
+          "  [diag] goal_selection returned nil tick=%d skips=[%s] pool_cache=[%s]",
+          state.tick or 0,
+          table.concat(skip_reasons, "; "),
+          table.concat(pc_summary, " | ")))
       end
-      opt.append("optimize.log", string.format(
-        "  [diag] goal_selection returned nil tick=%d skips=[%s] pool_cache=[%s]",
-        state.tick or 0,
-        table.concat(skip_reasons, "; "),
-        table.concat(pc_summary, " | ")))
     end
   end
 

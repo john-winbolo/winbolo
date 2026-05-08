@@ -259,15 +259,21 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
     local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy)
     if nx then
-      print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
+      if BRAIN_DEBUG_MODE then
+        print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
+      end
       return 1, nx, ny  -- status=done, next step
     end
-    print2(string.format("nav: dij MISS (%d,%d)->(%d,%d) — falling back to A*", sx, sy, dx, dy))
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("nav: dij MISS (%d,%d)->(%d,%d) — falling back to A*", sx, sy, dx, dy))
+    end
   end
   -- Fallback to A* if Dijkstra hasn't reached the destination yet
   local status, nx, ny = cpf_path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget)
-  print2(string.format("nav: A* (%d,%d)->(%d,%d) status=%d next=(%s,%s)",
-    sx, sy, dx, dy, status, tostring(nx), tostring(ny)))
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("nav: A* (%d,%d)->(%d,%d) status=%d next=(%s,%s)",
+      sx, sy, dx, dy, status, tostring(nx), tostring(ny)))
+  end
   return status, nx, ny
 end
 

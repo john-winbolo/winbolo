@@ -1171,14 +1171,16 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   end  -- end else (Lua neighbor bonus fallback)
 
   local _t_end = clock_us()
-  if _t_end - _t_score_cands > 3000 then
-    opt.append("optimize.log", string.format(
-      "  [shield] scan total=%.2f ms  score_cands=%.2f ms  nudge=%.2f ms  neighbor=%.2f ms  stamp=%s",
-      (_t_end - _t_score_cands) / 1000,
-      (_t_nudge_start - _t_score_cands) / 1000,
-      (_t_neighbor_start - _t_nudge_start) / 1000,
-      (_t_end - _t_neighbor_start) / 1000,
-      _pill_hit and "yes" or "no"))
+  if BRAIN_PERF_LOG then
+    if _t_end - _t_score_cands > 3000 then
+      opt.append("optimize.log", string.format(
+        "  [shield] scan total=%.2f ms  score_cands=%.2f ms  nudge=%.2f ms  neighbor=%.2f ms  stamp=%s",
+        (_t_end - _t_score_cands) / 1000,
+        (_t_nudge_start - _t_score_cands) / 1000,
+        (_t_neighbor_start - _t_nudge_start) / 1000,
+        (_t_end - _t_neighbor_start) / 1000,
+        _pill_hit and "yes" or "no"))
+    end
   end
 
   local best
@@ -1381,11 +1383,10 @@ end
 -- Per-tile thin colored border via two stacked rects (slight inset for the
 -- inner one). Useful for layering multiple aim borders on the same tile.
 local function border_box(viz_id, mx, my, inset, r, g, b, a)
-  viz.rect(viz_id, mx + inset, my + inset, mx + 1 - inset, my + 1 - inset,
-           r, g, b, a, false)
 end
 
 function M.draw_overlay(scan, now_tick)
+  if not BRAIN_DEBUG_MODE then return end
   if not scan or not scan.candidates then return end
 
   -- After NONWINNER_FADE_TICKS, hide everything but the chosen viz
@@ -1419,10 +1420,6 @@ function M.draw_overlay(scan, now_tick)
                                 c.score_actual or 0,
                                 c.score_neighbor or 0,
                                 c.best_chain_len or 0)
-      viz.detail_circle(did, c.cx, c.cy, 0.04, hdr)
-      viz.detail_text(did, string.format("score: total=%d (a=%d p=%d n=%d)",
-        math.floor(c.score or 0),
-        c.score_actual or 0, c.score_potential or 0, c.score_neighbor or 0))
       if scan.fav_bonus_by_size and next(scan.fav_bonus_by_size) then
         local parts = {}
         local sizes = {}
@@ -1431,51 +1428,26 @@ function M.draw_overlay(scan, now_tick)
         for _, sz in ipairs(sizes) do
           parts[#parts+1] = string.format("%d->+%d", sz, scan.fav_bonus_by_size[sz])
         end
-        viz.detail_text(did, string.format(
-          "wounded bias: pill_hp=%d tier=%s min_chain=%d  blockers: %s",
-          scan.pill_hp or 0, scan.tier_label or "?", scan.min_chain or 0,
-          table.concat(parts, ", ")))
       else
-        viz.detail_text(did, string.format(
-          "wounded bias: pill_hp=%d -> NONE (HP > %d)",
-          scan.pill_hp or 0, M.WOUNDED_HP_FULL_MAX))
       end
-      viz.detail_text(did, string.format("position: cx=%.4f cy=%.4f wu=(%d,%d) tile=(%d,%d)",
-        c.cx, c.cy, math.floor(c.cx*256+0.5), math.floor(c.cy*256+0.5),
-        c.mx or 0, c.my or 0))
       if c.best_aim_idx then
         local aim_name = M.AIM_NAMES[c.best_aim_idx] or tostring(c.best_aim_idx)
-        viz.detail_text(did, string.format("winning aim: idx=%d (%s)",
-          c.best_aim_idx, aim_name))
         local a = c.aims and c.aims[c.best_aim_idx]
         if a then
           if (a.nudge_wu or 0) > 0 then
-            viz.detail_text(did, string.format(
-              "  nudge: %d wu (%.3f tiles) — origin moved toward pill to hit it",
-              a.nudge_wu, a.nudge_wu / 256.0))
           end
           local n_unreach = #(a.unreachable_blockers or {})
-          viz.detail_text(did, string.format(
-            "  blockers: actual=%d potential=%d  (LGM-unreachable dropped: %d)",
-            #(a.blockers or {}), #(a.potential_blockers or {}), n_unreach))
           for _, b in ipairs(a.blockers or {}) do
-            viz.detail_text(did, string.format("    actual      @ tile (%d,%d)", b.mx, b.my))
           end
           for _, b in ipairs(a.potential_blockers or {}) do
-            viz.detail_text(did, string.format("    potential   @ tile (%d,%d)", b.mx, b.my))
           end
           for _, b in ipairs(a.unreachable_blockers or {}) do
-            viz.detail_text(did, string.format(
-              "    UNREACHABLE @ tile (%d,%d) (LGM origin (%d,%d) -> dest unreachable per cpf.lgm_travel_ticks_map)",
-              b.mx, b.my, b.origin_mx or -1, b.origin_my or -1))
           end
         end
       else
-        viz.detail_text(did, "no winning aim (all blocked or scored 0)")
       end
       local evals = c._chain_evals
       if evals and #evals > 0 then
-        viz.detail_text(did, string.format("chain evals: %d (aim, subset) combos:", #evals))
         local sorted = {}
         for i, e in ipairs(evals) do sorted[i] = e end
         table.sort(sorted, function(a, b) return (a.total or 0) > (b.total or 0) end)
@@ -1498,16 +1470,10 @@ function M.draw_overlay(scan, now_tick)
           if aim_data and (aim_data.nudge_wu or 0) > 0 then
             nudge_str = string.format(" nudge=%dwu", aim_data.nudge_wu)
           end
-          viz.detail_text(did, string.format(
-            "  aim_idx=%d (%s) a=%d p=%d aim_score=%d chain=%d total=%d%s%s%s",
-            e.aim, aim_name, e.actual_n, e.potential_n,
-            e.aim_score, e.chain, e.total, bias_str, nudge_str, marker))
           if #blocker_strs > 0 then
-            viz.detail_text(did, "    subset: " .. table.concat(blocker_strs, " "))
           end
         end
       else
-        viz.detail_text(did, "no chain evals (no non-blocked aims with score>0)")
       end
     end
   end
@@ -1535,13 +1501,7 @@ function M.draw_overlay(scan, now_tick)
     -- cluster.
     local R = 1 / 256.0   -- 1 wu radius
     if c.kind == "standoff" then
-      viz.circle("shield_scan_candidates", c.cx, c.cy, 0.04,
-                 255, 255, 255, 255)
-      viz.circle("shield_scan_candidates", c.cx, c.cy, R,
-                 color_r, color_g, color_b, 255)
     else
-      viz.circle("shield_scan_candidates", c.cx, c.cy, R,
-                 color_r, color_g, color_b, 255)
     end
     -- Score directly on top of the marker, tiny. Format as
     -- "total (A+B+C)" where:
@@ -1564,8 +1524,6 @@ function M.draw_overlay(scan, now_tick)
     -- arc. Even index = right side, odd = left side.
     local side = (ci % 2 == 0) and "topleft" or "topright"
     local lx = (ci % 2 == 0) and (c.cx + 0.06) or (c.cx - 0.06)
-    viz.text("shield_scan_candidates", lx, c.cy - 0.04,
-             label, side, color_r, color_g, color_b, 255, 0.18)
 
     -- (viz_detail registration moved to Pass A above so loser
      -- candidates still get inspector entries after the visual fade.)
@@ -1581,9 +1539,6 @@ function M.draw_overlay(scan, now_tick)
     -- Bright green halo around the chosen target. Sized to be visible
     -- WITHOUT swamping the new 1-gu candidate markers — used to be
     -- 0.9 tile wide which was 14x the new marker size.
-    viz.rect("shield_scan_candidates", viz_target.cx - 0.08, viz_target.cy - 0.08,
-             viz_target.cx + 0.08, viz_target.cy + 0.08,
-             50, 255, 50, 255, false)
 
     -- Trajectory viz so the user can read the geometry directly:
     --   green CIRCLE on every tile in the tank -> pill-CENTER aim
@@ -1603,8 +1558,6 @@ function M.draw_overlay(scan, now_tick)
     local show_aim = viz_target.aims[show_idx]
     if show_aim and show_aim.tiles then
       for _, t in ipairs(show_aim.tiles) do
-        viz.circle("shield_scan_trajectory", t.mx + 0.5, t.my + 0.5, 0.42,
-                   60, 220, 60, 200)
       end
     end
     -- Specific line from the winner spot center to the exact aim point
@@ -1614,18 +1567,9 @@ function M.draw_overlay(scan, now_tick)
     if show_aim and not show_aim.blocked then
       local off = M.AIM_OFFSETS_TILE[show_idx] or M.AIM_OFFSETS_TILE[1]
       local col = M.AIM_COLORS[show_idx] or { 60, 220, 60, 255 }
-      viz.line("shield_scan_trajectory", viz_target.cx, viz_target.cy,
-               pmx + off[1], pmy + off[2],
-               col[1], col[2], col[3], 230)
     end
     if viz_target.return_fire and viz_target.return_fire.tiles then
       for _, t in ipairs(viz_target.return_fire.tiles) do
-        viz.rect("shield_scan_trajectory", t.mx + 0.08, t.my + 0.08,
-                 t.mx + 0.92, t.my + 0.92,
-                 230, 60, 60, 90)
-        viz.rect("shield_scan_trajectory", t.mx + 0.08, t.my + 0.08,
-                 t.mx + 0.92, t.my + 0.92,
-                 230, 60, 60, 230, false)
       end
     end
     -- Inner circle on each actual already-built blocker tile (across
@@ -1640,8 +1584,6 @@ function M.draw_overlay(scan, now_tick)
             local key = b.my * 256 + b.mx
             if not seen[key] then
               seen[key] = true
-              viz.circle("shield_scan_blockers", b.mx + 0.5, b.my + 0.5, 0.25,
-                         60, 255, 60, 255)
             end
           end
         end
@@ -1661,9 +1603,6 @@ function M.draw_overlay(scan, now_tick)
         local inset = border_inset_step * ai
         if a.blockers and #a.blockers > 0 then
           for _, b in ipairs(a.blockers) do
-            viz.rect("shield_scan_blockers", b.mx + 0.12, b.my + 0.12,
-                     b.mx + 0.88, b.my + 0.88,
-                     col[1], col[2], col[3], 110)
             border_box("shield_scan_blockers", b.mx, b.my, inset, col[1], col[2], col[3], col[4])
           end
         end
@@ -1679,26 +1618,9 @@ function M.draw_overlay(scan, now_tick)
         -- can't get to it from the standoff).
         if a.unreachable_blockers and #a.unreachable_blockers > 0 then
           for _, b in ipairs(a.unreachable_blockers) do
-            viz.line("shield_scan_blockers",
-                     b.mx + 0.15, b.my + 0.15,
-                     b.mx + 0.85, b.my + 0.85,
-                     220, 60, 60, 230)
-            viz.line("shield_scan_blockers",
-                     b.mx + 0.85, b.my + 0.15,
-                     b.mx + 0.15, b.my + 0.85,
-                     220, 60, 60, 230)
-            viz.text("shield_scan_blockers",
-                     b.mx + 0.5, b.my + 0.95,
-                     string.format("LGM-unreach from (%d,%d)",
-                                   b.origin_mx or -1, b.origin_my or -1),
-                     "center", 220, 60, 60, 220, 0.3)
             -- Faint dashed-ish line from origin to dest to make the
             -- attempted route visible.
             if b.origin_mx then
-              viz.line("shield_scan_blockers",
-                       b.origin_mx + 0.5, b.origin_my + 0.5,
-                       b.mx + 0.5, b.my + 0.5,
-                       220, 60, 60, 80)
             end
           end
         end
@@ -1715,9 +1637,6 @@ function M.draw_overlay(scan, now_tick)
       local a = viz_target.aims[ai]
       local n_act = (a and a.blockers) and #a.blockers or 0
       local n_pot = (a and a.potential_blockers) and #a.potential_blockers or 0
-      viz.text("shield_scan_legend", lx, ly + (ai - 1) * 0.3,
-               string.format("%s:%d+%d", M.AIM_NAMES[ai], n_act, n_pot),
-               "topleft", col[1], col[2], col[3], 255, 0.35)
     end
 
     -- Build-queue highlight: thick orange outline + 1-based build order
@@ -1742,15 +1661,6 @@ function M.draw_overlay(scan, now_tick)
         for i, b in ipairs(sorted) do
           -- Two stacked outlines = visibly thick on both low and high
           -- zoom (overlay_rect doesn't take a stroke width).
-          viz.rect("wall_build_queue", b.mx - 0.02, b.my - 0.02,
-                   b.mx + 1.02, b.my + 1.02,
-                   255, 140, 0, 255, false)
-          viz.rect("wall_build_queue", b.mx + 0.04, b.my + 0.04,
-                   b.mx + 0.96, b.my + 0.96,
-                   255, 140, 0, 255, false)
-          viz.text("wall_build_queue", b.mx + 0.5, b.my + 0.5,
-                   tostring(i),
-                   "center", 255, 200, 80, 255, 0.8)
         end
       end
     end

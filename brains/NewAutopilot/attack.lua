@@ -632,7 +632,7 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local fallback_dist = math.huge
   local fallback_mx, fallback_my = nil, nil
   -- Hoist viz toggle for the candidate-overlay emissions below.
-  local v_take = viz.is_on("pill_take_target")
+  local v_take = BRAIN_DEBUG_MODE and viz.is_on("pill_take_target")
 
   local seen = {}
   for R = R_MAX, R_MIN, -1 do
@@ -1564,19 +1564,21 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- Per-call breakdown — emitted only when the call cost > 1 ms so we
   -- don't flood optimize.log with cheap cache-hit-tier calls.
-  do
-    local _t_total = clock_us() - _t_func0
-    if _t_total > 1000 then
-      local _pf = _t_prefetch_us or -1
-      local _t_other = _t_total - _t_los - _t_scan_a - _t_scan_b - _pf
-      opt.append("optimize.log", string.format(
-        "  [diag] eval_pill_difficulty pill=(%d,%d) total=%.2f prefetch=%.2f los=%.2f scan_a=%.2f scan_b=%.2f other=%.2f angles=%d/%d/%d step=%s detailed=%s",
-        pmx, pmy,
-        _t_total / 1000, _pf / 1000, _t_los / 1000, _t_scan_a / 1000,
-        _t_scan_b / 1000, _t_other / 1000,
-        _angles_pass, _angles_los, _angles_total,
-        tostring(scan_step or C.ATTACK_SCAN_DEGREES),
-        tostring(detailed)))
+  if BRAIN_PERF_LOG then
+    do
+      local _t_total = clock_us() - _t_func0
+      if _t_total > 1000 then
+        local _pf = _t_prefetch_us or -1
+        local _t_other = _t_total - _t_los - _t_scan_a - _t_scan_b - _pf
+        opt.append("optimize.log", string.format(
+          "  [diag] eval_pill_difficulty pill=(%d,%d) total=%.2f prefetch=%.2f los=%.2f scan_a=%.2f scan_b=%.2f other=%.2f angles=%d/%d/%d step=%s detailed=%s",
+          pmx, pmy,
+          _t_total / 1000, _pf / 1000, _t_los / 1000, _t_scan_a / 1000,
+          _t_scan_b / 1000, _t_other / 1000,
+          _angles_pass, _angles_los, _angles_total,
+          tostring(scan_step or C.ATTACK_SCAN_DEGREES),
+          tostring(detailed)))
+      end
     end
   end
 
@@ -1596,8 +1598,10 @@ end
 --          or nil if no valid standoff position found.
 -- =========================================================================
 function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
-  print2(string.format("attack_tank standoff: evaluating enemy@(%d,%d) from tank@(%d,%d) R=%d",
-    et.mx, et.my, tmx, tmy, C.TANK_COMBAT_STANDOFF_RANGE))
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("attack_tank standoff: evaluating enemy@(%d,%d) from tank@(%d,%d) R=%d",
+      et.mx, et.my, tmx, tmy, C.TANK_COMBAT_STANDOFF_RANGE))
+  end
   local R = C.TANK_COMBAT_STANDOFF_RANGE
   local safe_r = C.ATTACK_SAFE_RADIUS
   local stamps = ELLIPSE_STAMPS_45DEG
@@ -1608,7 +1612,7 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   -- Hoist viz toggle: this function does both scoring (logic) and
   -- per-candidate overlay drawing. Score loop runs always; viz blocks
   -- gate on this so arg evaluation is skipped when overlay is off.
-  local v_scan = viz.is_on("tank_combat_standoff_scan")
+  local v_scan = BRAIN_DEBUG_MODE and viz.is_on("tank_combat_standoff_scan")
 
   for deg = 0, 315, 45 do
     local rad = math.rad(deg)
@@ -1621,7 +1625,9 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
     local tt = U.ttype(mx, my)
     local passable = (C.TERRAIN_COST_LAND[tt] or 9999) < 9999 and not U.is_water(tt)
     if not passable then
-      print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: impassable tt=%d", deg, mx, my, tt))
+      if BRAIN_DEBUG_MODE then
+        print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: impassable tt=%d", deg, mx, my, tt))
+      end
       scan_spots[#scan_spots + 1] = {
         cx = cx, cy = cy, mx = mx, my = my, deg = deg,
         has_los = false, total_score = 999, reason = "impassable",
@@ -1633,7 +1639,9 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
     -- Wall check: need clear shot to the enemy tank from this position
     local wall_hp = PF.wall_hp_between(mx, my, et.mx, et.my)
     if wall_hp > 0 then
-      print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: wall_hp=%d", deg, mx, my, wall_hp))
+      if BRAIN_DEBUG_MODE then
+        print2(string.format("  attack_tank cand deg=%d @(%d,%d) SKIP: wall_hp=%d", deg, mx, my, wall_hp))
+      end
       scan_spots[#scan_spots + 1] = {
         cx = cx, cy = cy, mx = mx, my = my, deg = deg,
         has_los = false, total_score = 999, reason = "wall_blocked",
@@ -1695,8 +1703,10 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
       maneuver_tiles = maneuver_tiles,
     }
 
-    print2(string.format("  attack_tank cand deg=%d @(%d,%d) danger=%.1f xfire=%.0f terrain=%.0f approach=%.0f total=%.0f",
-      deg, mx, my, score_danger, score_crossfire, terrain_penalty, score_approach, score))
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("  attack_tank cand deg=%d @(%d,%d) danger=%.1f xfire=%.0f terrain=%.0f approach=%.0f total=%.0f",
+        deg, mx, my, score_danger, score_crossfire, terrain_penalty, score_approach, score))
+    end
 
     -- Overlay: color-coded candidate positions
     if v_scan and score >= best_score then
@@ -1717,10 +1727,14 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   end
 
   if not best_mx then
-    print2("  attack_tank: NO valid standoff position found")
+    if BRAIN_DEBUG_MODE then
+      print2("  attack_tank: NO valid standoff position found")
+    end
     return nil
   end
-  print2(string.format("  attack_tank WINNER: deg=%d @(%d,%d) score=%.1f", best_deg, best_mx, best_my, best_score))
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("  attack_tank WINNER: deg=%d @(%d,%d) score=%.1f", best_deg, best_mx, best_my, best_score))
+  end
 
   if v_scan then
     -- Overlay: mark chosen standoff with green circle + line to enemy
@@ -1798,9 +1812,11 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, best_mx, best_my)
                          or cpf.astar_shells_at(best_mx, best_my)
 
-  print2(string.format("  attack_tank A* to (%d,%d): path_cost=%.1f shells_arr=%s",
-    best_mx, best_my, path_cost,
-    shells_on_arrival and tostring(math.floor(shells_on_arrival)) or "nil"))
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("  attack_tank A* to (%d,%d): path_cost=%.1f shells_arr=%s",
+      best_mx, best_my, path_cost,
+      shells_on_arrival and tostring(math.floor(shells_on_arrival)) or "nil"))
+  end
 
   return best_mx, best_my, best_score, path_cost, shells_on_arrival, scan_spots, best_deg
 end
@@ -1895,7 +1911,7 @@ function M.update_attack_substate(goal, state, world, info)
   update_shot_accounting(goal, world)
 
   -- HUD: kill attempt indicator (top-left)
-  if goal._kill_attempt ~= nil and viz.is_on("hud_kill_attempt") then
+  if BRAIN_DEBUG_MODE and goal._kill_attempt ~= nil and viz.is_on("hud_kill_attempt") then
     local label = goal._kill_attempt and "KILL ATTEMPT" or "DAMAGE ONLY"
     local r, g, b = goal._kill_attempt and 100 or 255,
                     goal._kill_attempt and 255 or 200,
@@ -1921,7 +1937,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- A tree-blocked shot drops out of the in-flight side without changing
   -- the HP side, so the indicator visibly goes down by one rather than
   -- pretending we somehow need more bullets to kill the pill.
-  if goal._fired and goal._fired > 0 and viz.is_on("pill_shot_count") then
+  if BRAIN_DEBUG_MODE and goal._fired and goal._fired > 0 and viz.is_on("pill_shot_count") then
     local pill_hp = 0
     if goal.target_id then
       local p = world.pills[goal.target_id]
@@ -1968,12 +1984,14 @@ function M.update_attack_substate(goal, state, world, info)
       goal._scan_tank_mx = tmx
       goal._scan_tank_my = tmy
 
-      local _t_pp0 = clock_us()
+      local _t_pp0 = BRAIN_PERF_LOG and clock_us() or 0
       local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, nil, state.phase, state, tmx, tmy)
       goal.scan_spots = spots
-      opt.append("optimize.log", string.format(
-        "  [as] plan_position eval_pill=%.3f ms pill=(%d,%d)",
-        (clock_us() - _t_pp0) / 1000, pmx, pmy))
+      if BRAIN_PERF_LOG then
+        opt.append("optimize.log", string.format(
+          "  [as] plan_position eval_pill=%.3f ms pill=(%d,%d)",
+          (clock_us() - _t_pp0) / 1000, pmx, pmy))
+      end
 
       -- Step 1: apply influence bonus/penalty to all LOS spots.
       --   friendly territory (influence > 0): -5 (cheaper)
@@ -2343,7 +2361,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- approach: navigate to standoff position, brake to stop
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "approach" then
-    local _t_app0 = clock_us()
+    local _t_app0 = BRAIN_PERF_LOG and clock_us() or 0
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
@@ -2385,7 +2403,7 @@ function M.update_attack_substate(goal, state, world, info)
 
       -- HUD overlay near the tank: current distance + threshold so we
       -- can see live what's blocking the transition.
-      if viz.is_on("approach_dist") then
+      if BRAIN_DEBUG_MODE and viz.is_on("approach_dist") then
         local twx = info.tankx / 256.0
         local twy = info.tanky / 256.0
         local dist_ok  = adist <= DIST_TOL
@@ -2523,10 +2541,12 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     -- Fall through to draw
-    local _t_app1 = clock_us()
-    if _t_app1 - _t_app0 > 300 then
-      opt.append("optimize.log", string.format(
-        "  [app] SLOW total=%.3f ms", (_t_app1 - _t_app0) / 1000))
+    if BRAIN_PERF_LOG then
+      local _t_app1 = clock_us()
+      if _t_app1 - _t_app0 > 300 then
+        opt.append("optimize.log", string.format(
+          "  [app] SLOW total=%.3f ms", (_t_app1 - _t_app0) / 1000))
+      end
     end
   end
 
@@ -2790,13 +2810,13 @@ function M.update_attack_substate(goal, state, world, info)
   -- detree: shoot trees between tank and pill until clear
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "detree" then
-    -- Visualize remaining trees (recount each tick just for the viz)
-    local trees_left = forest_tiles_on_path(tmx, tmy, pmx, pmy, true)
+    -- Recount trees for behavioral check; viz only when debug mode on
+    local trees_left = forest_tiles_on_path(tmx, tmy, pmx, pmy, BRAIN_DEBUG_MODE)
     local needed = goal._detree_shots_needed or 0
     -- Count actual shots fired by tracking shell count drops
     local fired = (goal._detree_shells_at_start or info.shells) - info.shells
     -- HUD: detree progress above the tank
-    if viz.is_on("detree_progress") then
+    if BRAIN_DEBUG_MODE and viz.is_on("detree_progress") then
       viz.text("detree_progress", tmx + 0.5, tmy - 1.2,
         string.format("DETREE %d/%d (left=%d)", fired, needed, trees_left),
         "center", 255, 255, 100, 255)
@@ -2858,7 +2878,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- tol=8 will stall just outside the transition window.
       goal._in_range_dist_tol = DIST_TOL
 
-      if viz.is_on("approach_dist") then
+      if BRAIN_DEBUG_MODE and viz.is_on("approach_dist") then
         local twx = info.tankx / 256.0
         local twy = info.tanky / 256.0
         local dist_ok  = sdist <= DIST_TOL
@@ -3095,7 +3115,7 @@ function M.update_attack_substate(goal, state, world, info)
 
     -- HUD: live progress toward each of the three exit triggers.
     -- Bar fills as we approach the exit (kill / swerve-from-hits / abort).
-    if viz.is_on("hud_shoot_pill_progress") then
+    if BRAIN_DEBUG_MODE and viz.is_on("hud_shoot_pill_progress") then
       local function bar(frac)
         if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
         local n = math.floor(frac * 10 + 0.5)
@@ -3375,7 +3395,7 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     -- HUD overlay: show raw swerve goal._* values (screen-relative)
-    if viz.is_on("hud_swerve_debug") then
+    if BRAIN_DEBUG_MODE and viz.is_on("hud_swerve_debug") then
       viz.hud_text("hud_swerve_debug", 10, 80,  "SWERVE", "topleft", 255, 255, 100, 255)
       viz.hud_text("hud_swerve_debug", 10, 100, "_swerve_ticks_left=" .. tostring(goal._swerve_ticks_left), "topleft", 255, 255, 100, 255)
       viz.hud_text("hud_swerve_debug", 10, 120, "_swerve_turn_ticks_left=" .. tostring(goal._swerve_turn_ticks_left), "topleft", 255, 255, 100, 255)
@@ -3431,7 +3451,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   -- DRAW swerve direction choice (left/right cover sample lines)
   -- ══════════════════════════════════════════════════════════════════
-  if goal._swerve_viz and viz.is_on("swerve_dir_choice") then
+  if BRAIN_DEBUG_MODE and goal._swerve_viz and viz.is_on("swerve_dir_choice") then
     local sv = goal._swerve_viz
     -- Color: chosen side bright green, unchosen dim red
     local lr, lg, lb = (sv.chosen == 1) and 50  or 200,
@@ -3468,7 +3488,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- Stays visible during all PPT substates (in_range_position /
     -- in_range_aim / shoot_pill) and the legacy aim/charge/engage
     -- substates too.
-    if goal.aim_mx and goal.aim_my and viz.is_on("pill_take_target") then
+    if BRAIN_DEBUG_MODE and goal.aim_mx and goal.aim_my and viz.is_on("pill_take_target") then
       local ax, ay = goal.aim_mx, goal.aim_my
       -- Three concentric magenta circles + crosshair lines. Sized so the
       -- visible mass fits inside a single pillbox tile — at the previous
@@ -3578,7 +3598,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- text actually persists on screen (overlay commands are cleared per
   -- frame). 100 ticks ~= 2 seconds at the 50 Hz sim rate.
   if goal._build_decision_msg and goal._build_decision_until and
-     now < goal._build_decision_until and viz.is_on("build_decision_banner") then
+     now < goal._build_decision_until and BRAIN_DEBUG_MODE and viz.is_on("build_decision_banner") then
     local twx = info.tankx / 256.0
     local twy = info.tanky / 256.0
     viz.text("build_decision_banner", twx, twy - 2.0, goal._build_decision_msg,

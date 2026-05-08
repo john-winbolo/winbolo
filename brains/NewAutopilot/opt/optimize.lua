@@ -75,7 +75,7 @@ local function log_msg(...)
 end
 
 function M.flush()
-  if debug_mode() or not perf_log_enabled() or #buffer == 0 then return end
+  if not perf_log_enabled() or #buffer == 0 then return end
   if na_opt_log then
     -- Threaded path: build full tick block in memory, enqueue for background write.
     local dir = pick_dir()

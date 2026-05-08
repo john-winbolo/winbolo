@@ -392,7 +392,7 @@ function M.decide(state, world, info, now)
   local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
 
   -- Always show precondition status on the HUD when near a base
-  if has_base then
+  if BRAIN_DEBUG_MODE and has_base then
     local parts = {}
     parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
     parts[#parts + 1] = has_trees and string.format("trees:YES(%d)", info.trees) or string.format("trees:NO(%d<%d)", info.trees, C.BASE_SHIELD_BUILD_COST)

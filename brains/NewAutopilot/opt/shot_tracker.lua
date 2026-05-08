@@ -257,6 +257,7 @@ end
 -- a few ticks so you can see where the verify failed. Coordinates are
 -- in tile units so divide wu by 256.
 function M.draw_overlay(tick)
+  if not BRAIN_DEBUG_MODE then return end
   for _, s in ipairs(M.shots) do
     if s.status == "in_flight" then
       local fx = s.cur_fx / 256.0
