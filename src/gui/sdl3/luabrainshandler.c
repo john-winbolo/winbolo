@@ -631,13 +631,20 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainCoreRegisterWorldSim(L, &inst->worldsim);
   }
 
-  /* Per-brain overlay command buffer + register overlay_* globals.
-   * The buffer is owned by this instance; the registered Lua closures
-   * hold a pointer-to-pointer so the buffer can be swapped per tick
-   * by the consumer (e.g. a UI replaying historical frames). */
+  /* Overlay bindings intentionally NOT registered under the SDL3 game
+   * client. The buffer would fill with thousands of viz.* commands per
+   * tick (every brain HUD/marker/standoff draw), but no rendering path
+   * in src/gui/sdl3 reads it — only BrainTest's renderer does. Leaving
+   * `overlay_text` et al. as nil makes viz.lua's wrappers short-circuit
+   * via their `if not overlay_text then return end` guard, killing the
+   * per-tick Lua-boundary-crossing cost.
+   *
+   * The buffer struct is still initialized (and destroyed in the close
+   * path) so botManagerGetOverlayCmds() returns a valid empty buffer
+   * to any caller that polls it. */
   overlayCmdBufferInit(&inst->overlay);
   inst->overlayPtr = &inst->overlay;
-  brainCoreRegisterOverlay(L, &inst->overlayPtr);
+  /* brainCoreRegisterOverlay(L, &inst->overlayPtr) intentionally omitted */
 
   /* braintest_viz_register binding so brains can populate the V
    * dialog rows. Routes to a callback BrainTest sets at startup;

@@ -481,12 +481,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->snapshotHdr.baseCount = baseCount;
         c->snapshotHdr.pillCount = pillCount;
 
-        /* Unpack tanks */
+        /* Unpack tanks — variable length: stubs are 1 byte, full entries
+         * are TANK_SNAPSHOT_WIRE_SIZE bytes.  The first byte's high bit
+         * (TANK_SNAPSHOT_HIDDEN_FLAG) tells us which. */
         if (tankCount > MAX_TANKS) tankCount = MAX_TANKS;
-        if (len < pos + tankCount * TANK_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < tankCount; i++) {
-            unpackTankSnapshot(buf + pos, &c->snapshotTanks[i]);
-            pos += TANK_SNAPSHOT_WIRE_SIZE;
+        {
+            bool tankBoundsOk = TRUE;
+            for (i = 0; i < tankCount; i++) {
+                int needed;
+                if (pos + 1 > len) { tankBoundsOk = FALSE; break; }
+                needed = (buf[pos] & TANK_SNAPSHOT_HIDDEN_FLAG) ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
+                if (pos + needed > len) { tankBoundsOk = FALSE; break; }
+                pos += unpackTankSnapshot(buf + pos, &c->snapshotTanks[i]);
+            }
+            if (!tankBoundsOk) break;
         }
 
         /* Unpack shells */

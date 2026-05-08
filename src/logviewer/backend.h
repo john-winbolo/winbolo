@@ -513,7 +513,7 @@ void lv_screenCentreOnSelectedItem();
 void lv_screenGetPlayerName(char *name, BYTE playerNum);
 void lv_screenGetMapName(char *dest);
 
-void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime);
+void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
 void lv_screenSeekToPosition(float ratio);
 
 #endif /* _BACKEND_H */
