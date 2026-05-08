@@ -192,6 +192,7 @@ static ShieldStampEntry *s_entries    = NULL;
 static int               s_n_angles   = 0;
 static int               s_n_nudges   = 0;
 static int               s_nudge_step = 0;  /* wu per nudge index */
+static char              s_loaded_path[512];
 
 /* Atomic guards for the one-shot disk load.
  *   s_entries_loading: 0 = unclaimed, 1 = a thread won the CAS and is loading.
@@ -314,6 +315,7 @@ static int l_load(lua_State *L) {
              * Losers are spinning on s_entries_state; we MUST set it
              * before returning so they can make progress. */
             int ok = do_disk_load(path);
+            if (ok) SDL_strlcpy(s_loaded_path, path, sizeof(s_loaded_path));
             SDL_SetAtomicInt(&s_entries_state, ok ? 1 : 2);
         } else {
             /* Loser: spin until the winner publishes a terminal result. */
@@ -327,6 +329,12 @@ static int l_load(lua_State *L) {
     if (state != 1) {
         lua_pushboolean(L, 0);
         return 1;
+    }
+
+    if (SDL_strcmp(path, s_loaded_path) != 0) {
+        return luaL_error(L,
+            "na_shield_stamp.load: already loaded with a different path '%s'; got '%s'",
+            s_loaded_path, path);
     }
 
     /* The pill_hit Lua table is per-lua_State (it lives on this state's
