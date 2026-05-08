@@ -242,34 +242,40 @@ static void main_loop_iteration(void) {
   DWORD tick;
   ClientSim *cs = humanSim;
 
-  {
-    static int dbgIter = 0;
-    if (dbgIter < 3) {
-      fprintf(stderr, "[WASM] iter %d: humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-             dbgIter,
-             (void*)humanSim,
-             humanSim ? (void*)humanSim->sim.plyrs : NULL,
-             humanSim ? (void*)humanSim->sim.mp : NULL,
-             humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
-      fflush(stderr);
-      dbgIter++;
-    }
-  }
-
   /* Process events */
   sdl3ImguiProcessEvents(cs);
 
-  /* Game tick accumulation (replaces SDL_AddTimer) */
+  /* Game tick accumulation (replaces SDL_AddTimer).
+   *
+   * After a JS GC pause or tab throttle, `elapsed` can spike to hundreds of
+   * ms.  Running every backlogged sim tick in a single render frame causes
+   * a visible hitch — but dropping ticks outright would lose
+   * transport->tick() calls (UDP packet send/recv) and break multiplayer.
+   *
+   * Compromise: cap per-frame sim ticks at MAX_CATCHUP so no single render
+   * frame stalls, and let leftover backlog stay in gameTickAccum to drain
+   * naturally over the following frames.  Each subsequent frame runs up to
+   * MAX_CATCHUP ticks until the debt clears, so windowRunGameTick (and the
+   * transport->tick inside it) eventually fire for every missed tick.
+   *
+   * Only MAX_ELAPSED_MS itself is hard-capped — a multi-second tab
+   * suspension shouldn't trigger an unbounded catch-up sequence. */
   if (gameFrontGetTransport() != NULL) {
+    const double MAX_ELAPSED_MS = 200.0;  /* hard limit on accumulated debt */
+    const int    MAX_CATCHUP    = 4;      /* at most 4 sim ticks per render frame */
     double now = emscripten_get_now();
     double elapsed = now - lastFrameTime;
     lastFrameTime = now;
+    if (elapsed > MAX_ELAPSED_MS) elapsed = MAX_ELAPSED_MS;
     gameTickAccum += elapsed;
 
-    while (gameTickAccum >= GAME_TICK_LENGTH) {
+    int ticksThisFrame = 0;
+    while (gameTickAccum >= GAME_TICK_LENGTH && ticksThisFrame < MAX_CATCHUP) {
       gameTickAccum -= GAME_TICK_LENGTH;
       windowRunGameTick(cs);
+      ticksThisFrame++;
     }
+    /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
   /* Render */
