@@ -1,12 +1,57 @@
 -- =========================================================================
 -- NewAutopilot/exploration.lua — frontier-based map coverage
 -- =========================================================================
+--
+-- Frontier entries are encoded as plain integers to avoid per-push table
+-- allocation and the GC pressure that causes periodic multi-ms pauses:
+--   entry = cost * 65536 + my * 256 + mx
+-- cost is Chebyshev distance (max 255 on 256x256), mx/my are tile coords.
+-- The frontier is a binary min-heap of these integers.
 
 local C    = require("constants")
 local U    = require("util")
-local heap = require("heap")
 
 local M = {}
+
+-- Min-heap helpers operating on plain integer entries (no table nodes).
+local function _heap_push(h, v)
+  local n = h.n + 1
+  h.n = n
+  h[n] = v
+  local i = n
+  while i > 1 do
+    local p = i >> 1
+    if h[p] <= h[i] then break end
+    h[i], h[p] = h[p], h[i]
+    i = p
+  end
+end
+
+local function _heap_pop(h)
+  local n = h.n
+  if n == 0 then return nil end
+  local top = h[1]
+  h[1]   = h[n]
+  h[n]   = nil
+  h.n    = n - 1
+  local i = 1
+  n = h.n
+  while true do
+    local l = i + i
+    local r = l + 1
+    local s = i
+    if l <= n and h[l] < h[s] then s = l end
+    if r <= n and h[r] < h[s] then s = r end
+    if s == i then break end
+    h[i], h[s] = h[s], h[i]
+    i = s
+  end
+  return top
+end
+
+function M.new_frontier()             return { n = 0 } end
+function M.frontier_pop(h)            return _heap_pop(h) end
+function M.frontier_push(h, cost, mx, my) _heap_push(h, math.floor(cost) * 65536 + my * 256 + mx) end
 
 function M.update(state, info)
   local tmx = info.tankx >> 8
@@ -25,11 +70,8 @@ function M.update(state, info)
           local tc = cost_table[tt] or 9999
           if tc < 100 then
             state.frontier_set[nk] = true
-            heap.push(state.frontier, {
-              cost = U.hdist(tmx, tmy, nx, ny),
-              mx   = nx,
-              my   = ny,
-            })
+            local dist = math.floor(U.hdist(tmx, tmy, nx, ny))
+            _heap_push(state.frontier, dist * 65536 + ny * 256 + nx)
           end
         end
       end
@@ -37,16 +79,19 @@ function M.update(state, info)
   end
 end
 
--- Returns the closest unvisited frontier square, or nil, nil
+-- Returns the closest unvisited frontier tile, or nil, nil.
 function M.best_frontier(state)
-  while not heap.empty(state.frontier) do
-    local top = state.frontier[1]  -- peek
-    local k   = U.mkey(top.mx, top.my)
-    if state.visited[k] then
-      heap.pop(state.frontier)
-      state.frontier_set[k] = nil
+  local h = state.frontier
+  while h.n > 0 do
+    local top = h[1]
+    local nx  = top % 256
+    local ny  = math.floor(top / 256) % 256
+    local nk  = U.mkey(nx, ny)
+    if state.visited[nk] then
+      _heap_pop(h)
+      state.frontier_set[nk] = nil
     else
-      return top.mx, top.my
+      return nx, ny
     end
   end
   return nil, nil

@@ -600,6 +600,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, s_perf_log);
   lua_setglobal(L, "BRAIN_PERF_LOG");
 
+  /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
+   * off in --opt production mode to eliminate GC pressure. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "BRAIN_POOL_VIZ");
+
   /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
   if (s_run_script_path[0]) {
     lua_pushstring(L, s_run_script_path);
