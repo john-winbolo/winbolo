@@ -115,31 +115,61 @@ function M.update(state, world, info)
       local omy = ob.y >> 8
       local d = U.mdist(tmx, tmy, omx, omy)
 
-      -- Match to closest previous-frame tank for velocity + smoothing
+      -- Match to closest previous-frame tank, then compute velocity by
+      -- averaging position delta over the last N ticks of history. Raw
+      -- single-tick delta is too noisy: WU positions quantize to
+      -- engine-tick resolution, so a tank moving smoothly NE at ~11
+      -- wu/tick reports per-tick deltas like (8,0), (0,-8), (8,-8) —
+      -- prediction flips between N / E / NE every tick and lead even
+      -- toggles off at the magnitude≤8 stationary cutoff. Averaging over
+      -- 3 ticks smooths the quantization and keeps magnitude consistent
+      -- without the EMA trail-off of past direction changes.
+      local HIST_LEN = 3
       local vx, vy = 0, 0
-      local svx, svy = 0, 0  -- EMA-smoothed velocity for lead prediction
-      local best_match_d = 5 * 256  -- max 5 tiles to match
+      local svx, svy = 0, 0
+      local best_match_d = 5 * 256
+      local matched_pt = nil
       for _, pt in ipairs(prev_tanks) do
         local dx = ob.x - pt.wx
         local dy = ob.y - pt.wy
         local md = math.abs(dx) + math.abs(dy)
         if md < best_match_d then
           best_match_d = md
-          vx = dx  -- WU per brain-tick delta
-          vy = dy
-          -- EMA: blend new raw sample with previous smoothed value
-          -- alpha=0.5: fast enough to track direction changes, smooths single-tick noise
-          local alpha = 0.5
-          svx = alpha * vx + (1 - alpha) * (pt.svx or vx)
-          svy = alpha * vy + (1 - alpha) * (pt.svy or vy)
+          matched_pt = pt
         end
+      end
+      -- Build new history newest-first, capped at HIST_LEN. Index 1 is
+      -- the CURRENT tick's position; index N is N-1 ticks back.
+      local hist = { { wx = ob.x, wy = ob.y } }
+      if matched_pt and matched_pt.hist then
+        for i = 1, math.min(HIST_LEN - 1, #matched_pt.hist) do
+          hist[#hist + 1] = matched_pt.hist[i]
+        end
+      end
+      -- Velocity from the oldest entry in the buffer back to current,
+      -- divided by the number of ticks the span actually covers. Falls
+      -- back to single-tick when only 2 entries are available (target
+      -- just appeared / re-acquired).
+      if #hist >= 2 then
+        local oldest = hist[#hist]
+        local n_ticks = #hist - 1
+        vx = (ob.x - oldest.wx) / n_ticks
+        vy = (ob.y - oldest.wy) / n_ticks
+        -- Sanity-cap: a real tank can't exceed ~16 wu/tick. > 40 wu/tick
+        -- means the matcher snapped to a different tank; reuse last
+        -- tick's velocity instead of feeding garbage to lead-prediction.
+        if vx * vx + vy * vy > 1600 then
+          vx = (matched_pt and matched_pt.vx) or 0
+          vy = (matched_pt and matched_pt.vy) or 0
+        end
+        svx, svy = vx, vy
       end
 
       local entry = { mx = omx, my = omy, dist = d, obj = ob,
                        id = ob.idnum,
                        speed = ob.speed or 0,
                        wx = ob.x, wy = ob.y, vx = vx, vy = vy,
-                       svx = svx, svy = svy }
+                       svx = svx, svy = svy, hist = hist }
       enemy_tanks[#enemy_tanks + 1] = entry
 
       if d < nearest_hostile_tank_dist then
@@ -149,11 +179,16 @@ function M.update(state, world, info)
     end
   end
 
-  -- Save current positions + smoothed velocity for next tick's computation
+  -- Save current positions + velocity + position history for next tick's
+  -- computation. hist is the rolling 3-tick lookback used to smooth
+  -- velocity against engine-tick position quantization.
   state._prev_enemy_tanks = {}
   for _, et in ipairs(enemy_tanks) do
     state._prev_enemy_tanks[#state._prev_enemy_tanks + 1] = {
-      wx = et.wx, wy = et.wy, svx = et.svx, svy = et.svy
+      wx = et.wx, wy = et.wy,
+      vx = et.vx, vy = et.vy,
+      svx = et.svx, svy = et.svy,
+      hist = et.hist,
     }
   end
 
