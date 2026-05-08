@@ -81,6 +81,10 @@ typedef struct NaThreatCtx {
     int t_halfbuild;
     int t_deepsea;
 
+    /* Per-terrain-type lookups (constants.lua). Set via configure(). */
+    int     terrain_speed[16];
+    uint8_t hazard_terrain[16];
+
     /* Disk geometry — rebuilt by build_disk on each configure(). */
     int   disk_dx[MAX_DISK_LEN];
     int   disk_dy[MAX_DISK_LEN];
@@ -128,18 +132,6 @@ typedef struct NaThreatCtx {
     const unsigned char **world_ptr_ptr;
 } NaThreatCtx;
 
-/* ── Process-wide read-only state ─────────────────────────────────── */
-
-/* TERRAIN_SPEED[tt] table — one entry per of the 16 possible terrain types.
- * Written from each brain's configure(); identical across NewAutopilot
- * clones, so concurrent writes are race-but-equivalent. */
-static int g_terrain_speed[16];
-
-/* HAZARD_TERRAIN bitset — 1 if this terrain type triggers the cardinal-
- * neighbor hazard multiplier (river / deepsea / rubble / swamp). Same
- * race-but-equivalent rationale as g_terrain_speed. */
-static uint8_t g_hazard_terrain[16];
-
 /* ── Registry-backed ctx lookup ───────────────────────────────────── */
 
 static int naThreatCtxGc(lua_State *L) {
@@ -184,16 +176,16 @@ static inline int tile_in_trees_c(const NaThreatCtx *ctx, int mx, int my) {
 
 static void compute_terrain_factor_at_c(NaThreatCtx *ctx, int mx, int my) {
     int tt = raw_tt(ctx, mx, my);
-    int spd = g_terrain_speed[tt & 0x0F];
+    int spd = ctx->terrain_speed[tt & 0x0F];
     if (spd <= 0) spd = 3; /* fallback matches Lua */
     float m = 16.0f / (float)spd;
     if (tt == ctx->t_forest) m = ctx->forest_terrain_mult;
     /* Hazard-neighbor check: any cardinal neighbor in the hazard set */
     int hazard = 0;
-    if (mx > 0       && g_hazard_terrain[raw_tt(ctx, mx - 1, my) & 0x0F]) hazard = 1;
-    if (!hazard && mx < MAP_W-1 && g_hazard_terrain[raw_tt(ctx, mx + 1, my) & 0x0F]) hazard = 1;
-    if (!hazard && my > 0       && g_hazard_terrain[raw_tt(ctx, mx, my - 1) & 0x0F]) hazard = 1;
-    if (!hazard && my < MAP_W-1 && g_hazard_terrain[raw_tt(ctx, mx, my + 1) & 0x0F]) hazard = 1;
+    if (mx > 0       && ctx->hazard_terrain[raw_tt(ctx, mx - 1, my) & 0x0F]) hazard = 1;
+    if (!hazard && mx < MAP_W-1 && ctx->hazard_terrain[raw_tt(ctx, mx + 1, my) & 0x0F]) hazard = 1;
+    if (!hazard && my > 0       && ctx->hazard_terrain[raw_tt(ctx, mx, my - 1) & 0x0F]) hazard = 1;
+    if (!hazard && my < MAP_W-1 && ctx->hazard_terrain[raw_tt(ctx, mx, my + 1) & 0x0F]) hazard = 1;
     if (hazard) m *= ctx->hazard_neighbor_mult;
 
     int k = my * MAP_W + mx;
@@ -366,27 +358,27 @@ static int l_naThreatConfigure(lua_State *L) {
 
     /* TERRAIN_SPEED table — keyed by terrain type integer (0..15).
      * Defaults to 3 for entries Lua doesn't supply. */
-    for (int i = 0; i < 16; i++) g_terrain_speed[i] = 3;
+    for (int i = 0; i < 16; i++) ctx->terrain_speed[i] = 3;
     lua_getfield(L, 1, "TERRAIN_SPEED");
     if (lua_istable(L, -1)) {
         lua_pushnil(L);
         while (lua_next(L, -2) != 0) {
             int tt = (int)luaL_optinteger(L, -2, -1);
             int sp = (int)luaL_optinteger(L, -1, 3);
-            if (tt >= 0 && tt < 16) g_terrain_speed[tt] = sp;
+            if (tt >= 0 && tt < 16) ctx->terrain_speed[tt] = sp;
             lua_pop(L, 1);
         }
     }
     lua_pop(L, 1);
 
     /* HAZARD_TERRAIN table — keys are terrain types, value is true. */
-    for (int i = 0; i < 16; i++) g_hazard_terrain[i] = 0;
+    for (int i = 0; i < 16; i++) ctx->hazard_terrain[i] = 0;
     lua_getfield(L, 1, "HAZARD_TERRAIN");
     if (lua_istable(L, -1)) {
         lua_pushnil(L);
         while (lua_next(L, -2) != 0) {
             int tt = (int)luaL_optinteger(L, -2, -1);
-            if (tt >= 0 && tt < 16) g_hazard_terrain[tt] = 1;
+            if (tt >= 0 && tt < 16) ctx->hazard_terrain[tt] = 1;
             lua_pop(L, 1);
         }
     }
