@@ -80,6 +80,15 @@ WinBolo uses the following third-party libraries and code.
 - Authors: Steven G. Johnson, Jiahao Chen, Peter Colberg, Tony Kelman, Scott P. Jones, and other contributors; Public Software Group e. V.
 - Used for UTF-8 NFC normalization and codepoint property lookup in player-name validation
 
+## Controller Glyphs
+
+### Xelu's Free Controller & Key Prompts
+- Location: data/controller/
+- License: CC0 1.0 (public domain)
+- https://thoseawesomeguys.com/prompts/
+- Author: Nicolae (Xelu) Berbece
+- Xbox, PlayStation 5, and Nintendo Switch controller-button glyph atlases used as the Path B (non-Steam-Input) glyph fallback for on-screen button hints
+
 ## Fonts
 
 ### Inter
