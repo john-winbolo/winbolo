@@ -3020,7 +3020,13 @@ function M.step_eval_queue(state, world, info)
             diff_score  = dc.score
             best_spot   = dc.spot
             _spots      = dc.spots
-            if dc.pickup_travel ~= nil then travel = dc.pickup_travel end  -- nil = not yet computed
+            if dc.pickup_travel ~= nil then
+              travel = dc.pickup_travel  -- nil = not yet computed; A* runs on first eval below
+              if BRAIN_POOL_VIZ and dc.spot then
+                goal_pickup_detail = string.format("cached=%.0f spot(%d,%d)→pill(%d,%d)",
+                  travel, dc.spot.mx, dc.spot.my, obj.mx, obj.my)
+              end
+            end
           else
             -- First-eval deferred. Stub keeps the candidate parked
             -- without paying for a scan.
@@ -3069,7 +3075,7 @@ function M.step_eval_queue(state, world, info)
           -- returned path and subtract this pill's own danger contrib +
           -- the 32767 overlay on its tile, matching what the planner
           -- would experience post-kill.
-          if travel == nil then  -- not yet cached for this spot
+          if dc == nil or dc.pickup_travel == nil or just_evaluated then  -- not cached or spot changed
           do
             local pck = obj.my * 256 + obj.mx
             local pc  = threat.pill_contrib and threat.pill_contrib[pck]
@@ -3097,7 +3103,14 @@ function M.step_eval_queue(state, world, info)
             -- Same TTL as diff_cache (spot only changes on re-eval).
             if diff_cache[dck] then diff_cache[dck].pickup_travel = travel end
           end  -- end pickup A* do-block
-          end  -- end if travel == nil
+          end  -- end pickup cache check
+          if BRAIN_POOL_VIZ then
+            local pck2 = obj.my * 256 + obj.mx
+            local has_contrib = threat.pill_contrib and threat.pill_contrib[pck2] ~= nil
+            goal_pickup_detail = string.format("A*=%.0f spot(%d,%d)→pill(%d,%d)%s",
+              travel, best_spot.mx, best_spot.my, obj.mx, obj.my,
+              has_contrib and " [contrib]" or " [no-contrib]")
+          end
           _spot_us = clock_us() - _t_spot
 
           -- Capture which pathfinder produced spot_cost + the realized
