@@ -201,7 +201,7 @@ static void compute_terrain_factor_at_c(NaThreatCtx *ctx, int mx, int my) {
 
 /* Runs Bresenham from (0,0) to (tx,ty), collecting intermediate points
  * (neither start nor end — matching U.bresenham's convention).
- * Returns the SECOND-TO-LAST intermediate point in *pdx/*pdy, which is
+ * Returns the SECOND-TO-LAST intermediate point in *pdx / *pdy, which is
  * Lua's line[#line-1].  Falls back to (0,0) if fewer than 2 intermediates.
  * This exactly replicates the predecessor selection in threat.lua's PRED
  * table construction so occlusion values agree between Lua and C. */
@@ -406,7 +406,7 @@ static int l_naThreatConfigure(lua_State *L) {
     memset(ctx->occ_trees,        0, sizeof(ctx->occ_trees));
     memset(ctx->occ_fpills,       0, sizeof(ctx->occ_fpills));
 
-    build_disk(ctx);  /* sets disk_built and rebuilds disk_*/prox/pred tables */
+    build_disk(ctx);  /* sets disk_built and rebuilds disk_* / prox/pred tables */
 
     ctx->cfg_done = 1;
     return 0;
