@@ -178,12 +178,14 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   local dest_changed = (pf.dest_mx ~= dest_mx or pf.dest_my ~= dest_my)
   local use_fallback = tank_moved and not dest_changed and fallback_nx >= 0
 
-  -- capture_pill: a just-died pill is still impassable in the cached
-  -- dijkstra slate (overlay was 32767 when it was alive). Force fresh
-  -- A* every tick so we route to the (now drivable) pill tile rather
-  -- than treating it as unreachable.
-  local skip_dijkstra = state.goal and state.goal.kind == "capture_pill"
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, skip_dijkstra)
+  -- capture_pill: Dijkstra slate still has the dead pill's tile at cost INF
+  -- (was 32767 overlay when alive). Clear the overlay so A* can route onto
+  -- it — same technique as the pickup A* in goals.lua. No restore needed;
+  -- dead pill has no overlay and init.lua doesn't stamp health=0 pills.
+  if state.goal and state.goal.kind == "capture_pill" then
+    cpf.set_overlay(dest_mx, dest_my, 0)
+  end
+  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET)
 
   -- Update state.pf tracking fields
   pf.src_mx  = tmx
@@ -1828,12 +1830,6 @@ function M.steer(state, world, info, goal)
         nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
       end
     end
-    -- capture_pill: route directly to the pill tile. The cached
-    -- dijkstra slate may still treat the pill as alive/impassable
-    -- (overlay 32767 baked in when it had health > 0), so cpf_path_to
-    -- forces fresh A* via skip_dijkstra=true. The pill tile itself
-    -- has no overlay applied for dead pills (init.lua only marks
-    -- pm.health > 0), so A* will route onto it.
     -- Rescue LGM: chase the LGM's LIVE sub-tile world position (not the
     -- cached goal.wx/wy from when the goal was created — the LGM moves).
     -- Tile coords still come from goal.mx/my for the A* path target.
@@ -1874,13 +1870,12 @@ function M.steer(state, world, info, goal)
           nav_wy = U.m2w(nav_my)
         end
       else
-        -- Legacy fallback: stand off on the line pill→tank
-        local dx  = tmx - goal.mx
-        local dy  = tmy - goal.my
-        local len = math.sqrt(dx * dx + dy * dy)
-        if len > 0.1 then
-          nav_mx = U.mclamp(math.floor(goal.mx + dx / len * C.ATTACK_PILL_STANDOFF + 0.5))
-          nav_my = U.mclamp(math.floor(goal.my + dy / len * C.ATTACK_PILL_STANDOFF + 0.5))
+        -- No standoff computed yet — navigate to explore frontier so the
+        -- tank keeps moving usefully while attack planning catches up.
+        local eb = state.explore_breakdown
+        if eb and eb.mx then
+          nav_mx = eb.mx
+          nav_my = eb.my
           nav_wx = U.m2w(nav_mx)
           nav_wy = U.m2w(nav_my)
         end
