@@ -150,9 +150,11 @@ function Brain.get_queue_status()
 end
 
 function Brain.get_pool_breakdown_json()
-  -- Structured (JSON-encoded) version for the pool_grid panel.
-  -- Errors return a minimal valid JSON envelope so the host always
-  -- has something to parse (panel renders an empty grid).
+  if not BRAIN_POOL_VIZ then
+    return string.format(
+      '{"phase":"%s","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"off","label":"Pool viz","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"BRAIN_POOL_VIZ is off","stale":-1,"active":false,"imminent":false,"reject":null}]}]}',
+      (state and state.phase) or "?", (state and state.tick) or 0, (state and state.player_number) or 0)
+  end
   local ok, result = pcall(goals.get_pool_breakdown_json, state)
   if ok then return result end
   io.stderr:write("BRAIN ERROR get_pool_breakdown_json: " .. tostring(result) .. "\n")
@@ -260,9 +262,11 @@ function Brain.open(info)
     -- cJSON and walks the section/row tree. The 4th-arg opts table
     -- requests its own SDL window with shortcut K (pooKs… alright,
     -- "K" for Killset — pick any free letter).
-    braintest_panel_register("Pool breakdown", "pool_grid",
-      "return brain.get_pool_breakdown_json()",
-      { shortcut = "P" })
+    if BRAIN_POOL_VIZ then
+      braintest_panel_register("Pool breakdown", "pool_grid",
+        "return brain.get_pool_breakdown_json()",
+        { shortcut = "P" })
+    end
     -- Queue status uses the generic text renderer (panel type "text").
     -- No shortcut → appears as a tab in the main P window.
     if Brain.get_queue_status then
