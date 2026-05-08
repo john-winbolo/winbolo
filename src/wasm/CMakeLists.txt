@@ -198,7 +198,7 @@ set(MAPEDITOR_SOURCES
 # WinBoloNet — replaced by a no-op stub (libcurl not available in Emscripten)
 set(WBN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/winbolonet_wasm.c)
 
-# GUI sources (SDL3) — excluding files we replace (winbolo.c, gamefront.c, netclient.c, clientmutex.c, dns_lookups.c)
+# GUI sources (SDL3) — excluding files we replace (winbolo.c, gamefront.c, sound.c, netclient.c, clientmutex.c, dns_lookups.c)
 set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
     ${SRC_ROOT}/gui/skins.c
@@ -235,7 +235,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/currentgames.c
     ${SRC_ROOT}/gui/sdl3/lang.c
-    ${SRC_ROOT}/gui/sdl3/sound.c
 )
 
 # WASM replacement sources
@@ -246,6 +245,7 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/threads_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
