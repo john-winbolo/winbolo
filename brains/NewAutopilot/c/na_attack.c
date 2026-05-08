@@ -81,15 +81,42 @@ typedef struct {
     EllTile tiles[NA_ATK_ELL_MAX_TILES];
 } EllStamp;
 
-static LosStamp s_los[NA_ATK_MAX_ANGLES];
-static EllStamp s_ell[NA_ATK_MAX_ANGLES];
-static int      s_stamps_built = 0;
+/* ── Per-brain working state ──────────────────────────────────────────
+ * Allocated as a Lua-managed userdata in naAttackRegister and accessed
+ * via getCtx(L). Each brain (lua_State) owns its own ctx; concurrent
+ * brains never touch each other's grids or stamps. */
+typedef struct NaAttackCtx {
+    LosStamp los[NA_ATK_MAX_ANGLES];
+    EllStamp ell[NA_ATK_MAX_ANGLES];
+    int      stamps_built;
+    float    pill_grid[MAP_TILES];
+    float    cov_grid[MAP_TILES];
+    uint8_t  pill_at[MAP_TILES];     /* 1 = non-target pill present    */
+    float    self_contrib[MAP_TILES];/* pill's own contribution (temp) */
+} NaAttackCtx;
 
-/* ── Per-tile data arrays ─────────────────────────────────────────────── */
-static float   s_pill_grid[MAP_TILES];
-static float   s_cov_grid[MAP_TILES];
-static uint8_t s_pill_at[MAP_TILES];    /* 1 = non-target pill present    */
-static float   s_self_contrib[MAP_TILES]; /* pill's own contribution (temp) */
+/* ── Registry-backed ctx lookup ───────────────────────────────────── */
+
+static int naAttackCtxGc(lua_State *L) {
+    /* Userdata storage is freed by Lua. The hook is here so any future
+     * ctx-owned sub-allocations have a place to be released. */
+    (void)L;
+    return 0;
+}
+
+static NaAttackCtx *getCtx(lua_State *L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "na_attack_ctx");
+    NaAttackCtx *ctx = (NaAttackCtx *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if (!ctx) luaL_error(L, "na_attack: ctx not initialized");
+    return ctx;
+}
+
+static NaAttackCtx *requireStampsBuilt(lua_State *L) {
+    NaAttackCtx *ctx = getCtx(L);
+    if (!ctx->stamps_built) luaL_error(L, "na_attack: init_stamps() must be called first");
+    return ctx;
+}
 
 /* ── Valid-spot accumulator ───────────────────────────────────────────── */
 #define MAX_VALID 80
@@ -139,8 +166,14 @@ static int l_init_stamps(lua_State *L) {
     luaL_checktype(L, 1, LUA_TTABLE); /* LOS_STAMPS_5DEG   */
     luaL_checktype(L, 2, LUA_TTABLE); /* ELLIPSE_STAMPS_5DEG */
 
-    memset(s_los, 0, sizeof(s_los));
-    memset(s_ell, 0, sizeof(s_ell));
+    NaAttackCtx *ctx = getCtx(L);
+
+    /* Mark unbuilt for the duration of the rebuild so any concurrent
+     * binding call sees stamps_built == 0 until the new state is fully
+     * built (matches Phase-2 lifecycle pattern). */
+    ctx->stamps_built = 0;
+    memset(ctx->los, 0, sizeof(ctx->los));
+    memset(ctx->ell, 0, sizeof(ctx->ell));
 
     /* LOS stamps: keyed by degree (0,5,10,...355) */
     for (int deg = 0, ai = 0; deg < 360; deg += 5, ai++) {
@@ -148,7 +181,7 @@ static int l_init_stamps(lua_State *L) {
         lua_rawgeti(L, 1, deg);  /* try integer key first */
         if (lua_isnil(L, -1)) { lua_pop(L, 1); continue; }
 
-        LosStamp *ls = &s_los[ai];
+        LosStamp *ls = &ctx->los[ai];
 
         lua_getfield(L, -1, "spot_dx");
         ls->spot_dx = (int8_t)lua_tointeger(L, -1); lua_pop(L, 1);
@@ -183,7 +216,7 @@ static int l_init_stamps(lua_State *L) {
         lua_rawgeti(L, 2, deg);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); continue; }
 
-        EllStamp *es = &s_ell[ai];
+        EllStamp *es = &ctx->ell[ai];
         int tlen = (int)lua_rawlen(L, -1);
         int n = 0;
         for (int t = 1; t <= tlen && n < NA_ATK_ELL_MAX_TILES; t++) {
@@ -204,13 +237,13 @@ static int l_init_stamps(lua_State *L) {
         lua_pop(L, 1); /* stamp array */
     }
 
-    s_stamps_built = 1;
+    ctx->stamps_built = 1;
     return 0;
 }
 
 /*
  * na_attack.sync_pill_at(world_pill_at_table, target_pmx, target_pmy)
- * Rebuilds s_pill_at from world.pill_at, excluding the target pill tile.
+ * Rebuilds ctx->pill_at from world.pill_at, excluding the target pill tile.
  */
 static int l_sync_pill_at(lua_State *L) {
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -218,7 +251,8 @@ static int l_sync_pill_at(lua_State *L) {
     int target_pmy = (int)luaL_checkinteger(L, 3);
     int target_key = target_pmy * MAP_W + target_pmx;
 
-    memset(s_pill_at, 0, sizeof(s_pill_at));
+    NaAttackCtx *ctx = requireStampsBuilt(L);
+    memset(ctx->pill_at, 0, sizeof(ctx->pill_at));
 
     lua_pushnil(L);
     while (lua_next(L, 1)) {
@@ -228,7 +262,7 @@ static int l_sync_pill_at(lua_State *L) {
             if (k >= 0 && k < MAP_TILES && k != target_key) {
                 /* Check if the array has at least one pill entry */
                 if (lua_istable(L, -1) && lua_rawlen(L, -1) > 0) {
-                    s_pill_at[k] = 1;
+                    ctx->pill_at[k] = 1;
                 }
             }
         }
@@ -239,17 +273,18 @@ static int l_sync_pill_at(lua_State *L) {
 
 /*
  * na_attack.sync_grids()
- * Copies s_pill_grid_c and s_cov_grid_c from na_threat into local arrays.
+ * Copies pill_grid and cov_grid from na_threat into ctx local arrays.
  * pill_grid and cov_grid are now written directly to C by stamp_pill and
  * apply_occlusion_all, so this is a plain memcpy — no Lua table iteration.
  */
 static int l_sync_grids(lua_State *L) {
+    NaAttackCtx *ctx = requireStampsBuilt(L);
     float *pg = naThreatGetPillGrid(L);
     float *cg = naThreatGetCovGrid(L);
-    if (pg) memcpy(s_pill_grid, pg, MAP_TILES * sizeof(float));
-    else    memset(s_pill_grid, 0, sizeof(s_pill_grid));
-    if (cg) memcpy(s_cov_grid,  cg, MAP_TILES * sizeof(float));
-    else    memset(s_cov_grid,  0, sizeof(s_cov_grid));
+    if (pg) memcpy(ctx->pill_grid, pg, MAP_TILES * sizeof(float));
+    else    memset(ctx->pill_grid, 0, sizeof(ctx->pill_grid));
+    if (cg) memcpy(ctx->cov_grid,  cg, MAP_TILES * sizeof(float));
+    else    memset(ctx->cov_grid,  0, sizeof(ctx->cov_grid));
     return 0;
 }
 
@@ -262,7 +297,8 @@ static int l_sync_grids(lua_State *L) {
  * Returns math.huge, -1, -1, -1 when no valid spot is found.
  */
 static int l_evaluate_pill_difficulty(lua_State *L) {
-    if (!s_stamps_built) {
+    NaAttackCtx *ctx = getCtx(L);
+    if (!ctx->stamps_built) {
         lua_pushnumber(L, 1e30);
         lua_pushinteger(L, -1);
         lua_pushinteger(L, -1);
@@ -291,14 +327,14 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
     const BYTE *world = *wpp;
 
     /* Build self_contrib from Lua table */
-    memset(s_self_contrib, 0, sizeof(s_self_contrib));
+    memset(ctx->self_contrib, 0, sizeof(ctx->self_contrib));
     if (has_self_contrib) {
         lua_pushnil(L);
         while (lua_next(L, 7)) {
             if (lua_isinteger(L, -2)) {
                 int k = (int)lua_tointeger(L, -2);
                 if (k >= 0 && k < MAP_TILES)
-                    s_self_contrib[k] = (float)lua_tonumber(L, -1);
+                    ctx->self_contrib[k] = (float)lua_tonumber(L, -1);
             }
             lua_pop(L, 1);
         }
@@ -331,7 +367,7 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
         int stamp_idx = deg / 5;   /* stamps are always 5-deg spaced */
         if (stamp_idx >= NA_ATK_MAX_ANGLES) stamp_idx = NA_ATK_MAX_ANGLES - 1;
 
-        const LosStamp *ls = &s_los[stamp_idx];
+        const LosStamp *ls = &ctx->los[stamp_idx];
         int pill_key = pmy * MAP_W + pmx;
         int has_los = 0;
 
@@ -346,7 +382,7 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
                 int ttt = world[tk] & TT_MASK;
                 if (ttt == TT_BUILDING || ttt == TT_HALFBUILD) { blocked = 1; break; }
                 /* Non-target pill blocks LOS */
-                if (tk != pill_key && s_pill_at[tk]) { blocked = 1; break; }
+                if (tk != pill_key && ctx->pill_at[tk]) { blocked = 1; break; }
             }
             if (!blocked) { has_los = 1; break; }
         }
@@ -354,7 +390,7 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
         if (!has_los) continue;
 
         /* Ellipse scan (back half: proj <= 0) */
-        const EllStamp *es = &s_ell[stamp_idx];
+        const EllStamp *es = &ctx->ell[stamp_idx];
 
         float max_coverage  = 0.0f;
         float total_danger  = 0.0f;
@@ -370,7 +406,7 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
             if (k < 0 || k >= MAP_TILES) continue;
 
             /* scan_a: coverage (crossfire) */
-            float cov = s_cov_grid[k];
+            float cov = ctx->cov_grid[k];
             if (cov > max_coverage) max_coverage = cov;
 
             /* scan_b: danger + terrain */
@@ -381,8 +417,8 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
             int stt = world[k] & TT_MASK;
             if (stt == TT_FOREST) forest_count++;
 
-            float d = s_pill_grid[k];
-            float sc = s_self_contrib[k];
+            float d = ctx->pill_grid[k];
+            float sc = ctx->self_contrib[k];
             if (sc > 0.0f) d -= sc;
             if (d < 0.0f) d = 0.0f;
 
@@ -396,7 +432,7 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
                        stt == TT_SWAMP   || stt == TT_RIVER      ||
                        stt == TT_PILLBOX) {
                 terrain_penalty += 100.0f;
-            } else if (s_pill_at[k]) {
+            } else if (ctx->pill_at[k]) {
                 /* friendly pill presence — add terrain penalty */
                 terrain_penalty += 100.0f;
             }
@@ -500,6 +536,21 @@ static const luaL_Reg na_attack_lib[] = {
 };
 
 void naAttackRegister(lua_State *L) {
+    /* Allocate the ctx as a Lua-managed userdata (the userdata storage
+     * IS the ctx). Lua frees it on lua_State close; the __gc metatable
+     * is a no-op today but is the hook for any sub-allocation cleanup
+     * the ctx might grow later. */
+    NaAttackCtx *ctx = (NaAttackCtx *)lua_newuserdata(L, sizeof(NaAttackCtx));
+    memset(ctx, 0, sizeof(*ctx));
+
+    if (luaL_newmetatable(L, "na_attack_ctx_mt")) {
+        lua_pushcfunction(L, naAttackCtxGc);
+        lua_setfield(L, -2, "__gc");
+    }
+    lua_setmetatable(L, -2);
+
+    lua_setfield(L, LUA_REGISTRYINDEX, "na_attack_ctx");
+
     luaL_newlib(L, na_attack_lib);
     lua_setglobal(L, "na_attack");
 }
