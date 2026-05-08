@@ -164,4 +164,20 @@ int lv_snapshotCount(snapshot *value);
 *********************************************************/
 bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
 
+/*********************************************************
+*NAME:          lv_snapshotFindByTime
+*PURPOSE:
+* Finds the latest snapshot at or before the given game
+* time (ms). Returns TRUE if found.
+*
+*ARGUMENTS:
+* value      - Snapshot list
+* targetTime - Target game time in ms
+* filePos    - Returned file position of the snapshot
+* time       - Returned time of the snapshot
+* key        - Returned decryption key
+* pTeams     - Returned pointer to team data
+*********************************************************/
+bool lv_snapshotFindByTime(snapshot *value, uint32_t targetTime, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
+
 #endif /* __SNAPSHOT_H */

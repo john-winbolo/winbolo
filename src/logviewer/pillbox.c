@@ -425,8 +425,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
-    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
-    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
@@ -434,11 +433,9 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     /* Stole pill */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
-    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
-    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner);
-    strncpy(args.otherName, oldOwner, sizeof(args.otherName) - 1);
-    args.otherName[sizeof(args.otherName) - 1] = '\0';
+    snprintf(args.otherName, sizeof(args.otherName), "%s", oldOwner);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }
   (*value)->item[pillNum].owner = owner;

@@ -83,6 +83,23 @@ uint16_t lv_gameViewGetDeaths(BYTE slot) {
   if (slot >= MAX_TANKS) return 0;
   return g_lv->deaths[slot];
 }
+uint32_t lv_gameViewGetDeathTimeMs(BYTE slot) {
+  if (slot >= MAX_TANKS) return 0;
+  return g_lv->gameViewHud[slot].deathTimeMs;
+}
+void lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
+  if (slot >= MAX_TANKS) {
+    if (shells) *shells = 0;
+    if (mines)  *mines  = 0;
+    if (armour) *armour = 0;
+    if (trees)  *trees  = 0;
+    return;
+  }
+  if (shells) *shells = g_lv->tankInv[slot].shells;
+  if (mines)  *mines  = g_lv->tankInv[slot].mines;
+  if (armour) *armour = g_lv->tankInv[slot].armour;
+  if (trees)  *trees  = g_lv->tankInv[slot].trees;
+}
 
 /* Pending memory-based log load (set by logViewerRunFromMemory) */
 static uint8_t *s_pendingZipData = NULL;
@@ -508,6 +525,11 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     memset(g_lv->kills, 0, sizeof(g_lv->kills));
     memset(g_lv->deaths, 0, sizeof(g_lv->deaths));
     memset(g_lv->gameViewHud, 0, sizeof(g_lv->gameViewHud));
+    memset(g_lv->tankInv, 0, sizeof(g_lv->tankInv));
+    memset(g_lv->prevBaseShells, 0, sizeof(g_lv->prevBaseShells));
+    memset(g_lv->prevBaseMines, 0, sizeof(g_lv->prevBaseMines));
+    memset(g_lv->prevBaseArmour, 0, sizeof(g_lv->prevBaseArmour));
+    memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
     lv_screenSetState(g_lv);
 
@@ -720,12 +742,13 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             }
 
             /* Manual arrow-key viewport scroll while game view is active.
-             * Shifts xOffset/yOffset by 1 tile per key event (SDL fires
-             * SDL_EVENT_KEY_DOWN repeatedly while a key is held, so no
-             * auto-repeat logic needed). The viewport is clamped to the
-             * map and to keep the camera tank on-screen — the dead-zone
-             * tracker on the next frame may pull it back if the tank's
-             * left the safe zone. */
+             * Pans by kArrowStep unzoomed pixels per key event (SDL fires
+             * SDL_EVENT_KEY_DOWN repeatedly while held), going through
+             * lv_screenPanToTotalPixels so the pan accumulates at sub-tile
+             * granularity into (xOffset,subPxX) instead of snapping a
+             * whole tile per repeat. The dead-zone tracker on the next
+             * frame may ease the camera back if the pan moved the tank
+             * out of the safe zone. */
             if (g_lv->gameView && sdlEvent.type == SDL_EVENT_KEY_DOWN) {
                 int dx = 0, dy = 0;
                 switch (sdlEvent.key.key) {
@@ -736,28 +759,71 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                     default: break;
                 }
                 if (dx || dy) {
-                    const int kViewTiles = 16; /* mirrors GV_SCREEN_TILES */
-                    int newX = (int)g_lv->xOffset + dx;
-                    int newY = (int)g_lv->yOffset + dy;
-                    if (newX < 0) newX = 0;
-                    if (newY < 0) newY = 0;
-                    if (newX > 256 - kViewTiles) newX = 256 - kViewTiles;
-                    if (newY > 256 - kViewTiles) newY = 256 - kViewTiles;
+                    const int kViewTiles  = 16; /* mirrors GV_SCREEN_TILES */
+                    const int kTilePx     = 16; /* TILE_SIZE_X */
+                    const int kArrowStep  = 8;  /* unzoomed px per repeat */
+                    int totalPxX = (int)g_lv->xOffset * kTilePx + g_lv->subPxX
+                                 + dx * kArrowStep;
+                    int totalPxY = (int)g_lv->yOffset * kTilePx + g_lv->subPxY
+                                 + dy * kArrowStep;
                     if (lv_playersIsInUse(g_lv->cameraSlot)) {
                         BYTE camMx, camMy, camPx, camPy, camFr;
                         bool camBoat;
                         lv_playersGetTankDetails(g_lv->cameraSlot,
                             &camMx, &camMy, &camPx, &camPy, &camFr, &camBoat);
-                        if      ((int)camMx <  newX)              newX = (int)camMx;
-                        else if ((int)camMx >= newX + kViewTiles) newX = (int)camMx - kViewTiles + 1;
-                        if      ((int)camMy <  newY)              newY = (int)camMy;
-                        else if ((int)camMy >= newY + kViewTiles) newY = (int)camMy - kViewTiles + 1;
+                        int tankWorldPxX = (int)camMx * kTilePx + (int)camPx;
+                        int tankWorldPxY = (int)camMy * kTilePx + (int)camPy;
+                        int viewportPx   = kViewTiles * kTilePx;
+                        if      (tankWorldPxX <  totalPxX)              totalPxX = tankWorldPxX;
+                        else if (tankWorldPxX >= totalPxX + viewportPx) totalPxX = tankWorldPxX - viewportPx + 1;
+                        if      (tankWorldPxY <  totalPxY)              totalPxY = tankWorldPxY;
+                        else if (tankWorldPxY >= totalPxY + viewportPx) totalPxY = tankWorldPxY - viewportPx + 1;
                     }
-                    g_lv->xOffset = (BYTE)newX;
-                    g_lv->yOffset = (BYTE)newY;
+                    lv_screenPanToTotalPixels(totalPxX, totalPxY);
                     g_lv->wantScreenUpdate = TRUE;
                     continue;
                 }
+            }
+
+            /* ',' / '<' jump back, '.' / '>' jump forward, 10s each.
+             * SDL3 reports key.key as the unmodified keycode by default,
+             * so Shift+',' arrives as SDLK_COMMA — match both physical
+             * keys regardless of shift state. Re-centres the camera
+             * after the seek because a 10s jump can leave the followed
+             * tank far outside the viewport, and the dead-zone tracker
+             * would otherwise scroll one tile per frame to catch up. */
+            if (g_lv->gameView && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+                g_lv->isLoaded &&
+                (sdlEvent.key.key == SDLK_COMMA  || sdlEvent.key.key == SDLK_LESS ||
+                 sdlEvent.key.key == SDLK_PERIOD || sdlEvent.key.key == SDLK_GREATER)) {
+                size_t curPos, totSize;
+                uint32_t curTime, totTime;
+                lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+                if (totTime > 0) {
+                    const uint32_t kStepMs = 10000;
+                    bool back = (sdlEvent.key.key == SDLK_COMMA ||
+                                 sdlEvent.key.key == SDLK_LESS);
+                    uint32_t targetMs;
+                    if (back) {
+                        targetMs = (curTime > kStepMs) ? curTime - kStepMs : 0;
+                    } else {
+                        targetMs = curTime + kStepMs;
+                        if (targetMs > totTime) targetMs = totTime;
+                    }
+                    float ratio = (float)targetMs / (float)totTime;
+                    unsigned char wasPlaying = g_lv->playIsPlaying;
+                    if (wasPlaying) lv_windowPause();
+                    lv_clientMutexWaitFor();
+                    lv_drawDirtyScreen();
+                    lv_screenSeekToPosition(ratio);
+                    lv_drawDirtyScreen();
+                    lv_clientMutexRelease();
+                    lv_imgui_game_view_init_camera(g_lv);
+                    lv_windowNeedRedraw();
+                    if (wasPlaying) lv_windowPlay();
+                    g_lv->wantScreenUpdate = TRUE;
+                }
+                continue;
             }
 
             lv_imgui_context_handle_event(&sdlEvent);
