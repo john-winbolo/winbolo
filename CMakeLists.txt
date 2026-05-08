@@ -377,12 +377,13 @@ endfunction()
 # overlay). Only binaries that link luabrainshandler.c need these
 # files — that's where the per-tick registrations happen.
 #
-# Glob is build-time: adding a new .c under brains/<bot>/c/ requires
-# a CMake re-run. Include dirs are derived from the source list so
+# CONFIGURE_DEPENDS makes CMake re-glob on every build, so adding a new
+# .c under brains/<bot>/c/ is picked up automatically without a manual
+# reconfigure. Include dirs are derived from the source list so
 # consumers (luabrainshandler.c, braintest_main.c) can #include the
 # bot-specific headers without long relative paths.
 # ─────────────────────────────────────────────────────────────────────
-file(GLOB BOT_C_SOURCES "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
+file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
 set(BOT_C_INCLUDE_DIRS "")
 foreach(_bot_c_src ${BOT_C_SOURCES})
     get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
