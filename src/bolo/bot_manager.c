@@ -80,6 +80,31 @@ typedef struct {
     /* Last tick at which a budget-overrun warning was logged for this
      * bot. Limits the warning to at most one per ~50 ticks. */
     Uint32          lastOverrunWarnTick;
+    /* Set by the count hook when SDL_GetPerformanceCounter() passes
+     * thinkDeadlineCounter; polled by C bindings (cpf/wsim/NA) at
+     * their outer-loop checkpoints so they can return a partial result
+     * cheaply instead of running to completion past the budget. The
+     * hook also raises luaL_error("tick_budget_exceeded") in the same
+     * step, so once C returns to Lua the longjmp unwinds to the
+     * brainCoreCallThink pcall within ~1000 instructions. Reset to 0
+     * each tick before dispatch.  */
+    SDL_AtomicInt   abort_flag;
+    /* Absolute SDL_GetPerformanceCounter() value at which this bot's
+     * think budget elapses. Set per-tick by runBotThinkJob from
+     * t0 + s_lastTargetMs * SDL_GetPerformanceFrequency() / 1000 so
+     * the count hook does one cheap compare against `now`. */
+    Uint64          thinkDeadlineCounter;
+    /* One-tick edge signal set by the producer when the previous tick
+     * was aborted by the budget hook. Surfaced to the brain via
+     * brain.wasKilled; reset to false immediately after being passed,
+     * so a brain only sees it for the single tick that follows an
+     * abort. */
+    bool            wasKilled;
+    /* The bot's lua_State stores BotContext * via lua_getextraspace(L).
+     * Set up exactly once during botManagerAddBot after the brain
+     * instance is created; the count hook and every cpf_/wsim_/NA
+     * binding cast lua_getextraspace(L) back to BotContext * to read
+     * abort_flag and thinkDeadlineCounter without per-binding plumbing. */
 } BotContext;
 
 static BotContext bots[MAX_TANKS];
@@ -136,6 +161,37 @@ static void (*g_preThinkHook)(int playerNum) = NULL;
 
 void botManagerSetPreThinkHook(void (*hook)(int playerNum)) {
     g_preThinkHook = hook;
+}
+
+/* Recover the BotContext from a brain's lua_State. NULL when the
+ * lua_State has no associated bot (e.g. the singleton GUI brain). */
+static BotContext *botFromLua(lua_State *L) {
+    if (L == NULL) return NULL;
+    void *slot = lua_getextraspace(L);
+    return slot ? *(BotContext **)slot : NULL;
+}
+
+/* Lua count hook installed for the duration of brain.think(). Fires
+ * every ~1000 VM instructions; checks the per-bot deadline and, on
+ * overrun, sets abort_flag and longjmps out via luaL_error. */
+static void brainBudgetHook(lua_State *L, lua_Debug *ar) {
+    (void)ar;
+    BotContext *bot = botFromLua(L);
+    if (bot == NULL) return;
+    Uint64 now = SDL_GetPerformanceCounter();
+    if (now >= bot->thinkDeadlineCounter) {
+        SDL_SetAtomicInt(&bot->abort_flag, 1);
+        /* Raise. Longjmps unwind to the lua_pcall in brainCoreCallThink,
+         * which detects the suffix and reports "killed" rather than the
+         * real-error removal path. */
+        luaL_error(L, "tick_budget_exceeded");
+    }
+}
+
+bool botManagerShouldAbort(struct lua_State *L) {
+    BotContext *bot = botFromLua((lua_State *)L);
+    if (bot == NULL) return false;
+    return SDL_GetAtomicInt(&bot->abort_flag) != 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -355,6 +411,28 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         return false;
     }
 
+    /* Stash BotContext* in lua_getextraspace so the count hook and
+     * cpf_/wsim_/NA bindings can recover bot->abort_flag and
+     * bot->thinkDeadlineCounter from a bare lua_State without per-
+     * binding plumbing. Set exactly once here. */
+    if (bot->brain.L != NULL) {
+        *(BotContext **)lua_getextraspace(bot->brain.L) = bot;
+    }
+    SDL_SetAtomicInt(&bot->abort_flag, 0);
+    bot->thinkDeadlineCounter = 0;
+    bot->wasKilled = false;
+
+    /* Wire the abort flag through to the C pathfinder/worldsim so their
+     * inner search loops can poll it without going back through Lua.
+     * Pointer outlives the bot — both structs are owned by bot->brain
+     * and torn down before the BotContext is reused. */
+    if (bot->brain.pathfinder != NULL) {
+        brainPathfinderSetAbortFlag(bot->brain.pathfinder, &bot->abort_flag);
+    }
+    if (bot->brain.worldsim != NULL) {
+        brainWorldSimSetAbortFlag(bot->brain.worldsim, &bot->abort_flag);
+    }
+
     bot->active = true;
     numBots++;
 
@@ -381,35 +459,41 @@ typedef struct {
     InputPacket         pkt1, pkt2;
     bool                needRemove;  /* worker → producer: brain tick failed */
     bool                hasInput;    /* worker → producer: pkt1/pkt2 valid */
+    /* worker → producer: brain.think was aborted by the count hook this
+     * tick (tick_budget_exceeded). The bot stays alive; the producer
+     * surfaces the kill to the next tick via bot->wasKilled. */
+    bool                wasKilled;
 } BotJobCtx;
 
 static BotJobCtx s_jobs[MAX_TANKS];
 static int       s_jobIndices[MAX_TANKS];
 
-static void runBotThinkJob(int botIndex, void *userData) {
-    (void)userData;
-    BotJobCtx *j = &s_jobs[botIndex];
-    BotContext *bot = j->bot;
-    ServerSim  *sim = j->sim;
+/* Run brain.think for the bot, with the count hook already armed and
+ * a deadline already populated by the wrapper. Single return point in
+ * the wrapper guarantees the hook is uninstalled regardless of which
+ * exit path this function takes. */
+static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
+    ServerSim *sim = j->sim;
 
-    /* Optional pre-think hook (BrainTest viz). NULL in WinBoloDS.
-     * Set once at host init and never modified after, so reading the
-     * function pointer here from a worker thread is safe. */
-    if (g_preThinkHook) g_preThinkHook(botIndex);
-
-    Uint64 t0 = SDL_GetPerformanceCounter();
     bool ok = luaBrainInstanceTick(&bot->brain);
     Uint64 t1 = SDL_GetPerformanceCounter();
-
-    if (g_preThinkHook) g_preThinkHook(-1);
 
     bot->lastThinkMs = (double)(t1 - t0) * 1000.0
                        / (double)SDL_GetPerformanceFrequency();
 
     if (!ok) {
-        /* Producer handles botManagerRemoveBot in the input-send stage —
-         * never call it from a worker thread. */
-        j->needRemove = true;
+        /* Distinguish a budget abort (recoverable: bot stays, brain.wasKilled
+         * fires next tick) from a real Lua error (existing path: producer
+         * removes the bot in Phase 3). The hook stamps abort_flag before
+         * raising, and brainCoreCallThink also matches on the error suffix
+         * so non-hook luaL_errors can never spoof the kill code path. */
+        if (bot->brain.wasKilled) {
+            j->wasKilled = true;
+        } else {
+            /* Producer handles botManagerRemoveBot in the input-send stage —
+             * never call it from a worker thread. */
+            j->needRemove = true;
+        }
         return;
     }
 
@@ -427,6 +511,42 @@ static void runBotThinkJob(int botIndex, void *userData) {
                              TRUE, !firstIsGame, bot->playerNum,
                              sim->tick + 1);
     j->hasInput = true;
+}
+
+static void runBotThinkJob(int botIndex, void *userData) {
+    (void)userData;
+    BotJobCtx *j = &s_jobs[botIndex];
+    BotContext *bot = j->bot;
+
+    /* Optional pre-think hook (BrainTest viz). NULL in WinBoloDS.
+     * Set once at host init and never modified after, so reading the
+     * function pointer here from a worker thread is safe. */
+    if (g_preThinkHook) g_preThinkHook(botIndex);
+
+    /* Compute this bot's absolute deadline and arm the count hook
+     * before the tick. Capturing t0 here (after the pre-think hook)
+     * means lastThinkMs measures only the brain work itself. */
+    Uint64 t0   = SDL_GetPerformanceCounter();
+    Uint64 freq = SDL_GetPerformanceFrequency();
+    bot->thinkDeadlineCounter =
+        t0 + (Uint64)(s_lastTargetMs * (double)freq / 1000.0);
+
+    /* Install for brain.think() only — brain.open() (one-time init,
+     * called from luaBrainInstanceCreate) is allowed to be unbounded. */
+    if (bot->brain.L != NULL) {
+        lua_sethook(bot->brain.L, brainBudgetHook, LUA_MASKCOUNT, 1000);
+    }
+
+    runBotThinkJobImpl(j, bot, t0);
+
+    /* Single uninstall point. Leaking the hook into the next tick would
+     * fire against a stale deadline and abort spuriously, so this must
+     * run on the success path AND the error/budget-kill path. */
+    if (bot->brain.L != NULL) {
+        lua_sethook(bot->brain.L, NULL, 0, 0);
+    }
+
+    if (g_preThinkHook) g_preThinkHook(-1);
 }
 
 void botManagerTick(ServerSim *sim, aiType ai) {
@@ -449,6 +569,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         j->sim = sim;
         j->needRemove = false;
         j->hasInput   = false;
+        j->wasKilled  = false;
 
         bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
                                    &j->hdr, j->tanks, MAX_TANKS,
@@ -499,10 +620,19 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     s_lastTargetMs = botManagerComputePerBotTargetMs(activeCount);
     for (int k = 0; k < activeCount; k++) {
         int i = s_jobIndices[k];
+        /* wasKilled is a one-tick edge signal: pass the persisted flag
+         * from the previous tick, then reset so it does not stick. The
+         * worker may set bots[i].wasKilled = true again below if the
+         * count hook fires this tick. */
         luaBrainSetTickInputs(&bots[i].brain,
                               bots[i].lastThinkMs,
                               s_lastTargetMs,
-                              false /* wasKilled — no kill enforcement yet */);
+                              bots[i].wasKilled);
+        bots[i].wasKilled = false;
+        /* Clean abort flag so the worker starts each tick unflagged.
+         * Atomic store pairs with the worker's atomic load on the
+         * other side of the pool's release/acquire on dispatch. */
+        SDL_SetAtomicInt(&bots[i].abort_flag, 0);
     }
 
     /* ---- Stage 2: brain tick (parallel via pool, serial on first tick) ----
@@ -542,6 +672,22 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             WB_LOG_WARN(WB_LOG_CAT_LUA,
                         "bot %d brain tick failed, removing", i);
             botManagerRemoveBot(sim, (BYTE)i);
+            continue;
+        }
+        if (j->wasKilled) {
+            /* Tick aborted by the budget hook. The bot stays alive; a
+             * partial cs state isn't safe to convert into an input
+             * packet, so j->hasInput stays false above. Surface the
+             * kill to next tick's brain.wasKilled and bump the overrun
+             * counter — these always go together. */
+            bots[i].wasKilled = true;
+            bots[i].overrunCount++;
+            if ((sim->tick - bots[i].lastOverrunWarnTick) > 50) {
+                WB_LOG_WARN(WB_LOG_CAT_LUA,
+                            "bot %d think aborted (budget %.1fms exceeded; overruns=%u)",
+                            i, s_lastTargetMs, bots[i].overrunCount);
+                bots[i].lastOverrunWarnTick = sim->tick;
+            }
             continue;
         }
         if (!j->hasInput) {

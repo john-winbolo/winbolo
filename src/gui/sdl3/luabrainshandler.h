@@ -323,6 +323,13 @@ typedef struct {
     OverlayCmdBuffer  overlay;
     OverlayCmdBuffer *overlayPtr;
     BrainInfo bInfo;            /* Per-instance BrainInfo */
+    /* True iff the most recent luaBrainInstanceTick aborted via the
+     * tick-budget count hook (Lua error suffix
+     * "tick_budget_exceeded"). The producer reads this after the
+     * worker returns to decide between the survive-with-wasKilled
+     * path and the real-error remove-the-bot path. Reset to false at
+     * the top of each tick. */
+    bool wasKilled;
 } LuaBrainInstance;
 
 /*********************************************************

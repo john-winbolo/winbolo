@@ -30,6 +30,7 @@
 
 #include "na_threat.h"
 #include "../../../src/bolo/braincore.h"
+#include "../../../src/bolo/bot_manager.h"
 #include <lauxlib.h>
 #include <math.h>
 #include <string.h>
@@ -413,6 +414,11 @@ static int l_naThreatTerrainRebuild(lua_State *L) {
         return luaL_error(L, "na_threat.terrain_rebuild: world pointer not available");
     }
     for (int my = 0; my < MAP_W; my++) {
+        /* Cooperative abort: poll once per row (256 inner tiles each).
+         * On hit we stop early, leave terrain_built = 0 so the next
+         * call (or anything that requires terrain) re-runs the sweep
+         * from scratch. The brain's count hook handles the rest. */
+        if (botManagerShouldAbort(L)) return 0;
         for (int mx = 0; mx < MAP_W; mx++) {
             compute_terrain_factor_at_c(ctx, mx, my);
         }
@@ -561,6 +567,14 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
 
     /* Process each hostile/neutral pill. */
     for (int hi = 1; hi <= hp_n; hi++) {
+        /* Cooperative abort: per-pill is the natural checkpoint —
+         * the inner DP sweep walks the precomputed pred_order in a
+         * single pass and finishing one pill keeps occ_walls/trees/
+         * fpills consistent. Partial-pill abort would leave an
+         * inconsistent sweep mid-pill. The friendly_set cleanup at
+         * the bottom is keyed off the same fp arrays we just set, so
+         * skipping pills doesn't leak set bits. */
+        if (botManagerShouldAbort(L)) break;
         lua_rawgeti(L, 5, hi); int px = (int)lua_tointeger(L, -1); lua_pop(L, 1);
         lua_rawgeti(L, 6, hi); int py = (int)lua_tointeger(L, -1); lua_pop(L, 1);
 
@@ -677,10 +691,19 @@ static int l_naThreatSyncGrids(lua_State *L) {
  * Replaces the Lua crossfire loop — operates on pill_grid_c directly. */
 static int l_naThreatApplyCrossfire(lua_State *L) {
     NaThreatCtx *ctx = requireConfigured(L);
-    for (int k = 0; k < MAP_TILES; k++) {
-        if (ctx->pill_grid_c[k] > 0.0f) {
-            float cov = ctx->cov_grid_c[k];
-            if (cov > 1.0f) ctx->pill_grid_c[k] *= cov;
+    /* Single 65536-tile sweep. Poll once per row (256 tiles) so the
+     * extraspace lookup is amortised. Partial sweep: tiles past the
+     * abort point keep their pre-crossfire value, which is a strict
+     * underestimate of danger — safer than overestimate, and the
+     * brain re-runs the rebuild next tick anyway. */
+    for (int k0 = 0; k0 < MAP_TILES; k0 += 256) {
+        if (botManagerShouldAbort(L)) break;
+        int kEnd = k0 + 256;
+        for (int k = k0; k < kEnd; k++) {
+            if (ctx->pill_grid_c[k] > 0.0f) {
+                float cov = ctx->cov_grid_c[k];
+                if (cov > 1.0f) ctx->pill_grid_c[k] *= cov;
+            }
         }
     }
     return 0;
@@ -712,14 +735,22 @@ static int l_naThreatCovGridAt(lua_State *L) {
 static int l_naThreatForEachPillDanger(lua_State *L) {
     NaThreatCtx *ctx = requireConfigured(L);
     luaL_checktype(L, 1, LUA_TFUNCTION);
-    for (int k = 0; k < MAP_TILES; k++) {
-        float v = ctx->pill_grid_c[k];
-        if (v > 0.0f) {
-            lua_pushvalue(L, 1);
-            lua_pushinteger(L, k & 255);         /* mx */
-            lua_pushinteger(L, (k >> 8) & 255);  /* my */
-            lua_pushnumber(L, (double)v);
-            lua_call(L, 3, 0);
+    /* Each callback re-enters Lua, where the count hook can fire and
+     * raise tick_budget_exceeded directly. The C-side poll is a coarse
+     * backstop for runs where lua_call dispatches to a C function that
+     * happens to keep the VM busy on its own; check once per row. */
+    for (int k0 = 0; k0 < MAP_TILES; k0 += 256) {
+        if (botManagerShouldAbort(L)) break;
+        int kEnd = k0 + 256;
+        for (int k = k0; k < kEnd; k++) {
+            float v = ctx->pill_grid_c[k];
+            if (v > 0.0f) {
+                lua_pushvalue(L, 1);
+                lua_pushinteger(L, k & 255);         /* mx */
+                lua_pushinteger(L, (k >> 8) & 255);  /* my */
+                lua_pushnumber(L, (double)v);
+                lua_call(L, 3, 0);
+            }
         }
     }
     return 0;

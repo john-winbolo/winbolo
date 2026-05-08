@@ -16,6 +16,7 @@
 #include "na_attack.h"
 #include "na_threat.h"
 #include "../../../src/bolo/braincore.h"
+#include "../../../src/bolo/bot_manager.h"
 #include <lauxlib.h>
 #include <math.h>
 #include <stdint.h>
@@ -351,6 +352,13 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
     int step = (step_deg > 0) ? step_deg : 5;
 
     for (int deg = 0; deg < 360; deg += step) {
+        /* Cooperative abort. Per-degree is the natural checkpoint —
+         * each iteration runs an independent LOS+ellipse scan and
+         * appends to `valid[]`. On hit we fall through to the
+         * post-loop block; if any spots were collected the brain
+         * gets the best of them, otherwise the no-valid path returns
+         * the existing 1e30 sentinel which it already handles. */
+        if (botManagerShouldAbort(L)) break;
         float rad = (float)(deg * M_PI / 180.0);
         float cx  = pcx + sinf(rad) * R;
         float cy  = pcy - cosf(rad) * R;
