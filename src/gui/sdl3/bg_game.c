@@ -47,7 +47,7 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 
 /* Bot player count range */
 #define BG_MIN_BOTS 2
-#define BG_MAX_BOTS 2
+#define BG_MAX_BOTS 16
 
 /* Brain script path */
 #define BG_BRAIN_PATH "Brains/NewAutopilot/init.lua"
@@ -287,10 +287,31 @@ void bgGameDestroy(BgGame *bg) {
 void bgGameTick(BgGame *bg) {
     if (!bg || !bg->valid || bg->numBots == 0) return;
 
-    /* Run brain AI then tick the simulation.
-     * Bot brains run every other tick (game tick, not keys tick). */
+    /* Real-game cadence: bot brains run at 50 Hz (game-ticks only), but
+     * the inner sim ticks at 100 Hz (keys-tick + game-tick alternation in
+     * winbolo.c). One botManagerTick produces input packets for both,
+     * so call serverSimTick twice to advance the sim at the right rate.
+     * Events from the first tick would be wiped by the second; preserve
+     * them so bots see both ticks' events on their next snapshot. */
     botManagerTick(&bg->sim, aiFull);
     serverSimTick(&bg->sim);
+    {
+        GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
+        uint8_t   savedCount = bg->sim.eventCount;
+        if (savedCount > 0) {
+            memcpy(savedEvents, bg->sim.events,
+                   savedCount * sizeof(GameEvent));
+        }
+        serverSimTick(&bg->sim);
+        if (savedCount > 0 &&
+            savedCount + bg->sim.eventCount <= MAX_SNAPSHOT_EVENTS) {
+            memmove(bg->sim.events + savedCount, bg->sim.events,
+                    bg->sim.eventCount * sizeof(GameEvent));
+            memcpy(bg->sim.events, savedEvents,
+                   savedCount * sizeof(GameEvent));
+            bg->sim.eventCount += savedCount;
+        }
+    }
 
     /* Update camera to follow the tracked player (freeze while dead) */
     if (bg->cameraPlayer < MAX_TANKS &&
@@ -397,14 +418,24 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     bgGameRenderMapName(bg, renderer, screenW, screenH);
 }
 
-#define BG_TICK_INTERVAL_MS 10  /* 100 Hz — matches normal game tick rate */
+#define BG_TICK_INTERVAL_MS  20   /* 50 Hz — matches server tick rate */
+#define BG_MAX_CATCHUP_TICKS 3    /* cap catch-up so a stall can't snowball */
 
 void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime) {
     if (!bg || !bg->valid) return;
     Uint64 now = SDL_GetTicks();
-    while (now - *lastTickTime >= BG_TICK_INTERVAL_MS) {
+    int ticks = 0;
+    while (now - *lastTickTime >= BG_TICK_INTERVAL_MS &&
+           ticks < BG_MAX_CATCHUP_TICKS) {
         bgGameTick(bg);
         *lastTickTime += BG_TICK_INTERVAL_MS;
+        ticks++;
+    }
+    /* If we hit the cap, advance lastTickTime so the next call doesn't
+     * try to make up the dropped ticks — discarding sim time is the
+     * right call for a decorative background sim. */
+    if (now - *lastTickTime >= BG_TICK_INTERVAL_MS) {
+        *lastTickTime = now;
     }
 }
 
