@@ -128,8 +128,8 @@ bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) { 
 void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName) { (void)value; (void)mx; (void)my; (void)px; (void)py; (void)frame; (void)playerNum; (void)playerName; }
 void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) { (void)csPtr; (void)messageStr; }
 /* clientCenterTankCS / screenPillViewCS — display-only helpers called from
- * brain_io.c.  Bots never invoke them (guarded by isHuman / view-key tests),
- * but the linker still needs the symbol. */
+ * client_snapshot.c.  Bots never invoke them (guarded by isHuman / view-key
+ * tests), but the linker still needs the symbol. */
 void clientCenterTankCS(ClientSim *csPtr) { (void)csPtr; }
 void screenPillViewCS(ClientSim *csPtr, int horz, int vert) { (void)csPtr; (void)horz; (void)vert; }
 
@@ -144,27 +144,29 @@ void screenIncomingMessageCS(ClientSim *cs, BYTE playerNum, char *messageStr) { 
 
 /* Screen / display stubs — client_sim.c calls these but the server has no display */
 void screenTankViewCS(ClientSim *cs) { (void)cs; }
-/* screenSyncFromSnapshotCS now lives in brain_io.c (linked into WinBoloDS) */
+/* screenSyncFromSnapshotCS lives in client_snapshot.c (linked into WinBoloDS) */
 void screenSimDisplayTickCS(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
 void messageCreate(MessageState *ms) { (void)ms; }
 void messageDestroy(MessageState *ms) { (void)ms; }
-/* messageIsNewMessage / messageGetNewMessage are called by brain_io.c when
- * building BrainInfo.  Bots have no chat inbox, so report "no message" and
- * never have GetNewMessage invoked. */
+/* messageIsNewMessage / messageGetNewMessage are called by brain_data.c
+ * when building BrainInfo.  Bots have no chat inbox, so report "no message"
+ * and never have GetNewMessage invoked. */
 bool messageIsNewMessage(MessageState *ms) { (void)ms; return FALSE; }
 BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap) {
   (void)ms; if (dest) dest[0] = '\0'; if (playerBitmap) *playerBitmap = NULL; return 0;
 }
 void scrollCreate(ScrollState *ss) { (void)ss; }
-/* scrollCenterObject is called by brain_io.c only when the brain switches
- * pillbox view — bots never do this, but the linker still needs the symbol. */
+/* scrollCenterObject is called by client_snapshot.c only when the brain
+ * switches pillbox view — bots never do this, but the linker still needs
+ * the symbol. */
 void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY) {
   (void)ss; (void)xValue; (void)yValue; (void)objectX; (void)objectY;
 }
 
 
-/* screenBuildInputPacketCS, screenMakeBrainInfoCS, screenExtractBrainInfoCS
-   now live in brain_io.c (linked into WinBoloDS). */
+/* screenBuildInputPacketCS lives in client_snapshot.c; screenMakeBrainInfoCS
+   and screenExtractBrainInfoCS live in brain_data.c (both linked into
+   WinBoloDS). */
 void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) { (void)ms; (void)msgType; (void)top; (void)bottom; }
 void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
 
