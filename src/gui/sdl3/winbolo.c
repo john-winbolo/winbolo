@@ -1753,8 +1753,12 @@ bool frontEndTutorial(BYTE pos) {
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
     if (mid == 0) break;
-    imguiMessageBoxEx(DIALOG_BOX_TITLE, tutorialResolveText(mid),
-                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
+    {
+      TutorialSeg segs[TUTORIAL_SEG_MAX];
+      int n = tutorialResolveSegments(mid, segs, TUTORIAL_SEG_MAX);
+      imguiMessageBoxRich(DIALOG_BOX_TITLE, segs, n,
+                          IMGUI_MSG_INFO, IMGUI_MSG_OK);
+    }
   }
   /* Final step: exit tutorial mode so the player can keep driving.
    * We clear the global client flag plus both sims' isTutorial so that

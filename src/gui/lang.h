@@ -212,9 +212,9 @@
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
  * desktop wording references hardware keys or mouse clicks. The
- * sequencer picks these via tutorialResolveText() when uiModeIsTablet()
- * is true. Only the affected strings have siblings — the rest fall
- * through to the desktop entry unchanged. */
+ * sequencer picks these via tutorialResolveSegments() when
+ * uiModeIsTablet() is true. Only the affected strings have siblings —
+ * the rest fall through to the desktop entry unchanged. */
 #define STR_TUTORIAL01_TOUCH                468
 #define STR_TUTORIAL02_TOUCH                469
 #define STR_TUTORIAL03_TOUCH                470

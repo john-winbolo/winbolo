@@ -80,6 +80,7 @@ extern "C" {
 #include "input.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
+#include "input_source.h"
 #include "../ui_mode.h"
 }
 
@@ -2583,6 +2584,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     flagsCreate(renderer);
     inputGamepadInit();
+    inputSourceInit();
     return true;
 }
 
@@ -2609,6 +2611,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             SDL_ConvertEventToRenderCoordinates(s_renderer, &ev);
         }
         ImGui_ImplSDL3_ProcessEvent(&ev);
+
+        /* Track which input device the player most recently used so
+         * tutorial dialogs can pick keyboard vs gamepad glyphs.  Sits
+         * here because every poll iteration runs this exactly once,
+         * before any subsystem-specific continue/break, regardless of
+         * whether the event is later swallowed by ImGui or a popup. */
+        inputSourceUpdate(&ev);
 
         /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
         if (uiModeIsTablet()) {

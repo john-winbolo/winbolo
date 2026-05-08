@@ -1055,7 +1055,7 @@ static const LangEntry langTable[] = {
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
-     * time by tutorialResolveText() when uiModeIsTablet() is true. */
+     * time by tutorialResolveSegments() when uiModeIsTablet() is true. */
     {468,  "Ahead of you is a short river leading inland. Push\nthe thumbstick forward to drive your boat to the end\nof the river.\n\nWhen you get there, keep the thumbstick pushed\nforward. The tank will disembark from the boat and the\nboat will be left moored at the end of the river"},
     {469,  "You are now on the grass. The tank moves quite\nquickly on grass.\n\n\nKeep the thumbstick pushed forward to move ahead\nto the forest."},
     {470,  "You are now in the forest. The tank moves more\nslowly in the forest than it does on grass.\n\n\nKeep the thumbstick pushed forward to move ahead\nto the swamp."},
