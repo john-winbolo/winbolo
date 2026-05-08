@@ -1025,6 +1025,20 @@ local function nearest_hostile_base(world, mx, my)
   return best, best_d
 end
 
+-- Substates during which a fresh attack_pill goal selection should
+-- LOCK ONTO the current pill instead of re-picking from the pool —
+-- protects in-progress takes from being yanked off-target. Hoisted
+-- above eval_attack_tank so the engage-break logic there can read it.
+local LOCK_SUBS = {
+  gather_trees=true, approach=true, build_walls=true,
+  aim=true, detree=true, charge=true, engage=true, rush=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
+  ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true, ws_retreat=true, ws_rebuild=true,
+  swerve=true, post_engage=true, loiter=true,
+}
+
 local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   state.attack_tank_breakdown = nil
 
@@ -1272,8 +1286,30 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     if b.mx == best_tank.mx and b.my == best_tank.my then win_entry = b; break end
   end
 
+  -- Mid-take engage break: when we're committed to an attack_pill take
+  -- (in any LOCK_SUB substate) and an enemy tank is BOTH (a) within
+  -- shooting range and (b) further from our target pill than we are,
+  -- the situation is unfavourable — the target pill is shooting US, not
+  -- the tank — and we should turn and engage. Drop cost under pool 6's
+  -- mid-take floor (10) and flag the entry so hysteresis (additive +
+  -- multiplicative) is skipped for it. Without the flag, mid-take SW+CM
+  -- penalties would push the cost back over the lock floor.
+  local engage_break_lock = false
+  if state.goal and state.goal.kind == "attack_pill"
+     and LOCK_SUBS[state.goal.substate or ""]
+     and best_tank.dist <= C.TANK_COMBAT_ENGAGE_RANGE then
+    local tank_to_pill = U.mdist(best_tank.mx, best_tank.my,
+                                 state.goal.mx, state.goal.my)
+    local our_to_pill  = U.mdist(tmx, tmy, state.goal.mx, state.goal.my)
+    if tank_to_pill > our_to_pill then
+      best_cost = math.min(best_cost, 9)
+      engage_break_lock = true
+    end
+  end
+
   return {
     cost = best_cost,
+    _engage_break_lock = engage_break_lock or nil,
     goal = { kind = "attack_tank", mx = best_tank.mx, my = best_tank.my,
              wx = U.m2w(best_tank.mx), wy = U.m2w(best_tank.my),
              target_id = best_tank.id,
@@ -1283,8 +1319,9 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
              tank_standoff_deg = win_entry and win_entry.standoff_deg or nil,
              tank_standoff_mx = win_entry and win_entry.standoff_mx or nil,
              tank_standoff_my = win_entry and win_entry.standoff_my or nil, },
-    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f",
-           best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed) or "",
+    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f%s",
+           best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed,
+           engage_break_lock and " [engage-break]" or "") or "",
   }
 end
 
@@ -1960,18 +1997,7 @@ local POOL_NAMES = {
   [12] = "wait_for_lgm",
 }
 
--- Substates during which a fresh attack_pill goal selection should
--- LOCK ONTO the current pill instead of re-picking from the pool —
--- protects in-progress takes from being yanked off-target.
-local LOCK_SUBS = {
-  gather_trees=true, approach=true, build_walls=true,
-  aim=true, detree=true, charge=true, engage=true, rush=true,
-  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
-  in_range_aim_finetune=true, shoot_pill=true,
-  ws_prebuild=true, ws_prewait=true, ws_advance=true,
-  ws_engage=true, ws_retreat=true, ws_rebuild=true,
-  swerve=true, post_engage=true, loiter=true,
-}
+-- (LOCK_SUBS defined above eval_attack_tank.)
 
 -- Wall-shield investment substates; gain extra commitment penalty
 -- in goal_selection's hysteresis so we don't abandon a half-built
@@ -2583,15 +2609,6 @@ local function get_formula_inner(e)
         e._fin_age or 0, C.WOUNDED_FINISH_DECAY_TICKS or 500,
         _fin_mult)
       or  "1.00 (no wounded pill, or this IS the wounded pill, or HP > threshold, or decayed out)"
-    local _self_dr = e._self_dr or 0
-    local _d_self_dr
-    if _self_dr > 0 then
-      _d_self_dr = string.format("sum of target pill's danger contribution along spot path (HP-independent) = %.0f", _self_dr)
-    elseif e._self_dr_no_path then
-      _d_self_dr = "0 (NO PATH — dijkstra slate hadn't reached best_spot at eval time; trace returned nil)"
-    else
-      _d_self_dr = "0 (no path tile lands inside the target pill's range disk, or no contribution stamped)"
-    end
     local _ammo = e._ammo or 0
     local _sh_now = e._sh_now or 0
     local _sh_end = e._sh_end or 0
@@ -2637,16 +2654,16 @@ local function get_formula_inner(e)
     local _tw = e._travel_wound or 1.0
     local _d_pickup = e._pickup_detail or "(no path captured)"
     f = string.format(
-      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
-      "||spot cost is NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
+      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s}"..
+      "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
+      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _self_dr, _ammo_str,
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
+      e._hp, _wound_detail, _ammo_str,
+      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2783,9 +2800,10 @@ function M.step_eval_queue(state, world, info)
       goto continue
     end
 
-    -- All pools use KIND_NORMAL. Pool 6 (attack_pill) subtracts the target
-    -- pill's own danger contribution along the spot path via self_dr below —
-    -- that correction is more principled than discounting all danger 10x.
+    -- All pools use KIND_NORMAL. Pool 6 (attack_pill) computes spot_cost
+    -- with an offset-aware A* below — the target pill's contribution to
+    -- the danger field is temporarily subtracted via load_danger_offset
+    -- so the spot cost reflects an "as-if-the-pill-were-dead" approach.
     --
     -- Note: capture_pool / CAPTURE_THREAT_WEIGHT used to scale the A*
     -- fallback's danger weighting. With dij-only there's no fallback,
@@ -2970,11 +2988,6 @@ function M.step_eval_queue(state, world, info)
       -- Extra costs for attack_pill (pool 6)
       local anger_cost, xfire_cost, intcpt_cost, wound_mult = 0, 0, 0, 1.0
       local diff_cost, spot_cost = 0, 0
-      local self_dr = 0  -- self-danger reduction: target pill's contribution
-                         -- along the spot path, scaled by missing HP. Subtracts
-                         -- from the final cost so the bot doesn't get scared off
-                         -- approaching a pill it's about to kill.
-      local _self_dr_no_path = false  -- true when trace_path returned nil
       local ammo_cost = 0  -- shells gate: COST_INF if we can't finish the
                            -- pill, otherwise 25 per shell under SHELLS_LOW
                            -- the take would leave us at.
@@ -3102,11 +3115,15 @@ function M.step_eval_queue(state, world, info)
           spot_found_mx = best_spot.mx
           spot_found_my = best_spot.my
           local _t_spot = clock_us()
-          -- Use KIND_NORMAL (full danger) for the spot — it's a real
-          -- position the tank must navigate to while the pill is still
-          -- alive and shooting.
-          spot_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_spot.mx, best_spot.my,
-                                 boat_flag, shells, trees, mines, armour)
+          -- KIND_NORMAL Dijkstra lookup with target pill subtraction.
+          -- C side walks the slate's parent chain back to source and
+          -- subtracts pcontrib[tile] * danger_scale * inv_speed at each
+          -- non-source tile, returning the exact "as-if-this-pill-were-
+          -- dead" cost. Replaces smart_cost + self_dr walk-and-subtract.
+          local _pck = obj.my * 256 + obj.mx
+          local _pc  = threat.pill_contrib and threat.pill_contrib[_pck]
+          spot_cost = cpf.dijkstra_lookup_subtract_by_kind(
+                        cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag, _pc)
           if spot_cost >= 1e9 then spot_cost = 500 end
           -- Travel = spot → dead pill (pill will be dead by the time we
           -- reach the spot, so this is a short capture walk).
@@ -3223,58 +3240,8 @@ function M.step_eval_queue(state, world, info)
           goal_spot_path_str = spot_path_str
           goal_spot_path_len = _path_tiles and #_path_tiles // 2 or 0
 
-          -- Self-danger reduction: subtract this pill's own contribution
-          -- to the spot-path cost, scaled linearly by missing HP. At full
-          -- HP we don't discount (pill is healthy and threatening); at 0
-          -- HP we discount fully (pill is about to die). Walks the
-          -- realized Dijkstra path and sums per-tile contributions in
-          -- cost-units (matches Dijkstra step formula:
-          -- danger * danger_scale * 16/speed, with danger_scale=1 here).
-          -- Self-danger reduction applies regardless of pill HP — the bot
-          -- is committed to attacking, so the target pill's contribution
-          -- to its own approach corridor shouldn't bully the planner even
-          -- at full HP. (Earlier this was scaled by missing HP; that
-          -- left the discount off precisely when it mattered most — the
-          -- first attack on a fresh pill.)
-          if spot_cost < 1e9 then
-            local pcontrib = threat.pill_contrib[obj.my * 256 + obj.mx]
-            if pcontrib then
-              -- Walk Dijkstra's parent chain when the slate reached the
-              -- spot; otherwise fall back to the A* search smart_cost
-              -- just ran. cpf.trace_path() returns the most-recent
-              -- cost_to result and stays valid until the next
-              -- cost_to/path_to call — nothing in this candidate's eval
-              -- runs another A* between smart_cost and here.
-              -- Use the multi-slate trace so we land on the same slate
-              -- smart_cost above used (lookup_by_kind walks all slates;
-              -- single-slate trace_path picks "best" which can be a
-              -- newer slate that hasn't reached best_spot yet, returning
-              -- nil even though the cost was found in an older slate).
-              -- No fallback to cpf.trace_path() — that would return
-              -- whatever the LAST cost_to ran (likely a different
-              -- candidate's path) and silently sum unrelated tiles.
-              local path = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL,
-                                                            best_spot.mx, best_spot.my)
-              if path then
-                for i = 1, #path, 2 do
-                  local nx, ny = path[i], path[i+1]
-                  local k = ny * 256 + nx
-                  local p = pcontrib[k]
-                  if p then
-                    local tt = U.ttype(nx, ny)
-                    local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
-                    if spd <= 0 then spd = 16 end
-                    self_dr = self_dr + p * (16 / spd)
-                  end
-                end
-              else
-                -- Surface the trace failure on the entry so the formula
-                -- breakdown can show "self_dr=0 (no path)" instead of an
-                -- ambiguous 0 that could equally mean "path has no overlap".
-                _self_dr_no_path = true
-              end
-            end
-          end
+          -- (self_dr removed: the offset-aware A* above bakes the
+          -- as-if-pill-dead discount directly into spot_cost.)
         end
         if (_diff_us > 1000 or _spot_us > 1000) then
           if BRAIN_DEBUG_MODE then print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
@@ -3377,18 +3344,18 @@ function M.step_eval_queue(state, world, info)
 
       -- Spot cost (path to firing position) stays fixed. A* and other combat
       -- terms scale with hp/wound — a nearly-dead pill is easier to fight
-      -- but still costs the same to reach a good firing spot.
+      -- but still costs the same to reach a good firing spot. spot_cost
+      -- itself is computed via offset-aware A* (target pill's contribution
+      -- subtracted from the danger field), so the "as-if-pill-dead"
+      -- discount is already baked in — no separate self_dr term.
       -- travel (dp, pool 6 only) gets its own wound factor at 2x the wound
       -- discount (clamped to 1): heavily wounded pill → big travel discount,
       -- fresh pill → no discount. Separate from hp*wound to avoid stacking.
-      -- self_dr (pool 6 only) is the linear-by-HP discount on the spot path
-      -- for the target pill's own contribution; subtracted so the bot will
-      -- close in on a pill it's about to kill.
       -- ammo_cost (pool 6 only) is the shells-budget penalty; goes to
       -- COST_INF when we lack the shells to finish the pill at all.
       local travel_wound = (pool_idx == 6) and math.min(1.0, wound_mult * 2) or 1.0
       local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
-      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost - self_dr + ammo_cost
+      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost
 
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
@@ -3421,7 +3388,6 @@ function M.step_eval_queue(state, world, info)
         entry._xfire=xfire_cost; entry._intcpt=intcpt_cost; entry._hp=hp_mult
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
-        entry._self_dr=self_dr
         entry._pickup_detail=goal_pickup_detail
         entry._pickup_path=goal_pickup_path
         entry._spot_method=goal_spot_method
@@ -3429,7 +3395,6 @@ function M.step_eval_queue(state, world, info)
         entry._spot_tick=goal_spot_tick
         entry._spot_path=goal_spot_path_str
         entry._spot_path_len=goal_spot_path_len
-        entry._self_dr_no_path=_self_dr_no_path
         entry._ammo=ammo_cost
         entry._sh_now=info.shells
         entry._sh_end=(info.shells or 0) - (obj.health or 0)
@@ -3729,7 +3694,11 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        pcost = -1  -- sentinel: locked, real cost not relevant
+        -- Soft mid-take lock. 10 is low enough to beat normal alternatives
+        -- (refuel, capture_*, attack_base, attack_pill on a different pill)
+        -- but stays beatable by an attack_tank goal that drops itself
+        -- under 10 — see eval_attack_tank's mid-take engage discount.
+        pcost = 10
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
@@ -4459,12 +4428,18 @@ local function goal_selection(state, world, info, quiet)
           local loc_adj = C.CAPTURE_PILL_BASE_COST * (lm - 1.0)
           cost = cost + loc_adj
         end
+        -- Mid-take engage-break: hard-cap under pool-6's mid-take floor
+        -- (10) so phase weight / loc_adj can't push it back over.
+        if entry._engage_break_lock then
+          cost = math.min(cost, 9)
+        end
         pool[#pool + 1] = {
           cost = cost, _base_cost = cost,  -- _base_cost preserved for breakdown display
           goal = entry.goal, desc = entry.desc,
           cands = entry.cands, _pill = entry._pill, _pill_id = entry._pill_id,
           phase_weight = pw,
           loc_mult = lm, loc_reason = entry.loc_reason or "",
+          _engage_break_lock = entry._engage_break_lock,
         }
         ::continue_pool::
       end
@@ -4502,7 +4477,12 @@ local function goal_selection(state, world, info, quiet)
     -- base commitment so they aren't swallowed by GOAL_COMMITMENT_CAP.
     local cur_is_attack_tank = (state.goal.kind == "attack_tank")
     for _, c in ipairs(pool) do
-      if HYST_EXEMPT[c.goal.kind] then goto continue_hyst end
+      -- Engage-break: an attack_tank goal that detected a mid-take
+      -- threat (tank in range, further from pill than us) is exempt
+      -- from both additive SW+CM penalty AND the multiplicative ratio
+      -- gate (the gate only fires for entries with c.hysteresis set,
+      -- which we leave nil here).
+      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then goto continue_hyst end
       local cg = goal_group(c.goal.kind)
       local effective_commit = commitment
       if cur_is_attack_tank then
