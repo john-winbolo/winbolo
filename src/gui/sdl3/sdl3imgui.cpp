@@ -537,6 +537,8 @@ static void renderSysInfoContent(void) {
     ServerSim *spSim = gameFrontGetServerSim();
     if (spSim != NULL) {
         BotPoolStats ps = {};
+        BotInfo  botInfos[MAX_TANKS] = {};
+        bool     botInfoValid[MAX_TANKS] = {};
         double tickLast = 0.0, tickEwma = 0.0;
         double simLast  = 0.0, simEwma  = 0.0;
         bool   hasBots  = false;
@@ -547,6 +549,9 @@ static void renderSysInfoContent(void) {
         threadsWaitForMutex();
         hasBots = botManagerHasAnyBot();
         botManagerGetPoolStats(&ps);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+        }
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         serverLifecycleGetSimStats(&simLast, &simEwma);
         threadsReleaseMutex();
@@ -602,6 +607,17 @@ static void renderSysInfoContent(void) {
                              s_sysHistoryOffset, nullptr,
                              0.0f, maxBrain * 1.2f,
                              ImVec2(ImGui::GetContentRegionAvail().x, 40));
+        }
+
+        if (hasBots) {
+            ImGui::Text("Brain overruns: %u", ps.totalOverruns);
+            if (ps.totalOverruns > 0) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
+                        ImGui::Text("  bot[%d]: %u", i, botInfos[i].overrunCount);
+                    }
+                }
+            }
         }
 
         /* Text-only stats for the remaining metrics. simLast > 0
