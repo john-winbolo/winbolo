@@ -31,9 +31,7 @@ void naPillContribSetAddTileCallback(NaPillContribAddTileFunc cb)     { g_addTil
  * someone wants multi-brain viz. */
 static int l_pillcontrib_clear(lua_State *L) {
   (void)L;
-  BotPoolStats stats;
-  botManagerGetPoolStats(&stats);
-  if (stats.activeBots > 1) return 0;
+  if (botManagerGetActiveBotCount() > 1) return 0;
   if (g_clearCb) g_clearCb();
   return 0;
 }
@@ -43,9 +41,7 @@ static int l_pillcontrib_begin_pill(lua_State *L) {
   int pill_id = (int)luaL_checkinteger(L, 1);
   int mx      = (int)luaL_checkinteger(L, 2);
   int my      = (int)luaL_checkinteger(L, 3);
-  BotPoolStats stats;
-  botManagerGetPoolStats(&stats);
-  if (stats.activeBots > 1) {
+  if (botManagerGetActiveBotCount() > 1) {
     lua_pushinteger(L, -1);
     return 1;
   }
@@ -63,9 +59,7 @@ static int l_pillcontrib_add_tile(lua_State *L) {
   int   tx    = (int)luaL_checkinteger(L, 2);
   int   ty    = (int)luaL_checkinteger(L, 3);
   float value = (float)luaL_checknumber(L, 4);
-  BotPoolStats stats;
-  botManagerGetPoolStats(&stats);
-  if (stats.activeBots > 1) return 0;
+  if (botManagerGetActiveBotCount() > 1) return 0;
   if (g_addTileCb) {
     g_addTileCb(slot, tx, ty, value);
   }
@@ -79,9 +73,7 @@ static int l_pillcontrib_add_tile(lua_State *L) {
  * reducing Lua→C boundary crossings from N_tiles to 1. */
 static int l_pillcontrib_add_all(lua_State *L) {
   int slot = (int)luaL_checkinteger(L, 1);
-  BotPoolStats stats;
-  botManagerGetPoolStats(&stats);
-  if (stats.activeBots > 1) return 0;
+  if (botManagerGetActiveBotCount() > 1) return 0;
   if (!g_addTileCb || !lua_istable(L, 2)) return 0;
   lua_pushnil(L);
   while (lua_next(L, 2) != 0) {
