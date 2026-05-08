@@ -127,7 +127,6 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/labels.c
     ${SRC_ROOT}/bolo/lgm.c
     ${SRC_ROOT}/bolo/log.c
-    ${SRC_ROOT}/bolo/mathWinbolo.c
     ${SRC_ROOT}/bolo/messages.c
     ${SRC_ROOT}/bolo/mines.c
     ${SRC_ROOT}/bolo/minesexp.c
