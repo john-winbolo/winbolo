@@ -331,7 +331,12 @@ static int l_load(lua_State *L) {
         return 1;
     }
 
-    if (SDL_strcmp(path, s_loaded_path) != 0) {
+    /* Case-insensitive: callers reach this load via several path resolvers
+     * (findBrainPath, discoverBrains, BRAIN_DIR-derived paths) that don't
+     * agree on casing. On case-insensitive filesystems (Windows, macOS HFS+,
+     * WSL DrvFs) "Brains/..." and "brains/..." refer to the same file, and
+     * we want to accept the second caller rather than hard-erroring. */
+    if (SDL_strcasecmp(path, s_loaded_path) != 0) {
         return luaL_error(L,
             "na_shield_stamp.load: already loaded with a different path '%s'; got '%s'",
             s_loaded_path, path);
