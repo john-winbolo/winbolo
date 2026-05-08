@@ -247,6 +247,13 @@ function Brain.open(info)
   opt.set_tick(0)
   opt("BEGIN Brain.open player=", info.player_number)
   local t_open0 = clock_us()
+  -- Switch to Lua 5.4 generational GC. Brain ticks allocate lots of
+  -- short-lived tables (closures, per-tick scratch); generational keeps
+  -- minor collections cheap and frequent. minor=10 fires minor passes
+  -- when heap grows 10% over the last minor (2x default frequency, each
+  -- pass tiny). DO NOT add later setpause/setstepmul calls — those flip
+  -- the collector back to incremental in 5.4.
+  collectgarbage("generational", 10, 100)
   -- Register every viz_id with the host's V dialog. No-op when
   -- braintest_viz_register isn't bound (e.g. running under WinBolo
   -- client); the brain still emits overlay commands but they're
