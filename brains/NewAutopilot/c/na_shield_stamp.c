@@ -27,6 +27,7 @@
 
 #include "na_shield_stamp.h"
 #include "na_threat.h"
+#include "../../../src/bolo/bot_manager.h"
 #include <SDL3/SDL.h>
 #include <lauxlib.h>
 #include <math.h>
@@ -579,6 +580,13 @@ static int l_run_neighbor_bonus(lua_State *L) {
     NbResult r;
 
     for (int i = 0; i < n_cands; i++) {
+        /* Cooperative abort. Per-candidate is the natural checkpoint —
+         * each run_nb_for_cand is self-contained (writes RESULT_STRIDE
+         * values to `out` for one candidate). On hit we stop early; the
+         * Lua side sees a shorter result table than expected and treats
+         * it as "scoring incomplete", same shape as if scan_c had
+         * picked fewer candidates. */
+        if (botManagerShouldAbort(L)) break;
         run_nb_for_cand(ctx, &cfg, i, n_cands, n_aims,
                         score_per_slot, built_bonus, neighbor_bonus, &r);
 
@@ -958,6 +966,12 @@ static int l_scan_c(lua_State *L) {
     memset(ctx->slate_ni_used, 0, sizeof(ctx->slate_ni_used));
 
     for (int ci = 0; ci < n_cands; ci++) {
+        /* Cooperative abort. Per-candidate is the natural checkpoint
+         * for the scoring sweep — each candidate is independent and
+         * writes its own slate row. Stopping early leaves untouched
+         * rows zeroed (memset above), which the neighbor-bonus pass
+         * below treats as "blocked" and skips. */
+        if (botManagerShouldAbort(L)) { n_cands = ci; break; }
         ScanCand *cand = &ctx->scan_buf[ci].cand;
         ScanResult *sr = &ctx->scan_buf[ci];
         sr->best_aim   = -1;
@@ -1055,7 +1069,12 @@ static int l_scan_c(lua_State *L) {
 
     /* ── Neighbor bonus ───────────────────────────────────────────── */
     NbResult nb_results[SCAN_MAX_CANDS];
+    memset(nb_results, 0, sizeof(NbResult) * (size_t)n_cands);
     for (int ci = 0; ci < n_cands; ci++) {
+        /* Cooperative abort. Skipped candidates keep their zero-init
+         * NbResult (best_aim = 0), which the best-pick loop below
+         * filters out via `best_aim > 0`. */
+        if (botManagerShouldAbort(L)) break;
         run_nb_for_cand(ctx, &cfg, ci, n_cands, SCAN_N_AIMS,
                         ctx->score_per_slot, ctx->built_bonus, ctx->neighbor_bonus,
                         &nb_results[ci]);

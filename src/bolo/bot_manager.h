@@ -32,6 +32,7 @@
 
 /* Forward declarations */
 struct ServerSim;
+struct lua_State;
 
 /*********************************************************
  *NAME:          botManagerInit
@@ -398,6 +399,23 @@ typedef struct {
     } candidates[BRAIN_GOAL_MAX_CANDIDATES];
     int num_candidates;
 } BrainGoalInfo;
+
+/*********************************************************
+ *NAME:          botManagerShouldAbort
+ *PURPOSE:
+ *  Returns true if the bot whose lua_State this is has had
+ *  its tick-budget exceeded for the current tick. Inner C
+ *  loops invoked from cpf_/wsim_/NA bindings poll this at
+ *  their natural checkpoint and break out with a partial
+ *  result; the count hook then raises tick_budget_exceeded
+ *  on the Lua side once control returns to the VM.
+ *
+ *  Works because botManagerAddBot stashes BotContext * in
+ *  lua_getextraspace(L). Returns false if the lua_State has
+ *  no associated bot (e.g. the singleton GUI brain) so loops
+ *  outside the worker pool stay unbounded.
+ *********************************************************/
+bool botManagerShouldAbort(struct lua_State *L);
 
 /*********************************************************
  *NAME:          botManagerGetGoalInfo

@@ -847,7 +847,12 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   if (inst->worldsim) {
     brainWorldSimSetMap(inst->worldsim, inst->bInfo.theWorld);
   }
-  ok = brainCoreCallThink(inst->L, &inst->bInfo);
+  /* wasKilled is recorded on the instance so the caller (bot_manager
+   * runBotThinkJobImpl) can disambiguate the budget-abort recovery
+   * path from a real Lua error after the call returns. Reset to false
+   * here so a successful tick clears stale state from a prior abort. */
+  inst->wasKilled = false;
+  ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
   screenExtractBrainInfoCS(inst->cs, &inst->bInfo);
 
   return ok;

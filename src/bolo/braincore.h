@@ -100,8 +100,16 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info);
  *PURPOSE:
  *  Calls brain.think(info) and processes the return table.
  *  Returns false on error.
+ *
+ *  When out_killed is non-NULL, sets *out_killed = true iff
+ *  the pcall failed with the budget-hook sentinel
+ *  "tick_budget_exceeded" (Lua prepends <chunk>:<line>:  to
+ *  luaL_error messages, so we suffix-match). This lets the
+ *  caller distinguish a recoverable budget abort from a real
+ *  Lua bug; when out_killed is NULL the caller doesn't care
+ *  and gets the legacy false-on-any-error contract.
  *********************************************************/
-bool brainCoreCallThink(lua_State *L, BrainInfo *info);
+bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed);
 
 /*********************************************************
  *NAME:          brainCoreCallMethod
