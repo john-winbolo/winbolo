@@ -588,6 +588,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     return false;
   }
 
+  /* Zero the BotContext* slot before any C binding can run. Lua does not
+   * zero-init extraspace, and brain.open() below can reach botFromLua via
+   * na_threat / cpf bindings. botManagerAddBot writes the real pointer
+   * after this function returns. */
+  *(void **)lua_getextraspace(L) = NULL;
+
   luaL_openlibs(L);
   brainCoreRegisterConstants(L);
 
