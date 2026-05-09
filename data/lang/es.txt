@@ -1130,3 +1130,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulación
 STR_DLGSYSINFO_BOTPREP=Prep. de bots
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Excesos Brain
+
+# Mando – etiquetas de acciones
+STR_GP_SECTION=Mando
+STR_GP_REBIND_PROMPT=Pulsa un botón o tira del gatillo...
+STR_GP_ACTION_FIRE=Disparar
+STR_GP_ACTION_MINE=Colocar mina
+STR_GP_ACTION_BUILD_CONFIRM=Confirmar construcción
+STR_GP_ACTION_VIEW_CYCLE=Cambiar vista
+STR_GP_ACTION_GUNSIGHT_DEC=Disminuir mira
+STR_GP_ACTION_GUNSIGHT_INC=Aumentar mira
+STR_GP_ACTION_BUILD_PREV=Tipo de construcción anterior
+STR_GP_ACTION_BUILD_NEXT=Tipo de construcción siguiente
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Alternar cursor de construcción
+STR_GP_ACTION_QUICK_CHAT=Chat rápido
+STR_GP_ACTION_PAUSE=Pausa
+STR_GP_ACTION_STATUS_TOGGLE=Panel de estado

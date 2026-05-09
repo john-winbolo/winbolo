@@ -1052,6 +1052,20 @@ static const LangEntry langTable[] = {
     {1236, "Simulation"},
     {1237, "Bot prep"},
     {1238, "Brain overruns"},
+    {1239, "Controller"},
+    {1240, "Press a button or pull a trigger..."},
+    {1241, "Fire"},
+    {1242, "Lay Mine"},
+    {1243, "Confirm Build"},
+    {1244, "Cycle View"},
+    {1245, "Decrease Gunsight"},
+    {1246, "Increase Gunsight"},
+    {1247, "Previous Build Type"},
+    {1248, "Next Build Type"},
+    {1249, "Toggle Build Cursor"},
+    {1250, "Quick Chat"},
+    {1251, "Pause"},
+    {1252, "Status Overlay"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display

@@ -31,6 +31,65 @@ void inputGamepadShutdown(void);
 void inputGamepadProcessEvent(const SDL_Event *e);
 bool inputGamepadIsConnected(void);
 
+/* --- Path B rebindable action set ---
+ * Twelve gameplay actions the player can rebind from the Configure
+ * Keys dialog.  Path A (Steam Input) ignores this table — Steam's
+ * own configurator owns binding for Steam launches.  Defaults are
+ * applied by inputGamepadBindingsResetDefaults and reproduce the
+ * historical hardcoded mapping. */
+typedef enum {
+  GP_ACT_FIRE = 0,
+  GP_ACT_MINE,
+  GP_ACT_BUILD_CONFIRM,
+  GP_ACT_VIEW_CYCLE,
+  GP_ACT_GUNSIGHT_DEC,
+  GP_ACT_GUNSIGHT_INC,
+  GP_ACT_BUILD_PREV,
+  GP_ACT_BUILD_NEXT,
+  GP_ACT_BUILD_CURSOR_TOGGLE,
+  GP_ACT_QUICK_CHAT,
+  GP_ACT_PAUSE,
+  GP_ACT_STATUS_TOGGLE,
+  GP_ACT_COUNT
+} GamepadAction;
+
+typedef enum {
+  GP_BIND_NONE    = 0,
+  GP_BIND_BUTTON  = 1,    /* code is SDL_GamepadButton */
+  GP_BIND_TRIGGER = 2     /* code is SDL_GamepadAxis (LEFT_TRIGGER / RIGHT_TRIGGER) */
+} GamepadBindKind;
+
+typedef struct {
+  GamepadBindKind kind;
+  int             code;
+} GamepadBinding;
+
+/* Two binding slots per action.  Held = either slot held; edge events
+   fire from either slot.  Slot order is purely for UI display.  Only
+   FIRE ships with a non-NONE secondary by default (RT primary, SOUTH
+   secondary) — every other action defaults secondary to NONE. */
+typedef enum {
+  GP_SLOT_PRIMARY   = 0,
+  GP_SLOT_SECONDARY = 1,
+  GP_SLOT_COUNT
+} GamepadSlot;
+
+typedef struct {
+  GamepadBinding pri;
+  GamepadBinding sec;
+} GamepadActionBindings;
+
+typedef struct {
+  GamepadActionBindings b[GP_ACT_COUNT];
+} GamepadBindings;
+
+void                  inputGamepadBindingsResetDefaults(GamepadBindings *out);
+const GamepadBinding *inputGamepadBindingsGet(GamepadAction a, GamepadSlot s);
+void                  inputGamepadBindingsSet(GamepadAction a, GamepadSlot s, GamepadBinding b);
+void                  inputGamepadBindingsGetAll(GamepadBindings *out);
+void                  inputGamepadBindingsSetAll(const GamepadBindings *in);
+const char           *inputGamepadActionName(GamepadAction a);
+
 tankButton inputGamepadGetMovement(BYTE tankAngle);
 bool inputGamepadIsFireHeld(void);
 bool inputGamepadIsMineHeld(void);

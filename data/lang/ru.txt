@@ -1128,3 +1128,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Симуляция
 STR_DLGSYSINFO_BOTPREP=Подготовка ботов
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Превышения Brain
+
+# Gamepad action labels
+STR_GP_SECTION=Геймпад
+STR_GP_REBIND_PROMPT=Нажмите кнопку или потяните триггер...
+STR_GP_ACTION_FIRE=Выстрел
+STR_GP_ACTION_MINE=Поставить мину
+STR_GP_ACTION_BUILD_CONFIRM=Подтвердить постройку
+STR_GP_ACTION_VIEW_CYCLE=Сменить вид
+STR_GP_ACTION_GUNSIGHT_DEC=Уменьшить прицел
+STR_GP_ACTION_GUNSIGHT_INC=Увеличить прицел
+STR_GP_ACTION_BUILD_PREV=Предыдущий тип постройки
+STR_GP_ACTION_BUILD_NEXT=Следующий тип постройки
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Переключить курсор постройки
+STR_GP_ACTION_QUICK_CHAT=Быстрый чат
+STR_GP_ACTION_PAUSE=Пауза
+STR_GP_ACTION_STATUS_TOGGLE=Панель статуса

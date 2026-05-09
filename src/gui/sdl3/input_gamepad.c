@@ -55,6 +55,23 @@ static bool s_buildCursorToggleEdge = false;
 static bool s_statusToggleEdge   = false;
 static bool s_activeDisconnectedEdge = false;
 
+/* Per-trigger last-axis state for edge synthesis when a trigger is
+   bound to an edge action (view, pause, etc.).  Indexed by axis -
+   SDL_GAMEPAD_AXIS_LEFT_TRIGGER. */
+static bool s_triggerWasPressed[2] = { false, false };
+
+/* Path B rebindable action table.  Seeded with defaults the first
+   time it is read or written; gameFront's prefs load may pre-populate
+   it before inputGamepadInit() runs. */
+static GamepadBindings s_bindings;
+static bool            s_bindings_seeded = false;
+
+static void seedBindingsIfNeeded(void) {
+  if (s_bindings_seeded) return;
+  inputGamepadBindingsResetDefaults(&s_bindings);
+  s_bindings_seeded = true;
+}
+
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
 float g_gamepadScrollSensitivity = 1.0f;
 
@@ -108,6 +125,140 @@ static bool path_a_active(void) {
   return now;
 }
 
+/* --- Binding table --- */
+
+static const char *kActionNames[GP_ACT_COUNT] = {
+  "fire",
+  "mine",
+  "build_confirm",
+  "view_cycle",
+  "gunsight_dec",
+  "gunsight_inc",
+  "build_prev",
+  "build_next",
+  "build_cursor_toggle",
+  "quick_chat",
+  "pause",
+  "status_toggle",
+};
+
+const char *inputGamepadActionName(GamepadAction a) {
+  if ((unsigned)a >= GP_ACT_COUNT) return "";
+  return kActionNames[a];
+}
+
+/* Defaults reproduce the historical hardcoded mapping in this file.
+   FIRE keeps its dual binding (RT primary + SOUTH secondary) so the
+   pre-refactor "RT or A" behaviour is preserved.  MINE remains LT-only
+   because EAST (B) is reserved for ImGui cancel.  Every other action
+   defaults secondary to NONE.
+
+   fire                = RT     + SOUTH
+   mine                = LT     + NONE   (B reserved for cancel)
+   build_confirm       = WEST   + NONE
+   view_cycle          = NORTH  + NONE
+   gunsight_dec        = LB     + NONE
+   gunsight_inc        = RB     + NONE
+   build_prev          = DPAD_UP    + NONE
+   build_next          = DPAD_DOWN  + NONE
+   build_cursor_toggle = R3     + NONE
+   quick_chat          = DPAD_LEFT  + NONE
+   pause               = START  + NONE
+   status_toggle       = BACK   + NONE */
+void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
+  if (!out) return;
+  static const GamepadBinding kNone = { GP_BIND_NONE, 0 };
+  for (int i = 0; i < GP_ACT_COUNT; ++i) {
+    out->b[i].pri = kNone;
+    out->b[i].sec = kNone;
+  }
+  out->b[GP_ACT_FIRE].pri                = (GamepadBinding){ GP_BIND_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER };
+  out->b[GP_ACT_FIRE].sec                = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_SOUTH };
+  out->b[GP_ACT_MINE].pri                = (GamepadBinding){ GP_BIND_TRIGGER, SDL_GAMEPAD_AXIS_LEFT_TRIGGER };
+  out->b[GP_ACT_BUILD_CONFIRM].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_WEST };
+  out->b[GP_ACT_VIEW_CYCLE].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_NORTH };
+  out->b[GP_ACT_GUNSIGHT_DEC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_LEFT_SHOULDER };
+  out->b[GP_ACT_GUNSIGHT_INC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER };
+  out->b[GP_ACT_BUILD_PREV].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_UP };
+  out->b[GP_ACT_BUILD_NEXT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_DOWN };
+  out->b[GP_ACT_BUILD_CURSOR_TOGGLE].pri = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_STICK };
+  out->b[GP_ACT_QUICK_CHAT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_LEFT };
+  out->b[GP_ACT_PAUSE].pri               = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_START };
+  out->b[GP_ACT_STATUS_TOGGLE].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_BACK };
+}
+
+static GamepadBinding *slotPtr(GamepadActionBindings *ab, GamepadSlot s) {
+  return (s == GP_SLOT_SECONDARY) ? &ab->sec : &ab->pri;
+}
+
+const GamepadBinding *inputGamepadBindingsGet(GamepadAction a, GamepadSlot s) {
+  if ((unsigned)a >= GP_ACT_COUNT) return NULL;
+  if ((unsigned)s >= GP_SLOT_COUNT) return NULL;
+  seedBindingsIfNeeded();
+  return (s == GP_SLOT_SECONDARY) ? &s_bindings.b[a].sec : &s_bindings.b[a].pri;
+}
+
+void inputGamepadBindingsSet(GamepadAction a, GamepadSlot s, GamepadBinding b) {
+  if ((unsigned)a >= GP_ACT_COUNT) return;
+  if ((unsigned)s >= GP_SLOT_COUNT) return;
+  seedBindingsIfNeeded();
+  *slotPtr(&s_bindings.b[a], s) = b;
+}
+
+void inputGamepadBindingsGetAll(GamepadBindings *out) {
+  if (!out) return;
+  seedBindingsIfNeeded();
+  *out = s_bindings;
+}
+
+void inputGamepadBindingsSetAll(const GamepadBindings *in) {
+  if (!in) return;
+  s_bindings = *in;
+  s_bindings_seeded = true;
+}
+
+/* True if the binding identifies a held button or a trigger above the
+   threshold.  Returns false when the binding is NONE or no gamepad. */
+static bool bindingIsHeld(const GamepadBinding *b) {
+  if (!b || !s_activeGamepad) return false;
+  if (b->kind == GP_BIND_BUTTON) {
+    return SDL_GetGamepadButton(s_activeGamepad, (SDL_GamepadButton)b->code);
+  }
+  if (b->kind == GP_BIND_TRIGGER) {
+    float v = (float)SDL_GetGamepadAxis(s_activeGamepad, (SDL_GamepadAxis)b->code) * AXIS_NORM;
+    return v > TRIGGER_THRESHOLD;
+  }
+  return false;
+}
+
+/* Held = either slot held.  Both slots are checked; NONE slots
+   short-circuit to false inside bindingIsHeld via the kind switch. */
+static bool actionIsHeld(GamepadAction a) {
+  if (!s_activeGamepad) return false;
+  seedBindingsIfNeeded();
+  const GamepadActionBindings *ab = &s_bindings.b[a];
+  return bindingIsHeld(&ab->pri) || bindingIsHeld(&ab->sec);
+}
+
+/* Edge-action dispatch — call from an input event when the bound
+   button/trigger crosses to pressed.  Sets exactly the s_*Edge flags
+   the queries below consume.  Build prev/next set the integer
+   accumulator instead.  Held actions (fire, mine, gunsight inc/dec)
+   are intentionally absent: their queries poll live state. */
+static void fireEdgeForAction(GamepadAction a) {
+  switch (a) {
+    case GP_ACT_BUILD_PREV:          s_buildSelectChange     = -1; break;
+    case GP_ACT_BUILD_NEXT:          s_buildSelectChange     = +1; break;
+    case GP_ACT_VIEW_CYCLE:          s_viewToggleEdge        = true; break;
+    case GP_ACT_BUILD_CONFIRM:       s_builderConfirmEdge    = true; break;
+    case GP_ACT_PAUSE:               s_pauseEdge             = true; break;
+    case GP_ACT_QUICK_CHAT:          s_quickChatEdge         = true; break;
+    case GP_ACT_BUILD_CURSOR_TOGGLE: s_buildCursorToggleEdge = true; break;
+    case GP_ACT_STATUS_TOGGLE:       s_statusToggleEdge      = true; break;
+    default: break;
+  }
+}
+
 /* --- Helpers --- */
 
 static void openGamepadById(SDL_JoystickID id) {
@@ -151,6 +302,11 @@ void inputGamepadInit(void) {
   s_buildCursorToggleEdge = false;
   s_statusToggleEdge   = false;
   s_activeDisconnectedEdge = false;
+  s_triggerWasPressed[0] = false;
+  s_triggerWasPressed[1] = false;
+  /* Bindings are seeded on first access (or by gameFront's prefs
+     load if it ran first); do not reset here. */
+  seedBindingsIfNeeded();
   /* Reset Path A edge tracking so first-frame reads start from a
      known zero state regardless of which path eventually drives. */
   s_path_a_was_active        = false;
@@ -199,44 +355,51 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
 
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
       if (s_activeGamepad && e->gbutton.which == s_activeId) {
-        switch (e->gbutton.button) {
-          case SDL_GAMEPAD_BUTTON_DPAD_UP:
-            s_buildSelectChange  = -1;
-            break;
-          case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
-            s_buildSelectChange  = +1;
-            break;
-          case SDL_GAMEPAD_BUTTON_NORTH:
-            s_viewToggleEdge     = true;
-            break;
-          case SDL_GAMEPAD_BUTTON_WEST:
-            /* X = builder-confirm. Kept off SOUTH (A) so it doesn't
-               double-fire alongside the fire button. */
-            s_builderConfirmEdge = true;
-            break;
-          case SDL_GAMEPAD_BUTTON_START:
-            s_pauseEdge = true;
-            break;
-          case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
-            s_quickChatEdge = true;
-            break;
-          case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
-            /* R3 — toggle free build cursor mode.  See build_cursor.c. */
-            s_buildCursorToggleEdge = true;
-            break;
-          case SDL_GAMEPAD_BUTTON_BACK:
-            /* Back/Select — toggle status overlay (currently the
-               Players panel; will grow as more state moves into it). */
-            s_statusToggleEdge = true;
-            break;
-          default:
-            break;
+        seedBindingsIfNeeded();
+        for (int i = 0; i < GP_ACT_COUNT; ++i) {
+          const GamepadBinding *slots[2] = {
+            &s_bindings.b[i].pri, &s_bindings.b[i].sec
+          };
+          for (int s = 0; s < 2; ++s) {
+            const GamepadBinding *b = slots[s];
+            if (b->kind == GP_BIND_BUTTON && b->code == e->gbutton.button) {
+              fireEdgeForAction((GamepadAction)i);
+              break;
+            }
+          }
         }
       }
       break;
 
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
       /* No-op: held-state queries read live via SDL_GetGamepadButton. */
+      break;
+
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+      if (s_activeGamepad && e->gaxis.which == s_activeId) {
+        SDL_GamepadAxis axis = (SDL_GamepadAxis)e->gaxis.axis;
+        if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+            axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+          seedBindingsIfNeeded();
+          int slot = (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) ? 0 : 1;
+          float v = (float)e->gaxis.value * AXIS_NORM;
+          bool nowDown = v > TRIGGER_THRESHOLD;
+          if (nowDown && !s_triggerWasPressed[slot]) {
+            for (int i = 0; i < GP_ACT_COUNT; ++i) {
+              const GamepadBinding *bs[2] = {
+                &s_bindings.b[i].pri, &s_bindings.b[i].sec
+              };
+              for (int j = 0; j < 2; ++j) {
+                if (bs[j]->kind == GP_BIND_TRIGGER && bs[j]->code == (int)axis) {
+                  fireEdgeForAction((GamepadAction)i);
+                  break;
+                }
+              }
+            }
+          }
+          s_triggerWasPressed[slot] = nowDown;
+        }
+      }
       break;
 
     default:
@@ -322,40 +485,27 @@ bool inputGamepadIsFireHeld(void) {
   if (path_a_active()) {
     return steam_input_is_action_pressed(SI_ACTION_FIRE);
   }
-
-  if (!s_activeGamepad) return false;
-
-  if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_SOUTH)) return true;
-
-  float rt = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * AXIS_NORM;
-  return rt > TRIGGER_THRESHOLD;
+  return actionIsHeld(GP_ACT_FIRE);
 }
 
 bool inputGamepadIsMineHeld(void) {
   if (path_a_active()) {
     return steam_input_is_action_pressed(SI_ACTION_MINE);
   }
-
-  if (!s_activeGamepad) return false;
-
-  /* Mine = LT only.  B (EAST) is reserved for ImGui nav-cancel / dialog
-     close — overlapping it with mine made every cancel-press also lay
-     a mine.  See controller plan §6.2: LT mine, B cancel/close menu. */
-  float lt = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * AXIS_NORM;
-  return lt > TRIGGER_THRESHOLD;
+  return actionIsHeld(GP_ACT_MINE);
 }
 
 int inputGamepadGetGunsightChange(void) {
-  /* Return live held state (-1/0/+1) on both paths so holding LB/RB
-     repeats at the caller's rate (INPUT_GUNSIGHT_WAIT_TIME), matching
-     keyboard behavior.  Inc wins if both are held. */
+  /* Return live held state (-1/0/+1) on both paths so holding the
+     bound buttons repeats at the caller's rate (INPUT_GUNSIGHT_WAIT_TIME),
+     matching keyboard behavior.  Inc wins if both are held. */
   bool dec, inc;
   if (path_a_active()) {
     dec = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_DEC);
     inc = steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_INC);
   } else if (s_activeGamepad) {
-    dec = SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
-    inc = SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    dec = actionIsHeld(GP_ACT_GUNSIGHT_DEC);
+    inc = actionIsHeld(GP_ACT_GUNSIGHT_INC);
   } else {
     return 0;
   }

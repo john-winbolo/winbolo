@@ -1130,3 +1130,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulering
 STR_DLGSYSINFO_BOTPREP=Bot-förberedelse
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain-överskridningar
+
+# Handkontroll – åtgärdsetiketter
+STR_GP_SECTION=Handkontroll
+STR_GP_REBIND_PROMPT=Tryck en knapp eller dra i en trigger...
+STR_GP_ACTION_FIRE=Skjut
+STR_GP_ACTION_MINE=Lägg ut mina
+STR_GP_ACTION_BUILD_CONFIRM=Bekräfta byggande
+STR_GP_ACTION_VIEW_CYCLE=Byt vy
+STR_GP_ACTION_GUNSIGHT_DEC=Minska siktet
+STR_GP_ACTION_GUNSIGHT_INC=Öka siktet
+STR_GP_ACTION_BUILD_PREV=Föregående byggnadstyp
+STR_GP_ACTION_BUILD_NEXT=Nästa byggnadstyp
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Växla byggmarkör
+STR_GP_ACTION_QUICK_CHAT=Snabbchatt
+STR_GP_ACTION_PAUSE=Pausa
+STR_GP_ACTION_STATUS_TOGGLE=Statusöverlägg

@@ -1147,6 +1147,22 @@
 #define STR_DLGSYSINFO_BOTPREP              1237
 #define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
 
+/* Gamepad rebinding (Configure Keys → Controller section) */
+#define STR_GP_SECTION                      1239
+#define STR_GP_REBIND_PROMPT                1240
+#define STR_GP_ACTION_FIRE                  1241
+#define STR_GP_ACTION_MINE                  1242
+#define STR_GP_ACTION_BUILD_CONFIRM         1243
+#define STR_GP_ACTION_VIEW_CYCLE            1244
+#define STR_GP_ACTION_GUNSIGHT_DEC          1245
+#define STR_GP_ACTION_GUNSIGHT_INC          1246
+#define STR_GP_ACTION_BUILD_PREV            1247
+#define STR_GP_ACTION_BUILD_NEXT            1248
+#define STR_GP_ACTION_BUILD_CURSOR_TOGGLE   1249
+#define STR_GP_ACTION_QUICK_CHAT            1250
+#define STR_GP_ACTION_PAUSE                 1251
+#define STR_GP_ACTION_STATUS_TOGGLE         1252
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

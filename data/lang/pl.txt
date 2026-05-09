@@ -1126,3 +1126,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Symulacja
 STR_DLGSYSINFO_BOTPREP=Przygotowanie botów
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Przekroczenia Brain
+
+# Kontroler – etykiety akcji
+STR_GP_SECTION=Kontroler
+STR_GP_REBIND_PROMPT=Naciśnij przycisk lub wychyl spust...
+STR_GP_ACTION_FIRE=Strzał
+STR_GP_ACTION_MINE=Połóż minę
+STR_GP_ACTION_BUILD_CONFIRM=Potwierdź budowę
+STR_GP_ACTION_VIEW_CYCLE=Przełącz widok
+STR_GP_ACTION_GUNSIGHT_DEC=Zmniejsz zasięg celownika
+STR_GP_ACTION_GUNSIGHT_INC=Zwiększ zasięg celownika
+STR_GP_ACTION_BUILD_PREV=Poprzedni typ budowy
+STR_GP_ACTION_BUILD_NEXT=Następny typ budowy
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Przełącz kursor budowy
+STR_GP_ACTION_QUICK_CHAT=Szybki czat
+STR_GP_ACTION_PAUSE=Pauza
+STR_GP_ACTION_STATUS_TOGGLE=Panel stanu

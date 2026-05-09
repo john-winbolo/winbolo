@@ -1130,3 +1130,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulation
 STR_DLGSYSINFO_BOTPREP=Prép. bots
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Dépassements Brain
+
+# Manette – libellés des actions
+STR_GP_SECTION=Manette
+STR_GP_REBIND_PROMPT=Appuyez sur un bouton ou tirez une gâchette...
+STR_GP_ACTION_FIRE=Tirer
+STR_GP_ACTION_MINE=Poser une mine
+STR_GP_ACTION_BUILD_CONFIRM=Confirmer la construction
+STR_GP_ACTION_VIEW_CYCLE=Changer de vue
+STR_GP_ACTION_GUNSIGHT_DEC=Diminuer la portée du viseur
+STR_GP_ACTION_GUNSIGHT_INC=Augmenter la portée du viseur
+STR_GP_ACTION_BUILD_PREV=Type de construction précédent
+STR_GP_ACTION_BUILD_NEXT=Type de construction suivant
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Basculer le curseur de construction
+STR_GP_ACTION_QUICK_CHAT=Message rapide
+STR_GP_ACTION_PAUSE=Pause
+STR_GP_ACTION_STATUS_TOGGLE=Affichage d'état

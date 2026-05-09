@@ -351,6 +351,21 @@ static bool         s_keySetupAutoSlowdown  = false;
 static bool         s_keySetupAutoGunsight  = false;
 static KeySetupField s_keySetupWaiting      = ksNone;
 
+/* Gamepad rebind working state.  Mirrors s_keySetupKeys / s_keySetupWaiting:
+   the dialog populates s_keySetupGamepadBindings on open, mutates it as
+   the player rebinds, commits on OK, and discards on Cancel.  Waiting
+   action is GP_ACT_COUNT when no capture is pending; otherwise the
+   slot field selects which slot (primary or secondary) the next
+   captured input writes to.  s_keySetupTrigArmed[] tracks whether
+   each trigger needs to release-then-press to count (true when the
+   trigger was already pulled at Change-click time, so the first
+   cross-up-from-below is a real player action and not a spurious
+   match against held state). */
+static GamepadBindings s_keySetupGamepadBindings;
+static int             s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+static GamepadSlot     s_keySetupGamepadWaitingSlot   = GP_SLOT_PRIMARY;
+static bool            s_keySetupTrigArmed[2]         = { true, true };
+
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
 static int    s_sendMsgRecipient  = kSendAll;
@@ -1553,6 +1568,140 @@ static void keySetupRow(const char *label, KeySetupField field) {
     ImGui::PopID();
 }
 
+/* Returns a stable short label for the binding's button/axis using
+ * SDL_GetGamepadStringForButton/Axis.  Used for both the procedural
+ * keycap fallback text and the default row label when no PNG art
+ * exists in the active glyph set. */
+static const char *gamepadBindingLabel(const GamepadBinding *b) {
+    if (!b) return "-";
+    if (b->kind == GP_BIND_NONE) return "-";
+    if (b->kind == GP_BIND_BUTTON) {
+        const char *n = SDL_GetGamepadStringForButton((SDL_GamepadButton)b->code);
+        return (n && n[0]) ? n : "?";
+    }
+    if (b->kind == GP_BIND_TRIGGER) {
+        const char *n = SDL_GetGamepadStringForAxis((SDL_GamepadAxis)b->code);
+        return (n && n[0]) ? n : "?";
+    }
+    return "?";
+}
+
+/* Snapshot trigger state — a trigger that's already pulled at the
+   moment of a Change-click must release before a re-press counts as
+   the player's choice.  Shared by both slot-Change buttons. */
+static void armTriggersForCapture(void) {
+    SDL_Gamepad *gp = inputGamepadGetActiveHandle();
+    for (int t = 0; t < 2; ++t) {
+        SDL_GamepadAxis ax = (t == 0) ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER
+                                      : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+        float v = gp ? (float)SDL_GetGamepadAxis(gp, ax) * (1.0f / 32767.0f) : 0.0f;
+        s_keySetupTrigArmed[t] = (v <= 0.5f);
+    }
+}
+
+/* Renders one slot's glyph + label, or a faded "—" placeholder when
+   the binding is NONE.  Used by gamepadSetupRow for both pri and sec. */
+static void gamepadSetupRenderSlot(const GamepadBinding *b) {
+    float textLineH = ImGui::GetTextLineHeight();
+    float glyphSize = textLineH * 1.5f;
+    float glyphYOff = (glyphSize - textLineH) * 0.5f;
+    float cursorY   = ImGui::GetCursorPosY();
+
+    if (!b || b->kind == GP_BIND_NONE) {
+        /* Faded em-dash placeholder; reserves the same vertical room
+           as a real glyph so rows keep aligning. */
+        ImGui::SetCursorPosY(cursorY - glyphYOff);
+        ImGui::Dummy(ImVec2(glyphSize, glyphSize));
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::SetCursorPosY(cursorY);
+        ImGui::TextDisabled("%s", "-");
+        return;
+    }
+
+    const char  *name  = gamepadBindingLabel(b);
+    SDL_Texture *glyph = NULL;
+    if (b->kind == GP_BIND_BUTTON) {
+        glyph = glyphForGamepadButton((SDL_GamepadButton)b->code);
+    } else if (b->kind == GP_BIND_TRIGGER) {
+        glyph = glyphForGamepadAxis((SDL_GamepadAxis)b->code);
+    }
+    ImGui::SetCursorPosY(cursorY - glyphYOff);
+    if (glyph) {
+        ImGui::Image((ImTextureID)glyph, ImVec2(glyphSize, glyphSize));
+    } else {
+        drawProceduralKeycapAt(ImGui::GetCursorScreenPos(), glyphSize, name);
+        ImGui::Dummy(ImVec2(glyphSize, glyphSize));
+    }
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::SetCursorPosY(cursorY);
+    ImGui::TextUnformatted(name);
+}
+
+/* Render a single gamepad-binding row with both slots:
+   "Label  [pri glyph][pri text]  [sec glyph][sec text]  [Change Pri][Change Sec]" */
+static void gamepadSetupRow(const char *label, GamepadAction action) {
+    const GamepadBinding *bp = &s_keySetupGamepadBindings.b[(int)action].pri;
+    const GamepadBinding *bs = &s_keySetupGamepadBindings.b[(int)action].sec;
+    bool waitingPri = (s_keySetupGamepadWaitingAction == (int)action &&
+                       s_keySetupGamepadWaitingSlot   == GP_SLOT_PRIMARY);
+    bool waitingSec = (s_keySetupGamepadWaitingAction == (int)action &&
+                       s_keySetupGamepadWaitingSlot   == GP_SLOT_SECONDARY);
+
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(label);
+
+    /* Column 1: both slot glyphs side by side, separated by a tab-wide
+       gap.  When a slot is waiting for capture, its half shows the
+       prompt instead. */
+    ImGui::TableSetColumnIndex(1);
+    if (waitingPri) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_GP_REBIND_PROMPT));
+    } else {
+        gamepadSetupRenderSlot(bp);
+    }
+    ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    if (waitingSec) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_GP_REBIND_PROMPT));
+    } else {
+        gamepadSetupRenderSlot(bs);
+    }
+
+    /* Column 2: two stacked SmallButtons (Change Pri / Change Sec).
+       While one slot is being captured, its button reads "Cancel"
+       and the other slot's button stays enabled but inert via PushID
+       isolation. */
+    ImGui::TableSetColumnIndex(2);
+    ImGui::PushID(0x1000 + (int)action);
+    if (waitingPri) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
+            s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+        }
+    } else {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            s_keySetupGamepadWaitingAction = (int)action;
+            s_keySetupGamepadWaitingSlot   = GP_SLOT_PRIMARY;
+            armTriggersForCapture();
+        }
+    }
+    ImGui::PushID(1);
+    if (waitingSec) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
+            s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+        }
+    } else {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            s_keySetupGamepadWaitingAction = (int)action;
+            s_keySetupGamepadWaitingSlot   = GP_SLOT_SECONDARY;
+            armTriggersForCapture();
+        }
+    }
+    ImGui::PopID();
+    ImGui::PopID();
+}
+
 static void renderKeySetupModal(ClientSim *cs) {
     char title[128];
     snprintf(title, sizeof(title), "%s###keysetup", langGetText(STR_DLGKEYSETUP_TITLE));
@@ -1563,6 +1712,10 @@ static void renderKeySetupModal(ClientSim *cs) {
         s_keySetupAutoSlowdown = screenGetTankAutoSlowdownCS(cs);
         s_keySetupAutoGunsight = screenGetTankAutoHideGunsightCS(cs);
         s_keySetupWaiting      = ksNone;
+        inputGamepadBindingsGetAll(&s_keySetupGamepadBindings);
+        s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+        s_keySetupTrigArmed[0] = true;
+        s_keySetupTrigArmed[1] = true;
     }
 
     /* Keep the popup centered on first use */
@@ -1588,6 +1741,10 @@ static void renderKeySetupModal(ClientSim *cs) {
     if (s_keySetupWaiting != ksNone) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
                            langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
+        ImGui::Separator();
+    } else if (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_GP_REBIND_PROMPT));
         ImGui::Separator();
     }
 
@@ -1648,6 +1805,26 @@ static void renderKeySetupModal(ClientSim *cs) {
     keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
     endSection();
 
+    /* Controller — only show when a gamepad is currently connected.
+       Path A (Steam Input) sees this section but the table is ignored
+       at runtime; Steam owns its own binding configurator. */
+    if (inputGamepadIsConnected()) {
+        section(langGetText(STR_GP_SECTION));
+        gamepadSetupRow(langGetText(STR_GP_ACTION_FIRE),                GP_ACT_FIRE);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_MINE),                GP_ACT_MINE);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_BUILD_CONFIRM),       GP_ACT_BUILD_CONFIRM);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_GUNSIGHT_DEC),        GP_ACT_GUNSIGHT_DEC);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_GUNSIGHT_INC),        GP_ACT_GUNSIGHT_INC);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_BUILD_PREV),          GP_ACT_BUILD_PREV);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_BUILD_NEXT),          GP_ACT_BUILD_NEXT);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_STATUS_TOGGLE),       GP_ACT_STATUS_TOGGLE);
+        endSection();
+    }
+
     ImGui::EndChild();
 
     ImGui::Separator();
@@ -1656,23 +1833,27 @@ static void renderKeySetupModal(ClientSim *cs) {
     ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_keySetupAutoGunsight);
     ImGui::Spacing();
 
-    /* OK / Cancel — disabled while a key-capture is pending so the user
-     * must press a key or click Cancel on the row first. */
-    bool busy = (s_keySetupWaiting != ksNone);
+    /* OK / Cancel — disabled while a key-capture or gamepad-capture
+     * is pending so the user must complete or cancel the row first. */
+    bool busy = (s_keySetupWaiting != ksNone) ||
+                (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT);
     if (busy) ImGui::BeginDisabled();
 
     if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
         windowSetKeys(&s_keySetupKeys);
+        inputGamepadBindingsSetAll(&s_keySetupGamepadBindings);
         screenSetTankAutoSlowdownCS(cs, s_keySetupAutoSlowdown);
         screenSetTankAutoHideGunsightCS(cs, s_keySetupAutoGunsight);
         gameFrontSaveTankPrefs(cs);   /* sync globals from tank */
         gameFrontSaveCurrentPrefs();  /* persist to disk now */
         s_keySetupWaiting = ksNone;
+        s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
         s_keySetupWaiting = ksNone;
+        s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
         ImGui::CloseCurrentPopup();
     }
 
@@ -2846,6 +3027,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Esc on the keyboard also cancels gamepad capture mode. */
+        if (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT &&
+            ev.type == SDL_EVENT_KEY_DOWN &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+            s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+            continue;
+        }
+
         /* Forward key events to input system for event-driven mine key tracking.
          * Must happen before the ImGui swallow so key-up events are never lost. */
         if (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP) {
@@ -2854,13 +3044,51 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
         }
 
-        /* Route gamepad connect/disconnect and button-edge events to the
-         * gamepad input module. Axis state is polled via SDL_GetGamepadAxis
-         * each frame, so axis events don't need explicit dispatch. */
-        if (ev.type == SDL_EVENT_GAMEPAD_ADDED       ||
-            ev.type == SDL_EVENT_GAMEPAD_REMOVED     ||
-            ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
-            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+        /* Gamepad capture for the Key Setup modal — intercept button-down
+         * events and trigger axis cross-edges before the game / input
+         * module sees them.  Stick axes are silently ignored: capture
+         * stays open until a button or trigger arrives.  Esc cancels
+         * the capture (handled in the keyboard intercept above). */
+        if (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT) {
+            int           idx     = s_keySetupGamepadWaitingAction;
+            GamepadBinding *target = (s_keySetupGamepadWaitingSlot == GP_SLOT_SECONDARY)
+                                       ? &s_keySetupGamepadBindings.b[idx].sec
+                                       : &s_keySetupGamepadBindings.b[idx].pri;
+            if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                target->kind = GP_BIND_BUTTON;
+                target->code = (int)ev.gbutton.button;
+                s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+                continue;
+            }
+            if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                SDL_GamepadAxis axis = (SDL_GamepadAxis)ev.gaxis.axis;
+                if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                    axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+                    int slot = (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) ? 0 : 1;
+                    float v = (float)ev.gaxis.value * (1.0f / 32767.0f);
+                    if (v <= 0.5f) {
+                        /* Trigger released — arm so the next press counts. */
+                        s_keySetupTrigArmed[slot] = true;
+                    } else if (s_keySetupTrigArmed[slot]) {
+                        target->kind = GP_BIND_TRIGGER;
+                        target->code = (int)axis;
+                        s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+                    }
+                    continue;
+                }
+                /* Stick axis: ignore (do not consume — let game/UI keep its state). */
+            }
+        }
+
+        /* Route gamepad connect/disconnect, button events, and trigger
+         * axis events to the gamepad input module.  Stick axes are
+         * still polled via SDL_GetGamepadAxis each frame; only triggers
+         * need event delivery for the rebindable edge-action path. */
+        if (ev.type == SDL_EVENT_GAMEPAD_ADDED        ||
+            ev.type == SDL_EVENT_GAMEPAD_REMOVED      ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN  ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP    ||
+            ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
             inputGamepadProcessEvent(&ev);
         }
 

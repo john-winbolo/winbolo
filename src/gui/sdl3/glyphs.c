@@ -411,3 +411,72 @@ SDL_Texture *glyphForGamepadAction(const char *glyphAction) {
   }
   return NULL;
 }
+
+/* --- Per-button + per-trigger table ---
+ *
+ * Mirrors the per-set glyph naming used above, indexed by SDL gamepad
+ * enum.  The entries cover every button and trigger the rebindable
+ * action set's defaults reference, plus a few common remap targets
+ * (face buttons, shoulder buttons, dpad).  Buttons not listed here
+ * resolve to NULL — the rebind UI falls back to a procedural keycap
+ * with SDL_GetGamepadStringForButton(). */
+
+typedef struct {
+  SDL_GamepadButton btn;
+  const char       *xbox;
+  const char       *ps5;
+  const char       *sw;
+} GamepadButtonRow;
+
+static const GamepadButtonRow kGpButtons[] = {
+  { SDL_GAMEPAD_BUTTON_SOUTH,           "XboxSeriesX_A.png",            "PS5_Cross.png",           "Switch_B.png" },
+  { SDL_GAMEPAD_BUTTON_EAST,            "XboxSeriesX_B.png",            "PS5_Circle.png",          "Switch_A.png" },
+  { SDL_GAMEPAD_BUTTON_WEST,            "XboxSeriesX_X.png",            "PS5_Square.png",          "Switch_Y.png" },
+  { SDL_GAMEPAD_BUTTON_NORTH,           "XboxSeriesX_Y.png",            "PS5_Triangle.png",        "Switch_X.png" },
+  { SDL_GAMEPAD_BUTTON_BACK,            "XboxSeriesX_View.png",         "PS5_Share.png",           "Switch_Minus.png" },
+  { SDL_GAMEPAD_BUTTON_START,           "XboxSeriesX_Menu.png",         "PS5_Options.png",         "Switch_Plus.png" },
+  { SDL_GAMEPAD_BUTTON_LEFT_STICK,      "XboxSeriesX_Left_Stick_Click.png",  "PS5_Left_Stick_Click.png",  "Switch_Left_Stick_Click.png" },
+  { SDL_GAMEPAD_BUTTON_RIGHT_STICK,     "XboxSeriesX_Right_Stick_Click.png", "PS5_Right_Stick_Click.png", "Switch_Right_Stick_Click.png" },
+  { SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,   "XboxSeriesX_LB.png",           "PS5_L1.png",              "Switch_LB.png" },
+  { SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,  "XboxSeriesX_RB.png",           "PS5_R1.png",              "Switch_RB.png" },
+  { SDL_GAMEPAD_BUTTON_DPAD_UP,         "XboxSeriesX_Dpad_Up.png",      "PS5_Dpad_Up.png",         "Switch_Dpad_Up.png" },
+  { SDL_GAMEPAD_BUTTON_DPAD_DOWN,       "XboxSeriesX_Dpad_Down.png",    "PS5_Dpad_Down.png",       "Switch_Dpad_Down.png" },
+  { SDL_GAMEPAD_BUTTON_DPAD_LEFT,       "XboxSeriesX_Dpad_Left.png",    "PS5_Dpad_Left.png",       "Switch_Dpad_Left.png" },
+  { SDL_GAMEPAD_BUTTON_DPAD_RIGHT,      "XboxSeriesX_Dpad_Right.png",   "PS5_Dpad_Right.png",      "Switch_Dpad_Right.png" },
+};
+static const int kGpButtonCount = (int)(sizeof(kGpButtons) / sizeof(kGpButtons[0]));
+
+SDL_Texture *glyphForGamepadButton(SDL_GamepadButton button) {
+  glyphsRefreshActiveSet();
+  for (int i = 0; i < kGpButtonCount; ++i) {
+    if (kGpButtons[i].btn != button) continue;
+    const char *file = NULL;
+    const char *sub  = NULL;
+    switch (s_active_set) {
+      case GAMEPAD_GLYPH_SET_PS5:    sub = "ps5";    file = kGpButtons[i].ps5;  break;
+      case GAMEPAD_GLYPH_SET_SWITCH: sub = "switch"; file = kGpButtons[i].sw;   break;
+      default:                       sub = "xbox";   file = kGpButtons[i].xbox; break;
+    }
+    return load_pathb(sub, file);
+  }
+  return NULL;
+}
+
+SDL_Texture *glyphForGamepadAxis(SDL_GamepadAxis axis) {
+  glyphsRefreshActiveSet();
+  const char *xbox = NULL;
+  const char *ps5  = NULL;
+  const char *sw   = NULL;
+  if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) {
+    xbox = "XboxSeriesX_LT.png"; ps5 = "PS5_L2.png"; sw = "Switch_LT.png";
+  } else if (axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+    xbox = "XboxSeriesX_RT.png"; ps5 = "PS5_R2.png"; sw = "Switch_RT.png";
+  } else {
+    return NULL;
+  }
+  switch (s_active_set) {
+    case GAMEPAD_GLYPH_SET_PS5:    return load_pathb("ps5",    ps5);
+    case GAMEPAD_GLYPH_SET_SWITCH: return load_pathb("switch", sw);
+    default:                       return load_pathb("xbox",   xbox);
+  }
+}

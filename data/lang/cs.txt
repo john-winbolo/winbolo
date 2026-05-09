@@ -1130,3 +1130,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulace
 STR_DLGSYSINFO_BOTPREP=Příprava botů
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Překročení Brain
+
+# Ovladač – popisky akcí
+STR_GP_SECTION=Ovladač
+STR_GP_REBIND_PROMPT=Stiskni tlačítko nebo přitáhni spoušť...
+STR_GP_ACTION_FIRE=Střílet
+STR_GP_ACTION_MINE=Položit minu
+STR_GP_ACTION_BUILD_CONFIRM=Potvrdit stavbu
+STR_GP_ACTION_VIEW_CYCLE=Přepnout pohled
+STR_GP_ACTION_GUNSIGHT_DEC=Zmenšit dosah zaměřovače
+STR_GP_ACTION_GUNSIGHT_INC=Zvětšit dosah zaměřovače
+STR_GP_ACTION_BUILD_PREV=Předchozí typ stavby
+STR_GP_ACTION_BUILD_NEXT=Další typ stavby
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Přepnout kurzor stavby
+STR_GP_ACTION_QUICK_CHAT=Rychlý chat
+STR_GP_ACTION_PAUSE=Pauza
+STR_GP_ACTION_STATUS_TOGGLE=Přehled stavu

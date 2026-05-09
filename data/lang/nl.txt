@@ -1130,3 +1130,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulatie
 STR_DLGSYSINFO_BOTPREP=Bot-voorbereiding
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain-overschrijdingen
+
+# Controller – actielabels
+STR_GP_SECTION=Controller
+STR_GP_REBIND_PROMPT=Druk op een knop of trek een trigger...
+STR_GP_ACTION_FIRE=Schieten
+STR_GP_ACTION_MINE=Mijn leggen
+STR_GP_ACTION_BUILD_CONFIRM=Bouw bevestigen
+STR_GP_ACTION_VIEW_CYCLE=Weergave wisselen
+STR_GP_ACTION_GUNSIGHT_DEC=Vizier verlagen
+STR_GP_ACTION_GUNSIGHT_INC=Vizier verhogen
+STR_GP_ACTION_BUILD_PREV=Vorige bouwtype
+STR_GP_ACTION_BUILD_NEXT=Volgende bouwtype
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bouwcursor in-/uitschakelen
+STR_GP_ACTION_QUICK_CHAT=Snelchat
+STR_GP_ACTION_PAUSE=Pauzeren
+STR_GP_ACTION_STATUS_TOGGLE=Statusscherm

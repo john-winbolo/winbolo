@@ -1130,3 +1130,19 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulation
 STR_DLGSYSINFO_BOTPREP=Bot-Vorbereitung
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain-Überschreitungen
+
+# Gamepad – Aktionsbeschriftungen
+STR_GP_SECTION=Controller
+STR_GP_REBIND_PROMPT=Taste drücken oder Trigger ziehen...
+STR_GP_ACTION_FIRE=Schießen
+STR_GP_ACTION_MINE=Mine legen
+STR_GP_ACTION_BUILD_CONFIRM=Bau bestätigen
+STR_GP_ACTION_VIEW_CYCLE=Ansicht wechseln
+STR_GP_ACTION_GUNSIGHT_DEC=Zielfernrohr verringern
+STR_GP_ACTION_GUNSIGHT_INC=Zielfernrohr erhöhen
+STR_GP_ACTION_BUILD_PREV=Vorheriger Bautyp
+STR_GP_ACTION_BUILD_NEXT=Nächster Bautyp
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bau-Cursor umschalten
+STR_GP_ACTION_QUICK_CHAT=Schnellnachricht
+STR_GP_ACTION_PAUSE=Pause
+STR_GP_ACTION_STATUS_TOGGLE=Statusanzeige

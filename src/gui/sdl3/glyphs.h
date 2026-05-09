@@ -73,6 +73,17 @@ SDL_Texture *glyphForKeyboardScancode(SDL_Scancode sc);
  * module. */
 SDL_Texture *glyphForGamepadAction(const char *glyphAction);
 
+/* Texture for a specific SDL_GamepadButton resolved against the
+ * currently-active gamepad glyph set.  Returns NULL if the button
+ * has no entry in the per-set table; callers fall back to a
+ * procedural keycap with SDL_GetGamepadStringForButton(). */
+SDL_Texture *glyphForGamepadButton(SDL_GamepadButton button);
+
+/* Texture for a trigger axis (LEFT_TRIGGER / RIGHT_TRIGGER) resolved
+ * against the currently-active gamepad glyph set.  Returns NULL for
+ * non-trigger axes or unmapped sets. */
+SDL_Texture *glyphForGamepadAxis(SDL_GamepadAxis axis);
+
 #ifdef __cplusplus
 }
 #endif

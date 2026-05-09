@@ -1819,6 +1819,94 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     g_gamepadScrollSensitivity = gs;
   }
 
+  /* Gamepad — Path B rebindable action table.  Start from defaults so
+     missing prefs keys leave each action at its historical mapping;
+     present keys overlay on top.  inputGamepadInit may run after this
+     prefs load, so we seed via SetAll which marks the table as
+     initialised and prevents init from re-resetting it.
+
+     Two slots per action persist as gpb_<name>_pri_{kind,code} and
+     gpb_<name>_sec_{kind,code}.  Older prefs files used a single
+     gpb_<name>_{kind,code} pair — when the new keys are absent but
+     the old ones exist, the old values migrate into the primary slot
+     and the secondary is forced to NONE (matching the single-binding
+     behaviour the legacy file expressed).  Players who want the
+     historical FIRE=RT-or-A behaviour can re-bind the secondary or
+     remove [GAMEPAD] entirely to fall back to defaults. */
+  {
+    GamepadBindings gb;
+    inputGamepadBindingsResetDefaults(&gb);
+    /* Sentinel that survives any plausible legacy code value. */
+    static const char kAbsentSentinel[] = "__absent__";
+    for (int i = 0; i < GP_ACT_COUNT; ++i) {
+      const char *name = inputGamepadActionName((GamepadAction)i);
+      char keyOldKind[64], keyOldCode[64];
+      char keyPriKind[64], keyPriCode[64];
+      char keySecKind[64], keySecCode[64];
+      snprintf(keyOldKind, sizeof(keyOldKind), "gpb_%s_kind",     name);
+      snprintf(keyOldCode, sizeof(keyOldCode), "gpb_%s_code",     name);
+      snprintf(keyPriKind, sizeof(keyPriKind), "gpb_%s_pri_kind", name);
+      snprintf(keyPriCode, sizeof(keyPriCode), "gpb_%s_pri_code", name);
+      snprintf(keySecKind, sizeof(keySecKind), "gpb_%s_sec_kind", name);
+      snprintf(keySecCode, sizeof(keySecCode), "gpb_%s_sec_code", name);
+
+      char rPriKind[FILENAME_MAX], rPriCode[FILENAME_MAX];
+      char rSecKind[FILENAME_MAX], rSecCode[FILENAME_MAX];
+      GetPrivateProfileString("GAMEPAD", keyPriKind, kAbsentSentinel, rPriKind, FILENAME_MAX, prefsFile);
+      GetPrivateProfileString("GAMEPAD", keyPriCode, kAbsentSentinel, rPriCode, FILENAME_MAX, prefsFile);
+      GetPrivateProfileString("GAMEPAD", keySecKind, kAbsentSentinel, rSecKind, FILENAME_MAX, prefsFile);
+      GetPrivateProfileString("GAMEPAD", keySecCode, kAbsentSentinel, rSecCode, FILENAME_MAX, prefsFile);
+
+      bool havePri = (strcmp(rPriKind, kAbsentSentinel) != 0 &&
+                      strcmp(rPriCode, kAbsentSentinel) != 0);
+      bool haveSec = (strcmp(rSecKind, kAbsentSentinel) != 0 &&
+                      strcmp(rSecCode, kAbsentSentinel) != 0);
+
+      if (havePri || haveSec) {
+        /* New-format file: any present slot wins; any missing slot
+           clears to NONE.  Mixing with legacy keys is impossible — the
+           writer below only emits new keys, and a hand-edited file
+           that mixes the two is treated as new-format authoritative. */
+        gb.b[i].pri.kind = GP_BIND_NONE;
+        gb.b[i].pri.code = 0;
+        gb.b[i].sec.kind = GP_BIND_NONE;
+        gb.b[i].sec.code = 0;
+        if (havePri) {
+          int k = atoi(rPriKind);
+          int c = atoi(rPriCode);
+          if (k < 0 || k > GP_BIND_TRIGGER) k = GP_BIND_NONE;
+          gb.b[i].pri.kind = (GamepadBindKind)k;
+          gb.b[i].pri.code = c;
+        }
+        if (haveSec) {
+          int k = atoi(rSecKind);
+          int c = atoi(rSecCode);
+          if (k < 0 || k > GP_BIND_TRIGGER) k = GP_BIND_NONE;
+          gb.b[i].sec.kind = (GamepadBindKind)k;
+          gb.b[i].sec.code = c;
+        }
+      } else {
+        /* No new keys — try legacy single-suffix migration. */
+        char rOldKind[FILENAME_MAX], rOldCode[FILENAME_MAX];
+        GetPrivateProfileString("GAMEPAD", keyOldKind, kAbsentSentinel, rOldKind, FILENAME_MAX, prefsFile);
+        GetPrivateProfileString("GAMEPAD", keyOldCode, kAbsentSentinel, rOldCode, FILENAME_MAX, prefsFile);
+        if (strcmp(rOldKind, kAbsentSentinel) != 0 &&
+            strcmp(rOldCode, kAbsentSentinel) != 0) {
+          int k = atoi(rOldKind);
+          int c = atoi(rOldCode);
+          if (k < 0 || k > GP_BIND_TRIGGER) k = (int)gb.b[i].pri.kind;
+          gb.b[i].pri.kind = (GamepadBindKind)k;
+          gb.b[i].pri.code = c;
+          /* Legacy file had no concept of a secondary slot. */
+          gb.b[i].sec.kind = GP_BIND_NONE;
+          gb.b[i].sec.code = 0;
+        }
+        /* else: neither new nor old keys present; defaults stand. */
+      }
+    }
+    inputGamepadBindingsSetAll(&gb);
+  }
+
   /* Remember */
   GetPrivateProfileString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX, prefsFile);
   gameFrontRemeber = YESNO_TO_TRUEFALSE(buff[0]);
@@ -2029,6 +2117,36 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
   WritePrivateProfileString("SETTINGS", "Gamepad Scroll Sens", buff, prefsFile);
+
+  /* Gamepad — Path B rebindable action table.  Four keys per action:
+     gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
+     kind is 0=NONE / 1=BUTTON / 2=TRIGGER and code is the integer SDL
+     enum value.  The loader applies defaults when no key for an action
+     is present so removing the [GAMEPAD] section reverts to historical
+     behaviour.  Legacy single-suffix keys (gpb_<name>_{kind,code}) are
+     migrated on load and ignored thereafter; we don't bother deleting
+     them from the file. */
+  {
+    GamepadBindings gb;
+    inputGamepadBindingsGetAll(&gb);
+    for (int i = 0; i < GP_ACT_COUNT; ++i) {
+      char keyPriKind[64], keyPriCode[64];
+      char keySecKind[64], keySecCode[64];
+      const char *name = inputGamepadActionName((GamepadAction)i);
+      snprintf(keyPriKind, sizeof(keyPriKind), "gpb_%s_pri_kind", name);
+      snprintf(keyPriCode, sizeof(keyPriCode), "gpb_%s_pri_code", name);
+      snprintf(keySecKind, sizeof(keySecKind), "gpb_%s_sec_kind", name);
+      snprintf(keySecCode, sizeof(keySecCode), "gpb_%s_sec_code", name);
+      intToStr((int)gb.b[i].pri.kind, buff, sizeof(buff));
+      WritePrivateProfileString("GAMEPAD", keyPriKind, buff, prefsFile);
+      intToStr(gb.b[i].pri.code, buff, sizeof(buff));
+      WritePrivateProfileString("GAMEPAD", keyPriCode, buff, prefsFile);
+      intToStr((int)gb.b[i].sec.kind, buff, sizeof(buff));
+      WritePrivateProfileString("GAMEPAD", keySecKind, buff, prefsFile);
+      intToStr(gb.b[i].sec.code, buff, sizeof(buff));
+      WritePrivateProfileString("GAMEPAD", keySecCode, buff, prefsFile);
+    }
+  }
 
   /* Remember */
   WritePrivateProfileString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber), prefsFile);
