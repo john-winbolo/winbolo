@@ -1437,7 +1437,9 @@ local function tank_combat_steer(state, world, info, goal)
       local best_nav_dist = math.huge
       -- Use 5° scan (72 directions) for precision once we've committed
       -- to attacking this target. Pool eval uses 45° for speed.
-      for deg = 0, 355, 5 do
+      -- Capacity tier tank_step coarsens the step at lower tiers.
+      local _tank_step = (state._capacity and state._capacity.tank_step) or 5
+      for deg = 0, 355, _tank_step do
         local rad = math.rad(deg)
         local sx = math.floor(target.mx + 0.5 + math.sin(rad) * R)
         local sy = math.floor(target.my + 0.5 - math.cos(rad) * R)

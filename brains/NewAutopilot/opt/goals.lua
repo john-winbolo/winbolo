@@ -1544,7 +1544,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
 
   -- ── Scoring grid ────────────────────────────────────────────────────────
+  -- Capacity tier place_r: cap the heatmap search radius. (2R+1)² tiles
+  -- get scored, so halving R quarters the work.
   local R = C.STRATEGIC_PLACE_SEARCH_RADIUS
+  if state._capacity and state._capacity.place_r and state._capacity.place_r < R then
+    R = state._capacity.place_r
+  end
   local best_score = -math.huge
   local best_mx, best_my = nil, nil
   local all_cands = {}
@@ -2679,6 +2684,11 @@ function M.step_eval_queue(state, world, info)
   local pf = state.pf
   if pf and pf.status == "running" then return end
 
+  -- Capacity tier eval_iv: pop a candidate only every Nth tick when
+  -- throttled. Tier 10 → every tick. Tier 1 → every 5 ticks.
+  local _eval_iv = (state._capacity and state._capacity.eval_iv) or 1
+  if _eval_iv > 1 and ((state.tick or 0) % _eval_iv) ~= 0 then return end
+
   local queue = state.eval_queue
   if not queue then return end
   local pos = state.eval_queue_pos or 1
@@ -3013,6 +3023,8 @@ function M.step_eval_queue(state, world, info)
         elseif _sqdist < 900 then tier_ttl, tier_idx = 150, 2
         else                       tier_ttl, tier_idx = 500, 3
         end
+        local _ttl_mult = (state._capacity and state._capacity.ttl_mult) or 1.0
+        if _ttl_mult ~= 1.0 then tier_ttl = math.floor(tier_ttl * _ttl_mult) end
 
         local needs_eval
         if not dc then
@@ -3049,9 +3061,10 @@ function M.step_eval_queue(state, world, info)
             _spots     = nil
           end
         else
+          local _scan_step = (state._capacity and state._capacity.scan_step) or 5
           diff_score, _spots, best_spot =
             attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                            5, state.phase, state, tmx, tmy)
+                                            _scan_step, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
@@ -3071,13 +3084,15 @@ function M.step_eval_queue(state, world, info)
           spot_found_mx = best_spot.mx
           spot_found_my = best_spot.my
           local _t_spot = clock_us()
-          -- Use KIND_NORMAL Dijkstra slate (full danger including the
-          -- target pill's contribution). The "as-if-pill-dead" discount
-          -- will land here once the C-side Dijkstra gains an optional
-          -- target-pill subtract parameter; until then spot_cost is
-          -- slightly over-pessimistic for the inbound leg.
-          spot_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_spot.mx, best_spot.my,
-                                 boat_flag, shells, trees, mines, armour)
+          -- KIND_NORMAL Dijkstra lookup with target pill subtraction.
+          -- C side walks the slate's parent chain back to source and
+          -- subtracts pcontrib[tile] * danger_scale * inv_speed at each
+          -- non-source tile, returning the exact "as-if-this-pill-were-
+          -- dead" cost. Replaces smart_cost + self_dr walk-and-subtract.
+          local _pck = obj.my * 256 + obj.mx
+          local _pc  = threat.pill_contrib and threat.pill_contrib[_pck]
+          spot_cost = cpf.dijkstra_lookup_subtract_by_kind(
+                        cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag, _pc)
           if spot_cost >= 1e9 then spot_cost = 500 end
           -- Travel = spot → dead pill (pill will be dead by the time we
           -- reach the spot, so this is a short capture walk).
@@ -4558,10 +4573,20 @@ local function goal_selection(state, world, info, quiet)
        and C.WSIM_OPENING_ENABLED == false then
       wsim_active = false
     end
+    -- Capacity tier wsim cap: nil = sim every entry (default), integer N =
+    -- sim top-N of the cost-sorted pool only, false = skip entirely.
+    local _wsim_cap = nil
+    if state._capacity then
+      _wsim_cap = state._capacity.wsim
+      if _wsim_cap == false then wsim_active = false end
+    end
     local _tgs_pre_wsim = clock_us()
     _tgs_log("pool_build")
     if wsim_active then
+      local _wsim_done = 0
       for _, c in ipairs(pool) do
+        if _wsim_cap and _wsim_done >= _wsim_cap then break end
+        _wsim_done = _wsim_done + 1
         -- Only sim goals that travel through danger (skip refuel/explore)
         local sim_kinds = { capture_base=true, capture_pill=true,
                             attack_pill=true, attack_base=true,
