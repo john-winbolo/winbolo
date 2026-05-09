@@ -37,6 +37,7 @@ extern "C" {
 #include "../../../bolo/global.h"
 #include "../../../bolo/util.h"
 #include "../../lang.h"
+#include "../input_source.h"
 #include "imgui_udpsetup.h"
 }
 
@@ -309,7 +310,9 @@ extern "C" int imguiUdpSetupShow(void) {
         /* --- Action buttons --- */
         float btnW = 80.0f * s;
 
-        ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+            ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
+        }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
         if (ImGui::Button(langGetText(STR_DLGTCP_NEW), ImVec2(btnW, 0))) {
             /* Check ports aren't equal */
@@ -329,7 +332,9 @@ extern "C" int imguiUdpSetupShow(void) {
             }
         }
 
-        ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+            ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
+        }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
         if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, 0))) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
@@ -343,7 +348,9 @@ extern "C" int imguiUdpSetupShow(void) {
             }
         }
 
-        ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+            ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
+        }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
         if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, 0))) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,

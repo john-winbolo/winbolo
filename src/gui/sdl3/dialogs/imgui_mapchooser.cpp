@@ -43,6 +43,7 @@ extern "C" {
 #include "../../../bolo/pillbox.h"
 #include "../../../bolo/bases.h"
 #include "../../../bolo/starts.h"
+#include "../input_source.h"
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
 #include "../../../mapeditor/mapeditor_generate.h"
@@ -489,7 +490,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
 
     if (!renderPreviewImage(state)) {
         if (state->randomMapSelected) {
-            ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
+            if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+                ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
+            }
         } else {
             ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
         }

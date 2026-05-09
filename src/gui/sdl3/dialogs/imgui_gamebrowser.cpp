@@ -53,6 +53,7 @@ extern "C" {
 #include "../../../bolo/bolo_packets.h"
 #include "../../../server/geolookup.h"
 #include "../../lang.h"
+#include "../input_source.h"
 #include "imgui_gamebrowser.h"
 }
 
@@ -447,7 +448,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Status */
     bool loadingGames = false;
-    const char *statusText = useTracker ? langGetText(STR_DLGBROWSER_TRACKER_INSTRUCTION) : langGetText(STR_DLGBROWSER_LAN_INSTRUCTION);
+    /* "Click Refresh..." prompt is keyboard/mouse-specific; suppress for gamepad. */
+    const char *statusText = (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD)
+                                 ? (useTracker ? langGetText(STR_DLGBROWSER_TRACKER_INSTRUCTION) : langGetText(STR_DLGBROWSER_LAN_INSTRUCTION))
+                                 : "";
 
     /* Error popup */
     const char *errorMsg = nullptr;
