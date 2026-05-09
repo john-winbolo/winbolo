@@ -124,6 +124,44 @@ static int numBots = 0;
  * to scale per-bot time when more bots than runners are active. */
 static int g_threadsConfig = 1;
 
+/* Pending thread-count request from the BrainTest panel. -1 = no
+ * pending change. Applied at the top of botManagerTick (between ticks),
+ * never mid-dispatch. Single-producer (main thread) so a plain int
+ * is fine — no atomics needed. */
+static int s_pending_threads = -1;
+
+void botManagerRequestThreads(int total_runners) {
+    if (total_runners < 1) total_runners = 1;
+    int cores = SDL_GetNumLogicalCPUCores();
+    if (total_runners > cores)    total_runners = cores;
+    if (total_runners > MAX_TANKS) total_runners = MAX_TANKS;
+    s_pending_threads = total_runners;
+}
+
+int botManagerGetThreads(void) { return g_threadsConfig; }
+
+/* Apply any pending pool-resize request. Called from botManagerTick
+ * before any dispatch happens, so the resize lands in the gap between
+ * ticks. */
+static void applyPendingThreadResize(void) {
+    int want = s_pending_threads;
+    if (want < 0 || want == g_threadsConfig) {
+        s_pending_threads = -1;
+        return;
+    }
+    botWorkerPoolDestroy();
+    int workers = want - 1;
+    if (workers > 0 && !botWorkerPoolCreate(workers)) {
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM,
+                    "botManager: pool create(%d) failed; staying serial",
+                    workers);
+        g_threadsConfig = 1;
+    } else {
+        g_threadsConfig = want;
+    }
+    s_pending_threads = -1;
+}
+
 /* Diagnostic toggle for the per-tick brain budget kill path. When 1
  * (default) the count hook is installed for every brain.think(), fires
  * tick_budget_exceeded on overrun, and C bindings poll the abort flag
@@ -572,6 +610,11 @@ static void runBotThinkJob(int botIndex, void *userData) {
 void botManagerTick(ServerSim *sim, aiType ai) {
     int activeCount = 0;
 
+    /* Apply any pending thread-pool resize from the BrainTest panel.
+     * Lands here, before dispatch, so the pool destroy/create gap is
+     * always between ticks — never mid-flight. */
+    applyPendingThreadResize();
+
     /* Capture the start of the serial setup stage. The EWMA of serial
      * cost is (brainStart - setupStart) + (sendEnd - brainEnd), i.e.
      * everything inside this function that is not the dispatched
@@ -675,6 +718,9 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             runBotThinkJob(s_jobIndices[k], NULL);
         }
     } else {
+        /* botWorkerPoolRun has its own serial fallback when the pool
+         * has 0 workers, so the panel resize-to-1 case Just Works
+         * without an extra check here. */
         botWorkerPoolRun(s_jobIndices, activeCount, runBotThinkJob, NULL);
     }
     Uint64 brainEnd = SDL_GetPerformanceCounter();

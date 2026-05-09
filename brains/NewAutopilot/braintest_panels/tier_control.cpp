@@ -45,22 +45,31 @@ double getNum(const cJSON *o, const char *k, double d) {
     return (v && cJSON_IsNumber(v)) ? v->valuedouble : d;
 }
 
-/* Push a tier override (or clear it) to the bot that owns this panel.
- * Uses botManagerExecLua, the same mechanism BrainTest uses to mirror
- * V-dialog state back into bot Lua. */
-void pushTierOverride(int registry_idx, int tier_or_zero) {
-    if (registry_idx < 0) return;
-    const PanelRegistryEntry *e = panelRegistryGet(registry_idx);
-    if (!e) return;
-    int bot = e->bot_owner;
-    if (bot < 0 || !botManagerIsBot((BYTE)bot)) return;
-
+/* Push a tier override (or clear it) to one bot, or to every active bot
+ * when apply_to_all is true. Uses botManagerExecLua — the same
+ * mechanism BrainTest uses to mirror V-dialog state back into bot Lua. */
+void pushTierOverride(int registry_idx, int tier_or_zero, bool apply_to_all) {
     char src[64];
     if (tier_or_zero >= 1 && tier_or_zero <= 10) {
         SDL_snprintf(src, sizeof(src), "_G._BT_TIER_OVERRIDE=%d", tier_or_zero);
     } else {
         SDL_snprintf(src, sizeof(src), "_G._BT_TIER_OVERRIDE=nil");
     }
+
+    if (apply_to_all) {
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (botManagerIsBot((BYTE)i)) {
+                botManagerExecLua((BYTE)i, src);
+            }
+        }
+        return;
+    }
+
+    if (registry_idx < 0) return;
+    const PanelRegistryEntry *e = panelRegistryGet(registry_idx);
+    if (!e) return;
+    int bot = e->bot_owner;
+    if (bot < 0 || !botManagerIsBot((BYTE)bot)) return;
     botManagerExecLua((BYTE)bot, src);
 }
 
@@ -619,24 +628,60 @@ void renderTierControl(int registry_idx, const char *body) {
     ImGui::Separator();
     int controlTier = overrideActive ? overrideTier : tier;
 
+    /* When checked, every press of ↑/↓/Auto pushes the override into
+     * EVERY active bot, not just the panel's owner. Process-wide static
+     * so the setting persists across panel re-renders and across panels
+     * (toggling on this panel affects every Capacity tiers panel's
+     * behavior consistently). */
+    static bool s_apply_to_all = false;
+    ImGui::Checkbox("apply to all bots", &s_apply_to_all);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Off: ↑/↓/Auto only push to this panel's bot.\n"
+                          "On: same press pushes the override to every "
+                          "active bot, so a 4-bot match goes to lockstep "
+                          "tier together.");
+    }
+
     ImGui::PushButtonRepeat(true);
     if (ImGui::ArrowButton("##tier_up", ImGuiDir_Up)) {
         int next = controlTier + 1;
         if (next > 10) next = 10;
-        pushTierOverride(registry_idx, next);
+        pushTierOverride(registry_idx, next, s_apply_to_all);
     }
     ImGui::SameLine();
     if (ImGui::ArrowButton("##tier_dn", ImGuiDir_Down)) {
         int next = controlTier - 1;
         if (next < 1) next = 1;
-        pushTierOverride(registry_idx, next);
+        pushTierOverride(registry_idx, next, s_apply_to_all);
     }
     ImGui::PopButtonRepeat();
     ImGui::SameLine();
     ImGui::Text("set tier");
     ImGui::SameLine(0.0f, 24.0f);
     if (ImGui::Button("Auto (clear override)")) {
-        pushTierOverride(registry_idx, 0);
+        pushTierOverride(registry_idx, 0, s_apply_to_all);
+    }
+
+    /* ── Brain dispatch thread count ──────────────────────────────────
+     * Process-wide. Total runners = workers + producer; 1 means serial
+     * dispatch (no workers). Slider stashes the request as pending —
+     * bot_manager.c applies it at the top of the next tick, so the
+     * pool destroy/create gap is always between ticks, never during
+     * dispatch. Useful for A/B comparing parallel vs serial cost. */
+    {
+        int threads = botManagerGetThreads();
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::SliderInt("brain threads", &threads, 1, 16,
+                             threads == 1 ? "%d (serial)" : "%d")) {
+            botManagerRequestThreads(threads);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Total brain-tick runners (workers + producer).\n"
+                              "1 = serial: every bot's brain.think runs inline.\n"
+                              "N = (N-1) worker threads + 1 producer = N-way parallel.\n"
+                              "Defaults to logical CPU core count at startup.\n"
+                              "Applied at the top of the next tick (never mid-dispatch).");
+        }
     }
 
     /* ── Active tier's lever values ────────────────────────────────── */

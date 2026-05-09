@@ -112,6 +112,12 @@ void luaBrainsSetProfile(int profile, int profile_log) {
     s_profile_log = profile_log ? 1 : 0;
 }
 
+/* Set by --log-json (or always-on in dev mode). Captured as
+ * BRAIN_LOG_JSON Lua global at brain init. */
+static int s_log_json = 0;
+
+void luaBrainsSetLogJson(int enable) { s_log_json = enable ? 1 : 0; }
+
 void luaBrainsSetRunScript(const char *path) {
     if (path && path[0])
         SDL_strlcpy(s_run_script_path, path, sizeof(s_run_script_path));
@@ -613,6 +619,9 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
   lua_pushboolean(L, s_profile_log);
   lua_setglobal(L, "BRAIN_PROFILE_LOG");
+
+  lua_pushboolean(L, s_log_json);
+  lua_setglobal(L, "BRAIN_LOG_JSON");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
    * off in --opt production mode to eliminate GC pressure. */

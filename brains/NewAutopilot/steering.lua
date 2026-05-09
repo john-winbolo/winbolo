@@ -141,10 +141,12 @@ local function stuck_recovery(state, info, goal)
   local k = U.mkey(pf.next_mx, pf.next_my)
   if bl[k] == nil then
     cpf.set_overlay(pf.next_mx, pf.next_my, STUCK_PENALTY)
-    print(string.format(
-      "[STUCK_RECOVERY] t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d) penalize %dt",
-      now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
-      goal.kind, pf.next_mx, pf.next_my, STUCK_DURATION))
+    if BRAIN_DEBUG_MODE then
+      print(string.format(
+        "[STUCK_RECOVERY] t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d) penalize %dt",
+        now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
+        goal.kind, pf.next_mx, pf.next_my, STUCK_DURATION))
+    end
     log.event("stuck_recovery", string.format(
       "%s next=%d,%d", goal.kind, pf.next_mx, pf.next_my))
   end
@@ -1973,7 +1975,7 @@ function M.steer(state, world, info, goal)
     local _t_pre_path = BRAIN_PROFILE and clock_us() or 0
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
     local _t_post_path = BRAIN_PROFILE and clock_us() or 0
-    if BRAIN_PROFILE and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
+    if BRAIN_PROFILE_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
       opt.append("optimize.log", string.format(
         "  [steer-detail] tick=%d goal=%s stuck_r=%.2fms path_to=%.2fms dest=(%d,%d)",
         state.tick or 0, goal.kind or "?",

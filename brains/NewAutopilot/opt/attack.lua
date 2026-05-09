@@ -160,7 +160,7 @@ local function clear_attack_goal(state, reason)
     kind_was = kind_was, sub_was = sub_was,
     mx_was = mx_was, my_was = my_was,
   }
-  if reason then
+  if reason and BRAIN_DEBUG_MODE then
     print(string.format("[clear_attack_goal] %s", reason))
   end
 end
@@ -1538,7 +1538,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- Per-call breakdown — emitted only when the call cost > 1 ms so we
   -- don't flood optimize.log with cheap cache-hit-tier calls.
-  if BRAIN_PROFILE then
+  if BRAIN_PROFILE_LOG then
     do
       local _t_total = clock_us() - _t_func0
       if _t_total > 1000 then
@@ -1884,7 +1884,6 @@ function M.update_attack_substate(goal, state, world, info)
   -- Only log on substate transitions (avoid spamming every tick)
   if goal.substate ~= goal._last_logged_sub then
     goal._last_logged_sub = goal.substate
-    print(string.format(TAG .. " [ATTACK] substate=%s pill=(%d,%d)", goal.substate, pmx, pmy))
   end
 
   -- Look up pill
@@ -1924,7 +1923,7 @@ function M.update_attack_substate(goal, state, world, info)
       if _pp_spread > 1 then _eff_step = 45 end
       local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, _eff_step, state.phase, state, tmx, tmy)
       goal.scan_spots = spots
-      if BRAIN_PROFILE then
+      if BRAIN_PROFILE_LOG then
         opt.append("optimize.log", string.format(
           "  [as] plan_position eval_pill=%.3f ms pill=(%d,%d)",
           (clock_us() - _t_pp0) / 1000, pmx, pmy))
@@ -2479,7 +2478,7 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     -- Fall through to draw
-    if BRAIN_PROFILE then
+    if BRAIN_PROFILE_LOG then
       local _t_app1 = clock_us()
       if _t_app1 - _t_app0 > 300 then
         opt.append("optimize.log", string.format(

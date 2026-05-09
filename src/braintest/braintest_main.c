@@ -1524,6 +1524,10 @@ static char optRunScript[1024] = "";
  * --profile-log to enable file writes too (which implies --profile). */
 static int  optProfile    = 0;
 static int  optProfileLog = 0;
+/* JSONL behavior log (brain_p<N>.jsonl, goal_player%d.log, etc.). Always
+ * on in dev mode; opt-in under --opt via --log-json. Independent of the
+ * profile flags — behavior trace is about decisions, not perf. */
+static int  optLogJson    = 0;
 static int  optAutoStart = 0;
 static int  optMaxTicks = 0;   /* 0 = run forever */
 
@@ -1545,6 +1549,8 @@ static void printUsage(const char *prog) {
         "  --profile          (--opt only) In-memory timing → Y panel time bar. No file writes.\n"
         "  --profile-log      (--opt only) Profiling + write optimize.log/performance.ticks.log.\n"
         "                     Implies --profile. In dev mode (no --opt) both are on by default.\n"
+        "  --log-json         (--opt only) Write brain_p<N>.jsonl + goal_player<N>.log behavior\n"
+        "                     traces. On by default in dev mode.\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
         "\n"
@@ -1604,6 +1610,8 @@ static bool parseArgs(int argc, char **argv) {
              * measurement makes no sense — buffer would be empty). */
             optProfile    = 1;
             optProfileLog = 1;
+        } else if (strcmp(argv[i], "--log-json") == 0) {
+            optLogJson = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
@@ -4301,7 +4309,10 @@ int main(int argc, char *argv[]) {
      * --profile (memory only) or --profile-log (memory + files). */
     int effProfile    = (!optProduction) || optProfile    || optProfileLog;
     int effProfileLog = (!optProduction) || optProfileLog;
+    /* JSONL behavior trace: dev mode = on, --opt = off unless --log-json. */
+    int effLogJson    = (!optProduction) || optLogJson;
     luaBrainsSetProfile(effProfile, effProfileLog);
+    luaBrainsSetLogJson(effLogJson);
     if (optRunScript[0])
         luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];

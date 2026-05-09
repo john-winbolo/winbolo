@@ -1171,7 +1171,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   end  -- end else (Lua neighbor bonus fallback)
 
   local _t_end = clock_us()
-  if BRAIN_PROFILE then
+  if BRAIN_PROFILE_LOG then
     if _t_end - _t_score_cands > 3000 then
       opt.append("optimize.log", string.format(
         "  [shield] scan total=%.2f ms  score_cands=%.2f ms  nudge=%.2f ms  neighbor=%.2f ms  stamp=%s",
