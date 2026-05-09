@@ -153,6 +153,13 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
+  /* Sentinel value for "no batch start assigned" — clients never run the
+   * batch placement, but startsGetStart still checks the slot when bots /
+   * single-player tankCreate runs, so leave them all unset. */
+  for (int i = 0; i < MAX_TANKS; i++) {
+    cs->sim.pendingStartIdx[i] = MAX_STARTS;
+  }
+
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
   cs->sim.isLocalTransport = true;

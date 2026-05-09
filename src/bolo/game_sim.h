@@ -141,6 +141,15 @@ typedef struct GameSim {
     uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */
     PosHistory *posHistoryPtr;               /* NULL on client, points to ServerSim.posHistory on server */
     PosHistory *lgmPosHistoryPtr;            /* NULL on client, points to ServerSim.lgmPosHistory on server */
+
+    /* Pre-computed start indices used during the lobby->game batch tank
+     * creation. Each slot is a start index in [0, MAX_STARTS); MAX_STARTS
+     * itself is the "unassigned" sentinel. startsGetStart consumes and
+     * clears the slot, falling through to the per-player algorithm when
+     * unassigned. Scatter and direction conversion happen lazily on
+     * consumption so siblings already created in the batch loop are
+     * visible during the per-square nudge. */
+    BYTE        pendingStartIdx[MAX_TANKS];
 } GameSim;
 
 /*********************************************************
