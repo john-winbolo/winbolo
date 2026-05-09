@@ -139,7 +139,7 @@ static const char *kActionNames[GP_ACT_COUNT] = {
   "build_cursor_toggle",
   "quick_chat",
   "pause",
-  "status_toggle",
+  "view_players",
 };
 
 const char *inputGamepadActionName(GamepadAction a) {
@@ -164,7 +164,7 @@ const char *inputGamepadActionName(GamepadAction a) {
    build_cursor_toggle = R3     + NONE
    quick_chat          = DPAD_LEFT  + NONE
    pause               = START  + NONE
-   status_toggle       = BACK   + NONE */
+   view_players        = DPAD_RIGHT + NONE */
 void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   if (!out) return;
   static const GamepadBinding kNone = { GP_BIND_NONE, 0 };
@@ -184,7 +184,7 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   out->b[GP_ACT_BUILD_CURSOR_TOGGLE].pri = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_STICK };
   out->b[GP_ACT_QUICK_CHAT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_LEFT };
   out->b[GP_ACT_PAUSE].pri               = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_START };
-  out->b[GP_ACT_STATUS_TOGGLE].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_BACK };
+  out->b[GP_ACT_STATUS_TOGGLE].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
 }
 
 static GamepadBinding *slotPtr(GamepadActionBindings *ab, GamepadSlot s) {
