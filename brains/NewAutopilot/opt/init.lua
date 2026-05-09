@@ -13,6 +13,13 @@
 
 local C       = require("constants")
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
+-- TAG-prefixed brain chatter (goal shifts, stuck warnings, command
+-- echoes) is wrapped in `if BRAIN_DEBUG_MODE then print(...) end` at
+-- each call site. The strip removes those blocks from opt/ entirely,
+-- so --opt pays zero cost — no function call, no string concat, no
+-- print. Bare print(...) calls (no TAG / no BRAIN_DEBUG_MODE wrap)
+-- are reserved for things that MUST surface in production: load-time
+-- errors, fatal asserts, and one-shot startup banners.
 local U       = require("util")
 local dbg     = require("debugger")
 local heap    = require("heap")
@@ -119,19 +126,15 @@ end
 
 function Brain.set_setting(id, value)
   if id == "command" and type(value) == "string" and value ~= "" then
-    print(string.format(TAG .. " COMMAND: '%s'", value))
     local cmd = cmds.parse(value)
     if cmd then
       local reply = cmds.execute(cmd, state, world)
       if reply then
-        print(TAG .. " REPLY: " .. reply)
       end
     else
-      print(TAG .. " unknown command: " .. value)
     end
   elseif id == "auto_explore" then
     state.auto_explore = value
-    print(string.format(TAG .. " auto_explore = %s", tostring(value)))
   elseif id == "logging" then
     if value and not log.is_open() then
       if log.open(log.make_filename("brain_p" .. state.player_number)) then
@@ -554,10 +557,20 @@ function Brain.open(info)
   -- Player 0 logs when _JSONL_LOGGER_ENABLED is set (controlled by the
   -- BrainTest debug modules panel — off by default since the file is huge
   -- and rarely needed). Other players log if ENABLE_LOGGING or debug_log.
-  -- JSONL behavior logger setup. Gated on BRAIN_DEBUG_MODE so the strip
-  -- removes the whole block from opt/ — --opt runs never open the JSONL
-  -- log file regardless of toggles.
+  -- JSONL behavior logger setup. Gate `BRAIN_LOG_JSON or BRAIN_DEBUG_MODE`
+  -- with LOG_JSON FIRST so the strip's `if BRAIN_DEBUG_MODE then` prefix
+  -- doesn't match — opt/ keeps this block, and at runtime BRAIN_LOG_JSON
+  -- (set from --log-json) decides. Dev mode auto-sets both true.
   local log_fname = nil
+  if BRAIN_LOG_JSON or BRAIN_DEBUG_MODE then
+    if info.player_number == 0 then
+      if _G._JSONL_LOGGER_ENABLED then
+        log_fname = log.make_filename("player0")
+      end
+    elseif ENABLE_LOGGING or state.debug_log then
+      log_fname = log.make_filename("brain_p" .. info.player_number)
+    end
+  end
   local t_open_logsetup = clock_us()
   if log_fname then
     if log.open(log_fname) then
@@ -792,7 +805,11 @@ function Brain.think(info)
     -- we can verify the algorithm + corroborate per-tier ms history.
     -- Format: tick, prev->new, ratio, last_ms, target_ms, killed flag,
     -- and the per-tier ms history snapshot.
-    if cur ~= prev_tier then
+    -- Tier shifts are infrequent but the line build does several
+    -- string.formats; gate on BRAIN_PROFILE_LOG so --opt without
+    -- profile-log skips this entirely. The console print also
+    -- becomes BRAIN_DEBUG_MODE-gated below.
+    if cur ~= prev_tier and BRAIN_PROFILE_LOG then
       local hist_parts = {}
       for t = 10, 1, -1 do
         local v = state._tier_ms and state._tier_ms[t]
@@ -804,7 +821,6 @@ function Brain.think(info)
         state._capacity_ratio_ewma or -1, last_ms, tgt_ms, tostring(killed),
         table.concat(hist_parts, " "))
       opt.append("optimize.log", "  " .. line)
-      print(TAG .. " " .. line)  -- also emit to console so BrainTest shows tier shifts live
     end
   end
 
@@ -1069,9 +1085,30 @@ function Brain.think(info)
       goal_str = string.format("Goal: %s (%d,%d)",
         gkind, g.mx or 0, g.my or 0)
     end
-    -- Per-tick goal log — behavior trace, debug-mode only. Strip removes
-    -- this whole block from opt/, so --opt mode (production-ish) never
-    -- writes goal_player%d.log regardless of profile / profile-log flags.
+    -- Per-tick goal log — behavior trace. Gate `BRAIN_LOG_JSON or
+    -- BRAIN_DEBUG_MODE` (LOG_JSON first so strip leaves the block alone).
+    -- --opt without --log-json: both false, no file write. --opt --log-json
+    -- or dev mode: writes goal_player<N>.log to DEBUG_SESSION_DIR.
+    if BRAIN_LOG_JSON or BRAIN_DEBUG_MODE then
+      local sdir = _G.DEBUG_SESSION_DIR
+      if sdir then
+        local pn = info.player_number or 0
+        local path = string.format("%s/goal_player%d.log", sdir, pn)
+        if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
+          if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
+          local f = io.open(path, "a")
+          if f then
+            _G._GOAL_LOG_FILE = f
+            _G._GOAL_LOG_PATH = path
+          end
+        end
+        if _G._GOAL_LOG_FILE then
+          local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
+          _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
+          _G._GOAL_LOG_FILE:flush()
+        end
+      end
+    end
     -- HUD draws (gated)
   end
 
@@ -1532,8 +1569,6 @@ function Brain.think(info)
 
     local cmd = cmds.parse(info.message.text)
     if cmd then
-      print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
-            now, info.message.sender, info.message.text))
       log.event("cmd_recv", info.message.text)
       local reply = cmds.execute(cmd, state, world)
       if reply and not send_msg then
@@ -1571,8 +1606,6 @@ function Brain.think(info)
   if info.newtank then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    print(string.format(TAG .. " t=%d RESPAWN at (%d,%d)",
-          now, info.tankx >> 8, info.tanky >> 8))
     log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
   end
 
@@ -1628,9 +1661,6 @@ function Brain.think(info)
           -- All of the flee ray is blocked; stay put.
           fmx, fmy = cur_mx, cur_my
         end
-        print(string.format(
-          TAG .. " t=%d STUCK %s pill at (%d,%d) -- fleeing to (%d,%d)",
-          now, state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         log.event("stuck", string.format("%s@%d,%d->flee(%d,%d)",
           state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         state.goal = { kind = "flee_pill", mx = fmx, my = fmy,
@@ -1641,14 +1671,10 @@ function Brain.think(info)
             C.BRAIN_NAME .. ": STUCK attacking pill #%d -- fleeing",
             state.command_goal.id or 0)
           state.command_goal = nil
-          print(TAG .. " CMD: cancelled due to stuck (attack_pill)")
         end
       else
         local bk = U.mkey(state.goal.mx, state.goal.my)
         state.blocked[bk] = now + 600
-        print(string.format(
-          TAG .. " t=%d STUCK at (%d,%d) goal=%s dest=(%d,%d) -- blocking for 600t",
-          now, cur_mx, cur_my, state.goal.kind, state.goal.mx, state.goal.my))
         log.event("stuck", string.format("%s@%d,%d", state.goal.kind, state.goal.mx, state.goal.my))
         if state.command_goal then
           state.command_reply = string.format(
@@ -1656,7 +1682,6 @@ function Brain.think(info)
             state.command_goal.kind, state.command_goal.id,
             state.command_goal.mx, state.command_goal.my)
           state.command_goal = nil
-          print(TAG .. " CMD: cancelled due to stuck")
         end
         attack.clear_attack_goal(state)
       end
@@ -1726,8 +1751,6 @@ function Brain.think(info)
     -- pathfinder and pool cache so they recalculate with on-foot costs.
     -- The periodic replan will naturally re-evaluate if a better goal
     -- exists with on-foot costs.
-    print(string.format(TAG .. " t=%d BOAT LOST at (%d,%d) goal=%s -- recalc on-foot",
-          now, cur_mx, cur_my, state.goal.kind))
     log.event("boat_lost", string.format("%d,%d goal=%s", cur_mx, cur_my, state.goal.kind))
   end
 
@@ -1745,8 +1768,6 @@ function Brain.think(info)
       state.water_build = { x = cur_mx, y = cur_my }
       if not state.water_build_logged then
         state.water_build_logged = true
-        print(string.format(TAG .. " t=%d WATER BUILD ROAD at (%d,%d) trees=%d",
-              now, cur_mx, cur_my, info.trees))
       end
     else
       state.water_build = nil
@@ -1760,8 +1781,6 @@ function Brain.think(info)
            or state.goal.mx ~= dry_x or state.goal.my ~= dry_y then
           state.goal = { kind = "escape_water", mx = dry_x, my = dry_y,
                          wx = U.m2w(dry_x), wy = U.m2w(dry_y) }
-          print(string.format(TAG .. " t=%d WATER ESCAPE to (%d,%d)",
-                now, dry_x, dry_y))
           log.event("water_escape", string.format("%d,%d tt=%d", dry_x, dry_y, tank_tt))
         end
       end
@@ -1772,8 +1791,6 @@ function Brain.think(info)
 
     -- Clear escape_water goal once on dry land and trigger immediate replan
     if state.goal.kind == "escape_water" then
-      print(string.format(TAG .. " t=%d ESCAPED WATER at (%d,%d) -- replanning",
-            now, cur_mx, cur_my))
       state.goal = { kind = "none" }
     end
 
@@ -1822,8 +1839,6 @@ function Brain.think(info)
             }
             state.pf.status = "idle"
             state.antitank_drop_cooldown = now + C.ANTITANK_DROP_COOLDOWN
-            print(string.format(TAG .. " t=%d ANTITANK DROP at (%d,%d) enemy@(%d,%d) dist=%d",
-                  now, mid_mx, mid_my, et.mx, et.my, et.dist))
             log.event("antitank_drop", string.format("at(%d,%d) enemy(%d,%d)", mid_mx, mid_my, et.mx, et.my))
           end
         end
@@ -1888,8 +1903,6 @@ function Brain.think(info)
             emergency = true,
           }
           state.pf.status = "idle"
-          print(string.format(TAG .. " t=%d EMERGENCY PILL DROP at (%d,%d) armour=%d",
-                now, best_drop_mx, best_drop_my, info.armour))
           log.event("emergency_drop", string.format("at(%d,%d) arm=%d", best_drop_mx, best_drop_my, info.armour))
           -- Overlay: emergency drop position
         end
@@ -1910,7 +1923,7 @@ function Brain.think(info)
       -- Accept neutral (normal capture) and hostile (weakened base drive-over capture)
       if not b or (b.owner ~= "neutral" and b.owner ~= "hostile") then
         -- Base captured — replan immediately (refuel will win if supplies are low)
-        if b and b.owner == "friendly" then
+        if b and b.owner == "friendly" and BRAIN_DEBUG_MODE then
           print(string.format(TAG .. " t=%d BASE CAPTURED: (%d,%d) — replanning", now, gmx, gmy))
         end
         goal_valid = false
@@ -1921,8 +1934,6 @@ function Brain.think(info)
         goal_valid = false
       elseif b.owner == "neutral" then
         -- Base armour depleted — it went neutral, now just drive over to capture
-        print(string.format(TAG .. " t=%d BASE CAPTURABLE: (%d,%d) owner=%s — switching to capture_base",
-              now, gmx, gmy, b.owner))
         log.event("base_capturable", string.format("(%d,%d) owner=%s", gmx, gmy, b.owner))
         state.goal.kind = "capture_base"
         state.pf.status = "idle"
@@ -2007,8 +2018,6 @@ function Brain.think(info)
       if not b or (b.owner ~= "friendly" and b.owner ~= "neutral") then goal_valid = false end
     end
     if not goal_valid then
-      print(string.format(TAG .. " t=%d GOAL INVALID: %s at (%d,%d) — replanning",
-            now, gk, gmx, gmy))
       log.event("goal_invalid", string.format("%s@%d,%d", gk, gmx, gmy))
       -- Build a specific reason for the clear-overlay: for attack_pill
       -- name WHICH check failed (the silent killer during finetune is
@@ -2028,7 +2037,7 @@ function Brain.think(info)
     end
 
     t_goal0 = clock_us()
-    if BRAIN_PROFILE and t_goal0 - t_gv0 > 1000 then
+    if BRAIN_PROFILE_LOG and t_goal0 - t_gv0 > 1000 then
       opt.append("optimize.log", string.format(
         "  [gv] SLOW total=%.3f ms pre=%.3f ms body=%.3f ms gk=%s",
         (t_goal0 - t_gv0) / 1000,
@@ -2140,9 +2149,6 @@ function Brain.think(info)
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 200
           attack.clear_attack_goal(state)
-          print(string.format(TAG .. " t=%d REFUEL: base at (%d,%d) can't supply us (arm=%d sh=%d mn=%d), replanning",
-                now, state.goal.mx or 0, state.goal.my or 0,
-                info.base.armour or 0, info.base.shells or 0, info.base.mines or 0))
         elseif C.REFUEL_LOCK_IN then
           refuel_hold = true
         end
@@ -2165,7 +2171,7 @@ function Brain.think(info)
     -- same fields as the previous tick — pure noise.
     if BRAIN_DEBUG_MODE and (replan or timer_fire) then
     end
-    if timer_fire and not replan then
+    if timer_fire and not replan and BRAIN_DEBUG_MODE then
       print(string.format(TAG .. " t=%d REPLAN BLOCKED: hold=%s cmd=%s urgent=%s atk_done=%s refuel_done=%s",
         now, tostring(refuel_hold), tostring(state.command_goal ~= nil),
         tostring(urgent_replan), tostring(attack_tank_done), tostring(refuel_done)))
@@ -2323,8 +2329,6 @@ function Brain.think(info)
       if state.goal.kind == "explore" then
         local gk = U.mkey(state.goal.mx, state.goal.my)
         state.visited[gk] = true
-        print(string.format(TAG .. " t=%d ARRIVED/FAILED explore (%d,%d) -- marking visited",
-              now, state.goal.mx, state.goal.my))
         attack.clear_attack_goal(state)
       elseif state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Can't reach attack position: flee away from the pill.
@@ -2334,9 +2338,6 @@ function Brain.think(info)
         local len = math.max(1, math.sqrt(dx * dx + dy * dy))
         local fmx = U.mclamp(math.floor(cur_mx + dx / len * C.FLEE_PILL_DIST + 0.5))
         local fmy = U.mclamp(math.floor(cur_my + dy / len * C.FLEE_PILL_DIST + 0.5))
-        print(string.format(
-          TAG .. " t=%d PF FAILED for %s (%d,%d) -- fleeing to (%d,%d)",
-          now, state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         log.event("pf_failed", string.format("%s@%d,%d->flee(%d,%d)",
           state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         state.goal = { kind = "flee_pill", mx = fmx, my = fmy,
@@ -2349,8 +2350,6 @@ function Brain.think(info)
         if state.pf_fail_count >= 3 then
           if not state.pf_fail_logged then
             state.pf_fail_logged = true
-            print(string.format(TAG .. " t=%d PF FAILED for %s dest=(%d,%d) -- tank at (%d,%d), blocking",
-                  now, state.goal.kind, state.goal.mx, state.goal.my, cur_mx, cur_my))
             log.event("pf_failed", string.format("%s@%d,%d", state.goal.kind, state.goal.mx, state.goal.my))
           end
           -- Block this destination so goal selection picks something else
@@ -2371,7 +2370,7 @@ function Brain.think(info)
   attack.update_attack_substate(state.goal, state, world, info)
   local t_as1 = clock_us()
   opt(string.format("  attack_substate done %.2f ms", (t_as1 - t_as0) / 1000))
-  if t_as1 - t_as0 > 500 then
+  if BRAIN_PROFILE_LOG and t_as1 - t_as0 > 500 then
     opt.append("optimize.log", string.format(
       "  [as] SLOW sub=%s total=%.3f ms",
       tostring(state._attack_substate_name), (t_as1 - t_as0) / 1000))
@@ -2519,7 +2518,7 @@ function Brain.think(info)
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
   opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
-  if t_steer1 - t_steer0 > 5000 then
+  if BRAIN_PROFILE_LOG and t_steer1 - t_steer0 > 5000 then
     opt.append("optimize.log", string.format(
       "  [steer] SLOW %.2f ms goal=%s sub=%s",
       (t_steer1 - t_steer0) / 1000,

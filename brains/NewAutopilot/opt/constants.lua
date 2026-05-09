@@ -872,6 +872,6 @@ M.CAPACITY_DEFAULT_TIER     = 10    -- start at full quality; throttle on observ
 -- when the host has plenty of headroom. Set to 0.75 to drive the bot
 -- into low tiers and verify the levers actually fire. nil = use host's
 -- published targetMs (production behavior).
-M.CAPACITY_FORCED_TARGET_MS = 0.75
+M.CAPACITY_FORCED_TARGET_MS = nil
 
 return M

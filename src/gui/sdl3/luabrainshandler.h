@@ -381,6 +381,17 @@ void luaBrainsSetRunScript(const char *path);
 void luaBrainsSetProfile(int profile, int profile_log);
 
 /*********************************************************
+*NAME:          luaBrainsSetLogJson
+*PURPOSE:
+*  Drives the BRAIN_LOG_JSON Lua global. When true, the
+*  brain opens its JSONL behavior trace files (brain_p<N>.jsonl,
+*  goal_player<N>.log) and emits per-tick decision events.
+*  Independent of profile/profile-log: behavior trace is about
+*  decisions, not performance.
+*********************************************************/
+void luaBrainsSetLogJson(int enable);
+
+/*********************************************************
 *NAME:          luaBrainInstanceTick
 *PURPOSE:
 *  Runs one brain think cycle: populates BrainInfo from

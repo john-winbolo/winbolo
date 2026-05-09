@@ -165,7 +165,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local _tw1 = clock_us()
   local r = wsim.run(C.WSIM_MAX_TICKS)
   local _tw2 = clock_us()
-  if BRAIN_PROFILE and (_tw2 - _tw0) > 200 then
+  if BRAIN_PROFILE_LOG and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
       goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
@@ -2271,7 +2271,7 @@ function M.build_eval_queue(state, world, info)
   -- to optimize.log directly so we don't need print2 enabled.
   if not state._base_in_pool then state._base_in_pool = {} end
   local function _diag_log_first_pool_add(pool_idx, pool_name, id, obj)
-    if not BRAIN_PROFILE then return end
+    if not BRAIN_PROFILE_LOG then return end
     local key = pool_idx .. ":" .. id
     if state._base_in_pool[key] then return end
     state._base_in_pool[key] = state.tick or 0
@@ -2829,7 +2829,7 @@ function M.step_eval_queue(state, world, info)
           _t_smart = clock_us() - _ts
           -- Diag: log pool 3 (capture_base) cost lookups so we can see
           -- whether Dijkstra is returning finite values yet.
-          if BRAIN_PROFILE and pool_idx == 3 then
+          if BRAIN_PROFILE_LOG and pool_idx == 3 then
             local rc = (raw_cost == math.huge) and "INF" or string.format("%.1f", raw_cost)
             opt.append("optimize.log", string.format(
               "  [diag] update_pool_cache pool=3 id=%s obj=(%d,%d) cheapest_adj=(%s,%s) raw_cost=%s tick=%d",
@@ -3401,7 +3401,7 @@ function M.step_eval_queue(state, world, info)
     -- shows up on the per-tick summary). Includes sub-timings for the
     -- 8-neighbor adjacent sweep + smart_cost call so we can identify
     -- which inner step dominates.
-    if BRAIN_PROFILE and _t_total > 500 then
+    if BRAIN_PROFILE_LOG and _t_total > 500 then
       opt.append("optimize.log", string.format(
         "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
@@ -4130,14 +4130,11 @@ local function goal_selection(state, world, info, quiet)
     local co = state.capture_objective
     local p  = world.pills[co.id]
     if not p or p.owner == "friendly" then
-      print(string.format(TAG .. " CAPTURE: pill #%d captured!", co.id))
       state.command_reply     = string.format(C.BRAIN_NAME .. ": pill #%d captured!", co.id)
       state.capture_objective = nil
     elseif p.health == 0 then
       if not co.kill_tick then
         co.kill_tick = state.tick
-        print(string.format(TAG .. " CAPTURE: pill#%d killed at t=%d — holding %d ticks for shots to clear",
-              co.id, co.kill_tick, C.POST_KILL_WAIT_TICKS))
       end
       local ticks_waited = state.tick - co.kill_tick
       if ticks_waited < C.POST_KILL_WAIT_TICKS then
@@ -4169,7 +4166,6 @@ local function goal_selection(state, world, info, quiet)
       local base, bid, bdist, bcands = nearest_where(world.bases, world, tmx, tmy,
         function(b) return b.owner ~= "friendly" end, boat, ammo, state, info, KIND_NORMAL)
       if not base then
-        print(TAG .. " CAPTURE: all bases captured!")
         state.command_reply = C.BRAIN_NAME .. ": all bases captured!"
         state.base_capture_objective = nil
       else
@@ -4183,12 +4179,10 @@ local function goal_selection(state, world, info, quiet)
       local b = world.bases[bco.id]
       if not b or b.owner == "friendly" then
         if bco.all then
-          print(string.format(TAG .. " CAPTURE: base #%d captured, continuing cb:all", bco.id))
           bco.id = nil; bco.mx = 0; bco.my = 0
           state.pf.status = "idle"
           state.stuck_for = 0
         else
-          print(string.format(TAG .. " CAPTURE: base #%d captured!", bco.id))
           state.command_reply = string.format(C.BRAIN_NAME .. ": base #%d captured!", bco.id)
           state.base_capture_objective = nil
         end
@@ -4610,32 +4604,6 @@ local function goal_selection(state, world, info, quiet)
           end
           local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(c.goal, world, info, attack_id, spot_x, spot_y)
           -- Debug print: every wsim run, even 0-damage survivors.
-          do
-            local shot_parts = {}
-            if wsim_result and wsim_result.pills then
-              for _, ps in ipairs(wsim_result.pills) do
-                if ps.shots and ps.shots > 0 then
-                  shot_parts[#shot_parts + 1] = string.format("p#%d:%d", ps.id, ps.shots)
-                end
-              end
-            end
-            local shot_str = #shot_parts > 0 and (" [" .. table.concat(shot_parts, ",") .. "]") or ""
-            local dest_str = ""
-            if c.goal.kind == "attack_pill" and spot_x then
-              dest_str = string.format(" dest=spot(%d,%d)", spot_x, spot_y)
-            else
-              dest_str = string.format(" dest=goal(%d,%d)", c.goal.mx or 0, c.goal.my or 0)
-            end
-            print(string.format("[wsim] %s(%d,%d)%s +cost=%.0f %ddmg arm=%d->%d (%.1fs)%s%s",
-              c.goal.kind, c.goal.mx or 0, c.goal.my or 0, dest_str,
-              extra,
-              wsim_result and wsim_result.damage or 0,
-              info.armour,
-              wsim_result and wsim_result.armour or info.armour,
-              (wsim_result and wsim_result.ticks or 0) / 50.0,
-              killed and " KILL+99999" or "",
-              shot_str))
-          end
           c.wsim_add = (c.wsim_add or 0) + extra
           c.cost = c.cost + extra
           if BRAIN_POOL_VIZ then c.desc = c.desc .. sdesc end
@@ -4668,7 +4636,7 @@ local function goal_selection(state, world, info, quiet)
     end
     local _tgs_post_wsim = clock_us()
     _tgs_log("wsim")
-    if BRAIN_PROFILE and (_tgs_post_wsim - _tgs0) > 500 then
+    if BRAIN_PROFILE_LOG and (_tgs_post_wsim - _tgs0) > 500 then
       opt.append("optimize.log", string.format(
         "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
         (_tgs_post_wsim-_tgs0)/1000, (_tgs_pre_pool-_tgs0)/1000,
@@ -4704,7 +4672,7 @@ local function goal_selection(state, world, info, quiet)
   -- Compare on stable key (kind+target) so wsim tick changes don't spam
   local goal_key = result and string.format("%s@%d,%d", result.kind, result.mx or 0, result.my or 0) or nil
   if goal_key ~= last_strategic_goal then
-    if not quiet then
+    if not quiet and BRAIN_DEBUG_MODE then
       if desc then
         print(TAG .. " GOAL: " .. desc)
       elseif last_strategic_goal then
@@ -4780,7 +4748,7 @@ local function goal_selection(state, world, info, quiet)
     -- needing print2 enabled. Includes which pools had cached winners
     -- so we can see whether pool_cache was empty or just got filtered
     -- out (blocked / cooldown / phase weight zero).
-    if BRAIN_PROFILE then
+    if BRAIN_PROFILE_LOG then
       do
         local pc_summary = {}
         local pc = state.pool_cache or {}
@@ -4849,8 +4817,6 @@ function M.pick_goal(state, world, info, quiet)
     end
 
     if arrived then
-      print(string.format(TAG .. " CMD: ARRIVED at %s #%d (%d,%d)",
-            cg.kind, cg.id, cg.mx, cg.my))
       state.command_reply = string.format(C.BRAIN_NAME .. ": arrived at %s #%d (%d,%d)",
         cg.kind, cg.id, cg.mx, cg.my)
       state.command_goal = nil

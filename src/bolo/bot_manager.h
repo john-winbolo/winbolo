@@ -70,6 +70,31 @@ bool botManagerInit(int threads);
 void botManagerSetDefaultDebugMode(bool enabled);
 
 /*********************************************************
+ *NAME:          botManagerRequestThreads
+ *PURPOSE:
+ *  Request a live resize of the worker pool. `total_runners`
+ *  is the total number of concurrent brain-tick runners
+ *  INCLUDING the producer (main thread). 1 = serial (no
+ *  workers); N>1 = pool of size N-1 plus producer.
+ *
+ *  Doesn't touch the pool immediately — stashes the value as
+ *  pending. The next botManagerTick() call applies it before
+ *  dispatching, guaranteeing the resize happens between ticks
+ *  and never mid-dispatch. Safe to call from the main thread
+ *  any time (e.g. from a panel slider during render).
+ *********************************************************/
+void botManagerRequestThreads(int total_runners);
+
+/*********************************************************
+ *NAME:          botManagerGetThreads
+ *PURPOSE:
+ *  Returns the current total runner count (workers + producer).
+ *  1 means serial dispatch. Reflects the live state, not any
+ *  pending request.
+ *********************************************************/
+int  botManagerGetThreads(void);
+
+/*********************************************************
  *NAME:          botManagerAddBot
  *PURPOSE:
  *  Creates a bot with its own ClientSim, passive transport,
