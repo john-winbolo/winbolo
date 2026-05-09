@@ -33,6 +33,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
+#include "../../ui_mode.h"
 }
 
 /* Match openingStates enum from gamefront.h */
@@ -301,13 +302,16 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
+            /* Map Editor is mouse-driven; gamepad-only players on Steam
+               Deck have no usable workflow. Hide on Deck. */
+            const bool showMapEditor = !uiModeIsSteamDeck();
             struct { langid labelId; int code; bool show; } miniModes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showMapEditor },
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
@@ -427,13 +431,14 @@ extern "C" int imguiWelcomeShow(void) {
             const float rowStartX = (panelW - rowW) * 0.5f;
 
             const bool showTutorialMain = gameFrontGetShowTutorialButton();
+            const bool showMapEditorMain = !uiModeIsSteamDeck();
             struct { langid labelId; int code; bool show; } modes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorialMain },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showMapEditorMain },
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
