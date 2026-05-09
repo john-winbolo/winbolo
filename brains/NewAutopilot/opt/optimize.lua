@@ -58,6 +58,13 @@ local function try_open(dir)
   print(string.format("[optimize] opened %s", path))
 end
 
+-- Per-tick section breakdown for the BrainTest "Capacity tiers" panel.
+-- Populated as a side effect of flush() when perf-log is on. Shape:
+--   { { name = "threat", ms = 0.20, subs = { { name = "pillcontrib export",
+--       ms = 0.15 }, ... } }, ... }
+-- The panel reads this each frame to render the stacked time-bar.
+M.last_sections = {}
+
 function M.set_tick(t)
   tick       = t
   tick_start = clock()
@@ -74,8 +81,41 @@ local function log_msg(...)
   buffer[#buffer + 1] = string.format("[%.2fms] %s", elapsed_ms, table.concat(parts, ""))
 end
 
+-- Walk the tick's buffer and build a hierarchical section list for the
+-- panel. Lines look like "[0.00ms] <indent><name> done <ms> ms". A
+-- non-indented line is a main section; preceding indented lines roll up
+-- as its `subs`. Subs always appear before their parent in the buffer
+-- because opt() is called when each phase ends — depth-first ordering.
+local function rebuild_sections()
+  M.last_sections = {}
+  local pending = {}
+  for i = 1, #buffer do
+    local L = buffer[i]
+    -- Match: "[<elapsed>ms] <indent>(name) done <ms> ms"
+    -- Lua patterns are greedy: `%s*` followed by `(%s*)` would eat all
+    -- the whitespace into the first capture and leave the second empty.
+    -- We anchor on a literal space after the closing bracket and capture
+    -- only the *extra* whitespace as the indent. That lets us tell
+    -- "[N.NNms] world done ..." (indent 0) from
+    -- "[N.NNms]   pillcontrib export done ..." (indent 2) apart.
+    local indent, name, ms = L:match("^%[[^%]]+%] (%s*)(.-) done%s+([%d.]+)%s+ms")
+    if name and ms and name ~= "" then
+      local ind = #(indent or "")
+      local entry = { name = name, ms = tonumber(ms) or 0 }
+      if ind == 0 then
+        entry.subs = pending
+        pending = {}
+        M.last_sections[#M.last_sections + 1] = entry
+      else
+        pending[#pending + 1] = entry
+      end
+    end
+  end
+end
+
 function M.flush()
   if not perf_log_enabled() or #buffer == 0 then return end
+  rebuild_sections()
   if na_opt_log then
     -- Threaded path: build full tick block in memory, enqueue for background write.
     local dir = pick_dir()

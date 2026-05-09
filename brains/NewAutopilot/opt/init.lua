@@ -176,12 +176,32 @@ function Brain.get_capacity_state_json()
   local rows = {}
   for t = 1, 10 do rows[#rows + 1] = lvl(t) end
 
+  -- Per-tick section timing breakdown for the panel's stacked bar.
+  -- Populated by optimize.lua at flush() — only available when
+  -- BRAIN_PERF_LOG is on (i.e. --perf-log was passed). Shape:
+  --   { { name, ms, subs: [{name, ms}, ...] }, ... }
+  local secs = (opt and opt.last_sections) or {}
+  local sec_parts = {}
+  for _, s in ipairs(secs) do
+    local sub_parts = {}
+    if s.subs then
+      for _, sb in ipairs(s.subs) do
+        sub_parts[#sub_parts + 1] = string.format('{"name":%q,"ms":%.3f}',
+          sb.name or "?", sb.ms or 0)
+      end
+    end
+    sec_parts[#sec_parts + 1] = string.format(
+      '{"name":%q,"ms":%.3f,"subs":[%s]}',
+      s.name or "?", s.ms or 0, table.concat(sub_parts, ","))
+  end
+
   return string.format(
-    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"levels":[%s]}',
+    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"levels":[%s],"sections":[%s]}',
     tier,
     (type(ovr) == "number") and tostring(math.floor(ovr)) or "null",
     last_ms, tgt_ms, sm,
-    table.concat(rows, ","))
+    table.concat(rows, ","),
+    table.concat(sec_parts, ","))
 end
 
 function Brain.get_pool_breakdown_json()
