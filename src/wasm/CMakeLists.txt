@@ -203,6 +203,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
     ${SRC_ROOT}/gui/skins.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
+    ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
     ${SRC_ROOT}/gui/sdl3/luabrainshandler.c
     ${SRC_ROOT}/gui/sdl3/minimap_render.c

@@ -227,6 +227,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/ui_mode.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/imgui_steam_nav.cpp
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui_tablet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialog_backend.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_udpsetup.cpp

@@ -39,6 +39,7 @@
 #include "imgui_keycap.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "../imgui_steam_nav.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -478,6 +479,8 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
         ImGui_ImplSDL3_NewFrame();
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Full-screen invisible host window for the modal. */
         int winW, winH;
@@ -647,6 +650,8 @@ extern "C" int imguiMessageBoxRich(const char *title,
         ImGui_ImplSDL3_NewFrame();
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
