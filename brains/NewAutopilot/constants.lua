@@ -830,4 +830,48 @@ M.WSIM_KILL_REJECT_OPENING = false  -- enforce the death-reject in the opening p
 M.WSIM_OPENING_ENABLED     = false  -- run wsim AT ALL during the opening phase. Default false: same reasoning — taking bases early is so important that we'd rather be reckless and risk dying than have wsim's damage-cost shaping pull us off an opportunity.
 M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
 
+-- =========================================================================
+-- BRAIN_CAPACITY_LEVELS[1..10]: 1=10%, 10=100%. Levers per tier:
+--   dij_short  : SHORT-slate nodes/tick (default 500). Powers steering nav.
+--   dij_long   : LONG-slate nodes/tick (default ~560 from 70k/125 ticks).
+--   scan_step  : eval_pill_difficulty step in degrees (5/10/20/45).
+--   pp_spread  : plan_position scan spread over N ticks (1=sync). NOT WIRED YET.
+--   sb_spread  : shield-blocker scan spread over N ticks (1=sync).  NOT WIRED YET.
+--   ttl_mult   : multiplier on pool-6 diff_cache distance-tier TTLs.
+--   eval_iv    : ticks between step_eval_queue pops (1=every tick).
+--   wsim       : sims top-N of the merged ~9-entry pool[]. nil=all, false=skip.
+--   place_r    : STRATEGIC_PLACE_SEARCH_RADIUS for pool-8 heatmap (default 8).
+--   tank_step  : eval_attack_tank standoff scan step in degrees (default 5).
+-- =========================================================================
+M.BRAIN_CAPACITY_LEVELS = {
+  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  sb_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5  },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=1,  sb_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5  },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=2,  sb_spread=2,  ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=7, tank_step=10 },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=2,  sb_spread=2,  ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=7, tank_step=10 },
+  [6]  = { dij_short=350, dij_long=200, scan_step=20, pp_spread=3,  sb_spread=3,  ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10 },
+  [5]  = { dij_short=300, dij_long=150, scan_step=20, pp_spread=4,  sb_spread=4,  ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20 },
+  [4]  = { dij_short=250, dij_long=100, scan_step=20, pp_spread=5,  sb_spread=5,  ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20 },
+  [3]  = { dij_short=200, dij_long=75,  scan_step=45, pp_spread=6,  sb_spread=6,  ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45 },
+  [2]  = { dij_short=150, dij_long=50,  scan_step=45, pp_spread=8,  sb_spread=8,  ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45 },
+  [1]  = { dij_short=100, dij_long=25,  scan_step=45, pp_spread=10, sb_spread=10, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45 },
+}
+
+-- Tier control: per-tier ms history corroborates raise decisions; drops
+-- are aggressive (multi-tier on bigger overruns + on host-killed ticks).
+M.CAPACITY_EWMA_ALPHA       = 0.20  -- EWMA blend on think/target ratio AND per-tier ms.
+M.CAPACITY_DROP_RATIO       = 1.20  -- drop 1 tier when smoothed ratio > 1.2.
+M.CAPACITY_DROP_BIG_RATIO   = 1.50  -- drop 2 tiers when smoothed ratio > 1.5.
+M.CAPACITY_RAISE_RATIO      = 0.70  -- raise 1 tier (with corroboration) when ratio < 0.7.
+M.CAPACITY_RAISE_FREE_RATIO = 0.40  -- raise 1 tier (skip corroboration) when ratio < 0.4.
+M.CAPACITY_KILLED_CUT       = 3     -- tiers to drop when wasKilled (host force-killed last tick).
+M.CAPACITY_KILLED_AVOID     = 200   -- ticks to avoid a tier that just got killed at.
+M.CAPACITY_RAISE_HEADROOM   = 0.90  -- raise only if next-tier history < target * this.
+M.CAPACITY_DEFAULT_TIER     = 10    -- start at full quality; throttle on observed pressure.
+-- Test override: when non-nil, ignore brain.targetMs and pretend this is
+-- the per-bot budget. Lets you force the throttle tiers to engage even
+-- when the host has plenty of headroom. Set to 0.75 to drive the bot
+-- into low tiers and verify the levers actually fire. nil = use host's
+-- published targetMs (production behavior).
+M.CAPACITY_FORCED_TARGET_MS = 0.75
+
 return M

@@ -149,6 +149,41 @@ function Brain.get_queue_status()
   return goals.get_queue_status(state)
 end
 
+-- Capacity tier panel data. JSON shape consumed by tier_control.cpp.
+-- Includes the active tier, current override (if any), all 10 tier
+-- definitions for the legend, and the live values that hash to the
+-- active tier for highlighting.
+function Brain.get_capacity_state_json()
+  local lvls = C.BRAIN_CAPACITY_LEVELS
+  local tier = (state and state._capacity_tier) or 10
+  local ovr  = _G._BT_TIER_OVERRIDE
+  local last_ms = (_G.brain and _G.brain.lastThinkMs) or 0
+  local tgt_ms  = (_G.brain and _G.brain.targetMs)    or 0
+  local sm      = (state and state._capacity_ratio_ewma) or 0
+
+  -- Build per-tier rows + tier_ms snapshot.
+  local function lvl(t)
+    local L = lvls[t] or {}
+    return string.format(
+      '{"tier":%d,"dij_short":%d,"dij_long":%d,"scan_step":%d,"pp_spread":%d,"sb_spread":%d,"ttl_mult":%.2f,"eval_iv":%d,"wsim":%s,"place_r":%d,"tank_step":%d,"ms":%s}',
+      t, L.dij_short or 0, L.dij_long or 0, L.scan_step or 0,
+      L.pp_spread or 1, L.sb_spread or 1, L.ttl_mult or 1.0,
+      L.eval_iv or 1,
+      (L.wsim == nil and "null") or (L.wsim == false and "false") or tostring(L.wsim),
+      L.place_r or 0, L.tank_step or 0,
+      (state._tier_ms and state._tier_ms[t]) and string.format("%.2f", state._tier_ms[t]) or "null")
+  end
+  local rows = {}
+  for t = 1, 10 do rows[#rows + 1] = lvl(t) end
+
+  return string.format(
+    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"levels":[%s]}',
+    tier,
+    (type(ovr) == "number") and tostring(math.floor(ovr)) or "null",
+    last_ms, tgt_ms, sm,
+    table.concat(rows, ","))
+end
+
 function Brain.get_pool_breakdown_json()
   if not BRAIN_POOL_VIZ then
     return string.format(
@@ -281,6 +316,15 @@ function Brain.open(info)
       braintest_panel_register("Queue status", "text",
         "return brain.get_queue_status()")
     end
+    -- Capacity tier control: bespoke renderer with up/down arrows that
+    -- push _G._BT_TIER_OVERRIDE back into the bot to lock its tier.
+    -- Shortcut Y → own SDL window. (T was the natural choice but it's
+    -- reserved by BrainTest core; Y is free and adjacent on QWERTY.)
+    -- Type name kept short (<= 10 chars) so PANEL_REG_TYPE_MAX (24) fits
+    -- "NewAutopilot:" + type without truncating off the trailing letter.
+    braintest_panel_register("Capacity tiers", "tier_ctrl",
+      "return brain.get_capacity_state_json()",
+      { shortcut = "Y" })
   end
   -- Shot-sim points of interest. Each lua_expr returns (wx, wy) when
   -- the POI is currently available, or nil. Polled every BrainTest
@@ -611,6 +655,109 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+
+  -- ── Capacity tier ──
+  -- The host publishes brain.lastThinkMs (previous tick's wall ms),
+  -- brain.targetMs (per-bot CPU budget for this tick), and
+  -- brain.wasKilled (true if previous tick was force-killed) onto the
+  -- global `brain` table each tick.
+  --
+  -- Decision algorithm:
+  --   1. Record per-tier ms history. state._tier_ms[T] is an EWMA of how
+  --      long this bot's thinks cost at tier T given current world load.
+  --      This corroborates raises: we only raise if next-tier history
+  --      shows it actually fits in budget.
+  --   2. If wasKilled: drop CAPACITY_KILLED_CUT tiers and mark the prior
+  --      tier as "burned" for CAPACITY_KILLED_AVOID ticks so the raise
+  --      path doesn't immediately retry it.
+  --   3. Otherwise classify smoothed ratio = think_ms / target_ms:
+  --        > 1.50 → drop 2 tiers
+  --        > 1.20 → drop 1 tier
+  --        < 0.40 → raise 1 tier (free, ignores corroboration)
+  --        < 0.70 → raise 1 tier (only if next tier's history fits)
+  do
+    local last_ms = (_G.brain and _G.brain.lastThinkMs) or 0
+    -- Test-override: when set, treat this as our per-bot budget regardless
+    -- of what the host published. Lets us force-engage tiers for testing.
+    local tgt_ms  = C.CAPACITY_FORCED_TARGET_MS
+                or (_G.brain and _G.brain.targetMs)
+                or 0
+    local killed  = (_G.brain and _G.brain.wasKilled)   or false
+    local prev_tier = state._capacity_tier or C.CAPACITY_DEFAULT_TIER
+
+    -- Per-tier ms history (records the tier we just ran at).
+    state._tier_ms = state._tier_ms or {}
+    if last_ms > 0 then
+      local prior = state._tier_ms[prev_tier]
+      state._tier_ms[prev_tier] = prior
+        and (prior * (1 - C.CAPACITY_EWMA_ALPHA) + last_ms * C.CAPACITY_EWMA_ALPHA)
+        or  last_ms
+    end
+
+    state._tier_killed = state._tier_killed or {}
+
+    local cur = prev_tier
+    if killed then
+      cur = math.max(1, prev_tier - C.CAPACITY_KILLED_CUT)
+      state._tier_killed[prev_tier] = state.tick
+    elseif tgt_ms > 0 and last_ms > 0 then
+      local ratio = last_ms / tgt_ms
+      state._capacity_ratio_ewma = (state._capacity_ratio_ewma or ratio)
+                                 * (1 - C.CAPACITY_EWMA_ALPHA)
+                                 + ratio * C.CAPACITY_EWMA_ALPHA
+      local sm = state._capacity_ratio_ewma
+      if sm > C.CAPACITY_DROP_BIG_RATIO and cur > 1 then
+        cur = math.max(1, cur - 2)
+      elseif sm > C.CAPACITY_DROP_RATIO and cur > 1 then
+        cur = cur - 1
+      elseif cur < 10 then
+        local next_t = cur + 1
+        local k = state._tier_killed[next_t]
+        local recently_killed = k and (state.tick - k) < C.CAPACITY_KILLED_AVOID
+        if not recently_killed then
+          if sm < C.CAPACITY_RAISE_FREE_RATIO then
+            cur = next_t  -- big headroom: raise even without corroboration
+          elseif sm < C.CAPACITY_RAISE_RATIO then
+            local hist = state._tier_ms[next_t]
+            if not hist or hist < tgt_ms * C.CAPACITY_RAISE_HEADROOM then
+              cur = next_t  -- raise only if history shows next tier fits
+            end
+          end
+        end
+      end
+    end
+
+    -- BrainTest panel override: when _G._BT_TIER_OVERRIDE is set
+    -- (integer 1..10), force the capacity tier to that value regardless
+    -- of the dynamic algorithm. Lets the user lock the bot into a
+    -- specific tier from the T-window for testing.
+    local _ovr = _G._BT_TIER_OVERRIDE
+    if type(_ovr) == "number" and _ovr >= 1 and _ovr <= 10 then
+      cur = math.floor(_ovr)
+    end
+
+    state._capacity_tier = cur
+    state._capacity = C.BRAIN_CAPACITY_LEVELS[cur]
+
+    -- Tier-shift logging: every change emits a line to optimize.log so
+    -- we can verify the algorithm + corroborate per-tier ms history.
+    -- Format: tick, prev->new, ratio, last_ms, target_ms, killed flag,
+    -- and the per-tier ms history snapshot.
+    if cur ~= prev_tier then
+      local hist_parts = {}
+      for t = 10, 1, -1 do
+        local v = state._tier_ms and state._tier_ms[t]
+        hist_parts[#hist_parts + 1] = v and string.format("%d:%.1f", t, v) or string.format("%d:--", t)
+      end
+      local line = string.format(
+        "[capacity] t=%d  tier %d->%d  ratio=%.2f  last=%.2fms  target=%.2fms  killed=%s  hist=[%s]",
+        state.tick or 0, prev_tier, cur,
+        state._capacity_ratio_ewma or -1, last_ms, tgt_ms, tostring(killed),
+        table.concat(hist_parts, " "))
+      opt.append("optimize.log", "  " .. line)
+      print(TAG .. " " .. line)  -- also emit to console so BrainTest shows tier shifts live
+    end
+  end
 
   -- Snapshot V-dialog enabled state once per tick so call-site
   -- `if viz.is_on("foo") then ... end` guards reduce to a single
@@ -1599,6 +1746,16 @@ function Brain.think(info)
     -- Step only the main slates (backups are frozen snapshots, done=true).
     local budget_short = C.DIJKSTRA_SHORT_BUDGET
     local budget_long  = math.max(500, math.ceil(70000 / C.DIJKSTRA_LONG_SPREAD_TICKS))
+    -- Capacity tier dij_short / dij_long: cap each slate's per-tick node
+    -- expansion budget. Tier 10 → defaults; tier 1 → 100/25 nodes/tick.
+    if state._capacity then
+      if state._capacity.dij_short and state._capacity.dij_short < budget_short then
+        budget_short = state._capacity.dij_short
+      end
+      if state._capacity.dij_long and state._capacity.dij_long < budget_long then
+        budget_long = state._capacity.dij_long
+      end
+    end
     local active_slates = {}
     for _, idx in ipairs({ SLATE_SHORT_MAIN, SLATE_LONG_MAIN }) do
       refresh_slate(idx)
@@ -3373,6 +3530,42 @@ function Brain.think(info)
       string.format("replan:%d  phase:%s  goal:%s",
         replan_left, state.phase or "?", goal_str),
       "topleft", 200, 220, 200)
+    -- Capacity tier readout: current tier + ratio + per-tier ms history
+    -- (so corroboration data is visible). Color shifts toward red as
+    -- tier drops so glances catch it.
+    local _tier = state._capacity_tier or 10
+    local _ratio = state._capacity_ratio_ewma or 0
+    local _r, _g, _b = 200, 220, 200
+    if     _tier <= 3 then _r, _g, _b = 255, 80, 80
+    elseif _tier <= 5 then _r, _g, _b = 255, 160, 80
+    elseif _tier <= 7 then _r, _g, _b = 230, 220, 100
+    end
+    local _last  = (_G.brain and _G.brain.lastThinkMs) or 0
+    local _tgt   = (_G.brain and _G.brain.targetMs)    or 0
+    local _killed_str = ""
+    if _G.brain and _G.brain.wasKilled then _killed_str = " KILLED" end
+    viz.hud_text("hud_tick_info", 8, 44,
+      string.format("capacity: tier %d/10  (ratio %.2f, last %.1fms / target %.1fms)%s",
+        _tier, _ratio, _last, _tgt, _killed_str),
+      "topleft", _r, _g, _b)
+    -- Per-tier ms history line: shows what we've seen each tier cost.
+    -- Dashes for tiers we haven't visited yet. Useful for verifying the
+    -- raise corroboration logic is making sensible choices.
+    if state._tier_ms then
+      local parts = {}
+      for t = 10, 1, -1 do
+        local v = state._tier_ms[t]
+        local marker = (t == _tier) and "*" or " "
+        if v then
+          parts[#parts + 1] = string.format("%s%d:%.1f", marker, t, v)
+        else
+          parts[#parts + 1] = string.format("%s%d:--", marker, t)
+        end
+      end
+      viz.hud_text("hud_tick_info", 8, 56,
+        "tier ms: " .. table.concat(parts, " "),
+        "topleft", 180, 200, 180, 200, 0.85)
+    end
   end end -- BRAIN_DEBUG_MODE (hud_tick_info)
 
   -- Output
