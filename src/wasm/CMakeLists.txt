@@ -219,6 +219,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_trackersetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keycap.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp

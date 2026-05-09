@@ -36,6 +36,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_keycap.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -55,38 +56,6 @@ static const char *iconPathForType(ImguiMsgType type) {
         case IMGUI_MSG_WARNING: return "data/ui/dialog-warning.svg";
         case IMGUI_MSG_ERROR:   return "data/ui/dialog-error.svg";
         default:                return "data/ui/dialog-info.svg";
-    }
-}
-
-/* Procedural keycap drawer — used for keyboard tokens whose scancode
- * has no PNG in the Xelu pack.  Draws a rounded-rect cap of side `h`
- * at screen position `pos` with the label centred inside.  Border
- * colour follows ImGuiCol_Text so it adapts to light/dark themes.
- * Pure draw-list operation: does not advance any layout cursor. */
-static void drawProceduralKeycapAt(ImVec2 pos, float h, const char *label) {
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    ImVec2 a = pos;
-    ImVec2 b = ImVec2(pos.x + h, pos.y + h);
-    ImU32 bg     = ImGui::GetColorU32(ImGuiCol_FrameBg);
-    ImU32 border = ImGui::GetColorU32(ImGuiCol_Text);
-    float rounding = h * 0.15f;
-    dl->AddRectFilled(a, b, bg, rounding);
-    dl->AddRect(a, b, border, rounding, 0, 1.0f);
-    if (label && *label) {
-        /* If the label is wide (e.g. "Left Shift"), draw just its
-           first character so it stays inside the cap.  The full name
-           still appears in the dialog text where the player needs it. */
-        char buf[8];
-        const char *draw = label;
-        if ((int)strlen(label) > 2) {
-            buf[0] = label[0];
-            buf[1] = '\0';
-            draw = buf;
-        }
-        ImVec2 ts = ImGui::CalcTextSize(draw);
-        ImVec2 p = ImVec2(a.x + (h - ts.x) * 0.5f,
-                          a.y + (h - ts.y) * 0.5f);
-        dl->AddText(p, border, draw);
     }
 }
 

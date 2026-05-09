@@ -26,11 +26,13 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_keycap.h"
 
 extern "C" {
 #include "../sdl3draw.h"
 #include "../../../bolo/global.h"
 #include "../bg_game.h"
+#include "../glyphs.h"
 #include "../input.h"
 #include "../../winbolo.h"
 #include "../../lang.h"
@@ -108,7 +110,25 @@ static void keyRow(const char *label, KeySetupField field) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
                            langGetText(STR_DLGKEYSETUP_PRESSAKEY));
     } else {
-        ImGui::TextUnformatted(scancodeLabel(*ptr));
+        const char  *name      = scancodeLabel(*ptr);
+        float        textLineH = ImGui::GetTextLineHeight();
+        float        glyphSize = textLineH * 1.5f;
+        SDL_Texture *glyph     = glyphForKeyboardScancode((SDL_Scancode)*ptr);
+        /* Lift the glyph by half its overshoot so its vertical centre
+           aligns with the row text baseline; otherwise the cap sits
+           below the line. */
+        float        glyphYOff = (glyphSize - textLineH) * 0.5f;
+        float        cursorY   = ImGui::GetCursorPosY();
+        ImGui::SetCursorPosY(cursorY - glyphYOff);
+        if (glyph) {
+            ImGui::Image((ImTextureID)glyph, ImVec2(glyphSize, glyphSize));
+        } else {
+            drawProceduralKeycapAt(ImGui::GetCursorScreenPos(), glyphSize, name);
+            ImGui::Dummy(ImVec2(glyphSize, glyphSize));
+        }
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::SetCursorPosY(cursorY);
+        ImGui::TextUnformatted(name);
     }
 
     ImGui::TableSetColumnIndex(2);
