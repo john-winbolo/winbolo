@@ -314,6 +314,12 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     memset(sim, 0, sizeof(ServerSim));
 
+    /* Sentinel value for "no batch start assigned" — memset gives 0, but 0
+     * is a valid start index, so initialise explicitly. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->sim.pendingStartIdx[count] = MAX_STARTS;
+    }
+
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
     sim->originalGameLength = gameLen;
@@ -2289,6 +2295,23 @@ void serverSimStartGame(ServerSim *sim) {
                 playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
             }
         }
+    }
+
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other and rivals don't grab adjacent squares (the tankCreate
+     * loop below runs synchronously, so without a batch pass each player's
+     * per-position checks would be blind to siblings being created in the
+     * same loop). startsGetStart consumes the slot lazily, doing scatter
+     * and direction conversion at consumption time so the per-square nudge
+     * sees siblings already placed earlier in this loop. */
+    {
+        BYTE batchTeam[MAX_TANKS];
+        for (i = 0; i < MAX_TANKS; i++) {
+            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+        }
+        startsAssignBatch(&sim->sim, &sim->sim.ss,
+                          sim->playerConnected, batchTeam,
+                          sim->sim.pendingStartIdx);
     }
 
     /* Create tanks for all connected players */

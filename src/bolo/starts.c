@@ -28,6 +28,7 @@
 /* Includes */
 #include <stdlib.h>
 #include <memory.h>
+#include <limits.h>
 #include <SDL3/SDL.h>
 #include "../common/wb_log.h"
 #include "global.h"
@@ -318,7 +319,9 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
   BYTE count;
   BYTE sx;
   BYTE sy;
-  int secondChoice;
+  int friendlyChoice; /* Tier 2: a start with only friendly units nearby */
+  int fallbackChoice; /* Tier 3: a start with hostile units nearby (last resort) */
+  int chosen;
   bool anyTankNearby;
   bool anyPillNearby;
   bool hostileTankNearby;
@@ -331,7 +334,8 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
   BYTE pillOwner;
   BYTE bt;
 
-  secondChoice = -1;
+  friendlyChoice = -1;
+  fallbackChoice = -1;
   offset = (BYTE)(rand() % numStarts);
 
   for (count = 0; count < numStarts; count++) {
@@ -389,26 +393,29 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
 
     /* Good: only friendly units nearby */
     if (hostileTankNearby == FALSE && hostilePillNearby == FALSE) {
-      if (secondChoice == -1) {
-        secondChoice = idx;
+      if (friendlyChoice == -1) {
+        friendlyChoice = idx;
       }
       continue;
     }
 
     /* Fallback: at least it's a valid square */
-    if (secondChoice == -1) {
-      secondChoice = idx;
+    if (fallbackChoice == -1) {
+      fallbackChoice = idx;
     }
   }
 
-  /* Phase 2: use best available */
-  if (secondChoice == -1) {
-    secondChoice = 0;
-  }
+  /* Pick the best available tier: prefer friendly-only over hostile-near.
+   * Tracking these separately matters when the random offset hits a hostile
+   * start before a friendly one — without separate tiers, hostile would
+   * win just because of iteration order. */
+  if (friendlyChoice >= 0) chosen = friendlyChoice;
+  else if (fallbackChoice >= 0) chosen = fallbackChoice;
+  else chosen = 0;
 
   /* Phase 3: scatter search around chosen position */
-  startsScatterFind(sim, (*value)->item[secondChoice].x, (*value)->item[secondChoice].y, x, y);
-  bt = startsConvertDir((*value)->item[secondChoice].dir);
+  startsScatterFind(sim, (*value)->item[chosen].x, (*value)->item[chosen].y, x, y);
+  bt = startsConvertDir((*value)->item[chosen].dir);
   *dir = (TURNTYPE)(bt * START_TIMES_16);
 }
 
@@ -592,13 +599,456 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
 }
 
 /*********************************************************
+*NAME:          startsHasHostileNearAtStart
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Returns whether start index startIdx has any hostile
+*  pillbox or base within range, treating playerNum (and
+*  any allies) as the "friendly" reference. Used by the
+*  batch placement to penalise hostile-near candidates.
+*********************************************************/
+static bool startsHasHostileNearAtStart(GameSim *sim, starts *value, BYTE startIdx, BYTE playerNum) {
+  BYTE numPills = pillsGetNumPills(&sim->pb);
+  BYTE numBases = basesGetNumBases(&sim->bs);
+  BYTE sx = (*value)->item[startIdx].x;
+  BYTE sy = (*value)->item[startIdx].y;
+  BYTE i;
+  int dist;
+  BYTE owner;
+
+  for (i = 0; i < numPills; i++) {
+    if (sim->pb->item[i].inTank == TRUE || sim->pb->item[i].armour == 0) {
+      continue;
+    }
+    dist = startsMapDistance(sx, sy, sim->pb->item[i].x, sim->pb->item[i].y);
+    if (dist > START_PILL_RANGE) continue;
+    owner = sim->pb->item[i].owner;
+    if (owner != NEUTRAL && startsIsOwnerFriendly(sim, owner, playerNum) == FALSE) {
+      return TRUE;
+    }
+  }
+  for (i = 0; i < numBases; i++) {
+    if (sim->bs->item[i].armour <= MIN_ARMOUR_CAPTURE) continue;
+    dist = startsMapDistance(sx, sy, sim->bs->item[i].x, sim->bs->item[i].y);
+    if (dist > START_BASE_RANGE) continue;
+    owner = sim->bs->item[i].owner;
+    if (owner != NEUTRAL && startsIsOwnerFriendly(sim, owner, playerNum) == FALSE) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Internal grouping structure for batch placement. */
+typedef struct {
+  BYTE players[MAX_TANKS]; /* Player indices in this group */
+  BYTE size;
+  bool isSolo;             /* TRUE if this is a single-player solo group */
+  bool anchored;           /* TRUE once anchorX/anchorY are populated */
+  int  anchorX;
+  int  anchorY;
+} StartsBatchGroup;
+
+/* Insertion-sort group indices in `order` by group size descending. */
+static void startsBatchSortBySize(int *order, int n, const StartsBatchGroup *groups) {
+  int i;
+  int j;
+  int key;
+  for (i = 1; i < n; i++) {
+    key = order[i];
+    j = i - 1;
+    while (j >= 0 && groups[order[j]].size < groups[key].size) {
+      order[j + 1] = order[j];
+      j--;
+    }
+    order[j + 1] = key;
+  }
+}
+
+/*********************************************************
+*NAME:          startsAssignBatch
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Computes start positions for every connected player in a
+*  single pass, used at the lobby->game transition where the
+*  per-player algorithm cannot see siblings being created in
+*  the same batch.
+*
+*  Players sharing a non-zero teamNumber are grouped and
+*  placed near each other; teams without map-encoded base
+*  ownership are assigned a stripe along the map's long
+*  axis (so 2 teams split top/bottom or left/right rather
+*  than corner-vs-corner). Solo players (teamNumber == 0)
+*  are slotted in afterwards via farthest-first to maximise
+*  spacing from teams and other solos.
+*
+*  Existing per-position rules (avoid hostile pills/bases,
+*  scatter to a valid deep-sea square) are layered on top
+*  of the team assignment.
+*
+*ARGUMENTS:
+*  sim          - Game simulation
+*  value        - Starts structure
+*  connected    - [MAX_TANKS] which player slots are joining
+*  teamNumber   - [MAX_TANKS] team for each slot (0 = solo)
+*  outStartIdx  - [MAX_TANKS] receives the chosen start index
+*                 per slot (0..MAX_STARTS-1) or MAX_STARTS if
+*                 the slot was not placed (caller should fall
+*                 back to the per-player algorithm). Scatter
+*                 and direction conversion happen later, when
+*                 startsGetStart consumes the slot.
+*********************************************************/
+void startsAssignBatch(GameSim *sim, starts *value,
+                       const bool *connected, const BYTE *teamNumber,
+                       BYTE *outStartIdx) {
+  StartsBatchGroup groups[MAX_TANKS];
+  int teamToGroup[MAX_TANKS + 1]; /* teamNumber 1..16 -> group index, -1 if unseen */
+  int unanchored[MAX_TANKS];
+  int teamOrder[MAX_TANKS];
+  int stripeCentX[MAX_TANKS];
+  int stripeCentY[MAX_TANKS];
+  int stripeCount[MAX_TANKS];
+  bool stripeUsed[MAX_TANKS];
+  bool startClaimed[MAX_STARTS];
+  BYTE startToPlayer[MAX_STARTS];
+  int leftPos;
+  int rightPos;
+  int topPos;
+  int bottomPos;
+  int spanX;
+  int spanY;
+  int numGroups;
+  int numUnanchored;
+  int numTeams;
+  BYTE numStarts;
+  BYTE numBases;
+  BYTE i;
+  int g;
+  int s;
+  int t;
+  int p;
+  int b;
+  int sumX;
+  int sumY;
+  int cnt;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    outStartIdx[i] = MAX_STARTS;
+  }
+  if (*value == NULL || (*value)->numStarts == 0) {
+    return;
+  }
+  numStarts = (*value)->numStarts;
+
+  /* Step 1: build groups */
+  numGroups = 0;
+  for (i = 0; i <= MAX_TANKS; i++) teamToGroup[i] = -1;
+  for (i = 0; i < MAX_TANKS; i++) {
+    BYTE tn;
+    if (!connected[i]) continue;
+    tn = teamNumber[i];
+    if (tn > 0 && tn <= MAX_TANKS && teamToGroup[tn] >= 0) {
+      g = teamToGroup[tn];
+    } else {
+      g = numGroups++;
+      groups[g].size = 0;
+      groups[g].anchored = FALSE;
+      groups[g].isSolo = (tn == 0);
+      groups[g].anchorX = 0;
+      groups[g].anchorY = 0;
+      if (tn > 0 && tn <= MAX_TANKS) teamToGroup[tn] = g;
+    }
+    groups[g].players[groups[g].size++] = i;
+  }
+
+  /* Step 2: anchors from owned bases (teams only) */
+  numBases = basesGetNumBases(&sim->bs);
+  for (g = 0; g < numGroups; g++) {
+    if (groups[g].isSolo) continue;
+    sumX = 0; sumY = 0; cnt = 0;
+    for (b = 0; b < numBases; b++) {
+      BYTE owner = sim->bs->item[b].owner;
+      if (sim->bs->item[b].armour <= MIN_ARMOUR_CAPTURE) continue;
+      if (owner == NEUTRAL) continue;
+      for (p = 0; p < groups[g].size; p++) {
+        if (groups[g].players[p] == owner) {
+          sumX += sim->bs->item[b].x;
+          sumY += sim->bs->item[b].y;
+          cnt++;
+          break;
+        }
+      }
+    }
+    if (cnt > 0) {
+      groups[g].anchored = TRUE;
+      groups[g].anchorX = sumX / cnt;
+      groups[g].anchorY = sumY / cnt;
+    }
+  }
+
+  /* Step 3: stripe-place unanchored teams along the map's long axis */
+  startsGetMaxs(value, &leftPos, &rightPos, &topPos, &bottomPos);
+  spanX = rightPos - leftPos;
+  spanY = bottomPos - topPos;
+  numUnanchored = 0;
+  for (g = 0; g < numGroups; g++) {
+    if (!groups[g].isSolo && !groups[g].anchored) {
+      unanchored[numUnanchored++] = g;
+    }
+  }
+  if (numUnanchored > 0) {
+    /* Partition the bbox into a roughly-square grid (divX * divY >= N).
+     * One-dimensional stripes don't separate corner clusters: e.g. on a
+     * square map with 4 teams and clusters in each corner, splitting only
+     * along X gives 4 vertical stripes that each span both the top and
+     * bottom rows, mixing teammates across opposite corners. A 2x2 grid
+     * gives one corner per team. Orientation is biased toward the long
+     * axis so wide maps still get more X-divisions than Y. */
+    int divX;
+    int divY;
+    int numCells;
+    startsBatchSortBySize(unanchored, numUnanchored, groups);
+    if (numUnanchored == 1) {
+      divX = 1;
+      divY = 1;
+    } else if (spanX >= spanY) {
+      divX = 1;
+      while (divX * divX < numUnanchored) divX++;
+      divY = (numUnanchored + divX - 1) / divX;
+    } else {
+      divY = 1;
+      while (divY * divY < numUnanchored) divY++;
+      divX = (numUnanchored + divY - 1) / divY;
+    }
+    numCells = divX * divY;
+    if (numCells > MAX_TANKS) numCells = MAX_TANKS;
+
+    for (s = 0; s < numCells; s++) {
+      stripeCentX[s] = 0;
+      stripeCentY[s] = 0;
+      stripeCount[s] = 0;
+      stripeUsed[s] = FALSE;
+    }
+    for (i = 0; i < numStarts; i++) {
+      int sx = (*value)->item[i].x;
+      int sy = (*value)->item[i].y;
+      int cellX;
+      int cellY;
+      int cellIdx;
+      if (spanX <= 0) cellX = 0;
+      else {
+        cellX = (sx - leftPos) * divX / (spanX + 1);
+        if (cellX >= divX) cellX = divX - 1;
+        if (cellX < 0) cellX = 0;
+      }
+      if (spanY <= 0) cellY = 0;
+      else {
+        cellY = (sy - topPos) * divY / (spanY + 1);
+        if (cellY >= divY) cellY = divY - 1;
+        if (cellY < 0) cellY = 0;
+      }
+      cellIdx = cellY * divX + cellX;
+      if (cellIdx >= numCells) continue;
+      stripeCentX[cellIdx] += sx;
+      stripeCentY[cellIdx] += sy;
+      stripeCount[cellIdx]++;
+    }
+    for (s = 0; s < numCells; s++) {
+      if (stripeCount[s] > 0) {
+        stripeCentX[s] /= stripeCount[s];
+        stripeCentY[s] /= stripeCount[s];
+      } else {
+        /* Empty cell — synthesise centroid at the cell midpoint */
+        int cx = s % divX;
+        int cy = s / divX;
+        stripeCentX[s] = leftPos + (cx * 2 + 1) * spanX / (divX * 2);
+        stripeCentY[s] = topPos + (cy * 2 + 1) * spanY / (divY * 2);
+      }
+    }
+    /* Largest unanchored team picks the cell with most starts */
+    for (t = 0; t < numUnanchored; t++) {
+      int bestS = -1;
+      int bestCount = -1;
+      for (s = 0; s < numCells; s++) {
+        if (!stripeUsed[s] && stripeCount[s] > bestCount) {
+          bestS = s;
+          bestCount = stripeCount[s];
+        }
+      }
+      if (bestS >= 0) {
+        stripeUsed[bestS] = TRUE;
+        g = unanchored[t];
+        groups[g].anchored = TRUE;
+        groups[g].anchorX = stripeCentX[bestS];
+        groups[g].anchorY = stripeCentY[bestS];
+      }
+    }
+  }
+
+  /* Step 4: assign starts to teams, largest first.
+   * When starts are scarce (sum of team sizes > valid starts), apportion
+   * via Hamilton's method: floor each team's quota and distribute leftover
+   * starts by largest fractional remainder, ties broken by team size.
+   * Without this, a greedy "largest team takes its full size first" would
+   * starve smaller teams entirely (e.g. 8 starts vs two 8-player teams). */
+  {
+    int totalTeamPlayers = 0;
+    int validStartCount = 0;
+    int teamClaim[MAX_TANKS];
+    for (g = 0; g < numGroups; g++) {
+      teamClaim[g] = 0;
+      if (!groups[g].isSolo) totalTeamPlayers += groups[g].size;
+    }
+    for (i = 0; i < numStarts; i++) {
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y)) {
+        validStartCount++;
+      }
+    }
+
+    for (i = 0; i < MAX_STARTS; i++) {
+      startClaimed[i] = FALSE;
+      startToPlayer[i] = MAX_TANKS;
+    }
+    numTeams = 0;
+    for (g = 0; g < numGroups; g++) {
+      if (!groups[g].isSolo) teamOrder[numTeams++] = g;
+    }
+    startsBatchSortBySize(teamOrder, numTeams, groups);
+
+    if (validStartCount >= totalTeamPlayers || totalTeamPlayers == 0) {
+      /* Plenty of starts — every team claims its full size */
+      for (t = 0; t < numTeams; t++) {
+        teamClaim[teamOrder[t]] = groups[teamOrder[t]].size;
+      }
+    } else {
+      /* Scarce: Hamilton apportionment.
+       * floor and remainder are kept as integers via the *T trick:
+       *   exact   = size * S / T
+       *   floor_g = (size * S) / T          (integer division)
+       *   rem_g   = (size * S) - floor_g*T  (in [0, T-1])
+       */
+      int floors[MAX_TANKS];
+      int rems[MAX_TANKS];
+      int totalFloor = 0;
+      int leftover;
+      for (t = 0; t < numTeams; t++) {
+        int idx = teamOrder[t];
+        int prod = (int)groups[idx].size * validStartCount;
+        floors[idx] = prod / totalTeamPlayers;
+        rems[idx] = prod - floors[idx] * totalTeamPlayers;
+        teamClaim[idx] = floors[idx];
+        totalFloor += floors[idx];
+      }
+      leftover = validStartCount - totalFloor;
+      while (leftover > 0) {
+        int bestG = -1;
+        int bestRem = -1;
+        int bestSize = -1;
+        for (t = 0; t < numTeams; t++) {
+          int idx = teamOrder[t];
+          if (teamClaim[idx] >= groups[idx].size) continue;
+          if (rems[idx] > bestRem ||
+              (rems[idx] == bestRem && groups[idx].size > bestSize)) {
+            bestG = idx;
+            bestRem = rems[idx];
+            bestSize = groups[idx].size;
+          }
+        }
+        if (bestG < 0) break;
+        teamClaim[bestG]++;
+        rems[bestG] = -1; /* don't pick the same team for the next leftover */
+        leftover--;
+      }
+    }
+
+    for (t = 0; t < numTeams; t++) {
+      g = teamOrder[t];
+      for (p = 0; p < teamClaim[g]; p++) {
+      int bestStart = -1;
+      int bestScore = -1;
+      BYTE rep = groups[g].players[0];
+      for (i = 0; i < numStarts; i++) {
+        int dist;
+        int score;
+        if (startClaimed[i]) continue;
+        if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+        dist = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                                 groups[g].anchorX, groups[g].anchorY);
+        score = dist;
+        if (startsHasHostileNearAtStart(sim, value, i, rep)) {
+          /* Push hostile-near candidates well below distance ranking */
+          score += MAP_ARRAY_SIZE * 2;
+        }
+        if (bestStart < 0 || score < bestScore) {
+          bestStart = i;
+          bestScore = score;
+        }
+      }
+      if (bestStart >= 0) {
+        startClaimed[bestStart] = TRUE;
+        startToPlayer[bestStart] = groups[g].players[p];
+      }
+      }
+    }
+  }
+
+  /* Step 5: solos via farthest-first from already-claimed starts */
+  for (g = 0; g < numGroups; g++) {
+    int bestStart = -1;
+    int bestMinDist = -1;
+    BYTE soloPlayer;
+    if (!groups[g].isSolo) continue;
+    soloPlayer = groups[g].players[0];
+    for (i = 0; i < numStarts; i++) {
+      int minD = INT_MAX;
+      BYTE j;
+      if (startClaimed[i]) continue;
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      for (j = 0; j < numStarts; j++) {
+        int d;
+        if (!startClaimed[j]) continue;
+        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                              (*value)->item[j].x, (*value)->item[j].y);
+        if (d < minD) minD = d;
+      }
+      if (minD == INT_MAX) minD = MAP_ARRAY_SIZE; /* no claims yet — any start is "infinitely far" */
+      if (minD > bestMinDist) {
+        bestMinDist = minD;
+        bestStart = i;
+      }
+    }
+    if (bestStart >= 0) {
+      startClaimed[bestStart] = TRUE;
+      startToPlayer[bestStart] = soloPlayer;
+    }
+  }
+
+  /* Step 6: emit chosen start indices. Scatter and direction conversion
+   * are deferred to startsGetStart so they account for sibling tanks that
+   * are placed earlier in the same batch loop. */
+  for (i = 0; i < numStarts; i++) {
+    BYTE pl;
+    if (!startClaimed[i]) continue;
+    pl = startToPlayer[i];
+    if (pl >= MAX_TANKS) continue;
+    outStartIdx[pl] = i;
+  }
+}
+
+/*********************************************************
 *NAME:          startsGetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 7/1/99
 *LAST MODIFIED: 24/4/26
 *PURPOSE:
-*  Returns a start position. Dispatches to the appropriate
-*  algorithm based on game type.
+*  Returns a start position. If a pre-computed batch
+*  position has been stashed for this player (lobby->game
+*  transition), consume it. Otherwise dispatch to the
+*  per-player algorithm based on game type.
 *
 *ARGUMENTS:
 *  sim       - Pointer to the game simulation
@@ -610,6 +1060,20 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
 *********************************************************/
 void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir, BYTE playerNum) {
   if (*value == NULL || (*value)->numStarts == 0) {
+    return;
+  }
+
+  if (playerNum < MAX_TANKS && sim->pendingStartIdx[playerNum] < (*value)->numStarts) {
+    BYTE idx = sim->pendingStartIdx[playerNum];
+    BYTE rx;
+    BYTE ry;
+    BYTE bt;
+    sim->pendingStartIdx[playerNum] = MAX_STARTS;
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+    bt = startsConvertDir((*value)->item[idx].dir);
+    *x = rx;
+    *y = ry;
+    *dir = (TURNTYPE)(bt * START_TIMES_16);
     return;
   }
 
