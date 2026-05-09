@@ -665,6 +665,17 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
+  -- Open the optimize.log section timer at the EARLIEST possible point
+  -- so prelude work (capacity tier calc, debug-mode viz refresh, the
+  -- startup-mode block, etc.) is included in the per-section sum. The
+  -- optimize.lua tick_start was previously set ~200 lines later, which
+  -- left the prelude as unaccounted gap in the time-bar.
+  opt.set_tick(now)
+  -- Real tick-start clock used by every later phase timer (t_early,
+  -- t_world, etc. all forward to this value). Captures from the actual
+  -- top of Brain.think, not after the prelude work.
+  local t_tick_start = clock_us()
+
   -- ── Capacity tier ──
   -- The host publishes brain.lastThinkMs (previous tick's wall ms),
   -- brain.targetMs (per-bot CPU budget for this tick), and
@@ -789,9 +800,12 @@ function Brain.think(info)
   -- Expose brain tick to C side so debug file naming (.ldump, _queue.txt,
   -- _dbg.txt) can all use the same brain-tick number.
   _G._BRAIN_TICK = now
-  opt.set_tick(now)
+  -- (opt.set_tick already fired at the top of think; just emit the
+  -- BEGIN marker here.)
   opt("BEGIN tick=", now, " goal=", state.goal.kind, " sub=", tostring(state.goal.substate))
-  local t_tick_start = clock_us()
+  -- t_tick_start is the real top-of-think clock (set above, near
+  -- opt.set_tick). t_early is its alias used by the early-viz/HUD timer
+  -- so the first section measures from the actual tick start.
   local t_early = t_tick_start
 
   -- Diagnostic: log when Dijkstra newly reaches a base. State-tracked
@@ -2883,6 +2897,11 @@ function Brain.think(info)
   local us_total = t_end - t0
   metrics.set("us_post_build_hud", t_end - t_build1)
   opt(string.format("post-build HUD done %.2f ms", (t_end - t_build1) / 1000))
+  -- Anchor for the (tail) timer: real clock immediately after the last
+  -- named main-section emit. Anything between here and opt.flush() is
+  -- attributed to (tail) so the named-section sum equals the actual
+  -- tick wall-clock with no gap.
+  local _t_tail_anchor = clock_us()
   opt(string.format("TICK TOTAL %.2f ms", us_total / 1000))
   metrics.set("us_total", us_total)
   metrics.max("us_total", us_total)
@@ -2928,8 +2947,35 @@ function Brain.think(info)
   --   hold (green)      — continuous turn in `keys`; full turn rate
 
   -- Flush print2 log for this tick
+  -- Real tail timer: clock here is the boundary between the last named
+  -- section's "done" emit and opt.flush(). Anything between (final HUD
+  -- writes, debug-mode arrow HUD, print2.flush, dbg.end_trace) shows up
+  -- as the (tail) section so the section sum equals (clock_us() -
+  -- t_tick_start) without any synthesized gap.
+  opt(string.format("(tail) done %.2f ms", (clock_us() - _t_tail_anchor) / 1000))
   opt(string.format("END tick=%d total=%.2f ms", now, (clock_us() - t_tick_start) / 1000))
   opt.flush()
+
+  -- ── performance.ticks.log ──────────────────────────────────────────
+  -- One JSON object per tick recording the same state the BrainTest
+  -- "Capacity tiers" (Y) panel would show. The first byte of each line
+  -- is `{` so jq -c '.' / line-by-line streaming readers work.
+  -- Lands in DEBUG_SESSION_DIR/performance.ticks.log when the host
+  -- published one; falls back to cwd otherwise. Gated on BRAIN_PERF_LOG
+  -- (set by --perf-log) — without that flag the JSON's "sections" array
+  -- is empty anyway (opt() short-circuits, so optimize.lua's
+  -- last_sections never populates), making the file uninteresting.
+  if _G.BRAIN_PERF_LOG then
+    local dir  = _G.DEBUG_SESSION_DIR or "."
+    local path = dir .. "/performance.ticks.log"
+    local f = io.open(path, "a")
+    if f then
+      local body = Brain.get_capacity_state_json and Brain.get_capacity_state_json() or "{}"
+      f:write(string.format('{"tick":%d,"bot":%d,"data":%s}\n',
+                             now, state.player_number or 0, body))
+      f:close()
+    end
+  end
 
   -- Print2 watchdog: every 50 ticks, sanity-check that flushes are
   -- actually happening when the flag is on. The user wants HARD CRASHES

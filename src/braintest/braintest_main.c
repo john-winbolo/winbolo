@@ -4288,11 +4288,14 @@ int main(int argc, char *argv[]) {
     if (optRunScript[0])
         luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];
-    /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
-     * once at startup. We use a timestamped subdir so multiple BrainTest
-     * runs don't trample each other; offline tools / LLMs reading these
-     * files just point at the directory printed below. */
-    if (g_panelRecordEnabled) {
+    /* ── Per-run session directory ─────────────────────────────────────
+     * debug_sessions/<YYYYMMDD_HHMMSS>/ — created only when --perf-log
+     * is on so non-perf runs don't leave stray empty folders behind.
+     * Bots' Lua DEBUG_SESSION_DIR global points here so optimize.log,
+     * performance.ticks.log, etc. all land in this run's folder.
+     * Sortable alphabetically gives time-of-run order in `ls`. */
+    char g_sessionDir[FILENAME_MAX] = "";
+    if (optPerfLog) {
         time_t t = time(NULL);
         struct tm tmv;
 #ifdef _WIN32
@@ -4302,9 +4305,21 @@ int main(int argc, char *argv[]) {
 #endif
         char ts[32];
         strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+        SDL_snprintf(g_sessionDir, sizeof(g_sessionDir),
+                     "debug_sessions/%s", ts);
+        if (!SDL_CreateDirectory(g_sessionDir)) {
+            SDL_Log("WARN: couldn't create %s (%s) — falling back to cwd",
+                    g_sessionDir, SDL_GetError());
+            g_sessionDir[0] = '\0';
+        } else {
+            fprintf(stderr, "  Session dir: %s\n", g_sessionDir);
+        }
+    }
+    /* When --record-panels is on, per-panel JSON snapshots go in a
+     * panels/ subfolder of the session dir. */
+    if (g_panelRecordEnabled && g_sessionDir[0]) {
         SDL_snprintf(g_panelRecordDir, sizeof(g_panelRecordDir),
-                     "debug_sessions/%s/panels", ts);
-        /* SDL_CreateDirectory is recursive in SDL3. */
+                     "%s/panels", g_sessionDir);
         if (!SDL_CreateDirectory(g_panelRecordDir)) {
             SDL_Log("WARN: couldn't create %s — panel recording disabled (%s)",
                     g_panelRecordDir, SDL_GetError());
@@ -4354,6 +4369,21 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
+        /* Publish the per-run session dir to each bot's Lua state so the
+         * brain's optimize.log + performance.ticks.log writers land
+         * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
+         * the path works for Lua's io.open under both Windows and bash
+         * harnesses. */
+        if (g_sessionDir[0]) {
+            char setSession[FILENAME_MAX + 64];
+            SDL_snprintf(setSession, sizeof(setSession),
+                         "_G.DEBUG_SESSION_DIR=\"%s\"", g_sessionDir);
+            for (int i = 0; i < optNumPlayers; i++) {
+                if (botManagerIsBot((BYTE)i)) {
+                    botManagerExecLua((BYTE)i, setSession);
+                }
+            }
+        }
     } else {
         fprintf(stderr, "  WARNING: Brain script not found: %s\n", optBrain);
     }
