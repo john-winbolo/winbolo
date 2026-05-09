@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Växla byggmarkör
 STR_GP_ACTION_QUICK_CHAT=Snabbchatt
 STR_GP_ACTION_PAUSE=Pausa
 STR_GP_ACTION_STATUS_TOGGLE=Statusöverlägg
+
+# Handkontrolläge inställning + anslutningsprompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=Handkontrolläge
+STR_CTRL_MODE_OFF=Av
+STR_CTRL_MODE_ON=På
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Fråga när handkontroll ansluts
+STR_CTRL_PROMPT_TITLE=Handkontroll identifierad
+STR_CTRL_PROMPT_LINE1=En gamepad har anslutits.
+STR_CTRL_PROMPT_LINE2=Byta till handkontrolläge?
+STR_CTRL_PROMPT_DESC=(Döljer menyraden; Start öppnar en handkontrollvänlig pausmeny.\nÄndra senare i Inställningar.)
+STR_CTRL_PROMPT_NOTNOW=Inte nu
+STR_CTRL_PROMPT_DONTASK=Fråga inte igen

@@ -1096,6 +1096,35 @@ STR_DLGSYSINFO_SIMULATION=Simulation
 STR_DLGSYSINFO_BOTPREP=Bot prep
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain overruns
 
+# Gamepad rebinding (Configure Keys → Controller section)
+STR_GP_SECTION=Controller
+STR_GP_REBIND_PROMPT=Press a button or pull a trigger...
+STR_GP_ACTION_FIRE=Fire
+STR_GP_ACTION_MINE=Lay Mine
+STR_GP_ACTION_BUILD_CONFIRM=Confirm Build
+STR_GP_ACTION_VIEW_CYCLE=Cycle View
+STR_GP_ACTION_GUNSIGHT_DEC=Decrease Gunsight
+STR_GP_ACTION_GUNSIGHT_INC=Increase Gunsight
+STR_GP_ACTION_BUILD_PREV=Previous Build Type
+STR_GP_ACTION_BUILD_NEXT=Next Build Type
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Toggle Build Cursor
+STR_GP_ACTION_QUICK_CHAT=Quick Chat
+STR_GP_ACTION_PAUSE=Pause
+STR_GP_ACTION_STATUS_TOGGLE=Status Overlay
+
+# Controller Mode pref + connect prompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=Controller Mode
+STR_CTRL_MODE_OFF=Off
+STR_CTRL_MODE_ON=On
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Ask when controller connected
+STR_CTRL_PROMPT_TITLE=Controller detected
+STR_CTRL_PROMPT_LINE1=A gamepad has been connected.
+STR_CTRL_PROMPT_LINE2=Switch to Controller Mode?
+STR_CTRL_PROMPT_DESC=(Hides the menu bar; Start opens a controller-friendly pause menu.\nChange later in Settings.)
+STR_CTRL_PROMPT_NOTNOW=Not now
+STR_CTRL_PROMPT_DONTASK=Don't ask again
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

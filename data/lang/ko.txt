@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=건설 커서 전환
 STR_GP_ACTION_QUICK_CHAT=빠른 채팅
 STR_GP_ACTION_PAUSE=일시 정지
 STR_GP_ACTION_STATUS_TOGGLE=상태 오버레이
+
+# Controller Mode pref + connect prompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=컨트롤러 모드
+STR_CTRL_MODE_OFF=끄기
+STR_CTRL_MODE_ON=켜기
+STR_CTRL_MODE_AUTO=자동
+STR_CTRL_MODE_ASK=컨트롤러 연결 시 확인
+STR_CTRL_PROMPT_TITLE=컨트롤러가 감지되었습니다
+STR_CTRL_PROMPT_LINE1=게임패드가 연결되었습니다.
+STR_CTRL_PROMPT_LINE2=컨트롤러 모드로 전환하시겠습니까?
+STR_CTRL_PROMPT_DESC=(메뉴 표시줄을 숨깁니다. Start 버튼으로 컨트롤러 친화적인 일시 정지 메뉴를 열 수 있습니다.\n나중에 설정에서 변경할 수 있습니다.)
+STR_CTRL_PROMPT_NOTNOW=나중에
+STR_CTRL_PROMPT_DONTASK=다시 묻지 않기

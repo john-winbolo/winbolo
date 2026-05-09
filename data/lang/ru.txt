@@ -1144,3 +1144,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Переключить курсор постр
 STR_GP_ACTION_QUICK_CHAT=Быстрый чат
 STR_GP_ACTION_PAUSE=Пауза
 STR_GP_ACTION_STATUS_TOGGLE=Панель статуса
+
+# Controller mode pref + connect prompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=Режим геймпада
+STR_CTRL_MODE_OFF=Выкл.
+STR_CTRL_MODE_ON=Вкл.
+STR_CTRL_MODE_AUTO=Авто
+STR_CTRL_MODE_ASK=Спрашивать при подключении геймпада
+STR_CTRL_PROMPT_TITLE=Геймпад обнаружен
+STR_CTRL_PROMPT_LINE1=Подключён геймпад.
+STR_CTRL_PROMPT_LINE2=Переключиться в Режим геймпада?
+STR_CTRL_PROMPT_DESC=(Скрывает строку меню; Start открывает меню паузы для геймпада.\nИзменить в Настройки.)
+STR_CTRL_PROMPT_NOTNOW=Не сейчас
+STR_CTRL_PROMPT_DONTASK=Больше не спрашивать

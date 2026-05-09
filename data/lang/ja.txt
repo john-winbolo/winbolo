@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=建設カーソルを切り替え
 STR_GP_ACTION_QUICK_CHAT=クイックチャット
 STR_GP_ACTION_PAUSE=一時停止
 STR_GP_ACTION_STATUS_TOGGLE=ステータス表示
+
+# Controller Mode pref + connect prompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=コントローラーモード
+STR_CTRL_MODE_OFF=オフ
+STR_CTRL_MODE_ON=オン
+STR_CTRL_MODE_AUTO=オート
+STR_CTRL_MODE_ASK=コントローラー接続時に確認
+STR_CTRL_PROMPT_TITLE=コントローラーを検出しました
+STR_CTRL_PROMPT_LINE1=ゲームパッドが接続されました。
+STR_CTRL_PROMPT_LINE2=コントローラーモードに切り替えますか？
+STR_CTRL_PROMPT_DESC=(メニューバーを非表示にします。Startボタンでコントローラー向けの一時停止メニューが開きます。\n後から設定で変更できます。)
+STR_CTRL_PROMPT_NOTNOW=後で
+STR_CTRL_PROMPT_DONTASK=次回から表示しない

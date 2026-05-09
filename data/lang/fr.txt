@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Basculer le curseur de construction
 STR_GP_ACTION_QUICK_CHAT=Message rapide
 STR_GP_ACTION_PAUSE=Pause
 STR_GP_ACTION_STATUS_TOGGLE=Affichage d'état
+
+# Mode manette – préférence et invite de connexion (Phase 8.1)
+STR_CTRL_MODE_HEADER=Mode manette
+STR_CTRL_MODE_OFF=Désactivé
+STR_CTRL_MODE_ON=Activé
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Demander lors de la connexion d'une manette
+STR_CTRL_PROMPT_TITLE=Manette détectée
+STR_CTRL_PROMPT_LINE1=Une manette a été connectée.
+STR_CTRL_PROMPT_LINE2=Activer le mode manette ?
+STR_CTRL_PROMPT_DESC=(Masque la barre de menus ; Start ouvre un menu pause adapté à la manette.\nModifiable plus tard dans Paramètres.)
+STR_CTRL_PROMPT_NOTNOW=Pas maintenant
+STR_CTRL_PROMPT_DONTASK=Ne plus demander

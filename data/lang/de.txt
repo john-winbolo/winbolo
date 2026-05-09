@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bau-Cursor umschalten
 STR_GP_ACTION_QUICK_CHAT=Schnellnachricht
 STR_GP_ACTION_PAUSE=Pause
 STR_GP_ACTION_STATUS_TOGGLE=Statusanzeige
+
+# Controller-Modus Einstellung + Verbindungsaufforderung (Phase 8.1)
+STR_CTRL_MODE_HEADER=Controller-Modus
+STR_CTRL_MODE_OFF=Aus
+STR_CTRL_MODE_ON=An
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Fragen, wenn Controller verbunden
+STR_CTRL_PROMPT_TITLE=Controller erkannt
+STR_CTRL_PROMPT_LINE1=Ein Gamepad wurde angeschlossen.
+STR_CTRL_PROMPT_LINE2=Zum Controller-Modus wechseln?
+STR_CTRL_PROMPT_DESC=(Blendet die Menüleiste aus; Start öffnet ein controllerfreundliches Pause-Menü.\nSpäter in den Einstellungen änderbar.)
+STR_CTRL_PROMPT_NOTNOW=Nicht jetzt
+STR_CTRL_PROMPT_DONTASK=Nicht mehr fragen

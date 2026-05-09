@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Alternar cursor de construcción
 STR_GP_ACTION_QUICK_CHAT=Chat rápido
 STR_GP_ACTION_PAUSE=Pausa
 STR_GP_ACTION_STATUS_TOGGLE=Panel de estado
+
+# Modo mando – preferencia y aviso de conexión (Phase 8.1)
+STR_CTRL_MODE_HEADER=Modo mando
+STR_CTRL_MODE_OFF=Apagado
+STR_CTRL_MODE_ON=Encendido
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Preguntar al conectar un mando
+STR_CTRL_PROMPT_TITLE=Mando detectado
+STR_CTRL_PROMPT_LINE1=Se ha conectado un mando.
+STR_CTRL_PROMPT_LINE2=¿Cambiar al modo mando?
+STR_CTRL_PROMPT_DESC=(Oculta la barra de menú; Start abre un menú de pausa adaptado al mando.\nCámbialo más tarde en Configuración.)
+STR_CTRL_PROMPT_NOTNOW=Ahora no
+STR_CTRL_PROMPT_DONTASK=No volver a preguntar

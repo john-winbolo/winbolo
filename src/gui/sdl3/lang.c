@@ -1067,6 +1067,19 @@ static const LangEntry langTable[] = {
     {1251, "Pause"},
     {1252, "Status Overlay"},
 
+    /* Controller Mode pref + connect prompt (Phase 8.1) */
+    {1253, "Controller Mode"},
+    {1254, "Off"},
+    {1255, "On"},
+    {1256, "Auto"},
+    {1257, "Ask when controller connected"},
+    {1258, "Controller detected"},
+    {1259, "A gamepad has been connected."},
+    {1260, "Switch to Controller Mode?"},
+    {1261, "(Hides the menu bar; Start opens a controller-friendly pause menu.\nChange later in Settings.)"},
+    {1262, "Not now"},
+    {1263, "Don't ask again"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveSegments() when uiModeIsTablet() is true. */

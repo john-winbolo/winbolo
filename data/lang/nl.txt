@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bouwcursor in-/uitschakelen
 STR_GP_ACTION_QUICK_CHAT=Snelchat
 STR_GP_ACTION_PAUSE=Pauzeren
 STR_GP_ACTION_STATUS_TOGGLE=Statusscherm
+
+# Controller-modus voorkeur + verbindingsprompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=Controllermodus
+STR_CTRL_MODE_OFF=Uit
+STR_CTRL_MODE_ON=Aan
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Vragen wanneer controller wordt aangesloten
+STR_CTRL_PROMPT_TITLE=Controller gedetecteerd
+STR_CTRL_PROMPT_LINE1=Er is een gamepad aangesloten.
+STR_CTRL_PROMPT_LINE2=Overschakelen naar Controllermodus?
+STR_CTRL_PROMPT_DESC=(Verbergt de menubalk; Start opent een controllervriendelijk pauzemenu.\nLater wijzigen via Instellingen.)
+STR_CTRL_PROMPT_NOTNOW=Niet nu
+STR_CTRL_PROMPT_DONTASK=Niet meer vragen

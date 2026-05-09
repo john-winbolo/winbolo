@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Attiva/disattiva cursore costruzione
 STR_GP_ACTION_QUICK_CHAT=Chat rapida
 STR_GP_ACTION_PAUSE=Pausa
 STR_GP_ACTION_STATUS_TOGGLE=Pannello stato
+
+# Modalità controller – preferenza e avviso di connessione (Phase 8.1)
+STR_CTRL_MODE_HEADER=Modalità controller
+STR_CTRL_MODE_OFF=Off
+STR_CTRL_MODE_ON=On
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Chiedi quando viene collegato un controller
+STR_CTRL_PROMPT_TITLE=Controller rilevato
+STR_CTRL_PROMPT_LINE1=È stato collegato un controller.
+STR_CTRL_PROMPT_LINE2=Passare alla modalità controller?
+STR_CTRL_PROMPT_DESC=(Nasconde la barra dei menu; Start apre un menu pausa ottimizzato per il controller.\nModificabile in seguito in Impostazioni.)
+STR_CTRL_PROMPT_NOTNOW=Non ora
+STR_CTRL_PROMPT_DONTASK=Non chiedere più

@@ -1163,6 +1163,19 @@
 #define STR_GP_ACTION_PAUSE                 1251
 #define STR_GP_ACTION_STATUS_TOGGLE         1252
 
+/* Controller Mode pref + connect prompt (Phase 8.1) */
+#define STR_CTRL_MODE_HEADER                1253
+#define STR_CTRL_MODE_OFF                   1254
+#define STR_CTRL_MODE_ON                    1255
+#define STR_CTRL_MODE_AUTO                  1256
+#define STR_CTRL_MODE_ASK                   1257
+#define STR_CTRL_PROMPT_TITLE               1258
+#define STR_CTRL_PROMPT_LINE1               1259
+#define STR_CTRL_PROMPT_LINE2               1260
+#define STR_CTRL_PROMPT_DESC                1261
+#define STR_CTRL_PROMPT_NOTNOW              1262
+#define STR_CTRL_PROMPT_DONTASK             1263
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

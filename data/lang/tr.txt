@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=İnşaat İmlecini Aç/Kapat
 STR_GP_ACTION_QUICK_CHAT=Hızlı Sohbet
 STR_GP_ACTION_PAUSE=Duraklat
 STR_GP_ACTION_STATUS_TOGGLE=Durum Bindirmesi
+
+# Kontrolcü modu tercihi + bağlantı istemi (Phase 8.1)
+STR_CTRL_MODE_HEADER=Kontrolcü Modu
+STR_CTRL_MODE_OFF=Kapalı
+STR_CTRL_MODE_ON=Açık
+STR_CTRL_MODE_AUTO=Otomatik
+STR_CTRL_MODE_ASK=Kontrolcü bağlandığında sor
+STR_CTRL_PROMPT_TITLE=Kontrolcü algılandı
+STR_CTRL_PROMPT_LINE1=Bir oyun kumandası bağlandı.
+STR_CTRL_PROMPT_LINE2=Kontrolcü Moduna geçilsin mi?
+STR_CTRL_PROMPT_DESC=(Menü çubuğunu gizler; Start tuşu kontrolcüye uygun bir duraklama menüsü açar.\nDaha sonra Ayarlar'dan değiştirebilirsiniz.)
+STR_CTRL_PROMPT_NOTNOW=Şimdi değil
+STR_CTRL_PROMPT_DONTASK=Bir daha sorma

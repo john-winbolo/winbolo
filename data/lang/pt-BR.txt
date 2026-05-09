@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Alternar cursor de construção
 STR_GP_ACTION_QUICK_CHAT=Chat rápido
 STR_GP_ACTION_PAUSE=Pausar
 STR_GP_ACTION_STATUS_TOGGLE=Painel de status
+
+# Modo controle – preferência e aviso de conexão (Phase 8.1)
+STR_CTRL_MODE_HEADER=Modo controle
+STR_CTRL_MODE_OFF=Desligado
+STR_CTRL_MODE_ON=Ligado
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Perguntar ao conectar um controle
+STR_CTRL_PROMPT_TITLE=Controle detectado
+STR_CTRL_PROMPT_LINE1=Um controle foi conectado.
+STR_CTRL_PROMPT_LINE2=Mudar para o modo controle?
+STR_CTRL_PROMPT_DESC=(Oculta a barra de menus; Start abre um menu de pausa adaptado ao controle.\nAlterável depois em Configurações.)
+STR_CTRL_PROMPT_NOTNOW=Agora não
+STR_CTRL_PROMPT_DONTASK=Não perguntar novamente

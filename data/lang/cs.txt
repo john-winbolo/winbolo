@@ -1146,3 +1146,16 @@ STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Přepnout kurzor stavby
 STR_GP_ACTION_QUICK_CHAT=Rychlý chat
 STR_GP_ACTION_PAUSE=Pauza
 STR_GP_ACTION_STATUS_TOGGLE=Přehled stavu
+
+# Režim ovladače – předvolba a výzva k připojení (Phase 8.1)
+STR_CTRL_MODE_HEADER=Režim ovladače
+STR_CTRL_MODE_OFF=Vypnuto
+STR_CTRL_MODE_ON=Zapnuto
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Zeptat se při připojení ovladače
+STR_CTRL_PROMPT_TITLE=Ovladač rozpoznán
+STR_CTRL_PROMPT_LINE1=Byl připojen gamepad.
+STR_CTRL_PROMPT_LINE2=Přepnout do Režimu ovladače?
+STR_CTRL_PROMPT_DESC=(Skryje lištu nabídek; Start otevře herní nabídku přizpůsobenou ovladači.\nZměnit lze v Nastavení.)
+STR_CTRL_PROMPT_NOTNOW=Teď ne
+STR_CTRL_PROMPT_DONTASK=Příště se neptát
