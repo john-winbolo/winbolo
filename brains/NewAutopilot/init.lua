@@ -178,7 +178,7 @@ function Brain.get_capacity_state_json()
 
   -- Per-tick section timing breakdown for the panel's stacked bar.
   -- Populated by optimize.lua at flush() — only available when
-  -- BRAIN_PERF_LOG is on (i.e. --perf-log was passed). Shape:
+  -- BRAIN_PROFILE is on (i.e. --perf-log was passed). Shape:
   --   { { name, ms, subs: [{name, ms}, ...] }, ... }
   local secs = (opt and opt.last_sections) or {}
   local sec_parts = {}
@@ -186,8 +186,18 @@ function Brain.get_capacity_state_json()
     local sub_parts = {}
     if s.subs then
       for _, sb in ipairs(s.subs) do
-        sub_parts[#sub_parts + 1] = string.format('{"name":%q,"ms":%.3f}',
-          sb.name or "?", sb.ms or 0)
+        -- Third level: subsubs nested under each sub. Serialise them
+        -- the same way so the panel's renderer can draw three levels.
+        local ss_parts = {}
+        if sb.subs then
+          for _, ss in ipairs(sb.subs) do
+            ss_parts[#ss_parts + 1] = string.format('{"name":%q,"ms":%.3f}',
+              ss.name or "?", ss.ms or 0)
+          end
+        end
+        sub_parts[#sub_parts + 1] = string.format(
+          '{"name":%q,"ms":%.3f,"subs":[%s]}',
+          sb.name or "?", sb.ms or 0, table.concat(ss_parts, ","))
       end
     end
     sec_parts[#sec_parts + 1] = string.format(
@@ -545,13 +555,18 @@ function Brain.open(info)
   -- Player 0 logs when _JSONL_LOGGER_ENABLED is set (controlled by the
   -- BrainTest debug modules panel — off by default since the file is huge
   -- and rarely needed). Other players log if ENABLE_LOGGING or debug_log.
+  -- JSONL behavior logger setup. Gated on BRAIN_DEBUG_MODE so the strip
+  -- removes the whole block from opt/ — --opt runs never open the JSONL
+  -- log file regardless of toggles.
   local log_fname = nil
-  if info.player_number == 0 then
-    if _G._JSONL_LOGGER_ENABLED then
-      log_fname = log.make_filename("player0")
+  if BRAIN_DEBUG_MODE then
+    if info.player_number == 0 then
+      if _G._JSONL_LOGGER_ENABLED then
+        log_fname = log.make_filename("player0")
+      end
+    elseif ENABLE_LOGGING or state.debug_log then
+      log_fname = log.make_filename("brain_p" .. info.player_number)
     end
-  elseif ENABLE_LOGGING or state.debug_log then
-    log_fname = log.make_filename("brain_p" .. info.player_number)
   end
   local t_open_logsetup = clock_us()
   if log_fname then
@@ -564,10 +579,12 @@ function Brain.open(info)
   opt(string.format("  log.dump_map+world done %.2f ms (fname=%s)",
     (t_open_logdump - t_open_logsetup) / 1000, tostring(log_fname)))
 
-  -- Always open perf-metrics files for the debug bot (player 0, or any bot
+  -- Open perf-metrics files for the debug bot (player 0, or any bot
   -- whose debug_log flag is set). Independent of the JSONL logger flag —
   -- these files are small and drive scripts/analyze_metrics.py.
-  if info.player_number == 0 or state.debug_log then
+  -- Gated on BRAIN_PROFILE_LOG (file-write toggle) — without --profile-log
+  -- (or dev mode), never opens these files at all.
+  if BRAIN_PROFILE_LOG and (info.player_number == 0 or state.debug_log) then
     local dir = _G.DEBUG_SESSION_DIR or "."
     local prefix = "player" .. info.player_number
     metrics.open_files(dir, prefix)
@@ -687,7 +704,7 @@ function Brain.think(info)
   -- (think_end_us - think_start_us) using the SAME timer (clock_us)
   -- every named section's "done" emit uses. Gated so non-perf runs
   -- don't pay the function-call cost.
-  if _G.BRAIN_PERF_LOG then
+  if _G.BRAIN_PROFILE then
     state._think_start_us = clock_us()
   end
   -- Capture wall clock at think entry; the matching exit-time
@@ -857,7 +874,7 @@ function Brain.think(info)
         local c = cpf.dijkstra_cost_at(_slate, b.mx, b.my, _in_boat)
         if c < 1e29 then
           state._base_dij_known[id] = _now
-          if BRAIN_PERF_LOG then
+          if BRAIN_PROFILE_LOG then
             opt.append("optimize.log", string.format(
               "  [diag] base #%d at (%d,%d) owner=%s REACHED by Dijkstra slate=%d cost=%.1f tick=%d",
               id, b.mx, b.my, tostring(b.owner), _slate, c, _now))
@@ -1276,7 +1293,7 @@ function Brain.think(info)
           end
         end
       end
-      if #hits > 0 then
+      if #hits > 0 and BRAIN_DEBUG_MODE then
         local f = io.open("intersect.log", "a")
         if f then
           for _, h in ipairs(hits) do f:write(h, "\n") end
@@ -1368,23 +1385,27 @@ function Brain.think(info)
       goal_str = string.format("Goal: %s (%d,%d)",
         gkind, g.mx or 0, g.my or 0)
     end
-    -- Per-tick goal log (file write — non-viz, always runs).
-    local sdir = _G.DEBUG_SESSION_DIR
-    if sdir then
-      local pn = info.player_number or 0
-      local path = string.format("%s/goal_player%d.log", sdir, pn)
-      if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
-        if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
-        local f = io.open(path, "a")
-        if f then
-          _G._GOAL_LOG_FILE = f
-          _G._GOAL_LOG_PATH = path
+    -- Per-tick goal log — behavior trace, debug-mode only. Strip removes
+    -- this whole block from opt/, so --opt mode (production-ish) never
+    -- writes goal_player%d.log regardless of profile / profile-log flags.
+    if BRAIN_DEBUG_MODE then
+      local sdir = _G.DEBUG_SESSION_DIR
+      if sdir then
+        local pn = info.player_number or 0
+        local path = string.format("%s/goal_player%d.log", sdir, pn)
+        if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
+          if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
+          local f = io.open(path, "a")
+          if f then
+            _G._GOAL_LOG_FILE = f
+            _G._GOAL_LOG_PATH = path
+          end
         end
-      end
-      if _G._GOAL_LOG_FILE then
-        local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
-        _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
-        _G._GOAL_LOG_FILE:flush()
+        if _G._GOAL_LOG_FILE then
+          local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
+          _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
+          _G._GOAL_LOG_FILE:flush()
+        end
       end
     end
     -- HUD draws (gated)
@@ -2356,7 +2377,7 @@ function Brain.think(info)
     end
 
     t_goal0 = clock_us()
-    if BRAIN_PERF_LOG and t_goal0 - t_gv0 > 1000 then
+    if BRAIN_PROFILE and t_goal0 - t_gv0 > 1000 then
       opt.append("optimize.log", string.format(
         "  [gv] SLOW total=%.3f ms pre=%.3f ms body=%.3f ms gk=%s",
         (t_goal0 - t_gv0) / 1000,
@@ -2527,7 +2548,7 @@ function Brain.think(info)
       metrics.inc("goal_replan")
       local t_pg0 = clock_us()
       local new_goal = goals.pick_goal(state, world, info)
-      if BRAIN_PERF_LOG and state._pick_goal_timing then
+      if BRAIN_PROFILE and state._pick_goal_timing then
         for _, entry in ipairs(state._pick_goal_timing) do opt(entry) end
       end
       opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
@@ -3487,6 +3508,7 @@ function Brain.think(info)
 
   -- Finish metrics for this tick
   metrics.finish_tick(now)
+  local _t_tail_post_metrics = BRAIN_PROFILE and clock_us() or 0
 
 
   -- Label all pills and bases with their IDs (centered on tile)
@@ -3538,10 +3560,26 @@ function Brain.think(info)
     print2("END state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
     print2.flush()
   end
-  -- Tail-timer emit BEFORE flush: captures from _t_tail_anchor (set
-  -- right after the last named section's done emit) to the moment of
-  -- this opt() call. opt.flush parses it into last_sections like any
-  -- other section.
+  -- Sub-section breakdown of (tail). Indented sub-section emits MUST
+  -- come before the (tail) main emit so rebuild_sections attaches them
+  -- as subs.
+  --   (tail)/metrics    — TICK TOTAL emit + metrics.set/max +
+  --                       metrics.finish_tick. Mostly opt() buffer-push
+  --                       overhead.
+  --   (tail)/late-debug — pill+base id labels, dbg.end_trace, arrow
+  --                       HUD, print2.flush. All stripped in opt/, so
+  --                       reads near zero in production. A non-trivial
+  --                       value here in opt/ implies a GC pause hit
+  --                       during this window.
+  if BRAIN_PROFILE then
+    opt(string.format("  (tail)/metrics done %.2f ms",
+                      (_t_tail_post_metrics - _t_tail_anchor) / 1000))
+    opt(string.format("  (tail)/late-debug done %.2f ms",
+                      (clock_us() - _t_tail_post_metrics) / 1000))
+  end
+  -- (tail) main: total from _t_tail_anchor to NOW. Emit AFTER the
+  -- indented subs above so the parser sees pending subs and attaches
+  -- them to this section.
   opt(string.format("(tail) done %.2f ms", (clock_us() - _t_tail_anchor) / 1000))
   opt(string.format("END tick=%d total=%.2f ms", now, (clock_us() - t_tick_start) / 1000))
   -- Anchor right before the flush itself. opt.flush()'s sync work
@@ -3551,7 +3589,7 @@ function Brain.think(info)
   -- sum-of-sections equals the end-marker think_total_ms.
   local _t_pre_flush = clock_us()
   opt.flush()
-  if _G.BRAIN_PERF_LOG and opt.last_sections then
+  if _G.BRAIN_PROFILE and opt.last_sections then
     opt.last_sections[#opt.last_sections + 1] = {
       name = "(post-flush)",
       ms   = (clock_us() - _t_pre_flush) / 1000,
@@ -3559,24 +3597,22 @@ function Brain.think(info)
     }
   end
 
-  -- ── performance.ticks.log ──────────────────────────────────────────
-  -- One JSON object per tick recording the same state the BrainTest
-  -- "Capacity tiers" (Y) panel would show. The first byte of each line
-  -- is `{` so jq -c '.' / line-by-line streaming readers work.
-  -- Lands in DEBUG_SESSION_DIR/performance.ticks.log when the host
-  -- published one; falls back to cwd otherwise. Gated on BRAIN_PERF_LOG
-  -- (set by --perf-log) — without that flag the JSON's "sections" array
-  -- is empty anyway (opt() short-circuits, so optimize.lua's
-  -- last_sections never populates), making the file uninteresting.
-  if _G.BRAIN_PERF_LOG then
-    -- ── PERFORMANCE MARKER: END ──
-    -- Captured here, just before the JSON is built and queued. The
-    -- write itself is fire-and-forget via na_opt_log.append (the
-    -- threaded writer used for optimize.log too) — file I/O happens
-    -- on the writer thread, not in Brain.think, so think_total_ms
-    -- doesn't get charged the disk write cost. Only the queue-push
-    -- (~1 µs) lands between the marker and `return`.
+  -- ── PERFORMANCE MARKER: END ──
+  -- Capture the wall-clock at think exit so the Y panel's header can
+  -- show think_total_ms (matched against host's lastThinkMs). Gated on
+  -- BRAIN_PROFILE because the panel only needs this when profiling is
+  -- on; without the marker, get_capacity_state_json reports null.
+  if _G.BRAIN_PROFILE then
     state._think_end_us = clock_us()
+  end
+
+  -- ── performance.ticks.log ──────────────────────────────────────────
+  -- One JSON object per tick recording the same state the Y panel
+  -- shows. First byte of each line is `{` so jq -c / line-streaming
+  -- readers work. Lands in DEBUG_SESSION_DIR/performance.ticks.log when
+  -- the host set one, else cwd. Gated on BRAIN_PROFILE_LOG so we only
+  -- pay the JSON build + queue push when we actually want files.
+  if _G.BRAIN_PROFILE_LOG then
     local body = Brain.get_capacity_state_json and Brain.get_capacity_state_json() or "{}"
     local path = (_G.DEBUG_SESSION_DIR or ".") .. "/performance.ticks.log"
     local line = string.format('{"tick":%d,"bot":%d,"data":%s}',
@@ -3755,22 +3791,27 @@ end
 function Brain.on_click(mx, my, mods)
   mods = mods or {}
   local rp = state._real_print or print
-  -- Debug to file since console may not be visible
-  local f = io.open("click_lua.log", "a")
-  if f then
-    local pill_count = 0
-    if world and world.pills then
-      for _ in pairs(world.pills) do pill_count = pill_count + 1 end
+  -- Debug to file since console may not be visible. Gated on
+  -- BRAIN_DEBUG_MODE so the strip removes it from the production
+  -- brain (live game, no instruction = no file I/O).
+  if BRAIN_DEBUG_MODE then
+    local f = io.open("click_lua.log", "a")
+    if f then
+      local pill_count = 0
+      if world and world.pills then
+        for _ in pairs(world.pills) do pill_count = pill_count + 1 end
+      end
+      f:write(string.format("on_click: (%d,%d) shift=%s ctrl=%s tick=%d pills=%d\n",
+              mx, my, tostring(mods.shift), tostring(mods.ctrl), state.tick or -1, pill_count))
+      f:close()
     end
-    f:write(string.format("on_click: (%d,%d) shift=%s ctrl=%s tick=%d pills=%d\n",
-            mx, my, tostring(mods.shift), tostring(mods.ctrl), state.tick or -1, pill_count))
-    f:close()
   end
   rp(string.format(TAG .. " CLICK: (%d,%d) shift=%s ctrl=%s", mx, my, tostring(mods.shift), tostring(mods.ctrl)))
 
   if mods.shift then
-    -- Toggle pill inspect overlay
-    local f2 = io.open("click_lua.log", "a")
+    -- Toggle pill inspect overlay. f2 is gated on BRAIN_DEBUG_MODE for
+    -- the same reason as the on_click line above.
+    local f2 = BRAIN_DEBUG_MODE and io.open("click_lua.log", "a") or nil
     if state.inspect_pill and state.inspect_pill.mx == mx and state.inspect_pill.my == my then
       state.inspect_pill = nil
       if f2 then f2:write("  -> cleared inspect\n"); f2:close() end

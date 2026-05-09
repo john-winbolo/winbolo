@@ -165,7 +165,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local _tw1 = clock_us()
   local r = wsim.run(C.WSIM_MAX_TICKS)
   local _tw2 = clock_us()
-  if BRAIN_PERF_LOG and (_tw2 - _tw0) > 200 then
+  if BRAIN_PROFILE and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
       goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
@@ -2301,7 +2301,7 @@ function M.build_eval_queue(state, world, info)
   -- to optimize.log directly so we don't need print2 enabled.
   if not state._base_in_pool then state._base_in_pool = {} end
   local function _diag_log_first_pool_add(pool_idx, pool_name, id, obj)
-    if not BRAIN_PERF_LOG then return end
+    if not BRAIN_PROFILE then return end
     local key = pool_idx .. ":" .. id
     if state._base_in_pool[key] then return end
     state._base_in_pool[key] = state.tick or 0
@@ -2871,7 +2871,7 @@ function M.step_eval_queue(state, world, info)
           _t_smart = clock_us() - _ts
           -- Diag: log pool 3 (capture_base) cost lookups so we can see
           -- whether Dijkstra is returning finite values yet.
-          if BRAIN_PERF_LOG and pool_idx == 3 then
+          if BRAIN_PROFILE and pool_idx == 3 then
             local rc = (raw_cost == math.huge) and "INF" or string.format("%.1f", raw_cost)
             opt.append("optimize.log", string.format(
               "  [diag] update_pool_cache pool=3 id=%s obj=(%d,%d) cheapest_adj=(%s,%s) raw_cost=%s tick=%d",
@@ -3259,7 +3259,7 @@ function M.step_eval_queue(state, world, info)
         if (_diff_us > 1000 or _spot_us > 1000) then
           if BRAIN_DEBUG_MODE then print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
                                tostring(id), _diff_us / 1000, _spot_us / 1000)) end
-          if BRAIN_PERF_LOG then opt.append("optimize.log", string.format(
+          if BRAIN_PROFILE_LOG then opt.append("optimize.log", string.format(
             "  [diag] pool6 cand id=%s diff=%.2f spot=%.2f just_evaluated=%s force_detailed=%s",
             tostring(id), _diff_us / 1000, _spot_us / 1000,
             tostring(just_evaluated), tostring(force_detailed))) end
@@ -3451,7 +3451,7 @@ function M.step_eval_queue(state, world, info)
     -- shows up on the per-tick summary). Includes sub-timings for the
     -- 8-neighbor adjacent sweep + smart_cost call so we can identify
     -- which inner step dominates.
-    if BRAIN_PERF_LOG and _t_total > 500 then
+    if BRAIN_PROFILE and _t_total > 500 then
       opt.append("optimize.log", string.format(
         "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
@@ -3527,7 +3527,7 @@ function M.finalize_pools(state, world, info)
     end
   end
 
-  if BRAIN_PERF_LOG then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
   local _t1 = clock_us()
   -- Fresh cache each cycle (don't carry stale entries from last cycle)
   state.pool_cache = {}
@@ -3754,7 +3754,7 @@ function M.finalize_pools(state, world, info)
     pc[7] = nil
   end
 
-  if BRAIN_PERF_LOG then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
   local _t2 = clock_us()
   -- Run cheap evaluators directly
   for _, idx in ipairs(FINALIZE_POOLS) do
@@ -3763,7 +3763,7 @@ function M.finalize_pools(state, world, info)
     if evaluator then
       pc[idx] = evaluator(state, world, info, tmx, tmy, boat, ammo)
     end
-    if BRAIN_PERF_LOG then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
+    if BRAIN_PROFILE then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
   end
 
   -- Summary: which pools got finalized
@@ -3807,7 +3807,7 @@ function M.update_pool_cache(state, world, info)
   -- giving ~49 ticks to process before the next decision.
   local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
-  if BRAIN_PERF_LOG then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
 
   -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
   -- Iterates the diff cache and emits each pill's spots with a mode
@@ -3860,9 +3860,9 @@ end
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
 local function goal_selection(state, world, info, quiet)
-  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PERF_LOG)
+  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PROFILE)
   local _tgs_t = 0
-  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PERF_LOG; set by pick_goal
+  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PROFILE; set by pick_goal
   if _tgs_buf then _tgs_t = _tgs0 end
   local function _tgs_log(label)
     if not _tgs_buf then return end
@@ -4785,7 +4785,7 @@ local function goal_selection(state, world, info, quiet)
     end
     local _tgs_post_wsim = clock_us()
     _tgs_log("wsim")
-    if BRAIN_PERF_LOG and (_tgs_post_wsim - _tgs0) > 500 then
+    if BRAIN_PROFILE and (_tgs_post_wsim - _tgs0) > 500 then
       opt.append("optimize.log", string.format(
         "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
         (_tgs_post_wsim-_tgs0)/1000, (_tgs_pre_pool-_tgs0)/1000,
@@ -5016,7 +5016,7 @@ local function goal_selection(state, world, info, quiet)
     -- needing print2 enabled. Includes which pools had cached winners
     -- so we can see whether pool_cache was empty or just got filtered
     -- out (blocked / cooldown / phase weight zero).
-    if BRAIN_PERF_LOG then
+    if BRAIN_PROFILE then
       do
         local pc_summary = {}
         local pc = state.pool_cache or {}
@@ -5130,7 +5130,7 @@ function M.pick_goal(state, world, info, quiet)
   end
 
   -- Strategic goal selection (timing buf populated only when perf-log is active)
-  state._pick_goal_timing = _G.BRAIN_PERF_LOG and {} or nil
+  state._pick_goal_timing = _G.BRAIN_PROFILE and {} or nil
   local strategic = goal_selection(state, world, info, quiet)
   if strategic then return strategic end
 

@@ -1564,7 +1564,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- Per-call breakdown — emitted only when the call cost > 1 ms so we
   -- don't flood optimize.log with cheap cache-hit-tier calls.
-  if BRAIN_PERF_LOG then
+  if BRAIN_PROFILE then
     do
       local _t_total = clock_us() - _t_func0
       if _t_total > 1000 then
@@ -1984,7 +1984,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal._scan_tank_mx = tmx
       goal._scan_tank_my = tmy
 
-      local _t_pp0 = BRAIN_PERF_LOG and clock_us() or 0
+      local _t_pp0 = BRAIN_PROFILE and clock_us() or 0
       -- Capacity-tier pp_spread: this is the heaviest single scan in
       -- the brain (~9 ms at 5° × 72 angles). When the tier requests a
       -- spread > 1 we instead coarsen to 45° — 8 angles via precomputed
@@ -1998,7 +1998,7 @@ function M.update_attack_substate(goal, state, world, info)
       if _pp_spread > 1 then _eff_step = 45 end
       local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, _eff_step, state.phase, state, tmx, tmy)
       goal.scan_spots = spots
-      if BRAIN_PERF_LOG then
+      if BRAIN_PROFILE then
         opt.append("optimize.log", string.format(
           "  [as] plan_position eval_pill=%.3f ms pill=(%d,%d)",
           (clock_us() - _t_pp0) / 1000, pmx, pmy))
@@ -2379,7 +2379,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- approach: navigate to standoff position, brake to stop
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "approach" then
-    local _t_app0 = BRAIN_PERF_LOG and clock_us() or 0
+    local _t_app0 = BRAIN_PROFILE and clock_us() or 0
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
@@ -2559,7 +2559,7 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     -- Fall through to draw
-    if BRAIN_PERF_LOG then
+    if BRAIN_PROFILE then
       local _t_app1 = clock_us()
       if _t_app1 - _t_app0 > 300 then
         opt.append("optimize.log", string.format(
