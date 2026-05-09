@@ -195,11 +195,23 @@ function Brain.get_capacity_state_json()
       s.name or "?", s.ms or 0, table.concat(sub_parts, ","))
   end
 
+  -- think_total_ms: real wall-clock between the two performance
+  -- markers at the top and bottom of Brain.think. Same timer (clock_us)
+  -- the section "done" emits use, so sum-of-sections and this number
+  -- share a single measurement basis. Null when --perf-log is off
+  -- (markers aren't captured to save the function-call cost).
+  local think_total_ms_str = "null"
+  if state._think_start_us and state._think_end_us then
+    think_total_ms_str = string.format("%.3f",
+      (state._think_end_us - state._think_start_us) / 1000)
+  end
+
   return string.format(
-    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"levels":[%s],"sections":[%s]}',
+    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"think_total_ms":%s,"levels":[%s],"sections":[%s]}',
     tier,
     (type(ovr) == "number") and tostring(math.floor(ovr)) or "null",
     last_ms, tgt_ms, sm,
+    think_total_ms_str,
     table.concat(rows, ","),
     table.concat(sec_parts, ","))
 end
@@ -669,6 +681,15 @@ end
 -- =========================================================================
 
 function Brain.think(info)
+  -- ── PERFORMANCE MARKER: START ──
+  -- First instruction in Brain.think when --perf-log is on: capture
+  -- a real tick-start clock so the Y panel can compute total_ms as
+  -- (think_end_us - think_start_us) using the SAME timer (clock_us)
+  -- every named section's "done" emit uses. Gated so non-perf runs
+  -- don't pay the function-call cost.
+  if _G.BRAIN_PERF_LOG then
+    state._think_start_us = clock_us()
+  end
   -- Capture wall clock at think entry; the matching exit-time
   -- snapshot at the bottom drives the top-left tick-info HUD.
   local _think_t0 = os.clock()
@@ -3517,14 +3538,26 @@ function Brain.think(info)
     print2("END state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
     print2.flush()
   end
-  -- Real tail timer: clock here is the boundary between the last named
-  -- section's "done" emit and opt.flush(). Anything between (final HUD
-  -- writes, debug-mode arrow HUD, print2.flush, dbg.end_trace) shows up
-  -- as the (tail) section so the section sum equals (clock_us() -
-  -- t_tick_start) without any synthesized gap.
+  -- Tail-timer emit BEFORE flush: captures from _t_tail_anchor (set
+  -- right after the last named section's done emit) to the moment of
+  -- this opt() call. opt.flush parses it into last_sections like any
+  -- other section.
   opt(string.format("(tail) done %.2f ms", (clock_us() - _t_tail_anchor) / 1000))
   opt(string.format("END tick=%d total=%.2f ms", now, (clock_us() - t_tick_start) / 1000))
+  -- Anchor right before the flush itself. opt.flush()'s sync work
+  -- (rebuild_sections walk + queue-push to the threaded log writer)
+  -- happens between (tail) emit and the END marker — captured below
+  -- as a (post-flush) section appended to last_sections so that
+  -- sum-of-sections equals the end-marker think_total_ms.
+  local _t_pre_flush = clock_us()
   opt.flush()
+  if _G.BRAIN_PERF_LOG and opt.last_sections then
+    opt.last_sections[#opt.last_sections + 1] = {
+      name = "(post-flush)",
+      ms   = (clock_us() - _t_pre_flush) / 1000,
+      subs = {},
+    }
+  end
 
   -- ── performance.ticks.log ──────────────────────────────────────────
   -- One JSON object per tick recording the same state the BrainTest
@@ -3536,14 +3569,25 @@ function Brain.think(info)
   -- is empty anyway (opt() short-circuits, so optimize.lua's
   -- last_sections never populates), making the file uninteresting.
   if _G.BRAIN_PERF_LOG then
-    local dir  = _G.DEBUG_SESSION_DIR or "."
-    local path = dir .. "/performance.ticks.log"
-    local f = io.open(path, "a")
-    if f then
-      local body = Brain.get_capacity_state_json and Brain.get_capacity_state_json() or "{}"
-      f:write(string.format('{"tick":%d,"bot":%d,"data":%s}\n',
-                             now, state.player_number or 0, body))
-      f:close()
+    -- ── PERFORMANCE MARKER: END ──
+    -- Captured here, just before the JSON is built and queued. The
+    -- write itself is fire-and-forget via na_opt_log.append (the
+    -- threaded writer used for optimize.log too) — file I/O happens
+    -- on the writer thread, not in Brain.think, so think_total_ms
+    -- doesn't get charged the disk write cost. Only the queue-push
+    -- (~1 µs) lands between the marker and `return`.
+    state._think_end_us = clock_us()
+    local body = Brain.get_capacity_state_json and Brain.get_capacity_state_json() or "{}"
+    local path = (_G.DEBUG_SESSION_DIR or ".") .. "/performance.ticks.log"
+    local line = string.format('{"tick":%d,"bot":%d,"data":%s}',
+                                now, state.player_number or 0, body)
+    if na_opt_log then
+      na_opt_log.append(path, line)
+    else
+      -- Fallback when the threaded writer isn't compiled in. Same
+      -- semantics, but file I/O on the brain thread.
+      local f = io.open(path, "a")
+      if f then f:write(line, "\n"); f:close() end
     end
   end
 
@@ -3633,6 +3677,11 @@ function Brain.think(info)
         "topleft", 180, 200, 180, 200, 0.85)
     end
   end end -- BRAIN_DEBUG_MODE (hud_tick_info)
+
+  -- (PERFORMANCE MARKER: END is captured inside the perf-log write
+  -- block above, just before get_capacity_state_json reads it. Doing
+  -- it there instead of here means the JSON's think_total_ms value
+  -- is fresh for the current tick.)
 
   -- Output
   return {
