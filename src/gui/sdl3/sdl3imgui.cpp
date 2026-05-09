@@ -90,6 +90,7 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_nav_outline.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -222,6 +223,7 @@ extern "C" bool showNetworkDebugMessages;
 
 /* Device presets are defined in imgui_dialog_utils.h (shared with dialogs) */
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_nav_outline.h"
 
 /* -------------------------------------------------------
  * Module state
@@ -436,6 +438,7 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -492,6 +495,7 @@ static void popOutEndContent(PopOutWindow *pw) {
 
 static void popOutEndFrame(PopOutWindow *pw) {
     ImGui::EndFrame();
+    dialogDrawNavOutline();
     ImGui::Render();
     SDL_SetRenderDrawColor(pw->renderer, 30, 30, 30, 255);
     SDL_RenderClear(pw->renderer);
@@ -2057,21 +2061,25 @@ static void renderSettingsPanel(ClientSim *cs) {
            offer the radio there. */
         if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
             ImGui::Separator();
-            ImGui::TextUnformatted("Controller Mode");
+            ImGui::TextUnformatted(langGetText(STR_CTRL_MODE_HEADER));
             ControllerModePref cm = uiControllerModeGet();
             int cur = (int)cm;
             bool changed = false;
-            if (ImGui::RadioButton("Off##cmode",  cur == CONTROLLER_MODE_OFF))  { cur = CONTROLLER_MODE_OFF;  changed = true; }
+            char rOff[64], rOn[64], rAuto[64];
+            snprintf(rOff,  sizeof(rOff),  "%s##cmode", langGetText(STR_CTRL_MODE_OFF));
+            snprintf(rOn,   sizeof(rOn),   "%s##cmode", langGetText(STR_CTRL_MODE_ON));
+            snprintf(rAuto, sizeof(rAuto), "%s##cmode", langGetText(STR_CTRL_MODE_AUTO));
+            if (ImGui::RadioButton(rOff,  cur == CONTROLLER_MODE_OFF))  { cur = CONTROLLER_MODE_OFF;  changed = true; }
             ImGui::SameLine();
-            if (ImGui::RadioButton("On##cmode",   cur == CONTROLLER_MODE_ON))   { cur = CONTROLLER_MODE_ON;   changed = true; }
+            if (ImGui::RadioButton(rOn,   cur == CONTROLLER_MODE_ON))   { cur = CONTROLLER_MODE_ON;   changed = true; }
             ImGui::SameLine();
-            if (ImGui::RadioButton("Auto##cmode", cur == CONTROLLER_MODE_AUTO)) { cur = CONTROLLER_MODE_AUTO; changed = true; }
+            if (ImGui::RadioButton(rAuto, cur == CONTROLLER_MODE_AUTO)) { cur = CONTROLLER_MODE_AUTO; changed = true; }
             if (changed) {
                 uiControllerModeSet((ControllerModePref)cur);
                 gameFrontSaveCurrentPrefs();
             }
             bool ask = uiControllerPromptAskOnConnectGet();
-            if (ImGui::Checkbox("Ask when controller connected", &ask)) {
+            if (ImGui::Checkbox(langGetText(STR_CTRL_MODE_ASK), &ask)) {
                 uiControllerPromptAskOnConnectSet(ask);
                 gameFrontSaveCurrentPrefs();
             }
@@ -2776,6 +2784,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename  = nullptr; /* no imgui.ini — avoid filesystem clutter */
 
     ImGui::StyleColorsDark();
@@ -3540,6 +3549,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
 
     ImGui::EndFrame();
+    dialogDrawNavOutline();
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_renderer);
 

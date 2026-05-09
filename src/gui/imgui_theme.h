@@ -117,7 +117,11 @@ static inline void imguiApplyBoloTheme(void) {
 
     /* Misc */
     c[ImGuiCol_DockingPreview] = ImVec4(0.24f, 0.42f, 0.55f, 0.70f);
-    c[ImGuiCol_NavHighlight]   = ImVec4(0.40f, 0.72f, 0.88f, 1.00f);
+    /* Nav cursor: zeroed so ImGui's stock 2px stroked rounded rect
+       (which renders with irregular thickness + jagged corners at
+       desktop DPI) doesn't draw.  imgui_nav_outline.cpp draws a clean
+       replacement once per frame on the focused item. */
+    c[ImGuiCol_NavHighlight]   = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 }
 
 #endif /* IMGUI_THEME_H */

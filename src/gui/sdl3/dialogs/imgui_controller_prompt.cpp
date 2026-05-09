@@ -24,10 +24,15 @@
 extern "C" {
 #include "../../ui_mode.h"
 #include "../../gamefront.h"
+#include "../../lang.h"
 }
 
 static bool s_open        = false;
 static bool s_pendingOpen = false;
+/* One-shot: when the popup appears, force keyboard/gamepad focus onto
+   the Yes button on the next frame so the user sees a highlighted
+   default selection. */
+static bool s_focusYes    = false;
 
 void controllerPromptOpen(void) {
     s_pendingOpen = true;
@@ -39,9 +44,11 @@ bool controllerPromptIsOpen(void) {
 
 void controllerPromptRender(void) {
     if (s_pendingOpen) {
-        ImGui::OpenPopup("Controller detected");
+        ImGui::OpenPopup(langGetText(STR_CTRL_PROMPT_TITLE));
+        ImGui::SetNavCursorVisible(true);
         s_pendingOpen = false;
         s_open        = true;
+        s_focusYes    = true;
     }
     if (!s_open) return;
 
@@ -54,7 +61,7 @@ void controllerPromptRender(void) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_AlwaysAutoResize;
 
-    if (ImGui::BeginPopupModal("Controller detected", &s_open, flags)) {
+    if (ImGui::BeginPopupModal(langGetText(STR_CTRL_PROMPT_TITLE), &s_open, flags)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             ImGui::CloseCurrentPopup();
@@ -63,11 +70,10 @@ void controllerPromptRender(void) {
             return;
         }
 
-        ImGui::TextUnformatted("A gamepad has been connected.");
-        ImGui::TextUnformatted("Switch to Controller Mode?");
+        ImGui::TextUnformatted(langGetText(STR_CTRL_PROMPT_LINE1));
+        ImGui::TextUnformatted(langGetText(STR_CTRL_PROMPT_LINE2));
         ImGui::Spacing();
-        ImGui::TextDisabled("(Hides the menu bar; Start opens a controller-friendly pause menu.\n"
-                            "Change later in Settings.)");
+        ImGui::TextDisabled("%s", langGetText(STR_CTRL_PROMPT_DESC));
         ImGui::Spacing();
 
         const ImVec2 btnSize(140.0f, 0.0f);
@@ -75,19 +81,23 @@ void controllerPromptRender(void) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(style.FramePadding.x, 8.0f));
 
-        if (ImGui::Button("Yes", btnSize)) {
+        if (s_focusYes) {
+            ImGui::SetKeyboardFocusHere();
+            s_focusYes = false;
+        }
+        if (ImGui::Button(langGetText(STR_YES), btnSize)) {
             uiControllerModeSet(CONTROLLER_MODE_ON);
             gameFrontSaveCurrentPrefs();
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Not now", btnSize)) {
+        if (ImGui::Button(langGetText(STR_CTRL_PROMPT_NOTNOW), btnSize)) {
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Don't ask again", btnSize)) {
+        if (ImGui::Button(langGetText(STR_CTRL_PROMPT_DONTASK), btnSize)) {
             uiControllerPromptAskOnConnectSet(false);
             gameFrontSaveCurrentPrefs();
             ImGui::CloseCurrentPopup();

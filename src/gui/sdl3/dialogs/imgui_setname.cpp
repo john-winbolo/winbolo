@@ -27,6 +27,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
 #include "../imgui_steam_nav.h"
 
 extern "C" {
@@ -77,6 +78,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -240,6 +242,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
 
         ImGui::End();
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

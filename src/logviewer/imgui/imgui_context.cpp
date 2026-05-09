@@ -13,6 +13,7 @@
 #include "../../gui/imgui_theme.h"
 #include "../../gui/imgui_fonts.h"
 #include "../../gui/ui_mode.h"
+#include "../../gui/sdl3/dialogs/imgui_nav_outline.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <stdio.h>
@@ -40,6 +41,7 @@ int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     // Note: ViewportsEnable requires proper renderer support, may need to be disabled initially
 
     // Set up style
@@ -117,6 +119,7 @@ void lv_imgui_context_render(void) {
     if (!g_context) return;
     
     ImGui::SetCurrentContext(g_context);
+    dialogDrawNavOutline();
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
 }

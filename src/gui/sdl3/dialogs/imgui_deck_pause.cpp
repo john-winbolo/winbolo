@@ -27,6 +27,9 @@ extern "C" void windowNewGame(void);
 
 static bool s_open        = false;
 static bool s_pendingOpen = false;
+/* One-shot: focus Resume on the next frame after popup-open so the
+   highlighted default selection is visible from frame 1. */
+static bool s_focusFirst  = false;
 
 void deckPauseOpen(void) {
     s_pendingOpen = true;
@@ -64,8 +67,10 @@ static bool pauseButton(const char *action_name,
 void deckPauseRender(struct ClientSim *cs) {
     if (s_pendingOpen) {
         ImGui::OpenPopup("Pause");
+        ImGui::SetNavCursorVisible(true);
         s_pendingOpen = false;
         s_open        = true;
+        s_focusFirst  = true;
     }
     if (!s_open) return;
 
@@ -100,6 +105,10 @@ void deckPauseRender(struct ClientSim *cs) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(style.FramePadding.x, 8.0f));
 
+        if (s_focusFirst) {
+            ImGui::SetKeyboardFocusHere();
+            s_focusFirst = false;
+        }
         /* Resume gets the Pause/Start glyph — same physical button that
            opened the menu, the one the player most needs to identify. */
         if (pauseButton(SI_ACTION_PAUSE, "Resume", btnSize)) {
