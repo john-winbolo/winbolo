@@ -95,6 +95,17 @@ void botManagerRequestThreads(int total_runners);
 int  botManagerGetThreads(void);
 
 /*********************************************************
+ *NAME:          botManagerGetPendingThreads
+ *PURPOSE:
+ *  Returns the pending thread-count request, or -1 if no
+ *  resize is pending. Lets the panel UI render an "applying"
+ *  annotation between the slider change and the next tick
+ *  applying it. Cleared to -1 by the apply step (whether the
+ *  pool create succeeded or fell back to serial).
+ *********************************************************/
+int  botManagerGetPendingThreads(void);
+
+/*********************************************************
  *NAME:          botManagerAddBot
  *PURPOSE:
  *  Creates a bot with its own ClientSim, passive transport,

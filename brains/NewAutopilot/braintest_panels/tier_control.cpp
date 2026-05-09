@@ -667,13 +667,31 @@ void renderTierControl(int registry_idx, const char *body) {
      * dispatch (no workers). Slider stashes the request as pending —
      * bot_manager.c applies it at the top of the next tick, so the
      * pool destroy/create gap is always between ticks, never during
-     * dispatch. Useful for A/B comparing parallel vs serial cost. */
+     * dispatch. Useful for A/B comparing parallel vs serial cost.
+     *
+     * UX: the slider is driven from local intent (`s_panel_threads`)
+     * rather than the live value, so the user's choice doesn't snap
+     * back between the click and the next tick's apply. After apply,
+     * three outcomes are possible:
+     *   1. live == intent           → slider matches, no annotation.
+     *   2. pending != -1            → still in flight, "(applying)".
+     *   3. pending == -1, mismatch  → apply ran, pool create failed,
+     *                                 live fell back to 1. We surface
+     *                                 "(create failed → N)" and reset
+     *                                 the intent so the slider stops
+     *                                 re-requesting on every render. */
     {
-        int threads = botManagerGetThreads();
+        int live    = botManagerGetThreads();
+        int pending = botManagerGetPendingThreads();
+        static int s_panel_threads = -1;
+        if (s_panel_threads < 0) s_panel_threads = live;
+
         ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::SliderInt("brain threads", &threads, 1, 16,
-                             threads == 1 ? "%d (serial)" : "%d")) {
-            botManagerRequestThreads(threads);
+        int show = s_panel_threads;
+        if (ImGui::SliderInt("brain threads", &show, 1, 16,
+                             show == 1 ? "%d (serial)" : "%d")) {
+            s_panel_threads = show;
+            botManagerRequestThreads(show);
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Total brain-tick runners (workers + producer).\n"
@@ -681,6 +699,20 @@ void renderTierControl(int registry_idx, const char *body) {
                               "N = (N-1) worker threads + 1 producer = N-way parallel.\n"
                               "Defaults to logical CPU core count at startup.\n"
                               "Applied at the top of the next tick (never mid-dispatch).");
+        }
+        if (s_panel_threads != live) {
+            ImGui::SameLine();
+            if (pending >= 0) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.30f, 1.0f),
+                                   "(applying)");
+            } else {
+                /* Apply ran but live disagrees with intent → pool create
+                 * failed (logged in C). Snap intent to live so we stop
+                 * re-requesting on every frame. */
+                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.30f, 1.0f),
+                                   "(create failed → %d)", live);
+                s_panel_threads = live;
+            }
         }
     }
 
