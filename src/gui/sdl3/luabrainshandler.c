@@ -102,10 +102,15 @@
 /* Path passed by --run-script; injected as RUN_SCRIPT_PATH Lua global. */
 static char s_run_script_path[1024] = "";
 
-/* Set by --perf-log; enables optimize.log writing in the brain. */
-static int s_perf_log = 0;
+/* Set by --profile / --profile-log (or always-on in dev mode). Captured
+ * as BRAIN_PROFILE / BRAIN_PROFILE_LOG Lua globals at brain init. */
+static int s_profile     = 0;
+static int s_profile_log = 0;
 
-void luaBrainsSetPerfLog(int enable) { s_perf_log = enable ? 1 : 0; }
+void luaBrainsSetProfile(int profile, int profile_log) {
+    s_profile     = profile     ? 1 : 0;
+    s_profile_log = profile_log ? 1 : 0;
+}
 
 void luaBrainsSetRunScript(const char *path) {
     if (path && path[0])
@@ -603,8 +608,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
 
-  lua_pushboolean(L, s_perf_log);
-  lua_setglobal(L, "BRAIN_PERF_LOG");
+  lua_pushboolean(L, s_profile);
+  lua_setglobal(L, "BRAIN_PROFILE");
+
+  lua_pushboolean(L, s_profile_log);
+  lua_setglobal(L, "BRAIN_PROFILE_LOG");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
    * off in --opt production mode to eliminate GC pressure. */

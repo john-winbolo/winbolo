@@ -136,6 +136,18 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
     const float kSubBarW   = 5.0f;
 
     float yCursor = origin.y + 1.0f;
+    /* Running tick offset (ms since think start) so the hover tooltip
+     * can show each section as "start - end (duration)" rather than
+     * a bare ms number. Sections are emitted in execution order and
+     * represent contiguous wall-clock spans, so summing prior ms gives
+     * the start offset of the current section within the tick. */
+    double running_ms = 0.0;
+    /* Capture mouse position once per frame so per-row hit-testing in
+     * the tooltip can highlight whichever sub/subsub block the cursor
+     * is actually over (vs. just the parent). The renderer loop below
+     * sets these indices when it finds a block whose rect contains the
+     * mouse; the tooltip then colors the matching row orange. */
+    const ImVec2 mouse_pos = ImGui::GetIO().MousePos;
     for (int i = 0; i < n; i++) {
         cJSON *s = cJSON_GetArrayItem(sections, i);
         if (!s) continue;
@@ -144,6 +156,14 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
         if (jn && cJSON_IsString(jn)) name = jn->valuestring;
         double ms = getNum(s, "ms", 0.0);
         if (ms <= 0.001) continue;
+        double parent_start_ms = running_ms;
+        running_ms += ms;
+        /* Per-main hover tracking. -1 means "no row hit at this level".
+         * Set by the sub/subsub loops below when their rect covers the
+         * mouse; the tooltip uses these to highlight the matching row. */
+        int hovered_sub_idx     = -1;  // index into this main's subs[]
+        int hovered_ss_sub_idx  = -1;  // sub index whose subsubs were hit
+        int hovered_ss_idx      = -1;  // index into that sub's subs[]
 
         float h = (float)(ms / scale_ms) * (bar_h - 2.0f);
         if (h < 2.0f) h = 2.0f;
@@ -154,6 +174,19 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
         ImU32 col = colorForName(name);
         ImVec2 p0(origin.x + kBlockX,         yCursor);
         ImVec2 p1(origin.x + bar_w - kBlockX, yCursor + h);
+        /* Double-click any block to put a one-line summary on the
+         * clipboard, so the user can paste timing into a chat. The
+         * deepest level wins because the per-rect checks below run in
+         * order: subsub overwrites sub overwrites main. */
+        bool main_hit = mouse_pos.x >= p0.x && mouse_pos.x <= p1.x &&
+                        mouse_pos.y >= p0.y && mouse_pos.y <= p1.y;
+        if (main_hit && ImGui::IsMouseDoubleClicked(0)) {
+            char buf[256];
+            SDL_snprintf(buf, sizeof(buf),
+                         "%s: %.3f - %.3f (%.3f) ms",
+                         name, parent_start_ms, parent_start_ms + ms, ms);
+            ImGui::SetClipboardText(buf);
+        }
         dl->AddRectFilled(p0, p1, col, 2.0f);
         /* Outline so sub-blocks inside don't blend into the parent. */
         dl->AddRect(p0, p1, shadeColor(col, -50), 2.0f);
@@ -214,6 +247,10 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
                             ImVec2(kTrunkX, subAreaY1),
                             trunk_col, 1.5f);
 
+                /* Track the running offset within the tick so the
+                 * double-click clipboard summary can include start/end
+                 * timestamps for the row, matching the tooltip format. */
+                double sub_start_offset = parent_start_ms;
                 for (int si = 0; si < sn; si++) {
                     cJSON *sb = cJSON_GetArrayItem(subs, si);
                     if (!sb) continue;
@@ -238,6 +275,19 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
                     /* Sub block, deeply indented. */
                     ImVec2 bp0(p0.x + kSubIndent, subYCursor);
                     ImVec2 bp1(p1.x - 4,           subYCursor + sh);
+                    bool sub_hit = mouse_pos.x >= bp0.x && mouse_pos.x <= bp1.x &&
+                                   mouse_pos.y >= bp0.y && mouse_pos.y <= bp1.y;
+                    if (sub_hit) {
+                        hovered_sub_idx = si;
+                        if (ImGui::IsMouseDoubleClicked(0)) {
+                            char buf[256];
+                            SDL_snprintf(buf, sizeof(buf),
+                                         "%s: %.3f - %.3f (%.3f) ms",
+                                         snm, sub_start_offset,
+                                         sub_start_offset + sms, sms);
+                            ImGui::SetClipboardText(buf);
+                        }
+                    }
                     dl->AddRectFilled(bp0, bp1, sub_col, 2.0f);
                     dl->AddRect(bp0, bp1, shadeColor(sub_col, -40), 2.0f);
                     /* Sub label. */
@@ -254,6 +304,95 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
                             ImVec2(bp0.x + 4, bp0.y),
                             IM_COL32(15, 15, 25, 255), snm);
                     }
+
+                    /* Third level: subsubs nested inside this sub block.
+                     * Same pattern as the main->sub loop above, just
+                     * indented further with `kSubIndent` added once
+                     * more. Only attempted when the sub block is tall
+                     * enough to host children at all. */
+                    cJSON *ssubs = cJSON_GetObjectItem(sb, "subs");
+                    int ssn = (ssubs && cJSON_IsArray(ssubs))
+                                ? cJSON_GetArraySize(ssubs) : 0;
+                    if (ssn > 0 && sh > 14.0f) {
+                        const float kSubSubIndent = 18.0f;
+                        float ssAreaY0 = bp0.y + 1.0f;
+                        float ssAreaY1 = bp1.y - 1.0f;
+                        float ssAreaH  = ssAreaY1 - ssAreaY0;
+                        if (ssAreaH > 3.0f) {
+                            double ss_scale = sms;
+                            if (ss_scale < 0.001) ss_scale = 1.0;
+                            float ssYCursor = ssAreaY0;
+                            /* Subsub running offset for clipboard summary. */
+                            double ssub_start_offset = sub_start_offset;
+                            const float kSSTrunkX = bp0.x + 6.0f;
+                            ImU32 ss_trunk_col = shadeColor(sub_col, -70);
+                            dl->AddLine(ImVec2(kSSTrunkX, ssAreaY0),
+                                        ImVec2(kSSTrunkX, ssAreaY1),
+                                        ss_trunk_col, 1.0f);
+                            for (int ssi = 0; ssi < ssn; ssi++) {
+                                cJSON *ssb = cJSON_GetArrayItem(ssubs, ssi);
+                                if (!ssb) continue;
+                                const char *ssnm = "?";
+                                cJSON *ssjn = cJSON_GetObjectItem(ssb, "name");
+                                if (ssjn && cJSON_IsString(ssjn)) ssnm = ssjn->valuestring;
+                                double ssms = getNum(ssb, "ms", 0.0);
+                                if (ssms <= 0.001) continue;
+                                float ssh = (float)(ssms / ss_scale) * ssAreaH;
+                                if (ssh < 1.0f) ssh = 1.0f;
+                                if (ssYCursor + ssh > ssAreaY1) {
+                                    ssh = ssAreaY1 - ssYCursor;
+                                    if (ssh < 0.5f) break;
+                                }
+                                ImU32 ss_col = shadeColor(colorForName(ssnm), -45);
+                                float ssMidY = ssYCursor + ssh * 0.5f;
+                                dl->AddLine(ImVec2(kSSTrunkX, ssMidY),
+                                            ImVec2(bp0.x + kSubSubIndent - 1, ssMidY),
+                                            ss_trunk_col, 1.0f);
+                                ImVec2 ssp0(bp0.x + kSubSubIndent, ssYCursor);
+                                ImVec2 ssp1(bp1.x - 2,             ssYCursor + ssh);
+                                bool ss_hit = mouse_pos.x >= ssp0.x && mouse_pos.x <= ssp1.x &&
+                                              mouse_pos.y >= ssp0.y && mouse_pos.y <= ssp1.y;
+                                if (ss_hit) {
+                                    hovered_ss_sub_idx = si;
+                                    hovered_ss_idx     = ssi;
+                                    if (ImGui::IsMouseDoubleClicked(0)) {
+                                        char buf[256];
+                                        /* Subsub names from the brain are
+                                         * bare ("misc", "search (...)") —
+                                         * prepend the parent sub's name so
+                                         * the clipboard line carries the
+                                         * full hierarchy ("steer/nav-
+                                         * dispatch/path/misc"). */
+                                        SDL_snprintf(buf, sizeof(buf),
+                                                     "%s/%s: %.3f - %.3f (%.3f) ms",
+                                                     snm, ssnm,
+                                                     ssub_start_offset,
+                                                     ssub_start_offset + ssms, ssms);
+                                        ImGui::SetClipboardText(buf);
+                                    }
+                                }
+                                dl->AddRectFilled(ssp0, ssp1, ss_col, 1.0f);
+                                dl->AddRect(ssp0, ssp1, shadeColor(ss_col, -40), 1.0f);
+                                char sslbl[64];
+                                SDL_snprintf(sslbl, sizeof(sslbl), "%s %.2fms", ssnm, ssms);
+                                ImVec2 ssts = ImGui::CalcTextSize(sslbl);
+                                if (ssh >= ssts.y + 1) {
+                                    dl->AddText(
+                                        ImVec2(ssp0.x + 3,
+                                               ssp0.y + (ssh - ssts.y) * 0.5f),
+                                        IM_COL32(20, 20, 30, 255), sslbl);
+                                } else if (ssh >= 7) {
+                                    dl->AddText(
+                                        ImVec2(ssp0.x + 3, ssp0.y),
+                                        IM_COL32(20, 20, 30, 255), ssnm);
+                                }
+                                ssub_start_offset += ssms;
+                                ssYCursor += ssh + 1.0f;
+                            }
+                        }
+                    }
+
+                    sub_start_offset += sms;
                     subYCursor += sh + 2.0f;
                 }
             }
@@ -263,17 +402,72 @@ static void renderTimeBar(cJSON *sections, float bar_w, float bar_h,
          * where the sub-blocks are too small to read in-line. */
         if (ImGui::IsMouseHoveringRect(p0, p1)) {
             ImGui::BeginTooltip();
-            ImGui::Text("%s: %.3f ms", name, ms);
+            /* Layout: "<start> ms  <indented_name>  (<duration> ms)".
+             * Left column is the absolute start offset within the tick,
+             * so rows naturally read top-to-bottom in time order. The
+             * duration is appended after the name in parens so the eye
+             * can scan either column independently. Fixed-width left
+             * column lines names up across all 3 nesting levels. */
+            ImGui::Text("%7.3f ms  %s  (%.3f ms)",
+                        parent_start_ms, name, ms);
             if (sn > 0) {
                 ImGui::Separator();
+                /* Subs are emitted in execution order too, so we can
+                 * walk them with the same accumulator pattern starting
+                 * at the parent's start offset. */
+                /* Highlight color for the row matching the cursor —
+                 * orange so it pops against the dimmed default. */
+                const ImVec4 kOrange(1.00f, 0.55f, 0.10f, 1.0f);
+                double sub_acc = parent_start_ms;
                 for (int si = 0; si < sn; si++) {
                     cJSON *sb = cJSON_GetArrayItem(subs, si);
                     if (!sb) continue;
                     const char *snm = "?";
                     cJSON *sjn = cJSON_GetObjectItem(sb, "name");
                     if (sjn && cJSON_IsString(sjn)) snm = sjn->valuestring;
-                    ImGui::TextDisabled("  %s: %.3f ms", snm,
-                                        getNum(sb, "ms", 0.0));
+                    double sms = getNum(sb, "ms", 0.0);
+                    /* The sub row is highlighted only when the cursor
+                     * is inside the sub's own rect AND not inside one
+                     * of its subsubs (so a hover deep into a subsub
+                     * doesn't double-highlight its parent sub). */
+                    bool sub_hit = (si == hovered_sub_idx) &&
+                                   (hovered_ss_sub_idx != si);
+                    if (sub_hit) {
+                        ImGui::TextColored(kOrange,
+                                           "%7.3f ms    %s  (%.3f ms)",
+                                           sub_acc, snm, sms);
+                    } else {
+                        ImGui::TextDisabled("%7.3f ms    %s  (%.3f ms)",
+                                            sub_acc, snm, sms);
+                    }
+                    /* Third level (subsubs) — emitters writing 4-space
+                     * indents land here. Display nested under their
+                     * parent sub so the tooltip mirrors the visual
+                     * hierarchy in the bar. */
+                    cJSON *ssubs = cJSON_GetObjectItem(sb, "subs");
+                    int ssn = (ssubs && cJSON_IsArray(ssubs))
+                                ? cJSON_GetArraySize(ssubs) : 0;
+                    double ssub_acc = sub_acc;
+                    for (int ssi = 0; ssi < ssn; ssi++) {
+                        cJSON *ssb = cJSON_GetArrayItem(ssubs, ssi);
+                        if (!ssb) continue;
+                        const char *ssnm = "?";
+                        cJSON *ssjn = cJSON_GetObjectItem(ssb, "name");
+                        if (ssjn && cJSON_IsString(ssjn)) ssnm = ssjn->valuestring;
+                        double ssms = getNum(ssb, "ms", 0.0);
+                        bool ss_hit = (si == hovered_ss_sub_idx)
+                                   && (ssi == hovered_ss_idx);
+                        if (ss_hit) {
+                            ImGui::TextColored(kOrange,
+                                               "%7.3f ms        %s  (%.3f ms)",
+                                               ssub_acc, ssnm, ssms);
+                        } else {
+                            ImGui::TextDisabled("%7.3f ms        %s  (%.3f ms)",
+                                                ssub_acc, ssnm, ssms);
+                        }
+                        ssub_acc += ssms;
+                    }
+                    sub_acc += sms;
                 }
             }
             ImGui::EndTooltip();

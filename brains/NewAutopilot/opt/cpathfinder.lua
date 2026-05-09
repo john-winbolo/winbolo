@@ -247,6 +247,12 @@ end
 --- @return status integer  0=running, 1=done, -1=failed
 --- @return nx integer      next step x (-1 if no step yet)
 --- @return ny integer      next step y (-1 if no step yet)
+-- Records which method satisfied the last path_to call: "dij" when the
+-- Dijkstra slate already covered the destination, "astar" when we had
+-- to run a fresh A*. Read by the steering perf-log emit so the timing
+-- panel can label "search (dijkstra)" vs "search (A*)".
+M._last_method = "dij"
+
 function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, skip_dijkstra)
   -- Try Dijkstra first — same cost surface, no duplicate A* search.
   -- Uses KIND_NORMAL (0) for general navigation.
@@ -259,11 +265,13 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
     local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy)
     if nx then
-      return 1, nx, ny  -- status=done, next step
+      M._last_method = "dij"
+      return 1, nx, ny
     end
   end
   -- Fallback to A* if Dijkstra hasn't reached the destination yet
   local status, nx, ny = cpf_path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget)
+  M._last_method = "astar"
   return status, nx, ny
 end
 
