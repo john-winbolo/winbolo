@@ -1419,11 +1419,37 @@ function Brain.think(info)
 
     -- Double-buffer restart: at each interval, snapshot the main slate into
     -- the backup so lookups always have complete coverage, then restart main.
-    local function maybe_copy_and_restart(main_idx, backup_idx, interval, max_cost, boat, allow_boat)
+    --
+    -- wait_for_done: when true, the schedule-driven restart only fires
+    -- once the current main is `done` (full map covered). Used for the
+    -- LONG slate, where at low capacity tiers a fresh restart can fail
+    -- to reach completion within `interval`. Restarting on schedule
+    -- regardless would leave the backup as a partial snapshot — and
+    -- the new main also partial — so the bot would never have a
+    -- complete cost surface. Holding off the restart until completion
+    -- preserves "always-complete backup" at the cost of a longer real
+    -- recompute cycle (e.g. ~40s at tier 1). Acceptable for long-range
+    -- strategic decisions: relative cost ranking is mostly preserved
+    -- under tank movement, and the short slate handles nearby tactical
+    -- routing with much fresher data.
+    --
+    -- Short slate keeps the original "restart on schedule" semantics:
+    -- its work fits in the budget at every tier so completion-within-
+    -- interval is the normal case, and stale short-range data hurts
+    -- tactical decisions much more than stale long-range data.
+    local function maybe_copy_and_restart(main_idx, backup_idx, interval,
+                                          max_cost, boat, allow_boat,
+                                          wait_for_done)
       refresh_slate(main_idx)
       local s = d.slates[main_idx]
       local age = now - s.started_tick
-      if not s.active or age >= interval then
+      local schedule_hit = age >= interval
+      if wait_for_done and schedule_hit and not s.done then
+        -- Holding off: keep stepping the current main until it
+        -- finishes, then snapshot + restart on the next pass.
+        return
+      end
+      if not s.active or schedule_hit then
         if s.active then
           local t_cs = clock_us()
           cpf.dijkstra_copy_slate(main_idx, backup_idx)
@@ -1436,12 +1462,15 @@ function Brain.think(info)
     end
 
     -- Short: land-only unless on a boat. Long: always allow boat.
+    -- Long passes wait_for_done=true so its backup is ALWAYS a fully-
+    -- complete map, even at low tiers where the long search may not
+    -- finish within DIJKSTRA_RECOMPUTE_INTERVAL.
     maybe_copy_and_restart(SLATE_SHORT_MAIN, SLATE_SHORT_BACKUP,
                            C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_MAX_COST,
-                           in_boat, in_boat)
+                           in_boat, in_boat, false)
     maybe_copy_and_restart(SLATE_LONG_MAIN, SLATE_LONG_BACKUP,
                            C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_MAX_COST,
-                           in_boat, 1)
+                           in_boat, 1, true)
 
     -- Step only the main slates (backups are frozen snapshots, done=true).
     local budget_short = C.DIJKSTRA_SHORT_BUDGET
@@ -1486,7 +1515,6 @@ function Brain.think(info)
   opt(string.format("dij sched done %.2f ms", (t_dij1 - t_dij0) / 1000))
 
   -- Outgoing message -- only one per tick
-  local t_comms0 = clock_us()
   local send_msg = nil
   local msg_dest = 0
 
@@ -1666,9 +1694,15 @@ function Brain.think(info)
   local t_mid = clock_us()
   opt(string.format("  blocked/banned sweep done %.2f ms (sweep=%s)",
     (t_mid - t_stuck1) / 1000, tostring(now % 200 == 0)))
-  metrics.set("us_mid", t_mid - t4)
-  opt(string.format("mid done %.2f ms", (t_mid - t4) / 1000))
-  opt(string.format("  comms+stuck done %.2f ms", (t_mid - t_comms0) / 1000))
+  -- mid covers from end-of-dij-sched (t_dij1) to here. Was using t4,
+  -- which double-counted the dij sched block since that has its own
+  -- main "dij sched done" emit. The unattributed remainder of mid
+  -- (mid total minus stuck-detection minus blocked/banned) is the
+  -- comms processing + respawn handling + stuck setup between t_dij1
+  -- and t_stuck0. Dropped the "  comms+stuck done" sub-emit since it
+  -- measured essentially the same span as mid itself.
+  metrics.set("us_mid", t_mid - t_dij1)
+  opt(string.format("mid done %.2f ms", (t_mid - t_dij1) / 1000))
   local t_water0 = t_mid
   local t_goal0 = clock_us()   -- initialized here; updated below if goal section runs
   local t_goal1 = nil
