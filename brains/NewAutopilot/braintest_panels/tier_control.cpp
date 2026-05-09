@@ -340,7 +340,10 @@ void renderTierControl(int registry_idx, const char *body) {
     double ratioEwma = getNum(root, "ratio_ewma", 0.0);
 
     /* ── Two columns: left = stacked time bar, right = tier controls. ── */
-    const float kBarColW = 200.0f;
+    /* 50/50 split: left = stacked time bar; right = tier controls.
+     * Was hard-coded 200 px which clamped the bar narrower than half
+     * the panel and let the right column's wider tables crowd in. */
+    const float kBarColW = ImGui::GetContentRegionAvail().x * 0.5f;
     ImGui::Columns(2, "tier_ctrl_cols", true);
     ImGui::SetColumnWidth(0, kBarColW);
 
@@ -360,8 +363,32 @@ void renderTierControl(int registry_idx, const char *body) {
                 if (s) total_ms += getNum(s, "ms", 0.0);
             }
         }
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1),
-                           "Tick: %.2f / %.2f ms", total_ms, targetMs);
+        /* Two timing references shown so you can verify alignment:
+         *   Think  — brain-measured wall-clock between the two
+         *            PERFORMANCE MARKER clocks bracketing Brain.think.
+         *            Same timer (clock_us) the section "done" emits use,
+         *            so sum-of-sections == Think.
+         *   host   — brain.lastThinkMs (PREVIOUS tick), the host's
+         *            SDL_GetPerformanceCounter delta around
+         *            luaBrainInstanceTick. The top-left HUD reads this
+         *            same value. Slightly larger than Think because it
+         *            includes Lua dispatch + return marshal overhead.
+         * The two should track each other within ~50-200 µs. If they
+         * diverge meaningfully, something between the markers is hiding
+         * from the section breakdown. */
+        double thinkTotal = getNum(root, "think_total_ms", -1.0);
+        if (thinkTotal >= 0.0) {
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1),
+                "Think: %.2f ms (host: %.2f, target %.2f)",
+                thinkTotal, lastMs, targetMs);
+        } else {
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1),
+                "host: %.2f / target %.2f ms (--perf-log off)",
+                lastMs, targetMs);
+        }
+        if (total_ms > 0.001) {
+            ImGui::TextDisabled("  sections sum: %.2f ms", total_ms);
+        }
         /* Window-relative height: window inner height minus current
          * y-cursor inside the window minus a small bottom margin. This
          * pulls the bar all the way to the bottom of the panel. */
