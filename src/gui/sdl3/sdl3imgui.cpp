@@ -92,6 +92,7 @@ extern "C" {
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_quickchat.h"
+#include "dialogs/imgui_controller_prompt.h"
 #include "imgui_steam_nav.h"
 
 extern "C" void windowSetQuitting(void);
@@ -2051,6 +2052,31 @@ static void renderSettingsPanel(ClientSim *cs) {
         }
 
 #ifndef __ANDROID__
+        /* Controller Mode (Phase 8.1) — desktop-only.  On Steam Deck the
+           UI is always in controller mode regardless of pref, so don't
+           offer the radio there. */
+        if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Controller Mode");
+            ControllerModePref cm = uiControllerModeGet();
+            int cur = (int)cm;
+            bool changed = false;
+            if (ImGui::RadioButton("Off##cmode",  cur == CONTROLLER_MODE_OFF))  { cur = CONTROLLER_MODE_OFF;  changed = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("On##cmode",   cur == CONTROLLER_MODE_ON))   { cur = CONTROLLER_MODE_ON;   changed = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Auto##cmode", cur == CONTROLLER_MODE_AUTO)) { cur = CONTROLLER_MODE_AUTO; changed = true; }
+            if (changed) {
+                uiControllerModeSet((ControllerModePref)cur);
+                gameFrontSaveCurrentPrefs();
+            }
+            bool ask = uiControllerPromptAskOnConnectGet();
+            if (ImGui::Checkbox("Ask when controller connected", &ask)) {
+                uiControllerPromptAskOnConnectSet(ask);
+                gameFrontSaveCurrentPrefs();
+            }
+        }
+
         if (!uiModeIsTablet()) {
             bool tabletMode = false;
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_TABLETMODE), &tabletMode)) {
@@ -3320,15 +3346,45 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
-    /* Pause-overlay open trigger: Start button in Deck mode. */
-    if (inputGamepadIsPauseEdge() && uiModeIsSteamDeck()) {
+    /* Phase 8.1 — controller-detected prompt.  Rising edge from no
+       gamepad → gamepad connected, when controller mode is currently off
+       and the player hasn't dismissed the prompt with "Don't ask again".
+       Skip on tablet (mobile has its own touch UX) and on Deck (already
+       always controller-mode).  Allowed in lobby — a controller plugged
+       in at the menu is exactly when the prompt is most useful.
+
+       First-frame sync: seed from the current connection state without
+       firing.  Without this, a controller plugged in before the main
+       context started rendering would always look like a "rising edge"
+       on the first frame and pop the prompt even if the player just
+       launched with the pad already attached. */
+    {
+        static bool s_initialized   = false;
+        static bool s_lastConnected = false;
+        bool nowConnected = inputGamepadIsConnected();
+        if (!s_initialized) {
+            s_lastConnected = nowConnected;
+            s_initialized   = true;
+        } else if (nowConnected && !s_lastConnected &&
+                   !uiModeIsTablet() && !uiModeIsSteamDeck() &&
+                   !uiShouldUseControllerMode() &&
+                   uiControllerPromptAskOnConnectGet() &&
+                   !controllerPromptIsOpen()) {
+            controllerPromptOpen();
+        }
+        s_lastConnected = nowConnected;
+    }
+
+    /* Pause-overlay open trigger: Start button in controller mode (Deck
+       always, desktop when the Controller Mode pref opts in — Phase 8.1). */
+    if (inputGamepadIsPauseEdge() && uiShouldUseControllerMode()) {
         deckPauseOpen();
     }
     /* Active-controller-disconnect open trigger: open pause overlay so the
-       player can recover (battery dies, dongle drops).  Deck-only for V1;
-       skip in lobby (keyboard UI) and when overlay is already open. */
+       player can recover (battery dies, dongle drops).  Skip in lobby
+       (keyboard UI) and when overlay is already open. */
     if (inputGamepadConsumeActiveDisconnect() &&
-        uiModeIsSteamDeck() && cs && !cs->inLobby &&
+        uiShouldUseControllerMode() && cs && !cs->inLobby &&
         !deckPauseIsOpen()) {
         deckPauseOpen();
     }
@@ -3370,12 +3426,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
     } else {
-        if (!uiModeIsSteamDeck()) {
+        /* Hide the menu bar in controller mode — controller-only players
+           can't reach the 22px menu strip; the pause overlay replaces it. */
+        if (!uiShouldUseControllerMode()) {
             renderMenuBar(cs);
         }
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
         quickChatRender(cs);
+        /* Controller-detected prompt (Phase 8.1) — also a no-op when
+           closed.  Rendered through the main context so it inherits
+           NavEnableGamepad for A/B selection. */
+        controllerPromptRender();
     }
 
     /* Detect when a menu-bar dropdown (child menu popup) just closed.

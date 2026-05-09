@@ -22,9 +22,17 @@
 #endif
 
 #include "ui_mode.h"
+#include "sdl3/input_gamepad.h"
 
 static UIMode s_currentMode = UI_MODE_DESKTOP;
 static bool   s_initialized = false;
+
+/* Phase 8.1 — controller-mode pref state.  Mirrored here so callers
+   can ask uiShouldUseControllerMode() without a gamefront.h include.
+   gamefront.c writes via uiControllerModeSet on prefs load and
+   on settings-dialog change. */
+static ControllerModePref s_controllerMode = CONTROLLER_MODE_OFF;
+static bool               s_controllerPromptAsk = true;
 
 /* Shared device preset index for Ctrl+T cycling (-1 = desktop, no preset) */
 int g_currentDevicePreset = -1;
@@ -133,4 +141,35 @@ bool uiModeIsTablet(void) {
 
 bool uiModeIsSteamDeck(void) {
   return uiModeGet() == UI_MODE_STEAM_DECK;
+}
+
+void uiControllerModeSet(ControllerModePref m) {
+  s_controllerMode = m;
+}
+
+ControllerModePref uiControllerModeGet(void) {
+  return s_controllerMode;
+}
+
+void uiControllerPromptAskOnConnectSet(bool ask) {
+  s_controllerPromptAsk = ask;
+}
+
+bool uiControllerPromptAskOnConnectGet(void) {
+  return s_controllerPromptAsk;
+}
+
+bool uiShouldUseControllerMode(void) {
+  /* Steam Deck: always controller-mode regardless of pref or connection
+     state — the built-in pad is part of the device. */
+  if (uiModeIsSteamDeck()) return true;
+  /* Desktop: Off is unconditional; On and Auto require a currently-
+     connected gamepad.  Tracking the live state means hot-unplug
+     reverts to keyboard UX (menu bar comes back) without bookkeeping
+     a snapshot, and the previous "Auto snapshots before SDL_INIT_GAMEPAD"
+     race goes away because there's nothing to snapshot.  Difference
+     between On and Auto now lives entirely in the connect-edge prompt
+     trigger: Off asks, On/Auto enter controller mode silently. */
+  if (s_controllerMode == CONTROLLER_MODE_OFF) return false;
+  return inputGamepadIsConnected();
 }

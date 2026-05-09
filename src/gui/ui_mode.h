@@ -27,6 +27,15 @@ typedef enum {
   UI_MODE_STEAM_DECK = 2
 } UIMode;
 
+/* Controller-mode preference (Phase 8.1).  Off and On are explicit;
+   Auto opts in at startup if a gamepad is connected, otherwise off,
+   and never flips mid-session — the auto-open prompt covers hot-plug. */
+typedef enum {
+  CONTROLLER_MODE_OFF  = 0,
+  CONTROLLER_MODE_ON   = 1,
+  CONTROLLER_MODE_AUTO = 2
+} ControllerModePref;
+
 /*********************************************************
 *NAME:          uiModeDetect
 *PURPOSE:
@@ -78,6 +87,44 @@ bool uiModeIsSteamDeck(void);
 *  uiModeDetect() finalises s_currentMode.
 *********************************************************/
 bool uiModeIsSteamDeckHardware(void);
+
+/*********************************************************
+*NAME:          uiShouldUseControllerMode
+*PURPOSE:
+*  Phase 8.1: returns true when the UI should run in
+*  controller-first mode (menu bar hidden, Start opens the
+*  pause overlay, dialog auto-size disabled).  True when
+*  any of:
+*    - current UI mode is Steam Deck (always controller),
+*    - controllerMode pref is ON,
+*    - controllerMode is AUTO and a gamepad was connected
+*      at startup (snapshotted on first call).
+*  Does NOT flip mid-session for AUTO — the controller-
+*  detected prompt handles hot-plug.
+*********************************************************/
+bool uiShouldUseControllerMode(void);
+
+/*********************************************************
+*NAME:          uiControllerModeSet / Get
+*PURPOSE:
+*  In-process getter/setter for the controllerMode pref.
+*  The on-disk value is owned by gamefront.c; these mirror
+*  it so the pref is visible to callers (sdl3imgui /
+*  imgui_settings) without dragging gamefront.h into every
+*  TU.  Set from prefs load and from the settings UI.
+*********************************************************/
+void               uiControllerModeSet(ControllerModePref m);
+ControllerModePref uiControllerModeGet(void);
+
+/*********************************************************
+*NAME:          uiControllerPromptAskOnConnectSet/Get
+*PURPOSE:
+*  Mirrors the "ask when controller connected" pref.
+*  When the prompt's "Don't ask again" is chosen the value
+*  flips to false; the settings dialog can re-enable it.
+*********************************************************/
+void uiControllerPromptAskOnConnectSet(bool ask);
+bool uiControllerPromptAskOnConnectGet(void);
 
 #ifdef __cplusplus
 }

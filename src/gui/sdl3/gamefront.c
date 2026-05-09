@@ -1819,6 +1819,20 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     g_gamepadScrollSensitivity = gs;
   }
 
+  /* Phase 8.1 — Controller Mode pref (Off / On / Auto).  Default Auto on
+     desktop so a player who plugs in a pad is offered the prompt; the
+     prompt itself can be silenced via "Ask when controller connected".
+     Steam Deck ignores this pref (uiShouldUseControllerMode is unconditional
+     on Deck). */
+  GetPrivateProfileString("SETTINGS", "Controller Mode", "2", buff, FILENAME_MAX, prefsFile);
+  {
+    int v = atoi(buff);
+    if (v < 0 || v > 2) v = 2;
+    uiControllerModeSet((ControllerModePref)v);
+  }
+  GetPrivateProfileString("SETTINGS", "Controller Prompt Ask", "Yes", buff, FILENAME_MAX, prefsFile);
+  uiControllerPromptAskOnConnectSet(YESNO_TO_TRUEFALSE(buff[0]));
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -2117,6 +2131,13 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
   WritePrivateProfileString("SETTINGS", "Gamepad Scroll Sens", buff, prefsFile);
+
+  /* Phase 8.1 — Controller Mode pref + prompt-on-connect flag. */
+  intToStr((int)uiControllerModeGet(), buff, sizeof(buff));
+  WritePrivateProfileString("SETTINGS", "Controller Mode", buff, prefsFile);
+  WritePrivateProfileString("SETTINGS", "Controller Prompt Ask",
+                            TRUEFALSE_TO_STR(uiControllerPromptAskOnConnectGet()),
+                            prefsFile);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

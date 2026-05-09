@@ -351,11 +351,13 @@ extern int g_currentDevicePreset;
 
 /* Set dialog window size; only re-center if the size actually changed.
  * If a device preset is active, uses the preset dimensions instead.
- * On Steam Deck, leave the host window alone so dialogs render into the
- * existing 1280x800 fullscreen surface — clamping to a 1024x768 default
- * would clip below the 800px screen height. */
+ * In controller mode (Deck always, desktop when the player opted in via
+ * Controller Mode), leave the host window alone so dialogs render into
+ * the existing fullscreen surface — clamping to a 1024x768 default
+ * would clip below smaller-than-1024 screen heights, and forcing a
+ * resize while the player is using a controller is jarring. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
-    if (uiModeIsSteamDeck()) {
+    if (uiShouldUseControllerMode()) {
         return;
     }
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&

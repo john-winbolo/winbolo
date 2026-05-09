@@ -1595,8 +1595,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
     /* Menu bar height — ImGui default is ~20 pixels, but we'll query it later.
-       For now, use a reasonable estimate. */
-    float menuBarHeight = 22.0f;
+       For now, use a reasonable estimate.  Zero when the menu bar is hidden
+       (controller mode) so the game render fills the freed top strip
+       instead of leaving a 22px band. */
+    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : 22.0f;
 
     /* Available area below menu */
     float availW = (float)winW;
@@ -1727,7 +1729,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    float menuBarHeight = 22.0f;
+    /* Zero when the menu bar is hidden (controller mode) — see matching
+       block above. */
+    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : 22.0f;
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 
