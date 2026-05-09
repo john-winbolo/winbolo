@@ -371,9 +371,26 @@ static const GamepadActionRow kGpActions[] = {
   { "glyph_scroll_down",  "XboxSeriesX_Right_Stick.png", "PS5_Right_Stick.png", "Switch_Right_Stick.png" },
   { "glyph_scroll_left",  "XboxSeriesX_Right_Stick.png", "PS5_Right_Stick.png", "Switch_Right_Stick.png" },
   { "glyph_scroll_right", "XboxSeriesX_Right_Stick.png", "PS5_Right_Stick.png", "Switch_Right_Stick.png" },
+  /* Start-equivalent button on each pad. */
+  { "glyph_pause",        "XboxSeriesX_Menu.png",        "PS5_Options.png",     "Switch_Plus.png" },
+  /* Quick chat — D-pad left on every set. */
+  { "glyph_quick_chat",   "XboxSeriesX_Dpad_Left.png",   "PS5_Dpad_Left.png",   "Switch_Dpad_Left.png" },
+  /* Confirm/dismiss — south face button on each pad.  Switch's
+     south face is labelled B (Nintendo's A/B are swapped vs Xbox). */
+  { "glyph_dismiss",      "XboxSeriesX_A.png",           "PS5_Cross.png",       "Switch_B.png" },
 };
 static const int kGpActionCount =
     (int)(sizeof(kGpActions) / sizeof(kGpActions[0]));
+
+SDL_Texture *glyphForActionAuto(const char *action_name) {
+  if (!action_name) return NULL;
+  SDL_Texture *t = glyphForAction(action_name);
+  if (t) return t;
+  if (strncmp(action_name, "glyph_", 6) == 0) return NULL;
+  char buf[80];
+  SDL_snprintf(buf, sizeof(buf), "glyph_%s", action_name);
+  return glyphForGamepadAction(buf);
+}
 
 SDL_Texture *glyphForGamepadAction(const char *glyphAction) {
   if (!glyphAction) return NULL;

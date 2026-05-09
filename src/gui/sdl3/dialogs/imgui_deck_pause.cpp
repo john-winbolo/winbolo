@@ -36,15 +36,16 @@ bool deckPauseIsOpen(void) {
     return s_open;
 }
 
-/* Pause-overlay button with optional glyph icon (Path A only).  When
-   action_name is NULL or no glyph is bound, falls back to plain text.
-   The button itself is the hit area; the glyph image is decoration on
-   the same row to the left.  Width adjusted so the row total matches
-   `size.x`. */
+/* Pause-overlay button with optional glyph icon.  Steam Input glyph
+   (Path A) takes precedence; falls back to the Xelu atlas (Path B)
+   when Steam Input is unavailable, and to plain text when neither
+   path resolves.  The button itself is the hit area; the glyph image
+   is decoration on the same row to the left.  Width adjusted so the
+   row total matches `size.x`. */
 static bool pauseButton(const char *action_name,
                         const char *label,
                         ImVec2 size) {
-    SDL_Texture *glyph = action_name ? glyphForAction(action_name) : NULL;
+    SDL_Texture *glyph = action_name ? glyphForActionAuto(action_name) : NULL;
     ImGui::PushID(label);
     bool clicked = false;
     if (glyph) {

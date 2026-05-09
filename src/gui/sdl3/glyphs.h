@@ -40,6 +40,12 @@ void glyphsShutdown(void);
  * (V1: never; restart required to pick up rebinds). */
 SDL_Texture *glyphForAction(const char *action_name);
 
+/* Tries Path A (Steam Input) first; on miss, looks up the Xelu
+ * atlas via Path B by prefixing "glyph_" to action_name.  Returns
+ * NULL if neither path resolves; callers handle NULL by falling
+ * back to text-only labels. */
+SDL_Texture *glyphForActionAuto(const char *action_name);
+
 /* --- Path B --- */
 
 typedef enum {

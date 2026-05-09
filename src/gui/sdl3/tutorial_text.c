@@ -44,6 +44,8 @@ static int kt_scroll_up(void)    { return keys.kiScrollUp; }
 static int kt_scroll_down(void)  { return keys.kiScrollDown; }
 static int kt_scroll_left(void)  { return keys.kiScrollLeft; }
 static int kt_scroll_right(void) { return keys.kiScrollRight; }
+/* Tutorial dismissal isn't user-rebindable — always Return. */
+static int kt_dismiss(void)      { return SDL_SCANCODE_RETURN; }
 
 typedef struct {
   const char  *token;
@@ -62,6 +64,7 @@ static const TokenEntry kTokens[] = {
   { "{SCROLL_DOWN}",  kt_scroll_down,  "glyph_scroll_down"   },
   { "{SCROLL_LEFT}",  kt_scroll_left,  "glyph_scroll_left"   },
   { "{SCROLL_RIGHT}", kt_scroll_right, "glyph_scroll_right"  },
+  { "{DISMISS}",      kt_dismiss,      "glyph_dismiss"       },
 };
 static const int kTokenCount = (int)(sizeof(kTokens) / sizeof(kTokens[0]));
 
