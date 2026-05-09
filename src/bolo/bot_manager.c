@@ -139,6 +139,7 @@ void botManagerRequestThreads(int total_runners) {
 }
 
 int botManagerGetThreads(void) { return g_threadsConfig; }
+int botManagerGetPendingThreads(void) { return s_pending_threads; }
 
 /* Apply any pending pool-resize request. Called from botManagerTick
  * before any dispatch happens, so the resize lands in the gap between

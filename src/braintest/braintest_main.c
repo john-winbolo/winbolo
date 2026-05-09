@@ -4317,13 +4317,15 @@ int main(int argc, char *argv[]) {
         luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];
     /* ── Per-run session directory ─────────────────────────────────────
-     * debug_sessions/<YYYYMMDD_HHMMSS>/ — created only when profile-log
-     * is on so non-logging runs don't leave stray empty folders behind.
-     * Bots' Lua DEBUG_SESSION_DIR global points here so optimize.log,
-     * performance.ticks.log, etc. all land in this run's folder.
-     * Sortable alphabetically gives time-of-run order in `ls`. */
+     * debug_sessions/<YYYYMMDD_HHMMSS>/ — created when EITHER --profile-log
+     * OR --log-json is on. Bots' Lua DEBUG_SESSION_DIR global points here
+     * so optimize.log, performance.ticks.log, brain_p<N>.jsonl, and
+     * goal_player<N>.log all land in this run's folder. Sortable
+     * alphabetically gives time-of-run order in `ls`. Skipped entirely
+     * when no log destination is enabled so non-logging runs don't leave
+     * stray empty folders behind. */
     char g_sessionDir[FILENAME_MAX] = "";
-    if (effProfileLog) {
+    if (effProfileLog || effLogJson) {
         time_t t = time(NULL);
         struct tm tmv;
 #ifdef _WIN32
