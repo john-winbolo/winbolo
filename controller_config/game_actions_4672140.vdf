@@ -37,7 +37,7 @@
                 "build_cursor_toggle" "#act_build_cursor_toggle"
                 "quick_chat"     "#act_quick_chat"
                 "pause"          "#act_pause"
-                "status_toggle"  "#act_status_toggle"
+                "view_players"  "#act_view_players"
             }
         }
 
@@ -77,7 +77,7 @@
             "act_build_cursor_toggle" "Toggle Build Cursor"
             "act_quick_chat"    "Quick Chat"
             "act_pause"         "Pause Menu"
-            "act_status_toggle" "Toggle Status Overlay"
+            "act_view_players" "View Players"
 
             "act_menu_accept"   "Accept"
             "act_menu_cancel"   "Back / Cancel"
