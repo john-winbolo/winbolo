@@ -31,6 +31,7 @@
 #include <string.h>
 #include "global.h"
 #include "transport.h"
+#include "client_sim.h"
 #include "../server/server_sim.h"
 
 /* Size of the delayed input queue — must be a power of 2 */
@@ -38,6 +39,7 @@
 
 typedef struct {
     ServerSim *sim;
+    ClientSim *cs;              /* Client-side sim this transport feeds */
     BYTE playerNum;
     uint16_t delay_ticks;       /* Simulated one-way latency in ticks (0 = none) */
     InputPacket inputQueue[INPUT_QUEUE_SIZE];
@@ -99,11 +101,12 @@ static bool localTick(void *ctx) {
     return TRUE;
 }
 
-Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
+Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     Transport t;
     TransportLocalCtx *lctx = (TransportLocalCtx *)malloc(sizeof(TransportLocalCtx));
     memset(lctx, 0, sizeof(TransportLocalCtx));
     lctx->sim = sim;
+    lctx->cs = cs;
     lctx->playerNum = playerNum;
     lctx->delay_ticks = 0;
     lctx->ticksServer = true;
@@ -115,8 +118,8 @@ Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
     return t;
 }
 
-Transport transportLocalCreatePassive(ServerSim *sim, BYTE playerNum) {
-    Transport t = transportLocalCreate(sim, playerNum);
+Transport transportLocalCreatePassive(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
+    Transport t = transportLocalCreate(sim, cs, playerNum);
     TransportLocalCtx *lctx = (TransportLocalCtx *)t.ctx;
     lctx->ticksServer = false;
     return t;

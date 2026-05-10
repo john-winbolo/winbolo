@@ -61,6 +61,8 @@
 #include "../winbolonet/http.h"
 #include "server_sim.h"
 #include "server_lifecycle.h"
+#include "../bolo/control_event.h"
+#include <assert.h>
 #include "../bolo/interpolation.h"
 #include "../bolo/position_history.h"
 #include "../bolo/screenbullet.h"
@@ -2718,4 +2720,231 @@ void serverSimMapDirDestroy(ServerSim *sim) {
         sim->mapDirFiles = NULL;
         sim->mapDirCount = 0;
     }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Subscriber registry                                                    */
+/* ---------------------------------------------------------------------- */
+
+#define SUBSCRIBER_SLOT_COUNT (MAX_TANKS + 1)
+#define SUBSCRIBER_HANDLE_ENCODE(slot, gen) (((int)(slot) << 16) | (uint16_t)(gen))
+#define SUBSCRIBER_HANDLE_SLOT(h)           (((h) >> 16) & 0xFFFF)
+#define SUBSCRIBER_HANDLE_GEN(h)            ((uint16_t)((h) & 0xFFFF))
+
+static ControlGamePhase serverPhaseToCtrlPhase(ServerState s) {
+    switch (s) {
+    case serverStateLobby:     return CTRL_PHASE_LOBBY;
+    case serverStateCountdown: return CTRL_PHASE_COUNTDOWN;
+    case serverStateRunning:   return CTRL_PHASE_RUNNING;
+    case serverStateGameOver:  return CTRL_PHASE_GAME_OVER;
+    }
+    return CTRL_PHASE_LOBBY;
+}
+
+static netStatus serverPhaseToNetStat(ServerState s) {
+    switch (s) {
+    case serverStateLobby:     return netLobby;
+    case serverStateCountdown: return netLobbyCountdown;
+    case serverStateRunning:   return netRunning;
+    case serverStateGameOver:  return netLobby;
+    }
+    return netLobby;
+}
+
+static void serverFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
+    evt->type = CTRL_GAME_PHASE;
+    evt->u.gamePhase.phase = serverPhaseToCtrlPhase(sim->state);
+    /* countdownTicks is a 50Hz counter; round up so a partial second still
+     * surfaces as 1 rather than 0 to a freshly-synced subscriber. */
+    if (sim->countdownTicks > 0) {
+        evt->u.gamePhase.countdownSeconds = (int)((sim->countdownTicks + 49) / 50);
+    } else {
+        evt->u.gamePhase.countdownSeconds = 0;
+    }
+}
+
+static void serverFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_SETTINGS;
+    memset(evt->u.lobbySettings.mapName, 0, MAP_STR_SIZE);
+    strncpy(evt->u.lobbySettings.mapName, sim->mapName, MAP_STR_SIZE - 1);
+    evt->u.lobbySettings.lobbyGameType    = gameTypeGet(&sim->sim.game);
+    evt->u.lobbySettings.lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
+    evt->u.lobbySettings.lobbyAiType      = (uint8_t)sim->botAiType;
+    evt->u.lobbySettings.lobbyTimeLimit   = sim->gameLength;
+    evt->u.lobbySettings.lobbyPillCount   = pillsGetNumPills(&sim->sim.pb);
+    evt->u.lobbySettings.lobbyBaseCount   = basesGetNumBases(&sim->sim.bs);
+    evt->u.lobbySettings.lobbyStartCount  = startsGetNumStarts(&sim->sim.ss);
+    evt->u.lobbySettings.mapSkipAvailable =
+        (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
+    evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
+    evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+}
+
+static void serverFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    ClientLobbySlot slot;
+    memset(&slot, 0, sizeof(slot));
+    slot.connected = sim->playerConnected[i] ? true : false;
+    if (slot.connected) {
+        const char *name = sim->sim.plyrs->item[i].playerName;
+        strncpy(slot.playerName, name, PACKET_MAX_PLAYER_NAME - 1);
+        slot.playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+        slot.teamNumber = sim->lobbyPlayers[i].teamNumber;
+        slot.ready      = sim->lobbyPlayers[i].ready;
+        slot.isBot      = sim->lobbyPlayers[i].isBot;
+        slot.pingMs     = sim->playerPing[i];
+        slot.countryCode[0] = sim->sim.plyrs->item[i].location[0];
+        slot.countryCode[1] = sim->sim.plyrs->item[i].location[1];
+        slot.countryCode[2] = '\0';
+        slot.clientType  = playersGetClientType(&sim->sim.plyrs, i);
+        slot.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    }
+    evt->type = CTRL_LOBBY_SLOT;
+    evt->u.lobbySlot.playerNum = i;
+    evt->u.lobbySlot.slot = slot;
+}
+
+static void serverFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    PlayerBitMap allies = playersGetAlliesBitMap(&sim->sim.plyrs, i);
+    BYTE numAllies = 0;
+    BYTE bit;
+
+    evt->type = CTRL_PLAYER_JOIN;
+    evt->u.playerJoin.playerNum = i;
+    memset(evt->u.playerJoin.name, 0, PACKET_MAX_PLAYER_NAME);
+    strncpy(evt->u.playerJoin.name, sim->sim.plyrs->item[i].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    evt->u.playerJoin.country[0] = sim->sim.plyrs->item[i].location[0];
+    evt->u.playerJoin.country[1] = sim->sim.plyrs->item[i].location[1];
+    evt->u.playerJoin.country[2] = '\0';
+    evt->u.playerJoin.clientType  = playersGetClientType(&sim->sim.plyrs, i);
+    evt->u.playerJoin.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    for (bit = 0; bit < MAX_TANKS && numAllies < MAX_TANKS; bit++) {
+        if (allies & ((PlayerBitMap)1u << bit)) {
+            evt->u.playerJoin.allies[numAllies++] = bit;
+        }
+    }
+    evt->u.playerJoin.numAllies = numAllies;
+}
+
+static void serverSimSyncSubscriber(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    ControlEvent evt;
+    BYTE i;
+
+    memset(&evt, 0, sizeof(evt));
+    serverFillGamePhaseEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    memset(&evt, 0, sizeof(evt));
+    serverFillLobbySettingsEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i]) {
+            memset(&evt, 0, sizeof(evt));
+            serverFillLobbySlotEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
+            memset(&evt, 0, sizeof(evt));
+            serverFillPlayerJoinEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+}
+
+SubscriberHandle serverSimRegisterSubscriber(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    int i;
+    int slot = -1;
+
+    if (sim == NULL || deliver == NULL) {
+        return SUBSCRIBER_HANDLE_INVALID;
+    }
+
+    for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+        if (sim->subscribers[i].deliver == NULL) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return SUBSCRIBER_HANDLE_INVALID;
+    }
+
+    sim->subscriberGen[slot]++;
+    sim->subscribers[slot].deliver    = deliver;
+    sim->subscribers[slot].ctx        = ctx;
+    sim->subscribers[slot].generation = sim->subscriberGen[slot];
+    sim->numSubscribers++;
+
+    serverSimSyncSubscriber(sim, deliver, ctx);
+
+    return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
+}
+
+void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
+    int slot;
+    uint16_t gen;
+
+    if (sim == NULL || h == SUBSCRIBER_HANDLE_INVALID) {
+        return;
+    }
+    slot = SUBSCRIBER_HANDLE_SLOT(h);
+    gen  = SUBSCRIBER_HANDLE_GEN(h);
+    if (slot < 0 || slot >= SUBSCRIBER_SLOT_COUNT) {
+        return;
+    }
+    if (sim->subscribers[slot].deliver == NULL ||
+        sim->subscribers[slot].generation != gen) {
+        return;
+    }
+    sim->subscribers[slot].deliver    = NULL;
+    sim->subscribers[slot].ctx        = NULL;
+    sim->subscribers[slot].generation = 0;
+    if (sim->numSubscribers > 0) {
+        sim->numSubscribers--;
+    }
+}
+
+void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
+    ControlSubscriber snapshot[SUBSCRIBER_SLOT_COUNT];
+    int snapCount = 0;
+    int i;
+
+    if (sim == NULL || evt == NULL) {
+        return;
+    }
+
+    /* Reentrancy guard: a deliver callback that triggers another publish
+     * is a design error. */
+    assert(!sim->publishing);
+
+    /* Server is not a subscriber: double-mutating sim itself would corrupt
+     * already-applied state. */
+    for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+        assert(sim->subscribers[i].ctx != sim);
+    }
+
+    sim->publishing = true;
+
+    /* Iterate a snapshot of the active list so a deliver that
+     * registers/unregisters does not corrupt our walk. */
+    for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+        if (sim->subscribers[i].deliver != NULL) {
+            snapshot[snapCount++] = sim->subscribers[i];
+        }
+    }
+    for (i = 0; i < snapCount; i++) {
+        snapshot[i].deliver(snapshot[i].ctx, evt);
+    }
+
+    sim->publishing = false;
 }

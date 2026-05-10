@@ -144,7 +144,7 @@ static void gymSetupGame(WinBoloGym *g) {
     serverSimAddPlayer(&g->serverSim, 0, "GymAgent", false);
     g->serverSim.sim.viewPlayer = 0;
 
-    g->transport = transportLocalCreate(&g->serverSim, 0);
+    g->transport = transportLocalCreate(&g->serverSim, &g->clientSim, 0);
 
     screenLoadCompressedMapCS(&g->clientSim, g->cachedMap, g->cachedMapLen,
                               "Gym", g->gameMode, false, 0,
