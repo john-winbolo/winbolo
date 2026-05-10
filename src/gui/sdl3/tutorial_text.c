@@ -20,7 +20,6 @@
 #include "../ui_mode.h"
 #include "../../common/wb_log.h"
 #include "glyphs.h"
-#include "input_source.h"
 
 /* Global key-binding struct; defined in winbolo.c (and the
  * platform main_*.c files). */
@@ -147,8 +146,7 @@ static int emitText(TutorialSeg *out, int idx, int max,
 static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
                              int *bufPos, const TokenEntry *t) {
   if (idx >= max) return idx;
-  InputSource src = inputSourceCurrent();
-  if (src == INPUT_SOURCE_GAMEPAD) {
+  if (uiShouldUseControllerMode()) {
     SDL_Texture *g = glyphForGamepadAction(t->gpAction);
     if (g) {
       out[idx].kind        = TUTORIAL_SEG_GLYPH_PNG;
