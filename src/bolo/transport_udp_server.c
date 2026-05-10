@@ -1898,6 +1898,16 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
 
     fprintf(stderr, "[UDP SERVER] Map change broadcast: %u bytes compressed map\n",
             udpServer.compressedMapSize);
+
+    /* Layout A: any meaningful change auto-unreadies all players. Map
+     * is the most disruptive — players must re-confirm they accept the
+     * new map before the host can start. Only fires when the server is
+     * actually in lobby state; mid-game map swaps (where this can be
+     * called via random map regeneration) skip the unready since
+     * everyone's mid-round anyway. */
+    if (sim->state == serverStateLobby) {
+        transportUdpServerBroadcastLobbyAutoUnready(sim);
+    }
 }
 
 void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]) {

@@ -2092,6 +2092,14 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
+    /* Layout A: restore allowNewPlayers if autoLockOnGameStart had
+     * flipped it off when the game started. This persists across
+     * rounds — operators can lock and have it re-arm next start. */
+    if (sim->autoLockOnGameStart && !sim->allowNewPlayers) {
+        sim->allowNewPlayers = sim->savedAllowNewPlayers;
+        transportUdpServerSetLock(sim, sim->savedAllowNewPlayers);
+    }
+
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
@@ -2359,6 +2367,15 @@ void serverSimStartGame(ServerSim *sim) {
 
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
+
+    /* Layout A: autoLockOnGameStart. Save the current allowNewPlayers
+     * value so we can restore it when the game ends, then close the
+     * lobby for the duration of the running game. */
+    sim->savedAllowNewPlayers = sim->allowNewPlayers;
+    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
+        sim->allowNewPlayers = FALSE;
+        transportUdpServerSetLock(sim, FALSE);  /* re-broadcasts lock state */
+    }
 
 #ifndef HAVE_SCREEN_C
     /* Log the lobby-to-game transition; a snapshot will be written
