@@ -63,6 +63,30 @@ typedef struct {
   bool isBot;          /* Managed by bot system, not by player packets */
 } LobbyPlayer;
 
+/* Per-team metadata — used by the Layout A lobby UI for color tinting,
+ * editable team names, and per-team bot naming pools. The `in_use` flag
+ * is 0 for any team number that has no metadata yet (renders with
+ * default name "Team N" and a fallback color). Team membership lives
+ * in LobbyPlayer.teamNumber; this struct carries presentation only. */
+#ifndef LOBBY_TEAM_NAME_LEN
+#define LOBBY_TEAM_NAME_LEN 32
+#endif
+typedef struct {
+  uint8_t in_use;       /* 0 = defaults; 1 = customised */
+  uint8_t color;        /* index into client-side kTeamColors[] */
+  uint8_t namingPool;   /* index into client-side bot pool table */
+  char    name[LOBBY_TEAM_NAME_LEN];
+} TeamMetadata;
+
+/* Per-bot config — extends bot identity with difficulty + personality
+ * the Layout A AiConfig sub-panel writes. Brain consumption is deferred
+ * (NewAutopilot accepts the values via brain.set_config but ignores
+ * them in v1). Indexed by slot (matches bot's playerNum). */
+typedef struct {
+  uint8_t difficulty;   /* 0=easy, 1=normal, 2=hard */
+  uint8_t personality;  /* 0=normal, 1=aggressive, 2=defensive, 3=sniper */
+} LobbyBotConfig;
+
 #ifndef BALANCEPROPOSAL_TYPEDEF
 #define BALANCEPROPOSAL_TYPEDEF
 typedef struct BalanceProposal BalanceProposal;
@@ -88,6 +112,29 @@ typedef struct ServerSim {
     ServerState  state;
     bool         lobbyEnabled;       /* false = no-lobby mode (skip lobby, play immediately) */
     LobbyPlayer  lobbyPlayers[MAX_TANKS];
+
+    /* ── Lobby Layout A — auto-ally team metadata + bot configs ────
+     * teams[] is presentation: name, color, naming pool — keyed by
+     * teamNumber 1..MAX_TANKS-1. teams[0] is reserved for "Unassigned"
+     * and never has metadata. Persists across rounds with the rest of
+     * the lobby state. */
+    TeamMetadata    teams[MAX_TANKS];
+    LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    /* Layout A lobby flags — all persist across rounds. */
+    bool     openHost;             /* anyone can edit when true */
+    bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
+    bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
+    bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */
+    uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+
+    /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
+     * The authoritative values live in GameSim/serverSim CLI args; these
+     * track the most recently broadcast value so we can detect/refuse
+     * locked changes and emit SETTING_CHG diffs cleanly. */
+    uint8_t  aiPolicy;             /* mirrors aiType passed at create */
+    bool     timeLimit;            /* derived from gameLength != UNLIMITED */
+    uint16_t timeMinutes;          /* user-facing minutes (display + edit) */
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
     int32_t      originalGameLength; /* Cached for reset between rounds */
     bool         hadPlayersEver;     /* For auto-close detection */
