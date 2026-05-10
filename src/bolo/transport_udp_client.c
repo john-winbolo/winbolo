@@ -1158,15 +1158,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_COUNTDOWN:
         /* [header 8] [secondsRemaining 1] */
         if (len >= PACKET_HEADER_SIZE + 1) {
-            c->clientSim->countdownSeconds = buf[PACKET_HEADER_SIZE];
-            c->clientSim->netStat = netLobbyCountdown;
+            ControlEvent evt = { .type = CTRL_GAME_PHASE };
+            evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+            evt.u.gamePhase.countdownSeconds = buf[PACKET_HEADER_SIZE];
+            clientSimApplyControl(c->clientSim, &evt);
         }
         break;
 
     case PACKET_GAME_START:
         /* [header 8] */
-        c->clientSim->netStat = netRunning;
-        c->clientSim->countdownSeconds = 0;
+        {
+            ControlEvent evt = { .type = CTRL_GAME_PHASE };
+            evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
+            evt.u.gamePhase.countdownSeconds = 0;
+            clientSimApplyControl(c->clientSim, &evt);
+        }
         /* Reset input ring so stale inputs from the previous game
          * are not sent as redundant packets in the new game. */
         c->inputRingCount = 0;
@@ -1250,10 +1256,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
 
+        {
+            ControlEvent phaseEvt = { .type = CTRL_GAME_PHASE };
+            phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+            phaseEvt.u.gamePhase.countdownSeconds = 0;
+            clientSimApplyControl(c->clientSim, &phaseEvt);
+            ControlEvent overEvt = { .type = CTRL_GAME_OVER };
+            clientSimApplyControl(c->clientSim, &overEvt);
+        }
+
         if (c->clientSim->inLobby) {
-            c->clientSim->netStat = netLobby;
-            c->clientSim->countdownSeconds = 0;
-            c->clientSim->lobbyChatHistory[0] = '\0';
             /* Reset timeout tracking — the server won't send snapshots
              * during gameOver countdown, and the client's catch-up loop
              * advances localTick rapidly which can trigger a spurious
