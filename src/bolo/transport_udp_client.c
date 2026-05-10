@@ -615,7 +615,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_PLAYER_JOINED:
+    case PACKET_PLAYER_JOINED: {
         /* Wire format: [pNum 1][name 32][cc 2][clientType 1][clientFlags 1]. */
         if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2) {
             int pos = PACKET_HEADER_SIZE;
@@ -633,10 +633,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             clientFlags = buf[pos++];
             if (clientType >= CLIENT_TYPE_COUNT) clientType = CLIENT_TYPE_UNKNOWN;
             if (pNum != c->playerNum) {
-                playersSetClientType(&c->clientSim->sim.plyrs, pNum, clientType);
-                playersSetClientFlags(&c->clientSim->sim.plyrs, pNum, clientFlags);
-                playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, pName, cc,
-                                 0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
+                ControlEvent evt = { .type = CTRL_PLAYER_JOIN };
+                evt.u.playerJoin.playerNum = pNum;
+                memcpy(evt.u.playerJoin.name, pName, sizeof(evt.u.playerJoin.name));
+                evt.u.playerJoin.name[sizeof(evt.u.playerJoin.name) - 1] = '\0';
+                evt.u.playerJoin.country[0] = cc[0];
+                evt.u.playerJoin.country[1] = cc[1];
+                evt.u.playerJoin.country[2] = '\0';
+                evt.u.playerJoin.clientType = clientType;
+                evt.u.playerJoin.clientFlags = clientFlags;
+                evt.u.playerJoin.numAllies = 0;
+                clientSimApplyControl(c->clientSim, &evt);
                 /* Show join message in lobby chat */
                 if (c->clientSim->inLobby) {
                     char joinMsg[64];
@@ -646,6 +653,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
         break;
+    }
 
     case PACKET_PLAYER_LIST:
         /* Player list format: [header][count]
@@ -682,12 +690,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     memcpy(allies, buf + plPos, numAllies);
                     plPos += numAllies;
                 }
-                if (pNum != c->playerNum) {
-                    playersSetClientType(&c->clientSim->sim.plyrs, pNum, clientType);
-                    playersSetClientFlags(&c->clientSim->sim.plyrs, pNum, clientFlags);
-                    playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, pName, cc,
-                                     0, 0, 0, 0, 0, FALSE,
-                                     numAllies, numAllies > 0 ? allies : NULL, FALSE);
+                {
+                    ControlEvent evt = { .type = CTRL_PLAYER_JOIN };
+                    evt.u.playerJoin.playerNum = pNum;
+                    memcpy(evt.u.playerJoin.name, pName, sizeof(evt.u.playerJoin.name));
+                    evt.u.playerJoin.name[sizeof(evt.u.playerJoin.name) - 1] = '\0';
+                    evt.u.playerJoin.country[0] = cc[0];
+                    evt.u.playerJoin.country[1] = cc[1];
+                    evt.u.playerJoin.country[2] = '\0';
+                    evt.u.playerJoin.clientType = clientType;
+                    evt.u.playerJoin.clientFlags = clientFlags;
+                    evt.u.playerJoin.numAllies = numAllies;
+                    if (numAllies > 0) {
+                        memcpy(evt.u.playerJoin.allies, allies, numAllies);
+                    }
+                    clientSimApplyControl(c->clientSim, &evt);
                 }
             }
             /* Server skips our own slot when building PLAYER_LIST, so the
@@ -705,11 +722,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memcpy(pName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
             pName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
             if (pNum != c->playerNum) {
-                /* Register player name from packet before leaving,
-                 * in case they were only auto-registered with a placeholder */
-                if (playersIsInUse(&c->clientSim->sim.plyrs, pNum) == TRUE) {
-                    playersLeaveGame(&c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, FALSE);
-                }
                 /* Show leave message in lobby chat */
                 if (c->clientSim->inLobby) {
                     char leaveMsg[64];
@@ -1076,6 +1088,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int pos = PACKET_HEADER_SIZE;
             uint8_t playerNum;
             ClientLobbySlot tmp;
+            ControlEvent evt = { .type = CTRL_LOBBY_SLOT };
 
             /* playerNum + connected flag (2 bytes minimum). */
             if (pos + 2 > len) {
@@ -1123,7 +1136,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 if (tmp.clientType >= CLIENT_TYPE_COUNT)
                     tmp.clientType = CLIENT_TYPE_UNKNOWN;
             }
-            c->clientSim->lobbySlots[playerNum] = tmp;
+            evt.u.lobbySlot.playerNum = playerNum;
+            evt.u.lobbySlot.slot = tmp;
+            clientSimApplyControl(c->clientSim, &evt);
         }
         break;
 
