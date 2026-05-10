@@ -412,12 +412,11 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
-    imguiApplyBoloTheme();
-    /* WbTheme owns identity colors (team colors, status indicators,
-     * badges) used by the lobby and other dialogs. Call after the
-     * existing chrome setup so its apply() — currently a no-op
-     * pass-through to StyleColorsDark — doesn't undo the bolo theme
-     * tweaks above. */
+    /* wbThemeInit() applies the active theme (Dark by default); the
+     * Dark theme's apply() calls imguiApplyBoloTheme internally, so
+     * we don't need to call it explicitly here. Identity colors
+     * (team colors, status indicators, badges) become available via
+     * g_theme for the lobby and other dialogs. */
     wbThemeInit();
     imguiLoadBoloFont(18.0f);
     ImGui_ImplSDL3_InitForSDLRenderer(pw->window, pw->renderer);
@@ -2534,7 +2533,6 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     io.IniFilename  = nullptr; /* no imgui.ini — avoid filesystem clutter */
 
     ImGui::StyleColorsDark();
-    imguiApplyBoloTheme();
     /* WbTheme — see comment on the other call site above. */
     wbThemeInit();
     imguiLoadBoloFont(18.0f);
