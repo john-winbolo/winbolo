@@ -175,6 +175,13 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     }
 }
 
+/* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
+static int s_expandedBotSlot = -1;
+
+/* Forward decl — defined below the team renderer. */
+static void renderBotAiConfig(ClientSim *cs, Transport *transport,
+                              int slot, int teamId, float s);
+
 /* ── Layout A — team-grouped player list ──────────────────────────
  * Renders players grouped under team headers with color tints from
  * WbTheme. Replaces the flat 5-column table with the mockup's
@@ -309,10 +316,20 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 }
             }
 
-            /* Name with appropriate tinting. */
+            /* Name with appropriate tinting. Bots are clickable to
+             * expand the AiConfig sub-row below; click again to collapse. */
             if (isBot) {
-                ImGui::TextColored(wbThemeColor(g_theme->botBadge), "[bot] %s",
-                    cs->lobbySlots[i].playerName);
+                char botLabel[80];
+                SDL_snprintf(botLabel, sizeof(botLabel),
+                             "%s [bot] %s##botclick%d",
+                             s_expandedBotSlot == i ? "v" : ">",
+                             cs->lobbySlots[i].playerName, i);
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      wbThemeColor(g_theme->botBadge));
+                if (ImGui::SmallButton(botLabel)) {
+                    s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                }
+                ImGui::PopStyleColor();
             } else if (isMe) {
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s (you)",
                     cs->lobbySlots[i].playerName);
@@ -345,7 +362,13 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 SDL_snprintf(btnId, sizeof(btnId), "x##rb%d", i);
                 if (ImGui::SmallButton(btnId)) {
                     transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                    if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
                 }
+            }
+
+            /* Expanded AiConfig sub-row for the clicked bot. */
+            if (isBot && s_expandedBotSlot == i && effectiveHost) {
+                renderBotAiConfig(cs, transport, i, teamId, s);
             }
         }
 
@@ -378,6 +401,95 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                         i == myPlayerNum ? " (you)" : "");
         }
     }
+}
+
+/* ── Layout A — bot AiConfig sub-row ──────────────────────────────
+ * Inline panel under an expanded bot row showing the name override
+ * with dice-reroll, difficulty dropdown, personality dropdown, and
+ * close button. Edits dispatch as PACKET_LOBBY_BOT_CONFIG. */
+static void renderBotAiConfig(ClientSim *cs, Transport *transport,
+                              int slot, int teamId, float s) {
+    if (slot < 0 || slot >= MAX_TANKS) return;
+
+    /* Build the "currently used names" array for the dice reroll —
+     * collect every bot name in the lobby so we don't collide. */
+    const char *usedNames[MAX_TANKS];
+    int usedCount = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (cs->lobbySlots[i].connected && cs->lobbySlots[i].isBot &&
+            cs->lobbySlots[i].playerName[0]) {
+            usedNames[usedCount++] = cs->lobbySlots[i].playerName;
+        }
+    }
+
+    ImGui::Indent(20.0f * s);
+    ImGui::PushID(slot);
+
+    /* ── Name + dice reroll ───────────────────────────────────── */
+    ImGui::TextDisabled("Name (override)");
+    char nameBuf[32];
+    strncpy(nameBuf, cs->lobbySlots[slot].playerName, sizeof(nameBuf) - 1);
+    nameBuf[sizeof(nameBuf) - 1] = '\0';
+    ImGui::SetNextItemWidth(180.0f * s);
+    bool nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    bool diceClicked = ImGui::SmallButton("Reroll");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Pick a fresh random name from the team's pool.");
+    }
+
+    if (diceClicked && transport) {
+        /* Pick a name from this team's pool, excluding all currently-used
+         * bot names (incl. this one — we want a NEW name, not the same). */
+        int pool = (teamId > 0 && teamId < 16) ? cs->lobbyTeamPool[teamId] : 0;
+        char pickBuf[32];
+        lobbyBotPoolPick(pool, usedNames, usedCount, pickBuf, sizeof(pickBuf));
+        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+            cs->lobbyBotDifficulty[slot], cs->lobbyBotPersonality[slot], pickBuf);
+    }
+    if (nameChanged && transport) {
+        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+            cs->lobbyBotDifficulty[slot], cs->lobbyBotPersonality[slot], nameBuf);
+    }
+
+    /* ── Difficulty dropdown ──────────────────────────────────── */
+    ImGui::SameLine(0.0f, 16.0f * s);
+    ImGui::TextDisabled("Difficulty");
+    ImGui::SameLine();
+    const char *diffItems[] = { "Easy", "Normal", "Hard" };
+    int diff = cs->lobbyBotDifficulty[slot];
+    if (diff < 0 || diff > 2) diff = 1;
+    ImGui::SetNextItemWidth(90.0f * s);
+    if (ImGui::Combo("##diff", &diff, diffItems, 3) && transport) {
+        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+            (uint8_t)diff, cs->lobbyBotPersonality[slot],
+            cs->lobbySlots[slot].playerName);
+    }
+
+    /* ── Personality dropdown ─────────────────────────────────── */
+    ImGui::SameLine(0.0f, 16.0f * s);
+    ImGui::TextDisabled("Personality");
+    ImGui::SameLine();
+    const char *persItems[] = { "Normal", "Aggressive", "Defensive", "Sniper" };
+    int pers = cs->lobbyBotPersonality[slot];
+    if (pers < 0 || pers > 3) pers = 0;
+    ImGui::SetNextItemWidth(110.0f * s);
+    if (ImGui::Combo("##pers", &pers, persItems, 4) && transport) {
+        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+            cs->lobbyBotDifficulty[slot], (uint8_t)pers,
+            cs->lobbySlots[slot].playerName);
+    }
+
+    /* ── Close button ─────────────────────────────────────────── */
+    ImGui::SameLine(0.0f, 16.0f * s);
+    if (ImGui::SmallButton("Done")) {
+        s_expandedBotSlot = -1;
+    }
+
+    ImGui::PopID();
+    ImGui::Unindent(20.0f * s);
+    ImGui::Spacing();
 }
 
 /* ── Layout A — small inline lock badge ───────────────────────────
