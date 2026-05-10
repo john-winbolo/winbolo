@@ -71,12 +71,17 @@ typedef struct {
   BYTE lgmPixelX;                   /* LGM Pixel X and Y positions */
   BYTE lgmPixelY;
   BYTE lgmFrame;                    /* LGM Frame */
+  /* Server emits log_LgmLocation only while the LGM is out, so a
+   * per-tick wipe followed by per-event set yields presence. lgmIsDead
+   * is sticky from log_LostMan until the next log_LgmLocation. */
+  bool lgmIsOut;
+  bool lgmIsDead;
   /* Misc */
   bool isChecked;                   /* Is this item checked */
   bool needUpdate;
   BYTE team;
   /* Per-player account flags (v1 logs only). Bit 0 = WBN, bit 1 = Steam.
-   * Mirrors MESSAGE_FLAG_WBN / MESSAGE_FLAG_STEAM from src/gui/lang.h. */
+   * Mirrors PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED from src/bolo/player_flags.h. */
   BYTE accountFlags;
 } player;
 
@@ -350,6 +355,25 @@ bool lv_playersIsInUse(BYTE playerNumber);
 *********************************************************/
 void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame);
 
+/*********************************************************
+*NAME:          lv_playersGetTankDetails
+*AUTHOR:        John Morrison
+*CREATION DATE: 31/8/99
+*LAST MODIFIED: 31/8/99
+*PURPOSE:
+* Gets the tank details for a player
+*
+*ARGUMENTS:
+*  playerNum - The player num to check
+*  mx        - Tank Map X Position
+*  my        - Tank Map Y Position
+*  px        - Tank Pixel X Position
+*  py        - Tank Pixel Y Position
+*  frame     - Tank Frame
+*  onBoat    - Whether the tank is on a boat
+*********************************************************/
+void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
+
 
 /*********************************************************
 *NAME:          lv_playersLeaveAlliance
@@ -379,6 +403,16 @@ void lv_playersLeaveAlliance(BYTE playerNum);
 void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember);
 
 void lv_playersLgmZero();
+
+/* Marks the LGM dead for the given slot. Cleared by the next
+ * lv_playersUpdateLgm (i.e. the LGM has respawned and is out again). */
+void lv_playersSetLgmDead(BYTE playerNum);
+
+/* Reports the camera-display state of an LGM. Both flags are FALSE for
+ * unused slots. isOut means a log_LgmLocation arrived in the current
+ * tick batch; isDead means a log_LostMan arrived since the last
+ * log_LgmLocation for this slot. */
+void lv_playersGetLgmStatus(BYTE playerNum, bool *isOut, bool *isDead);
 
 bool lv_playersChooseView(int x, int y);
 

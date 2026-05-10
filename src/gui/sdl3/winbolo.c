@@ -683,11 +683,20 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
           transport->sendInput(transport->ctx, &pkt);
-          /* Tick bot brains before the sim tick (local game only) */
+          /* Tick bot brains before the sim tick (local game only).
+           * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
+           * line reflects bot processing — brainHandlerRun below only
+           * covers the human's local autopilot. Advance ttick by the same
+           * duration so dwSysGame (computed as winboloTimer() - ttick at
+           * the bottom of the loop) doesn't also count it as sim time. */
           {
             ServerSim *serverSim = gameFrontGetServerSim();
             if (serverSim != NULL && botManagerGetNumBots() > 0) {
+              DWORD bttick = winboloTimer();
               botManagerTick(serverSim, screenGetAiTypeCS(cs));
+              DWORD botDur = winboloTimer() - bttick;
+              dwSysBrain += botDur;
+              ttick += botDur;
             }
           }
           transport->tick(transport->ctx);
@@ -1528,7 +1537,7 @@ void frontEndClearPlayer(playerNumbers value) {
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 
-void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant) {
+void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
   if (!screenGetGameRunningCS(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
@@ -1540,7 +1549,7 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   cc[2] = '\0';
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
-  sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, wbnParticipant, steamParticipant);
+  sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {

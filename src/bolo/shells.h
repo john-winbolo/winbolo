@@ -143,6 +143,50 @@ shells shellsCreate(void);
 *********************************************************/
 void shellsAddItem(struct GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle, TURNTYPE len, BYTE owner, bool onBoat);
 
+/* Pure shell-physics primitives — no game-state mutation. Used by
+ * both the live engine (shellsUpdate / shellsAddItem) and the brain's
+ * stateless trajectory simulator (brainPathfinderSimulateShot). Must
+ * stay bit-identical or the brain's "would my shot hit?" predictions
+ * diverge from reality. */
+
+/* Apply the SHELL_START_ADD initial offset that shellsAddItem uses
+ * before the first tick. Mutates *x, *y in place. xAdd/yAdd are the
+ * low-precision integer per-tick step from utilCalcDistance(angle,
+ * SHELL_SPEED). */
+void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd);
+
+/* Advance one tick of high-precision (24.8 fixed-point) shell
+ * motion. Adds (xStep, yStep) into the accumulators, extracts the
+ * whole-wu portion, and bumps *x, *y by it. xStep/yStep are the
+ * SHELL_SPEED * (sin, -cos) of the angle in 24.8 format from
+ * utilCalcDistanceHP — constant for the shell's lifetime. */
+void shellAdvance1Tick(WORLD *x, WORLD *y,
+                       int32_t *xAcc, int32_t *yAcc,
+                       int32_t xStep, int32_t yStep);
+
+/* Compute the shell-life tick budget the same way shellsAddItem
+ * stores it on the shell record: SHELL_LIFE * len - SHELL_START_ADD,
+ * floored at 0. `len` is the value the firing tank passed (sightLen/2
+ * for tanks, PILLBOX_FIRE_DISTANCE for pills). */
+int  shellLifeTicks(int len);
+
+/* Convert a (origin → target) wu vector to the integer bolo bradian
+ * angle (0..255) that a shooter would need to fire along that line.
+ * Bolo convention: N=0(-y), E=64(+x), S=128(+y), W=192(-x). Returns
+ * 0 if the two points coincide. Rounds (not truncates) so we land
+ * on the same integer the engine's tank.direction would carry. */
+TURNTYPE shellAngleFromTarget(WORLD ox, WORLD oy, WORLD tx, WORLD ty);
+
+/* Compute where a shell physically appears when a tank fires from
+ * (tank_x, tank_y) at the given angle. Combines utilCalcDistance
+ * (low-precision per-tick step) with the SHELL_START_ADD initial
+ * offset that shellsAddItem applies — same math as the engine, so
+ * the brain knows the exact spawn coordinate before the engine sets
+ * it. Writes spawn position into *out_x, *out_y. */
+void shellSpawnPos(WORLD tank_x, WORLD tank_y, TURNTYPE angle,
+                   WORLD *out_x, WORLD *out_y);
+
+
 /*********************************************************
 *NAME:          shellsUpdate
 *AUTHOR:        John Morrison
@@ -307,5 +351,10 @@ void shellsNetExtract(struct GameSim *sim, shells *value, pillboxes *pb, BYTE *b
 *  bottomPos - Bottom position of rectangle
 *********************************************************/
 void shellsGetBrainShellsInRect(struct ClientSim *cs, struct GameSim *sim, shells *value, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos);
+
+/* --- Debug: shell-hit ring buffer (populated by shellsUpdate on collision). --- */
+void shellsDebugHitLogClear(void);
+int  shellsDebugHitLogCount(void);
+int  shellsDebugHitLogGet(int i, int *wx, int *wy, uint32_t *tick, uint8_t *owner);
 
 #endif /* SHELLS_H */

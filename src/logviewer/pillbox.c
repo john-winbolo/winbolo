@@ -170,6 +170,30 @@ BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
   return 0;
 }
 
+pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum) {
+  pillAlliance returnValue = pillNeutral;
+  BYTE self;
+
+  if (*value == NULL) return returnValue;
+  if (pillNum < 1 || pillNum > (*value)->numPills) return returnValue;
+  pillNum--;
+  self = lv_playersGetSelf();
+
+  if ((*value)->item[pillNum].armour == 0 && (*value)->item[pillNum].inTank == FALSE) {
+    return pillDead;
+  }
+  if ((*value)->item[pillNum].owner == self) {
+    return (*value)->item[pillNum].inTank ? pillTankGood : pillGood;
+  }
+  if (lv_playersIsAllie((*value)->item[pillNum].owner, self) == TRUE) {
+    return (*value)->item[pillNum].inTank ? pillTankAllie : pillAllie;
+  }
+  if ((*value)->item[pillNum].owner != NEUTRAL) {
+    return (*value)->item[pillNum].inTank ? pillTankEvil : pillEvil;
+  }
+  return returnValue;
+}
+
 
 /*********************************************************
 *NAME:          lv_pillsGetPill
@@ -401,8 +425,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
-    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
-    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
@@ -410,11 +433,9 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     /* Stole pill */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
-    strncpy(args.playerName, ownerName, sizeof(args.playerName) - 1);
-    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner);
-    strncpy(args.otherName, oldOwner, sizeof(args.otherName) - 1);
-    args.otherName[sizeof(args.otherName) - 1] = '\0';
+    snprintf(args.otherName, sizeof(args.otherName), "%s", oldOwner);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }
   (*value)->item[pillNum].owner = owner;

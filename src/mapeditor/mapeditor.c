@@ -73,7 +73,7 @@ extern int WritePrivateProfileString(const char *section, const char *key,
 static const float zoomSteps[] = {
     0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
     1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
-    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f
+    9.0f, 10.0f
 };
 #define ZOOM_STEP_COUNT (sizeof(zoomSteps) / sizeof(zoomSteps[0]))
 #define ZOOM_STEP_1X 5  /* index of 1.0 in the table */
@@ -1827,6 +1827,12 @@ static void meRemoveRecentFile(MapEditorState *ed, const char *path) {
 }
 
 static void meAddRecentFile(MapEditorState *ed, const char *path) {
+    /* Caller may pass a pointer into ed->recentFiles itself (e.g. open-recent
+     * menu). The shifts below would corrupt that aliased memory mid-update,
+     * so snapshot the path first. */
+    char pathCopy[ME_PATH_MAX];
+    SDL_strlcpy(pathCopy, path, ME_PATH_MAX);
+    path = pathCopy;
     /* Remove existing entry for this path (if any) */
     for (int i = 0; i < ed->numRecentFiles; i++) {
         if (strcmp(ed->recentFiles[i], path) == 0) {
@@ -3856,10 +3862,10 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             meEnsureOffscreen(ed, renderW, renderH);
             SDL_SetRenderTarget(renderer, ed->offscreenTex);
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_RenderClear(renderer);
+            SDL_RenderFillRect(renderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
         } else {
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_RenderClear(renderer);
+            SDL_RenderFillRect(renderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
         }
 
         meRenderTiles(ed, renderW, renderH);
@@ -3949,7 +3955,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                               &ed->showInspector, &ed->showObjects,
                               &ed->showOverview, &ed->showStatsPanel,
                               &ed->showStampLibrary,
-                              ed->fromMainMenu);
+                              ed->fromMainMenu,
+                              ed->zoomStepIndex, (int)ZOOM_STEP_COUNT,
+                              zoomSteps);
 
         /* Handle menu actions */
         if (menuAction.wantNew) {
@@ -4013,6 +4021,24 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         }
         if (menuAction.togglePillRanges) {
             ed->showPillRanges = !ed->showPillRanges;
+        }
+        if (menuAction.wantZoomIn) {
+            if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
+            ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
+            ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+        }
+        if (menuAction.wantZoomOut) {
+            if (ed->zoomStepIndex > 0) ed->zoomStepIndex--;
+            ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
+            ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+        }
+        if (menuAction.wantZoomSet) {
+            int idx = menuAction.zoomSetIndex;
+            if (idx >= 0 && idx < (int)ZOOM_STEP_COUNT) {
+                ed->zoomStepIndex = idx;
+                ed->zoomLevel = zoomSteps[idx];
+                ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+            }
         }
         if (menuAction.wantValidate) {
             meRunValidation(ed);

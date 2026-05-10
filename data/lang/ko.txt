@@ -1116,3 +1116,17 @@ STR_LV_INFO_NO_WBN_KEY=댓글을 보려면 WinBolo.net 키가 있는 로그를 �
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=WinBolo.net에서 열기...
+
+# Log viewer zoom menu
+STR_LV_ZOOM=확대/축소
+STR_LV_ZOOM_IN=확대
+STR_LV_ZOOM_OUT=축소
+
+# System Info panel — server-side bot/sim telemetry labels
+STR_DLGSYSINFO_SERVER=서버
+STR_DLGSYSINFO_BOTPOOL=봇 풀
+STR_DLGSYSINFO_TICK=틱
+STR_DLGSYSINFO_BRAIN=Brain
+STR_DLGSYSINFO_SIMULATION=시뮬레이션
+STR_DLGSYSINFO_BOTPREP=봇 준비
+STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain 초과

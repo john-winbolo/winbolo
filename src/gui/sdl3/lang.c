@@ -534,7 +534,7 @@ static const LangEntry langTable[] = {
     {788,  "Single Player"},
     {789,  "Local"},
     {790,  "Map Editor"},
-    {791,  "Log Viewer"},
+    {791,  "WinBolo Log Viewer"},
     {792,  "Internet"},
     {793,  "Everard Island (Inbuilt)"},
     {794,  "Load a Map"},
@@ -1069,6 +1069,20 @@ static const LangEntry langTable[] = {
 
     /* Log viewer File menu — open log from WinBolo.net */
     {1246, "Open from WinBolo.net..."},
+
+    /* Log viewer zoom menu */
+    {1247, "Zoom"},
+    {1248, "Zoom In"},
+    {1249, "Zoom Out"},
+
+    /* System Info panel — server-side bot/sim telemetry labels */
+    {1250, "Server"},
+    {1251, "Bot pool"},
+    {1252, "Tick"},
+    {1253, "Brain"},
+    {1254, "Simulation"},
+    {1255, "Bot prep"},
+    {1256, "Brain overruns"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display

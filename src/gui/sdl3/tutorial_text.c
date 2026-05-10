@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "../Input.h"
+#include "../input.h"
 #include "../lang.h"
 #include "../ui_mode.h"
 

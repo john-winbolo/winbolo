@@ -157,7 +157,8 @@ bool sdl3ImguiWantsKeyboard(void);
 void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *countryCode);
 void sdl3ImguiClearPlayer(unsigned char playerNum);
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked);
-void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping, bool wbn, bool steam);
+void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
+                               uint8_t clientType, uint8_t clientFlags);
 
 /*********************************************************
 *NAME:          sdl3ImguiGetGlobeIcon / GetSteamIcon
@@ -170,30 +171,45 @@ SDL_Texture *sdl3ImguiGetGlobeIcon(void);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiGetPlatformIcon
+*PURPOSE:
+*  Returns the SDL_Texture for the platform icon matching
+*  clientType (a CLIENT_TYPE_* enum value). Loads the SVGs
+*  lazily on first call. Returns NULL for CLIENT_TYPE_UNKNOWN
+*  or out-of-range values. CLIENT_TYPE_WEB falls back to the
+*  globe icon since no dedicated web.svg exists.
+*********************************************************/
+SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
+
+/*********************************************************
 *NAME:          renderPlayerName
 *PURPOSE:
 *  Renders a player name with its decorations as a single
-*  inline ImGui run: WBN globe (verified) and/or Steam icon
-*  to the left of the name, optional country flag to the
-*  right when showCountry is true and countryCode is a real
-*  ISO 3166 alpha-2 code. Both the WBN and Steam icons can
-*  appear together (a user signed into both); only the WBN
-*  icon implies verified status.
+*  inline ImGui run: platform icon (gold-tinted if supporter)
+*  then WBN globe (verified) then Steam icon to the left of
+*  the name, optional country flag to the right when
+*  showCountry is true and countryCode is a real ISO 3166
+*  alpha-2 code. Steam badge surfaces for either a
+*  WBN-linked Steam account or a player running the Steam
+*  build of the client (intentional widening: previously
+*  WBN-link only).
 *
 *ARGUMENTS:
 *  name        - UTF-8 NUL-terminated display name. NULL or
-*                "" emits just the WBN/Steam badge sequence
-*                (icon-only mode) — useful for surfaces that
-*                render the name via their own widget
-*                (Selectable, TextColored, etc.). In that
-*                mode countryCode/showCountry are ignored.
-*  flags       - MESSAGE_FLAG_WBN | MESSAGE_FLAG_STEAM
+*                "" emits just the icon sequence (icon-only
+*                mode) — useful for surfaces that render the
+*                name via their own widget (Selectable,
+*                TextColored, etc.). In that mode
+*                countryCode/showCountry are ignored.
+*  flags       - PLAYER_FLAG_* bits (see players.h)
+*  clientType  - CLIENT_TYPE_* enum — drives platform icon.
+*                CLIENT_TYPE_UNKNOWN renders no platform icon.
 *  countryCode - 2-letter ISO 3166 code, "" or "XX" for
 *                unknown
 *  showCountry - whether to render the country flag (the
 *                "Show country flags in chat" preference)
 *********************************************************/
-void renderPlayerName(const char *name, uint8_t flags,
+void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
 
 #ifdef __cplusplus

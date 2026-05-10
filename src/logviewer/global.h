@@ -36,12 +36,6 @@ typedef struct { long left, top, right, bottom; } RECT;
 /* Portable compile-time assertions and packed-struct macros */
 #include "../bolo/platform_types.h"
 
-/* Byte type def */
-typedef unsigned char  BYTE;
-typedef BYTE MAP_X, MAP_Y;
-typedef float TURNTYPE;
-typedef float SPEEDTYPE;
-
 /* Boolean type */
 #undef TRUE
 #define TRUE 1
@@ -53,20 +47,6 @@ typedef BYTE bool;
 #endif
 #endif
 typedef BYTE Bool;
-
-
-/* The world co-ordinate for tank - It is a 16 bit number*/
-/* Top 8 bits (or byte) represent position on the map */
-/* Next 2 bits represent the tanks sub-map position in pixels (0-15) */
-/* Last 2 bits sub 40 pixels */
-typedef unsigned short WORLD;
-
-/* WORD data type */
-typedef unsigned short WORD;
-
-
-
-typedef uint32_t PlayerBitMap;
 
 /* Strings of 36 charectors */
 #define MAP_STR_SIZE 36
@@ -211,9 +191,12 @@ void lv_efree(Generic object);
 /* Game time is set to -1 if it an untimed game */
 #define UNLIMITED_GAME_TIME -1
 
-/* Player Name string lengths */
-#define PLAYER_NAME_LEN 33
-#define PLAYER_NAME_LAST 32
+/* Player Name string lengths — must match bolo/global.h. The value is
+ * baked into the layout of MessageArgs (gui/lang.h), so a mismatch
+ * shifts every field after playerName and silently breaks lang
+ * substitution across the TU boundary. */
+#define PLAYER_NAME_LEN 65
+#define PLAYER_NAME_LAST 64
 
 /* 0xFF is neutral */
 #define NEUTRAL 0xFF
@@ -221,12 +204,21 @@ void lv_efree(Generic object);
 /* Everytime something gets hit armour is decreased by this amount */
 #define DAMAGE 5
 
+/* Mine explosion damage (mirrors bolo/tank.h MINE_DAMAGE) */
+#define MINE_DAMAGE 10
+
+/* Tank inventory caps (mirror bolo/gametype.h) */
+#define TANK_FULL_ARMOUR 40
+#define TANK_FULL_SHELLS 40
+#define TANK_FULL_MINES  40
+#define TANK_FULL_TREES  40
+
 #define M_W_SHIFT_SIZE 8
 
 /* Version number */
 #define STRVER "1.09"
 
-#define DIALOG_BOX_TITLE "Log Viewer"
+#define DIALOG_BOX_TITLE "WinBolo Log Viewer"
 
 #define MESSAGE_QUOTES "\""
 

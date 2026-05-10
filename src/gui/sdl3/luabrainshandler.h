@@ -41,6 +41,7 @@
 #include "../../bolo/brain.h"  /* For BrainInfo, aiType */
 #include "../../bolo/brain_pathfinder.h"
 #include "../../bolo/brain_worldsim.h"
+#include "../../bolo/brain_overlay.h"
 
 /* Forward declarations */
 struct ClientSim;
@@ -315,7 +316,20 @@ typedef struct {
     const BYTE *worldPtr;       /* get_terrain upvalue (updated per-tick) */
     BrainPathfinder *pathfinder; /* C pathfinder instance (cpf_* globals) */
     BrainWorldSim *worldsim;     /* C world simulator instance (wsim_* globals) */
+    /* Per-brain overlay command buffer + the pointer-to-pointer the
+     * Lua overlay_* closures hold as upvalue. brainCoreRegisterOverlay
+     * captures &overlayPtr so we could swap buffers per tick (we
+     * don't, but the indirection is what the API expects). */
+    OverlayCmdBuffer  overlay;
+    OverlayCmdBuffer *overlayPtr;
     BrainInfo bInfo;            /* Per-instance BrainInfo */
+    /* True iff the most recent luaBrainInstanceTick aborted via the
+     * tick-budget count hook (Lua error suffix
+     * "tick_budget_exceeded"). The producer reads this after the
+     * worker returns to decide between the survive-with-wasKilled
+     * path and the real-error remove-the-bot path. Reset to false at
+     * the top of each tick. */
+    bool wasKilled;
 } LuaBrainInstance;
 
 /*********************************************************
@@ -329,7 +343,53 @@ typedef struct {
 *********************************************************/
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
-                            aiType aiMode);
+                            aiType aiMode, bool debug_mode);
+
+/*********************************************************
+*NAME:          luaBrainsSetRunScript
+*PURPOSE:
+*  Sets a Lua script path for --run-script mode.
+*  When non-empty, RUN_SCRIPT_PATH is injected as a Lua
+*  global so Brain.open can dofile() the script and exit.
+*  Call before any brain instance is created.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. The path is captured into the per-brain
+*  RUN_SCRIPT_PATH Lua global at luaBrainInstanceCreate()
+*  time; modification after the first instance exists has no
+*  effect on already-created brains.
+*********************************************************/
+void luaBrainsSetRunScript(const char *path);
+
+/*********************************************************
+*NAME:          luaBrainsSetProfile
+*PURPOSE:
+*  Two-flag profiling toggle:
+*    profile     — drives BRAIN_PROFILE Lua global. When true,
+*                  the brain emits opt() phase markers and
+*                  populates opt.last_sections so the BrainTest
+*                  Y panel time bar has data.
+*    profile_log — drives BRAIN_PROFILE_LOG. When true, optimize.lua
+*                  flushes per-tick blocks to optimize.log and
+*                  performance.ticks.log. Implies profile.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. Captured into the per-brain Lua globals at
+*  luaBrainInstanceCreate() time; later modification has no
+*  effect on already-created brains.
+*********************************************************/
+void luaBrainsSetProfile(int profile, int profile_log);
+
+/*********************************************************
+*NAME:          luaBrainsSetLogJson
+*PURPOSE:
+*  Drives the BRAIN_LOG_JSON Lua global. When true, the
+*  brain opens its JSONL behavior trace files (brain_p<N>.jsonl,
+*  goal_player<N>.log) and emits per-tick decision events.
+*  Independent of profile/profile-log: behavior trace is about
+*  decisions, not performance.
+*********************************************************/
+void luaBrainsSetLogJson(int enable);
 
 /*********************************************************
 *NAME:          luaBrainInstanceTick
@@ -349,6 +409,48 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst);
 *  instance.
 *********************************************************/
 void luaBrainInstanceDestroy(LuaBrainInstance *inst);
+
+/*********************************************************
+*NAME:          luaBrainSetTickInputs
+*PURPOSE:
+*  Writes the per-tick host-provided inputs onto the brain's
+*  Lua table:
+*    brain.lastThinkMs - wall-clock cost of the previous tick
+*    brain.targetMs    - per-bot budget for the current tick
+*    brain.wasKilled   - set when the previous tick was forced
+*                        to abort (always false today; see plan
+*                        for the kill-on-overrun follow-up)
+*  Brains may read these to scale their work voluntarily; they
+*  are not required to do so.
+*
+*  Producer-thread only — pushes / pops on the brain's own
+*  lua_State while the bot's worker thread is idle, so no
+*  cross-thread Lua access happens. Stack-balanced (pops every
+*  value it pushes).
+*********************************************************/
+void luaBrainSetTickInputs(LuaBrainInstance *inst,
+                           double lastThinkMs,
+                           double targetMs,
+                           bool   wasKilled);
+
+/*********************************************************
+*NAME:          luaBrainInstanceSetDebugMode
+*PURPOSE:
+*  Updates the BRAIN_DEBUG_MODE Lua global on this instance's
+*  VM. Lets BrainTest toggle between "viz-supporting work
+*  active" and "production-mode skip" at runtime, so the user
+*  can feel the perf cost of debug-only allocations without
+*  reloading the brain.
+*
+*  Note: the brain source itself is whichever was loaded at
+*  construction (brains/<bot>/init.lua for debug=true,
+*  brains/<bot>/opt/init.lua for debug=false). This setter
+*  only flips the runtime gate — `if BRAIN_DEBUG_MODE then`
+*  blocks in the un-stripped source will start/stop executing.
+*  In stripped opt/ source those blocks were removed by
+*  lua_strip and the toggle has no effect.
+*********************************************************/
+void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled);
 
 /*********************************************************
 *NAME:          luaBrainInstanceGetSettings

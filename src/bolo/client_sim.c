@@ -153,6 +153,13 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
+  /* Sentinel value for "no batch start assigned" — clients never run the
+   * batch placement, but startsGetStart still checks the slot when bots /
+   * single-player tankCreate runs, so leave them all unset. */
+  for (int i = 0; i < MAX_TANKS; i++) {
+    cs->sim.pendingStartIdx[i] = MAX_STARTS;
+  }
+
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
   cs->sim.isLocalTransport = true;
@@ -203,7 +210,6 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
     cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
   }
   pillsCreate(&cs->sim.pb);
-  logCreate();
   screenBrainMapCreate(cs);
   
   /* Initialize brain state (now per-instance in the struct).
@@ -255,7 +261,6 @@ void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
  *  cs - Pointer to the ClientSim to destroy
  *********************************************************/
 void clientSimDestroy(ClientSim *cs) {
-  logDestroy();
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
   tankDestroy(&cs->sim, &MY_TANK(cs));
@@ -395,6 +400,7 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
   screenSimDisplayTickCS(cs, isBrain);
+  basesTickMessageQueue(&cs->sim, cs);
 }
 
 /*********************************************************

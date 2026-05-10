@@ -37,9 +37,7 @@
 #define MAX_STARTS 16
 
 
-/* Typedefs */
-
-typedef struct startsObj *starts;
+/* Typedefs — starts is defined in bolo/types.h */
 
 /* Prototypes */
 

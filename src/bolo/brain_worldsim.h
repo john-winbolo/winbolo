@@ -72,6 +72,15 @@ typedef struct {
   uint8_t  speed;           /* WU/tick (~4) */
 } WSimLGM;
 
+#define WSIM_MAX_HITS 64
+
+typedef struct {
+  int16_t  mx, my;            /* map tile where hit occurred */
+  int16_t  armour_after;      /* armour remaining after this hit */
+  int16_t  tick;              /* sim tick of the hit */
+  uint8_t  pill_idx;          /* which pill fired (index into sim pills) */
+} WSimHitRecord;
+
 typedef struct {
   int16_t  armour_remaining;
   int16_t  damage_taken;
@@ -84,6 +93,9 @@ typedef struct {
   uint16_t pill_shots[WSIM_MAX_PILLS];
   uint8_t  pill_final_health[WSIM_MAX_PILLS];
   uint8_t  pill_final_speed[WSIM_MAX_PILLS];
+  /* Per-hit position log */
+  WSimHitRecord hits[WSIM_MAX_HITS];
+  int16_t  num_hits;
 } WSimResult;
 
 typedef struct {
@@ -102,6 +114,11 @@ typedef struct {
   int           attack_target;       /* pill index we're shooting, or -1 */
   int           tank_shoot_interval; /* ticks between our shots (default 8) */
   int           shell_damage;        /* armor per hit (default 5) */
+
+  /* Cooperative abort flag (SDL_AtomicInt *). Polled at the per-tick
+   * checkpoint in brainWorldSimRun. NULL disables polling. void * so
+   * this header doesn't pull in SDL3 — the .c file casts on read. */
+  void *abort_flag;
 } BrainWorldSim;
 
 /*********************************************************
@@ -121,6 +138,11 @@ void brainWorldSimDestroy(BrainWorldSim *sim);
 void brainWorldSimClear(BrainWorldSim *sim);
 void brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map);
 void brainWorldSimSetTerrainSpeed(BrainWorldSim *sim, int type, float speed);
+
+/* Set the cooperative abort flag the per-tick sim loop polls.
+ * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
+ * available don't need to depend on it). NULL disables polling. */
+void brainWorldSimSetAbortFlag(BrainWorldSim *sim, void *flag);
 
 void brainWorldSimAddPill(BrainWorldSim *sim, int mx, int my,
                           int health, float anger, int owner, int pill_id);

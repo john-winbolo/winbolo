@@ -295,6 +295,8 @@ void processKeys(bool isQuiet) {
 					threadsWaitForMutex();
 					transportUdpServerKickPlayer(&serverSim, playerKick);
 					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "quit", 4) == 0) {
+					/* Loop's while-condition will exit on next check */
 				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
 					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
 				}
@@ -380,6 +382,8 @@ void processKeys(bool isQuiet) {
         threadsWaitForMutex();
         transportUdpServerKickPlayer(&serverSim, playerKick);
         threadsReleaseMutex();
+      } else if (strncmp(keyBuff, "quit", 4) == 0) {
+        /* Loop's while-condition will exit on next check */
       } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
         fprintf(stderr, "Unknown command - Type \"help\" for help\n");
       }
@@ -494,8 +498,13 @@ void printArgs() {
   fprintf(stderr, "-log          - Create game log file (filename optional)\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
+  fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
+  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
+  fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
@@ -1157,7 +1166,20 @@ int main(int argc, char **argv) {
   }
 
   /* Initialize and add bot players */
-  botManagerInit();
+  {
+    int threadsArg = 0;
+    int argNum = findArg(argc, argv, "threads");
+    if (argNum != ARG_NOT_FOUND) {
+      threadsArg = atoi((char *)argv[argNum]);
+    }
+    if (!botManagerInit(threadsArg)) {
+      fprintf(stderr, "Error initializing bot manager\n");
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+  }
   {
     int numBots = 0;
     char brainPath[MAX_PATH];
@@ -1200,13 +1222,37 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
+      int allyTeam = 0;  /* 0 = no allying; 1-16 = team to place bots on */
+      if (argExist(argc, argv, "allybots") == TRUE) {
+        int aArg = findArg(argc, argv, "allybots");
+        allyTeam = 1;
+        if (aArg != ARG_NOT_FOUND && argv[aArg][0] != '-') {
+          int t = atoi((char *)argv[aArg]);
+          if (t >= 1 && t <= 16) {
+            allyTeam = t;
+          } else {
+            fprintf(stderr, "Warning: -allybots team must be 1-16, defaulting to 1\n");
+          }
+        }
+      }
       for (i = 0; i < numBots; i++) {
         snprintf(botName, sizeof(botName), "Bot %d", i + 1);
         if (!botManagerAddBot(&serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
+        } else if (allyTeam > 0) {
+          /* Shared non-zero team for every bot — server_sim's start-of-round
+           * pass converts matching teamNumber into alliances, and the lobby
+           * protocol already broadcasts teamNumber to clients so the lobby
+           * UI shows the bots on this team. */
+          serverSim.lobbyPlayers[i].teamNumber = (uint8_t)allyTeam;
         }
       }
-      fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+      if (allyTeam > 0) {
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
+                numBots, brainPath, allyTeam);
+      } else {
+        fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+      }
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }
@@ -1248,8 +1294,10 @@ int main(int argc, char **argv) {
 
   serverInstanceShutdown(&serverSim);
 
+  if (isLogging == TRUE) {
+    logStop(); /* Finalize zip — must run regardless of WBN upload */
+  }
   if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
-    logStop(); /* Flush and close the zip so the file has content before upload */
     serverMessageConsoleMessage(&serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
     httpSendLogFile(fileName, key, FALSE);

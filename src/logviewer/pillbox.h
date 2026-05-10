@@ -49,9 +49,7 @@ typedef enum {
 } pillAlliance;
 
 
-/* Typedefs */
-
-typedef struct pillsObj *pillboxes;
+/* Typedefs - pillboxes is already defined in bolo/types.h */
 
 /* Prototypes */
 
@@ -216,5 +214,19 @@ void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen);
 
 // Assumes that the pillbox exists otherwise returns 0
 BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue);
+
+/*********************************************************
+*NAME:          lv_pillsGetAllianceNum
+*PURPOSE:
+*  Returns the alliance type of a pillbox by index for
+*  status-panel rendering. Mirrors bolo's pillsGetAllianceNum
+*  but resolves "self" via lv_playersGetSelf() instead of a
+*  GameSim handle the logviewer doesn't have.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillboxes structure
+*  pillNum - 1-based pillbox index
+*********************************************************/
+pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum);
 
 #endif /* PILLBOX_H */

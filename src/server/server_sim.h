@@ -63,14 +63,18 @@ typedef struct {
   bool isBot;          /* Managed by bot system, not by player packets */
 } LobbyPlayer;
 
-typedef struct BalanceProposal {
+#ifndef BALANCEPROPOSAL_TYPEDEF
+#define BALANCEPROPOSAL_TYPEDEF
+typedef struct BalanceProposal BalanceProposal;
+#endif
+struct BalanceProposal {
   uint8_t teamForSlot[MAX_TANKS]; /* Proposed team number per slot (0 = unassigned by WBN) */
   bool pending;                   /* True while proposal is active and hasn't been applied/dismissed */
   bool requestInFlight;           /* True while the HTTP call is running (prevents duplicate requests) */
   bool broadcastNeeded;           /* True when thread finishes; cleared after first broadcast */
   uint8_t teamSize;               /* Requested team size, passed through to WBN API */
   SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
-} BalanceProposal;
+};
 
 typedef struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -344,6 +348,11 @@ ServerSim *serverSimGetActive(void);
  *  maxPills      - Max entries in pillsOut
  *  eventsOut     - Output: GameEvent array
  *  maxEvents     - Max entries in eventsOut
+ *  noCull        - If true, skip viewport-based culling so the snapshot
+ *                  contains every tank, shell, explosion, base, pill,
+ *                  and event regardless of distance from clientIdx. Used
+ *                  by BrainTest's god-view recording; network paths pass
+ *                  false.
  *********************************************************/
 void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
@@ -352,7 +361,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
-                            GameEvent *eventsOut, int maxEvents);
+                            GameEvent *eventsOut, int maxEvents,
+                            bool noCull);
 
 /*********************************************************
  *NAME:          serverSimInformation

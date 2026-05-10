@@ -228,6 +228,18 @@ struct SDL_Renderer* lv_drawGetSDLRenderer(void);
 struct SDL_Texture* lv_drawGetGameTexture(void);
 
 /*********************************************************
+*NAME:          lv_drawGetTilesTexture / lv_drawGetSheetScale
+*PURPOSE:
+*  Expose the unified SVG/PNG/BMP tile atlas (and its build
+*  scale) so the standalone game-view path (Phase D of
+*  plans/ctrailer.md) can construct a MapViewCtx pointing at
+*  the same atlas this module already maintains. Atlas scale
+*  is always 1.
+*********************************************************/
+struct SDL_Texture* lv_drawGetTilesTexture(void);
+int lv_drawGetSheetScale(void);
+
+/*********************************************************
 *NAME:          lv_drawBlitGameTexture
 *PURPOSE:
 *  Blits the game render texture to the screen without
@@ -283,5 +295,34 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY);
 *  Returns the current zoom multiplier (1.0 == native).
 *********************************************************/
 float lv_drawGetZoomLevel(void);
+
+/*********************************************************
+*NAME:          lv_drawGetZoomStepIndex
+*PURPOSE:
+*  Returns the current zoom step index into the zoom table.
+*********************************************************/
+int lv_drawGetZoomStepIndex(void);
+
+/*********************************************************
+*NAME:          lv_drawGetZoomStepCount
+*PURPOSE:
+*  Returns the total number of zoom steps available.
+*********************************************************/
+int lv_drawGetZoomStepCount(void);
+
+/*********************************************************
+*NAME:          lv_drawGetZoomStepValue
+*PURPOSE:
+*  Returns the zoom multiplier for a given step index.
+*********************************************************/
+float lv_drawGetZoomStepValue(int index);
+
+/*********************************************************
+*NAME:          lv_drawSetZoomStep
+*PURPOSE:
+*  Sets zoom to a specific step index, anchored on the
+*  given screen coordinates.
+*********************************************************/
+void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY);
 
 #endif

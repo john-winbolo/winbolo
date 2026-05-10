@@ -71,6 +71,8 @@ void lv_playersCreate() {
     plrs.item[count].isChecked = FALSE;
     plrs.item[count].team = NO_TEAM_SET;
     plrs.item[count].accountFlags = 0;
+    plrs.item[count].lgmIsOut = FALSE;
+    plrs.item[count].lgmIsDead = FALSE;
   }
   testP[0] = '\0';
 }
@@ -138,10 +140,8 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
   {
     MessageArgs args = {0};
     lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
-    strncpy(args.otherName, label, sizeof(args.otherName) - 1);
-    args.otherName[sizeof(args.otherName) - 1] = '\0';
-    strncpy(args.playerName, playerName, sizeof(args.playerName) - 1);
-    args.playerName[sizeof(args.playerName) - 1] = '\0';
+    snprintf(args.otherName, sizeof(args.otherName), "%s", label);
+    snprintf(args.playerName, sizeof(args.playerName), "%s", playerName);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
   }
 
@@ -199,6 +199,8 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
     plrs.item[playerNum].frame = frame;
     plrs.item[playerNum].onBoat = onBoat;
     plrs.item[playerNum].accountFlags = accountFlags;
+    plrs.item[playerNum].lgmIsOut = FALSE;
+    plrs.item[playerNum].lgmIsDead = FALSE;
 
     plrs.item[playerNum].allie = lv_allienceCreate();
     count = 0;
@@ -269,6 +271,11 @@ void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYT
     plrs.item[playerNum].lgmPixelX = lgmPX;
     plrs.item[playerNum].lgmPixelY = lgmPY;
     plrs.item[playerNum].lgmFrame = lgmFrame;
+    plrs.item[playerNum].lgmIsOut = TRUE;
+    /* Server keeps emitting log_LgmLocation through the helicopter
+     * respawn animation; the helicopter frame is the durable "dead"
+     * signal. log_LostMan only fires once at the moment of death. */
+    plrs.item[playerNum].lgmIsDead = (lgmFrame == LGM_HELICOPTER_FRAME) ? TRUE : FALSE;
   }
 }
 
@@ -280,7 +287,24 @@ void lv_playersLgmZero() {
  //     plrs.item[count].mapY = 0;
       plrs.item[count].lgmMapX = 0;
       plrs.item[count].lgmMapY = 0;
+      plrs.item[count].lgmIsOut = FALSE;
     }
+  }
+}
+
+void lv_playersSetLgmDead(BYTE playerNum) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
+    plrs.item[playerNum].lgmIsDead = TRUE;
+  }
+}
+
+void lv_playersGetLgmStatus(BYTE playerNum, bool *isOut, bool *isDead) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
+    if (isOut)  *isOut  = plrs.item[playerNum].lgmIsOut;
+    if (isDead) *isDead = plrs.item[playerNum].lgmIsDead;
+  } else {
+    if (isOut)  *isOut  = FALSE;
+    if (isDead) *isDead = FALSE;
   }
 }
 
@@ -298,11 +322,9 @@ void lv_playersLgmZero() {
 *********************************************************/
 void lv_playersGetPlayerName(BYTE playerNum, char *dest) {
   if (plrs.item[playerNum].inUse == TRUE) {
-    strncpy(dest, plrs.item[playerNum].playerName, PLAYER_NAME_LEN - 1);
-    dest[PLAYER_NAME_LEN - 1] = '\0';
+    snprintf(dest, PLAYER_NAME_LEN, "%s", plrs.item[playerNum].playerName);
   } else {
-    strncpy(dest, NO_TANK, PLAYER_NAME_LEN - 1);
-    dest[PLAYER_NAME_LEN - 1] = '\0';
+    snprintf(dest, PLAYER_NAME_LEN, "%s", NO_TANK);
   }
 }
 
@@ -323,8 +345,7 @@ void lv_playersMakeMessageName(BYTE playerNum, char *dest) {
 
   label[0] = '\0';
   lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
-  strncpy(dest, label, FILENAME_MAX - 1);
-  dest[FILENAME_MAX - 1] = '\0';
+  snprintf(dest, FILENAME_MAX, "%s", label);
 }
 
 /*********************************************************
@@ -345,8 +366,7 @@ void lv_playersMakeScreenName(BYTE playerNum, char *dest) {
   label[0] = '\0';
   if (plrs.item[playerNum].inUse == TRUE) {
     lv_labelMakeTankLabel(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location, FALSE);
-    strncpy(dest, label, FILENAME_MAX - 1);
-    dest[FILENAME_MAX - 1] = '\0';
+    snprintf(dest, FILENAME_MAX, "%s", label);
   }
 }
 
@@ -620,8 +640,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
       name[0] = '\0';
       lv_playersMakeMessageName(playerNum, name);
       MessageArgs args = {0};
-      strncpy(args.playerName, name, sizeof(args.playerName) - 1);
-      args.playerName[sizeof(args.playerName) - 1] = '\0';
+      snprintf(args.playerName, sizeof(args.playerName), "%s", name);
       lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
   }
@@ -671,6 +690,41 @@ void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, B
     *px = 0;
     *py = 0;
     *frame = 0;
+  }
+}
+
+/*********************************************************
+*NAME:          lv_playersGetTankDetails
+*AUTHOR:        John Morrison
+*CREATION DATE: 31/8/99
+*LAST MODIFIED: 31/8/99
+*PURPOSE:
+* Gets the tank details for a player
+*
+*ARGUMENTS:
+*  playerNum - The player num to check
+*  mx        - Tank Map X Position
+*  my        - Tank Map Y Position
+*  px        - Tank Pixel X Position
+*  py        - Tank Pixel Y Position
+*  frame     - Tank Frame
+*  onBoat    - Whether the tank is on a boat
+*********************************************************/
+void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat) {
+  if (plrs.item[playerNumber].inUse == TRUE) {
+    *mx     = plrs.item[playerNumber].mapX;
+    *my     = plrs.item[playerNumber].mapY;
+    *px     = plrs.item[playerNumber].pixelX;
+    *py     = plrs.item[playerNumber].pixelY;
+    *frame  = plrs.item[playerNumber].frame;
+    *onBoat = plrs.item[playerNumber].onBoat;
+  } else {
+    *mx = 0;
+    *my = 0;
+    *px = 0;
+    *py = 0;
+    *frame = 0;
+    *onBoat = false;
   }
 }
 

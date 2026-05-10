@@ -106,17 +106,8 @@ A base bust have one armour unit or more to resist a shell --
 #ifdef _WIN32
 typedef unsigned char  u_char;
 typedef unsigned short u_short;
-/* u_long intentionally NOT defined here — use uint32_t for wire-format fields */
-typedef u_char  NIBBLE; /* to be interpreted as four bits */
-typedef u_char  BYTE;
-typedef u_short WORD;
-#else
-typedef unsigned char  u_char;
-typedef unsigned short u_short;
-typedef u_char  NIBBLE;
-typedef u_char  BYTE;
-typedef u_short WORD;
 #endif
+typedef u_char  NIBBLE; /* to be interpreted as four bits */
 #ifndef _GAMEID_DEFINED
 #define _GAMEID_DEFINED
 #pragma pack(push, 1)
@@ -228,6 +219,14 @@ typedef struct
 	WORLD_Y tanky;
 	
 	BYTE direction;
+	/* Float (un-quantized) tank angle, 0..256. The engine stores
+	 * tank->angle as a float and fires shells at that exact value;
+	 * `direction` above is just (BYTE)angle (a floor). Brains that
+	 * need pixel-precise aiming — crosshair display, fire-when-
+	 * lined-up checks, simulate_shot prediction — must use this
+	 * instead of `direction` or the prediction won't match the
+	 * engine's actual flight. */
+	float tank_angle;
 	BYTE speed;				// 64 is top speed on road, 48 on grass,
       							// 24 in forest, 12 on rubble, crater, water etc.
 	BYTE inboat;			// non-zero means currently on boat

@@ -98,7 +98,7 @@ typedef struct {
 	BYTE data[0xFF]; /* actual length of data is always much less than 0xFF */
 } bmapRun;
 
-typedef struct mapObj *map;
+/* map is defined in bolo/types.h */
 
 
 

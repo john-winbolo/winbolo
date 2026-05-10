@@ -81,27 +81,6 @@ void utilCalcDistanceHP(int32_t *xStep, int32_t *yStep, TURNTYPE angle, int spee
 
 
 /*********************************************************
-*NAME:          utilCalcTankSlide
-*AUTHOR:        Chris Lesnieski
-*CREATION DATE: 2009-01-04
-*LAST MODIFIED: 2009-01-04
-*PURPOSE:
-*  Calculates the X and Y distance a tank should move 
-*  after being hit by a shell.  We do not decrement the 
-*  tank slide timer here as that is handled by code in the
-*  tankUpdate() method.
-*
-*ARGUMENTS:
-*  tankSlideTimer - The number of ticks left to slide
-*  angle - The angle at which the shell was travelling
-*  xAmount - The amount to add in the X direction
-*  yAmount - The amount to add in the Y direction
-*  speed   - The speed of the tank
-*********************************************************/
-void utilCalcTankSlide(BYTE tankSlideTimer, TURNTYPE angle, int *xAmount, int *yAmount, int speed);
-
-
-/*********************************************************
 *NAME:          utilGetDir
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/98
@@ -333,5 +312,12 @@ void utilSpiralOffset(int step, int *dx, int *dy);
 void initWinboloTimer(void);
 DWORD winboloTimer(void);
 void endWinboloTimer(void);
+
+/* Returns the CLIENT_TYPE_* enum value for the platform we're running on. */
+uint8_t bolo_detect_client_type(void);
+
+/* Returns true iff the running Steam build owns the Supporter DLC.
+ * Currently a stub — DLC AppID is not yet allocated. */
+bool bolo_steam_has_supporter_dlc(void);
 
 #endif /* UTILS_H */

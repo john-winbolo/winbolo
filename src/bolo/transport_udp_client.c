@@ -28,6 +28,7 @@
 #include "bases.h"
 #include "pillbox.h"
 #include "players.h"
+#include "util.h"
 #include "screen.h"
 #include "messages.h"
 #include "client_sim.h"
@@ -480,12 +481,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->snapshotHdr.baseCount = baseCount;
         c->snapshotHdr.pillCount = pillCount;
 
-        /* Unpack tanks */
+        /* Unpack tanks — variable length: stubs are 1 byte, full entries
+         * are TANK_SNAPSHOT_WIRE_SIZE bytes.  The first byte's high bit
+         * (TANK_SNAPSHOT_HIDDEN_FLAG) tells us which. */
         if (tankCount > MAX_TANKS) tankCount = MAX_TANKS;
-        if (len < pos + tankCount * TANK_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < tankCount; i++) {
-            unpackTankSnapshot(buf + pos, &c->snapshotTanks[i]);
-            pos += TANK_SNAPSHOT_WIRE_SIZE;
+        {
+            bool tankBoundsOk = TRUE;
+            for (i = 0; i < tankCount; i++) {
+                int needed;
+                if (pos + 1 > len) { tankBoundsOk = FALSE; break; }
+                needed = (buf[pos] & TANK_SNAPSHOT_HIDDEN_FLAG) ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
+                if (pos + needed > len) { tankBoundsOk = FALSE; break; }
+                pos += unpackTankSnapshot(buf + pos, &c->snapshotTanks[i]);
+            }
+            if (!tankBoundsOk) break;
         }
 
         /* Unpack shells */
@@ -605,17 +614,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_PLAYER_JOINED:
-        if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) {
-            uint8_t pNum = buf[PACKET_HEADER_SIZE];
+        /* Wire format: [pNum 1][name 32][cc 2][clientType 1][clientFlags 1]. */
+        if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2) {
+            int pos = PACKET_HEADER_SIZE;
+            uint8_t pNum = buf[pos++];
             char pName[PACKET_MAX_PLAYER_NAME];
             char cc[3] = {0, 0, 0};
-            memcpy(pName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
+            uint8_t clientType;
+            uint8_t clientFlags;
+            memcpy(pName, buf + pos, PACKET_MAX_PLAYER_NAME);
             pName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-            if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2) {
-                cc[0] = (char)buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
-                cc[1] = (char)buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 1];
-            }
+            pos += PACKET_MAX_PLAYER_NAME;
+            cc[0] = (char)buf[pos++];
+            cc[1] = (char)buf[pos++];
+            clientType = buf[pos++];
+            clientFlags = buf[pos++];
+            if (clientType >= CLIENT_TYPE_COUNT) clientType = CLIENT_TYPE_UNKNOWN;
             if (pNum != c->playerNum) {
+                playersSetClientType(&c->clientSim->sim.plyrs, pNum, clientType);
+                playersSetClientFlags(&c->clientSim->sim.plyrs, pNum, clientFlags);
                 playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, pName, cc,
                                  0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
                 /* Show join message in lobby chat */
@@ -630,7 +647,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_PLAYER_LIST:
         /* Player list format: [header][count]
-         *   [playerNum 1][name 32][countryCode 2][numAllies 1][ally0 1]...
+         *   [playerNum 1][name 32][cc 2][clientType 1][clientFlags 1]
+         *   [numAllies 1][ally0 1]...
          * Each entry is variable-length. */
         if (len >= PACKET_HEADER_SIZE + 1) {
             uint8_t plCount = buf[PACKET_HEADER_SIZE];
@@ -640,16 +658,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 uint8_t pNum;
                 char pName[PACKET_MAX_PLAYER_NAME];
                 char cc[3] = {0, 0, 0};
+                uint8_t clientType;
+                uint8_t clientFlags;
                 uint8_t numAllies;
                 BYTE allies[MAX_TANKS];
 
-                if (plPos + 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 > len) break;
+                if (plPos + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2 + 1 > len) break;
                 pNum = buf[plPos];
                 memcpy(pName, buf + plPos + 1, PACKET_MAX_PLAYER_NAME);
                 pName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
                 plPos += 1 + PACKET_MAX_PLAYER_NAME;
                 cc[0] = (char)buf[plPos++];
                 cc[1] = (char)buf[plPos++];
+                clientType = buf[plPos++];
+                clientFlags = buf[plPos++];
+                if (clientType >= CLIENT_TYPE_COUNT) clientType = CLIENT_TYPE_UNKNOWN;
                 numAllies = buf[plPos++];
                 if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
                 if (plPos + numAllies > len) break;
@@ -658,11 +681,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     plPos += numAllies;
                 }
                 if (pNum != c->playerNum) {
+                    playersSetClientType(&c->clientSim->sim.plyrs, pNum, clientType);
+                    playersSetClientFlags(&c->clientSim->sim.plyrs, pNum, clientFlags);
                     playersSetPlayer(c->clientSim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, pName, cc,
                                      0, 0, 0, 0, 0, FALSE,
                                      numAllies, numAllies > 0 ? allies : NULL, FALSE);
                 }
             }
+            /* Server skips our own slot when building PLAYER_LIST, so the
+             * loop above never updates item[selfPlayer].allie. Rebuild it
+             * now from the per-player lists we just decoded. */
+            playersRebuildSelfAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs,
+                                       c->clientSim->myPlayerNum);
         }
         break;
 
@@ -768,7 +798,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                             clientSimAppendLobbyChat(c->clientSim, "Server",
                                                      rendered);
                         } else {
-                            screenNetStatusMessage(c->clientSim, rendered);
+                            screenNetStatusMessage(c->clientSim, (char *)rendered);
                         }
                     }
                 }
@@ -846,7 +876,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          *     If connected:
          *       [nameLen 1] [name nameLen UTF-8 bytes (no NUL)]
          *       [teamNumber 1] [ready 1] [isBot 1] [pingMs 2]
-         *       [countryCode 2] [wbn 1] [steam 1]
+         *       [countryCode 2] [clientType 1] [clientFlags 1]
          *   Game settings tail:
          *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
          *     [gameLength 4] [pillCount 1] [baseCount 1] [startCount 1]
@@ -916,8 +946,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 tmpSlots[i].countryCode[0] = (char)buf[pos++];
                 tmpSlots[i].countryCode[1] = (char)buf[pos++];
                 tmpSlots[i].countryCode[2] = '\0';
-                tmpSlots[i].wbnParticipant = buf[pos++] ? true : false;
-                tmpSlots[i].steamParticipant = buf[pos++] ? true : false;
+                tmpSlots[i].clientType  = buf[pos++];
+                tmpSlots[i].clientFlags = buf[pos++];
+                if (tmpSlots[i].clientType >= CLIENT_TYPE_COUNT)
+                    tmpSlots[i].clientType = CLIENT_TYPE_UNKNOWN;
             }
             if (!decodeOk) {
                 break;
@@ -932,10 +964,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             /* Commit decoded slots. */
             for (i = 0; i < MAX_TANKS; i++) {
                 c->clientSim->lobbySlots[i] = tmpSlots[i];
-                if (tmpSlots[i].wbnParticipant || tmpSlots[i].steamParticipant) {
+                if (tmpSlots[i].clientFlags & (PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_WBN_STEAM_LINKED)) {
                     WB_LOG_DEBUG(WB_LOG_CAT_NET, "[WBN LOBBY] slot %d wbn=%d steam=%d",
-                            i, tmpSlots[i].wbnParticipant,
-                            tmpSlots[i].steamParticipant);
+                            i,
+                            (tmpSlots[i].clientFlags & PLAYER_FLAG_WBN_VERIFIED) ? 1 : 0,
+                            (tmpSlots[i].clientFlags & PLAYER_FLAG_WBN_STEAM_LINKED) ? 1 : 0);
                 }
             }
             /* Game settings tail */
@@ -992,7 +1025,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             /* WBN re-auth: if our slot lost its WBN flag (server re-registered
              * with WBN between rounds) and we have a token, re-authenticate */
             if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-                !c->clientSim->lobbySlots[c->playerNum].wbnParticipant) {
+                !(c->clientSim->lobbySlots[c->playerNum].clientFlags & PLAYER_FLAG_WBN_VERIFIED)) {
                 if (!c->wbnReauthSent) {
                     c->wbnReauthSent = TRUE;
                     /* Inline re-auth send (we have ctx, not Transport*) */
@@ -1016,7 +1049,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          *   [header 8] [playerNum 1] [connected 1]
          *   If connected:
          *     [nameLen 1] [name nameLen UTF-8 bytes] [teamNumber 1] [ready 1]
-         *     [isBot 1] [pingMs 2] [countryCode 2] [wbn 1] [steam 1] */
+         *     [isBot 1] [pingMs 2] [countryCode 2] [clientType 1] [clientFlags 1] */
         if (len > UDP_MAX_PAYLOAD) {
             fprintf(stderr, "[UDP CLIENT] LOBBY_UPDATE oversized: len=%d\n", len);
             break;
@@ -1067,8 +1100,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 tmp.countryCode[0] = (char)buf[pos++];
                 tmp.countryCode[1] = (char)buf[pos++];
                 tmp.countryCode[2] = '\0';
-                tmp.wbnParticipant = buf[pos++] ? true : false;
-                tmp.steamParticipant = buf[pos++] ? true : false;
+                tmp.clientType  = buf[pos++];
+                tmp.clientFlags = buf[pos++];
+                if (tmp.clientType >= CLIENT_TYPE_COUNT)
+                    tmp.clientType = CLIENT_TYPE_UNKNOWN;
             }
             c->clientSim->lobbySlots[playerNum] = tmp;
         }
@@ -1295,7 +1330,7 @@ static bool udpClientTick(void *ctx) {
                     (int)c->joinAttempts, (int)JOIN_MAX_RETRIES);
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN + 1];
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN + 1 + 2];
                 int joffset = PACKET_HEADER_SIZE;
                 packHeader(jbuf, PACKET_JOIN_REQUEST, c->outSequence++);
                 memcpy(jbuf + joffset, c->playerName, PACKET_MAX_PLAYER_NAME);
@@ -1309,6 +1344,15 @@ static bool udpClientTick(void *ctx) {
                 joffset += WBN_TOKEN_WIRE_LEN;
                 /* Flags byte: bit 0 = wantRejoin */
                 jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
+                jbuf[joffset++] = bolo_detect_client_type();
+                {
+                    uint8_t clientHints = 0;
+#ifdef HAVE_STEAM
+                    clientHints |= PLAYER_FLAG_STEAM_BUILD;
+#endif
+                    if (bolo_steam_has_supporter_dlc()) clientHints |= PLAYER_FLAG_SUPPORTER;
+                    jbuf[joffset++] = clientHints;
+                }
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,

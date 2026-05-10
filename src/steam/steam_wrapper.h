@@ -18,6 +18,9 @@ void     steam_set_rich_presence(const char *key, const char *value);
 void     steam_clear_rich_presence(void);
 bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len);
 
+/* True iff Steam is initialized and currently running on a Steam Deck. */
+bool     steam_is_steam_deck(void);
+
 /* Stats & achievements */
 void     steam_increment_stat(const char *name, int amount);
 void     steam_set_achievement(const char *id);

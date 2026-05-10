@@ -68,6 +68,9 @@ extern "C" {
 #include "../../bolo/players.h"
 #include "../../bolo/transport.h"
 #include "../../bolo/transport_udp.h"
+#include "../../bolo/bot_manager.h"
+#include "../../server/server_lifecycle.h"
+#include "../../server/threads.h"
 }
 
 /* Include input.h for keyItems — SDL3 already included, safe here */
@@ -243,10 +246,6 @@ static bool s_suppressAutoCustom = false;
    and WM_EXITSIZEMOVE).  Suppresses auto-switch to Custom during drag. */
 static bool s_inModalResize = false;
 
-/* Saved custom window size — restored when switching back to Custom mode */
-static int s_customWindowW = 0;
-static int s_customWindowH = 0;
-
 /* Optional extra render callback (used by Android for players panel) */
 static sdl3ImguiExtraRenderFn s_extraRenderFn = nullptr;
 
@@ -262,8 +261,8 @@ static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
 static bool     s_playerChecked[MAX_PLAYERS]  = {};
 static uint16_t s_playerPing[MAX_PLAYERS] = {};
-static bool     s_playerWbn[MAX_PLAYERS]  = {};
-static bool     s_playerSteam[MAX_PLAYERS] = {};
+static uint8_t  s_playerClientType[MAX_PLAYERS] = {};
+static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
 
 /* WBN/Steam icon textures */
 static SDL_Texture *s_iconGlobe = nullptr;
@@ -280,6 +279,26 @@ static void ensureWbnIconsLoaded(void) {
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+}
+
+/* Platform icon textures, indexed by ClientType. UNKNOWN slot stays NULL. */
+static SDL_Texture *s_iconPlatform[CLIENT_TYPE_COUNT] = {};
+static bool s_platformIconsLoaded = false;
+
+static void ensurePlatformIconsLoaded(void) {
+    if (s_platformIconsLoaded) return;
+    s_platformIconsLoaded = true;
+    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    /* Force white so platform icons read against the dark ImGui background
+     * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
+    s_iconPlatform[CLIENT_TYPE_UNKNOWN]   = nullptr;
+    s_iconPlatform[CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
+    s_iconPlatform[CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
 }
 
 /* Settings panel state */
@@ -465,6 +484,38 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h) {
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
+
+/* Tick / brain timing graph state — only populated while
+ * the System Info dialog is open. Sampled once per second
+ * to match the ping graph's cadence. */
+#define SYS_GRAPH_SIZE 120   /* ~2 minutes at 1 sample/sec */
+static float    s_tickHistory[SYS_GRAPH_SIZE];
+static float    s_brainHistory[SYS_GRAPH_SIZE];
+static int      s_sysHistoryOffset = 0;
+static int      s_sysHistoryCount  = 0;
+static uint32_t s_sysLastSampleTick = 0;
+
+static void sysInfoGraphReset(void) {
+    memset(s_tickHistory, 0, sizeof(s_tickHistory));
+    memset(s_brainHistory, 0, sizeof(s_brainHistory));
+    s_sysHistoryOffset = 0;
+    s_sysHistoryCount  = 0;
+    s_sysLastSampleTick = 0;
+}
+
+/* Sample once per second. tickMs and brainPhaseMs are the
+ * "last" values from server_lifecycle / bot_manager — already
+ * updated each tick by the server timer thread. */
+static void sysInfoGraphSample(double tickMs, double brainPhaseMs) {
+    uint32_t now = SDL_GetTicks();
+    if (now - s_sysLastSampleTick < 1000 && s_sysHistoryCount > 0) return;
+    s_sysLastSampleTick = now;
+    s_tickHistory[s_sysHistoryOffset]  = (float)tickMs;
+    s_brainHistory[s_sysHistoryOffset] = (float)brainPhaseMs;
+    s_sysHistoryOffset = (s_sysHistoryOffset + 1) % SYS_GRAPH_SIZE;
+    if (s_sysHistoryCount < SYS_GRAPH_SIZE) s_sysHistoryCount++;
+}
+
 static void renderSysInfoContent(void) {
     float drawPct  = (windowGetDrawTime() / 1000.0f) * 100.0f;
     float simPct   = (windowGetSimTime()  / 1000.0f) * 100.0f;
@@ -481,12 +532,122 @@ static void renderSysInfoContent(void) {
     ImGui::Text("  %s %.2f %%", langGetText(STR_DLGSYSINFO_AITANKS), aiPct);
     ImGui::Separator();
     ImGui::Text("  %s %.2f %%", langGetText(STR_DLGSYSINFO_TOTAL), totalPct);
+
+    /* Server-side bot/sim telemetry. Only present when a local
+     * server sim is ticking (single-player or local listen-server). */
+    ServerSim *spSim = gameFrontGetServerSim();
+    if (spSim != NULL) {
+        BotPoolStats ps = {};
+        BotInfo  botInfos[MAX_TANKS] = {};
+        bool     botInfoValid[MAX_TANKS] = {};
+        double tickLast = 0.0, tickEwma = 0.0;
+        double simLast  = 0.0, simEwma  = 0.0;
+        bool   hasBots  = false;
+
+        /* The server timer thread writes these file-statics every
+         * tick. Take the same mutex serverInstanceTick uses so the
+         * snapshot is consistent. Cheap — these are quick reads. */
+        threadsWaitForMutex();
+        hasBots = botManagerHasAnyBot();
+        botManagerGetPoolStats(&ps);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+        }
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+        threadsReleaseMutex();
+
+        sysInfoGraphSample(tickLast, ps.lastBrainPhaseMs);
+
+        ImGui::Separator();
+        ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_SERVER));
+
+        if (hasBots) {
+            if (ps.workerCount == 0) {
+                ImGui::Text("%s: single-thread (%d active bots), target=%.1fms/bot",
+                            langGetText(STR_DLGSYSINFO_BOTPOOL),
+                            ps.activeBots, ps.currentTargetMs);
+            } else {
+                ImGui::Text("%s: %d workers (%d active bots), target=%.1fms/bot",
+                            langGetText(STR_DLGSYSINFO_BOTPOOL),
+                            ps.workerCount, ps.activeBots, ps.currentTargetMs);
+            }
+        }
+
+        /* Tick wall-clock chart. Show min/avg/max over the
+         * sample window above the plot, like the ping graph
+         * does. Y-axis capped so the 20ms budget is visible
+         * within frame even when ticks are well under it. */
+        if (s_sysHistoryCount > 1) {
+            float minTick = s_tickHistory[0];
+            float maxTick = s_tickHistory[0];
+            float sumTick = 0;
+            for (int i = 0; i < s_sysHistoryCount; i++) {
+                float v = s_tickHistory[i];
+                if (v < minTick) minTick = v;
+                if (v > maxTick) maxTick = v;
+                sumTick += v;
+            }
+            float avgTick = sumTick / (float)s_sysHistoryCount;
+            float plotMax = (maxTick > 25.0f) ? maxTick * 1.2f : 25.0f;
+            ImGui::Text("%s: min=%.1fms avg=%.1fms max=%.1fms (budget=20ms)",
+                        langGetText(STR_DLGSYSINFO_TICK),
+                        minTick, avgTick, maxTick);
+            ImGui::PlotLines("##tick", s_tickHistory, s_sysHistoryCount,
+                             s_sysHistoryOffset, nullptr,
+                             0.0f, plotMax,
+                             ImVec2(ImGui::GetContentRegionAvail().x, 60));
+        }
+
+        /* Brain phase chart — only when there are bots. */
+        if (hasBots && s_sysHistoryCount > 1) {
+            float maxBrain = 0;
+            for (int i = 0; i < s_sysHistoryCount; i++) {
+                if (s_brainHistory[i] > maxBrain) maxBrain = s_brainHistory[i];
+            }
+            if (maxBrain < 1.0f) maxBrain = 1.0f;
+            ImGui::Text("%s: EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_BRAIN),
+                        ps.ewmaBrainPhaseMs);
+            ImGui::PlotLines("##brain", s_brainHistory, s_sysHistoryCount,
+                             s_sysHistoryOffset, nullptr,
+                             0.0f, maxBrain * 1.2f,
+                             ImVec2(ImGui::GetContentRegionAvail().x, 40));
+        }
+
+        if (hasBots) {
+            ImGui::Text("%s: %u",
+                        langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
+                        ps.totalOverruns);
+            if (ps.totalOverruns > 0) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
+                        ImGui::Text("  bot[%d]: %u", i, botInfos[i].overrunCount);
+                    }
+                }
+            }
+        }
+
+        /* Text-only stats for the remaining metrics. simLast > 0
+         * means at least one running-state tick has happened —
+         * suppress the line otherwise. */
+        if (simLast > 0.0) {
+            ImGui::Text("%s: last=%.1fms EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_SIMULATION),
+                        simLast, simEwma);
+        }
+        if (hasBots) {
+            ImGui::Text("%s: last=%.1fms EWMA=%.1fms",
+                        langGetText(STR_DLGSYSINFO_BOTPREP),
+                        ps.lastSerialMs, ps.ewmaSerialMs);
+        }
+    }
 }
 
 static void renderSysInfoPanel(void) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(300, 210), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(440, 600), ImGuiCond_FirstUseEver);
     char title[128];
     snprintf(title, sizeof(title), "%s###sysinfo", langGetText(STR_DLGSYSINFO_TITLE));
     if (!ImGui::Begin(title, &s_showSysInfo)) {
@@ -986,10 +1147,6 @@ static void renderPlayersPanel(ClientSim *cs) {
     int enabledCount = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i]) {
-            /* Refresh ping/WBN/Steam */
-            s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-            s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
-            s_playerSteam[i] = playersGetSteamParticipant(&cs->sim.plyrs, (BYTE)i);
             enabledPlayers[enabledCount++] = i;
         }
     }
@@ -1017,23 +1174,8 @@ static void renderPlayersPanel(ClientSim *cs) {
             }
         }
 
-        /* WBN participant icon */
-        if (s_playerWbn[i]) {
-            ensureWbnIconsLoaded();
-            if (s_iconGlobe) {
-                ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                ImGui::SameLine();
-            }
-        }
-
-        /* Steam participant icon */
-        if (s_playerSteam[i]) {
-            ensureWbnIconsLoaded();
-            if (s_iconSteam) {
-                ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-                ImGui::SameLine();
-            }
-        }
+        /* Platform / WBN / Steam icons */
+        renderPlayerName(NULL, s_playerFlags[i], s_playerClientType[i], "", false);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
         char defLabel[16];
@@ -1871,12 +2013,12 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  300, 210);
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  440, 600);
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo,  langGetText(STR_DLGNETINFO_TITLE),  360, 420);
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   s_showSysInfo   = !s_showSysInfo;
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_showNetInfo))   { if (!s_showNetInfo) pingGraphReset(); s_showNetInfo = !s_showNetInfo; }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
@@ -2074,10 +2216,6 @@ static void renderMenuBar(ClientSim *cs) {
                 }
             }
             if (s_playerEnabled[i]) {
-                /* Refresh ping/WBN from player struct each frame */
-                s_playerPing[i] = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-                s_playerWbn[i]  = playersGetWbnParticipant(&cs->sim.plyrs, (BYTE)i);
-
                 /* Custom row: selectable name on left, colored WBN+ping on right */
                 float fullWidth = ImGui::GetContentRegionAvail().x;
 
@@ -2090,14 +2228,19 @@ static void renderMenuBar(ClientSim *cs) {
                 }
                 /* Measure right-side width: icons + ping + checkmark (rightmost) */
                 ensureWbnIconsLoaded();
+                ensurePlatformIconsLoaded();
                 ImGuiContext &g = *GImGui;
                 float checkSz = g.FontSize * 0.866f;
                 float iconW = (float)WBN_ICON_SIZE;
                 float pingWidth = ImGui::CalcTextSize(pingStr).x;
                 float spacing = ImGui::GetStyle().ItemSpacing.x;
+                uint8_t pflags = s_playerFlags[i];
+                uint8_t pct    = s_playerClientType[i];
                 float iconsWidth = 0.0f;
-                if (s_playerWbn[i] && s_iconGlobe)  iconsWidth += iconW + spacing;
-                if (s_playerSteam[i] && s_iconSteam) iconsWidth += iconW + spacing;
+                if (sdl3ImguiGetPlatformIcon(pct))                         iconsWidth += iconW + spacing;
+                if ((pflags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe)    iconsWidth += iconW + spacing;
+                if ((pflags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam)
+                    iconsWidth += iconW + spacing;
                 float rightWidth = iconsWidth + pingWidth + spacing + checkSz;
 
                 /* Selectable player name (no highlight) */
@@ -2107,14 +2250,9 @@ static void renderMenuBar(ClientSim *cs) {
                     screenTogglePlayerCheckStateCS(cs, (BYTE)i);
                 }
 
-                /* Right-aligned WBN/Steam icons */
+                /* Right-aligned platform/WBN/Steam icons */
                 ImGui::SameLine(fullWidth - rightWidth);
-                {
-                    uint8_t badgeFlags = 0;
-                    if (s_playerWbn[i])   badgeFlags |= MESSAGE_FLAG_WBN;
-                    if (s_playerSteam[i]) badgeFlags |= MESSAGE_FLAG_STEAM;
-                    renderPlayerName(NULL, badgeFlags, "", false);
-                }
+                renderPlayerName(NULL, pflags, pct, "", false);
 
                 /* Ping with color coding */
                 ImGui::SameLine();
@@ -3172,6 +3310,7 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn) {
 }
 
 void sdl3ImguiShowSysInfo(bool open) {
+    if (open && !s_showSysInfo) sysInfoGraphReset();
     s_showSysInfo = open;
 }
 void sdl3ImguiShowNetInfo(bool open) {
@@ -3259,15 +3398,16 @@ void sdl3ImguiClearPlayer(unsigned char playerNum) {
     s_playerEnabled[playerNum] = false;
     s_playerChecked[playerNum] = false;
     s_playerPing[playerNum] = 0;
-    s_playerWbn[playerNum] = false;
-    s_playerSteam[playerNum] = false;
+    s_playerClientType[playerNum] = CLIENT_TYPE_UNKNOWN;
+    s_playerFlags[playerNum] = 0;
 }
 
-void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping, bool wbn, bool steam) {
+void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
+                               uint8_t clientType, uint8_t clientFlags) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerPing[playerNum] = ping;
-    s_playerWbn[playerNum]  = wbn;
-    s_playerSteam[playerNum] = steam;
+    s_playerClientType[playerNum] = clientType;
+    s_playerFlags[playerNum] = clientFlags;
 }
 
 SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
@@ -3280,14 +3420,51 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     return s_iconSteam;
 }
 
-void renderPlayerName(const char *name, uint8_t flags,
+SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType) {
+    ensurePlatformIconsLoaded();
+    if (clientType >= CLIENT_TYPE_COUNT) return nullptr;
+    return s_iconPlatform[clientType];
+}
+
+/* Gold tint for supporters; white = no tint (passthrough). */
+static const ImVec4 SUPPORTER_TINT = ImVec4(1.00f, 0.84f, 0.20f, 1.00f);
+static const ImVec4 NO_TINT        = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+
+static const char *platformName(uint8_t ct) {
+    static const char *names[CLIENT_TYPE_COUNT] = {
+        "", "Windows", "Linux", "macOS", "iOS", "Android", "Steam Deck", "Web"
+    };
+    return (ct < CLIENT_TYPE_COUNT) ? names[ct] : "";
+}
+
+void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
+    ensurePlatformIconsLoaded();
+    SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
+    if (platTex) {
+        ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
+        /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
+         * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
+        ImGui::ImageWithBg((ImTextureID)platTex,
+                           ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                           ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0, 0, 0, 0), tint);
+        if (ImGui::IsItemHovered()) {
+            const char *plat = platformName(clientType);
+            if (flags & PLAYER_FLAG_SUPPORTER)
+                ImGui::SetTooltip("%s — Supporter", plat);
+            else
+                ImGui::SetTooltip("%s", plat);
+        }
+        ImGui::SameLine();
+    }
+
     ensureWbnIconsLoaded();
-    if ((flags & MESSAGE_FLAG_WBN) && s_iconGlobe) {
+    if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
         ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
         ImGui::SameLine();
     }
-    if ((flags & MESSAGE_FLAG_STEAM) && s_iconSteam) {
+    if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
         ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
         ImGui::SameLine();
     }
@@ -3328,6 +3505,12 @@ void sdl3ImguiCleanup(void) {
     if (s_iconGlobe) { SDL_DestroyTexture(s_iconGlobe); s_iconGlobe = nullptr; }
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     s_wbnIconsLoaded = false;
+    for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
+        /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a
+         * distinct SDL_Texture so destroying every slot is safe. */
+        if (s_iconPlatform[i]) { SDL_DestroyTexture(s_iconPlatform[i]); s_iconPlatform[i] = nullptr; }
+    }
+    s_platformIconsLoaded = false;
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;

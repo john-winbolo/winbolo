@@ -48,8 +48,8 @@ typedef struct {
     bool isBot;
     uint16_t pingMs;       /* Player ping in ms */
     char countryCode[3];   /* ISO 3166-1 alpha-2 (e.g. "US") */
-    bool wbnParticipant;   /* Logged into WinBolo.net */
-    bool steamParticipant; /* Logged into Steam */
+    uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
+    uint8_t clientType;    /* ClientType enum */
 } ClientLobbySlot;
 
 /* Callback typedefs for new transport message sending */
@@ -80,7 +80,11 @@ typedef struct {
     bool active;
 } PredictedShell;
 
-typedef struct ClientSim {
+#ifndef CLIENTSIM_TYPEDEF
+#define CLIENTSIM_TYPEDEF
+typedef struct ClientSim ClientSim;
+#endif
+struct ClientSim {
     GameSim     sim;    /* MUST be first member */
     BYTE        myPlayerNum; /* Server-assigned player number; tanks[myPlayerNum] is our tank */
 
@@ -218,7 +222,7 @@ typedef struct ClientSim {
     /* Steam achievement: rapid death tracking (ACH_RAPID_DEATH) */
     uint32_t deathTimestamps[10];
     uint8_t  deathTimestampIdx;
-} ClientSim;
+};
 
 /* Access the local player's tank and LGM by server player number */
 #define MY_TANK(cs) ((cs)->sim.tanks[(cs)->myPlayerNum])

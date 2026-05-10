@@ -56,9 +56,11 @@
 #include "../bolo/sounddist.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/playersrejoin.h"
+#include "../bolo/bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "../winbolonet/http.h"
 #include "server_sim.h"
+#include "server_lifecycle.h"
 #include "../bolo/interpolation.h"
 #include "../bolo/position_history.h"
 #include "../bolo/screenbullet.h"
@@ -311,6 +313,12 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     BYTE count;
 
     memset(sim, 0, sizeof(ServerSim));
+
+    /* Sentinel value for "no batch start assigned" — memset gives 0, but 0
+     * is a valid start index, so initialise explicitly. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->sim.pendingStartIdx[count] = MAX_STARTS;
+    }
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
@@ -941,7 +949,6 @@ void serverSimTick(ServerSim *sim) {
                     sim->sim.lagCompTicks = compTicks;
                 }
                 tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
-                lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
 
                 /* Handle mine laying */
                 if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
@@ -982,6 +989,17 @@ void serverSimTick(ServerSim *sim) {
 
     /* World systems: run on even server ticks (game ticks) */
     if (!isKeysTick) {
+        /* Update LGMs every game tick — server-authoritative state must
+         * not depend on per-player input arrival.  Without this, parachute
+         * descent, walking back to tank, and build progress freeze whenever
+         * a player isn't sending fresh inputs (notably while dead). */
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.lgmen[count] != NULL
+                && sim->sim.tanks[count] != NULL) {
+                lgmUpdate(&sim->sim, &sim->sim.lgmen[count], &sim->sim.tanks[count]);
+            }
+        }
+
         /* Record tank positions for lag compensation history */
         for (count = 0; count < MAX_TANKS; count++) {
             if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
@@ -1515,7 +1533,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             TkExplosionSnapshot *tkExplOut, int maxTkExpl,
                             BaseSnapshot *basesOut, int maxBases,
                             PillSnapshot *pillsOut, int maxPills,
-                            GameEvent *eventsOut, int maxEvents) {
+                            GameEvent *eventsOut, int maxEvents,
+                            bool noCull) {
     int i;
     int tankCount = 0;
     ViewportRect viewports[MAX_VIEWPORTS];
@@ -1525,8 +1544,9 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     hdr->serverTick = sim->tick;
     hdr->lastProcessedInput = sim->lastProcessedInput[clientIdx];
 
-    /* Primary viewport: client's tank position */
-    {
+    /* Primary viewport: client's tank position. Skipped under noCull so
+     * the fallback full-map viewport below covers everything. */
+    if (!noCull) {
         WORLD clientWX = 0, clientWY = 0;
         if (serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
             int centerMX = clientWX >> 8;
@@ -1541,7 +1561,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     }
 
     /* Additional viewports: pillboxes owned by this client (not in tank) */
-    if (sim->sim.pb != NULL) {
+    if (!noCull && sim->sim.pb != NULL) {
         int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
         BYTE np = pillsGetNumPills(&sim->sim.pb);
         BYTE p;
@@ -1556,7 +1576,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         }
     }
 
-    /* No viewports (dead/respawning with no placed pills) — send everything */
+    /* No viewports (dead/respawning with no placed pills, or noCull) —
+     * send everything. */
     if (numViewports == 0) {
         viewports[0].minMX = 0;  viewports[0].maxMX = 255;
         viewports[0].minMY = 0;  viewports[0].maxMY = 255;
@@ -1574,8 +1595,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         /* Always include the client's own tank; cull others by viewport.
          * Also check LGM position — a parachuting LGM can be far from its
          * tank (starts at a random spawn), so we need to send updates when
-         * the LGM is visible even if the tank is not. */
-        if (i != clientIdx) {
+         * the LGM is visible even if the tank is not.  Out-of-view tanks
+         * are emitted as 1-byte stubs (TANK_SNAPSHOT_HIDDEN_FLAG) rather
+         * than skipped, so the client can clear stale ghost positions for
+         * tanks that have driven off screen.  noCull bypasses this so
+         * recording paths capture every tank in full. */
+        if (i != clientIdx && !noCull) {
             bool inView = inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8);
             if (!inView && sim->sim.lgmen[i] != NULL && lgmIsOut(&sim->sim.lgmen[i])) {
                 BYTE lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
@@ -1585,6 +1610,10 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 }
             }
             if (!inView) {
+                ts = &tanksOut[tankCount];
+                memset(ts, 0, sizeof(*ts));
+                ts->playerNum = (uint8_t)(i | TANK_SNAPSHOT_HIDDEN_FLAG);
+                tankCount++;
                 continue;
             }
         }
@@ -1608,12 +1637,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->firstLeft = tankGetFirstLeft(&sim->sim.tanks[i]);
         ts->firstRight = tankGetFirstRight(&sim->sim.tanks[i]);
         ts->pingMs = sim->playerPing[i];
-        ts->accountFlags = (playersGetWbnParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x01 : 0)
-                         | (playersGetSteamParticipant(&sim->sim.plyrs, (BYTE)i) ? 0x02 : 0);
+        ts->clientFlags = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
         { static bool _snaplg[16] = {0};
-          if (!_snaplg[i] && ts->accountFlags != 0) {
+          if (!_snaplg[i] && ts->clientFlags != 0) {
             _snaplg[i] = 1;
-            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d accountFlags=0x%02x", i, ts->accountFlags);
+            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d clientFlags=0x%02x", i, ts->clientFlags);
           }
         }
 
@@ -1790,8 +1818,80 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
                     sim->playerPing[count],
                     sim->jitterTarget[count]);
+
+            /* For bot slots, append a 4-space-indented [BOT] line with
+             * the brain's most recent timing. Mute fields suppressed
+             * when zero — see commit message. */
+            BotInfo bi;
+            if (botManagerGetBotInfo(count, &bi)) {
+                if (bi.hasBrain) {
+                    if (bi.overrunCount == 0) {
+                        fprintf(stdout,
+                                "    [BOT] brain=%s last=%.1fms target=%.1fms\n",
+                                bi.brainName, bi.lastThinkMs, bi.targetMs);
+                    } else {
+                        fprintf(stdout,
+                                "    [BOT] brain=%s last=%.1fms target=%.1fms overruns=%u\n",
+                                bi.brainName, bi.lastThinkMs, bi.targetMs,
+                                bi.overrunCount);
+                    }
+                } else {
+                    fprintf(stdout, "    [BOT]\n");
+                }
+            }
         }
     }
+
+    /* Bot pool summary block — only when at least one bot slot is
+     * active. Shows the per-bot budget against the 20ms server tick
+     * plus per-stage last + EWMA wall-clock so operators can spot
+     * spikes against averages at a glance. */
+    if (botManagerHasAnyBot()) {
+        BotPoolStats ps;
+        botManagerGetPoolStats(&ps);
+        if (ps.workerCount == 0) {
+            fprintf(stdout,
+                    "Bot pool: single-thread (%d active bots), target=%.1fms/bot\n",
+                    ps.activeBots, ps.currentTargetMs);
+        } else {
+            fprintf(stdout,
+                    "Bot pool: %d workers (%d active bots), target=%.1fms/bot\n",
+                    ps.workerCount, ps.activeBots, ps.currentTargetMs);
+        }
+
+        double tickLast = 0.0, tickEwma = 0.0;
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        double simLast = 0.0, simEwma = 0.0;
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+
+        if (tickLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma);
+        }
+        fprintf(stdout,
+                "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs);
+        if (simLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Simulation:", simLast, simEwma);
+        }
+        /* "Bot prep" labels the non-brain serial parts of
+         * botManagerTick: snapshot/sync + input send. Distinct from
+         * "Simulation:" above which times the two serverSimTick calls. */
+        if (ps.totalOverruns == 0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs);
+        } else {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u\n",
+                    "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs,
+                    ps.totalOverruns);
+        }
+    }
+
     fprintf(stdout, "\n");
 }
 
@@ -2195,6 +2295,23 @@ void serverSimStartGame(ServerSim *sim) {
                 playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
             }
         }
+    }
+
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other and rivals don't grab adjacent squares (the tankCreate
+     * loop below runs synchronously, so without a batch pass each player's
+     * per-position checks would be blind to siblings being created in the
+     * same loop). startsGetStart consumes the slot lazily, doing scatter
+     * and direction conversion at consumption time so the per-square nudge
+     * sees siblings already placed earlier in this loop. */
+    {
+        BYTE batchTeam[MAX_TANKS];
+        for (i = 0; i < MAX_TANKS; i++) {
+            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+        }
+        startsAssignBatch(&sim->sim, &sim->sim.ss,
+                          sim->playerConnected, batchTeam,
+                          sim->sim.pendingStartIdx);
     }
 
     /* Create tanks for all connected players */

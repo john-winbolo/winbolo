@@ -48,6 +48,31 @@ typedef enum {
   lv_lr_shortwait
 } lvLrStates;
 
+/* Per-player HUD state for game-view armour bar tracking. Logs do not
+ * carry tank armour, so the bar is binary (alive=full / dead=destroyed)
+ * and the timestamps drive any death/respawn animations. */
+typedef struct {
+  bool     alive;
+  uint32_t deathTimeMs;
+  uint32_t respawnTimeMs;
+} GameViewPlayerHud;
+
+/* Per-tank inventory inferred from the event stream for legacy logs that
+ * do not carry tank shells/mines/armour/trees. Reset at spawn/respawn
+ * from gameTypeGetItems; mutated on log_SoundShoot/MineLay/HitTank/
+ * MineExplode by tile correlation with the shooter/victim's last
+ * log_PlayerLocation; refilled on log_BaseSetStock deltas when a
+ * friendly tank is standing on the base tile. Approximate — sound
+ * events lack player IDs, so adjacent tanks may steal each other's
+ * deltas. New (post-snapshot-tank-stats) logs should override these
+ * from authoritative snapshots. */
+typedef struct {
+  BYTE shells;
+  BYTE mines;
+  BYTE armour;
+  BYTE trees;
+} TankInventory;
+
 /*********************************************************
  * LogViewerState — all viewer state in one struct.
  *
@@ -82,6 +107,7 @@ typedef struct LogViewerState {
   bool         isPlaying;
   bool         logLoaded;
   uint32_t     timeRunning;
+  uint32_t     totalTimeMs;     /* Total log duration in ms, computed once on load */
   bool         centredTank;
   bool         fastForwarding;
   int32_t      gmeStartDelay;
@@ -110,6 +136,24 @@ typedef struct LogViewerState {
   int          timerSleep;
   SDL_TimerID  timerGameID;
   SDL_TimerID  timerFrameID;
+
+  /* --- Game-view (trailer-capture) skin state --- */
+  bool         gameView;             /* gates the rendering branch */
+  BYTE         cameraSlot;           /* 0..MAX_TANKS-1, the spectated player */
+  bool         savedUseTeamColours;  /* restored when leaving game view mode */
+  uint16_t     kills[MAX_TANKS];     /* per-player kill tally */
+  uint16_t     deaths[MAX_TANKS];    /* per-player death tally */
+  GameViewPlayerHud gameViewHud[MAX_TANKS];
+  TankInventory tankInv[MAX_TANKS];  /* inferred per-tank inventory (legacy logs) */
+  /* Per-base previous-stock snapshot for log_BaseSetStock delta
+   * computation. prevBaseStockValid is set FALSE until the first
+   * log_BaseSetStock for a base, so the initial value isn't credited
+   * to whichever tank happens to be standing on that tile. Indexed by
+   * base number minus 1 (1..MAX_BASES → 0..MAX_BASES-1). */
+  BYTE         prevBaseShells[MAX_BASES];
+  BYTE         prevBaseMines[MAX_BASES];
+  BYTE         prevBaseArmour[MAX_BASES];
+  bool         prevBaseStockValid[MAX_BASES];
 
   /* --- FROM draw.c (SDL handles) --- */
   struct SDL_Window   *window;

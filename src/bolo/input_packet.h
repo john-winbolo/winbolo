@@ -77,7 +77,19 @@ typedef struct {
     uint16_t mapChecksum;         /* CRC-16 of map terrain (non-zero on full sync ticks) */
 } SnapshotHeader;
 
-/* Per-tank data within a snapshot (wire format) */
+/* High bit of TankSnapshot.playerNum: when set, this entry is a "hidden stub"
+ * — only the playerNum byte is on the wire, no tank payload follows.  The
+ * server emits one entry per connected player every tick; players whose tank
+ * (and LGM) are outside this client's viewport ship as stubs so the client
+ * can clear stale ghost tanks instead of leaving the previous in-view position
+ * lingering in the players struct.  The low 7 bits hold the actual slot index
+ * (MAX_TANKS=16, so 4 bits is enough). */
+#define TANK_SNAPSHOT_HIDDEN_FLAG 0x80
+#define TANK_SNAPSHOT_PLAYER_MASK 0x7F
+
+/* Per-tank data within a snapshot (wire format).  Variable-length: a stub
+ * (playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) is 1 byte on the wire; a full entry
+ * is TANK_SNAPSHOT_WIRE_SIZE bytes. */
 typedef struct {
     uint8_t  playerNum;
     uint16_t worldX;
@@ -100,7 +112,7 @@ typedef struct {
     uint8_t  deathWait;    /* Ticks remaining until respawn (0 = alive) */
     uint8_t  reload;       /* Ticks remaining until can fire again (owning player only) */
     uint16_t pingMs;       /* This player's ping in ms */
-    uint8_t  accountFlags; /* Bit 0: WBN participant, Bit 1: Steam participant */
+    uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
 } TankSnapshot;
 
 /* Per-shell data within a snapshot (wire format) */

@@ -144,9 +144,13 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->pingMs = unpackU16(buf + 19);
 }
 
-/* Serialize one TankSnapshot into buf. Returns bytes written (27). */
+/* Serialize one TankSnapshot into buf. Returns bytes written: 1 for a stub
+ * (out-of-view), TANK_SNAPSHOT_WIRE_SIZE for a full entry. */
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
     buf[0] = ts->playerNum;
+    if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
+        return 1;
+    }
     packU16(buf + 1, ts->worldX);
     packU16(buf + 3, ts->worldY);
     packU16(buf + 5, ts->angle);
@@ -167,12 +171,37 @@ int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
     buf[22] = ts->deathWait;
     buf[23] = ts->reload;
     packU16(buf + 24, ts->pingMs);
-    buf[26] = ts->accountFlags;
+    buf[26] = ts->clientFlags;
     return 27;
 }
 
-void unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
+/* Returns bytes consumed: 1 for a stub, TANK_SNAPSHOT_WIRE_SIZE for full. */
+int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
     ts->playerNum = buf[0];
+    if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
+        ts->worldX = 0;
+        ts->worldY = 0;
+        ts->angle = 0;
+        ts->speed = 0;
+        ts->tankStatus = 0;
+        ts->lgmFrame = 0;
+        ts->lgmMX = 0;
+        ts->lgmMY = 0;
+        ts->lgmPX = 0;
+        ts->lgmPY = 0;
+        ts->armour = 0;
+        ts->shells = 0;
+        ts->mines = 0;
+        ts->trees = 0;
+        ts->firstLeft = 0;
+        ts->firstRight = 0;
+        ts->gunsightLen = 0;
+        ts->deathWait = 0;
+        ts->reload = 0;
+        ts->pingMs = 0;
+        ts->clientFlags = 0;
+        return 1;
+    }
     ts->worldX = unpackU16(buf + 1);
     ts->worldY = unpackU16(buf + 3);
     ts->angle = unpackU16(buf + 5);
@@ -193,7 +222,8 @@ void unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
     ts->deathWait = buf[22];
     ts->reload = buf[23];
     ts->pingMs = unpackU16(buf + 24);
-    ts->accountFlags = buf[26];
+    ts->clientFlags = buf[26];
+    return 27;
 }
 
 /* Serialize one ShellSnapshot into buf. Returns bytes written (7). */

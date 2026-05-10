@@ -611,6 +611,11 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
     int sheetW = TILE_FILE_X * scale;
     int sheetH = TILE_FILE_Y * scale;
 
+    /* Use SDL_GetBasePath() so asset files are found regardless of CWD.
+       On macOS the CWD often differs from the executable directory. */
+    const char *basePath = SDL_GetBasePath();
+    if (!basePath) basePath = "";
+
     /* Create the output RGBA32 surface at scaled size. */
     SDL_Surface *sheet = SDL_CreateSurface(sheetW, sheetH,
                                            SDL_PIXELFORMAT_RGBA32);
@@ -625,7 +630,9 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 
     /* Load the BMP fallback surface and apply green color key.
        If scale > 1 we scale the BMP up so it lands at the right position. */
-    SDL_Surface *bmpRaw = SDL_LoadBMP("data/skin.bmp");
+    char bmpPathBuf[512];
+    SDL_snprintf(bmpPathBuf, sizeof(bmpPathBuf), "%sdata/skin.bmp", basePath);
+    SDL_Surface *bmpRaw = SDL_LoadBMP(bmpPathBuf);
     SDL_Surface *bmp = NULL;
     if (bmpRaw) {
         Uint32 key = SDL_MapRGB(SDL_GetPixelFormatDetails(bmpRaw->format),
@@ -635,7 +642,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         SDL_DestroySurface(bmpRaw);
     }
     if (!bmp) {
-        WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: could not load data/skin.bmp fallback");
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: could not load %s fallback", bmpPathBuf);
     }
 
     NSVGrasterizer *rast = nsvgCreateRasterizer();
@@ -687,7 +694,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             (void)targetPx;
             char dir[256];
             if (s_skinName[0]) {
-                SDL_snprintf(dir, sizeof(dir), "data/skins/%s", s_skinName);
+                SDL_snprintf(dir, sizeof(dir), "%sdata/skins/%s", basePath, s_skinName);
                 bool skinHit = tryLoadSizedPNG(dir, e->name, w, w, h, tmpBuf);
                 SDL_Log("tileLoader[HD]   tryLoadSizedPNG skin dir='%s' -> %s", dir, skinHit ? "HIT" : "miss");
                 if (skinHit) {
@@ -697,7 +704,9 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
                 }
             }
             if (!loaded) {
-                bool svgHit = tryLoadSizedPNG("data/svg", e->name, w, w, h, tmpBuf);
+                char svgDir[256];
+                SDL_snprintf(svgDir, sizeof(svgDir), "%sdata/svg", basePath);
+                bool svgHit = tryLoadSizedPNG(svgDir, e->name, w, w, h, tmpBuf);
                 SDL_Log("tileLoader[HD]   tryLoadSizedPNG data/svg -> %s", svgHit ? "HIT" : "miss");
                 if (svgHit) {
                     blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
@@ -717,7 +726,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         /* Skin override: try data/skins/<skin>/<name>.svg|png. */
         if (!loaded && s_skinName[0]) {
             SDL_snprintf(pathBuf, sizeof(pathBuf),
-                         "data/skins/%s/%s.svg", s_skinName, e->name);
+                         "%sdata/skins/%s/%s.svg", basePath, s_skinName, e->name);
             if (tryLoadSVG(pathBuf, srcW, srcH, tmpBuf, rast)) {
                 blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                 loaded = true;
@@ -725,7 +734,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
             }
             if (!loaded) {
                 SDL_snprintf(pathBuf, sizeof(pathBuf),
-                             "data/skins/%s/%s.png", s_skinName, e->name);
+                             "%sdata/skins/%s/%s.png", basePath, s_skinName, e->name);
                 if (tryLoadPNG(pathBuf, srcW, srcH, tmpBuf)) {
                     blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                     loaded = true;
@@ -737,7 +746,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         }
 
         /* Try SVG first — rasterized at source size, then upscaled. */
-        SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.svg", e->name);
+        SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/svg/%s.svg", basePath, e->name);
         if (!loaded && tryLoadSVG(pathBuf, srcW, srcH, tmpBuf, rast)) {
             blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
             loaded = true;
@@ -746,7 +755,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 
         /* Try PNG next — scaled to source size, then upscaled. */
         if (!loaded) {
-            SDL_snprintf(pathBuf, sizeof(pathBuf), "data/svg/%s.png", e->name);
+            SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/svg/%s.png", basePath, e->name);
             if (tryLoadPNG(pathBuf, srcW, srcH, tmpBuf)) {
                 blitRGBAScaled(sheet, dstX, dstY, w, h, srcW, srcH, tmpBuf);
                 loaded = true;

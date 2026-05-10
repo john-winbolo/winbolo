@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <SDL3/SDL.h>
 
 /* Game constants matching tank.h / global.h */
 #define WSIM_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
@@ -228,6 +229,10 @@ void brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map) {
   sim->map = map;
 }
 
+void brainWorldSimSetAbortFlag(BrainWorldSim *sim, void *flag) {
+  if (sim) sim->abort_flag = flag;
+}
+
 void brainWorldSimSetTerrainSpeed(BrainWorldSim *sim, int type, float speed) {
   if (type >= 0 && type < 16) {
     sim->terrain_speed[type] = speed;
@@ -337,6 +342,18 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     int i;
     int our_wx, our_wy;
 
+    /* Cooperative abort. Per-tick header is the natural checkpoint —
+     * the rest of the body assumes a complete tick. Jumping to `done`
+     * lets the existing post-loop block fill in result.armour /
+     * pill_final_health from whatever state we already simulated; the
+     * brain sees a shorter prediction (smaller ticks_simulated, no
+     * arrival_tick) which is exactly the existing "ran out of budget"
+     * shape callers already handle. */
+    if (sim->abort_flag &&
+        SDL_GetAtomicInt((SDL_AtomicInt *)sim->abort_flag)) {
+      goto done;
+    }
+
     /* ============================================================= */
     /* 1. MOVE OUR TANK along path waypoints at terrain speed        */
     /* ============================================================= */
@@ -359,6 +376,9 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
           path_idx++;
           if (path_idx >= sim->num_path && result.arrival_tick < 0) {
             result.arrival_tick = (int16_t)tick;
+            /* Stop simulating — wsim only evaluates travel survivability,
+             * not prolonged combat at the destination. */
+            goto done;
           }
         } else {
           our->wx += (int)(dx * move / dist);
@@ -374,6 +394,21 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     /* 2. APPLY KNOCKBACK SLIDE                                      */
     /* ============================================================= */
     wsim_apply_slide(sim, our);
+
+    /* 2b. Proximity arrival — pill knockback can prevent exact waypoint
+     * arrival, trapping the tank in a push-approach loop until death.
+     * If we're within 1 tile of the final waypoint, count as arrived. */
+    if (path_idx < sim->num_path && result.arrival_tick < 0) {
+      int last_idx = sim->num_path - 1;
+      int final_wx = (sim->path[last_idx].mx << 8) + 128;
+      int final_wy = (sim->path[last_idx].my << 8) + 128;
+      int fdx = final_wx - our->wx;
+      int fdy = final_wy - our->wy;
+      if (fdx * fdx + fdy * fdy <= 128 * 128) {
+        result.arrival_tick = (int16_t)tick;
+        goto done;
+      }
+    }
 
     /* ============================================================= */
     /* 3. MOVE ENEMY TANKS (straight-line extrapolation)             */
@@ -526,9 +561,34 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             sim->lgm.active = 3; /* dead */
             result.lgm_death_tick = (int16_t)tick;
           } else {
-            /* Hit the target tank */
+            /* Hit the target tank.
+             * Distance-scaled hit: wsim has no shell travel time, so pills
+             * hit the tank instantly regardless of range. In reality, shells
+             * take ~64 ticks to cover 8 tiles and moving tanks frequently
+             * duck the shot. Scale damage by 1 - dist/range so close shots
+             * still do full damage but far-range shots contribute less.
+             * TODO: proper shell-flight model (option B) for better fidelity.
+             */
             WSimTank *t = &sim->tanks[best_target];
-            t->armour -= sim->shell_damage;
+            int dsq = wsim_dist_sq(pill_wx, pill_wy, t->wx, t->wy);
+            float dist_frac = sqrtf((float)dsq) / (float)WSIM_PILL_RANGE;
+            if (dist_frac > 1.0f) dist_frac = 1.0f;
+            int scaled = (int)(sim->shell_damage * (1.0f - dist_frac) + 0.5f);
+            if (scaled < 1 && dsq <= (WSIM_PILL_RANGE/2) * (WSIM_PILL_RANGE/2)) {
+              /* floor: very close shots always do at least 1 dmg */
+              scaled = 1;
+            }
+            t->armour -= scaled;
+
+            /* Record hit position if this is our tank */
+            if (t->is_ours && result.num_hits < WSIM_MAX_HITS) {
+              WSimHitRecord *hr = &result.hits[result.num_hits++];
+              hr->mx = (int16_t)(t->wx >> 8);
+              hr->my = (int16_t)(t->wy >> 8);
+              hr->armour_after = t->armour;
+              hr->tick = (int16_t)tick;
+              hr->pill_idx = (uint8_t)i;
+            }
 
             /* Knockback — compute initial velocity from pill toward tank */
             {
@@ -605,7 +665,11 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     result.ticks_simulated = (int16_t)tick;
   }
 
+done:
   /* Fill result */
+  if (result.ticks_simulated == 0) {
+    result.ticks_simulated = (int16_t)((result.arrival_tick >= 0) ? result.arrival_tick : 0);
+  }
   result.armour_remaining = our->armour;
   result.damage_taken = (int16_t)(initial_armour - our->armour);
 

@@ -95,7 +95,7 @@ static const char *soundFiles[NUM_SOUNDS] = {
 };
 
 #ifndef DIALOG_BOX_TITLE
-#define DIALOG_BOX_TITLE "Log Viewer"
+#define DIALOG_BOX_TITLE "WinBolo Log Viewer"
 #endif
 
 /*********************************************************

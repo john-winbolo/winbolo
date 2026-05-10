@@ -1114,3 +1114,17 @@ STR_LV_INFO_NO_WBN_KEY=Откройте лог с ключом WinBolo.net, чт
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=Открыть с WinBolo.net…
+
+# Log viewer zoom menu
+STR_LV_ZOOM=Масштаб
+STR_LV_ZOOM_IN=Увеличить
+STR_LV_ZOOM_OUT=Уменьшить
+
+# System Info panel — server-side bot/sim telemetry labels
+STR_DLGSYSINFO_SERVER=Сервер
+STR_DLGSYSINFO_BOTPOOL=Пул ботов
+STR_DLGSYSINFO_TICK=Тик
+STR_DLGSYSINFO_BRAIN=Brain
+STR_DLGSYSINFO_SIMULATION=Симуляция
+STR_DLGSYSINFO_BOTPREP=Подготовка ботов
+STR_DLGSYSINFO_BRAIN_OVERRUNS=Превышения Brain

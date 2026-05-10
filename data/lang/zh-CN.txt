@@ -1116,3 +1116,17 @@ STR_LV_INFO_NO_WBN_KEY=请打开含有 WinBolo.net 密钥的日志以查看评�
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=从 WinBolo.net 打开...
+
+# Log viewer zoom menu
+STR_LV_ZOOM=缩放
+STR_LV_ZOOM_IN=放大
+STR_LV_ZOOM_OUT=缩小
+
+# System Info panel — server-side bot/sim telemetry labels
+STR_DLGSYSINFO_SERVER=服务器
+STR_DLGSYSINFO_BOTPOOL=Bot 池
+STR_DLGSYSINFO_TICK=节拍
+STR_DLGSYSINFO_BRAIN=Brain
+STR_DLGSYSINFO_SIMULATION=模拟
+STR_DLGSYSINFO_BOTPREP=Bot 准备
+STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain 超限

@@ -60,7 +60,7 @@
 #include "../gamefront.h"
 #include "../../server/threads.h"
 #include "../../bolo/bot_manager.h"
-#include "../Input.h"
+#include "../input.h"
 #include "../lang.h"
 #include "../sound.h"
 #include "../winbolo.h"
@@ -1132,7 +1132,8 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
                                    snapBases, MAX_SNAPSHOT_BASES,
                                    snapPills, MAX_SNAPSHOT_PILLS,
-                                   snapEvents, MAX_SNAPSHOT_EVENTS);
+                                   snapEvents, MAX_SNAPSHOT_EVENTS,
+                                   false);
             clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
                                    snapShells, snapHdr.shellCount,
                                    snapTkExplosions, snapHdr.tkExplosionCount,
@@ -1151,8 +1152,9 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
           }
           /* Add bot brains for local game if AI is enabled */
-          botManagerInit();
-          {
+          if (!botManagerInit(0)) {
+            fprintf(stderr, "[gameFront] botManagerInit failed; bots disabled for this session\n");
+          } else {
             /* Resolve brain path for lobby "Add Bot" support and initial bots */
             char brainPath[FILENAME_MAX];
             bool haveBrain = false;
@@ -1193,7 +1195,11 @@ bool gameFrontSetDlgState(openingStates newState) {
                 spServerSim->lobbyPlayers[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
                 clientSim->lobbySlots[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
               }
-              /* Apply team alliances — players with same non-zero team become allies */
+              /* Apply team alliances — players with same non-zero team become allies.
+               * The local transport doesn't replicate lobby/alliance events, so we
+               * have to apply the same alliance to the client's players struct
+               * directly; otherwise teammates render as enemies and friendly-fire
+               * checks fail on the client. */
               for (int a = 0; a < 16; a++) {
                 if (!spServerSim->playerConnected[a]) continue;
                 if (spServerSim->lobbyPlayers[a].teamNumber == 0) continue;
@@ -1201,6 +1207,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                   if (!spServerSim->playerConnected[b]) continue;
                   if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
                     playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
+                    playersAcceptAlliance(&humanSim->sim, &humanSim->sim.plyrs, humanSim->myPlayerNum, (BYTE)a, (BYTE)b, FALSE);
                   }
                 }
               }

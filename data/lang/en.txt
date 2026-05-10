@@ -588,7 +588,7 @@ STR_DLGWELCOME_WINTITLE=WinBolo - Game Selection
 STR_DLGWELCOME_SINGLE=Single Player
 STR_DLGWELCOME_LOCAL=Local
 STR_DLGWELCOME_MAPEDITOR=Map Editor
-STR_DLGWELCOME_LOGVIEWER=Log Viewer
+STR_DLGWELCOME_LOGVIEWER=WinBolo Log Viewer
 STR_DLGWELCOME_INTERNET=Internet
 
 # Map Chooser dialog
@@ -1058,8 +1058,8 @@ STR_DLGSETTINGS_USE_NATTRAV=Use NAT traversal (hole-punching) via tracker
 STR_DLGSETTINGS_TILEDETAIL=Tile Detail Level
 STR_DLGSETTINGS_TD_CLASSIC=Classic
 STR_DLGSETTINGS_TD_MATCHZOOM=Highest Detail with Full Coverage (all game tiles are included in skin at that zoom level)
-STR_DLGSETTINGS_TD_MATCHZOOM_HINT=Some skins may include only some tiles, such as only tanks.
 STR_DLGSETTINGS_TD_HIGHDETAIL=Per Tile Best (use high detail for a tile regardless of if all game tiles have that detail level)
+STR_DLGSETTINGS_TD_MATCHZOOM_HINT=Some skins may include only some tiles, such as only tanks.
 STR_DLGSETTINGS_ANIMSMOOTH=Animation Smoothness (Tanks, Shells, and Builders)
 STR_DLGSETTINGS_AS_MATCH=Match skin
 STR_DLGSETTINGS_AS_MAX=Max - smoothest, ignores pixelation
@@ -1101,6 +1101,18 @@ STR_LV_INFO_NO_WBN_KEY=Open a log with a WinBolo.net key to view comments
 
 # Log viewer File menu — open log from WinBolo.net
 STR_LV_MENU_OPEN_WBN=Open from WinBolo.net...
+
+# Log viewer zoom menu
+STR_LV_ZOOM=Zoom
+STR_LV_ZOOM_IN=Zoom In
+STR_LV_ZOOM_OUT=Zoom Out
+STR_DLGSYSINFO_SERVER=Server
+STR_DLGSYSINFO_BOTPOOL=Bot pool
+STR_DLGSYSINFO_TICK=Tick
+STR_DLGSYSINFO_BRAIN=Brain
+STR_DLGSYSINFO_SIMULATION=Simulation
+STR_DLGSYSINFO_BOTPREP=Bot prep
+STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain overruns
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

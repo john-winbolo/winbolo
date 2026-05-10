@@ -29,8 +29,20 @@ local C      = require("constants")
 local U      = require("util")
 local danger = require("danger")
 local log    = require("logger")
+local PF     = require("pathfinder")
+local print2 = require("print2")
+local viz    = require("viz")
 
 local M = {}
+
+-- Hoisted: was reallocated inside the wall-build threat-blocker
+-- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
+-- when in build mode). Module-scope constant.
+local BAD_TERRAIN_FOR_WALL = {
+  [C.T_BUILDING]=true, [C.T_HALFBUILD]=true,
+  [C.T_RIVER]=true, [C.T_DEEPSEA]=true,
+  [C.T_PILLBOX]=true, [C.T_SWAMP]=true,
+}
 
 -- -------------------------------------------------------------------------
 -- Mode mapping: tank goal kind → builder mode
@@ -40,7 +52,7 @@ local GOAL_TO_MODE = {
   rescue_lgm     = "suppressed",
   defend_pill    = "suppressed",
   attack_pill    = "suppressed",     -- overridden to "wall_shield" below when applicable
-  bpc_pill       = "suppressed",     -- circle-strafe attack: no building during combat
+  -- bpc_pill removed: unified into attack_pill
   pill_place     = "suppressed",     -- overridden to "place_pill" below when dispatching
   attack_tank    = "suppressed",     -- no building during tank combat
   attack_base    = "suppressed",
@@ -51,6 +63,7 @@ local GOAL_TO_MODE = {
   explore              = "infrastructure",
   place_pill_strategic = "place_pill_strategic",
   none                 = "repair_nearby",
+  wait_for_lgm         = "suppressed",  -- whole point is to NOT dispatch the LGM
 }
 
 -- -------------------------------------------------------------------------
@@ -60,15 +73,29 @@ function M.set_mode(state, world, info, goal)
   local b    = state.builder
   local kind = goal.kind
 
-  b.mode       = GOAL_TO_MODE[kind] or "opportunistic"
-  b.target     = nil
-  b.need_trees = 0
+  b.mode           = GOAL_TO_MODE[kind] or "opportunistic"
+  b.target         = nil
+  b.need_trees     = 0
+  b.defensive_debug = nil
+
+  -- Pre-flight tree gather for PPT pill takes. The plan_position substate
+  -- transitions here when the bot is short on trees for the planned shield
+  -- walls; we want the existing smart gather (Priority 3 in decide()) to
+  -- pick a nearby reachable forest. need_trees drives the gate-out at
+  -- decide():608.
+  if kind == "attack_pill" and goal.substate == "gather_trees" then
+    b.mode       = "gather"
+    b.need_trees = goal._trees_for_walls or 0
+  end
 
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
   if kind == "attack_pill" and goal.wall_shield and goal.wall_mx then
     local sub = goal.substate or ""
-    if sub == "ws_prebuild" or sub == "ws_rebuild" then
-      -- LGM should go build/rebuild the wall
+    if sub == "ws_prebuild" or sub == "ws_rebuild" or sub == "build_walls" then
+      -- LGM should go build/rebuild the wall. "build_walls" is the
+      -- shield-scan-driven multi-wall build phase from attack.lua —
+      -- attack.lua advances goal.wall_mx/my to the next site itself,
+      -- so the builder just dispatches whichever target is current.
       b.mode = "wall_shield"
       b.wall_target = { mx = goal.wall_mx, my = goal.wall_my }
       b.target_pill = { mx = goal.mx, my = goal.my }  -- exclude from angry check
@@ -103,6 +130,69 @@ function M.set_mode(state, world, info, goal)
        and info.man_status == C.LGM_INTANK and not info.inboat then
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }
+    end
+  end
+
+  -- Defensive build during attack_tank: if carrying a pill and LGM is in
+  -- the tank, send LGM to place a pill at ±45° from the enemy direction
+  -- (2-5 tiles out).  Tank continues fighting; LGM runs out simultaneously.
+  if kind == "attack_tank"
+     and (info.carried_pills or 0) >= 1
+     and info.man_status == C.LGM_INTANK
+     and not info.inboat then
+    local perc = state.perc
+    if perc and perc.enemy_tanks and #perc.enemy_tanks > 0 then
+      local tmx = info.tankx >> 8
+      local tmy = info.tanky >> 8
+      local closest_et, closest_dist = nil, math.huge
+      for _, et in ipairs(perc.enemy_tanks) do
+        if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
+      end
+      if closest_et then
+        local aim = U.aim_at(info.tankx, info.tanky, U.m2w(closest_et.mx), U.m2w(closest_et.my))
+        local found_mx, found_my, found_dist, found_aoff = nil, nil, nil, nil
+        for dist = C.DEFENSIVE_BUILD_MAX_DIST, C.DEFENSIVE_BUILD_MIN_DIST, -1 do
+          if found_mx then break end
+          for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
+            local angle = (aim + aoff) % 256
+            local rad   = angle * (math.pi * 2 / 256)
+            local dx    = math.sin(rad)
+            local dy    = -math.cos(rad)
+            local cx    = U.mclamp(math.floor(tmx + dx * dist + 0.5))
+            local cy    = U.mclamp(math.floor(tmy + dy * dist + 0.5))
+            if not U.is_placeable(cx, cy, world) then goto next_bdef_angle end
+            if PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then goto next_bdef_angle end
+            do
+              local water_blocked = false
+              for step = 1, dist - 1 do
+                local ix = U.mclamp(math.floor(tmx + dx * step + 0.5))
+                local iy = U.mclamp(math.floor(tmy + dy * step + 0.5))
+                if U.is_water(U.ttype(ix, iy)) then water_blocked = true; break end
+              end
+              if water_blocked then goto next_bdef_angle end
+            end
+            found_mx, found_my, found_dist, found_aoff = cx, cy, dist, aoff
+            break
+            ::next_bdef_angle::
+          end
+        end
+        if found_mx then
+          b.mode       = "place_pill"
+          b.pill_target = { mx = found_mx, my = found_my }
+          b.defensive_debug = {
+            found    = true,
+            mx       = found_mx, my    = found_my,
+            aim      = aim,      dist  = found_dist, aoff = found_aoff,
+            enemy_mx = closest_et.mx,  enemy_my = closest_et.my,
+          }
+        else
+          b.defensive_debug = { found = false, reason = "no valid spot" }
+        end
+      else
+        b.defensive_debug = { found = false, reason = "no enemy" }
+      end
+    else
+      b.defensive_debug = { found = false, reason = "no enemy tanks" }
     end
   end
 
@@ -246,7 +336,7 @@ local function road_ahead(state, info, now, world)
   -- Quick reject: if threat_at_tank > 0, the LGM path starting at the tank
   -- tile already exceeds LGM_DANGER_LOW (0), so lgm_path_safe will fail.
   if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then return nil end
-  if not danger.lgm_path_safe(info, nmx, nmy, C.LGM_DANGER_LOW, now, world) then
+  if not danger.lgm_path_safe_enhanced(info, nmx, nmy, C.LGM_DANGER_LOW, now, world) then
     return nil
   end
   return { x = nmx, y = nmy, action = BUILDMODE_ROAD }
@@ -259,12 +349,110 @@ end
 function M.decide(state, world, info, now)
   local b = state.builder
 
+  -- Compute LGM ETA when out on a mission (for base departure timing)
+  if info.man_status == C.LGM_MOVING then
+    local man_mx = info.man_x >> 8
+    local man_my = info.man_y >> 8
+    local tmx = info.tankx >> 8
+    local tmy = info.tanky >> 8
+    local ticks = cpf_lgm_travel_ticks_map(man_mx, man_my, tmx, tmy, 0, 0, 2000, 150)
+    b.lgm_eta = ticks > 0 and (now + ticks) or nil
+  else
+    b.lgm_eta = nil
+  end
+
   -- LGM must be in the tank and available
   if info.man_status ~= C.LGM_INTANK then return nil end
 
   -- Never dispatch the LGM while in a boat.  The pacing slowdown drops
   -- the tank below disembark speed, stranding it on water.
   if info.inboat then return nil end
+
+  -- Don't dispatch when the next pathfinder step is water — tank is about
+  -- to enter a boat and LGM would be stranded immediately.
+  local pf = state.pf
+  if pf and pf.next_mx and pf.next_mx >= 0 then
+    local next_tt = U.ttype(pf.next_mx, pf.next_my)
+    if next_tt == C.T_RIVER or next_tt == C.T_DEEPSEA or next_tt == C.T_BOAT then
+      return nil
+    end
+  end
+
+  -- Priority 0.5: base shield — build wall to block pill fire while on any base.
+  -- Triggers ONLY on the tick we take damage (pill just fired → max window
+  -- before next shot). Checks all 8 directions for the best blocking tile.
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+  -- Allow base shield when ON the base or within 1 tile of it.
+  -- Wall must be placed on one of the 8 tiles adjacent to the base.
+  local has_base = info.base and info.base.x
+  local near_base = has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) <= 1
+  local has_trees = info.trees >= C.BASE_SHIELD_BUILD_COST
+  local took_dmg = state.took_damage_this_tick
+  local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
+
+  -- Always show precondition status on the HUD when near a base
+  if BRAIN_DEBUG_MODE and has_base then
+    local parts = {}
+    parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
+    parts[#parts + 1] = has_trees and string.format("trees:YES(%d)", info.trees) or string.format("trees:NO(%d<%d)", info.trees, C.BASE_SHIELD_BUILD_COST)
+    parts[#parts + 1] = took_dmg and "took_dmg:YES" or "took_dmg:NO"
+    parts[#parts + 1] = pill_threats_exist and string.format("threats:%d", #state.perc.pill_threats) or "threats:0"
+    local all_ok = near_base and has_trees and took_dmg and pill_threats_exist
+    local cr, cg = all_ok and 0 or 200, all_ok and 200 or 100
+    viz.hud_text("base_shield_viz", 10, 84, "BaseShield: " .. table.concat(parts, " | "), "topleft", cr, cg, 0)
+  end
+
+  if near_base and has_trees and took_dmg then
+    local bmx, bmy = info.base.x, info.base.y
+    local perc = state.perc
+    local pill_threats = perc and perc.pill_threats or {}
+    local DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }
+    local DY8 = { -1, -1, 0, 1, 1, 1, 0, -1 }
+    for _, pt in ipairs(pill_threats) do
+      if pt.dist >= C.BASE_SHIELD_MIN_DIST then
+        local pm = pt.pill
+        -- Try all 8 tiles adjacent to the BASE, pick the one that best
+        -- blocks the line from pill to base (smallest angle to pill direction)
+        local pill_dir = math.atan(pm.mx - bmx, -(pm.my - bmy))
+        local best_wx, best_wy, best_score = nil, nil, math.huge
+        for d = 1, 8 do
+          local wx, wy = bmx + DX8[d], bmy + DY8[d]
+          if U.in_map(wx, wy) then
+            local wtt = U.ttype(wx, wy)
+            if not BAD_TERRAIN_FOR_WALL[wtt] then
+              -- Score: how well does this tile block the pill's line to the base?
+              -- Lower = better blocker (closer to the pill direction from base)
+              local tile_dir = math.atan(wx - bmx, -(wy - bmy))
+              local diff = math.abs(pill_dir - tile_dir)
+              if diff > math.pi then diff = 2 * math.pi - diff end
+              if diff < best_score then
+                best_score = diff
+                best_wx, best_wy = wx, wy
+              end
+            end
+          end
+        end
+        if best_wx and lgm_can_reach(info, best_wx, best_wy) then
+          b.mode = "base_shield"
+          b.wall_target = { mx = best_wx, my = best_wy }
+          -- Store for persistent visualization
+          state._base_shield_viz = {
+            wall_mx = best_wx, wall_my = best_wy,
+            pill_mx = pm.mx, pill_my = pm.my,
+            base_mx = bmx, base_my = bmy,
+            anger = pt.anger, dist = pt.dist,
+            tick = now,
+          }
+          if BRAIN_DEBUG_MODE then
+            print2(string.format("base_shield: wall@(%d,%d) vs pill@(%d,%d) anger=%.2f dist=%d (just took damage)",
+              best_wx, best_wy, pm.mx, pm.my, pt.anger, pt.dist))
+          end
+          break
+        end
+      end
+    end
+  end
 
   -- Priority 1: emergency road under self when drowning in river
   if state.water_build then
@@ -281,7 +469,7 @@ function M.decide(state, world, info, now)
       end
     end
     if not angry_pill_close
-       and danger.lgm_path_safe(info, bx, by, C.LGM_DANGER_HIGH, now, world) then
+       and danger.lgm_path_safe_enhanced(info, bx, by, C.LGM_DANGER_HIGH, now, world) then
       return { x = bx, y = by, action = BUILDMODE_ROAD }
     end
     -- Danger too high even for emergency; nothing else is safe to do either
@@ -295,7 +483,7 @@ function M.decide(state, world, info, now)
   -- allows builds with a calm pill at 4+ tiles but aborts under heavy/angry fire.
   if state.slow_build and b.mode ~= "suppressed" then
     local bx, by = state.slow_build.x, state.slow_build.y
-    if danger.lgm_path_safe(info, bx, by, C.LGM_DANGER_MED, now, world) then
+    if danger.lgm_path_safe_enhanced(info, bx, by, C.LGM_DANGER_MED, now, world) then
       return { x = bx, y = by, action = BUILDMODE_ROAD }
     end
   end
@@ -317,7 +505,7 @@ function M.decide(state, world, info, now)
      and not info.inboat
      and (not state.trail_drop_cooldown or now >= state.trail_drop_cooldown) then
     local gk = state.goal and state.goal.kind or "none"
-    if gk ~= "attack_pill" and gk ~= "pill_place" and gk ~= "bpc_pill"
+    if gk ~= "attack_pill" and gk ~= "pill_place"
        and gk ~= "place_pill_strategic" then
       -- Check no friendly pill within radius
       local tmx = info.tankx >> 8
@@ -355,7 +543,7 @@ function M.decide(state, world, info, now)
     local px, py = b.pill_target.mx, b.pill_target.my
     if (info.carried_pills or 0) > 0
        and lgm_can_reach(info, px, py)
-       and danger.lgm_path_safe(info, px, py, C.LGM_DANGER_HIGH, now, world) then
+       and danger.lgm_path_safe_enhanced(info, px, py, C.LGM_DANGER_HIGH, now, world) then
       log.reason("build", { mode = "place_pill", why = "placing pill",
                              pill_mx = px, pill_my = py })
       return { x = px, y = py, action = BUILDMODE_PBOX }
@@ -373,14 +561,21 @@ function M.decide(state, world, info, now)
                                              or C.WALL_SHIELD_BUILD_COST
       -- Check for angry pills close to the wall tile — if a pill has woken up
       -- (e.g., another player provoked it) the LGM will die in transit.
-      -- Exclude the TARGET pill for wall_shield mode: we know the wall is near
-      -- it, and the pill is calm at prebuild distance (9 tiles, outside range).
+      -- Exclude the TARGET pill (wall_shield) and the pill we're shielding
+      -- against (base_shield) — those are the ones we're trying to block.
       local angry_pill_close = false
       local pill_threats = state.perc and state.perc.pill_threats or {}
       local tp = b.target_pill
+      -- For base_shield, the shield pill's position is stored on the goal
+      local sp_mx = state.goal and state.goal.shield_wall_mx and state.perc
+                    and state.perc.fire_source_mx
+      local sp_my = state.perc and state.perc.fire_source_my
       for _, pt in ipairs(pill_threats) do
-        -- Skip the target pill in wall_shield mode
+        -- Skip the target pill (wall_shield) or shield source pill (base_shield)
         if tp and pt.pill.mx == tp.mx and pt.pill.my == tp.my then
+          goto next_pill_threat
+        end
+        if sp_mx and pt.pill.mx == sp_mx and pt.pill.my == sp_my then
           goto next_pill_threat
         end
         if pt.anger > 0.3 and U.mdist(wx, wy, pt.pill.mx, pt.pill.my) <= C.PILL_RANGE_MAP then
@@ -389,14 +584,56 @@ function M.decide(state, world, info, now)
         end
         ::next_pill_threat::
       end
-      if not angry_pill_close and info.trees >= cost
-         and lgm_can_reach(info, wx, wy)
-         and danger.lgm_path_safe(info, wx, wy, C.LGM_DANGER_HIGH, now, world) then
+      local has_trees   = info.trees >= cost
+      local can_reach   = lgm_can_reach(info, wx, wy)
+      -- Exclude the target pill's own per-tile contribution from the
+      -- safety check — we're committed to killing it, so its danger
+      -- footprint shouldn't bully our LGM dispatch within its own
+      -- range. Mirrors goals.lua's self_dr trick. tp is the
+      -- target_pill set above when mode == "wall_shield".
+      local excl_mx = tp and tp.mx or nil
+      local excl_my = tp and tp.my or nil
+      local path_safe   = can_reach and
+                          danger.lgm_path_safe_enhanced(info, wx, wy,
+                              C.LGM_DANGER_HIGH, now, world,
+                              excl_mx, excl_my)
+      if not angry_pill_close and has_trees and can_reach and path_safe then
+        -- Forest in the way? The engine can't drop a wall on T_FOREST;
+        -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
+        -- Dispatch FARM first to harvest, then the next builder tick
+        -- will see grass/road and dispatch the actual BUILD. Two
+        -- separate LGM round-trips, but the wall_shield idx in attack.lua
+        -- only advances on T_BUILDING/T_HALFBUILD so it'll keep
+        -- targeting the same tile until the wall is genuinely up.
+        if wtt == C.T_FOREST then
+          log.reason("build", { mode = b.mode, why = "harvest forest before wall",
+                                wall_mx = wx, wall_my = wy })
+          return { x = wx, y = wy, action = BUILDMODE_FARM }
+        end
         local why = b.mode == "base_shield" and "building wall to protect refuel"
                                               or "building wall for pill attack"
         log.reason("build", { mode = b.mode, why = why, wall_mx = wx, wall_my = wy })
         return { x = wx, y = wy, action = BUILDMODE_BUILD }
       end
+      -- Stash gate failure on state so the brain can surface it (and
+      -- the upcoming on-screen viz can read it). Also persist the most
+      -- recent skip reason for trace logs / a future overlay.
+      state._wall_shield_skip = {
+        tick           = now,
+        wx             = wx, wy = wy,
+        angry_pill_close = angry_pill_close,
+        has_trees      = has_trees,
+        trees_have     = info.trees,
+        trees_need     = cost,
+        can_reach      = can_reach,
+        path_safe      = path_safe,
+      }
+      log.reason("build_skip", {
+        mode = b.mode, wall_mx = wx, wall_my = wy,
+        angry = angry_pill_close,
+        trees = string.format("%d/%d", info.trees, cost),
+        reach = can_reach, safe  = path_safe,
+      })
     end
     -- Wall already exists or can't build safely — fall through to default
     if b.mode == "wall_shield" then return nil end
@@ -410,7 +647,7 @@ function M.decide(state, world, info, now)
     local fx, fy, fd = nearest_onpath_forest(state, info, C.FARM_GATHER_RADIUS)
     if fx and fd <= C.LGM_DEPLOY_DIST
        and lgm_can_reach(info, fx, fy)
-       and danger.lgm_path_safe(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
+       and danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
       return { x = fx, y = fy, action = BUILDMODE_FARM }
     end
     -- Forest not reachable or unsafe; don't fall through to road building
@@ -430,10 +667,20 @@ function M.decide(state, world, info, now)
     if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
       return road_ahead(state, info, now, world)
     end
-    local fx, fy, fd = nearest_onpath_forest(state, info, C.FARM_OPPORTUNISTIC_RADIUS)
-    if fx and fd <= C.LGM_DEPLOY_DIST
+    -- Wider radius when stationary at refuel base — tank isn't moving so
+    -- LGM has time to walk further without pacing issues.
+    local is_refuel_stationary = state.goal and state.goal.kind == "refuel_at_base"
+        and info.speed == 0
+        and (info.tankx >> 8) == (state.goal.mx or -1)
+        and (info.tanky >> 8) == (state.goal.my or -1)
+    local farm_radius = is_refuel_stationary and C.FARM_REFUEL_RADIUS
+                                              or C.FARM_OPPORTUNISTIC_RADIUS
+    local deploy_dist = is_refuel_stationary and C.LGM_DEPLOY_DIST_REFUEL
+                                              or C.LGM_DEPLOY_DIST
+    local fx, fy, fd = nearest_onpath_forest(state, info, farm_radius)
+    if fx and fd <= deploy_dist
        and lgm_can_reach(info, fx, fy)
-       and danger.lgm_path_safe(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
+       and danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
       return { x = fx, y = fy, action = BUILDMODE_FARM }
     end
   end

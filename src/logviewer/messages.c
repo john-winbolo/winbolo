@@ -103,12 +103,13 @@ void lv_messageDestroy(void) {
 }
 
 
-/* lv_messageAdd lives in screen.c — it is the active path that
- * forwards rendered text to the events panel via lv_windowAddEvent.
- * The legacy scrolling-message data structure that the rest of this
- * file maintains is unused by the current frontend; the helpers
- * below remain only because lv_messageCreate/lv_messageDestroy are
- * still called during logviewer setup/teardown. */
+/* lv_messageAdd lives in screen.c — it forwards rendered text to the
+ * events panel via lv_windowAddEvent and tail-calls lv_messageAddItem
+ * to feed the scrolling-marquee queue used by the trailer game view
+ * (game_view.c sets up/tears down the queue and ticks lv_messageUpdate
+ * each frame). Outside of game-view mode the queue is populated but
+ * never drained — cheap, and it keeps lv_messageAdd's call sites the
+ * same in both modes. */
 
 
 /*********************************************************
@@ -193,20 +194,24 @@ void lv_messageAddItem(char *top, char *bottom) {
 *CREATION DATE:  3/1/99
 *LAST MODIFIED: 26/11/99
 *PURPOSE:
-*  Updates the scrolling message
+*  Updates the scrolling message — pops one queued char into
+*  the right-edge staging slot, shifts the visible cells one
+*  position left, and blanks the staging slot. The visible
+*  region is positions 0..MESSAGE_WIDTH-2 (read via
+*  lv_messageGetMessage); position MESSAGE_WIDTH-1 is the
+*  staging slot and ends each call as a string terminator so
+*  topLine/bottomLine stay valid as C strings.
 *
 *ARGUMENTS:
 *
 *********************************************************/
-#if 0
 void lv_messageUpdate(void) {
   message q;  /* temp Pointer */
   BYTE count; /* Looping variable */
-  
+
   newMessage[0] = '\0';
   /* Only want to do something if the message needs to be scrolled */
   if (NonEmpty(msg)) {
-    
     /* Get the next charectors */
     topLine[MESSAGE_WIDTH-1] = MessageHeadTop(msg);
     bottomLine[MESSAGE_WIDTH-1] = MessageHeadBottom(msg);
@@ -224,11 +229,26 @@ void lv_messageUpdate(void) {
     }
     topLine[MESSAGE_WIDTH-1] = END_OF_STRING;
     bottomLine[MESSAGE_WIDTH-1] = END_OF_STRING;
-    /* Update the screen */
-    lv_windowAddEvent(topLine,bottomLine);
   }
 }
-#endif
+
+/*********************************************************
+*NAME:          lv_messageDrainQueue
+*PURPOSE:
+*  Drains every pending cell into the visible row in one go.
+*  Each lv_messageUpdate call pops one cell and shifts left,
+*  so looping until the queue is empty leaves the visible
+*  cells holding the tail of whatever was queued — which is
+*  exactly what continuous play would have eventually shown.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+void lv_messageDrainQueue(void) {
+  while (NonEmpty(msg)) {
+    lv_messageUpdate();
+  }
+}
 
 /*********************************************************
 *NAME:          lv_messageGetMessage

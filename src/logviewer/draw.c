@@ -26,7 +26,7 @@
 
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>  /* Already included, but needed for debug printf */
+#include <stdio.h>
 #include <string.h>
 
 #include "global.h"
@@ -36,6 +36,7 @@
 #include "positions.h"
 #include "draw.h"
 #include "logviewer.h"
+#include "game_view.h"
 #include "imgui/imgui_main_menu.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
@@ -80,8 +81,7 @@ static uint32_t g_dwFrameTotal = 0;
  * sized to the visible tile count and the blit scales it up. */
 static const float g_zoomSteps[] = {
     0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-    1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
-    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f
+    1.0f, 2.0f, 3.0f, 4.0f
 };
 #define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
 #define ZOOM_STEP_1X    5
@@ -240,6 +240,23 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY) {
     lv_drawApplyZoomStep(g_zoomStepIndex - 1, mouseScreenX, mouseScreenY);
 }
 
+int lv_drawGetZoomStepIndex(void) {
+    return g_zoomStepIndex;
+}
+
+int lv_drawGetZoomStepCount(void) {
+    return ZOOM_STEP_COUNT;
+}
+
+float lv_drawGetZoomStepValue(int index) {
+    if (index < 0 || index >= ZOOM_STEP_COUNT) return 1.0f;
+    return g_zoomSteps[index];
+}
+
+void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY) {
+    lv_drawApplyZoomStep(stepIndex, mouseScreenX, mouseScreenY);
+}
+
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
  * Returns NULL on failure. The log viewer always uses scale 1 — the
  * blit-time scaling is in the texture target, not the source atlas. */
@@ -344,7 +361,7 @@ BYTE lv_drawSetup(void) {
     width  = lv_screenGetSizeX() * TILE_SIZE_X;
     height = lv_screenGetSizeY() * TILE_SIZE_Y + IMGUI_MENU_BAR_HEIGHT;
 
-    sdlWindow = SDL_CreateWindow("Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
+    sdlWindow = SDL_CreateWindow("WinBolo Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
     if (sdlWindow == NULL) {
         TTF_Quit(); SDL_Quit();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating SDL window", NULL);
@@ -582,6 +599,15 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     (void)isPillView; (void)edgeX; (void)edgeY; (void)useCursor;
     (void)cursorLeft; (void)cursorTop;
 
+    /* Phase D: standalone game-view path. Routes the same per-frame
+     * pointers lv_screenUpdate built into the live-game renderers.
+     * Embedded mode never enters here — gameView toggle is gated on
+     * ownsWindow in logviewer.c. */
+    if (lv->gameView && lv->ownsWindow) {
+        lv_drawGameViewFrame(value, mineView, tks, sBullets, lgms);
+        return;
+    }
+
     zoomFactor = lv_windowGetZoomFactor();
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
 
@@ -595,7 +621,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
             lv_drawLast[x][y] = pos;
             isPill = isBase = FALSE;
             
-            if ((pos >= PILL_EVIL_0 && pos <= PILL_EVIL_15) || (pos >= PILL_GOOD_0 && pos <= PILL_GOOD_15)) {
+            if (pos == PILL_EVIL_15 || (pos >= PILL_EVIL_14 && pos <= PILL_EVIL_0) || (pos >= PILL_GOOD_15 && pos <= PILL_GOOD_0)) {
                 isPill = TRUE;
                 lv_drawLast[x][y] = 10000;
             }
@@ -884,4 +910,17 @@ SDL_Renderer* lv_drawGetSDLRenderer(void) {
 *********************************************************/
 SDL_Texture* lv_drawGetGameTexture(void) {
     return textureTarget;
+}
+
+/* Tile atlas accessor — exposes the unified SVG/PNG/BMP atlas built by
+ * buildTileAtlas() so the standalone game-view path can route it through
+ * mapview.c's MapViewCtx. */
+SDL_Texture* lv_drawGetTilesTexture(void) {
+    return textureTiles;
+}
+
+/* Atlas is always built at scale 1 (see buildTileAtlas()) — the blit-time
+ * scaling is in the texture target, not the source atlas. */
+int lv_drawGetSheetScale(void) {
+    return 1;
 }

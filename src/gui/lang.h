@@ -1151,6 +1151,22 @@
 /* Log viewer File menu — open log from WinBolo.net */
 #define STR_LV_MENU_OPEN_WBN                1246
 
+/* Log viewer zoom menu */
+#define STR_LV_ZOOM                         1247
+#define STR_LV_ZOOM_IN                      1248
+#define STR_LV_ZOOM_OUT                     1249
+
+/* System Info panel — server-side bot/sim telemetry labels.
+ * Bare nouns (no trailing colon, no format specifiers); colons and
+ * numeric format specifiers stay literal in the C format strings. */
+#define STR_DLGSYSINFO_SERVER               1250
+#define STR_DLGSYSINFO_BOTPOOL              1251
+#define STR_DLGSYSINFO_TICK                 1252
+#define STR_DLGSYSINFO_BRAIN                1253
+#define STR_DLGSYSINFO_SIMULATION           1254
+#define STR_DLGSYSINFO_BOTPREP              1255
+#define STR_DLGSYSINFO_BRAIN_OVERRUNS       1256
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
@@ -1176,6 +1192,7 @@
 #ifndef RC_INVOKED
 
 #include "../bolo/global.h"
+#include "../bolo/player_flags.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1204,14 +1221,9 @@ typedef struct {
  * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
 #define LANG_MSGARG_STRING_LEN 64
 
-/* Bit flags for MessageArgs::playerFlags / otherFlags. Mirrors the
- * accountFlags byte in TankSnapshot (src/bolo/input_packet.h). */
-#define MESSAGE_FLAG_WBN   0x01
-#define MESSAGE_FLAG_STEAM 0x02
-
 typedef struct {
     char    playerName[PLAYER_NAME_LEN];
-    uint8_t playerFlags;        /* MESSAGE_FLAG_WBN | MESSAGE_FLAG_STEAM */
+    uint8_t playerFlags;        /* PLAYER_FLAG_* bits */
     char    playerCountry[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
     char    otherName[PLAYER_NAME_LEN];
     uint8_t otherFlags;

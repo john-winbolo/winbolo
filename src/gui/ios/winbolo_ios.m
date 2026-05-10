@@ -847,7 +847,7 @@ void frontEndClearPlayer(playerNumbers value) {
     sdl3ImguiClearPlayer((unsigned char)value);
 }
 
-void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, bool wbnParticipant, bool steamParticipant) {
+void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
     char cc[3];
     if (!screenGetGameRunningCS(cs)) {
         cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
@@ -858,7 +858,7 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
     cc[1] = countryCode[1];
     cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
-    sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, wbnParticipant, steamParticipant);
+    sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {

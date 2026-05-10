@@ -66,6 +66,102 @@ BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
 
+/* --- Inferred tank-inventory helpers (legacy logs only) -------------
+ * Logs prior to the snapshot-tank-stats version don't carry per-tank
+ * shells/mines/armour/trees. We approximate them by walking the event
+ * stream:
+ *   - log_PlayerJoined / log_PlayerRejoin / first log_PlayerLocation
+ *     after death  -> spawn defaults from gameType
+ *   - log_KillPlayer / log_PlayerDied / log_PlayerLeaving / Quit -> 0
+ *   - log_SoundShoot at (mx,my)        -> tank at tile: shells--
+ *   - log_SoundMineLay at (mx,my)      -> tank at tile: mines--
+ *   - log_SoundHitTank at (mx,my)      -> tank at tile: armour -= DAMAGE
+ *   - log_SoundMineExplode at (mx,my)  -> tank at tile: armour -= MINE_DAMAGE
+ *   - log_BaseSetStock                 -> tank on base: receives delta
+ *
+ * Sound events lack player IDs, so adjacent tanks may steal each
+ * other's deltas. Drift accumulates over the game; new logs will
+ * carry authoritative values in snapshots and override these. */
+
+static void inv_setSpawn(BYTE slot) {
+  if (slot >= MAX_TANKS) return;
+  /* Mirrors gameTypeGetItems() in src/bolo/gametype.c. The
+   * gameTournament shell amount depends on the runtime ratio of
+   * neutral bases to total bases at spawn time — use TANK_FULL_SHELLS
+   * as the upper bound rather than try to reproduce that calculation
+   * over a different base ownership tracker. */
+  g_lv->tankInv[slot].armour = TANK_FULL_ARMOUR;
+  switch (g_lv->gt) {
+    case gameOpen:
+      g_lv->tankInv[slot].shells = TANK_FULL_SHELLS;
+      g_lv->tankInv[slot].mines  = TANK_FULL_MINES;
+      g_lv->tankInv[slot].trees  = TANK_FULL_TREES;
+      break;
+    case gameTournament:
+      g_lv->tankInv[slot].shells = TANK_FULL_SHELLS;
+      g_lv->tankInv[slot].mines  = 0;
+      g_lv->tankInv[slot].trees  = 0;
+      break;
+    case gameStrictTournament:
+    default:
+      g_lv->tankInv[slot].shells = 0;
+      g_lv->tankInv[slot].mines  = 0;
+      g_lv->tankInv[slot].trees  = 0;
+      break;
+  }
+}
+
+static void inv_zero(BYTE slot) {
+  if (slot >= MAX_TANKS) return;
+  g_lv->tankInv[slot].armour = 0;
+  g_lv->tankInv[slot].shells = 0;
+  g_lv->tankInv[slot].mines  = 0;
+  g_lv->tankInv[slot].trees  = 0;
+}
+
+/* Subtract `amount` from `*field`, clamped at 0. */
+static void inv_subClamp(BYTE *field, BYTE amount) {
+  if (*field <= amount) *field = 0;
+  else *field = (BYTE)(*field - amount);
+}
+
+/* Add `amount` to `*field`, clamped at `cap`. */
+static void inv_addClamp(BYTE *field, BYTE amount, BYTE cap) {
+  unsigned int sum = (unsigned int)(*field) + amount;
+  if (sum > cap) sum = cap;
+  *field = (BYTE)sum;
+}
+
+/* Find the first in-use tank whose mapX/mapY matches (mx,my). Returns
+ * 0xFF if none. Tanks can't normally share a tile (collision), so the
+ * first match is the only match in practice. */
+static BYTE inv_findTankAtTile(BYTE mx, BYTE my) {
+  BYTE i;
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (!lv_playersIsInUse(i)) continue;
+    if (!g_lv->gameViewHud[i].alive) continue;
+    BYTE tmx, tmy, tpx, tpy, tframe;
+    bool tOnBoat;
+    lv_playersGetTankDetails(i, &tmx, &tmy, &tpx, &tpy, &tframe, &tOnBoat);
+    if (tmx == mx && tmy == my) return i;
+  }
+  return 0xFF;
+}
+
+/* Find the in-use tank whose LGM is at (mx,my). Used for events that
+ * fire at the LGM's tile (mine lay, farm, build) rather than the
+ * tank's. Returns 0xFF if no LGM matches. */
+static BYTE inv_findTankByLgmAtTile(BYTE mx, BYTE my) {
+  BYTE i;
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (!lv_playersIsInUse(i)) continue;
+    BYTE lmx, lmy, lpx, lpy, lframe;
+    lv_playersGetLgmDetails(i, &lmx, &lmy, &lpx, &lpy, &lframe);
+    if (lmx == mx && lmy == my) return i;
+  }
+  return 0xFF;
+}
+
 // Some prototypes to cleanup and document
 
 bool logIsEOF();
@@ -522,8 +618,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
           /* Version 0: opt2-opt5 are IP address octets */
           snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
           lv_dnsLookup(mem, str, sizeof(str));
-          strncpy(mem, str, sizeof(mem) - 1);
-          mem[sizeof(mem) - 1] = '\0';
+          snprintf(mem, sizeof(mem), "%s", str);
         } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
           /* Version 1: opt2-opt3 are 2-char country code,
            * opt4 is accountFlags (bit 0=WBN, bit 1=Steam),
@@ -535,9 +630,13 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, name, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
+      }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = true;
+        g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
+        inv_setSpawn(opt1);
       }
       break;
     case log_PlayerQuit:
@@ -546,18 +645,40 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersLeaveGame(opt1, TRUE);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        inv_zero(opt1);
+        if (g_lv->gameView && opt1 == g_lv->cameraSlot) {
+          /* Advance camera to next in-use slot. Mirrors Tab cycle in
+           * logviewer.c:651-660. The `next != opt1` guard skips the
+           * leaving player explicitly: lv_playersIsInUse(opt1) may still
+           * return TRUE here, and we don't want the camera to bounce
+           * back. */
+          BYTE start = g_lv->cameraSlot;
+          BYTE found = start;
+          BYTE i;
+          for (i = 1; i <= MAX_TANKS; i++) {
+            BYTE next = (BYTE)((start + i) % MAX_TANKS);
+            if (next != opt1 && lv_playersIsInUse(next)) {
+              found = next;
+              break;
+            }
+          }
+          g_lv->cameraSlot = found;
+          g_lv->wantScreenUpdate = TRUE;
+        }
       }
       break;
     case log_LostMan:
       logReadBytes(&opt1, 1);
+      lv_playersSetLgmDead(opt1);
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
       }
       break;
@@ -581,10 +702,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, mem);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
-        strncpy(args.otherName, mem, sizeof(args.otherName) - 1);
-        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_REQUEST, &args);
       }
       break;
@@ -596,10 +715,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, mem);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
-        strncpy(args.otherName, mem, sizeof(args.otherName) - 1);
-        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_ACCEPT, &args);
       }
       break;
@@ -609,8 +726,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_LEAVE, &args);
       }
       break;
@@ -652,6 +768,31 @@ void lv_screenProcessLog(unsigned short numEvents) {
          opt3 = manDyingNear;
       }
       lv_soundDist(opt3, opt1, opt2);
+
+      /* Inferred-inventory side effects. opt1=mx, opt2=my of the
+       * sound source. log_SoundShoot fires at the shooter's tile
+       * (tank or pill — pills don't share tiles with tanks so the
+       * lookup safely returns nobody). log_SoundHitTank fires at the
+       * victim's tile. log_SoundMineLay fires at the LGM's tile (the
+       * server emits manLayingMineNear in lgm.c, not the tank's
+       * position) — find the owning tank via the LGM tracker.
+       * log_SoundMineExplode fires at the mine tile; if a tank is on
+       * it, that tank took the damage. log_SoundFarm/Build aren't
+       * wired (would inflow trees, but trees ride home with the LGM
+       * before crediting the tank — too noisy to model here). */
+      if (code == log_SoundShoot) {
+        BYTE slot = inv_findTankAtTile(opt1, opt2);
+        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].shells, 1);
+      } else if (code == log_SoundMineLay) {
+        BYTE slot = inv_findTankByLgmAtTile(opt1, opt2);
+        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].mines, 1);
+      } else if (code == log_SoundHitTank) {
+        BYTE slot = inv_findTankAtTile(opt1, opt2);
+        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].armour, DAMAGE);
+      } else if (code == log_SoundMineExplode) {
+        BYTE slot = inv_findTankAtTile(opt1, opt2);
+        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].armour, MINE_DAMAGE);
+      }
       break;
     case log_PlayerLocation:
       logReadBytes(&opt1, 1);
@@ -663,6 +804,11 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilGetNibbles(opt5, &frame, &onBoat);
       if (opt2 != 0) {
         lv_playersUpdateTank(opt1, opt2, opt3, px, py, frame, onBoat);
+        if (opt1 < MAX_TANKS && !g_lv->gameViewHud[opt1].alive) {
+          g_lv->gameViewHud[opt1].alive = true;
+          g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
+          inv_setSpawn(opt1);
+        }
       }
       break;
     case log_Shell:
@@ -690,10 +836,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, name);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, name, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
-        strncpy(args.string1, str, sizeof(args.string1) - 1);
-        args.string1[sizeof(args.string1) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        snprintf(args.string1, sizeof(args.string1), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
       }
       break;
@@ -707,12 +851,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, name2);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, name, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
-        strncpy(args.otherName, name2, sizeof(args.otherName) - 1);
-        args.otherName[sizeof(args.otherName) - 1] = '\0';
-        strncpy(args.string1, str, sizeof(args.string1) - 1);
-        args.string1[sizeof(args.string1) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        snprintf(args.otherName, sizeof(args.otherName), "%s", name2);
+        snprintf(args.string1, sizeof(args.string1), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
       }
       break;
@@ -722,8 +863,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       {
         MessageArgs args = {0};
-        strncpy(args.string1, str, sizeof(args.string1) - 1);
-        args.string1[sizeof(args.string1) - 1] = '\0';
+        snprintf(args.string1, sizeof(args.string1), "%s", str);
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
@@ -739,6 +879,43 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
       lv_basesSetStock(&g_lv->bs, opt1, opt2, opt3, opt4);
+      /* Refill inference: when a base's shells/mines/armour drops and a
+       * tank is standing on the base tile, credit the delta to that
+       * tank. Stock increases (server-side production) are ignored.
+       * Suppressed on the first event per base so the initial value
+       * isn't credited to whoever happens to be there. opt1 is the
+       * 0-based base index in the log (server emits it post-decrement
+       * — see basesSetBase / basesUpdateStock in src/bolo/bases.c).
+       * lv_basesGetBase wants the 1-based number, hence opt1+1. */
+      if (opt1 < MAX_BASES) {
+        BYTE bsIdx = opt1;
+        if (g_lv->prevBaseStockValid[bsIdx]) {
+          base bi;
+          lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(opt1 + 1));
+          BYTE slot = inv_findTankAtTile(bi.x, bi.y);
+          if (slot != 0xFF) {
+            if (opt2 < g_lv->prevBaseShells[bsIdx]) {
+              inv_addClamp(&g_lv->tankInv[slot].shells,
+                           (BYTE)(g_lv->prevBaseShells[bsIdx] - opt2),
+                           TANK_FULL_SHELLS);
+            }
+            if (opt3 < g_lv->prevBaseMines[bsIdx]) {
+              inv_addClamp(&g_lv->tankInv[slot].mines,
+                           (BYTE)(g_lv->prevBaseMines[bsIdx] - opt3),
+                           TANK_FULL_MINES);
+            }
+            if (opt4 < g_lv->prevBaseArmour[bsIdx]) {
+              inv_addClamp(&g_lv->tankInv[slot].armour,
+                           (BYTE)(g_lv->prevBaseArmour[bsIdx] - opt4),
+                           TANK_FULL_ARMOUR);
+            }
+          }
+        }
+        g_lv->prevBaseShells[bsIdx] = opt2;
+        g_lv->prevBaseMines[bsIdx]  = opt3;
+        g_lv->prevBaseArmour[bsIdx] = opt4;
+        g_lv->prevBaseStockValid[bsIdx] = true;
+      }
       break;
     case log_PillSetOwner:
       logReadBytes(&opt1, 1);
@@ -768,28 +945,38 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, mem);
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
-        strncpy(args.playerName, mem, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
         lv_playersGetPlayerName(opt2, str);
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
-        strncpy(args.otherName, mem, sizeof(args.otherName) - 1);
-        args.otherName[sizeof(args.otherName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
+      if (opt1 < MAX_TANKS) g_lv->deaths[opt1]++;
+      if (opt2 != opt1 && opt2 != NEUTRAL && opt2 < MAX_TANKS) {
+        g_lv->kills[opt2]++;
+      }
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        g_lv->gameViewHud[opt1].deathTimeMs = g_lv->timeRunning;
+        inv_zero(opt1);
+      }
       break;
     case log_PlayerRejoin:
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
+      }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = true;
+        g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
+        inv_setSpawn(opt1);
       }
       break;
     case log_PlayerLeaving:
@@ -797,14 +984,41 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
+      }
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        inv_zero(opt1);
+        if (g_lv->gameView && opt1 == g_lv->cameraSlot) {
+          /* Advance camera to next in-use slot. Mirrors Tab cycle in
+           * logviewer.c:651-660. The `next != opt1` guard skips the
+           * leaving player explicitly: lv_playersIsInUse(opt1) may still
+           * return TRUE here, and we don't want the camera to bounce
+           * back. */
+          BYTE start = g_lv->cameraSlot;
+          BYTE found = start;
+          BYTE i;
+          for (i = 1; i <= MAX_TANKS; i++) {
+            BYTE next = (BYTE)((start + i) % MAX_TANKS);
+            if (next != opt1 && lv_playersIsInUse(next)) {
+              found = next;
+              break;
+            }
+          }
+          g_lv->cameraSlot = found;
+          g_lv->wantScreenUpdate = TRUE;
+        }
       }
       break;
     case log_PlayerDied:
       logReadBytes(&opt1, 1);
       lv_playersUpdateTank(opt1, 0, 0, 0, 0, 0, TRUE);
+      if (opt1 < MAX_TANKS) {
+        g_lv->gameViewHud[opt1].alive = false;
+        g_lv->gameViewHud[opt1].deathTimeMs = g_lv->timeRunning;
+        inv_zero(opt1);
+      }
       break;
     case log_SaveMap:
       /* No-op — marker event with no visual effect on replay */
@@ -820,8 +1034,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_READY, &args);
       }
       break;
@@ -830,8 +1043,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_UNREADY, &args);
       }
       break;
@@ -841,8 +1053,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         if (opt2 == 0) {
           lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_LEFT_TEAM, &args);
         } else {
@@ -862,8 +1073,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        strncpy(args.playerName, str, sizeof(args.playerName) - 1);
-        args.playerName[sizeof(args.playerName) - 1] = '\0';
+        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MAP_SKIP_VOTE, &args);
       }
       break;
@@ -873,8 +1083,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       {
         MessageArgs args = {0};
-        strncpy(args.string1, str, sizeof(args.string1) - 1);
-        args.string1[sizeof(args.string1) - 1] = '\0';
+        snprintf(args.string1, sizeof(args.string1), "%s", str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
       }
       break;
@@ -1166,7 +1375,8 @@ bool lv_processSnapshot() {
               returnValue = FALSE;
             } else {
               allies = data+pos;
-              /* Snapshot wire format has no accountFlags; default to 0.
+              /* Snapshot replay does not extract the clientFlags byte in
+               * TankSnapshot; default the v1-log accountFlags storage to 0.
                * The flags will be re-set by any subsequent log_PlayerJoined
                * event for this slot. */
               lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
@@ -1179,7 +1389,262 @@ bool lv_processSnapshot() {
     count++;
   }
 
+  /* Legacy snapshots don't carry tank inventory or per-base prev-stock
+   * tracking. Best effort: assume any in-use tank in the snapshot is
+   * at spawn defaults and invalidate the base-stock cache so the next
+   * log_BaseSetStock re-anchors without crediting a bogus delta. New
+   * log format will replace this with authoritative snapshot data. */
+  for (BYTE slot = 0; slot < MAX_TANKS; slot++) {
+    if (lv_playersIsInUse(slot)) {
+      inv_setSpawn(slot);
+    } else {
+      inv_zero(slot);
+    }
+  }
+  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
+
   return returnValue;
+}
+
+/*********************************************************
+* Walker for total-time computation
+*
+* Walks the decompressed log byte stream from the current
+* position to LOG_QUIT/EOF, counting ticks (20ms each) so
+* that the seek bar can show real time/remaining instead of
+* a byte-ratio estimate. Saves and restores logPosition and
+* the XOR key so it leaves no observable side effects.
+*
+* Compression makes byte position non-linear in time, and
+* event density varies wildly between phases (lobby vs.
+* play), so a one-shot scan is the only way to get a stable
+* total. The buffer is fully decompressed before this runs,
+* so it's just a byte walk.
+*********************************************************/
+
+/* Returns bytes-after-code consumed by event 'code' (excluding code byte
+ * itself). For variable-length events with a pascal-string payload this
+ * peeks the length byte by reading and decrypting it via lv_blocksReadBytes.
+ * Returns -1 on read error / unknown event. */
+static int walkSkipEventBody(BYTE code) {
+  BYTE lenByte;
+  int rc;
+  switch (code) {
+    /* Fixed-size payloads */
+    case log_PlayerQuit:
+    case log_LostMan:
+    case log_AllyLeave:
+    case log_PillSetHealth:
+    case log_PillSetInTank:
+    case log_PlayerRejoin:
+    case log_PlayerLeaving:
+    case log_PlayerDied:
+    case log_PlayerReady:
+    case log_PlayerUnready:
+    case log_MapSkipVote:
+      /* 1 byte */
+      { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
+      return 1;
+    case log_AllyRequest:
+    case log_AllyAccept:
+    case log_KillPlayer:
+    case log_TeamSet:
+    case log_SoundBuild:
+    case log_SoundFarm:
+    case log_SoundShoot:
+    case log_SoundHitTank:
+    case log_SoundHitTree:
+    case log_SoundHitWall:
+    case log_SoundMineLay:
+    case log_SoundMineExplode:
+    case log_SoundExplosion:
+    case log_SoundBigExplosion:
+    case log_SoundManDie:
+      { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
+      return 2;
+    case log_MapChange:
+    case log_BaseSetOwner:
+    case log_PillSetOwner:
+    case log_PillSetPlace:
+      { BYTE b[3]; if (logReadBytes(b, 3) != 3) return -1; }
+      return 3;
+    case log_BaseSetStock:
+    case log_LgmLocation:
+    case log_Shell:
+      { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
+      return 4;
+    case log_PlayerLocation:
+      { BYTE b[5]; if (logReadBytes(b, 5) != 5) return -1; }
+      return 5;
+    case log_SaveMap:
+    case log_LobbyEnter:
+    case log_LobbyExit:
+    case log_CountdownStart:
+    case log_CountdownCancel:
+    case log_BalanceApplied:
+      return 0;
+    /* Variable-length: pascal string trailing the fixed prefix */
+    case log_PlayerJoined:
+      /* 5 opt bytes + pascal string */
+      { BYTE b[5]; if (logReadBytes(b, 5) != 5) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 6 + lenByte;
+    case log_ChangeName:
+      /* 1 opt byte + pascal string */
+      { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 2 + lenByte;
+    case log_MessageAll:
+      /* 1 opt byte + pascal string */
+      { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 2 + lenByte;
+    case log_MessagePlayers:
+      /* 2 opt bytes + pascal string */
+      { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 3 + lenByte;
+    case log_MessageServer:
+    case log_MapSkipApplied:
+      /* pascal string only */
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 1 + lenByte;
+    default:
+      return -1;
+  }
+}
+
+/* Skip an event packet of numEvents events. Reader updates the XOR key
+ * to the event's code byte after each event (matches the writer's
+ * logKey rotation). Returns FALSE on read error / unknown event. */
+static bool walkSkipEvents(unsigned short numEvents) {
+  unsigned short i;
+  BYTE code;
+  for (i = 0; i < numEvents; i++) {
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    if (walkSkipEventBody(code) < 0) return FALSE;
+    lv_blocksSetKey(code);
+  }
+  return TRUE;
+}
+
+/* Skip a snapshot block. Mirrors lv_processSnapshot's read order without
+ * applying any state. */
+static bool walkSkipSnapshot(void) {
+  BYTE buf[512];
+  BYTE dlen;
+  int32_t hdr;
+  BYTE runHead[SIZEOFBMAP_RUN_HEADER];
+  int i;
+
+  /* gmeStartDelay + gmeLength */
+  if (logReadBytes((BYTE *)&hdr, (int)sizeof(int32_t)) != (int)sizeof(int32_t)) return FALSE;
+  if (logReadBytes((BYTE *)&hdr, (int)sizeof(int32_t)) != (int)sizeof(int32_t)) return FALSE;
+
+  /* pills, bases, starts: 1-byte len + len bytes (BYTE max 255 fits in buf) */
+  for (i = 0; i < 3; i++) {
+    if (logReadBytes(&dlen, 1) != 1) return FALSE;
+    if (dlen > 0 && logReadBytes(buf, dlen) != dlen) return FALSE;
+  }
+
+  /* Map runs: 4-byte header repeating until terminator
+   * (datalen==4, y==255, startx==255, endx==255). Non-terminator runs
+   * are followed by (datalen - 4) data bytes. */
+  for (;;) {
+    if (logReadBytes(runHead, SIZEOFBMAP_RUN_HEADER) != SIZEOFBMAP_RUN_HEADER) return FALSE;
+    /* Layout: datalen, y, startx, endx (all BYTE per bmapRunHeader) */
+    if (runHead[0] == SIZEOFBMAP_RUN_HEADER && runHead[1] == MAP_ARRAY_LAST
+        && runHead[2] == MAP_ARRAY_LAST && runHead[3] == MAP_ARRAY_LAST) {
+      break;
+    }
+    {
+      int dataBytes = (int)runHead[0] - SIZEOFBMAP_RUN_HEADER;
+      if (dataBytes < 0) return FALSE;
+      while (dataBytes > 0) {
+        int chunk = dataBytes > (int)sizeof(buf) ? (int)sizeof(buf) : dataBytes;
+        if (logReadBytes(buf, chunk) != chunk) return FALSE;
+        dataBytes -= chunk;
+      }
+    }
+  }
+
+  /* MAX_TANKS player records: 1-byte len + len bytes (BYTE max 255 fits in buf) */
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (logReadBytes(&dlen, 1) != 1) return FALSE;
+    if (dlen > 0 && logReadBytes(buf, dlen) != dlen) return FALSE;
+  }
+  return TRUE;
+}
+
+/* Walk the log buffer from the current position to LOG_QUIT/EOF, counting
+ * 20ms ticks. Saves and restores logPosition + XOR key. */
+static uint32_t lv_walkComputeTotalTimeMs(void) {
+  size_t   savedPos = lv_logGetCurrentPosition();
+  BYTE     savedKey = lv_blocksGetKey();
+  uint64_t ticks    = 0;
+  bool     done     = FALSE;
+  BYTE     code;
+  BYTE     b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        ticks++;
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
+        ticks++;
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+  return (uint32_t)(ticks * 20);
 }
 
 // Memory size in MB
@@ -1194,6 +1659,11 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap = lv_snapshotCreate();
   g_lv->timeRunning = 0;
+  memset(g_lv->kills,        0, sizeof(g_lv->kills));
+  memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
+  memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
+  memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
+  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   returnValue = lv_blocksCreate(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
@@ -1279,6 +1749,11 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
   if (returnValue == TRUE) {
     /* Decompress entire log so we know total size for the seek slider */
     lv_logDecompressAll();
+    /* Pre-scan to compute total game time. Byte position vs. time is
+     * non-linear due to compression and variable event density, so the
+     * one-shot walk is the only way to get accurate total/remaining
+     * before a player joins. */
+    g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     /* Set the game information up */
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
@@ -1307,6 +1782,11 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap = lv_snapshotCreate();
   g_lv->timeRunning = 0;
+  memset(g_lv->kills,        0, sizeof(g_lv->kills));
+  memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
+  memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
+  memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
+  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   returnValue = lv_blocksCreateFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
@@ -1378,6 +1858,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   returnValue = lv_logLoadFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     lv_logDecompressAll();
+    g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
@@ -1673,16 +2154,34 @@ void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
    * runtime so each viewer sees its own language; switching languages
    * mid-replay does not retranslate prior entries (acceptable per the
    * Phase 1 caveat — the events panel stores rendered strings). */
-  (void)msgType;
-  (void)topId;
   char body[FILENAME_MAX];
   const char *rendered = langGetTextFmt(bodyId, args);
   body[0] = '\0';
   if (rendered) {
-    strncpy(body, rendered, sizeof(body) - 1);
-    body[sizeof(body) - 1] = '\0';
+    snprintf(body, sizeof(body), "%s", rendered);
   }
   lv_windowAddEvent(0, body);
+
+  /* Feed the scrolling-marquee queue used by the trailer game view.
+   * Mirror the live game's clientMessageAdd: the channel header
+   * (topId — e.g. "Newswire:") goes on the top line on the first
+   * message of a run from a given source, and is blanked on
+   * consecutive messages of the same source so successive entries
+   * read as one continuing transcript. The queue is dormant when
+   * the game view isn't running (no consumer); the cost is one
+   * list-append per event. */
+  {
+    static messageType s_lastMessage = (messageType)-1;
+    const char *topRendered =
+        (s_lastMessage != msgType) ? langGetText(topId) : MESSAGE_EMPTY;
+    s_lastMessage = msgType;
+    char top[FILENAME_MAX];
+    top[0] = '\0';
+    if (topRendered) {
+      snprintf(top, sizeof(top), "%s", topRendered);
+    }
+    lv_messageAddItem(top, body);
+  }
 }
 
 void lv_screenGetTime(char *dest) {
@@ -1829,27 +2328,28 @@ void lv_screenRewind() {
   }
 }
 
-void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime) {
+void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime) {
   *currentPos = lv_logGetCurrentPosition();
   *totalSize = lv_logGetTotalSize();
   *currentTime = g_lv->timeRunning;
+  *totalTime = g_lv->totalTimeMs;
 }
 
 void lv_screenSeekToPosition(float ratio) {
-  size_t totalSize = lv_logGetTotalSize();
-  size_t targetPos;
+  uint32_t totalTime = g_lv->totalTimeMs;
+  uint32_t targetTime;
   size_t snapPos;
   uint32_t snapTime;
   BYTE key;
   BYTE *pTeams = NULL;
 
-  if (totalSize == 0) return;
+  if (totalTime == 0) return;
   if (ratio < 0.0f) ratio = 0.0f;
   if (ratio > 1.0f) ratio = 1.0f;
 
-  targetPos = (size_t)(ratio * (float)totalSize);
+  targetTime = (uint32_t)(ratio * (float)totalTime);
 
-  if (lv_snapshotFindByPosition(&g_lv->snap, targetPos, &snapPos, &snapTime, &key, &pTeams)) {
+  if (lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams)) {
     g_lv->timeRunning = snapTime;
     lv_logSetPosition(snapPos);
     lv_blocksSetKey(key);
@@ -1862,12 +2362,30 @@ void lv_screenSeekToPosition(float ratio) {
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
 
-    /* Fast-forward from snapshot to target position */
+    /* Reset the scrolling-newswire marquee. Both the pending queue and
+     * the visible cells carry forward across a seek; without this the
+     * marquee keeps scrolling out characters from messages emitted
+     * before the seek long after we've jumped past their time. The
+     * fast-forward below re-queues every event between the snapshot
+     * and the target. */
+    lv_messageDestroy();
+    lv_messageCreate();
+
+    /* Fast-forward from snapshot to target time */
     g_lv->fastForwarding = TRUE;
-    while (lv_logGetCurrentPosition() < targetPos && g_lv->isPlaying == TRUE) {
+    while (g_lv->timeRunning < targetTime && g_lv->isPlaying == TRUE) {
       lv_screenLogTick();
     }
     g_lv->fastForwarding = FALSE;
+
+    /* Drain whatever the fast-forward queued straight into the visible
+     * cells. Without this, the user would have to wait for tens of
+     * seconds of accumulated text to scroll past at wall-clock pace
+     * before fresh events show up. After the drain the visible row
+     * holds the tail of the [snapshot..target] message stream — i.e.
+     * the most recent message(s) at the seek point — and the queue is
+     * empty so the next live message starts scrolling in normally. */
+    lv_messageDrainQueue();
   }
 }
 

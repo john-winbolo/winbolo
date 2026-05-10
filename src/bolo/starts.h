@@ -171,6 +171,29 @@ struct GameSim;
 void startsGetStart(struct GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir, BYTE playerNum);
 
 /*********************************************************
+*NAME:          startsAssignBatch
+*PURPOSE:
+*  Computes start positions for every connected player in a
+*  single pass, used at the lobby->game transition where the
+*  per-player algorithm cannot see siblings being created in
+*  the same batch. Players sharing a non-zero teamNumber are
+*  grouped near each other (anchored by owned bases when the
+*  map encodes them, otherwise stripe-partitioned along the
+*  map's long axis). Solo players (teamNumber == 0) are then
+*  slotted in via farthest-first to maximise spacing.
+*
+*  Writes the chosen start index per slot into outStartIdx
+*  (0..MAX_STARTS-1) or MAX_STARTS for slots that could not
+*  be placed. Scatter and direction conversion are deferred
+*  to startsGetStart, which consumes the slot lazily so the
+*  per-square nudge sees siblings already created earlier
+*  in the batch loop.
+*********************************************************/
+void startsAssignBatch(struct GameSim *sim, starts *value,
+                       const bool *connected, const BYTE *teamNumber,
+                       BYTE *outStartIdx);
+
+/*********************************************************
 *NAME:          startsGetRandStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 7/1/99

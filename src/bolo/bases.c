@@ -413,6 +413,122 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 
 }
 
+/* Steal-message debounce. The newswire message is generic — "X stole base
+ * from Y" with no base reference — so collapsing by (newOwner, prevOwner)
+ * pair is functionally equivalent to per-base for what the player sees.
+ * Cooldown = window after an emit during which further pair-matching
+ * steals are suppressed. Quiet = no-new-activity period that triggers a
+ * trailing flush of the latest suppressed steal. */
+/* Counters advance from clientSimDisplayTick (game tick, 50 Hz). */
+#define BASE_STEAL_COOLDOWN_TICKS 150  /* 3s */
+#define BASE_STEAL_QUIET_TICKS    100  /* 2s */
+
+static void basesEmitCaptureMessage(GameSim *sim, struct ClientSim *cs,
+                                    BYTE newOwner, BYTE prevOwner) {
+  MessageArgs args;
+  BYTE selfPlayer = (cs != NULL) ? cs->myPlayerNum : sim->viewPlayer;
+  memset(&args, 0, sizeof(args));
+  playersMakeMessageName(cs, &sim->plyrs, selfPlayer, newOwner, args.playerName);
+  args.playerFlags = playersGetAccountFlags(&sim->plyrs, newOwner);
+  playersGetCountryCode(&sim->plyrs, newOwner, args.playerCountry);
+  if (prevOwner != NEUTRAL) {
+    playersGetPlayerName(&sim->plyrs, prevOwner, args.otherName, sim->isServer);
+    args.otherFlags = playersGetAccountFlags(&sim->plyrs, prevOwner);
+    playersGetCountryCode(&sim->plyrs, prevOwner, args.otherCountry);
+    sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage,
+                              MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
+  } else {
+    sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage,
+                              MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
+  }
+}
+
+/* Returns the slot for this pair, allocating one if absent. When the table
+ * is full the slot with the highest lastEmitTicks (least-recently emitted)
+ * is evicted. Newly allocated slots start with lastEmitTicks at the
+ * cooldown threshold so the very first steal of a pair always emits. */
+static baseStealDebounceSlot *basesFindOrAllocStealSlot(bases *value,
+                                                       BYTE newOwner,
+                                                       BYTE prevOwner) {
+  baseStealDebounceSlot *table = (*value)->stealDebounce;
+  baseStealDebounceSlot *firstFree = NULL;
+  baseStealDebounceSlot *oldest = &table[0];
+  int i;
+
+  for (i = 0; i < BASE_STEAL_TABLE_SIZE; i++) {
+    if (table[i].active && table[i].newOwner == newOwner
+        && table[i].prevOwner == prevOwner) {
+      return &table[i];
+    }
+    if (!table[i].active && firstFree == NULL) {
+      firstFree = &table[i];
+    }
+    if (table[i].lastEmitTicks > oldest->lastEmitTicks) {
+      oldest = &table[i];
+    }
+  }
+
+  baseStealDebounceSlot *slot = (firstFree != NULL) ? firstFree : oldest;
+  slot->active = TRUE;
+  slot->newOwner = newOwner;
+  slot->prevOwner = prevOwner;
+  slot->pendingActive = FALSE;
+  slot->lastEmitTicks = BASE_STEAL_COOLDOWN_TICKS;
+  slot->pendingAge = 0;
+  return slot;
+}
+
+void basesEnqueueCaptureMessage(GameSim *sim, struct ClientSim *cs,
+                                BYTE newOwner, BYTE prevOwner) {
+  if (prevOwner == NEUTRAL) {
+    basesEmitCaptureMessage(sim, cs, newOwner, prevOwner);
+    return;
+  }
+
+  /* Allied steals are silent — mirrors the pillbox alliance gate. */
+  if (playersIsAllie(&sim->plyrs, newOwner, prevOwner) == TRUE) {
+    return;
+  }
+
+  bases *value = &sim->bs;
+  baseStealDebounceSlot *slot = basesFindOrAllocStealSlot(value, newOwner,
+                                                          prevOwner);
+
+  if (slot->lastEmitTicks >= BASE_STEAL_COOLDOWN_TICKS) {
+    basesEmitCaptureMessage(sim, cs, newOwner, prevOwner);
+    slot->lastEmitTicks = 0;
+    slot->pendingActive = FALSE;
+  } else {
+    slot->pendingActive = TRUE;
+    slot->pendingAge = 0;
+  }
+}
+
+void basesTickMessageQueue(GameSim *sim, struct ClientSim *cs) {
+  bases *value = &sim->bs;
+  baseStealDebounceSlot *table = (*value)->stealDebounce;
+  int i;
+
+  for (i = 0; i < BASE_STEAL_TABLE_SIZE; i++) {
+    baseStealDebounceSlot *slot = &table[i];
+    if (!slot->active) continue;
+
+    if (slot->lastEmitTicks < 0xFFFE) slot->lastEmitTicks++;
+
+    if (slot->pendingActive) {
+      slot->pendingAge++;
+      if (slot->pendingAge >= BASE_STEAL_QUIET_TICKS) {
+        basesEmitCaptureMessage(sim, cs, slot->newOwner, slot->prevOwner);
+        slot->lastEmitTicks = 0;
+        slot->pendingActive = FALSE;
+      }
+    } else if (slot->lastEmitTicks > BASE_STEAL_COOLDOWN_TICKS * 4) {
+      /* Long idle — recycle the slot. */
+      slot->active = FALSE;
+    }
+  }
+}
+
 /*********************************************************
 *NAME:          basesUpdateStock
 *AUTHOR:        John Morrison
@@ -538,23 +654,11 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
     } else if (owner == NEUTRAL) {
       (*value)->item[baseNum].owner = owner;
     } else if ((*value)->item[baseNum].owner != owner) {
-      MessageArgs args;
-      memset(&args, 0, sizeof(args));
-      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
-      args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
-      playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
       if (returnValue != NEUTRAL) {
         (*value)->item[baseNum].armour = 0;
         (*value)->item[baseNum].shells = 0;
         (*value)->item[baseNum].mines = 0;
         (*value)->item[baseNum].baseTime = 0;
-        playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
-        args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
-        playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
-        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
-      } else {
-        /* Neutral */
-        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
       }
       (*value)->item[baseNum].owner = owner;
     }
@@ -620,23 +724,11 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
-        MessageArgs args;
-        memset(&args, 0, sizeof(args));
-        playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
-        args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
-        playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
         if (returnValue != NEUTRAL) {
           (*value)->item[count].armour = 0;
           (*value)->item[count].shells = 0;
           (*value)->item[count].mines = 0;
           (*value)->item[count].baseTime = 0;
-          playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
-          args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
-          playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
-          sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
-        } else {
-          /* Neutral */
-          sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
         }
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);

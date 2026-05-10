@@ -35,7 +35,10 @@
 #include "mines.h"
 
 /* Forward declaration — full definition in client_sim.h */
+#ifndef CLIENTSIM_TYPEDEF
+#define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
+#endif
 
 void screenBrainMapCreate(ClientSim *cs);
 void screenBrainMapDestroy(ClientSim *cs);

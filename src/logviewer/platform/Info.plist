@@ -8,6 +8,7 @@
     <key>CFBundleVersion</key>          <string>1.01</string>
     <key>CFBundleShortVersionString</key><string>1.01</string>
     <key>CFBundleExecutable</key>       <string>Log Viewer</string>
+    <key>CFBundleIconFile</key>         <string>${MACOSX_BUNDLE_ICON_FILE}</string>
     <key>CFBundlePackageType</key>      <string>APPL</string>
     <key>NSHighResolutionCapable</key>  <true/>
     <key>NSHumanReadableCopyright</key> <string>Copyright 1998-2008 John Morrison</string>

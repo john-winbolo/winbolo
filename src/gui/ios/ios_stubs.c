@@ -74,9 +74,11 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
 bool winbolonetIsRunning(void) { return false; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return false; }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg, bool *hasSteam) {
+bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
+                                 bool *hasSteam, bool *isSupporter) {
     (void)token; (void)playerNum; (void)errorMsg;
-    if (hasSteam) *hasSteam = false;
+    if (hasSteam)    *hasSteam    = false;
+    if (isSupporter) *isSupporter = false;
     return false;
 }
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
@@ -128,6 +130,10 @@ void preferencesGetPreferenceFile(char *dest) {
     strcpy(dest, "WinBolo.ini");
 }
 
+void preferencesSetPreferenceFileOverride(const char *path) {
+    (void)path;
+}
+
 unsigned long GetPrivateProfileString(const char *section, const char *key,
                                        const char *def, char *dest,
                                        unsigned long size, const char *file) {
@@ -158,6 +164,60 @@ void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMa
 void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMainMenu) {
     (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
 }
+
+#include <stdint.h>
+#include <stddef.h>
+
+void logViewerRunFromMemory(void *window, void *renderer, uint8_t *zipData, size_t zipLen, bool fromMainMenu) {
+    (void)window; (void)renderer; (void)zipData; (void)zipLen; (void)fromMainMenu;
+}
+
+/* ---- WBN browser stub (requires libcurl/cJSON, not built on iOS) ---- */
+
+#include "../sdl3/dialogs/imgui_wbn_browser.h"
+
+WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window,
+                                     struct SDL_Renderer *renderer) {
+    (void)window; (void)renderer;
+    WbnBrowserResult r = {0};
+    r.action = WBN_BROWSER_CLOSE;
+    return r;
+}
+
+/* ---- server lifecycle stubs (dedicated-server-only on iOS) ---- */
+
+#include "../../server/server_lifecycle.h"
+
+bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
+    (void)sim; (void)cfg;
+    return false;
+}
+void serverInstanceTick(ServerSim *sim) { (void)sim; }
+void serverInstanceShutdown(ServerSim *sim) { (void)sim; }
+void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
+    if (out) {
+        out->status = SERVER_PORTMAP_DISABLED;
+        out->externalIp[0] = '\0';
+        out->externalPort = 0;
+        out->internalPort = 0;
+    }
+}
+void serverInstanceTriggerManualProbe(void) {}
+ManualProbeState serverInstanceGetManualProbeState(void) { return MANUAL_PROBE_IDLE; }
+
+/* ---- window state stubs (provided by sdl3/winbolo.c, not in iOS build) ---- */
+
+void windowGetSavedPosition(int *x, int *y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+}
+void windowSetSavedPosition(int x, int y) { (void)x; (void)y; }
+void windowGetCustomSize(int *w, int *h) {
+    if (w) *w = 0;
+    if (h) *h = 0;
+}
+void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
+void windowSmoothScrolling_toggle(void) {}
 
 /* ---- winbolonet map change stub ---- */
 

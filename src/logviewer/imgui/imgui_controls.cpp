@@ -32,7 +32,7 @@ extern "C" {
     void lv_windowNeedRedraw(void);
     void lv_screenGetTime(char *buffer);
     void lv_updateSpeed(unsigned char speed, int updateSlider);
-    void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime);
+    void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
     void lv_screenSeekToPosition(float ratio);
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
@@ -175,13 +175,17 @@ void lv_imgui_controls_window(void) {
         /* Seek slider row */
         if (s_lv->isLoaded) {
             size_t currentPos = 0, totalSize = 0;
-            uint32_t currentTime = 0;
-            lv_screenGetLogProgress(&currentPos, &totalSize, &currentTime);
+            uint32_t currentTime = 0, totalTime = 0;
+            lv_screenGetLogProgress(&currentPos, &totalSize, &currentTime, &totalTime);
+            (void)currentPos; (void)totalSize;
 
-            /* Calculate current ratio for display */
+            /* totalTime comes from a one-shot scan at load, so the bar is
+             * stable from the moment the file opens — no more byte-ratio
+             * drift while waiting for the first player to join. */
             float displayRatio = 0.0f;
-            if (totalSize > 0) {
-                displayRatio = (float)currentPos / (float)totalSize;
+            if (totalTime > 0) {
+                displayRatio = (float)currentTime / (float)totalTime;
+                if (displayRatio > 1.0f) displayRatio = 1.0f;
             }
 
             /* Only update slider position when not actively seeking */
@@ -192,13 +196,11 @@ void lv_imgui_controls_window(void) {
             /* Current time */
             format_time(s_current_time, sizeof(s_current_time), currentTime);
 
-            /* Estimate total time from byte position ratio */
             char total_time_str[32] = "--:--";
             char remaining_str[32] = "--:--";
-            if (displayRatio > 0.01f && currentTime > 0) {
-                uint32_t estimatedTotal = (uint32_t)((float)currentTime / displayRatio);
-                uint32_t remaining = estimatedTotal > currentTime ? estimatedTotal - currentTime : 0;
-                format_time(total_time_str, sizeof(total_time_str), estimatedTotal);
+            if (totalTime > 0) {
+                uint32_t remaining = totalTime > currentTime ? totalTime - currentTime : 0;
+                format_time(total_time_str, sizeof(total_time_str), totalTime);
                 format_time(remaining_str, sizeof(remaining_str), remaining);
             }
 
