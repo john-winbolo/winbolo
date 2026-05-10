@@ -688,6 +688,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                      numAllies, numAllies > 0 ? allies : NULL, FALSE);
                 }
             }
+            /* Server skips our own slot when building PLAYER_LIST, so the
+             * loop above never updates item[selfPlayer].allie. Rebuild it
+             * now from the per-player lists we just decoded. */
+            playersRebuildSelfAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs,
+                                       c->clientSim->myPlayerNum);
         }
         break;
 

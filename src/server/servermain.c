@@ -502,6 +502,9 @@ void printArgs() {
   fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
+  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
+  fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
@@ -1219,13 +1222,37 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
+      int allyTeam = 0;  /* 0 = no allying; 1-16 = team to place bots on */
+      if (argExist(argc, argv, "allybots") == TRUE) {
+        int aArg = findArg(argc, argv, "allybots");
+        allyTeam = 1;
+        if (aArg != ARG_NOT_FOUND && argv[aArg][0] != '-') {
+          int t = atoi((char *)argv[aArg]);
+          if (t >= 1 && t <= 16) {
+            allyTeam = t;
+          } else {
+            fprintf(stderr, "Warning: -allybots team must be 1-16, defaulting to 1\n");
+          }
+        }
+      }
       for (i = 0; i < numBots; i++) {
         snprintf(botName, sizeof(botName), "Bot %d", i + 1);
         if (!botManagerAddBot(&serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
+        } else if (allyTeam > 0) {
+          /* Shared non-zero team for every bot — server_sim's start-of-round
+           * pass converts matching teamNumber into alliances, and the lobby
+           * protocol already broadcasts teamNumber to clients so the lobby
+           * UI shows the bots on this team. */
+          serverSim.lobbyPlayers[i].teamNumber = (uint8_t)allyTeam;
         }
       }
-      fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+      if (allyTeam > 0) {
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
+                numBots, brainPath, allyTeam);
+      } else {
+        fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+      }
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }
