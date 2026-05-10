@@ -993,7 +993,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* Commit decoded slots. */
             for (i = 0; i < MAX_TANKS; i++) {
-                c->clientSim->lobbySlots[i] = tmpSlots[i];
+                {
+                    ControlEvent slotEvt = { .type = CTRL_LOBBY_SLOT };
+                    slotEvt.u.lobbySlot.playerNum = (BYTE)i;
+                    slotEvt.u.lobbySlot.slot = tmpSlots[i];
+                    clientSimApplyControl(c->clientSim, &slotEvt);
+                }
                 if (tmpSlots[i].clientFlags & (PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_WBN_STEAM_LINKED)) {
                     WB_LOG_DEBUG(WB_LOG_CAT_NET, "[WBN LOBBY] slot %d wbn=%d steam=%d",
                             i,
@@ -1002,25 +1007,30 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
             }
             /* Game settings tail */
-            strncpy(c->clientSim->mapName, (const char *)(buf + pos), MAP_STR_SIZE - 1);
-            c->clientSim->mapName[MAP_STR_SIZE - 1] = '\0';
-            pos += MAP_STR_SIZE;
-            c->clientSim->lobbyGameType = (gameType)buf[pos++];
-            c->clientSim->lobbyHiddenMines = buf[pos++] ? true : false;
-            c->clientSim->lobbyAiType = buf[pos++];
-            c->clientSim->lobbyTimeLimit = (int32_t)unpackU32(buf + pos);
-            pos += 4;
-            c->clientSim->lobbyPillCount = buf[pos++];
-            c->clientSim->lobbyBaseCount = buf[pos++];
-            c->clientSim->lobbyStartCount = buf[pos++];
-            c->clientSim->mapSkipAvailable = buf[pos++] ? true : false;
-            /* Map server state to client netStatus — preserve countdown state */
-            if (serverState == 1) { /* serverStateCountdown */
-                c->clientSim->netStat = netLobbyCountdown;
-            } else {
-                c->clientSim->netStat = netLobby;
+            {
+                ControlEvent settingsEvt = { .type = CTRL_LOBBY_SETTINGS };
+                memset(settingsEvt.u.lobbySettings.mapName, 0, MAP_STR_SIZE);
+                strncpy(settingsEvt.u.lobbySettings.mapName,
+                        (const char *)(buf + pos), MAP_STR_SIZE - 1);
+                pos += MAP_STR_SIZE;
+                settingsEvt.u.lobbySettings.lobbyGameType    = (gameType)buf[pos++];
+                settingsEvt.u.lobbySettings.lobbyHiddenMines = buf[pos++] ? true : false;
+                settingsEvt.u.lobbySettings.lobbyAiType      = buf[pos++];
+                settingsEvt.u.lobbySettings.lobbyTimeLimit   = (int32_t)unpackU32(buf + pos);
+                pos += 4;
+                settingsEvt.u.lobbySettings.lobbyPillCount   = buf[pos++];
+                settingsEvt.u.lobbySettings.lobbyBaseCount   = buf[pos++];
+                settingsEvt.u.lobbySettings.lobbyStartCount  = buf[pos++];
+                settingsEvt.u.lobbySettings.mapSkipAvailable = buf[pos++] ? true : false;
+                /* Map server state to client netStatus — preserve countdown state */
+                if (serverState == 1) { /* serverStateCountdown */
+                    settingsEvt.u.lobbySettings.netStat = netLobbyCountdown;
+                } else {
+                    settingsEvt.u.lobbySettings.netStat = netLobby;
+                }
+                settingsEvt.u.lobbySettings.inLobby = true;
+                clientSimApplyControl(c->clientSim, &settingsEvt);
             }
-            c->clientSim->inLobby = true;
 
             /* Lonely lobby tracking (ACH_LONELY_LOBBY) */
             {
@@ -1054,8 +1064,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* WBN re-auth: if our slot lost its WBN flag (server re-registered
              * with WBN between rounds) and we have a token, re-authenticate */
+            /* Read tmpSlots directly: the dispatcher self-skips CTRL_LOBBY_SLOT
+             * for our own slot, so c->clientSim->lobbySlots[c->playerNum]
+             * does not reflect this packet's flags. */
             if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-                !(c->clientSim->lobbySlots[c->playerNum].clientFlags & PLAYER_FLAG_WBN_VERIFIED)) {
+                !(tmpSlots[c->playerNum].clientFlags & PLAYER_FLAG_WBN_VERIFIED)) {
                 if (!c->wbnReauthSent) {
                     c->wbnReauthSent = TRUE;
                     /* Inline re-auth send (we have ctx, not Transport*) */
