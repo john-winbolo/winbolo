@@ -69,8 +69,7 @@ typedef struct playersObj *players;
 typedef struct {
   bool inUse;                       /* Is player slot in use? */
   char playerName[PLAYER_NAME_LEN]; /* Player name */
-  char location[512];               /* Location field (legacy, now stores country code) */
-  char countryCode[3];              /* ISO 3166-1 alpha-2 country code (e.g., "US") */
+  char location[3];                 /* ISO 3166-1 alpha-2 country code (e.g., "US") */
   allience allie;                   /* Alliences this player has */
   BYTE mapX;                        /* Map X and Y co-ordinates */
   BYTE mapY;
