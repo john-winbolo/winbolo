@@ -654,20 +654,28 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainCoreRegisterWorldSim(L, &inst->worldsim);
   }
 
-  /* Overlay bindings intentionally NOT registered under the SDL3 game
-   * client. The buffer would fill with thousands of viz.* commands per
-   * tick (every brain HUD/marker/standoff draw), but no rendering path
-   * in src/gui/sdl3 reads it — only BrainTest's renderer does. Leaving
-   * `overlay_text` et al. as nil makes viz.lua's wrappers short-circuit
-   * via their `if not overlay_text then return end` guard, killing the
-   * per-tick Lua-boundary-crossing cost.
+  /* Per-brain overlay command buffer + register overlay_* globals.
+   * The buffer is owned by this instance; the registered Lua closures
+   * hold a pointer-to-pointer so the buffer can be swapped per tick
+   * by the consumer (e.g. a UI replaying historical frames).
    *
-   * The buffer struct is still initialized (and destroyed in the close
-   * path) so botManagerGetOverlayCmds() returns a valid empty buffer
-   * to any caller that polls it. */
+   * BrainTest reads this buffer via botManagerGetOverlayCmds — without
+   * the bindings, viz.lua short-circuits on `if not overlay_text then
+   * return end` and BrainTest sees an empty buffer (no overlays drawn).
+   * The SDL3 game client's perf concern (buffer would fill every tick
+   * with brain viz.* output) is handled below by setting
+   * _BT_VIZ_SUPPRESS_ALL=true when debug_mode is false, which short-
+   * circuits viz.is_on for everything except hud_resources. */
   overlayCmdBufferInit(&inst->overlay);
   inst->overlayPtr = &inst->overlay;
-  /* brainCoreRegisterOverlay(L, &inst->overlayPtr) intentionally omitted */
+  brainCoreRegisterOverlay(L, &inst->overlayPtr);
+  if (!debug_mode) {
+    /* Game-client path: bindings exist (so future code can swap a
+     * reader in without a rebuild) but viz.* calls early-return
+     * via SUPPRESS_ALL before reaching the C overlay_* closures. */
+    lua_pushboolean(L, 1);
+    lua_setglobal(L, "_BT_VIZ_SUPPRESS_ALL");
+  }
 
   /* braintest_viz_register binding so brains can populate the V
    * dialog rows. Routes to a callback BrainTest sets at startup;
