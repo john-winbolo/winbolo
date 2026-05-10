@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=次の建設タイプ
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=建設カーソルを切り替え
 STR_GP_ACTION_QUICK_CHAT=クイックチャット
 STR_GP_ACTION_PAUSE=一時停止
-STR_GP_ACTION_VIEW_PLAYERS=ステータス表示
+STR_GP_ACTION_VIEW_PLAYERS=プレイヤー一覧
 
 # Controller Mode pref + connect prompt (Phase 8.1)
 STR_CTRL_MODE_HEADER=コントローラーモード

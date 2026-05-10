@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Volgende bouwtype
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bouwcursor in-/uitschakelen
 STR_GP_ACTION_QUICK_CHAT=Snelchat
 STR_GP_ACTION_PAUSE=Pauzeren
-STR_GP_ACTION_VIEW_PLAYERS=Statusscherm
+STR_GP_ACTION_VIEW_PLAYERS=Spelerslijst
 
 # Controller-modus voorkeur + verbindingsprompt (Phase 8.1)
 STR_CTRL_MODE_HEADER=Controllermodus

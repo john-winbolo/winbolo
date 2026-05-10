@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Nästa byggnadstyp
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Växla byggmarkör
 STR_GP_ACTION_QUICK_CHAT=Snabbchatt
 STR_GP_ACTION_PAUSE=Pausa
-STR_GP_ACTION_VIEW_PLAYERS=Statusöverlägg
+STR_GP_ACTION_VIEW_PLAYERS=Visa spelare
 
 # Handkontrolläge inställning + anslutningsprompt (Phase 8.1)
 STR_CTRL_MODE_HEADER=Handkontrolläge

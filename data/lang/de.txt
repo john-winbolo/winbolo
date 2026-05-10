@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Nächster Bautyp
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bau-Cursor umschalten
 STR_GP_ACTION_QUICK_CHAT=Schnellnachricht
 STR_GP_ACTION_PAUSE=Pause
-STR_GP_ACTION_VIEW_PLAYERS=Statusanzeige
+STR_GP_ACTION_VIEW_PLAYERS=Spielerliste
 
 # Controller-Modus Einstellung + Verbindungsaufforderung (Phase 8.1)
 STR_CTRL_MODE_HEADER=Controller-Modus

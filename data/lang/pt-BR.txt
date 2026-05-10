@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Próximo tipo de construção
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Alternar cursor de construção
 STR_GP_ACTION_QUICK_CHAT=Chat rápido
 STR_GP_ACTION_PAUSE=Pausar
-STR_GP_ACTION_VIEW_PLAYERS=Painel de status
+STR_GP_ACTION_VIEW_PLAYERS=Ver jogadores
 
 # Modo controle – preferência e aviso de conexão (Phase 8.1)
 STR_CTRL_MODE_HEADER=Modo controle

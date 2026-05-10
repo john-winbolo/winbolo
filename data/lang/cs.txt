@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Další typ stavby
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Přepnout kurzor stavby
 STR_GP_ACTION_QUICK_CHAT=Rychlý chat
 STR_GP_ACTION_PAUSE=Pauza
-STR_GP_ACTION_VIEW_PLAYERS=Přehled stavu
+STR_GP_ACTION_VIEW_PLAYERS=Zobrazit hráče
 
 # Režim ovladače – předvolba a výzva k připojení (Phase 8.1)
 STR_CTRL_MODE_HEADER=Režim ovladače
