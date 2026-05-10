@@ -720,17 +720,19 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_NAME_CHANGE:
+    case PACKET_NAME_CHANGE: {
         /* Name change format:
          *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME] */
         if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) {
             uint8_t pNum = buf[PACKET_HEADER_SIZE];
-            char newName[PACKET_MAX_PLAYER_NAME];
-            memcpy(newName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
-            newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-            playersSetPlayerName(c->clientSim, &c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, pNum, newName, FALSE);
+            ControlEvent evt = { .type = CTRL_PLAYER_NAME };
+            evt.u.playerName.playerNum = pNum;
+            memcpy(evt.u.playerName.name, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
+            evt.u.playerName.name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+            clientSimApplyControl(c->clientSim, &evt);
         }
         break;
+    }
 
     case PACKET_NAME_CHANGE_REJECT:
         /* Name change reject format:
