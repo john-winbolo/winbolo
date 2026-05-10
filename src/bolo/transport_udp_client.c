@@ -838,6 +838,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             case ALLIANCE_EVENT_REQUEST:
                 /* Only show dialog if we are the target */
                 if (toPlayer == c->playerNum) {
+                    /* Bot auto-accept: if the brain has the requester in its
+                     * wantallies bitmap, accept immediately without UI.
+                     * Without this bots can never form alliances host-side
+                     * (no dialog, no accept packet) which leaves the
+                     * OBJECT_HOSTILE bit set on tanks the brain considers
+                     * allied — so attack_tank fires on its own teammates. */
+                    if (c->clientSim->isBot &&
+                        (c->clientSim->brainsWantAllies & (1u << fromPlayer))) {
+                        clientSimAllianceAccept(c->clientSim, fromPlayer);
+                        break;
+                    }
                     char pName[FILENAME_MAX];
                     playersGetPlayerName(&c->clientSim->sim.plyrs, fromPlayer, pName, FALSE);
                     if (windowShowAllianceRequest() == TRUE) {

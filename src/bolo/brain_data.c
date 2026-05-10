@@ -470,10 +470,35 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
     /* Otherwise leave action set for screenBuildInputPacket to read */
   }
 
-  /* Allies */
-  /* FIXME!!!! Get want allies stuff */
-/*  brainsWantAllies = *(value->allies);
-    value->wantallies = &brainsWantAllies; */
+  /* Allies — emit request packets for every slot the brain wants allied
+   * that we aren't allied with yet. Throttled per-target so a brain that
+   * sets the bit every tick (e.g. NewAutopilot's auto_ally_all) doesn't
+   * flood the wire while waiting for the other side to accept.
+   *
+   * NOTE: brainsWantAllies was seeded to current allies in
+   * screenMakeBrainInfoCS, then overwritten by the brain's wantallies
+   * field. The diff against the current allies bitmap is what we act on. */
+  {
+    PlayerBitMap want    = csPtr->brainsWantAllies;
+    PlayerBitMap current = playersGetAlliesBitMap(&csPtr->sim.plyrs, csPtr->myPlayerNum);
+    /* Only consider bits that are wanted but not yet allied. The "current"
+     * bitmap from playersGetAlliesBitMap includes our own slot, so masking
+     * with ~current also drops self. */
+    PlayerBitMap todo = want & ~current;
+    /* 5 seconds at 30 ticks/sec — same cadence as the human UI button. */
+    const uint32_t COOLDOWN_TICKS = 150;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (i == csPtr->myPlayerNum) continue;
+      if (!(todo & (1u << i))) continue;
+      if (!playersIsInUse(&csPtr->sim.plyrs, i)) continue;
+      uint32_t now = csPtr->lastServerTick;
+      uint32_t last = csPtr->brainsAllianceReqLastTick[i];
+      if (last != 0 && (uint32_t)(now - last) < COOLDOWN_TICKS) continue;
+      clientSimRequestAlliance(csPtr, csPtr->myPlayerNum, i);
+      csPtr->brainsAllianceReqLastTick[i] = (now == 0) ? 1 : now;
+    }
+  }
 
   /* Message Sending */
   if (value->sendmessage[0] != 0) {

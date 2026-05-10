@@ -62,6 +62,16 @@ function M.parse(text)
   if lower == "start"  then return { cmd = "start" }  end
   if lower == "status" then return { cmd = "status" } end
 
+  -- ally:N — request alliance with player N. Sent to public chat so
+  -- every bot picks it up. Each receiving bot also flips into
+  -- auto-accept-all mode for the rest of the round, so other bots
+  -- (and any humans) requesting alliance with this bot get accepted
+  -- without manual action.
+  local ally_id = lower:match("^ally:(%d+)$")
+  if ally_id then
+    return { cmd = "ally", id = tonumber(ally_id) }
+  end
+
   return nil
 end
 
@@ -381,6 +391,16 @@ function M.execute(cmd, state, world)
       cmd.id, p.mx, p.my, obs_mx, obs_my)
     print(TAG .. " CMD: " .. msg)
     return msg
+
+  elseif cmd.cmd == "ally" then
+    -- Request alliance with player N (sets a wantallies bit picked up
+    -- by init.lua's tick output). Also flips into auto-accept mode so
+    -- alliance requests from other bots/players addressed to us land
+    -- without manual confirmation.
+    state.alliance_target = cmd.id
+    state.auto_ally_all   = true
+    print(string.format(TAG .. " CMD: ally:%d -- requesting + auto-accept ON", cmd.id))
+    return string.format(C.BRAIN_NAME .. ": allying with player %d (auto-accept on)", cmd.id)
   end
 
   return nil

@@ -422,6 +422,16 @@ function Brain.open(info)
   state.debug_log     = (state.player_name == "Bot 1" or info.player_number == 0)
   state.send_open_msg = true
 
+  -- Hardcoded testing setup: every bot allies player 2 + auto-accepts
+  -- everyone. Player 2 itself also requests alliance with every slot
+  -- with id > 2 (handled in compute_wantallies via state.player_number
+  -- == 2 special case). Prints a one-shot startup message broadcast.
+  state.alliance_target = 2
+  state.auto_ally_all   = true
+  state.startup_ally_announce = true   -- fires on first think tick
+  print(string.format(TAG .. " ally bootstrap: target=2, auto-accept-all ON, my slot=%d",
+        info.player_number))
+
   -- Startup mode: minimal first-tick work. Skips threat.update, long
   -- Dijkstra start, pool eval queue, perception, and goal selection
   -- until the short-range Dijkstra has finished its first lifetime
@@ -689,6 +699,45 @@ end
 -- =========================================================================
 -- THINK
 -- =========================================================================
+
+-- Compute the wantallies bitmask for this tick. Starts with the host's
+-- current allies (info.allies). If a chat command "ally:N" set
+-- state.alliance_target, OR in bit N (request alliance with player N).
+-- If state.auto_ally_all is set, OR in every other connected player's
+-- bit so any incoming alliance request gets auto-accepted (the host
+-- accepts when our wantallies contains the requester's bit). info is
+-- the current tick's BrainInfo; sn is state.player_number.
+local function compute_wantallies(info, st)
+  local w = info.allies or 0
+  if st.alliance_target and st.alliance_target >= 0 and st.alliance_target < 16 then
+    w = w | (1 << st.alliance_target)
+  end
+  if st.auto_ally_all then
+    -- Set bits for every connected slot except our own.
+    local names = info.player_names or {}
+    for i = 1, 16 do
+      local name = names[i]
+      local slot = i - 1  -- player_names is 1-indexed Lua table
+      if name and name ~= "" and slot ~= st.player_number then
+        w = w | (1 << slot)
+      end
+    end
+  end
+  -- Hardcoded testing: when this brain is at slot 2, also actively
+  -- request alliance with every connected slot whose id > 2. Combined
+  -- with auto_ally_all on every other bot, this kicks the alliance
+  -- handshake from both ends so it converges quickly.
+  if st.player_number == 2 then
+    local names = info.player_names or {}
+    for slot = 3, 15 do
+      local name = names[slot + 1]  -- 1-indexed
+      if name and name ~= "" then
+        w = w | (1 << slot)
+      end
+    end
+  end
+  return w
+end
 
 function Brain.think(info)
   -- ── PERFORMANCE MARKER: START ──
@@ -969,7 +1018,7 @@ function Brain.think(info)
       holdkeys    = 0,
       tapkeys     = 0,
       build       = -1,
-      wantallies  = info.allies,
+      wantallies  = compute_wantallies(info, state),
       messagedest = 0,
       sendmessage = nil,
     }
@@ -1013,7 +1062,7 @@ function Brain.think(info)
     else
       metrics.inc("danger_skips")
     end
-    return { holdkeys = manual_keys, tapkeys = 0, build = -1, wantallies = info.allies, messagedest = 0, sendmessage = "" }
+    return { holdkeys = manual_keys, tapkeys = 0, build = -1, wantallies = compute_wantallies(info, state), messagedest = 0, sendmessage = "" }
   end
 
 
@@ -1555,11 +1604,64 @@ function Brain.think(info)
   local send_msg = nil
   local msg_dest = 0
 
+  -- Alliance-change detection: when info.allies gains a bit since last
+  -- tick, queue a confirmation message for that player. Drained one
+  -- per tick at the chat-send fallback below. Self-bit (always set) is
+  -- skipped. Initialised lazily on first observation so we don't spam
+  -- "allied with player X" for everyone we joined the lobby already
+  -- allied with at game start.
+  state.alliance_confirm_queue = state.alliance_confirm_queue or {}
+  if state.prev_allies == nil then
+    state.prev_allies = info.allies or 0
+  else
+    local cur = info.allies or 0
+    local newBits = cur & (~state.prev_allies)
+    if newBits ~= 0 then
+      for slot = 0, 15 do
+        if slot ~= state.player_number and (newBits & (1 << slot)) ~= 0 then
+          state.alliance_confirm_queue[#state.alliance_confirm_queue + 1] = slot
+        end
+      end
+    end
+    state.prev_allies = cur
+  end
+
   if state.send_open_msg then
     send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
     msg_dest = 1 << state.player_number
     state.send_open_msg = false
+  end
+
+  -- Hardcoded testing: announce the startup ally bootstrap once on
+  -- the first think tick where we can actually broadcast. Public
+  -- chat (msg_dest=0) so all players + bots see it.
+  if state.startup_ally_announce and not send_msg then
+    local target = state.alliance_target or 2
+    if state.player_number == 2 then
+      send_msg = string.format(
+          "%s [slot %d]: Allying with all players (id > 2)",
+          C.BRAIN_NAME, state.player_number)
+    else
+      send_msg = string.format(
+          "%s [slot %d]: Allying with player %d",
+          C.BRAIN_NAME, state.player_number, target)
+    end
+    msg_dest = 0xFFFF  -- broadcast to all (0 = debug log)
+    state.startup_ally_announce = false
+  end
+
+  -- Drain one alliance confirmation per tick to public chat. Only if
+  -- nothing else is pending (open-msg / cmd reply etc) so we don't
+  -- step on more important responses. Names: prefer the queued
+  -- player's name if known, fall back to "player N".
+  if not send_msg and #state.alliance_confirm_queue > 0 then
+    local who = table.remove(state.alliance_confirm_queue, 1)
+    local names = info.player_names or {}
+    local name  = names[who + 1]  -- 1-indexed Lua
+    if not name or name == "" then name = string.format("player %d", who) end
+    send_msg = string.format("%s: now allied with %s", C.BRAIN_NAME, name)
+    msg_dest = 0xFFFF  -- broadcast to all (0 means debug log!)
   end
 
   -- Process incoming newswire message
@@ -1586,7 +1688,7 @@ function Brain.think(info)
       holdkeys    = 0,
       tapkeys     = 0,
       build       = nil,
-      wantallies  = info.allies,
+      wantallies  = compute_wantallies(info, state),
       messagedest = msg_dest,
       sendmessage = send_msg,
     }
@@ -3104,7 +3206,7 @@ function Brain.think(info)
     holdkeys    = keys,
     tapkeys     = taps,
     build       = build_cmd,
-    wantallies  = info.allies,
+    wantallies  = compute_wantallies(info, state),
     messagedest = msg_dest,
     sendmessage = send_msg,
   }

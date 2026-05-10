@@ -121,6 +121,11 @@ struct ClientSim {
     uint32_t    brainTapKeys;
     BuildInfo  *brainBuildInfo;
     PlayerBitMap brainsWantAllies;
+    /* Per-target tick of last outbound alliance request issued by the brain.
+     * Used by screenExtractBrainInfoCS to throttle re-requests to once
+     * every BRAIN_ALLIANCE_REQ_COOLDOWN_TICKS while the request is still
+     * pending acceptance. Indexed by target player number. */
+    uint32_t     brainsAllianceReqLastTick[MAX_TANKS];
     PlayerBitMap brainsMessageDest;
     char        brainsMessage[FILENAME_MAX];
     unsigned short brainsNumObjects;

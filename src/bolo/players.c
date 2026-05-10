@@ -286,11 +286,18 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
     (*plrs)->item[playerNum].pixelY = py;
     (*plrs)->item[playerNum].frame = frame;
     (*plrs)->item[playerNum].onBoat = onBoat;
-    (*plrs)->item[playerNum].allie = allienceCreate();
-    count = 0;
-    while (count < numAllies) {
-      allienceAdd(&((*plrs)->item[playerNum].allie), allies[count]);
-      count++;
+    /* Only reset the allie bitmask when the caller provides authoritative
+     * data (e.g. PACKET_PLAYER_LIST). The snapshot auto-register path
+     * passes allies=NULL/numAllies=0 — overwriting then would wipe
+     * pre-seeded local alliances (e.g. botManagerSetTeams in BrainTest)
+     * before the player's slot was first marked inUse. */
+    if (allies != NULL) {
+      (*plrs)->item[playerNum].allie = allienceCreate();
+      count = 0;
+      while (count < numAllies) {
+        allienceAdd(&((*plrs)->item[playerNum].allie), allies[count]);
+        count++;
+      }
     }
   }
   else if (iMyPlayerNum == iPlayerNum) {
@@ -310,12 +317,16 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
     (*plrs)->item[playerNum].location[1] = location[1];
     (*plrs)->item[playerNum].location[2] = '\0';
     utilCtoPString(playerName, (char *) ((*plrs)->playerBrainNames[playerNum]));
-    allienceDestroy(&((*plrs)->item[playerNum].allie));
-    (*plrs)->item[playerNum].allie = allienceCreate();
-    count = 0;
-    while (count < numAllies) {
-      allienceAdd(&((*plrs)->item[playerNum].allie), allies[count]);
-      count++;
+    /* Same guard as the inUse=FALSE branch: snapshot auto-register
+     * (allies=NULL) must not destroy pre-seeded local alliances. */
+    if (allies != NULL) {
+      allienceDestroy(&((*plrs)->item[playerNum].allie));
+      (*plrs)->item[playerNum].allie = allienceCreate();
+      count = 0;
+      while (count < numAllies) {
+        allienceAdd(&((*plrs)->item[playerNum].allie), allies[count]);
+        count++;
+      }
     }
   }
 
