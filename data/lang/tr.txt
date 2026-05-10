@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Sonraki İnşaat Türü
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=İnşaat İmlecini Aç/Kapat
 STR_GP_ACTION_QUICK_CHAT=Hızlı Sohbet
 STR_GP_ACTION_PAUSE=Duraklat
-STR_GP_ACTION_STATUS_TOGGLE=Durum Bindirmesi
+STR_GP_ACTION_VIEW_PLAYERS=Durum Bindirmesi
 
 # Kontrolcü modu tercihi + bağlantı istemi (Phase 8.1)
 STR_CTRL_MODE_HEADER=Kontrolcü Modu

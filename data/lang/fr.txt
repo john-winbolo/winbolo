@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Type de construction suivant
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Basculer le curseur de construction
 STR_GP_ACTION_QUICK_CHAT=Message rapide
 STR_GP_ACTION_PAUSE=Pause
-STR_GP_ACTION_STATUS_TOGGLE=Affichage d'état
+STR_GP_ACTION_VIEW_PLAYERS=Affichage d'état
 
 # Mode manette – préférence et invite de connexion (Phase 8.1)
 STR_CTRL_MODE_HEADER=Mode manette

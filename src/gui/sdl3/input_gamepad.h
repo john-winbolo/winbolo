@@ -49,7 +49,7 @@ typedef enum {
   GP_ACT_BUILD_CURSOR_TOGGLE,
   GP_ACT_QUICK_CHAT,
   GP_ACT_PAUSE,
-  GP_ACT_STATUS_TOGGLE,
+  GP_ACT_VIEW_PLAYERS,
   GP_ACT_COUNT
 } GamepadAction;
 
@@ -103,7 +103,7 @@ bool inputGamepadIsBuilderConfirmEdge(void);   /* X press, consumed on read */
 bool inputGamepadIsPauseEdge(void);            /* Start press, consumed on read */
 bool inputGamepadIsQuickChatEdge(void);        /* D-pad LEFT press, consumed on read */
 bool inputGamepadIsBuildCursorToggleEdge(void); /* R3 press, consumed on read */
-bool inputGamepadIsStatusToggleEdge(void);     /* Back/Select press, consumed on read */
+bool inputGamepadIsViewPlayersEdge(void);      /* D-pad Right press, consumed on read */
 bool inputGamepadConsumeActiveDisconnect(void);  /* Active controller disconnect, consumed on read */
 
 /* Right-stick scroll sensitivity multiplier (clamped 0.25..4.0 by UI). */

@@ -1161,7 +1161,7 @@
 #define STR_GP_ACTION_BUILD_CURSOR_TOGGLE   1249
 #define STR_GP_ACTION_QUICK_CHAT            1250
 #define STR_GP_ACTION_PAUSE                 1251
-#define STR_GP_ACTION_STATUS_TOGGLE         1252
+#define STR_GP_ACTION_VIEW_PLAYERS          1252
 
 /* Controller Mode pref + connect prompt (Phase 8.1) */
 #define STR_CTRL_MODE_HEADER                1253

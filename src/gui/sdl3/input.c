@@ -293,7 +293,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
       buildCursorToggle(cs);
     }
 
-    if (inputGamepadIsStatusToggleEdge()) {
+    if (inputGamepadIsViewPlayersEdge()) {
       sdl3ImguiTogglePlayersPanel();
     }
 

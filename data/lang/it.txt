@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Tipo costruzione successivo
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Attiva/disattiva cursore costruzione
 STR_GP_ACTION_QUICK_CHAT=Chat rapida
 STR_GP_ACTION_PAUSE=Pausa
-STR_GP_ACTION_STATUS_TOGGLE=Pannello stato
+STR_GP_ACTION_VIEW_PLAYERS=Pannello stato
 
 # Modalità controller – preferenza e avviso di connessione (Phase 8.1)
 STR_CTRL_MODE_HEADER=Modalità controller

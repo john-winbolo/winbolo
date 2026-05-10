@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Tipo de construcción siguiente
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Alternar cursor de construcción
 STR_GP_ACTION_QUICK_CHAT=Chat rápido
 STR_GP_ACTION_PAUSE=Pausa
-STR_GP_ACTION_STATUS_TOGGLE=Panel de estado
+STR_GP_ACTION_VIEW_PLAYERS=Panel de estado
 
 # Modo mando – preferencia y aviso de conexión (Phase 8.1)
 STR_CTRL_MODE_HEADER=Modo mando

@@ -1827,7 +1827,7 @@ static void renderKeySetupModal(ClientSim *cs) {
         gamepadSetupRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
         gamepadSetupRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
         gamepadSetupRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
-        gamepadSetupRow(langGetText(STR_GP_ACTION_STATUS_TOGGLE),       GP_ACT_STATUS_TOGGLE);
+        gamepadSetupRow(langGetText(STR_GP_ACTION_VIEW_PLAYERS),        GP_ACT_VIEW_PLAYERS);
         endSection();
     }
 

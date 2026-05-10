@@ -52,7 +52,7 @@ static bool s_builderConfirmEdge = false;
 static bool s_pauseEdge          = false;
 static bool s_quickChatEdge      = false;
 static bool s_buildCursorToggleEdge = false;
-static bool s_statusToggleEdge   = false;
+static bool s_viewPlayersEdge   = false;
 static bool s_activeDisconnectedEdge = false;
 
 /* Per-trigger last-axis state for edge synthesis when a trigger is
@@ -98,7 +98,7 @@ static bool s_path_a_last_builder_confirm = false;
 static bool s_path_a_last_build_prev      = false;
 static bool s_path_a_last_build_next      = false;
 static bool s_path_a_last_build_cursor_toggle = false;
-static bool s_path_a_last_status_toggle   = false;
+static bool s_path_a_last_view_players   = false;
 
 static void reset_path_a_edges(void) {
   s_path_a_last_pause           = false;
@@ -108,7 +108,7 @@ static void reset_path_a_edges(void) {
   s_path_a_last_build_prev      = false;
   s_path_a_last_build_next      = false;
   s_path_a_last_build_cursor_toggle = false;
-  s_path_a_last_status_toggle   = false;
+  s_path_a_last_view_players   = false;
 }
 
 static bool path_a_active(void) {
@@ -184,7 +184,7 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   out->b[GP_ACT_BUILD_CURSOR_TOGGLE].pri = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_STICK };
   out->b[GP_ACT_QUICK_CHAT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_LEFT };
   out->b[GP_ACT_PAUSE].pri               = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_START };
-  out->b[GP_ACT_STATUS_TOGGLE].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
+  out->b[GP_ACT_VIEW_PLAYERS].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
 }
 
 static GamepadBinding *slotPtr(GamepadActionBindings *ab, GamepadSlot s) {
@@ -254,7 +254,7 @@ static void fireEdgeForAction(GamepadAction a) {
     case GP_ACT_PAUSE:               s_pauseEdge             = true; break;
     case GP_ACT_QUICK_CHAT:          s_quickChatEdge         = true; break;
     case GP_ACT_BUILD_CURSOR_TOGGLE: s_buildCursorToggleEdge = true; break;
-    case GP_ACT_STATUS_TOGGLE:       s_statusToggleEdge      = true; break;
+    case GP_ACT_VIEW_PLAYERS:       s_viewPlayersEdge      = true; break;
     default: break;
   }
 }
@@ -300,7 +300,7 @@ void inputGamepadInit(void) {
   s_pauseEdge          = false;
   s_quickChatEdge      = false;
   s_buildCursorToggleEdge = false;
-  s_statusToggleEdge   = false;
+  s_viewPlayersEdge   = false;
   s_activeDisconnectedEdge = false;
   s_triggerWasPressed[0] = false;
   s_triggerWasPressed[1] = false;
@@ -629,16 +629,16 @@ bool inputGamepadIsBuildCursorToggleEdge(void) {
   return v;
 }
 
-bool inputGamepadIsStatusToggleEdge(void) {
+bool inputGamepadIsViewPlayersEdge(void) {
   if (path_a_active()) {
-    bool now = steam_input_is_action_pressed(SI_ACTION_STATUS_TOGGLE);
-    bool edge = now && !s_path_a_last_status_toggle;
-    s_path_a_last_status_toggle = now;
+    bool now = steam_input_is_action_pressed(SI_ACTION_VIEW_PLAYERS);
+    bool edge = now && !s_path_a_last_view_players;
+    s_path_a_last_view_players = now;
     return edge;
   }
 
-  bool v = s_statusToggleEdge;
-  s_statusToggleEdge = false;
+  bool v = s_viewPlayersEdge;
+  s_viewPlayersEdge = false;
   return v;
 }
 

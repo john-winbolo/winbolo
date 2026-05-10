@@ -1141,7 +1141,7 @@ STR_GP_ACTION_BUILD_NEXT=Następny typ budowy
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Przełącz kursor budowy
 STR_GP_ACTION_QUICK_CHAT=Szybki czat
 STR_GP_ACTION_PAUSE=Pauza
-STR_GP_ACTION_STATUS_TOGGLE=Panel stanu
+STR_GP_ACTION_VIEW_PLAYERS=Panel stanu
 
 # Tryb kontrolera – ustawienie i monit o połączeniu (Phase 8.1)
 STR_CTRL_MODE_HEADER=Tryb kontrolera

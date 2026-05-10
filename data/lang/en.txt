@@ -1110,7 +1110,7 @@ STR_GP_ACTION_BUILD_NEXT=Next Build Type
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Toggle Build Cursor
 STR_GP_ACTION_QUICK_CHAT=Quick Chat
 STR_GP_ACTION_PAUSE=Pause
-STR_GP_ACTION_STATUS_TOGGLE=Status Overlay
+STR_GP_ACTION_VIEW_PLAYERS=View Players
 
 # Controller Mode pref + connect prompt (Phase 8.1)
 STR_CTRL_MODE_HEADER=Controller Mode

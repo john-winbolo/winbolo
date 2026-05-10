@@ -1145,7 +1145,7 @@ STR_GP_ACTION_BUILD_NEXT=Наступний тип будівництва
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Перемкнути курсор будівництва
 STR_GP_ACTION_QUICK_CHAT=Швидкий чат
 STR_GP_ACTION_PAUSE=Пауза
-STR_GP_ACTION_STATUS_TOGGLE=Панель статусу
+STR_GP_ACTION_VIEW_PLAYERS=Панель статусу
 
 # Controller mode pref + connect prompt (Phase 8.1)
 STR_CTRL_MODE_HEADER=Режим геймпада

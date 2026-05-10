@@ -24,7 +24,7 @@
 #define SI_ACTION_BUILD_CURSOR_TOGGLE "build_cursor_toggle" /* R3 — enter/exit free build cursor */
 #define SI_ACTION_QUICK_CHAT    "quick_chat"      /* D-pad LEFT */
 #define SI_ACTION_PAUSE         "pause"           /* Start */
-#define SI_ACTION_STATUS_TOGGLE "status_toggle"   /* Select */
+#define SI_ACTION_VIEW_PLAYERS  "view_players"    /* D-pad RIGHT — open Players panel */
 
 /* Analog actions — InGame set */
 #define SI_ANALOG_TANK_MOVE     "tank_move"       /* Left stick */
