@@ -17,6 +17,8 @@
 
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_sim_control.h"
+#include "../bolo/control_event.h"
 #include "../bolo/global.h"
 #include "../bolo/players.h"
 #include "../bolo/platform_net.h"
@@ -146,6 +148,11 @@ static ServerSim *wasmServerSim = NULL;
 static Transport wasmTransport;
 static bool wasmTransportActive = FALSE;
 static BYTE wasmPlayerNum = 0;
+static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
+
+static void wasmDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 ClientSim humanSimStorage;
 ClientSim *humanSim = NULL;
 
@@ -549,6 +556,13 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                              snapEvents, snapHdr.reliableEventCount, 0);
     }
     screenNetSetupTankGoCS(humanSim);
+    /* Register the WASM client as a control-event subscriber. Placed
+     * after screenLoadCompressedMapCS (which calls clientSimCreate) so
+     * humanSim->myPlayerNum is initialized to 0 — matching the SP
+     * slot — before sync's self-skip runs. */
+    wasmControlSub = serverSimRegisterSubscriber(wasmServerSim,
+                                                wasmDeliverControl,
+                                                humanSim);
     printf("[WASM] Single-player ServerSim ready\n");
   }
 
@@ -581,6 +595,8 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
           tankDestroy(&wasmServerSim->sim, &wasmServerSim->sim.tanks[i]);
         }
       }
+      serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
+      wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
       transportLocalDestroy(&wasmTransport);
       free(wasmServerSim);
       wasmServerSim = NULL;

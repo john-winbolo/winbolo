@@ -49,6 +49,8 @@
 #include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_sim_control.h"
+#include "../../bolo/control_event.h"
 #include "../../bolo/global.h"
 #include "../../bolo/players.h"
 #include "../../bolo/gui_message.h"
@@ -225,6 +227,11 @@ ClientSim *humanSim = NULL;
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
 static Transport spTransport;
+static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+
+static void humanDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 static bool spServerSimActive = FALSE;
 static bool spTransportLocalUsed = FALSE;
 static bool spServerHosted = FALSE;
@@ -518,6 +525,8 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
       }
     }
     if (spTransportLocalUsed) {
+      serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
+      spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
       transportLocalDestroy(&spTransport);
       spTransportLocalUsed = FALSE;
     }
@@ -1139,6 +1148,14 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapPills, snapHdr.pillCount,
                                    snapEvents, snapHdr.reliableEventCount, 0);
           }
+          /* Register humanSim as a control-event subscriber. Placed after
+           * clientSimCreate (run from the screenLoadCompressedMapCS / else
+           * branch above) so myPlayerNum is initialized to 0 — matching the
+           * SP slot — and the dispatcher's self-skip protects this slot
+           * during sync. */
+          spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
+                                                        humanDeliverControl,
+                                                        humanSim);
           screenNetSetupTankGoCS(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls botManagerDestroy which would wipe bots we add below. */
@@ -1186,12 +1203,24 @@ bool gameFrontSetDlgState(openingStates newState) {
                 if (team > 0) {
                   spServerSim->lobbyPlayers[slot].teamNumber = team;
                   clientSim->lobbySlots[slot].teamNumber = team;
+                  {
+                    ControlEvent slotEvt;
+                    memset(&slotEvt, 0, sizeof(slotEvt));
+                    serverSimFillLobbySlotEvent(spServerSim, slot, &slotEvt);
+                    serverSimPublishControl(spServerSim, &slotEvt);
+                  }
                 }
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {
                 spServerSim->lobbyPlayers[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
                 clientSim->lobbySlots[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
+                {
+                  ControlEvent slotEvt;
+                  memset(&slotEvt, 0, sizeof(slotEvt));
+                  serverSimFillLobbySlotEvent(spServerSim, 0, &slotEvt);
+                  serverSimPublishControl(spServerSim, &slotEvt);
+                }
               }
               /* Apply team alliances — players with same non-zero team become allies.
                * The local transport doesn't replicate lobby/alliance events, so we
@@ -1204,7 +1233,13 @@ bool gameFrontSetDlgState(openingStates newState) {
                 for (int b = a + 1; b < 16; b++) {
                   if (!spServerSim->playerConnected[b]) continue;
                   if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
+                    ControlEvent allyEvt;
                     playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
+                    memset(&allyEvt, 0, sizeof(allyEvt));
+                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                    allyEvt.u.allianceAccept.acceptedBy = (BYTE)a;
+                    allyEvt.u.allianceAccept.newMember  = (BYTE)b;
+                    serverSimPublishControl(spServerSim, &allyEvt);
                     playersAcceptAlliance(&humanSim->sim, &humanSim->sim.plyrs, humanSim->myPlayerNum, (BYTE)a, (BYTE)b, FALSE);
                   }
                 }

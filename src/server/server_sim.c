@@ -1292,6 +1292,17 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         transportUdpServerBroadcastMapSkipState(sim);
     }
+
+    /* Notify in-process subscribers that a player joined. The just-added
+     * player is not yet a subscriber (bot register happens after this in
+     * botManagerAddBot; SP humanSim register happens after this in
+     * gamefront), so this fans out only to peers. */
+    {
+        ControlEvent joinEvt;
+        memset(&joinEvt, 0, sizeof(joinEvt));
+        serverSimFillPlayerJoinEvent(sim, playerNum, &joinEvt);
+        serverSimPublishControl(sim, &joinEvt);
+    }
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
@@ -2294,7 +2305,13 @@ void serverSimStartGame(ServerSim *sim) {
         for (j = i + 1; j < MAX_TANKS; j++) {
             if (!sim->playerConnected[j]) continue;
             if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
+                ControlEvent allyEvt;
                 playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
+                memset(&allyEvt, 0, sizeof(allyEvt));
+                allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                allyEvt.u.allianceAccept.acceptedBy = i;
+                allyEvt.u.allianceAccept.newMember  = j;
+                serverSimPublishControl(sim, &allyEvt);
             }
         }
     }
@@ -2751,7 +2768,7 @@ static netStatus serverPhaseToNetStat(ServerState s) {
     return netLobby;
 }
 
-static void serverFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
+void serverSimFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->type = CTRL_GAME_PHASE;
     evt->u.gamePhase.phase = serverPhaseToCtrlPhase(sim->state);
     /* countdownTicks is a 50Hz counter; round up so a partial second still
@@ -2763,7 +2780,7 @@ static void serverFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
     }
 }
 
-static void serverFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
+void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_SETTINGS;
     memset(evt->u.lobbySettings.mapName, 0, MAP_STR_SIZE);
     strncpy(evt->u.lobbySettings.mapName, sim->mapName, MAP_STR_SIZE - 1);
@@ -2780,7 +2797,7 @@ static void serverFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
 }
 
-static void serverFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     ClientLobbySlot slot;
     memset(&slot, 0, sizeof(slot));
     slot.connected = sim->playerConnected[i] ? true : false;
@@ -2803,7 +2820,7 @@ static void serverFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) 
     evt->u.lobbySlot.slot = slot;
 }
 
-static void serverFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     PlayerBitMap allies = playersGetAlliesBitMap(&sim->sim.plyrs, i);
     BYTE numAllies = 0;
     BYTE bit;
@@ -2834,17 +2851,17 @@ static void serverSimSyncSubscriber(
     BYTE i;
 
     memset(&evt, 0, sizeof(evt));
-    serverFillGamePhaseEvent(sim, &evt);
+    serverSimFillGamePhaseEvent(sim, &evt);
     deliver(ctx, &evt);
 
     memset(&evt, 0, sizeof(evt));
-    serverFillLobbySettingsEvent(sim, &evt);
+    serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->playerConnected[i]) {
             memset(&evt, 0, sizeof(evt));
-            serverFillLobbySlotEvent(sim, i, &evt);
+            serverSimFillLobbySlotEvent(sim, i, &evt);
             deliver(ctx, &evt);
         }
     }
@@ -2852,7 +2869,7 @@ static void serverSimSyncSubscriber(
     for (i = 0; i < MAX_TANKS; i++) {
         if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
             memset(&evt, 0, sizeof(evt));
-            serverFillPlayerJoinEvent(sim, i, &evt);
+            serverSimFillPlayerJoinEvent(sim, i, &evt);
             deliver(ctx, &evt);
         }
     }
