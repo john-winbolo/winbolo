@@ -69,6 +69,8 @@
 
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_sim_control.h"
+#include "../bolo/control_event.h"
 #include "../bolo/frontend.h"
 #include "../bolo/players.h"
 #include "../bolo/brain.h"
@@ -125,6 +127,11 @@ static volatile bool headlessQuit = FALSE;
 /* Transport state */
 static Transport headlessTransport;
 static bool transportActive = FALSE;
+static SubscriberHandle headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
+
+static void headlessDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 static BYTE playerNum = 0;
 static ClientSim humanSimStorage;
 static ClientSim *humanSim = NULL;
@@ -1042,12 +1049,24 @@ static bool fastModeSetupGame(void) {
   headlessSyncSnapshot();
   screenNetSetupTankGoCS(humanSim);
 
+  /* Register the headless client as a control-event subscriber. Placed
+   * after screenLoadCompressedMapCS (which calls clientSimCreate) so
+   * humanSim->myPlayerNum is initialized to 0 before sync's self-skip
+   * runs. Unregister any prior handle first so a re-setup that skipped
+   * the teardown path does not leak a slot. */
+  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
+  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
+                                                  headlessDeliverControl,
+                                                  humanSim);
+
   return true;
 }
 
 /* Tear down client sim and transport (but not the server sim) */
 static void fastModeTeardownGame(void) {
   brainsHandlerShutdown();
+  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
   clientSimDestroy(humanSim);
   transportLocalDestroy(&headlessTransport);
   transportActive = FALSE;
@@ -1116,6 +1135,13 @@ static int runFastMode(void) {
   screenSetAiTypeCS(humanSim, optAi);
   headlessSyncSnapshot();
   screenNetSetupTankGoCS(humanSim);
+
+  /* Register the headless client as a control-event subscriber. Placed
+   * after screenLoadCompressedMapCS so humanSim->myPlayerNum is 0 before
+   * sync's self-skip runs. */
+  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
+                                                  headlessDeliverControl,
+                                                  humanSim);
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
@@ -1232,6 +1258,8 @@ static int runFastMode(void) {
 
   logStateClose();
   brainsHandlerShutdown();
+  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
   clientSimDestroy(humanSim);
   transportLocalDestroy(&headlessTransport);
   transportActive = FALSE;

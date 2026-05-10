@@ -638,4 +638,20 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h);
  *********************************************************/
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
 
+/*********************************************************
+ *NAME:          serverSimFillGamePhaseEvent
+ *               serverSimFillLobbySettingsEvent
+ *               serverSimFillLobbySlotEvent
+ *               serverSimFillPlayerJoinEvent
+ *PURPOSE:
+ *  Populate a ControlEvent of the corresponding type from
+ *  the current ServerSim state. Used by both the initial
+ *  state sync (serverSimSyncSubscriber) and live publish
+ *  call sites that need an event payload.
+ *********************************************************/
+void serverSimFillGamePhaseEvent(const ServerSim *sim, struct ControlEvent *evt);
+void serverSimFillLobbySettingsEvent(ServerSim *sim, struct ControlEvent *evt);
+void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
+void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
+
 #endif /* SERVER_SIM_H */

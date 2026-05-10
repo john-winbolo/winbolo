@@ -36,6 +36,7 @@
 #include "../server/geolookup.h"
 #include "../server/server_sim.h"
 #include "../server/server_lifecycle.h"
+#include "control_event.h"
 #include "../winbolonet/winbolonet.h"
 #include "../server/threads.h"
 #include "sounddist.h"
@@ -560,6 +561,14 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
                           &udpServer.clients[j].addr);
             }
         }
+    }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_PLAYER_NAME;
+        evt.u.playerName.playerNum = (BYTE)victimSlot;
+        strncpy(evt.u.playerName.name, chosenName, PACKET_MAX_PLAYER_NAME - 1);
+        serverSimPublishControl(sim, &evt);
     }
 
     /* Broadcast a single-slot lobby update so other surfaces (lobby
@@ -1606,6 +1615,12 @@ void transportUdpServerDestroy(void) {
         }
         closesocket(udpServer.sock);
         udpServer.sock = INVALID_SOCKET;
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_SERVER_SHUTDOWN;
+            serverSimPublishControl(serverSimGetActive(), &evt);
+        }
     }
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
@@ -1772,6 +1787,19 @@ void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
                       &udpServer.clients[i].addr);
         }
     }
+    {
+        ControlEvent evt;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i]) {
+                memset(&evt, 0, sizeof(evt));
+                serverSimFillLobbySlotEvent(sim, (BYTE)i, &evt);
+                serverSimPublishControl(sim, &evt);
+            }
+        }
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbySettingsEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientIdx) {
@@ -1816,6 +1844,12 @@ void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
             udpSendTo(udpServer.sock, buf, pos, &udpServer.clients[i].addr);
         }
     }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbySlotEvent(sim, playerNum, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void transportUdpServerBroadcastCountdown(ServerSim *sim, uint8_t secondsRemaining) {
@@ -1829,12 +1863,19 @@ void transportUdpServerBroadcastCountdown(ServerSim *sim, uint8_t secondsRemaini
                       &udpServer.clients[i].addr);
         }
     }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_PHASE;
+        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+        evt.u.gamePhase.countdownSeconds = secondsRemaining;
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void transportUdpServerBroadcastGameStart(ServerSim *sim) {
     uint8_t buf[PACKET_HEADER_SIZE];
     int i;
-    (void)sim;
     packHeader(buf, PACKET_GAME_START, 0);
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
@@ -1854,18 +1895,36 @@ void transportUdpServerBroadcastGameStart(ServerSim *sim) {
         udpServer.mapEventQueues[i].nextSeq = 1;
         udpServer.mapEventQueues[i].ackedSeq = 1;
     }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_PHASE;
+        evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
+        evt.u.gamePhase.countdownSeconds = 0;
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void transportUdpServerBroadcastGameOver(ServerSim *sim) {
     uint8_t buf[PACKET_HEADER_SIZE];
     int i;
-    (void)sim;
     packHeader(buf, PACKET_GAME_OVER, 0);
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
             udpSendTo(udpServer.sock, buf, sizeof(buf),
                       &udpServer.clients[i].addr);
         }
+    }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_PHASE;
+        evt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+        evt.u.gamePhase.countdownSeconds = 0;
+        serverSimPublishControl(sim, &evt);
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_OVER;
+        serverSimPublishControl(sim, &evt);
     }
 }
 
@@ -1894,6 +1953,12 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
 
         /* 4. Reset map download tracking and start sending new chunks */
         serverInitMapDownload(i);
+    }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &evt);
     }
 
     fprintf(stderr, "[UDP SERVER] Map change broadcast: %u bytes compressed map\n",
@@ -2290,6 +2355,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             }
                         }
                     }
+                    {
+                        ControlEvent evt;
+                        memset(&evt, 0, sizeof(evt));
+                        evt.type = CTRL_PLAYER_NAME;
+                        evt.u.playerName.playerNum = (BYTE)clientIdx;
+                        strncpy(evt.u.playerName.name, newName,
+                                PACKET_MAX_PLAYER_NAME - 1);
+                        serverSimPublishControl(serverSimGetActive(), &evt);
+                    }
                 }
             }
             break;
@@ -2380,6 +2454,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                               &udpServer.clients[toPlayer].addr);
                     fprintf(stderr, "[UDP SERVER] Alliance update forwarded to player %d\n", toPlayer);
                     logAddEvent(log_AllyRequest, (BYTE)clientIdx, toPlayer, 0, 0, 0, NULL);
+                    {
+                        ControlEvent reqEvt;
+                        memset(&reqEvt, 0, sizeof(reqEvt));
+                        reqEvt.type = CTRL_ALLIANCE_REQUEST;
+                        reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
+                        reqEvt.u.allianceRequest.toPlayer   = toPlayer;
+                        serverSimPublishControl(serverSimGetActive(), &reqEvt);
+                    }
                 }
             }
             break;
@@ -2397,6 +2479,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
                 logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
+                {
+                    ControlEvent acceptEvt;
+                    memset(&acceptEvt, 0, sizeof(acceptEvt));
+                    acceptEvt.type = CTRL_ALLIANCE_ACCEPT;
+                    acceptEvt.u.allianceAccept.acceptedBy = (BYTE)clientIdx;
+                    acceptEvt.u.allianceAccept.newMember  = newMember;
+                    serverSimPublishControl(ssim, &acceptEvt);
+                }
                 /* Broadcast ALLIANCE_UPDATE (ACCEPT) to all clients */
                 {
                     uint8_t outBuf[PACKET_HEADER_SIZE + 3];
@@ -2422,7 +2512,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 /* Apply on server-side players struct */
                 {
                     ServerSim *ssim = serverSimGetActive();
+                    ControlEvent leaveEvt;
                     playersLeaveAlliance(&ssim->sim, &ssim->sim.plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
+                    memset(&leaveEvt, 0, sizeof(leaveEvt));
+                    leaveEvt.type = CTRL_ALLIANCE_LEAVE;
+                    leaveEvt.u.allianceLeave.playerNum = (BYTE)clientIdx;
+                    serverSimPublishControl(ssim, &leaveEvt);
                 }
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
                                    (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
