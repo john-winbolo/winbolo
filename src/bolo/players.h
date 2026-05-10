@@ -479,7 +479,7 @@ BYTE playersMakeNetAlliences(players *plrs, BYTE playerNum, BYTE *value);
  * (tank status icons, ally menu, scoreboard counts) miss our team membership.
  * After applying a PLAYER_LIST, call this so all UI surfaces agree with
  * the bidirectional checks used by pillbox/base alliance markers. */
-void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer);
+void playersRebuildSelfAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer);
 
 /*********************************************************
 *NAME:          playersGetFirstNotUsed
