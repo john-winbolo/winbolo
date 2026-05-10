@@ -401,6 +401,35 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                         i == myPlayerNum ? " (you)" : "");
         }
     }
+
+    /* "Switch my team" picker — always available so non-host players
+     * can self-assign. Existing PACKET_LOBBY_TEAM_SET wire path. */
+    if (transport && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+        cs->lobbySlots[myPlayerNum].connected) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("My team:");
+        ImGui::SameLine();
+        int curTeam = cs->lobbySlots[myPlayerNum].teamNumber;
+        const char *teamNameItems[17] = { "Unassigned" };
+        char teamNameStorage[16][16];
+        for (int t = 1; t < 16; t++) {
+            const char *labelSrc = (cs->lobbyTeamInUse[t] && cs->lobbyTeamName[t][0])
+                ? cs->lobbyTeamName[t] : nullptr;
+            if (labelSrc) {
+                strncpy(teamNameStorage[t], labelSrc, sizeof(teamNameStorage[t]) - 1);
+                teamNameStorage[t][sizeof(teamNameStorage[t]) - 1] = '\0';
+            } else {
+                SDL_snprintf(teamNameStorage[t], sizeof(teamNameStorage[t]),
+                             "Team %d", t);
+            }
+            teamNameItems[t] = teamNameStorage[t];
+        }
+        ImGui::SetNextItemWidth(140.0f * s);
+        if (ImGui::Combo("##myteam", &curTeam, teamNameItems, 16)) {
+            transportUdpClientSendTeamSet(transport, (uint8_t)curTeam);
+        }
+    }
 }
 
 /* ── Layout A — bot AiConfig sub-row ──────────────────────────────
