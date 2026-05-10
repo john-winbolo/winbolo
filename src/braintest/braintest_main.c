@@ -1518,7 +1518,16 @@ static gameType optGame   = gameOpen;
  * without leaving BrainTest. Default false → un-stripped, debug=true. */
 static bool optProduction   = false;
 static char optRunScript[1024] = "";
-static int  optPerfLog = 0;
+/* Profiling toggles. In dev mode (no --opt) BOTH default to on so the Y
+ * panel and logs Just Work. In --opt mode both default to off; pass
+ * --profile to enable in-memory timing (Y panel) without disk I/O, and
+ * --profile-log to enable file writes too (which implies --profile). */
+static int  optProfile    = 0;
+static int  optProfileLog = 0;
+/* JSONL behavior log (brain_p<N>.jsonl, goal_player%d.log, etc.). Always
+ * on in dev mode; opt-in under --opt via --log-json. Independent of the
+ * profile flags — behavior trace is about decisions, not perf. */
+static int  optLogJson    = 0;
 static int  optAutoStart = 0;
 static int  optMaxTicks = 0;   /* 0 = run forever */
 
@@ -1537,7 +1546,11 @@ static void printUsage(const char *prog) {
         "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
         "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
         "                     then exit. The script has full access to cpf, world, etc.\n"
-        "  --perf-log         Enable optimize.log performance timing (off by default).\n"
+        "  --profile          (--opt only) In-memory timing → Y panel time bar. No file writes.\n"
+        "  --profile-log      (--opt only) Profiling + write optimize.log/performance.ticks.log.\n"
+        "                     Implies --profile. In dev mode (no --opt) both are on by default.\n"
+        "  --log-json         (--opt only) Write brain_p<N>.jsonl + goal_player<N>.log behavior\n"
+        "                     traces. On by default in dev mode.\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
         "\n"
@@ -1590,8 +1603,15 @@ static bool parseArgs(int argc, char **argv) {
             /* Load brain from the stripped opt/ subdirectory with
              * BRAIN_DEBUG_MODE=false — true production-mode feel. */
             optProduction = true;
-        } else if (strcmp(argv[i], "--perf-log") == 0) {
-            optPerfLog = 1;
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            optProfile = 1;
+        } else if (strcmp(argv[i], "--profile-log") == 0) {
+            /* --profile-log implies --profile (file-writing without
+             * measurement makes no sense — buffer would be empty). */
+            optProfile    = 1;
+            optProfileLog = 1;
+        } else if (strcmp(argv[i], "--log-json") == 0) {
+            optLogJson = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
@@ -4284,15 +4304,28 @@ int main(int argc, char *argv[]) {
      * --opt CLI flag flips the default off so bots load from stripped
      * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
     botManagerSetDefaultDebugMode(!optProduction);
-    luaBrainsSetPerfLog(optPerfLog);
+    /* Effective profiling flags. In dev mode (no --opt) both default to
+     * on so the Y panel + logs Just Work. In --opt mode you opt in via
+     * --profile (memory only) or --profile-log (memory + files). */
+    int effProfile    = (!optProduction) || optProfile    || optProfileLog;
+    int effProfileLog = (!optProduction) || optProfileLog;
+    /* JSONL behavior trace: dev mode = on, --opt = off unless --log-json. */
+    int effLogJson    = (!optProduction) || optLogJson;
+    luaBrainsSetProfile(effProfile, effProfileLog);
+    luaBrainsSetLogJson(effLogJson);
     if (optRunScript[0])
         luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];
-    /* Set up the panel-recording directory (debug_sessions/<ts>/panels)
-     * once at startup. We use a timestamped subdir so multiple BrainTest
-     * runs don't trample each other; offline tools / LLMs reading these
-     * files just point at the directory printed below. */
-    if (g_panelRecordEnabled) {
+    /* ── Per-run session directory ─────────────────────────────────────
+     * debug_sessions/<YYYYMMDD_HHMMSS>/ — created when EITHER --profile-log
+     * OR --log-json is on. Bots' Lua DEBUG_SESSION_DIR global points here
+     * so optimize.log, performance.ticks.log, brain_p<N>.jsonl, and
+     * goal_player<N>.log all land in this run's folder. Sortable
+     * alphabetically gives time-of-run order in `ls`. Skipped entirely
+     * when no log destination is enabled so non-logging runs don't leave
+     * stray empty folders behind. */
+    char g_sessionDir[FILENAME_MAX] = "";
+    if (effProfileLog || effLogJson) {
         time_t t = time(NULL);
         struct tm tmv;
 #ifdef _WIN32
@@ -4302,9 +4335,21 @@ int main(int argc, char *argv[]) {
 #endif
         char ts[32];
         strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+        SDL_snprintf(g_sessionDir, sizeof(g_sessionDir),
+                     "debug_sessions/%s", ts);
+        if (!SDL_CreateDirectory(g_sessionDir)) {
+            SDL_Log("WARN: couldn't create %s (%s) — falling back to cwd",
+                    g_sessionDir, SDL_GetError());
+            g_sessionDir[0] = '\0';
+        } else {
+            fprintf(stderr, "  Session dir: %s\n", g_sessionDir);
+        }
+    }
+    /* When --record-panels is on, per-panel JSON snapshots go in a
+     * panels/ subfolder of the session dir. */
+    if (g_panelRecordEnabled && g_sessionDir[0]) {
         SDL_snprintf(g_panelRecordDir, sizeof(g_panelRecordDir),
-                     "debug_sessions/%s/panels", ts);
-        /* SDL_CreateDirectory is recursive in SDL3. */
+                     "%s/panels", g_sessionDir);
         if (!SDL_CreateDirectory(g_panelRecordDir)) {
             SDL_Log("WARN: couldn't create %s — panel recording disabled (%s)",
                     g_panelRecordDir, SDL_GetError());
@@ -4354,6 +4399,21 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
+        /* Publish the per-run session dir to each bot's Lua state so the
+         * brain's optimize.log + performance.ticks.log writers land
+         * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
+         * the path works for Lua's io.open under both Windows and bash
+         * harnesses. */
+        if (g_sessionDir[0]) {
+            char setSession[FILENAME_MAX + 64];
+            SDL_snprintf(setSession, sizeof(setSession),
+                         "_G.DEBUG_SESSION_DIR=\"%s\"", g_sessionDir);
+            for (int i = 0; i < optNumPlayers; i++) {
+                if (botManagerIsBot((BYTE)i)) {
+                    botManagerExecLua((BYTE)i, setSession);
+                }
+            }
+        }
     } else {
         fprintf(stderr, "  WARNING: Brain script not found: %s\n", optBrain);
     }
