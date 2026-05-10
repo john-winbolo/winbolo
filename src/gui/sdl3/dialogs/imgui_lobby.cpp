@@ -380,6 +380,174 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
     }
 }
 
+/* ── Layout A — small inline lock badge ───────────────────────────
+ * Renders an inline orange "[locked]" pill next to a setting name
+ * when the server has flagged it in serverLocks. Cosmetic + tooltip. */
+static void renderLockBadge(void) {
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
+    ImGui::Text("[locked]");
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Locked by server (admin --lock-* CLI flag).\n"
+                          "Cannot be changed from the lobby.");
+    }
+}
+
+/* ── Layout A — editable game settings panel ──────────────────────
+ * Renders the four mockup setting groups (Game Type / AI / Other /
+ * Time Limit). Locked settings render disabled with a lock badge.
+ * Edits dispatch as PACKET_LOBBY_SET_SETTING via the new wire
+ * commands. Host-only or anyone if openHost. */
+static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
+                                    int myPlayerNum, float s) {
+    bool effectiveHost = (myPlayerNum == 0) || cs->lobbyOpenHost;
+
+    if (!ImGui::CollapsingHeader("Game settings",
+                                 ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::Columns(3, "##settingsCols", false);
+
+    /* ── Game Type ──────────────────────────────────────────── */
+    bool gtLocked = (cs->lobbyServerLocks & 0x01) != 0;  /* LOBBY_LOCK_GAME_TYPE */
+    {
+        ImGui::Text("Game Type");
+        if (gtLocked) renderLockBadge();
+        bool disable = !effectiveHost || gtLocked;
+        if (disable) ImGui::BeginDisabled();
+        const char *items[] = {
+            "Open Game (pre-armed)",
+            "Tournament (free ammo early)",
+            "Strict Tournament (no free ammo)",
+        };
+        for (int i = 0; i < 3; i++) {
+            char rid[16];
+            SDL_snprintf(rid, sizeof(rid), "##gt%d", i);
+            bool checked = (cs->lobbyGameType == (gameType)i);
+            if (ImGui::RadioButton(rid, checked) && !checked && transport) {
+                uint8_t v = (uint8_t)i;
+                transportUdpClientSendLobbySetting(transport, 1 /*LST_GAME_TYPE*/,
+                                                   &v, 1);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(items[i]);
+        }
+        if (disable) ImGui::EndDisabled();
+    }
+    ImGui::NextColumn();
+
+    /* ── AI Computer Players ─────────────────────────────────── */
+    bool aiLocked = (cs->lobbyServerLocks & 0x02) != 0;  /* LOBBY_LOCK_AI_POLICY */
+    {
+        ImGui::Text("AI Computer Players");
+        if (aiLocked) renderLockBadge();
+        bool disable = !effectiveHost || aiLocked;
+        if (disable) ImGui::BeginDisabled();
+        const char *items[] = {
+            "No computer tanks",
+            "Allow computer tanks",
+            "Allow with advantage",
+            "Allow with full advantage",
+        };
+        for (int i = 0; i < 4; i++) {
+            char rid[16];
+            SDL_snprintf(rid, sizeof(rid), "##ai%d", i);
+            bool checked = (cs->lobbyAiType == (uint8_t)i);
+            if (ImGui::RadioButton(rid, checked) && !checked && transport) {
+                uint8_t v = (uint8_t)i;
+                transportUdpClientSendLobbySetting(transport, 3 /*LST_AI_POLICY*/,
+                                                   &v, 1);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(items[i]);
+        }
+        if (disable) ImGui::EndDisabled();
+    }
+    ImGui::NextColumn();
+
+    /* ── Other (mines / time limit / autoLockOnGameStart) ────── */
+    {
+        ImGui::Text("Other");
+
+        bool minesLocked = (cs->lobbyServerLocks & 0x04) != 0;
+        bool minesV = cs->lobbyHiddenMines;
+        bool minesDisabled = !effectiveHost || minesLocked;
+        if (minesDisabled) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("Allow Hidden Mines", &minesV) && transport) {
+            uint8_t v = minesV ? 1 : 0;
+            transportUdpClientSendLobbySetting(transport, 2 /*LST_HIDDEN_MINES*/,
+                                               &v, 1);
+        }
+        if (minesDisabled) ImGui::EndDisabled();
+        if (minesLocked) renderLockBadge();
+
+        bool timeLocked = (cs->lobbyServerLocks & 0x08) != 0;
+        bool timeV = cs->lobbyTimeLimit > 0;
+        bool timeDisabled = !effectiveHost || timeLocked;
+        if (timeDisabled) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("Game time limit", &timeV) && transport) {
+            uint8_t v = timeV ? 1 : 0;
+            transportUdpClientSendLobbySetting(transport, 4 /*LST_TIME_LIMIT*/,
+                                               &v, 1);
+        }
+        if (timeV) {
+            int mins = cs->lobbyTimeLimit > 0
+                ? (int)(cs->lobbyTimeLimit / (50 * 60))
+                : 30;
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80.0f * s);
+            if (ImGui::InputInt("##tmin", &mins, 1, 5,
+                                ImGuiInputTextFlags_EnterReturnsTrue) && transport) {
+                if (mins < 1) mins = 1;
+                if (mins > 999) mins = 999;
+                uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
+                                 (uint8_t)(mins & 0xFF) };
+                transportUdpClientSendLobbySetting(transport, 5 /*LST_TIME_MINUTES*/,
+                                                   v, 2);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("min");
+        }
+        if (timeDisabled) ImGui::EndDisabled();
+        if (timeLocked) renderLockBadge();
+
+        /* "Allow new players" — uses existing PACKET_LOCK_TOGGLE */
+        bool allowJoin = transportUdpServerGetLock();
+        if (effectiveHost && transport &&
+            ImGui::Checkbox("Allow new players", &allowJoin)) {
+            transportUdpClientSendLockToggle(transport, allowJoin);
+        }
+
+        /* "Disallow new players once started" — autoLockOnGameStart */
+        bool autoLockLocked = (cs->lobbyServerLocks & 0x10) != 0;
+        bool autoLockV = cs->lobbyAutoLockOnGameStart;
+        bool autoLockDisabled = !effectiveHost || autoLockLocked;
+        if (autoLockDisabled) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("Disallow new players once game has started", &autoLockV)
+            && transport) {
+            uint8_t v = autoLockV ? 1 : 0;
+            transportUdpClientSendLobbySetting(transport, 6 /*LST_AUTO_LOCK_ON_GAME*/,
+                                               &v, 1);
+        }
+        if (autoLockDisabled) ImGui::EndDisabled();
+        if (autoLockLocked) renderLockBadge();
+
+        /* openHost toggle — host-only, opens lobby controls to other players. */
+        if (myPlayerNum == 0 && transport) {
+            bool oh = cs->lobbyOpenHost;
+            if (ImGui::Checkbox("Players can change teams and bots", &oh)) {
+                transportUdpClientSendLobbyOpenHost(transport, oh);
+            }
+        }
+    }
+
+    ImGui::Columns(1);
+    ImGui::Spacing();
+}
+
 extern "C" int imguiLobbyShow(ClientSim *cs) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d",
             (void*)cs, cs ? cs->inLobby : -1, cs ? (int)cs->netStat : -1);
@@ -593,6 +761,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
 
         ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        /* Layout A — collapsible game settings panel (radios, checkboxes,
+         * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING. */
+        renderGameSettingsPanel(cs, transport, myPlayerNum, s);
         ImGui::Separator();
         ImGui::Spacing();
 
