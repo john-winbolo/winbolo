@@ -394,13 +394,13 @@ function M.execute(cmd, state, world)
 
   elseif cmd.cmd == "ally" then
     -- Request alliance with player N (sets a wantallies bit picked up
-    -- by init.lua's tick output). Also flips into auto-accept mode so
-    -- alliance requests from other bots/players addressed to us land
-    -- without manual confirmation.
+    -- by init.lua's tick output). The transport_udp_client bot-side
+    -- auto-accept handler reads the same wantallies bit, so the
+    -- inbound ALLIANCE_EVENT_REQUEST that this triggers will also be
+    -- accepted on the other end if both bots sent !ally to each other.
     state.alliance_target = cmd.id
-    state.auto_ally_all   = true
-    print(string.format(TAG .. " CMD: ally:%d -- requesting + auto-accept ON", cmd.id))
-    return string.format(C.BRAIN_NAME .. ": allying with player %d (auto-accept on)", cmd.id)
+    if BRAIN_DEBUG_MODE then print(string.format(TAG .. " CMD: ally:%d -- requesting", cmd.id)) end
+    return string.format(C.BRAIN_NAME .. ": allying with player %d", cmd.id)
   end
 
   return nil
