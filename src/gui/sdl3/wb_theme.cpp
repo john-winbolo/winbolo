@@ -1,0 +1,68 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "wb_theme.h"
+#include "imgui.h"
+
+/* ── Default Dark theme ────────────────────────────────────────────
+ * Initial single theme. Colors chosen to match WinBolo's current
+ * ImGui::StyleColorsDark() baseline plus identity colors lifted
+ * directly from the Layout A mockup (TEAM_COLORS in LobbyData.jsx). */
+static void applyDark(void) {
+    /* Stay close to ImGui's own Dark for chrome — this is what
+     * sdl3imgui.cpp already calls. Future custom themes can override
+     * individual ImGuiCol_* slots after the StyleColorsDark() base. */
+    ImGui::StyleColorsDark();
+}
+
+static const WbTheme s_themeDark = {
+    /* name  */ "Dark",
+    /* apply */ applyDark,
+
+    /* teamColors — match LobbyData.jsx TEAM_COLORS hex values.
+     * Order: red, blue, green, yellow, purple, orange, cyan, pink. */
+    /* teamColors */ {
+        IM_COL32(216,  98,  90, 255),  /* #d8625a red    */
+        IM_COL32( 74, 144, 200, 255),  /* #4a90c8 blue   */
+        IM_COL32(109, 199, 122, 255),  /* #6dc77a green  */
+        IM_COL32(232, 197,  71, 255),  /* #e8c547 yellow */
+        IM_COL32(176, 122, 216, 255),  /* #b07ad8 purple */
+        IM_COL32(232, 146,  72, 255),  /* #e89248 orange */
+        IM_COL32( 95, 200, 216, 255),  /* #5fc8d8 cyan   */
+        IM_COL32(232, 139, 184, 255),  /* #e88bb8 pink   */
+    },
+
+    /* Status indicators — match WinBolo's current inline colors
+     * (sdl3imgui.cpp uses (0, 0.9, 0) for online and (0.9, 0, 0)
+     * for disconnected). High-ping yellow lifted from the player
+     * row warning gradient. */
+    /* statusOnline       */ IM_COL32(  0, 230,   0, 255),
+    /* statusReady        */ IM_COL32(  0, 230,   0, 255),
+    /* statusHighPing     */ IM_COL32(231, 165,  75, 255),
+    /* statusDisconnected */ IM_COL32(230,   0,   0, 255),
+
+    /* Badges */
+    /* lockBadge  */ IM_COL32(231, 165,  75, 255),  /* same as Layout A's lock orange */
+    /* hostBadge  */ IM_COL32(120, 180, 220, 255),  /* soft blue, distinct from team blue */
+    /* botBadge   */ IM_COL32(170, 170, 200, 255),  /* desaturated for "this is computer" */
+};
+
+/* The single live theme pointer. Defaults to Dark; swap-then-apply
+ * for theme switches. */
+const WbTheme *g_theme = &s_themeDark;
+
+void wbThemeInit(void) {
+    g_theme = &s_themeDark;
+    g_theme->apply();
+}
