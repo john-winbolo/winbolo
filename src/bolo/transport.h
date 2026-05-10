@@ -28,8 +28,10 @@
 #include "global.h"
 #include "input_packet.h"
 
-/* Forward declaration — ServerSim is defined in server_sim.h */
+/* Forward declarations — ServerSim is defined in server_sim.h,
+ * ClientSim in client_sim.h. */
 struct ServerSim;
+struct ClientSim;
 
 /*********************************************************
  * Transport interface
@@ -69,13 +71,17 @@ typedef struct {
 
 /* Creates a local transport backed by a ServerSim.
  * The ServerSim must already be initialized.
- * playerNum is the local player's slot. */
-Transport transportLocalCreate(struct ServerSim *sim, BYTE playerNum);
+ * playerNum is the local player's slot.
+ * cs is the client-side simulation that this transport belongs to;
+ * stored so server-published control events can reach it. */
+Transport transportLocalCreate(struct ServerSim *sim, struct ClientSim *cs,
+                               BYTE playerNum);
 
 /* Creates a passive local transport that does NOT call serverSimTick().
  * Used for bot ClientSim instances that share a ServerSim with the
  * human player's transport (which owns the ticking). */
-Transport transportLocalCreatePassive(struct ServerSim *sim, BYTE playerNum);
+Transport transportLocalCreatePassive(struct ServerSim *sim, struct ClientSim *cs,
+                                      BYTE playerNum);
 
 /* Destroys local transport resources (does NOT destroy the ServerSim). */
 void transportLocalDestroy(Transport *t);

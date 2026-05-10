@@ -1093,7 +1093,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim->state = serverStateRunning;
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
           spServerSim->sim.viewPlayer = 0;
-          spTransport = transportLocalCreate(spServerSim, 0);
+          spTransport = transportLocalCreate(spServerSim, &humanSimStorage, 0);
           spTransportLocalUsed = TRUE;
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */

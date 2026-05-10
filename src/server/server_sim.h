@@ -31,6 +31,19 @@
 #include "../bolo/input_packet.h"
 #include "../mapeditor/mapeditor_generate.h"
 
+/* Forward decl — full definition in bolo/control_event.h. Kept opaque here so
+ * server_sim.h doesn't drag client_sim.h's include closure into every TU. */
+struct ControlEvent;
+
+typedef int SubscriberHandle;
+#define SUBSCRIBER_HANDLE_INVALID (-1)
+
+typedef struct {
+    void (*deliver)(void *ctx, const struct ControlEvent *evt);
+    void *ctx;
+    uint16_t generation;   /* matches subscriberGen[slot] when active */
+} ControlSubscriber;
+
 #ifndef _AITYPE_ENUM
 #define _AITYPE_ENUM
 typedef enum {
@@ -184,6 +197,12 @@ typedef struct ServerSim {
     /* Log recording configuration (set from CLI args, used by serverSimStartGame) */
     bool         wantLogging;
     char         userLogFileName[512];
+
+    /* In-process control event subscribers (bot ClientSims, SP humanSim). */
+    ControlSubscriber subscribers[MAX_TANKS + 1];
+    uint16_t          subscriberGen[MAX_TANKS + 1];
+    int               numSubscribers;
+    bool              publishing;
 } ServerSim;
 
 /*********************************************************
@@ -588,5 +607,35 @@ bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
  *  lobby. Returns TRUE on success.
  *********************************************************/
 bool serverSimRandomMapRegenerate(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimRegisterSubscriber
+ *PURPOSE:
+ *  Adds an in-process subscriber and synchronously delivers
+ *  the current server state to it before returning. Returns
+ *  an opaque handle, or SUBSCRIBER_HANDLE_INVALID if no
+ *  free slot is available.
+ *********************************************************/
+SubscriberHandle serverSimRegisterSubscriber(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimUnregisterSubscriber
+ *PURPOSE:
+ *  Removes a subscriber. Idempotent on stale or invalid
+ *  handles (no-op).
+ *********************************************************/
+void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h);
+
+/*********************************************************
+ *NAME:          serverSimPublishControl
+ *PURPOSE:
+ *  Fans out a ControlEvent to every active subscriber.
+ *  Asserts the four dispatcher invariants (no reentry, no
+ *  self-subscription, snapshot iteration).
+ *********************************************************/
+void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
 
 #endif /* SERVER_SIM_H */
