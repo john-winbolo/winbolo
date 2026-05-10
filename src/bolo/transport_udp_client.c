@@ -837,7 +837,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint8_t toPlayer = buf[PACKET_HEADER_SIZE + 2];
 
             switch (eventType) {
-            case ALLIANCE_EVENT_REQUEST:
+            case ALLIANCE_EVENT_REQUEST: {
+                ControlEvent evt = { .type = CTRL_ALLIANCE_REQUEST };
+                evt.u.allianceRequest.fromPlayer = fromPlayer;
+                evt.u.allianceRequest.toPlayer = toPlayer;
+                clientSimApplyControl(c->clientSim, &evt);
                 /* Only show dialog if we are the target */
                 if (toPlayer == c->playerNum) {
                     char pName[FILENAME_MAX];
@@ -853,13 +857,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                 }
                 break;
-            case ALLIANCE_EVENT_ACCEPT:
-                playersAcceptAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, fromPlayer,
-                                     toPlayer, FALSE);
+            }
+            case ALLIANCE_EVENT_ACCEPT: {
+                ControlEvent evt = { .type = CTRL_ALLIANCE_ACCEPT };
+                evt.u.allianceAccept.acceptedBy = fromPlayer;
+                evt.u.allianceAccept.newMember = toPlayer;
+                clientSimApplyControl(c->clientSim, &evt);
                 break;
-            case ALLIANCE_EVENT_LEAVE:
-                playersLeaveAlliance(&c->clientSim->sim, &c->clientSim->sim.plyrs, c->clientSim->myPlayerNum, fromPlayer, FALSE);
+            }
+            case ALLIANCE_EVENT_LEAVE: {
+                ControlEvent evt = { .type = CTRL_ALLIANCE_LEAVE };
+                evt.u.allianceLeave.playerNum = fromPlayer;
+                clientSimApplyControl(c->clientSim, &evt);
                 break;
+            }
             }
         }
         break;
