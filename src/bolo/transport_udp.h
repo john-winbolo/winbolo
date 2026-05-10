@@ -383,6 +383,25 @@ void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t t
 /* Broadcast the current map skip vote state (one byte per slot) to all clients. */
 void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim);
 
+/* ── Layout A lobby — server broadcast helpers ─────────────────────
+ * Each is sent in response to an applied client command, plus
+ * (for SETTING and OPEN_HOST) on initial state sync. The TEAM_META
+ * helper reads the current team metadata from sim->teams[teamId];
+ * BOT_CONFIG_CHG reads sim->botConfigs[slot] + the bot's name from
+ * the udpServer client array. AUTO_UNREADY also clears server-side
+ * ready flags before sending the signal. */
+void transportUdpServerBroadcastLobbySettingChg(struct ServerSim *sim,
+                                                uint8_t settingType,
+                                                const uint8_t *value,
+                                                uint8_t valueLen);
+void transportUdpServerBroadcastLobbyOpenHostChg(struct ServerSim *sim,
+                                                 bool openHost);
+void transportUdpServerBroadcastLobbyTeamMetaChg(struct ServerSim *sim,
+                                                 uint8_t teamId);
+void transportUdpServerBroadcastLobbyBotConfigChg(struct ServerSim *sim,
+                                                  uint8_t slot);
+void transportUdpServerBroadcastLobbyAutoUnready(struct ServerSim *sim);
+
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);
