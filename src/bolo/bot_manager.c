@@ -170,10 +170,9 @@ static void applyPendingThreadResize(void) {
  * is never stamped, and brain.think runs to completion regardless of
  * how long it takes — the producer's post-tick overrun telemetry
  * (overrunCount, rate-limited slow-tick warning) still fires, so
- * operators still see overruns, just without the truncation. Flip to
- * 0 when investigating whether kill enforcement is causing fallout. */
+ * operators still see overruns, just without the truncation. */
 #ifndef BRAIN_BUDGET_ENFORCE
-#define BRAIN_BUDGET_ENFORCE 0
+#define BRAIN_BUDGET_ENFORCE 1
 #endif
 
 /* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
