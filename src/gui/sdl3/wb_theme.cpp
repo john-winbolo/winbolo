@@ -14,16 +14,20 @@
 
 #include "wb_theme.h"
 #include "imgui.h"
+#include "../imgui_theme.h"   /* imguiApplyBoloTheme — existing chrome */
 
 /* ── Default Dark theme ────────────────────────────────────────────
- * Initial single theme. Colors chosen to match WinBolo's current
- * ImGui::StyleColorsDark() baseline plus identity colors lifted
- * directly from the Layout A mockup (TEAM_COLORS in LobbyData.jsx). */
+ * The Dark theme delegates chrome setup to the existing
+ * imguiApplyBoloTheme() (custom rounding + blue-teal palette already
+ * established in src/gui/imgui_theme.h). WbTheme adds the IDENTITY
+ * layer on top — team colors, status indicators, badges — that the
+ * chrome theme didn't cover.
+ *
+ * Self-contained on purpose: a future theme switch (g_theme = &light;
+ * g_theme->apply()) re-applies everything from scratch without needing
+ * call sites to remember to also call imguiApplyBoloTheme. */
 static void applyDark(void) {
-    /* Stay close to ImGui's own Dark for chrome — this is what
-     * sdl3imgui.cpp already calls. Future custom themes can override
-     * individual ImGuiCol_* slots after the StyleColorsDark() base. */
-    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
 }
 
 static const WbTheme s_themeDark = {
