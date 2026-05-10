@@ -145,6 +145,60 @@ static SDL_Texture *s_iconError   = nullptr;
 static SDL_Texture *s_iconInfo    = nullptr;
 static bool         s_iconsAttempted = false;
 
+/* Tank sprite used as the team identity badge in the lobby header.
+ * Loaded once on first lobby render; tinted with the team color via
+ * a darkened semi-transparent overlay. */
+static SDL_Texture *s_tankSelf04 = nullptr;
+static bool         s_tankSelf04Attempted = false;
+
+/* stb_image entry points — defined in C, declared with C linkage
+ * so the C++ linker finds them. Mirror of how imgui_welcome.cpp
+ * pulls them in (its include of stb_image.h provides the same). */
+extern "C" {
+    unsigned char *stbi_load_from_memory(const unsigned char *, int,
+                                         int *, int *, int *, int);
+    void stbi_image_free(void *);
+}
+
+/* Minimal PNG loader (mirror of imgui_welcome.cpp's loadPng) — uses
+ * SDL_IOFromFile + stb_image so it works on Android APK assets and
+ * regular filesystem alike. */
+static SDL_Texture *loadLobbyPng(SDL_Renderer *renderer, const char *filename) {
+    SDL_IOStream *io = SDL_IOFromFile(filename, "rb");
+    if (!io) {
+        char path[512];
+        SDL_snprintf(path, sizeof(path), "data/%s", filename);
+        io = SDL_IOFromFile(path, "rb");
+    }
+    if (!io) return nullptr;
+    Sint64 size = SDL_GetIOSize(io);
+    if (size <= 0) { SDL_CloseIO(io); return nullptr; }
+    unsigned char *buf = (unsigned char *)SDL_malloc((size_t)size);
+    if (!buf) { SDL_CloseIO(io); return nullptr; }
+    SDL_ReadIO(io, buf, (size_t)size);
+    SDL_CloseIO(io);
+    int w, h, ch;
+    unsigned char *data = stbi_load_from_memory(buf, (int)size, &w, &h, &ch, 4);
+    SDL_free(buf);
+    if (!data) return nullptr;
+    SDL_Surface *surf = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, data, w * 4);
+    if (!surf) { stbi_image_free(data); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_DestroySurface(surf);
+    stbi_image_free(data);
+    return tex;
+}
+
+static SDL_Texture *getTankSelf04Texture(SDL_Renderer *renderer) {
+    if (s_tankSelf04Attempted) return s_tankSelf04;
+    s_tankSelf04Attempted = true;
+    s_tankSelf04 = loadLobbyPng(renderer, "svg/tank_self_04.png");
+    if (s_tankSelf04) {
+        SDL_SetTextureScaleMode(s_tankSelf04, SDL_SCALEMODE_LINEAR);
+    }
+    return s_tankSelf04;
+}
+
 static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     if (s_iconsAttempted) return;
     s_iconsAttempted = true;
@@ -207,9 +261,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
     /* Walk teams 1..15, render those with members. Then unassigned. */
     bool effectiveHost = isHost || cs->lobbyOpenHost;
 
-    /* Header: "Add Team" button (host only). The lowest unused
-     * teamId becomes the new team — sends PACKET_LOBBY_TEAM_META
-     * with a default name + color. */
+    /* Header: "Add Team" button (host only) and the openHost toggle.
+     * Add Team picks the lowest unused teamId, sends a default-name
+     * TEAM_META. The openHost toggle lets non-host players manage
+     * teams + bots; the wording flips between checked/unchecked
+     * states so each phrasing reads truthfully. */
     if (effectiveHost && transport) {
         if (ImGui::SmallButton("+ Add Team")) {
             for (int t = 1; t < 16; t++) {
@@ -222,8 +278,18 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 }
             }
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(creates an empty team you can drop bots/players into)");
+        if (myPlayerNum == 0) {
+            ImGui::SameLine(0.0f, 16.0f * s);
+            bool oh = cs->lobbyOpenHost;
+            if (ImGui::Checkbox("Everybody can manage teams", &oh)) {
+                transportUdpClientSendLobbyOpenHost(transport, oh);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(oh
+                    ? "Anyone in the lobby can add/rename/remove teams and bots."
+                    : "Only the host can manage teams.");
+            }
+        }
         ImGui::Spacing();
     }
     for (int teamId = 1; teamId < 16; teamId++) {
@@ -239,71 +305,63 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             tc = g_theme->teamColors[(teamId - 1) & 7];
         }
 
-        /* Header row — color swatch + name + count + actions. */
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,
-            ImGui::ColorConvertU32ToFloat4((tc & 0x00FFFFFF) | (0x18 << 24)));
+        /* Team child window — uses the default ChildBg from the theme.
+         * Team color is reserved for the header strip only (see below)
+         * so the body stays neutral and the team identity reads as a
+         * banner rather than a flood fill. */
         char teamFrame[32];
         SDL_snprintf(teamFrame, sizeof(teamFrame), "##team%d", teamId);
         ImGui::BeginChild(teamFrame,
                           ImVec2(0, 0),
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-        ImGui::PopStyleColor();
 
-        /* Color swatch — small filled rect at the head of the row. */
-        ImVec2 swatchPos = ImGui::GetCursorScreenPos();
-        float  swatchSz  = 12.0f * s;
+        /* Color header strip — fills the header row's full width with
+         * the team color at low alpha, drawn under the header widgets
+         * via the window draw list. Renders before the swatch so the
+         * widgets sit on top of it. */
+        ImVec2 stripStart = ImGui::GetCursorScreenPos();
+        float  stripH     = ImGui::GetTextLineHeightWithSpacing() + 4.0f * s;
+        float  contentW   = ImGui::GetContentRegionAvail().x;
+        ImU32  stripCol   = (tc & 0x00FFFFFF) | (0x28 << 24);
         ImGui::GetWindowDrawList()->AddRectFilled(
-            swatchPos,
-            ImVec2(swatchPos.x + swatchSz, swatchPos.y + swatchSz),
-            tc, 2.0f);
-        ImGui::Dummy(ImVec2(swatchSz + 6.0f * s, swatchSz));
-        ImGui::SameLine();
+            stripStart,
+            ImVec2(stripStart.x + contentW, stripStart.y + stripH),
+            stripCol, 2.0f);
 
-        /* Team name — defaults to "Team N" when not customised. */
+        /* Team identity badge — tank_self_04.png drawn straight, no
+         * tint. The team color reads from the colored team name and
+         * the low-alpha header strip; layering tint on the tank made
+         * it look muddy. Falls back to a flat color rect if the PNG
+         * failed to load. */
+        SDL_Renderer *r = sdl3DrawGetRenderer();
+        SDL_Texture  *tankTex = r ? getTankSelf04Texture(r) : nullptr;
+        ImVec2 badgePos = ImGui::GetCursorScreenPos();
+        float  badgeSz  = 18.0f * s;
+        if (tankTex) {
+            ImGui::Image((ImTextureID)tankTex, ImVec2(badgeSz, badgeSz));
+        } else {
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                badgePos,
+                ImVec2(badgePos.x + badgeSz, badgePos.y + badgeSz),
+                tc, 2.0f);
+            ImGui::Dummy(ImVec2(badgeSz, badgeSz));
+        }
+        ImGui::SameLine(0.0f, 6.0f * s);
+
+        /* Team name — always "Team N", non-editable. Renaming was
+         * dropped per UX feedback; the number is enough identity
+         * alongside the colored tank badge. */
         char defaultName[16];
         SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", teamId);
-        const char *displayName = cs->lobbyTeamInUse[teamId] && cs->lobbyTeamName[teamId][0]
-            ? cs->lobbyTeamName[teamId] : defaultName;
-
-        /* Inline rename — host only. */
-        if (effectiveHost && transport) {
-            char editId[16];
-            SDL_snprintf(editId, sizeof(editId), "##rn%d", teamId);
-            char nameBuf[32];
-            strncpy(nameBuf, displayName, sizeof(nameBuf) - 1);
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
-            ImGui::SetNextItemWidth(160.0f * s);
-            if (ImGui::InputText(editId, nameBuf, sizeof(nameBuf),
-                                 ImGuiInputTextFlags_EnterReturnsTrue |
-                                 ImGuiInputTextFlags_AutoSelectAll)) {
-                transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)teamId,
-                    cs->lobbyTeamColor[teamId], cs->lobbyTeamPool[teamId], nameBuf);
-            }
-            ImGui::PopStyleColor();
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
-            ImGui::Text("%s", displayName);
-            ImGui::PopStyleColor();
-        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
+        ImGui::Text("%s", defaultName);
+        ImGui::PopStyleColor();
 
         ImGui::SameLine();
         ImGui::TextDisabled("· %d player%s%s%s",
             memberCount[teamId], memberCount[teamId] == 1 ? "" : "s",
             botCount[teamId] > 0 ? " · " : "",
             botCount[teamId] > 0 ? (botCount[teamId] == 1 ? "1 bot" : "bots") : "");
-
-        /* Remove team — host only, only when team is empty. Drops the
-         * metadata; members would have already been moved out. */
-        if (effectiveHost && transport && memberCount[teamId] == 0 &&
-            cs->lobbyTeamInUse[teamId]) {
-            ImGui::SameLine(0.0f, 16.0f * s);
-            char rmId[24];
-            SDL_snprintf(rmId, sizeof(rmId), "Remove##rmt%d", teamId);
-            if (ImGui::SmallButton(rmId)) {
-                transportUdpClientSendLobbyTeamClear(transport, (uint8_t)teamId);
-            }
-        }
 
         /* Per-team Bot naming pool dropdown — only shown when team has bots. */
         if (botCount[teamId] > 0 && effectiveHost && transport) {
@@ -329,6 +387,31 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             }
         }
 
+        /* X button at the right edge of the team header — host only.
+         * Suppressed when any human is on the team: removing wouldn't
+         * help the host (humans pick their own team). Bots-only or
+         * empty teams keep the X so leftover metadata can be cleared.
+         * Anchored to GetContentRegionMax().x so it sits at the inside
+         * right edge of the team child window regardless of how much
+         * the previous header widgets consumed. */
+        int humanCount = memberCount[teamId] - botCount[teamId];
+        if (effectiveHost && transport && humanCount == 0) {
+            float xBtnW   = 22.0f * s;
+            float rightX  = ImGui::GetContentRegionMax().x - xBtnW;
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(rightX);
+            char rmId[24];
+            SDL_snprintf(rmId, sizeof(rmId), "X##rmt%d", teamId);
+            if (ImGui::SmallButton(rmId)) {
+                transportUdpClientSendLobbyTeamClear(transport, (uint8_t)teamId);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(memberCount[teamId] == 0
+                    ? "Remove this team"
+                    : "Clear team metadata (members stay assigned)");
+            }
+        }
+
         ImGui::Separator();
 
         /* Member rows. */
@@ -338,6 +421,21 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
 
             bool isMe = (i == myPlayerNum);
             bool isBot = cs->lobbySlots[i].isBot;
+
+            /* "You" row gets a 25%-darker translucent overlay so the
+             * local player can spot themselves at a glance. Drawn
+             * UNDER the row widgets via the window draw list, sized
+             * to the current row height. */
+            ImVec2 rowStart = ImGui::GetCursorScreenPos();
+            float  rowH     = ImGui::GetTextLineHeightWithSpacing();
+            float  rowW     = ImGui::GetContentRegionAvail().x;
+            if (isMe) {
+                ImU32 darkOverlay = IM_COL32(0, 0, 0, 64);  /* ~25% black */
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    rowStart,
+                    ImVec2(rowStart.x + rowW, rowStart.y + rowH),
+                    darkOverlay, 2.0f);
+            }
 
             /* Country flag (humans only). */
             if (!isBot && cs->lobbySlots[i].countryCode[0] != '\0') {
@@ -434,34 +532,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
         }
     }
 
-    /* "Switch my team" picker — always available so non-host players
-     * can self-assign. Existing PACKET_LOBBY_TEAM_SET wire path. */
-    if (transport && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-        cs->lobbySlots[myPlayerNum].connected) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text("My team:");
-        ImGui::SameLine();
-        int curTeam = cs->lobbySlots[myPlayerNum].teamNumber;
-        const char *teamNameItems[17] = { "Unassigned" };
-        char teamNameStorage[16][16];
-        for (int t = 1; t < 16; t++) {
-            const char *labelSrc = (cs->lobbyTeamInUse[t] && cs->lobbyTeamName[t][0])
-                ? cs->lobbyTeamName[t] : nullptr;
-            if (labelSrc) {
-                strncpy(teamNameStorage[t], labelSrc, sizeof(teamNameStorage[t]) - 1);
-                teamNameStorage[t][sizeof(teamNameStorage[t]) - 1] = '\0';
-            } else {
-                SDL_snprintf(teamNameStorage[t], sizeof(teamNameStorage[t]),
-                             "Team %d", t);
-            }
-            teamNameItems[t] = teamNameStorage[t];
-        }
-        ImGui::SetNextItemWidth(140.0f * s);
-        if (ImGui::Combo("##myteam", &curTeam, teamNameItems, 16)) {
-            transportUdpClientSendTeamSet(transport, (uint8_t)curTeam);
-        }
-    }
+    /* No bottom team picker — Layout A relies on drag-to-assign + the
+     * default-team logic on the server. Players who want to switch
+     * teams can be dragged by the host (planned) or via context menu. */
 }
 
 /* ── Layout A — bot AiConfig sub-row ──────────────────────────────
@@ -551,6 +624,146 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     ImGui::PopID();
     ImGui::Unindent(20.0f * s);
     ImGui::Spacing();
+}
+
+/* ── Layout A — connectivity badge (icon + short text + Test btn) ─
+ * Self-contained block extracted from the inline lobby chrome so it
+ * can be rendered at top-right of the status bar (Layout A
+ * placement) instead of below the settings line.
+ *
+ * Renders nothing when port-mapping status is DISABLED. Owns its own
+ * popup modal for the detail view; clicking the icon/text opens it. */
+static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
+    ServerPortmapInfo pm;
+    serverInstanceGetPortmapInfo(&pm);
+
+    loadStatusIconsOnce(renderer, s);
+
+    SDL_Texture *icon       = nullptr;
+    const char  *shortText  = nullptr;
+    ImVec4       color;
+    const char  *detailFmt  = nullptr;
+
+    switch (pm.status) {
+        case SERVER_PORTMAP_DISABLED:
+            return;  /* nothing to show */
+        case SERVER_PORTMAP_PENDING:
+            icon      = s_iconInfo;
+            shortText = langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
+            color     = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+            detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_PENDING);
+            break;
+        case SERVER_PORTMAP_SUCCEEDED:
+            icon      = s_iconSuccess;
+            shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
+            color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
+            detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED);
+            break;
+        case SERVER_PORTMAP_HOLE_PUNCH_OK:
+            icon      = s_iconSuccess;
+            shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
+            color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
+            detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH);
+            break;
+        case SERVER_PORTMAP_SYMMETRIC_NAT:
+            icon      = s_iconError;
+            shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
+            color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+            detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC);
+            break;
+        case SERVER_PORTMAP_FAILED:
+            icon      = s_iconError;
+            shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
+            color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+            detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_FAILED);
+            break;
+    }
+
+    if (!shortText) return;
+
+    ImGui::BeginGroup();
+    if (icon) {
+        float iconSize = 18.0f * s;
+        ImGui::Image((ImTextureID)icon, ImVec2(iconSize, iconSize));
+        ImGui::SameLine();
+        float textOffset = (iconSize - ImGui::GetTextLineHeight()) * 0.5f;
+        if (textOffset > 0.0f) {
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + textOffset);
+        }
+    }
+    ImGui::TextColored(color, "%s", shortText);
+    ImGui::EndGroup();
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    char popupTitle[128];
+    SDL_snprintf(popupTitle, sizeof(popupTitle), "%s##portmap_details",
+                 langGetText(STR_DLGLOBBY_PORTMAP_POPUP_TITLE));
+
+    if (ImGui::IsItemClicked()) {
+        ImGui::OpenPopup(popupTitle);
+    }
+
+    ImGui::SameLine();
+    bool canTest = (pm.status != SERVER_PORTMAP_DISABLED &&
+                    pm.status != SERVER_PORTMAP_PENDING);
+    if (!canTest) ImGui::BeginDisabled();
+    if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_TEST_CONNECTIVITY))) {
+        serverInstanceTriggerManualProbe();
+    }
+    if (!canTest) ImGui::EndDisabled();
+
+    ManualProbeState mps = serverInstanceGetManualProbeState();
+    if (mps != MANUAL_PROBE_IDLE) {
+        ImGui::SameLine();
+        switch (mps) {
+            case MANUAL_PROBE_IN_PROGRESS:
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                                   "%s", langGetText(STR_DLGLOBBY_TEST_TESTING));
+                break;
+            case MANUAL_PROBE_SUCCESS:
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                                   "%s", langGetText(STR_DLGLOBBY_TEST_REACHABLE));
+                break;
+            case MANUAL_PROBE_TIMEOUT:
+                ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
+                                   "%s", langGetText(STR_DLGLOBBY_TEST_NO_REPLY));
+                break;
+            case MANUAL_PROBE_IDLE:
+                break;
+        }
+    }
+
+    if (ImGui::BeginPopupModal(popupTitle, nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ServerPortmapInfo pm2;
+        serverInstanceGetPortmapInfo(&pm2);
+        ImGui::PushTextWrapPos(420.0f * s);
+        switch (pm2.status) {
+            case SERVER_PORTMAP_SUCCEEDED:
+                ImGui::Text(detailFmt, pm2.externalIp,
+                            (unsigned)pm2.externalPort);
+                break;
+            case SERVER_PORTMAP_SYMMETRIC_NAT:
+            case SERVER_PORTMAP_FAILED:
+                ImGui::Text(detailFmt,
+                            (unsigned)(pm2.internalPort != 0
+                                           ? pm2.internalPort
+                                           : 27500));
+                break;
+            default:
+                ImGui::TextUnformatted(detailFmt);
+                break;
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ImGui::Button(langGetText(STR_CLOSE)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 /* ── Layout A — server reject toast ───────────────────────────────
@@ -732,13 +945,9 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         if (autoLockDisabled) ImGui::EndDisabled();
         if (autoLockLocked) renderLockBadge();
 
-        /* openHost toggle — host-only, opens lobby controls to other players. */
-        if (myPlayerNum == 0 && transport) {
-            bool oh = cs->lobbyOpenHost;
-            if (ImGui::Checkbox("Players can change teams and bots", &oh)) {
-                transportUdpClientSendLobbyOpenHost(transport, oh);
-            }
-        }
+        /* openHost toggle moved to the team-list header (next to
+         * "+ Add Team") so it lives where its scope is — managing
+         * teams + bots. See renderTeamGroupedPlayers. */
     }
 
     ImGui::Columns(1);
@@ -955,6 +1164,24 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
 #endif
+
+            /* Layout A — connectivity badge in the top-right corner.
+             * Push the cursor to the right edge minus an estimated
+             * badge width (icon + status text + Test button + status
+             * text). 320px scaled is wide enough for the longest
+             * combination ("Server unreachable [Test connectivity]
+             * No reply yet"). The badge gracefully no-ops when port-
+             * mapping is disabled (clients not hosting). */
+            {
+                float availW   = ImGui::GetContentRegionAvail().x;
+                float badgeW   = 320.0f * s;
+                float startX   = ImGui::GetCursorPosX() + availW - badgeW;
+                if (startX > ImGui::GetCursorPosX()) {
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(startX);
+                    renderConnectivityBadge(renderer, s);
+                }
+            }
         }
 
         ImGui::Spacing();
@@ -972,140 +1199,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        /* --- Hosted-MP port-mapping status --- */
-        {
-            ServerPortmapInfo pm;
-            serverInstanceGetPortmapInfo(&pm);
-
-            loadStatusIconsOnce(renderer, s);
-
-            SDL_Texture *icon       = nullptr;
-            const char  *shortText  = nullptr;
-            ImVec4       color;
-            const char  *detailFmt  = nullptr;
-
-            switch (pm.status) {
-                case SERVER_PORTMAP_DISABLED:
-                    break;
-                case SERVER_PORTMAP_PENDING:
-                    icon      = s_iconInfo;
-                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
-                    color     = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_PENDING);
-                    break;
-                case SERVER_PORTMAP_SUCCEEDED:
-                    icon      = s_iconSuccess;
-                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
-                    color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
-                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED);
-                    break;
-                case SERVER_PORTMAP_HOLE_PUNCH_OK:
-                    icon      = s_iconSuccess;
-                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
-                    color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
-                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH);
-                    break;
-                case SERVER_PORTMAP_SYMMETRIC_NAT:
-                    icon      = s_iconError;
-                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
-                    color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
-                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC);
-                    break;
-                case SERVER_PORTMAP_FAILED:
-                    icon      = s_iconError;
-                    shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
-                    color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
-                    detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_FAILED);
-                    break;
-            }
-
-            if (shortText != nullptr) {
-                ImGui::BeginGroup();
-                if (icon != nullptr) {
-                    float iconSize = 18.0f * s;
-                    ImGui::Image((ImTextureID)icon, ImVec2(iconSize, iconSize));
-                    ImGui::SameLine();
-                    float textOffset = (iconSize - ImGui::GetTextLineHeight()) * 0.5f;
-                    if (textOffset > 0.0f) {
-                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + textOffset);
-                    }
-                }
-                ImGui::TextColored(color, "%s", shortText);
-                ImGui::EndGroup();
-
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                }
-                char popupTitle[128];
-                SDL_snprintf(popupTitle, sizeof(popupTitle), "%s##portmap_details",
-                             langGetText(STR_DLGLOBBY_PORTMAP_POPUP_TITLE));
-
-                if (ImGui::IsItemClicked()) {
-                    ImGui::OpenPopup(popupTitle);
-                }
-
-                ImGui::SameLine();
-                bool canTest = (pm.status != SERVER_PORTMAP_DISABLED &&
-                                pm.status != SERVER_PORTMAP_PENDING);
-                if (!canTest) ImGui::BeginDisabled();
-                if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_TEST_CONNECTIVITY))) {
-                    serverInstanceTriggerManualProbe();
-                }
-                if (!canTest) ImGui::EndDisabled();
-
-                ManualProbeState mps = serverInstanceGetManualProbeState();
-                if (mps != MANUAL_PROBE_IDLE) {
-                    ImGui::SameLine();
-                    switch (mps) {
-                        case MANUAL_PROBE_IN_PROGRESS:
-                            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                                               "%s", langGetText(STR_DLGLOBBY_TEST_TESTING));
-                            break;
-                        case MANUAL_PROBE_SUCCESS:
-                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
-                                               "%s", langGetText(STR_DLGLOBBY_TEST_REACHABLE));
-                            break;
-                        case MANUAL_PROBE_TIMEOUT:
-                            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
-                                               "%s", langGetText(STR_DLGLOBBY_TEST_NO_REPLY));
-                            break;
-                        case MANUAL_PROBE_IDLE:
-                            break;
-                    }
-                }
-                ImGui::Spacing();
-
-                if (ImGui::BeginPopupModal(popupTitle, nullptr,
-                                           ImGuiWindowFlags_AlwaysAutoResize)) {
-                    ServerPortmapInfo pm2;
-                    serverInstanceGetPortmapInfo(&pm2);
-                    ImGui::PushTextWrapPos(420.0f * s);
-                    switch (pm2.status) {
-                        case SERVER_PORTMAP_SUCCEEDED:
-                            ImGui::Text(detailFmt, pm2.externalIp,
-                                        (unsigned)pm2.externalPort);
-                            break;
-                        case SERVER_PORTMAP_SYMMETRIC_NAT:
-                        case SERVER_PORTMAP_FAILED:
-                            ImGui::Text(detailFmt,
-                                        (unsigned)(pm2.internalPort != 0
-                                                       ? pm2.internalPort
-                                                       : 27500));
-                            break;
-                        default:
-                            ImGui::TextUnformatted(detailFmt);
-                            break;
-                    }
-                    ImGui::PopTextWrapPos();
-                    ImGui::Spacing();
-                    if (ImGui::Button(langGetText(STR_CLOSE)) ||
-                        ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-            }
-        }
+        /* Hosted-MP port-mapping status now renders at top-right via
+         * renderConnectivityBadge — see the call site in the read-only
+         * status block above. */
 
         /* --- Main content --- */
 #if BOLO_MOBILE

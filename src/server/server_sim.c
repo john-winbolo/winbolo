@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <limits.h>  /* INT_MAX for default-team load balance */
 /* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
@@ -353,6 +354,21 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * defaults). Same for botConfigs[] (difficulty=easy=0,
      * personality=normal=0). serverLocks defaults to 0 — bolod
      * --lock-* CLI flags set bits at server startup. */
+
+    /* Layout A — guarantee at least two teams always exist so the
+     * lobby UI never shows fewer than 2. teams[1] gets the host
+     * by default (see player-join path); teams[2] gets the second
+     * joiner. Marking them in_use here ensures the UI renders both
+     * even before anyone joins. */
+    sim->teams[1].in_use     = 1;
+    sim->teams[1].color      = 0;  /* red */
+    sim->teams[1].namingPool = 0;  /* classic */
+    SDL_strlcpy(sim->teams[1].name, "Team 1", LOBBY_TEAM_NAME_LEN);
+    sim->teams[2].in_use     = 1;
+    sim->teams[2].color      = 1;  /* blue */
+    sim->teams[2].namingPool = 0;
+    SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
+
     sim->openHost            = FALSE;
     sim->allowNewPlayers     = TRUE;   /* lobby starts open */
     sim->autoLockOnGameStart = FALSE;
@@ -1274,10 +1290,41 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
 
-    /* Initialize lobby player state */
-    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    /* Initialize lobby player state. Default-team assignment (Layout A):
+     *   slot 0 (host)             → team 1
+     *   slot 1 (second joiner)    → team 2
+     *   slot 2+ (subsequent)      → smallest existing team (load balance)
+     * Bots take whichever team the bot-add path picks (existing logic).
+     * Players can self-reassign via the team picker after joining. */
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    {
+        uint8_t defaultTeam = 1;
+        if (playerNum == 0) {
+            defaultTeam = 1;
+        } else if (playerNum == 1) {
+            defaultTeam = 2;
+        } else {
+            /* Smallest in-use team wins. Counts include bots. */
+            int counts[16] = {0};
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (i == playerNum) continue;
+                if (!sim->playerConnected[i]) continue;
+                uint8_t t = sim->lobbyPlayers[i].teamNumber;
+                if (t > 0 && t < 16) counts[t]++;
+            }
+            int bestTeam = 1, bestCount = INT_MAX;
+            for (int t = 1; t < 16; t++) {
+                if (!sim->teams[t].in_use) continue;
+                if (counts[t] < bestCount) {
+                    bestCount = counts[t];
+                    bestTeam  = t;
+                }
+            }
+            defaultTeam = (uint8_t)bestTeam;
+        }
+        sim->lobbyPlayers[playerNum].teamNumber = defaultTeam;
+    }
 
     /* Set active sim so routing functions access sim state during tankCreate */
     activeSim = sim;
