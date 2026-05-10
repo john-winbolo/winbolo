@@ -293,6 +293,68 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define NAME_REJECT_MIXED_SCRIPTS   5   /* single-script rule */
 #define NAME_REJECT_EMPTY           6   /* empty after strip */
 
+/* ── Lobby Layout A — Client → Server (160-169) ───────────────────
+ * One packet type per command (matches the convention established
+ * by PACKET_LOBBY_TEAM_SET / READY / ADD_BOT / REMOVE_BOT above).
+ * Per-team objects are auto-ally affordances — server uses the
+ * existing alliance system to ally team members at game start.
+ *
+ * Authority on every command: senderIsHost || (game.openHost &&
+ * senderIsActivePlayer). Plus per-setting lock check.
+ * Server applies, broadcasts the matching _CHG, then broadcasts
+ * PACKET_LOBBY_AUTO_UNREADY. */
+#define PACKET_LOBBY_SET_SETTING    160  /* { settingType 1, valueLen 1, value N } */
+#define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
+#define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
+                                            *   nameLen 1, name N }
+                                            * Single packet handles create +
+                                            * rename + recolor + naming pool. */
+#define PACKET_LOBBY_TEAM_CLEAR     163  /* { teamId 1 } */
+#define PACKET_LOBBY_BOT_CONFIG     164  /* { slot 1, difficulty 1,
+                                            *   personality 1, nameLen 1,
+                                            *   name N } */
+#define PACKET_LOBBY_KICK           165  /* { slot 1 } */
+
+/* Existing packets get extended payloads (additive, version-bumped):
+ *   PACKET_LOBBY_TEAM_SET (130): host can move others, not just self.
+ *   PACKET_LOBBY_ADD_BOT  (132): + { teamId, name, difficulty, personality }.
+ *   PACKET_LOCK_TOGGLE    (128): unchanged — exposed via "Allow new players"
+ *                                checkbox in the Other section. */
+
+/* ── Lobby Layout A — Server → Client (175-184) ─────────────────── */
+#define PACKET_LOBBY_SETTING_CHG    175  /* echo of CLIENT SET_SETTING */
+#define PACKET_LOBBY_OPEN_HOST_CHG  176  /* { bool 1 } */
+#define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
+#define PACKET_LOBBY_BOT_CONFIG_CHG 178
+#define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
+#define PACKET_LOBBY_AUTO_UNREADY   180  /* (empty payload) */
+
+/* Setting types used inside SET_SETTING / SETTING_CHG payloads.
+ * Forward-compat: receivers must skip unknown types via valueLen. */
+#define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */
+#define LST_HIDDEN_MINES       2   /* 1 byte bool */
+#define LST_AI_POLICY          3   /* 1 byte enum: none|allow|advantage|full */
+#define LST_TIME_LIMIT         4   /* 1 byte bool */
+#define LST_TIME_MINUTES       5   /* 2 bytes uint16 BE */
+#define LST_AUTO_LOCK_ON_GAME  6   /* 1 byte bool */
+/* allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
+ * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
+
+/* Reject reason codes for PACKET_LOBBY_REJECT. */
+#define LOBBY_REJECT_NOT_HOST   1   /* sender lacks authority */
+#define LOBBY_REJECT_LOCKED     2   /* setting is in serverLocks bitmask */
+#define LOBBY_REJECT_INVALID    3   /* malformed payload / out-of-range value */
+
+/* ServerLocks bitmask — sent in extended PACKET_LOBBY_STATE.
+ * Set by bolod CLI flags (--lock-game-type etc); never changes after
+ * server startup. Hosts cannot modify locks; clients render matching
+ * settings disabled with a lock badge. */
+#define LOBBY_LOCK_GAME_TYPE         (1u << 0)
+#define LOBBY_LOCK_AI_POLICY         (1u << 1)
+#define LOBBY_LOCK_MINES             (1u << 2)
+#define LOBBY_LOCK_TIME_LIMIT        (1u << 3)
+#define LOBBY_LOCK_AUTO_LOCK_ON_GAME (1u << 4)
+
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
 #define ALLIANCE_EVENT_ACCEPT   1
