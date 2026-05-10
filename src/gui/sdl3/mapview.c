@@ -820,10 +820,14 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
   {
     tkExplosion q = sim->tankExplosions;
     while (q != NULL) {
+      /* Anchor top-left, matching mapViewDrawShells (the real game's path
+         for tank fireballs via screenBullets/SHELL_EXPLOSION1). Centering
+         here would offset the head half a tile from the trail explosions
+         and make it look like a separate spark traveling past the impact. */
       int tpx = ((int)q->x * tileSize) >> 8;
       int tpy = ((int)q->y * tileSize) >> 8;
-      float tx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX - scaledTile / 2);
-      float ty = (float)((tpy - camMY * tileSize) * zf - edgeY + originY - scaledTile / 2);
+      float tx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX);
+      float ty = (float)((tpy - camMY * tileSize) * zf - edgeY + originY);
 
       if (tx + scaledTile >= originX && tx <= originX + viewW &&
           ty + scaledTile >= originY && ty <= originY + viewH) {
