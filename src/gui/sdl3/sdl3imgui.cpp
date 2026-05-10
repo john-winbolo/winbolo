@@ -61,6 +61,7 @@ extern "C" {
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
 #include "luabrainshandler.h"
+#include "wb_theme.h"
 #include "flags.h"
 
 /* Include players.h with C linkage — no #pragma pack inside, safe here */
@@ -412,6 +413,12 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
+    /* WbTheme owns identity colors (team colors, status indicators,
+     * badges) used by the lobby and other dialogs. Call after the
+     * existing chrome setup so its apply() — currently a no-op
+     * pass-through to StyleColorsDark — doesn't undo the bolo theme
+     * tweaks above. */
+    wbThemeInit();
     imguiLoadBoloFont(18.0f);
     ImGui_ImplSDL3_InitForSDLRenderer(pw->window, pw->renderer);
     ImGui_ImplSDLRenderer3_Init(pw->renderer);
@@ -2528,6 +2535,8 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
+    /* WbTheme — see comment on the other call site above. */
+    wbThemeInit();
     imguiLoadBoloFont(18.0f);
 
     /* Tablet mode: scale up ImGui for touch targets.
