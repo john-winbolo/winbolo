@@ -193,7 +193,7 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) playerNum, temp,
-                          (*plrs)->item[playerNum].countryCode,
+                          (*plrs)->item[playerNum].location,
                           (*plrs)->item[playerNum].ping,
                           playersGetClientType(plrs, playerNum),
                           playersGetClientFlags(plrs, playerNum));
@@ -231,7 +231,7 @@ void playersSetPlayersMenu(ClientSim *csParam, players *plrs, BYTE selfPlayer, b
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) count, temp,
-                          (*plrs)->item[count].countryCode,
+                          (*plrs)->item[count].location,
                           (*plrs)->item[count].ping,
                           playersGetClientType(plrs, count),
                           playersGetClientFlags(plrs, count));
@@ -276,11 +276,9 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   if ((*plrs)->item[playerNum].inUse == FALSE) {
     (*plrs)->item[playerNum].inUse = TRUE;
     strcpy((*plrs)->item[playerNum].playerName, playerName);
-    strcpy((*plrs)->item[playerNum].location, location);
-    /* Store country code from location (now a 2-char code, not an IP) */
-    (*plrs)->item[playerNum].countryCode[0] = location[0];
-    (*plrs)->item[playerNum].countryCode[1] = location[1];
-    (*plrs)->item[playerNum].countryCode[2] = '\0';
+    (*plrs)->item[playerNum].location[0] = location[0];
+    (*plrs)->item[playerNum].location[1] = location[1];
+    (*plrs)->item[playerNum].location[2] = '\0';
     utilCtoPString(playerName, (char *) ((*plrs)->playerBrainNames[playerNum]));
     (*plrs)->item[playerNum].mapX = mx;
     (*plrs)->item[playerNum].mapY = my;
@@ -297,10 +295,9 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   }
   else if (iMyPlayerNum == iPlayerNum) {
     /* Processing our client, store location for the network info */
-    strcpy((*plrs)->item[playerNum].location, location);
-    (*plrs)->item[playerNum].countryCode[0] = location[0];
-    (*plrs)->item[playerNum].countryCode[1] = location[1];
-    (*plrs)->item[playerNum].countryCode[2] = '\0';
+    (*plrs)->item[playerNum].location[0] = location[0];
+    (*plrs)->item[playerNum].location[1] = location[1];
+    (*plrs)->item[playerNum].location[2] = '\0';
   } else {
     /* Already registered (e.g. auto-registered from snapshot with a
        placeholder name) — update name and location from authoritative
@@ -309,10 +306,9 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
        snapshot auto-register path leaves the list empty so server-driven
        team alliances would otherwise never reach the client view. */
     strcpy((*plrs)->item[playerNum].playerName, playerName);
-    strcpy((*plrs)->item[playerNum].location, location);
-    (*plrs)->item[playerNum].countryCode[0] = location[0];
-    (*plrs)->item[playerNum].countryCode[1] = location[1];
-    (*plrs)->item[playerNum].countryCode[2] = '\0';
+    (*plrs)->item[playerNum].location[0] = location[0];
+    (*plrs)->item[playerNum].location[1] = location[1];
+    (*plrs)->item[playerNum].location[2] = '\0';
     utilCtoPString(playerName, (char *) ((*plrs)->playerBrainNames[playerNum]));
     allienceDestroy(&((*plrs)->item[playerNum].allie));
     (*plrs)->item[playerNum].allie = allienceCreate();
@@ -326,14 +322,14 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   /* Update front end if we are in a running game (ie not in the joining phase) */
   if (csParam == NULL || csParam->netStat != netFailed) {
     strcpy(str, (*plrs)->item[playerNum].playerName);
-    if (playerNum != selfPlayer && (*plrs)->item[playerNum].countryCode[0] != '\0') {
+    if (playerNum != selfPlayer && (*plrs)->item[playerNum].location[0] != '\0') {
       strcat(str, " (");
-      strcat(str, (*plrs)->item[playerNum].countryCode);
+      strcat(str, (*plrs)->item[playerNum].location);
       strcat(str, ")");
     }
     if (isServer == FALSE) {
       frontEndSetPlayer(csParam, (playerNumbers) playerNum, str,
-                        (*plrs)->item[playerNum].countryCode,
+                        (*plrs)->item[playerNum].location,
                         (*plrs)->item[playerNum].ping,
                         playersGetClientType(plrs, playerNum),
                         playersGetClientFlags(plrs, playerNum));
@@ -499,8 +495,8 @@ void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest) {
 
 void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
   if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
-    dest[0] = (*plrs)->item[playerNum].countryCode[0];
-    dest[1] = (*plrs)->item[playerNum].countryCode[1];
+    dest[0] = (*plrs)->item[playerNum].location[0];
+    dest[1] = (*plrs)->item[playerNum].location[1];
     dest[2] = '\0';
   } else {
     dest[0] = 'X';
@@ -1060,7 +1056,7 @@ void playersSetMenuItems(ClientSim *csParam, players *plrs, BYTE selfPlayer, boo
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) count, str,
-                          (*plrs)->item[count].countryCode,
+                          (*plrs)->item[count].location,
                           (*plrs)->item[count].ping,
                           playersGetClientType(plrs, count),
                           playersGetClientFlags(plrs, count));
