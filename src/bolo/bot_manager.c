@@ -39,6 +39,7 @@
 #include "starts.h"
 #include "tank.h"
 #include "players.h"
+#include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
 #include "transport.h"
@@ -821,6 +822,24 @@ void botManagerOnGameStart(ServerSim *sim) {
 
         /* Reset brain so full-map fill triggers again for aiFull bots */
         bot->brain.isFirst = true;
+    }
+}
+
+void botManagerSetTeams(ServerSim *sim, const BYTE *teamOf, BYTE numPlayers) {
+    if (sim == NULL || teamOf == NULL || numPlayers < 2) return;
+    if (numPlayers > MAX_TANKS) numPlayers = MAX_TANKS;
+
+    for (BYTE i = 0; i < numPlayers; i++) {
+        for (BYTE j = 0; j < numPlayers; j++) {
+            if (i == j || teamOf[i] != teamOf[j]) continue;
+
+            allienceAdd(&sim->sim.plyrs->item[i].allie, j);
+
+            for (BYTE k = 0; k < MAX_TANKS; k++) {
+                if (!bots[k].active) continue;
+                allienceAdd(&bots[k].cs.sim.plyrs->item[i].allie, j);
+            }
+        }
     }
 }
 

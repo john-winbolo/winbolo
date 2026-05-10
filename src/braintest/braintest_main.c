@@ -1510,6 +1510,7 @@ static void signalHandler(int sig) {
 static char optBrain[512] = "brains/NewAutopilot";
 static char optMap[512]   = "";
 static int  optNumPlayers = 1;
+static int  optNumTeams   = 0;   /* 0 = FFA; >=2 = round-robin teams */
 static int  optFollow     = 0;
 static aiType  optAI      = aiFull;
 static gameType optGame   = gameOpen;
@@ -1538,6 +1539,7 @@ static void printUsage(const char *prog) {
         "Options:\n"
         "  -brain PATH      Brain script directory (default: brains/NewAutopilot)\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
+        "  -teams N         Split bots into N teams round-robin (default: 0 = FFA)\n"
         "  -map PATH        Map file (default: built-in Everard Island)\n"
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
@@ -1576,6 +1578,9 @@ static bool parseArgs(int argc, char **argv) {
             optNumPlayers = atoi(argv[++i]);
             if (optNumPlayers < 1) optNumPlayers = 1;
             if (optNumPlayers > 16) optNumPlayers = 16;
+        } else if ((strcmp(argv[i], "-teams") == 0 || strcmp(argv[i], "--teams") == 0) && i + 1 < argc) {
+            optNumTeams = atoi(argv[++i]);
+            if (optNumTeams < 0) optNumTeams = 0;
         } else if ((strcmp(argv[i], "-map") == 0 || strcmp(argv[i], "--map") == 0) && i + 1 < argc) {
             strncpy(optMap, argv[++i], sizeof(optMap) - 1);
         } else if ((strcmp(argv[i], "-follow") == 0 || strcmp(argv[i], "--follow") == 0) && i + 1 < argc) {
@@ -4172,6 +4177,11 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "BrainTest - Brain Debug Viewer\n");
     fprintf(stderr, "  Brain:   %s\n", optBrain);
     fprintf(stderr, "  Players: %d\n", optNumPlayers);
+    if (optNumTeams >= 2) {
+        fprintf(stderr, "  Teams:   %d (round-robin)\n", optNumTeams);
+    } else {
+        fprintf(stderr, "  Teams:   FFA\n");
+    }
     fprintf(stderr, "  Map:     %s\n", optMap[0] ? optMap : "(built-in Everard Island)");
     fprintf(stderr, "  AI:      %s\n", aiNames[optAI]);
     fprintf(stderr, "  Game:    %s\n", gameNames[optGame]);
@@ -4399,6 +4409,20 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
+
+        /* Apply team alliances. Headless harness — no lobby/alliance
+         * packet flow exists, so write the bits directly into both the
+         * server sim and every bot's ClientSim via botManagerSetTeams.
+         * Round-robin: teamOf[i] = i % optNumTeams. */
+        if (optNumTeams >= 2 && app.numBots >= 2) {
+            int teams = optNumTeams > app.numBots ? app.numBots : optNumTeams;
+            BYTE teamOf[MAX_TANKS];
+            for (BYTE i = 0; i < (BYTE)optNumPlayers; i++) {
+                teamOf[i] = (BYTE)(i % teams);
+            }
+            botManagerSetTeams(&app.sim, teamOf, (BYTE)optNumPlayers);
+            fprintf(stderr, "  Set up %d teams across %d bots\n", teams, app.numBots);
+        }
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
