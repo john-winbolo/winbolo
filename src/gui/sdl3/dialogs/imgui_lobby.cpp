@@ -46,6 +46,7 @@ extern "C" {
 #include "../../../bolo/bases.h"
 #include "../../../bolo/starts.h"
 #include "../../../bolo/platform_net.h"
+#include "../../../bolo/lobby_bot_pools.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
@@ -54,6 +55,7 @@ extern "C" {
 #include "imgui_lobby.h"
 #include "imgui_messagebox.h"
 }
+#include "../wb_theme.h"
 
 #define MAX_TANKS 16
 #define WBN_ICON_SIZE 14
@@ -169,6 +171,211 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
                              "%s%s", base, icons[i].relPath);
                 *icons[i].target = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
             }
+        }
+    }
+}
+
+/* ── Layout A — team-grouped player list ──────────────────────────
+ * Renders players grouped under team headers with color tints from
+ * WbTheme. Replaces the flat 5-column table with the mockup's
+ * "team containers" model. Sized to fit inside the calling child
+ * window. Returns nothing — purely UI. */
+static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
+                                     int myPlayerNum, float s, bool isHost) {
+    /* Helper to count members per team for header strings. */
+    int memberCount[16] = {0};
+    int botCount[16]    = {0};
+    int unassignedCount = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!cs->lobbySlots[i].connected) continue;
+        uint8_t t = cs->lobbySlots[i].teamNumber;
+        if (t == 0) {
+            unassignedCount++;
+        } else if (t < 16) {
+            memberCount[t]++;
+            if (cs->lobbySlots[i].isBot) botCount[t]++;
+        }
+    }
+
+    /* Walk teams 1..15, render those with members. Then unassigned. */
+    bool effectiveHost = isHost || cs->lobbyOpenHost;
+    for (int teamId = 1; teamId < 16; teamId++) {
+        if (memberCount[teamId] == 0 && !cs->lobbyTeamInUse[teamId]) continue;
+
+        /* Team color from theme; falls back to gray for un-themed teams. */
+        ImU32 tc;
+        uint8_t colorIdx = cs->lobbyTeamColor[teamId];
+        if (cs->lobbyTeamInUse[teamId] && colorIdx < 8) {
+            tc = g_theme->teamColors[colorIdx];
+        } else {
+            /* Default per-team color: cycle through palette by teamId. */
+            tc = g_theme->teamColors[(teamId - 1) & 7];
+        }
+
+        /* Header row — color swatch + name + count + actions. */
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,
+            ImGui::ColorConvertU32ToFloat4((tc & 0x00FFFFFF) | (0x18 << 24)));
+        char teamFrame[32];
+        SDL_snprintf(teamFrame, sizeof(teamFrame), "##team%d", teamId);
+        ImGui::BeginChild(teamFrame,
+                          ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        ImGui::PopStyleColor();
+
+        /* Color swatch — small filled rect at the head of the row. */
+        ImVec2 swatchPos = ImGui::GetCursorScreenPos();
+        float  swatchSz  = 12.0f * s;
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            swatchPos,
+            ImVec2(swatchPos.x + swatchSz, swatchPos.y + swatchSz),
+            tc, 2.0f);
+        ImGui::Dummy(ImVec2(swatchSz + 6.0f * s, swatchSz));
+        ImGui::SameLine();
+
+        /* Team name — defaults to "Team N" when not customised. */
+        char defaultName[16];
+        SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", teamId);
+        const char *displayName = cs->lobbyTeamInUse[teamId] && cs->lobbyTeamName[teamId][0]
+            ? cs->lobbyTeamName[teamId] : defaultName;
+
+        /* Inline rename — host only. */
+        if (effectiveHost && transport) {
+            char editId[16];
+            SDL_snprintf(editId, sizeof(editId), "##rn%d", teamId);
+            char nameBuf[32];
+            strncpy(nameBuf, displayName, sizeof(nameBuf) - 1);
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
+            ImGui::SetNextItemWidth(160.0f * s);
+            if (ImGui::InputText(editId, nameBuf, sizeof(nameBuf),
+                                 ImGuiInputTextFlags_EnterReturnsTrue |
+                                 ImGuiInputTextFlags_AutoSelectAll)) {
+                transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)teamId,
+                    cs->lobbyTeamColor[teamId], cs->lobbyTeamPool[teamId], nameBuf);
+            }
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
+            ImGui::Text("%s", displayName);
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("· %d player%s%s%s",
+            memberCount[teamId], memberCount[teamId] == 1 ? "" : "s",
+            botCount[teamId] > 0 ? " · " : "",
+            botCount[teamId] > 0 ? (botCount[teamId] == 1 ? "1 bot" : "bots") : "");
+
+        /* Per-team Bot naming pool dropdown — only shown when team has bots. */
+        if (botCount[teamId] > 0 && effectiveHost && transport) {
+            ImGui::SameLine(0.0f, 16.0f * s);
+            ImGui::TextDisabled("Bot naming:");
+            ImGui::SameLine();
+            int curPool = cs->lobbyTeamPool[teamId];
+            if (curPool < 0 || curPool >= lobbyBotPoolCount()) curPool = 0;
+            char poolId[16];
+            SDL_snprintf(poolId, sizeof(poolId), "##pool%d", teamId);
+            ImGui::SetNextItemWidth(160.0f * s);
+            if (ImGui::BeginCombo(poolId, lobbyBotPoolLabel(curPool))) {
+                for (int p = 0; p < lobbyBotPoolCount(); p++) {
+                    bool sel = (p == curPool);
+                    if (ImGui::Selectable(lobbyBotPoolLabel(p), sel)) {
+                        transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)teamId,
+                            cs->lobbyTeamColor[teamId], (uint8_t)p,
+                            cs->lobbyTeamInUse[teamId] ? cs->lobbyTeamName[teamId] : defaultName);
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+        }
+
+        ImGui::Separator();
+
+        /* Member rows. */
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (!cs->lobbySlots[i].connected) continue;
+            if (cs->lobbySlots[i].teamNumber != teamId) continue;
+
+            bool isMe = (i == myPlayerNum);
+            bool isBot = cs->lobbySlots[i].isBot;
+
+            /* Country flag (humans only). */
+            if (!isBot && cs->lobbySlots[i].countryCode[0] != '\0') {
+                SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
+                if (flagTex) {
+                    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                    ImGui::SameLine();
+                }
+            }
+
+            /* Name with appropriate tinting. */
+            if (isBot) {
+                ImGui::TextColored(wbThemeColor(g_theme->botBadge), "[bot] %s",
+                    cs->lobbySlots[i].playerName);
+            } else if (isMe) {
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s (you)",
+                    cs->lobbySlots[i].playerName);
+            } else {
+                ImGui::Text("%s", cs->lobbySlots[i].playerName);
+            }
+
+            /* Ping (humans). */
+            if (!isBot && cs->lobbySlots[i].pingMs > 0) {
+                ImGui::SameLine(0.0f, 12.0f * s);
+                ImVec4 pingColor;
+                if (cs->lobbySlots[i].pingMs < 50)        pingColor = wbThemeColor(g_theme->statusOnline);
+                else if (cs->lobbySlots[i].pingMs < 150)  pingColor = wbThemeColor(g_theme->statusHighPing);
+                else                                       pingColor = wbThemeColor(g_theme->statusDisconnected);
+                ImGui::TextColored(pingColor, "%dms", (int)cs->lobbySlots[i].pingMs);
+            }
+
+            /* Ready status. */
+            ImGui::SameLine(0.0f, 12.0f * s);
+            if (cs->lobbySlots[i].ready) {
+                ImGui::TextColored(wbThemeColor(g_theme->statusReady), "[ready]");
+            } else {
+                ImGui::TextDisabled("[not ready]");
+            }
+
+            /* Bot remove button — host only. */
+            if (isBot && effectiveHost && transport) {
+                ImGui::SameLine();
+                char btnId[24];
+                SDL_snprintf(btnId, sizeof(btnId), "x##rb%d", i);
+                if (ImGui::SmallButton(btnId)) {
+                    transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                }
+            }
+        }
+
+        /* "+ Bot" button at the bottom of each team — host only.
+         * Drives the existing PACKET_LOBBY_ADD_BOT for now; future
+         * work extends with explicit teamId + name + config. */
+        if (effectiveHost && transport && cs->lobbyAiType != 0) {
+            ImGui::Spacing();
+            char addId[24];
+            SDL_snprintf(addId, sizeof(addId), "+ Bot##ab%d", teamId);
+            if (ImGui::SmallButton(addId)) {
+                transportUdpClientSendAddBot(transport);
+                /* Note: server picks slot + name. Subsequent commits
+                 * will switch to a teamId-aware add-bot flow. */
+            }
+        }
+
+        ImGui::EndChild();
+        ImGui::Spacing();
+    }
+
+    /* Unassigned tray. */
+    if (unassignedCount > 0) {
+        ImGui::TextDisabled("Unassigned (%d):", unassignedCount);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (!cs->lobbySlots[i].connected) continue;
+            if (cs->lobbySlots[i].teamNumber != 0) continue;
+            ImGui::Bullet();
+            ImGui::Text("%s%s", cs->lobbySlots[i].playerName,
+                        i == myPlayerNum ? " (you)" : "");
         }
     }
 }
@@ -545,11 +752,22 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
                     ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_None);
 
+                    /* Layout A: team-grouped player rendering. The
+                     * legacy 5-column table below the #if 0 is left
+                     * intact for reference; toggle the 0/1 to A/B
+                     * compare during the in-progress UI rewrite. */
+#if 1
+                    bool isHostHere = (myPlayerNum == 0);
+                    renderTeamGroupedPlayers(cs, transport, myPlayerNum, s, isHostHere);
+                    /* Avoid the legacy table entirely. */
+                    if (false) {
+#else
                     if (ImGui::BeginTable("##PlayerTable", 5,
                                           ImGuiTableFlags_Borders |
                                           ImGuiTableFlags_RowBg |
                                           ImGuiTableFlags_SizingStretchProp |
                                           ImGuiTableFlags_ScrollY)) {
+#endif
                         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PLAYER_COL), ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PING_COL), ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
                         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_TEAM_COL), ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
@@ -899,14 +1117,25 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             float playerPanelW = availW - mapPanelW - 8.0f;
             float panelH = availContentH;
 
-            /* Left: Player table */
+            /* Left: Player panel — Layout A team-grouped rendering. */
             ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, panelH), ImGuiChildFlags_None);
 
+            /* Layout A: team-grouped player rendering. Legacy 6-column
+             * table preserved below the #if 0 for reference; toggle to
+             * A/B compare during the in-progress UI rewrite. */
+#if 1
+            {
+                bool isHostHere = (myPlayerNum == 0);
+                renderTeamGroupedPlayers(cs, transport, myPlayerNum, s, isHostHere);
+            }
+            if (false) {
+#else
             if (ImGui::BeginTable("##PlayerTable", 6,
                                   ImGuiTableFlags_Borders |
                                   ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_SizingStretchProp |
                                   ImGuiTableFlags_ScrollY)) {
+#endif
                 ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_SLOT_COL),   ImGuiTableColumnFlags_WidthFixed, 30.0f * s);
                 ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_NAME_COL),   ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_PING_COL),   ImGuiTableColumnFlags_WidthFixed, 45.0f * s);
