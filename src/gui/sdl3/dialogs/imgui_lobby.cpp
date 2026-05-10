@@ -521,6 +521,30 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     ImGui::Spacing();
 }
 
+/* ── Layout A — server reject toast ───────────────────────────────
+ * Surfaces the last PACKET_LOBBY_REJECT as a one-line orange status
+ * pill. Auto-clears after the user dismisses it (clicks the X) so
+ * subsequent rejects re-trigger naturally. */
+static void renderLobbyRejectToast(ClientSim *cs, float s) {
+    if (cs->lobbyLastRejectPacket == 0) return;
+    const char *reason = "rejected";
+    switch (cs->lobbyLastRejectReason) {
+        case 1: reason = "host-only action";       break;  /* LOBBY_REJECT_NOT_HOST */
+        case 2: reason = "setting locked by server"; break; /* LOBBY_REJECT_LOCKED */
+        case 3: reason = "invalid request";         break; /* LOBBY_REJECT_INVALID */
+        default: break;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
+    ImGui::Text("⚠ Lobby change rejected: %s", reason);
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("X##rejdismiss")) {
+        cs->lobbyLastRejectPacket = 0;
+        cs->lobbyLastRejectReason = 0;
+    }
+    (void)s;
+}
+
 /* ── Layout A — small inline lock badge ───────────────────────────
  * Renders an inline orange "[locked]" pill next to a setting name
  * when the server has flagged it in serverLocks. Cosmetic + tooltip. */
@@ -904,6 +928,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
+
+        /* Layout A — surface the most recent server reject (locked
+         * setting, non-host action, invalid request). Renders only
+         * when cs->lobbyLastRejectPacket != 0. */
+        renderLobbyRejectToast(cs, s);
 
         /* Layout A — collapsible game settings panel (radios, checkboxes,
          * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING. */
