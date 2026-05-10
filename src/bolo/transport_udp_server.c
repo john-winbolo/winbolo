@@ -2114,8 +2114,15 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
 
     pkt.gametype = (BYTE)sim->sim.game;
     pkt.allow_mines = sim->sim.hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
-    pkt.allow_AI = 0;
-    pkt.spare1 = 0;
+    pkt.allow_AI = (BYTE)sim->aiPolicy;  /* 0=none, 1=allow, 2=adv, 3=full */
+    /* Layout A — co-opt spare1 for lobby flags (forward-compatible:
+     * old tracker parsers see 0; new ones decode the bits):
+     *   bit 0 = openHost
+     *   bit 1 = autoLockOnGameStart
+     *   bit 2 = allowNewPlayers (live state — closed lobbies show on tracker) */
+    pkt.spare1 = (BYTE)((sim->openHost            ? 0x01 : 0) |
+                        (sim->autoLockOnGameStart ? 0x02 : 0) |
+                        (sim->allowNewPlayers     ? 0x04 : 0));
     pkt.start_delay = sim->startDelay;
     pkt.time_limit = sim->gameLength;
 
@@ -2126,7 +2133,9 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.free_pills = pillsGetNumNeutral(&sim->sim.pb);
     pkt.free_bases = basesGetNumNeutral(&sim->sim.bs);
     pkt.has_password = udpServer.password[0] != '\0' ? 1 : 0;
-    pkt.spare2 = 0;
+    /* Layout A — co-opt spare2 for the LOBBY_LOCK_* bitmask (5 bits
+     * used today). Tracker clients render lock badges per setting. */
+    pkt.spare2 = (BYTE)(sim->serverLocks & 0xFF);
 
     sendto(udpServer.sock, (const char *)&pkt, sizeof(pkt), 0,
            (const struct sockaddr *)&dest, sizeof(dest));
