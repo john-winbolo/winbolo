@@ -205,6 +205,28 @@ struct ClientSim {
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
 
+    /* ── Layout A lobby state (client-side mirror of server) ──────
+     * Populated from PACKET_LOBBY_*_CHG broadcasts. The team metadata
+     * table starts zeroed (in_use=0 → "Team N" defaults); each
+     * TEAM_META_CHG broadcast updates one entry. Bot configs same
+     * shape, indexed by slot. */
+    uint8_t  lobbyTeamInUse[16];
+    uint8_t  lobbyTeamColor[16];
+    uint8_t  lobbyTeamPool[16];
+    char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
+
+    uint8_t  lobbyBotDifficulty[16];
+    uint8_t  lobbyBotPersonality[16];
+
+    bool     lobbyOpenHost;
+    bool     lobbyAutoLockOnGameStart;
+    uint16_t lobbyServerLocks;
+
+    /* Most recent server reject — surfaced via toast/log when set.
+     * lobbyLastRejectPacket is set to 0 when no pending message. */
+    uint8_t  lobbyLastRejectPacket;
+    uint8_t  lobbyLastRejectReason;
+
     /* Steam achievement: first capture tracking (per-game) */
     bool     hasAnyBaseCaptured;
     bool     hasAnyPillCaptured;
