@@ -1929,6 +1929,125 @@ void transportUdpServerBroadcastMapSkipState(ServerSim *sim) {
     }
 }
 
+/* ── Layout A lobby — server broadcast helpers ─────────────────── */
+
+/* Internal broadcast helper used by the helpers below. */
+static void lobbyBroadcastBuf(const uint8_t *buf, int len) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clients[i].connected) {
+            udpSendTo(udpServer.sock, buf, len, &udpServer.clients[i].addr);
+        }
+    }
+}
+
+void transportUdpServerBroadcastLobbySettingChg(ServerSim *sim,
+                                                uint8_t settingType,
+                                                const uint8_t *value,
+                                                uint8_t valueLen) {
+    uint8_t buf[PACKET_HEADER_SIZE + 2 + 32];
+    (void)sim;
+    if (valueLen > 32) valueLen = 32;
+    packHeader(buf, PACKET_LOBBY_SETTING_CHG, 0);
+    buf[PACKET_HEADER_SIZE]     = settingType;
+    buf[PACKET_HEADER_SIZE + 1] = valueLen;
+    if (valueLen > 0 && value) memcpy(buf + PACKET_HEADER_SIZE + 2, value, valueLen);
+    lobbyBroadcastBuf(buf, PACKET_HEADER_SIZE + 2 + valueLen);
+}
+
+void transportUdpServerBroadcastLobbyOpenHostChg(ServerSim *sim, bool openHost) {
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    (void)sim;
+    packHeader(buf, PACKET_LOBBY_OPEN_HOST_CHG, 0);
+    buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
+    lobbyBroadcastBuf(buf, sizeof(buf));
+}
+
+void transportUdpServerBroadcastLobbyTeamMetaChg(ServerSim *sim, uint8_t teamId) {
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + LOBBY_TEAM_NAME_LEN];
+    int nameLen, len;
+    const TeamMetadata *t;
+
+    if (teamId == 0 || teamId >= MAX_TANKS) return;
+    t = &sim->teams[teamId];
+
+    /* Compute name length, clamped to LOBBY_TEAM_NAME_LEN-1. */
+    nameLen = (int)strnlen(t->name, LOBBY_TEAM_NAME_LEN - 1);
+
+    packHeader(buf, PACKET_LOBBY_TEAM_META_CHG, 0);
+    buf[PACKET_HEADER_SIZE + 0] = teamId;
+    buf[PACKET_HEADER_SIZE + 1] = t->color;
+    buf[PACKET_HEADER_SIZE + 2] = t->namingPool;
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, t->name, nameLen);
+    len = PACKET_HEADER_SIZE + 4 + nameLen;
+    lobbyBroadcastBuf(buf, len);
+}
+
+void transportUdpServerBroadcastLobbyBotConfigChg(ServerSim *sim, uint8_t slot) {
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + PACKET_MAX_PLAYER_NAME];
+    int nameLen, len;
+    const char *name;
+
+    if (slot >= MAX_TANKS) return;
+
+    name = udpServer.clients[slot].playerName;
+    nameLen = (int)strnlen(name, PACKET_MAX_PLAYER_NAME - 1);
+    if (nameLen > 31) nameLen = 31;
+
+    packHeader(buf, PACKET_LOBBY_BOT_CONFIG_CHG, 0);
+    buf[PACKET_HEADER_SIZE + 0] = slot;
+    buf[PACKET_HEADER_SIZE + 1] = sim->botConfigs[slot].difficulty;
+    buf[PACKET_HEADER_SIZE + 2] = sim->botConfigs[slot].personality;
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
+    len = PACKET_HEADER_SIZE + 4 + nameLen;
+    lobbyBroadcastBuf(buf, len);
+}
+
+/* Auto-unready: clears every player's ready flag on the server side
+ * AND broadcasts the signal so clients drop their local ready UI.
+ * Called after any meaningful lobby state change (settings, teams,
+ * bots, map, openHost, joins, leaves). */
+void transportUdpServerBroadcastLobbyAutoUnready(ServerSim *sim) {
+    uint8_t buf[PACKET_HEADER_SIZE];
+    int i;
+    /* Authoritative: clear every ready flag. Originator included —
+     * any meaningful change forces a re-confirmation. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->lobbyPlayers[i].ready) {
+            sim->lobbyPlayers[i].ready = FALSE;
+        }
+    }
+    /* If a countdown was in flight, cancel it. */
+    if (sim->state == serverStateCountdown) {
+        sim->state = serverStateLobby;
+        sim->countdownTicks = 0;
+    }
+    packHeader(buf, PACKET_LOBBY_AUTO_UNREADY, 0);
+    lobbyBroadcastBuf(buf, sizeof(buf));
+}
+
+/* Per-recipient reject: sent only to the originator of a rejected
+ * lobby command. Reason codes in netpacks.h (LOBBY_REJECT_*). */
+static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
+                          uint8_t reasonCode) {
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
+    packHeader(buf, PACKET_LOBBY_REJECT, 0);
+    buf[PACKET_HEADER_SIZE]     = origPacket;
+    buf[PACKET_HEADER_SIZE + 1] = reasonCode;
+    udpSendTo(udpServer.sock, buf, sizeof(buf), addr);
+}
+
+/* Authority check used by every lobby command handler.
+ * Returns TRUE if the sender at clientIdx is allowed to issue the
+ * command (host, OR open-host is on and they're an active player). */
+static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
+    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
+    if (clientIdx == 0) return TRUE;  /* slot 0 = host */
+    return sim->openHost && sim->playerConnected[clientIdx];
+}
+
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
     if (playerNum >= MAX_TANKS) return;
     strncpy(udpServer.clients[playerNum].playerName, name,
@@ -2553,8 +2672,212 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (targetSlot < MAX_TANKS && botManagerIsBot(targetSlot)) {
                     botManagerRemoveBot(sim, targetSlot);
                     transportUdpServerBroadcastLobbyUpdate(sim, targetSlot);
+                    transportUdpServerBroadcastLobbyAutoUnready(sim);
                 }
             }
+            break;
+        }
+        /* ── Layout A lobby commands ─────────────────────────────── */
+        case PACKET_LOBBY_SET_SETTING: {
+            /* Wire: [header 8] [settingType 1] [valueLen 1] [value N] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t settingType = buf[PACKET_HEADER_SIZE];
+            uint8_t valueLen    = buf[PACKET_HEADER_SIZE + 1];
+            if (len < PACKET_HEADER_SIZE + 2 + valueLen ||
+                valueLen > 32) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            const uint8_t *value = buf + PACKET_HEADER_SIZE + 2;
+
+            /* Lock check + per-setting apply. */
+            uint16_t lockBit = 0;
+            switch (settingType) {
+                case LST_GAME_TYPE:         lockBit = LOBBY_LOCK_GAME_TYPE; break;
+                case LST_HIDDEN_MINES:      lockBit = LOBBY_LOCK_MINES; break;
+                case LST_AI_POLICY:         lockBit = LOBBY_LOCK_AI_POLICY; break;
+                case LST_TIME_LIMIT:        lockBit = LOBBY_LOCK_TIME_LIMIT; break;
+                case LST_TIME_MINUTES:      lockBit = LOBBY_LOCK_TIME_LIMIT; break;
+                case LST_AUTO_LOCK_ON_GAME: lockBit = LOBBY_LOCK_AUTO_LOCK_ON_GAME; break;
+                default:                    lockBit = 0xFFFF; break;  /* unknown */
+            }
+            if (lockBit == 0xFFFF) {
+                /* Unknown setting — silently drop (forward-compat). */
+                break;
+            }
+            if (sim->serverLocks & lockBit) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_LOCKED);
+                break;
+            }
+
+            /* Apply to authoritative state. Mirrors only — actual
+             * GameSim values get reseeded at game start from these. */
+            switch (settingType) {
+                case LST_GAME_TYPE:
+                    if (valueLen == 1 && value[0] <= 2) {
+                        sim->sim.game = (gameType)value[0];
+                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                           LOBBY_REJECT_INVALID); break; }
+                    break;
+                case LST_HIDDEN_MINES:
+                    if (valueLen == 1) sim->sim.hiddenMines = value[0] != 0;
+                    break;
+                case LST_AI_POLICY:
+                    if (valueLen == 1 && value[0] <= 3) {
+                        sim->aiPolicy = value[0];
+                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                           LOBBY_REJECT_INVALID); break; }
+                    break;
+                case LST_TIME_LIMIT:
+                    if (valueLen == 1) sim->timeLimit = value[0] != 0;
+                    break;
+                case LST_TIME_MINUTES:
+                    if (valueLen == 2) {
+                        sim->timeMinutes = (uint16_t)((value[0] << 8) | value[1]);
+                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                           LOBBY_REJECT_INVALID); break; }
+                    break;
+                case LST_AUTO_LOCK_ON_GAME:
+                    if (valueLen == 1) sim->autoLockOnGameStart = value[0] != 0;
+                    break;
+            }
+
+            transportUdpServerBroadcastLobbySettingChg(sim, settingType,
+                                                       value, valueLen);
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_OPEN_HOST: {
+            /* Wire: [header 8] [bool 1]. Host-only. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx != 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            sim->openHost = buf[PACKET_HEADER_SIZE] != 0;
+            transportUdpServerBroadcastLobbyOpenHostChg(sim, sim->openHost);
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_TEAM_META: {
+            /* Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
+             *       [nameLen 1] [name N] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 4) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t teamId     = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t color      = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t namingPool = buf[PACKET_HEADER_SIZE + 2];
+            uint8_t nameLen    = buf[PACKET_HEADER_SIZE + 3];
+            if (teamId == 0 || teamId >= MAX_TANKS ||
+                nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
+                len < PACKET_HEADER_SIZE + 4 + nameLen) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            TeamMetadata *t = &sim->teams[teamId];
+            t->in_use = 1;
+            t->color = color;
+            t->namingPool = namingPool;
+            memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
+            if (nameLen > 0) {
+                memcpy(t->name, buf + PACKET_HEADER_SIZE + 4, nameLen);
+            }
+            transportUdpServerBroadcastLobbyTeamMetaChg(sim, teamId);
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_TEAM_CLEAR: {
+            /* Wire: [header 8] [teamId 1] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t teamId = buf[PACKET_HEADER_SIZE];
+            if (teamId == 0 || teamId >= MAX_TANKS) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            memset(&sim->teams[teamId], 0, sizeof(TeamMetadata));
+            transportUdpServerBroadcastLobbyTeamMetaChg(sim, teamId);
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_BOT_CONFIG: {
+            /* Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
+             *       [nameLen 1] [name N] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 4) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t slot        = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t difficulty  = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t personality = buf[PACKET_HEADER_SIZE + 2];
+            uint8_t nameLen     = buf[PACKET_HEADER_SIZE + 3];
+            if (slot >= MAX_TANKS || difficulty > 2 || personality > 3 ||
+                nameLen > 31 ||
+                len < PACKET_HEADER_SIZE + 4 + nameLen ||
+                !botManagerIsBot(slot)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            sim->botConfigs[slot].difficulty  = difficulty;
+            sim->botConfigs[slot].personality = personality;
+            if (nameLen > 0) {
+                char name[PACKET_MAX_PLAYER_NAME];
+                memset(name, 0, sizeof(name));
+                memcpy(name, buf + PACKET_HEADER_SIZE + 4, nameLen);
+                transportUdpServerSetBotName(slot, name);
+            }
+            transportUdpServerBroadcastLobbyBotConfigChg(sim, slot);
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_KICK: {
+            /* Wire: [header 8] [slot 1]. Host-only. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx != 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t slot = buf[PACKET_HEADER_SIZE];
+            if (slot >= MAX_TANKS || slot == 0 /* can't kick host */) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            const char *name = transportUdpServerGetPlayerName(slot);
+            if (name) transportUdpServerKickPlayer(sim, name);
+            /* No explicit broadcast — the kick path itself fires the
+             * existing player-left flow. AUTO_UNREADY follows. */
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
             break;
         }
         case PACKET_WBN_REAUTH: {
