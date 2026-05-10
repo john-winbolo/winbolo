@@ -48,6 +48,7 @@
 #include "../bolo/log.h"
 #include "../bolo/transport_udp.h"
 #include "../bolo/bot_manager.h"
+#include "../bolo/netpacks.h"  /* LOBBY_LOCK_* bitmask values */
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
@@ -1011,6 +1012,30 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+  }
+
+  /* Layout A lobby — admin-only --lock-* CLI flags. Sets the
+   * serverLocks bitmask exposed in PACKET_LOBBY_STATE. Hosts can't
+   * change locks at runtime; only the admin/operator running bolod
+   * sets them. Clients render matching settings disabled with a
+   * lock badge. */
+  {
+    uint16_t locks = 0;
+    if (argExist(argc, argv, "lock-game-type"))     locks |= LOBBY_LOCK_GAME_TYPE;
+    if (argExist(argc, argv, "lock-ai-policy"))     locks |= LOBBY_LOCK_AI_POLICY;
+    if (argExist(argc, argv, "lock-mines"))         locks |= LOBBY_LOCK_MINES;
+    if (argExist(argc, argv, "lock-time-limit"))    locks |= LOBBY_LOCK_TIME_LIMIT;
+    if (argExist(argc, argv, "lock-auto-lock"))     locks |= LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+    serverSim.serverLocks = locks;
+    if (locks) {
+      fprintf(stderr, "  Server locks (admin):");
+      if (locks & LOBBY_LOCK_GAME_TYPE)         fprintf(stderr, " game-type");
+      if (locks & LOBBY_LOCK_AI_POLICY)         fprintf(stderr, " ai-policy");
+      if (locks & LOBBY_LOCK_MINES)             fprintf(stderr, " mines");
+      if (locks & LOBBY_LOCK_TIME_LIMIT)        fprintf(stderr, " time-limit");
+      if (locks & LOBBY_LOCK_AUTO_LOCK_ON_GAME) fprintf(stderr, " auto-lock");
+      fprintf(stderr, "\n");
     }
   }
 

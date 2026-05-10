@@ -348,6 +348,32 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     memset(sim->mapName, 0, MAP_STR_SIZE);
     memset(sim->lobbyPlayers, 0, sizeof(sim->lobbyPlayers));
 
+    /* ── Layout A lobby state — initial defaults ─────────────────
+     * teams[] zeroed by the memset above (in_use=0 → renders with
+     * defaults). Same for botConfigs[] (difficulty=easy=0,
+     * personality=normal=0). serverLocks defaults to 0 — bolod
+     * --lock-* CLI flags set bits at server startup. */
+    sim->openHost            = FALSE;
+    sim->allowNewPlayers     = TRUE;   /* lobby starts open */
+    sim->autoLockOnGameStart = FALSE;
+    sim->savedAllowNewPlayers = TRUE;
+    sim->serverLocks         = 0;
+
+    /* Mirror gameType + hiddenMines + time fields so the lobby change
+     * path can detect locked-setting attempts and emit clean diffs.
+     * aiPolicy is filled in by serverSimSetBotBrainPath / aiType setter
+     * after init when the host configures bots. */
+    sim->aiPolicy    = 0;
+    sim->timeLimit   = (gameLen > 0);
+    /* gameLen is in TICKS (50/sec); convert back to whole minutes for the
+     * user-facing display. Cap to fit uint16. */
+    {
+        int32_t mins = sim->timeLimit ? (gameLen / (50 * 60)) : 30;
+        if (mins < 1) mins = 1;
+        if (mins > 0xFFFF) mins = 0xFFFF;
+        sim->timeMinutes = (uint16_t)mins;
+    }
+
     /* Set up server callbacks */
     sim->sim.callbacks.messageAdd = serverSimCbMessageAdd;
     sim->sim.callbacks.soundDist = serverSimCbSoundDist;
