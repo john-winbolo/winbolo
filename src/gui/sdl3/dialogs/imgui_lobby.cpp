@@ -206,6 +206,26 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
 
     /* Walk teams 1..15, render those with members. Then unassigned. */
     bool effectiveHost = isHost || cs->lobbyOpenHost;
+
+    /* Header: "Add Team" button (host only). The lowest unused
+     * teamId becomes the new team — sends PACKET_LOBBY_TEAM_META
+     * with a default name + color. */
+    if (effectiveHost && transport) {
+        if (ImGui::SmallButton("+ Add Team")) {
+            for (int t = 1; t < 16; t++) {
+                if (memberCount[t] == 0 && !cs->lobbyTeamInUse[t]) {
+                    char defaultName[16];
+                    SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", t);
+                    transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)t,
+                        (uint8_t)((t - 1) & 7), 0 /*pool=classic*/, defaultName);
+                    break;
+                }
+            }
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(creates an empty team you can drop bots/players into)");
+        ImGui::Spacing();
+    }
     for (int teamId = 1; teamId < 16; teamId++) {
         if (memberCount[teamId] == 0 && !cs->lobbyTeamInUse[teamId]) continue;
 
@@ -272,6 +292,18 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             memberCount[teamId], memberCount[teamId] == 1 ? "" : "s",
             botCount[teamId] > 0 ? " · " : "",
             botCount[teamId] > 0 ? (botCount[teamId] == 1 ? "1 bot" : "bots") : "");
+
+        /* Remove team — host only, only when team is empty. Drops the
+         * metadata; members would have already been moved out. */
+        if (effectiveHost && transport && memberCount[teamId] == 0 &&
+            cs->lobbyTeamInUse[teamId]) {
+            ImGui::SameLine(0.0f, 16.0f * s);
+            char rmId[24];
+            SDL_snprintf(rmId, sizeof(rmId), "Remove##rmt%d", teamId);
+            if (ImGui::SmallButton(rmId)) {
+                transportUdpClientSendLobbyTeamClear(transport, (uint8_t)teamId);
+            }
+        }
 
         /* Per-team Bot naming pool dropdown — only shown when team has bots. */
         if (botCount[teamId] > 0 && effectiveHost && transport) {
