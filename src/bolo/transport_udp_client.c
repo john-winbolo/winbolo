@@ -32,6 +32,8 @@
 #include "screen.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "control_event.h"
+#include "client_sim_control.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
@@ -862,11 +864,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_SERVER_SHUTDOWN:
+    case PACKET_SERVER_SHUTDOWN: {
+        ControlEvent evt = { .type = CTRL_SERVER_SHUTDOWN };
+        clientSimApplyControl(c->clientSim, &evt);
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "PACKET_SERVER_SHUTDOWN received -> SERVER_SHUTDOWN");
         c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         break;
+    }
 
     case PACKET_LOBBY_STATE:
         /* Full lobby snapshot (variable-length per slot):
