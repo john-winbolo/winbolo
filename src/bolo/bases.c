@@ -485,6 +485,11 @@ void basesEnqueueCaptureMessage(GameSim *sim, struct ClientSim *cs,
     return;
   }
 
+  /* Allied steals are silent — mirrors the pillbox alliance gate. */
+  if (playersIsAllie(&sim->plyrs, newOwner, prevOwner) == TRUE) {
+    return;
+  }
+
   bases *value = &sim->bs;
   baseStealDebounceSlot *slot = basesFindOrAllocStealSlot(value, newOwner,
                                                           prevOwner);

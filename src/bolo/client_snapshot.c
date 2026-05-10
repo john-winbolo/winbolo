@@ -729,18 +729,24 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_PILL_CAPTURED:
         /* data: [newOwner, previousOwner] */
         if (isHuman) {
-          MessageArgs args;
-          memset(&args, 0, sizeof(args));
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
-          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
-          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
-          if (events[i].data[1] != NEUTRAL) {
-            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
-            args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[1]);
-            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[1], args.otherCountry);
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
-          } else {
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+          BYTE newOwner = events[i].data[0];
+          BYTE prevOwner = events[i].data[1];
+          bool suppressAllied = (prevOwner != NEUTRAL &&
+              playersIsAllie(&csPtr->sim.plyrs, newOwner, prevOwner) == TRUE);
+          if (!suppressAllied) {
+            MessageArgs args;
+            memset(&args, 0, sizeof(args));
+            playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, newOwner, args.playerName);
+            args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, newOwner);
+            playersGetCountryCode(&csPtr->sim.plyrs, newOwner, args.playerCountry);
+            if (prevOwner != NEUTRAL) {
+              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName, FALSE);
+              args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, prevOwner);
+              playersGetCountryCode(&csPtr->sim.plyrs, prevOwner, args.otherCountry);
+              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
+            } else {
+              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+            }
           }
         }
         /* Steam stat: pill captures */

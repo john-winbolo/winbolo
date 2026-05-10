@@ -980,12 +980,11 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
     (*value)->item[pillNum].owner = owner;
     logAddEvent(log_PillSetOwner, pillNum, owner, migrate, 0, 0, NULL);
     pillNum++;
-    /* Winbolo.Net stuff */
-    /* FIXME: Check if in an alliance?????? */
+    /* Winbolo.Net stuff — allied steals are not stat-tracked. */
     if (migrate == FALSE && owner != NEUTRAL) {
       if (returnValue == NEUTRAL) {
         winbolonetAddEvent(WINBOLO_NET_EVENT_PILL_CAPTURE, sim->isServer, owner, WINBOLO_NET_NO_PLAYER);
-      } else {
+      } else if (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) {
         winbolonetAddEvent(WINBOLO_NET_EVENT_PILL_STEAL, sim->isServer, owner, returnValue);
       }
     }
