@@ -343,15 +343,27 @@ SOCKET createUdpSocket(void) {
     return sock;
 }
 
+/* Per-packet send trace — verbose, useful for protocol debugging,
+ * spammy for normal server operation. Gated on a compile-time flag
+ * so the dedicated server is quiet by default. Define
+ * UDP_TRACE_PACKETS=1 at build time to re-enable. */
+#ifndef UDP_TRACE_PACKETS
+#define UDP_TRACE_PACKETS 0
+#endif
+
 /* Send a buffer via UDP to a specific address */
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
+#if UDP_TRACE_PACKETS
     uint8_t pktType = getPacketType(buf, len);
     if (pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG && pktType != PACKET_INPUT) {
         fprintf(stderr, "[UDP SEND] %s (%u) len=%d to %s:%u\n",
                 packetTypeName(pktType), pktType, len,
                 inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
     }
+#else
+    (void)buf; (void)len; (void)addr;  /* silence unused warnings */
+#endif
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }
