@@ -18,6 +18,7 @@
 
 extern "C" {
     #include "logviewer.h"
+    #include "../../gui/ui_mode.h"
     void lv_windowOpenFile(char *cmdLine);
 }
 
@@ -120,11 +121,18 @@ void lvMenuRender(struct LogViewerState *lv) {
             ImGui::CloseCurrentPopup();
             s_open = false;
         }
-        if (ImGui::Button("Open from file system", btnSize)) {
-            lv_windowOpenFile(NULL);
-            ImGui::CloseCurrentPopup();
-            s_open = false;
+        /* Native file dialog isn't reachable from a controller and
+           doesn't exist on mobile — Deck and tablet users get the
+           WBN list above as the only entry point. */
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+        if (!uiModeIsSteamDeck()) {
+            if (ImGui::Button("Open from file system", btnSize)) {
+                lv_windowOpenFile(NULL);
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
         }
+#endif
         if (fromMainMenu) {
             if (ImGui::Button("Return to main menu", btnSize)) {
                 push_quit();

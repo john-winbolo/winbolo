@@ -468,17 +468,21 @@ static inline void dialogRestorePosition(SDL_Window *win) {
  * for the given dialog window.  Lets controller users cancel any
  * standalone dialog with B, routing through the dialog's existing
  * SDL_EVENT_WINDOW_CLOSE_REQUESTED handler so behaviour matches the X
- * close button.  Skipped while an ImGui popup is open or text input is
- * active in this context — those cases want B to act as nav-cancel
- * (close popup / clear text) before falling through to dialog close.
+ * close button.  Skipped while:
+ *   - an ImGui popup is open (B closes the popup)
+ *   - text input is active (B clears the field)
+ *   - nav focus is inside a child window or table scroll region
+ *     (B pops out of the sub-region via ImGui's NavCancel)
  * Call AFTER ImGui_ImplSDL3_ProcessEvent so ImGui still sees the raw
  * gamepad event (it polls button state, not the event, but be safe). */
+extern "C" bool dialogNavIsInsideSubRegion(void);  /* imgui_nav_outline.cpp */
 static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event *ev) {
     if (!ev || !window) return false;
     if (ev->type != SDL_EVENT_GAMEPAD_BUTTON_DOWN) return false;
     if (ev->gbutton.button != SDL_GAMEPAD_BUTTON_EAST) return false;
     if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)) return false;
     if (ImGui::GetIO().WantTextInput) return false;
+    if (dialogNavIsInsideSubRegion()) return false;
     SDL_zero(*ev);
     ev->type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     ev->window.windowID = SDL_GetWindowID(window);
