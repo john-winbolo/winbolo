@@ -1251,6 +1251,115 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
+    /* ── Layout A lobby — server → client broadcasts ─────────────── */
+    case PACKET_LOBBY_SETTING_CHG:
+        /* [header 8] [settingType 1] [valueLen 1] [value valueLen] */
+        if (len >= PACKET_HEADER_SIZE + 2) {
+            uint8_t st = buf[PACKET_HEADER_SIZE];
+            uint8_t vl = buf[PACKET_HEADER_SIZE + 1];
+            const uint8_t *v = buf + PACKET_HEADER_SIZE + 2;
+            if (len >= PACKET_HEADER_SIZE + 2 + vl && vl <= 32) {
+                switch (st) {
+                    case LST_GAME_TYPE:
+                        if (vl == 1) c->clientSim->lobbyGameType = (gameType)v[0];
+                        break;
+                    case LST_HIDDEN_MINES:
+                        if (vl == 1) c->clientSim->lobbyHiddenMines = v[0] != 0;
+                        break;
+                    case LST_AI_POLICY:
+                        if (vl == 1) c->clientSim->lobbyAiType = v[0];
+                        break;
+                    case LST_TIME_LIMIT:
+                        /* Bool — preserved separately on the client; lobbyTimeLimit
+                         * itself is the tick-encoded length, set via TIME_MINUTES. */
+                        break;
+                    case LST_TIME_MINUTES:
+                        if (vl == 2) {
+                            uint16_t mins = (uint16_t)((v[0] << 8) | v[1]);
+                            c->clientSim->lobbyTimeLimit =
+                                (int32_t)mins * 60 * 50;  /* mins → seconds → ticks */
+                        }
+                        break;
+                    case LST_AUTO_LOCK_ON_GAME:
+                        if (vl == 1) c->clientSim->lobbyAutoLockOnGameStart = v[0] != 0;
+                        break;
+                    default: /* unknown setting type — ignore (forward-compat) */ break;
+                }
+            }
+        }
+        break;
+
+    case PACKET_LOBBY_OPEN_HOST_CHG:
+        if (len >= PACKET_HEADER_SIZE + 1) {
+            c->clientSim->lobbyOpenHost = buf[PACKET_HEADER_SIZE] != 0;
+        }
+        break;
+
+    case PACKET_LOBBY_TEAM_META_CHG:
+        /* [header 8] [teamId 1] [color 1] [namingPool 1] [nameLen 1] [name N] */
+        if (len >= PACKET_HEADER_SIZE + 4) {
+            uint8_t teamId  = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t color   = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t pool    = buf[PACKET_HEADER_SIZE + 2];
+            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
+            if (teamId > 0 && teamId < 16 && nameLen <= 31 &&
+                len >= PACKET_HEADER_SIZE + 4 + nameLen) {
+                c->clientSim->lobbyTeamColor[teamId] = color;
+                c->clientSim->lobbyTeamPool[teamId]  = pool;
+                memset(c->clientSim->lobbyTeamName[teamId], 0, 32);
+                if (nameLen > 0) {
+                    memcpy(c->clientSim->lobbyTeamName[teamId],
+                           buf + PACKET_HEADER_SIZE + 4, nameLen);
+                }
+                /* TEAM_META broadcasts (in_use=1) and TEAM_CLEAR (sent
+                 * with teams[id] zeroed, so nameLen=0+color=0+pool=0)
+                 * use the same packet — derive in_use from nameLen
+                 * being non-zero OR color being explicitly set. */
+                c->clientSim->lobbyTeamInUse[teamId] =
+                    (nameLen > 0 || color != 0 || pool != 0) ? 1 : 0;
+            }
+        }
+        break;
+
+    case PACKET_LOBBY_BOT_CONFIG_CHG:
+        /* [header 8] [slot 1] [difficulty 1] [personality 1]
+         *   [nameLen 1] [name N]. Bot name change also lands in the
+         *   slot's lobbySlots entry on the next LOBBY_UPDATE. */
+        if (len >= PACKET_HEADER_SIZE + 4) {
+            uint8_t slot = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t diff = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t pers = buf[PACKET_HEADER_SIZE + 2];
+            if (slot < 16) {
+                c->clientSim->lobbyBotDifficulty[slot]  = diff;
+                c->clientSim->lobbyBotPersonality[slot] = pers;
+            }
+        }
+        break;
+
+    case PACKET_LOBBY_REJECT:
+        /* [header 8] [origPacket 1] [reasonCode 1] — server rejected
+         * one of our lobby commands. Stored for the UI to surface as
+         * a toast or status line. */
+        if (len >= PACKET_HEADER_SIZE + 2) {
+            c->clientSim->lobbyLastRejectPacket = buf[PACKET_HEADER_SIZE];
+            c->clientSim->lobbyLastRejectReason = buf[PACKET_HEADER_SIZE + 1];
+        }
+        break;
+
+    case PACKET_LOBBY_AUTO_UNREADY:
+        /* No payload. Server cleared everyone's ready flag; clients
+         * mirror that locally so the Ready button restates "Click to
+         * Ready". Server also broadcasts individual LOBBY_UPDATEs for
+         * any slot that had a ready→unready transition, so this is a
+         * defensive belt-and-braces sweep. */
+        {
+            int i;
+            for (i = 0; i < MAX_TANKS; i++) {
+                c->clientSim->lobbySlots[i].ready = false;
+            }
+        }
+        break;
+
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
          * could drive UX someday; for now just consume so it doesn't fall
