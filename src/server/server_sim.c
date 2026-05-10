@@ -2843,12 +2843,54 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     evt->u.playerJoin.numAllies = numAllies;
 }
 
+/* Wrapper used to enforce the documented sync ordering:
+ *   CTRL_GAME_PHASE first; CTRL_PLAYER_JOIN events last (a regression
+ *   that reorders sync would silently mis-initialize a subscriber, so
+ *   catch it loudly in debug builds). Asserts compile out under NDEBUG.
+ */
+typedef struct {
+    void (*inner)(void *, const struct ControlEvent *);
+    void *innerCtx;
+    bool sawNonPhase;
+    bool sawPlayerJoin;
+} SyncOrderingCheck;
+
+static void serverSimSyncOrderingDeliver(void *ctx,
+                                         const struct ControlEvent *evt) {
+    SyncOrderingCheck *check = (SyncOrderingCheck *)ctx;
+
+    if (evt->type == CTRL_GAME_PHASE) {
+        assert(!check->sawNonPhase &&
+               "CTRL_GAME_PHASE must be the first event in sync");
+    } else {
+        check->sawNonPhase = true;
+    }
+
+    if (evt->type != CTRL_PLAYER_JOIN) {
+        assert(!check->sawPlayerJoin &&
+               "no non-CTRL_PLAYER_JOIN event may follow "
+               "CTRL_PLAYER_JOIN in sync");
+    } else {
+        check->sawPlayerJoin = true;
+    }
+
+    check->inner(check->innerCtx, evt);
+}
+
 static void serverSimSyncSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx) {
     ControlEvent evt;
     BYTE i;
+    SyncOrderingCheck check;
+
+    check.inner         = deliver;
+    check.innerCtx      = ctx;
+    check.sawNonPhase   = false;
+    check.sawPlayerJoin = false;
+    deliver = serverSimSyncOrderingDeliver;
+    ctx     = &check;
 
     memset(&evt, 0, sizeof(evt));
     serverSimFillGamePhaseEvent(sim, &evt);
