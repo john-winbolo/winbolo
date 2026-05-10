@@ -304,13 +304,23 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   } else {
     /* Already registered (e.g. auto-registered from snapshot with a
        placeholder name) — update name and location from authoritative
-       source such as PACKET_PLAYER_LIST. */
+       source such as PACKET_PLAYER_LIST. Also rebuild the alliance list:
+       PLAYER_LIST carries the authoritative alliance bitmap, and the
+       snapshot auto-register path leaves the list empty so server-driven
+       team alliances would otherwise never reach the client view. */
     strcpy((*plrs)->item[playerNum].playerName, playerName);
     strcpy((*plrs)->item[playerNum].location, location);
     (*plrs)->item[playerNum].countryCode[0] = location[0];
     (*plrs)->item[playerNum].countryCode[1] = location[1];
     (*plrs)->item[playerNum].countryCode[2] = '\0';
     utilCtoPString(playerName, (char *) ((*plrs)->playerBrainNames[playerNum]));
+    allienceDestroy(&((*plrs)->item[playerNum].allie));
+    (*plrs)->item[playerNum].allie = allienceCreate();
+    count = 0;
+    while (count < numAllies) {
+      allienceAdd(&((*plrs)->item[playerNum].allie), allies[count]);
+      count++;
+    }
   }
 
   /* Update front end if we are in a running game (ie not in the joining phase) */
@@ -916,6 +926,38 @@ BYTE playersMakeNetAlliences(players *plrs, BYTE playerNum, BYTE *value) {
     count++;
   }
   return returnValue;
+}
+
+void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer) {
+  BYTE count;
+  BYTE total;
+
+  if (selfPlayer >= MAX_TANKS) return;
+  if ((*plrs)->item[selfPlayer].inUse == FALSE) return;
+
+  allienceDestroy(&((*plrs)->item[selfPlayer].allie));
+  (*plrs)->item[selfPlayer].allie = allienceCreate();
+  for (count = 0; count < MAX_TANKS; count++) {
+    if (count == selfPlayer) continue;
+    if ((*plrs)->item[count].inUse == FALSE) continue;
+    if (allienceExist(&((*plrs)->item[count].allie), selfPlayer) == TRUE) {
+      allienceAdd(&((*plrs)->item[selfPlayer].allie), count);
+    }
+  }
+
+  total = basesGetNumBases(&sim->bs);
+  for (count = 1; count <= total; count++) {
+    frontEndStatusBase(count, basesGetStatusNum(sim, count));
+  }
+  total = pillsGetNumPills(&sim->pb);
+  for (count = 1; count <= total; count++) {
+    frontEndStatusPillbox(count, pillsGetAllianceNum(sim, &sim->pb, count));
+  }
+  total = playersGetNumPlayers(&sim->plyrs);
+  for (count = 1; count <= total; count++) {
+    frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE)(count - 1)));
+  }
+  playersSetAllieMenu(plrs, selfPlayer, FALSE);
 }
 
 /*********************************************************

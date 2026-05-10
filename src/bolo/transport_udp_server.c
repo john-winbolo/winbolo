@@ -1937,7 +1937,12 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
 }
 
 const char *transportUdpServerGetPlayerName(BYTE playerNum) {
-    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+    if (playerNum >= MAX_TANKS) {
+        return NULL;
+    }
+    /* Bots have no UDP connection but their name was set via
+     * transportUdpServerSetBotName; treat them as valid name owners. */
+    if (!udpServer.clients[playerNum].connected && !botManagerIsBot(playerNum)) {
         return NULL;
     }
     return udpServer.clients[playerNum].playerName;

@@ -473,6 +473,14 @@ BYTE playersGetNumPlayers(players *plrs);
 *********************************************************/
 BYTE playersMakeNetAlliences(players *plrs, BYTE playerNum, BYTE *value);
 
+/* Rebuild selfPlayer's alliance list from the per-player alliance state.
+ * PACKET_PLAYER_LIST sends every other player's alliance bitmap but skips
+ * self's own entry, so single-direction checks against item[selfPlayer].allie
+ * (tank status icons, ally menu, scoreboard counts) miss our team membership.
+ * After applying a PLAYER_LIST, call this so all UI surfaces agree with
+ * the bidirectional checks used by pillbox/base alliance markers. */
+void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer);
+
 /*********************************************************
 *NAME:          playersGetFirstNotUsed
 *AUTHOR:        John Morrison
