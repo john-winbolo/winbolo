@@ -1919,3 +1919,108 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
     packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
     udpClientSendTo(c, buf, sizeof(buf));
 }
+
+/* ── Layout A lobby commands — Client → Server ─────────────────── */
+
+void transportUdpClientSendLobbySetting(Transport *t,
+                                        uint8_t settingType,
+                                        const uint8_t *value, uint8_t valueLen) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    /* Header + type byte + len byte + max 32 bytes of value (currently
+     * settings are 1-2 bytes; 32 leaves room for future LST_* values). */
+    uint8_t buf[PACKET_HEADER_SIZE + 2 + 32];
+    int len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (valueLen > 32) valueLen = 32;
+    if (valueLen > 0 && value == NULL) return;
+
+    packHeader(buf, PACKET_LOBBY_SET_SETTING, c->outSequence++);
+    buf[PACKET_HEADER_SIZE]     = settingType;
+    buf[PACKET_HEADER_SIZE + 1] = valueLen;
+    if (valueLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, value, valueLen);
+    len = PACKET_HEADER_SIZE + 2 + valueLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_OPEN_HOST, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
+                                         uint8_t color, uint8_t namingPool,
+                                         const char *name) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    /* Header + teamId + color + namingPool + nameLen + max 31 bytes
+     * (LOBBY_TEAM_NAME_LEN-1, leaving room for caller terminator). */
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
+    int nameLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+
+    nameLen = (int)strlen(name);
+    if (nameLen > 31) nameLen = 31;
+
+    packHeader(buf, PACKET_LOBBY_TEAM_META, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = teamId;
+    buf[PACKET_HEADER_SIZE + 1] = color;
+    buf[PACKET_HEADER_SIZE + 2] = namingPool;
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
+    len = PACKET_HEADER_SIZE + 4 + nameLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_TEAM_CLEAR, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = teamId;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
+                                          uint8_t difficulty, uint8_t personality,
+                                          const char *name) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    /* Header + slot + difficulty + personality + nameLen + max 31 bytes. */
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
+    int nameLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+
+    nameLen = (int)strlen(name);
+    if (nameLen > 31) nameLen = 31;
+
+    packHeader(buf, PACKET_LOBBY_BOT_CONFIG, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = slot;
+    buf[PACKET_HEADER_SIZE + 1] = difficulty;
+    buf[PACKET_HEADER_SIZE + 2] = personality;
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
+    len = PACKET_HEADER_SIZE + 4 + nameLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_KICK, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = slot;
+    udpClientSendTo(c, buf, sizeof(buf));
+}

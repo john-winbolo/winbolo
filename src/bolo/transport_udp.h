@@ -202,6 +202,42 @@ void transportUdpClientSendBalanceDismiss(Transport *t);
 /* Toggle map skip vote (server identifies player by source address). */
 void transportUdpClientSendMapSkipVote(Transport *t);
 
+/* ── Layout A lobby commands ───────────────────────────────────────
+ * Each function ships one PACKET_LOBBY_* request to the server.
+ * Server validates (host check OR openHost; lock check), applies,
+ * broadcasts the corresponding _CHG event, then broadcasts an
+ * AUTO_UNREADY. Failed validation comes back as a per-recipient
+ * PACKET_LOBBY_REJECT (no UI surface yet — silent reject is fine
+ * for v1, errors logged server-side). */
+
+/* Set a single lobby setting (e.g. game type, hidden mines, time
+ * limit, AI policy, autoLockOnGameStart). settingType is one of
+ * the LST_* constants in netpacks.h; value is settingType-specific
+ * (bool=1 byte, enum=1 byte, uint16=2 bytes BE). */
+void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
+                                        const uint8_t *value, uint8_t valueLen);
+
+/* Toggle the openHost flag (host-only). */
+void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
+
+/* Set a team's metadata. Single packet handles create + rename +
+ * recolor + naming-pool change. teamId in 1..MAX_TANKS-1. */
+void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
+                                         uint8_t color, uint8_t namingPool,
+                                         const char *name);
+
+/* Clear a team's metadata (back to defaults). Members stay on the
+ * teamId; host can manually move them after. */
+void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId);
+
+/* Set a bot's name + difficulty + personality. */
+void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
+                                          uint8_t difficulty, uint8_t personality,
+                                          const char *name);
+
+/* Kick a player out of the lobby. Host action. */
+void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
