@@ -128,7 +128,6 @@ bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYT
   upPos = FALSE;
   downPos = FALSE;
   returnValue = FALSE;
-  ss->autoScrollOverRide = TRUE;
 
   if (angle >= BRADIANS_SSWEST && angle <= BRADIANS_NNWEST) {
     rightPos = TRUE;
@@ -250,6 +249,25 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   myPlayer = sim->viewPlayer;
   tankGetWorld(&sim->tanks[myPlayer], &tankWX, &tankWY);
 
+  /* Manual-scroll override: while the player has panned the camera with
+   * keys or right stick, hold the offset where they put it.  Resume
+   * autoscroll only when the tank's on-screen position approaches an
+   * edge — same threshold as scrollNoAutoScroll, so the tank never gets
+   * close enough to clip out before tracking re-engages. */
+  if (ss->autoScrollOverRide) {
+    int screenX = (int)objectX - (int)*xValue;
+    int screenY = (int)objectY - (int)*yValue;
+    bool nearEdge =
+        screenX <= NO_SCROLL_EDGE ||
+        screenX >= MAIN_SCREEN_SIZE_X - NO_SCROLL_EDGE ||
+        screenY <= NO_SCROLL_EDGE ||
+        screenY >= MAIN_SCREEN_SIZE_Y - NO_SCROLL_EDGE;
+    if (!nearEdge) {
+      return FALSE;
+    }
+    ss->autoScrollOverRide = FALSE;
+  }
+
   /* Find the player's longest-lived live shell (the "fireball" the
    * camera follows). When present, the screen tracks the shell instead
    * of leading the tank. */
@@ -288,10 +306,6 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
 
   viewRefX = ((int)*xValue + 1) << 8;
   viewRefY = ((int)*yValue + 1) << 8;
-
-  /* scrollAutoScroll is only called when manual==FALSE, so clear any
-   * leftover manual override. */
-  ss->autoScrollOverRide = FALSE;
 
   /* Phase 2: build the priority item list */
   scrollItemListCreate(&ss->itemList);

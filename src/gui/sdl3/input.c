@@ -207,6 +207,14 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
     }
   }
 
+  /* Latch the manual-scroll override on any user scroll input.
+     scrollAutoScroll honours the flag and skips its recenter pull
+     until the tank's screen position reaches NO_SCROLL_EDGE, at which
+     point it clears the flag and resumes tracking. */
+  if (dx != 0 || dy != 0) {
+    cs->scroll.autoScrollOverRide = TRUE;
+  }
+
   smoothScrollAccumulate(cs, dx, dy);
 }
 
@@ -361,10 +369,12 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     scrollKeyCount++;
     if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
       scrollKeyCount = 0;
-      if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up); }
-      if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down); }
-      if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left); }
-      if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); }
+      bool scrolled = FALSE;
+      if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up);    scrolled = TRUE; }
+      if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down);  scrolled = TRUE; }
+      if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left);  scrolled = TRUE; }
+      if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); scrolled = TRUE; }
+      if (scrolled) cs->scroll.autoScrollOverRide = TRUE;
     }
   }
 
@@ -412,10 +422,12 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   scrollKeyCount++;
   if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
     scrollKeyCount = 0;
-    if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up); }
-    if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down); }
-    if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left); }
-    if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); }
+    bool scrolled = FALSE;
+    if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up);    scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down);  scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left);  scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); scrolled = TRUE; }
+    if (scrolled) cs->scroll.autoScrollOverRide = TRUE;
   }
 }
 
