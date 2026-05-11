@@ -1543,6 +1543,11 @@ void frontEndGameOver(ClientSim *cs) {
 }
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  if (cs != s_activeUiCs) {
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+      sdl3ImguiClearPlayer(i);
+    }
+  }
   s_activeUiCs = cs;
 }
 
