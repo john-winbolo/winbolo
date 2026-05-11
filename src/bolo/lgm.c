@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include "game_sim.h"
+#include "client_sim.h"
 #include "bases.h"
 #include "bolo_map.h"
 #include "building.h"
