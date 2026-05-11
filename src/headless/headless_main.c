@@ -930,7 +930,7 @@ static bool parseArgs(int argc, char **argv) {
       return FALSE;
     }
     /* In fast mode with log output, stdin is required for lockstep control */
-    if (optLogState[0] != '\0') {
+    if (optLogState[0] != '\0'  && optBrain[0] == '\0') {
       optStdin = TRUE;
     }
   } else {
