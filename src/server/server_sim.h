@@ -371,6 +371,58 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
 
 /*********************************************************
+ *NAME:          serverSimSetBotAiType
+ *PURPOSE:
+ *  Sets the AI advantage level cached for lobby bot
+ *  creation.
+ *********************************************************/
+void serverSimSetBotAiType(ServerSim *sim, aiType ai);
+
+/*********************************************************
+ *NAME:          serverSimSetBotBrainPath
+ *PURPOSE:
+ *  Sets the brain path cached for lobby bot creation.
+ *  Truncates to fit the internal buffer; always null-
+ *  terminates. NULL or empty path clears it.
+ *********************************************************/
+void serverSimSetBotBrainPath(ServerSim *sim, const char *path);
+
+/*********************************************************
+ *NAME:          serverSimSetEmptyResetEnabled
+ *PURPOSE:
+ *  Enables or disables the empty-server auto-reset
+ *  feature.
+ *********************************************************/
+void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimSetHasPassword
+ *PURPOSE:
+ *  Marks whether the server has a password set.
+ *********************************************************/
+void serverSimSetHasPassword(ServerSim *sim, bool hasPassword);
+
+/*********************************************************
+ *NAME:          serverSimSetLobbyEnabled
+ *PURPOSE:
+ *  Marks whether the lobby phase is active. false = no
+ *  lobby (run immediately on the local-headless setup
+ *  paths). Today this is also set false by some round-
+ *  start logic; do NOT alter that.
+ *********************************************************/
+void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimEnterLobby
+ *PURPOSE:
+ *  Sets the server state to serverStateLobby. Used by
+ *  the multiplayer-host startup path to begin in lobby.
+ *  No other side effects — for the round-start sequence
+ *  use serverSimStartGame.
+ *********************************************************/
+void serverSimEnterLobby(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimGetTankState
  *PURPOSE:
  *  Retrieves the world position of a player's tank.

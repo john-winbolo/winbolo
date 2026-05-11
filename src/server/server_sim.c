@@ -1538,6 +1538,35 @@ void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
     sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
 }
 
+void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
+    sim->botAiType = ai;
+}
+
+void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        sim->botBrainPath[0] = '\0';
+        return;
+    }
+    strncpy(sim->botBrainPath, path, sizeof(sim->botBrainPath) - 1);
+    sim->botBrainPath[sizeof(sim->botBrainPath) - 1] = '\0';
+}
+
+void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled) {
+    sim->emptyResetEnabled = enabled;
+}
+
+void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
+    sim->hasPassword = hasPassword;
+}
+
+void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
+    sim->lobbyEnabled = enabled;
+}
+
+void serverSimEnterLobby(ServerSim *sim) {
+    sim->state = serverStateLobby;
+}
+
 bool serverSimGetTankState(ServerSim *sim, BYTE playerNum, WORLD *wx, WORLD *wy) {
     if (playerNum >= MAX_TANKS || sim->sim.tanks[playerNum] == NULL) {
         return FALSE;
