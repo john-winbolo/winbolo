@@ -449,7 +449,7 @@ file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 # Bolo engine sources (matching desktop CLIENT_SOURCES)
 set(IOS_BOLO_SOURCES
     src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/braincore.c src/bolo/building.c src/bolo/client_sim.c src/bolo/client_state.c
+    src/bolo/braincore.c src/bolo/building.c src/bolo/client_sim.c src/bolo/client_sim_control.c src/bolo/client_state.c
     src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/labels.c src/bolo/lgm.c
@@ -936,7 +936,7 @@ set(CLIENT_SOURCES
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
     src/bolo/nat_portmap.c
     src/bolo/discovery.c
     src/bolo/bot_manager.c
@@ -1253,7 +1253,7 @@ set(SERVER_SOURCES
     src/server/threads.c src/server/server_sim.c
     src/server/server_lifecycle.c
     src/server/server_frontend_stubs.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/bot_worker_pool.c
@@ -1569,7 +1569,7 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/bot_worker_pool.c
@@ -1702,7 +1702,7 @@ set(GYM_SOURCES
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/bot_worker_pool.c
@@ -1829,7 +1829,7 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
     src/bolo/bot_manager.c
     src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1950,7 +1950,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
     src/bolo/bot_manager.c
     src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -2126,5 +2126,12 @@ add_custom_target(dist
     BYPRODUCTS "${DIST_ZIP}"
     VERBATIM
 )
+
+enable_testing()
+add_test(NAME baseline
+         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                      $<TARGET_FILE:WinBoloHeadless>
+                      $<TARGET_FILE:WinBoloDS>)
+set_tests_properties(baseline PROPERTIES TIMEOUT 120)
 
 endif() # iOS vs Desktop

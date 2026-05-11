@@ -34,6 +34,7 @@
 #include "../../bolo/bases.h"
 #include "../../bolo/starts.h"
 #include "../../bolo/allience.h"
+#include "../../bolo/control_event.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -238,17 +239,29 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         }
         if (numTeams > 0 && bg->numBots >= 2) {
             if (numTeams > bg->numBots) numTeams = bg->numBots;
-            /* Assign each bot to a team and set mutual alliances */
+            /* Assign each bot to a team via round-robin, then ally
+             * same-team pairs. Mirrors the round-start loop in
+             * server_sim.c:serverSimStartGame — the publish reaches each
+             * bot's ClientSim via the subscriber wiring in
+             * botManagerAddBot, so friend/foe checks see the alliance. */
             BYTE teamOf[MAX_TANKS];
             for (BYTE i = 0; i < bg->numBots; i++) {
                 teamOf[i] = i % numTeams;
+                bg->sim.lobbyPlayers[i].teamNumber = (BYTE)(teamOf[i] + 1);
             }
-            players *plrs = &bg->sim.sim.plyrs;
             for (BYTE i = 0; i < bg->numBots; i++) {
-                for (BYTE j = 0; j < bg->numBots; j++) {
-                    if (i != j && teamOf[i] == teamOf[j]) {
-                        allienceAdd(&((*plrs)->item[i].allie), j);
-                    }
+                if (!bg->sim.playerConnected[i]) continue;
+                for (BYTE j = i + 1; j < bg->numBots; j++) {
+                    if (!bg->sim.playerConnected[j]) continue;
+                    if (teamOf[i] != teamOf[j]) continue;
+                    ControlEvent allyEvt;
+                    playersAcceptAlliance(&bg->sim.sim, &bg->sim.sim.plyrs,
+                                          NEUTRAL, i, j, TRUE);
+                    memset(&allyEvt, 0, sizeof(allyEvt));
+                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                    allyEvt.u.allianceAccept.acceptedBy = i;
+                    allyEvt.u.allianceAccept.newMember  = j;
+                    serverSimPublishControl(&bg->sim, &allyEvt);
                 }
             }
             bg->numTeams = (BYTE)numTeams;

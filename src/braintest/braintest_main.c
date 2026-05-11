@@ -69,6 +69,7 @@
 #include "../bolo/bases.h"
 #include "../bolo/starts.h"
 #include "../bolo/allience.h"
+#include "../bolo/control_event.h"
 #include "../bolo/brain_pathfinder.h"
 #include "../bolo/gui_message.h"
 #include "../server/server_sim.h"
@@ -1510,7 +1511,7 @@ static void signalHandler(int sig) {
 static char optBrain[512] = "brains/NewAutopilot";
 static char optMap[512]   = "";
 static int  optNumPlayers = 1;
-static int  optNumTeams   = 0;   /* 0 = FFA; >=2 = round-robin teams */
+static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
 static int  optFollow     = 0;
 static aiType  optAI      = aiFull;
 static gameType optGame   = gameOpen;
@@ -1539,7 +1540,7 @@ static void printUsage(const char *prog) {
         "Options:\n"
         "  -brain PATH      Brain script directory (default: brains/NewAutopilot)\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
-        "  -teams N         Split bots into N teams round-robin (default: 0 = FFA)\n"
+        "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
         "  -map PATH        Map file (default: built-in Everard Island)\n"
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
@@ -1581,6 +1582,7 @@ static bool parseArgs(int argc, char **argv) {
         } else if ((strcmp(argv[i], "-teams") == 0 || strcmp(argv[i], "--teams") == 0) && i + 1 < argc) {
             optNumTeams = atoi(argv[++i]);
             if (optNumTeams < 0) optNumTeams = 0;
+            if (optNumTeams > MAX_TANKS) optNumTeams = MAX_TANKS;
         } else if ((strcmp(argv[i], "-map") == 0 || strcmp(argv[i], "--map") == 0) && i + 1 < argc) {
             strncpy(optMap, argv[++i], sizeof(optMap) - 1);
         } else if ((strcmp(argv[i], "-follow") == 0 || strcmp(argv[i], "--follow") == 0) && i + 1 < argc) {
@@ -4178,7 +4180,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "  Brain:   %s\n", optBrain);
     fprintf(stderr, "  Players: %d\n", optNumPlayers);
     if (optNumTeams >= 2) {
-        fprintf(stderr, "  Teams:   %d (round-robin)\n", optNumTeams);
+        fprintf(stderr, "  Teams:   %d\n", optNumTeams);
     } else {
         fprintf(stderr, "  Teams:   FFA\n");
     }
@@ -4409,19 +4411,35 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
-
-        /* Apply team alliances. Headless harness — no lobby/alliance
-         * packet flow exists, so write the bits directly into both the
-         * server sim and every bot's ClientSim via botManagerSetTeams.
-         * Round-robin: teamOf[i] = i % optNumTeams. */
-        if (optNumTeams >= 2 && app.numBots >= 2) {
-            int teams = optNumTeams > app.numBots ? app.numBots : optNumTeams;
-            BYTE teamOf[MAX_TANKS];
-            for (BYTE i = 0; i < (BYTE)optNumPlayers; i++) {
-                teamOf[i] = (BYTE)(i % teams);
+        /* Assign teams round-robin and ally same-team bots. Mirrors the
+         * round-start loop in server_sim.c:serverSimStartGame — braintest
+         * skips lobby/StartGame so we apply it here. The publish reaches
+         * each bot's ClientSim via the subscriber wiring in
+         * botManagerAddBot, so friend/foe checks see the alliance on the
+         * next think tick. */
+        if (optNumTeams >= 2) {
+            for (int i = 0; i < optNumPlayers; i++) {
+                app.sim.lobbyPlayers[i].teamNumber = (BYTE)((i % optNumTeams) + 1);
             }
-            botManagerSetTeams(&app.sim, teamOf, (BYTE)optNumPlayers);
-            fprintf(stderr, "  Set up %d teams across %d bots\n", teams, app.numBots);
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (!app.sim.playerConnected[i]) continue;
+                if (app.sim.lobbyPlayers[i].teamNumber == 0) continue;
+                for (int j = i + 1; j < MAX_TANKS; j++) {
+                    if (!app.sim.playerConnected[j]) continue;
+                    if (app.sim.lobbyPlayers[j].teamNumber
+                        != app.sim.lobbyPlayers[i].teamNumber) continue;
+                    ControlEvent allyEvt;
+                    playersAcceptAlliance(&app.sim.sim, &app.sim.sim.plyrs,
+                                          NEUTRAL, (BYTE)i, (BYTE)j, TRUE);
+                    memset(&allyEvt, 0, sizeof(allyEvt));
+                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                    allyEvt.u.allianceAccept.acceptedBy = (BYTE)i;
+                    allyEvt.u.allianceAccept.newMember  = (BYTE)j;
+                    serverSimPublishControl(&app.sim, &allyEvt);
+                }
+            }
+            fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
+                    optNumPlayers, optNumTeams);
         }
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land

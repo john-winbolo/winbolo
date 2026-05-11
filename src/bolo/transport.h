@@ -28,7 +28,7 @@
 #include "global.h"
 #include "input_packet.h"
 
-/* Forward declaration — ServerSim is defined in server_sim.h */
+/* Forward declaration — ServerSim is defined in server_sim.h. */
 struct ServerSim;
 
 /*********************************************************

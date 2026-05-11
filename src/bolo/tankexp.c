@@ -534,7 +534,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
-    pillsGetDamagePos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), (BYTE) (my+moveY), CRATER, FALSE, FALSE);
       floodAddItem(&sim->ff, (BYTE) (mx+moveX), (BYTE) (my+moveY));
@@ -552,7 +552,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), my);
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
-    pillsGetDamagePos(pb, (BYTE) (mx+moveX), my, TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), my, CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, (BYTE) (mx+moveX), my);
@@ -569,7 +569,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
-    pillsGetDamagePos(pb, mx, (BYTE) (my + moveY), TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp, mx, (BYTE) (my+moveY), CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, mx, (BYTE) (my+moveY));
@@ -595,7 +595,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, my);
   tkExplosionCheckRemove(sim, currentPos, mx, my);
   if (sim->isServer && pillsExistPos(pb, mx, my)) {
-    pillsGetDamagePos(pb, mx, my, TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, mx, my, TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, mx, my);

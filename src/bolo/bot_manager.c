@@ -42,6 +42,8 @@
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "client_sim_control.h"
+#include "control_event.h"
 #include "transport.h"
 #include "screen.h"
 #include "screenbrainmap.h"
@@ -106,7 +108,12 @@ typedef struct {
      * instance is created; the count hook and every cpf_/wsim_/NA
      * binding cast lua_getextraspace(L) back to BotContext * to read
      * abort_flag and thinkDeadlineCounter without per-binding plumbing. */
+    SubscriberHandle controlSub;
 } BotContext;
+
+static void botDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 
 static BotContext bots[MAX_TANKS];
 
@@ -402,6 +409,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     memset(bot, 0, sizeof(BotContext));
     bot->playerNum = playerNum;
     bot->ai = ai;
+    bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
     if (brainPath != NULL) {
         SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
     }
@@ -421,6 +429,17 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->cs.isBot = true;
     clientSimSetPlayerNum(&bot->cs, playerNum);
 
+    /* Load map data from the server before tankCreate so the bot's local
+     * starts/pills/bases are populated when startsGetStart() runs — without
+     * starts loaded it early-returns on numStarts==0, leaving tankCreate's
+     * out-params undefined. */
+    if (!botLoadMapFromServer(bot, sim)) {
+        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
+        clientSimDestroy(&bot->cs);
+        serverSimRemovePlayer(sim, playerNum);
+        return false;
+    }
+
     /* Create a tank at slot 0 for this ClientSim */
     if (MY_TANK(&bot->cs) != NULL) {
         tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
@@ -432,19 +451,19 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     playersSetSelf(NULL, &bot->cs.sim, &bot->cs.sim.plyrs, playerNum,
                    (char *)brainName, TRUE);
 
-    /* Load map data from the server */
-    if (!botLoadMapFromServer(bot, sim)) {
-        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
-        clientSimDestroy(&bot->cs);
-        serverSimRemovePlayer(sim, playerNum);
-        return false;
-    }
-
     /* Set AI type on the ClientSim */
     bot->cs.allowComputerTanks = ai;
 
     /* Create passive transport (does NOT tick the server) */
     bot->transport = transportLocalCreatePassive(sim, playerNum);
+
+    /* Register this bot's ClientSim as a control-event subscriber so
+     * out-of-band roster/lobby/phase state from the server reaches it
+     * the same way snapshots do. Sync runs inside register and uses the
+     * dispatcher's self-skip to leave the playersSetSelf record above
+     * untouched. */
+    bot->controlSub = serverSimRegisterSubscriber(sim, botDeliverControl,
+                                                  &bot->cs);
 
     /* Initialize the brain map (fog-of-war) */
     /* screenBrainMapCreate already called by clientSimCreate,
@@ -457,6 +476,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 &bot->cs, ai, s_default_debug_mode)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
+        serverSimUnregisterSubscriber(sim, bot->controlSub);
+        bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
         transportLocalDestroy(&bot->transport);
         clientSimDestroy(&bot->cs);
         serverSimRemovePlayer(sim, playerNum);
@@ -850,6 +871,8 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     if (!bot->active) return;
 
     luaBrainInstanceDestroy(&bot->brain);
+    serverSimUnregisterSubscriber(sim, bot->controlSub);
+    bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
     transportLocalDestroy(&bot->transport);
     clientSimDestroy(&bot->cs);
     serverSimRemovePlayer(sim, playerNum);

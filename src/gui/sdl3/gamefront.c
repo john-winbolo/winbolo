@@ -49,6 +49,8 @@
 #include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_sim_control.h"
+#include "../../bolo/control_event.h"
 #include "../../bolo/global.h"
 #include "../../bolo/players.h"
 #include "../../bolo/gui_message.h"
@@ -225,6 +227,11 @@ ClientSim *humanSim = NULL;
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
 static Transport spTransport;
+static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+
+static void humanDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 static bool spServerSimActive = FALSE;
 static bool spTransportLocalUsed = FALSE;
 static bool spServerHosted = FALSE;
@@ -518,6 +525,8 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
       }
     }
     if (spTransportLocalUsed) {
+      serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
+      spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
       transportLocalDestroy(&spTransport);
       spTransportLocalUsed = FALSE;
     }
@@ -541,6 +550,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
   if (humanSim != NULL) {
+    frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);
     clientSimDestroy(humanSim);
     humanSim = NULL;
@@ -889,6 +899,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       newState == openUdpJoin) {
     gameFrontValidateWbnBeforeJoin();
     humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    frontEndSetActiveClientSim(humanSim);
     if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
@@ -1109,6 +1120,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
           }
+          frontEndSetActiveClientSim(humanSim);
           if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
@@ -1139,6 +1151,14 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapPills, snapHdr.pillCount,
                                    snapEvents, snapHdr.reliableEventCount, 0);
           }
+          /* Register humanSim as a control-event subscriber. Placed after
+           * clientSimCreate (run from the screenLoadCompressedMapCS / else
+           * branch above) so myPlayerNum is initialized to 0 — matching the
+           * SP slot — and the dispatcher's self-skip protects this slot
+           * during sync. */
+          spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
+                                                        humanDeliverControl,
+                                                        humanSim);
           screenNetSetupTankGoCS(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls botManagerDestroy which would wipe bots we add below. */
@@ -1169,7 +1189,6 @@ bool gameFrontSetDlgState(openingStates newState) {
               spServerSim->botAiType = compTanks;
             }
             if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
-              ClientSim *clientSim = humanSim;
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
@@ -1178,34 +1197,42 @@ bool gameFrontSetDlgState(openingStates newState) {
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
                 if (botBrain[0] == '\0') botBrain = brainPath;
                 botManagerAddBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
-                /* Register bot name on the client side so the player list shows it */
-                playersSetPlayer(clientSim, &clientSim->sim.plyrs, clientSim->myPlayerNum, slot, botName, "AI",
-                                 0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {
                   spServerSim->lobbyPlayers[slot].teamNumber = team;
-                  clientSim->lobbySlots[slot].teamNumber = team;
+                  {
+                    ControlEvent slotEvt;
+                    memset(&slotEvt, 0, sizeof(slotEvt));
+                    serverSimFillLobbySlotEvent(spServerSim, slot, &slotEvt);
+                    serverSimPublishControl(spServerSim, &slotEvt);
+                  }
                 }
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {
                 spServerSim->lobbyPlayers[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
-                clientSim->lobbySlots[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
+                {
+                  ControlEvent slotEvt;
+                  memset(&slotEvt, 0, sizeof(slotEvt));
+                  serverSimFillLobbySlotEvent(spServerSim, 0, &slotEvt);
+                  serverSimPublishControl(spServerSim, &slotEvt);
+                }
               }
-              /* Apply team alliances — players with same non-zero team become allies.
-               * The local transport doesn't replicate lobby/alliance events, so we
-               * have to apply the same alliance to the client's players struct
-               * directly; otherwise teammates render as enemies and friendly-fire
-               * checks fail on the client. */
+              /* Apply team alliances — players with same non-zero team become allies. */
               for (int a = 0; a < 16; a++) {
                 if (!spServerSim->playerConnected[a]) continue;
                 if (spServerSim->lobbyPlayers[a].teamNumber == 0) continue;
                 for (int b = a + 1; b < 16; b++) {
                   if (!spServerSim->playerConnected[b]) continue;
                   if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
+                    ControlEvent allyEvt;
                     playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
-                    playersAcceptAlliance(&humanSim->sim, &humanSim->sim.plyrs, humanSim->myPlayerNum, (BYTE)a, (BYTE)b, FALSE);
+                    memset(&allyEvt, 0, sizeof(allyEvt));
+                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                    allyEvt.u.allianceAccept.acceptedBy = (BYTE)a;
+                    allyEvt.u.allianceAccept.newMember  = (BYTE)b;
+                    serverSimPublishControl(spServerSim, &allyEvt);
                   }
                 }
               }
