@@ -2337,7 +2337,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
 
                 if (newName[0] != '\0') {
-                    char msg[128];
+                    char msg[30 + 2 * PACKET_MAX_PLAYER_NAME];
                     snprintf(msg, sizeof(msg), "Player '%s' changed name to '%s'.",
                              udpServer.clients[clientIdx].playerName, newName);
                     serverSimConsoleMessage(msg);
