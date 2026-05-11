@@ -1303,11 +1303,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_MAP_SKIP_STATE:
         /* [header 8] [votes: 16 bytes, one per slot, 0 or 1] */
         if (len >= PACKET_HEADER_SIZE + MAX_TANKS) {
-            int i;
-            for (i = 0; i < MAX_TANKS; i++) {
-                c->clientSim->mapSkipVotes[i] = buf[PACKET_HEADER_SIZE + i] ? true : false;
-            }
-            c->clientSim->mapSkipMyVote = c->clientSim->mapSkipVotes[c->playerNum];
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_MAP_SKIP_STATE;
+            memcpy(evt.u.mapSkipState.votes, buf + PACKET_HEADER_SIZE, MAX_TANKS);
+            clientSimApplyControl(c->clientSim, &evt);
         }
         break;
 

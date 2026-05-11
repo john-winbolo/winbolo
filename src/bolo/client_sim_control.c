@@ -140,6 +140,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
+    case CTRL_MAP_SKIP_STATE: {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            cs->mapSkipVotes[i] = evt->u.mapSkipState.votes[i] ? true : false;
+        }
+        cs->mapSkipMyVote = cs->mapSkipVotes[cs->myPlayerNum];
+        break;
+    }
+
     case CTRL_GAME_PHASE:
         switch (evt->u.gamePhase.phase) {
         case CTRL_PHASE_LOBBY:

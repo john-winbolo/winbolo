@@ -43,6 +43,7 @@ typedef enum {
     CTRL_LOBBY_MAP_CHANGE,
     CTRL_MAP_DOWNLOAD_COMPLETE,
     CTRL_BALANCE_PROPOSAL,
+    CTRL_MAP_SKIP_STATE,
     CTRL_GAME_PHASE,
     CTRL_GAME_OVER,
     CTRL_SERVER_SHUTDOWN
@@ -55,7 +56,7 @@ typedef enum {
     CTRL_PHASE_GAME_OVER
 } ControlGamePhase;
 
-typedef struct {
+typedef struct ControlEvent {
     ControlEventType type;
     union {
         /* CTRL_ALLIANCE_REQUEST */
@@ -127,6 +128,11 @@ typedef struct {
         struct {
             BYTE teamForSlot[MAX_TANKS];
         } balanceProposal;
+
+        /* CTRL_MAP_SKIP_STATE — one byte per slot, 0 or 1, mirrors wire */
+        struct {
+            BYTE votes[MAX_TANKS];
+        } mapSkipState;
 
         /* CTRL_GAME_PHASE */
         struct {
