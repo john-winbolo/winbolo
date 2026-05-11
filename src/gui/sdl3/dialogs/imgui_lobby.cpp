@@ -449,6 +449,8 @@ static SDL_Texture *s_iconSuccess = nullptr;
 static SDL_Texture *s_iconError   = nullptr;
 static SDL_Texture *s_iconInfo    = nullptr;
 static SDL_Texture *s_iconSettings = nullptr;
+static SDL_Texture *s_iconBotCpuGreen  = nullptr;
+static SDL_Texture *s_iconBotCpuRed    = nullptr;
 static bool         s_iconsAttempted = false;
 
 /* Tank sprite used as the team identity badge in the lobby header.
@@ -550,6 +552,8 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         { &s_iconError,    "data/ui/dialog-error.svg" },
         { &s_iconInfo,     "data/ui/dialog-info.svg" },
         { &s_iconSettings, "data/ui/settings.svg" },
+        { &s_iconBotCpuGreen, "data/ui/bot-cpu-green.svg" },
+        { &s_iconBotCpuRed,   "data/ui/bot-cpu-red.svg" },
     };
 
     for (int i = 0; i < (int)(sizeof(icons) / sizeof(icons[0])); i++) {
@@ -732,8 +736,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
          * "+ Bot" button stays at the same X coordinate across teams
          * that do/don't render an X. */
         if (effectiveHost) {
-            const float comboW   = 140.0f * s;
-            const float botBtnW  = 70.0f * s;
+            const float comboW   = 200.0f * s;
+            const float namingShift = 50.0f * s;
+            const float botBtnW  = 95.0f * s;
             const float xBtnW    = 22.0f * s;
             const float labelW   = ImGui::CalcTextSize("Bot Naming:").x;
             const float gap      = 6.0f * s;
@@ -742,8 +747,14 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             bool showXBtn   = (teamId >= 3) && (humanCount == 0);
             /* Always reserve the X width so "+ Bot" sits at the same
              * X position across teams with/without an X. */
+            /* When showing the Bot Naming controls, leave a wider
+             * gap (namingShift) between the dropdown and the Add Bot
+             * button so the label + dropdown sit further left and
+             * the dropdown has room to be wider. */
             float groupW = botBtnW + gap + xBtnW
-                         + (showNaming ? labelW + gap + comboW + gap : 0);
+                         + (showNaming
+                            ? labelW + gap + comboW + namingShift
+                            : 0);
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - groupW);
             int curPool = cs->lobbyTeamPool[teamId];
@@ -768,11 +779,52 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     }
                     ImGui::EndCombo();
                 }
-                ImGui::SameLine(0.0f, gap);
+                ImGui::SameLine(0.0f, namingShift);
             }
+            /* Empty-label button used as a click target; the icon
+             * and the "Add Bot" text are drawn ourselves on top via
+             * WindowDrawList. This lets us shift the text right by
+             * a precise pixel offset so the centered label clears
+             * the overlaid bot-cpu glyph cleanly. */
             char addId[24];
-            SDL_snprintf(addId, sizeof(addId), "\xF0\x9F\xA7\xA0 + Bot##ab%d", teamId);
-            if (ImGui::Button(addId, ImVec2(botBtnW, 0))) {
+            SDL_snprintf(addId, sizeof(addId), "##ab%d", teamId);
+            ImVec2 addBtnPos = ImGui::GetCursorScreenPos();
+            bool addBtnClicked = ImGui::Button(addId, ImVec2(botBtnW, 0));
+            {
+                float btnH = ImGui::GetFrameHeight();
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                const char *addLbl = "Add Bot";
+                ImVec2 textSz = ImGui::CalcTextSize(addLbl);
+                ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+                /* Centered horizontally, then shifted right by 10px
+                 * so it never collides with the icon on the left. */
+                ImVec2 textPos(addBtnPos.x + (botBtnW - textSz.x) * 0.5f
+                                            + 10.0f * s,
+                               addBtnPos.y + (btnH - textSz.y) * 0.5f);
+                dl->AddText(textPos, textCol, addLbl);
+            }
+            /* Green for "your team" buttons, red for the others —
+             * matches the bot-cpu glyph rendered per row. */
+            uint8_t myTeamHdr = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
+                                ? cs->lobbySlots[myPlayerNum].teamNumber : 0;
+            SDL_Texture *addBtnIcon = (myTeamHdr != 0 && teamId == myTeamHdr)
+                                      ? s_iconBotCpuGreen
+                                      : s_iconBotCpuRed;
+            if (addBtnIcon) {
+                float btnH    = ImGui::GetFrameHeight();
+                float imgSz   = ImGui::GetFontSize();
+                /* Tucked a few pixels in from the left edge so the
+                 * icon doesn't hug the button border. The button is
+                 * wide enough that the centered "Add Bot" label
+                 * clears the icon naturally. */
+                ImVec2 iconPos(addBtnPos.x + 8.0f * s,
+                               addBtnPos.y + (btnH - imgSz) * 0.5f);
+                ImGui::GetWindowDrawList()->AddImage(
+                    (ImTextureID)addBtnIcon,
+                    iconPos,
+                    ImVec2(iconPos.x + imgSz, iconPos.y + imgSz));
+            }
+            if (addBtnClicked) {
                 /* When the first bot is added to a team, randomize
                  * the pool so the name comes from a varied source
                  * instead of always pool 0. Teams 1/2 are pre-marked
@@ -856,16 +908,22 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                                     * is allowed to extend visually
                                     * across the other columns. */
                                    | ImGuiTableFlags_NoClip;
-        if (ImGui::BeginTable(tableId, 6, tableFlags)) {
+        if (ImGui::BeginTable(tableId, 7, tableFlags)) {
             /* Wide column 0 so the tank icon sits well inside the
              * team panel (not crammed against the left edge). The
              * icon is positioned with a leading SetCursorPosX nudge
              * inside the cell.
              *
+             * Column 1 hosts the per-row identity icons (country
+             * flag + platform/WBN/Steam badges for humans, the
+             * bot-cpu glyph for bots) — extracted from the name
+             * column so the name text always starts at a fixed X.
+             *
              * Two stretch columns (name + spacer) with weights 3:1
              * park the ping/gear column at roughly 3/4 across the
              * row instead of flush against the ready/X cluster. */
             ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
             ImGui::TableSetupColumn("##name",   ImGuiTableColumnFlags_WidthStretch, 3.0f);
             ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
             ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -889,22 +947,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && cs->lobbySlots[i].teamNumber == myTeam);
 
-                /* Fix the row's minimum height so widgets that are
-                 * shorter than the tank icon (text, X, etc.) have
-                 * room to center vertically. Tallest item in a row
-                 * is the 18*s tank icon plus a couple of pixels of
-                 * breathing room. */
-                const float rowH    = ImMax(ImGui::GetFrameHeight(), 22.0f * s);
+                /* Row height = the tallest single widget we render
+                 * in the row plus a touch of breathing room. Widgets
+                 * are positioned per-cell via absolute Y so each one
+                 * is centered on the row's vertical midline regardless
+                 * of its own height. */
                 const float tankSz  = 18.0f * s;
                 const float closeSz = ImGui::GetFontSize();
-                /* Helper: bias the cursor so the next widget of size
-                 * `h` ends up vertically centered in the current row. */
-                auto centerY = [&](float h) {
-                    float yOff = (rowH - h) * 0.5f;
-                    if (yOff > 0) {
-                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + yOff);
-                    }
-                };
+                const float rowH    = ImMax(ImGui::GetFrameHeight(),
+                                            ImMax(tankSz, 22.0f * s));
 
                 ImGui::TableNextRow(0, rowH);
                 const ImU32 rowStripe = (playerIdx & 1) ? stripeB : stripeA;
@@ -917,8 +968,39 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 }
                 playerIdx++;
 
+                /* Per-cell vertical centering: capture the row's top
+                 * Y on entering each cell, then set cursor.y to
+                 * rowTopY + (rowH - widgetH)/2 immediately before
+                 * every widget. SameLine() resets cursor.y to the
+                 * line's min Y; we override it again per widget so
+                 * widgets of different heights (flags 11px, icons
+                 * 14px, text ~13px, tank 18px) each end up centered
+                 * on the row midline. */
+                float rowTopY;
+                auto cyAbs = [&](float h) {
+                    float y = rowTopY + (rowH - h) * 0.5f;
+                    if (y < rowTopY) y = rowTopY;
+                    ImGui::SetCursorPosY(y);
+                };
+                /* Text-specific centering: ImGui's text line box has a
+                 * couple of pixels of "ascent whitespace" above the
+                 * cap line and an almost-empty descender below, so a
+                 * pure line-height-based centering makes the visible
+                 * glyph mass sit too low (~8px top / ~5px bottom in a
+                 * 22px row). Bias the cursor up by ~12% of font size
+                 * (about 1.5–2 px) so the visible glyphs end up
+                 * centered. */
+                auto cyTextAbs = [&]() {
+                    float h = ImGui::GetTextLineHeight();
+                    float bias = ImGui::GetFontSize() * 0.12f;
+                    float y = rowTopY + (rowH - h) * 0.5f - bias;
+                    if (y < rowTopY) y = rowTopY;
+                    ImGui::SetCursorPosY(y);
+                };
+
                 /* ── Column 0: tank icon ─────────────────────────── */
                 ImGui::TableSetColumnIndex(0);
+                rowTopY = ImGui::GetCursorPosY();
                 {
                     SDL_Texture *tankTex = nullptr;
                     if (r) {
@@ -936,48 +1018,85 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                          * doesn't sit flush with the team panel's
                          * left edge. */
                         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 28.0f * s);
-                        centerY(tankSz);
+                        /* Apply the same optical bias used for text:
+                         * the tank PNG has a sliver of empty pixels
+                         * along its bottom (cannon points up), so a
+                         * pure geometric center makes it sit visibly
+                         * low in the row. Nudge up ~12% of font size
+                         * to match the centered look of the labels. */
+                        cyAbs(tankSz);
+                        float tankBias = ImGui::GetFontSize() * 0.12f;
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - tankBias);
                         ImGui::Image((ImTextureID)tankTex, ImVec2(tankSz, tankSz));
                     }
                 }
 
-                /* ── Column 1: country flag + platform icons + name ─ */
+                /* ── Column 1: identity icons (flag/platform/bot) ── */
                 ImGui::TableSetColumnIndex(1);
-                centerY(ImGui::GetTextLineHeight());
-                if (!isBot) {
+                rowTopY = ImGui::GetCursorPosY();
+                if (isBot) {
+                    /* Green for bots on the local player's team (incl.
+                     * the local player's own bots), red for bots on
+                     * any other team. Fall back to the neutral
+                     * bot-cpu.svg if a tinted variant is missing.
+                     * Drawn at the same size as the tank icon so the
+                     * two badges line up visually across rows. */
+                    SDL_Texture *botTex = isAlly ? s_iconBotCpuGreen
+                                                 : s_iconBotCpuRed;
+                    if (botTex) {
+                        cyAbs(tankSz);
+                        ImGui::Image((ImTextureID)botTex,
+                                     ImVec2(tankSz, tankSz));
+                    }
+                } else {
                     if (cs->lobbySlots[i].countryCode[0] != '\0') {
                         SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
                         if (flagTex) {
+                            cyAbs((float)FLAG_HEIGHT);
                             ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
                             ImGui::SameLine();
                         }
                     }
+                    /* All WBN/Steam/platform icons in renderPlayerName are
+                     * WBN_ICON_SIZE tall — center them as one block. */
+                    cyAbs((float)WBN_ICON_SIZE);
                     renderPlayerName(NULL,
                                      cs->lobbySlots[i].clientFlags,
                                      cs->lobbySlots[i].clientType,
                                      "", false);
-                    ImGui::AlignTextToFramePadding();
-                    if (isMe) {
-                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
-                                           "%s (you)", cs->lobbySlots[i].playerName);
-                    } else {
-                        ImGui::Text("%s", cs->lobbySlots[i].playerName);
-                    }
-                } else {
-                    /* Bot row: name only. The configure-wrench lives
-                     * in the next column (col 2 — gear/ping). */
+                }
+
+                /* ── Column 2: name ──────────────────────────────── */
+                ImGui::TableSetColumnIndex(2);
+                rowTopY = ImGui::GetCursorPosY();
+                cyTextAbs();
+                if (isBot) {
                     ImGui::PushStyleColor(ImGuiCol_Text,
                                           wbThemeColor(g_theme->botBadge));
                     ImGui::Text("%s [bot]", cs->lobbySlots[i].playerName);
                     ImGui::PopStyleColor();
+                } else if (isMe) {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
+                                       "%s (you)", cs->lobbySlots[i].playerName);
+                } else {
+                    ImGui::Text("%s", cs->lobbySlots[i].playerName);
                 }
 
-                /* ── Column 2: gear (bots) or ping (humans) ──────── */
-                ImGui::TableSetColumnIndex(2);
+                /* ── Column 3: gear (bots) or ping (humans) ──────── */
+                ImGui::TableSetColumnIndex(3);
+                rowTopY = ImGui::GetCursorPosY();
                 if (isBot) {
                     if (s_iconSettings) {
                         float iconSize = ImGui::GetFontSize();
-                        centerY(iconSize);
+                        cyAbs(iconSize);
+                        /* settings.svg renders 5px above / 2px below
+                         * with pure geometric centering — the gear
+                         * sits slightly low in the row. Nudge up
+                         * ~12% of font size (about 1.5px) so it
+                         * matches the optical center used by the
+                         * text and tank widgets. */
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY()
+                                             - ImGui::GetFontSize() * 0.12f);
                         ImVec2 iconStart = ImGui::GetCursorScreenPos();
                         char btnId[24];
                         SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
@@ -994,7 +1113,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                             ImGui::SetTooltip("Configure bot");
                         }
                     } else {
-                        centerY(ImGui::GetFrameHeight());
+                        cyAbs(ImGui::GetFrameHeight());
                         char fallId[24];
                         SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
                                      s_expandedBotSlot == i ? "v" : ">", i);
@@ -1003,8 +1122,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                         }
                     }
                 } else {
-                    centerY(ImGui::GetTextLineHeight());
                     if (cs->lobbySlots[i].pingMs > 0) {
+                        cyTextAbs();
                         ImVec4 pingColor;
                         if (cs->lobbySlots[i].pingMs < 50)        pingColor = wbThemeColor(g_theme->statusOnline);
                         else if (cs->lobbySlots[i].pingMs < 150)  pingColor = wbThemeColor(g_theme->statusHighPing);
@@ -1013,19 +1132,21 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     }
                 }
 
-                /* ── Column 4: ready / not ready ─────────────────── */
-                ImGui::TableSetColumnIndex(4);
-                centerY(ImGui::GetTextLineHeight());
+                /* ── Column 5: ready / not ready ─────────────────── */
+                ImGui::TableSetColumnIndex(5);
+                rowTopY = ImGui::GetCursorPosY();
+                cyTextAbs();
                 if (cs->lobbySlots[i].ready) {
                     ImGui::TextColored(wbThemeColor(g_theme->statusReady), "[ready]");
                 } else {
                     ImGui::TextDisabled("[not ready]");
                 }
 
-                /* ── Column 5: remove bot X (CloseButton) ────────── */
-                ImGui::TableSetColumnIndex(5);
+                /* ── Column 6: remove bot X (CloseButton) ────────── */
+                ImGui::TableSetColumnIndex(6);
+                rowTopY = ImGui::GetCursorPosY();
                 if (isBot && effectiveHost) {
-                    centerY(closeSz);
+                    cyAbs(closeSz);
                     ImVec2 closePos = ImGui::GetCursorScreenPos();
                     char rbStr[24];
                     SDL_snprintf(rbStr, sizeof(rbStr), "##rb%d", i);
@@ -1114,10 +1235,17 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     strncpy(nameBuf, cs->lobbySlots[slot].playerName, sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
     ImGui::SetNextItemWidth(180.0f * s);
+    /* The form lives inside a table cell with NoClip — without an
+     * explicit frame border, the InputText's outline blends into
+     * the row stripe and the field reads as "missing a border".
+     * Force a 1px border for this control so it's visually clearly
+     * an editable field. */
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     bool nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::PopStyleVar();
     ImGui::SameLine();
-    bool diceClicked = ImGui::SmallButton("Reroll");
+    bool diceClicked = ImGui::Button("Reroll");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Pick a fresh random name from the team's pool.");
     }
@@ -1141,37 +1269,48 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
     }
 
+    /* Difficulty / Personality dropdowns are hidden for now — the
+     * brain doesn't yet honor either field. Kept in the code (and
+     * still wired through lobbySendBotConfig) so flipping this
+     * flag to true is the only thing needed to re-enable the UI
+     * once the brain consumes the values. */
+    const bool kShowAiOptions = false;
+
     /* ── Difficulty dropdown ──────────────────────────────────── */
-    ImGui::SameLine(0.0f, 16.0f * s);
-    ImGui::TextDisabled("Difficulty");
-    ImGui::SameLine();
-    const char *diffItems[] = { "Easy", "Normal", "Hard" };
-    int diff = cs->lobbyBotDifficulty[slot];
-    if (diff < 0 || diff > 2) diff = 1;
-    ImGui::SetNextItemWidth(90.0f * s);
-    if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
-        lobbySendBotConfig(cs, transport, (uint8_t)slot,
-            (uint8_t)diff, cs->lobbyBotPersonality[slot],
-            cs->lobbySlots[slot].playerName);
+    if (kShowAiOptions) {
+        ImGui::SameLine(0.0f, 16.0f * s);
+        ImGui::TextDisabled("Difficulty");
+        ImGui::SameLine();
+        const char *diffItems[] = { "Easy", "Normal", "Hard" };
+        int diff = cs->lobbyBotDifficulty[slot];
+        if (diff < 0 || diff > 2) diff = 1;
+        ImGui::SetNextItemWidth(90.0f * s);
+        if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
+            lobbySendBotConfig(cs, transport, (uint8_t)slot,
+                (uint8_t)diff, cs->lobbyBotPersonality[slot],
+                cs->lobbySlots[slot].playerName);
+        }
     }
 
     /* ── Personality dropdown ─────────────────────────────────── */
-    ImGui::SameLine(0.0f, 16.0f * s);
-    ImGui::TextDisabled("Personality");
-    ImGui::SameLine();
-    const char *persItems[] = { "Normal", "Aggressive", "Defensive", "Sniper" };
-    int pers = cs->lobbyBotPersonality[slot];
-    if (pers < 0 || pers > 3) pers = 0;
-    ImGui::SetNextItemWidth(110.0f * s);
-    if (ImGui::Combo("##pers", &pers, persItems, 4)) {
-        lobbySendBotConfig(cs, transport, (uint8_t)slot,
-            cs->lobbyBotDifficulty[slot], (uint8_t)pers,
-            cs->lobbySlots[slot].playerName);
+    if (kShowAiOptions) {
+        ImGui::SameLine(0.0f, 16.0f * s);
+        ImGui::TextDisabled("Personality");
+        ImGui::SameLine();
+        const char *persItems[] = { "Normal", "Aggressive", "Defensive", "Sniper" };
+        int pers = cs->lobbyBotPersonality[slot];
+        if (pers < 0 || pers > 3) pers = 0;
+        ImGui::SetNextItemWidth(110.0f * s);
+        if (ImGui::Combo("##pers", &pers, persItems, 4)) {
+            lobbySendBotConfig(cs, transport, (uint8_t)slot,
+                cs->lobbyBotDifficulty[slot], (uint8_t)pers,
+                cs->lobbySlots[slot].playerName);
+        }
     }
 
     /* ── Close button ─────────────────────────────────────────── */
     ImGui::SameLine(0.0f, 16.0f * s);
-    if (ImGui::SmallButton("Done")) {
+    if (ImGui::Button("Done")) {
         s_expandedBotSlot = -1;
     }
 
