@@ -112,6 +112,8 @@ static bool optFast = FALSE;
 static char optMap[512] = "";
 static bool optStdin = FALSE;
 static bool optLogBinary = FALSE;
+static unsigned int optSeed = 0;
+static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
 /* Binary observation format constants */
@@ -843,6 +845,7 @@ static void printUsage(const char *prog) {
     "  --gametype TYPE   Game type: strict (default), tournament, open\n"
     "  --log-state FILE  Log verbose JSON state each tick (- for stdout)\n"
     "  --log-state binary  Binary observation frames to stdout (little-endian)\n"
+    "  --seed N          Seed the RNG with N for reproducible runs\n"
     "  --quiet           Suppress non-error output\n"
     "\n"
     "Network options:\n"
@@ -878,6 +881,9 @@ static bool parseArgs(int argc, char **argv) {
       optTicks = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--log-state") == 0 && i + 1 < argc) {
       strncpy(optLogState, argv[++i], sizeof(optLogState) - 1);
+    } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+      optSeed = (unsigned int)strtoul(argv[++i], NULL, 0);
+      optSeedSet = TRUE;
     } else if (strcmp(argv[i], "--password") == 0 && i + 1 < argc) {
       strncpy(optPassword, argv[++i], sizeof(optPassword) - 1);
     } else if (strcmp(argv[i], "--quiet") == 0) {
@@ -1516,6 +1522,10 @@ int main(int argc, char *argv[]) {
 
   if (!parseArgs(argc, argv)) {
     return 1;
+  }
+
+  if (optSeedSet) {
+    srand(optSeed);
   }
 
   signal(SIGINT, signalHandler);
