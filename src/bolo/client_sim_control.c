@@ -30,18 +30,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         return;
     }
 
-    /* Self-skip on identity-shaped events: the recipient's own slot is
-     * initialized by the code that creates the ClientSim and must not
-     * be overwritten by sync or live publish. */
+    /* Self-skip on CTRL_PLAYER_JOIN only: the recipient's own player
+     * record is established via the join handshake / snapshot stream
+     * and must not be overwritten by sync or live publish with stale
+     * or partial data. CTRL_LOBBY_SLOT and CTRL_PLAYER_NAME do update
+     * self — the server is the source of truth for the recipient's
+     * lobby slot and name, matching the pre-migration UDP handlers
+     * which had no self-guard. */
     switch (evt->type) {
     case CTRL_PLAYER_JOIN:
         if (evt->u.playerJoin.playerNum == cs->myPlayerNum) return;
-        break;
-    case CTRL_PLAYER_NAME:
-        if (evt->u.playerName.playerNum == cs->myPlayerNum) return;
-        break;
-    case CTRL_LOBBY_SLOT:
-        if (evt->u.lobbySlot.playerNum == cs->myPlayerNum) return;
         break;
     default:
         break;
