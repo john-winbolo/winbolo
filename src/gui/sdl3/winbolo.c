@@ -181,6 +181,14 @@ static bool showAllianceReq = TRUE;
 static SDL_AtomicInt needsRedraw = { 0 };
 static SDL_AtomicInt needsGameTick = { 0 };
 
+/* The ClientSim that drives the visible player-list UI. Registered by
+ * gamefront when humanSim is created; cleared on teardown. frontEnd*
+ * calls whose cs argument doesn't match this pointer are suppressed,
+ * so bot / bg_game / gym ClientSims can't pollute process-global
+ * UI state (s_playerName, s_playerEnabled, ...).
+ * NULL = no registration yet; calls fall through (bootstrapping). */
+static ClientSim *s_activeUiCs = NULL;
+
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
@@ -1523,12 +1531,18 @@ void frontEndGameOver(void) {
   winboloQuit = TRUE;
 }
 
-void frontEndClearPlayer(playerNumbers value) {
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  s_activeUiCs = cs;
+}
+
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (!screenGetGameRunningCS(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -1542,7 +1556,8 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
 
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 

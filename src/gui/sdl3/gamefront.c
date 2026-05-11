@@ -550,6 +550,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
   if (humanSim != NULL) {
+    frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);
     clientSimDestroy(humanSim);
     humanSim = NULL;
@@ -898,6 +899,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       newState == openUdpJoin) {
     gameFrontValidateWbnBeforeJoin();
     humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    frontEndSetActiveClientSim(humanSim);
     if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
@@ -1118,6 +1120,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
           }
+          frontEndSetActiveClientSim(humanSim);
           if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,

@@ -317,11 +317,21 @@ void frontEndGameOver(void) {
   finishedLoop = TRUE;
 }
 
-void frontEndClearPlayer(playerNumbers value) {
+/* Active-cs gate — see desktop frontend in src/gui/sdl3/winbolo.c for
+ * the rationale. NULL = no registration yet; calls fall through. */
+static ClientSim *s_activeUiCs = NULL;
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  s_activeUiCs = cs;
+}
+
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (!screenGetGameRunningCS(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -333,7 +343,8 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
