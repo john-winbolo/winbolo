@@ -4296,7 +4296,6 @@ int main(int argc, char *argv[]) {
         strncpy(app.sim.mapName, "Everard Island", MAP_STR_SIZE - 1);
     }
     app.sim.lobbyEnabled = false;
-    app.sim.state = serverStateRunning;
     app.simValid = true;
 
     /* Calculate map bounds */
@@ -4411,36 +4410,15 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
-        /* Assign teams round-robin and ally same-team bots. Mirrors the
-         * round-start loop in server_sim.c:serverSimStartGame — braintest
-         * skips lobby/StartGame so we apply it here. The publish reaches
-         * each bot's ClientSim via the subscriber wiring in
-         * botManagerAddBot, so friend/foe checks see the alliance on the
-         * next think tick. */
         if (optNumTeams >= 2) {
             for (int i = 0; i < optNumPlayers; i++) {
-                app.sim.lobbyPlayers[i].teamNumber = (BYTE)((i % optNumTeams) + 1);
-            }
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (!app.sim.playerConnected[i]) continue;
-                if (app.sim.lobbyPlayers[i].teamNumber == 0) continue;
-                for (int j = i + 1; j < MAX_TANKS; j++) {
-                    if (!app.sim.playerConnected[j]) continue;
-                    if (app.sim.lobbyPlayers[j].teamNumber
-                        != app.sim.lobbyPlayers[i].teamNumber) continue;
-                    ControlEvent allyEvt;
-                    playersAcceptAlliance(&app.sim.sim, &app.sim.sim.plyrs,
-                                          NEUTRAL, (BYTE)i, (BYTE)j, TRUE);
-                    memset(&allyEvt, 0, sizeof(allyEvt));
-                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-                    allyEvt.u.allianceAccept.acceptedBy = (BYTE)i;
-                    allyEvt.u.allianceAccept.newMember  = (BYTE)j;
-                    serverSimPublishControl(&app.sim, &allyEvt);
-                }
+                serverSimSetTeam(&app.sim, (BYTE)i,
+                                 (BYTE)((i % optNumTeams) + 1));
             }
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
+        serverSimStartGame(&app.sim);
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
