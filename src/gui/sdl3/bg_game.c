@@ -123,7 +123,6 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
     /* bg_game is a local headless sim — no lobby, run immediately */
     bg->sim.lobbyEnabled = false;
-    bg->sim.state = serverStateRunning;
 
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
@@ -239,30 +238,8 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         }
         if (numTeams > 0 && bg->numBots >= 2) {
             if (numTeams > bg->numBots) numTeams = bg->numBots;
-            /* Assign each bot to a team via round-robin, then ally
-             * same-team pairs. Mirrors the round-start loop in
-             * server_sim.c:serverSimStartGame — the publish reaches each
-             * bot's ClientSim via the subscriber wiring in
-             * botManagerAddBot, so friend/foe checks see the alliance. */
-            BYTE teamOf[MAX_TANKS];
             for (BYTE i = 0; i < bg->numBots; i++) {
-                teamOf[i] = i % numTeams;
-                bg->sim.lobbyPlayers[i].teamNumber = (BYTE)(teamOf[i] + 1);
-            }
-            for (BYTE i = 0; i < bg->numBots; i++) {
-                if (!bg->sim.playerConnected[i]) continue;
-                for (BYTE j = i + 1; j < bg->numBots; j++) {
-                    if (!bg->sim.playerConnected[j]) continue;
-                    if (teamOf[i] != teamOf[j]) continue;
-                    ControlEvent allyEvt;
-                    playersAcceptAlliance(&bg->sim.sim, &bg->sim.sim.plyrs,
-                                          NEUTRAL, i, j, TRUE);
-                    memset(&allyEvt, 0, sizeof(allyEvt));
-                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-                    allyEvt.u.allianceAccept.acceptedBy = i;
-                    allyEvt.u.allianceAccept.newMember  = j;
-                    serverSimPublishControl(&bg->sim, &allyEvt);
-                }
+                serverSimSetTeam(&bg->sim, i, (BYTE)((i % numTeams) + 1));
             }
             bg->numTeams = (BYTE)numTeams;
             WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Set up %d teams for %d bots", numTeams, bg->numBots);
@@ -270,6 +247,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             bg->numTeams = 0;
             WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Free-for-all (no teams)");
         }
+        serverSimStartGame(&bg->sim);
     } else {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] No brain script found");
     }
