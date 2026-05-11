@@ -162,6 +162,27 @@ void botManagerSetPreThinkHook(void (*hook)(int playerNum));
 void botManagerOnGameStart(struct ServerSim *sim);
 
 /*********************************************************
+ *NAME:          botManagerSetTeams
+ *PURPOSE:
+ *  Apply mutual alliance bits between every pair of slots
+ *  in [0, numPlayers) that share a team in teamOf[]. Writes
+ *  to both the server sim's plyrs and every active bot's
+ *  cs.sim.plyrs, so each bot's local view of friend/foe
+ *  matches the server. Headless-only helper for harnesses
+ *  (BrainTest, bg_game) that bypass the lobby/alliance
+ *  packet flow. Idempotent.
+ *
+ *ARGUMENTS:
+ *  sim        - The ServerSim
+ *  teamOf     - Array of length numPlayers; teamOf[i] is the
+ *               team id for slot i (any small int; only
+ *               equality matters)
+ *  numPlayers - Length of teamOf (clamped to MAX_TANKS)
+ *********************************************************/
+void botManagerSetTeams(struct ServerSim *sim,
+                        const BYTE *teamOf, BYTE numPlayers);
+
+/*********************************************************
  *NAME:          botManagerRemoveBot
  *PURPOSE:
  *  Destroys a bot's brain, transport, and ClientSim.
