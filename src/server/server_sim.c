@@ -1581,6 +1581,17 @@ void serverSimInstallMapDirList(ServerSim *sim,
     sim->mapDirCount = count;
 }
 
+void serverSimPrependEvents(ServerSim *sim,
+                            const GameEvent *events,
+                            uint8_t count) {
+    if (count == 0) return;
+    if ((uint16_t)count + sim->eventCount > MAX_SNAPSHOT_EVENTS) return;
+    memmove(sim->events + count, sim->events,
+            sim->eventCount * sizeof(GameEvent));
+    memcpy(sim->events, events, count * sizeof(GameEvent));
+    sim->eventCount += count;
+}
+
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
     sim->autoCloseOnEmpty = enabled;
 }

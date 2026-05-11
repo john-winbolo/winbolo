@@ -1014,7 +1014,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     }
     if (!haveOrigin) {
         if (!serverSimGetTankState(app->sim, app->followBot, &twx, &twy)) return;
-        tank *t = &app->sim->sim.tanks[app->followBot];
+        tank *t = &serverSimGetGameSim(app->sim)->tanks[app->followBot];
         in_boat    = tankIsOnBoat(t) ? 1 : 0;
         res_shells = tankGetShells(t);
         res_trees  = tankGetTrees(t);
@@ -1108,7 +1108,7 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     {
         int dijKind = botPf->dij_slates[viewSlate].kind;
         uint32_t dijStarted = botPf->dij_slates[viewSlate].started_tick;
-        uint32_t curTick    = app->sim->tick / 2;
+        uint32_t curTick    = serverSimGetTick(app->sim) / 2;
         int life = (dijStarted > 0) ? (int)(curTick - dijStarted) : 0;
         char dijLabel[160];
         SDL_snprintf(dijLabel, sizeof(dijLabel),
@@ -1672,7 +1672,7 @@ static bool findBrainScript(const char *base, char *out, size_t outLen) {
 /* ------------------------------------------------------------------ */
 
 static void calcMapBounds(BrainTestApp *app) {
-    GameSim *gs = &app->sim->sim;
+    GameSim *gs = serverSimGetGameSim(app->sim);
     int minX = 255, minY = 255, maxX = 0, maxY = 0;
 
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
@@ -1842,7 +1842,7 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
         if (!serverSimGetTankState(app->sim, app->followBot, &twx, &twy)) return;
         smx = twx >> 8;
         smy = twy >> 8;
-        tank *t = &app->sim->sim.tanks[app->followBot];
+        tank *t = &serverSimGetGameSim(app->sim)->tanks[app->followBot];
         in_boat    = tankIsOnBoat(t) ? 1 : 0;
         res_shells = tankGetShells(t);
         res_trees  = tankGetTrees(t);
@@ -1931,7 +1931,7 @@ static void updateOverlayTexture(BrainTestApp *app) {
      * just swapped pf->danger_grid to a different historical state. */
     uint32_t cacheKey = app->playbackMode
         ? (0x80000000u | (uint32_t)app->playbackFrame)
-        : app->sim->tick;
+        : serverSimGetTick(app->sim);
     if (cacheKey == app->overlayTick && !app->overlayDirty) return;
     app->overlayTick = cacheKey;
     app->overlayDirty = false;
@@ -2205,9 +2205,10 @@ static void recordingCapture(BrainTestApp *app) {
         rb->capacity = newCap;
     }
 
+    GameSim *gs = serverSimGetGameSim(app->sim);
     RecordingFrame *f = &rb->frames[rb->count];
     memset(f, 0, sizeof(*f));
-    f->tick = app->sim->tick;
+    f->tick = serverSimGetTick(app->sim);
 
     int mapSz  = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
     int gridSz = 65536;
@@ -2215,7 +2216,7 @@ static void recordingCapture(BrainTestApp *app) {
     f->isKeyframe = needKeyframe;
 
     /* ── Map terrain ── */
-    const BYTE *curMap = &app->sim->sim.mp->mapItem[0][0];
+    const BYTE *curMap = &gs->mp->mapItem[0][0];
     if (needKeyframe) {
         f->fullMap = (BYTE *)malloc(mapSz);
         memcpy(f->fullMap, curMap, mapSz);
@@ -2350,23 +2351,23 @@ static void recordingCapture(BrainTestApp *app) {
     f->shellCount = hdr.shellCount;
 
     /* ── Bases / pills (read directly from the server sim) ── */
-    f->baseCount = app->sim->sim.bs->numBases;
+    f->baseCount = gs->bs->numBases;
     if (f->baseCount > MAX_SNAPSHOT_BASES) f->baseCount = MAX_SNAPSHOT_BASES;
     for (int i = 0; i < f->baseCount; i++) {
-        f->snapBases[i].owner  = app->sim->sim.bs->item[i].owner;
-        f->snapBases[i].armour = app->sim->sim.bs->item[i].armour;
-        f->snapBases[i].shells = app->sim->sim.bs->item[i].shells;
-        f->snapBases[i].mines  = app->sim->sim.bs->item[i].mines;
+        f->snapBases[i].owner  = gs->bs->item[i].owner;
+        f->snapBases[i].armour = gs->bs->item[i].armour;
+        f->snapBases[i].shells = gs->bs->item[i].shells;
+        f->snapBases[i].mines  = gs->bs->item[i].mines;
     }
-    f->pillCount = app->sim->sim.pb->numPills;
+    f->pillCount = gs->pb->numPills;
     if (f->pillCount > MAX_SNAPSHOT_PILLS) f->pillCount = MAX_SNAPSHOT_PILLS;
     for (int i = 0; i < f->pillCount; i++) {
-        f->snapPills[i].x      = app->sim->sim.pb->item[i].x;
-        f->snapPills[i].y      = app->sim->sim.pb->item[i].y;
-        f->snapPills[i].owner  = app->sim->sim.pb->item[i].owner;
-        f->snapPills[i].armour = app->sim->sim.pb->item[i].armour;
-        f->snapPills[i].speed  = app->sim->sim.pb->item[i].speed;
-        f->snapPills[i].inTank = app->sim->sim.pb->item[i].inTank ? 1 : 0;
+        f->snapPills[i].x      = gs->pb->item[i].x;
+        f->snapPills[i].y      = gs->pb->item[i].y;
+        f->snapPills[i].owner  = gs->pb->item[i].owner;
+        f->snapPills[i].armour = gs->pb->item[i].armour;
+        f->snapPills[i].speed  = gs->pb->item[i].speed;
+        f->snapPills[i].inTank = gs->pb->item[i].inTank ? 1 : 0;
     }
 
     /* ── Camera + brain perf for HUD ── */
@@ -2705,7 +2706,7 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * think time the brain spent on that frame) so the HUD reflects
      * what's actually rendered, not where the live sim has advanced
      * to in the background. */
-    uint32_t hudTick = app->sim->tick / 2;
+    uint32_t hudTick = serverSimGetTick(app->sim) / 2;
     double   thinkMs = botManagerGetLastThinkMs(app->followBot);
     if (app->playbackMode
         && app->playbackFrame >= 0
@@ -2835,8 +2836,9 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
             const DijkstraSlate *s = pfDij
                 ? brainPathfinderDijkstraGetSlate(pfDij, app->dijViewSlate)
                 : NULL;
-            int in_boat = (app->sim->sim.tanks[app->followBot] != NULL &&
-                           tankIsOnBoat(&app->sim->sim.tanks[app->followBot])) ? 1 : 0;
+            GameSim *gs = serverSimGetGameSim(app->sim);
+            int in_boat = (gs->tanks[app->followBot] != NULL &&
+                           tankIsOnBoat(&gs->tanks[app->followBot])) ? 1 : 0;
             float dij = 1e30f;
             if (s && s->g_cost) {
                 int ni_base = app->clickMY * 256 + app->clickMX;
@@ -2952,7 +2954,7 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
 static void appTickBrain(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
-    app->sim->sim.isInMenu = isInMenu;
+    serverSimGetGameSim(app->sim)->isInMenu = isInMenu;
 
     pushVizStateToBots(app->vizSuppressActive || optProduction);
 
@@ -2988,18 +2990,14 @@ static void appTickSim(BrainTestApp *app) {
     serverSimTick(app->sim);
     {
         GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t savedCount = app->sim->eventCount;
+        uint8_t savedCount = serverSimGetEventCount(app->sim);
         if (savedCount > 0) {
-            memcpy(savedEvents, app->sim->events,
+            memcpy(savedEvents, serverSimGetEvents(app->sim),
                    savedCount * sizeof(GameEvent));
         }
         serverSimTick(app->sim);
-        if (savedCount > 0 && savedCount + app->sim->eventCount <= MAX_SNAPSHOT_EVENTS) {
-            memmove(app->sim->events + savedCount, app->sim->events,
-                    app->sim->eventCount * sizeof(GameEvent));
-            memcpy(app->sim->events, savedEvents,
-                   savedCount * sizeof(GameEvent));
-            app->sim->eventCount += savedCount;
+        if (savedCount > 0) {
+            serverSimPrependEvents(app->sim, savedEvents, savedCount);
         }
     }
 
@@ -3377,7 +3375,7 @@ static bool shotSimTankPosCallback(int *outWX, int *outWY, void *ud) {
         *outWY = (int)ts->worldY;
         return true;
     }
-    struct tankObj *t = app->sim->sim.tanks[pn];
+    struct tankObj *t = serverSimGetGameSim(app->sim)->tanks[pn];
     if (!t) return false;
     *outWX = (int)t->x;
     *outWY = (int)t->y;
@@ -3400,7 +3398,7 @@ static bool shotSimTankAngleCallback(float *outAngle, void *ud) {
         *outAngle = (float)ts->angle / 256.0f;
         return true;
     }
-    struct tankObj *t = app->sim->sim.tanks[pn];
+    struct tankObj *t = serverSimGetGameSim(app->sim)->tanks[pn];
     if (!t) return false;
     *outAngle = (float)t->angle;
     return true;
@@ -3543,6 +3541,7 @@ static void appRender(BrainTestApp *app) {
         WORLD savedViewCenterX = 0, savedViewCenterY = 0;
         bool patchedCamera = false;
         bool patched = false;
+        GameSim *gs = serverSimGetGameSim(app->sim);
         if (app->playbackMode
             && app->playbackFrame >= 0
             && app->playbackFrame < app->recording.count) {
@@ -3556,8 +3555,8 @@ static void appRender(BrainTestApp *app) {
             if (!savedInflu)    savedInflu    = (int16_t  *)malloc(gridSz * sizeof(int16_t));
             if (!savedOverl)    savedOverl    = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
             /* Map terrain. */
-            memcpy(savedMapBytes, &app->sim->sim.mp->mapItem[0][0], mapSz);
-            memcpy(&app->sim->sim.mp->mapItem[0][0],
+            memcpy(savedMapBytes, &gs->mp->mapItem[0][0], mapSz);
+            memcpy(&gs->mp->mapItem[0][0],
                    app->recording.playbackMap, mapSz);
             /* Pathfinder grids + brainMap (used by overlay renderers). */
             if (pbPf) {
@@ -3578,21 +3577,21 @@ static void appRender(BrainTestApp *app) {
                 }
             }
             /* Bases & pills — full copy, simpler than per-field patch. */
-            savedBases = *app->sim->sim.bs;
-            savedPills = *app->sim->sim.pb;
-            for (int i = 0; i < pf_->baseCount && i < app->sim->sim.bs->numBases; i++) {
-                app->sim->sim.bs->item[i].owner  = pf_->snapBases[i].owner;
-                app->sim->sim.bs->item[i].armour = pf_->snapBases[i].armour;
-                app->sim->sim.bs->item[i].shells = pf_->snapBases[i].shells;
-                app->sim->sim.bs->item[i].mines  = pf_->snapBases[i].mines;
+            savedBases = *gs->bs;
+            savedPills = *gs->pb;
+            for (int i = 0; i < pf_->baseCount && i < gs->bs->numBases; i++) {
+                gs->bs->item[i].owner  = pf_->snapBases[i].owner;
+                gs->bs->item[i].armour = pf_->snapBases[i].armour;
+                gs->bs->item[i].shells = pf_->snapBases[i].shells;
+                gs->bs->item[i].mines  = pf_->snapBases[i].mines;
             }
-            for (int i = 0; i < pf_->pillCount && i < app->sim->sim.pb->numPills; i++) {
-                app->sim->sim.pb->item[i].x      = pf_->snapPills[i].x;
-                app->sim->sim.pb->item[i].y      = pf_->snapPills[i].y;
-                app->sim->sim.pb->item[i].owner  = pf_->snapPills[i].owner;
-                app->sim->sim.pb->item[i].armour = pf_->snapPills[i].armour;
-                app->sim->sim.pb->item[i].speed  = pf_->snapPills[i].speed;
-                app->sim->sim.pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            for (int i = 0; i < pf_->pillCount && i < gs->pb->numPills; i++) {
+                gs->pb->item[i].x      = pf_->snapPills[i].x;
+                gs->pb->item[i].y      = pf_->snapPills[i].y;
+                gs->pb->item[i].owner  = pf_->snapPills[i].owner;
+                gs->pb->item[i].armour = pf_->snapPills[i].armour;
+                gs->pb->item[i].speed  = pf_->snapPills[i].speed;
+                gs->pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
             }
 
             /* ── Tanks ── reconstruct from TankSnapshot wire entries
@@ -3601,8 +3600,8 @@ static void appRender(BrainTestApp *app) {
              * speed/onBoat/death/resources). */
             memset(tempTanks, 0, sizeof(tempTanks));
             for (int i = 0; i < MAX_TANKS; i++) {
-                savedTanks[i] = app->sim->sim.tanks[i];
-                app->sim->sim.tanks[i] = NULL;
+                savedTanks[i] = gs->tanks[i];
+                gs->tanks[i] = NULL;
             }
             for (int i = 0; i < pf_->tankCount; i++) {
                 TankSnapshot *ts = &pf_->tanks[i];
@@ -3624,7 +3623,7 @@ static void appRender(BrainTestApp *app) {
                 t->shells    = ts->shells;
                 t->mines     = ts->mines;
                 t->trees     = ts->trees;
-                app->sim->sim.tanks[pn] = t;
+                gs->tanks[pn] = t;
             }
 
             /* ── LGMs ── lgmFrame is encoded as actual_frame+1 with 0
@@ -3632,8 +3631,8 @@ static void appRender(BrainTestApp *app) {
              * from lgmMX/MY map coords + lgmPX/PY pixel offsets. */
             memset(tempLgmen, 0, sizeof(tempLgmen));
             for (int i = 0; i < MAX_TANKS; i++) {
-                savedLgmen[i] = app->sim->sim.lgmen[i];
-                app->sim->sim.lgmen[i] = NULL;
+                savedLgmen[i] = gs->lgmen[i];
+                gs->lgmen[i] = NULL;
             }
             for (int i = 0; i < pf_->tankCount; i++) {
                 TankSnapshot *ts = &pf_->tanks[i];
@@ -3647,13 +3646,13 @@ static void appRender(BrainTestApp *app) {
                 l->y = (WORLD)((ts->lgmMY << 8) + (ts->lgmPY << 4));
                 l->inTank    = FALSE;
                 l->isDead    = FALSE;
-                app->sim->sim.lgmen[pn] = l;
+                gs->lgmen[pn] = l;
             }
 
             /* ── Shells ── linked list reconstruction. */
             memset(tempShellNodes, 0, sizeof(tempShellNodes));
-            savedShells = app->sim->sim.shs;
-            app->sim->sim.shs = NULL;
+            savedShells = gs->shs;
+            gs->shs = NULL;
             if (pf_->shellCount > 0) {
                 for (int i = 0; i < pf_->shellCount; i++) {
                     struct shellsObj *s = &tempShellNodes[i];
@@ -3666,19 +3665,19 @@ static void appRender(BrainTestApp *app) {
                     s->next = (i + 1 < pf_->shellCount) ? &tempShellNodes[i + 1] : NULL;
                     s->prev = (i > 0) ? &tempShellNodes[i - 1] : NULL;
                 }
-                app->sim->sim.shs = &tempShellNodes[0];
+                gs->shs = &tempShellNodes[0];
             }
 
             /* ── Explosions ── hide entirely during playback. Live
              * explosion animation frames don't correspond to anything
              * recorded, so playing them back at a scrubbed tick is
              * just visual noise. Save heads, NULL the lists. */
-            savedExpl      = app->sim->sim.expl;
-            savedTkExpl    = app->sim->sim.tankExplosions;
-            savedMinesExpl = app->sim->sim.minesExplosions;
-            app->sim->sim.expl            = NULL;
-            app->sim->sim.tankExplosions  = NULL;
-            app->sim->sim.minesExplosions = NULL;
+            savedExpl      = gs->expl;
+            savedTkExpl    = gs->tankExplosions;
+            savedMinesExpl = gs->minesExplosions;
+            gs->expl            = NULL;
+            gs->tankExplosions  = NULL;
+            gs->minesExplosions = NULL;
 
             /* ── Brain overlay command buffers ── pointer-swap each
              * active bot's OverlayCmdBuffer to the recorded cmds.
@@ -3741,15 +3740,15 @@ static void appRender(BrainTestApp *app) {
         }
 
         /* Set perspective to followed bot for correct coloring */
-        BYTE prevSelf = app->sim->sim.viewPlayer;
-        app->sim->sim.viewPlayer = app->followBot;
+        BYTE prevSelf = gs->viewPlayer;
+        gs->viewPlayer = app->followBot;
 
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
-        mapViewRenderCentered(&ctx, &app->sim->sim,
+        mapViewRenderCentered(&ctx, gs,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
 
-        app->sim->sim.viewPlayer = prevSelf;
+        gs->viewPlayer = prevSelf;
 
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);
@@ -3780,7 +3779,7 @@ static void appRender(BrainTestApp *app) {
         if (patched) {
             int mapSz = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
             int gridSz = 65536;
-            memcpy(&app->sim->sim.mp->mapItem[0][0], savedMapBytes, mapSz);
+            memcpy(&gs->mp->mapItem[0][0], savedMapBytes, mapSz);
             if (pbPf) {
                 memcpy(pbPf->danger_grid,    savedDanger, gridSz * sizeof(uint16_t));
                 memcpy(pbPf->influence_grid, savedInflu,  gridSz * sizeof(int16_t));
@@ -3789,20 +3788,20 @@ static void appRender(BrainTestApp *app) {
                     pbPf->map = savedBrainMapPtr;
                 }
             }
-            *app->sim->sim.bs = savedBases;
-            *app->sim->sim.pb = savedPills;
+            *gs->bs = savedBases;
+            *gs->pb = savedPills;
             for (int i = 0; i < MAX_TANKS; i++) {
-                app->sim->sim.tanks[i] = savedTanks[i];
-                app->sim->sim.lgmen[i] = savedLgmen[i];
+                gs->tanks[i] = savedTanks[i];
+                gs->lgmen[i] = savedLgmen[i];
                 if (savedOvlBufs[i]) {
                     savedOvlBufs[i]->cmds  = savedOvlCmds[i];
                     savedOvlBufs[i]->count = savedOvlCount[i];
                 }
             }
-            app->sim->sim.shs            = savedShells;
-            app->sim->sim.expl            = savedExpl;
-            app->sim->sim.tankExplosions  = savedTkExpl;
-            app->sim->sim.minesExplosions = savedMinesExpl;
+            gs->shs            = savedShells;
+            gs->expl            = savedExpl;
+            gs->tankExplosions  = savedTkExpl;
+            gs->minesExplosions = savedMinesExpl;
             if (patchedPath) app->cachedPathLen = savedCachedPathLen;
             if (patchedCamera) {
                 app->viewCenterX = savedViewCenterX;
@@ -4063,7 +4062,7 @@ static void appRender(BrainTestApp *app) {
         int pw, ph;
         SDL_GetWindowSize(app->panelWindow, &pw, &ph);
         g_panelPollFollowBot = app->followBot;
-        g_panelPollTick      = app->sim->tick / 2; /* brain tick */
+        g_panelPollTick      = serverSimGetTick(app->sim) / 2; /* brain tick */
         panelWindowRender(app->panelRenderer, pw, ph,
                           (int)app->followBot, panelPollCallback);
     }
@@ -4072,7 +4071,7 @@ static void appRender(BrainTestApp *app) {
      * when its slot is visible, so the cost is bounded by what the
      * user actually opened. */
     g_panelPollFollowBot = app->followBot;
-    g_panelPollTick      = app->sim->tick / 2;
+    g_panelPollTick      = serverSimGetTick(app->sim) / 2;
     botWindowRenderAll((int)app->followBot, panelPollCallback);
 }
 
@@ -4301,9 +4300,9 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "serverSimCreateCompressed failed\n");
             return 1;
         }
-        strncpy(app.sim->mapName, "Everard Island", MAP_STR_SIZE - 1);
+        serverSimSetMapName(app.sim, "Everard Island");
     }
-    app.sim->lobbyEnabled = false;
+    serverSimSetLobbyEnabled(app.sim, false);
     app.simValid = true;
 
     /* Calculate map bounds */
@@ -5158,13 +5157,13 @@ int main(int argc, char *argv[]) {
                     appTickBrain(&app);
                     recordingCapture(&app);
                     firstBrainSeeded = true;
-                    if (!autoPauseDone && app.sim->tick >= 4) {
+                    if (!autoPauseDone && serverSimGetTick(app.sim) >= 4) {
                         if (!optAutoStart) app.paused = true;
                         autoPauseDone = true;
                         lastTickTime += tickMs;
                         break;
                     }
-                    if (optMaxTicks > 0 && (int)app.sim->tick >= optMaxTicks) {
+                    if (optMaxTicks > 0 && (int)serverSimGetTick(app.sim) >= optMaxTicks) {
                         appQuit = TRUE;
                         break;
                     }
@@ -5191,7 +5190,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Cleanup */
-    fprintf(stderr, "Shutting down after tick %u\n", app.sim->tick);
+    fprintf(stderr, "Shutting down after tick %u\n", serverSimGetTick(app.sim));
     if (app.costToThread) {
         app.costToAbort = true;
         SDL_WaitThread(app.costToThread, NULL);
