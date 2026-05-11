@@ -531,9 +531,8 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
     originalName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
 
     /* Update the per-slot transport-side name. */
-    strncpy(udpServer.clients[victimSlot].playerName, chosenName,
-            PACKET_MAX_PLAYER_NAME - 1);
-    udpServer.clients[victimSlot].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    snprintf(udpServer.clients[victimSlot].playerName,
+             PACKET_MAX_PLAYER_NAME, "%s", chosenName);
     udpServer.clients[victimSlot].nameStickySuffix = true;
 
     /* Update the gameSim player record — same path PACKET_NAME_CHANGE
@@ -553,8 +552,8 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
         packHeader(outBuf, PACKET_NAME_CHANGE, 0);
         outBuf[PACKET_HEADER_SIZE] = (uint8_t)victimSlot;
         memset(outBuf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
-        strncpy((char *)(outBuf + PACKET_HEADER_SIZE + 1), chosenName,
-                PACKET_MAX_PLAYER_NAME - 1);
+        snprintf((char *)(outBuf + PACKET_HEADER_SIZE + 1),
+                 PACKET_MAX_PLAYER_NAME, "%s", chosenName);
         for (j = 0; j < MAX_TANKS; j++) {
             if (udpServer.clients[j].connected) {
                 udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
@@ -567,7 +566,7 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
         memset(&evt, 0, sizeof(evt));
         evt.type = CTRL_PLAYER_NAME;
         evt.u.playerName.playerNum = (BYTE)victimSlot;
-        strncpy(evt.u.playerName.name, chosenName, PACKET_MAX_PLAYER_NAME - 1);
+        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", chosenName);
         serverSimPublishControl(sim, &evt);
     }
 
@@ -944,9 +943,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.clients[slot].nameStickySuffix = false;
     udpServer.clients[slot].addr = *fromAddr;
     udpServer.clients[slot].playerNum = (uint8_t)slot;
-    strncpy(udpServer.clients[slot].playerName, name,
-            PACKET_MAX_PLAYER_NAME - 1);
-    udpServer.clients[slot].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    snprintf(udpServer.clients[slot].playerName,
+             PACKET_MAX_PLAYER_NAME, "%s", name);
     udpServer.clients[slot].lastReceivedTick = udpServer.tickCount;
     udpServer.clients[slot].outSequence = 1;
     udpServer.clients[slot].lastPingTime = udpServer.tickCount;

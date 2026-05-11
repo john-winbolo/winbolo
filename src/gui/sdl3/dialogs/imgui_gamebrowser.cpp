@@ -734,7 +734,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 struct SearchParams { char addr[FILENAME_MAX]; unsigned short port; bool tracker; };
                 SearchParams sp = {};
-                strncpy(sp.addr, tAddr, FILENAME_MAX - 1);
+                snprintf(sp.addr, FILENAME_MAX, "%s", tAddr);
                 sp.port = tPort;
                 sp.tracker = ut;
 
