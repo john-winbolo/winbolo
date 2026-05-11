@@ -95,123 +95,7 @@ struct BalanceProposal {
   SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
 };
 
-typedef struct ServerSim {
-    GameSim      sim;    /* MUST be first member */
-
-    /* Tick state */
-    uint32_t     tick;
-    int32_t      startDelay;
-    int32_t      gameLength;
-    int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
-    int32_t      ticksRun;           /* Running-state tick counter */
-
-    /* Server state machine */
-    ServerState  state;
-    bool         lobbyEnabled;       /* false = no-lobby mode (skip lobby, play immediately) */
-    LobbyPlayer  lobbyPlayers[MAX_TANKS];
-    int32_t      countdownTicks;     /* Countdown timer (in ticks) */
-    int32_t      originalGameLength; /* Cached for reset between rounds */
-    bool         hadPlayersEver;     /* For auto-close detection */
-    bool         quitOnWin;          /* Server should check for win condition */
-    bool         autoCloseOnEmpty;   /* Server should close when all players leave */
-    char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
-    bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
-    int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
-    int32_t      emptyResetTicks;    /* Countdown ticks remaining (-1 = not counting) */
-
-    /* Map reload — cached compressed map for between-round resets */
-    BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
-    int          cachedMapDataLen;   /* Length of compressed data */
-
-    /* Info packet fields — stored at creation for server browser responses */
-    char         mapName[MAP_STR_SIZE];
-    uint32_t     timeCreated;
-    unsigned short serverPort;
-
-    /* Per-player input queues — allows 2 inputs per server timer callback */
-#define SERVER_INPUT_QUEUE_SIZE 8  /* Must be power of 2 */
-    InputPacket  inputQueue[MAX_TANKS][SERVER_INPUT_QUEUE_SIZE];
-    uint8_t      inputQueueHead[MAX_TANKS];  /* Next slot to write */
-    uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
-    bool         playerConnected[MAX_TANKS];
-    uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
-    uint8_t      lastInputButtons[MAX_TANKS];    /* Last button bitmask for stall continuity */
-    uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
-
-    /* Input jitter buffer — delay processing until buffer reaches target depth */
-#define JITTER_BUFFER_MIN       1   /* Minimum buffer depth (ticks) */
-#define JITTER_BUFFER_MAX       4   /* Maximum buffer depth (ticks) */
-#define JITTER_BUFFER_DEFAULT   2   /* Starting depth before we have data */
-#define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
-#define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
-#define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
-    uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
-    uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
-    uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
-    uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
-
-    PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
-    PosHistory   lgmPosHistory[MAX_TANKS];        /* LGM position history for lag compensation */
-
-    /* Which player is currently being processed in the tick loop.
-     * Used by serverSimCbMessageAdd to target assistant messages. */
-    uint8_t      currentTickPlayer;
-
-    /* Event buffer — populated during tick, consumed by snapshot sender */
-    GameEvent    events[MAX_SNAPSHOT_EVENTS];
-    uint8_t      eventCount;
-
-    /* Separate map-change event buffer — never competes with sound/game
-     * events for slots, so map changes are never silently dropped. */
-#define MAX_MAP_EVENTS 256
-    GameEvent    mapEvents[MAX_MAP_EVENTS];
-    uint16_t     mapEventCount;
-
-    /* Previous pill/base state for change detection */
-    PillSnapshot prevPills[MAX_SNAPSHOT_PILLS];
-    BaseSnapshot prevBases[MAX_SNAPSHOT_BASES];
-    uint8_t      prevPillCount;
-    uint8_t      prevBaseCount;
-
-    /* Full state sync tracking */
-    uint32_t     lastFullSyncTick;
-
-    /* Bot configuration — cached from CLI args for lobby bot creation */
-    char         botBrainPath[260];       /* Brain path for lobby bot creation */
-    aiType       botAiType;               /* AI advantage level for bots */
-
-    /* WBN registration — cached from CLI args for re-registration between rounds */
-    bool         hasPassword;             /* Server has a password set */
-
-    /* WBN team balance proposal */
-    BalanceProposal balanceProposal;
-
-    bool mapSkipVotes[MAX_TANKS]; /* per-slot map skip vote */
-
-    /* Map directory rotation — validated map file paths for random selection */
-    char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
-    int          mapDirCount;             /* Number of valid maps in the array */
-
-    /* Random map generation (for -randommap mode) */
-    bool         randomMapEnabled;       /* true when using -randommap */
-    MapGenConfig randomMapConfig;        /* last used config */
-    bool         randomMapFixedSeed;     /* true = same map every round */
-
-    /* Server message configuration (was servermessages.c globals) */
-    bool         isServerQuiet;
-    char         serverMessageLogFile[FILENAME_MAX];
-    bool         serverMessageUseLogFile;
-
-    /* Log recording configuration (set from CLI args, used by serverSimStartGame) */
-    bool         wantLogging;
-    char         userLogFileName[512];
-
-    /* In-process control event subscribers (bot ClientSims, SP humanSim). */
-    ControlSubscriber subscribers[MAX_TANKS + 1];
-    uint16_t          subscriberGen[MAX_TANKS + 1];
-    int               numSubscribers;
-    bool              publishing;
-} ServerSim;
+typedef struct ServerSim ServerSim;
 
 /*********************************************************
  *NAME:          serverSimCreate
@@ -489,6 +373,33 @@ void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes);
  *  truncating as needed. NULL or empty name clears it.
  *********************************************************/
 void serverSimSetMapName(ServerSim *sim, const char *name);
+
+/*********************************************************
+ *NAME:          serverSimSetMessageLogFile
+ *PURPOSE:
+ *  Sets the file path used by server-message logging and
+ *  enables file-based logging. Truncates the path to fit
+ *  the internal buffer; always null-terminates. Passing
+ *  NULL or empty disables file-based logging and clears
+ *  the path.
+ *
+ *ARGUMENTS:
+ *  sim  - Pointer to the ServerSim
+ *  path - File path, or NULL/empty to disable
+ *********************************************************/
+void serverSimSetMessageLogFile(ServerSim *sim, const char *path);
+
+/*********************************************************
+ *NAME:          serverSimSetQuiet
+ *PURPOSE:
+ *  Sets the server's quiet flag. When true, non-assistant
+ *  messages and console output are suppressed.
+ *
+ *ARGUMENTS:
+ *  sim   - Pointer to the ServerSim
+ *  quiet - true = suppress messages, false = print
+ *********************************************************/
+void serverSimSetQuiet(ServerSim *sim, bool quiet);
 
 /*********************************************************
  *NAME:          serverSimSetQuitOnWin

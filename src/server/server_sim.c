@@ -1609,6 +1609,22 @@ void serverSimSetMapName(ServerSim *sim, const char *name) {
     sim->mapName[MAP_STR_SIZE - 1] = '\0';
 }
 
+void serverSimSetMessageLogFile(ServerSim *sim, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        sim->serverMessageLogFile[0] = '\0';
+        sim->serverMessageUseLogFile = FALSE;
+        return;
+    }
+    strncpy(sim->serverMessageLogFile, path,
+            sizeof(sim->serverMessageLogFile) - 1);
+    sim->serverMessageLogFile[sizeof(sim->serverMessageLogFile) - 1] = '\0';
+    sim->serverMessageUseLogFile = TRUE;
+}
+
+void serverSimSetQuiet(ServerSim *sim, bool quiet) {
+    sim->isServerQuiet = quiet;
+}
+
 void serverSimSetQuitOnWin(ServerSim *sim, bool enabled) {
     sim->quitOnWin = enabled;
 }
