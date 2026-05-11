@@ -773,14 +773,20 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             char addId[24];
             SDL_snprintf(addId, sizeof(addId), "\xF0\x9F\xA7\xA0 + Bot##ab%d", teamId);
             if (ImGui::Button(addId, ImVec2(botBtnW, 0))) {
-                /* If this team's pool hasn't been picked yet, pick a
-                 * random one before adding the bot so its name comes
-                 * from a varied source instead of always pool 0. */
+                /* When the first bot is added to a team, randomize
+                 * the pool so the name comes from a varied source
+                 * instead of always pool 0. Teams 1/2 are pre-marked
+                 * in_use at server init, so gating on in_use never
+                 * fired — gate on "no bots yet" instead. Subsequent
+                 * bots in the same team reuse the chosen pool; the
+                 * host can still override via the dropdown. */
                 int effectivePool = curPool;
-                if (!cs->lobbyTeamInUse[teamId] && lobbyBotPoolCount() > 0) {
+                if (botCount[teamId] == 0 && lobbyBotPoolCount() > 0) {
                     effectivePool = rand() % lobbyBotPoolCount();
+                    const char *nameForMeta = cs->lobbyTeamInUse[teamId]
+                        ? cs->lobbyTeamName[teamId] : defaultName;
                     lobbySendTeamPool(cs, transport, (uint8_t)teamId,
-                                      (uint8_t)effectivePool, defaultName);
+                                      (uint8_t)effectivePool, nameForMeta);
                 }
                 lobbySendAddBot(cs, transport, effectivePool, (uint8_t)teamId);
             }
