@@ -334,6 +334,17 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
+    /* Centre the LGM sprite on its authoritative hit pixel.
+     * LGM_WIDTH=3 and LGM_HEIGHT=4, so the sprite-local centre is
+     * (1.5, 2.0).  Without this offset the sprite top-left lands on
+     * the body coord, putting the head ~2 game-pixels north-west of
+     * where the engine actually thinks the LGM is — which makes
+     * hit/death animations look offset from the sprite. */
+    if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
+      sx -= 1.5f * (float)ctx->zoomFactor;
+      sy -= 2.0f * (float)ctx->zoomFactor;
+    }
+
     {
       int ss = ctx->sheetScale;
       SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
@@ -806,6 +817,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         srcX=LGM2_X; srcY=LGM2_Y; srcW=LGM_WIDTH; srcH=LGM_HEIGHT; break;
       default:
         srcX=LGM_HELICOPTER_X; srcY=LGM_HELICOPTER_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
+    }
+
+    /* Centre the on-foot LGM sprite on its authoritative hit pixel
+     * (l->x, l->y). Sprite-local centre is (LGM_WIDTH/2, LGM_HEIGHT/2)
+     * = (1.5, 2.0) game pixels. Helicopter frame draws full-tile from
+     * its own (0, 0) anchor so no offset there. */
+    if ((*l)->frame == LGM0 || (*l)->frame == LGM1 || (*l)->frame == LGM2) {
+      lx -= 1.5f * (float)zf;
+      ly -= 2.0f * (float)zf;
     }
 
     if (lx + srcW * zf >= originX && lx <= originX + viewW &&
