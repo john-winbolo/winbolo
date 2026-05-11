@@ -826,244 +826,231 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             }
         }
 
-        ImGui::Separator();
+        /* Member rows — proper ImGui Table.
+         *
+         * BordersInnerH gives us the inter-row dividers natively
+         * (one between each row, none above the first / below the
+         * last). RowBg + TableSetBgColor lets us paint the "you"
+         * row a darker tint without manually computing rectangles.
+         * SizingStretchProp makes the name column absorb leftover
+         * space while the icon columns stay fixed.
+         *
+         * Column layout: [tank | name+icons | ping | ready | X]. */
+        SDL_Renderer *r = sdl3DrawGetRenderer();
+        uint8_t myTeam = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
+                         ? cs->lobbySlots[myPlayerNum].teamNumber : 0;
+        char tableId[32];
+        SDL_snprintf(tableId, sizeof(tableId), "##members%d", teamId);
+        ImGuiTableFlags tableFlags = ImGuiTableFlags_BordersInnerH
+                                   | ImGuiTableFlags_RowBg
+                                   | ImGuiTableFlags_SizingStretchProp
+                                   | ImGuiTableFlags_PadOuterX
+                                   /* NoClip so the expanded bot's
+                                    * AiConfig form (rendered in col 0)
+                                    * is allowed to extend visually
+                                    * across the other columns. */
+                                   | ImGuiTableFlags_NoClip;
+        if (ImGui::BeginTable(tableId, 6, tableFlags)) {
+            /* Wide column 0 so the tank icon sits well inside the
+             * team panel (not crammed against the left edge). The
+             * icon is positioned with a leading SetCursorPosX nudge
+             * inside the cell.
+             *
+             * Two stretch columns (name + spacer) with weights 3:1
+             * park the ping/gear column at roughly 3/4 across the
+             * row instead of flush against the ready/X cluster. */
+            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+            ImGui::TableSetupColumn("##name",   ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
+            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
+            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 22.0f * s);
 
-        /* Member rows. */
-        bool firstRow = true;
-        for (int i = 0; i < MAX_TANKS; i++) {
-            if (!cs->lobbySlots[i].connected) continue;
-            if (cs->lobbySlots[i].teamNumber != teamId) continue;
+            /* Drive striping ourselves (per-player, not per-table-row)
+             * so the bot's expanded AiConfig sub-row inherits the same
+             * background as its parent bot row — keeps the odd/even
+             * stripe stable when the gear is toggled. */
+            const ImU32 stripeA = ImGui::GetColorU32(ImGuiCol_TableRowBg);
+            const ImU32 stripeB = ImGui::GetColorU32(ImGuiCol_TableRowBgAlt);
+            int playerIdx = 0;
 
-            /* Thin separator between rows (not before the first row —
-             * the team header already has a Separator() above this loop). */
-            if (!firstRow) ImGui::Separator();
-            firstRow = false;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (!cs->lobbySlots[i].connected) continue;
+                if (cs->lobbySlots[i].teamNumber != teamId) continue;
 
-            bool isMe = (i == myPlayerNum);
-            bool isBot = cs->lobbySlots[i].isBot;
+                bool isMe   = (i == myPlayerNum);
+                bool isBot  = cs->lobbySlots[i].isBot;
+                bool isSelf = isMe;
+                bool isAlly = (myTeam != 0 && cs->lobbySlots[i].teamNumber == myTeam);
 
-            /* "You" row gets a 25%-darker translucent overlay drawn
-             * BEFORE the Indent, so the highlight spans the team
-             * panel's full inner width (touches the left edge) while
-             * the content still sits 50px in.  Effectively padding
-             * rather than margin. */
-            float rowH     = ImGui::GetFrameHeightWithSpacing();
-            float rowFullW = ImGui::GetContentRegionAvail().x;
-            ImVec2 rowFullStart = ImGui::GetCursorScreenPos();
-            if (isMe) {
-                ImU32 darkOverlay = IM_COL32(0, 0, 0, 64);  /* ~25% black */
-                ImGui::GetWindowDrawList()->AddRectFilled(
-                    rowFullStart,
-                    ImVec2(rowFullStart.x + rowFullW, rowFullStart.y + rowH),
-                    darkOverlay, 2.0f);
-            }
+                /* Fix the row's minimum height so widgets that are
+                 * shorter than the tank icon (text, X, etc.) have
+                 * room to center vertically. Tallest item in a row
+                 * is the 18*s tank icon plus a couple of pixels of
+                 * breathing room. */
+                const float rowH    = ImMax(ImGui::GetFrameHeight(), 22.0f * s);
+                const float tankSz  = 18.0f * s;
+                const float closeSz = ImGui::GetFontSize();
+                /* Helper: bias the cursor so the next widget of size
+                 * `h` ends up vertically centered in the current row. */
+                auto centerY = [&](float h) {
+                    float yOff = (rowH - h) * 0.5f;
+                    if (yOff > 0) {
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + yOff);
+                    }
+                };
 
-            /* Indent each member row 50px past the team panel edge so
-             * the rows visually sit "inside" the team header rather
-             * than directly under it. */
-            ImGui::Indent(50.0f * s);
+                ImGui::TableNextRow(0, rowH);
+                const ImU32 rowStripe = (playerIdx & 1) ? stripeB : stripeA;
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, rowStripe);
+                if (isMe) {
+                    /* Translucent dark tint that highlights the local
+                     * player's row, painted on top of the stripe. */
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1,
+                                           IM_COL32(0, 0, 0, 64));
+                }
+                playerIdx++;
 
-            /* Per-row tank icon — green tank for slots on the local
-             * player's team (allies, including bots), red tank for
-             * slots on a different team (enemies). The check uses
-             * teamNumber, so two players both at team 0 (unassigned)
-             * read as on the same team. Vertically centered against
-             * the row's frame-padded height. */
-            {
-                uint8_t myTeam   = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
-                                   ? cs->lobbySlots[myPlayerNum].teamNumber : 0;
-                uint8_t theirTeam = cs->lobbySlots[i].teamNumber;
-                bool isSelf  = (i == myPlayerNum);
-                /* Ally iff both sides share the same non-zero team
-                 * number. Two "unassigned" (team 0) players don't
-                 * yet share a team in the game-logic sense, so render
-                 * those as enemies until one picks a team. */
-                bool isAlly  = (myTeam != 0 && theirTeam == myTeam);
-                SDL_Renderer *r  = sdl3DrawGetRenderer();
-                SDL_Texture  *tankTex = nullptr;
-                if (r) {
-                    if (isSelf) {
-                        /* Yourself — the black "self" tank
-                         * (tank_self_04.png) so your row is
-                         * instantly identifiable as you. */
-                        tankTex = getTankSelf04Texture(r);
-                    } else if (isAlly) {
-                        /* Teammates (humans and bots) — green ally
-                         * tank (tank_good_04.png). Falls back to the
-                         * self tank if the good asset is missing. */
-                        tankTex = getTankGood04Texture(r);
-                        if (!tankTex) tankTex = getTankSelf04Texture(r);
+                /* ── Column 0: tank icon ─────────────────────────── */
+                ImGui::TableSetColumnIndex(0);
+                {
+                    SDL_Texture *tankTex = nullptr;
+                    if (r) {
+                        if (isSelf) {
+                            tankTex = getTankSelf04Texture(r);  /* black self */
+                        } else if (isAlly) {
+                            tankTex = getTankGood04Texture(r);  /* green ally */
+                            if (!tankTex) tankTex = getTankSelf04Texture(r);
+                        } else {
+                            tankTex = getTankEvil04Texture(r);  /* red enemy */
+                        }
+                    }
+                    if (tankTex) {
+                        /* Indent the tank inside its cell so it
+                         * doesn't sit flush with the team panel's
+                         * left edge. */
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 28.0f * s);
+                        centerY(tankSz);
+                        ImGui::Image((ImTextureID)tankTex, ImVec2(tankSz, tankSz));
+                    }
+                }
+
+                /* ── Column 1: country flag + platform icons + name ─ */
+                ImGui::TableSetColumnIndex(1);
+                centerY(ImGui::GetTextLineHeight());
+                if (!isBot) {
+                    if (cs->lobbySlots[i].countryCode[0] != '\0') {
+                        SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
+                        if (flagTex) {
+                            ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                            ImGui::SameLine();
+                        }
+                    }
+                    renderPlayerName(NULL,
+                                     cs->lobbySlots[i].clientFlags,
+                                     cs->lobbySlots[i].clientType,
+                                     "", false);
+                    ImGui::AlignTextToFramePadding();
+                    if (isMe) {
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
+                                           "%s (you)", cs->lobbySlots[i].playerName);
                     } else {
-                        tankTex = getTankEvil04Texture(r);
+                        ImGui::Text("%s", cs->lobbySlots[i].playerName);
+                    }
+                } else {
+                    /* Bot row: name only. The configure-wrench lives
+                     * in the next column (col 2 — gear/ping). */
+                    ImGui::PushStyleColor(ImGuiCol_Text,
+                                          wbThemeColor(g_theme->botBadge));
+                    ImGui::Text("%s [bot]", cs->lobbySlots[i].playerName);
+                    ImGui::PopStyleColor();
+                }
+
+                /* ── Column 2: gear (bots) or ping (humans) ──────── */
+                ImGui::TableSetColumnIndex(2);
+                if (isBot) {
+                    if (s_iconSettings) {
+                        float iconSize = ImGui::GetFontSize();
+                        centerY(iconSize);
+                        ImVec2 iconStart = ImGui::GetCursorScreenPos();
+                        char btnId[24];
+                        SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
+                        bool clicked = ImGui::InvisibleButton(btnId,
+                                                              ImVec2(iconSize, iconSize));
+                        ImGui::GetWindowDrawList()->AddImage(
+                            (ImTextureID)s_iconSettings,
+                            iconStart,
+                            ImVec2(iconStart.x + iconSize, iconStart.y + iconSize));
+                        if (clicked) {
+                            s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Configure bot");
+                        }
+                    } else {
+                        centerY(ImGui::GetFrameHeight());
+                        char fallId[24];
+                        SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
+                                     s_expandedBotSlot == i ? "v" : ">", i);
+                        if (ImGui::SmallButton(fallId)) {
+                            s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                        }
+                    }
+                } else {
+                    centerY(ImGui::GetTextLineHeight());
+                    if (cs->lobbySlots[i].pingMs > 0) {
+                        ImVec4 pingColor;
+                        if (cs->lobbySlots[i].pingMs < 50)        pingColor = wbThemeColor(g_theme->statusOnline);
+                        else if (cs->lobbySlots[i].pingMs < 150)  pingColor = wbThemeColor(g_theme->statusHighPing);
+                        else                                       pingColor = wbThemeColor(g_theme->statusDisconnected);
+                        ImGui::TextColored(pingColor, "%dms", (int)cs->lobbySlots[i].pingMs);
                     }
                 }
-                if (tankTex) {
-                    float tankSz = 18.0f * s;
-                    float frameH = ImGui::GetFrameHeight();
-                    /* Center within the frame then nudge 2px lower so
-                     * the tank reads visually aligned with the player
-                     * name (which also got a 2px nudge). */
-                    float yOff   = (frameH - tankSz) * 0.5f + 2.0f * s;
-                    if (yOff < 0) yOff = 0;
-                    ImVec2 cur = ImGui::GetCursorScreenPos();
-                    ImGui::SetCursorScreenPos(ImVec2(cur.x, cur.y + yOff));
-                    ImGui::Image((ImTextureID)tankTex, ImVec2(tankSz, tankSz));
-                    /* Restore Y so siblings on this row stay aligned
-                     * to the frame baseline. */
-                    ImGui::SameLine(0.0f, 6.0f * s);
-                    ImVec2 after = ImGui::GetCursorScreenPos();
-                    ImGui::SetCursorScreenPos(ImVec2(after.x, cur.y));
-                }
-            }
 
-            /* Country flag + platform / WBN / Steam icons (humans
-             * only). Order matches the legacy lobby: country first,
-             * then renderPlayerName emits the platform icon (with
-             * supporter tint), the WBN verified globe, and the Steam
-             * badge as needed.  We pass an empty name so it stops at
-             * the badges — the actual name text is rendered below
-             * with its own coloring. */
-            if (!isBot) {
-                ImGui::AlignTextToFramePadding();
-                if (cs->lobbySlots[i].countryCode[0] != '\0') {
-                    SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
-                    if (flagTex) {
-                        ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-                        ImGui::SameLine();
-                    }
+                /* ── Column 4: ready / not ready ─────────────────── */
+                ImGui::TableSetColumnIndex(4);
+                centerY(ImGui::GetTextLineHeight());
+                if (cs->lobbySlots[i].ready) {
+                    ImGui::TextColored(wbThemeColor(g_theme->statusReady), "[ready]");
+                } else {
+                    ImGui::TextDisabled("[not ready]");
                 }
-                renderPlayerName(NULL,
-                                 cs->lobbySlots[i].clientFlags,
-                                 cs->lobbySlots[i].clientType,
-                                 "", false);
-            }
 
-            /* Bot rows: small chrome-less settings.svg icon button on
-             * the left that toggles the AiConfig sub-row, then the
-             * tinted bot name as plain text.  Human rows: tinted name
-             * text only.  All paths use AlignTextToFramePadding so
-             * the label baseline matches the row height. */
-            if (isBot) {
-                /* Bot name first, then the settings (wrench) icon
-                 * to its right.  The icon is a chrome-less
-                 * InvisibleButton over an AddImage so it shows the
-                 * SVG pixels with no border / hover-fill / padding. */
-                ImGui::AlignTextToFramePadding();
-                /* Nudge the text 2px lower to optically center inside
-                 * the row's frame-padded height. */
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * s);
-                ImGui::PushStyleColor(ImGuiCol_Text,
-                                      wbThemeColor(g_theme->botBadge));
-                ImGui::Text("%s [bot]", cs->lobbySlots[i].playerName);
-                ImGui::PopStyleColor();
-                ImGui::SameLine(0.0f, 6.0f * s);
-                if (s_iconSettings) {
-                    float iconSize = ImGui::GetFontSize();
-                    /* Vertically center the icon within the row's
-                     * frame-padded height, then nudge 2px up so it
-                     * sits a touch higher than dead-center. */
-                    float frameH = ImGui::GetFrameHeight();
-                    float yOff = (frameH - iconSize) * 0.5f - 2.0f * s;
-                    ImVec2 iconStart = ImGui::GetCursorScreenPos();
-                    iconStart.y += yOff;
-                    ImGui::SetCursorScreenPos(iconStart);
-                    char btnId[24];
-                    SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
-                    bool clicked = ImGui::InvisibleButton(btnId,
-                                                          ImVec2(iconSize, iconSize));
-                    ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)s_iconSettings,
-                        iconStart,
-                        ImVec2(iconStart.x + iconSize, iconStart.y + iconSize));
-                    if (clicked) {
-                        s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                /* ── Column 5: remove bot X (CloseButton) ────────── */
+                ImGui::TableSetColumnIndex(5);
+                if (isBot && effectiveHost) {
+                    centerY(closeSz);
+                    ImVec2 closePos = ImGui::GetCursorScreenPos();
+                    char rbStr[24];
+                    SDL_snprintf(rbStr, sizeof(rbStr), "##rb%d", i);
+                    ImGuiID rbId = ImGui::GetID(rbStr);
+                    if (ImGui::CloseButton(rbId, closePos)) {
+                        lobbySendRemoveBot(cs, transport, (uint8_t)i);
+                        if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Configure bot");
-                    }
-                } else {
-                    /* Icon failed to load — fall back to a caret. */
-                    char fallId[24];
-                    SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
-                                 s_expandedBotSlot == i ? "v" : ">", i);
-                    if (ImGui::SmallButton(fallId)) {
-                        s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                        ImGui::SetTooltip("Remove bot");
                     }
                 }
-            } else {
-                ImGui::AlignTextToFramePadding();
-                /* Same 2px optical-center nudge as the bot rows. */
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * s);
-                if (isMe) {
-                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s (you)",
-                        cs->lobbySlots[i].playerName);
-                } else {
-                    ImGui::Text("%s", cs->lobbySlots[i].playerName);
+
+                /* AiConfig sub-row when the wrench is expanded.
+                 * Rendered as its own table row, but we only put
+                 * content in column 0 — the form's widgets render
+                 * past the column boundary and visually span the
+                 * full team panel. The horizontal border below this
+                 * row groups the form with the bot above it via the
+                 * normal inter-row line. */
+                if (isBot && s_expandedBotSlot == i && effectiveHost) {
+                    ImGui::TableNextRow();
+                    /* Inherit the parent bot row's stripe color so the
+                     * sub-row reads as a continuation of that row and
+                     * doesn't disturb the odd/even pattern. */
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, rowStripe);
+                    ImGui::TableSetColumnIndex(0);
+                    renderBotAiConfig(cs, transport, i, teamId, s);
                 }
             }
-
-            /* Ping (humans). */
-            if (!isBot && cs->lobbySlots[i].pingMs > 0) {
-                ImGui::SameLine(0.0f, 12.0f * s);
-                ImVec4 pingColor;
-                if (cs->lobbySlots[i].pingMs < 50)        pingColor = wbThemeColor(g_theme->statusOnline);
-                else if (cs->lobbySlots[i].pingMs < 150)  pingColor = wbThemeColor(g_theme->statusHighPing);
-                else                                       pingColor = wbThemeColor(g_theme->statusDisconnected);
-                ImGui::TextColored(pingColor, "%dms", (int)cs->lobbySlots[i].pingMs);
-            }
-
-            /* Ready status. */
-            ImGui::SameLine(0.0f, 12.0f * s);
-            if (cs->lobbySlots[i].ready) {
-                ImGui::TextColored(wbThemeColor(g_theme->statusReady), "[ready]");
-            } else {
-                ImGui::TextDisabled("[not ready]");
-            }
-
-            /* Bot remove button — host only. Uses ImGui::CloseButton
-             * (imgui_internal.h) for the same proper × glyph the
-             * team-clear button renders, pinned to the row's right
-             * edge so per-row X's line up with the team-clear X.
-             *
-             * Important: we have to SameLine + advance the cursor
-             * with SetCursorPosX rather than passing an absolute
-             * screen pos directly to CloseButton — the absolute-pos
-             * path runs ItemAdd outside the row's flow and the first
-             * such item per BeginChild gets clipped by the scrollable
-             * area's initial cull, producing the "first bot has no X
-             * but later bots do" symptom. */
-            if (isBot && effectiveHost) {
-                ImGui::SameLine();
-                float closeSz = ImGui::GetFontSize();
-                float rightX  = ImGui::GetContentRegionMax().x - closeSz - 4.0f * s;
-                if (rightX < ImGui::GetCursorPosX()) rightX = ImGui::GetCursorPosX();
-                ImGui::SetCursorPosX(rightX);
-                ImVec2 closePos = ImGui::GetCursorScreenPos();
-                closePos.y += (ImGui::GetFrameHeight() - closeSz) * 0.5f;
-                char rbStr[24];
-                SDL_snprintf(rbStr, sizeof(rbStr), "##rb%d", i);
-                ImGuiID rbId = ImGui::GetID(rbStr);
-                if (ImGui::CloseButton(rbId, closePos)) {
-                    lobbySendRemoveBot(cs, transport, (uint8_t)i);
-                    if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Remove bot");
-                }
-            }
-
-            /* Expanded AiConfig sub-row for the clicked bot — drop
-             * the row's 50px indent so the edit form spans the team
-             * panel's full width.  Restored before the iteration
-             * ends so subsequent sibling rows still align. */
-            if (isBot && s_expandedBotSlot == i && effectiveHost) {
-                ImGui::Unindent(50.0f * s);
-                renderBotAiConfig(cs, transport, i, teamId, s);
-                ImGui::Indent(50.0f * s);
-            }
-
-            /* Pair the per-row Indent above. */
-            ImGui::Unindent(50.0f * s);
+            ImGui::EndTable();
         }
 
         /* "+ Bot" button moved to the team header bar (right-aligned
@@ -2173,7 +2160,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             float availContentH = ImGui::GetContentRegionAvail().y
                            - ImGui::GetTextLineHeightWithSpacing() * 8.4f  /* chat + buttons */
                            - 20.0f * s - padB;
-            float mapPanelW = (MAP_PREVIEW_SIZE + 20) * s;
+            /* Map panel: scales to ~30% of available width on larger
+             * screens, but never shrinks below the natural preview
+             * size (so on small windows the map stays readable and
+             * the teams take whatever extra room there is). */
+            float mapPanelW = ImMax((MAP_PREVIEW_SIZE + 20) * s,
+                                    availW * 0.30f);
             float playerPanelW = availW - mapPanelW - 8.0f;
             float panelH = availContentH;
 
