@@ -2945,6 +2945,7 @@ SubscriberHandle serverSimRegisterSubscriber(
         return SUBSCRIBER_HANDLE_INVALID;
     }
 
+    assert(sim->subscriberGen[slot] < UINT16_MAX);
     sim->subscriberGen[slot]++;
     sim->subscribers[slot].deliver    = deliver;
     sim->subscribers[slot].ctx        = ctx;

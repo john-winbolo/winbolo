@@ -2613,7 +2613,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     /* If all-ready check triggered countdown, broadcast it */
                     if (sim->state == serverStateCountdown) {
                         logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
-                        uint8_t secs = (uint8_t)(sim->countdownTicks / 50);
+                        uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
                         transportUdpServerBroadcastCountdown(sim, secs);
                     }
                 } else if (sim->state == serverStateCountdown && !ready) {

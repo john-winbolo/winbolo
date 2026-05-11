@@ -38,6 +38,12 @@ struct ControlEvent;
 typedef int SubscriberHandle;
 #define SUBSCRIBER_HANDLE_INVALID (-1)
 
+/* Threading: serverSimPublishControl, serverSimRegisterSubscriber, and
+ * serverSimUnregisterSubscriber are not synchronized. All callers must run on
+ * the same thread (today: the main game-tick thread, which drives both
+ * transport_local and transport_udp_*). If a subscriber's deliver callback ever
+ * runs on a worker thread, or publish is called from outside the tick thread,
+ * add a mutex. */
 typedef struct {
     void (*deliver)(void *ctx, const struct ControlEvent *evt);
     void *ctx;
