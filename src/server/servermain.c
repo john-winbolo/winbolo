@@ -495,6 +495,7 @@ void printArgs() {
   fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
   fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
+  fprintf(stderr, "-seed <N>     - Seed the RNG with N for reproducible runs.\n");
   fprintf(stderr, "-log          - Create game log file (filename optional)\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
@@ -786,6 +787,12 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 
 int main(int argc, char **argv) {
   srand((unsigned int)(time(NULL) ^ getpid()));
+  {
+    int seedArg = findArg(argc, argv, "seed");
+    if (seedArg != ARG_NOT_FOUND) {
+      srand((unsigned int)strtoul((char *)argv[seedArg], NULL, 0));
+    }
+  }
   sentryInit("WinBoloDS", argc, argv);
   atexit(sentryClose);
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
