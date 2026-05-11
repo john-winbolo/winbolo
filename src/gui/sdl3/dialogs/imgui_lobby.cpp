@@ -166,7 +166,34 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
         serverSimSyncLobbyToClient(sim, cs);
         return;
     }
-    if (transport) transportUdpClientSendAddBot(transport);
+    if (transport) {
+        /* Tell the server which brain to assign. Pick the first entry
+         * in the catalogue — the host can change it later per-bot via
+         * the AiConfig "Bot Code" combo (PACKET_LOBBY_SET_BOT_BRAIN).
+         * Empty string lets the server use its own default. */
+        const char *brainPath = "";
+        if (cs && cs->lobbyBrainList.count > 0) {
+            brainPath = cs->lobbyBrainList.entries[0].path;
+        }
+        /* Pick the bot's name from the chosen pool right here on the
+         * client — server doesn't know pool contents (see
+         * lobby_bot_pools.h). Empty string falls back to "Bot N". */
+        char botName[32];
+        botName[0] = '\0';
+        if (cs && namingPool >= 0 && namingPool < lobbyBotPoolCount()) {
+            const char *usedNames[MAX_TANKS];
+            int usedCount = 0;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (cs->lobbySlots[i].connected &&
+                    cs->lobbySlots[i].playerName[0]) {
+                    usedNames[usedCount++] = cs->lobbySlots[i].playerName;
+                }
+            }
+            lobbyBotPoolPick(namingPool, usedNames, usedCount,
+                             botName, sizeof(botName));
+        }
+        transportUdpClientSendAddBot(transport, teamNumber, brainPath, botName);
+    }
 }
 
 static void lobbySendRemoveBot(ClientSim *cs, Transport *transport, uint8_t slot) {
@@ -326,8 +353,49 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
         return;
     }
     if (transport) {
+        /* If the client hasn't received the team's actual metadata yet
+         * (e.g. fresh join), fall back to a sensible per-teamId default
+         * color rather than the zero-initialised value, which would
+         * paint every team RED until the server echoed the real one
+         * back. Server is authoritative — TEAM_META_CHG will correct
+         * this on the next round-trip. */
+        uint8_t color = cs->lobbyTeamColor[teamId];
+        if (!cs->lobbyTeamInUse[teamId]) {
+            color = (uint8_t)((teamId - 1) & 7);
+        }
         transportUdpClientSendLobbyTeamMeta(transport, teamId,
-            cs->lobbyTeamColor[teamId], namingPool, teamName);
+            color, namingPool, teamName);
+
+        /* The server can't rename existing bots when the pool changes
+         * because the per-pool name table lives only on the client
+         * (lobby_bot_pools.h). Fan out one BOT_CONFIG per bot on this
+         * team with a name drawn from the newly-selected pool — same
+         * behaviour as the SP branch above, just over the wire. */
+        const char *usedNames[MAX_TANKS];
+        int usedCount = 0;
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (cs->lobbySlots[i].connected &&
+                cs->lobbySlots[i].playerName[0]) {
+                usedNames[usedCount++] = cs->lobbySlots[i].playerName;
+            }
+        }
+        /* Stash the assigned names locally so subsequent loop
+         * iterations don't pick a name we just handed out. */
+        char assigned[MAX_TANKS][32];
+        for (int slot = 0; slot < MAX_TANKS; slot++) {
+            if (!cs->lobbySlots[slot].connected) continue;
+            if (!cs->lobbySlots[slot].isBot)       continue;
+            if (cs->lobbySlots[slot].teamNumber != teamId) continue;
+            if (slot < MAX_TANKS && s_botNameOverridden[slot]) continue;
+
+            lobbyBotPoolPick(namingPool, usedNames, usedCount,
+                             assigned[slot], sizeof(assigned[slot]));
+            transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+                cs->lobbyBotDifficulty[slot],
+                cs->lobbyBotPersonality[slot],
+                assigned[slot]);
+            usedNames[usedCount++] = assigned[slot];
+        }
     }
 }
 
@@ -767,7 +835,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             const float xBtnW    = 22.0f * s;
             const float labelW   = ImGui::CalcTextSize("Bot Naming:").x;
             const float gap      = 6.0f * s;
-            bool showNaming = botCount[teamId] > 0;
+            /* Bots are only addable when the server's AI policy allows
+             * it (lobbyAiType != aiNone) AND the server has at least
+             * one brain on disk to assign. Both fields are mirrored
+             * from the server dynamically, so the button and the
+             * Bot Naming controls disappear / reappear without a
+             * reconnect when -ai policy or brains/ changes. */
+            bool botsAllowed = (cs->lobbyAiType != 0) &&
+                               (cs->lobbyBrainList.count > 0);
+            bool showNaming = botsAllowed && botCount[teamId] > 0;
             int humanCount = memberCount[teamId] - botCount[teamId];
             bool showXBtn   = (teamId >= 3) && (humanCount == 0);
             /* Always reserve the X width so "+ Bot" sits at the same
@@ -776,7 +852,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
              * gap (namingShift) between the dropdown and the Add Bot
              * button so the label + dropdown sit further left and
              * the dropdown has room to be wider. */
-            float groupW = botBtnW + gap + xBtnW
+            float effBotBtnW = botsAllowed ? botBtnW : 0.0f;
+            float effBotGap  = botsAllowed ? gap    : 0.0f;
+            float groupW = effBotBtnW + effBotGap + xBtnW
                          + (showNaming
                             ? labelW + gap + comboW + namingShift
                             : 0);
@@ -811,10 +889,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
              * WindowDrawList. This lets us shift the text right by
              * a precise pixel offset so the centered label clears
              * the overlaid bot-cpu glyph cleanly. */
-            char addId[24];
-            SDL_snprintf(addId, sizeof(addId), "##ab%d", teamId);
+            bool addBtnClicked = false;
             ImVec2 addBtnPos = ImGui::GetCursorScreenPos();
-            bool addBtnClicked = ImGui::Button(addId, ImVec2(botBtnW, 0));
+            if (botsAllowed) {
+                char addId[24];
+                SDL_snprintf(addId, sizeof(addId), "##ab%d", teamId);
+                addBtnClicked = ImGui::Button(addId, ImVec2(botBtnW, 0));
             {
                 float btnH = ImGui::GetFrameHeight();
                 ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -849,6 +929,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     iconPos,
                     ImVec2(iconPos.x + imgSz, iconPos.y + imgSz));
             }
+            }  /* end botsAllowed AddBot block */
             if (addBtnClicked) {
                 /* When the first bot is added to a team, randomize
                  * the pool so the name comes from a varied source
@@ -876,7 +957,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
              * widget ImGui uses for window-close buttons. Renders a
              * proper crossed line "×" with hover + active styling,
              * sized to the current font. */
-            ImGui::SameLine(0.0f, gap);
+            if (botsAllowed) {
+                ImGui::SameLine(0.0f, gap);
+            }
             ImGui::AlignTextToFramePadding();
             if (showXBtn) {
                 char rmStrId[24];
@@ -1365,7 +1448,24 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     const BrainList *bl = &cs->lobbyBrainList;
     int pendingBrainPick = -1;
 
+    /* Capture the form's top Y once and anchor every group there
+     * explicitly via SetCursorScreenPos. Relying on SameLine alone
+     * was producing a few-pixel drift (Name appearing higher than
+     * Bot Code / Done) — probably because the Name group's
+     * frame-bordered InputText shifts the group's "start Y" by
+     * the FrameBorderSize when ItemAdd commits it. An explicit
+     * anchor sidesteps that entirely. */
+    ImVec2 formAnchor = ImGui::GetCursorScreenPos();
+    /* Nudge all three sub-groups 2px down (purely cosmetic — the
+     * AiConfig content felt visually crowded against the bot row
+     * above). The end-of-function SetCursorScreenPos subtracts the
+     * same nudge so the parent container's total height is
+     * unchanged. */
+    const float kFormNudgeY = 2.0f;
+    formAnchor.y += kFormNudgeY;
+
     /* Name group. */
+    ImGui::SetCursorScreenPos(formAnchor);
     ImGui::BeginGroup();
     ImGui::TextDisabled("Name (override)");
     ImGui::SetNextItemWidth(180.0f * s);
@@ -1379,10 +1479,19 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         ImGui::SetTooltip("Pick a fresh random name from the team's pool.");
     }
     ImGui::EndGroup();
+    float nameGroupRightX = ImGui::GetItemRectMax().x;
+    float nameGroupBottomY = ImGui::GetItemRectMax().y;
 
-    /* Bot Code group, right of the Name group. */
-    if (bl->count > 0) {
-        ImGui::SameLine(0.0f, 24.0f * s);
+    /* Bot Code group, right of the Name group at the same anchor Y. */
+    float botCodeStartX = 0.0f;
+    float botCodeStartY = 0.0f;
+    bool  botCodeShown  = (bl->count > 0);
+    const float comboW  = 240.0f * s;
+    if (botCodeShown) {
+        float bcX = nameGroupRightX + 24.0f * s;
+        ImGui::SetCursorScreenPos(ImVec2(bcX, formAnchor.y));
+        botCodeStartX = bcX;
+        botCodeStartY = formAnchor.y;
         ImGui::BeginGroup();
         ImGui::TextDisabled("Bot Code");
         const char *curPath = cs->lobbyBotBrain[slot];
@@ -1399,7 +1508,7 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         } else {
             SDL_snprintf(preview, sizeof(preview), "(none)");
         }
-        ImGui::SetNextItemWidth(240.0f * s);
+        ImGui::SetNextItemWidth(comboW);
         if (ImGui::BeginCombo("##botbrain", preview)) {
             for (int b = 0; b < bl->count; b++) {
                 const BrainListEntry *e = &bl->entries[b];
@@ -1482,10 +1591,44 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         }
     }
 
-    /* ── Close button ─────────────────────────────────────────── */
-    if (ImGui::Button("Done")) {
-        s_expandedBotSlot = -1;
+    /* ── Done group — anchored to formAnchor.y so all three sub-
+     * groups (Name / Bot Code / Done) sit on the same top Y. The
+     * "Hello" spacer above the button is a temporary debug label;
+     * change back to a blank string once alignment is confirmed. */
+    {
+        const char *doneLbl = "Done";
+        float doneW = ImGui::CalcTextSize(doneLbl).x
+                    + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImVec2 winPos  = ImGui::GetWindowPos();
+        float winRight = winPos.x + ImGui::GetWindowSize().x;
+        float padR     = 20.0f * s;
+        float targetScreenX = winRight - doneW - padR;
+        ImGui::SetCursorScreenPos(ImVec2(targetScreenX, formAnchor.y));
+        ImGui::BeginGroup();
+        /* Invisible spacer that advances the cursor exactly the
+         * same amount as the TextDisabled("Bot Code") above its
+         * combo — using TextDisabled(" ") keeps the metrics
+         * identical so the Done button below stays vertically
+         * aligned with the combo. */
+        ImGui::TextDisabled(" ");
+        ImGui::SetCursorScreenPos(ImVec2(targetScreenX,
+                                         ImGui::GetCursorScreenPos().y));
+        if (ImGui::Button(doneLbl)) {
+            s_expandedBotSlot = -1;
+        }
+        ImGui::EndGroup();
     }
+
+    /* Restore the cursor below all three groups so any subsequent
+     * widgets in the AiConfig sub-row land underneath. Subtract
+     * kFormNudgeY from the final Y so the 2px we shifted the
+     * contents down doesn't grow the parent container. */
+    float bottomY = nameGroupBottomY;
+    float curBotBottom = ImGui::GetItemRectMax().y;
+    if (curBotBottom > bottomY) bottomY = curBotBottom;
+    ImGui::SetCursorScreenPos(
+        ImVec2(formAnchor.x,
+               bottomY - kFormNudgeY + ImGui::GetStyle().ItemSpacing.y));
 
     ImGui::PopID();
     ImGui::Spacing();
@@ -1732,10 +1875,10 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
     }
     ImGui::NextColumn();
 
-    /* ── AI Computer Players ─────────────────────────────────── */
+    /* ── Computer Players ────────────────────────────────────── */
     bool aiLocked = (cs->lobbyServerLocks & 0x02) != 0;  /* LOBBY_LOCK_AI_POLICY */
     {
-        ImGui::Text("AI Computer Players");
+        ImGui::Text("Computer Players");
         if (aiLocked) renderLockBadge();
         bool disable = !effectiveHost || aiLocked;
         if (disable) ImGui::BeginDisabled();

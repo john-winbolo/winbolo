@@ -248,7 +248,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 /* Lobby packets — Client -> Server */
 #define PACKET_LOBBY_TEAM_SET    130  /* { playerNum, teamNumber } */
 #define PACKET_LOBBY_READY       131  /* { playerNum, ready } */
-#define PACKET_LOBBY_ADD_BOT     132  /* { brainPath } — request server add a bot */
+#define PACKET_LOBBY_ADD_BOT     132  /* { teamId 1, pathLen 1, path N,
+                                        *   nameLen 1, name M } —
+                                        * teamId=0 lets server pick;
+                                        * empty path = server default brain;
+                                        * empty name = server falls back to
+                                        *              "Bot <slot>" */
 #define PACKET_LOBBY_REMOVE_BOT  133  /* { playerNum } — request server remove a bot */
 
 /* Lobby packets — Server -> Client */
