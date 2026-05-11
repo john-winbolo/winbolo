@@ -1688,20 +1688,26 @@ static void calcMapBounds(BrainTestApp *app) {
     BYTE np = pillsGetNumPills(&gs->pb);
     for (BYTE i = 1; i <= np; i++) {
         pillbox p; pillsGetPill(&gs->pb, &p, i);
-        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
     }
     BYTE nb = basesGetNumBases(&gs->bs);
     for (BYTE i = 1; i <= nb; i++) {
         base b; basesGetBase(&gs->bs, &b, i);
-        if (b.x < minX) minX = b.x; if (b.x > maxX) maxX = b.x;
-        if (b.y < minY) minY = b.y; if (b.y > maxY) maxY = b.y;
+        if (b.x < minX) minX = b.x;
+        if (b.x > maxX) maxX = b.x;
+        if (b.y < minY) minY = b.y;
+        if (b.y > maxY) maxY = b.y;
     }
     BYTE ns = startsGetNumStarts(&gs->ss);
     for (BYTE i = 1; i <= ns; i++) {
         start st; startsGetStartStruct(&gs->ss, &st, i);
-        if (st.x < minX) minX = st.x; if (st.x > maxX) maxX = st.x;
-        if (st.y < minY) minY = st.y; if (st.y > maxY) maxY = st.y;
+        if (st.x < minX) minX = st.x;
+        if (st.x > maxX) maxX = st.x;
+        if (st.y < minY) minY = st.y;
+        if (st.y > maxY) maxY = st.y;
     }
 
     int pad = 5;
