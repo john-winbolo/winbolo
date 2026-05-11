@@ -1276,16 +1276,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_LOBBY_MAP_CHANGE:
+    case PACKET_LOBBY_MAP_CHANGE: {
         /* [header 8] – server loaded a new map; reset to re-download */
-        c->clientSim->mapDownloadComplete = false;
+        ControlEvent evt = { .type = CTRL_LOBBY_MAP_CHANGE };
+        clientSimApplyControl(c->clientSim, &evt);
         c->joinState = UDP_CLIENT_JOINING;
         c->joinAttempts = 0;
         c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
-        /* Votes reset server-side on map change */
-        memset(c->clientSim->mapSkipVotes, 0, sizeof(c->clientSim->mapSkipVotes));
-        c->clientSim->mapSkipMyVote = false;
         break;
+    }
 
     case PACKET_BALANCE_PROPOSAL:
         /* [header 8] [teamForSlot × 16] */
