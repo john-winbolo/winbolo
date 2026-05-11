@@ -485,10 +485,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
 
     /* WASM single-player: no lobby, run immediately */
-    wasmServerSim->lobbyEnabled = false;
+    serverSimSetLobbyEnabled(wasmServerSim, false);
     serverSimStartGame(wasmServerSim);
     serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
-    wasmServerSim->sim.viewPlayer = 0;
+    serverSimGetGameSim(wasmServerSim)->viewPlayer = 0;
     wasmTransport = transportLocalCreate(wasmServerSim, 0);
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
@@ -581,10 +581,11 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   if (wasmTransportActive) {
     if (wasmServerSim != NULL) {
       /* Local transport: free server tanks, then local transport */
+      GameSim *gs = serverSimGetGameSim(wasmServerSim);
       BYTE i;
       for (i = 0; i < MAX_TANKS; i++) {
-        if (wasmServerSim->sim.tanks[i] != NULL) {
-          tankDestroy(&wasmServerSim->sim, &wasmServerSim->sim.tanks[i]);
+        if (gs->tanks[i] != NULL) {
+          tankDestroy(gs, &gs->tanks[i]);
         }
       }
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
