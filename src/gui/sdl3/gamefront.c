@@ -1101,7 +1101,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         if (simOk) {
           /* Single-player: no lobby, run immediately */
           spServerSim->lobbyEnabled = false;
-          spServerSim->state = serverStateRunning;
+          serverSimStartGame(spServerSim);
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
           spServerSim->sim.viewPlayer = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
