@@ -753,4 +753,58 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, struct ControlEvent *evt);
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
+/*********************************************************
+ * Read accessors.
+ *
+ * One per externally-read ServerSim field. Callers outside
+ * src/server/<*.c> use these instead of touching fields
+ * directly. No mutator versions here — writes go through
+ * the public mutator API (serverSimAddBot / SetTeam /
+ * SetReady / StartGame / AddPlayer / RemovePlayer / ...).
+ *********************************************************/
+
+/* Scalar (bool/enum) accessors */
+bool          serverSimIsLobbyEnabled(const ServerSim *sim);
+bool          serverSimHasPassword(const ServerSim *sim);
+bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
+bool          serverSimIsQuiet(const ServerSim *sim);
+bool          serverSimGetServerMessageUseLogFile(const ServerSim *sim);
+ServerState   serverSimGetState(const ServerSim *sim);
+aiType        serverSimGetBotAiType(const ServerSim *sim);
+
+/* Scalar (integer) accessors */
+uint32_t       serverSimGetTick(const ServerSim *sim);
+uint32_t       serverSimGetTimeCreated(const ServerSim *sim);
+int32_t        serverSimGetStartDelay(const ServerSim *sim);
+int32_t        serverSimGetGameLength(const ServerSim *sim);
+int32_t        serverSimGetCountdownTicks(const ServerSim *sim);
+unsigned short serverSimGetServerPort(const ServerSim *sim);
+int            serverSimGetMapDirCount(const ServerSim *sim);
+uint8_t        serverSimGetEventCount(const ServerSim *sim);
+uint16_t       serverSimGetMapEventCount(const ServerSim *sim);
+
+/* String (char[]) accessors */
+const char *serverSimGetMapName(const ServerSim *sim);
+const char *serverSimGetBotBrainPath(const ServerSim *sim);
+const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
+
+/* Indexed-array accessors (bounds-checked; out-of-range
+ * returns NULL for pointer types, false/0 for scalars). */
+const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
+bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
+uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
+bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
+
+/* Array-pointer accessors (return pointer to backing storage). */
+char *const     *serverSimGetMapDirFiles(const ServerSim *sim);
+const GameEvent *serverSimGetEvents(const ServerSim *sim);
+const GameEvent *serverSimGetMapEvents(const ServerSim *sim);
+
+/* Struct-pointer accessors. */
+const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim);
+
+/* Cross-struct accessor — returns the embedded GameSim. NOT
+ * const-qualified: callers of GameSim mutate it freely. */
+GameSim *serverSimGetGameSim(ServerSim *sim);
+
 #endif /* SERVER_SIM_H */
