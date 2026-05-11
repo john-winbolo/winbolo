@@ -50,6 +50,7 @@
 #include "../bolo/treegrow.h"
 #include "../bolo/gametype.h"
 #include "../bolo/players.h"
+#include "../bolo/client_sim.h"
 #include "../bolo/log.h"
 #include "../bolo/util.h"
 #include "../bolo/input_packet.h"
@@ -2453,6 +2454,67 @@ void serverSimStartGame(ServerSim *sim) {
         }
     }
 #endif
+}
+
+/* Single-player path: copy server-side lobby state into the local
+ * ClientSim, replacing the PACKET_LOBBY_STATE round-trip used in
+ * multiplayer. The wire-protocol shape of LOBBY_STATE (see
+ * transport_udp_server.c serverBuildLobbyStatePayload + the matching
+ * decoder in transport_udp_client.c) is mirrored here field-for-field
+ * so the lobby UI sees the same data either way.
+ *
+ * UDP-specific per-slot fields (pingMs, countryCode, clientType,
+ * clientFlags) come from the server's plyrs accessors when populated
+ * and zero out otherwise — single-player has no network presence to
+ * report. Player names come from the players struct (set up during
+ * playersSetSelf for slot 0 and botManagerAddBot for bot slots). */
+void serverSimSyncLobbyToClient(ServerSim *sim, struct ClientSim *cs) {
+    BYTE i;
+    if (!sim || !cs) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        ClientLobbySlot *dst = &cs->lobbySlots[i];
+        bool connected = sim->playerConnected[i];
+        memset(dst, 0, sizeof(*dst));
+        dst->connected = connected;
+        if (!connected) continue;
+        playersGetPlayerName(&sim->sim.plyrs, i, dst->playerName, FALSE);
+        dst->teamNumber  = sim->lobbyPlayers[i].teamNumber;
+        dst->ready       = sim->lobbyPlayers[i].ready;
+        dst->isBot       = sim->lobbyPlayers[i].isBot;
+        dst->pingMs      = sim->playerPing[i];
+        playersGetCountryCode(&sim->sim.plyrs, i, dst->countryCode);
+        dst->clientType  = playersGetClientType(&sim->sim.plyrs, i);
+        dst->clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    }
+    /* Game-settings tail (mirrors LOBBY_STATE settings block). */
+    cs->lobbyGameType    = gameTypeGet(&sim->sim.game);
+    cs->lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
+    cs->lobbyAiType      = (uint8_t)sim->botAiType;
+    cs->lobbyTimeLimit   = sim->gameLength;
+    cs->lobbyPillCount   = pillsGetNumPills(&sim->sim.pb);
+    cs->lobbyBaseCount   = basesGetNumBases(&sim->sim.bs);
+    cs->lobbyStartCount  = startsGetNumStarts(&sim->sim.ss);
+    cs->mapSkipAvailable = (sim->mapDirCount > 1 || sim->randomMapEnabled);
+    /* Layout A flags. */
+    cs->lobbyOpenHost            = sim->openHost;
+    cs->lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
+    cs->lobbyServerLocks         = sim->serverLocks;
+    /* Per-team metadata. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        cs->lobbyTeamInUse[i] = sim->teams[i].in_use;
+        cs->lobbyTeamColor[i] = sim->teams[i].color;
+        cs->lobbyTeamPool[i]  = sim->teams[i].namingPool;
+        strncpy(cs->lobbyTeamName[i], sim->teams[i].name,
+                sizeof(cs->lobbyTeamName[i]) - 1);
+        cs->lobbyTeamName[i][sizeof(cs->lobbyTeamName[i]) - 1] = '\0';
+    }
+    /* Per-bot config. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        cs->lobbyBotDifficulty[i]  = sim->botConfigs[i].difficulty;
+        cs->lobbyBotPersonality[i] = sim->botConfigs[i].personality;
+    }
+    strncpy(cs->mapName, sim->mapName, MAP_STR_SIZE - 1);
+    cs->mapName[MAP_STR_SIZE - 1] = '\0';
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {

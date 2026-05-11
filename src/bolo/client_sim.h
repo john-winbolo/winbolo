@@ -116,6 +116,12 @@ struct ClientSim {
     /* Is this a bot ClientSim? (bot sims must not trigger frontend UI calls) */
     bool        isBot;
 
+    /* Single-player session — the local spServerSim runs in-process via
+     * transport_local. Lobby UI hides multiplayer-only controls (Allow
+     * new players / Disallow once started) and routes setting changes
+     * directly to the server instead of through the UDP packet path. */
+    bool        isSinglePlayer;
+
     /* Brain state (per-instance, moved from static globals in client_sim.c) */
     uint32_t    brainHoldKeys;
     uint32_t    brainTapKeys;

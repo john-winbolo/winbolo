@@ -397,19 +397,31 @@ int main(int argc, char *argv[]) {
 
         SDL_SetWindowSize(sdlWin, targetW, targetH);
 
-        /* Restore saved window position from preferences, but ensure it's on this monitor */
+        /* Restore saved window position from preferences, but only
+         * if it actually lives on the monitor the user is currently
+         * working on (the dialog's display). A saved position on a
+         * different monitor would yank the window away to where the
+         * user wasn't looking — disorienting. In that case fall back
+         * to centering on the current monitor. */
         {
           int savedX, savedY;
           windowGetSavedPosition(&savedX, &savedY);
-          if (savedX >= 0 && savedY >= 0) {
-            /* Clamp position to keep window on the target monitor */
+          int savedCenterX = savedX + targetW / 2;
+          int savedCenterY = savedY + targetH / 2;
+          bool savedIsOnThisMonitor =
+              (savedX >= 0 && savedY >= 0) &&
+              (savedCenterX >= usable.x && savedCenterX < usable.x + usable.w) &&
+              (savedCenterY >= usable.y && savedCenterY < usable.y + usable.h);
+          if (savedIsOnThisMonitor) {
+            /* Clamp inside the monitor in case the saved geometry
+             * sticks off an edge after a resolution change. */
             if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
             if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
             if (savedX < usable.x) savedX = usable.x;
             if (savedY < usable.y) savedY = usable.y;
             SDL_SetWindowPosition(sdlWin, savedX, savedY);
           } else {
-            /* Center on the dialog's monitor */
+            /* Center on the dialog's monitor. */
             int centeredX = usable.x + (usable.w - targetW) / 2;
             int centeredY = usable.y + (usable.h - targetH) / 2;
             SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
@@ -894,8 +906,19 @@ void windowSetCustomSize(int w, int h) {
 
 static SDL_Rect getDefaultDisplayBounds(void) {
     SDL_Rect bounds = {0, 0, 1920, 1080};
-    SDL_DisplayID primary = SDL_GetPrimaryDisplay();
-    if (primary) SDL_GetDisplayUsableBounds(primary, &bounds);
+    /* Prefer the display the user is currently working on — query the
+     * global mouse position and look up its containing display.  This
+     * runs before any WinBolo window exists, so SDL_GetGlobalMouseState
+     * returns the desktop cursor position regardless of focus.  Falls
+     * back to the primary display when the mouse position can't be
+     * resolved (no displays connected, headless, etc). */
+    SDL_DisplayID dispID = 0;
+    float gx = 0.0f, gy = 0.0f;
+    SDL_GetGlobalMouseState(&gx, &gy);
+    SDL_Point p = { (int)gx, (int)gy };
+    dispID = SDL_GetDisplayForPoint(&p);
+    if (!dispID) dispID = SDL_GetPrimaryDisplay();
+    if (dispID) SDL_GetDisplayUsableBounds(dispID, &bounds);
     return bounds;
 }
 

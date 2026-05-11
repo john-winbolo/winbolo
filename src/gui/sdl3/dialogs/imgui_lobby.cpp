@@ -21,11 +21,12 @@
 
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>
+#include <cstdlib>  /* rand() — used to randomise the default naming pool */
 
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_internal.h"  /* ImGui::CloseButton — proper X widget with hit area */
 #include "../../imgui_theme.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -41,10 +42,13 @@ extern "C" {
 #include "../../../bolo/transport.h"
 #include "../../../bolo/transport_udp.h"
 #include "../../../server/server_lifecycle.h"
+#include "../../../server/server_sim.h"
 #include "../../../bolo/bolo_map.h"
 #include "../../../bolo/pillbox.h"
 #include "../../../bolo/bases.h"
 #include "../../../bolo/starts.h"
+#include "../../../bolo/bot_manager.h"
+#include "../../../bolo/players.h"
 #include "../../../bolo/platform_net.h"
 #include "../../../bolo/lobby_bot_pools.h"
 #include "../flags.h"
@@ -62,8 +66,309 @@ extern "C" {
 #define CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 #define MAP_PREVIEW_SIZE 256
 
-static const int DIALOG_W = 900;
-static const int DIALOG_H = 700;
+static const int DIALOG_W = 1024;
+static const int DIALOG_H = 768;
+
+/* Per-slot tracking of whether the bot's name was manually overridden
+ * by the host typing into the name input field.  Cleared when a bot
+ * is added or its name is rerolled (those are pool-driven names);
+ * set when the user types a name in the AiConfig sub-panel.  Used by
+ * the team-naming-pool dropdown to decide which bots to auto-rename
+ * when the pool changes — overridden names stay, pool-driven names
+ * get a fresh pick from the new pool.
+ *
+ * UI-side state only (no server propagation). For multiplayer the
+ * server picks names so this array would never gate anything; for
+ * single-player it's the source of truth. */
+static bool s_botNameOverridden[MAX_TANKS] = {0};
+
+/* ── Single-player vs multiplayer command dispatch ─────────────────
+ * The lobby UI was originally written against the UDP transport — it
+ * sends PACKET_LOBBY_* commands and relies on the server broadcasting
+ * resulting state changes back via PACKET_LOBBY_STATE.  The single-
+ * player path runs the server in-process and has no packet flow, so
+ * commands route directly to the local spServerSim and the result is
+ * mirrored back into the ClientSim via serverSimSyncLobbyToClient.
+ *
+ * Each helper takes both the ClientSim (to detect single-player) and
+ * the Transport pointer (used by the multiplayer path).  When the
+ * Transport is null and we're not single-player, the call is a no-op.
+ */
+static void lobbySendReadyToggle(ClientSim *cs, Transport *transport, bool ready) {
+    if (cs && cs->isSinglePlayer) {
+        /* Single-player: skip the multiplayer ready→countdown
+         * choreography; clicking the Ready button starts the game
+         * straight away.  The Unready direction is meaningless here
+         * (there's nobody to wait on) so we ignore ready=false. */
+        if (ready) {
+            (void)gameFrontStartSinglePlayerGame(cs);
+        }
+        return;
+    }
+    if (transport) {
+        transportUdpClientSendReady(transport, ready);
+    }
+}
+
+/* Add Bot. namingPool < 0 means "use the slot's team pool" (multiplayer
+ * server already picks based on team membership). namingPool >= 0
+ * forces a specific pool — used by per-team header "+ Bot" buttons
+ * which have their own pool dropdown.  teamNumber > 0 assigns the
+ * new bot to that team after creation; teamNumber == 0 leaves it on
+ * whatever default team the server picked.  Single-player honors both
+ * overrides locally; multiplayer currently ignores them (server-side
+ * picks the name and default team — TODO: extend the protocol with a
+ * teamId-aware add-bot packet). */
+static void lobbySendAddBot(ClientSim *cs, Transport *transport,
+                            int namingPool, uint8_t teamNumber) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim) return;
+        if (sim->state != serverStateLobby) return;
+        /* Find first free slot */
+        BYTE slot;
+        for (slot = 1; slot < MAX_TANKS; slot++) {
+            if (!sim->playerConnected[slot]) break;
+        }
+        if (slot >= MAX_TANKS) return;
+        if (sim->botBrainPath[0] == '\0') return;
+
+        /* Pick a name. If a pool override is supplied we use it; else
+         * fall back to "Bot N". Build the used-names list from current
+         * lobby slots so the picker doesn't collide with existing bots. */
+        char botName[32];
+        if (namingPool >= 0 && namingPool < lobbyBotPoolCount()) {
+            const char *usedNames[MAX_TANKS];
+            int usedCount = 0;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (sim->playerConnected[i]) {
+                    usedNames[usedCount++] = cs->lobbySlots[i].playerName;
+                }
+            }
+            lobbyBotPoolPick(namingPool, usedNames, usedCount, botName, sizeof(botName));
+        } else {
+            snprintf(botName, sizeof(botName), "Bot %d", slot);
+        }
+
+        botManagerAddBot(sim, slot, sim->botBrainPath, botName,
+                         (aiType)sim->botAiType,
+                         (gameType)cs->lobbyGameType,
+                         cs->lobbyHiddenMines);
+        if (teamNumber > 0 && teamNumber < MAX_TANKS) {
+            sim->lobbyPlayers[slot].teamNumber = teamNumber;
+        }
+        /* Bot's name came from the pool — not an override. */
+        s_botNameOverridden[slot] = false;
+        serverSimSyncLobbyToClient(sim, cs);
+        return;
+    }
+    if (transport) transportUdpClientSendAddBot(transport);
+}
+
+static void lobbySendRemoveBot(ClientSim *cs, Transport *transport, uint8_t slot) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim) return;
+        if (sim->state != serverStateLobby) return;
+        botManagerRemoveBot(sim, slot);
+        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
+        serverSimSyncLobbyToClient(sim, cs);
+        return;
+    }
+    if (transport) transportUdpClientSendRemoveBot(transport, slot);
+}
+
+static void lobbySendTeamSet(ClientSim *cs, Transport *transport, uint8_t teamNumber) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim) return;
+        if (cs->myPlayerNum < MAX_TANKS) {
+            sim->lobbyPlayers[cs->myPlayerNum].teamNumber = teamNumber;
+            serverSimSyncLobbyToClient(sim, cs);
+        }
+        return;
+    }
+    if (transport) transportUdpClientSendTeamSet(transport, teamNumber);
+}
+
+/* Update a bot's per-slot config (difficulty / personality / name
+ * override). Mirrors the server-side PACKET_LOBBY_BOT_CONFIG handler.
+ * In single-player we write directly into spServerSim->botConfigs and
+ * (if name supplied) update the players struct so the lobby slot's
+ * playerName changes as well. */
+static void lobbySendBotConfig(ClientSim *cs, Transport *transport,
+                               uint8_t slot,
+                               uint8_t difficulty, uint8_t personality,
+                               const char *name) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim || slot >= MAX_TANKS) return;
+        if (sim->state != serverStateLobby) return;
+        if (difficulty > 2 || personality > 3) return;
+        if (!sim->lobbyPlayers[slot].isBot) return;
+        sim->botConfigs[slot].difficulty  = difficulty;
+        sim->botConfigs[slot].personality = personality;
+        if (name && name[0] != '\0') {
+            char nameBuf[32];
+            strncpy(nameBuf, name, sizeof(nameBuf) - 1);
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            char loc[3] = "??";
+            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
+                             nameBuf, loc,
+                             0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        }
+        serverSimSyncLobbyToClient(sim, cs);
+        return;
+    }
+    if (transport) {
+        transportUdpClientSendLobbyBotConfig(transport, slot,
+            difficulty, personality, name);
+    }
+}
+
+/* Clear a team's metadata (color/name/pool back to defaults).
+ * Mirrors PACKET_LOBBY_TEAM_CLEAR. Only called when the team is
+ * empty — caller already gates on memberCount == 0. */
+static void lobbySendTeamClear(ClientSim *cs, Transport *transport,
+                               uint8_t teamId) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+        memset(&sim->teams[teamId], 0, sizeof(sim->teams[teamId]));
+        serverSimSyncLobbyToClient(sim, cs);
+        return;
+    }
+    if (transport) {
+        transportUdpClientSendLobbyTeamClear(transport, teamId);
+    }
+}
+
+/* Update a team's naming pool. Mirrors the per-team naming dropdown
+ * which previously sent transportUdpClientSendLobbyTeamMeta directly.
+ * Single-player path mutates spServerSim->teams[teamId] in-place AND
+ * re-rolls every bot on the team whose name wasn't manually
+ * overridden so the new pool's vibe applies immediately. */
+static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
+                              uint8_t teamId, uint8_t namingPool,
+                              const char *teamName) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+        TeamMetadata *t = &sim->teams[teamId];
+        t->in_use = 1;
+        t->namingPool = namingPool;
+        if (teamName && teamName[0]) {
+            strncpy(t->name, teamName, LOBBY_TEAM_NAME_LEN - 1);
+            t->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
+        }
+        serverSimSyncLobbyToClient(sim, cs);
+
+        /* Rename bots on this team whose names weren't overridden by
+         * the host. We pick names sequentially from the new pool,
+         * each call's used-list including everyone already on the
+         * lobby plus the names we've assigned in this loop, so the
+         * picker doesn't collide with itself. */
+        const char *usedNames[MAX_TANKS];
+        int usedCount = 0;
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i]) {
+                usedNames[usedCount++] = cs->lobbySlots[i].playerName;
+            }
+        }
+        for (int slot = 0; slot < MAX_TANKS; slot++) {
+            if (!sim->playerConnected[slot]) continue;
+            if (!sim->lobbyPlayers[slot].isBot) continue;
+            if (sim->lobbyPlayers[slot].teamNumber != teamId) continue;
+            if (s_botNameOverridden[slot]) continue;
+
+            char pickBuf[32];
+            lobbyBotPoolPick(namingPool, usedNames, usedCount,
+                             pickBuf, sizeof(pickBuf));
+            lobbySendBotConfig(cs, transport, (uint8_t)slot,
+                               cs->lobbyBotDifficulty[slot],
+                               cs->lobbyBotPersonality[slot],
+                               pickBuf);
+            /* Replace this slot's entry in usedNames so subsequent
+             * picks see the updated name (avoids picking the same
+             * name twice within the loop). */
+            for (int u = 0; u < usedCount; u++) {
+                if (usedNames[u] == cs->lobbySlots[slot].playerName) {
+                    usedNames[u] = cs->lobbySlots[slot].playerName;
+                    break;
+                }
+            }
+        }
+        return;
+    }
+    if (transport) {
+        transportUdpClientSendLobbyTeamMeta(transport, teamId,
+            cs->lobbyTeamColor[teamId], namingPool, teamName);
+    }
+}
+
+/* Game-settings dispatcher. settingType is one of LST_* (netpacks.h);
+ * payload is 1 or 2 bytes per server-side parser. Mirrors what
+ * transport_udp_server.c::PACKET_LOBBY_SET_SETTING does to spServerSim
+ * for the single-player path, then re-syncs so the lobby UI's read
+ * of cs->lobby* sees the new value on the next frame. Without the
+ * sync the checkbox/radio flashes for one frame and reverts. */
+static void lobbySendSetting(ClientSim *cs, Transport *transport,
+                             uint8_t settingType,
+                             const uint8_t *value, uint8_t valueLen) {
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim) return;
+        if (sim->state != serverStateLobby) return;
+        switch (settingType) {
+            case 1 /* LST_GAME_TYPE */:
+                /* gameType enum is 1..3 (Open / Tournament / Strict).
+                 * The wire carries the raw enum value. */
+                if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
+                    sim->sim.game = (gameType)value[0];
+                }
+                break;
+            case 2 /* LST_HIDDEN_MINES */:
+                if (valueLen == 1) sim->sim.hiddenMines = value[0] != 0;
+                break;
+            case 3 /* LST_AI_POLICY */:
+                if (valueLen == 1 && value[0] <= 3) {
+                    sim->aiPolicy = value[0];
+                    sim->botAiType = (aiType)value[0];
+                }
+                break;
+            case 4 /* LST_TIME_LIMIT */:
+                if (valueLen == 1) {
+                    sim->timeLimit = value[0] != 0;
+                    /* When the host turns the time limit off, gameLength
+                     * goes to TIME_UNLIMITED; on, derive from current
+                     * timeMinutes mirror so the lobby still reflects
+                     * the previously-set value. */
+                    if (!sim->timeLimit) {
+                        sim->gameLength = -1;
+                    } else if (sim->timeMinutes > 0) {
+                        sim->gameLength = (int32_t)sim->timeMinutes * 60 * 50;
+                    }
+                }
+                break;
+            case 5 /* LST_TIME_MINUTES */:
+                if (valueLen == 2) {
+                    sim->timeMinutes = (uint16_t)((value[0] << 8) | value[1]);
+                    if (sim->timeLimit) {
+                        sim->gameLength = (int32_t)sim->timeMinutes * 60 * 50;
+                    }
+                }
+                break;
+            case 6 /* LST_AUTO_LOCK_ON_GAME */:
+                if (valueLen == 1) sim->autoLockOnGameStart = value[0] != 0;
+                break;
+        }
+        serverSimSyncLobbyToClient(sim, cs);
+        return;
+    }
+    if (transport) {
+        transportUdpClientSendLobbySetting(transport, settingType, value, valueLen);
+    }
+}
 
 /* Bounding box of interesting (non-sea) terrain in the map preview */
 struct MapBounds {
@@ -143,12 +448,15 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
 static SDL_Texture *s_iconSuccess = nullptr;
 static SDL_Texture *s_iconError   = nullptr;
 static SDL_Texture *s_iconInfo    = nullptr;
+static SDL_Texture *s_iconSettings = nullptr;
 static bool         s_iconsAttempted = false;
 
 /* Tank sprite used as the team identity badge in the lobby header.
  * Loaded once on first lobby render; tinted with the team color via
  * a darkened semi-transparent overlay. */
 static SDL_Texture *s_tankSelf04 = nullptr;
+static SDL_Texture *s_tankEvil04 = nullptr;
+static SDL_Texture *s_tankGood04 = nullptr;
 static bool         s_tankSelf04Attempted = false;
 
 /* stb_image entry points — defined in C, declared with C linkage
@@ -199,6 +507,34 @@ static SDL_Texture *getTankSelf04Texture(SDL_Renderer *renderer) {
     return s_tankSelf04;
 }
 
+/* Red enemy tank — used next to player rows on teams different from
+ * the local player's. Loaded lazily on first use, same pattern as
+ * getTankSelf04Texture. */
+static SDL_Texture *getTankEvil04Texture(SDL_Renderer *renderer) {
+    static bool attempted = false;
+    if (attempted) return s_tankEvil04;
+    attempted = true;
+    s_tankEvil04 = loadLobbyPng(renderer, "svg/tank_evil_04.png");
+    if (s_tankEvil04) {
+        SDL_SetTextureScaleMode(s_tankEvil04, SDL_SCALEMODE_LINEAR);
+    }
+    return s_tankEvil04;
+}
+
+/* "Good" ally tank (yellow tone) — used to distinguish the local
+ * player's own row from the rest of their team. Falls back to
+ * tank_self_04 if the asset isn't there. */
+static SDL_Texture *getTankGood04Texture(SDL_Renderer *renderer) {
+    static bool attempted = false;
+    if (attempted) return s_tankGood04;
+    attempted = true;
+    s_tankGood04 = loadLobbyPng(renderer, "svg/tank_good_04.png");
+    if (s_tankGood04) {
+        SDL_SetTextureScaleMode(s_tankGood04, SDL_SCALEMODE_LINEAR);
+    }
+    return s_tankGood04;
+}
+
 static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     if (s_iconsAttempted) return;
     s_iconsAttempted = true;
@@ -210,12 +546,13 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         SDL_Texture **target;
         const char   *relPath;
     } icons[] = {
-        { &s_iconSuccess, "data/ui/dialog-success.svg" },
-        { &s_iconError,   "data/ui/dialog-error.svg" },
-        { &s_iconInfo,    "data/ui/dialog-info.svg" },
+        { &s_iconSuccess,  "data/ui/dialog-success.svg" },
+        { &s_iconError,    "data/ui/dialog-error.svg" },
+        { &s_iconInfo,     "data/ui/dialog-info.svg" },
+        { &s_iconSettings, "data/ui/settings.svg" },
     };
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < (int)(sizeof(icons) / sizeof(icons[0])); i++) {
         *icons[i].target = imguiLoadSvgIcon(renderer, icons[i].relPath, iconPx);
         if (*icons[i].target == nullptr) {
             char basePathBuf[FILENAME_MAX];
@@ -266,14 +603,32 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
      * TEAM_META. The openHost toggle lets non-host players manage
      * teams + bots; the wording flips between checked/unchecked
      * states so each phrasing reads truthfully. */
-    if (effectiveHost && transport) {
-        if (ImGui::SmallButton("+ Add Team")) {
+    if (effectiveHost) {
+        if (ImGui::Button("+ Add Team")) {
             for (int t = 1; t < 16; t++) {
                 if (memberCount[t] == 0 && !cs->lobbyTeamInUse[t]) {
                     char defaultName[16];
                     SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", t);
-                    transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)t,
-                        (uint8_t)((t - 1) & 7), 0 /*pool=classic*/, defaultName);
+                    uint8_t color = (uint8_t)((t - 1) & 7);
+                    /* Single-player: write the team metadata directly
+                     * (UDP transport reinterpret would corrupt memory,
+                     * and the wire's TEAM_META has no SP equivalent).
+                     * Multiplayer: existing PACKET_LOBBY_TEAM_META. */
+                    if (cs->isSinglePlayer) {
+                        ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
+                        if (spSim) {
+                            TeamMetadata *tm = &spSim->teams[t];
+                            tm->in_use = 1;
+                            tm->color = color;
+                            tm->namingPool = 0;
+                            strncpy(tm->name, defaultName, LOBBY_TEAM_NAME_LEN - 1);
+                            tm->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
+                            serverSimSyncLobbyToClient(spSim, cs);
+                        }
+                    } else if (transport) {
+                        transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)t,
+                            color, 0 /*pool=classic*/, defaultName);
+                    }
                     break;
                 }
             }
@@ -293,7 +648,16 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
         ImGui::Spacing();
     }
     for (int teamId = 1; teamId < 16; teamId++) {
-        if (memberCount[teamId] == 0 && !cs->lobbyTeamInUse[teamId]) continue;
+        /* Teams 1 and 2 are always rendered (the lobby's two default
+         * sides) — the host always has somewhere to drop the first
+         * bot. Teams 3..15 render when they have members OR when the
+         * host has explicitly added them via "+ Add Team"
+         * (lobbyTeamInUse=1). Without the in_use check, freshly added
+         * teams would vanish on the same frame because they have no
+         * members yet. */
+        bool persistTeam = (teamId == 1 || teamId == 2)
+                        || cs->lobbyTeamInUse[teamId];
+        if (!persistTeam && memberCount[teamId] == 0) continue;
 
         /* Team color from theme; falls back to gray for un-themed teams. */
         ImU32 tc;
@@ -328,143 +692,314 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             ImVec2(stripStart.x + contentW, stripStart.y + stripH),
             stripCol, 2.0f);
 
-        /* Team identity badge — tank_self_04.png drawn straight, no
-         * tint. The team color reads from the colored team name and
-         * the low-alpha header strip; layering tint on the tank made
-         * it look muddy. Falls back to a flat color rect if the PNG
-         * failed to load. */
-        SDL_Renderer *r = sdl3DrawGetRenderer();
-        SDL_Texture  *tankTex = r ? getTankSelf04Texture(r) : nullptr;
-        ImVec2 badgePos = ImGui::GetCursorScreenPos();
-        float  badgeSz  = 18.0f * s;
-        if (tankTex) {
-            ImGui::Image((ImTextureID)tankTex, ImVec2(badgeSz, badgeSz));
-        } else {
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                badgePos,
-                ImVec2(badgePos.x + badgeSz, badgePos.y + badgeSz),
-                tc, 2.0f);
-            ImGui::Dummy(ImVec2(badgeSz, badgeSz));
-        }
-        ImGui::SameLine(0.0f, 6.0f * s);
+        /* Team identity badge moved off the team header; each player
+         * row now renders a green (self/ally) or red (enemy) tank
+         * icon to the left of its name, so team affiliation reads
+         * per-row instead of just in the header.  Pad a few pixels
+         * before the "Team N" label so it doesn't hug the left edge. */
+        ImGui::Dummy(ImVec2(6.0f * s, 0));
+        ImGui::SameLine(0.0f, 0.0f);
 
         /* Team name — always "Team N", non-editable. Renaming was
          * dropped per UX feedback; the number is enough identity
-         * alongside the colored tank badge. */
+         * alongside the colored tank badge.  AlignTextToFramePadding
+         * vertically centers both text spans with the frame-padded
+         * widgets on the same row (matches the "Bot Naming:" label). */
         char defaultName[16];
         SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", teamId);
+        ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
         ImGui::Text("%s", defaultName);
         ImGui::PopStyleColor();
 
         ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("· %d player%s%s%s",
             memberCount[teamId], memberCount[teamId] == 1 ? "" : "s",
             botCount[teamId] > 0 ? " · " : "",
             botCount[teamId] > 0 ? (botCount[teamId] == 1 ? "1 bot" : "bots") : "");
 
-        /* Per-team Bot naming pool dropdown — only shown when team has bots. */
-        if (botCount[teamId] > 0 && effectiveHost && transport) {
-            ImGui::SameLine(0.0f, 16.0f * s);
-            ImGui::TextDisabled("Bot naming:");
+        /* Per-team "+ Bot" button (always visible to the host) plus an
+         * optional "Bot Naming:" pool dropdown (only when the team has
+         * at least one bot — picking a pool before any bot exists has
+         * nothing to apply to) and an optional X (clear) button on
+         * the right edge.
+         *
+         * The X is shown only for teams 3..15 (teams 1 and 2 are
+         * persistent and never removable) and only when the team has
+         * no humans on it — clearing a team with humans would orphan
+         * them. We still reserve its width even when hidden so the
+         * "+ Bot" button stays at the same X coordinate across teams
+         * that do/don't render an X. */
+        if (effectiveHost) {
+            const float comboW   = 140.0f * s;
+            const float botBtnW  = 70.0f * s;
+            const float xBtnW    = 22.0f * s;
+            const float labelW   = ImGui::CalcTextSize("Bot Naming:").x;
+            const float gap      = 6.0f * s;
+            bool showNaming = botCount[teamId] > 0;
+            int humanCount = memberCount[teamId] - botCount[teamId];
+            bool showXBtn   = (teamId >= 3) && (humanCount == 0);
+            /* Always reserve the X width so "+ Bot" sits at the same
+             * X position across teams with/without an X. */
+            float groupW = botBtnW + gap + xBtnW
+                         + (showNaming ? labelW + gap + comboW + gap : 0);
             ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - groupW);
             int curPool = cs->lobbyTeamPool[teamId];
             if (curPool < 0 || curPool >= lobbyBotPoolCount()) curPool = 0;
-            char poolId[16];
-            SDL_snprintf(poolId, sizeof(poolId), "##pool%d", teamId);
-            ImGui::SetNextItemWidth(160.0f * s);
-            if (ImGui::BeginCombo(poolId, lobbyBotPoolLabel(curPool))) {
-                for (int p = 0; p < lobbyBotPoolCount(); p++) {
-                    bool sel = (p == curPool);
-                    if (ImGui::Selectable(lobbyBotPoolLabel(p), sel)) {
-                        transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)teamId,
-                            cs->lobbyTeamColor[teamId], (uint8_t)p,
-                            cs->lobbyTeamInUse[teamId] ? cs->lobbyTeamName[teamId] : defaultName);
+            if (showNaming) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("Bot Naming:");
+                ImGui::SameLine(0.0f, gap);
+                char poolId[16];
+                SDL_snprintf(poolId, sizeof(poolId), "##pool%d", teamId);
+                ImGui::SetNextItemWidth(comboW);
+                if (ImGui::BeginCombo(poolId, lobbyBotPoolLabel(curPool))) {
+                    for (int p = 0; p < lobbyBotPoolCount(); p++) {
+                        bool sel = (p == curPool);
+                        if (ImGui::Selectable(lobbyBotPoolLabel(p), sel)) {
+                            const char *nameForMeta = cs->lobbyTeamInUse[teamId]
+                                ? cs->lobbyTeamName[teamId] : defaultName;
+                            lobbySendTeamPool(cs, transport, (uint8_t)teamId,
+                                              (uint8_t)p, nameForMeta);
+                        }
+                        if (sel) ImGui::SetItemDefaultFocus();
                     }
-                    if (sel) ImGui::SetItemDefaultFocus();
+                    ImGui::EndCombo();
                 }
-                ImGui::EndCombo();
+                ImGui::SameLine(0.0f, gap);
             }
-        }
-
-        /* X button at the right edge of the team header — host only.
-         * Suppressed when any human is on the team: removing wouldn't
-         * help the host (humans pick their own team). Bots-only or
-         * empty teams keep the X so leftover metadata can be cleared.
-         * Anchored to GetContentRegionMax().x so it sits at the inside
-         * right edge of the team child window regardless of how much
-         * the previous header widgets consumed. */
-        int humanCount = memberCount[teamId] - botCount[teamId];
-        if (effectiveHost && transport && humanCount == 0) {
-            float xBtnW   = 22.0f * s;
-            float rightX  = ImGui::GetContentRegionMax().x - xBtnW;
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(rightX);
-            char rmId[24];
-            SDL_snprintf(rmId, sizeof(rmId), "X##rmt%d", teamId);
-            if (ImGui::SmallButton(rmId)) {
-                transportUdpClientSendLobbyTeamClear(transport, (uint8_t)teamId);
+            char addId[24];
+            SDL_snprintf(addId, sizeof(addId), "\xF0\x9F\xA7\xA0 + Bot##ab%d", teamId);
+            if (ImGui::Button(addId, ImVec2(botBtnW, 0))) {
+                /* If this team's pool hasn't been picked yet, pick a
+                 * random one before adding the bot so its name comes
+                 * from a varied source instead of always pool 0. */
+                int effectivePool = curPool;
+                if (!cs->lobbyTeamInUse[teamId] && lobbyBotPoolCount() > 0) {
+                    effectivePool = rand() % lobbyBotPoolCount();
+                    lobbySendTeamPool(cs, transport, (uint8_t)teamId,
+                                      (uint8_t)effectivePool, defaultName);
+                }
+                lobbySendAddBot(cs, transport, effectivePool, (uint8_t)teamId);
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(memberCount[teamId] == 0
-                    ? "Remove this team"
-                    : "Clear team metadata (members stay assigned)");
+                ImGui::SetTooltip("Add a bot to Team %d, named from the selected pool.",
+                                  teamId);
+            }
+            /* Pin the X to the right edge so it lines up across teams.
+             * Use ImGui::CloseButton (imgui_internal.h) — the same
+             * widget ImGui uses for window-close buttons. Renders a
+             * proper crossed line "×" with hover + active styling,
+             * sized to the current font. */
+            ImGui::SameLine(0.0f, gap);
+            ImGui::AlignTextToFramePadding();
+            if (showXBtn) {
+                char rmStrId[24];
+                SDL_snprintf(rmStrId, sizeof(rmStrId), "##rmt%d", teamId);
+                ImGuiID rmId = ImGui::GetID(rmStrId);
+                ImVec2 closePos = ImGui::GetCursorScreenPos();
+                /* Vertically center the close button within the row
+                 * height. CloseButton draws a FontSize × FontSize box;
+                 * frame height is taller. */
+                float frameH = ImGui::GetFrameHeight();
+                float fs = ImGui::GetFontSize();
+                closePos.y += (frameH - fs) * 0.5f;
+                if (ImGui::CloseButton(rmId, closePos)) {
+                    /* Clear the team's metadata and any bot members. */
+                    for (int i = 0; i < MAX_TANKS; i++) {
+                        if (cs->lobbySlots[i].connected
+                            && cs->lobbySlots[i].isBot
+                            && cs->lobbySlots[i].teamNumber == teamId) {
+                            lobbySendRemoveBot(cs, transport, (uint8_t)i);
+                        }
+                    }
+                    lobbySendTeamClear(cs, transport, (uint8_t)teamId);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Remove Team %d (and its bots).", teamId);
+                }
+            } else {
+                /* Hold the slot so + Bot's X position is stable. */
+                ImGui::Dummy(ImVec2(xBtnW, 0));
             }
         }
 
         ImGui::Separator();
 
         /* Member rows. */
+        bool firstRow = true;
         for (int i = 0; i < MAX_TANKS; i++) {
             if (!cs->lobbySlots[i].connected) continue;
             if (cs->lobbySlots[i].teamNumber != teamId) continue;
 
+            /* Thin separator between rows (not before the first row —
+             * the team header already has a Separator() above this loop). */
+            if (!firstRow) ImGui::Separator();
+            firstRow = false;
+
             bool isMe = (i == myPlayerNum);
             bool isBot = cs->lobbySlots[i].isBot;
 
-            /* "You" row gets a 25%-darker translucent overlay so the
-             * local player can spot themselves at a glance. Drawn
-             * UNDER the row widgets via the window draw list, sized
-             * to the current row height. */
-            ImVec2 rowStart = ImGui::GetCursorScreenPos();
-            float  rowH     = ImGui::GetTextLineHeightWithSpacing();
-            float  rowW     = ImGui::GetContentRegionAvail().x;
+            /* "You" row gets a 25%-darker translucent overlay drawn
+             * BEFORE the Indent, so the highlight spans the team
+             * panel's full inner width (touches the left edge) while
+             * the content still sits 50px in.  Effectively padding
+             * rather than margin. */
+            float rowH     = ImGui::GetFrameHeightWithSpacing();
+            float rowFullW = ImGui::GetContentRegionAvail().x;
+            ImVec2 rowFullStart = ImGui::GetCursorScreenPos();
             if (isMe) {
                 ImU32 darkOverlay = IM_COL32(0, 0, 0, 64);  /* ~25% black */
                 ImGui::GetWindowDrawList()->AddRectFilled(
-                    rowStart,
-                    ImVec2(rowStart.x + rowW, rowStart.y + rowH),
+                    rowFullStart,
+                    ImVec2(rowFullStart.x + rowFullW, rowFullStart.y + rowH),
                     darkOverlay, 2.0f);
             }
 
-            /* Country flag (humans only). */
-            if (!isBot && cs->lobbySlots[i].countryCode[0] != '\0') {
-                SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
-                if (flagTex) {
-                    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-                    ImGui::SameLine();
+            /* Indent each member row 50px past the team panel edge so
+             * the rows visually sit "inside" the team header rather
+             * than directly under it. */
+            ImGui::Indent(50.0f * s);
+
+            /* Per-row tank icon — green tank for slots on the local
+             * player's team (allies, including bots), red tank for
+             * slots on a different team (enemies). The check uses
+             * teamNumber, so two players both at team 0 (unassigned)
+             * read as on the same team. Vertically centered against
+             * the row's frame-padded height. */
+            {
+                uint8_t myTeam   = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
+                                   ? cs->lobbySlots[myPlayerNum].teamNumber : 0;
+                uint8_t theirTeam = cs->lobbySlots[i].teamNumber;
+                bool isSelf  = (i == myPlayerNum);
+                /* Ally iff both sides share the same non-zero team
+                 * number. Two "unassigned" (team 0) players don't
+                 * yet share a team in the game-logic sense, so render
+                 * those as enemies until one picks a team. */
+                bool isAlly  = (myTeam != 0 && theirTeam == myTeam);
+                SDL_Renderer *r  = sdl3DrawGetRenderer();
+                SDL_Texture  *tankTex = nullptr;
+                if (r) {
+                    if (isSelf) {
+                        /* Yourself — the black "self" tank
+                         * (tank_self_04.png) so your row is
+                         * instantly identifiable as you. */
+                        tankTex = getTankSelf04Texture(r);
+                    } else if (isAlly) {
+                        /* Teammates (humans and bots) — green ally
+                         * tank (tank_good_04.png). Falls back to the
+                         * self tank if the good asset is missing. */
+                        tankTex = getTankGood04Texture(r);
+                        if (!tankTex) tankTex = getTankSelf04Texture(r);
+                    } else {
+                        tankTex = getTankEvil04Texture(r);
+                    }
+                }
+                if (tankTex) {
+                    float tankSz = 18.0f * s;
+                    float frameH = ImGui::GetFrameHeight();
+                    /* Center within the frame then nudge 2px lower so
+                     * the tank reads visually aligned with the player
+                     * name (which also got a 2px nudge). */
+                    float yOff   = (frameH - tankSz) * 0.5f + 2.0f * s;
+                    if (yOff < 0) yOff = 0;
+                    ImVec2 cur = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImVec2(cur.x, cur.y + yOff));
+                    ImGui::Image((ImTextureID)tankTex, ImVec2(tankSz, tankSz));
+                    /* Restore Y so siblings on this row stay aligned
+                     * to the frame baseline. */
+                    ImGui::SameLine(0.0f, 6.0f * s);
+                    ImVec2 after = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImVec2(after.x, cur.y));
                 }
             }
 
-            /* Name with appropriate tinting. Bots are clickable to
-             * expand the AiConfig sub-row below; click again to collapse. */
+            /* Country flag + platform / WBN / Steam icons (humans
+             * only). Order matches the legacy lobby: country first,
+             * then renderPlayerName emits the platform icon (with
+             * supporter tint), the WBN verified globe, and the Steam
+             * badge as needed.  We pass an empty name so it stops at
+             * the badges — the actual name text is rendered below
+             * with its own coloring. */
+            if (!isBot) {
+                ImGui::AlignTextToFramePadding();
+                if (cs->lobbySlots[i].countryCode[0] != '\0') {
+                    SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
+                    if (flagTex) {
+                        ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                        ImGui::SameLine();
+                    }
+                }
+                renderPlayerName(NULL,
+                                 cs->lobbySlots[i].clientFlags,
+                                 cs->lobbySlots[i].clientType,
+                                 "", false);
+            }
+
+            /* Bot rows: small chrome-less settings.svg icon button on
+             * the left that toggles the AiConfig sub-row, then the
+             * tinted bot name as plain text.  Human rows: tinted name
+             * text only.  All paths use AlignTextToFramePadding so
+             * the label baseline matches the row height. */
             if (isBot) {
-                char botLabel[80];
-                SDL_snprintf(botLabel, sizeof(botLabel),
-                             "%s [bot] %s##botclick%d",
-                             s_expandedBotSlot == i ? "v" : ">",
-                             cs->lobbySlots[i].playerName, i);
+                /* Bot name first, then the settings (wrench) icon
+                 * to its right.  The icon is a chrome-less
+                 * InvisibleButton over an AddImage so it shows the
+                 * SVG pixels with no border / hover-fill / padding. */
+                ImGui::AlignTextToFramePadding();
+                /* Nudge the text 2px lower to optically center inside
+                 * the row's frame-padded height. */
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * s);
                 ImGui::PushStyleColor(ImGuiCol_Text,
                                       wbThemeColor(g_theme->botBadge));
-                if (ImGui::SmallButton(botLabel)) {
-                    s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
-                }
+                ImGui::Text("%s [bot]", cs->lobbySlots[i].playerName);
                 ImGui::PopStyleColor();
-            } else if (isMe) {
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s (you)",
-                    cs->lobbySlots[i].playerName);
+                ImGui::SameLine(0.0f, 6.0f * s);
+                if (s_iconSettings) {
+                    float iconSize = ImGui::GetFontSize();
+                    /* Vertically center the icon within the row's
+                     * frame-padded height, then nudge 2px up so it
+                     * sits a touch higher than dead-center. */
+                    float frameH = ImGui::GetFrameHeight();
+                    float yOff = (frameH - iconSize) * 0.5f - 2.0f * s;
+                    ImVec2 iconStart = ImGui::GetCursorScreenPos();
+                    iconStart.y += yOff;
+                    ImGui::SetCursorScreenPos(iconStart);
+                    char btnId[24];
+                    SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
+                    bool clicked = ImGui::InvisibleButton(btnId,
+                                                          ImVec2(iconSize, iconSize));
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)s_iconSettings,
+                        iconStart,
+                        ImVec2(iconStart.x + iconSize, iconStart.y + iconSize));
+                    if (clicked) {
+                        s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Configure bot");
+                    }
+                } else {
+                    /* Icon failed to load — fall back to a caret. */
+                    char fallId[24];
+                    SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
+                                 s_expandedBotSlot == i ? "v" : ">", i);
+                    if (ImGui::SmallButton(fallId)) {
+                        s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                    }
+                }
             } else {
-                ImGui::Text("%s", cs->lobbySlots[i].playerName);
+                ImGui::AlignTextToFramePadding();
+                /* Same 2px optical-center nudge as the bot rows. */
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * s);
+                if (isMe) {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s (you)",
+                        cs->lobbySlots[i].playerName);
+                } else {
+                    ImGui::Text("%s", cs->lobbySlots[i].playerName);
+                }
             }
 
             /* Ping (humans). */
@@ -485,36 +1020,55 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 ImGui::TextDisabled("[not ready]");
             }
 
-            /* Bot remove button — host only. */
-            if (isBot && effectiveHost && transport) {
+            /* Bot remove button — host only. Uses ImGui::CloseButton
+             * (imgui_internal.h) for the same proper × glyph the
+             * team-clear button renders, pinned to the row's right
+             * edge so per-row X's line up with the team-clear X.
+             *
+             * Important: we have to SameLine + advance the cursor
+             * with SetCursorPosX rather than passing an absolute
+             * screen pos directly to CloseButton — the absolute-pos
+             * path runs ItemAdd outside the row's flow and the first
+             * such item per BeginChild gets clipped by the scrollable
+             * area's initial cull, producing the "first bot has no X
+             * but later bots do" symptom. */
+            if (isBot && effectiveHost) {
                 ImGui::SameLine();
-                char btnId[24];
-                SDL_snprintf(btnId, sizeof(btnId), "x##rb%d", i);
-                if (ImGui::SmallButton(btnId)) {
-                    transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                float closeSz = ImGui::GetFontSize();
+                float rightX  = ImGui::GetContentRegionMax().x - closeSz - 4.0f * s;
+                if (rightX < ImGui::GetCursorPosX()) rightX = ImGui::GetCursorPosX();
+                ImGui::SetCursorPosX(rightX);
+                ImVec2 closePos = ImGui::GetCursorScreenPos();
+                closePos.y += (ImGui::GetFrameHeight() - closeSz) * 0.5f;
+                char rbStr[24];
+                SDL_snprintf(rbStr, sizeof(rbStr), "##rb%d", i);
+                ImGuiID rbId = ImGui::GetID(rbStr);
+                if (ImGui::CloseButton(rbId, closePos)) {
+                    lobbySendRemoveBot(cs, transport, (uint8_t)i);
                     if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Remove bot");
                 }
             }
 
-            /* Expanded AiConfig sub-row for the clicked bot. */
+            /* Expanded AiConfig sub-row for the clicked bot — drop
+             * the row's 50px indent so the edit form spans the team
+             * panel's full width.  Restored before the iteration
+             * ends so subsequent sibling rows still align. */
             if (isBot && s_expandedBotSlot == i && effectiveHost) {
+                ImGui::Unindent(50.0f * s);
                 renderBotAiConfig(cs, transport, i, teamId, s);
+                ImGui::Indent(50.0f * s);
             }
+
+            /* Pair the per-row Indent above. */
+            ImGui::Unindent(50.0f * s);
         }
 
-        /* "+ Bot" button at the bottom of each team — host only.
-         * Drives the existing PACKET_LOBBY_ADD_BOT for now; future
-         * work extends with explicit teamId + name + config. */
-        if (effectiveHost && transport && cs->lobbyAiType != 0) {
-            ImGui::Spacing();
-            char addId[24];
-            SDL_snprintf(addId, sizeof(addId), "+ Bot##ab%d", teamId);
-            if (ImGui::SmallButton(addId)) {
-                transportUdpClientSendAddBot(transport);
-                /* Note: server picks slot + name. Subsequent commits
-                 * will switch to a teamId-aware add-bot flow. */
-            }
-        }
+        /* "+ Bot" button moved to the team header bar (right-aligned
+         * next to the "Bot Naming:" pool dropdown) so all team-bot
+         * controls live in one place. */
 
         ImGui::EndChild();
         ImGui::Spacing();
@@ -556,7 +1110,9 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         }
     }
 
-    ImGui::Indent(20.0f * s);
+    /* Edit form sits flush with the left edge of the team panel —
+     * no internal indent. (The caller already strips the surrounding
+     * 50px row indent so the form spans the full team width.) */
     ImGui::PushID(slot);
 
     /* ── Name + dice reroll ───────────────────────────────────── */
@@ -573,18 +1129,23 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         ImGui::SetTooltip("Pick a fresh random name from the team's pool.");
     }
 
-    if (diceClicked && transport) {
+    if (diceClicked) {
         /* Pick a name from this team's pool, excluding all currently-used
-         * bot names (incl. this one — we want a NEW name, not the same). */
+         * bot names (incl. this one — we want a NEW name, not the same).
+         * Reroll = pool-driven, so clear the manual-override flag. */
         int pool = (teamId > 0 && teamId < 16) ? cs->lobbyTeamPool[teamId] : 0;
         char pickBuf[32];
         lobbyBotPoolPick(pool, usedNames, usedCount, pickBuf, sizeof(pickBuf));
-        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+        lobbySendBotConfig(cs, transport, (uint8_t)slot,
             cs->lobbyBotDifficulty[slot], cs->lobbyBotPersonality[slot], pickBuf);
+        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
     }
-    if (nameChanged && transport) {
-        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+    if (nameChanged) {
+        /* Manual edit — pin the name so a later pool change doesn't
+         * overwrite it. */
+        lobbySendBotConfig(cs, transport, (uint8_t)slot,
             cs->lobbyBotDifficulty[slot], cs->lobbyBotPersonality[slot], nameBuf);
+        if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
     }
 
     /* ── Difficulty dropdown ──────────────────────────────────── */
@@ -595,8 +1156,8 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     int diff = cs->lobbyBotDifficulty[slot];
     if (diff < 0 || diff > 2) diff = 1;
     ImGui::SetNextItemWidth(90.0f * s);
-    if (ImGui::Combo("##diff", &diff, diffItems, 3) && transport) {
-        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+    if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
+        lobbySendBotConfig(cs, transport, (uint8_t)slot,
             (uint8_t)diff, cs->lobbyBotPersonality[slot],
             cs->lobbySlots[slot].playerName);
     }
@@ -609,8 +1170,8 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     int pers = cs->lobbyBotPersonality[slot];
     if (pers < 0 || pers > 3) pers = 0;
     ImGui::SetNextItemWidth(110.0f * s);
-    if (ImGui::Combo("##pers", &pers, persItems, 4) && transport) {
-        transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+    if (ImGui::Combo("##pers", &pers, persItems, 4)) {
+        lobbySendBotConfig(cs, transport, (uint8_t)slot,
             cs->lobbyBotDifficulty[slot], (uint8_t)pers,
             cs->lobbySlots[slot].playerName);
     }
@@ -622,7 +1183,6 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     }
 
     ImGui::PopID();
-    ImGui::Unindent(20.0f * s);
     ImGui::Spacing();
 }
 
@@ -813,10 +1373,16 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
                                     int myPlayerNum, float s) {
     bool effectiveHost = (myPlayerNum == 0) || cs->lobbyOpenHost;
 
-    if (!ImGui::CollapsingHeader("Game settings",
-                                 ImGuiTreeNodeFlags_DefaultOpen)) {
+    /* Drive the CollapsingHeader's open state explicitly so a "Hide
+     * Settings" button at the bottom of the panel can fold it away
+     * once the host is happy with the configuration. */
+    static bool s_settingsOpen = true;
+    ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
+    if (!ImGui::CollapsingHeader("Game settings")) {
+        s_settingsOpen = false;
         return;
     }
+    s_settingsOpen = true;
 
     ImGui::Spacing();
     ImGui::Columns(3, "##settingsCols", false);
@@ -834,16 +1400,19 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
             "Strict Tournament (no free ammo)",
         };
         for (int i = 0; i < 3; i++) {
-            char rid[16];
-            SDL_snprintf(rid, sizeof(rid), "##gt%d", i);
-            bool checked = (cs->lobbyGameType == (gameType)i);
-            if (ImGui::RadioButton(rid, checked) && !checked && transport) {
-                uint8_t v = (uint8_t)i;
-                transportUdpClientSendLobbySetting(transport, 1 /*LST_GAME_TYPE*/,
-                                                   &v, 1);
+            /* gameType enum is 1-based (gameOpen=1, gameTournament=2,
+             * gameStrictTournament=3), so the array index → enum
+             * mapping is i+1. The previous (gameType)i comparison
+             * read the wrong row as "checked" — Open showed as
+             * Unknown, Tournament showed as Open, etc. */
+            int enumVal = i + 1;
+            char rid[80];
+            SDL_snprintf(rid, sizeof(rid), "%s##gt%d", items[i], i);
+            bool checked = (cs->lobbyGameType == (gameType)enumVal);
+            if (ImGui::RadioButton(rid, checked) && !checked) {
+                uint8_t v = (uint8_t)enumVal;
+                lobbySendSetting(cs, transport, 1 /*LST_GAME_TYPE*/, &v, 1);
             }
-            ImGui::SameLine();
-            ImGui::TextUnformatted(items[i]);
         }
         if (disable) ImGui::EndDisabled();
     }
@@ -863,16 +1432,15 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
             "Allow with full advantage",
         };
         for (int i = 0; i < 4; i++) {
-            char rid[16];
-            SDL_snprintf(rid, sizeof(rid), "##ai%d", i);
+            /* Same trick as the Game Type radios — embed the label so
+             * the whole row is clickable. */
+            char rid[80];
+            SDL_snprintf(rid, sizeof(rid), "%s##ai%d", items[i], i);
             bool checked = (cs->lobbyAiType == (uint8_t)i);
-            if (ImGui::RadioButton(rid, checked) && !checked && transport) {
+            if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
-                transportUdpClientSendLobbySetting(transport, 3 /*LST_AI_POLICY*/,
-                                                   &v, 1);
+                lobbySendSetting(cs, transport, 3 /*LST_AI_POLICY*/, &v, 1);
             }
-            ImGui::SameLine();
-            ImGui::TextUnformatted(items[i]);
         }
         if (disable) ImGui::EndDisabled();
     }
@@ -886,10 +1454,9 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         bool minesV = cs->lobbyHiddenMines;
         bool minesDisabled = !effectiveHost || minesLocked;
         if (minesDisabled) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Allow Hidden Mines", &minesV) && transport) {
+        if (ImGui::Checkbox("Allow Hidden Mines", &minesV)) {
             uint8_t v = minesV ? 1 : 0;
-            transportUdpClientSendLobbySetting(transport, 2 /*LST_HIDDEN_MINES*/,
-                                               &v, 1);
+            lobbySendSetting(cs, transport, 2 /*LST_HIDDEN_MINES*/, &v, 1);
         }
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) renderLockBadge();
@@ -898,10 +1465,9 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         bool timeV = cs->lobbyTimeLimit > 0;
         bool timeDisabled = !effectiveHost || timeLocked;
         if (timeDisabled) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Game time limit", &timeV) && transport) {
+        if (ImGui::Checkbox("Game time limit", &timeV)) {
             uint8_t v = timeV ? 1 : 0;
-            transportUdpClientSendLobbySetting(transport, 4 /*LST_TIME_LIMIT*/,
-                                               &v, 1);
+            lobbySendSetting(cs, transport, 4 /*LST_TIME_LIMIT*/, &v, 1);
         }
         if (timeV) {
             int mins = cs->lobbyTimeLimit > 0
@@ -910,13 +1476,12 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80.0f * s);
             if (ImGui::InputInt("##tmin", &mins, 1, 5,
-                                ImGuiInputTextFlags_EnterReturnsTrue) && transport) {
+                                ImGuiInputTextFlags_EnterReturnsTrue)) {
                 if (mins < 1) mins = 1;
                 if (mins > 999) mins = 999;
                 uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
                                  (uint8_t)(mins & 0xFF) };
-                transportUdpClientSendLobbySetting(transport, 5 /*LST_TIME_MINUTES*/,
-                                                   v, 2);
+                lobbySendSetting(cs, transport, 5 /*LST_TIME_MINUTES*/, v, 2);
             }
             ImGui::SameLine();
             ImGui::TextUnformatted("min");
@@ -924,26 +1489,29 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         if (timeDisabled) ImGui::EndDisabled();
         if (timeLocked) renderLockBadge();
 
-        /* "Allow new players" — uses existing PACKET_LOCK_TOGGLE */
-        bool allowJoin = transportUdpServerGetLock();
-        if (effectiveHost && transport &&
-            ImGui::Checkbox("Allow new players", &allowJoin)) {
-            transportUdpClientSendLockToggle(transport, allowJoin);
-        }
+        /* Multiplayer-only join controls. In single-player there's no
+         * UDP listener, so "allow new players" / "disallow once started"
+         * have no meaning — hide them rather than render disabled. */
+        if (!cs->isSinglePlayer) {
+            /* "Allow new players" — uses existing PACKET_LOCK_TOGGLE */
+            bool allowJoin = transportUdpServerGetLock();
+            if (effectiveHost && transport &&
+                ImGui::Checkbox("Allow new players", &allowJoin)) {
+                transportUdpClientSendLockToggle(transport, allowJoin);
+            }
 
-        /* "Disallow new players once started" — autoLockOnGameStart */
-        bool autoLockLocked = (cs->lobbyServerLocks & 0x10) != 0;
-        bool autoLockV = cs->lobbyAutoLockOnGameStart;
-        bool autoLockDisabled = !effectiveHost || autoLockLocked;
-        if (autoLockDisabled) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Disallow new players once game has started", &autoLockV)
-            && transport) {
-            uint8_t v = autoLockV ? 1 : 0;
-            transportUdpClientSendLobbySetting(transport, 6 /*LST_AUTO_LOCK_ON_GAME*/,
-                                               &v, 1);
+            /* "Disallow new players once started" — autoLockOnGameStart */
+            bool autoLockLocked = (cs->lobbyServerLocks & 0x10) != 0;
+            bool autoLockV = cs->lobbyAutoLockOnGameStart;
+            bool autoLockDisabled = !effectiveHost || autoLockLocked;
+            if (autoLockDisabled) ImGui::BeginDisabled();
+            if (ImGui::Checkbox("Disallow new players once game has started", &autoLockV)) {
+                uint8_t v = autoLockV ? 1 : 0;
+                lobbySendSetting(cs, transport, 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
+            }
+            if (autoLockDisabled) ImGui::EndDisabled();
+            if (autoLockLocked) renderLockBadge();
         }
-        if (autoLockDisabled) ImGui::EndDisabled();
-        if (autoLockLocked) renderLockBadge();
 
         /* openHost toggle moved to the team-list header (next to
          * "+ Add Team") so it lives where its scope is — managing
@@ -951,7 +1519,22 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
     }
 
     ImGui::Columns(1);
-    ImGui::Spacing();
+
+    /* Right-aligned "Hide Settings" button. Positioned by directly
+     * adjusting the cursor Y up by ~30px so the panel's overall
+     * bottom edge sits 30 pixels higher than it would with default
+     * ImGui::Spacing() padding — claws back vertical space for the
+     * teams list below. */
+    {
+        const char *label = "Hide Settings";
+        float btnW = ImGui::CalcTextSize(label).x + 16.0f * s;
+        float y = ImGui::GetCursorPosY() - 30.0f * s;
+        ImGui::SetCursorPosY(y);
+        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btnW);
+        if (ImGui::Button(label)) {
+            s_settingsOpen = false;
+        }
+    }
 }
 
 extern "C" int imguiLobbyShow(ClientSim *cs) {
@@ -1305,7 +1888,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char comboId[16];
                                     SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                                     if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                        transportUdpClientSendTeamSet(transport, (uint8_t)teamIdx);
+                                        lobbySendTeamSet(cs, transport, (uint8_t)teamIdx);
                                     }
                                 } else {
                                     if (cs->lobbySlots[i].teamNumber > 0) {
@@ -1334,7 +1917,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_REMOVE), i);
                                     if (ImGui::SmallButton(btnId)) {
-                                        transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                                        lobbySendRemoveBot(cs, transport, (uint8_t)i);
                                     }
                                 }
                             } else {
@@ -1352,7 +1935,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
                                     if (ImGui::SmallButton(btnId)) {
-                                        transportUdpClientSendAddBot(transport);
+                                        lobbySendAddBot(cs, transport, -1, 0);
                                     }
                                 }
                             }
@@ -1529,9 +2112,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
-                    if (transport) {
-                        transportUdpClientSendReady(transport, !myReady);
-                    }
+                    lobbySendReadyToggle(cs, transport, !myReady);
                 }
                 if (!canReady) ImGui::EndDisabled();
 
@@ -1582,9 +2163,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Desktop: Players (left) + Map Preview (right) --- */
         {
             float availW = ImGui::GetContentRegionAvail().x - padR;
+            /* Panel reservation: leave room for the chat label + chat
+             * history + chat input + ready/leave button row.
+             * Chat history is 3.4 lines tall (the chat-history child
+             * below) — 15% shorter than the original 4 lines. Reducing
+             * the reservation by the same amount lets the teams + map
+             * panels grow into the freed space and the chat block
+             * naturally slides lower. */
             float availContentH = ImGui::GetContentRegionAvail().y
-                           - ImGui::GetTextLineHeightWithSpacing() * 9  /* chat + buttons */
-                           - 40.0f * s - padB;
+                           - ImGui::GetTextLineHeightWithSpacing() * 8.4f  /* chat + buttons */
+                           - 20.0f * s - padB;
             float mapPanelW = (MAP_PREVIEW_SIZE + 20) * s;
             float playerPanelW = availW - mapPanelW - 8.0f;
             float panelH = availContentH;
@@ -1671,7 +2259,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char comboId[16];
                             SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                             if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                transportUdpClientSendTeamSet(transport, (uint8_t)teamIdx);
+                                lobbySendTeamSet(cs, transport, (uint8_t)teamIdx);
                             }
                         } else {
                             if (cs->lobbySlots[i].teamNumber > 0) {
@@ -1700,7 +2288,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Remove##%d", i);
                             if (ImGui::SmallButton(btnId)) {
-                                transportUdpClientSendRemoveBot(transport, (uint8_t)i);
+                                lobbySendRemoveBot(cs, transport, (uint8_t)i);
                             }
                         }
                     } else {
@@ -1718,7 +2306,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
                             if (ImGui::SmallButton(btnId)) {
-                                transportUdpClientSendAddBot(transport);
+                                lobbySendAddBot(cs, transport, -1, 0);
                             }
                         }
                     }
@@ -1843,13 +2431,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
 
         ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
 
         /* --- Chat section --- */
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CHAT));
         {
-            float chatHeight = ImGui::GetTextLineHeightWithSpacing() * 4;
+            float chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
             ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
             ImGui::TextUnformatted(cs->lobbyChatHistory);
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
@@ -1891,9 +2477,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             if (!canReady) ImGui::BeginDisabled();
             const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
             if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
-                if (transport) {
-                    transportUdpClientSendReady(transport, !myReady);
-                }
+                lobbySendReadyToggle(cs, transport, !myReady);
             }
             if (!canReady) ImGui::EndDisabled();
 

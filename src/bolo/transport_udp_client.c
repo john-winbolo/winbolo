@@ -102,7 +102,7 @@ typedef struct {
      * localized rendering. */
     char joinRejectReason[256];
 
-    /* Owning ClientSim — used for player state updates in callbacks */
+    /* Owning ClientSim â€” used for player state updates in callbacks */
     ClientSim *clientSim;
 
     /* Network stats (client-side only) */
@@ -119,7 +119,7 @@ typedef struct {
 
     bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
 
-    /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
+    /* Phase 3 â€” UDP hole-punching fallback. Empty trackerAddr disables
      * punch entirely (LAN/manual-connect joiners). */
     char           trackerAddr[FILENAME_MAX];
     unsigned short trackerPort;
@@ -128,7 +128,7 @@ typedef struct {
     bool           punchSent;      /* sent at least one PUNCH_REQUEST */
 } TransportUdpClientCtx;
 
-/* Client send wrapper — tracks packet and byte counters */
+/* Client send wrapper â€” tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
     udpSendTo(c->sock, buf, len, &c->serverAddr);
     c->packetsSentThisSec++;
@@ -167,7 +167,7 @@ static void udpClientRecordInput(void *ctx, const InputPacket *input) {
         return;
     }
 
-    /* Store in ring buffer — stamp with current reliable ACKs and ping */
+    /* Store in ring buffer â€” stamp with current reliable ACKs and ping */
     {
         InputPacket stamped = *input;
         stamped.eventAck = c->reliableEventAck;
@@ -273,7 +273,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     c->packetsRecvThisSec++;
     c->bytesRecvThisSec += len;
 
-    /* Reset timeout on any valid server packet — lobby state doesn't send
+    /* Reset timeout on any valid server packet â€” lobby state doesn't send
      * snapshots, so without this the client times out after 20s in lobby.
      * Also reset during map (re-)download so a map change doesn't time out. */
     if (pktType != 0 && (c->joinState == UDP_CLIENT_CONNECTED ||
@@ -481,7 +481,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->snapshotHdr.baseCount = baseCount;
         c->snapshotHdr.pillCount = pillCount;
 
-        /* Unpack tanks — variable length: stubs are 1 byte, full entries
+        /* Unpack tanks â€” variable length: stubs are 1 byte, full entries
          * are TANK_SNAPSHOT_WIRE_SIZE bytes.  The first byte's high bit
          * (TANK_SNAPSHOT_HIDDEN_FLAG) tells us which. */
         if (tankCount > MAX_TANKS) tankCount = MAX_TANKS;
@@ -530,12 +530,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
 
         /* Unpack reliable game events with dedup.
-         * Only advance ACK based on events we actually consumed — stop
+         * Only advance ACK based on events we actually consumed â€” stop
          * on truncated packet OR when the local buffer is full. */
         for (i = 0; i < reliableEventCount; i++) {
             uint32_t evSeq = reliableBaseSeq + (uint32_t)i;
             GameEvent ev;
-            if (pos + 1 > len) break;  /* Truncated packet — stop */
+            if (pos + 1 > len) break;  /* Truncated packet â€” stop */
             pos += unpackGameEvent(buf + pos, &ev);
             actuallyUnpacked++;
             /* Only apply events we haven't seen yet */
@@ -543,7 +543,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 if (newEventCount < MAX_SNAPSHOT_EVENTS) {
                     c->snapshotEvents[newEventCount++] = ev;
                 } else {
-                    break;  /* Buffer full — stop so we don't ACK unconsumed events */
+                    break;  /* Buffer full â€” stop so we don't ACK unconsumed events */
                 }
             }
         }
@@ -561,14 +561,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         for (i = 0; i < mapEventCount; i++) {
             uint32_t evSeq = mapEventBaseSeq + (uint32_t)i;
             GameEvent ev;
-            if (pos + 1 > len) break;  /* Truncated packet — stop */
+            if (pos + 1 > len) break;  /* Truncated packet â€” stop */
             pos += unpackGameEvent(buf + pos, &ev);
             actuallyUnpackedMap++;
             if (evSeq >= c->mapEventAck) {
                 if (newEventCount < MAX_SNAPSHOT_EVENTS) {
                     c->snapshotEvents[newEventCount++] = ev;
                 } else {
-                    break;  /* Buffer full — stop so we don't ACK unconsumed events */
+                    break;  /* Buffer full â€” stop so we don't ACK unconsumed events */
                 }
             }
         }
@@ -774,7 +774,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_CHAT_BROADCAST:
-        /* Chat broadcast — wire format depends on fromPlayer (see netpacks.h):
+        /* Chat broadcast â€” wire format depends on fromPlayer (see netpacks.h):
          *   < MAX_TANKS  : player-to-player chat, payload is plain message
          *   == 0xFF      : server localized, payload is langid + args
          *   == 0xFE      : server raw English (transitional), payload is plain message
@@ -979,7 +979,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->lobbyBaseCount = buf[pos++];
             c->clientSim->lobbyStartCount = buf[pos++];
             c->clientSim->mapSkipAvailable = buf[pos++] ? true : false;
-            /* Map server state to client netStatus — preserve countdown state */
+            /* Map server state to client netStatus â€” preserve countdown state */
             if (serverState == 1) { /* serverStateCountdown */
                 c->clientSim->netStat = netLobbyCountdown;
             } else {
@@ -1033,7 +1033,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
                 }
             } else {
-                /* Flag was restored or not needed — reset for next round */
+                /* Flag was restored or not needed â€” reset for next round */
                 c->wbnReauthSent = FALSE;
             }
         }
@@ -1164,7 +1164,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 localWon = (c->playerNum == first) ||
                            playersIsAllie(&cs->sim.plyrs, c->playerNum, first);
             }
-            /* else: time limit or other end condition — no winner */
+            /* else: time limit or other end condition â€” no winner */
 
             if (allOwned && numBases > 0) {
                 gameType gt = gameTypeGet(&cs->sim.game);
@@ -1203,7 +1203,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->netStat = netLobby;
             c->clientSim->countdownSeconds = 0;
             c->clientSim->lobbyChatHistory[0] = '\0';
-            /* Reset timeout tracking — the server won't send snapshots
+            /* Reset timeout tracking â€” the server won't send snapshots
              * during gameOver countdown, and the client's catch-up loop
              * advances localTick rapidly which can trigger a spurious
              * timeout before the game loop exits to the lobby. */
@@ -1214,7 +1214,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_LOBBY_MAP_CHANGE:
-        /* [header 8] – server loaded a new map; reset to re-download */
+        /* [header 8] â€“ server loaded a new map; reset to re-download */
         c->clientSim->mapDownloadComplete = false;
         c->joinState = UDP_CLIENT_JOINING;
         c->joinAttempts = 0;
@@ -1225,7 +1225,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_BALANCE_PROPOSAL:
-        /* [header 8] [teamForSlot × 16] */
+        /* [header 8] [teamForSlot Ã— 16] */
         if (len >= PACKET_HEADER_SIZE + 16) {
             int i;
             bool anyNonZero = false;
@@ -1251,7 +1251,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    /* ── Layout A lobby — server → client broadcasts ─────────────── */
+    /* â”€â”€ Layout A lobby â€” server â†’ client broadcasts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     case PACKET_LOBBY_SETTING_CHG:
         /* [header 8] [settingType 1] [valueLen 1] [value valueLen] */
         if (len >= PACKET_HEADER_SIZE + 2) {
@@ -1270,20 +1270,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                         if (vl == 1) c->clientSim->lobbyAiType = v[0];
                         break;
                     case LST_TIME_LIMIT:
-                        /* Bool — preserved separately on the client; lobbyTimeLimit
+                        /* Bool â€” preserved separately on the client; lobbyTimeLimit
                          * itself is the tick-encoded length, set via TIME_MINUTES. */
                         break;
                     case LST_TIME_MINUTES:
                         if (vl == 2) {
                             uint16_t mins = (uint16_t)((v[0] << 8) | v[1]);
                             c->clientSim->lobbyTimeLimit =
-                                (int32_t)mins * 60 * 50;  /* mins → seconds → ticks */
+                                (int32_t)mins * 60 * 50;  /* mins â†’ seconds â†’ ticks */
                         }
                         break;
                     case LST_AUTO_LOCK_ON_GAME:
                         if (vl == 1) c->clientSim->lobbyAutoLockOnGameStart = v[0] != 0;
                         break;
-                    default: /* unknown setting type — ignore (forward-compat) */ break;
+                    default: /* unknown setting type â€” ignore (forward-compat) */ break;
                 }
             }
         }
@@ -1313,7 +1313,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
                 /* TEAM_META broadcasts (in_use=1) and TEAM_CLEAR (sent
                  * with teams[id] zeroed, so nameLen=0+color=0+pool=0)
-                 * use the same packet — derive in_use from nameLen
+                 * use the same packet â€” derive in_use from nameLen
                  * being non-zero OR color being explicitly set. */
                 c->clientSim->lobbyTeamInUse[teamId] =
                     (nameLen > 0 || color != 0 || pool != 0) ? 1 : 0;
@@ -1337,7 +1337,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_LOBBY_REJECT:
-        /* [header 8] [origPacket 1] [reasonCode 1] — server rejected
+        /* [header 8] [origPacket 1] [reasonCode 1] â€” server rejected
          * one of our lobby commands. Stored for the UI to surface as
          * a toast or status line. */
         if (len >= PACKET_HEADER_SIZE + 2) {
@@ -1350,7 +1350,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* No payload. Server cleared everyone's ready flag; clients
          * mirror that locally so the Ready button restates "Click to
          * Ready". Server also broadcasts individual LOBBY_UPDATEs for
-         * any slot that had a ready→unready transition, so this is a
+         * any slot that had a readyâ†’unready transition, so this is a
          * defensive belt-and-braces sweep. */
         {
             int i;
@@ -1424,7 +1424,7 @@ static bool udpClientTick(void *ctx) {
         udpClientProcessPacket(c, buf, len);
     }
 
-    /* Handle join handshake — send/resend join requests */
+    /* Handle join handshake â€” send/resend join requests */
     if (c->joinState == UDP_CLIENT_JOINING) {
         c->ticksSinceJoinSent++;
         if (c->ticksSinceJoinSent >= JOIN_RETRY_INTERVAL) {
@@ -1457,7 +1457,7 @@ static bool udpClientTick(void *ctx) {
                     if (bolo_steam_has_supporter_dlc()) clientHints |= PLAYER_FLAG_SUPPORTER;
                     jbuf[joffset++] = clientHints;
                 }
-                /* Join requests bypass delay — they're control plane */
+                /* Join requests bypass delay â€” they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,
                     "join request sent: attempt=%d/%d to=%s:%u name='%s'",
@@ -1469,7 +1469,7 @@ static bool udpClientTick(void *ctx) {
                 c->ticksSinceJoinSent = 0;
 
                 /* On the second JOIN attempt with no response, kick off
-                 * the punch fallback. Only fires once per session — once
+                 * the punch fallback. Only fires once per session â€” once
                  * the host's punch packet arrives, our subsequent
                  * JOIN_REQUEST retries will get through. Skipped when no
                  * tracker configured (LAN/manual-connect joiners). */
@@ -1482,7 +1482,7 @@ static bool udpClientTick(void *ctx) {
         }
     }
 
-    /* Periodic ping — bypasses delay so RTT measurement is accurate
+    /* Periodic ping â€” bypasses delay so RTT measurement is accurate
      * (measures real network RTT, not simulated RTT) */
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         if (c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
@@ -1524,7 +1524,7 @@ static bool udpClientGetSnapshotVtable(void *ctx, BYTE clientIdx,
                                        GameEvent *events, int maxEvents) {
     TransportUdpClientCtx *c;
     int count;
-    (void)clientIdx; /* UDP client doesn't need this — server sends per-client data */
+    (void)clientIdx; /* UDP client doesn't need this â€” server sends per-client data */
     if (ctx == NULL) return false;
     c = (TransportUdpClientCtx *)ctx;
     if (!c->hasSnapshot) return false;
@@ -1604,6 +1604,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         c->joinState = UDP_CLIENT_ERROR;
         t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
+        t.kind = TRANSPORT_KIND_UDP_CLIENT;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
         t.ctx = c;
@@ -1676,6 +1677,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
+    t.kind = TRANSPORT_KIND_UDP_CLIENT;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
     t.ctx = c;
@@ -1837,6 +1839,7 @@ void transportUdpClientGetGameSettings(Transport *t, gameType *game,
  * destPlayer: 0xFF = all players, else specific player number. */
 void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
                                 const char *message) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
     int msgLen;
@@ -1857,6 +1860,7 @@ void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
 
 /* Send a name change request to the server. */
 void transportUdpClientSendNameChange(Transport *t, const char *newName) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
 
@@ -1874,6 +1878,7 @@ void transportUdpClientSendNameChange(Transport *t, const char *newName) {
 /* Send an alliance request to another player via server.
  * Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
 void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 2];
 
@@ -1889,6 +1894,7 @@ void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer) {
  * Wire: [header 8] [fromPlayer 1] [toPlayer 1]
  * fromPlayer = us (the accepter), toPlayer = who requested */
 void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 2];
 
@@ -1903,6 +1909,7 @@ void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer) {
 /* Send a leave alliance request to server.
  * Wire: [header 8] [playerNum 1] */
 void transportUdpClientSendAllianceLeave(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 
@@ -1916,6 +1923,7 @@ void transportUdpClientSendAllianceLeave(Transport *t) {
 /* Send a lock toggle to the server.
  * Wire: [header 8] [allow 1] */
 void transportUdpClientSendLockToggle(Transport *t, bool allow) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 
@@ -1930,6 +1938,7 @@ void transportUdpClientSendLockToggle(Transport *t, bool allow) {
 /* ---- Client lobby send functions ---- */
 
 void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 2];
 
@@ -1942,6 +1951,7 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber) {
 }
 
 void transportUdpClientSendReady(Transport *t, bool ready) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 2];
 
@@ -1954,6 +1964,7 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
 }
 
 void transportUdpClientSendAddBot(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE];
 
@@ -1964,6 +1975,7 @@ void transportUdpClientSendAddBot(Transport *t) {
 }
 
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 
@@ -1975,6 +1987,7 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
 }
 
 void transportUdpClientSendWbnReauth(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
 
@@ -1989,6 +2002,7 @@ void transportUdpClientSendWbnReauth(Transport *t) {
 /* ---- Client balance send functions ---- */
 
 void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 
@@ -2000,6 +2014,7 @@ void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize) {
 }
 
 void transportUdpClientSendBalanceApply(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE];
 
@@ -2010,6 +2025,7 @@ void transportUdpClientSendBalanceApply(Transport *t) {
 }
 
 void transportUdpClientSendBalanceDismiss(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE];
 
@@ -2020,6 +2036,7 @@ void transportUdpClientSendBalanceDismiss(Transport *t) {
 }
 
 void transportUdpClientSendMapSkipVote(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE];
 
@@ -2029,11 +2046,12 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
-/* ── Layout A lobby commands — Client → Server ─────────────────── */
+/* â”€â”€ Layout A lobby commands â€” Client â†’ Server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 void transportUdpClientSendLobbySetting(Transport *t,
                                         uint8_t settingType,
                                         const uint8_t *value, uint8_t valueLen) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* Header + type byte + len byte + max 32 bytes of value (currently
      * settings are 1-2 bytes; 32 leaves room for future LST_* values). */
@@ -2053,6 +2071,7 @@ void transportUdpClientSendLobbySetting(Transport *t,
 }
 
 void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 
@@ -2066,6 +2085,7 @@ void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
 void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
                                          uint8_t color, uint8_t namingPool,
                                          const char *name) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* Header + teamId + color + namingPool + nameLen + max 31 bytes
      * (LOBBY_TEAM_NAME_LEN-1, leaving room for caller terminator). */
@@ -2089,6 +2109,7 @@ void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
 }
 
 void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 
@@ -2102,6 +2123,7 @@ void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId) {
 void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
                                           uint8_t difficulty, uint8_t personality,
                                           const char *name) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* Header + slot + difficulty + personality + nameLen + max 31 bytes. */
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
@@ -2124,6 +2146,7 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
 }
 
 void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 1];
 

@@ -210,7 +210,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/flags.c
     ${SRC_ROOT}/gui/sdl3/dialog_backend.c
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_welcome.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamesetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_mapchooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamebrowser.cpp

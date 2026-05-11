@@ -2743,7 +2743,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              * GameSim values get reseeded at game start from these. */
             switch (settingType) {
                 case LST_GAME_TYPE:
-                    if (valueLen == 1 && value[0] <= 2) {
+                    /* gameType enum is 1-based: gameOpen=1, gameTournament=2,
+                     * gameStrictTournament=3. The wire carries the raw enum
+                     * value (matches the LOBBY_STATE pack format). */
+                    if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
                         sim->sim.game = (gameType)value[0];
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
