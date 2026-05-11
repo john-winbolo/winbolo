@@ -24,7 +24,7 @@
 #include "../bolo/bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "threads.h"
-#include "server_sim.h"
+#include "server_sim_internal.h"
 #include "server_lifecycle.h"
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";

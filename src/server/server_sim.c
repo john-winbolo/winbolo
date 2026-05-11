@@ -59,7 +59,7 @@
 #include "../bolo/bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "../winbolonet/http.h"
-#include "server_sim.h"
+#include "server_sim_internal.h"
 #include "server_lifecycle.h"
 #include "../bolo/control_event.h"
 #include <assert.h>
@@ -3110,4 +3110,124 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
     }
 
     sim->publishing = false;
+}
+
+/*********************************************************
+ * Read accessors.
+ *********************************************************/
+
+bool serverSimIsLobbyEnabled(const ServerSim *sim) {
+    return sim->lobbyEnabled;
+}
+
+bool serverSimHasPassword(const ServerSim *sim) {
+    return sim->hasPassword;
+}
+
+bool serverSimIsRandomMapEnabled(const ServerSim *sim) {
+    return sim->randomMapEnabled;
+}
+
+bool serverSimIsQuiet(const ServerSim *sim) {
+    return sim->isServerQuiet;
+}
+
+bool serverSimGetServerMessageUseLogFile(const ServerSim *sim) {
+    return sim->serverMessageUseLogFile;
+}
+
+ServerState serverSimGetState(const ServerSim *sim) {
+    return sim->state;
+}
+
+aiType serverSimGetBotAiType(const ServerSim *sim) {
+    return sim->botAiType;
+}
+
+uint32_t serverSimGetTick(const ServerSim *sim) {
+    return sim->tick;
+}
+
+uint32_t serverSimGetTimeCreated(const ServerSim *sim) {
+    return sim->timeCreated;
+}
+
+int32_t serverSimGetStartDelay(const ServerSim *sim) {
+    return sim->startDelay;
+}
+
+int32_t serverSimGetGameLength(const ServerSim *sim) {
+    return sim->gameLength;
+}
+
+int32_t serverSimGetCountdownTicks(const ServerSim *sim) {
+    return sim->countdownTicks;
+}
+
+unsigned short serverSimGetServerPort(const ServerSim *sim) {
+    return sim->serverPort;
+}
+
+int serverSimGetMapDirCount(const ServerSim *sim) {
+    return sim->mapDirCount;
+}
+
+uint8_t serverSimGetEventCount(const ServerSim *sim) {
+    return sim->eventCount;
+}
+
+uint16_t serverSimGetMapEventCount(const ServerSim *sim) {
+    return sim->mapEventCount;
+}
+
+const char *serverSimGetMapName(const ServerSim *sim) {
+    return sim->mapName;
+}
+
+const char *serverSimGetBotBrainPath(const ServerSim *sim) {
+    return sim->botBrainPath;
+}
+
+const char *serverSimGetServerMessageLogFile(const ServerSim *sim) {
+    return sim->serverMessageLogFile;
+}
+
+const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
+bool serverSimIsPlayerConnected(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return false;
+    return sim->playerConnected[n];
+}
+
+uint32_t serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return 0;
+    return sim->lastProcessedInput[n];
+}
+
+bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return false;
+    return sim->mapSkipVotes[n];
+}
+
+char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
+    return sim->mapDirFiles;
+}
+
+const GameEvent *serverSimGetEvents(const ServerSim *sim) {
+    return sim->events;
+}
+
+const GameEvent *serverSimGetMapEvents(const ServerSim *sim) {
+    return sim->mapEvents;
+}
+
+const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim) {
+    return &sim->balanceProposal;
+}
+
+GameSim *serverSimGetGameSim(ServerSim *sim) {
+    return &sim->sim;
 }
