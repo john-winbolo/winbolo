@@ -310,7 +310,7 @@ void gameFrontUpdateSteamPresence(ClientSim *cs) {
   /* Set connect string so friends see a "Join Game" button */
   if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
     char connect[FILENAME_MAX];
-    snprintf(connect, sizeof(connect), "+connect %s:%u",
+    snprintf(connect, sizeof(connect), "+connect %.255s:%u",
              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
     steam_set_rich_presence("connect", connect);
   }
@@ -1523,9 +1523,9 @@ void gameFrontHandleUrlOpen(char *url) {
     /* Reconstruct a clean URL from the parsed globals so fileName
        is not mangled by strtok. */
     if (gameFrontTargetUdp > 0) {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
+      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
     } else {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%s", gameFrontUdpAddress);
+      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s", gameFrontUdpAddress);
     }
     dlgState = openInternetManual;
   }
