@@ -1998,6 +1998,15 @@ void transportUdpServerBroadcastMapSkipState(ServerSim *sim) {
                       &udpServer.clients[i].addr);
         }
     }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_MAP_SKIP_STATE;
+        for (i = 0; i < MAX_TANKS; i++) {
+            evt.u.mapSkipState.votes[i] = sim->mapSkipVotes[i] ? 1 : 0;
+        }
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
