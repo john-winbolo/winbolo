@@ -235,6 +235,10 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
                                           uint8_t difficulty, uint8_t personality,
                                           const char *name);
 
+/* Change which Lua brain a lobby bot uses. Host (or openHost) only. */
+void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
+                                            const char *brainPath);
+
 /* Kick a player out of the lobby. Host action. */
 void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
 

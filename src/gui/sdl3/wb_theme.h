@@ -69,8 +69,17 @@ struct WbTheme {
 
     /* Badge colors — small inline indicators */
     ImU32 lockBadge;           /* server-locked setting (orange) */
-    ImU32 hostBadge;           /* "host" pill on a player row */
     ImU32 botBadge;            /* "bot" identifier */
+    /* HOST tag colors — small square pill rendered next to slot 0's
+     * name. Drawn as bg + 1px border + text so each layer is themable. */
+    ImU32 hostTagBg;
+    ImU32 hostTagBorder;
+    ImU32 hostTagText;
+    /* BOT tag — same bg as HOST so the row badges read as a family.
+     * Border + text differ to keep the two visually distinct. */
+    ImU32 botTagBg;
+    ImU32 botTagBorder;
+    ImU32 botTagText;
 };
 
 /* Single global theme pointer. Swapped on theme change. */

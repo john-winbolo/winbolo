@@ -154,6 +154,10 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
                          (aiType)sim->botAiType,
                          (gameType)cs->lobbyGameType,
                          cs->lobbyHiddenMines);
+        /* Mirror the path into the per-bot table so the AiConfig combo
+         * reflects "this bot's brain" rather than a global default. */
+        SDL_strlcpy(sim->botBrainPaths[slot], sim->botBrainPath,
+                    sizeof(sim->botBrainPaths[slot]));
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             sim->lobbyPlayers[slot].teamNumber = teamNumber;
         }
@@ -223,6 +227,27 @@ static void lobbySendBotConfig(ClientSim *cs, Transport *transport,
     if (transport) {
         transportUdpClientSendLobbyBotConfig(transport, slot,
             difficulty, personality, name);
+    }
+}
+
+/* Change which Lua brain script a lobby bot uses. SP path mutates the
+ * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN. */
+static void lobbySendSetBotBrain(ClientSim *cs, Transport *transport,
+                                 uint8_t slot, const char *brainPath) {
+    if (!brainPath) brainPath = "";
+    if (cs && cs->isSinglePlayer) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim || slot >= MAX_TANKS) return;
+        if (sim->state != serverStateLobby) return;
+        if (!sim->lobbyPlayers[slot].isBot) return;
+        SDL_strlcpy(sim->botBrainPaths[slot], brainPath,
+                    sizeof(sim->botBrainPaths[slot]));
+        botManagerSetBrainPath(slot, sim->botBrainPaths[slot]);
+        serverSimSyncLobbyToClient(sim, cs);
+        return;
+    }
+    if (transport) {
+        transportUdpClientSendLobbySetBotBrain(transport, slot, brainPath);
     }
 }
 
@@ -600,7 +625,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
     }
 
     /* Walk teams 1..15, render those with members. Then unassigned. */
-    bool effectiveHost = isHost || cs->lobbyOpenHost;
+    bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                         (cs->lobbySlots[myPlayerNum].clientFlags
+                          & PLAYER_FLAG_ADMIN));
+    bool effectiveHost = isHost || cs->lobbyOpenHost || isLocalAdmin;
 
     /* Header: "Add Team" button (host only) and the openHost toggle.
      * Add Team picks the lowest unused teamId, sends a default-name
@@ -1073,20 +1101,78 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                                      "", false);
                 }
 
-                /* ── Column 2: name ──────────────────────────────── */
+                /* ── Column 2: name + inline tags ────────────────── */
                 ImGui::TableSetColumnIndex(2);
                 rowTopY = ImGui::GetCursorPosY();
                 cyTextAbs();
                 if (isBot) {
                     ImGui::PushStyleColor(ImGuiCol_Text,
                                           wbThemeColor(g_theme->botBadge));
-                    ImGui::Text("%s [bot]", cs->lobbySlots[i].playerName);
+                    ImGui::Text("%s", cs->lobbySlots[i].playerName);
                     ImGui::PopStyleColor();
                 } else if (isMe) {
                     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
                                        "%s", cs->lobbySlots[i].playerName);
                 } else {
                     ImGui::Text("%s", cs->lobbySlots[i].playerName);
+                }
+
+                /* Inline tag pills after the name. Drawn via
+                 * WindowDrawList so we can size them tightly and
+                 * tint each one independently (HOST = yellow,
+                 * BOT = muted blue-gray). Same pill recipe as the
+                 * READY/NOT READY badge but at 70% font size. */
+                auto drawNameTag = [&](const char *lbl, ImU32 bg, ImU32 fg,
+                                       ImU32 border = 0) {
+                    const float tagScale = 0.70f;
+                    float tagFontSz = ImGui::GetFontSize() * tagScale;
+                    ImVec2 baseSz = ImGui::CalcTextSize(lbl);
+                    ImVec2 textSz(baseSz.x * tagScale, tagFontSz);
+                    float padX = 6.0f * s;
+                    float padY = 2.0f * s;
+                    float pillW = textSz.x + padX * 2.0f;
+                    float pillH = textSz.y + padY * 2.0f;
+                    ImGui::SameLine(0.0f, 6.0f * s);
+                    cyAbs(pillH);
+                    ImVec2 pos = ImGui::GetCursorScreenPos();
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    /* Square corners on the name tags so they read as
+                     * "labels", not status pills like READY. */
+                    dl->AddRectFilled(pos,
+                                      ImVec2(pos.x + pillW, pos.y + pillH),
+                                      bg, 0.0f);
+                    if (border != 0) {
+                        dl->AddRect(pos,
+                                    ImVec2(pos.x + pillW, pos.y + pillH),
+                                    border, 0.0f, 0, 1.0f);
+                    }
+                    dl->AddText(ImGui::GetFont(), tagFontSz,
+                                ImVec2(pos.x + padX, pos.y + padY),
+                                fg, lbl);
+                    ImGui::Dummy(ImVec2(pillW, pillH));
+                };
+                if (i == 0) {
+                    /* Host is always player slot 0. Themable bg /
+                     * border / text triple lives in wb_theme.cpp. */
+                    drawNameTag("HOST",
+                                g_theme->hostTagBg,
+                                g_theme->hostTagText,
+                                g_theme->hostTagBorder);
+                }
+                if (!isBot && i != 0 &&
+                    (cs->lobbySlots[i].clientFlags & PLAYER_FLAG_ADMIN)) {
+                    /* IP-matched admin (server -admins). Shown beside the
+                     * name like HOST but in a distinct teal so it reads
+                     * as a separate "host-level authority" badge. */
+                    drawNameTag("ADMIN",
+                                IM_COL32(70, 160, 175, 255),
+                                IM_COL32(10, 30, 35, 255));
+                }
+                if (isBot) {
+                    drawNameTag("BOT",
+                                g_theme->botTagBg,
+                                g_theme->botTagText,
+                                g_theme->botTagBorder);
                 }
 
                 /* ── Column 3: gear (bots) or ping (humans) ──────── */
@@ -1245,6 +1331,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
 static void renderBotAiConfig(ClientSim *cs, Transport *transport,
                               int slot, int teamId, float s) {
     if (slot < 0 || slot >= MAX_TANKS) return;
+    /* Render the whole AiConfig form at a smaller font so it reads
+     * as a secondary control surface beneath the bot row. Saved +
+     * restored so we don't bleed into the rest of the lobby. */
+    float aicfgOldScale = ImGui::GetCurrentWindow()->FontWindowScale;
+    ImGui::SetWindowFontScale(aicfgOldScale * 0.85f);
 
     /* Build the "currently used names" array for the dice reroll —
      * collect every bot name in the lobby so we don't collide. */
@@ -1262,25 +1353,71 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
      * 50px row indent so the form spans the full team width.) */
     ImGui::PushID(slot);
 
-    /* ── Name + dice reroll ───────────────────────────────────── */
-    ImGui::TextDisabled("Name (override)");
+    /* Two side-by-side groups: Name on the left, Bot Code on the right.
+     * BeginGroup + SameLine works inside the outer table cell (which is
+     * NoClip-enabled), unlike a nested BeginTable which gets clipped to
+     * the parent's narrow column width and squashes the controls. */
     char nameBuf[32];
     strncpy(nameBuf, cs->lobbySlots[slot].playerName, sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
+    bool nameChanged = false;
+    bool diceClicked = false;
+    const BrainList *bl = &cs->lobbyBrainList;
+    int pendingBrainPick = -1;
+
+    /* Name group. */
+    ImGui::BeginGroup();
+    ImGui::TextDisabled("Name (override)");
     ImGui::SetNextItemWidth(180.0f * s);
-    /* The form lives inside a table cell with NoClip — without an
-     * explicit frame border, the InputText's outline blends into
-     * the row stripe and the field reads as "missing a border".
-     * Force a 1px border for this control so it's visually clearly
-     * an editable field. */
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    bool nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
-                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
+                                   ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopStyleVar();
     ImGui::SameLine();
-    bool diceClicked = ImGui::Button("Reroll");
+    diceClicked = ImGui::Button("Reroll");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Pick a fresh random name from the team's pool.");
+    }
+    ImGui::EndGroup();
+
+    /* Bot Code group, right of the Name group. */
+    if (bl->count > 0) {
+        ImGui::SameLine(0.0f, 24.0f * s);
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("Bot Code");
+        const char *curPath = cs->lobbyBotBrain[slot];
+        const BrainListEntry *curEntry = brainListFindByPath(bl, curPath);
+        char preview[BRAIN_LIST_NAME_LEN + BRAIN_LIST_VER_LEN + 8];
+        if (curEntry) {
+            if (curEntry->version[0])
+                SDL_snprintf(preview, sizeof(preview), "%s (%s)",
+                             curEntry->name, curEntry->version);
+            else
+                SDL_snprintf(preview, sizeof(preview), "%s", curEntry->name);
+        } else if (curPath[0]) {
+            SDL_snprintf(preview, sizeof(preview), "(custom)");
+        } else {
+            SDL_snprintf(preview, sizeof(preview), "(none)");
+        }
+        ImGui::SetNextItemWidth(240.0f * s);
+        if (ImGui::BeginCombo("##botbrain", preview)) {
+            for (int b = 0; b < bl->count; b++) {
+                const BrainListEntry *e = &bl->entries[b];
+                char label[BRAIN_LIST_NAME_LEN + BRAIN_LIST_VER_LEN + 8];
+                if (e->version[0])
+                    SDL_snprintf(label, sizeof(label), "%s (%s)",
+                                 e->name, e->version);
+                else
+                    SDL_snprintf(label, sizeof(label), "%s", e->name);
+                bool sel = (curEntry == e);
+                if (ImGui::Selectable(label, sel)) {
+                    pendingBrainPick = b;
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndGroup();
     }
 
     if (diceClicked) {
@@ -1300,6 +1437,10 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         lobbySendBotConfig(cs, transport, (uint8_t)slot,
             cs->lobbyBotDifficulty[slot], cs->lobbyBotPersonality[slot], nameBuf);
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
+    }
+    if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
+        lobbySendSetBotBrain(cs, transport, (uint8_t)slot,
+                             bl->entries[pendingBrainPick].path);
     }
 
     /* Difficulty / Personality dropdowns are hidden for now — the
@@ -1342,13 +1483,13 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
     }
 
     /* ── Close button ─────────────────────────────────────────── */
-    ImGui::SameLine(0.0f, 16.0f * s);
     if (ImGui::Button("Done")) {
         s_expandedBotSlot = -1;
     }
 
     ImGui::PopID();
     ImGui::Spacing();
+    ImGui::SetWindowFontScale(aicfgOldScale);
 }
 
 /* ── Layout A — connectivity badge (icon + short text + Test btn) ─
@@ -1536,7 +1677,10 @@ static void renderLockBadge(void) {
  * commands. Host-only or anyone if openHost. */
 static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
                                     int myPlayerNum, float s) {
-    bool effectiveHost = (myPlayerNum == 0) || cs->lobbyOpenHost;
+    bool effectiveHost = (myPlayerNum == 0) || cs->lobbyOpenHost ||
+                         (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                          (cs->lobbySlots[myPlayerNum].clientFlags
+                           & PLAYER_FLAG_ADMIN));
 
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
      * Settings" button at the bottom of the panel can fold it away
@@ -1548,6 +1692,11 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         return;
     }
     s_settingsOpen = true;
+
+    /* Settings body uses a smaller font than the rest of the lobby so
+     * the 3-column form doesn't dominate the visual hierarchy. */
+    float settingsOldScale = ImGui::GetCurrentWindow()->FontWindowScale;
+    ImGui::SetWindowFontScale(settingsOldScale * 0.85f);
 
     ImGui::Spacing();
     ImGui::Columns(3, "##settingsCols", false);
@@ -1700,6 +1849,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
             s_settingsOpen = false;
         }
     }
+    ImGui::SetWindowFontScale(settingsOldScale);
 }
 
 extern "C" int imguiLobbyShow(ClientSim *cs) {

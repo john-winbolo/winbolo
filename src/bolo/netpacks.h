@@ -314,6 +314,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                             *   personality 1, nameLen 1,
                                             *   name N } */
 #define PACKET_LOBBY_KICK           165  /* { slot 1 } */
+#define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 
 /* Existing packets get extended payloads (additive, version-bumped):
  *   PACKET_LOBBY_TEAM_SET (130): host can move others, not just self.
@@ -328,6 +329,11 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_BOT_CONFIG_CHG 178
 #define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
 #define PACKET_LOBBY_AUTO_UNREADY   180  /* (empty payload) */
+#define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1,
+                                          *   for each: nameLen 1, name N,
+                                          *             verLen  1, ver  N,
+                                          *             pathLen 1, path N } */
+#define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
 
 /* Setting types used inside SET_SETTING / SETTING_CHG payloads.
  * Forward-compat: receivers must skip unknown types via valueLen. */

@@ -1046,6 +1046,21 @@ int main(int argc, char **argv) {
     httpSetAltIpAddress(useAddr);
   }
 
+  /* -admins <comma-separated-ips> — clients connecting from any of
+   * these IPs are tagged with PLAYER_FLAG_ADMIN and get host-level
+   * lobby authority (settings, teams, bot control). The host (slot 0)
+   * always retains authority regardless. */
+  serverSim.adminIps[0] = '\0';
+  if (argExist(argc, argv, "admins")) {
+    int argNum = findArg(argc, argv, "admins");
+    if (argNum != ARG_NOT_FOUND) {
+      strncpy(serverSim.adminIps, (char *)argv[argNum],
+              sizeof(serverSim.adminIps) - 1);
+      serverSim.adminIps[sizeof(serverSim.adminIps) - 1] = '\0';
+      fprintf(stderr, "  Admin IPs: %s\n", serverSim.adminIps);
+    }
+  }
+
   statusFile = argExist(argc, argv, "statusFile");
   serverSim.quitOnWin = argExist(argc, argv, "quitonwin");
   serverSim.autoCloseOnEmpty = argExist(argc, argv, "autoclose");
