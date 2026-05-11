@@ -41,6 +41,7 @@ typedef enum {
     CTRL_LOBBY_SLOT,
     CTRL_LOBBY_SETTINGS,
     CTRL_LOBBY_MAP_CHANGE,
+    CTRL_MAP_DOWNLOAD_COMPLETE,
     CTRL_GAME_PHASE,
     CTRL_GAME_OVER,
     CTRL_SERVER_SHUTDOWN
@@ -115,6 +116,11 @@ typedef struct {
         struct {
             uint8_t _unused;
         } lobbyMapChange;
+
+        /* CTRL_MAP_DOWNLOAD_COMPLETE — no payload fields needed */
+        struct {
+            uint8_t _unused;
+        } mapDownloadComplete;
 
         /* CTRL_GAME_PHASE */
         struct {

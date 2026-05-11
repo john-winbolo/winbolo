@@ -122,6 +122,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->mapSkipMyVote = false;
         break;
 
+    case CTRL_MAP_DOWNLOAD_COMPLETE:
+        cs->mapDownloadComplete = true;
+        break;
+
     case CTRL_GAME_PHASE:
         switch (evt->u.gamePhase.phase) {
         case CTRL_PHASE_LOBBY:

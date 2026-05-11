@@ -399,7 +399,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     (unsigned)c->mapDownloadTotal,
                     (unsigned)c->playerNum);
                 c->joinState = UDP_CLIENT_CONNECTED;
-                c->clientSim->mapDownloadComplete = true;
+                {
+                    ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
+                    clientSimApplyControl(c->clientSim, &evt);
+                }
             }
         }
         break;
