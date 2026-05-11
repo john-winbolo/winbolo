@@ -1320,6 +1320,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
 
     {
         UdpServerClient *c = &udpServer.clients[idx];
+        (void)c;
         WB_LOG_DEBUG(WB_LOG_CAT_NET,
             "disconnect slot=%d name='%s' addr=%s:%u graceful=%d "
             "tickCount=%u lastReceivedTick=%u tickDiff=%u (timeout=%d)",
@@ -1759,7 +1760,7 @@ static int serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
     }
     /* Game settings tail */
     memset(buf + pos, 0, MAP_STR_SIZE);
-    strncpy((char *)(buf + pos), sim->mapName, MAP_STR_SIZE - 1);
+    snprintf((char *)(buf + pos), MAP_STR_SIZE, "%s", sim->mapName);
     pos += MAP_STR_SIZE;
     buf[pos++] = (uint8_t)gameTypeGet(&sim->sim.game);
     buf[pos++] = sim->sim.hiddenMines ? 1 : 0;
@@ -2342,9 +2343,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     serverSimConsoleMessage(msg);
 
                     /* Update server-side name */
-                    strncpy(udpServer.clients[clientIdx].playerName, newName,
-                            PACKET_MAX_PLAYER_NAME - 1);
-                    udpServer.clients[clientIdx].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+                    snprintf(udpServer.clients[clientIdx].playerName,
+                             PACKET_MAX_PLAYER_NAME, "%s", newName);
 
                     /* Update in players struct */
                     {
@@ -2359,8 +2359,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         outBuf[PACKET_HEADER_SIZE] = (uint8_t)clientIdx;
                         memset(outBuf + PACKET_HEADER_SIZE + 1, 0,
                                PACKET_MAX_PLAYER_NAME);
-                        strncpy((char *)(outBuf + PACKET_HEADER_SIZE + 1),
-                                newName, PACKET_MAX_PLAYER_NAME - 1);
+                        snprintf((char *)(outBuf + PACKET_HEADER_SIZE + 1),
+                                 PACKET_MAX_PLAYER_NAME, "%s", newName);
                         for (j = 0; j < MAX_TANKS; j++) {
                             if (udpServer.clients[j].connected &&
                                 j != clientIdx) {
@@ -2375,8 +2375,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         memset(&evt, 0, sizeof(evt));
                         evt.type = CTRL_PLAYER_NAME;
                         evt.u.playerName.playerNum = (BYTE)clientIdx;
-                        strncpy(evt.u.playerName.name, newName,
-                                PACKET_MAX_PLAYER_NAME - 1);
+                        snprintf(evt.u.playerName.name,
+                                 PACKET_MAX_PLAYER_NAME, "%s", newName);
                         serverSimPublishControl(serverSimGetActive(), &evt);
                     }
                 }
@@ -3084,7 +3084,7 @@ void transportUdpServerSend(ServerSim *sim) {
                 /* Get name from players struct (works for both UDP clients and bots) */
                 memset(playerName, 0, sizeof(playerName));
                 playersGetPlayerName(&serverSimGetActive()->sim.plyrs, (BYTE)j, playerName, TRUE);
-                strncpy((char *)(plBuf + plPos), playerName, PACKET_MAX_PLAYER_NAME - 1);
+                snprintf((char *)(plBuf + plPos), PACKET_MAX_PLAYER_NAME, "%s", playerName);
                 plPos += PACKET_MAX_PLAYER_NAME;
                 /* Country code (2 bytes) */
                 plBuf[plPos++] = (uint8_t)udpServer.clients[j].countryCode[0];
