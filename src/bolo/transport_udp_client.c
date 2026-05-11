@@ -2013,15 +2013,40 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
-void transportUdpClientSendAddBot(Transport *t) {
+void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
+                                  const char *brainPath,
+                                  const char *botName) {
     if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
+    uint8_t buf[PACKET_HEADER_SIZE + 3 + BRAIN_LIST_PATH_LEN +
+                PACKET_MAX_PLAYER_NAME];
 
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->joinState != UDP_CLIENT_CONNECTED) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "[LOBBY] Client SendAddBot skipped: joinState=%d (not CONNECTED)",
+                    (int)c->joinState);
+        return;
+    }
 
+    if (brainPath == NULL) brainPath = "";
+    if (botName   == NULL) botName   = "";
+    int pathLen = (int)strlen(brainPath);
+    int nameLen = (int)strlen(botName);
+    if (pathLen >= BRAIN_LIST_PATH_LEN)    pathLen = BRAIN_LIST_PATH_LEN - 1;
+    if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
+    if (nameLen > 31)                      nameLen = 31;
+
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "[LOBBY] Client -> server: ADD_BOT team=%u brain='%s' name='%s'",
+                (unsigned)teamNumber, brainPath, botName);
+    int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+    buf[pos++] = teamNumber;
+    buf[pos++] = (uint8_t)pathLen;
+    if (pathLen > 0) { memcpy(buf + pos, brainPath, pathLen); pos += pathLen; }
+    buf[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) { memcpy(buf + pos, botName, nameLen); pos += nameLen; }
+    udpClientSendTo(c, buf, pos);
 }
 
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {

@@ -1803,6 +1803,19 @@ static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientI
     payloadLen = serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
     udpSendTo(udpServer.sock, buf, PACKET_HEADER_SIZE + payloadLen,
               &udpServer.clients[clientIdx].addr);
+    /* Replay per-team metadata so the joining client knows about
+     * default-existing teams (1/2) and any host-created teams.
+     * Without this, the client sees teams as "color 0" (red) and
+     * any TEAM_META it later sends will overwrite the real color
+     * server-side. */
+    {
+        int t;
+        for (t = 1; t < MAX_TANKS; t++) {
+            if (sim->teams[t].in_use) {
+                transportUdpServerBroadcastLobbyTeamMetaChg(sim, (uint8_t)t);
+            }
+        }
+    }
     /* Ship the brain catalogue and current per-bot brain assignments
      * so the joining client can render the AiConfig "Bot Code" combo
      * with the right options + selections. */
@@ -2751,8 +2764,65 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_ADD_BOT: {
-            /* Wire: [header 8] — no payload needed, server uses its own brain config */
+            /* Wire: [header 8] [teamId 1] [pathLen 1] [path N].
+             * teamId=0 lets the server pick a default (count-based);
+             * empty path falls back to the server's brain default. */
             int clientIdx = serverFindClient(fromAddr);
+            uint8_t reqTeam = 0;
+            char chosenBrain[260];
+            chosenBrain[0] = '\0';
+            if (sim->botBrainPath[0] != '\0') {
+                SDL_strlcpy(chosenBrain, sim->botBrainPath, sizeof(chosenBrain));
+            } else if (sim->brainList.count > 0) {
+                SDL_strlcpy(chosenBrain, sim->brainList.entries[0].path,
+                            sizeof(chosenBrain));
+            }
+            char chosenName[PACKET_MAX_PLAYER_NAME];
+            chosenName[0] = '\0';
+            if (len >= PACKET_HEADER_SIZE + 2) {
+                int pos = PACKET_HEADER_SIZE;
+                reqTeam = buf[pos++];
+                uint8_t plen = buf[pos++];
+                if (plen > 0 && plen < sizeof(chosenBrain) &&
+                    len >= pos + plen) {
+                    memset(chosenBrain, 0, sizeof(chosenBrain));
+                    memcpy(chosenBrain, buf + pos, plen);
+                    pos += plen;
+                } else {
+                    pos += plen;
+                }
+                if (len >= pos + 1) {
+                    uint8_t nlen = buf[pos++];
+                    if (nlen > 0 && nlen < sizeof(chosenName) &&
+                        len >= pos + nlen) {
+                        memcpy(chosenName, buf + pos, nlen);
+                        chosenName[nlen] = '\0';
+                    }
+                }
+            }
+            /* Sync the resolved choice into sim->botBrainPath so any
+             * subsequent ADD_BOT (e.g. from an older client that sends
+             * no payload) inherits it instead of dying on emptiness. */
+            if (chosenBrain[0] != '\0') {
+                SDL_strlcpy(sim->botBrainPath, chosenBrain,
+                            sizeof(sim->botBrainPath));
+            }
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "[LOBBY] ADD_BOT from clientIdx=%d lobbyEnabled=%d state=%d "
+                "botAiType=%d brainPath='%s'",
+                clientIdx, (int)sim->lobbyEnabled, (int)sim->state,
+                (int)sim->botAiType, sim->botBrainPath);
+            if (clientIdx < 0) {
+                WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: unknown client");
+            } else if (!sim->lobbyEnabled) {
+                WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: lobby not enabled");
+            } else if (sim->state != serverStateLobby) {
+                WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: not in lobby state (state=%d)", (int)sim->state);
+            } else if (sim->botAiType == aiNone) {
+                WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: botAiType=aiNone (server started without -ai)");
+            } else if (sim->botBrainPath[0] == '\0') {
+                WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: botBrainPath empty (no brains in brains/ either)");
+            }
             if (clientIdx >= 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 sim->botAiType != aiNone &&
@@ -2766,20 +2836,44 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         break;
                     }
                 }
-                if (found) {
+                if (!found) {
+                    WB_LOG_INFO(WB_LOG_CAT_NET,
+                                "[LOBBY] ADD_BOT rejected: no free slot (all 16 taken)");
+                } else {
                     char botName[64];
-                    snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
-                    if (botManagerAddBot(sim, slot, sim->botBrainPath, botName,
+                    if (chosenName[0]) {
+                        SDL_strlcpy(botName, chosenName, sizeof(botName));
+                    } else {
+                        snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
+                    }
+                    if (botManagerAddBot(sim, slot, chosenBrain, botName,
                                          sim->botAiType,
                                          gameTypeGet(&sim->sim.game),
                                          sim->sim.hiddenMines)) {
+                        /* Honor the client's explicit team request.
+                         * botManagerAddBot -> serverSimAddPlayer picks a
+                         * count-balanced default; override it here so
+                         * "+ Add Bot" on the Team N header reliably
+                         * lands on team N. */
+                        if (reqTeam > 0 && reqTeam < MAX_TANKS) {
+                            sim->lobbyPlayers[slot].teamNumber = reqTeam;
+                        }
+                        WB_LOG_INFO(WB_LOG_CAT_NET,
+                                    "[LOBBY] ADD_BOT ok: slot=%d team=%u name='%s' brain='%s'",
+                                    (int)slot,
+                                    (unsigned)sim->lobbyPlayers[slot].teamNumber,
+                                    botName, chosenBrain);
                         /* Record the per-bot brain path so it survives
                          * subsequent SET_BOT_BRAIN updates and ships to
                          * joining clients. */
-                        SDL_strlcpy(sim->botBrainPaths[slot], sim->botBrainPath,
+                        SDL_strlcpy(sim->botBrainPaths[slot], chosenBrain,
                                     sizeof(sim->botBrainPaths[slot]));
                         transportUdpServerBroadcastLobbyUpdate(sim, slot);
                         transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
+                    } else {
+                        WB_LOG_INFO(WB_LOG_CAT_NET,
+                                    "[LOBBY] ADD_BOT failed: botManagerAddBot(slot=%d) returned false",
+                                    (int)slot);
                     }
                 }
             }
@@ -2861,6 +2955,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 case LST_AI_POLICY:
                     if (valueLen == 1 && value[0] <= 3) {
                         sim->aiPolicy = value[0];
+                        /* botAiType is the field packed into LOBBY_STATE
+                         * and gates the AddBot handler. Keep it in sync
+                         * or the next periodic LOBBY_STATE rebroadcast
+                         * snaps every client back to the CLI startup
+                         * value. */
+                        sim->botAiType = (aiType)value[0];
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
                     break;

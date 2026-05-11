@@ -182,7 +182,14 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
 void transportUdpClientSendReady(Transport *t, bool ready);
 
 /* Request server add a bot. */
-void transportUdpClientSendAddBot(Transport *t);
+/* Add a bot.
+ *   teamNumber: target team (1..15); 0 lets the server pick a default.
+ *   brainPath:  brain catalogue entry to assign; NULL/"" = server default.
+ *   botName:    pool-picked display name; NULL/"" = server falls back to
+ *               "Bot <slot>". */
+void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
+                                  const char *brainPath,
+                                  const char *botName);
 
 /* Request server remove a bot at the given slot. */
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
