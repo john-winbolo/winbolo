@@ -3,7 +3,7 @@
  *
  * Map from panel "type" string (e.g. "NewAutopilot:pool_grid")
  * to the C render function that draws it. Per-bot panel
- * modules in brains/<bot>/braintest_panels/*.cpp call
+ * modules in brains/<bot>/braintest_panels/(*.cpp) call
  * panelTypeRegister() at static-init time to add themselves;
  * panelwindow.cpp's dispatcher calls panelTypeFind() per
  * frame to route a panel's body text to the right renderer.
