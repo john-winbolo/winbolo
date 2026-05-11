@@ -1067,11 +1067,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* WBN re-auth: if our slot lost its WBN flag (server re-registered
              * with WBN between rounds) and we have a token, re-authenticate */
-            /* Read tmpSlots directly: the dispatcher self-skips CTRL_LOBBY_SLOT
-             * for our own slot, so c->clientSim->lobbySlots[c->playerNum]
-             * does not reflect this packet's flags. */
             if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-                !(tmpSlots[c->playerNum].clientFlags & PLAYER_FLAG_WBN_VERIFIED)) {
+                !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
+                  PLAYER_FLAG_WBN_VERIFIED)) {
                 if (!c->wbnReauthSent) {
                     c->wbnReauthSent = TRUE;
                     /* Inline re-auth send (we have ctx, not Transport*) */
