@@ -1968,7 +1968,6 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
 void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]) {
     uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
     int i;
-    (void)sim;
     packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
     memcpy(buf + PACKET_HEADER_SIZE, teamForSlot, MAX_TANKS);
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1976,6 +1975,13 @@ void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForS
             udpSendTo(udpServer.sock, buf, sizeof(buf),
                       &udpServer.clients[i].addr);
         }
+    }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_BALANCE_PROPOSAL;
+        memcpy(evt.u.balanceProposal.teamForSlot, teamForSlot, MAX_TANKS);
+        serverSimPublishControl(sim, &evt);
     }
 }
 

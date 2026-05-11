@@ -126,6 +126,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->mapDownloadComplete = true;
         break;
 
+    case CTRL_BALANCE_PROPOSAL: {
+        bool anyNonZero = false;
+        int i;
+        memcpy(cs->balanceProposal, evt->u.balanceProposal.teamForSlot, MAX_TANKS);
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (cs->balanceProposal[i] != 0) {
+                anyNonZero = true;
+                break;
+            }
+        }
+        cs->balanceProposalActive = anyNonZero;
+        break;
+    }
+
     case CTRL_GAME_PHASE:
         switch (evt->u.gamePhase.phase) {
         case CTRL_PHASE_LOBBY:
