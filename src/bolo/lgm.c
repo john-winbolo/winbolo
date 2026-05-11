@@ -197,7 +197,7 @@ void lgmUpdate(GameSim *sim, lgm *lgman, tank *tnk) {
 			tankGetWorld(tnk, &wx, &wy);
 			/* Multiplayer game but just a client */
 			if (isServer == FALSE) {
-				frontEndManStatus(FALSE, utilCalcAngle((*lgman)->x, (*lgman)->y, wx, wy));
+				frontEndManStatus(clientSimFromSim(sim), FALSE, utilCalcAngle((*lgman)->x, (*lgman)->y, wx, wy));
 			}
 		}
 	}
@@ -667,7 +667,7 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   angle = utilCalcAngle((*lgman)->x, (*lgman)->y, (*lgman)->destX, (*lgman)->destY);
   frontAngle = utilCalcAngle((*lgman)->x, (*lgman)->y, newmx, newmy);
   if (isServer == FALSE) {
-    frontEndManStatus(FALSE, frontAngle);
+    frontEndManStatus(clientSimFromSim(sim), FALSE, frontAngle);
   }
   conv = (*lgman)->x;
   conv >>= TANK_SHIFT_MAPSIZE;
@@ -783,7 +783,7 @@ void lgmReturn(GameSim *sim, lgm *lgman, tank *tnk) {
   angle = utilCalcAngle((*lgman)->x, (*lgman)->y, newmx, newmy);
 
   if (isServer == FALSE) {
-    frontEndManStatus(FALSE, angle);
+    frontEndManStatus(clientSimFromSim(sim), FALSE, angle);
   }
 
   conv = (*lgman)->x;
@@ -938,7 +938,7 @@ void lgmReturn(GameSim *sim, lgm *lgman, tank *tnk) {
     (*lgman)->blessY = 0;
     lgmBackInTank(sim, lgman, tnk, TRUE);
     if (isServer == FALSE) {
-      frontEndManClear();
+      frontEndManClear(clientSimFromSim(sim));
     }
   }
 }
@@ -1085,7 +1085,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
           pillsSetPill(pb, &addPill, (*lgman)->numPills);
           sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
           if (isServer == FALSE) {
-            frontEndStatusPillbox((*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
+            frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
           }
           (*lgman)->numPills = LGM_NO_PILL;
         }
@@ -1375,7 +1375,7 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
           item.justSeen = FALSE;
           pillsSetPill(pb,&item,(*lgman)->numPills);
           if (isServer == FALSE) {
-            frontEndStatusPillbox((*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
+            frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
           }
         }
         (*lgman)->numPills = LGM_NO_PILL;
@@ -1397,7 +1397,7 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
       (*lgman)->y <<= TANK_SHIFT_MAPSIZE;
       (*lgman)->y += MAP_SQUARE_MIDDLE;
       if (isServer == FALSE) {
-        frontEndManStatus(TRUE, 0.0f);
+        frontEndManStatus(clientSimFromSim(sim), TRUE, 0.0f);
       }
 
       /* Log it */
@@ -1882,7 +1882,7 @@ void lgmNetBackInTank(GameSim *sim, lgm *lgman, tank *tnk, BYTE numTrees, BYTE n
   lgmBackInTank(sim, lgman, tnk, TRUE);
 
   if (isServer == FALSE) {
-    frontEndManClear();
+    frontEndManClear(clientSimFromSim(sim));
   }
 }
 
@@ -1963,11 +1963,11 @@ void lgmSetIsDead(GameSim *sim, lgm *lgman, bool isDead) {
     (*lgman)->x = 0;
     (*lgman)->y = 0;
     if (isServer == FALSE) {
-      frontEndManStatus(TRUE, 0.0f);
+      frontEndManStatus(clientSimFromSim(sim), TRUE, 0.0f);
     }
   } else {
     if (isServer == FALSE) {
-      frontEndManClear();
+      frontEndManClear(clientSimFromSim(sim));
     }
   }
 }

@@ -446,8 +446,8 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     (*value)->shells--;
 
     if (!isServer) {
-      frontEndPlaySound(shootSelf);
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndPlaySound(clientSimFromSim(sim), shootSelf);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
     (*value)->justFired = TRUE;
   }
@@ -1042,7 +1042,7 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
     (*value)->armour = armour;
     (*value)->trees = trees;
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   }
 }
@@ -1133,11 +1133,11 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 		}
 		if ((*value)->armour <= TANK_FULL_ARMOUR) {
 			if (!isServer) {
-				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
 			}
 		} else {
 			if (!isServer) {
-				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
 	} else if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
@@ -1189,7 +1189,7 @@ void tankInWater(GameSim *sim, tank *value) {
     bmy = (BYTE) conv;
     sim->callbacks.soundDist(sim->callbacks.ctx, bubbles, bmx, bmy);
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   }
 }
@@ -1269,7 +1269,7 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->waterCount = 0;
     /* Get the start position */
     if (!isServer) {
-      frontEndKillsDeaths((*value)->numKills, (*value)->numDeaths);
+      frontEndKillsDeaths(clientSimFromSim(sim), (*value)->numKills, (*value)->numDeaths);
     }
   } else if (isServer) {
     /* Server-authoritative respawn: pick a new start and reset resources */
@@ -1347,7 +1347,7 @@ void tankAddArmour(GameSim *sim, tank *value, BYTE amount) {
   if ((*value)->armour + amount <= TANK_FULL_ARMOUR) {
     (*value)->armour += amount;
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   }
 }
@@ -1369,7 +1369,7 @@ void tankAddShells(GameSim *sim, tank *value, BYTE amount) {
   if ((*value)->shells + amount <= TANK_FULL_SHELLS) {
     (*value)->shells += amount;
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   }
 }
@@ -1391,7 +1391,7 @@ void tankAddMines(GameSim *sim, tank *value, BYTE amount) {
   if ((*value)->mines + amount <= TANK_FULL_MINES) {
     (*value)->mines += amount;
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   }
 }
@@ -1704,7 +1704,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
               basesSetOwner(sim, newbmx, newbmy, gameSimGetTankPlayer(sim, value), FALSE);
               BYTE baseNum = basesGetBaseNum(bs, newbmx, newbmy);
               if (!isServer) {
-                frontEndStatusBase(baseNum, (basesGetStatusNum(sim, baseNum)));
+                frontEndStatusBase(clientSimFromSim(sim), baseNum, (basesGetStatusNum(sim, baseNum)));
               }
               if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
             }
@@ -1865,7 +1865,7 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 				pillsSetPillInTank(pb,pillNum, TRUE);
 				/* We are a client.. which should only happen in a single player game */
 				if (!isServer) {
-					frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
+					frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
 				}
 				New(q);
 				q->pillNum = pillNum;
@@ -1968,7 +1968,7 @@ void tankDropPills(GameSim *sim, tank *value) {
               pillsSetPill(pb,&item,q->pillNum);
             }
             if (!isServer) {
-              frontEndStatusPillbox(q->pillNum, (pillsGetAllianceNum(sim, pb, q->pillNum)));
+              frontEndStatusPillbox(clientSimFromSim(sim), q->pillNum, (pillsGetAllianceNum(sim, pb, q->pillNum)));
             }
             (*value)->carryPills = TankPillsTail(q);
             Dispose(q);
@@ -2033,11 +2033,11 @@ bool tankGetLgmTrees(GameSim *sim, tank *value, BYTE amount, bool perform) {
       (*value)->trees -= amount;
       if ((*value)->armour <= TANK_FULL_ARMOUR) {
         if (!isServer) {
-          frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+          frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
         }
       } else {
         if (!isServer) {
-          frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+          frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
         }
       }
     }
@@ -2066,11 +2066,11 @@ void tankGiveTrees(GameSim *sim, tank *value, BYTE amount) {
   }
   if ((*value)->armour <= TANK_FULL_ARMOUR) {
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   } else {
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
     }
   }
 }
@@ -2102,11 +2102,11 @@ bool tankGetLgmMines(GameSim *sim, tank *value, BYTE amount, bool perform) {
       (*value)->mines -= amount;
       if ((*value)->armour <= TANK_FULL_ARMOUR) {
         if (!isServer) {
-          frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+          frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
         }
       } else {
         if (!isServer) {
-          frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+          frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
         }
       }
     }
@@ -2135,11 +2135,11 @@ void tankGiveMines(GameSim *sim, tank *value, BYTE amount) {
   }
   if ((*value)->armour <= TANK_FULL_ARMOUR) {
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
   } else {
     if (!isServer) {
-      frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
     }
   }
 }
@@ -2308,11 +2308,11 @@ void tankLayMine(GameSim *sim, tank *value) {
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       if ((*value)->armour <= TANK_FULL_ARMOUR) {
         if (!isServer) {
-          frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+          frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
         }
       } else {
         if (!isServer) {
-          frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+          frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
         }
       }
       if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
@@ -2379,11 +2379,11 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
     }
     if ((*value)->armour <= TANK_FULL_ARMOUR) {
       if (!isServer) {
-        frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+        frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
       }
     } else {
       if (!isServer) {
-        frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+        frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
       }
     }
 
@@ -2942,7 +2942,7 @@ void tankPutPill(GameSim *sim, tank *value, BYTE pillNum) {
   tankCarryPb q;  /* Temp pointer for adding PBs to tank */
 
   if (!isServer) {
-    frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
+    frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
   }
   New(q);
   q->pillNum = pillNum;
@@ -3204,11 +3204,11 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		}
 		if ((*value)->armour <= TANK_FULL_ARMOUR) {
 			if (!isServer) {
-				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
+				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
 			}
 		} else {
 			if (!isServer) {
-				frontEndUpdateTankStatusBars((*value)->shells, (*value)->mines, 0, (*value)->trees);
+				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
 	} else if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {

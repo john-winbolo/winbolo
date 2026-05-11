@@ -372,7 +372,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
   /* Create predicted shell using pre-movement position to match server */
   if (canFire) {
     if (!isBrain) {
-      frontEndPlaySound(shootSelf);
+      frontEndPlaySound(cs, shootSelf);
     }
     clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &MY_TANK(cs), pkt->tick);
     /* Update predicted tank state to match what the server will do */

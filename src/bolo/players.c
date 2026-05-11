@@ -333,7 +333,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
                         (*plrs)->item[playerNum].ping,
                         playersGetClientType(plrs, playerNum),
                         playersGetClientFlags(plrs, playerNum));
-      frontEndStatusTank((BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
+      frontEndStatusTank(csParam, (BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
       frontEndRedrawAll(csParam);
     }
   }
@@ -943,15 +943,15 @@ void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer) {
 
   total = basesGetNumBases(&sim->bs);
   for (count = 1; count <= total; count++) {
-    frontEndStatusBase(count, basesGetStatusNum(sim, count));
+    frontEndStatusBase(clientSimFromSim(sim), count, basesGetStatusNum(sim, count));
   }
   total = pillsGetNumPills(&sim->pb);
   for (count = 1; count <= total; count++) {
-    frontEndStatusPillbox(count, pillsGetAllianceNum(sim, &sim->pb, count));
+    frontEndStatusPillbox(clientSimFromSim(sim), count, pillsGetAllianceNum(sim, &sim->pb, count));
   }
   total = playersGetNumPlayers(&sim->plyrs);
   for (count = 1; count <= total; count++) {
-    frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE)(count - 1)));
+    frontEndStatusTank(clientSimFromSim(sim), count, playersScreenAllience(plrs, selfPlayer, (BYTE)(count - 1)));
   }
   playersSetAllieMenu(plrs, selfPlayer, FALSE);
 }
@@ -1023,7 +1023,7 @@ void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE self
       (*plrs)->playerBrainNames[playerNum][0] = '\0';
       if (isServer == FALSE) {
         frontEndClearPlayer(csParam, (playerNumbers) playerNum);
-        frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
+        frontEndStatusTank(csParam, (BYTE) (playerNum + 1), tankNone);
         frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, FALSE);
       }
       /* Make a message about it */
@@ -1685,15 +1685,15 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
     GameSim *gsim = sim;
     total = basesGetNumBases(&gsim->bs);
     for (count=1;count<=total;count++) {
-      frontEndStatusBase(count, basesGetStatusNum(gsim, count));
+      frontEndStatusBase(clientSimFromSim(gsim), count, basesGetStatusNum(gsim, count));
     }
     total = pillsGetNumPills(&gsim->pb);
     for (count=1;count<=total;count++) {
-      frontEndStatusPillbox(count, pillsGetAllianceNum(gsim, &gsim->pb, count));
+      frontEndStatusPillbox(clientSimFromSim(gsim), count, pillsGetAllianceNum(gsim, &gsim->pb, count));
     }
     total = playersGetNumPlayers(&gsim->plyrs);
     for (count=1;count<=total;count++) {
-      frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
+      frontEndStatusTank(clientSimFromSim(gsim), count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
     }
     playersSetAllieMenu(plrs, selfPlayer, isServer);
   }
@@ -1765,15 +1765,15 @@ void playersAcceptAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE ac
     GameSim *gsim = sim;
     total = basesGetNumBases(&gsim->bs);
     for (count=1;count<=total;count++) {
-      frontEndStatusBase(count, basesGetStatusNum(gsim, count));
+      frontEndStatusBase(clientSimFromSim(gsim), count, basesGetStatusNum(gsim, count));
     }
     total = pillsGetNumPills(&gsim->pb);
     for (count=1;count<=total;count++) {
-      frontEndStatusPillbox(count, pillsGetAllianceNum(gsim, &gsim->pb, count));
+      frontEndStatusPillbox(clientSimFromSim(gsim), count, pillsGetAllianceNum(gsim, &gsim->pb, count));
     }
     total = playersGetNumPlayers(&gsim->plyrs);
     for (count=1;count<=total;count++) {
-      frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
+      frontEndStatusTank(clientSimFromSim(gsim), count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
     }
     playersSetAllieMenu(plrs, selfPlayer, isServer);
   }

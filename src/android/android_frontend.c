@@ -234,6 +234,14 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) { }
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
+/* Active-cs gate — see desktop frontend in src/gui/sdl3/winbolo.c for
+ * the rationale. NULL = no registration yet; calls fall through. */
+static ClientSim *s_activeUiCs = NULL;
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  s_activeUiCs = cs;
+}
+
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)
  * ------------------------------------------------------- */
@@ -251,18 +259,21 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   }
 }
 
-void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (armour > TANK_FULL_ARMOUR) {
     armour = 0;
   }
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
 }
 
-void frontEndUpdateBaseStatusBars(BYTE shells, BYTE mines, BYTE armour) {
+void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
 }
 
-void frontEndPlaySound(sndEffects value) {
+void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
@@ -270,36 +281,43 @@ void windowPlaySound(sndEffects value) {
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
-void frontEndStatusPillbox(BYTE pillNum, pillAlliance pb) {
+void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
 
-void frontEndStatusTank(BYTE tankNum, tankAlliance ts) {
+void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
 
-void frontEndStatusBase(BYTE baseNum, baseAlliance bs) {
+void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
 
-void frontEndMessages(char *top, char *bottom) {
+void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
-void frontEndKillsDeaths(int kills, int deaths) {
+void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
-void frontEndManStatus(bool isDead, TURNTYPE angle) {
+void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
 }
 
-void frontEndManClear(void) {
+void frontEndManClear(ClientSim *cs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -312,17 +330,10 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
-void frontEndGameOver(void) {
+void frontEndGameOver(ClientSim *cs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game over (time limit expired)");
   finishedLoop = TRUE;
-}
-
-/* Active-cs gate — see desktop frontend in src/gui/sdl3/winbolo.c for
- * the rationale. NULL = no registration yet; calls fall through. */
-static ClientSim *s_activeUiCs = NULL;
-
-void frontEndSetActiveClientSim(struct ClientSim *cs) {
-  s_activeUiCs = cs;
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
@@ -353,6 +364,7 @@ void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   showGunsight = !isShown;
   screenSetGunsightCS(cs, showGunsight);
 }
