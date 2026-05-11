@@ -517,10 +517,11 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      * tanks (which are deep copies since Phase 4 prediction).
      * LGMs are still shared (not deep-copied), so screenDestroy frees them. */
     {
+      GameSim *gs = serverSimGetGameSim(spServerSim);
       BYTE i;
       for (i = 0; i < MAX_TANKS; i++) {
-        if (spServerSim->sim.tanks[i] != NULL) {
-          tankDestroy(&spServerSim->sim, &spServerSim->sim.tanks[i]);
+        if (gs->tanks[i] != NULL) {
+          tankDestroy(gs, &gs->tanks[i]);
         }
       }
     }
@@ -751,7 +752,7 @@ static bool gameFrontDialogs(void) {
       /* Mark both sims so tank.c's tutorial stop logic fires
        * authoritatively on the server and keeps client prediction
        * consistent. */
-      if (spServerSim != NULL) spServerSim->sim.isTutorial = true;
+      if (spServerSim != NULL) serverSimGetGameSim(spServerSim)->isTutorial = true;
       if (humanSim != NULL)    humanSim->sim.isTutorial = true;
       break;
     case openSettings: {
@@ -1096,10 +1097,10 @@ bool gameFrontSetDlgState(openingStates newState) {
         }
         if (spServerSim != NULL) {
           /* Single-player: no lobby, run immediately */
-          spServerSim->lobbyEnabled = false;
+          serverSimSetLobbyEnabled(spServerSim, false);
           serverSimStartGame(spServerSim);
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-          spServerSim->sim.viewPlayer = 0;
+          serverSimGetGameSim(spServerSim)->viewPlayer = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
           spTransportLocalUsed = TRUE;
           spServerSimActive = TRUE;
@@ -1110,7 +1111,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
             if (compLen > 0) {
-              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, spServerSim->mapName,
+              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
                                        gametype, hiddenMines, startDelay,
                                        timeLen, gameFrontName, 0, FALSE);
             } else {
@@ -1180,9 +1181,8 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
             /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
             if (haveBrain) {
-              strncpy(spServerSim->botBrainPath, brainPath, sizeof(spServerSim->botBrainPath) - 1);
-              spServerSim->botBrainPath[sizeof(spServerSim->botBrainPath) - 1] = '\0';
-              spServerSim->botAiType = compTanks;
+              serverSimSetBotBrainPath(spServerSim, brainPath);
+              serverSimSetBotAiType(spServerSim, compTanks);
             }
             if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
@@ -1217,13 +1217,14 @@ bool gameFrontSetDlgState(openingStates newState) {
               }
               /* Apply team alliances — players with same non-zero team become allies. */
               for (int a = 0; a < 16; a++) {
-                if (!spServerSim->playerConnected[a]) continue;
-                if (spServerSim->lobbyPlayers[a].teamNumber == 0) continue;
+                if (!serverSimIsPlayerConnected(spServerSim, (BYTE)a)) continue;
+                if (serverSimGetLobbyPlayer(spServerSim, (BYTE)a)->teamNumber == 0) continue;
                 for (int b = a + 1; b < 16; b++) {
-                  if (!spServerSim->playerConnected[b]) continue;
-                  if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
+                  if (!serverSimIsPlayerConnected(spServerSim, (BYTE)b)) continue;
+                  if (serverSimGetLobbyPlayer(spServerSim, (BYTE)b)->teamNumber == serverSimGetLobbyPlayer(spServerSim, (BYTE)a)->teamNumber) {
+                    GameSim *gs = serverSimGetGameSim(spServerSim);
                     ControlEvent allyEvt;
-                    playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
+                    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
                     memset(&allyEvt, 0, sizeof(allyEvt));
                     allyEvt.type = CTRL_ALLIANCE_ACCEPT;
                     allyEvt.u.allianceAccept.acceptedBy = (BYTE)a;
@@ -1605,10 +1606,10 @@ bool gameFrontSetupServer(void) {
     return FALSE;
   }
 
-  spServerSim->lobbyEnabled = true;
-  spServerSim->emptyResetEnabled = true;
-  spServerSim->state = serverStateLobby;
-  spServerSim->hasPassword = (password[0] != '\0');
+  serverSimSetLobbyEnabled(spServerSim, true);
+  serverSimSetEmptyResetEnabled(spServerSim, true);
+  serverSimEnterLobby(spServerSim);
+  serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
 
   memset(&cfg, 0, sizeof(cfg));
   cfg.udpPort         = gameFrontMyUdp;
