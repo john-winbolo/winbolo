@@ -334,12 +334,13 @@ static void logStateVerbose(int tickNum) {
   /* Pill views: 15x15 terrain grid centered on each owned pillbox */
   fprintf(f, ",\"pill_views\":[");
   if (fastServerSim != NULL) {
+    GameSim *gs = serverSimGetGameSim(fastServerSim);
     const TERRAIN *world = bi.theWorld;
-    BYTE np = pillsGetNumPills(&fastServerSim->sim.pb);
+    BYTE np = pillsGetNumPills(&gs->pb);
     int first = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
       pillbox p;
-      pillsGetPill(&fastServerSim->sim.pb, &p, pi);
+      pillsGetPill(&gs->pb, &p, pi);
       if (p.owner != selfPlayer || p.inTank) continue;
       if (!first) fprintf(f, ",");
       fprintf(f, "{\"id\":%u,\"tx\":%u,\"ty\":%u,\"terrain\":[", (unsigned)pi, (unsigned)p.x, (unsigned)p.y);
@@ -369,10 +370,11 @@ static void logStateVerbose(int tickNum) {
   /* Pillboxes — full data from server sim */
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
-    BYTE np = pillsGetNumPills(&fastServerSim->sim.pb);
+    GameSim *gs = serverSimGetGameSim(fastServerSim);
+    BYTE np = pillsGetNumPills(&gs->pb);
     for (BYTE pi = 1; pi <= np; pi++) {
       pillbox p;
-      pillsGetPill(&fastServerSim->sim.pb, &p, pi);
+      pillsGetPill(&gs->pb, &p, pi);
       if (pi > 1) fprintf(f, ",");
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
         (unsigned)p.x, (unsigned)p.y,
@@ -386,10 +388,11 @@ static void logStateVerbose(int tickNum) {
   /* Bases — full data from server sim */
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
-    BYTE nb = basesGetNumBases(&fastServerSim->sim.bs);
+    GameSim *gs = serverSimGetGameSim(fastServerSim);
+    BYTE nb = basesGetNumBases(&gs->bs);
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
       base b;
-      basesGetBase(&fastServerSim->sim.bs, &b, bsi);
+      basesGetBase(&gs->bs, &b, bsi);
       if (bsi > 1) fprintf(f, ",");
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
         (unsigned)b.x, (unsigned)b.y,
@@ -404,19 +407,20 @@ static void logStateVerbose(int tickNum) {
     int self_pills = 0, ally_pills = 0, enemy_pills = 0;
     int self_bases = 0, ally_bases = 0, enemy_bases = 0;
     if (fastServerSim != NULL) {
-      BYTE np = pillsGetNumPills(&fastServerSim->sim.pb);
+      GameSim *gs = serverSimGetGameSim(fastServerSim);
+      BYTE np = pillsGetNumPills(&gs->pb);
       for (BYTE pi = 1; pi <= np; pi++) {
         pillbox p;
-        pillsGetPill(&fastServerSim->sim.pb, &p, pi);
+        pillsGetPill(&gs->pb, &p, pi);
         if (p.owner == 0xFF) { /* neutral — skip */ }
         else if (p.owner == selfPlayer) self_pills++;
         else if (alliesBits & (1u << p.owner)) ally_pills++;
         else enemy_pills++;
       }
-      BYTE nb = basesGetNumBases(&fastServerSim->sim.bs);
+      BYTE nb = basesGetNumBases(&gs->bs);
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
         base b;
-        basesGetBase(&fastServerSim->sim.bs, &b, bsi);
+        basesGetBase(&gs->bs, &b, bsi);
         if (b.owner == 0xFF) { /* neutral — skip */ }
         else if (b.owner == selfPlayer) self_bases++;
         else if (alliesBits & (1u << b.owner)) ally_bases++;
@@ -632,10 +636,11 @@ static void logStateBinary(int tickNum) {
 
     /* Channels 5-7: pillboxes, Channel 9: bases (from server sim) */
     if (fastServerSim != NULL) {
-      BYTE np = pillsGetNumPills(&fastServerSim->sim.pb);
+      GameSim *gs = serverSimGetGameSim(fastServerSim);
+      BYTE np = pillsGetNumPills(&gs->pb);
       for (BYTE pi = 1; pi <= np; pi++) {
         pillbox p;
-        pillsGetPill(&fastServerSim->sim.pb, &p, pi);
+        pillsGetPill(&gs->pb, &p, pi);
         if (p.inTank) continue;
         int gx = (int)p.x - tank_tx + 14;
         int gy = (int)p.y - tank_ty + 14;
@@ -650,10 +655,10 @@ static void logStateBinary(int tickNum) {
         }
       }
 
-      BYTE nb = basesGetNumBases(&fastServerSim->sim.bs);
+      BYTE nb = basesGetNumBases(&gs->bs);
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
         base b;
-        basesGetBase(&fastServerSim->sim.bs, &b, bsi);
+        basesGetBase(&gs->bs, &b, bsi);
         int gx = (int)b.x - tank_tx + 14;
         int gy = (int)b.y - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
@@ -687,21 +692,22 @@ static void logStateBinary(int tickNum) {
     int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
     int self_bases = 0, ally_bases = 0, total_bases = 0;
     if (fastServerSim != NULL) {
-      BYTE np = pillsGetNumPills(&fastServerSim->sim.pb);
+      GameSim *gs = serverSimGetGameSim(fastServerSim);
+      BYTE np = pillsGetNumPills(&gs->pb);
       total_pills = np;
       for (BYTE pi = 1; pi <= np; pi++) {
         pillbox p;
-        pillsGetPill(&fastServerSim->sim.pb, &p, pi);
+        pillsGetPill(&gs->pb, &p, pi);
         if (p.owner == 0xFF) continue;
         if (p.owner == selfPlayer) self_pills++;
         else if (alliesBits & (1u << p.owner)) ally_pills++;
         else enemy_pills++;
       }
-      BYTE nb = basesGetNumBases(&fastServerSim->sim.bs);
+      BYTE nb = basesGetNumBases(&gs->bs);
       total_bases = nb;
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
         base b;
-        basesGetBase(&fastServerSim->sim.bs, &b, bsi);
+        basesGetBase(&gs->bs, &b, bsi);
         if (b.owner == 0xFF) continue;
         if (b.owner == selfPlayer) self_bases++;
         else if (alliesBits & (1u << b.owner)) ally_bases++;
@@ -1032,10 +1038,10 @@ static bool verboseNeedMapInit = TRUE;
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
-  fastServerSim->lobbyEnabled = false;
+  serverSimSetLobbyEnabled(fastServerSim, false);
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  fastServerSim->sim.viewPlayer = 0;
+  serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
 
   /* Recreate local transport */
   headlessTransport = transportLocalCreate(fastServerSim, 0);
@@ -1118,10 +1124,10 @@ static int runFastMode(void) {
   }
 
   /* Initial game setup */
-  fastServerSim->lobbyEnabled = false;
+  serverSimSetLobbyEnabled(fastServerSim, false);
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  fastServerSim->sim.viewPlayer = 0;
+  serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
   headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
