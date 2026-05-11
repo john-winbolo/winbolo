@@ -451,7 +451,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->cs.allowComputerTanks = ai;
 
     /* Create passive transport (does NOT tick the server) */
-    bot->transport = transportLocalCreatePassive(sim, &bot->cs, playerNum);
+    bot->transport = transportLocalCreatePassive(sim, playerNum);
 
     /* Register this bot's ClientSim as a control-event subscriber so
      * out-of-band roster/lobby/phase state from the server reaches it
