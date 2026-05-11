@@ -1109,6 +1109,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */
           humanSim = &humanSimStorage;
+          frontEndSetActiveClientSim(humanSim);
           {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
@@ -1120,7 +1121,6 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
           }
-          frontEndSetActiveClientSim(humanSim);
           if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
