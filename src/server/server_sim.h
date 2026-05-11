@@ -413,6 +413,18 @@ void serverSimSetHasPassword(ServerSim *sim, bool hasPassword);
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
 
 /*********************************************************
+ *NAME:          serverSimEnableRandomMap
+ *PURPOSE:
+ *  Enables random map mode and caches the generator
+ *  config for between-round regeneration. Sets
+ *  randomMapEnabled = true, copies *cfg into
+ *  randomMapConfig, and sets randomMapFixedSeed.
+ *********************************************************/
+void serverSimEnableRandomMap(ServerSim *sim,
+                              const MapGenConfig *cfg,
+                              bool fixedSeed);
+
+/*********************************************************
  *NAME:          serverSimEnterLobby
  *PURPOSE:
  *  Sets the server state to serverStateLobby. Used by
@@ -421,6 +433,72 @@ void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
  *  use serverSimStartGame.
  *********************************************************/
 void serverSimEnterLobby(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimInstallMapDirList
+ *PURPOSE:
+ *  Installs the validated map rotation list. Takes
+ *  ownership of `files` (the array and each strdup'd
+ *  entry inside it). Caller must not free these
+ *  afterward.
+ *********************************************************/
+void serverSimInstallMapDirList(ServerSim *sim,
+                                char **files, int count);
+
+/*********************************************************
+ *NAME:          serverSimSetAutoCloseOnEmpty
+ *PURPOSE:
+ *  Configures whether the server should close when all
+ *  players leave.
+ *********************************************************/
+void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimSetEmptyResetMinutes
+ *PURPOSE:
+ *  Sets the number of minutes an empty server waits
+ *  before resetting to lobby.
+ *********************************************************/
+void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes);
+
+/*********************************************************
+ *NAME:          serverSimSetMapName
+ *PURPOSE:
+ *  Copies name into the sim's mapName buffer,
+ *  truncating as needed. NULL or empty name clears it.
+ *********************************************************/
+void serverSimSetMapName(ServerSim *sim, const char *name);
+
+/*********************************************************
+ *NAME:          serverSimSetQuitOnWin
+ *PURPOSE:
+ *  Configures whether the server should quit after
+ *  a win is detected.
+ *********************************************************/
+void serverSimSetQuitOnWin(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimSetTickLimit
+ *PURPOSE:
+ *  Sets the running-tick limit. 0 = unlimited.
+ *********************************************************/
+void serverSimSetTickLimit(ServerSim *sim, int32_t ticks);
+
+/*********************************************************
+ *NAME:          serverSimSetUserLogFileName
+ *PURPOSE:
+ *  Copies name into the user log file buffer. NULL or
+ *  empty clears.
+ *********************************************************/
+void serverSimSetUserLogFileName(ServerSim *sim, const char *name);
+
+/*********************************************************
+ *NAME:          serverSimSetWantLogging
+ *PURPOSE:
+ *  Configures whether the server should start logging
+ *  when entering a running game.
+ *********************************************************/
+void serverSimSetWantLogging(ServerSim *sim, bool enabled);
 
 /*********************************************************
  *NAME:          serverSimGetTankState

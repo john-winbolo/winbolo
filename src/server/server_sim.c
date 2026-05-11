@@ -1563,8 +1563,61 @@ void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
     sim->lobbyEnabled = enabled;
 }
 
+void serverSimEnableRandomMap(ServerSim *sim,
+                              const MapGenConfig *cfg,
+                              bool fixedSeed) {
+    sim->randomMapEnabled = true;
+    if (cfg != NULL) sim->randomMapConfig = *cfg;
+    sim->randomMapFixedSeed = fixedSeed;
+}
+
 void serverSimEnterLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
+}
+
+void serverSimInstallMapDirList(ServerSim *sim,
+                                char **files, int count) {
+    sim->mapDirFiles = files;
+    sim->mapDirCount = count;
+}
+
+void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
+    sim->autoCloseOnEmpty = enabled;
+}
+
+void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
+    sim->emptyResetMinutes = minutes;
+}
+
+void serverSimSetMapName(ServerSim *sim, const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        sim->mapName[0] = '\0';
+        return;
+    }
+    strncpy(sim->mapName, name, MAP_STR_SIZE - 1);
+    sim->mapName[MAP_STR_SIZE - 1] = '\0';
+}
+
+void serverSimSetQuitOnWin(ServerSim *sim, bool enabled) {
+    sim->quitOnWin = enabled;
+}
+
+void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
+    sim->tickLimit = ticks;
+}
+
+void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        sim->userLogFileName[0] = '\0';
+        return;
+    }
+    strncpy(sim->userLogFileName, name,
+            sizeof(sim->userLogFileName) - 1);
+    sim->userLogFileName[sizeof(sim->userLogFileName) - 1] = '\0';
+}
+
+void serverSimSetWantLogging(ServerSim *sim, bool enabled) {
+    sim->wantLogging = enabled;
 }
 
 bool serverSimGetTankState(ServerSim *sim, BYTE playerNum, WORLD *wx, WORLD *wy) {
