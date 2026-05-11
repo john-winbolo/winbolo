@@ -637,17 +637,14 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 }
             }
         }
-        if (myPlayerNum == 0) {
+        /* When openHost is enabled the toggle itself isn't shown here
+         * — it's surfaced in the lobby settings panel. We just leave
+         * an informational label so every player understands why the
+         * Add Team / + Bot / X controls are interactable. */
+        if (cs->lobbyOpenHost) {
             ImGui::SameLine(0.0f, 16.0f * s);
-            bool oh = cs->lobbyOpenHost;
-            if (ImGui::Checkbox("Everybody can manage teams", &oh)) {
-                transportUdpClientSendLobbyOpenHost(transport, oh);
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(oh
-                    ? "Anyone in the lobby can add/rename/remove teams and bots."
-                    : "Only the host can manage teams.");
-            }
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("The host has allowed everybody to manage teams.");
         }
         ImGui::Spacing();
     }
@@ -1045,14 +1042,23 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                                                  : s_iconBotCpuRed;
                     if (botTex) {
                         cyAbs(tankSz);
+                        /* Visible pixel mass in the bot-cpu PNGs
+                         * needs a small upward nudge to land
+                         * vertically centered on the row. */
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
                         ImGui::Image((ImTextureID)botTex,
                                      ImVec2(tankSz, tankSz));
                     }
                 } else {
+                    /* Same 2px upward nudge applied to text / tank /
+                     * chip / gear — keeps every glyph in the row
+                     * landing on a consistent optical center. */
+                    const float iconBiasY = 2.0f;
                     if (cs->lobbySlots[i].countryCode[0] != '\0') {
                         SDL_Texture *flagTex = flagsGetTexture(cs->lobbySlots[i].countryCode);
                         if (flagTex) {
                             cyAbs((float)FLAG_HEIGHT);
+                            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                             ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
                             ImGui::SameLine();
                         }
@@ -1060,6 +1066,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     /* All WBN/Steam/platform icons in renderPlayerName are
                      * WBN_ICON_SIZE tall — center them as one block. */
                     cyAbs((float)WBN_ICON_SIZE);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                     renderPlayerName(NULL,
                                      cs->lobbySlots[i].clientFlags,
                                      cs->lobbySlots[i].clientType,
@@ -1077,7 +1084,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     ImGui::PopStyleColor();
                 } else if (isMe) {
                     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
-                                       "%s (you)", cs->lobbySlots[i].playerName);
+                                       "%s", cs->lobbySlots[i].playerName);
                 } else {
                     ImGui::Text("%s", cs->lobbySlots[i].playerName);
                 }
@@ -1132,14 +1139,40 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     }
                 }
 
-                /* ── Column 5: ready / not ready ─────────────────── */
+                /* ── Column 5: ready / not ready badge ───────────── */
                 ImGui::TableSetColumnIndex(5);
                 rowTopY = ImGui::GetCursorPosY();
-                cyTextAbs();
-                if (cs->lobbySlots[i].ready) {
-                    ImGui::TextColored(wbThemeColor(g_theme->statusReady), "[ready]");
-                } else {
-                    ImGui::TextDisabled("[not ready]");
+                {
+                    bool isReady = cs->lobbySlots[i].ready;
+                    const char *lbl = isReady ? "READY" : "NOT READY";
+                    /* Render the badge text at 80% of the row font
+                     * size — a touch smaller than the player name
+                     * so the pill reads as a status tag rather than
+                     * a primary label. */
+                    const float pillFontScale = 0.80f;
+                    float pillFontSz = ImGui::GetFontSize() * pillFontScale;
+                    ImVec2 baseSz = ImGui::CalcTextSize(lbl);
+                    ImVec2 textSz(baseSz.x * pillFontScale, pillFontSz);
+                    float padX  = 7.0f * s;
+                    float padY  = 3.0f * s;
+                    float pillW = textSz.x + padX * 2.0f;
+                    float pillH = textSz.y + padY * 2.0f;
+                    cyAbs(pillH);
+                    ImVec2 pillPos = ImGui::GetCursorScreenPos();
+                    ImU32 bgCol = isReady ? IM_COL32(42, 80, 44, 255)
+                                          : IM_COL32(58, 58, 58, 255);
+                    ImU32 fgCol = isReady ? IM_COL32(120, 210, 120, 255)
+                                          : IM_COL32(180, 180, 180, 255);
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    dl->AddRectFilled(pillPos,
+                                      ImVec2(pillPos.x + pillW,
+                                             pillPos.y + pillH),
+                                      bgCol, pillH * 0.5f);
+                    dl->AddText(ImGui::GetFont(), pillFontSz,
+                                ImVec2(pillPos.x + padX,
+                                       pillPos.y + padY),
+                                fgCol, lbl);
+                    ImGui::Dummy(ImVec2(pillW, pillH));
                 }
 
                 /* ── Column 6: remove bot X (CloseButton) ────────── */
