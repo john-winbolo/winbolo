@@ -232,7 +232,7 @@ void processKeys(bool isQuiet) {
 	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
-		while (!(serverSim->state == serverStateGameOver && !serverSim->lobbyEnabled)) {
+		while (!(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
 			if (alarmRaised == alarmInterrupt) {
 				break;
 			}
@@ -245,7 +245,7 @@ void processKeys(bool isQuiet) {
 			CloseHandle(hThread);
 		}
 
-		while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSim->state == serverStateGameOver && !serverSim->lobbyEnabled)) {
+		while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
 			if (alarmRaised == alarmInterrupt) {
 				strcpy(keyBuff, "quit");
 				continue;
@@ -326,7 +326,7 @@ void processKeys(bool isQuiet) {
   FD_SET(STDIN_FILENO, &fdmask);
 
   if (isQuiet == TRUE || isNoInput == TRUE) {
-    while (!(serverSim->state == serverStateGameOver && !serverSim->lobbyEnabled)) {
+    while (!(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
       if (alarmRaised == alarmInterrupt) {
         break;
       } else if (alarmRaised == alarmLock) {
@@ -343,7 +343,7 @@ void processKeys(bool isQuiet) {
       sleep(1);
     }
   } else {
-    while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSim->state == serverStateGameOver && !serverSim->lobbyEnabled)) {
+    while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
       if (strncmp(keyBuff, "help", 4) == 0) {
         printHelp();
       } else if (strncmp(keyBuff, "unlock", 6) == 0) {
@@ -961,9 +961,7 @@ int main(int argc, char **argv) {
     }
 
     /* Store config for between-round regeneration */
-    serverSim->randomMapEnabled = true;
-    serverSim->randomMapConfig = cfg;
-    serverSim->randomMapFixedSeed = hasFixedSeed;
+    serverSimEnableRandomMap(serverSim, &cfg, hasFixedSeed);
 
   } else if (strcmp(mapName, "-inbuilt") == 0) {
 #ifdef _MSC_VER
@@ -982,8 +980,7 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    strncpy(serverSim->mapName, "Everard Island", MAP_STR_SIZE - 1);
-    serverSim->mapName[MAP_STR_SIZE - 1] = '\0';
+    serverSimSetMapName(serverSim, "Everard Island");
   } else if (strcmp(mapName, "-mapdir") == 0) {
     /* -mapdir without -map: scan the directory for valid maps, pick one at
      * random for the initial Create, then transfer the list onto the
@@ -1008,8 +1005,7 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    serverSim->mapDirFiles = scannedFiles;
-    serverSim->mapDirCount = scannedCount;
+    serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount);
   } else {
     serverSim = serverSimCreate(mapName, game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
@@ -1025,7 +1021,7 @@ int main(int argc, char **argv) {
    * Create (when sim was an embedded zero-struct that Create then
    * clobbered). */
   serverMessageSetQuietMode(serverSim, isQuiet ? TRUE : FALSE);
-  serverSim->botAiType = ai;
+  serverSimSetBotAiType(serverSim, ai);
   if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
     serverMessagesSetLogFile(serverSim, (char *) argv[findArg(argc, argv, "logfile")]);
   }
@@ -1043,34 +1039,34 @@ int main(int argc, char **argv) {
   }
 
   statusFile = argExist(argc, argv, "statusFile");
-  serverSim->quitOnWin = argExist(argc, argv, "quitonwin");
-  serverSim->autoCloseOnEmpty = argExist(argc, argv, "autoclose");
+  serverSimSetQuitOnWin(serverSim, argExist(argc, argv, "quitonwin") == TRUE);
+  serverSimSetAutoCloseOnEmpty(serverSim, argExist(argc, argv, "autoclose") == TRUE);
 
   {
     int argNum = findArg(argc, argv, "ticks");
     if (argNum != ARG_NOT_FOUND) {
-      serverSim->tickLimit = (int32_t)strtoul((char *)argv[argNum], NULL, 0);
+      serverSimSetTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
     }
   }
 
   /* Empty reset configuration — on by default */
   if (argExist(argc, argv, "noemptyreset") == TRUE) {
-    serverSim->emptyResetEnabled = FALSE;
+    serverSimSetEmptyResetEnabled(serverSim, false);
   }
   {
     int argNum = findArg(argc, argv, "emptyresetmins");
     if (argNum != ARG_NOT_FOUND) {
       int mins = atoi((char *)argv[argNum]);
       if (mins > 0) {
-        serverSim->emptyResetMinutes = mins;
+        serverSimSetEmptyResetMinutes(serverSim, mins);
       }
     }
   }
 
   /* -nolobby: skip lobby, start running immediately (backward-compatible mode) */
   if (argExist(argc, argv, "nolobby") == TRUE) {
-    serverSim->lobbyEnabled = FALSE;
-    serverSim->emptyResetEnabled = FALSE;
+    serverSimSetLobbyEnabled(serverSim, false);
+    serverSimSetEmptyResetEnabled(serverSim, false);
     serverSimStartGame(serverSim);
   }
 
@@ -1078,8 +1074,8 @@ int main(int argc, char **argv) {
    * Skip if already built (the -mapdir without -map case builds it earlier). */
   {
     int argNum = findArg(argc, argv, "mapdir");
-    if (argNum != ARG_NOT_FOUND && serverSim->mapDirFiles == NULL) {
-      if (!serverSim->lobbyEnabled) {
+    if (argNum != ARG_NOT_FOUND && serverSimGetMapDirFiles(serverSim) == NULL) {
+      if (!serverSimIsLobbyEnabled(serverSim)) {
         fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
 #ifdef USING_SDL
         SDL_Quit();
@@ -1104,7 +1100,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  serverSim->hasPassword = (pass[0] != '\0');
+  serverSimSetHasPassword(serverSim, pass[0] != '\0');
   {
     ServerInstanceConfig instCfg;
     instCfg.udpPort      = port;
@@ -1139,12 +1135,12 @@ int main(int argc, char **argv) {
     if (logArg != ARG_NOT_FOUND && argv[logArg][0] != '-') {
       strncpy(userLogFile, (char *)argv[logArg], MAX_PATH - 1);
     }
-    if (!serverSim->lobbyEnabled) {
+    if (!serverSimIsLobbyEnabled(serverSim)) {
       /* No-lobby: game is already running, start logging immediately */
       if (userLogFile[0] != '\0') {
         strncpy(fileName, userLogFile, MAX_PATH - 1);
       } else {
-        makeLogFileName(fileName, serverSim->mapName);
+        makeLogFileName(fileName, serverSimGetMapName(serverSim));
       }
       /* Ensure .wbv extension */
       {
@@ -1153,10 +1149,14 @@ int main(int argc, char **argv) {
           strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
         }
       }
-      isLogging = logStart(fileName, serverSim, &serverSim->sim.mp,
-                           &serverSim->sim.bs, &serverSim->sim.pb,
-                           &serverSim->sim.ss, &serverSim->sim.plyrs,
-                           (BYTE)ai, (BYTE)maxPlayers, serverSim->hasPassword);
+      {
+        GameSim *gs = serverSimGetGameSim(serverSim);
+        isLogging = logStart(fileName, serverSim, &gs->mp,
+                             &gs->bs, &gs->pb,
+                             &gs->ss, &gs->plyrs,
+                             (BYTE)ai, (BYTE)maxPlayers,
+                             serverSimHasPassword(serverSim));
+      }
       if (isLogging) {
         fprintf(stderr, "Logging to %s\n", fileName);
       } else {
@@ -1164,12 +1164,12 @@ int main(int argc, char **argv) {
       }
     } else {
       /* Lobby mode: start logging now so lobby joins/chat are captured */
-      serverSim->wantLogging = TRUE;
+      serverSimSetWantLogging(serverSim, true);
       if (userLogFile[0] != '\0') {
         strncpy(fileName, userLogFile, MAX_PATH - 1);
-        strncpy(serverSim->userLogFileName, userLogFile, sizeof(serverSim->userLogFileName) - 1);
+        serverSimSetUserLogFileName(serverSim, userLogFile);
       } else {
-        makeLogFileName(fileName, serverSim->mapName);
+        makeLogFileName(fileName, serverSimGetMapName(serverSim));
       }
       {
         size_t flen = strlen(fileName);
@@ -1177,10 +1177,14 @@ int main(int argc, char **argv) {
           strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
         }
       }
-      isLogging = logStart(fileName, serverSim, &serverSim->sim.mp,
-                           &serverSim->sim.bs, &serverSim->sim.pb,
-                           &serverSim->sim.ss, &serverSim->sim.plyrs,
-                           (BYTE)ai, (BYTE)maxPlayers, serverSim->hasPassword);
+      {
+        GameSim *gs = serverSimGetGameSim(serverSim);
+        isLogging = logStart(fileName, serverSim, &gs->mp,
+                             &gs->bs, &gs->pb,
+                             &gs->ss, &gs->plyrs,
+                             (BYTE)ai, (BYTE)maxPlayers,
+                             serverSimHasPassword(serverSim));
+      }
       if (isLogging) {
         fprintf(stderr, "Logging to %s (lobby)\n", fileName);
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
@@ -1242,8 +1246,7 @@ int main(int argc, char **argv) {
         }
       }
     }
-    strncpy(serverSim->botBrainPath, brainPath, sizeof(serverSim->botBrainPath) - 1);
-    serverSim->botBrainPath[sizeof(serverSim->botBrainPath) - 1] = '\0';
+    serverSimSetBotBrainPath(serverSim, brainPath);
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
