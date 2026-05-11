@@ -537,6 +537,21 @@ void serverSimStartGame(ServerSim *sim);
 void serverSimResetGameWorld(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimSyncLobbyToClient
+ *PURPOSE:
+ *  Single-player path: copy the server's lobby state into a
+ *  ClientSim's lobby* / lobbySlots fields directly, in place
+ *  of the PACKET_LOBBY_STATE round-trip used in multiplayer.
+ *  Call once after entering the lobby and again whenever the
+ *  server-side lobby state mutates.
+ *
+ *ARGUMENTS:
+ *  sim - The local ServerSim (lobbyEnabled=true, state=lobby).
+ *  cs  - The local ClientSim to write into.
+ *********************************************************/
+void serverSimSyncLobbyToClient(ServerSim *sim, struct ClientSim *cs);
+
+/*********************************************************
  *NAME:          serverSimChangeMap
  *PURPOSE:
  *  Changes the map while in lobby state. Loads a new map

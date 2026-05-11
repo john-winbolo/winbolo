@@ -112,6 +112,7 @@ Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;
     t.ctx = lctx;
+    t.kind = TRANSPORT_KIND_LOCAL;
     return t;
 }
 

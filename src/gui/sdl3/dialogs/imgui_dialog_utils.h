@@ -315,12 +315,48 @@ extern int g_currentDevicePreset;
 #endif
 
 /* Set dialog window size; only re-center if the size actually changed.
- * If a device preset is active, uses the preset dimensions instead. */
+ * If a device preset is active, uses the preset dimensions instead.
+ * Clamps against the usable bounds of the display the window is on
+ * so callers requesting a 1024×768 default still get something
+ * reasonable on smaller screens (laptops, low-DPI panels).
+ *
+ * `SDL_SetWindowSize` sets the *client* area — the OS-managed title
+ * bar/borders sit outside that. To make the total window fit within
+ * the display's usable bounds we subtract the borders (queried via
+ * SDL_GetWindowBordersSize) before clamping. Falls back to a
+ * conservative 40px reserve when the platform doesn't report borders. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
         s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
         w = s_devicePresets[g_currentDevicePreset].w;
         h = s_devicePresets[g_currentDevicePreset].h;
+    }
+    /* Discover the window's non-client borders so we can leave room
+     * for the title bar (and side/bottom borders) when clamping. */
+    int borderTop = 0, borderLeft = 0, borderBottom = 0, borderRight = 0;
+    if (!SDL_GetWindowBordersSize(window, &borderTop, &borderLeft,
+                                  &borderBottom, &borderRight)
+        || (borderTop + borderBottom == 0)) {
+        /* Platform didn't fill these in (window not yet shown, or no
+         * border data available) — reserve a typical Windows title-
+         * bar + frame budget. */
+        borderTop = 32;
+        borderBottom = 8;
+    }
+    /* Clamp to the usable area of the containing display. */
+    SDL_DisplayID dispID = SDL_GetDisplayForWindow(window);
+    if (!dispID) dispID = SDL_GetPrimaryDisplay();
+    if (dispID) {
+        SDL_Rect bounds = {0, 0, 0, 0};
+        if (SDL_GetDisplayUsableBounds(dispID, &bounds)
+            && bounds.w > 0 && bounds.h > 0) {
+            int maxW = bounds.w - (borderLeft + borderRight);
+            int maxH = bounds.h - (borderTop  + borderBottom);
+            if (maxW < 320) maxW = 320;
+            if (maxH < 240) maxH = 240;
+            if (w > maxW) w = maxW;
+            if (h > maxH) h = maxH;
+        }
     }
     int curW = 0, curH = 0;
     SDL_GetWindowSize(window, &curW, &curH);

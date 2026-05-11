@@ -15,7 +15,13 @@
 #include "lobby_bot_pools.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+/* Loose upper bound for "names in any one pool" — used to size the
+ * uniform-pick scratch buffer in lobbyBotPoolPick.  Generous so a new
+ * pool added below doesn't silently truncate. */
+#define POOL_MAX_NAMES 256
 
 /* Pool entry: a label + a fixed array of names. Names are mirrored
  * verbatim from the Layout A mockup (LobbyData.jsx BOT_NAME_POOLS). */
@@ -150,6 +156,8 @@ char *lobbyBotPoolPick(int poolIdx,
                        const char **used, int usedCount,
                        char *outBuf, int outBufLen) {
     int n, i, overflow;
+    int unusedIdx[POOL_MAX_NAMES];
+    int unusedCount = 0;
     const char *cand;
     const char *label;
 
@@ -163,15 +171,23 @@ char *lobbyBotPoolPick(int poolIdx,
 
     n = lobbyBotPoolNameCount(poolIdx);
 
-    /* Try every name in the pool first; first unused wins. */
-    for (i = 0; i < n; i++) {
+    /* Collect every unused candidate then pick one uniformly at
+     * random.  The previous "first unused wins" pick made reroll
+     * ping-pong between two names (current-name went into the
+     * used-list, so reroll always picked the same alternative). */
+    for (i = 0; i < n && unusedCount < POOL_MAX_NAMES; i++) {
         cand = lobbyBotPoolName(poolIdx, i);
         if (!cand) continue;
         if (!isUsed(cand, used, usedCount)) {
-            strncpy(outBuf, cand, (size_t)outBufLen - 1);
-            outBuf[outBufLen - 1] = '\0';
-            return outBuf;
+            unusedIdx[unusedCount++] = i;
         }
+    }
+    if (unusedCount > 0) {
+        int pick = rand() % unusedCount;
+        cand = lobbyBotPoolName(poolIdx, unusedIdx[pick]);
+        strncpy(outBuf, cand, (size_t)outBufLen - 1);
+        outBuf[outBufLen - 1] = '\0';
+        return outBuf;
     }
 
     /* Pool exhausted — overflow into "<label> N", finding the

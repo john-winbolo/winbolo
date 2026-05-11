@@ -48,6 +48,18 @@ struct ServerSim;
  *                Fills header, tank/shell/explosion/event arrays.
  * ctx:           Opaque pointer to implementation data.
  *********************************************************/
+/* Identifies a Transport's underlying implementation. The lobby /
+ * gamefront layer uses this to skip UDP-only command sends
+ * (transportUdpClient* family) when running in single-player against
+ * the local transport — those send fns reinterpret ctx as a
+ * TransportUdpClientCtx and would corrupt memory if called against a
+ * TransportLocalCtx. Set by each implementation in its create fn. */
+typedef enum {
+    TRANSPORT_KIND_UNKNOWN = 0,
+    TRANSPORT_KIND_LOCAL,
+    TRANSPORT_KIND_UDP_CLIENT
+} TransportKind;
+
 typedef struct {
     void (*recordInput)(void *ctx, const InputPacket *input);
     void (*sendInput)(void *ctx, const InputPacket *input);
@@ -61,6 +73,7 @@ typedef struct {
                         PillSnapshot *pills, int maxPills,
                         GameEvent *events, int maxEvents);
     void *ctx;
+    TransportKind kind;
 } Transport;
 
 /*********************************************************
