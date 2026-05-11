@@ -469,7 +469,7 @@ void messageAddItem(MessageState *ms, char *top, char *bottom) {
   messageQueuePush(ms, MESSAGE_BLANK, MESSAGE_BLANK);
 }
 
-void messageUpdate(MessageState *ms) {
+void messageUpdate(struct ClientSim *cs, MessageState *ms) {
   BYTE count;
 
   if (ms->queueCount > 0) {
@@ -493,7 +493,7 @@ void messageUpdate(MessageState *ms) {
      * for the renderer. Buffers are sized to fit MESSAGE_WIDTH * 4 + 1. */
     encodeCellsToUtf8(ms->topCells,    MESSAGE_WIDTH - 1, ms->topLine,    sizeof(ms->topLine));
     encodeCellsToUtf8(ms->bottomCells, MESSAGE_WIDTH - 1, ms->bottomLine, sizeof(ms->bottomLine));
-    frontEndMessages(ms->topLine, ms->bottomLine);
+    frontEndMessages(cs, ms->topLine, ms->bottomLine);
   }
 }
 

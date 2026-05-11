@@ -420,7 +420,7 @@ BYTE pillsSetPillOwner(struct GameSim *sim, pillboxes *value, BYTE pillNum, BYTE
 *  yValue - Y Location of pillbox
 *  amount - Amount of damage done to the pillbox
 *********************************************************/
-void pillsGetDamagePos(pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, bool isServer);
+void pillsGetDamagePos(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount);
 
 /*********************************************************
 *NAME:          pillsNumInRect

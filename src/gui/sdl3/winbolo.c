@@ -1432,8 +1432,9 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   }
 }
 
-void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (armour > TANK_FULL_ARMOUR) {
     armour = 0;
   }
@@ -1441,7 +1442,8 @@ void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE tre
   dwSysFrame += (winboloTimer() - tick);
 }
 
-void frontEndPlaySound(sndEffects value) {
+void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) {
     soundPlayEffect(value);
   }
@@ -1453,21 +1455,24 @@ void windowPlaySound(sndEffects value) {
   }
 }
 
-void frontEndStatusPillbox(BYTE pillNum, pillAlliance pb) {
+void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
   dwSysFrame += (winboloTimer() - tick);
 }
 
-void frontEndStatusTank(BYTE tankNum, tankAlliance ts) {
+void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
   dwSysFrame += (winboloTimer() - tick);
 }
 
-void frontEndMessages(char *top, char *bottom) {
+void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) {
     DWORD tick = winboloTimer();
     sdl3DrawMessages(0, 0, top, bottom);
@@ -1475,7 +1480,8 @@ void frontEndMessages(char *top, char *bottom) {
   }
 }
 
-void frontEndKillsDeaths(int kills, int deaths) {
+void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) {
     DWORD tick = winboloTimer();
     sdl3DrawKillsDeaths(0, 0, kills, deaths);
@@ -1483,29 +1489,33 @@ void frontEndKillsDeaths(int kills, int deaths) {
   }
 }
 
-void frontEndStatusBase(BYTE baseNum, baseAlliance bs) {
+void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
   dwSysFrame += (winboloTimer() - tick);
 }
 
-void frontEndUpdateBaseStatusBars(BYTE shells, BYTE mines, BYTE armour) {
+void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
   dwSysFrame += (winboloTimer() - tick);
 }
 
-void frontEndManStatus(bool isDead, TURNTYPE angle) {
+void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
   dwSysFrame += (winboloTimer() - tick);
 }
 
-void frontEndManClear(void) {
+void frontEndManClear(ClientSim *cs) {
   DWORD tick = winboloTimer();
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -1521,7 +1531,8 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
-void frontEndGameOver(void) {
+void frontEndGameOver(ClientSim *cs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   SDL_RemoveTimer(timerFrameID);
   SDL_RemoveTimer(timerGameID);
   timerFrameID = 0;
@@ -1617,6 +1628,7 @@ void frontEndRedrawAll(ClientSim *cs) {
  * frontEndShowGunsight — auto show/hide gunsight callback
  * ------------------------------------------------------- */
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   showGunsight = !isShown;
   screenSetGunsightCS(cs, showGunsight);
 }

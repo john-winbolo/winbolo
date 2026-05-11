@@ -97,19 +97,20 @@ void serverCoreSoundDist(sndEffects value, BYTE mx, BYTE my) {
 }
 
 /* Frontend stubs */
-void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) { (void)shells; (void)mines; (void)armour; (void)trees; }
-void frontEndUpdateBaseStatusBars(BYTE shells, BYTE mines, BYTE armour) { (void)shells; (void)mines; (void)armour; }
+void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) { (void)cs; (void)shells; (void)mines; (void)armour; (void)trees; }
+void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) { (void)cs; (void)shells; (void)mines; (void)armour; }
 void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) { (void)value; (void)mx; (void)my; (void)px; (void)py; (void)frame; }
-void frontEndPlaySound(sndEffects value) { (void)value; }
+void frontEndPlaySound(ClientSim *cs, sndEffects value) { (void)cs; (void)value; }
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) { (void)cs; (void)value; (void)mineView; (void)tks; (void)gs; (void)sBullet; (void)lgms; (void)srtDelay; (void)isPillView; (void)tank; (void)edgeX; (void)edgeY; }
-void frontEndStatusPillbox(BYTE pillNum, pillAlliance pb) { (void)pillNum; (void)pb; }
-void frontEndStatusTank(BYTE tankNum, tankAlliance ts) { (void)tankNum; (void)ts; }
-void frontEndStatusBase(BYTE baseNum, baseAlliance bs) { (void)baseNum; (void)bs; }
-void frontEndMessages(char *top, char *bottom) { (void)top; (void)bottom; }
-void frontEndKillsDeaths(int kills, int deaths) { (void)kills; (void)deaths; }
-void frontEndManStatus(bool isDead, TURNTYPE angle) { (void)isDead; (void)angle; }
-void frontEndManClear(void) {}
-void frontEndGameOver(void) {
+void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) { (void)cs; (void)pillNum; (void)pb; }
+void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) { (void)cs; (void)tankNum; (void)ts; }
+void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) { (void)cs; (void)baseNum; (void)bs; }
+void frontEndMessages(ClientSim *cs, char *top, char *bottom) { (void)cs; (void)top; (void)bottom; }
+void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) { (void)cs; (void)kills; (void)deaths; }
+void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) { (void)cs; (void)isDead; (void)angle; }
+void frontEndManClear(ClientSim *cs) { (void)cs; }
+void frontEndGameOver(ClientSim *cs) {
+  (void)cs;
   serverSimConsoleMessage("Game Timelimit has expired. Shutting down");
 }
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }

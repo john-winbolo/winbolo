@@ -466,7 +466,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       if ((*value)->item[count].armour == 0) {
         returnValue = TRUE;
         if (isServer == FALSE) {
-          frontEndStatusPillbox((BYTE) (count+1), pillDead);
+          frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
       } else if (wantDamage == TRUE) {
         (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
@@ -989,7 +989,7 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       }
     }
     if (sim->isServer == FALSE) {
-      frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(sim, value, pillNum)));
+      frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, value, pillNum)));
     }
   }
   return returnValue;
@@ -1010,7 +1010,7 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
 *  yValue - Y Location of pillbox
 *  amount - Amount of damage done to the pillbox
 *********************************************************/
-void pillsGetDamagePos(pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, bool isServer) {
+void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount) {
   BYTE count;       /* Looping Variable */
 
   count = 0;
@@ -1021,8 +1021,8 @@ void pillsGetDamagePos(pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, 
         (*value)->item[count].armour = 0;
       }
       if ((*value)->item[count].armour == 0) {
-        if (isServer == FALSE) {
-          frontEndStatusPillbox((BYTE) (count+1), pillDead);
+        if (sim->isServer == FALSE) {
+          frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
       }
       logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
@@ -1093,7 +1093,7 @@ void pillsRepairPos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BY
 	    (*value)->item[count].armour = PILLS_MAX_ARMOUR;
       }
       if (sim->isServer == FALSE) {
-        frontEndStatusPillbox((BYTE) (count+1), (pillsGetAllianceNum(sim, value, (BYTE) (count+1))));
+        frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), (pillsGetAllianceNum(sim, value, (BYTE) (count+1))));
       }
       logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
       count = (*value)->numPills;

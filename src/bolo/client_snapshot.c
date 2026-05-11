@@ -673,7 +673,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         /* data: [soundId, mx, my, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
-            frontEndPlaySound(hitTankSelf);
+            frontEndPlaySound(csPtr, hitTankSelf);
           } else {
             clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
           }
