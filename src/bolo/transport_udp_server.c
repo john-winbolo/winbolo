@@ -2591,7 +2591,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
                 if (teamNum <= 16) {
-                    sim->lobbyPlayers[clientIdx].teamNumber = teamNum;
+                    serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
                     logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
                 }
@@ -2606,7 +2606,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 bool ready = buf[PACKET_HEADER_SIZE + 1] != 0;
 
                 if (sim->state == serverStateLobby) {
-                    sim->lobbyPlayers[clientIdx].ready = ready;
+                    serverSimSetReady(sim, (BYTE)clientIdx, ready);
                     logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
                     serverSimLobbyCheckAllReady(sim);
@@ -2618,7 +2618,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 } else if (sim->state == serverStateCountdown && !ready) {
                     /* Someone unreadied during countdown — revert to lobby */
-                    sim->lobbyPlayers[clientIdx].ready = FALSE;
+                    serverSimSetReady(sim, (BYTE)clientIdx, false);
                     sim->state = serverStateLobby;
                     sim->countdownTicks = 0;
                     logAddEvent(log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
@@ -2758,7 +2758,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 int i;
                 for (i = 0; i < MAX_TANKS; i++) {
                     if (sim->balanceProposal.teamForSlot[i] != 0) {
-                        sim->lobbyPlayers[i].teamNumber = sim->balanceProposal.teamForSlot[i];
+                        serverSimSetTeam(sim, (BYTE)i, sim->balanceProposal.teamForSlot[i]);
                     }
                 }
                 memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));

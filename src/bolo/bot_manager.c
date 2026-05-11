@@ -414,12 +414,19 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
     }
 
-    /* Register the player in the server (creates tank + lgm) */
-    serverSimAddPlayer(sim, playerNum, brainName, false);
-
-    /* Mark as bot in lobby state (must come after serverSimAddPlayer which resets defaults) */
-    sim->lobbyPlayers[playerNum].isBot = true;
-    sim->lobbyPlayers[playerNum].ready = true;  /* Bots are always ready */
+    {
+        ServerSimBotConfig cfg = {
+            .brainPath   = bot->brainPath,
+            .brainName   = brainName,
+            .ai          = ai,
+            .gameType    = game,
+            .hiddenMines = hiddenMines,
+            .teamNumber  = 0,
+        };
+        if (!serverSimAddBot(sim, playerNum, &cfg)) {
+            return false;
+        }
+    }
 
     /* Set bot name in transport client array for lobby broadcasts */
     transportUdpServerSetBotName(playerNum, brainName);

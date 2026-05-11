@@ -1473,6 +1473,46 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 }
 
+bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
+                     const ServerSimBotConfig *cfg) {
+    if (cfg == NULL || cfg->brainPath == NULL) {
+        return false;
+    }
+    if (playerNum >= MAX_TANKS) {
+        return false;
+    }
+    if (sim->playerConnected[playerNum]) {
+        return false;
+    }
+
+    serverSimAddPlayer(sim, playerNum, cfg->brainName, false);
+
+    sim->lobbyPlayers[playerNum].isBot      = true;
+    sim->lobbyPlayers[playerNum].ready      = true;
+    sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
+    return true;
+}
+
+void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+    if (teamNumber > 16) {
+        teamNumber = 1;
+    }
+    sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
+}
+
+void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+    if (!sim->lobbyEnabled) {
+        return;
+    }
+    sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
+}
+
 bool serverSimGetTankState(ServerSim *sim, BYTE playerNum, WORLD *wx, WORLD *wy) {
     if (playerNum >= MAX_TANKS || sim->sim.tanks[playerNum] == NULL) {
         return FALSE;
