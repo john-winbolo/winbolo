@@ -496,7 +496,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
     /* WASM single-player: no lobby, run immediately */
     wasmServerSim->lobbyEnabled = false;
-    wasmServerSim->state = serverStateRunning;
+    serverSimStartGame(wasmServerSim);
     serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
     wasmServerSim->sim.viewPlayer = 0;
     wasmTransport = transportLocalCreate(wasmServerSim, 0);
