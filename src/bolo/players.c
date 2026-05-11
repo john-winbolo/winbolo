@@ -996,7 +996,7 @@ BYTE playersGetFirstNotUsed(players *plrs) {
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
   BYTE count;                /* Looping variable */
 
 
@@ -1022,9 +1022,9 @@ void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerN
       (*plrs)->item[playerNum].isChecked = FALSE;
       (*plrs)->playerBrainNames[playerNum][0] = '\0';
       if (isServer == FALSE) {
-        frontEndClearPlayer((playerNumbers) playerNum);
+        frontEndClearPlayer(csParam, (playerNumbers) playerNum);
         frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
-        frontEndSetPlayerCheckState((playerNumbers) playerNum, FALSE);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, FALSE);
       }
       /* Make a message about it */
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
@@ -1128,7 +1128,7 @@ int playersGetNumChecked(players *plrs) {
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer) {
+void playersCheckAllies(ClientSim *csParam, players *plrs, BYTE selfPlayer, bool isServer) {
   BYTE count; /* Looping variable */
 
   count = 0;
@@ -1139,7 +1139,7 @@ void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer) {
       (*plrs)->item[count].isChecked = FALSE;
     }
     if (isServer == FALSE) {
-      frontEndSetPlayerCheckState((playerNumbers) count, (*plrs)->item[count].isChecked);
+      frontEndSetPlayerCheckState(csParam, (playerNumbers) count, (*plrs)->item[count].isChecked);
     }
     count++;
   }
@@ -1159,7 +1159,7 @@ void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer) {
 * plrs - Pointer to the players object 
 * isChecked - TRUE if check all
 *********************************************************/
-void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool isServer) {
+void playersCheckAllNone(ClientSim *csParam, players *plrs, BYTE selfPlayer, bool isChecked, bool isServer) {
   BYTE count;         /* Looping variable */
 
   count = 0;
@@ -1167,7 +1167,7 @@ void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool is
     if ((*plrs)->item[count].inUse == TRUE) {
       (*plrs)->item[count].isChecked = isChecked;
       if (isServer == FALSE) {
-        frontEndSetPlayerCheckState((playerNumbers) count, isChecked);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) count, isChecked);
       }
     }
     count++;
@@ -1187,7 +1187,7 @@ void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool is
 * plrs - Pointer to the players object 
 * playerNum - The number of the player to check
 *********************************************************/
-void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+void playersToggleCheckedState(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
   if (playerNum < MAX_TANKS) {
     if ((*plrs)->item[playerNum].inUse == TRUE  ) {
       if ((*plrs)->item[playerNum].isChecked == TRUE) {
@@ -1196,7 +1196,7 @@ void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, b
         (*plrs)->item[playerNum].isChecked = TRUE;
       }
       if (isServer == FALSE) {
-        frontEndSetPlayerCheckState((playerNumbers) playerNum, (*plrs)->item[playerNum].isChecked);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, (*plrs)->item[playerNum].isChecked);
       }
     }
   }
@@ -1216,7 +1216,7 @@ void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, b
 * xValue - Your tanks X Map position
 * yValue - Your tanks Y Map position
 *********************************************************/
-void playersCheckNearbyPlayers(players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer) {
+void playersCheckNearbyPlayers(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer) {
   int xDiff;  /* X and Y differences in location */
   int yDiff;
   BYTE count; /* Looping variable */
@@ -1232,7 +1232,7 @@ void playersCheckNearbyPlayers(players *plrs, BYTE selfPlayer, BYTE xValue, BYTE
         (*plrs)->item[count].isChecked = FALSE;
       }
       if (isServer == FALSE) {
-        frontEndSetPlayerCheckState((playerNumbers) count, (*plrs)->item[count].isChecked);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) count, (*plrs)->item[count].isChecked);
       }
     }
     count++;
@@ -1793,7 +1793,7 @@ void playersAcceptAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE ac
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersConnectionLost(GameSim *sim, players *plrs, BYTE selfPlayer) {
+void playersConnectionLost(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer) {
   BYTE count; /* Looping variable */
   BYTE total;   /* Number of alliances acceptedBy has */
   BYTE current; /* Current Allie we are working on  */
@@ -1812,7 +1812,7 @@ void playersConnectionLost(GameSim *sim, players *plrs, BYTE selfPlayer) {
   count = 0;
   while (count < MAX_TANKS) {
     if ((*plrs)->item[count].inUse == TRUE && count != selfPlayer) {
-      playersLeaveGame(sim, plrs, selfPlayer, count, FALSE);
+      playersLeaveGame(csParam, sim, plrs, selfPlayer, count, FALSE);
     }
     count++;
   }

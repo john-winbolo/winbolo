@@ -26,6 +26,7 @@
 #include "../bolo/transport_udp.h"
 #include "../bolo/gui_message.h"
 #include "../bolo/everard_map.h"
+#include "../bolo/frontend.h"
 #include "../server/server_sim.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
@@ -361,6 +362,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   printf("[WASM] Setting up screen...\n");
   humanSim = &humanSimStorage;
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  frontEndSetActiveClientSim(humanSim);
 
   if (urlNetType == netUdp) {
     /* ---- UDP multiplayer via new transport ---- */
@@ -606,6 +608,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     }
     wasmTransportActive = FALSE;
   }
+  frontEndSetActiveClientSim(NULL);
   clientSimDestroy(humanSim);
   if (isQuiting == TRUE) {
     sdl3ImguiCleanup();

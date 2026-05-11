@@ -802,7 +802,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           BYTE leavePlayer = events[i].data[0];
           if (leavePlayer < MAX_TANKS && csPtr->sim.plyrs != NULL &&
               playersIsInUse(&csPtr->sim.plyrs, leavePlayer) == TRUE) {
-            playersLeaveGame(&csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, leavePlayer, FALSE);
+            playersLeaveGame(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, leavePlayer, FALSE);
           }
         }
         break;

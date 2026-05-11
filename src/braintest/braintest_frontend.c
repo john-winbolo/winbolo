@@ -80,8 +80,8 @@ void frontEndGameOver(void) {
   fprintf(stderr, "[braintest] Game over\n");
 }
 
-void frontEndClearPlayer(playerNumbers value) {
-  (void)value;
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  (void)cs; (void)value;
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
@@ -92,8 +92,12 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   (void)cs; (void)justBlack;
 }
 
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
-  (void)value; (void)isChecked;
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  (void)cs; (void)value; (void)isChecked;
+}
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  (void)cs;
 }
 
 void frontEndEnableRequestAllyMenu(bool enabled) {

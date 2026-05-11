@@ -1907,7 +1907,7 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
 *
 *********************************************************/
 void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
-  playersToggleCheckedState(&csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, FALSE);
+  playersToggleCheckedState(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, FALSE);
 }
 
 /*********************************************************
@@ -1922,7 +1922,7 @@ void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
 *  isChecked - TRUE if check all
 *********************************************************/
 void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
-  playersCheckAllNone(&csPtr->sim.plyrs, csPtr->myPlayerNum, isChecked, FALSE);
+  playersCheckAllNone(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, isChecked, FALSE);
 }
 
 /*********************************************************
@@ -1937,7 +1937,7 @@ void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
 *
 *********************************************************/
 void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
-  playersCheckAllies(&csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
+  playersCheckAllies(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
 }
 
 /*********************************************************
@@ -1952,7 +1952,7 @@ void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  playersCheckNearbyPlayers(&csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
+  playersCheckNearbyPlayers(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
 }
 
 /*********************************************************
@@ -2616,7 +2616,7 @@ bool screenGetGameRunningCS(ClientSim *csPtr) {
 *********************************************************/
 void screenConnectionLostCS(ClientSim *csPtr) {
   lgmConnectionLost(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), &csPtr->sim.ss);
-  playersConnectionLost(&csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum);
+  playersConnectionLost(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum);
 }
 
 

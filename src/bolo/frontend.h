@@ -227,7 +227,7 @@ void frontEndGameOver(void);
 *ARGUMENTS:
 *  value - The player number to clear
 *********************************************************/
-void frontEndClearPlayer(playerNumbers value);
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value);
 
 /*********************************************************
 *NAME:          frontEndSetPlayer
@@ -273,7 +273,23 @@ void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 * value     - The player number
 * isChecked - Is the item checked
 *********************************************************/
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked);
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked);
+
+/*********************************************************
+*NAME:          frontEndSetActiveClientSim
+*PURPOSE:
+* Register which ClientSim drives the visible player-list UI.
+* Subsequent frontEnd* calls whose cs argument doesn't match the
+* registered active cs are suppressed as no-ops, preventing bot
+* / bg_game / gym ClientSims from polluting process-global UI
+* state. NULL means "no active UI cs registered yet" — calls
+* fall through (preserves pre-registration bootstrapping).
+*
+*ARGUMENTS:
+*  cs - The ClientSim that owns the visible UI (usually humanSim),
+*       or NULL to clear the registration.
+*********************************************************/
+void frontEndSetActiveClientSim(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          frontEndEnableRequestAllyMenu
