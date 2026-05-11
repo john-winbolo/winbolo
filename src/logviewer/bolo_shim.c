@@ -69,6 +69,7 @@
 #include "pillbox.h"
 #include "bases.h"
 #include "bolo_map.h"
+#include "players.h"
 
 #include <stdlib.h>  /* abort */
 
@@ -137,6 +138,16 @@ void screenLgmGetItem(screenLgm *value, BYTE itemNum,
                       BYTE *mx, BYTE *my, BYTE *px, BYTE *py,
                       BYTE *frame) {
   lv_screenLgmGetItem(value, itemNum, mx, my, px, py, frame);
+}
+
+/* mapview.c (shared with main game) calls the main-game
+ * playersScreenAllience(); forward to the LogViewer's lv_
+ * equivalent which uses module-globals for plrs/selfPlayer. */
+tankAlliance playersScreenAllience(players *plrs, BYTE selfPlayer,
+                                   BYTE playerNum) {
+  (void)plrs;
+  (void)selfPlayer;
+  return lv_playersScreenAllience(playerNum);
 }
 
 

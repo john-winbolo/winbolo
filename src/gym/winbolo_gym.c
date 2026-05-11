@@ -32,6 +32,8 @@
 #include "../bolo/global.h"
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_sim_control.h"
+#include "../bolo/control_event.h"
 #include "../bolo/frontend.h"
 #include "../bolo/players.h"
 #include "../bolo/brain.h"
@@ -57,6 +59,7 @@ struct WinBoloGym {
     ServerSim   serverSim;
     ClientSim   clientSim;
     Transport   transport;
+    SubscriberHandle controlSub;
 
     BYTE       *cachedMap;
     int         cachedMapLen;
@@ -82,6 +85,10 @@ struct WinBoloGym {
 
 static void gymMessageHandler(const char *message, const char *title) {
     (void)message; (void)title;
+}
+
+static void gymDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
 }
 
 /* Accumulate server events into pre-allocated cache.
@@ -153,6 +160,14 @@ static void gymSetupGame(WinBoloGym *g) {
     gymSyncSnapshot(g);
     screenNetSetupTankGoCS(&g->clientSim);
 
+    /* Register the gym client as a control-event subscriber. Placed after
+     * screenLoadCompressedMapCS (which calls clientSimCreate) so myPlayerNum
+     * is initialized to 0 — matching the gym agent's slot — before sync's
+     * self-skip runs. */
+    g->controlSub = serverSimRegisterSubscriber(&g->serverSim,
+                                                gymDeliverControl,
+                                                &g->clientSim);
+
     g->simTickCounter = 0;
     g->gameTickCount = 0;
     g->needMapInit = TRUE;
@@ -171,6 +186,8 @@ static void gymSetupGame(WinBoloGym *g) {
 }
 
 static void gymTeardownGame(WinBoloGym *g) {
+    serverSimUnregisterSubscriber(&g->serverSim, g->controlSub);
+    g->controlSub = SUBSCRIBER_HANDLE_INVALID;
     clientSimDestroy(&g->clientSim);
     transportLocalDestroy(&g->transport);
 }
@@ -1534,6 +1551,7 @@ WBGYM_API WinBoloGym *winbolo_create(const char *map_path, int game_type) {
     WinBoloGym *g = (WinBoloGym *)calloc(1, sizeof(WinBoloGym));
     if (g == NULL) return NULL;
 
+    g->controlSub = SUBSCRIBER_HANDLE_INVALID;
     g->gameMode = (gameType)game_type;
     guiMessageSetHandler(gymMessageHandler);
     wsim_init_tables();  /* Ensure trig tables are ready before any stepping */

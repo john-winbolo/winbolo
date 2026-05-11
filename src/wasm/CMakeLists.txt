@@ -168,6 +168,7 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/interpolation.c
     ${SRC_ROOT}/bolo/position_history.c
     ${SRC_ROOT}/bolo/client_sim.c
+    ${SRC_ROOT}/bolo/client_sim_control.c
     ${SRC_ROOT}/bolo/bot_manager.c
     ${SRC_ROOT}/bolo/bot_worker_pool.c
     ${SRC_ROOT}/bolo/tutorial.c

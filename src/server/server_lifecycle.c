@@ -301,7 +301,7 @@ void serverInstanceTick(ServerSim *sim) {
                  sim->countdownTicks > 0 &&
                  sim->countdownTicks % 50 == 0) {
         /* Broadcast countdown tick (once per second) */
-        uint8_t secs = (uint8_t)(sim->countdownTicks / 50);
+        uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
         transportUdpServerBroadcastCountdown(sim, secs);
       }
     }

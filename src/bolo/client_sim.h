@@ -228,6 +228,20 @@ struct ClientSim {
 #define MY_TANK(cs) ((cs)->sim.tanks[(cs)->myPlayerNum])
 #define MY_LGM(cs)  ((cs)->sim.lgmen[(cs)->myPlayerNum])
 
+/* Recover the owning ClientSim from a GameSim* for the frontEnd
+ * active-cs gate. Relies on the "GameSim sim MUST be first member"
+ * invariant declared above (and mirrored in server_sim.h). When the
+ * GameSim belongs to a ServerSim (sim->isServer == true) the cast
+ * would yield a bogus pointer, so we return NULL; the gate then
+ * suppresses safely because NULL never matches the registered active
+ * humanSim. Callers in bolo/* with only a GameSim* in scope use this
+ * to feed frontEnd*(cs, ...) calls without having to thread cs
+ * through every signature. */
+static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
+    if (sim == NULL || sim->isServer) return NULL;
+    return (struct ClientSim *)sim;
+}
+
 /* Lifecycle API — initializes/destroys the ClientSim struct */
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
 void clientSimDestroy(ClientSim *cs);

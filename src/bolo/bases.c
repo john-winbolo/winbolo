@@ -559,7 +559,7 @@ void basesUpdateStock(GameSim *sim, BYTE baseNum) {
       /* Update the frontend status as required */
       if (oldArmour == BASE_DEAD && (*value)->item[baseNum].armour > BASE_DEAD) { /* FIXME: Changed to hardcoded value */
         if (isServer == FALSE) {
-          frontEndStatusBase((BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
+          frontEndStatusBase(clientSimFromSim(sim), (BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
         }
       }
     }
@@ -822,21 +822,21 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
         tankAddArmour(sim, tnk, BASE_ARMOUR_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
         if (isServer == FALSE) {
-          frontEndUpdateBaseStatusBars(((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
+          frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (shellsAmount < TANK_FULL_SHELLS && ((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
         (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
         tankAddShells(sim, tnk, BASE_SHELLS_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
         if (isServer == FALSE) {
-          frontEndUpdateBaseStatusBars(((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
+          frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (mines < TANK_FULL_MINES && ((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
         (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
         tankAddMines(sim, tnk, BASE_MINES_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);
         if (isServer == FALSE) {
-          frontEndUpdateBaseStatusBars(((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
+          frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       }
       logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
@@ -966,7 +966,7 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue) {
       }
       if ((*value)->item[count].armour <= BASE_DISPLAY_X) {
         if (isServer == FALSE) {
-          frontEndStatusBase((BYTE) (count+1), baseDead);
+          frontEndStatusBase(clientSimFromSim(sim), (BYTE) (count+1), baseDead);
         }
       }
       done = TRUE;
@@ -1379,7 +1379,7 @@ void basesServerRefuel(GameSim *sim, BYTE baseNum, BYTE addAmount) {
       /* Update the frontend status as required */
       if (oldArmour == BASE_DEAD && (*value)->item[baseNum].armour > BASE_DEAD) {
         if (isServer == FALSE) {
-          frontEndStatusBase((BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
+          frontEndStatusBase(clientSimFromSim(sim), (BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
         }
       }
     }

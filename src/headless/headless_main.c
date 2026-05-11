@@ -69,6 +69,8 @@
 
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_sim_control.h"
+#include "../bolo/control_event.h"
 #include "../bolo/frontend.h"
 #include "../bolo/players.h"
 #include "../bolo/brain.h"
@@ -110,6 +112,8 @@ static bool optFast = FALSE;
 static char optMap[512] = "";
 static bool optStdin = FALSE;
 static bool optLogBinary = FALSE;
+static unsigned int optSeed = 0;
+static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
 /* Binary observation format constants */
@@ -125,6 +129,11 @@ static volatile bool headlessQuit = FALSE;
 /* Transport state */
 static Transport headlessTransport;
 static bool transportActive = FALSE;
+static SubscriberHandle headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
+
+static void headlessDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 static BYTE playerNum = 0;
 static ClientSim humanSimStorage;
 static ClientSim *humanSim = NULL;
@@ -836,6 +845,7 @@ static void printUsage(const char *prog) {
     "  --gametype TYPE   Game type: strict (default), tournament, open\n"
     "  --log-state FILE  Log verbose JSON state each tick (- for stdout)\n"
     "  --log-state binary  Binary observation frames to stdout (little-endian)\n"
+    "  --seed N          Seed the RNG with N for reproducible runs\n"
     "  --quiet           Suppress non-error output\n"
     "\n"
     "Network options:\n"
@@ -871,6 +881,9 @@ static bool parseArgs(int argc, char **argv) {
       optTicks = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--log-state") == 0 && i + 1 < argc) {
       strncpy(optLogState, argv[++i], sizeof(optLogState) - 1);
+    } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+      optSeed = (unsigned int)strtoul(argv[++i], NULL, 0);
+      optSeedSet = TRUE;
     } else if (strcmp(argv[i], "--password") == 0 && i + 1 < argc) {
       strncpy(optPassword, argv[++i], sizeof(optPassword) - 1);
     } else if (strcmp(argv[i], "--quiet") == 0) {
@@ -917,7 +930,7 @@ static bool parseArgs(int argc, char **argv) {
       return FALSE;
     }
     /* In fast mode with log output, stdin is required for lockstep control */
-    if (optLogState[0] != '\0') {
+    if (optLogState[0] != '\0'  && optBrain[0] == '\0') {
       optStdin = TRUE;
     }
   } else {
@@ -1042,12 +1055,24 @@ static bool fastModeSetupGame(void) {
   headlessSyncSnapshot();
   screenNetSetupTankGoCS(humanSim);
 
+  /* Register the headless client as a control-event subscriber. Placed
+   * after screenLoadCompressedMapCS (which calls clientSimCreate) so
+   * humanSim->myPlayerNum is initialized to 0 before sync's self-skip
+   * runs. Unregister any prior handle first so a re-setup that skipped
+   * the teardown path does not leak a slot. */
+  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
+  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
+                                                  headlessDeliverControl,
+                                                  humanSim);
+
   return true;
 }
 
 /* Tear down client sim and transport (but not the server sim) */
 static void fastModeTeardownGame(void) {
   brainsHandlerShutdown();
+  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
   clientSimDestroy(humanSim);
   transportLocalDestroy(&headlessTransport);
   transportActive = FALSE;
@@ -1116,6 +1141,13 @@ static int runFastMode(void) {
   screenSetAiTypeCS(humanSim, optAi);
   headlessSyncSnapshot();
   screenNetSetupTankGoCS(humanSim);
+
+  /* Register the headless client as a control-event subscriber. Placed
+   * after screenLoadCompressedMapCS so humanSim->myPlayerNum is 0 before
+   * sync's self-skip runs. */
+  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
+                                                  headlessDeliverControl,
+                                                  humanSim);
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
@@ -1232,6 +1264,8 @@ static int runFastMode(void) {
 
   logStateClose();
   brainsHandlerShutdown();
+  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
   clientSimDestroy(humanSim);
   transportLocalDestroy(&headlessTransport);
   transportActive = FALSE;
@@ -1488,6 +1522,10 @@ int main(int argc, char *argv[]) {
 
   if (!parseArgs(argc, argv)) {
     return 1;
+  }
+
+  if (optSeedSet) {
+    srand(optSeed);
   }
 
   signal(SIGINT, signalHandler);
