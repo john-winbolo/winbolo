@@ -1596,6 +1596,14 @@ void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
     sim->autoCloseOnEmpty = enabled;
 }
 
+void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
+    sim->balanceProposal.broadcastNeeded = needed;
+}
+
+void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight) {
+    sim->balanceProposal.requestInFlight = inFlight;
+}
+
 void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
     sim->emptyResetMinutes = minutes;
 }
@@ -1627,6 +1635,10 @@ void serverSimSetQuiet(ServerSim *sim, bool quiet) {
 
 void serverSimSetQuitOnWin(ServerSim *sim, bool enabled) {
     sim->quitOnWin = enabled;
+}
+
+void serverSimSetServerPort(ServerSim *sim, unsigned short port) {
+    sim->serverPort = port;
 }
 
 void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
@@ -2179,10 +2191,19 @@ bool serverSimIsRunning(void) {
     return sim != NULL && sim->state == serverStateRunning;
 }
 
+void serverSimAbortCountdown(ServerSim *sim) {
+    sim->state = serverStateLobby;
+    sim->countdownTicks = 0;
+}
+
 void serverSimClearActive(ServerSim *sim) {
     if (activeSim == sim) {
         activeSim = NULL;
     }
+}
+
+void serverSimClearBalanceProposal(ServerSim *sim) {
+    memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }
 
 void serverSimConsoleMessage(const char *msg) {
@@ -3162,6 +3183,13 @@ SubscriberHandle serverSimRegisterSubscriber(
     return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
 }
 
+void serverSimRequestBalanceProposal(ServerSim *sim,
+                                     uint8_t totalPlayers,
+                                     uint8_t teamSize) {
+    winbolonetServerRequestBalance(totalPlayers, teamSize,
+                                   &sim->balanceProposal);
+}
+
 void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
     int slot;
     uint16_t gen;
@@ -3224,6 +3252,14 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
 /*********************************************************
  * Read accessors.
  *********************************************************/
+
+bool serverSimBalanceShutdownRequested(const ServerSim *sim) {
+    /* SDL_GetAtomicInt takes a non-const pointer for ABI reasons,
+     * but the operation is a read. Const-cast is the standard
+     * pattern for this SDL API. */
+    return SDL_GetAtomicInt(
+        (SDL_AtomicInt *)&sim->balanceProposal.shutdownFlag) != 0;
+}
 
 bool serverSimIsLobbyEnabled(const ServerSim *sim) {
     return sim->lobbyEnabled;
