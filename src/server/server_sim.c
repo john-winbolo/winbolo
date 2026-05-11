@@ -2296,6 +2296,13 @@ void serverSimStartGame(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
+        {
+            ControlEvent leaveEvt;
+            memset(&leaveEvt, 0, sizeof(leaveEvt));
+            leaveEvt.type = CTRL_ALLIANCE_LEAVE;
+            leaveEvt.u.allianceLeave.playerNum = i;
+            serverSimPublishControl(sim, &leaveEvt);
+        }
     }
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
