@@ -246,6 +246,32 @@ static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
 void clientSimDestroy(ClientSim *cs);
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          clientSimSetupSelf
+ *PURPOSE:
+ *  Initialise the local self-record on a freshly-created
+ *  ClientSim. Replaces the inline tankCreate +
+ *  playersSetSelf + playersSetClientType +
+ *  playersSetClientFlags sequences in screen.c and
+ *  bot_manager.c. Pure data-model init — no UI side effects.
+ *  The caller is responsible for any frontend updates
+ *  (frontEndSetPlayer, frontEndUpdateTankStatusBars).
+ *
+ *  cs->myPlayerNum must already be set (via
+ *  clientSimSetPlayerNum) before this call.
+ *
+ *ARGUMENTS:
+ *  cs          - The ClientSim to initialise self on
+ *  playerNum   - The player slot for the self-record
+ *  playerName  - Display name (or brain name for bots)
+ *  clientType  - CLIENT_TYPE_* enum value; pass 0 for bots
+ *  clientFlags - PLAYER_FLAG_* bitmask; pass 0 for bots
+ *********************************************************/
+void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
+                        const char *playerName,
+                        uint8_t clientType, uint8_t clientFlags);
+
 void clientSimKeysTick(ClientSim *cs, const InputPacket *pkt);
 void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain);
 void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,

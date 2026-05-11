@@ -447,16 +447,9 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         return false;
     }
 
-    /* Create a tank at slot 0 for this ClientSim */
-    if (MY_TANK(&bot->cs) != NULL) {
-        tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
-        MY_TANK(&bot->cs) = NULL;
-    }
-    tankCreate(&bot->cs.sim, &MY_TANK(&bot->cs));
-
-    /* Set this bot's identity */
-    playersSetSelf(NULL, &bot->cs.sim, &bot->cs.sim.plyrs, playerNum,
-                   (char *)brainName, TRUE);
+    /* Set this bot's identity (creates the tank and writes the self
+     * record on the bot's local ClientSim) */
+    clientSimSetupSelf(&bot->cs, playerNum, brainName, 0, 0);
 
     /* Set AI type on the ClientSim */
     bot->cs.allowComputerTanks = ai;

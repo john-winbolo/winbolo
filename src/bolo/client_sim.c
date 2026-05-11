@@ -251,6 +251,21 @@ void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
     }
 }
 
+void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
+                        const char *playerName,
+                        uint8_t clientType, uint8_t clientFlags) {
+    if (MY_TANK(cs) != NULL) {
+        tankDestroy(&cs->sim, &MY_TANK(cs));
+        MY_TANK(cs) = NULL;
+    }
+    tankCreate(&cs->sim, &MY_TANK(cs));
+    playersSetSelf(cs, &cs->sim, &cs->sim.plyrs,
+                   (playerNumbers)playerNum,
+                   (char *)playerName, TRUE);
+    playersSetClientType (&cs->sim.plyrs, playerNum, clientType);
+    playersSetClientFlags(&cs->sim.plyrs, playerNum, clientFlags);
+}
+
 /*********************************************************
  *NAME:          clientSimDestroy
  *PURPOSE:
