@@ -145,10 +145,10 @@ static void gymSyncSnapshot(WinBoloGym *g) {
 }
 
 static void gymSetupGame(WinBoloGym *g) {
-    g->serverSim->lobbyEnabled = false;
+    serverSimSetLobbyEnabled(g->serverSim, false);
     serverSimStartGame(g->serverSim);
     serverSimAddPlayer(g->serverSim, 0, "GymAgent", false);
-    g->serverSim->sim.viewPlayer = 0;
+    serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
     g->transport = transportLocalCreate(g->serverSim, 0);
 
@@ -194,24 +194,25 @@ static void gymTeardownGame(WinBoloGym *g) {
 /* Check win condition: all bases owned by the same alliance, all with
  * armour above capture threshold.  Mirrors serverSimCheckGameWin(). */
 static bool gymCheckGameWin(WinBoloGym *g, bool *agentWon) {
-    BYTE max = basesGetNumBases(&g->serverSim->sim.bs);
+    GameSim *gs = serverSimGetGameSim(g->serverSim);
+    BYTE max = basesGetNumBases(&gs->bs);
     if (max == 0) return false;
 
     BYTE first = NEUTRAL;
     for (BYTE i = 1; i <= max; i++) {
-        BYTE owner = basesGetBaseOwner(&g->serverSim->sim.bs, i);
+        BYTE owner = basesGetBaseOwner(&gs->bs, i);
         BYTE shellsAmt, minesAmt, armourAmt;
-        basesGetStats(&g->serverSim->sim.bs, i, &shellsAmt, &minesAmt, &armourAmt);
+        basesGetStats(&gs->bs, i, &shellsAmt, &minesAmt, &armourAmt);
         if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) return false;
         if (i == 1) {
             first = owner;
-        } else if (!playersIsAllie(&g->serverSim->sim.plyrs, owner, first)) {
+        } else if (!playersIsAllie(&gs->plyrs, owner, first)) {
             return false;
         }
     }
 
     /* Game is won — check if player 0 (the gym agent) is on the winning team */
-    *agentWon = (first == 0) || playersIsAllie(&g->serverSim->sim.plyrs, 0, first);
+    *agentWon = (first == 0) || playersIsAllie(&gs->plyrs, 0, first);
     return true;
 }
 
@@ -270,7 +271,7 @@ static uint8_t gymGetOwner(BYTE owner, BYTE selfPlayer, PlayerBitMap alliesBits)
 /* ------------------------------------------------------------------ */
 
 static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
-    GameSim *sim = &g->serverSim->sim;
+    GameSim *sim = serverSimGetGameSim(g->serverSim);
 
     memset(bi, 0, sizeof(*bi));
 
@@ -307,7 +308,7 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
     bi->manobstructed = lgmGetBrainObstructed(&sim->lgmen[0]);
 
     /* Server tick and assistant message */
-    bi->server_tick = g->serverSim->tick;
+    bi->server_tick = serverSimGetTick(g->serverSim);
 
     /* Events — read directly from server event buffer into pre-allocated cache.
      * Called once per step AFTER both ticks, with events accumulated by
@@ -338,6 +339,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     gymMakeBrainInfo(g, &bi);
     g->needMapInit = FALSE;
 
+    GameSim *gs = serverSimGetGameSim(g->serverSim);
+
     BYTE selfPlayer = (BYTE)bi.player_number;
     PlayerBitMap alliesBits = bi.allies ? *(bi.allies) : 0;
     bool dead = bi.armour > TANK_FULL_ARMOUR;
@@ -358,10 +361,10 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     numViewRects = 1;
 
     /* Each owned alive pill: 15x15 centered on pill */
-    BYTE np = pillsGetNumPills(&g->serverSim->sim.pb);
+    BYTE np = pillsGetNumPills(&gs->pb);
     for (BYTE pi = 1; pi <= np && numViewRects < MAX_VIEW_RECTS; pi++) {
         pillbox p;
-        pillsGetPill(&g->serverSim->sim.pb, &p, pi);
+        pillsGetPill(&gs->pb, &p, pi);
         if (p.inTank) continue;
         if (p.armour == 0) continue;
         if (p.owner == 0xFF) continue;
@@ -519,7 +522,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             int mx = tank_tx - 14 + col;
             int my = tank_ty - 14 + row;
             if (mx >= 0 && mx < 256 && my >= 0 && my < 256) {
-                BYTE raw = mapGetPos(&g->serverSim->sim.mp, (BYTE)mx, (BYTE)my);
+                BYTE raw = mapGetPos(&gs->mp, (BYTE)mx, (BYTE)my);
                 BYTE terrain = raw;
                 if (terrain >= MINE_START && terrain <= MINE_END) {
                     terrain -= MINE_SUBTRACT;
@@ -527,7 +530,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
                     terrain = BDEEPSEA;
                 }
                 obs->terrain[row][col] = (float)(terrain & TERRAIN_MASK) / 15.0f;
-                if (minesExistPos(&g->serverSim->sim.mns, &g->serverSim->sim.mp,
+                if (minesExistPos(&gs->mns, &gs->mp,
                                   (BYTE)mx, (BYTE)my)) {
                     obs->mines_map[row][col] = 1.0f;
                 }
@@ -541,7 +544,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* Shells (linked list) */
     {
-        shells sh = g->serverSim->sim.shs;
+        shells sh = gs->shs;
         while (sh != NULL && ne < WBGYM_MAX_ENTITIES) {
             WORLD sx, sy;
             sx = sh->x;
@@ -564,8 +567,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* Tanks (array, all players) */
     for (BYTE p = 0; p < MAX_TANKS; p++) {
-        if (!g->serverSim->playerConnected[p]) continue;
-        tank *tk = &g->serverSim->sim.tanks[p];
+        if (!serverSimIsPlayerConnected(g->serverSim, p)) continue;
+        tank *tk = &gs->tanks[p];
         WORLD tx_w, ty_w;
         tankGetWorld(tk, &tx_w, &ty_w);
         BYTE armour = tankGetArmour(tk);
@@ -588,8 +591,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             if (tankIsNewTank(tk)) ent->flags |= WBGYM_FLAG_DEAD; /* new tank = just died */
             /* Hidden check: use utilIsTankInTrees for non-self tanks */
             if (p != selfPlayer) {
-                if (utilIsTankInTrees(&g->serverSim->sim.mp, &g->serverSim->sim.pb,
-                                     &g->serverSim->sim.bs, tx_w, ty_w))
+                if (utilIsTankInTrees(&gs->mp, &gs->pb,
+                                     &gs->bs, tx_w, ty_w))
                     ent->flags |= WBGYM_FLAG_HIDDEN;
             } else if (bi.hidden) {
                 ent->flags |= WBGYM_FLAG_HIDDEN;
@@ -600,8 +603,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* LGMs (array, all players) */
     for (BYTE p = 0; p < MAX_TANKS; p++) {
-        if (!g->serverSim->playerConnected[p]) continue;
-        lgm *lg = &g->serverSim->sim.lgmen[p];
+        if (!serverSimIsPlayerConnected(g->serverSim, p)) continue;
+        lgm *lg = &gs->lgmen[p];
         BYTE lgmState = lgmGetBrainState(lg);
 
         if (lgmState == LGM_BRAIN_INTANK) continue; /* in tank, skip */
@@ -618,7 +621,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             ent->ry = ((float)ly - self_wy) / 256.0f;
             ent->type = isParachuting ? WBGYM_ENT_PARACHUTE : WBGYM_ENT_LGM;
             ent->allegiance = gymGetAllegiance(p, selfPlayer, alliesBits);
-            ent->direction = (float)lgmGetDir(lg, &g->serverSim->sim.tanks[p]) / 256.0f;
+            ent->direction = (float)lgmGetDir(lg, &gs->tanks[p]) / 256.0f;
             ent->speed = 0.0f;
             ent->strength = 0.0f;
             ent->flags = 0;
@@ -630,7 +633,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* Explosions (linked list) */
     {
-        explosions ex = g->serverSim->sim.expl;
+        explosions ex = gs->expl;
         while (ex != NULL && ne < WBGYM_MAX_ENTITIES) {
             int etx = (int)ex->mx;
             int ety = (int)ex->my;
@@ -654,10 +657,10 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     }
 
     /* Pillboxes (global — not view-gated) */
-    np = pillsGetNumPills(&g->serverSim->sim.pb);
+    np = pillsGetNumPills(&gs->pb);
     for (BYTE pi = 1; pi <= np && ne < WBGYM_MAX_ENTITIES; pi++) {
         pillbox p;
-        pillsGetPill(&g->serverSim->sim.pb, &p, pi);
+        pillsGetPill(&gs->pb, &p, pi);
         WinBoloEntity *ent = &obs->entities[ne++];
         float pwx = (float)p.x * 256.0f + 128.0f; /* center of tile */
         float pwy = (float)p.y * 256.0f + 128.0f;
@@ -675,10 +678,10 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     }
 
     /* Bases (global — not view-gated) */
-    BYTE nb = basesGetNumBases(&g->serverSim->sim.bs);
+    BYTE nb = basesGetNumBases(&gs->bs);
     for (BYTE bsi = 1; bsi <= nb && ne < WBGYM_MAX_ENTITIES; bsi++) {
         base b;
-        basesGetBase(&g->serverSim->sim.bs, &b, bsi);
+        basesGetBase(&gs->bs, &b, bsi);
         WinBoloEntity *ent = &obs->entities[ne++];
         float bwx = (float)b.x * 256.0f + 128.0f;
         float bwy = (float)b.y * 256.0f + 128.0f;
@@ -692,7 +695,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         /* Base armour from stats */
         {
             BYTE shellsAmt, minesAmt, armourAmt;
-            basesGetStats(&g->serverSim->sim.bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
+            basesGetStats(&gs->bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
             ent->strength = (float)armourAmt / 90.0f;
         }
         ent->flags = 0;
@@ -721,21 +724,21 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
         int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
         int self_bases = 0, ally_bases = 0, total_bases = 0;
-        np = pillsGetNumPills(&g->serverSim->sim.pb);
+        np = pillsGetNumPills(&gs->pb);
         total_pills = np;
         for (BYTE pi = 1; pi <= np; pi++) {
             pillbox p;
-            pillsGetPill(&g->serverSim->sim.pb, &p, pi);
+            pillsGetPill(&gs->pb, &p, pi);
             if (p.owner == 0xFF) continue;
             if (p.owner == selfPlayer) self_pills++;
             else if (alliesBits & (1u << p.owner)) ally_pills++;
             else enemy_pills++;
         }
-        nb = basesGetNumBases(&g->serverSim->sim.bs);
+        nb = basesGetNumBases(&gs->bs);
         total_bases = nb;
         for (BYTE bsi = 1; bsi <= nb; bsi++) {
             base b;
-            basesGetBase(&g->serverSim->sim.bs, &b, bsi);
+            basesGetBase(&gs->bs, &b, bsi);
             if (b.owner == 0xFF) continue;
             if (b.owner == selfPlayer) self_bases++;
             else if (alliesBits & (1u << b.owner)) ally_bases++;
@@ -753,8 +756,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         /* New scalars 19-25 */
         obs->scalar[19] = (float)bi.gunrange / 14.0f;
         obs->scalar[20] = bi.hidden ? 1.0f : 0.0f;
-        obs->scalar[21] = tankIsNewTank(&g->serverSim->sim.tanks[selfPlayer]) ? 1.0f : 0.0f;
-        obs->scalar[22] = tankIsObstructed(&g->serverSim->sim.tanks[selfPlayer]) ? 1.0f : 0.0f;
+        obs->scalar[21] = tankIsNewTank(&gs->tanks[selfPlayer]) ? 1.0f : 0.0f;
+        obs->scalar[22] = tankIsObstructed(&gs->tanks[selfPlayer]) ? 1.0f : 0.0f;
 
         /* man_status: 0=in tank, 0.33=outside working, 0.66=parachuting, 1=dead */
         {
@@ -763,8 +766,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
                 obs->scalar[23] = 0.0f;
             } else if (ms == LGM_BRAIN_DEAD) {
                 /* Check if actually parachuting (isDead but tank alive = parachuting) */
-                lgm *lg = &g->serverSim->sim.lgmen[selfPlayer];
-                if ((*lg)->isDead && tankGetArmour(&g->serverSim->sim.tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
+                lgm *lg = &gs->lgmen[selfPlayer];
+                if ((*lg)->isDead && tankGetArmour(&gs->tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
                     obs->scalar[23] = 0.66f; /* parachuting */
                 } else {
                     obs->scalar[23] = 1.0f; /* actually dead */
@@ -778,7 +781,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         obs->scalar[24] = (float)bi.manobstructed / 2.0f;
 
         /* death_wait */
-        obs->scalar[25] = (float)tankGetDeathWait(&g->serverSim->sim.tanks[selfPlayer]) / 255.0f;
+        obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) / 255.0f;
     }
 
     /* ---- LGM state ---- */
@@ -794,10 +797,10 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* ---- Pillbox list ---- */
     {
-        np = pillsGetNumPills(&g->serverSim->sim.pb);
+        np = pillsGetNumPills(&gs->pb);
         for (BYTE pi = 1; pi <= np && obs->num_pillboxes < WBGYM_MAX_PILLBOXES; pi++) {
             pillbox p;
-            pillsGetPill(&g->serverSim->sim.pb, &p, pi);
+            pillsGetPill(&gs->pb, &p, pi);
             WinBoloPillObs *po = &obs->pillboxes[obs->num_pillboxes];
             po->tx = p.x;
             po->ty = p.y;
@@ -809,10 +812,10 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* ---- Base list ---- */
     {
-        nb = basesGetNumBases(&g->serverSim->sim.bs);
+        nb = basesGetNumBases(&gs->bs);
         for (BYTE bsi = 1; bsi <= nb && obs->num_bases < WBGYM_MAX_BASES; bsi++) {
             base b;
-            basesGetBase(&g->serverSim->sim.bs, &b, bsi);
+            basesGetBase(&gs->bs, &b, bsi);
             WinBoloBaseObs *bo = &obs->bases[obs->num_bases];
             bo->tx = b.x;
             bo->ty = b.y;
@@ -820,7 +823,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             /* Only expose stocks for friendly/allied bases */
             if (bo->owner == WBGYM_OWNER_SELF || bo->owner == WBGYM_OWNER_ALLY) {
                 BYTE shellsAmt, minesAmt, armourAmt;
-                basesGetStats(&g->serverSim->sim.bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
+                basesGetStats(&gs->bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
                 bo->shells = shellsAmt;
                 bo->mines = minesAmt;
                 bo->armour = armourAmt;
