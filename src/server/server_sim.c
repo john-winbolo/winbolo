@@ -325,6 +325,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
     sim->originalGameLength = gameLen;
+    sim->tickLimit = 0;
+    sim->ticksRun = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -806,6 +808,22 @@ void serverSimTick(ServerSim *sim) {
         if (sim->gameLength == 0) {
             mapSetChangeCallback(NULL);
             serverSimConsoleMessage("Game time limit reached.");
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
+    if (sim->tickLimit > 0) {
+        sim->ticksRun++;
+        if (sim->ticksRun >= sim->tickLimit) {
+            char ticksMsg[64];
+            snprintf(ticksMsg, sizeof(ticksMsg),
+                     "Reached tick limit (%d). Exiting.",
+                     (int)sim->tickLimit);
+            sim->tickLimit = 0;
+            mapSetChangeCallback(NULL);
+            serverSimConsoleMessage(ticksMsg);
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;

@@ -478,6 +478,8 @@ void printArgs() {
   fprintf(stderr, "<Delay>       - Specifies the start delay (in seconds) (none if not specified)\n");
   fprintf(stderr, "<Limit>       - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
+  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
+  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
   fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
   fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
   fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
@@ -1034,6 +1036,13 @@ int main(int argc, char **argv) {
   statusFile = argExist(argc, argv, "statusFile");
   serverSim.quitOnWin = argExist(argc, argv, "quitonwin");
   serverSim.autoCloseOnEmpty = argExist(argc, argv, "autoclose");
+
+  {
+    int argNum = findArg(argc, argv, "ticks");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSim.tickLimit = (int32_t)strtoul((char *)argv[argNum], NULL, 0);
+    }
+  }
 
   /* Empty reset configuration — on by default */
   if (argExist(argc, argv, "noemptyreset") == TRUE) {
