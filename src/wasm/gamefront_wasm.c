@@ -466,29 +466,19 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
 
-    wasmServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-    if (wasmServerSim == NULL) {
-      printf("[WASM] Failed to allocate ServerSim\n");
-      clientSimDestroy(humanSim);
-      return FALSE;
-    }
-
     {
-      bool simOk = FALSE;
       if (fileName[0] != '\0') {
-        simOk = serverSimCreate(wasmServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
-        if (!simOk) {
+        wasmServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
+        if (wasmServerSim == NULL) {
           printf("[WASM] Failed to load map '%s' into ServerSim, trying built-in\n", fileName);
         }
       }
-      if (!simOk) {
+      if (wasmServerSim == NULL) {
         BYTE emap[6000] = E_MAP;
-        simOk = serverSimCreateCompressed(wasmServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+        wasmServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
       }
-      if (!simOk) {
+      if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");
-        free(wasmServerSim);
-        wasmServerSim = NULL;
         clientSimDestroy(humanSim);
         return FALSE;
       }

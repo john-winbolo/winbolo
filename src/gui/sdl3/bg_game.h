@@ -32,7 +32,7 @@ extern "C" {
 #endif
 
 typedef struct BgGame {
-    ServerSim    sim;
+    ServerSim   *sim;
     bool         valid;         /* true if sim was loaded successfully */
     SDL_Texture *tilesTex;      /* Own tile atlas for bg rendering */
     BYTE         cameraPlayer;  /* Player slot to follow with camera */

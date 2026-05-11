@@ -216,27 +216,27 @@ typedef struct ServerSim {
 /*********************************************************
  *NAME:          serverSimCreate
  *PURPOSE:
- *  Creates and initializes a ServerSim by loading a map
- *  file. Returns TRUE on success.
+ *  Allocates and initializes a ServerSim by loading a map
+ *  file. Returns the new ServerSim on success, or NULL on
+ *  failure.
  *
  *ARGUMENTS:
- *  sim         - Pointer to the ServerSim to initialize
  *  mapFileName - Path to the .map file
  *  game        - Game type (open/tournament/strict)
  *  hiddenMines - Are hidden mines allowed
  *  startDelay  - Game start delay (in ticks)
  *  gameLen     - Game length in ticks (-1 = unlimited)
  *********************************************************/
-bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
+ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
 
 /*********************************************************
  *NAME:          serverSimCreateCompressed
  *PURPOSE:
- *  Creates and initializes a ServerSim from a compressed
- *  map buffer (e.g. built-in maps). Returns TRUE on success.
+ *  Allocates and initializes a ServerSim from a compressed
+ *  map buffer (e.g. built-in maps). Returns the new
+ *  ServerSim on success, or NULL on failure.
  *
  *ARGUMENTS:
- *  sim         - Pointer to the ServerSim to initialize
  *  buff        - Compressed map data
  *  buffLen     - Length of compressed data
  *  game        - Game type (open/tournament/strict)
@@ -244,15 +244,17 @@ bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hidd
  *  startDelay  - Game start delay (in ticks)
  *  gameLen     - Game length in ticks (-1 = unlimited)
  *********************************************************/
-bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
 
 /*********************************************************
  *NAME:          serverSimDestroy
  *PURPOSE:
- *  Destroys a ServerSim and frees all owned resources.
+ *  Destroys a ServerSim, frees all owned resources, and
+ *  frees the ServerSim itself. Accepts NULL (no-op). The
+ *  caller must not call free(sim) afterward.
  *
  *ARGUMENTS:
- *  sim - Pointer to the ServerSim to destroy
+ *  sim - Pointer to the ServerSim to destroy (may be NULL)
  *********************************************************/
 void serverSimDestroy(ServerSim *sim);
 
@@ -601,6 +603,31 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName);
 bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath);
 
 /*********************************************************
+ *NAME:          serverSimScanMapDir
+ *PURPOSE:
+ *  Scans dirPath for *.map files, validates each, and
+ *  returns the validated paths in a newly-allocated array.
+ *  Caller owns the returned array and each string in it
+ *  (free each entry with SDL_free, then free the array
+ *  with free).
+ *
+ *  Used by serverSimMapDirBuild (which stuffs the result
+ *  into a ServerSim's rotation list) and by the dedicated
+ *  server's startup path (which needs the list before any
+ *  ServerSim exists, to pick the first map).
+ *
+ *ARGUMENTS:
+ *  dirPath   - Directory to scan
+ *  outFiles  - On success, *outFiles is set to a malloc'd
+ *              array of SDL_strdup'd paths
+ *  outCount  - On success, *outCount is set to entry count
+ *RETURNS: TRUE on success, FALSE on empty/missing dir or
+ *  no valid maps. On FALSE *outFiles is untouched.
+ *********************************************************/
+bool serverSimScanMapDir(const char *dirPath,
+                         char ***outFiles, int *outCount);
+
+/*********************************************************
  *NAME:          serverSimMapDirPickRandom
  *PURPOSE:
  *  Selects a random map from the mapDirFiles list and
@@ -663,13 +690,13 @@ bool serverSimCheckEmptyReset(ServerSim *sim);
 /*********************************************************
  *NAME:          serverSimCreateRandomMap
  *PURPOSE:
- *  Creates and initializes a ServerSim using procedural
- *  map generation instead of loading from disk.
- *  Returns TRUE on success.
+ *  Allocates and initializes a ServerSim using procedural
+ *  map generation instead of loading from disk. Returns
+ *  the new ServerSim on success, or NULL on failure.
  *********************************************************/
-bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
-                              gameType game, bool hiddenMines,
-                              int32_t startDelay, int32_t gameLen);
+ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
+                                    gameType game, bool hiddenMines,
+                                    int32_t startDelay, int32_t gameLen);
 
 /*********************************************************
  *NAME:          serverSimRandomMapRegenerate

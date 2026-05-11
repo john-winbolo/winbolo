@@ -408,18 +408,26 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 }
 
-bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim;
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSim create: map='%s' gameType=%d hiddenMines=%d startDelay=%d gameLen=%d",
         mapFileName ? mapFileName : "(null)",
         (int)game, (int)hiddenMines, (int)startDelay, (int)gameLen);
+
+    sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
             "serverSim create: mapRead failed for '%s'",
             mapFileName ? mapFileName : "(null)");
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
 
     /* Store map name (basename without path or .map extension) for info packet responses */
@@ -456,14 +464,19 @@ bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hidd
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
-bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, buff, buffLen) == FALSE) {
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
 
     basesClearMines(&sim->sim);
@@ -480,17 +493,22 @@ bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
-bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
-                              gameType game, bool hiddenMines,
-                              int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
+                                    gameType game, bool hiddenMines,
+                                    int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim;
     BYTE tempBuf[65536];
     int len;
     char seedStr[64];
     int x, y;
 
+    sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     /* Clear map to DEEP_SEA */
@@ -543,13 +561,14 @@ bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
     len = serverSimGetCompressedMap(sim, tempBuf);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
@@ -644,6 +663,10 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
 
+    if (sim == NULL) {
+        return;
+    }
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER, "serverSim destroy: state=%d", (int)sim->state);
 
     /* Signal the balance thread to stop and wait for it to finish */
@@ -692,6 +715,8 @@ void serverSimDestroy(ServerSim *sim) {
     if (activeSim == sim) {
         activeSim = NULL;
     }
+
+    free(sim);
 }
 
 static void serverSimLogTick(ServerSim *sim) {
@@ -2615,7 +2640,8 @@ bool serverSimCheckEmptyReset(ServerSim *sim) {
     return FALSE;
 }
 
-bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+bool serverSimScanMapDir(const char *dirPath,
+                         char ***outFiles, int *outCount) {
     char fullPath[2048];
     char **tempList = NULL;
     int tempCount = 0;
@@ -2685,9 +2711,21 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
         return FALSE;
     }
 
-    sim->mapDirFiles = tempList;
-    sim->mapDirCount = tempCount;
-    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n", tempCount, dirPath);
+    *outFiles = tempList;
+    *outCount = tempCount;
+    return TRUE;
+}
+
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+    char **files = NULL;
+    int count = 0;
+    if (!serverSimScanMapDir(dirPath, &files, &count)) {
+        return FALSE;
+    }
+    sim->mapDirFiles = files;
+    sim->mapDirCount = count;
+    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n",
+            count, dirPath);
     return TRUE;
 }
 

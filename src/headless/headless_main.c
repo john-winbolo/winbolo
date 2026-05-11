@@ -1097,15 +1097,9 @@ static int runFastMode(void) {
   }
 
   /* Create server sim from map file (first time only — hits disk) */
-  fastServerSim = (ServerSim *)malloc(sizeof(ServerSim));
+  fastServerSim = serverSimCreate(optMap, optGameType, false, 0, UNLIMITED_GAME_TIME);
   if (fastServerSim == NULL) {
-    fprintf(stderr, "Error: failed to allocate ServerSim\n");
-    return 1;
-  }
-  if (!serverSimCreate(fastServerSim, optMap, optGameType, false, 0, UNLIMITED_GAME_TIME)) {
     fprintf(stderr, "Error: failed to load map '%s'\n", optMap);
-    free(fastServerSim);
-    fastServerSim = NULL;
     return 1;
   }
 
@@ -1116,7 +1110,6 @@ static int runFastMode(void) {
     if (cachedCompressedMapLen <= 0) {
       fprintf(stderr, "Error: failed to compress map\n");
       serverSimDestroy(fastServerSim);
-      free(fastServerSim);
       fastServerSim = NULL;
       return 1;
     }
@@ -1268,7 +1261,6 @@ static int runFastMode(void) {
   transportLocalDestroy(&headlessTransport);
   transportActive = FALSE;
   serverSimDestroy(fastServerSim);
-  free(fastServerSim);
   fastServerSim = NULL;
   free(cachedCompressedMap);
   cachedCompressedMap = NULL;
