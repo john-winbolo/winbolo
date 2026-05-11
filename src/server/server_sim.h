@@ -305,6 +305,70 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
+ *NAME:          ServerSimBotConfig
+ *PURPOSE:
+ *  Bot configuration for serverSimAddBot. Spawn position
+ *  is not configurable — startsAssignBatch() inside
+ *  serverSimResetGameWorld places each tank deterministically
+ *  from map start data.
+ *********************************************************/
+typedef struct ServerSimBotConfig {
+    const char *brainPath;
+    const char *brainName;
+    aiType      ai;
+    gameType    gameType;
+    bool        hiddenMines;
+    BYTE        teamNumber;  /* 0 = no team */
+} ServerSimBotConfig;
+
+/*********************************************************
+ *NAME:          serverSimAddBot
+ *PURPOSE:
+ *  Adds a bot in lobby state. Validates inputs, calls
+ *  serverSimAddPlayer to register the slot, then marks
+ *  the slot as a ready bot with the configured team.
+ *
+ *  Returns true on success. Returns false (without partial
+ *  writes) if cfg is NULL, cfg->brainPath is NULL,
+ *  playerNum >= MAX_TANKS, or sim->playerConnected[playerNum]
+ *  is already TRUE.
+ *
+ *ARGUMENTS:
+ *  sim       - Pointer to the ServerSim
+ *  playerNum - Player slot (0..MAX_TANKS-1)
+ *  cfg       - Bot configuration (must not be NULL)
+ *********************************************************/
+bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
+                     const ServerSimBotConfig *cfg);
+
+/*********************************************************
+ *NAME:          serverSimSetTeam
+ *PURPOSE:
+ *  Sets a player's lobby team. teamNumber > 16 is coerced
+ *  to 1, preserving the existing servermain.c range
+ *  behavior. No-op if playerNum >= MAX_TANKS.
+ *
+ *ARGUMENTS:
+ *  sim        - Pointer to the ServerSim
+ *  playerNum  - Player slot (0..MAX_TANKS-1)
+ *  teamNumber - 0 = no team; 1-16 = team number
+ *********************************************************/
+void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
+
+/*********************************************************
+ *NAME:          serverSimSetReady
+ *PURPOSE:
+ *  Sets a player's lobby-ready flag. No-op if
+ *  playerNum >= MAX_TANKS or lobby is not enabled.
+ *
+ *ARGUMENTS:
+ *  sim       - Pointer to the ServerSim
+ *  playerNum - Player slot (0..MAX_TANKS-1)
+ *  ready     - true = ready, false = not ready
+ *********************************************************/
+void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
+
+/*********************************************************
  *NAME:          serverSimGetTankState
  *PURPOSE:
  *  Retrieves the world position of a player's tank.

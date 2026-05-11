@@ -1200,7 +1200,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {
-                  spServerSim->lobbyPlayers[slot].teamNumber = team;
+                  serverSimSetTeam(spServerSim, slot, team);
                   {
                     ControlEvent slotEvt;
                     memset(&slotEvt, 0, sizeof(slotEvt));
@@ -1211,7 +1211,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {
-                spServerSim->lobbyPlayers[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
+                serverSimSetTeam(spServerSim, 0, gameFrontBotSetupData.playerTeamNumber);
                 {
                   ControlEvent slotEvt;
                   memset(&slotEvt, 0, sizeof(slotEvt));
