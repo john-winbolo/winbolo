@@ -234,7 +234,7 @@ struct ClientSim {
  * GameSim belongs to a ServerSim (sim->isServer == true) the cast
  * would yield a bogus pointer, so we return NULL; the gate then
  * suppresses safely because NULL never matches the registered active
- * humanSim. Callers in bolo/* with only a GameSim* in scope use this
+ * humanSim. Callers in bolo/<*> with only a GameSim* in scope use this
  * to feed frontEnd*(cs, ...) calls without having to thread cs
  * through every signature. */
 static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
