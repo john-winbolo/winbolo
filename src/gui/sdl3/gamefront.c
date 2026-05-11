@@ -1078,27 +1078,23 @@ bool gameFrontSetDlgState(openingStates newState) {
      * Create the server sim, then load the map on the client side
      * using the same compressed data the UDP path uses. */
     {
-        bool simOk = FALSE;
-        spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-        if (spServerSim != NULL) {
-          if (strncmp(fileName, "randommap:", 10) == 0) {
-            /* Random map — parse seed from "randommap:<seed>" */
-            MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-            const char *seedStr = fileName + 10;
-            if (!mapGenSeedToConfig(seedStr, &cfg)) {
-                WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
-            }
-            cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
-            cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-            simOk = serverSimCreateRandomMap(spServerSim, &cfg, gametype, hiddenMines, startDelay, timeLen);
-          } else if (strcmp(fileName, "") != 0) {
-            simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
-          } else {
-            BYTE emap[6000] = E_MAP;
-            simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+        if (strncmp(fileName, "randommap:", 10) == 0) {
+          /* Random map — parse seed from "randommap:<seed>" */
+          MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+          const char *seedStr = fileName + 10;
+          if (!mapGenSeedToConfig(seedStr, &cfg)) {
+              WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
           }
+          cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+          cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+          spServerSim = serverSimCreateRandomMap(&cfg, gametype, hiddenMines, startDelay, timeLen);
+        } else if (strcmp(fileName, "") != 0) {
+          spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
+        } else {
+          BYTE emap[6000] = E_MAP;
+          spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
         }
-        if (simOk) {
+        if (spServerSim != NULL) {
           /* Single-player: no lobby, run immediately */
           spServerSim->lobbyEnabled = false;
           serverSimStartGame(spServerSim);
@@ -1561,7 +1557,6 @@ void gameFrontShutdownServer(void) {
 
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
-  free(toFree);
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -1577,7 +1572,6 @@ bool gameFrontPreferencesExist(void) {
 }
 
 bool gameFrontSetupServer(void) {
-  bool simOk = FALSE;
   ServerInstanceConfig cfg;
 
   /* Welcome-screen BgGame leaves the global botManager state populated
@@ -1592,11 +1586,6 @@ bool gameFrontSetupServer(void) {
     }
   }
 
-  spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-  if (spServerSim == NULL) {
-    return FALSE;
-  }
-
   if (strncmp(fileName, "randommap:", 10) == 0) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
@@ -1605,16 +1594,14 @@ bool gameFrontSetupServer(void) {
     }
     mcfg.x1 = MAP_MINE_EDGE_LEFT + 1; mcfg.y1 = MAP_MINE_EDGE_TOP + 1;
     mcfg.x2 = MAP_MINE_EDGE_RIGHT - 1; mcfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-    simOk = serverSimCreateRandomMap(spServerSim, &mcfg, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateRandomMap(&mcfg, gametype, hiddenMines, startDelay, timeLen);
   } else if (fileName[0] != '\0') {
-    simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
   }
-  if (!simOk) {
-    free(spServerSim);
-    spServerSim = NULL;
+  if (spServerSim == NULL) {
     return FALSE;
   }
 
@@ -1638,7 +1625,6 @@ bool gameFrontSetupServer(void) {
 
   if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);
-    free(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }
@@ -1647,7 +1633,6 @@ bool gameFrontSetupServer(void) {
   if (hostedServerTimerID == 0) {
     serverInstanceShutdown(spServerSim);
     serverSimDestroy(spServerSim);
-    free(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }
