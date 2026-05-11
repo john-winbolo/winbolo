@@ -507,6 +507,7 @@ static void serverCleanupMapDownload(int slot) {
 
 /* Forward declarations for lobby broadcast helpers (defined after serverRecv) */
 static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientIdx);
+static void transportUdpServerSendLobbyBrainList(ServerSim *sim, int clientIdx);
 void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum);
 static void serverSendServerMessage(langid id, int argCount,
                                     const char *const args[]);
@@ -969,6 +970,27 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (incomingIsWBN)                  flags |= PLAYER_FLAG_WBN_VERIFIED;
         if (incomingIsWBN && wbnHasSteam)   flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
         if (incomingIsWBN && wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+        /* Admin IP match → tag with PLAYER_FLAG_ADMIN so the client
+         * renders the ADMIN badge and lobbyClientMayEdit grants
+         * host-level authority. Comma- or whitespace-separated list. */
+        if (sim->adminIps[0] != '\0') {
+            char ipStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
+            const char *p = sim->adminIps;
+            while (*p) {
+                while (*p == ' ' || *p == ',' || *p == '\t') p++;
+                if (!*p) break;
+                const char *end = p;
+                while (*end && *end != ',' && *end != ' ' && *end != '\t') end++;
+                size_t n = (size_t)(end - p);
+                if (n > 0 && n == strlen(ipStr) &&
+                    strncmp(p, ipStr, n) == 0) {
+                    flags |= PLAYER_FLAG_ADMIN;
+                    break;
+                }
+                p = end;
+            }
+        }
         playersSetClientFlags(&sim->sim.plyrs, (BYTE)slot, flags);
         playersSetClientType (&sim->sim.plyrs, (BYTE)slot, clientType);
     }
@@ -1781,6 +1803,29 @@ static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientI
     payloadLen = serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
     udpSendTo(udpServer.sock, buf, PACKET_HEADER_SIZE + payloadLen,
               &udpServer.clients[clientIdx].addr);
+    /* Ship the brain catalogue and current per-bot brain assignments
+     * so the joining client can render the AiConfig "Bot Code" combo
+     * with the right options + selections. */
+    transportUdpServerSendLobbyBrainList(sim, clientIdx);
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i] && sim->lobbyPlayers[i].isBot &&
+                sim->botBrainPaths[i][0] != '\0') {
+                uint8_t bb[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
+                int p = (int)strnlen(sim->botBrainPaths[i],
+                                     BRAIN_LIST_PATH_LEN - 1);
+                packHeader(bb, PACKET_LOBBY_BOT_BRAIN_CHG,
+                           udpServer.clients[clientIdx].outSequence++);
+                bb[PACKET_HEADER_SIZE + 0] = (uint8_t)i;
+                bb[PACKET_HEADER_SIZE + 1] = (uint8_t)p;
+                if (p > 0) memcpy(bb + PACKET_HEADER_SIZE + 2,
+                                  sim->botBrainPaths[i], p);
+                udpSendTo(udpServer.sock, bb, PACKET_HEADER_SIZE + 2 + p,
+                          &udpServer.clients[clientIdx].addr);
+            }
+        }
+    }
 }
 
 void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
@@ -1994,6 +2039,52 @@ void transportUdpServerBroadcastLobbyTeamMetaChg(ServerSim *sim, uint8_t teamId)
     lobbyBroadcastBuf(buf, len);
 }
 
+/* Broadcast a change to one bot's brain script (script path only —
+ * version metadata is shipped once via the brain-list packet). */
+void transportUdpServerBroadcastLobbyBotBrainChg(ServerSim *sim, uint8_t slot) {
+    uint8_t buf[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
+    int pathLen, len;
+    const char *path;
+
+    if (slot >= MAX_TANKS) return;
+    path = sim->botBrainPaths[slot];
+    pathLen = (int)strnlen(path, BRAIN_LIST_PATH_LEN - 1);
+
+    packHeader(buf, PACKET_LOBBY_BOT_BRAIN_CHG, 0);
+    buf[PACKET_HEADER_SIZE + 0] = slot;
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, path, pathLen);
+    len = PACKET_HEADER_SIZE + 2 + pathLen;
+    lobbyBroadcastBuf(buf, len);
+}
+
+/* Send the available-brains catalogue to a single newly-joined client.
+ * Format: [count 1] then per-entry [nameLen 1][name][verLen 1][ver][pathLen 1][path]. */
+static void transportUdpServerSendLobbyBrainList(ServerSim *sim, int clientIdx) {
+    const BrainList *list = &sim->brainList;
+    /* Worst case: 1 count + 16 entries * (3 lenbytes + 32 + 24 + 256). */
+    uint8_t buf[PACKET_HEADER_SIZE + 1 +
+                BRAIN_LIST_MAX * (3 + BRAIN_LIST_NAME_LEN +
+                                  BRAIN_LIST_VER_LEN + BRAIN_LIST_PATH_LEN)];
+    int pos = PACKET_HEADER_SIZE;
+    int i;
+
+    if (list->count < 0) return;
+
+    packHeader(buf, PACKET_LOBBY_BRAIN_LIST, udpServer.clients[clientIdx].outSequence++);
+    buf[pos++] = (uint8_t)list->count;
+    for (i = 0; i < list->count; i++) {
+        const BrainListEntry *e = &list->entries[i];
+        uint8_t n = (uint8_t)strnlen(e->name,    BRAIN_LIST_NAME_LEN - 1);
+        uint8_t v = (uint8_t)strnlen(e->version, BRAIN_LIST_VER_LEN  - 1);
+        uint8_t p = (uint8_t)strnlen(e->path,    BRAIN_LIST_PATH_LEN - 1);
+        buf[pos++] = n; if (n) { memcpy(buf + pos, e->name,    n); pos += n; }
+        buf[pos++] = v; if (v) { memcpy(buf + pos, e->version, v); pos += v; }
+        buf[pos++] = p; if (p) { memcpy(buf + pos, e->path,    p); pos += p; }
+    }
+    udpSendTo(udpServer.sock, buf, pos, &udpServer.clients[clientIdx].addr);
+}
+
 void transportUdpServerBroadcastLobbyBotConfigChg(ServerSim *sim, uint8_t slot) {
     uint8_t buf[PACKET_HEADER_SIZE + 4 + PACKET_MAX_PLAYER_NAME];
     int nameLen, len;
@@ -2055,6 +2146,13 @@ static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
 static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
     if (clientIdx == 0) return TRUE;  /* slot 0 = host */
+    /* Admin-flagged players (matched -admins IP) have host-level
+     * authority regardless of the openHost toggle. */
+    if (sim->playerConnected[clientIdx] &&
+        (playersGetClientFlags(&sim->sim.plyrs, (BYTE)clientIdx)
+         & PLAYER_FLAG_ADMIN)) {
+        return TRUE;
+    }
     return sim->openHost && sim->playerConnected[clientIdx];
 }
 
@@ -2675,7 +2773,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                          sim->botAiType,
                                          gameTypeGet(&sim->sim.game),
                                          sim->sim.hiddenMines)) {
+                        /* Record the per-bot brain path so it survives
+                         * subsequent SET_BOT_BRAIN updates and ships to
+                         * joining clients. */
+                        SDL_strlcpy(sim->botBrainPaths[slot], sim->botBrainPath,
+                                    sizeof(sim->botBrainPaths[slot]));
                         transportUdpServerBroadcastLobbyUpdate(sim, slot);
+                        transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
                     }
                 }
             }
@@ -2878,6 +2982,34 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 transportUdpServerSetBotName(slot, name);
             }
             transportUdpServerBroadcastLobbyBotConfigChg(sim, slot);
+            transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_SET_BOT_BRAIN: {
+            /* Wire: [header 8] [slot 1] [pathLen 1] [path N]. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t slot    = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t pathLen = buf[PACKET_HEADER_SIZE + 1];
+            if (slot >= MAX_TANKS || pathLen >= BRAIN_LIST_PATH_LEN ||
+                len < PACKET_HEADER_SIZE + 2 + pathLen ||
+                !botManagerIsBot(slot)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            memset(sim->botBrainPaths[slot], 0, sizeof(sim->botBrainPaths[slot]));
+            if (pathLen > 0) {
+                memcpy(sim->botBrainPaths[slot], buf + PACKET_HEADER_SIZE + 2,
+                       pathLen);
+            }
+            botManagerSetBrainPath(slot, sim->botBrainPaths[slot]);
+            transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
             transportUdpServerBroadcastLobbyAutoUnready(sim);
             break;
         }

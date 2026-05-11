@@ -1336,6 +1336,56 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
+    case PACKET_LOBBY_BRAIN_LIST: {
+        /* [header 8] [count 1]
+         * per entry: [nameLen 1][name][verLen 1][ver][pathLen 1][path] */
+        if (len < PACKET_HEADER_SIZE + 1) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t cnt = buf[pos++];
+        BrainList *bl = &c->clientSim->lobbyBrainList;
+        memset(bl, 0, sizeof(*bl));
+        if (cnt > BRAIN_LIST_MAX) cnt = BRAIN_LIST_MAX;
+        for (int i = 0; i < cnt && pos < len; i++) {
+            if (pos + 1 > len) break;
+            uint8_t nlen = buf[pos++];
+            if (nlen >= BRAIN_LIST_NAME_LEN || pos + nlen > len) break;
+            memcpy(bl->entries[i].name, buf + pos, nlen);
+            bl->entries[i].name[nlen] = '\0';
+            pos += nlen;
+            if (pos + 1 > len) break;
+            uint8_t vlen = buf[pos++];
+            if (vlen >= BRAIN_LIST_VER_LEN || pos + vlen > len) break;
+            memcpy(bl->entries[i].version, buf + pos, vlen);
+            bl->entries[i].version[vlen] = '\0';
+            pos += vlen;
+            if (pos + 1 > len) break;
+            uint8_t plen = buf[pos++];
+            if (plen >= BRAIN_LIST_PATH_LEN || pos + plen > len) break;
+            memcpy(bl->entries[i].path, buf + pos, plen);
+            bl->entries[i].path[plen] = '\0';
+            pos += plen;
+            bl->count++;
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_BOT_BRAIN_CHG: {
+        /* [header 8] [slot 1] [pathLen 1] [path N]. */
+        if (len < PACKET_HEADER_SIZE + 2) break;
+        uint8_t slot = buf[PACKET_HEADER_SIZE + 0];
+        uint8_t plen = buf[PACKET_HEADER_SIZE + 1];
+        if (slot >= MAX_TANKS) break;
+        if (plen >= sizeof(c->clientSim->lobbyBotBrain[0])) break;
+        if (len < PACKET_HEADER_SIZE + 2 + plen) break;
+        memset(c->clientSim->lobbyBotBrain[slot], 0,
+               sizeof(c->clientSim->lobbyBotBrain[slot]));
+        if (plen > 0) {
+            memcpy(c->clientSim->lobbyBotBrain[slot],
+                   buf + PACKET_HEADER_SIZE + 2, plen);
+        }
+        break;
+    }
+
     case PACKET_LOBBY_REJECT:
         /* [header 8] [origPacket 1] [reasonCode 1] â€” server rejected
          * one of our lobby commands. Stored for the UI to surface as
@@ -2142,6 +2192,27 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
     buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
     if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
     len = PACKET_HEADER_SIZE + 4 + nameLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
+                                            const char *brainPath) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (brainPath == NULL) brainPath = "";
+
+    pathLen = (int)strlen(brainPath);
+    if (pathLen >= BRAIN_LIST_PATH_LEN) pathLen = BRAIN_LIST_PATH_LEN - 1;
+
+    packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = slot;
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, brainPath, pathLen);
+    len = PACKET_HEADER_SIZE + 2 + pathLen;
     udpClientSendTo(c, buf, len);
 }
 

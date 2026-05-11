@@ -455,7 +455,7 @@ set(IOS_BOLO_SOURCES
     src/bolo/grass.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/labels.c src/bolo/lgm.c
     src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -917,7 +917,7 @@ set(CLIENT_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1242,7 +1242,7 @@ set(SERVER_SOURCES
     src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c
     src/bolo/screenbrainmap.c src/bolo/screenbullet.c src/bolo/screencalc.c
     src/bolo/shells.c src/bolo/starts.c
@@ -1559,7 +1559,7 @@ set(HEADLESS_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1692,7 +1692,7 @@ set(GYM_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1820,7 +1820,7 @@ set(BRAINTEST_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
@@ -1939,7 +1939,7 @@ set(MAPEDITOR_SOURCES
     src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
     src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
     src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/rubble.c
+    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/lobby_bot_pools.c src/bolo/brain_list.c src/bolo/rubble.c
     src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
     src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
     src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c

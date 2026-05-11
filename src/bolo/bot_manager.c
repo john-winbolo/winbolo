@@ -347,6 +347,17 @@ bool botManagerInit(int threads) {
     return true;
 }
 
+/* Swap the brain script path for an already-added bot without re-creating
+ * its lobby slot. Used by PACKET_LOBBY_SET_BOT_BRAIN — the brain itself
+ * isn't loaded until the game starts, so storing the new path is enough. */
+bool botManagerSetBrainPath(BYTE playerNum, const char *brainPath) {
+    if (playerNum >= MAX_TANKS || brainPath == NULL) return false;
+    if (!bots[playerNum].active) return false;
+    SDL_strlcpy(bots[playerNum].brainPath, brainPath,
+                sizeof(bots[playerNum].brainPath));
+    return true;
+}
+
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
                       aiType ai, gameType game, bool hiddenMines) {

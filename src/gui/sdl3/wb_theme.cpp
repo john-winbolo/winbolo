@@ -58,8 +58,13 @@ static const WbTheme s_themeDark = {
 
     /* Badges */
     /* lockBadge  */ IM_COL32(231, 165,  75, 255),  /* same as Layout A's lock orange */
-    /* hostBadge  */ IM_COL32(120, 180, 220, 255),  /* soft blue, distinct from team blue */
     /* botBadge   */ IM_COL32(170, 170, 200, 255),  /* desaturated for "this is computer" */
+    /* hostTagBg     */ IM_COL32( 73,  76,  72, 255),  /* near-black khaki */
+    /* hostTagBorder */ IM_COL32(121, 113,  72, 255),  /* warm olive */
+    /* hostTagText   */ IM_COL32(228, 194,  71, 255),  /* host gold */
+    /* botTagBg      */ IM_COL32( 73,  76,  72, 255),  /* match HOST bg */
+    /* botTagBorder  */ IM_COL32( 95, 110, 125, 255),  /* cool slate    */
+    /* botTagText    */ IM_COL32(220, 230, 245, 255),  /* near-white    */
 };
 
 /* The single live theme pointer. Defaults to Dark; swap-then-apply

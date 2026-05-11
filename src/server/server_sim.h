@@ -29,6 +29,7 @@
 #include "../bolo/game_sim.h"
 #include "../bolo/position_history.h"
 #include "../bolo/input_packet.h"
+#include "../bolo/brain_list.h"
 #include "../mapeditor/mapeditor_generate.h"
 
 #ifndef _AITYPE_ENUM
@@ -120,6 +121,21 @@ typedef struct ServerSim {
      * the lobby state. */
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    /* Per-bot brain path. Empty = "use the global botBrainPath". The
+     * lobby AiConfig dropdown writes here via PACKET_LOBBY_SET_BOT_BRAIN
+     * so different bots in the same lobby can run different brains. */
+    char            botBrainPaths[MAX_TANKS][260];
+
+    /* Discovered brain codebases under brains/ — sent to clients via
+     * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */
+    BrainList       brainList;
+
+    /* Admin IPs (-admins CLI flag). When a client connects from any of
+     * these IPs, the server tags them with PLAYER_FLAG_ADMIN and grants
+     * them host-level lobby authority. Comma-separated string of IPv4
+     * literals; the first '\0' terminates the list. */
+    char            adminIps[1024];
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */

@@ -322,6 +322,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
     }
 
+    /* Populate the available-brains list so the lobby can advertise
+     * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
+     * brains/ tree. */
+    brainListScan(&sim->brainList);
+
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
     sim->originalGameLength = gameLen;
@@ -2512,7 +2517,13 @@ void serverSimSyncLobbyToClient(ServerSim *sim, struct ClientSim *cs) {
     for (i = 0; i < MAX_TANKS; i++) {
         cs->lobbyBotDifficulty[i]  = sim->botConfigs[i].difficulty;
         cs->lobbyBotPersonality[i] = sim->botConfigs[i].personality;
+        strncpy(cs->lobbyBotBrain[i], sim->botBrainPaths[i],
+                sizeof(cs->lobbyBotBrain[i]) - 1);
+        cs->lobbyBotBrain[i][sizeof(cs->lobbyBotBrain[i]) - 1] = '\0';
     }
+    /* Brain list mirror so single-player and freshly joined clients can
+     * render the AiConfig "Bot Code" combo without a separate packet. */
+    cs->lobbyBrainList = sim->brainList;
     strncpy(cs->mapName, sim->mapName, MAP_STR_SIZE - 1);
     cs->mapName[MAP_STR_SIZE - 1] = '\0';
 }

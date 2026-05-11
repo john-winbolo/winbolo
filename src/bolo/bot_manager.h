@@ -89,6 +89,10 @@ bool botManagerAddBot(struct ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
                       aiType ai, gameType game, bool hiddenMines);
 
+/* Swap the brain script path on an already-added bot. Returns false
+ * when the slot is empty / out-of-range. */
+bool botManagerSetBrainPath(BYTE playerNum, const char *brainPath);
+
 /*********************************************************
  *NAME:          botManagerTick
  *PURPOSE:
