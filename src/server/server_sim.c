@@ -2886,7 +2886,7 @@ void serverSimFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
 void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_SETTINGS;
     memset(evt->u.lobbySettings.mapName, 0, MAP_STR_SIZE);
-    strncpy(evt->u.lobbySettings.mapName, sim->mapName, MAP_STR_SIZE - 1);
+    snprintf(evt->u.lobbySettings.mapName, MAP_STR_SIZE, "%s", sim->mapName);
     evt->u.lobbySettings.lobbyGameType    = gameTypeGet(&sim->sim.game);
     evt->u.lobbySettings.lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
     evt->u.lobbySettings.lobbyAiType      = (uint8_t)sim->botAiType;
