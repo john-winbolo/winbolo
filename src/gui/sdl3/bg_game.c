@@ -121,11 +121,10 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimCreateCompressed also failed");
             return false;
         }
-        strncpy(bg->sim->mapName, "Everard Island", MAP_STR_SIZE - 1);
-        bg->sim->mapName[MAP_STR_SIZE - 1] = '\0';
+        serverSimSetMapName(bg->sim, "Everard Island");
     }
     /* bg_game is a local headless sim — no lobby, run immediately */
-    bg->sim->lobbyEnabled = false;
+    serverSimSetLobbyEnabled(bg->sim, false);
 
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
@@ -149,7 +148,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 
     /* Compute bounding box of map content (non-ocean terrain + pills/bases/starts) */
     {
-        GameSim *gs = &bg->sim->sim;
+        GameSim *gs = serverSimGetGameSim(bg->sim);
         int minX = 255, minY = 255, maxX = 0, maxY = 0;
 
         /* Scan terrain */
@@ -291,26 +290,22 @@ void bgGameTick(BgGame *bg) {
     serverSimTick(bg->sim);
     {
         GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t   savedCount = bg->sim->eventCount;
+        uint8_t   savedCount = serverSimGetEventCount(bg->sim);
         if (savedCount > 0) {
-            memcpy(savedEvents, bg->sim->events,
+            memcpy(savedEvents, serverSimGetEvents(bg->sim),
                    savedCount * sizeof(GameEvent));
         }
         serverSimTick(bg->sim);
-        if (savedCount > 0 &&
-            savedCount + bg->sim->eventCount <= MAX_SNAPSHOT_EVENTS) {
-            memmove(bg->sim->events + savedCount, bg->sim->events,
-                    bg->sim->eventCount * sizeof(GameEvent));
-            memcpy(bg->sim->events, savedEvents,
-                   savedCount * sizeof(GameEvent));
-            bg->sim->eventCount += savedCount;
+        if (savedCount > 0) {
+            serverSimPrependEvents(bg->sim, savedEvents, savedCount);
         }
     }
 
     /* Update camera to follow the tracked player (freeze while dead) */
+    GameSim *gs = serverSimGetGameSim(bg->sim);
     if (bg->cameraPlayer < MAX_TANKS &&
-        bg->sim->sim.tanks[bg->cameraPlayer] != NULL &&
-        tankGetDeathWait(&bg->sim->sim.tanks[bg->cameraPlayer]) == 0) {
+        gs->tanks[bg->cameraPlayer] != NULL &&
+        tankGetDeathWait(&gs->tanks[bg->cameraPlayer]) == 0) {
         WORLD wx, wy;
         if (serverSimGetTankState(bg->sim, bg->cameraPlayer, &wx, &wy)) {
             /* Smooth camera: lerp toward tank position */
@@ -326,7 +321,7 @@ void bgGameTick(BgGame *bg) {
 #define MAP_NAME_MAX_ALPHA     180  /* Slightly transparent */
 
 static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
-    if (!bg->sim->mapName[0]) return;
+    if (!serverSimGetMapName(bg->sim)[0]) return;
 
     Uint64 elapsed = SDL_GetTicks() - bg->createdTicks;
     if (elapsed >= MAP_NAME_DISPLAY_MS) return;
@@ -340,7 +335,7 @@ static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW,
 
     /* Build map name without .map extension */
     char mapName[MAP_STR_SIZE];
-    SDL_snprintf(mapName, sizeof(mapName), "%s", bg->sim->mapName);
+    SDL_snprintf(mapName, sizeof(mapName), "%s", serverSimGetMapName(bg->sim));
     size_t mnLen = SDL_strlen(mapName);
     if (mnLen > 4 && SDL_strcasecmp(mapName + mnLen - 4, ".map") == 0) {
         mapName[mnLen - 4] = '\0';
@@ -387,8 +382,9 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     /* Temporarily set the sim's "self" player to the camera player so
      * basesGetAlliancePos / pillsGetScreenHealth colour bases and pills
      * correctly from this player's perspective (own = good, enemy = evil). */
-    BYTE prevSelf = bg->sim->sim.viewPlayer;
-    bg->sim->sim.viewPlayer = bg->cameraPlayer;
+    GameSim *gs = serverSimGetGameSim(bg->sim);
+    BYTE prevSelf = gs->viewPlayer;
+    gs->viewPlayer = bg->cameraPlayer;
 
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
@@ -402,11 +398,11 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     if (zf < 1) zf = 1;
 
     MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
-    mapViewRenderCentered(&ctx, &bg->sim->sim,
+    mapViewRenderCentered(&ctx, gs,
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);
 
-    bg->sim->sim.viewPlayer = prevSelf;
+    gs->viewPlayer = prevSelf;
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);
