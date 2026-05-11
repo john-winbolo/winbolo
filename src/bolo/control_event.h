@@ -42,6 +42,7 @@ typedef enum {
     CTRL_LOBBY_SETTINGS,
     CTRL_LOBBY_MAP_CHANGE,
     CTRL_MAP_DOWNLOAD_COMPLETE,
+    CTRL_BALANCE_PROPOSAL,
     CTRL_GAME_PHASE,
     CTRL_GAME_OVER,
     CTRL_SERVER_SHUTDOWN
@@ -121,6 +122,11 @@ typedef struct {
         struct {
             uint8_t _unused;
         } mapDownloadComplete;
+
+        /* CTRL_BALANCE_PROPOSAL — proposed team per slot (0 = none) */
+        struct {
+            BYTE teamForSlot[MAX_TANKS];
+        } balanceProposal;
 
         /* CTRL_GAME_PHASE */
         struct {

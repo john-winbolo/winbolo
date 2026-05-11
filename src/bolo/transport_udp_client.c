@@ -1292,16 +1292,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_BALANCE_PROPOSAL:
         /* [header 8] [teamForSlot × 16] */
         if (len >= PACKET_HEADER_SIZE + 16) {
-            int i;
-            bool anyNonZero = false;
-            memcpy(c->clientSim->balanceProposal, buf + PACKET_HEADER_SIZE, 16);
-            for (i = 0; i < 16; i++) {
-                if (c->clientSim->balanceProposal[i] != 0) {
-                    anyNonZero = true;
-                    break;
-                }
-            }
-            c->clientSim->balanceProposalActive = anyNonZero;
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_BALANCE_PROPOSAL;
+            memcpy(evt.u.balanceProposal.teamForSlot, buf + PACKET_HEADER_SIZE, MAX_TANKS);
+            clientSimApplyControl(c->clientSim, &evt);
         }
         break;
 
