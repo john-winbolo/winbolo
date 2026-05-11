@@ -102,6 +102,8 @@ typedef struct ServerSim {
     uint32_t     tick;
     int32_t      startDelay;
     int32_t      gameLength;
+    int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
+    int32_t      ticksRun;           /* Running-state tick counter */
 
     /* Server state machine */
     ServerState  state;
