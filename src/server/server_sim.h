@@ -359,6 +359,24 @@ void serverSimPrependEvents(ServerSim *sim,
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled);
 
 /*********************************************************
+ *NAME:          serverSimSetBalanceBroadcastNeeded
+ *PURPOSE:
+ *  Sets the balance proposal's broadcastNeeded flag. Set
+ *  true by the balance worker thread when it finishes;
+ *  cleared after the main thread broadcasts.
+ *********************************************************/
+void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed);
+
+/*********************************************************
+ *NAME:          serverSimSetBalanceRequestInFlight
+ *PURPOSE:
+ *  Sets the balance proposal's requestInFlight flag. True
+ *  while the HTTP call is in flight (prevents duplicates);
+ *  cleared once the worker returns or aborts.
+ *********************************************************/
+void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight);
+
+/*********************************************************
  *NAME:          serverSimSetEmptyResetMinutes
  *PURPOSE:
  *  Sets the number of minutes an empty server waits
@@ -408,6 +426,14 @@ void serverSimSetQuiet(ServerSim *sim, bool quiet);
  *  a win is detected.
  *********************************************************/
 void serverSimSetQuitOnWin(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimSetServerPort
+ *PURPOSE:
+ *  Records the UDP port the server is listening on. Set
+ *  once at startup; consumed by server-info responses.
+ *********************************************************/
+void serverSimSetServerPort(ServerSim *sim, unsigned short port);
 
 /*********************************************************
  *NAME:          serverSimSetTickLimit
@@ -593,6 +619,16 @@ bool serverSimIsRunning(void);
 void serverSimConsoleMessage(const char *msg);
 
 /*********************************************************
+ *NAME:          serverSimAbortCountdown
+ *PURPOSE:
+ *  Returns the server from serverStateCountdown to
+ *  serverStateLobby and resets the countdown timer.
+ *  Used by the UDP transport when a player unreadies
+ *  during the countdown window.
+ *********************************************************/
+void serverSimAbortCountdown(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimClearActive
  *PURPOSE:
  *  Clears the active sim pointer if it matches the given
@@ -600,6 +636,16 @@ void serverSimConsoleMessage(const char *msg);
  *  cleaned up via serverSimDestroy.
  *********************************************************/
 void serverSimClearActive(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimClearBalanceProposal
+ *PURPOSE:
+ *  Zeroes out the WBN team balance proposal — clears
+ *  pending/in-flight/broadcast flags and all per-slot
+ *  team assignments. Used after a proposal is applied,
+ *  dismissed, or cancelled by a state transition.
+ *********************************************************/
+void serverSimClearBalanceProposal(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimEnterGameOver
@@ -783,6 +829,19 @@ SubscriberHandle serverSimRegisterSubscriber(
     void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimRequestBalanceProposal
+ *PURPOSE:
+ *  Initiates a WBN team-balance proposal request. Wraps
+ *  the winbolonet HTTP call and keeps the proposal pointer
+ *  inside server_sim. Synchronous — caller is responsible
+ *  for invoking from a worker thread if non-blocking
+ *  behavior is desired.
+ *********************************************************/
+void serverSimRequestBalanceProposal(ServerSim *sim,
+                                     uint8_t totalPlayers,
+                                     uint8_t teamSize);
+
+/*********************************************************
  *NAME:          serverSimUnregisterSubscriber
  *PURPOSE:
  *  Removes a subscriber. Idempotent on stale or invalid
@@ -826,6 +885,7 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *e
  *********************************************************/
 
 /* Scalar (bool/enum) accessors */
+bool          serverSimBalanceShutdownRequested(const ServerSim *sim);
 bool          serverSimIsLobbyEnabled(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
