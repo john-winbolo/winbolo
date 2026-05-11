@@ -145,9 +145,8 @@ static void gymSyncSnapshot(WinBoloGym *g) {
 }
 
 static void gymSetupGame(WinBoloGym *g) {
-    serverSimResetGameWorld(&g->serverSim);
     g->serverSim.lobbyEnabled = false;
-    g->serverSim.state = serverStateRunning;
+    serverSimStartGame(&g->serverSim);
     serverSimAddPlayer(&g->serverSim, 0, "GymAgent", false);
     g->serverSim.sim.viewPlayer = 0;
 

@@ -1032,10 +1032,8 @@ static bool verboseNeedMapInit = TRUE;
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
-  /* Reset server world (reloads map/pills/bases from its own cache) */
-  serverSimResetGameWorld(fastServerSim);
   fastServerSim->lobbyEnabled = false;
-  fastServerSim->state = serverStateRunning;
+  serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   fastServerSim->sim.viewPlayer = 0;
 
@@ -1128,7 +1126,7 @@ static int runFastMode(void) {
 
   /* Initial game setup */
   fastServerSim->lobbyEnabled = false;
-  fastServerSim->state = serverStateRunning;
+  serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   fastServerSim->sim.viewPlayer = 0;
   headlessTransport = transportLocalCreate(fastServerSim, 0);

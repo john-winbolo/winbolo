@@ -1062,7 +1062,7 @@ int main(int argc, char **argv) {
   if (argExist(argc, argv, "nolobby") == TRUE) {
     serverSim.lobbyEnabled = FALSE;
     serverSim.emptyResetEnabled = FALSE;
-    serverSim.state = serverStateRunning;
+    serverSimStartGame(&serverSim);
   }
 
   /* -mapdir: build validated map list for rotation between rounds.
