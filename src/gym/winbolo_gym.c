@@ -97,8 +97,10 @@ static void gymDeliverControl(void *ctx, const ControlEvent *evt) {
  * to brainEvents, preserving identical observation behavior. */
 static void gymBufferServerEvents(WinBoloGym *g) {
     ServerSim *ss = g->serverSim;
-    for (int i = 0; i < ss->eventCount && g->cachedEventCount < MAX_BRAIN_EVENTS; i++) {
-        switch (ss->events[i].type) {
+    int evCount = serverSimGetEventCount(ss);
+    const GameEvent *events = serverSimGetEvents(ss);
+    for (int i = 0; i < evCount && g->cachedEventCount < MAX_BRAIN_EVENTS; i++) {
+        switch (events[i].type) {
         case EVENT_SOUND:
         case EVENT_SOUND_SHOOT:
         case EVENT_SOUND_TANK_HIT:
@@ -110,7 +112,7 @@ static void gymBufferServerEvents(WinBoloGym *g) {
         case EVENT_PILL_UPDATE:
         case EVENT_BASE_UPDATE:
         case EVENT_ASSISTANT_MSG:
-            g->cachedEvents[g->cachedEventCount++] = ss->events[i];
+            g->cachedEvents[g->cachedEventCount++] = events[i];
             break;
         default:
             break;
@@ -1609,7 +1611,7 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
         pkt.buildAction = (uint8_t)action->build_action;
         if (action->build_action > 0) {
             WORLD twx, twy;
-            tankGetWorld(&game->serverSim->sim.tanks[0], &twx, &twy);
+            tankGetWorld(&serverSimGetGameSim(game->serverSim)->tanks[0], &twx, &twy);
             int ttx = (int)(twx >> 8);
             int tty = (int)(twy >> 8);
             pkt.buildX = (uint8_t)gymClamp(ttx + action->build_rx, 0, 255);

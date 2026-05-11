@@ -34,7 +34,7 @@
 #include "util.h"
 #include "game_sim.h"
 #include "../server/geolookup.h"
-#include "../server/server_sim.h"
+#include "../server/server_sim_internal.h"
 #include "../server/server_lifecycle.h"
 #include "control_event.h"
 #include "../winbolonet/winbolonet.h"
@@ -2347,7 +2347,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     /* Update in players struct */
                     {
                         ServerSim *ssim = serverSimGetActive();
-                        playersSetPlayerName(NULL, &ssim->sim, &ssim->sim.plyrs, NEUTRAL, (BYTE)clientIdx, newName, TRUE);
+                        GameSim *gs = serverSimGetGameSim(ssim);
+                        playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, newName, TRUE);
                     }
 
                     /* Broadcast to all other clients */
@@ -2487,7 +2488,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
                 /* Apply alliance on server-side players struct */
                 ServerSim *ssim = serverSimGetActive();
-                playersAcceptAlliance(&ssim->sim, &ssim->sim.plyrs, NEUTRAL,
+                GameSim *gs = serverSimGetGameSim(ssim);
+                playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL,
                                      (BYTE)clientIdx, newMember, TRUE);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
@@ -2525,8 +2527,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 /* Apply on server-side players struct */
                 {
                     ServerSim *ssim = serverSimGetActive();
+                    GameSim *gs = serverSimGetGameSim(ssim);
                     ControlEvent leaveEvt;
-                    playersLeaveAlliance(&ssim->sim, &ssim->sim.plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
+                    playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
                     memset(&leaveEvt, 0, sizeof(leaveEvt));
                     leaveEvt.type = CTRL_ALLIANCE_LEAVE;
                     leaveEvt.u.allianceLeave.playerNum = (BYTE)clientIdx;

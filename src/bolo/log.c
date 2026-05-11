@@ -625,14 +625,14 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
 
   /* Write start delay and time left */
   if (returnValue == TRUE) {
-    length = htonl(ssim->startDelay);
+    length = htonl(serverSimGetStartDelay(ssim));
     ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }
   }
   if (returnValue == TRUE) {
-    length = htonl(ssim->gameLength);
+    length = htonl(serverSimGetGameLength(ssim));
     ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
     if (ret != Z_OK) {
       returnValue = FALSE;
@@ -687,7 +687,7 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
 
   /* Write each player */
   while (count < MAX_TANKS && returnValue == TRUE) {
-    playersPrepareLogSnapshotForPlayer(&ssim->sim, plrs, count, data, &dataLen);
+    playersPrepareLogSnapshotForPlayer(serverSimGetGameSim(ssim), plrs, count, data, &dataLen);
     savedDataLen = dataLen;
     ret = writeData((BYTE *) &dataLen, 1, logOldKey);
     ret = writeData(data, savedDataLen, logOldKey);
@@ -786,7 +786,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Write Map Name */
   if (returnValue == TRUE) {
-    strcpy((char *)(data+1), ssim->mapName);
+    strcpy((char *)(data+1), serverSimGetMapName(ssim));
     data[0] = (BYTE) strlen((char *)(data+1));
     ret = zipWriteInFileInZip(logFile, data, data[0]+1);
     if (ret != Z_OK) {
@@ -796,8 +796,8 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Write Game Type, Allow mines, AI type, password */
   if (returnValue == TRUE) {
-    data[0] = gameTypeGet(&ssim->sim.game);
-    data[1] = minesGetAllowHiddenMines(&ssim->sim.mns);
+    data[0] = gameTypeGet(&serverSimGetGameSim(ssim)->game);
+    data[1] = minesGetAllowHiddenMines(&serverSimGetGameSim(ssim)->mns);
     data[2] = ai;
     data[3] = usePassword;
     data[4] = maxPlayers;
@@ -828,7 +828,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Start time */
   if (returnValue == TRUE) {
-    start = htonl((int32_t)ssim->timeCreated);
+    start = htonl((int32_t)serverSimGetTimeCreated(ssim));
     ret = zipWriteInFileInZip(logFile, &start, sizeof(int32_t));
     if (ret != Z_OK) {
       returnValue = FALSE;
@@ -845,7 +845,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
     }
   }
 
-  logKey = logOldKey = (BYTE) (ssim->timeCreated & 0xFF);
+  logKey = logOldKey = (BYTE) (serverSimGetTimeCreated(ssim) & 0xFF);
   /* Write Snapshot */
   if (returnValue == TRUE) {
     returnValue = logWriteSnapshot(ssim, mp, pb, bs, ss, plrs, FALSE);

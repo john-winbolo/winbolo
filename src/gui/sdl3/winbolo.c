@@ -1715,7 +1715,7 @@ bool frontEndTutorial(BYTE pos) {
     if (humanSim) humanSim->sim.isTutorial = false;
     {
       ServerSim *srv = gameFrontGetServerSim();
-      if (srv) srv->sim.isTutorial = false;
+      if (srv) serverSimGetGameSim(srv)->isTutorial = false;
     }
     gameFrontSetShowTutorialButton(false);
   }
