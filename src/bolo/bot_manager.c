@@ -428,6 +428,17 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->cs.isBot = true;
     clientSimSetPlayerNum(&bot->cs, playerNum);
 
+    /* Load map data from the server before tankCreate so the bot's local
+     * starts/pills/bases are populated when startsGetStart() runs — without
+     * starts loaded it early-returns on numStarts==0, leaving tankCreate's
+     * out-params undefined. */
+    if (!botLoadMapFromServer(bot, sim)) {
+        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
+        clientSimDestroy(&bot->cs);
+        serverSimRemovePlayer(sim, playerNum);
+        return false;
+    }
+
     /* Create a tank at slot 0 for this ClientSim */
     if (MY_TANK(&bot->cs) != NULL) {
         tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
@@ -438,14 +449,6 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     /* Set this bot's identity */
     playersSetSelf(NULL, &bot->cs.sim, &bot->cs.sim.plyrs, playerNum,
                    (char *)brainName, TRUE);
-
-    /* Load map data from the server */
-    if (!botLoadMapFromServer(bot, sim)) {
-        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
-        clientSimDestroy(&bot->cs);
-        serverSimRemovePlayer(sim, playerNum);
-        return false;
-    }
 
     /* Set AI type on the ClientSim */
     bot->cs.allowComputerTanks = ai;
