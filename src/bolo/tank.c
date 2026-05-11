@@ -42,6 +42,7 @@
 #include "players.h"
 #include "tank.h"
 #include "game_sim.h"
+#include "client_sim.h"
 #include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 
