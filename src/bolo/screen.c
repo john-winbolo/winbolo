@@ -577,10 +577,6 @@ int32_t screenGetGameStartDelayCS(ClientSim *csPtr) {
 
 
 
-void screenGetPlayerNameCS(ClientSim *csPtr, char *value) {
-  clientSimGetPlayerName(csPtr, value);
-}
-
 /*********************************************************
 *NAME:          screenSetLabelOwnTank
 *AUTHOR:        John Morrison
@@ -1169,19 +1165,8 @@ void screenGetSubMapSquareOffset(int *xPos, int *yPos) {
 
 
 
-/*********************************************************
-*NAME:          screenSetAiType
-*AUTHOR:        John Morrison
-*CREATION DATE: 26/11/99
-*LAST MODIFIED: 26/11/99
-*PURPOSE:
-*  Sets the AI type for this game
-*
-*ARGUMENTS:
-*
-*********************************************************/
 void screenSetAiTypeCS(ClientSim *csPtr, aiType value) {
-  *clientSimGetAllowComputerTanks(csPtr) = value;
+  clientSimSetAiType(csPtr, value);
 }
 
 
@@ -1486,6 +1471,6 @@ void setBuildCurrentSelectCS(ClientSim *csPtr, buildSelect bs) {
 
 
 void screenSetLocalTransportCS(ClientSim *csPtr, bool isLocal) {
-  clientSimGetGameSim(csPtr)->isLocalTransport = isLocal;
+  clientSimSetLocalTransport(csPtr, isLocal);
 }
 
