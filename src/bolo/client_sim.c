@@ -106,7 +106,7 @@ static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
 
 static void csCallbackCenterTank(void *ctx) {
   ClientSim *cs = (ClientSim *)ctx;
-  screenTankViewCS(cs);
+  clientSimTankView(cs);
 }
 
 static void csCallbackSoundDistShoot(void *ctx, BYTE mx, BYTE my, BYTE owner) {

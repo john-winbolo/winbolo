@@ -38,6 +38,7 @@
 #include "messages.h"
 #include "player_flags.h"
 #include "screen.h"
+#include "client_sim.h"
 
 /*********************************************************
  *NAME:          setupClientSim
@@ -109,7 +110,7 @@ bool clientLoadMap(ClientSim *csPtr, char *fileName, gameType game, bool hiddenM
       }
       frontEndSetPlayer(csPtr, (playerNumbers) clientSimGetMyPlayerNum(csPtr), playerName, "", 0, selfType, selfFlags);
     }
-    screenUpdateViewCS(csPtr, redraw);
+    clientSimUpdateView(csPtr, redraw);
     basesClearMines(clientSimGetGameSim(csPtr));
 
   } else {
@@ -158,7 +159,7 @@ bool clientLoadCompressedMap(ClientSim *csPtr, BYTE *buff, int buffLen, char *ma
       }
       frontEndSetPlayer(csPtr, (playerNumbers) clientSimGetMyPlayerNum(csPtr), playerName, "", 0, selfType, selfFlags);
     }
-    screenUpdateViewCS(csPtr, redraw);
+    clientSimUpdateView(csPtr, redraw);
     basesClearMines(clientSimGetGameSim(csPtr));
   } else {
     clientSimDestroy(csPtr);

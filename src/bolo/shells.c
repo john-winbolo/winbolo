@@ -827,7 +827,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 	}
 
 	if (returnValue == TRUE && !sim->isServer) {
-		screenReCalcCS((ClientSim *)sim);
+		clientSimRecalc((ClientSim *)sim);
 	}
 
 	return returnValue;

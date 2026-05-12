@@ -146,7 +146,7 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
       clientCenterTankCS(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
-      screenPillViewCS(csPtr, 0, 0);
+      clientSimPillView(csPtr, 0, 0);
     }
 
     /* Clear tap keys after reading — preserve shoot tap on non-game ticks
@@ -653,7 +653,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         if (csPtr->sim.mp != NULL) {
           mapSetPos(&csPtr->sim, &csPtr->sim.mp, events[i].data[0], events[i].data[1],
                     events[i].data[2], FALSE, TRUE);
-          screenReCalcCS(csPtr);
+          clientSimRecalc(csPtr);
         }
         break;
       case EVENT_SOUND:
@@ -901,7 +901,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_MINE_VISIBLE:
         /* data: [mx, my, sourcePlayer] — reveal mine at position */
         minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
-        screenReCalcCS(csPtr);
+        clientSimRecalc(csPtr);
         break;
       default:
         break;
