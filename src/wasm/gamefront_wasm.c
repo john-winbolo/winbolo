@@ -445,7 +445,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
           wasmTransportActive = FALSE;
           return FALSE;
         }
-        screenSetLocalTransportCS(humanSim, false);
+        clientSimSetLocalTransport(humanSim, false);
       } else {
         printf("[WASM] No map data from server\n");
         transportUdpClientDestroy(&wasmTransport);
@@ -560,10 +560,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     printf("[WASM] Single-player ServerSim ready\n");
   }
 
-  screenSetAiTypeCS(humanSim, compTanks);
+  clientSimSetAiType(humanSim, compTanks);
   clientMutexWaitFor();
-  screenSetTankAutoSlowdownCS(humanSim, useAutoslow);
-  screenSetTankAutoHideGunsightCS(humanSim, useAutohide);
+  clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+  clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
   clientMutexRelease();
 
   dlgState = openFinished;
@@ -576,8 +576,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   clientMutexWaitFor();
   if (gamePlayed == TRUE) {
-    useAutoslow = screenGetTankAutoSlowdownCS(humanSim);
-    useAutohide = screenGetTankAutoHideGunsightCS(humanSim);
+    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
+    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
   if (wasmTransportActive) {
@@ -671,7 +671,7 @@ void gameFrontSetPlayerName(char *pn)  { strcpy(gameFrontName, pn); }
 
 void gameFrontSetAIType(aiType ait) {
   compTanks = ait;
-  screenSetAiTypeCS(humanSim, compTanks);
+  clientSimSetAiType(humanSim, compTanks);
   if (compTanks == aiNone) brainsHandlerSet(FALSE);
   else brainsHandlerSet(TRUE);
 }
@@ -784,8 +784,8 @@ void gameFrontSaveWindowSettings(void) {
 
 void gameFrontSaveTankPrefs(ClientSim *cs) {
   if (cs != NULL) {
-    useAutoslow = screenGetTankAutoSlowdownCS(cs);
-    useAutohide = screenGetTankAutoHideGunsightCS(cs);
+    useAutoslow = clientSimGetTankAutoSlowdown(cs);
+    useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
 }
 

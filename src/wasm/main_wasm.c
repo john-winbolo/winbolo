@@ -17,6 +17,7 @@
 #include <emscripten/html5.h>
 
 #include "../bolo/screen.h"
+#include "../bolo/client_render.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/frontend.h"
 #include "../bolo/playername_validate.h"
@@ -282,7 +283,7 @@ static void main_loop_iteration(void) {
   tick = winboloTimer();
   clientMutexWaitFor();
   if (finishedLoop == FALSE) {
-    screenUpdateCS(cs, redraw);
+    clientRenderFrame(cs, redraw);
   }
   clientMutexRelease();
   dwSysFrame += (winboloTimer() - tick);
@@ -467,7 +468,7 @@ void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
   screenSetAutoScroll(cs, autoScrollingEnabled);
   screenSetLabelOwnTank(cs, labelSelf);
   screenSetMesageLabelLen(cs, labelMsg);
@@ -539,7 +540,7 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 /* Menu toggles — called by sdl3imgui.cpp */
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
@@ -551,7 +552,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   sdl3DrawSetPillsStatusClear();
   total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
   for (count = 1; count <= total; count++) {
-    BYTE pillStat = screenPillAllianceCS(cs, count);
+    BYTE pillStat = clientSimGetPillAlliance(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
   }
   sdl3DrawCopyPillsStatus(0, 0);
@@ -562,7 +563,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   sdl3DrawSetBasesStatusClear();
   total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
   for (count = 1; count <= total; count++) {
-    BYTE baseStat = screenBaseAllianceCS(cs, count);
+    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
   }
   sdl3DrawCopyBasesStatus(0, 0);
@@ -611,7 +612,7 @@ void windowDisableSound(void)           { soundEffects = FALSE; useSoundKeepaliv
 bool windowGetBackgroundSound(void)     { return backgroundSound; }
 void windowRedrawAll(ClientSim *cs) {
   clientMutexWaitFor();
-  sdl3DrawRedrawAll(cs, getBuildCurrentSelectCS(cs), NULL, showPillLabels, showBaseLabels);
+  sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
   clientMutexRelease();
 }
 void *windowWnd(void) { return NULL; }
@@ -624,8 +625,8 @@ void windowSaveMap(ClientSim *cs) {
 }
 
 void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) screenTankViewCS(cs);
-  else if (keyCode == keys.kiPillView) screenPillViewCS(cs, 0, 0);
+  if (keyCode == keys.kiTankView) clientSimTankView(cs);
+  else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
 }
 void windowButtonAdd(int keyCode)    { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
@@ -659,7 +660,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
-    bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
+    bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
@@ -757,7 +758,7 @@ void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   showGunsight = !isShown;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
