@@ -36,23 +36,24 @@
 #include "screenbrainmap.h"
 
 void screenBrainMapCreate(ClientSim *cs) {
-  memset(cs->brainMap, TERRAIN_UNKNOWN, (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE));
-  cs->sim.brainMap = cs->brainMap;
+  memset(clientSimGetBrainMap(cs), TERRAIN_UNKNOWN, (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE));
+  clientSimGetGameSim(cs)->brainMap = clientSimGetBrainMap(cs);
 }
 
 void screenBrainMapDestroy(ClientSim *cs) {
-  cs->sim.brainMap = NULL;
+  clientSimGetGameSim(cs)->brainMap = NULL;
 }
 
 BYTE *screenBrainMapGetPointer(ClientSim *cs) {
-  return (BYTE *) cs->brainMap;
+  return clientSimGetBrainMap(cs);
 }
 
 void screenBrainMapFillFromMap(ClientSim *cs, map *mp, mines *mn) {
   BYTE x, y;
+  BYTE (*brainMap)[MAP_ARRAY_SIZE] = (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs);
   for (y = 0; ; y++) {
     for (x = 0; ; x++) {
-      screenBrainMapSetPos(cs->brainMap, x, y, mapGetPos(mp, x, y), minesExistPos(mn, mp, x, y));
+      screenBrainMapSetPos(brainMap, x, y, mapGetPos(mp, x, y), minesExistPos(mn, mp, x, y));
       if (x == 255) break;
     }
     if (y == 255) break;

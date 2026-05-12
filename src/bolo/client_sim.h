@@ -481,4 +481,17 @@ void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);
 /* Pending build input (set as a triple) */
 void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y);
 
+/* Brain state */
+void clientSimSetBrainLastAssistMsg(ClientSim *cs, uint8_t v);
+void clientSimSetBrainEventCount(ClientSim *cs, int v);
+
+/* Label state */
+void clientSimSetLabelMessage(ClientSim *cs, labelLen v);
+void clientSimSetLabelTankLabel(ClientSim *cs, labelLen v);
+void clientSimSetLabelOwnTank(ClientSim *cs, bool v);
+
+/* Last-player-name buffer (copy semantics — strcpy into the field,
+ * matching the existing call site behavior; caller bounds-checks). */
+void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name);
+
 #endif /* CLIENT_SIM_H */
