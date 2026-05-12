@@ -209,17 +209,22 @@ static void lobbySendRemoveBot(ClientSim *cs, Transport *transport, uint8_t slot
     if (transport) transportUdpClientSendRemoveBot(transport, slot);
 }
 
-static void lobbySendTeamSet(ClientSim *cs, Transport *transport, uint8_t teamNumber) {
+/* Move `targetSlot` to `teamNumber`. The host (or any client with
+ * lobbyClientMayEdit authority on the server) can move any player;
+ * non-authorised clients can only move themselves. The server gates
+ * this — we just send the request. */
+static void lobbySendTeamSet(ClientSim *cs, Transport *transport,
+                             uint8_t targetSlot, uint8_t teamNumber) {
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim) return;
-        if (cs->myPlayerNum < MAX_TANKS) {
-            sim->lobbyPlayers[cs->myPlayerNum].teamNumber = teamNumber;
-            serverSimSyncLobbyToClient(sim, cs);
-        }
+        if (!sim || targetSlot >= MAX_TANKS) return;
+        sim->lobbyPlayers[targetSlot].teamNumber = teamNumber;
+        serverSimSyncLobbyToClient(sim, cs);
         return;
     }
-    if (transport) transportUdpClientSendTeamSet(transport, teamNumber);
+    if (transport) {
+        transportUdpClientSendTeamSet(transport, targetSlot, teamNumber);
+    }
 }
 
 /* Update a bot's per-slot config (difficulty / personality / name
@@ -675,8 +680,20 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
  * WbTheme. Replaces the flat 5-column table with the mockup's
  * "team containers" model. Sized to fit inside the calling child
  * window. Returns nothing — purely UI. */
+static void renderLockBadge(void);
+
 static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                                      int myPlayerNum, float s, bool isHost) {
+    /* Lazy-load the badge / bot-cpu icons. Used to be done inside
+     * renderConnectivityBadge, but we now skip that in SP / LAN-only
+     * mode where the badge has nothing to report — the bot-cpu PNGs
+     * still need to come up though, so trigger it here too. The
+     * helper is idempotent (s_iconsAttempted guard). */
+    {
+        SDL_Renderer *r = sdl3DrawGetRenderer();
+        if (r) loadStatusIconsOnce(r, s);
+    }
+
     /* Helper to count members per team for header strings. */
     int memberCount[16] = {0};
     int botCount[16]    = {0};
@@ -733,15 +750,50 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 }
             }
         }
-        /* When openHost is enabled the toggle itself isn't shown here
-         * — it's surfaced in the lobby settings panel. We just leave
-         * an informational label so every player understands why the
-         * Add Team / + Bot / X controls are interactable. */
-        if (cs->lobbyOpenHost) {
-            ImGui::SameLine(0.0f, 16.0f * s);
+        /* Compact "Allow new players" group right of "+ Add Team":
+         *   Allow New Players:  [ ] Now   [ ] During game
+         * Multiplayer-only — single-player has no UDP listener and
+         * these controls have no meaning there. */
+        if (transport && !cs->isSinglePlayer) {
+            ImGui::SameLine(0.0f, 20.0f * s);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("The host has allowed everybody to manage teams.");
+            ImGui::TextDisabled("Allow New Players:");
+            bool allowJoin = transportUdpServerGetLock();
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
+                transportUdpClientSendLockToggle(transport, allowJoin);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Accept new join requests right now while the lobby is open.");
+            }
+            /* "During game" = inverse of autoLockOnGameStart (which
+             * means 'disallow new players once started'). Toggling
+             * this sends LST_AUTO_LOCK_ON_GAME with the inverted bit. */
+            bool autoLockLocked = (cs->lobbyServerLocks & 0x10) != 0;
+            bool duringGame = !cs->lobbyAutoLockOnGameStart;
+            if (autoLockLocked) ImGui::BeginDisabled();
+            ImGui::SameLine();
+            if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
+                uint8_t v = duringGame ? 0 : 1;  /* invert */
+                lobbySendSetting(cs, transport,
+                                 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
+            }
+            if (autoLockLocked) ImGui::EndDisabled();
+            if (autoLockLocked) {
+                ImGui::SameLine(0.0f, 4.0f * s);
+                renderLockBadge();
+            }
+            if (ImGui::IsItemHovered() && !autoLockLocked) {
+                ImGui::SetTooltip(
+                    "Keep accepting new players after the game has started.");
+            }
         }
+
+        /* (Previously the team list header showed a "The host has
+         * allowed everybody to manage teams." label here.  Removed —
+         * the same info is now surfaced as the right-aligned label on
+         * the Game Settings header.) */
         ImGui::Spacing();
     }
     for (int teamId = 1; teamId < 16; teamId++) {
@@ -815,6 +867,24 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             memberCount[teamId], memberCount[teamId] == 1 ? "" : "s",
             botCount[teamId] > 0 ? " · " : "",
             botCount[teamId] > 0 ? (botCount[teamId] == 1 ? "1 bot" : "bots") : "");
+
+        /* "Join Team" — moves the local player to this team. Available
+         * to every client regardless of permissions (you can always
+         * move yourself) and only rendered when you're not already on
+         * this team. */
+        if (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+            cs->lobbySlots[myPlayerNum].teamNumber != teamId) {
+            ImGui::SameLine();
+            char joinId[24];
+            SDL_snprintf(joinId, sizeof(joinId), "Join##j%d", teamId);
+            if (ImGui::SmallButton(joinId)) {
+                lobbySendTeamSet(cs, transport,
+                                 (uint8_t)myPlayerNum, (uint8_t)teamId);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Move yourself to Team %d.", teamId);
+            }
+        }
 
         /* Per-team "+ Bot" button (always visible to the host) plus an
          * optional "Bot Naming:" pool dropdown (only when the team has
@@ -1106,9 +1176,78 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     ImGui::SetCursorPosY(y);
                 };
 
-                /* ── Column 0: tank icon ─────────────────────────── */
+                /* ── Column 0: drag handle + tank icon ─────────────── */
                 ImGui::TableSetColumnIndex(0);
                 rowTopY = ImGui::GetCursorPosY();
+                /* Capture the row's screen-Y top while we're at it so
+                 * later columns can do an absolute-rect hover test
+                 * (gear visibility, etc.). */
+                float rowTopScreenY = ImGui::GetCursorScreenPos().y;
+
+                /* Drag handle — drives the "drag a player onto a team"
+                 * flow. Authority: anyone may drag themselves; the host
+                 * (or openHost / admin) may drag anyone (incl. bots).
+                 * Server re-validates on PACKET_LOBBY_TEAM_SET.
+                 * Rendered as a 4-arrow "move" cross centered in the
+                 * row, before the tank icon. */
+                bool canDragThis = (i == myPlayerNum) || effectiveHost;
+                if (canDragThis) {
+                    const float handleS = 14.0f * s;
+                    cyAbs(handleS);
+                    ImVec2 hPos = ImGui::GetCursorScreenPos();
+                    char hId[24];
+                    SDL_snprintf(hId, sizeof(hId), "##drag%d", i);
+                    ImGui::InvisibleButton(hId, ImVec2(handleS, handleS));
+                    ImU32 lineCol = ImGui::IsItemHovered()
+                        ? IM_COL32(230, 230, 230, 230)
+                        : IM_COL32(140, 140, 140, 200);
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    float cx = hPos.x + handleS * 0.5f;
+                    float cy = hPos.y + handleS * 0.5f;
+                    float a  = handleS * 0.45f;
+                    float h  = handleS * 0.20f;
+                    float th = 1.2f;
+                    /* Crossbars. */
+                    dl->AddLine(ImVec2(cx - a, cy), ImVec2(cx + a, cy),
+                                lineCol, th);
+                    dl->AddLine(ImVec2(cx, cy - a), ImVec2(cx, cy + a),
+                                lineCol, th);
+                    /* Four arrowheads, one per crossbar tip. */
+                    dl->AddLine(ImVec2(cx - a, cy),
+                                ImVec2(cx - a + h, cy - h), lineCol, th);
+                    dl->AddLine(ImVec2(cx - a, cy),
+                                ImVec2(cx - a + h, cy + h), lineCol, th);
+                    dl->AddLine(ImVec2(cx + a, cy),
+                                ImVec2(cx + a - h, cy - h), lineCol, th);
+                    dl->AddLine(ImVec2(cx + a, cy),
+                                ImVec2(cx + a - h, cy + h), lineCol, th);
+                    dl->AddLine(ImVec2(cx, cy - a),
+                                ImVec2(cx - h, cy - a + h), lineCol, th);
+                    dl->AddLine(ImVec2(cx, cy - a),
+                                ImVec2(cx + h, cy - a + h), lineCol, th);
+                    dl->AddLine(ImVec2(cx, cy + a),
+                                ImVec2(cx - h, cy + a - h), lineCol, th);
+                    dl->AddLine(ImVec2(cx, cy + a),
+                                ImVec2(cx + h, cy + a - h), lineCol, th);
+                    if (ImGui::BeginDragDropSource(
+                            ImGuiDragDropFlags_SourceAllowNullID)) {
+                        uint8_t slot = (uint8_t)i;
+                        ImGui::SetDragDropPayload("WB_LOBBY_PLAYER",
+                                                  &slot, sizeof(slot));
+                        ImGui::TextUnformatted(
+                            cs->lobbySlots[i].playerName[0]
+                            ? cs->lobbySlots[i].playerName
+                            : "(slot)");
+                        ImGui::EndDragDropSource();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        ImGui::SetTooltip("Drag onto a team to move");
+                    }
+                    ImGui::SameLine(0.0f, 4.0f * s);
+                    /* Reset Y for the tank-icon block below. */
+                    ImGui::SetCursorPosY(rowTopY);
+                }
                 {
                     SDL_Texture *tankTex = nullptr;
                     if (r) {
@@ -1178,10 +1317,22 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                      * WBN_ICON_SIZE tall — center them as one block. */
                     cyAbs((float)WBN_ICON_SIZE);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
-                    renderPlayerName(NULL,
-                                     cs->lobbySlots[i].clientFlags,
-                                     cs->lobbySlots[i].clientType,
-                                     "", false);
+                    {
+                        /* Hide the WBN globe in local-only sessions —
+                         * single-player has no WBN session and a LAN-only
+                         * host would similarly skip WBN registration. Keep
+                         * the Steam + platform badges since those signal
+                         * what the player is running, not who they are on
+                         * the leaderboard. */
+                        uint8_t pflags = cs->lobbySlots[i].clientFlags;
+                        if (cs->isSinglePlayer || cs->isLanOnly) {
+                            pflags &= ~PLAYER_FLAG_WBN_VERIFIED;
+                        }
+                        renderPlayerName(NULL,
+                                         pflags,
+                                         cs->lobbySlots[i].clientType,
+                                         "", false);
+                    }
                 }
 
                 /* ── Column 2: name + inline tags ────────────────── */
@@ -1217,6 +1368,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     float pillH = textSz.y + padY * 2.0f;
                     ImGui::SameLine(0.0f, 6.0f * s);
                     cyAbs(pillH);
+                    /* Nudge HOST / BOT / ADMIN name-tags up 1px so
+                     * they sit a touch above the row centerline,
+                     * which lines them up better with the cap-height
+                     * of the player name. */
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 1.0f);
                     ImVec2 pos = ImGui::GetCursorScreenPos();
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     /* Square corners on the name tags so they read as
@@ -1261,7 +1417,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                 /* ── Column 3: gear (bots) or ping (humans) ──────── */
                 ImGui::TableSetColumnIndex(3);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot) {
+                /* Gear visibility: always shown for bots when this
+                 * client has lobby-edit authority (host / openHost /
+                 * admin). Hidden entirely for non-permitted clients
+                 * so they don't see a non-functional control. */
+                if (isBot && effectiveHost) {
                     if (s_iconSettings) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
@@ -1278,10 +1438,19 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                         SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
                         bool clicked = ImGui::InvisibleButton(btnId,
                                                               ImVec2(iconSize, iconSize));
+                        /* Tint the gear toward grey so it reads as a
+                         * secondary action — the primary visual focus
+                         * is the player name and status badges. Full
+                         * white on hover so it lights up under the
+                         * mouse. */
+                        ImU32 gearTint = ImGui::IsItemHovered()
+                            ? IM_COL32_WHITE
+                            : IM_COL32(180, 180, 180, 200);
                         ImGui::GetWindowDrawList()->AddImage(
                             (ImTextureID)s_iconSettings,
                             iconStart,
-                            ImVec2(iconStart.x + iconSize, iconStart.y + iconSize));
+                            ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
+                            ImVec2(0, 0), ImVec2(1, 1), gearTint);
                         if (clicked) {
                             s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
                         }
@@ -1297,7 +1466,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                             s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
                         }
                     }
-                } else {
+                } else if (!isBot) {
                     if (cs->lobbySlots[i].pingMs > 0) {
                         cyTextAbs();
                         ImVec4 pingColor;
@@ -1308,10 +1477,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     }
                 }
 
-                /* ── Column 5: ready / not ready badge ───────────── */
+                /* ── Column 5: ready / not ready badge (humans only — bots
+                 *   are always ready and don't need a pill) ─────────────── */
                 ImGui::TableSetColumnIndex(5);
                 rowTopY = ImGui::GetCursorPosY();
-                {
+                if (!isBot) {
                     bool isReady = cs->lobbySlots[i].ready;
                     const char *lbl = isReady ? "READY" : "NOT READY";
                     /* Render the badge text at 80% of the row font
@@ -1327,6 +1497,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     float pillW = textSz.x + padX * 2.0f;
                     float pillH = textSz.y + padY * 2.0f;
                     cyAbs(pillH);
+                    /* Nudge the READY / NOT READY pill up 2px so it
+                     * lines up with the cap-height of adjacent text
+                     * rather than the row's geometric center. */
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
                     ImVec2 pillPos = ImGui::GetCursorScreenPos();
                     ImU32 bgCol = isReady ? IM_COL32(42, 80, 44, 255)
                                           : IM_COL32(58, 58, 58, 255);
@@ -1387,6 +1561,33 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
          * controls live in one place. */
 
         ImGui::EndChild();
+        /* Drop target: the team child window is the last item. Any
+         * BeginDragDropSource elsewhere can drop a slot index here
+         * to move that player onto this team. While a drag is over
+         * the team, paint a translucent highlight along its border. */
+        if (ImGui::BeginDragDropTarget()) {
+            ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptBeforeDelivery;
+            const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(
+                "WB_LOBBY_PLAYER", flags);
+            if (payload) {
+                /* Paint a thicker, brighter border while the payload
+                 * hovers the team child. */
+                ImVec2 itemMin = ImGui::GetItemRectMin();
+                ImVec2 itemMax = ImGui::GetItemRectMax();
+                ImU32 hl = (tc & 0x00FFFFFF) | (0xC0 << 24);
+                ImGui::GetForegroundDrawList()->AddRect(
+                    itemMin, itemMax, hl, 4.0f, 0, 3.0f);
+                if (payload->IsDelivery() &&
+                    payload->DataSize == (int)sizeof(uint8_t)) {
+                    uint8_t fromSlot = *(const uint8_t *)payload->Data;
+                    if (fromSlot < MAX_TANKS) {
+                        lobbySendTeamSet(cs, transport,
+                                         fromSlot, (uint8_t)teamId);
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
         ImGui::Spacing();
     }
 
@@ -1830,11 +2031,37 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
      * once the host is happy with the configuration. */
     static bool s_settingsOpen = true;
     ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
+    /* Capture screen-Y of the header before drawing so the
+     * right-aligned openHost control can be overlaid on the same
+     * line via SetCursorScreenPos. */
+    ImVec2 headerStart = ImGui::GetCursorScreenPos();
     if (!ImGui::CollapsingHeader("Game settings")) {
         s_settingsOpen = false;
         return;
     }
     s_settingsOpen = true;
+
+    /* Read-only mirror at the top-right of the header line for
+     * non-host / non-admin clients when openHost is on. The actual
+     * checkbox toggle lives in the "Other" column further down so
+     * the host has it grouped with the rest of the lobby settings. */
+    if (!cs->isSinglePlayer && cs->lobbyOpenHost) {
+        bool isHostLocal = (myPlayerNum == 0);
+        bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                             (cs->lobbySlots[myPlayerNum].clientFlags
+                              & PLAYER_FLAG_ADMIN));
+        if (!isHostLocal && !isAdminLocal) {
+            const char *labelLbl = "All players can change the game settings";
+            ImVec2 winPos  = ImGui::GetWindowPos();
+            float  winRight = winPos.x + ImGui::GetContentRegionMax().x;
+            ImVec2 textSize = ImGui::CalcTextSize(labelLbl);
+            ImVec2 saved = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(
+                ImVec2(winRight - textSize.x - 8.0f * s, headerStart.y));
+            ImGui::TextDisabled("%s", labelLbl);
+            ImGui::SetCursorScreenPos(saved);
+        }
+    }
 
     /* Settings body uses a smaller font than the rest of the lobby so
      * the 3-column form doesn't dominate the visual hierarchy. */
@@ -1946,33 +2173,34 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         if (timeDisabled) ImGui::EndDisabled();
         if (timeLocked) renderLockBadge();
 
-        /* Multiplayer-only join controls. In single-player there's no
-         * UDP listener, so "allow new players" / "disallow once started"
-         * have no meaning — hide them rather than render disabled. */
+        /* "Allow new players" / "Disallow new players once game has
+         * started" moved to the team-list header (right of "+ Add Team")
+         * so all join-related controls live in one row. See
+         * renderTeamGroupedPlayers. */
+
+        /* "Allow all players to change settings" — toggles openHost
+         * (the same flag that gates per-team manage-bots authority).
+         *   - host / admin sees the checkbox.
+         *   - everyone else sees a read-only label when it's on, so
+         *     they understand why the settings UI is interactable. */
         if (!cs->isSinglePlayer) {
-            /* "Allow new players" — uses existing PACKET_LOCK_TOGGLE */
-            bool allowJoin = transportUdpServerGetLock();
-            if (effectiveHost && transport &&
-                ImGui::Checkbox("Allow new players", &allowJoin)) {
-                transportUdpClientSendLockToggle(transport, allowJoin);
+            bool isHostLocal = (myPlayerNum == 0);
+            bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                                 (cs->lobbySlots[myPlayerNum].clientFlags
+                                  & PLAYER_FLAG_ADMIN));
+            if (isHostLocal || isAdminLocal) {
+                bool oh = cs->lobbyOpenHost;
+                if (ImGui::Checkbox("Allow all players to change settings",
+                                    &oh)) {
+                    if (transport) {
+                        transportUdpClientSendLobbyOpenHost(transport, oh);
+                    }
+                }
+            } else if (cs->lobbyOpenHost) {
+                ImGui::TextDisabled(
+                    "All players can change the game settings");
             }
-
-            /* "Disallow new players once started" — autoLockOnGameStart */
-            bool autoLockLocked = (cs->lobbyServerLocks & 0x10) != 0;
-            bool autoLockV = cs->lobbyAutoLockOnGameStart;
-            bool autoLockDisabled = !effectiveHost || autoLockLocked;
-            if (autoLockDisabled) ImGui::BeginDisabled();
-            if (ImGui::Checkbox("Disallow new players once game has started", &autoLockV)) {
-                uint8_t v = autoLockV ? 1 : 0;
-                lobbySendSetting(cs, transport, 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
-            }
-            if (autoLockDisabled) ImGui::EndDisabled();
-            if (autoLockLocked) renderLockBadge();
         }
-
-        /* openHost toggle moved to the team-list header (next to
-         * "+ Add Team") so it lives where its scope is — managing
-         * teams + bots. See renderTeamGroupedPlayers. */
     }
 
     ImGui::Columns(1);
@@ -2179,8 +2407,45 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Header: Server info line --- */
         {
             char serverStr[64];
+            const char *addrStr = inet_ntoa(cs->serverAddress);
+            /* LAN host self-joins via loopback (127.0.0.1) — display
+             * the actual LAN-routable IPv4 instead so it's useful to
+             * read off to a player on the same network. Local helper:
+             * UDP socket + "connect" to a public address (no packets
+             * sent, just routing-table lookup) + getsockname. */
+            char lanIp[INET_ADDRSTRLEN];
+            lanIp[0] = '\0';
+            auto fillLanIp = [&]() -> bool {
+                bolo_socket_t sk = socket(AF_INET, SOCK_DGRAM, 0);
+                if (sk == BOLO_INVALID_SOCKET) return false;
+                sockaddr_in tgt; memset(&tgt, 0, sizeof(tgt));
+                tgt.sin_family = AF_INET;
+                tgt.sin_port = htons(53);
+                inet_pton(AF_INET, "8.8.8.8", &tgt.sin_addr);
+                if (connect(sk, (sockaddr *)&tgt, sizeof(tgt)) != 0) {
+                    closesocket(sk); return false;
+                }
+                sockaddr_in loc; memset(&loc, 0, sizeof(loc));
+#ifdef _WIN32
+                int slen = (int)sizeof(loc);
+#else
+                socklen_t slen = sizeof(loc);
+#endif
+                int rc = getsockname(sk, (sockaddr *)&loc, &slen);
+                closesocket(sk);
+                if (rc != 0) return false;
+                return inet_ntop(AF_INET, &loc.sin_addr,
+                                 lanIp, sizeof(lanIp)) != NULL;
+            };
+            if (cs->isLanOnly && addrStr &&
+                strcmp(addrStr, "127.0.0.1") == 0 &&
+                fillLanIp() &&
+                lanIp[0] != '\0' &&
+                strcmp(lanIp, "127.0.0.1") != 0) {
+                addrStr = lanIp;
+            }
             SDL_snprintf(serverStr, sizeof(serverStr), "%s:%u",
-                         inet_ntoa(cs->serverAddress), cs->serverPort);
+                         addrStr, cs->serverPort);
 
             char timeStr[32];
             formatTimeLimit(cs->lobbyTimeLimit, timeStr, sizeof(timeStr));
@@ -2207,13 +2472,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #endif
 
             /* Layout A — connectivity badge in the top-right corner.
-             * Push the cursor to the right edge minus an estimated
-             * badge width (icon + status text + Test button + status
-             * text). 320px scaled is wide enough for the longest
-             * combination ("Server unreachable [Test connectivity]
-             * No reply yet"). The badge gracefully no-ops when port-
-             * mapping is disabled (clients not hosting). */
-            {
+             * Only meaningful when this client is also hosting AND
+             * the host instance is actively NAT-punching (i.e. not
+             * passed -no-natpunch / LAN-only). Skipping it covers SP,
+             * LAN-only hosts, and non-hosting clients in one check. */
+            if (serverInstanceIsNatPunchActive()) {
                 float availW   = ImGui::GetContentRegionAvail().x;
                 float badgeW   = 320.0f * s;
                 float startX   = ImGui::GetCursorPosX() + availW - badgeW;
@@ -2307,8 +2570,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     }
                                 }
                                 if (!cs->lobbySlots[i].isBot) {
+                                    uint8_t pflags = cs->lobbySlots[i].clientFlags;
+                                    if (cs->isSinglePlayer || cs->isLanOnly) {
+                                        pflags &= ~PLAYER_FLAG_WBN_VERIFIED;
+                                    }
                                     renderPlayerName(NULL,
-                                                     cs->lobbySlots[i].clientFlags,
+                                                     pflags,
                                                      cs->lobbySlots[i].clientType,
                                                      "", false);
                                 }
@@ -2346,7 +2613,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char comboId[16];
                                     SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                                     if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                        lobbySendTeamSet(cs, transport, (uint8_t)teamIdx);
+                                        lobbySendTeamSet(cs, transport, (uint8_t)myPlayerNum, (uint8_t)teamIdx);
                                     }
                                 } else {
                                     if (cs->lobbySlots[i].teamNumber > 0) {
@@ -2687,8 +2954,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             }
                         }
                         if (!cs->lobbySlots[i].isBot) {
+                            uint8_t pflags = cs->lobbySlots[i].clientFlags;
+                            if (cs->isSinglePlayer || cs->isLanOnly) {
+                                pflags &= ~PLAYER_FLAG_WBN_VERIFIED;
+                            }
                             renderPlayerName(NULL,
-                                             cs->lobbySlots[i].clientFlags,
+                                             pflags,
                                              cs->lobbySlots[i].clientType,
                                              "", false);
                         }
@@ -2722,7 +2993,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char comboId[16];
                             SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                             if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                lobbySendTeamSet(cs, transport, (uint8_t)teamIdx);
+                                lobbySendTeamSet(cs, transport, (uint8_t)myPlayerNum, (uint8_t)teamIdx);
                             }
                         } else {
                             if (cs->lobbySlots[i].teamNumber > 0) {

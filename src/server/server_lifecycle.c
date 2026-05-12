@@ -493,6 +493,12 @@ void serverInstanceShutdown(ServerSim *sim) {
   manualProbeWaitTicks = 0;
 }
 
+bool serverInstanceIsNatPunchActive(void) {
+  /* No mutex needed — these are plain bools written once at startup
+   * / cleared once at shutdown. */
+  return instanceUseNatKeepalive && instanceUseTracker;
+}
+
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
   if (out == NULL) {
     return;
