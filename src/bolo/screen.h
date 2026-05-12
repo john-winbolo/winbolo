@@ -267,7 +267,6 @@ void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yVa
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
 bool screenGetGameRunningCS(struct ClientSim *csPtr);
 void screenConnectionLostCS(struct ClientSim *csPtr);
-void screenSimDisplayTickCS(struct ClientSim *csPtr, bool isBrain);
 buildSelect getBuildCurrentSelectCS(struct ClientSim *csPtr);
 void setBuildCurrentSelectCS(struct ClientSim *csPtr, buildSelect bs);
 void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);

@@ -29,6 +29,7 @@
 #include "client_sim_internal.h"
 #include "client_state.h"
 #include "screen.h"
+#include "client_ui_events.h"
 #include "global.h"
 #include "bolo_map.h"
 #include "pillbox.h"
@@ -432,7 +433,7 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
-  screenSimDisplayTickCS(cs, isBrain);
+  clientUiOnTick(cs, isBrain);
   basesTickMessageQueue(&cs->sim, cs);
 }
 
