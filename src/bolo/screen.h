@@ -204,8 +204,6 @@ void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
 void screenLgmDropPillCS(struct ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pillNum);
 void screenTankLayMineCS(struct ClientSim *csPtr);
 void screenCheckTankMineDamageCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
-BYTE screenPillNumPosCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
-BYTE screenBaseNumPosCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
 void screenSetAllowHiddenMinesCS(struct ClientSim *csPtr, bool hidden);
 int32_t screenGetGameStartDelayCS(struct ClientSim *csPtr);
 tankAlliance screenTankAllianceCS(struct ClientSim *csPtr, BYTE playerNum);
@@ -244,6 +242,5 @@ void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yVa
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
 bool screenGetGameRunningCS(struct ClientSim *csPtr);
 buildSelect getBuildCurrentSelectCS(struct ClientSim *csPtr);
-void setBuildCurrentSelectCS(struct ClientSim *csPtr, buildSelect bs);
 void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);
 #endif /* SCREEN_H */

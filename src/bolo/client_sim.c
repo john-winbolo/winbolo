@@ -1076,6 +1076,14 @@ baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum) {
   return basesGetStatusNum(clientSimGetGameSim(cs), baseNum);
 }
 
+BYTE clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my) {
+  return pillsGetPillNum(&clientSimGetGameSim(cs)->pb, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my), FALSE, FALSE);
+}
+
+BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {
+  return basesGetBaseNum(&clientSimGetGameSim(cs)->bs, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my));
+}
+
 /* Local tank stat accessors. */
 void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
   tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);

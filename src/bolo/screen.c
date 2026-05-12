@@ -491,42 +491,6 @@ void screenCheckTankMineDamageCS(ClientSim *csPtr, BYTE mx, BYTE my) {
 }
 
 /*********************************************************
-*NAME:          screenPillNumPos
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/1/99
-*LAST MODIFIED: 23/1/99
-*PURPOSE:
-* The front end needs the pillbox number at a specific
-* location for drawing its label
-*
-*ARGUMENTS:
-*  mx - X Map Co-ordinate relative to the screen
-*  my - Y Map Co-ordinate relative to the screen
-*********************************************************/
-BYTE screenPillNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
-  return pillsGetPillNum(&clientSimGetGameSim(csPtr)->pb, (BYTE) (clientSimGetXOffset(csPtr)+mx), (BYTE) (clientSimGetYOffset(csPtr)+my), FALSE, FALSE);
-}
-
-
-/*********************************************************
-*NAME:          screenBaseNumPos
-*AUTHOR:        John Morrison
-*CREATION DATE: 23/1/99
-*LAST MODIFIED: 23/1/99
-*PURPOSE:
-* The front end needs the base number at a specific
-* location for drawing its label
-*
-*ARGUMENTS:
-*  mx - X Map Co-ordinate relative to the screen
-*  my - Y Map Co-ordinate relative to the screen
-*********************************************************/
-BYTE screenBaseNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
-  return basesGetBaseNum(&clientSimGetGameSim(csPtr)->bs, (BYTE) (clientSimGetXOffset(csPtr)+mx), (BYTE) (clientSimGetYOffset(csPtr)+my));
-}
-
-
-/*********************************************************
 *NAME:          screenSetAllowHiddenMines
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/2/99
@@ -1400,19 +1364,6 @@ void serverCoreSoundDist(sndEffects value, BYTE mx, BYTE my) {
 *********************************************************/
 buildSelect getBuildCurrentSelectCS(ClientSim *csPtr) {
   return clientSimGetCurrentBuildSelect(csPtr);
-}
-
-
-/*********************************************************
-*NAME:          setBuildCurrentSelect
-*PURPOSE:
-*  Sets the current build selection
-*
-*ARGUMENTS:
-*  bs - The new build selection
-*********************************************************/
-void setBuildCurrentSelectCS(ClientSim *csPtr, buildSelect bs) {
-  clientSimSetCurrentBuildSelect(csPtr, bs);
 }
 
 
