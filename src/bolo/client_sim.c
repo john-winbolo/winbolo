@@ -811,3 +811,19 @@ ScrollState   *clientSimGetScroll(ClientSim *cs)     { return &cs->scroll; }
 InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
 screen        *clientSimGetView(ClientSim *cs)       { return &cs->view; }
 screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->mineView; }
+
+/* ================================================================
+ * Mutators — see header for the contract.
+ * ================================================================ */
+
+void clientSimSetBalanceProposalActive(ClientSim *cs, bool active) {
+  cs->balanceProposalActive = active;
+}
+
+void clientSimClearBalanceProposal(ClientSim *cs) {
+  memset(cs->balanceProposal, 0, sizeof(cs->balanceProposal));
+}
+
+void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote) {
+  cs->mapSkipMyVote = vote;
+}
