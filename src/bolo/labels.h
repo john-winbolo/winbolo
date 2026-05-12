@@ -38,9 +38,6 @@ struct ClientSim;
 
 /* Prototypes */
 
-void labelSetSenderLength(struct ClientSim *cs, labelLen isLengthShort);
-void labelSetTankLength(struct ClientSim *cs, labelLen isLengthShort);
-void labelSetLabelOwnTank(struct ClientSim *cs, bool labelOwn);
 void labelMakeMessage(struct ClientSim *cs, char *res, char *name, char *loc);
 void labelMakeTankLabel(struct ClientSim *cs, char *res, char *name, char *loc, bool isOwn);
 

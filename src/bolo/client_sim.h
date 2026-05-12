@@ -454,6 +454,10 @@ void         clientSimPanX(ClientSim *cs, int dxTiles);
 void         clientSimPanY(ClientSim *cs, int dyTiles);
 bool         clientSimTankIsDead(ClientSim *cs);
 bool         clientSimTankScroll(ClientSim *cs);
+void         clientSimCenterTank(ClientSim *cs);
+void         clientSimSetAutoScroll(ClientSim *cs, bool isAuto);
+void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
+void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 
 /* Submits a build request for the local LGM through InputPacket,
  * gated on tank armour and net status. */
