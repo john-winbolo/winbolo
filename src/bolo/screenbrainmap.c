@@ -37,7 +37,7 @@
 
 void screenBrainMapCreate(ClientSim *cs) {
   memset(clientSimGetBrainMap(cs), TERRAIN_UNKNOWN, (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE));
-  clientSimGetGameSim(cs)->brainMap = clientSimGetBrainMap(cs);
+  clientSimGetGameSim(cs)->brainMap = (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs);
 }
 
 void screenBrainMapDestroy(ClientSim *cs) {
