@@ -242,6 +242,7 @@ bool clientSimGetTankAutoSlowdown(ClientSim *cs);
 void clientSimSetTankAutoSlowdown(ClientSim *cs, bool useSlowdown);
 bool clientSimGetTankAutoHideGunsight(ClientSim *cs);
 void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide);
+void clientSimSetGunsight(ClientSim *cs, bool shown);
 
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs);
@@ -440,6 +441,7 @@ void clientSimSetIsBot(ClientSim *cs, bool v);
  * underlying viewport ops with ClientSim's tank/scroll/gameSim. */
 void         clientSimTankView(ClientSim *cs);
 void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
+bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
 void         clientSimPillView(ClientSim *cs, int horz, int vert);
 
 /* Submits a build request for the local LGM through InputPacket,
@@ -455,5 +457,9 @@ baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum);
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
+
+/* Notifies the local LGM and player table that the server connection
+ * has been lost; called by the frontend when a UDP shutdown is seen. */
+void         clientSimConnectionLost(ClientSim *cs);
 
 #endif /* CLIENT_SIM_H */

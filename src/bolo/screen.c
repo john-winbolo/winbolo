@@ -311,7 +311,7 @@ void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
 *  shown - TRUE = Gunsight on.
 *********************************************************/
 void screenSetGunsightCS(ClientSim *csPtr, bool shown) {
-  tankSetGunsight(&MY_TANK(csPtr), shown);
+  clientSimSetGunsight(csPtr, shown);
 }
 
 
@@ -523,23 +523,6 @@ BYTE screenPillNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
 *********************************************************/
 BYTE screenBaseNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
   return basesGetBaseNum(&clientSimGetGameSim(csPtr)->bs, (BYTE) (clientSimGetXOffset(csPtr)+mx), (BYTE) (clientSimGetYOffset(csPtr)+my));
-}
-
-
-/*********************************************************
-*NAME:          screenGetMapName
-*AUTHOR:        John Morrison
-*CREATION DATE: 26/1/99
-*LAST MODIFIED: 26/1/99
-*PURPOSE:
-* The front end eants to know what the map name is.
-* Make a copy for it.
-*
-*ARGUMENTS:
-*  value - Place to hold copy of the map name
-*********************************************************/
-void screenGetMapNameCS(ClientSim *csPtr, char *value) {
-  strcpy(value, clientSimGetMapName(csPtr));
 }
 
 
@@ -1216,7 +1199,7 @@ void screenSetCursorPosCS(ClientSim *csPtr, BYTE posX, BYTE posY) {
 *  posY - Pointer to hold top position
 *********************************************************/
 bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
-  return viewportGetCursor(clientSimViewport(csPtr), posX, posY);
+  return clientSimGetCursorPos(csPtr, posX, posY);
 }
 
 
@@ -1359,8 +1342,7 @@ bool screenGetGameRunningCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenConnectionLostCS(ClientSim *csPtr) {
-  lgmConnectionLost(clientSimGetGameSim(csPtr), &MY_LGM(csPtr), &MY_TANK(csPtr), &clientSimGetGameSim(csPtr)->ss);
-  playersConnectionLost(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+  clientSimConnectionLost(csPtr);
 }
 
 

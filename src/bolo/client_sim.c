@@ -764,6 +764,10 @@ void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide) {
   tankSetAutoHideGunsight(&MY_TANK(cs), useAutohide);
 }
 
+void clientSimSetGunsight(ClientSim *cs, bool shown) {
+  tankSetGunsight(&MY_TANK(cs), shown);
+}
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs) {
   return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);
@@ -1035,6 +1039,10 @@ void clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY) {
   viewportSetCursor(clientSimViewportMut(cs), posX, posY);
 }
 
+bool clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY) {
+  return viewportGetCursor(clientSimViewport(cs), posX, posY);
+}
+
 void clientSimPillView(ClientSim *cs, int horz, int vert) {
   viewportPanInPillView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
                         clientSimGetScroll(cs), MY_TANK(cs), horz, vert);
@@ -1074,4 +1082,9 @@ void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount,
 
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {
   tankGetKillsDeaths(&MY_TANK(cs), kills, deaths);
+}
+
+void clientSimConnectionLost(ClientSim *cs) {
+  lgmConnectionLost(clientSimGetGameSim(cs), &MY_LGM(cs), &MY_TANK(cs), &clientSimGetGameSim(cs)->ss);
+  playersConnectionLost(cs, clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs));
 }

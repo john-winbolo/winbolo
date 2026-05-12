@@ -207,7 +207,6 @@ void screenTankLayMineCS(struct ClientSim *csPtr);
 void screenCheckTankMineDamageCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
 BYTE screenPillNumPosCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
 BYTE screenBaseNumPosCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
-void screenGetMapNameCS(struct ClientSim *csPtr, char *value);
 void screenSetAllowHiddenMinesCS(struct ClientSim *csPtr, bool hidden);
 int32_t screenGetGameStartDelayCS(struct ClientSim *csPtr);
 tankAlliance screenTankAllianceCS(struct ClientSim *csPtr, BYTE playerNum);
