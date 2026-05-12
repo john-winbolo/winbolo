@@ -57,7 +57,7 @@ bool isInMenu = FALSE;
 /* Per-instance game state */
 struct WinBoloGym {
     ServerSim  *serverSim;
-    ClientSim   clientSim;
+    ClientSim  *clientSim;
     Transport   transport;
     SubscriberHandle controlSub;
 
@@ -136,7 +136,7 @@ static void gymSyncSnapshot(WinBoloGym *g) {
                                   snapBases, MAX_SNAPSHOT_BASES,
                                   snapPills, MAX_SNAPSHOT_PILLS,
                                   snapEvents, MAX_SNAPSHOT_EVENTS)) {
-        clientSimSyncFromSnapshot(&g->clientSim, &snapHdr,
+        clientSimSyncFromSnapshot(g->clientSim, &snapHdr,
                                   snapTanks, snapHdr.tankCount,
                                   snapShells, snapHdr.shellCount,
                                   snapTkExplosions, snapHdr.tkExplosionCount,
@@ -154,12 +154,13 @@ static void gymSetupGame(WinBoloGym *g) {
 
     g->transport = transportLocalCreate(g->serverSim, 0);
 
-    screenLoadCompressedMapCS(&g->clientSim, g->cachedMap, g->cachedMapLen,
+    g->clientSim = clientSimAlloc();
+    screenLoadCompressedMapCS(g->clientSim, g->cachedMap, g->cachedMapLen,
                               "Gym", g->gameMode, false, 0,
                               UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
-    screenSetAiTypeCS(&g->clientSim, aiYes);
+    screenSetAiTypeCS(g->clientSim, aiYes);
     gymSyncSnapshot(g);
-    screenNetSetupTankGoCS(&g->clientSim);
+    screenNetSetupTankGoCS(g->clientSim);
 
     /* Register the gym client as a control-event subscriber. Placed after
      * screenLoadCompressedMapCS (which calls clientSimCreate) so myPlayerNum
@@ -167,7 +168,7 @@ static void gymSetupGame(WinBoloGym *g) {
      * self-skip runs. */
     g->controlSub = serverSimRegisterSubscriber(g->serverSim,
                                                 gymDeliverControl,
-                                                &g->clientSim);
+                                                g->clientSim);
 
     g->simTickCounter = 0;
     g->gameTickCount = 0;
@@ -189,7 +190,8 @@ static void gymSetupGame(WinBoloGym *g) {
 static void gymTeardownGame(WinBoloGym *g) {
     serverSimUnregisterSubscriber(g->serverSim, g->controlSub);
     g->controlSub = SUBSCRIBER_HANDLE_INVALID;
-    clientSimDestroy(&g->clientSim);
+    clientSimDestroy(g->clientSim);
+    g->clientSim = NULL;
     transportLocalDestroy(&g->transport);
 }
 

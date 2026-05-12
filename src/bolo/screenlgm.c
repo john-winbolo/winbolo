@@ -76,8 +76,8 @@ void screenLgmPrepare(ClientSim *cs, screenLgm *value, BYTE leftPos, BYTE rightP
     lgmGetScreenCoords(&MY_LGM(cs), leftPos, top, &mx, &my, &px, &py, &frame);
     screenLgmAddItem(value, mx, my, px ,py, frame);
   }
-  playersMakeScreenLgm(cs, &cs->sim.plyrs, value, leftPos, rightPos, top, bottom);
-} 
+  playersMakeScreenLgm(cs, &clientSimGetGameSim(cs)->plyrs, value, leftPos, rightPos, top, bottom);
+}
 
 /*********************************************************
 *NAME:          screenLgmGetNumEntries

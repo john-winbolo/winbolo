@@ -288,8 +288,6 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 	WORLD newY;      /* world y-coord of new shell location */
 	shells position; /* The position in the stack of items */
 	bool needUpdate; /* Does an update need to occur? */
-	int xAdd;        /* Amounts to add */
-	int yAdd;
 	BYTE bmx;        /* Shell map x-coord */
 	BYTE bmy;        /* Shell map y-coord */
 	BYTE sx;         /* Screen - TANK_SUBTRACT Map X and Y Positions */
@@ -326,8 +324,6 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			shellAdvance1Tick(&newX, &newY,
 			                  &position->xAcc, &position->yAcc,
 			                  position->xStep, position->yStep);
-			xAdd = (int)newX - (int)position->x;
-			yAdd = (int)newY - (int)position->y;
 			/* Check for colision */
 			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks, position->compensationTicks)) == TRUE)
 			{

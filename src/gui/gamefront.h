@@ -736,7 +736,7 @@ BYTE gameFrontGetPlayerNum(void);
 *RETURNS:
 *  TRUE on success, FALSE on failure.
 *********************************************************/
-bool gameFrontLoadDeferredMap(struct ClientSim *cs);
+bool gameFrontLoadDeferredMap(struct ClientSim **cs);
 
 /*********************************************************
 *NAME:          gameFrontStartSinglePlayerGame

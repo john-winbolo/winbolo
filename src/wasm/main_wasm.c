@@ -362,12 +362,15 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 1;
   }
-  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-         (void*)humanSim,
-         humanSim ? (void*)humanSim->sim.plyrs : NULL,
-         humanSim ? (void*)humanSim->sim.mp : NULL,
-         humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
-  fflush(stderr);
+  {
+    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
+    fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
+           (void*)humanSim,
+           gs ? (void*)gs->plyrs : NULL,
+           gs ? (void*)gs->mp : NULL,
+           gs ? (void*)gs->tanks[0] : NULL);
+    fflush(stderr);
+  }
 
   /* Apply player name from URL after gameFrontStart sets defaults.
    * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
@@ -435,12 +438,15 @@ int main(int argc, char *argv[]) {
   oldTick = winboloTimer();
   lastFrameTime = emscripten_get_now();
 
-  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-         (void*)humanSim,
-         humanSim ? (void*)humanSim->sim.plyrs : NULL,
-         humanSim ? (void*)humanSim->sim.mp : NULL,
-         humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
-  fflush(stderr);
+  {
+    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
+    fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
+           (void*)humanSim,
+           gs ? (void*)gs->plyrs : NULL,
+           gs ? (void*)gs->mp : NULL,
+           gs ? (void*)gs->tanks[0] : NULL);
+    fflush(stderr);
+  }
   emscripten_set_main_loop(main_loop_iteration, 0, 1);
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */
@@ -543,7 +549,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showPillLabels = !showPillLabels;
   sdl3DrawSetPillsStatusClear();
-  total = pillsGetNumPills(&cs->sim.pb);
+  total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
   for (count = 1; count <= total; count++) {
     BYTE pillStat = screenPillAllianceCS(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
@@ -554,7 +560,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showBaseLabels = !showBaseLabels;
   sdl3DrawSetBasesStatusClear();
-  total = basesGetNumBases(&cs->sim.bs);
+  total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
   for (count = 1; count <= total; count++) {
     BYTE baseStat = screenBaseAllianceCS(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
@@ -654,7 +660,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
-    sdl3DrawSetNetFailed(cs->netStat == netFailed);
+    sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,

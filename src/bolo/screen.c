@@ -95,16 +95,16 @@ extern void moveMousePointer(updateType value);
 *  Called by screenSetup after clientSimCreate.
 *********************************************************/
 static void screenRenderSetup(ClientSim *csPtr) {
-  New(csPtr->view);
-  New(csPtr->mineView);
-  csPtr->xOffset = 0;
-  csPtr->yOffset = 0;
-  csPtr->cursorPosX = -1;
-  csPtr->cursorPosY = -1;
-  csPtr->needScreenReCalc = FALSE;
-  csPtr->inPillView = FALSE;
-  csPtr->pillViewX = 0;
-  csPtr->pillViewY = 0;
+  New(*clientSimGetView(csPtr));
+  New(*clientSimGetMineView(csPtr));
+  clientSimSetXOffset(csPtr, 0);
+  clientSimSetYOffset(csPtr, 0);
+  clientSimSetCursorPosX(csPtr, -1);
+  clientSimSetCursorPosY(csPtr, -1);
+  clientSimSetNeedScreenReCalc(csPtr, FALSE);
+  clientSimSetInPillView(csPtr, FALSE);
+  clientSimSetPillViewX(csPtr, 0);
+  clientSimSetPillViewY(csPtr, 0);
 }
 
 /*********************************************************
@@ -114,13 +114,13 @@ static void screenRenderSetup(ClientSim *csPtr) {
 *  Called by screenDestroy before clientSimDestroy.
 *********************************************************/
 static void screenRenderDestroy(ClientSim *csPtr) {
-  if (csPtr->view != NULL) {
-    Dispose(csPtr->view);
-    csPtr->view = NULL;
+  if (*clientSimGetView(csPtr) != NULL) {
+    Dispose(*clientSimGetView(csPtr));
+    clientSimSetView(csPtr, NULL);
   }
-  if (csPtr->mineView != NULL) {
-    Dispose(csPtr->mineView);
-    csPtr->mineView = NULL;
+  if (*clientSimGetMineView(csPtr) != NULL) {
+    Dispose(*clientSimGetMineView(csPtr));
+    clientSimSetMineView(csPtr, NULL);
   }
 }
 
@@ -148,10 +148,10 @@ static void screenSetupCS(ClientSim *csPtr, gameType game, bool hiddenMines, int
   screenRenderSetup(csPtr);
 
   /* Initialize display variables */
-  csPtr->mapName[0] = '\0';
-  csPtr->gmeStartDelay = srtDelay;
-  csPtr->gmeLength = gmeLen;
-  csPtr->timeStart = 0;
+  clientSimGetMapNameMutable(csPtr)[0] = '\0';
+  clientSimSetGmeStartDelay(csPtr, srtDelay);
+  clientSimSetGmeLength(csPtr, gmeLen);
+  clientSimSetTimeStart(csPtr, 0);
 }
 
 /*********************************************************
@@ -197,23 +197,23 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
   screenTanks scnTnk;
   BYTE gsX;
   netStatus ns;
-  BYTE oldXOffset = csPtr->xOffset;
-  BYTE oldYOffset = csPtr->yOffset;
+  BYTE oldXOffset = clientSimGetXOffset(csPtr);
+  BYTE oldYOffset = clientSimGetYOffset(csPtr);
 
   if (b == TRUE) {
     return;
   }
-  ns = csPtr->netStat;
+  ns = clientSimGetNetStatus(csPtr);
   if (ns != netRunning && ns != netFailed) {
     frontEndDrawDownload(csPtr, FALSE);
     return;
   }
-  if (csPtr->sim.inStartFind == TRUE) {
+  if (clientSimGetGameSim(csPtr)->inStartFind == TRUE) {
     frontEndDrawDownload(csPtr, TRUE);
     return;
   }
-  if (csPtr->needScreenReCalc == TRUE) {
-    csPtr->needScreenReCalc = FALSE;
+  if (clientSimIsNeedScreenReCalc(csPtr) == TRUE) {
+    clientSimSetNeedScreenReCalc(csPtr, FALSE);
     screenUpdateViewCS(csPtr, (updateType) 0);
   }
 
@@ -229,7 +229,7 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
   px = tankGetScreenPX(&MY_TANK(csPtr));
   py = tankGetScreenPY(&MY_TANK(csPtr));
 
-  if (px >3 || (x - csPtr->xOffset) == 0) {
+  if (px >3 || (x - clientSimGetXOffset(csPtr)) == 0) {
     x++;
   }
   if (py >2) {
@@ -245,75 +245,75 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
   case redraw:
     break;
   case left:
-    if (csPtr->inPillView == FALSE) {
-      if (scrollCheck((BYTE) (csPtr->xOffset-1), csPtr->yOffset, x, y) == TRUE) {
-        csPtr->xOffset--;
+    if (clientSimIsInPillView(csPtr) == FALSE) {
+      if (scrollCheck((BYTE) (clientSimGetXOffset(csPtr)-1), clientSimGetYOffset(csPtr), x, y) == TRUE) {
+        clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) - 1);
 		moveMousePointer(left);
-        if (csPtr->xOffset != oldXOffset) {
-          csPtr->cursorPosX++;
+        if (clientSimGetXOffset(csPtr) != oldXOffset) {
+          clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) + 1);
         }
       }
     } else {
       screenPillViewCS(csPtr, -1, 0);
     }
-    csPtr->needScreenReCalc = TRUE;
+    clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   case right:
-    if (csPtr->inPillView == FALSE) {
-      if (scrollCheck((BYTE) (csPtr->xOffset+1), csPtr->yOffset, x, y) == TRUE) {
-        csPtr->xOffset++;
+    if (clientSimIsInPillView(csPtr) == FALSE) {
+      if (scrollCheck((BYTE) (clientSimGetXOffset(csPtr)+1), clientSimGetYOffset(csPtr), x, y) == TRUE) {
+        clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) + 1);
 		moveMousePointer(right);
-        if (csPtr->xOffset != oldXOffset) {
-          csPtr->cursorPosX--;
+        if (clientSimGetXOffset(csPtr) != oldXOffset) {
+          clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1);
         }
       }
     } else {
       screenPillViewCS(csPtr, 1, 0);
     }
-    csPtr->needScreenReCalc = TRUE;
+    clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   case up:
-    if (csPtr->inPillView == FALSE) {
-      if (scrollCheck(csPtr->xOffset, (BYTE) (csPtr->yOffset-1), x, y) == TRUE) {
-        csPtr->yOffset--;
+    if (clientSimIsInPillView(csPtr) == FALSE) {
+      if (scrollCheck(clientSimGetXOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr)-1), x, y) == TRUE) {
+        clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) - 1);
 		moveMousePointer(up);
-        if (csPtr->yOffset != oldYOffset) {
-          csPtr->cursorPosY++;
+        if (clientSimGetYOffset(csPtr) != oldYOffset) {
+          clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) + 1);
         }
       }
     } else {
       screenPillViewCS(csPtr, 0, -1);
     }
-    csPtr->needScreenReCalc = TRUE;
+    clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   case down:
   default:
-    if (csPtr->inPillView == FALSE) {
-      if (scrollCheck(csPtr->xOffset, (BYTE) (csPtr->yOffset+1), x, y) == TRUE) {
-        csPtr->yOffset++;
+    if (clientSimIsInPillView(csPtr) == FALSE) {
+      if (scrollCheck(clientSimGetXOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr)+1), x, y) == TRUE) {
+        clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) + 1);
 		moveMousePointer(down);
-        if (csPtr->yOffset != oldYOffset) {
-          csPtr->cursorPosY--;
+        if (clientSimGetYOffset(csPtr) != oldYOffset) {
+          clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) - 1);
         }
       }
     } else {
       screenPillViewCS(csPtr, 0, 1);
     }
-    csPtr->needScreenReCalc = TRUE;
+    clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   }
 
 
   if (value == redraw) {
-    screenTanksPrepare(csPtr, &scnTnk, &MY_TANK(csPtr), csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y));
-    screenLgmPrepare(csPtr, &lgms, csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1 ), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y-1));
+    screenTanksPrepare(csPtr, &scnTnk, &MY_TANK(csPtr), clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y));
+    screenLgmPrepare(csPtr, &lgms, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1 ), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
     if (tankIsGunsightShow(&MY_TANK(csPtr)) == TRUE) {
       tankGetGunsight(&MY_TANK(csPtr), &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
       gs.mapX = gsX;
 
-      if (gs.mapX >= csPtr->xOffset && gs.mapX < (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1) && gs.mapY >= csPtr->yOffset && gs.mapY < (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y -1 )) {
-        gs.mapX -= csPtr->xOffset;
-        gs.mapY -= csPtr->yOffset;
+      if (gs.mapX >= clientSimGetXOffset(csPtr) && gs.mapX < (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1) && gs.mapY >= clientSimGetYOffset(csPtr) && gs.mapY < (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y -1 )) {
+        gs.mapX -= clientSimGetXOffset(csPtr);
+        gs.mapY -= clientSimGetYOffset(csPtr);
       } else {
         gs.mapX = NO_GUNSIGHT;
       }
@@ -325,41 +325,41 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
      * during snapshot sync in screenSyncFromSnapshotCS) */
     {
       int si;
-      BYTE myPlayer = csPtr->interpCtx.localPlayer;
-      for (si = 0; si < csPtr->serverShellCount; si++) {
-        BYTE smx = (BYTE)(csPtr->serverShellSnaps[si].worldX >> TANK_SHIFT_MAPSIZE);
-        BYTE smy = (BYTE)(csPtr->serverShellSnaps[si].worldY >> TANK_SHIFT_MAPSIZE);
-        if (csPtr->serverShellSnaps[si].owner == myPlayer) {
+      BYTE myPlayer = clientSimGetInterpCtx(csPtr)->localPlayer;
+      for (si = 0; si < clientSimGetServerShellCount(csPtr); si++) {
+        BYTE smx = (BYTE)(clientSimGetServerShellSnaps(csPtr)[si].worldX >> TANK_SHIFT_MAPSIZE);
+        BYTE smy = (BYTE)(clientSimGetServerShellSnaps(csPtr)[si].worldY >> TANK_SHIFT_MAPSIZE);
+        if (clientSimGetServerShellSnaps(csPtr)[si].owner == myPlayer) {
           continue;
         }
-        if (smx >= csPtr->xOffset && smx < (BYTE)(csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X - 1) &&
-            smy >= csPtr->yOffset && smy < (BYTE)(csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
+        if (smx >= clientSimGetXOffset(csPtr) && smx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
+            smy >= clientSimGetYOffset(csPtr) && smy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
           WORLD conv;
           BYTE spx, spy, sframe;
-          conv = csPtr->serverShellSnaps[si].worldX;
+          conv = clientSimGetServerShellSnaps(csPtr)[si].worldX;
           conv <<= TANK_SHIFT_MAPSIZE;
           conv >>= TANK_SHIFT_PIXELSIZE;
           spx = (BYTE)conv;
-          conv = csPtr->serverShellSnaps[si].worldY;
+          conv = clientSimGetServerShellSnaps(csPtr)[si].worldY;
           conv <<= TANK_SHIFT_MAPSIZE;
           conv >>= TANK_SHIFT_PIXELSIZE;
           spy = (BYTE)conv;
-          sframe = (BYTE)(utilGetDir((TURNTYPE)csPtr->serverShellSnaps[si].angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(smx - csPtr->xOffset), (BYTE)(smy - csPtr->yOffset), spx, spy, sframe);
+          sframe = (BYTE)(utilGetDir((TURNTYPE)clientSimGetServerShellSnaps(csPtr)[si].angle) + SHELL_START_EXPLODE + 1);
+          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe);
         }
       }
     }
     /* Client-predicted shells (local player only) */
     {
       int pi;
-      for (pi = 0; pi < csPtr->predictedShellCount; pi++) {
-        PredictedShell *ps = &csPtr->predictedShells[pi];
+      for (pi = 0; pi < clientSimGetPredictedShellCount(csPtr); pi++) {
+        const PredictedShell *ps = &clientSimGetPredictedShells(csPtr)[pi];
         /* Don't render shells that have expired — prevents ghost frame alongside explosion */
         if (ps->length <= SHELL_DEATH) continue;
         BYTE pmx = (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE);
         BYTE pmy = (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE);
-        if (pmx >= csPtr->xOffset && pmx < (BYTE)(csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X - 1) &&
-            pmy >= csPtr->yOffset && pmy < (BYTE)(csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
+        if (pmx >= clientSimGetXOffset(csPtr) && pmx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
+            pmy >= clientSimGetYOffset(csPtr) && pmy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
           WORLD conv;
           BYTE ppx, ppy, pframe;
           conv = ps->x;
@@ -371,13 +371,13 @@ void screenUpdateCS(ClientSim *csPtr, updateType value) {
           conv >>= TANK_SHIFT_PIXELSIZE;
           ppy = (BYTE)conv;
           pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(pmx - csPtr->xOffset), (BYTE)(pmy - csPtr->yOffset), ppx, ppy, pframe);
+          screenBulletsAddItem(&sBullets, (BYTE)(pmx - clientSimGetXOffset(csPtr)), (BYTE)(pmy - clientSimGetYOffset(csPtr)), ppx, ppy, pframe);
         }
       }
     }
-    explosionsCalcScreenBullets(&csPtr->sim.expl, &sBullets, csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y-1));
-    tkExplosionCalcScreenBullets(&csPtr->sim.tankExplosions, &sBullets, csPtr->xOffset, (BYTE) (csPtr->xOffset + MAIN_BACK_BUFFER_SIZE_X-1), csPtr->yOffset, (BYTE) (csPtr->yOffset + MAIN_BACK_BUFFER_SIZE_Y-1));
-    frontEndDrawMainScreen(csPtr, &csPtr->view, &csPtr->mineView, &scnTnk, &gs, &sBullets, &lgms, csPtr->gmeStartDelay, csPtr->inPillView, &MY_TANK(csPtr), 0, 0);
+    explosionsCalcScreenBullets(&clientSimGetGameSim(csPtr)->expl, &sBullets, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
+    tkExplosionCalcScreenBullets(&clientSimGetGameSim(csPtr)->tankExplosions, &sBullets, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
+    frontEndDrawMainScreen(csPtr, clientSimGetView(csPtr), clientSimGetMineView(csPtr), &scnTnk, &gs, &sBullets, &lgms, clientSimGetGmeStartDelay(csPtr), clientSimIsInPillView(csPtr), &MY_TANK(csPtr), 0, 0);
   }
   screenBulletsDestroy(&sBullets);
   screenLgmDestroy(&lgms);
@@ -451,8 +451,8 @@ void screenUpdateViewCS(ClientSim *csPtr, updateType value) {
 
   for (count=0;count<MAIN_BACK_BUFFER_SIZE_X;count++) {
     for (count2=0;count2<MAIN_BACK_BUFFER_SIZE_Y;count2++) {
-      (*csPtr->view).screenItem[count][count2] = screenCalcSquareCS(csPtr, (BYTE) (count+csPtr->xOffset),(BYTE) (count2+csPtr->yOffset), count, count2);
-      screenBrainMapSetPos(csPtr->brainMap, (BYTE) (count+csPtr->xOffset), (BYTE) (count2+csPtr->yOffset), mapGetPos(&csPtr->sim.mp, (BYTE) (count+csPtr->xOffset), (BYTE) (count2+csPtr->yOffset)), minesExistPos(&csPtr->sim.mns, &csPtr->sim.mp, (BYTE) (count+csPtr->xOffset), (BYTE) (count2+csPtr->yOffset)));
+      (*clientSimGetView(csPtr))->screenItem[count][count2] = screenCalcSquareCS(csPtr, (BYTE) (count+clientSimGetXOffset(csPtr)),(BYTE) (count2+clientSimGetYOffset(csPtr)), count, count2);
+      screenBrainMapSetPos((BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(csPtr), (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr)), mapGetPos(&clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))), minesExistPos(&clientSimGetGameSim(csPtr)->mns, &clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))));
     }
   }
 }
@@ -482,12 +482,12 @@ BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, B
   BYTE below;
   BYTE belowRight;
 
-  (*csPtr->mineView).mineItem[scrX][scrY] = FALSE;
+  (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = FALSE;
   /* Set up Items */
-  if ((pillsExistPos(&csPtr->sim.pb,xValue,yValue)) == TRUE) {
-    returnValue = pillsGetScreenHealth(&csPtr->sim, &csPtr->sim.pb, xValue, yValue);
-  } else if ((basesExistPos(&csPtr->sim.bs,xValue,yValue)) == TRUE) {
-     ba = basesGetAlliancePos(&csPtr->sim, xValue, yValue);
+  if ((pillsExistPos(&clientSimGetGameSim(csPtr)->pb,xValue,yValue)) == TRUE) {
+    returnValue = pillsGetScreenHealth(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, xValue, yValue);
+  } else if ((basesExistPos(&clientSimGetGameSim(csPtr)->bs,xValue,yValue)) == TRUE) {
+     ba = basesGetAlliancePos(clientSimGetGameSim(csPtr), xValue, yValue);
     switch (ba) {
     case baseOwnGood:
       returnValue = BASE_GOOD;
@@ -499,7 +499,7 @@ BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, B
       returnValue = BASE_NEUTRAL;
       break;
     case baseDead:
-      if (basesAmOwner(&csPtr->sim, csPtr->myPlayerNum, xValue, yValue) == TRUE) {
+      if (basesAmOwner(clientSimGetGameSim(csPtr), clientSimGetMyPlayerNum(csPtr), xValue, yValue) == TRUE) {
         returnValue = BASE_GOOD;
       } else {
         returnValue = BASE_EVIL;
@@ -511,92 +511,92 @@ BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, B
       returnValue = BASE_EVIL;
     }
   }  else {
-    currentPos = mapGetPos(&csPtr->sim.mp,xValue,yValue);
+    currentPos = mapGetPos(&clientSimGetGameSim(csPtr)->mp,xValue,yValue);
 	if (currentPos>=HALFBUILDING+MINE_SUBTRACT&&currentPos!=DEEP_SEA){
-	  minesRemoveItem(&csPtr->sim.mns, xValue, yValue);
-	  (*csPtr->mineView).mineItem[scrX][scrY] = FALSE;
+	  minesRemoveItem(&clientSimGetGameSim(csPtr)->mns, xValue, yValue);
+	  (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = FALSE;
 	  currentPos = currentPos - MINE_SUBTRACT;
-	  mapSetPos(&csPtr->sim, &csPtr->sim.mp, xValue, yValue, currentPos,TRUE,TRUE);
+	  mapSetPos(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->mp, xValue, yValue, currentPos,TRUE,TRUE);
 	}
-    if (mapIsMine(&csPtr->sim.mp, xValue, yValue) == TRUE) {
-      if (minesExistPos(&csPtr->sim.mns, &csPtr->sim.mp, xValue, yValue) == TRUE) {
-        (*csPtr->mineView).mineItem[scrX][scrY] = TRUE;
+    if (mapIsMine(&clientSimGetGameSim(csPtr)->mp, xValue, yValue) == TRUE) {
+      if (minesExistPos(&clientSimGetGameSim(csPtr)->mns, &clientSimGetGameSim(csPtr)->mp, xValue, yValue) == TRUE) {
+        (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = TRUE;
       }
 	  if (currentPos != DEEP_SEA) {
         currentPos = currentPos - MINE_SUBTRACT;
       }
     } else {
-      (*csPtr->mineView).mineItem[scrX][scrY] = FALSE;
+      (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = FALSE;
     }
 
-    if (basesExistPos(&csPtr->sim.bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
       aboveLeft = ROAD;
     } else {
-      aboveLeft = mapGetPos(&csPtr->sim.mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
+      aboveLeft = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
       if (aboveLeft >= MINE_START && aboveLeft <= MINE_END) {
         aboveLeft = aboveLeft - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&csPtr->sim.bs, xValue, (BYTE) (yValue-1)) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, xValue, (BYTE) (yValue-1)) == TRUE) {
       above = ROAD;
     } else {
-      above = mapGetPos(&csPtr->sim.mp,xValue,(BYTE) (yValue-1));
+      above = mapGetPos(&clientSimGetGameSim(csPtr)->mp,xValue,(BYTE) (yValue-1));
       if (above >= MINE_START && above <= MINE_END) {
         above = above - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&csPtr->sim.bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
       aboveRight = ROAD;
     } else {
-      aboveRight = mapGetPos(&csPtr->sim.mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
+      aboveRight = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
       if (aboveRight >= MINE_START && aboveRight <= MINE_END) {
         aboveRight = aboveRight - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&csPtr->sim.bs, (BYTE) (xValue-1), yValue) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue-1), yValue) == TRUE) {
       leftPos = ROAD;
     } else {
-      leftPos = mapGetPos(&csPtr->sim.mp,(BYTE) (xValue-1),yValue);
+      leftPos = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue-1),yValue);
       if (leftPos >= MINE_START && leftPos <= MINE_END) {
         leftPos = leftPos - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&csPtr->sim.bs, (BYTE) (xValue+1), yValue) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue+1), yValue) == TRUE) {
       rightPos = ROAD;
     } else {
-      rightPos = mapGetPos(&csPtr->sim.mp,(BYTE) (xValue+1),yValue);
+      rightPos = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue+1),yValue);
       if (rightPos >= MINE_START && rightPos <= MINE_END) {
         rightPos = rightPos - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&csPtr->sim.bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
       belowLeft = ROAD;
     } else {
-      belowLeft = mapGetPos(&csPtr->sim.mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
+      belowLeft = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
       if (belowLeft >= MINE_START && belowLeft <= MINE_END) {
         belowLeft = belowLeft - MINE_SUBTRACT;
       }
     }
 
 
-    if (basesExistPos(&csPtr->sim.bs, xValue, (BYTE) (yValue+1)) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, xValue, (BYTE) (yValue+1)) == TRUE) {
       below = ROAD;
     } else {
-      below = mapGetPos(&csPtr->sim.mp,xValue,(BYTE) (yValue+1));
+      below = mapGetPos(&clientSimGetGameSim(csPtr)->mp,xValue,(BYTE) (yValue+1));
       if (below >= MINE_START && below <= MINE_END) {
         below = below - MINE_SUBTRACT;
       }
     }
 
-    if (basesExistPos(&csPtr->sim.bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
+    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
       belowRight = ROAD;
     } else {
-      belowRight = mapGetPos(&csPtr->sim.mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
+      belowRight = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
       if (belowRight >= MINE_START && belowRight <= MINE_END) {
         belowRight = belowRight - MINE_SUBTRACT;
       }
@@ -661,7 +661,7 @@ bool screenLoadMapCS(ClientSim *csPtr, char *fileName, gameType game, bool hidde
   returnValue = FALSE;
   doneFree = FALSE;
   screenSetupCS(csPtr, game, hiddenMines,srtDelay,gmeLen);
-  returnValue = mapRead(fileName, &csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss);
+  returnValue = mapRead(fileName, &clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss);
 
 /*
  * Used to write out linux compressed map file.
@@ -671,18 +671,18 @@ bool screenLoadMapCS(ClientSim *csPtr, char *fileName, gameType game, bool hidde
   FILE *fp;
 
   fp = fopen("c:\\map.txt", "wb");
-  buffLen = mapSaveCompressedMap(&mp, &csPtr->sim.pb, &csPtr->sim.bs, &ss, buff);
+  buffLen = mapSaveCompressedMap(&mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &ss, buff);
   fwrite(buff, buffLen, 1, fp);
   fclose(fp);
 
   }   */
 
   if (returnValue == TRUE) {
-    utilExtractMapName(fileName, csPtr->mapName);
+    utilExtractMapName(fileName, clientSimGetMapNameMutable(csPtr));
     utilStripNameReplace(playerName);
     screenSetupTankCS(csPtr, playerName, 0);
     screenUpdateViewCS(csPtr, redraw);
-    basesClearMines(&csPtr->sim);
+    basesClearMines(clientSimGetGameSim(csPtr));
 
   } else {
     screenDestroyCS(csPtr);
@@ -708,15 +708,15 @@ bool screenLoadCompressedMapCS(ClientSim *csPtr, BYTE *buff, int buffLen, char *
   if (playerNum != 0) {
     clientSimSetPlayerNum(csPtr, playerNum);
   }
-  returnValue = mapLoadCompressedMap(&csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss, buff, buffLen);
+  returnValue = mapLoadCompressedMap(&clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss, buff, buffLen);
 
   if (returnValue == TRUE) {
-    strncpy(csPtr->mapName, mapn, MAP_STR_SIZE - 1);
-    csPtr->mapName[MAP_STR_SIZE - 1] = '\0';
+    strncpy(clientSimGetMapNameMutable(csPtr), mapn, MAP_STR_SIZE - 1);
+    clientSimGetMapNameMutable(csPtr)[MAP_STR_SIZE - 1] = '\0';
     utilStripNameReplace(playerName);
     screenSetupTankCS(csPtr, playerName, playerNum);
     screenUpdateViewCS(csPtr, redraw);
-    basesClearMines(&csPtr->sim);
+    basesClearMines(clientSimGetGameSim(csPtr));
   } else {
     screenDestroyCS(csPtr);
     doneFree = TRUE;
@@ -764,10 +764,10 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
     setkey(*holdKeys, KEY_turnright);
   }
   if (testkey(*tapKeys, KEY_morerange)) {
-    tankGunsightIncrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
+    tankGunsightIncrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
   if (testkey(*tapKeys, KEY_lessrange)) {
-    tankGunsightDecrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
+    tankGunsightDecrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
   if (testkey(*tapKeys, KEY_shoot)) {
     if (isGameTick == TRUE) {
@@ -777,10 +777,10 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
     }
   }
   if (testkey(*tapKeys, KEY_dropmine)) {
-    tankLayMine(&csPtr->sim, &MY_TANK(csPtr));
+    tankLayMine(clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
   if (testkey(*tapKeys, KEY_TankView)) {
-    csPtr->inPillView = FALSE;
+    clientSimSetInPillView(csPtr, FALSE);
     clientCenterTankCS(csPtr);
   }
   if (testkey(*tapKeys, KEY_PillView)) {
@@ -815,19 +815,19 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
 
   /* Handle remaining keys */
   if (testkey(*holdKeys, KEY_morerange)) {
-    tankGunsightIncrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
+    tankGunsightIncrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
   if (testkey(*holdKeys, KEY_lessrange)) {
-    tankGunsightDecrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
+    tankGunsightDecrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
   if (testkey(*holdKeys, KEY_shoot) && isGameTick == TRUE) {
     *isShoot = TRUE;
   }
   if (testkey(*holdKeys, KEY_dropmine)) {
-    tankLayMine(&csPtr->sim, &MY_TANK(csPtr));
+    tankLayMine(clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
   if (testkey(*holdKeys, KEY_TankView)) {
-    csPtr->inPillView = FALSE;
+    clientSimSetInPillView(csPtr, FALSE);
     clientCenterTankCS(csPtr);
   }
   if (testkey(*holdKeys, KEY_PillView)) {
@@ -858,7 +858,7 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
 *  baseNum - The base number to get
 *********************************************************/
 baseAlliance screenBaseAllianceCS(ClientSim *csPtr, BYTE baseNum) {
-  return basesGetStatusNum(&csPtr->sim, baseNum);
+  return basesGetStatusNum(clientSimGetGameSim(csPtr), baseNum);
 }
 
 
@@ -875,7 +875,7 @@ baseAlliance screenBaseAllianceCS(ClientSim *csPtr, BYTE baseNum) {
 *  pillNum - The pillbox number to get
 *********************************************************/
 pillAlliance screenPillAllianceCS(ClientSim *csPtr, BYTE pillNum) {
-  return pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, pillNum);
+  return pillsGetAllianceNum(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, pillNum);
 }
 
 
@@ -914,9 +914,9 @@ void screenGetTankStatsCS(ClientSim *csPtr, BYTE *shellsAmount, BYTE *minesAmoun
 *********************************************************/
 void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
   if (increase == TRUE) {
-    tankGunsightIncrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
+    tankGunsightIncrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   } else {
-    tankGunsightDecrease(csPtr, &csPtr->sim, &MY_TANK(csPtr));
+    tankGunsightDecrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
 }
 
@@ -949,7 +949,7 @@ void screenSetGunsightCS(ClientSim *csPtr, bool shown) {
 *
 *********************************************************/
 void screenReCalcCS(ClientSim *csPtr) {
-  csPtr->needScreenReCalc = TRUE;
+  clientSimSetNeedScreenReCalc(csPtr, TRUE);
 }
 
 
@@ -966,7 +966,7 @@ void screenReCalcCS(ClientSim *csPtr) {
 *  top - Top message line to get
 *********************************************************/
 void screenGetMessages(ClientSim *csPtr, char *top, char *bottom) {
-  messageGetMessage(&csPtr->messages, top,bottom);
+  messageGetMessage(clientSimGetMessages(csPtr), top,bottom);
 }
 
 /*********************************************************
@@ -986,7 +986,7 @@ void clientCenterTankCS(ClientSim *csPtr) {
   tankGetStats(&MY_TANK(csPtr), &high, &low, &health, &dummy);
   if (health <= TANK_FULL_ARMOUR) {
     /* Tank isn't dead */
-    scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, (tankGetMX(&MY_TANK(csPtr))), (tankGetMY(&MY_TANK(csPtr))));
+    scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), (tankGetMX(&MY_TANK(csPtr))), (tankGetMY(&MY_TANK(csPtr))));
     screenReCalcCS(csPtr);
   }
 }
@@ -1022,7 +1022,7 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
     tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
     frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
   }
-  frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, selfType, selfFlags);
+  frontEndSetPlayer(csPtr, (playerNumbers) clientSimGetMyPlayerNum(csPtr), playerName, "", 0, selfType, selfFlags);
 }
 
 /*********************************************************
@@ -1056,20 +1056,20 @@ void screenGetKillsDeathsCS(ClientSim *csPtr, int *kills, int *deaths) {
 void screenShowMessages(ClientSim *csPtr, BYTE msgType, bool isShown) {
   switch (msgType) {
   case MSG_NEWSWIRE:
-    messageSetNewswire(&csPtr->messages, isShown);
+    messageSetNewswire(clientSimGetMessages(csPtr), isShown);
     break;
   case MSG_ASSISTANT:
-    messageSetAssistant(&csPtr->messages, isShown);
+    messageSetAssistant(clientSimGetMessages(csPtr), isShown);
     break;
   case MSG_AI:
-    messageSetAI(&csPtr->messages, isShown);
+    messageSetAI(clientSimGetMessages(csPtr), isShown);
     break;
   case MSG_NETSTATUS:
-    messageSetNetStatus(&csPtr->messages, isShown);
+    messageSetNetStatus(clientSimGetMessages(csPtr), isShown);
     break;
   default:
     /* MSG_Network */
-    messageSetNetwork(&csPtr->messages, isShown);
+    messageSetNetwork(clientSimGetMessages(csPtr), isShown);
     break;
   }
 }
@@ -1087,12 +1087,13 @@ void screenShowMessages(ClientSim *csPtr, BYTE msgType, bool isShown) {
 *  buildS - The building type selected
 *********************************************************/
 void screenManMoveCS(ClientSim *csPtr, buildSelect buildS) {
-  if (tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR && csPtr->netStat != netFailed) {
+  if (tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(csPtr) != netFailed) {
     /* Route build request through InputPacket so the server sim
      * processes it authoritatively (matches brain build path). */
-    csPtr->pendingBuildAction = (BYTE) buildS + 1;  /* 1-based in InputPacket (0=none) */
-    csPtr->pendingBuildX = (BYTE) (csPtr->cursorPosX + csPtr->xOffset);
-    csPtr->pendingBuildY = (BYTE) (csPtr->cursorPosY + csPtr->yOffset);
+    clientSimSetPendingBuild(csPtr,
+                             (BYTE) buildS + 1,  /* 1-based in InputPacket (0=none) */
+                             (BYTE) (clientSimGetCursorPosX(csPtr) + clientSimGetXOffset(csPtr)),
+                             (BYTE) (clientSimGetCursorPosY(csPtr) + clientSimGetYOffset(csPtr)));
   }
 }
 
@@ -1110,7 +1111,7 @@ void screenManMoveCS(ClientSim *csPtr, buildSelect buildS) {
 *  isAuto - Is the scrolling option automatic or not?
 *********************************************************/
 void screenSetAutoScroll(ClientSim *csPtr, bool isAuto) {
-  scrollSetScrollType(&csPtr->scroll, isAuto);
+  scrollSetScrollType(clientSimGetScroll(csPtr), isAuto);
 }
 
 /*********************************************************
@@ -1140,8 +1141,8 @@ void screenLgmDropPillCS(ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pi
   item.x = mx;
   item.y = my;
   item.justSeen = FALSE;
-  pillsSetPill(&csPtr->sim.pb,&item, pillNum);
-  frontEndStatusPillbox(csPtr, pillNum, (pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, pillNum)));
+  pillsSetPill(&clientSimGetGameSim(csPtr)->pb,&item, pillNum);
+  frontEndStatusPillbox(csPtr, pillNum, (pillsGetAllianceNum(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, pillNum)));
 }
 
 /*********************************************************
@@ -1156,7 +1157,7 @@ void screenLgmDropPillCS(ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pi
 *
 *********************************************************/
 void screenTankLayMineCS(ClientSim *csPtr) {
-  tankLayMine(&csPtr->sim, &MY_TANK(csPtr));
+  tankLayMine(clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
 }
 
 /*********************************************************
@@ -1172,7 +1173,7 @@ void screenTankLayMineCS(ClientSim *csPtr) {
 *  my - Y Map Co-ordinate
 *********************************************************/
 void screenCheckTankMineDamageCS(ClientSim *csPtr, BYTE mx, BYTE my) {
-  tankMineDamage(&csPtr->sim, &MY_TANK(csPtr), mx, my);
+  tankMineDamage(clientSimGetGameSim(csPtr), &MY_TANK(csPtr), mx, my);
 }
 
 /*********************************************************
@@ -1189,7 +1190,7 @@ void screenCheckTankMineDamageCS(ClientSim *csPtr, BYTE mx, BYTE my) {
 *  my - Y Map Co-ordinate relative to the screen
 *********************************************************/
 BYTE screenPillNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
-  return pillsGetPillNum(&csPtr->sim.pb, (BYTE) (csPtr->xOffset+mx), (BYTE) (csPtr->yOffset+my), FALSE, FALSE);
+  return pillsGetPillNum(&clientSimGetGameSim(csPtr)->pb, (BYTE) (clientSimGetXOffset(csPtr)+mx), (BYTE) (clientSimGetYOffset(csPtr)+my), FALSE, FALSE);
 }
 
 
@@ -1207,7 +1208,7 @@ BYTE screenPillNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
 *  my - Y Map Co-ordinate relative to the screen
 *********************************************************/
 BYTE screenBaseNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
-  return basesGetBaseNum(&csPtr->sim.bs, (BYTE) (csPtr->xOffset+mx), (BYTE) (csPtr->yOffset+my));
+  return basesGetBaseNum(&clientSimGetGameSim(csPtr)->bs, (BYTE) (clientSimGetXOffset(csPtr)+mx), (BYTE) (clientSimGetYOffset(csPtr)+my));
 }
 
 
@@ -1224,7 +1225,7 @@ BYTE screenBaseNumPosCS(ClientSim *csPtr, BYTE mx, BYTE my) {
 *  value - Place to hold copy of the map name
 *********************************************************/
 void screenGetMapNameCS(ClientSim *csPtr, char *value) {
-  strcpy(value, csPtr->mapName);
+  strcpy(value, clientSimGetMapName(csPtr));
 }
 
 
@@ -1240,7 +1241,7 @@ void screenGetMapNameCS(ClientSim *csPtr, char *value) {
 *
 *********************************************************/
 BYTE screenGetNumPlayersCS(ClientSim *csPtr) {
-  return playersGetNumPlayers(&csPtr->sim.plyrs);
+  return playersGetNumPlayers(&clientSimGetGameSim(csPtr)->plyrs);
 }
 
 
@@ -1257,7 +1258,7 @@ BYTE screenGetNumPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 bool screenGetAllowHiddenMinesCS(ClientSim *csPtr) {
-  return minesGetAllowHiddenMines(&csPtr->sim.mns);
+  return minesGetAllowHiddenMines(&clientSimGetGameSim(csPtr)->mns);
 }
 
 
@@ -1273,8 +1274,8 @@ bool screenGetAllowHiddenMinesCS(ClientSim *csPtr) {
 *  hidden - TRUE if hidden mines are allowed
 *********************************************************/
 void screenSetAllowHiddenMinesCS(ClientSim *csPtr, bool hidden) {
-  minesDestroy(&csPtr->sim.mns);
-  minesCreate(&csPtr->sim.mns, hidden);
+  minesDestroy(&clientSimGetGameSim(csPtr)->mns);
+  minesCreate(&clientSimGetGameSim(csPtr)->mns, hidden);
 }
 
 
@@ -1290,7 +1291,7 @@ void screenSetAllowHiddenMinesCS(ClientSim *csPtr, bool hidden) {
 *
 *********************************************************/
 int32_t screenGetGameTimeLeftCS(ClientSim *csPtr) {
-  return csPtr->gmeLength;
+  return clientSimGetGmeLength(csPtr);
 }
 
 
@@ -1306,7 +1307,7 @@ int32_t screenGetGameTimeLeftCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int32_t screenGetGameStartDelayCS(ClientSim *csPtr) {
-  return csPtr->gmeStartDelay;
+  return clientSimGetGmeStartDelay(csPtr);
 }
 
 
@@ -1323,10 +1324,10 @@ int32_t screenGetGameStartDelayCS(ClientSim *csPtr) {
 *  value - String to hold copy of the player name
 *********************************************************/
 void screenGetPlayerNameCS(ClientSim *csPtr, char *value) {
-  if (csPtr->sim.plyrs == NULL) {
-    strcpy(value, csPtr->myLastPlayerName);
+  if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
+    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
   } else {
-    playersGetPlayerName(&csPtr->sim.plyrs, csPtr->myPlayerNum, value, FALSE);
+    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
   }
 }
 
@@ -1348,10 +1349,10 @@ bool screenSetPlayerNameCS(ClientSim *csPtr, char *value) {
   bool returnValue;              /* Value to return */
 
   utilStripNameReplace(value);
-  returnValue = playersSetPlayerName(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, value, FALSE);
+  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE);
   if (returnValue == TRUE) {
-    if (csPtr->networkGameType != netSingle) {
-      clientSimSendChangePlayerName(csPtr, csPtr->myPlayerNum, value);
+    if (clientSimGetNetType(csPtr) != netSingle) {
+      clientSimSendChangePlayerName(csPtr, clientSimGetMyPlayerNum(csPtr), value);
     }
   }
   return returnValue;
@@ -1414,7 +1415,7 @@ void screenSetTankLabelLen(ClientSim *csPtr, labelLen value) {
 *
 *********************************************************/
 void screenTankViewCS(ClientSim *csPtr) {
-  csPtr->inPillView = FALSE;
+  clientSimSetInPillView(csPtr, FALSE);
   clientCenterTankCS(csPtr);
 }
 
@@ -1434,35 +1435,35 @@ void screenTankViewCS(ClientSim *csPtr) {
 void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
   bool result; /* Was the operation successful */
 
-  if (csPtr->inPillView == FALSE) {
-    if (pillsCheckView(&csPtr->sim, &csPtr->sim.pb, csPtr->pillViewX, csPtr->pillViewY) == TRUE) {
-      csPtr->inPillView = TRUE;
-      scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+  if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (pillsCheckView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr)) == TRUE) {
+      clientSimSetInPillView(csPtr, TRUE);
+      scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
       screenReCalcCS(csPtr);
     } else {
-      result = pillsGetNextView(&csPtr->sim, &csPtr->sim.pb, &csPtr->pillViewX, &csPtr->pillViewY, FALSE);
+      result = pillsGetNextView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewXPtr(csPtr), clientSimGetPillViewYPtr(csPtr), FALSE);
       if (result == TRUE) {
         /* Center on the object */
-        csPtr->inPillView = TRUE;
-        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+        clientSimSetInPillView(csPtr, TRUE);
+        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
         screenReCalcCS(csPtr);
       } else {
-        csPtr->inPillView = FALSE;
+        clientSimSetInPillView(csPtr, FALSE);
       }
     }
   } else {
     if (horz == 0 && vert == 0) {
-      result = pillsGetNextView(&csPtr->sim, &csPtr->sim.pb, &csPtr->pillViewX, &csPtr->pillViewY, TRUE);
+      result = pillsGetNextView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewXPtr(csPtr), clientSimGetPillViewYPtr(csPtr), TRUE);
       if (result == FALSE) {
         screenTankViewCS(csPtr);
       } else {
         /* Center on the object */
-        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
         screenReCalcCS(csPtr);
       }
     } else {
-      if (pillsMoveView(&csPtr->sim, &csPtr->sim.pb, &csPtr->pillViewX, &csPtr->pillViewY, horz, vert) == TRUE) {
-        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
+      if (pillsMoveView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewXPtr(csPtr), clientSimGetPillViewYPtr(csPtr), horz, vert) == TRUE) {
+        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
         screenReCalcCS(csPtr);
       }
     }
@@ -1485,9 +1486,9 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, topLine);
-  clientMessageAdd(&csPtr->messages, (messageType) (csPtr->myPlayerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  clientSimMessageSendAllPlayers(csPtr, csPtr->myPlayerNum, messageStr);
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  clientSimMessageSendAllPlayers(csPtr, clientSimGetMyPlayerNum(csPtr), messageStr);
 }
 
 /*********************************************************
@@ -1505,15 +1506,15 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
 bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
   bool returnValue;                 /* Value to return */
 
-  returnValue = mapWrite(fileName, &csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, &csPtr->sim.ss);
+  returnValue = mapWrite(fileName, &clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss);
   if (returnValue == TRUE) {
-    if (csPtr->networkGameType == netSingle) {
+    if (clientSimGetNetType(csPtr) == netSingle) {
       MessageArgs args;
       memset(&args, 0, sizeof(args));
-      playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, args.playerName);
-      args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, csPtr->myPlayerNum);
-      playersGetCountryCode(&csPtr->sim.plyrs, csPtr->myPlayerNum, args.playerCountry);
-      csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
+      playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), args.playerName);
+      args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+      playersGetCountryCode(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), args.playerCountry);
+      clientSimGetGameSim(csPtr)->callbacks.messageAdd(clientSimGetGameSim(csPtr)->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
     }
   }
   return returnValue;
@@ -1533,7 +1534,7 @@ bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
 *  fileName - path and filename to save
 *********************************************************/
 tankAlliance screenTankAllianceCS(ClientSim *csPtr, BYTE playerNum) {
-  return playersScreenAllience(&csPtr->sim.plyrs, csPtr->myPlayerNum, (BYTE) (playerNum-1));
+  return playersScreenAllience(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), (BYTE) (playerNum-1));
 }
 
 
@@ -1576,7 +1577,7 @@ bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) {
 *
 *********************************************************/
 BYTE screenGetNumNeutralPillsCS(ClientSim *csPtr) {
-  return pillsGetNumNeutral(&csPtr->sim.pb);
+  return pillsGetNumNeutral(&clientSimGetGameSim(csPtr)->pb);
 }
 
 /*********************************************************
@@ -1591,7 +1592,7 @@ BYTE screenGetNumNeutralPillsCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int32_t screenGetTimeGameCreatedCS(ClientSim *csPtr) {
-  return (int32_t) csPtr->timeStart;
+  return (int32_t) clientSimGetTimeStart(csPtr);
 }
 
 /*********************************************************
@@ -1606,7 +1607,7 @@ int32_t screenGetTimeGameCreatedCS(ClientSim *csPtr) {
 *  value - Time to set it to
 *********************************************************/
 void screenSetTimeGameCreatedCS(ClientSim *csPtr, int32_t value) {
-  csPtr->timeStart = value;
+  clientSimSetTimeStart(csPtr, value);
 }
 
 /*********************************************************
@@ -1622,7 +1623,7 @@ void screenSetTimeGameCreatedCS(ClientSim *csPtr, int32_t value) {
 *  name - Map name
 *********************************************************/
 void screenSetMapNameCS(ClientSim *csPtr, char *name) {
-  strcpy(csPtr->mapName, name);
+  strcpy(clientSimGetMapNameMutable(csPtr), name);
 }
 
 /*********************************************************
@@ -1639,8 +1640,8 @@ void screenSetMapNameCS(ClientSim *csPtr, char *name) {
 *                (-1 =unlimited)
 *********************************************************/
 void screenSetTimeLengthsCS(ClientSim *csPtr, int srtDelay, int32_t gmeLen) {
-  csPtr->gmeStartDelay = srtDelay;
-  csPtr->gmeLength = gmeLen;
+  clientSimSetGmeStartDelay(csPtr, srtDelay);
+  clientSimSetGmeLength(csPtr, gmeLen);
 }
 
 
@@ -1656,7 +1657,7 @@ void screenSetTimeLengthsCS(ClientSim *csPtr, int srtDelay, int32_t gmeLen) {
 *  gt - The game type to set to
 *********************************************************/
 void screenSetGameTypeCS(ClientSim *csPtr, gameType gt) {
-  gameTypeSet(&csPtr->sim.game, gt);
+  gameTypeSet(&clientSimGetGameSim(csPtr)->game, gt);
 }
 
 /*********************************************************
@@ -1671,9 +1672,9 @@ void screenSetGameTypeCS(ClientSim *csPtr, gameType gt) {
 * isInStart - Are we in In start mode?
 *********************************************************/
 void screenNetSetupTankCS(ClientSim *csPtr, bool isInStart) {
-  csPtr->sim.inStartFind = isInStart;
-  tankCreate(&csPtr->sim, &MY_TANK(csPtr));
-  tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), 0, 0, (TURNTYPE) 0, FALSE);
+  clientSimGetGameSim(csPtr)->inStartFind = isInStart;
+  tankCreate(clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
+  tankSetWorld(clientSimGetGameSim(csPtr), &MY_TANK(csPtr), 0, 0, (TURNTYPE) 0, FALSE);
 }
 
 /*********************************************************
@@ -1703,7 +1704,7 @@ void screenNetSetupTankGoCS(ClientSim *csPtr) {
 
   for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
     for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
-      (*csPtr->mineView).mineItem[count][count2] = FALSE;
+      (*clientSimGetMineView(csPtr))->mineItem[count][count2] = FALSE;
     }
   }
 
@@ -1727,26 +1728,26 @@ void screenSetBaseNetDataCS(ClientSim *csPtr, BYTE *buff, int length) {
   BYTE max;   /* Max items */
   char pn[PLAYER_NAME_LEN];
   
-  basesSetBaseNetData(&csPtr->sim.bs, buff, length);
+  basesSetBaseNetData(&clientSimGetGameSim(csPtr)->bs, buff, length);
   count = 1;
-  max = basesGetNumBases(&csPtr->sim.bs);
+  max = basesGetNumBases(&clientSimGetGameSim(csPtr)->bs);
   while (count <= max) {
-    frontEndStatusBase(csPtr, count, basesGetStatusNum(&csPtr->sim, count));
+    frontEndStatusBase(csPtr, count, basesGetStatusNum(clientSimGetGameSim(csPtr), count));
     count++;
   }
   /* Set our player name in the menu */
-  max = csPtr->myPlayerNum;
-  playersGetPlayerName(&csPtr->sim.plyrs, max, pn, FALSE);
+  max = clientSimGetMyPlayerNum(csPtr);
+  playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, max, pn, FALSE);
   {
     char cc[3];
-    playersGetCountryCode(&csPtr->sim.plyrs, max, cc);
+    playersGetCountryCode(&clientSimGetGameSim(csPtr)->plyrs, max, cc);
     frontEndSetPlayer(csPtr, (playerNumbers) max, pn, cc,
-                      playersGetPing(&csPtr->sim.plyrs, max),
-                      playersGetClientType(&csPtr->sim.plyrs, max),
-                      playersGetClientFlags(&csPtr->sim.plyrs, max));
+                      playersGetPing(&clientSimGetGameSim(csPtr)->plyrs, max),
+                      playersGetClientType(&clientSimGetGameSim(csPtr)->plyrs, max),
+                      playersGetClientFlags(&clientSimGetGameSim(csPtr)->plyrs, max));
   }
   /* Set The other players in the menu */
-  playersSetMenuItems(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
+  playersSetMenuItems(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
 }
 
 
@@ -1766,11 +1767,11 @@ void screenSetPillNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
   BYTE count; /* Looping variable */
   BYTE max;   /* Max items */
   
-  pillsSetPillNetData(&csPtr->sim.pb, buff, dataLen);
+  pillsSetPillNetData(&clientSimGetGameSim(csPtr)->pb, buff, dataLen);
   count = 1;
-  max = pillsGetNumPills(&csPtr->sim.pb);
+  max = pillsGetNumPills(&clientSimGetGameSim(csPtr)->pb);
   while (count <= max) {
-    frontEndStatusPillbox(csPtr, count, pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, count));
+    frontEndStatusPillbox(csPtr, count, pillsGetAllianceNum(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, count));
     count++;
   }
 }
@@ -1788,7 +1789,7 @@ void screenSetPillNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
 *  dataLen - Length of the data
 *********************************************************/
 void screenSetStartsNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
-  startsSetStartNetData(&csPtr->sim.ss, buff, dataLen); 
+  startsSetStartNetData(&clientSimGetGameSim(csPtr)->ss, buff, dataLen);
 }
 
 /*********************************************************
@@ -1804,7 +1805,7 @@ void screenSetStartsNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
 *  buff - Pointer to hold Packet data
 *********************************************************/
 BYTE screenMakeShellDataCS(ClientSim *csPtr, BYTE *buff) {
-  return shellsNetMake(&csPtr->sim.shs, buff, 0xFF, TRUE);
+  return shellsNetMake(&clientSimGetGameSim(csPtr)->shs, buff, 0xFF, TRUE);
 }
 
 /*********************************************************
@@ -1820,7 +1821,7 @@ BYTE screenMakeShellDataCS(ClientSim *csPtr, BYTE *buff) {
 *  datLen - Length of the packet
 *********************************************************/
 void screenExtractShellDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
-  shellsNetExtract(&csPtr->sim, &csPtr->sim.shs, &csPtr->sim.pb, buff, dataLen, FALSE, NULL);
+  shellsNetExtract(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->shs, &clientSimGetGameSim(csPtr)->pb, buff, dataLen, FALSE, NULL);
 }
 
 /*********************************************************
@@ -1880,12 +1881,12 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, topLine);
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), playerNum, topLine);
 
-  if (csPtr->inLobby && playerNum < 16) {
-    clientSimAppendLobbyChat(csPtr, csPtr->lobbySlots[playerNum].playerName, messageStr);
+  if (clientSimIsInLobby(csPtr) && playerNum < 16) {
+    clientSimAppendLobbyChat(csPtr, clientSimGetLobbySlot(csPtr, playerNum)->playerName, messageStr);
   } else {
-    clientMessageAdd(&csPtr->messages, (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+    clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   }
 }
 
@@ -1901,7 +1902,7 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
 *
 *********************************************************/
 void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
-  playersToggleCheckedState(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, FALSE);
+  playersToggleCheckedState(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), playerNum, FALSE);
 }
 
 /*********************************************************
@@ -1916,7 +1917,7 @@ void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
 *  isChecked - TRUE if check all
 *********************************************************/
 void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
-  playersCheckAllNone(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, isChecked, FALSE);
+  playersCheckAllNone(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), isChecked, FALSE);
 }
 
 /*********************************************************
@@ -1931,7 +1932,7 @@ void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
 *
 *********************************************************/
 void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
-  playersCheckAllies(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
+  playersCheckAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
 }
 
 /*********************************************************
@@ -1946,7 +1947,7 @@ void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  playersCheckNearbyPlayers(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
+  playersCheckNearbyPlayers(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
 }
 
 /*********************************************************
@@ -1961,7 +1962,7 @@ void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int screenNumCheckedPlayersCS(ClientSim *csPtr) {
-  return playersGetNumChecked(&csPtr->sim.plyrs);
+  return playersGetNumChecked(&clientSimGetGameSim(csPtr)->plyrs);
 }
 
 /*********************************************************
@@ -1976,7 +1977,7 @@ int screenNumCheckedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int screenNumAlliesCS(ClientSim *csPtr) {
-  return playersGetNumAllies(&csPtr->sim.plyrs, csPtr->myPlayerNum);
+  return playersGetNumAllies(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
 }
 
 /*********************************************************
@@ -1991,7 +1992,7 @@ int screenNumAlliesCS(ClientSim *csPtr) {
 *
 *********************************************************/
 int screenNumNearbyTanksCS(ClientSim *csPtr) {
-  return playersNumNearbyPlayers(&csPtr->sim.plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)));
+  return playersNumNearbyPlayers(&clientSimGetGameSim(csPtr)->plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)));
 }
 
 /*********************************************************
@@ -2009,9 +2010,9 @@ void screenSendMessageAllAlliesCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, topLine);
-  clientMessageAdd(&csPtr->messages, (messageType) (csPtr->myPlayerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllAllies(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, messageStr);
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
 }
 
 /*********************************************************
@@ -2026,7 +2027,7 @@ void screenSendMessageAllAlliesCS(ClientSim *csPtr, char *messageStr) {
 *  messageStr - The message to send
 *********************************************************/
 void screenSendMessageAllSelectedCS(ClientSim *csPtr, char *messageStr) {
-  playersSendMessageAllSelected(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, messageStr);
+  playersSendMessageAllSelected(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
 }
 
 /*********************************************************
@@ -2044,9 +2045,9 @@ void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
   topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, csPtr->myPlayerNum, topLine);
-  clientMessageAdd(&csPtr->messages, (messageType) (csPtr->myPlayerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllNearby(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllNearby(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
 }
 
 /*********************************************************
@@ -2061,7 +2062,7 @@ void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
 *
 *********************************************************/
 void screenRequestAllianceCS(ClientSim *csPtr) {
-  playersRequestAlliance(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum);
+  playersRequestAlliance(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
 }
 
 /*********************************************************
@@ -2076,7 +2077,7 @@ void screenRequestAllianceCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenLeaveAllianceCS(ClientSim *csPtr) {
-  clientSimLeaveAlliance(csPtr, csPtr->myPlayerNum);
+  clientSimLeaveAlliance(csPtr, clientSimGetMyPlayerNum(csPtr));
 }
 
 /*********************************************************
@@ -2092,8 +2093,8 @@ void screenLeaveAllianceCS(ClientSim *csPtr) {
 *  oldOwner - The old Owner of the stuff
 *********************************************************/
 void screenChangeOwnershipCS(ClientSim *csPtr, BYTE oldOwner) {
-  basesMigrate(&csPtr->sim, oldOwner, csPtr->myPlayerNum);
-  pillsMigrate(&csPtr->sim, oldOwner, csPtr->myPlayerNum);
+  basesMigrate(clientSimGetGameSim(csPtr), oldOwner, clientSimGetMyPlayerNum(csPtr));
+  pillsMigrate(clientSimGetGameSim(csPtr), oldOwner, clientSimGetMyPlayerNum(csPtr));
 }
 
 /*********************************************************
@@ -2109,9 +2110,9 @@ void screenChangeOwnershipCS(ClientSim *csPtr, BYTE oldOwner) {
 *********************************************************/
 void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) {
   if (isLeft == TRUE) {
-    csPtr->xOffset--;
+    clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) - 1);
   } else {
-    csPtr->xOffset++;
+    clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) + 1);
   }
 }
 
@@ -2128,9 +2129,9 @@ void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) {
 *********************************************************/
 void screenMoveViewOffsetUpCS(ClientSim *csPtr, bool isUp) {
   if (isUp == TRUE) {
-    csPtr->yOffset--;
+    clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) - 1);
   } else {
-    csPtr->yOffset++;
+    clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) + 1);
   }
 }
 
@@ -2193,7 +2194,7 @@ bool screenTankScrollCS(ClientSim *csPtr) {
   BYTE y;
 
   /* Don't scroll the view while in pill view — the view is locked on the pill */
-  if (csPtr->inPillView == TRUE) {
+  if (clientSimIsInPillView(csPtr) == TRUE) {
     return FALSE;
   }
 
@@ -2205,7 +2206,7 @@ bool screenTankScrollCS(ClientSim *csPtr) {
   if (py >2) {
     y++;
   } */
-  return scrollManual(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(csPtr)));
+  return scrollManual(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(csPtr)));
 }
 
 /*********************************************************
@@ -2355,11 +2356,11 @@ void screenSetCursorPosCS(ClientSim *csPtr, BYTE posX, BYTE posY) {
 /*    if (posX >15  || posY > 15) {
       strcat(str, " bad");
     } */
-    csPtr->cursorPosX = posX;
-    csPtr->cursorPosY = posY;
-/*    if (oldCursorXPos != csPtr->cursorPosX || oldCursorYPos != csPtr->cursorPosY) {
-      oldCursorXPos = csPtr->cursorPosX;
-      oldCursorYPos = csPtr->cursorPosY;
+    clientSimSetCursorPosX(csPtr, posX);
+    clientSimSetCursorPosY(csPtr, posY);
+/*    if (oldCursorXPos != clientSimGetCursorPosX(csPtr) || oldCursorYPos != clientSimGetCursorPosY(csPtr)) {
+      oldCursorXPos = clientSimGetCursorPosX(csPtr);
+      oldCursorYPos = clientSimGetCursorPosY(csPtr);
       messageAdd(globalMessage, "mouse", str);
     } */
   }
@@ -2383,10 +2384,10 @@ bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
   bool returnValue; /* Value to return */
 
   returnValue = FALSE;
-  if (csPtr->cursorPosX >= 0 && csPtr->cursorPosX <= MAIN_SCREEN_SIZE_X && csPtr->cursorPosY >= 0 && csPtr->cursorPosY <= MAIN_SCREEN_SIZE_Y) {
+  if (clientSimGetCursorPosX(csPtr) >= 0 && clientSimGetCursorPosX(csPtr) <= MAIN_SCREEN_SIZE_X && clientSimGetCursorPosY(csPtr) >= 0 && clientSimGetCursorPosY(csPtr) <= MAIN_SCREEN_SIZE_Y) {
     returnValue = TRUE;
-    *posX = (BYTE) csPtr->cursorPosX;
-    *posY = (BYTE) csPtr->cursorPosY;
+    *posX = (BYTE) clientSimGetCursorPosX(csPtr);
+    *posY = (BYTE) clientSimGetCursorPosY(csPtr);
   } else {
     *posX = 0;
     *posY = 0;
@@ -2408,7 +2409,7 @@ bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
 *  messageStr - The message text
 *********************************************************/
 void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) {
-  clientMessageAdd(&csPtr->messages, networkStatus, (char *) "Network Status", messageStr);
+  clientMessageAdd(clientSimGetMessages(csPtr), networkStatus, (char *) "Network Status", messageStr);
 }
 
 /*********************************************************
@@ -2516,7 +2517,7 @@ bool screenGenerateMapPreview(char *fileName, BYTE *buff) {
 *  pillNum  - Pillbox being carries
 *********************************************************/
 void screenNetLgmReturnCS(ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE pillNum) {
-  lgmNetBackInTank(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), numTrees, numMines, pillNum);
+  lgmNetBackInTank(clientSimGetGameSim(csPtr), &MY_LGM(csPtr), &MY_TANK(csPtr), numTrees, numMines, pillNum);
 }
 
 /*********************************************************
@@ -2535,7 +2536,7 @@ void screenNetLgmReturnCS(ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE p
 *  numTrees - The number of trees
 *********************************************************/
 void screenNetManWorkingCS(ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines, BYTE pillNum, BYTE numTrees) {
-  lgmNetManWorking(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), mapX, mapY, numTrees, numMines, pillNum);
+  lgmNetManWorking(clientSimGetGameSim(csPtr), &MY_LGM(csPtr), &MY_TANK(csPtr), mapX, mapY, numTrees, numMines, pillNum);
 }
 
 /*********************************************************
@@ -2557,13 +2558,13 @@ void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TU
   BYTE numTrees;
   tankSetLocationData(&MY_TANK(csPtr), (WORLD) ((xValue << TANK_SHIFT_MAPSIZE ) + MAP_SQUARE_MIDDLE), (WORLD) ((yValue << TANK_SHIFT_MAPSIZE ) + MAP_SQUARE_MIDDLE), (TURNTYPE) angle, (SPEEDTYPE) 0, (bool) TRUE);
   numTrees = 0;
-  if (gameTypeGet(&csPtr->sim.game) == gameOpen) {
+  if (gameTypeGet(&clientSimGetGameSim(csPtr)->game) == gameOpen) {
     numTrees = TANK_FULL_TREES;
   }
   tankSetStats(&MY_TANK(csPtr), numShells, numMines, TANK_FULL_ARMOUR, numTrees);
   frontEndUpdateTankStatusBars(csPtr, numShells, numMines, TANK_FULL_ARMOUR, numTrees);
   screenTankViewCS(csPtr);
-  csPtr->sim.inStartFind = FALSE;
+  clientSimGetGameSim(csPtr)->inStartFind = FALSE;
 }
 
 /*********************************************************
@@ -2578,7 +2579,7 @@ void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TU
 *
 *********************************************************/
 void screenSetPlayersMenuCS(ClientSim *csPtr) {
-  playersSetPlayersMenu(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
+  playersSetPlayersMenu(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
 }
 
 /*********************************************************
@@ -2593,7 +2594,7 @@ void screenSetPlayersMenuCS(ClientSim *csPtr) {
 *
 *********************************************************/
 bool screenGetGameRunningCS(ClientSim *csPtr) {
-  return csPtr->running;
+  return clientSimIsRunning(csPtr);
 }
 
 
@@ -2609,8 +2610,8 @@ bool screenGetGameRunningCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenConnectionLostCS(ClientSim *csPtr) {
-  lgmConnectionLost(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), &csPtr->sim.ss);
-  playersConnectionLost(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum);
+  lgmConnectionLost(clientSimGetGameSim(csPtr), &MY_LGM(csPtr), &MY_TANK(csPtr), &clientSimGetGameSim(csPtr)->ss);
+  playersConnectionLost(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
 }
 
 
@@ -2705,30 +2706,30 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   BYTE armour, shellsAmount, minesAmount;
   BYTE tmx, tmy, pmx, pmy;
 
-  if (csPtr->running == FALSE || csPtr->netStat == netFailed) {
+  if (clientSimIsRunning(csPtr) == FALSE || clientSimGetNetStatus(csPtr) == netFailed) {
     return;
   }
 
-  if (csPtr->gmeStartDelay > 0) {
-    csPtr->messages.messageTime++;
-    if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
-      messageUpdate(csPtr, &csPtr->messages);
-      csPtr->messages.messageTime = 0;
+  if (clientSimGetGmeStartDelay(csPtr) > 0) {
+    clientSimGetMessages(csPtr)->messageTime++;
+    if (clientSimGetMessages(csPtr)->messageTime == MESSAGE_SCROLL_TIME) {
+      messageUpdate(csPtr, clientSimGetMessages(csPtr));
+      clientSimGetMessages(csPtr)->messageTime = 0;
     }
     return;
   }
 
-  if (csPtr->gmeLength == 0) {
-    csPtr->running = FALSE;
+  if (clientSimGetGmeLength(csPtr) == 0) {
+    clientSimSetRunning(csPtr, FALSE);
     frontEndGameOver(csPtr);
     return;
   }
 
-  if (csPtr->netStat != netRunning) {
-    csPtr->messages.messageTime++;
-    if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
-      messageUpdate(csPtr, &csPtr->messages);
-      csPtr->messages.messageTime = 0;
+  if (clientSimGetNetStatus(csPtr) != netRunning) {
+    clientSimGetMessages(csPtr)->messageTime++;
+    if (clientSimGetMessages(csPtr)->messageTime == MESSAGE_SCROLL_TIME) {
+      messageUpdate(csPtr, clientSimGetMessages(csPtr));
+      clientSimGetMessages(csPtr)->messageTime = 0;
     }
     return;
   }
@@ -2736,31 +2737,31 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   /* Update scrolling based on tank position */
   if (tankGetSpeed(&MY_TANK(csPtr)) > 0) {
     tankGetGunsight(&MY_TANK(csPtr), &tmx, &tmy, &pmx, &pmy);
-    if (csPtr->inPillView == FALSE) {
-      int oldXOffset = csPtr->xOffset;
-      int oldYOffset = csPtr->yOffset;
-      if (scrollUpdate(&csPtr->scroll, &csPtr->sim, &csPtr->xOffset, &csPtr->yOffset, tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
-        if (oldXOffset < csPtr->xOffset) { csPtr->cursorPosX--; moveMousePointer(right); }
-        else if (oldXOffset > csPtr->xOffset) { csPtr->cursorPosX++; moveMousePointer(left); }
-        if (oldYOffset < csPtr->yOffset) { csPtr->cursorPosY--; moveMousePointer(down); }
-        else if (oldYOffset > csPtr->yOffset) { csPtr->cursorPosY++; moveMousePointer(up); }
+    if (clientSimIsInPillView(csPtr) == FALSE) {
+      int oldXOffset = clientSimGetXOffset(csPtr);
+      int oldYOffset = clientSimGetYOffset(csPtr);
+      if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
+        if (oldXOffset < clientSimGetXOffset(csPtr)) { clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1); moveMousePointer(right); }
+        else if (oldXOffset > clientSimGetXOffset(csPtr)) { clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) + 1); moveMousePointer(left); }
+        if (oldYOffset < clientSimGetYOffset(csPtr)) { clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) - 1); moveMousePointer(down); }
+        else if (oldYOffset > clientSimGetYOffset(csPtr)) { clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) + 1); moveMousePointer(up); }
         screenReCalcCS(csPtr);
       }
     }
   }
 
   /* Follow the death fireball when the tank is dead */
-  if (csPtr->inPillView == FALSE && screenTankIsDeadCS(csPtr)) {
+  if (clientSimIsInPillView(csPtr) == FALSE && screenTankIsDeadCS(csPtr)) {
     BYTE expMX, expMY;
-    if (tkExplosionGetOwnPosition(&csPtr->sim.tankExplosions, csPtr->myPlayerNum, &expMX, &expMY)) {
-      scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, expMX, expMY);
+    if (tkExplosionGetOwnPosition(&clientSimGetGameSim(csPtr)->tankExplosions, clientSimGetMyPlayerNum(csPtr), &expMX, &expMY)) {
+      scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), expMX, expMY);
       screenReCalcCS(csPtr);
     }
   }
 
   /* Check we are still allowed to be in pillbox view */
-  if (csPtr->inPillView == TRUE) {
-    if (pillsCheckView(&csPtr->sim, &csPtr->sim.pb, csPtr->pillViewX, csPtr->pillViewY) == FALSE) {
+  if (clientSimIsInPillView(csPtr) == TRUE) {
+    if (pillsCheckView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr)) == FALSE) {
       screenTankViewCS(csPtr);
     }
   }
@@ -2794,23 +2795,23 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
 
   /* Update base status bars */
   tankGetWorld(&MY_TANK(csPtr), &tankX, &tankY);
-  basesGetStats(&csPtr->sim.bs, basesGetClosest(&csPtr->sim, tankX, tankY), &shellsAmount, &minesAmount, &armour);
+  basesGetStats(&clientSimGetGameSim(csPtr)->bs, basesGetClosest(clientSimGetGameSim(csPtr), tankX, tankY), &shellsAmount, &minesAmount, &armour);
   frontEndUpdateBaseStatusBars(csPtr, shellsAmount, minesAmount, armour);
 
   /* Advance tank explosions locally for smooth animation/sounds between snapshots.
    * Destructive operations (pill damage, lgm death) are gated behind isServer
    * inside tkExplosionUpdate, so passing NULL/0 for lgm args is safe. */
-  tkExplosionUpdate(&csPtr->sim, NULL, 0, NULL, &csPtr->sim.ss);
-  explosionsUpdate(&csPtr->sim.expl);
+  tkExplosionUpdate(clientSimGetGameSim(csPtr), NULL, 0, NULL, &clientSimGetGameSim(csPtr)->ss);
+  explosionsUpdate(&clientSimGetGameSim(csPtr)->expl);
 
   /* Update network LGM frames */
-  playersGameTickUpdate(&csPtr->sim.plyrs);
+  playersGameTickUpdate(&clientSimGetGameSim(csPtr)->plyrs);
 
   /* Messaging */
-  csPtr->messages.messageTime++;
-  if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
-    messageUpdate(csPtr, &csPtr->messages);
-    csPtr->messages.messageTime = 0;
+  clientSimGetMessages(csPtr)->messageTime++;
+  if (clientSimGetMessages(csPtr)->messageTime == MESSAGE_SCROLL_TIME) {
+    messageUpdate(csPtr, clientSimGetMessages(csPtr));
+    clientSimGetMessages(csPtr)->messageTime = 0;
   }
 }
 
@@ -2823,7 +2824,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
 *
 *********************************************************/
 buildSelect getBuildCurrentSelectCS(ClientSim *csPtr) {
-  return csPtr->currentBuildSelect;
+  return clientSimGetCurrentBuildSelect(csPtr);
 }
 
 
@@ -2839,11 +2840,11 @@ void setBuildCurrentSelectCS(ClientSim *csPtr, buildSelect bs) {
   if ((bs != BsTrees) && (bs != BsRoad) && (bs != BsBuilding) && (bs != BsPillbox) && (bs != BsMine)) {
     return;
   }
-  csPtr->currentBuildSelect = bs;
+  clientSimSetCurrentBuildSelect(csPtr, bs);
 }
 
 
 void screenSetLocalTransportCS(ClientSim *csPtr, bool isLocal) {
-  csPtr->sim.isLocalTransport = isLocal;
+  clientSimGetGameSim(csPtr)->isLocalTransport = isLocal;
 }
 

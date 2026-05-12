@@ -420,6 +420,8 @@ void transportUdpServerBroadcastLobbyTeamMetaChg(struct ServerSim *sim,
                                                  uint8_t teamId);
 void transportUdpServerBroadcastLobbyBotConfigChg(struct ServerSim *sim,
                                                   uint8_t slot);
+void transportUdpServerBroadcastLobbyBotBrainChg(struct ServerSim *sim,
+                                                 uint8_t slot);
 void transportUdpServerBroadcastLobbyAutoUnready(struct ServerSim *sim);
 
 /* Set a bot's name in the server transport client array so it appears

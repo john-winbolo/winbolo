@@ -426,7 +426,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 static void basesEmitCaptureMessage(GameSim *sim, struct ClientSim *cs,
                                     BYTE newOwner, BYTE prevOwner) {
   MessageArgs args;
-  BYTE selfPlayer = (cs != NULL) ? cs->myPlayerNum : sim->viewPlayer;
+  BYTE selfPlayer = (cs != NULL) ? clientSimGetMyPlayerNum(cs) : sim->viewPlayer;
   memset(&args, 0, sizeof(args));
   playersMakeMessageName(cs, &sim->plyrs, selfPlayer, newOwner, args.playerName);
   args.playerFlags = playersGetAccountFlags(&sim->plyrs, newOwner);

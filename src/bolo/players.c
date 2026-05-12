@@ -126,7 +126,7 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
   returnValue = FALSE;
   if ((*plrs)->item[playerNum].inUse == FALSE) {
     if (playersNameTaken(plrs, playerName) == FALSE) {
-      if (csParam) strcpy(csParam->myLastPlayerName, playerName);
+      if (csParam) clientSimSetMyLastPlayerName(csParam, playerName);
       returnValue = TRUE;
       strcpy((*plrs)->item[playerNum].playerName, playerName);
       (*plrs)->item[playerNum].inUse = TRUE;
@@ -189,7 +189,7 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
         strcat(temp, "@");
         strcat(temp, (*plrs)->item[playerNum].location);
       } else if (isServer == FALSE && csParam) {
-        strcpy(csParam->myLastPlayerName, playerName);
+        clientSimSetMyLastPlayerName(csParam, playerName);
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) playerNum, temp,
@@ -320,7 +320,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   }
 
   /* Update front end if we are in a running game (ie not in the joining phase) */
-  if (csParam == NULL || csParam->netStat != netFailed) {
+  if (csParam == NULL || clientSimGetNetStatus(csParam) != netFailed) {
     strcpy(str, (*plrs)->item[playerNum].playerName);
     if (playerNum != selfPlayer && (*plrs)->item[playerNum].location[0] != '\0') {
       strcat(str, " (");
@@ -732,13 +732,13 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
 
 /* FIXME: This function could use some optimisation I think */
   {
-    BYTE self = cs->myPlayerNum;
+    BYTE self = clientSimGetMyPlayerNum(cs);
     if (self >= MAX_TANKS || sim->tanks[self] == NULL) return;
     tankGetWorld(&sim->tanks[self], &ourTankX, &ourTankY);
   }
 
   for (count=0;count<MAX_TANKS;count++) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       playerName[0] = EMPTY_CHAR;
       /* Extract fixed map co-ordinates */
       conv = (*plrs)->item[count].mapX;
@@ -793,12 +793,12 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
           conv >>= TANK_SHIFT_PIXELSIZE;
           py = (BYTE) conv;
           /* Extract player screen name */
-          playersMakeScreenName(cs, plrs, cs->myPlayerNum, count, playerName);
+          playersMakeScreenName(cs, plrs, clientSimGetMyPlayerNum(cs), count, playerName);
           frame = (*plrs)->item[count].frame;
           if ((*plrs)->item[count].onBoat == TRUE) {
             frame += TANK_BOAT_ADD;
           }
-          if (allienceExist(&((*plrs)->item[count].allie), cs->myPlayerNum) == TRUE) {
+          if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
             frame += TANK_GOOD_ADD;
           } else {
             frame += TANK_EVIL_ADD;
@@ -836,7 +836,7 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
   BYTE count;                    /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       if ((*plrs)->item[count].lgmMapX >= leftPos && (*plrs)->item[count].lgmMapX <= rightPos && (*plrs)->item[count].lgmMapY >= top && (*plrs)->item[count].lgmMapY <= bottom) {
         wx = (*plrs)->item[count].lgmMapX << TANK_SHIFT_MAPSIZE;
         wx += (*plrs)->item[count].lgmPixelX << TANK_SHIFT_RIGHT2;
@@ -854,7 +854,7 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
           conv2 = ourTankY - wy;
         }
 
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame);
         }
       }
@@ -1326,7 +1326,7 @@ void playersSendMessageAllSelected(ClientSim *cs, GameSim *sim, players *plrs, B
          * client message log. */
         topLine[0] = '\0';
         playersMakeMessageName(cs, plrs, selfPlayer, selfPlayer, topLine);
-        clientMessageAdd(&cs->messages, (messageType) selfPlayer, topLine, messageStr);
+        clientMessageAdd(clientSimGetMessages(cs), (messageType) selfPlayer, topLine, messageStr);
       } else {
         clientSimMessageSendPlayer(cs, selfPlayer, count, messageStr);
       }
@@ -1860,7 +1860,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
 */
 
   while (count<MAX_TANKS) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       /* X Position */
       wx = (*plrs)->item[count].mapX;
       wx <<= TANK_SHIFT_MAPSIZE;
@@ -1884,13 +1884,13 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
       } else {
         diffY = tankY - wy;
       }
-      
-      
-      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
+
+
+      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (screenIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
         /* In the rectangle */
         /* wx and wy already set */
         /* Info */
-        if (allienceExist(&((*plrs)->item[count].allie), cs->myPlayerNum) == TRUE) {
+        if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
           owner = PLAYERS_BRAIN_FRIENDLY;
         } else {
           owner = PLAYERS_BRAIN_HOSTILE;
@@ -1944,7 +1944,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
 */
 
   while (count<MAX_TANKS) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       if ((*plrs)->item[count].lgmMapX >= leftPos && (*plrs)->item[count].lgmMapX <= rightPos && (*plrs)->item[count].lgmMapY >= top && (*plrs)->item[count].lgmMapY <= bottom) {
         /* In trees check */
         wx = (*plrs)->item[count].lgmMapX << TANK_SHIFT_MAPSIZE;
@@ -1963,7 +1963,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv2 = ourTankY - wy;
         }
         
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (screenIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
           /* In the rectangle */
           /* Object Type */
           if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME) {
@@ -1984,7 +1984,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv <<= TANK_SHIFT_RIGHT2;
           wy += conv;
           /* Info */
-          if (allienceExist(&((*plrs)->item[count].allie), cs->myPlayerNum) == TRUE) {
+          if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
             owner = PLAYERS_BRAIN_FRIENDLY;
           } else {
             owner = PLAYERS_BRAIN_HOSTILE;
@@ -2069,14 +2069,15 @@ void playersSendAiMessage(ClientSim *cs, GameSim *sim, players *plrs, PlayerBitM
     test = (bitMap >>count);
     test &= 1;
     if ((*plrs)->item[count].inUse == TRUE && test) {
-      if (count == cs->myPlayerNum) {
+      if (count == clientSimGetMyPlayerNum(cs)) {
         /* Self-echo of an AI-generated chat — same dynamic-text path as
          * playersSendMessageAllSelected; bypass the langid callback. */
+        BYTE myPN = clientSimGetMyPlayerNum(cs);
         topLine[0] = '\0';
-        playersMakeMessageName(cs, plrs, cs->myPlayerNum, cs->myPlayerNum, topLine);
-        clientMessageAdd(&cs->messages, (messageType) cs->myPlayerNum, topLine, messageStr);
+        playersMakeMessageName(cs, plrs, myPN, myPN, topLine);
+        clientMessageAdd(clientSimGetMessages(cs), (messageType) myPN, topLine, messageStr);
       } else {
-        clientSimMessageSendPlayer(cs, cs->myPlayerNum, count, messageStr);
+        clientSimMessageSendPlayer(cs, clientSimGetMyPlayerNum(cs), count, messageStr);
       }
     }
     count++;
@@ -2217,7 +2218,7 @@ bool playersCheckSameSquare(players *plrs, BYTE playerNum, BYTE xValue, BYTE yVa
 *********************************************************/
 void playersSetMyLastPlayerName(ClientSim *cs, char *dest)
 {
-  strcpy(cs->myLastPlayerName, dest);
+  clientSimSetMyLastPlayerName(cs, dest);
 }
 
 void playersSetPing(players *plrs, BYTE playerNum, uint16_t ping) {

@@ -715,10 +715,10 @@ static void renderNetInfoContent(ClientSim *cs) {
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
 
     /* Client in a networked game: prepend player location to port */
-    if (cs->networkGameType != netSingle) {
+    if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        players *plrs = &cs->sim.plyrs;
-        playersGetPlayerLocation(plrs, cs->myPlayerNum, addr);
+        players *plrs = &clientSimGetGameSim(cs)->plyrs;
+        playersGetPlayerLocation(plrs, clientSimGetMyPlayerNum(cs), addr);
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -852,7 +852,7 @@ static void renderGameInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
     }
 
-    gameType *gt = &cs->sim.game;
+    gameType *gt = &clientSimGetGameSim(cs)->game;
     langid gtStr = STR_DLGGAMEINFO_STRICT;
     if      (*gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
     else if (*gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
@@ -1133,8 +1133,8 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::Separator();
 
     /* Pre-compute alliance state */
-    players *plrs = &cs->sim.plyrs;
-    BYTE self = cs->myPlayerNum;
+    players *plrs = &clientSimGetGameSim(cs)->plyrs;
+    BYTE self = clientSimGetMyPlayerNum(cs);
     bool hasAllies  = false;
     bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
@@ -1410,8 +1410,8 @@ static void renderAllianceRequest(ClientSim *cs) {
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
-            args.playerFlags = playersGetAccountFlags(&cs->sim.plyrs, s_alliancePlayerNum);
-            playersGetCountryCode(&cs->sim.plyrs, s_alliancePlayerNum, args.playerCountry);
+            args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(cs)->plyrs, s_alliancePlayerNum);
+            playersGetCountryCode(&clientSimGetGameSim(cs)->plyrs, s_alliancePlayerNum, args.playerCountry);
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
@@ -2135,8 +2135,8 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAlliedPlayersCS(cs);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckNearbyPlayersCS(cs);
         /* Pre-compute alliance state for each player */
-        players *plrs = &cs->sim.plyrs;
-        BYTE self = cs->myPlayerNum;
+        players *plrs = &clientSimGetGameSim(cs)->plyrs;
+        BYTE self = clientSimGetMyPlayerNum(cs);
         bool hasAllies  = false;
         bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
@@ -2810,7 +2810,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
                 WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link while running: %s", url);
-                if (cs && cs->netStat == netRunning) {
+                if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
                     s_joinConfirmUrl[sizeof(s_joinConfirmUrl) - 1] = '\0';

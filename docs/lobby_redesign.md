@@ -290,6 +290,83 @@ browser line:
 Exact format TBD — depends on existing `INFO_RESPONSE` layout, follow
 the same pattern.
 
+## Single-player path: ControlEvent pub/sub
+
+Earlier iterations of this redesign used a cross-struct shortcut —
+`serverSimSyncLobbyToClient(ServerSim *, ClientSim *)` — to push the
+server's lobby state directly into the local `humanSim` after every
+SP-host UI action. With the opaque-sims migration, that shortcut would
+have required either:
+
+- including `client_sim_internal.h` from `server_sim.c` (breaks the
+  opacity wall server-side), or
+- including `server_sim.h` from `client_sim.c` (creates an unwanted
+  client→server compile-time dependency that doesn't exist in
+  multiplayer).
+
+Neither was acceptable. The function has been deleted; the SP path
+now uses the same `ControlEvent` pub/sub system that bots and the
+WASM frontend already rely on.
+
+### How it works
+
+`client_sim_control.c::clientSimApplyControl` is the single mutation
+sink for ClientSim lobby state. It handles events emitted from two
+sources:
+
+1. **Network multiplayer** — `transport_udp_client.c`'s packet handlers
+   decode incoming `PACKET_LOBBY_*` packets and call
+   `clientSimApplyControl` directly with the resulting events.
+2. **In-process (SP / LAN host, bots, WASM)** — the local ClientSim
+   registers as a subscriber via `serverSimRegisterSubscriber(...)`.
+   Registration triggers `serverSimSyncSubscriber` which delivers the
+   full current state as a sequence of fill-events (game phase, lobby
+   settings, lobby slots, player joins, **team metadata, bot configs,
+   bot brain paths, brain list**). Live updates are published by
+   the same `transportUdpServerBroadcast*Chg` functions the multiplayer
+   path already uses — they now call `serverSimPublishControl` in
+   addition to sending UDP, so in-process subscribers see every change
+   without a separate code path.
+
+### ControlEvent types touched by this redesign
+
+| Event | Carries |
+|---|---|
+| `CTRL_LOBBY_SLOT` | one slot's full `ClientLobbySlot` (existing) |
+| `CTRL_LOBBY_SETTINGS` | mapName + game settings; **extended** with `lobbyOpenHost`, `lobbyAutoLockOnGameStart`, `lobbyServerLocks` |
+| `CTRL_LOBBY_TEAM_META` | **new** — `teamId` + `in_use/color/namingPool/name` |
+| `CTRL_LOBBY_BOT_CONFIG` | **new** — `slot` + `difficulty/personality/name` |
+| `CTRL_LOBBY_BOT_BRAIN` | **new** — `slot` + brain script path |
+| `CTRL_LOBBY_BRAIN_LIST` | **new** — full discovered `BrainList` catalogue |
+
+Server-side fill functions live in `server_sim.c`
+(`serverSimFillLobbyTeamMetaEvent`, `serverSimFillLobbyBotConfigEvent`,
+`serverSimFillLobbyBotBrainEvent`, `serverSimFillLobbyBrainListEvent`).
+The matching apply cases live in `client_sim_control.c`.
+
+### When something new is added to lobby state
+
+If you add a new lobby field that needs to mirror server→client:
+
+1. Add the field to the opaque struct in `server_sim_internal.h` and to
+   the opaque struct in `client_sim_internal.h`.
+2. Add public accessors on both sides.
+3. Add a `CTRL_LOBBY_*` event type (or extend an existing one) in
+   `control_event.h`.
+4. Add a `serverSimFill*Event` in `server_sim.c` and call it from
+   `serverSimSyncSubscriber` so new subscribers get initial state.
+5. Add an apply case to `clientSimApplyControl`.
+6. Add a `serverSimPublishControl(sim, &evt)` call inside the relevant
+   `transportUdpServerBroadcast*Chg` function (and add a wire packet if
+   live multiplayer needs it).
+7. SP host code paths in `imgui_lobby.cpp` should call the broadcast
+   function — never reach across to the ClientSim directly.
+
+The opacity contract is the enforcement mechanism: any code outside
+the allowed-includers list of `client_sim_internal.h` or
+`server_sim_internal.h` *cannot* write the field directly. It must go
+through the event system.
+
 ## Future / deferred
 
 - **WBN auto-balance** (`PACKET_BALANCE_*`) — works alongside manual team
