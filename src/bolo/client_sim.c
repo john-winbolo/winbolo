@@ -625,6 +625,27 @@ void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName)
   }
 }
 
+void clientSimGetPlayerName(ClientSim *csPtr, char *value) {
+  if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
+    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
+  } else {
+    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
+  }
+}
+
+bool clientSimSetPlayerName(ClientSim *csPtr, char *value) {
+  bool returnValue;              /* Value to return */
+
+  utilStripNameReplace(value);
+  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE);
+  if (returnValue == TRUE) {
+    if (clientSimGetNetType(csPtr) != netSingle) {
+      clientSimSendChangePlayerName(csPtr, clientSimGetMyPlayerNum(csPtr), value);
+    }
+  }
+  return returnValue;
+}
+
 void clientSimRequestAlliance(ClientSim *cs, BYTE playerNum, BYTE requestTo) {
   if (cs->allianceRequestFunc != NULL) {
     cs->allianceRequestFunc(requestTo);

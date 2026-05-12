@@ -671,50 +671,12 @@ int32_t screenGetGameStartDelayCS(ClientSim *csPtr) {
 
 
 
-/*********************************************************
-*NAME:          screenGetPlayerName
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/2/99
-*LAST MODIFIED: 1/2/99
-*PURPOSE:
-* Copies the player name into the value passed
-*
-*ARGUMENTS:
-*  value - String to hold copy of the player name
-*********************************************************/
 void screenGetPlayerNameCS(ClientSim *csPtr, char *value) {
-  if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
-    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
-  } else {
-    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
-  }
+  clientSimGetPlayerName(csPtr, value);
 }
 
-
-/*********************************************************
-*NAME:          screenSetPlayerName
-*AUTHOR:        John Morrison
-*CREATION DATE: 01/02/99
-*LAST MODIFIED: 30/01/02
-*PURPOSE:
-* Checks to see if the new name is taken. If not the it
-* changes the players name to the new name. Returns whether
-* the change took place or not
-*
-*ARGUMENTS:
-*  value - New Player Name
-*********************************************************/
 bool screenSetPlayerNameCS(ClientSim *csPtr, char *value) {
-  bool returnValue;              /* Value to return */
-
-  utilStripNameReplace(value);
-  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE);
-  if (returnValue == TRUE) {
-    if (clientSimGetNetType(csPtr) != netSingle) {
-      clientSimSendChangePlayerName(csPtr, clientSimGetMyPlayerNum(csPtr), value);
-    }
-  }
-  return returnValue;
+  return clientSimSetPlayerName(csPtr, value);
 }
 
 /*********************************************************
