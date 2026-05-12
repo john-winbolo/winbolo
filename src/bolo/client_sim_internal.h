@@ -8,7 +8,8 @@
  *
  * Allowed includers: src/bolo/client_sim.c,
  * src/bolo/client_sim_control.c, src/bolo/client_snapshot.c,
- * src/bolo/transport_udp_client.c, src/bolo/viewport.c.
+ * src/bolo/transport_udp_client.c, src/bolo/viewport.c,
+ * src/bolo/client_mapload.c.
  * All other callers must include client_sim.h and use the
  * public accessor API.
  *********************************************************/
