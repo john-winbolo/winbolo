@@ -992,7 +992,12 @@ void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay =
 void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }
 void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; }
 void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
-void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) { cs->currentBuildSelect = v; }
+void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) {
+  if (v != BsTrees && v != BsRoad && v != BsBuilding && v != BsPillbox && v != BsMine) {
+    return;
+  }
+  cs->currentBuildSelect = v;
+}
 
 void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y) {
   cs->pendingBuildAction = action;
@@ -1015,3 +1020,53 @@ void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadCom
 void clientSimSetServerAddress(ClientSim *cs, struct in_addr v) { cs->serverAddress = v; }
 void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort = v; }
 void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }
+
+/* View-control composition helpers. */
+void clientSimTankView(ClientSim *cs) {
+  viewportFollowTank(clientSimViewportMut(cs), clientSimGetScroll(cs), MY_TANK(cs));
+}
+
+void clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY) {
+  viewportSetCursor(clientSimViewportMut(cs), posX, posY);
+}
+
+void clientSimPillView(ClientSim *cs, int horz, int vert) {
+  viewportPanInPillView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
+                        clientSimGetScroll(cs), MY_TANK(cs), horz, vert);
+}
+
+void clientSimManMove(ClientSim *cs, buildSelect buildS) {
+  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+    /* Route build request through InputPacket so the server sim
+     * processes it authoritatively (matches brain build path). */
+    clientSimSetPendingBuild(cs,
+                             (BYTE) buildS + 1,  /* 1-based in InputPacket (0=none) */
+                             (BYTE) (clientSimGetCursorPosX(cs) + clientSimGetXOffset(cs)),
+                             (BYTE) (clientSimGetCursorPosY(cs) + clientSimGetYOffset(cs)));
+  }
+}
+
+/* Alliance accessors. */
+tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum) {
+  return playersScreenAllience(&clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), (BYTE) (playerNum - 1));
+}
+
+pillAlliance clientSimGetPillAlliance(ClientSim *cs, BYTE pillNum) {
+  return pillsGetAllianceNum(clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->pb, pillNum);
+}
+
+baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum) {
+  return basesGetStatusNum(clientSimGetGameSim(cs), baseNum);
+}
+
+/* Local tank stat accessors. */
+void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
+  tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);
+  if (*armourAmount > TANK_FULL_ARMOUR) {
+    *armourAmount = 0;
+  }
+}
+
+void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {
+  tankGetKillsDeaths(&MY_TANK(cs), kills, deaths);
+}

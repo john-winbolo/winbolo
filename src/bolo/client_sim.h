@@ -434,4 +434,24 @@ void clientSimSetServerPort(ClientSim *cs, unsigned short v);
  * frontend UI calls). */
 void clientSimSetIsBot(ClientSim *cs, bool v);
 
+/* View control — mutates viewport/cursor state by composing the
+ * underlying viewport ops with ClientSim's tank/scroll/gameSim. */
+void         clientSimTankView(ClientSim *cs);
+void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
+void         clientSimPillView(ClientSim *cs, int horz, int vert);
+
+/* Submits a build request for the local LGM through InputPacket,
+ * gated on tank armour and net status. */
+void         clientSimManMove(ClientSim *cs, buildSelect buildS);
+
+/* Alliance accessors. playerNum is 1-based (legacy screen-facade
+ * convention); the function converts to 0-based internally. */
+tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum);
+pillAlliance clientSimGetPillAlliance(ClientSim *cs, BYTE pillNum);
+baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum);
+
+/* Local tank stat accessors. */
+void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
+
 #endif /* CLIENT_SIM_H */
