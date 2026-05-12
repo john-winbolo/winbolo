@@ -185,6 +185,7 @@ char *clientSimGetBrainsMessage(ClientSim *cs);
 unsigned short *clientSimGetBrainsNumObjects(ClientSim *cs);
 ObjectInfo *clientSimGetBrainObjects(ClientSim *cs);
 aiType *clientSimGetAllowComputerTanks(ClientSim *cs);
+aiType clientSimGetAiType(ClientSim *cs);
 
 /* Network state accessors (per-instance) */
 netType clientSimGetNetType(ClientSim *cs);
@@ -213,6 +214,16 @@ void clientSimRequestAlliance(ClientSim *cs, BYTE playerNum, BYTE requestTo);
 void clientSimAllianceAccept(ClientSim *cs, BYTE playerNum);
 void clientSimLeaveAlliance(ClientSim *cs, BYTE playerNum);
 void clientSimSetAllowNewPlayers(ClientSim *cs, bool allow);
+
+/* Tank preferences (per-instance) — operate on the local player's tank */
+bool clientSimGetTankAutoSlowdown(ClientSim *cs);
+void clientSimSetTankAutoSlowdown(ClientSim *cs, bool useSlowdown);
+bool clientSimGetTankAutoHideGunsight(ClientSim *cs);
+void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide);
+
+/* Game info (per-instance) */
+bool clientSimGetAllowHiddenMines(ClientSim *cs);
+BYTE clientSimGetNumPlayers(ClientSim *cs);
 
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans);
 void netGetServerAddressStr(ClientSim *cs, char *dest);

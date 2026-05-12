@@ -578,6 +578,7 @@ char *clientSimGetBrainsMessage(ClientSim *cs) { return cs->brainsMessage; }
 unsigned short *clientSimGetBrainsNumObjects(ClientSim *cs) { return &cs->brainsNumObjects; }
 ObjectInfo *clientSimGetBrainObjects(ClientSim *cs) { return cs->brainObjects; }
 aiType *clientSimGetAllowComputerTanks(ClientSim *cs) { return &cs->allowComputerTanks; }
+aiType  clientSimGetAiType(ClientSim *cs)              { return *clientSimGetAllowComputerTanks(cs); }
 
 /* -------------------------------------------------------
  * Network state accessors (per-instance)
@@ -670,6 +671,32 @@ void clientSimSetAllowNewPlayers(ClientSim *cs, bool allow) {
   if (cs->lockToggleSendFunc != NULL) {
     cs->lockToggleSendFunc(allow);
   }
+}
+
+/* Tank preferences (per-instance) — operate on the local player's tank */
+bool clientSimGetTankAutoSlowdown(ClientSim *cs) {
+  return tankGetAutoSlowdown(&MY_TANK(cs));
+}
+
+void clientSimSetTankAutoSlowdown(ClientSim *cs, bool useSlowdown) {
+  tankSetAutoSlowdown(&MY_TANK(cs), useSlowdown);
+}
+
+bool clientSimGetTankAutoHideGunsight(ClientSim *cs) {
+  return tankGetAutoHideGunsight(&MY_TANK(cs));
+}
+
+void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide) {
+  tankSetAutoHideGunsight(&MY_TANK(cs), useAutohide);
+}
+
+/* Game info (per-instance) */
+bool clientSimGetAllowHiddenMines(ClientSim *cs) {
+  return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);
+}
+
+BYTE clientSimGetNumPlayers(ClientSim *cs) {
+  return playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
 }
 
 

@@ -589,39 +589,6 @@ void screenGetMapNameCS(ClientSim *csPtr, char *value) {
 
 
 /*********************************************************
-*NAME:          screenGetNumPlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 26/1/99
-*LAST MODIFIED: 26/1/99
-*PURPOSE:
-* Returns the number of players in the game
-*
-*ARGUMENTS:
-*
-*********************************************************/
-BYTE screenGetNumPlayersCS(ClientSim *csPtr) {
-  return playersGetNumPlayers(&clientSimGetGameSim(csPtr)->plyrs);
-}
-
-
-/*********************************************************
-*NAME:          screenGetAllowHiddenMines
-*AUTHOR:        John Morrison
-*CREATION DATE: 26/1/99
-*LAST MODIFIED: 26/1/99
-*PURPOSE:
-* Returns whether hidden mines are allowed in the game
-* or not
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool screenGetAllowHiddenMinesCS(ClientSim *csPtr) {
-  return minesGetAllowHiddenMines(&clientSimGetGameSim(csPtr)->mns);
-}
-
-
-/*********************************************************
 *NAME:          screenSetAllowHiddenMines
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/2/99
@@ -1474,91 +1441,17 @@ void screenSetAiTypeCS(ClientSim *csPtr, aiType value) {
 }
 
 
-/*********************************************************
-*NAME:          screenGetAiType
-*AUTHOR:        John Morrison
-*CREATION DATE: 26/11/99
-*LAST MODIFIED: 26/11/99
-*PURPOSE:
-*  Returns the AI type for this game
-*
-*ARGUMENTS:
-*
-*********************************************************/
-aiType screenGetAiTypeCS(ClientSim *csPtr) {
-  return *clientSimGetAllowComputerTanks(csPtr);
-}
-
+aiType screenGetAiTypeCS(ClientSim *csPtr) { return clientSimGetAiType(csPtr); }
 
 
 BYTE screenGetTank256DirCS(ClientSim *csPtr) {
   return tankGet256Dir(&MY_TANK(csPtr));
 }
 
-/*********************************************************
-*NAME:          screenGetTankAutoSlowdown
-*AUTHOR:        John Morrison
-*CREATION DATE: 4/1/00
-*LAST MODIFIED: 4/1/00
-*PURPOSE:
-*  Returns whether tank autoslowdown is enabled or not
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) {
-  return tankGetAutoSlowdown(&MY_TANK(csPtr));
-}
-
-
-/*********************************************************
-*NAME:          screenGetTankAutoSlowdown
-*AUTHOR:        John Morrison
-*CREATION DATE: 4/1/00
-*LAST MODIFIED: 4/1/00
-*PURPOSE:
-*  Sets whether tank autoslowdown is enabled or not
-*
-*ARGUMENTS:
-*  useSlowdown - TRUE if auto slowdown is used
-*********************************************************/
-void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) {
-  tankSetAutoSlowdown(&MY_TANK(csPtr), useSlowdown);
-}
-
-
-/*********************************************************
-*NAME:          screenGetTankAutoHideGunsight
-*AUTHOR:        John Morrison
-*CREATION DATE: 4/1/00
-*LAST MODIFIED: 4/1/00
-*PURPOSE:
-*  Returns whether tank auto show/hide gunsight is enabled 
-*  or not
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) {
-  return tankGetAutoHideGunsight(&MY_TANK(csPtr));
-}
-
-
-/*********************************************************
-*NAME:          screenSetTankAutoHideGunsight
-*AUTHOR:        John Morrison
-*CREATION DATE: 4/1/00
-*LAST MODIFIED: 4/1/00
-*PURPOSE:
-*  Sets whether tank auto show/hide gunsight is enabled 
-*  or not
-*
-*ARGUMENTS:
-*  useAutohide - TRUE if auto show/hide is used
-*********************************************************/
-void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) {
-  tankSetAutoHideGunsight(&MY_TANK(csPtr), useAutohide);
-}
+bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) { return clientSimGetTankAutoSlowdown(csPtr); }
+void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) { clientSimSetTankAutoSlowdown(csPtr, useSlowdown); }
+bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) { return clientSimGetTankAutoHideGunsight(csPtr); }
+void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) { clientSimSetTankAutoHideGunsight(csPtr, useAutohide); }
 
 
 
