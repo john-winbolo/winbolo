@@ -452,7 +452,7 @@ void screenUpdateViewCS(ClientSim *csPtr, updateType value) {
   for (count=0;count<MAIN_BACK_BUFFER_SIZE_X;count++) {
     for (count2=0;count2<MAIN_BACK_BUFFER_SIZE_Y;count2++) {
       (*clientSimGetView(csPtr))->screenItem[count][count2] = screenCalcSquareCS(csPtr, (BYTE) (count+clientSimGetXOffset(csPtr)),(BYTE) (count2+clientSimGetYOffset(csPtr)), count, count2);
-      screenBrainMapSetPos(clientSimGetBrainMap(csPtr), (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr)), mapGetPos(&clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))), minesExistPos(&clientSimGetGameSim(csPtr)->mns, &clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))));
+      screenBrainMapSetPos((BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(csPtr), (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr)), mapGetPos(&clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))), minesExistPos(&clientSimGetGameSim(csPtr)->mns, &clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))));
     }
   }
 }
