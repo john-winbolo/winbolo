@@ -26,6 +26,7 @@
 #include <string.h>
 #include <time.h>
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "client_state.h"
 #include "screen.h"
 #include "global.h"
@@ -717,3 +718,96 @@ void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host) {
   playerSetLocation(&cs->sim.plyrs, ip, host);
   clientMutexRelease();
 }
+
+/* ================================================================
+ * Read accessors — see header for the contract.
+ * ================================================================ */
+
+bool clientSimIsRunning(const ClientSim *cs)              { return cs->running; }
+bool clientSimIsBot(const ClientSim *cs)                  { return cs->isBot; }
+bool clientSimIsInPillView(const ClientSim *cs)           { return cs->inPillView; }
+bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->needScreenReCalc; }
+bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
+bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
+bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
+bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
+bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
+bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
+bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnTank; }
+
+buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }
+gameType    clientSimGetLobbyGameType(const ClientSim *cs)      { return cs->lobbyGameType; }
+labelLen    clientSimGetLabelMessage(const ClientSim *cs)       { return cs->labelMessage; }
+labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->labelTankLabel; }
+
+BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
+BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->xOffset; }
+BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->yOffset; }
+BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->pillViewX; }
+BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->pillViewY; }
+BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
+BYTE     clientSimGetPendingBuildX(const ClientSim *cs)     { return cs->pendingBuildX; }
+BYTE     clientSimGetPendingBuildY(const ClientSim *cs)     { return cs->pendingBuildY; }
+int      clientSimGetCursorPosX(const ClientSim *cs)        { return cs->cursorPosX; }
+int      clientSimGetCursorPosY(const ClientSim *cs)        { return cs->cursorPosY; }
+int      clientSimGetGmeStartDelay(const ClientSim *cs)     { return cs->gmeStartDelay; }
+int      clientSimGetCountdownSeconds(const ClientSim *cs)  { return cs->countdownSeconds; }
+int      clientSimGetServerShellCount(const ClientSim *cs)  { return cs->serverShellCount; }
+int      clientSimGetPredictedShellCount(const ClientSim *cs){ return cs->predictedShellCount; }
+int      clientSimGetBrainEventCount(const ClientSim *cs)   { return cs->brainEventCount; }
+int32_t  clientSimGetGmeLength(const ClientSim *cs)         { return cs->gmeLength; }
+int32_t  clientSimGetLobbyTimeLimit(const ClientSim *cs)    { return cs->lobbyTimeLimit; }
+uint8_t  clientSimGetLobbyAiType(const ClientSim *cs)       { return cs->lobbyAiType; }
+uint8_t  clientSimGetLobbyPillCount(const ClientSim *cs)    { return cs->lobbyPillCount; }
+uint8_t  clientSimGetLobbyBaseCount(const ClientSim *cs)    { return cs->lobbyBaseCount; }
+uint8_t  clientSimGetLobbyStartCount(const ClientSim *cs)   { return cs->lobbyStartCount; }
+uint8_t  clientSimGetBrainLastAssistMsg(const ClientSim *cs){ return cs->brainLastAssistMsg; }
+uint32_t clientSimGetLastServerTick(const ClientSim *cs)    { return cs->lastServerTick; }
+unsigned short clientSimGetServerPort(const ClientSim *cs)  { return cs->serverPort; }
+time_t   clientSimGetTimeStart(const ClientSim *cs)         { return cs->timeStart; }
+
+const char *clientSimGetMapName(const ClientSim *cs)          { return cs->mapName; }
+const char *clientSimGetLobbyChatHistory(const ClientSim *cs) { return cs->lobbyChatHistory; }
+const char *clientSimGetMyLastPlayerName(const ClientSim *cs) { return cs->myLastPlayerName; }
+
+const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
+  if (n >= 16) return NULL;
+  return &cs->lobbySlots[n];
+}
+
+bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
+  if (n >= 16) return false;
+  return cs->mapSkipVotes[n];
+}
+
+uint8_t clientSimGetBalanceProposal(const ClientSim *cs, BYTE n) {
+  if (n >= 16) return 0;
+  return cs->balanceProposal[n];
+}
+
+BYTE *clientSimGetBrainMap(ClientSim *cs) {
+  return &cs->brainMap[0][0];
+}
+
+const ShellSnapshot *clientSimGetServerShellSnaps(const ClientSim *cs) {
+  return cs->serverShellSnaps;
+}
+
+const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs) {
+  return cs->predictedShells;
+}
+
+const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
+  return cs->brainEvents;
+}
+
+struct in_addr clientSimGetServerAddress(const ClientSim *cs) {
+  return cs->serverAddress;
+}
+
+GameSim       *clientSimGetGameSim(ClientSim *cs)    { return &cs->sim; }
+MessageState  *clientSimGetMessages(ClientSim *cs)   { return &cs->messages; }
+ScrollState   *clientSimGetScroll(ClientSim *cs)     { return &cs->scroll; }
+InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
+screen        *clientSimGetView(ClientSim *cs)       { return &cs->view; }
+screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->mineView; }

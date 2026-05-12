@@ -32,6 +32,7 @@
 #include "screen.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "../gui/lang.h"
