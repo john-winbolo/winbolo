@@ -2718,16 +2718,28 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_TEAM_SET: {
-            /* Wire: [header 8] [playerNum 1] [teamNumber 1] */
+            /* Wire: [header 8] [playerNum 1] [teamNumber 1].
+             * Sender can always move themselves; host / openHost /
+             * admin can move any player. Anyone else trying to move
+             * someone else is silently coerced to moving themselves
+             * (defence in depth — UI already gates the drag handle
+             * to authorised cases). */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 2) {
+                uint8_t reqSlot = buf[PACKET_HEADER_SIZE + 0];
                 uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
+                uint8_t target  = (uint8_t)clientIdx;
+                if (reqSlot < MAX_TANKS && reqSlot != (uint8_t)clientIdx) {
+                    if (lobbyClientMayEdit(sim, clientIdx)) {
+                        target = reqSlot;
+                    }
+                }
                 if (teamNum <= 16) {
-                    sim->lobbyPlayers[clientIdx].teamNumber = teamNum;
-                    logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
-                    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                    sim->lobbyPlayers[target].teamNumber = teamNum;
+                    logAddEvent(log_TeamSet, target, teamNum, 0, 0, 0, NULL);
+                    transportUdpServerBroadcastLobbyUpdate(sim, target);
                 }
             }
             break;
@@ -2812,8 +2824,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 "botAiType=%d brainPath='%s'",
                 clientIdx, (int)sim->lobbyEnabled, (int)sim->state,
                 (int)sim->botAiType, sim->botBrainPath);
+            bool mayEdit = (clientIdx >= 0) &&
+                           lobbyClientMayEdit(sim, clientIdx);
             if (clientIdx < 0) {
                 WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: unknown client");
+            } else if (!mayEdit) {
+                WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: not host/openHost/admin");
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
+                              LOBBY_REJECT_NOT_HOST);
             } else if (!sim->lobbyEnabled) {
                 WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: lobby not enabled");
             } else if (sim->state != serverStateLobby) {
@@ -2823,7 +2841,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             } else if (sim->botBrainPath[0] == '\0') {
                 WB_LOG_INFO(WB_LOG_CAT_NET, "[LOBBY] ADD_BOT rejected: botBrainPath empty (no brains in brains/ either)");
             }
-            if (clientIdx >= 0 && sim->lobbyEnabled &&
+            if (mayEdit && sim->lobbyEnabled &&
                 sim->state == serverStateLobby &&
                 sim->botAiType != aiNone &&
                 sim->botBrainPath[0] != '\0') {
@@ -2882,15 +2900,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_REMOVE_BOT: {
             /* Wire: [header 8] [playerNum 1] */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && sim->lobbyEnabled &&
-                sim->state == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 1) {
-                uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
-                if (targetSlot < MAX_TANKS && botManagerIsBot(targetSlot)) {
-                    botManagerRemoveBot(sim, targetSlot);
-                    transportUdpServerBroadcastLobbyUpdate(sim, targetSlot);
-                    transportUdpServerBroadcastLobbyAutoUnready(sim);
-                }
+            if (clientIdx < 0 || !sim->lobbyEnabled ||
+                sim->state != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_REMOVE_BOT,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
+            if (targetSlot < MAX_TANKS && botManagerIsBot(targetSlot)) {
+                botManagerRemoveBot(sim, targetSlot);
+                transportUdpServerBroadcastLobbyUpdate(sim, targetSlot);
+                transportUdpServerBroadcastLobbyAutoUnready(sim);
             }
             break;
         }

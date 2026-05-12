@@ -179,6 +179,14 @@ bool gameFrontTrackerEnabled;
 bool gameFrontUseUpnp         = TRUE;
 bool gameFrontUseNatTraversal = TRUE;
 
+/* LAN-only host mode: set when the user chose "Host LAN game" from the
+ * welcome screen. Suppresses WBN registration, public tracker, NAT
+ * portmap (UPnP/PCP/NAT-PMP) and NAT keepalive — everything the host
+ * would normally do to reach players outside the local network. The
+ * lobby UI also mirrors this onto ClientSim.isLanOnly so the WBN globe
+ * badge / connectivity test stay hidden client-side. */
+bool gameFrontIsLanOnly = FALSE;
+
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
@@ -797,6 +805,7 @@ static bool gameFrontDialogs(void) {
     case openLanManual: {
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
+      gameFrontIsLanOnly = (dlgState == openLanManual);
       db->udpSetupShow();
       /* dlgState already updated by gameFrontSetDlgState inside the dialog
        * (OnJoin/OnNew/OnCancel all call gameFrontSetDlgState before EndModal).
@@ -829,12 +838,14 @@ static bool gameFrontDialogs(void) {
       /* Multiplayer host: udpSetupShow already ran in the previous
        * state. Advance straight to openFinished — the join handshake
        * + server-driven lobby take over from here. */
+      gameFrontIsLanOnly = (dlgState == openLanSetup);
       gameFrontSetDlgState(openFinished);
       break;
     }
     case openInternet: {
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
+      gameFrontIsLanOnly = FALSE;
       db->gameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
       if (dlgState == prev) dlgState = openWelcome;
       break;
@@ -842,6 +853,7 @@ static bool gameFrontDialogs(void) {
     case openLan: {
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
+      gameFrontIsLanOnly = TRUE;
       db->gameBrowserShow(langGetText(STR_GAMEFRONT_LANFINDER_TITLE), FALSE);
       if (dlgState == prev) dlgState = openWelcome;
       break;
@@ -1018,6 +1030,11 @@ bool gameFrontSetDlgState(openingStates newState) {
       newState == openUdpJoin) {
     gameFrontValidateWbnBeforeJoin();
     humanSim = &humanSimStorage; clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    /* Propagate LAN-only-ness to the joining client so it hides the
+     * WBN globe badge and skips the connectivity-test UI (the server
+     * already skips WBN/portmap/tracker via gameFrontSetupServer's
+     * cfg override). */
+    humanSim->isLanOnly = gameFrontIsLanOnly ? true : false;
     if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
@@ -1737,6 +1754,22 @@ bool gameFrontSetupServer(void) {
   cfg.trackerPort     = gameFrontTrackerPort;
   cfg.useNatKeepalive = gameFrontUseNatTraversal;
   cfg.useNatPortmap   = gameFrontUseUpnp;
+
+  /* LAN-only host: hard-disable every internet-facing subsystem
+   * regardless of the user's saved preferences. We don't register on
+   * WBN, don't announce to the public tracker, don't request a
+   * portmap, and don't waste keepalives on outbound NAT. The lobby UI
+   * also keys off humanSim->isLanOnly to hide WBN-derived badges and
+   * the connectivity test. */
+  if (gameFrontIsLanOnly) {
+    cfg.useWbn          = FALSE;
+    cfg.useTracker      = FALSE;
+    cfg.useNatPortmap   = FALSE;
+    cfg.useNatKeepalive = FALSE;
+  }
+  if (humanSim != NULL) {
+    humanSim->isLanOnly = gameFrontIsLanOnly ? true : false;
+  }
 
   if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);

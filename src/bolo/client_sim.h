@@ -122,6 +122,13 @@ struct ClientSim {
      * new players / Disallow once started) and routes setting changes
      * directly to the server instead of through the UDP packet path. */
     bool        isSinglePlayer;
+    /* LAN-only host session — set by gamefront when "Host LAN game"
+     * was chosen. Mirrors gameFrontIsLanOnly. The lobby UI uses this
+     * (and isSinglePlayer) to hide WBN-derived badges and skip the
+     * connectivity test. Server-side, the cfg flags are already
+     * forced off in gameFrontSetupServer so this is presentation-
+     * only on the client. */
+    bool        isLanOnly;
 
     /* Brain state (per-instance, moved from static globals in client_sim.c) */
     uint32_t    brainHoldKeys;

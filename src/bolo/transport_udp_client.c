@@ -1987,7 +1987,8 @@ void transportUdpClientSendLockToggle(Transport *t, bool allow) {
 
 /* ---- Client lobby send functions ---- */
 
-void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber) {
+void transportUdpClientSendTeamSet(Transport *t, uint8_t playerNum,
+                                   uint8_t teamNumber) {
     if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 2];
@@ -1995,7 +1996,7 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_LOBBY_TEAM_SET, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
+    buf[PACKET_HEADER_SIZE] = playerNum;
     buf[PACKET_HEADER_SIZE + 1] = teamNumber;
     udpClientSendTo(c, buf, sizeof(buf));
 }

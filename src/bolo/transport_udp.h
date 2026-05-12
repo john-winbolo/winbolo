@@ -176,7 +176,10 @@ void transportUdpClientSendAllianceLeave(Transport *t);
 void transportUdpClientSendLockToggle(Transport *t, bool allow);
 
 /* Send team selection to server. teamNumber: 0-16. */
-void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
+/* Move a player to a team. playerNum=self when moving yourself; host
+ * (or openHost / admin) may pass any slot to move other players. */
+void transportUdpClientSendTeamSet(Transport *t, uint8_t playerNum,
+                                   uint8_t teamNumber);
 
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
