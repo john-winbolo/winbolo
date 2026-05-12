@@ -16,6 +16,7 @@
 #ifndef CLIENT_SIM_INTERNAL_H
 #define CLIENT_SIM_INTERNAL_H
 
+#include <stddef.h>
 #include "client_sim.h"
 #include "viewport.h"
 
@@ -170,5 +171,8 @@ struct ClientSim {
     uint32_t deathTimestamps[10];
     uint8_t  deathTimestampIdx;
 };
+
+BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
+                   ClientSim_sim_must_be_first_member);
 
 #endif /* CLIENT_SIM_INTERNAL_H */
