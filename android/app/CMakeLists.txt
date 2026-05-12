@@ -14,6 +14,8 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size
 # Project root is two levels up from android/app/
 set(PROJ_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
+include(${PROJ_ROOT}/cmake/bolo_lib.cmake)
+
 # ---------------------------------------------------------------------------
 # Dependencies (FetchContent) — same versions as main CMakeLists.txt
 # ---------------------------------------------------------------------------
@@ -206,7 +208,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/playername_validate.c
     ${PROJ_ROOT}/src/bolo/playersrejoin.c
     ${PROJ_ROOT}/src/bolo/rubble.c
-    ${PROJ_ROOT}/src/bolo/screen.c
     ${PROJ_ROOT}/src/bolo/screenbrainmap.c
     ${PROJ_ROOT}/src/bolo/screenbullet.c
     ${PROJ_ROOT}/src/bolo/screencalc.c
@@ -303,13 +304,13 @@ set(ANDROID_SOURCES
 add_library(main SHARED ${ANDROID_SOURCES} ${BOT_C_SOURCES})
 
 target_include_directories(main PRIVATE
-    ${PROJ_ROOT}/src/bolo
     ${PROJ_ROOT}/src/gui/sdl3
     ${PROJ_ROOT}/src/gui/sdl3/dialogs
     ${PROJ_ROOT}/src/gui
     ${PROJ_ROOT}/src/server
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(main gui)
 
 target_link_libraries(main PRIVATE
     SDL3::SDL3

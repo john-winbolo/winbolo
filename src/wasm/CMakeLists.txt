@@ -25,6 +25,8 @@ get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(SRC_ROOT "${REPO_ROOT}/src")
 set(DATA_DIR "${REPO_ROOT}/data")
 
+include(${REPO_ROOT}/cmake/bolo_lib.cmake)
+
 ###
 # Fetch dependencies (same versions as main build)
 #
@@ -136,7 +138,6 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/playername_validate.c
     ${SRC_ROOT}/bolo/playersrejoin.c
     ${SRC_ROOT}/bolo/rubble.c
-    ${SRC_ROOT}/bolo/screen.c
     ${SRC_ROOT}/bolo/screenbrainmap.c
     ${SRC_ROOT}/bolo/screenbullet.c
     ${SRC_ROOT}/bolo/screencalc.c
@@ -281,11 +282,11 @@ add_executable(winbolo
 target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui/sdl3
     ${SRC_ROOT}/gui
-    ${SRC_ROOT}/bolo
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(winbolo gui)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE

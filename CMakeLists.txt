@@ -18,6 +18,8 @@ endif()
 
 project(winbolo C)
 
+include(${CMAKE_SOURCE_DIR}/cmake/bolo_lib.cmake)
+
 # Enable Objective-C for macOS pinch-to-zoom support (not iOS)
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJC)
@@ -622,11 +624,11 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui
     src/gui/ios
     src/gui/mobile
-    src/bolo
     src/server
     src/mapeditor
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBoloIOS gui)
 
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
@@ -1049,7 +1051,6 @@ endif()
 target_include_directories(WinBolo PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/mapeditor
     src
@@ -1060,6 +1061,7 @@ target_include_directories(WinBolo PRIVATE
     src/third_party/tweetnacl
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBolo gui)
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
@@ -1279,13 +1281,13 @@ target_compile_definitions(WinBoloDS PRIVATE
 target_include_directories(WinBoloDS PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBoloDS runtime_only)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -1505,6 +1507,7 @@ target_include_directories(LogViewer PRIVATE
     ${CMAKE_SOURCE_DIR}/src/third_party/tweetnacl
     ${cjson_SOURCE_DIR}
 )
+bolo_apply_include_rules(LogViewer runtime_only)
 
 target_link_libraries(LogViewer PRIVATE
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
@@ -1610,7 +1613,6 @@ target_compile_definitions(WinBoloHeadless PRIVATE
 target_include_directories(WinBoloHeadless PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/headless
     src/mapeditor
@@ -1618,6 +1620,7 @@ target_include_directories(WinBoloHeadless PRIVATE
     src/third_party/tweetnacl
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBoloHeadless runtime_only)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -1745,7 +1748,6 @@ target_compile_definitions(winbolo_gym PRIVATE
 target_include_directories(winbolo_gym PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/headless
     src/mapeditor
@@ -1753,6 +1755,7 @@ target_include_directories(winbolo_gym PRIVATE
     src/third_party/tweetnacl
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(winbolo_gym runtime_only)
 
 if(WIN32)
     target_link_libraries(winbolo_gym PRIVATE ws2_32 winmm user32)
@@ -1884,13 +1887,13 @@ target_compile_definitions(BrainTest PRIVATE
 target_include_directories(BrainTest PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/braintest
     src/mapeditor
     ${cjson_SOURCE_DIR}
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(BrainTest runtime_only)
 
 # braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
 # backends). imgui_backends carries the headers + the impl libs.
@@ -1984,11 +1987,11 @@ target_compile_definitions(MapEditor PRIVATE
 target_include_directories(MapEditor PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/mapeditor
     ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(MapEditor mapeditor)
 
 if(WIN32)
     target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
