@@ -74,6 +74,7 @@
 #include "interpolation.h"
 #include "util.h"
 #include "client_sim.h"
+#include "viewport.h"
 #include "../server/server_sim.h"
 #include <SDL3/SDL.h>
 #include "../steam/steam_wrapper.h"
@@ -87,42 +88,6 @@ extern void moveMousePointer(updateType value);
 /* Module Level Variables */
 
 /* Display statics removed — now fields of ClientSim (see client_sim.h) */
-
-/*********************************************************
-*NAME:          screenRenderSetup
-*PURPOSE:
-*  Sets up rendering-only state (view buffers, offsets).
-*  Called by screenSetup after clientSimCreate.
-*********************************************************/
-static void screenRenderSetup(ClientSim *csPtr) {
-  New(*clientSimGetView(csPtr));
-  New(*clientSimGetMineView(csPtr));
-  clientSimSetXOffset(csPtr, 0);
-  clientSimSetYOffset(csPtr, 0);
-  clientSimSetCursorPosX(csPtr, -1);
-  clientSimSetCursorPosY(csPtr, -1);
-  clientSimSetNeedScreenReCalc(csPtr, FALSE);
-  clientSimSetInPillView(csPtr, FALSE);
-  clientSimSetPillViewX(csPtr, 0);
-  clientSimSetPillViewY(csPtr, 0);
-}
-
-/*********************************************************
-*NAME:          screenRenderDestroy
-*PURPOSE:
-*  Cleans up rendering-only state (view buffers).
-*  Called by screenDestroy before clientSimDestroy.
-*********************************************************/
-static void screenRenderDestroy(ClientSim *csPtr) {
-  if (*clientSimGetView(csPtr) != NULL) {
-    Dispose(*clientSimGetView(csPtr));
-    clientSimSetView(csPtr, NULL);
-  }
-  if (*clientSimGetMineView(csPtr) != NULL) {
-    Dispose(*clientSimGetMineView(csPtr));
-    clientSimSetMineView(csPtr, NULL);
-  }
-}
 
 /*********************************************************
 *NAME:          screenSetup
@@ -145,7 +110,7 @@ static void screenSetupCS(ClientSim *csPtr, gameType game, bool hiddenMines, int
   clientSimCreate(csPtr, game, hiddenMines, srtDelay, gmeLen);
 
   /* Initialize rendering state */
-  screenRenderSetup(csPtr);
+  viewportInit(clientSimViewportMut(csPtr));
 
   /* Initialize display variables */
   clientSimGetMapNameMutable(csPtr)[0] = '\0';
@@ -168,7 +133,7 @@ static void screenSetupCS(ClientSim *csPtr, gameType game, bool hiddenMines, int
 *********************************************************/
 void screenDestroyCS(ClientSim *csPtr) {
   /* Clean up rendering state first */
-  screenRenderDestroy(csPtr);
+  viewportDestroy(clientSimViewportMut(csPtr));
 
   /* Clean up simulation state */
   clientSimDestroy(csPtr);
@@ -445,16 +410,9 @@ bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
 * value - The update type (Helps in optimisations)
 *********************************************************/
 void screenUpdateViewCS(ClientSim *csPtr, updateType value) {
-/* NOTE: value UNUSED */
-  BYTE count;   /* Looping Variables */
-  BYTE count2;
-
-  for (count=0;count<MAIN_BACK_BUFFER_SIZE_X;count++) {
-    for (count2=0;count2<MAIN_BACK_BUFFER_SIZE_Y;count2++) {
-      (*clientSimGetView(csPtr))->screenItem[count][count2] = screenCalcSquareCS(csPtr, (BYTE) (count+clientSimGetXOffset(csPtr)),(BYTE) (count2+clientSimGetYOffset(csPtr)), count, count2);
-      screenBrainMapSetPos((BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(csPtr), (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr)), mapGetPos(&clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))), minesExistPos(&clientSimGetGameSim(csPtr)->mns, &clientSimGetGameSim(csPtr)->mp, (BYTE) (count+clientSimGetXOffset(csPtr)), (BYTE) (count2+clientSimGetYOffset(csPtr))));
-    }
-  }
+  viewportUpdateView(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
+                     clientSimGetMyPlayerNum(csPtr),
+                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(csPtr), value);
 }
 
 /*********************************************************
@@ -470,166 +428,8 @@ void screenUpdateViewCS(ClientSim *csPtr, updateType value) {
 *  yValue - The y co-ordinate
 *********************************************************/
 BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
-  baseAlliance ba;  /* The allience of a base */
-  BYTE returnValue; /* Value to return */
-  BYTE currentPos;
-  BYTE aboveLeft;
-  BYTE above;
-  BYTE aboveRight;
-  BYTE leftPos;
-  BYTE rightPos;
-  BYTE belowLeft;
-  BYTE below;
-  BYTE belowRight;
-
-  (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = FALSE;
-  /* Set up Items */
-  if ((pillsExistPos(&clientSimGetGameSim(csPtr)->pb,xValue,yValue)) == TRUE) {
-    returnValue = pillsGetScreenHealth(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, xValue, yValue);
-  } else if ((basesExistPos(&clientSimGetGameSim(csPtr)->bs,xValue,yValue)) == TRUE) {
-     ba = basesGetAlliancePos(clientSimGetGameSim(csPtr), xValue, yValue);
-    switch (ba) {
-    case baseOwnGood:
-      returnValue = BASE_GOOD;
-      break;
-    case baseAllieGood:
-      returnValue = BASE_GOOD;
-      break;
-    case baseNeutral:
-      returnValue = BASE_NEUTRAL;
-      break;
-    case baseDead:
-      if (basesAmOwner(clientSimGetGameSim(csPtr), clientSimGetMyPlayerNum(csPtr), xValue, yValue) == TRUE) {
-        returnValue = BASE_GOOD;
-      } else {
-        returnValue = BASE_EVIL;
-      }
-      break;
-    case baseEvil:
-    default:
-      /* Base Evil */
-      returnValue = BASE_EVIL;
-    }
-  }  else {
-    currentPos = mapGetPos(&clientSimGetGameSim(csPtr)->mp,xValue,yValue);
-	if (currentPos>=HALFBUILDING+MINE_SUBTRACT&&currentPos!=DEEP_SEA){
-	  minesRemoveItem(&clientSimGetGameSim(csPtr)->mns, xValue, yValue);
-	  (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = FALSE;
-	  currentPos = currentPos - MINE_SUBTRACT;
-	  mapSetPos(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->mp, xValue, yValue, currentPos,TRUE,TRUE);
-	}
-    if (mapIsMine(&clientSimGetGameSim(csPtr)->mp, xValue, yValue) == TRUE) {
-      if (minesExistPos(&clientSimGetGameSim(csPtr)->mns, &clientSimGetGameSim(csPtr)->mp, xValue, yValue) == TRUE) {
-        (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = TRUE;
-      }
-	  if (currentPos != DEEP_SEA) {
-        currentPos = currentPos - MINE_SUBTRACT;
-      }
-    } else {
-      (*clientSimGetMineView(csPtr))->mineItem[scrX][scrY] = FALSE;
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
-      aboveLeft = ROAD;
-    } else {
-      aboveLeft = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
-      if (aboveLeft >= MINE_START && aboveLeft <= MINE_END) {
-        aboveLeft = aboveLeft - MINE_SUBTRACT;
-      }
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, xValue, (BYTE) (yValue-1)) == TRUE) {
-      above = ROAD;
-    } else {
-      above = mapGetPos(&clientSimGetGameSim(csPtr)->mp,xValue,(BYTE) (yValue-1));
-      if (above >= MINE_START && above <= MINE_END) {
-        above = above - MINE_SUBTRACT;
-      }
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
-      aboveRight = ROAD;
-    } else {
-      aboveRight = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
-      if (aboveRight >= MINE_START && aboveRight <= MINE_END) {
-        aboveRight = aboveRight - MINE_SUBTRACT;
-      }
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue-1), yValue) == TRUE) {
-      leftPos = ROAD;
-    } else {
-      leftPos = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue-1),yValue);
-      if (leftPos >= MINE_START && leftPos <= MINE_END) {
-        leftPos = leftPos - MINE_SUBTRACT;
-      }
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue+1), yValue) == TRUE) {
-      rightPos = ROAD;
-    } else {
-      rightPos = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue+1),yValue);
-      if (rightPos >= MINE_START && rightPos <= MINE_END) {
-        rightPos = rightPos - MINE_SUBTRACT;
-      }
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
-      belowLeft = ROAD;
-    } else {
-      belowLeft = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
-      if (belowLeft >= MINE_START && belowLeft <= MINE_END) {
-        belowLeft = belowLeft - MINE_SUBTRACT;
-      }
-    }
-
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, xValue, (BYTE) (yValue+1)) == TRUE) {
-      below = ROAD;
-    } else {
-      below = mapGetPos(&clientSimGetGameSim(csPtr)->mp,xValue,(BYTE) (yValue+1));
-      if (below >= MINE_START && below <= MINE_END) {
-        below = below - MINE_SUBTRACT;
-      }
-    }
-
-    if (basesExistPos(&clientSimGetGameSim(csPtr)->bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
-      belowRight = ROAD;
-    } else {
-      belowRight = mapGetPos(&clientSimGetGameSim(csPtr)->mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
-      if (belowRight >= MINE_START && belowRight <= MINE_END) {
-        belowRight = belowRight - MINE_SUBTRACT;
-      }
-    }
-
-    switch (currentPos) {
-    case ROAD:
-      returnValue = screenCalcRoad(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    case BUILDING:
-      returnValue = screenCalcBuilding(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    case FOREST:
-      returnValue = screenCalcForest(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    case RIVER:
-      returnValue = screenCalcRiver(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    case DEEP_SEA:
-      returnValue = screenCalcDeepSea(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    case BOAT:
-      returnValue = screenCalcBoat(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    case CRATER:
-      returnValue = screenCalcCrater(aboveLeft, above, aboveRight, leftPos, rightPos, belowLeft, below, belowRight);
-      break;
-    default:
-      returnValue = currentPos;
-      break;
-    }
-  }
-  return returnValue;
+  return viewportCalcSquare(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
+                            clientSimGetMyPlayerNum(csPtr), xValue, yValue, scrX, scrY);
 }
 
 
@@ -949,7 +749,7 @@ void screenSetGunsightCS(ClientSim *csPtr, bool shown) {
 *
 *********************************************************/
 void screenReCalcCS(ClientSim *csPtr) {
-  clientSimSetNeedScreenReCalc(csPtr, TRUE);
+  viewportRecalc(clientSimViewportMut(csPtr));
 }
 
 
@@ -981,14 +781,7 @@ void screenGetMessages(ClientSim *csPtr, char *top, char *bottom) {
 *
 *********************************************************/
 void clientCenterTankCS(ClientSim *csPtr) {
-  BYTE high, low, health, dummy;
-
-  tankGetStats(&MY_TANK(csPtr), &high, &low, &health, &dummy);
-  if (health <= TANK_FULL_ARMOUR) {
-    /* Tank isn't dead */
-    scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), (tankGetMX(&MY_TANK(csPtr))), (tankGetMY(&MY_TANK(csPtr))));
-    screenReCalcCS(csPtr);
-  }
+  viewportCenterOnTank(clientSimViewportMut(csPtr), clientSimGetScroll(csPtr), MY_TANK(csPtr));
 }
 
 /*********************************************************
@@ -1415,8 +1208,7 @@ void screenSetTankLabelLen(ClientSim *csPtr, labelLen value) {
 *
 *********************************************************/
 void screenTankViewCS(ClientSim *csPtr) {
-  clientSimSetInPillView(csPtr, FALSE);
-  clientCenterTankCS(csPtr);
+  viewportFollowTank(clientSimViewportMut(csPtr), clientSimGetScroll(csPtr), MY_TANK(csPtr));
 }
 
 
@@ -1433,41 +1225,8 @@ void screenTankViewCS(ClientSim *csPtr) {
 *  vert - If we are moving up or down (0 for neither)
 *********************************************************/
 void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
-  bool result; /* Was the operation successful */
-
-  if (clientSimIsInPillView(csPtr) == FALSE) {
-    if (pillsCheckView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr)) == TRUE) {
-      clientSimSetInPillView(csPtr, TRUE);
-      scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
-      screenReCalcCS(csPtr);
-    } else {
-      result = pillsGetNextView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewXPtr(csPtr), clientSimGetPillViewYPtr(csPtr), FALSE);
-      if (result == TRUE) {
-        /* Center on the object */
-        clientSimSetInPillView(csPtr, TRUE);
-        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
-        screenReCalcCS(csPtr);
-      } else {
-        clientSimSetInPillView(csPtr, FALSE);
-      }
-    }
-  } else {
-    if (horz == 0 && vert == 0) {
-      result = pillsGetNextView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewXPtr(csPtr), clientSimGetPillViewYPtr(csPtr), TRUE);
-      if (result == FALSE) {
-        screenTankViewCS(csPtr);
-      } else {
-        /* Center on the object */
-        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
-        screenReCalcCS(csPtr);
-      }
-    } else {
-      if (pillsMoveView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewXPtr(csPtr), clientSimGetPillViewYPtr(csPtr), horz, vert) == TRUE) {
-        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
-        screenReCalcCS(csPtr);
-      }
-    }
-  }
+  viewportPanInPillView(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
+                        clientSimGetScroll(csPtr), MY_TANK(csPtr), horz, vert);
 }
 
 
@@ -2109,11 +1868,7 @@ void screenChangeOwnershipCS(ClientSim *csPtr, BYTE oldOwner) {
 *  isLeft - TRUE for left, FALSE for right
 *********************************************************/
 void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) {
-  if (isLeft == TRUE) {
-    clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) - 1);
-  } else {
-    clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) + 1);
-  }
+  viewportPanX(clientSimViewportMut(csPtr), isLeft ? -1 : +1);
 }
 
 /*********************************************************
@@ -2128,11 +1883,7 @@ void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) {
 *  isup - TRUE for up, FALSE for dpwm
 *********************************************************/
 void screenMoveViewOffsetUpCS(ClientSim *csPtr, bool isUp) {
-  if (isUp == TRUE) {
-    clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) - 1);
-  } else {
-    clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) + 1);
-  }
+  viewportPanY(clientSimViewportMut(csPtr), isUp ? -1 : +1);
 }
 
 
@@ -2347,23 +2098,7 @@ void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) {
 *  posY - Top position
 *********************************************************/
 void screenSetCursorPosCS(ClientSim *csPtr, BYTE posX, BYTE posY) {
-/*  char str[255];
-  static BYTE oldCursorXPos = 255;
-  static BYTE oldCursorYPos = 255;
-
-  sprintf(str, "pos (%d, %d)", posX, posY); */
-  if(posX != 0 && posY != 0) {
-/*    if (posX >15  || posY > 15) {
-      strcat(str, " bad");
-    } */
-    clientSimSetCursorPosX(csPtr, posX);
-    clientSimSetCursorPosY(csPtr, posY);
-/*    if (oldCursorXPos != clientSimGetCursorPosX(csPtr) || oldCursorYPos != clientSimGetCursorPosY(csPtr)) {
-      oldCursorXPos = clientSimGetCursorPosX(csPtr);
-      oldCursorYPos = clientSimGetCursorPosY(csPtr);
-      messageAdd(globalMessage, "mouse", str);
-    } */
-  }
+  viewportSetCursor(clientSimViewportMut(csPtr), posX, posY);
 }
 
 /*********************************************************
@@ -2381,19 +2116,7 @@ void screenSetCursorPosCS(ClientSim *csPtr, BYTE posX, BYTE posY) {
 *  posY - Pointer to hold top position
 *********************************************************/
 bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
-  bool returnValue; /* Value to return */
-
-  returnValue = FALSE;
-  if (clientSimGetCursorPosX(csPtr) >= 0 && clientSimGetCursorPosX(csPtr) <= MAIN_SCREEN_SIZE_X && clientSimGetCursorPosY(csPtr) >= 0 && clientSimGetCursorPosY(csPtr) <= MAIN_SCREEN_SIZE_Y) {
-    returnValue = TRUE;
-    *posX = (BYTE) clientSimGetCursorPosX(csPtr);
-    *posY = (BYTE) clientSimGetCursorPosY(csPtr);
-  } else {
-    *posX = 0;
-    *posY = 0;
-  }
-
-  return returnValue;
+  return viewportGetCursor(clientSimViewport(csPtr), posX, posY);
 }
 
 

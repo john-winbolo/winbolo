@@ -147,7 +147,7 @@ ClientSim *clientSimAlloc(void) {
  *PURPOSE:
  *  Initializes a ClientSim struct with all simulation state.
  *  This is the simulation-only initialization; rendering
- *  setup is handled separately by screenRenderSetup().
+ *  setup is handled separately by viewportInit().
  *
  *ARGUMENTS:
  *  cs         - Pointer to the ClientSim to initialize
@@ -282,7 +282,7 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *PURPOSE:
  *  Cleans up all simulation state in a ClientSim struct and
  *  frees the cs pointer (pairs with clientSimAlloc).
- *  Rendering cleanup is handled separately by screenRenderDestroy().
+ *  Rendering cleanup is handled separately by viewportDestroy().
  *  Accepts NULL as a no-op.
  *
  *ARGUMENTS:

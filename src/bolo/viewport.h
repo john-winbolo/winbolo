@@ -17,9 +17,10 @@
  *Filename:      viewport.h
  *Purpose:
  *  Declares struct ViewPort (forward only) and the viewport
- *  math operations (init, recalc, pan, pill-view toggle,
- *  tank-follow, square calculation) that operate on a
- *  ViewPort substructure of ClientSim.
+ *  math operations (init/destroy, recalc, view-buffer fill,
+ *  square calculation, pan, tank-follow, pill-view pan,
+ *  cursor get/set) that operate on a ViewPort substructure
+ *  of ClientSim.
  *
  *  The struct definition lives in client_sim_internal.h
  *  because ViewPort is embedded by value in struct ClientSim;
@@ -31,17 +32,28 @@
 #define VIEWPORT_H
 
 #include "viewport_types.h"
+#include "client_enums.h"
 #include "types.h"
+#include "scroll.h"
+
+struct GameSim;
 
 typedef struct ViewPort ViewPort;
 
 void viewportInit(ViewPort *vp);
-void viewportRecalc(ViewPort *vp, map mp, tank myTank);
+void viewportDestroy(ViewPort *vp);
+void viewportRecalc(ViewPort *vp);
+void viewportUpdateView(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
+                        BYTE brainMap[][MAP_ARRAY_SIZE], updateType value);
+BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
+                        BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
 void viewportPanX(ViewPort *vp, int dxTiles);
 void viewportPanY(ViewPort *vp, int dyTiles);
-void viewportEnterPillView(ViewPort *vp, BYTE pillX, BYTE pillY);
-void viewportExitPillView(ViewPort *vp);
-void viewportFollowTank(ViewPort *vp, tank myTank);
-BYTE viewportCalcSquare(const ViewPort *vp, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
+void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank);
+void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
+                           tank myTank, int horz, int vert);
+void viewportSetCursor(ViewPort *vp, BYTE posX, BYTE posY);
+bool viewportGetCursor(const ViewPort *vp, BYTE *posX, BYTE *posY);
+void viewportCenterOnTank(ViewPort *vp, ScrollState *scroll, tank myTank);
 
 #endif /* VIEWPORT_H */
