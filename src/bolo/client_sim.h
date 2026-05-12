@@ -210,10 +210,31 @@ void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, 
 void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName);
 void clientSimGetPlayerName(ClientSim *cs, char *value);
 bool clientSimSetPlayerName(ClientSim *cs, char *value);
+
+/* High-level send-message wrappers used by the players-panel UI. */
+void clientSimSendMessageAllPlayers(ClientSim *cs, char *messageStr);
+void clientSimSendMessageAllAllies(ClientSim *cs, char *messageStr);
+void clientSimSendMessageAllNearby(ClientSim *cs, char *messageStr);
+void clientSimSendMessageAllSelected(ClientSim *cs, char *messageStr);
+
 void clientSimRequestAlliance(ClientSim *cs, BYTE playerNum, BYTE requestTo);
 void clientSimAllianceAccept(ClientSim *cs, BYTE playerNum);
 void clientSimLeaveAlliance(ClientSim *cs, BYTE playerNum);
+
+/* Local-player alliance actions (disambiguate from the targeted variants above). */
+void clientSimLeaveAllianceSelf(ClientSim *cs);
+void clientSimRequestAllianceSelected(ClientSim *cs);
+
 void clientSimSetAllowNewPlayers(ClientSim *cs, bool allow);
+
+/* Players-panel selection helpers — operate on local player check-state. */
+void clientSimTogglePlayerCheckState(ClientSim *cs, BYTE playerNum);
+void clientSimCheckAllNonePlayers(ClientSim *cs, bool isChecked);
+void clientSimCheckAlliedPlayers(ClientSim *cs);
+void clientSimCheckNearbyPlayers(ClientSim *cs);
+int  clientSimGetNumCheckedPlayers(ClientSim *cs);
+int  clientSimGetNumAllies(ClientSim *cs);
+int  clientSimGetNumNearbyTanks(ClientSim *cs);
 
 /* Tank preferences (per-instance) — operate on the local player's tank */
 bool clientSimGetTankAutoSlowdown(ClientSim *cs);

@@ -706,26 +706,6 @@ void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
 
 
 /*********************************************************
-*NAME:          screenSendMessageAllPlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 5/2/99
-*LAST MODIFIED: 24/4/99
-*PURPOSE:
-* Front end wants to send a message
-*
-*ARGUMENTS:
-*  messageStr - Message to send
-*********************************************************/
-void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
-  char topLine[FILENAME_MAX];       /* The message topline */
-
-  topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
-  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  clientSimMessageSendAllPlayers(csPtr, clientSimGetMyPlayerNum(csPtr), messageStr);
-}
-
-/*********************************************************
 *NAME:          screenTanksAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
@@ -1094,194 +1074,20 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
   }
 }
 
-/*********************************************************
-*NAME:          screenTogglePlayerCheckState
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Toggles the check mark state on a player
-*
-*ARGUMENTS:
-*
-*********************************************************/
 void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
-  playersToggleCheckedState(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), playerNum, FALSE);
+  clientSimTogglePlayerCheckState(csPtr, playerNum);
 }
 
-/*********************************************************
-*NAME:          screenCheckAllNonePlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Checks/UnChecks all players.
-*
-*ARGUMENTS:
-*  isChecked - TRUE if check all
-*********************************************************/
 void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
-  playersCheckAllNone(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), isChecked, FALSE);
+  clientSimCheckAllNonePlayers(csPtr, isChecked);
 }
 
-/*********************************************************
-*NAME:          screenCheckAlliedPlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Checks your allies
-*
-*ARGUMENTS:
-*
-*********************************************************/
 void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
-  playersCheckAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
+  clientSimCheckAlliedPlayers(csPtr);
 }
 
-/*********************************************************
-*NAME:          screenCheckAlliedPlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Checks nearby players
-*
-*ARGUMENTS:
-*
-*********************************************************/
 void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  playersCheckNearbyPlayers(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
-}
-
-/*********************************************************
-*NAME:          screenNumCheckedPlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Returns the number of checked players
-*
-*ARGUMENTS:
-*
-*********************************************************/
-int screenNumCheckedPlayersCS(ClientSim *csPtr) {
-  return playersGetNumChecked(&clientSimGetGameSim(csPtr)->plyrs);
-}
-
-/*********************************************************
-*NAME:          screenNumCheckedPlayers
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Returns the number of allied players
-*
-*ARGUMENTS:
-*
-*********************************************************/
-int screenNumAlliesCS(ClientSim *csPtr) {
-  return playersGetNumAllies(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
-}
-
-/*********************************************************
-*NAME:          screenNumNearbyTanks
-*AUTHOR:        John Morrison
-*CREATION DATE: 6/4/99
-*LAST MODIFIED: 6/4/99
-*PURPOSE:
-* Returns the number of nearby tanks
-*
-*ARGUMENTS:
-*
-*********************************************************/
-int screenNumNearbyTanksCS(ClientSim *csPtr) {
-  return playersNumNearbyPlayers(&clientSimGetGameSim(csPtr)->plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)));
-}
-
-/*********************************************************
-*NAME:          screenSendMessageAllAllies
-*AUTHOR:        John Morrison
-*CREATION DATE: 7/4/99
-*LAST MODIFIED: 7/4/99
-*PURPOSE:
-* Sends a message to all allied players
-*
-*ARGUMENTS:
-*  message - The message to send
-*********************************************************/
-void screenSendMessageAllAlliesCS(ClientSim *csPtr, char *messageStr) {
-  char topLine[FILENAME_MAX];       /* The message topline */
-
-  topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
-  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
-}
-
-/*********************************************************
-*NAME:          screenSendMessageAllSelected
-*AUTHOR:        John Morrison
-*CREATION DATE: 7/4/99
-*LAST MODIFIED: 7/4/99
-*PURPOSE:
-* Sends a message to all selected players
-*
-*ARGUMENTS:
-*  messageStr - The message to send
-*********************************************************/
-void screenSendMessageAllSelectedCS(ClientSim *csPtr, char *messageStr) {
-  playersSendMessageAllSelected(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
-}
-
-/*********************************************************
-*NAME:          screenSendMessageAllNearby
-*AUTHOR:        John Morrison
-*CREATION DATE: 7/4/99
-*LAST MODIFIED: 7/4/99
-*PURPOSE:
-* Sends a message to all nearby players
-*
-*ARGUMENTS:
-*  message - The message to send
-*********************************************************/
-void screenSendMessageAllNearbyCS(ClientSim *csPtr, char *messageStr) {
-  char topLine[FILENAME_MAX];       /* The message topline */
-
-  topLine[0] = '\0';
-  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
-  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
-  playersSendMessageAllNearby(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
-}
-
-/*********************************************************
-*NAME:          screenRequestAlliance
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/11/99
-*LAST MODIFIED: 1/11/99
-*PURPOSE:
-* Frontend has clicked the request alliance menu item
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenRequestAllianceCS(ClientSim *csPtr) {
-  playersRequestAlliance(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
-}
-
-/*********************************************************
-*NAME:          screenLeaveAlliance
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/11/99
-*LAST MODIFIED: 1/11/99
-*PURPOSE:
-* Frontend has clicked the leave alliance menu item
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenLeaveAllianceCS(ClientSim *csPtr) {
-  clientSimLeaveAlliance(csPtr, clientSimGetMyPlayerNum(csPtr));
+  clientSimCheckNearbyPlayers(csPtr);
 }
 
 /*********************************************************
