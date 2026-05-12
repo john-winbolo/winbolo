@@ -40,7 +40,6 @@
 #include "players.h"
 #include "pillbox.h"
 #include "rubble.h"
-#include "screen.h"
 #include "brain_data.h"
 #include "screenbullet.h"
 #include "shells.h"

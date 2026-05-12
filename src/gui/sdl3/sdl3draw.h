@@ -41,7 +41,11 @@
 extern "C" {
 #endif
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "../../bolo/client_enums.h"    /* buildSelect */
+#include "../../bolo/screentank.h"      /* screenTanks, tank */
+#include "../../bolo/screenbullet.h"    /* screenBullets */
+#include "../../bolo/screenlgm.h"       /* screenLgm */
 #include "../../bolo/client_sim.h"
 /* Status / message / HUD renderers extracted in Phase C of
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so

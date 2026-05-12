@@ -25,6 +25,31 @@
 #ifndef CLIENT_ENUMS_H
 #define CLIENT_ENUMS_H
 
+#ifndef _AITYPE_ENUM
+#define _AITYPE_ENUM
+
+typedef enum {
+  aiNone,
+  aiYes,
+  aiYesAdvantage,
+  aiFull
+} aiType;
+
+#endif
+
+#ifndef _BUILDSELECT_ENUM
+#define _BUILDSELECT_ENUM
+
+/* The type of building operation currently being selected */
+typedef enum {
+  BsTrees,
+  BsRoad,
+  BsBuilding,
+  BsPillbox,
+  BsMine
+} buildSelect;
+#endif
+
 #ifndef _GAMETYPE_ENUM
 #define _GAMETYPE_ENUM
 

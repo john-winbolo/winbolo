@@ -81,7 +81,6 @@
 #include "../../common/wb_log.h"
 #include "../../bolo/global.h"
 #include "../../bolo/brain.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/brain_data.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/util.h"

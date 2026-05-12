@@ -47,7 +47,6 @@
 #endif
 
 #include "../../common/wb_log.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/client_mapload.h"
 #include "../../bolo/client_render.h"
 #include "../../bolo/client_sim.h"

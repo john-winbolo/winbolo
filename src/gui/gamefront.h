@@ -29,7 +29,7 @@
 #define GAMEFRONT_H
 
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "../bolo/client_enums.h"  /* aiType, gameType */
 #include "../bolo/transport.h"
 #include "../server/server_sim.h"
 #include "input.h"

@@ -3,7 +3,7 @@
 
 #include <SDL3/SDL.h>
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/tank.h"  /* tankButton */
 
 /* Initialize touch input system. Call once after SDL_Init.
    safeLeft/safeTop/safeRight/safeBottom are insets from screen edges

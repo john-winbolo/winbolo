@@ -67,7 +67,6 @@
 #include "labels.h"
 #include "players.h"
 #include "screenbrainmap.h"
-#include "screen.h"
 #include "client_snapshot.h"
 #include "client_state.h"
 #include "interpolation.h"

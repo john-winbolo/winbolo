@@ -45,7 +45,6 @@
 #include "players.h"
 #include "pillbox.h"
 #include "rubble.h"
-#include "screen.h"
 #include "sounddist.h"
 #include "starts.h"
 #include "swamp.h"

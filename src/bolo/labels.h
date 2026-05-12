@@ -29,7 +29,6 @@
 #define LABELS_H
 
 #include "global.h"
-#include "screen.h"
 
 struct ClientSim;
 

@@ -30,7 +30,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include "global.h"
-#include "screen.h"
 #include "scroll.h"
 #include "scroll_item_list.h"
 #include "tank.h"

@@ -26,7 +26,7 @@
 
 #include "global.h"
 #include "brain.h"
-#include "screen.h"   /* aiType */
+#include "client_enums.h"   /* aiType */
 
 struct ClientSim;
 

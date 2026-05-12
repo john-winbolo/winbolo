@@ -27,7 +27,6 @@
 
 #include "global.h"
 #include "screenbullet.h"
-#include "screen.h"
 #include "rubble.h"
 #include "frontend.h"
 #include "explosions.h"

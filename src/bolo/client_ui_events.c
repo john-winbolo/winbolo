@@ -31,7 +31,6 @@
 #include "global.h"
 #include "client_ui_events.h"
 #include "client_sim.h"
-#include "screen.h"
 #include "tank.h"
 #include "bases.h"
 #include "pillbox.h"

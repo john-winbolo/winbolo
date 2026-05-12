@@ -32,7 +32,6 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
-#include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
 #include "../../../bolo/util.h"
 #include "../../../bolo/playername_validate.h"

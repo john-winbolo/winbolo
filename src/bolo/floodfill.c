@@ -30,7 +30,6 @@
 #include "bolo_map.h"
 #include "bases.h"
 #include "pillbox.h"
-#include "screen.h"
 #include "client_sim.h"
 #include "mines.h"
 #include "floodfill.h"

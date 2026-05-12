@@ -33,7 +33,6 @@
 #include "frontend.h"
 #include "messages.h"
 #include "players.h"
-#include "screen.h"
 #include "brain_data.h"
 #include "log.h"
 #include "../winbolonet/winbolonet.h"

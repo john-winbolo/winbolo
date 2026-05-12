@@ -45,7 +45,6 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "transport.h"
-#include "screen.h"
 #include "client_snapshot.h"
 #include "screenbrainmap.h"
 #include "input_packet.h"
