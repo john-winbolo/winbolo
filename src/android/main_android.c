@@ -20,6 +20,7 @@
 #include "../common/wb_log.h"
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_render.h"
 #include "../bolo/frontend.h"
 #include "../bolo/transport.h"
 #include "../bolo/transport_udp.h"
@@ -199,7 +200,7 @@ static void windowRunGameTick(ClientSim *cs) {
       {
         ServerSim *serverSim = gameFrontGetServerSim();
         if (serverSim != NULL && botManagerGetNumBots() > 0) {
-          botManagerTick(serverSim, screenGetAiTypeCS(cs));
+          botManagerTick(serverSim, clientSimGetAiType(cs));
         }
       }
       transport->tick(transport->ctx);
@@ -498,7 +499,7 @@ int main(int argc, char *argv[]) {
     tick = winboloTimer();
     clientMutexWaitFor();
     if (finishedLoop == FALSE) {
-      screenUpdateCS(cs, redraw);
+      clientRenderFrame(cs, redraw);
     }
     clientMutexRelease();
     dwSysFrame += (winboloTimer() - tick);

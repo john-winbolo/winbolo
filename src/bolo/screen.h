@@ -228,7 +228,6 @@ void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen)
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
 bool screenTankScrollCS(struct ClientSim *csPtr);
 void screenSetAiTypeCS(struct ClientSim *csPtr, aiType value);
-aiType screenGetAiTypeCS(struct ClientSim *csPtr);
 bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
 void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
 bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
@@ -240,7 +239,6 @@ void screenNetLgmReturnCS(struct ClientSim *csPtr, BYTE numTrees, BYTE numMines,
 void screenNetManWorkingCS(struct ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines, BYTE pillNum, BYTE numTrees);
 void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, TURNTYPE angle, BYTE numShells, BYTE numMines);
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
-bool screenGetGameRunningCS(struct ClientSim *csPtr);
 buildSelect getBuildCurrentSelectCS(struct ClientSim *csPtr);
 void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);
 #endif /* SCREEN_H */
