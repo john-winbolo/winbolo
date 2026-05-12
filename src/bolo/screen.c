@@ -1256,7 +1256,3 @@ void serverCoreSoundDist(sndEffects value, BYTE mx, BYTE my) {
 
 
 
-void screenSetLocalTransportCS(ClientSim *csPtr, bool isLocal) {
-  clientSimSetLocalTransport(csPtr, isLocal);
-}
-

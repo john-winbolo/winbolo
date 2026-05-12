@@ -230,5 +230,4 @@ void screenNetLgmReturnCS(struct ClientSim *csPtr, BYTE numTrees, BYTE numMines,
 void screenNetManWorkingCS(struct ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines, BYTE pillNum, BYTE numTrees);
 void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, TURNTYPE angle, BYTE numShells, BYTE numMines);
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
-void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);
 #endif /* SCREEN_H */

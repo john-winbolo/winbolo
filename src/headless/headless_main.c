@@ -974,7 +974,7 @@ void gameFrontSetPlayerName(char *pn) {
 }
 
 void gameFrontSetAIType(aiType ait) {
-  screenSetAiTypeCS(humanSim, ait);
+  clientSimSetAiType(humanSim, ait);
 }
 
 void gameFrontEnableRejoin(void) {
@@ -1053,7 +1053,7 @@ static bool fastModeSetupGame(void) {
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
-  screenSetAiTypeCS(humanSim, optAi);
+  clientSimSetAiType(humanSim, optAi);
 
   /* Sync initial snapshot and place tank */
   headlessSyncSnapshot();
@@ -1135,7 +1135,7 @@ static int runFastMode(void) {
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
-  screenSetAiTypeCS(humanSim, optAi);
+  clientSimSetAiType(humanSim, optAi);
   headlessSyncSnapshot();
   screenNetSetupTankGoCS(humanSim);
 
@@ -1367,8 +1367,8 @@ static int runNetworkMode(void) {
         transportUdpClientDestroy(&headlessTransport);
         return 1;
       }
-      screenSetLocalTransportCS(humanSim, false);
-      screenSetAiTypeCS(humanSim, optAi);
+      clientSimSetLocalTransport(humanSim, false);
+      clientSimSetAiType(humanSim, optAi);
     } else {
       fprintf(stderr, "Error: no map data from server\n");
       transportUdpClientDestroy(&headlessTransport);
