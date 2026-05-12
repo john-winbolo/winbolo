@@ -650,7 +650,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 clientSimApplyControl(c->clientSim, &evt);
                 /* Show join message in lobby chat */
                 if (c->clientSim->inLobby) {
-                    char joinMsg[64];
+                    char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
                     snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", pName);
                     clientSimAppendLobbyChat(c->clientSim, "***", joinMsg);
                 }
@@ -728,7 +728,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (pNum != c->playerNum) {
                 /* Show leave message in lobby chat */
                 if (c->clientSim->inLobby) {
-                    char leaveMsg[64];
+                    char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
                     snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", pName);
                     clientSimAppendLobbyChat(c->clientSim, "***", leaveMsg);
                 }
