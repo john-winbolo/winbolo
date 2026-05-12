@@ -30,7 +30,6 @@
 #include "global.h"
 #include "types.h"
 #include "floodfill.h"
-#include "screen.h"
 #include "client_sim.h"
 #include "sounddist.h"
 #include "explosions.h"

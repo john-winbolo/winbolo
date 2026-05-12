@@ -19,7 +19,7 @@
 #include <stdbool.h>
 #include <SDL3/SDL.h>
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"   /* updateType */
+#include "../../bolo/client_enums.h"   /* updateType */
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32

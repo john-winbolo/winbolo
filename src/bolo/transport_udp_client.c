@@ -29,7 +29,6 @@
 #include "pillbox.h"
 #include "players.h"
 #include "util.h"
-#include "screen.h"
 #include "messages.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"

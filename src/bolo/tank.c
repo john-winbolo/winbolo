@@ -29,7 +29,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "screen.h"
 #include "explosions.h"
 #include "frontend.h"
 #include "gametype.h"

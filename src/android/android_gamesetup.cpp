@@ -28,7 +28,6 @@ extern "C" {
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
 #include "../gui/sdl3/dialogs/imgui_gamesetup.h"

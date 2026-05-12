@@ -29,7 +29,8 @@
 #include "pillbox.h"
 #include "starts.h"
 #include "players.h"
-#include "screen.h"
+#include "client_enums.h"  /* aiType, gameType, sndEffects, updateType */
+#include "viewport_types.h"  /* screen */
 #include "messages.h"
 #include "util.h"
 #include "game_sim.h"

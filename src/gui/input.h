@@ -28,7 +28,6 @@
 #define _INPUT_H
 
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
 
 /* Typestructure that holds the keys */
 typedef struct {

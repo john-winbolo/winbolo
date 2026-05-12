@@ -29,7 +29,6 @@
 #include "client_sim_internal.h"
 #include "client_snapshot.h"
 #include "client_state.h"
-#include "screen.h"
 #include "client_ui_events.h"
 #include "global.h"
 #include "bolo_map.h"

@@ -30,7 +30,13 @@
 
 #include <SDL3/SDL.h>
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "../../bolo/client_enums.h"    /* buildSelect */
+#include "../../bolo/bases.h"           /* baseAlliance */
+#include "../../bolo/pillbox.h"         /* pillAlliance */
+#include "../../bolo/screentank.h"      /* screenTanks, tank */
+#include "../../bolo/screenbullet.h"    /* screenBullets */
+#include "../../bolo/screenlgm.h"       /* screenLgm */
 
 /* Portable RECT definition for non-Windows platforms */
 #ifndef _WIN32

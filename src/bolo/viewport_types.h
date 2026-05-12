@@ -48,6 +48,9 @@ struct screenMineObj {
   bool mineItem[MAIN_BACK_BUFFER_SIZE_X][MAIN_BACK_BUFFER_SIZE_Y];
 };
 
+/* Flag to indicate no gunsight is to be drawn */
+#define NO_GUNSIGHT -1
+
 /* Defines the gunsight position on the screen */
 typedef struct {
   int mapX;

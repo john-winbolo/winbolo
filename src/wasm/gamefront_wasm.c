@@ -15,7 +15,6 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "../bolo/screen.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/client_snapshot.h"

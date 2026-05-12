@@ -39,7 +39,6 @@
 #include "pillbox.h"
 #include "players.h"
 #include "playername_validate.h"
-#include "screen.h"
 #include "brain_data.h"
 #include "client_sim.h"
 #include "screenlgm.h"

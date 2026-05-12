@@ -54,7 +54,6 @@
 #include "tileloader.h"
 #include "sdl_bmp.h"
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/tank.h"
 #include "../gamefront.h"

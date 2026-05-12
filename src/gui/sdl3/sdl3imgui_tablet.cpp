@@ -41,9 +41,9 @@
 
 extern "C" {
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/screentank.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "../ui_mode.h"

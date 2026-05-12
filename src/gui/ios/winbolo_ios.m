@@ -20,7 +20,6 @@
 
 #include "../../bolo/frontend.h"
 #include "../../bolo/players.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/client_snapshot.h"
 #include "../../bolo/client_render.h"

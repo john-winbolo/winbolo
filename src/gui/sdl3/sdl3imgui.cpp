@@ -50,7 +50,6 @@
 /* Bolo types (included after SDL3 to avoid #pragma pack conflicts) */
 extern "C" {
 #include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
-#include "../../bolo/screen.h"   /* labelLen, lblNone/lblShort/lblLong */
 #include "../../bolo/client_sim.h"
 #include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"

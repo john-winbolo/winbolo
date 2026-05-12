@@ -27,7 +27,6 @@
 
 #include <SDL3/SDL.h>
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/client_render.h"
 #include "../gamefront.h"

@@ -37,7 +37,6 @@
 #include "players.h"
 #include "messages.h"
 #include "player_flags.h"
-#include "screen.h"
 #include "client_sim.h"
 
 /*********************************************************

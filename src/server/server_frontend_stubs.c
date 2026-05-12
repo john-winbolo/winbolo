@@ -26,7 +26,6 @@
 
 #include <stdio.h>
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
 #include "../bolo/scroll.h"
 #include "../bolo/frontend.h"
 

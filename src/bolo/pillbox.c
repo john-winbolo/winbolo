@@ -33,7 +33,6 @@
 #include "tilenum.h"
 #include "frontend.h"
 #include "sounddist.h"
-#include "screen.h"
 #include "brain_data.h"
 #include "messages.h"
 #include "players.h"

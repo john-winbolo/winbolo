@@ -30,7 +30,6 @@
 #include "winbolo_gym.h"
 
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/client_snapshot.h"

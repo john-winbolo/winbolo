@@ -39,7 +39,6 @@ extern "C" {
 #include "../bg_game.h"
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
-#include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
 #include "../map_preview_popup.h"
 #include "../../lang.h"

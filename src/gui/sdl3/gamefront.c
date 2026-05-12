@@ -47,7 +47,6 @@
 #include <time.h>
 
 #include "../../common/wb_log.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/client_mapload.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/client_snapshot.h"

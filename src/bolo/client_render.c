@@ -29,7 +29,6 @@
 #include "global.h"
 #include "client_render.h"
 #include "client_sim.h"
-#include "screen.h"
 #include "tank.h"
 #include "shells.h"
 #include "explosions.h"

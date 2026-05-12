@@ -28,7 +28,6 @@
 
 #include "global.h"
 #include "tank.h"
-#include "screen.h"
 #include "client_sim.h"
 #include "explosions.h"
 #include "util.h"

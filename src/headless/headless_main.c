@@ -67,7 +67,6 @@
 #include <math.h>
 #include "cJSON.h"
 
-#include "../bolo/screen.h"
 #include "../bolo/brain_data.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"

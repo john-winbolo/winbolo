@@ -34,7 +34,7 @@
 #include "brain.h"
 #include "brain_overlay.h"
 #include "shells.h"
-#include "screen.h"
+#include "client_enums.h"  /* sndEffects */
 #include "util.h"
 #include "braincore.h"
 #include "brain_pathfinder.h"

@@ -32,12 +32,20 @@
 #include "interpolation.h"
 #include "input_packet.h"
 #include "netpacks.h"     /* For PACKET_MAX_PLAYER_NAME */
-#include "screen.h"
-#include "brain.h"  /* For BuildInfo, ObjectInfo, aiType */
-#include "players.h" /* For PlayerBitMap */
+#include "client_enums.h" /* For aiType, buildSelect, gameType, labelLen */
+#include "viewport_types.h" /* For screen, screenMines, screenGunsight */
+#include "brain.h"  /* For BuildInfo, ObjectInfo */
+#include "players.h" /* For PlayerBitMap, playerNumbers */
 #include "bolo_packets.h" /* For netType, netStatus enums */
 #include "messages.h"     /* For MessageState */
 #include "scroll.h"       /* For ScrollState */
+
+/* Messages status on/off */
+#define MSG_NEWSWIRE 0
+#define MSG_ASSISTANT 1
+#define MSG_AI 2
+#define MSG_NETWORK 3
+#define MSG_NETSTATUS 4
 
 /* Client-side mirror of server lobby slot state */
 typedef struct {
