@@ -28,7 +28,7 @@
 #ifndef LABELS_H
 #define LABELS_H
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
 
 /* The @ Symbol */

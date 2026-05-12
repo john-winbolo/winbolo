@@ -61,15 +61,15 @@
 *  Draw* path.
 *********************************************************/
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
-#include "screenbullet.h"
-#include "screenlgm.h"
-#include "screentank.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "bolo_map.h"
-#include "players.h"
+#include "lv_screenbullet.h"
+#include "lv_screenlgm.h"
+#include "lv_screentank.h"
+#include "lv_pillbox.h"
+#include "lv_bases.h"
+#include "lv_bolo_map.h"
+#include "lv_players.h"
 
 #include <stdlib.h>  /* abort */
 

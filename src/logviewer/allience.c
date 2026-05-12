@@ -26,8 +26,8 @@
 *  bitmask: bit N set => allied to player N.
 *********************************************************/
 
-#include "global.h"
-#include "allience.h"
+#include "lv_global.h"
+#include "lv_allience.h"
 
 allience lv_allienceCreate(void) {
   return 0;

@@ -27,11 +27,11 @@
 
 #ifndef _PLAYERS_H
 #define _PLAYERS_H
-#include "global.h"
+#include "lv_global.h"
 
-#include "allience.h"
-#include "screentank.h"
-#include "screenlgm.h"
+#include "lv_allience.h"
+#include "lv_screentank.h"
+#include "lv_screenlgm.h"
 
 /* Defines */
 

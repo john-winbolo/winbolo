@@ -32,26 +32,26 @@
 #else
 #  include <arpa/inet.h>
 #endif
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
-#include "bolo_map.h"
+#include "lv_bolo_map.h"
 #include "tiles.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "screencalc.h"
-#include "screentank.h"
-#include "screenlgm.h"
-#include "screenbullet.h"
-#include "starts.h"
-#include "util.h"
-#include "shells.h"
-#include "sounddist.h"
-#include "players.h"
+#include "lv_pillbox.h"
+#include "lv_bases.h"
+#include "lv_screencalc.h"
+#include "lv_screentank.h"
+#include "lv_screenlgm.h"
+#include "lv_screenbullet.h"
+#include "lv_starts.h"
+#include "lv_util.h"
+#include "lv_shells.h"
+#include "lv_sounddist.h"
+#include "lv_players.h"
 #include "snapshot.h"
 #include "blocks.h"
 #include "dns.h"
 #include "logviewer.h"
-#include "messages.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 /* File-scope pointer to the central LogViewerState */
@@ -586,7 +586,7 @@ BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
   return returnValue;
 }
 
-#include "log.h"
+#include "lv_log.h"
 void lv_windowAddEvent(int eventType, char *msg);
 
 

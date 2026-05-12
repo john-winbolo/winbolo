@@ -16,7 +16,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include "global.h"
+#include "lv_global.h"
 #include "blocks.h"
 #include "unzip.h"
 #include "ioapi.h"

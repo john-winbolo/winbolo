@@ -31,8 +31,8 @@
 
 
 /* Includes */
-#include "global.h"
-#include "tilenum.h"
+#include "lv_global.h"
+#include "lv_tilenum.h"
 
 /* Prototypes */
 

@@ -50,7 +50,7 @@
 #define BIG_FILENAME 1024
 
 /* Includes */
-#include "global.h"
+#include "lv_global.h"
 
 
 /*********************************************************

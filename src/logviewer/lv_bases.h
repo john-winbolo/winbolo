@@ -30,7 +30,7 @@
 
 
 /* Includes */
-#include "global.h"
+#include "lv_global.h"
 #include "types.h"
 /* Defines */
 #define MAX_BASES 16

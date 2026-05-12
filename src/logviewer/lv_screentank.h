@@ -28,7 +28,7 @@
 #ifndef SCREENTANKS_H
 #define SCREENTANKS_H
 
-#include "global.h"
+#include "lv_global.h"
 
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)

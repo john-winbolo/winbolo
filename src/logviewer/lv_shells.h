@@ -29,9 +29,9 @@
 #define _SHELLS_H
 
 #include <memory.h>
-#include "global.h"
-#include "shells.h"
-#include "screenbullet.h"
+#include "lv_global.h"
+#include "lv_shells.h"
+#include "lv_screenbullet.h"
 
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
