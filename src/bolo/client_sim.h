@@ -186,6 +186,7 @@ unsigned short *clientSimGetBrainsNumObjects(ClientSim *cs);
 ObjectInfo *clientSimGetBrainObjects(ClientSim *cs);
 aiType *clientSimGetAllowComputerTanks(ClientSim *cs);
 aiType clientSimGetAiType(ClientSim *cs);
+void clientSimSetAiType(ClientSim *cs, aiType value);
 
 /* Network state accessors (per-instance) */
 netType clientSimGetNetType(ClientSim *cs);
@@ -403,6 +404,7 @@ void clientSimSetGmeLength(ClientSim *cs, int32_t v);
 void clientSimSetTimeStart(ClientSim *cs, time_t v);
 void clientSimSetRunning(ClientSim *cs, bool v);
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);
+void clientSimSetLocalTransport(ClientSim *cs, bool isLocal);
 
 /* Pending build input (set as a triple) */
 void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y);

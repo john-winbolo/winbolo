@@ -467,12 +467,12 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  screenSetAiTypeCS(humanSim, compTanks);
+  clientSimSetAiType(humanSim, compTanks);
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
-    screenSetTankAutoSlowdownCS(humanSim, useAutoslow);
-    screenSetTankAutoHideGunsightCS(humanSim, useAutohide);
+    clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+    clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
     clientMutexRelease();
   }
 
@@ -490,8 +490,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * ------------------------------------------------------- */
 void gameFrontSaveTankPrefs(ClientSim *cs) {
   if (cs != NULL) {
-    useAutoslow = screenGetTankAutoSlowdownCS(cs);
-    useAutohide = screenGetTankAutoHideGunsightCS(cs);
+    useAutoslow = clientSimGetTankAutoSlowdown(cs);
+    useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
 }
 
@@ -502,8 +502,8 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
   if (gamePlayed == TRUE && humanSim != NULL) {
-    useAutoslow = screenGetTankAutoSlowdownCS(humanSim);
-    useAutohide = screenGetTankAutoHideGunsightCS(humanSim);
+    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
+    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
   /* Clean up server-authoritative single-player state.
@@ -1008,7 +1008,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                                        (BYTE)udpPlayerNum, FALSE) == FALSE) {
               mapLoadOk = FALSE;
             } else {
-              screenSetLocalTransportCS(humanSim, false);
+              clientSimSetLocalTransport(humanSim, false);
               /* Re-set network callbacks cleared by clientSimDestroy above */
               clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
               clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
@@ -1355,7 +1355,7 @@ void gameFrontSetPlayerName(char *pn) {
 void gameFrontSetAIType(aiType ait) {
   compTanks = ait;
   if (humanSim != NULL) {
-    screenSetAiTypeCS(humanSim, compTanks);
+    clientSimSetAiType(humanSim, compTanks);
   }
   if (compTanks == aiNone) {
     brainsHandlerSet(FALSE);
@@ -1937,7 +1937,7 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
-    screenGetPlayerNameCS(humanSim, playerName);
+    clientSimGetPlayerName(humanSim, playerName);
     strcpy(gameFrontName, playerName);
     WritePrivateProfileString("SETTINGS", "Player Name", playerName, prefsFile);
   } else {
@@ -2182,7 +2182,7 @@ bool gameFrontLoadDeferredMap(ClientSim **cs) {
     return FALSE;
   }
 
-  screenSetLocalTransportCS(*cs, false);
+  clientSimSetLocalTransport(*cs, false);
   clientSimSetInLobby(*cs, wasInLobby);
   clientSimSetMapDownloadComplete(*cs, true);
 

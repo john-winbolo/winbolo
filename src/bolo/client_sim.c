@@ -579,6 +579,7 @@ unsigned short *clientSimGetBrainsNumObjects(ClientSim *cs) { return &cs->brains
 ObjectInfo *clientSimGetBrainObjects(ClientSim *cs) { return cs->brainObjects; }
 aiType *clientSimGetAllowComputerTanks(ClientSim *cs) { return &cs->allowComputerTanks; }
 aiType  clientSimGetAiType(ClientSim *cs)              { return *clientSimGetAllowComputerTanks(cs); }
+void    clientSimSetAiType(ClientSim *cs, aiType value) { *clientSimGetAllowComputerTanks(cs) = value; }
 
 /* -------------------------------------------------------
  * Network state accessors (per-instance)
@@ -992,6 +993,10 @@ void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay =
 void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }
 void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; }
 void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
+void clientSimSetLocalTransport(ClientSim *cs, bool isLocal) {
+  clientSimGetGameSim(cs)->isLocalTransport = isLocal;
+}
+
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) {
   if (v != BsTrees && v != BsRoad && v != BsBuilding && v != BsPillbox && v != BsMine) {
     return;
