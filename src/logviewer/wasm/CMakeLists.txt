@@ -27,6 +27,8 @@ set(SRC_ROOT "${REPO_ROOT}/src")
 set(LV_ROOT  "${SRC_ROOT}/logviewer")
 set(DATA_DIR "${REPO_ROOT}/data")
 
+include(${REPO_ROOT}/cmake/bolo_lib.cmake)
+
 ###
 # Fetch dependencies (same versions as main build)
 #
@@ -159,6 +161,7 @@ target_include_directories(logviewer PRIVATE
     ${LV_ROOT}/imgui
     ${LV_ROOT}/platform
 )
+bolo_apply_include_rules(logviewer runtime_only)
 
 target_link_libraries(logviewer PRIVATE
     minizip
