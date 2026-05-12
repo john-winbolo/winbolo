@@ -30,7 +30,6 @@
 #define SCROLL_H
 
 #include "global.h"
-#include "screen.h"
 #include "types.h"
 #include "game_sim.h"
 #include "scroll_item_list.h"

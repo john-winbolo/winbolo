@@ -26,6 +26,11 @@
 #ifndef GAME_SIM_H
 #define GAME_SIM_H
 
+/* The game timer is 20 milliseconds between events the game_tick_length is half this */
+#define GAME_TICK_LENGTH 10
+#define GAME_NUMTOTALTICKS_SEC (1000 / GAME_TICK_LENGTH)
+#define GAME_NUMGAMETICKS_SEC (1000 / 20)
+
 #include "global.h"
 #include "bolo_map.h"
 #include "pillbox.h"

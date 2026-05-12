@@ -47,8 +47,10 @@
 #endif
 
 #include "../../common/wb_log.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/client_mapload.h"
+#include "../../bolo/client_render.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_snapshot.h"
 #include "../../bolo/frontend.h"
 #include "../../bolo/tutorial.h"
 #include "../../bolo/players.h"
@@ -478,7 +480,7 @@ int main(int argc, char *argv[]) {
           DWORD tick = winboloTimer();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
-            screenUpdateCS(cs, redraw);
+            clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
           dwSysFrame += (winboloTimer() - tick);
@@ -516,7 +518,6 @@ int main(int argc, char *argv[]) {
         SDL_SetWindowResizable(sdlWin, true);
         SDL_HideWindow(sdlWin);
       }
-      screenLeaveGame();
     }
 
     finishedLoop = TRUE;
@@ -604,7 +605,7 @@ static void windowRunGameTick(ClientSim *cs) {
    * Only check for UDP transports (serverSim == NULL means not local). */
   if (transport != NULL && gameFrontGetServerSim() == NULL &&
       transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
-    screenConnectionLostCS(cs);
+    clientSimConnectionLost(cs);
     imguiMessageBoxEx(DIALOG_BOX_TITLE,
                       "You have lost your connection to the server.\n"
                       "Returning to menu.",
@@ -632,7 +633,7 @@ static void windowRunGameTick(ClientSim *cs) {
             inputScroll(cs, &keys, isInMenu);
           }
           InputPacket pkt;
-          screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+          clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
           if (!brainRunning) {
             uint8_t gsAdj = inputConsumeGunsightAdj();
             if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
@@ -684,7 +685,7 @@ static void windowRunGameTick(ClientSim *cs) {
             inputScroll(cs, &keys, isInMenu);
           }
           InputPacket pkt;
-          screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+          clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
           if (!brainRunning) {
             uint8_t gsAdj = inputConsumeGunsightAdj();
             if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
@@ -703,7 +704,7 @@ static void windowRunGameTick(ClientSim *cs) {
             ServerSim *serverSim = gameFrontGetServerSim();
             if (serverSim != NULL && botManagerGetNumBots() > 0) {
               DWORD bttick = winboloTimer();
-              botManagerTick(serverSim, screenGetAiTypeCS(cs));
+              botManagerTick(serverSim, clientSimGetAiType(cs));
               DWORD botDur = winboloTimer() - bttick;
               dwSysBrain += botDur;
               ttick += botDur;
@@ -829,16 +830,16 @@ void windowReCreate(void) {
  * windowApplyMenuChecks — apply prefs to backend
  * ------------------------------------------------------- */
 void windowApplyMenuChecks(ClientSim *cs) {
-  screenSetGunsightCS(cs, showGunsight);
-  screenSetAutoScroll(cs, autoScrollingEnabled);
-  screenSetLabelOwnTank(cs, labelSelf);
-  screenSetMesageLabelLen(cs, labelMsg);
-  screenSetTankLabelLen(cs, labelTank);
-  screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
-  screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
-  screenShowMessages(cs, MSG_AI, showAIMessages);
-  screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
-  screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+  clientSimSetGunsight(cs, showGunsight);
+  clientSimSetAutoScroll(cs, autoScrollingEnabled);
+  clientSimSetLabelOwnTank(cs, labelSelf);
+  clientSimSetLabelMessage(cs, labelMsg);
+  clientSimSetLabelTankLabel(cs, labelTank);
+  clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  clientSimShowMessages(cs, MSG_AI, showAIMessages);
+  clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
 
 /* -------------------------------------------------------
@@ -1191,12 +1192,12 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
+  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
 }
 
 void windowSmoothScrolling_toggle(void) {
@@ -1215,7 +1216,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   sdl3DrawSetPillsStatusClear();
   total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
   for (count = 1; count <= total; count++) {
-    BYTE pillStat = screenPillAllianceCS(cs, count);
+    BYTE pillStat = clientSimGetPillAlliance(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
   }
   sdl3DrawCopyPillsStatus(0, 0);
@@ -1228,7 +1229,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   sdl3DrawSetBasesStatusClear();
   total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
   for (count = 1; count <= total; count++) {
-    BYTE baseStat = screenBaseAllianceCS(cs, count);
+    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
   }
   sdl3DrawCopyBasesStatus(0, 0);
@@ -1259,27 +1260,27 @@ void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
 
 void windowMenuNewswire_toggle(ClientSim *cs) {
   showNewswireMessages = !showNewswireMessages;
-  if (cs) screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
 }
 
 void windowMenuAssistant_toggle(ClientSim *cs) {
   showAssistantMessages = !showAssistantMessages;
-  if (cs) screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
 }
 
 void windowMenuAI_toggle(ClientSim *cs) {
   showAIMessages = !showAIMessages;
-  if (cs) screenShowMessages(cs, MSG_AI, showAIMessages);
+  if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages);
 }
 
 void windowMenuNetwork_toggle(ClientSim *cs) {
   showNetworkStatusMessages = !showNetworkStatusMessages;
-  if (cs) screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
 }
 
 void windowMenuNetworkDebug_toggle(ClientSim *cs) {
   showNetworkDebugMessages = !showNetworkDebugMessages;
-  if (cs) screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+  if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
 
 void windowHideMainView_toggle(void) {
@@ -1288,17 +1289,17 @@ void windowHideMainView_toggle(void) {
 
 void windowLabelOwnTank_toggle(ClientSim *cs) {
   labelSelf = !labelSelf;
-  if (cs) screenSetLabelOwnTank(cs, labelSelf);
+  if (cs) clientSimSetLabelOwnTank(cs, labelSelf);
 }
 
 void windowSetMessageLabelLen(ClientSim *cs, labelLen newLen) {
   labelMsg = newLen;
-  if (cs) screenSetMesageLabelLen(cs, labelMsg);
+  if (cs) clientSimSetLabelMessage(cs, labelMsg);
 }
 
 void windowSetTankLabelLen(ClientSim *cs, labelLen newLen) {
   labelTank = newLen;
-  if (cs) screenSetTankLabelLen(cs, labelTank);
+  if (cs) clientSimSetLabelTankLabel(cs, labelTank);
 }
 
 void windowNewGame(void) {
@@ -1359,7 +1360,7 @@ bool windowGetBackgroundSound(void) {
 
 void windowRedrawAll(ClientSim *cs) {
   clientMutexWaitFor();
-  sdl3DrawRedrawAll(cs, getBuildCurrentSelectCS(cs), NULL, showPillLabels, showBaseLabels);
+  sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
   clientMutexRelease();
 }
 
@@ -1391,7 +1392,7 @@ void windowSaveMap(ClientSim *cs) {
   };
 
   memset(&state, 0, sizeof(state));
-  screenGetMapNameCS(cs, defaultName);
+  strcpy(defaultName, clientSimGetMapName(cs));
 
   SDL_ShowSaveFileDialog(saveMapCallback, &state, sdl3DrawGetWindow(),
                          filters, 1, NULL);
@@ -1400,7 +1401,7 @@ void windowSaveMap(ClientSim *cs) {
     SDL_WaitEventTimeout(&e, 100);
   }
   if (state.ok) {
-    if (screenSaveMapCS(cs, state.path) == FALSE) {
+    if (clientSaveMap(cs, state.path) == FALSE) {
       imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
                         IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     }
@@ -1409,9 +1410,9 @@ void windowSaveMap(ClientSim *cs) {
 
 void windowKeyPressed(ClientSim *cs, int keyCode) {
   if (keyCode == keys.kiTankView) {
-    screenTankViewCS(cs);
+    clientSimTankView(cs);
   } else if (keyCode == keys.kiPillView) {
-    screenPillViewCS(cs, 0, 0);
+    clientSimPillView(cs, 0, 0);
   }
 }
 
@@ -1446,7 +1447,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     BYTE cursorX, cursorY;
     bool showCursor;
 
-    showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
+    showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
@@ -1588,7 +1589,7 @@ void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
-  if (!screenGetGameRunningCS(cs)) {
+  if (!clientSimIsRunning(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
     return;
@@ -1654,7 +1655,7 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * frontEndRedrawAll — called by backend to force redraw
  * ------------------------------------------------------- */
 void frontEndRedrawAll(ClientSim *cs) {
-  if (!screenGetGameRunningCS(cs)) return;
+  if (!clientSimIsRunning(cs)) return;
   windowRedrawAll(cs);
 }
 
@@ -1664,7 +1665,7 @@ void frontEndRedrawAll(ClientSim *cs) {
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   showGunsight = !isShown;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 
 /* -------------------------------------------------------

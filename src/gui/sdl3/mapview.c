@@ -31,6 +31,7 @@
 #include "../../bolo/mines.h"
 #include "../../bolo/tank.h"
 #include "../../bolo/screencalc.h"
+#include "../../bolo/client_render.h"
 #include "../../bolo/players.h"
 #include "../../bolo/shells.h"
 #include "../../bolo/explosions.h"

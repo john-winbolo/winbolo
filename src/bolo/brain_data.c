@@ -21,11 +21,11 @@
  *  reads decisions back out. Pure data shaping; no I/O,
  *  rendering, or network code.
  *
- *  Contents (declared in screen.h):
- *    screenMakeBrainViewDataCS  - terrain rect for the brain's view
- *    screenMakeBrainInfoCS      - populate BrainInfo before think()
- *    screenExtractBrainInfoCS   - read brain decisions back, free buffers
- *    screenAddBrainObject       - append an object to the brain object list
+ *  Contents (declared in brain_data.h):
+ *    brainDataMakeViewData  - terrain rect for the brain's view
+ *    brainDataMakeInfo      - populate BrainInfo before think()
+ *    brainDataExtractInfo   - read brain decisions back, free buffers
+ *    brainDataAddObject     - append an object to the brain object list
  *
  *  Companion file: client_snapshot.c (server snapshot apply +
  *  input packet building).
@@ -66,7 +66,7 @@
 #include "labels.h"
 #include "players.h"
 #include "screenbrainmap.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -75,12 +75,12 @@
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************
-*NAME:          screenMakeBrainViewData
+*NAME:          brainDataMakeViewData
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/11/99
 *LAST MODIFIED: 26/11/99
 *PURPOSE:
-*  Makes the view information including base and pills 
+*  Makes the view information including base and pills
 *  for the brain.
 *
 *ARGUMENTS:
@@ -90,7 +90,7 @@
 *  topPos    - top position on the map to get data from
 *  bottomPos - bottom position on the map to get data from
 *********************************************************/
-void screenMakeBrainViewDataCS(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos) {
+void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos) {
   BYTE count1; /* Looping variable */
   BYTE count2; /* Looping variable */
   BYTE pos;    /* Upto position    */
@@ -119,7 +119,7 @@ void screenMakeBrainViewDataCS(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rig
   }
 }
 /*********************************************************
-*NAME:          screenMakeBrainInfo
+*NAME:          brainDataMakeInfo
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/11/99
 *LAST MODIFIED: 28/11/99
@@ -131,7 +131,7 @@ void screenMakeBrainViewDataCS(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rig
 *  first - TRUE if this is the first time we have been
 *          called
 *********************************************************/
-void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiType aiMode) {
+void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType aiMode) {
   BYTE tx;        /* Tank X and Y Co-ordinates */
   BYTE ty;
   BYTE closeBase; /* The closest base to our current position */
@@ -298,7 +298,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   }
   //value->viewdata = malloc((value->view_width+1) * (value->view_height+1));
   value->viewdata = malloc(30 * 30);
-  screenMakeBrainViewDataCS(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+  brainDataMakeViewData(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
 
   /* From Bolo Version History:
   Added option to give Brains an advantage to make them more
@@ -331,7 +331,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   /* Bots have no client-side prediction layer that fills sim.shs, so
    * shellsGetBrainShellsInRect above adds nothing for bot players.
    * Mirror the snapshot shells (now retained for bots — see
-   * screenSyncFromSnapshotCS) into the brain object array so
+   * clientApplySnapshot) into the brain object array so
    * info.objects actually contains type=OBJECT_SHOT entries the
    * brain (and BrainTest's shell-hitbox overlay) can render. */
   if (clientSimIsBot(csPtr)) {
@@ -354,10 +354,10 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
         owner = SHELLS_BRAIN_FRIENDLY;
       else
         owner = SHELLS_BRAIN_HOSTILE;
-      screenAddBrainObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
-                           s->worldX, s->worldY, 0,
-                           utilGet16Dir((TURNTYPE)s->angle),
-                           owner, 0);
+      brainDataAddObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
+                         s->worldX, s->worldY, 0,
+                         utilGet16Dir((TURNTYPE)s->angle),
+                         owner, 0);
     }
   }
 
@@ -410,7 +410,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   value->gameinfo.gameid.serverport = clientSimGetServerPort(csPtr);
 }
 /*********************************************************
-*NAME:          screenExtractBrainInfo
+*NAME:          brainDataExtractInfo
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED: 13/12/99
@@ -421,7 +421,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
 *ARGUMENTS:
 *  value - Pointer to the brain info structure
 *********************************************************/
-void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
+void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
   BYTE pillNum;
 
   free(value->allies);
@@ -442,7 +442,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
         clientSimSetPillViewX(csPtr, p.x);
         clientSimSetPillViewY(csPtr, p.y);
         scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
-        screenReCalcCS(csPtr);
+        clientSimRecalc(csPtr);
       }
     }
   }
@@ -465,7 +465,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
 
   /* Build requests are routed through InputPacket so the server sim
    * processes them authoritatively.  brainBuildInfo->action is 1-based
-   * (0=none, 1=BsTrees, 2=BsRoad, ...) and screenBuildInputPacket
+   * (0=none, 1=BsTrees, 2=BsRoad, ...) and clientBuildInputPacket
    * will pick it up and put it in the InputPacket as-is.  The server
    * sim decrements to 0-based before passing to lgmAddRequest. */
   if (value->build->action != 0) {
@@ -473,7 +473,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
       /* Tank is dead, cancel build */
       value->build->action = 0;
     }
-    /* Otherwise leave action set for screenBuildInputPacket to read */
+    /* Otherwise leave action set for clientBuildInputPacket to read */
   }
 
   /* Allies */
@@ -497,7 +497,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
   }
 }
 /*********************************************************
-*NAME:          screenAddBrainObject
+*NAME:          brainDataAddObject
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/11/99
 *LAST MODIFIED: 28/11/99
@@ -512,7 +512,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
 *  dir    - Direction of the object
 *  info   - Object info
 *********************************************************/
-void screenAddBrainObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed) {
+void brainDataAddObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed) {
   unsigned short *numObjects;
   ObjectInfo *objects;
 

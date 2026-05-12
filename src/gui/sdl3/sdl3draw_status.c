@@ -40,7 +40,7 @@
 #include "../ui_mode.h"
 #include "../positions.h"
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
 #include "../../bolo/screentank.h"
 #include "../../bolo/bases.h"
 #include "../../bolo/pillbox.h"

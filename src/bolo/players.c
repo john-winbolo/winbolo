@@ -39,7 +39,7 @@
 #include "pillbox.h"
 #include "players.h"
 #include "playername_validate.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "client_sim.h"
 #include "screenlgm.h"
 #include "screentank.h"
@@ -48,6 +48,19 @@
 #include "game_sim.h"
 #include "gametype.h"
 #include "util.h"
+
+/* Hidden-by-trees visibility test for player items (tanks or LGMs).
+ * Returns FALSE when the viewer is within MIN_SIGHT_DISTANCE squares so
+ * adjacent items always render; otherwise delegates to utilIsTankInTrees. */
+static bool playersIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) {
+  int xDiff = tankGetScreenMX(&viewerTank) - bmx;
+  int yDiff = tankGetScreenMY(&viewerTank) - bmy;
+  if (xDiff >= MIN_SIGHT_DISTANCE_LEFT && xDiff <= MIN_SIGHT_DISTANCE_RIGHT &&
+      yDiff >= MIN_SIGHT_DISTANCE_LEFT && yDiff <= MIN_SIGHT_DISTANCE_RIGHT) {
+    return FALSE;
+  }
+  return utilIsTankInTrees(&sim->mp, &sim->pb, &sim->bs, bmx, bmy);
+}
 
 
 /*********************************************************
@@ -771,7 +784,7 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         } else {
           conv2 = ourTankY - ty;
         }
-        if ((screenIsItemInTrees(sim, MY_TANK(cs), tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
+        if ((playersIsItemInTrees(sim, MY_TANK(cs), tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
           /* Extract fixed pixel co-ordinates */
           conv = (*plrs)->item[count].mapX;
           conv <<= TANK_SHIFT_MAPSIZE;
@@ -854,7 +867,7 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
           conv2 = ourTankY - wy;
         }
 
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame);
         }
       }
@@ -1886,7 +1899,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
       }
 
 
-      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (screenIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
+      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
         /* In the rectangle */
         /* wx and wy already set */
         /* Info */
@@ -1895,7 +1908,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
         } else {
           owner = PLAYERS_BRAIN_HOSTILE;
         }
-        screenAddBrainObject(cs, PLAYERS_BRAIN_OBJECT_TYPE_TANK, wx, wy, count, (*plrs)->item[count].frame, owner, (*plrs)->item[count].speed);
+        brainDataAddObject(cs, PLAYERS_BRAIN_OBJECT_TYPE_TANK, wx, wy, count, (*plrs)->item[count].frame, owner, (*plrs)->item[count].speed);
       }
     }
     count++;
@@ -1963,7 +1976,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv2 = ourTankY - wy;
         }
         
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (screenIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
           /* In the rectangle */
           /* Object Type */
           if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME) {
@@ -1989,7 +2002,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           } else {
             owner = PLAYERS_BRAIN_HOSTILE;
           }
-          screenAddBrainObject(cs, lgmType, wx, wy, count, 0, owner, 0);
+          brainDataAddObject(cs, lgmType, wx, wy, count, 0, owner, 0);
         }
       }
     }

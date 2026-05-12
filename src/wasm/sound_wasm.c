@@ -25,7 +25,7 @@
  */
 
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "../bolo/client_enums.h"  /* sndEffects */
 #include "../gui/sound.h"
 
 #include <emscripten.h>

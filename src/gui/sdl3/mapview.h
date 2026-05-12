@@ -27,7 +27,7 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/viewport_types.h"  /* screen, screenMines, screenGunsight */
 #include "../../bolo/screenbullet.h"
 #include "../../bolo/screentank.h"
 #include "../../bolo/screenlgm.h"

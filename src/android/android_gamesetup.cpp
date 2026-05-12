@@ -28,7 +28,7 @@ extern "C" {
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
 #include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
 
 /* The desktop imgui_gamesetup screen has been removed in favor of the
@@ -264,8 +264,8 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                         gameFrontSetFileName((char *)"");
                     } else {
                         /* Try to load the selected map to validate it */
-                        bool ok = screenLoadMapCS(cs, (char *)mapFiles[i], gameOpen, FALSE, 0,
-                                                UNLIMITED_GAME_TIME, (char *)"Me", TRUE);
+                        bool ok = clientLoadMap(cs, (char *)mapFiles[i], gameOpen, FALSE, 0,
+                                              UNLIMITED_GAME_TIME, (char *)"Me", TRUE);
                         if (ok) {
                             gameFrontSetFileName((char *)mapFiles[i]);
                         } else {

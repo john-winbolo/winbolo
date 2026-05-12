@@ -26,7 +26,7 @@
 #define BOT_MANAGER_H
 
 #include "global.h"
-#include "screen.h"  /* For aiType, gameType */
+#include "client_enums.h"  /* aiType, gameType */
 #include "brain_pathfinder.h"
 #include "brain_overlay.h"
 

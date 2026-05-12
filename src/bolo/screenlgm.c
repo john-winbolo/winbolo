@@ -26,7 +26,6 @@
 *********************************************************/
 
 #include "global.h"
-#include "screen.h"
 #include "players.h"
 #include "lgm.h"
 #include "screenlgm.h"

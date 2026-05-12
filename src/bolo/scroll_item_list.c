@@ -31,7 +31,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include "global.h"
-#include "screen.h"
+#include "game_sim.h"  /* GAME_NUMGAMETICKS_SEC */
 #include "scroll_item_list.h"
 
 

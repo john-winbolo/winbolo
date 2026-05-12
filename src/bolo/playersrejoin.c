@@ -31,7 +31,6 @@
 #include "bases.h"
 #include "game_sim.h"
 #include "playersrejoin.h"
-#include "screen.h"
 #include "log.h"
 
 playersRejoin rejoin;

@@ -29,7 +29,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "screen.h"
 #include "explosions.h"
 #include "frontend.h"
 #include "gametype.h"
@@ -1105,7 +1104,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			(*value)->boatState = BoatState_NotOnBoat;
 			(*value)->speed = 0;
 			if (!isServer) {
-				screenReCalcCS((struct ClientSim *)sim);
+				clientSimRecalc((struct ClientSim *)sim);
 			}
 		}
 
@@ -1516,7 +1515,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
 
   /* Check for scroll of screen */
   if (!isServer) {
-    screenTankScrollCS((struct ClientSim *)sim);
+    clientSimTankScroll((struct ClientSim *)sim);
   }
 
   /* Step 9 — Boat/water handling (server-authoritative) */
@@ -1537,7 +1536,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         explosionsAddItem(&sim->expl, newbmx, newbmy, 0, 0, EXPLOSION_START);
         if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, newbmx, newbmy, 0, 0);
         sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, newbmx, newbmy);
-        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+        if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
       }
 
       /* Lookahead bank clamp: hold tank center TANK_MOVE_BOAT_SUB inside
@@ -1594,7 +1593,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           }
           (*value)->boatState = BoatState_NotOnBoat;
           (*value)->onBoat = FALSE;
-          if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+          if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
         } else if ((*value)->speed >= BOAT_FAST_EXIT_SPEED) {
           /* Fast approach on soft terrain — instant exit.
            * Only drop boat if last river tile is adjacent (deep sea→land skip) */
@@ -1605,7 +1604,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           }
           (*value)->boatState = BoatState_NotOnBoat;
           (*value)->onBoat = FALSE;
-          if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+          if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
           if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
             minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
           }
@@ -1664,7 +1663,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
         (*value)->boatState = BoatState_NotOnBoat;
         (*value)->onBoat = FALSE;
-        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+        if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
       }
 
     } else {
@@ -1676,7 +1675,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         (*value)->boatState = BoatState_InBoat;
         (*value)->lastBoatRiverX = newbmx;
         (*value)->lastBoatRiverY = newbmy;
-        if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+        if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
       }
 
       /* Check for hit mine */
@@ -1707,7 +1706,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
               if (!isServer) {
                 frontEndStatusBase(clientSimFromSim(sim), baseNum, (basesGetStatusNum(sim, baseNum)));
               }
-              if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+              if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
             }
           }
         }
@@ -1881,7 +1880,7 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 					pillNum = PILL_NOT_FOUND;
 				}
 			}
-			if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+			if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
 		}
 	}
 }
@@ -1987,7 +1986,7 @@ void tankDropPills(GameSim *sim, tank *value) {
       }
 
     }
-    if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }
   return;
 }
@@ -2316,7 +2315,7 @@ void tankLayMine(GameSim *sim, tank *value) {
           frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
         }
       }
-      if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
   }
 }
@@ -2388,7 +2387,7 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
       }
     }
 
-    if (!isServer) { screenReCalcCS((struct ClientSim *)sim); }
+    if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }
 }
 
@@ -2468,7 +2467,7 @@ void tankNearMines(GameSim *sim, BYTE mx, BYTE my, BYTE dir) {
   }
 
   if (needRecalc == TRUE && !sim->isServer) {
-    screenReCalcCS((struct ClientSim *)sim);
+    clientSimRecalc((struct ClientSim *)sim);
   }
 }
 
@@ -3182,7 +3181,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			(*value)->boatState = BoatState_NotOnBoat;
 			(*value)->speed = 0;
 			if (!isServer) {
-				screenReCalcCS((struct ClientSim *)sim);
+				clientSimRecalc((struct ClientSim *)sim);
 			}
 		}
 

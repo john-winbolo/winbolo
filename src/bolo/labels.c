@@ -30,18 +30,6 @@
 #include "client_sim.h"
 #include "labels.h"
 
-void labelSetSenderLength(ClientSim *cs, labelLen isLengthShort) {
-  clientSimSetLabelMessage(cs, isLengthShort);
-}
-
-void labelSetTankLength(ClientSim *cs, labelLen isLengthShort) {
-  clientSimSetLabelTankLabel(cs, isLengthShort);
-}
-
-void labelSetLabelOwnTank(ClientSim *cs, bool labelOwn) {
-  clientSimSetLabelOwnTank(cs, labelOwn);
-}
-
 void labelMakeMessage(ClientSim *cs, char *res, char *name, char *loc) {
   labelLen lm = cs ? clientSimGetLabelMessage(cs) : lblShort;
   res[0] = '\0';

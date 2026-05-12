@@ -16,28 +16,26 @@
 
 
 /*********************************************************
-*Name:          Labels
-*Filename:      label.h
+*Name:          ClientRender
+*Filename:      client_render.h
 *Author:        John Morrison
-*Creation Date:  2/2/99
-*Last Modified:  2/2/99
 *Purpose:
-*  Responsable for message labels (short/long etc).
+*  Per-frame render entry point and small screen/mine-view
+*  buffer accessors. Extracted from screen.c so the render
+*  pipeline lives in its own translation unit.
 *********************************************************/
 
-#ifndef LABELS_H
-#define LABELS_H
+#ifndef CLIENT_RENDER_H
+#define CLIENT_RENDER_H
 
 #include "global.h"
+#include "viewport_types.h"
+#include "client_enums.h"
 
 struct ClientSim;
 
-/* The @ Symbol */
-#define LABEL_AT_SYMBOL "@\0"
+void clientRenderFrame(struct ClientSim *cs, updateType value);
+BYTE screenGetPos(screen *value, BYTE xValue, BYTE yValue);
+bool screenIsMine(screenMines *value, BYTE xValue, BYTE yValue);
 
-/* Prototypes */
-
-void labelMakeMessage(struct ClientSim *cs, char *res, char *name, char *loc);
-void labelMakeTankLabel(struct ClientSim *cs, char *res, char *name, char *loc, bool isOwn);
-
-#endif /* LABELS_H */
+#endif /* CLIENT_RENDER_H */
