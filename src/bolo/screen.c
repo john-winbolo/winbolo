@@ -89,10 +89,6 @@ extern void moveMousePointer(updateType value);
 
 /* Display statics removed — now fields of ClientSim (see client_sim.h) */
 
-void screenUpdateCS(ClientSim *csPtr, updateType value) {
-  clientRenderFrame(csPtr, value);
-}
-
 /*********************************************************
 *NAME:          screenUpdateView
 *AUTHOR:        John Morrison
@@ -246,39 +242,6 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
  */
 
 /*********************************************************
-*NAME:          screenBaseAlliance
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/12/98
-*LAST MODIFIED: 21/12/98
-*PURPOSE:
-*  Returns the base alliance of a particular base for 
-*  drawing.
-*
-*ARGUMENTS:
-*  baseNum - The base number to get
-*********************************************************/
-baseAlliance screenBaseAllianceCS(ClientSim *csPtr, BYTE baseNum) {
-  return clientSimGetBaseAlliance(csPtr, baseNum);
-}
-
-
-/*********************************************************
-*NAME:          screenPillAlliance
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/12/98
-*LAST MODIFIED: 21/12/98
-*PURPOSE:
-*  Returns the pill alliance of a particular pill for 
-*  status drawing.
-*
-*ARGUMENTS:
-*  pillNum - The pillbox number to get
-*********************************************************/
-pillAlliance screenPillAllianceCS(ClientSim *csPtr, BYTE pillNum) {
-  return clientSimGetPillAlliance(csPtr, pillNum);
-}
-
-/*********************************************************
 *NAME:          screenGunsightRange
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/12/98
@@ -296,22 +259,6 @@ void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
   } else {
     tankGunsightDecrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
-}
-
-
-/*********************************************************
-*NAME:          screenGunsightRange
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/12/98
-*LAST MODIFIED: 24/12/98
-*PURPOSE:
-*  Shows / Hides the gunsight
-*
-*ARGUMENTS:
-*  shown - TRUE = Gunsight on.
-*********************************************************/
-void screenSetGunsightCS(ClientSim *csPtr, bool shown) {
-  clientSimSetGunsight(csPtr, shown);
 }
 
 
@@ -1101,13 +1048,6 @@ void screenSetAiTypeCS(ClientSim *csPtr, aiType value) {
 }
 
 
-bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) { return clientSimGetTankAutoSlowdown(csPtr); }
-void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) { clientSimSetTankAutoSlowdown(csPtr, useSlowdown); }
-bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) { return clientSimGetTankAutoHideGunsight(csPtr); }
-void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) { clientSimSetTankAutoHideGunsight(csPtr, useAutohide); }
-
-
-
 /*********************************************************
 *NAME:          screenSetCursorPos
 *AUTHOR:        John Morrison
@@ -1124,25 +1064,6 @@ void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) { clien
 void screenSetCursorPosCS(ClientSim *csPtr, BYTE posX, BYTE posY) {
   clientSimSetCursorPos(csPtr, posX, posY);
 }
-
-/*********************************************************
-*NAME:          screenGetCursorPos
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/05/00
-*LAST MODIFIED: 27/05/00
-*PURPOSE:
-*  Gets the cursor position in steps from the top and 
-*  left corner position of the active screen. Returns if
-*  the cursor should be shown or not
-*
-*ARGUMENTS:
-*  posX - Pointer to hold left position
-*  posY - Pointer to hold top position
-*********************************************************/
-bool screenGetCursorPosCS(ClientSim *csPtr, BYTE *posX, BYTE *posY) {
-  return clientSimGetCursorPos(csPtr, posX, posY);
-}
-
 
 /*********************************************************
 *NAME:          screenNetStatusMessage
@@ -1333,19 +1254,6 @@ void serverCoreSoundDist(sndEffects value, BYTE mx, BYTE my) {
 }
 
 
-
-
-/*********************************************************
-*NAME:          getBuildCurrentSelect
-*PURPOSE:
-*  Returns the current build selection
-*
-*ARGUMENTS:
-*
-*********************************************************/
-buildSelect getBuildCurrentSelectCS(ClientSim *csPtr) {
-  return clientSimGetCurrentBuildSelect(csPtr);
-}
 
 
 void screenSetLocalTransportCS(ClientSim *csPtr, bool isLocal) {

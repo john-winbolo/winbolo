@@ -189,17 +189,13 @@ void screenSyncFromSnapshotCS(struct ClientSim *cs,
                               const PillSnapshot *pillSnaps, int pillCount,
                               const GameEvent *events, int eventCount,
                               BYTE playerNum);
-void screenUpdateCS(struct ClientSim *csPtr, updateType value);
 void screenUpdateViewCS(struct ClientSim *csPtr, updateType value);
 BYTE screenCalcSquareCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
 void screenReCalcCS(struct ClientSim *csPtr);
 void screenTankViewCS(struct ClientSim *csPtr);
 void screenPillViewCS(struct ClientSim *csPtr, int horz, int vert);
 tankButton screenTranslateBrainButtonsCS(struct ClientSim *csPtr, bool *isShoot, bool isGameTick);
-baseAlliance screenBaseAllianceCS(struct ClientSim *csPtr, BYTE baseNum);
-pillAlliance screenPillAllianceCS(struct ClientSim *csPtr, BYTE pillNum);
 void screenGunsightRangeCS(struct ClientSim *csPtr, bool increase);
-void screenSetGunsightCS(struct ClientSim *csPtr, bool shown);
 void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
 void screenLgmDropPillCS(struct ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pillNum);
 void screenTankLayMineCS(struct ClientSim *csPtr);
@@ -228,17 +224,11 @@ void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen)
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
 bool screenTankScrollCS(struct ClientSim *csPtr);
 void screenSetAiTypeCS(struct ClientSim *csPtr, aiType value);
-bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
-void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
-bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
-void screenSetTankAutoHideGunsightCS(struct ClientSim *csPtr, bool useAutohide);
 void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
-bool screenGetCursorPosCS(struct ClientSim *csPtr, BYTE *posX, BYTE *posY);
 void screenTankStopCarryingPillCS(struct ClientSim *csPtr, BYTE itemNum);
 void screenNetLgmReturnCS(struct ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE pillNum);
 void screenNetManWorkingCS(struct ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines, BYTE pillNum, BYTE numTrees);
 void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, TURNTYPE angle, BYTE numShells, BYTE numMines);
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
-buildSelect getBuildCurrentSelectCS(struct ClientSim *csPtr);
 void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);
 #endif /* SCREEN_H */
