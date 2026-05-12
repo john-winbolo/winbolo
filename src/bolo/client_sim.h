@@ -207,6 +207,8 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message);
 void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName);
+void clientSimGetPlayerName(ClientSim *cs, char *value);
+bool clientSimSetPlayerName(ClientSim *cs, char *value);
 void clientSimRequestAlliance(ClientSim *cs, BYTE playerNum, BYTE requestTo);
 void clientSimAllianceAccept(ClientSim *cs, BYTE playerNum);
 void clientSimLeaveAlliance(ClientSim *cs, BYTE playerNum);
