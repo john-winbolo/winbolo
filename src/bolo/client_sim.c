@@ -673,6 +673,79 @@ void clientSimSetAllowNewPlayers(ClientSim *cs, bool allow) {
   }
 }
 
+/* High-level send-message wrappers — build the sender topLine, locally
+ * echo into the message ticker, then dispatch through the lower-level
+ * transport / players_send_* fan-out. */
+void clientSimSendMessageAllPlayers(ClientSim *csPtr, char *messageStr) {
+  char topLine[FILENAME_MAX];       /* The message topline */
+
+  topLine[0] = '\0';
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  clientSimMessageSendAllPlayers(csPtr, clientSimGetMyPlayerNum(csPtr), messageStr);
+}
+
+void clientSimSendMessageAllAllies(ClientSim *csPtr, char *messageStr) {
+  char topLine[FILENAME_MAX];       /* The message topline */
+
+  topLine[0] = '\0';
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
+}
+
+void clientSimSendMessageAllNearby(ClientSim *csPtr, char *messageStr) {
+  char topLine[FILENAME_MAX];       /* The message topline */
+
+  topLine[0] = '\0';
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllNearby(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
+}
+
+void clientSimSendMessageAllSelected(ClientSim *csPtr, char *messageStr) {
+  playersSendMessageAllSelected(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
+}
+
+/* Local-player alliance actions — sugar over the targeted variants. */
+void clientSimLeaveAllianceSelf(ClientSim *csPtr) {
+  clientSimLeaveAlliance(csPtr, clientSimGetMyPlayerNum(csPtr));
+}
+
+void clientSimRequestAllianceSelected(ClientSim *csPtr) {
+  playersRequestAlliance(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+}
+
+/* Players-panel selection helpers — thread gameSim->plyrs + the local
+ * player num through to the underlying players* API. */
+void clientSimTogglePlayerCheckState(ClientSim *csPtr, BYTE playerNum) {
+  playersToggleCheckedState(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), playerNum, FALSE);
+}
+
+void clientSimCheckAllNonePlayers(ClientSim *csPtr, bool isChecked) {
+  playersCheckAllNone(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), isChecked, FALSE);
+}
+
+void clientSimCheckAlliedPlayers(ClientSim *csPtr) {
+  playersCheckAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
+}
+
+void clientSimCheckNearbyPlayers(ClientSim *csPtr) {
+  playersCheckNearbyPlayers(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
+}
+
+int clientSimGetNumCheckedPlayers(ClientSim *csPtr) {
+  return playersGetNumChecked(&clientSimGetGameSim(csPtr)->plyrs);
+}
+
+int clientSimGetNumAllies(ClientSim *csPtr) {
+  return playersGetNumAllies(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+}
+
+int clientSimGetNumNearbyTanks(ClientSim *csPtr) {
+  return playersNumNearbyPlayers(&clientSimGetGameSim(csPtr)->plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)));
+}
+
 /* Tank preferences (per-instance) — operate on the local player's tank */
 bool clientSimGetTankAutoSlowdown(ClientSim *cs) {
   return tankGetAutoSlowdown(&MY_TANK(cs));

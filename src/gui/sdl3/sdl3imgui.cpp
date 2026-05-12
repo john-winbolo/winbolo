@@ -172,14 +172,6 @@ extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
 
-/* Backend functions called directly from menu */
-extern "C" void screenRequestAllianceCS(struct ClientSim *csPtr);
-extern "C" void screenLeaveAllianceCS(struct ClientSim *csPtr);
-extern "C" void screenCheckAllNonePlayersCS(struct ClientSim *csPtr, bool isChecked);
-extern "C" void screenCheckAlliedPlayersCS(struct ClientSim *csPtr);
-extern "C" void screenCheckNearbyPlayersCS(struct ClientSim *csPtr);
-extern "C" void screenTogglePlayerCheckStateCS(struct ClientSim *csPtr, BYTE playerNum);
-
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
 extern "C" bool smoothScrollingEnabled;
@@ -993,9 +985,9 @@ static void renderSendMsgContent(ClientSim *cs) {
     int numSend = 0;
     switch (s_sendMsgRecipient) {
         case kSendAll:      numSend = (int)clientSimGetNumPlayers(cs);     break;
-        case kSendAllies:   numSend = screenNumAlliesCS(cs);              break;
-        case kSendNearby:   numSend = screenNumNearbyTanksCS(cs);         break;
-        case kSendSelected: numSend = screenNumCheckedPlayersCS(cs);      break;
+        case kSendAllies:   numSend = clientSimGetNumAllies(cs);              break;
+        case kSendNearby:   numSend = clientSimGetNumNearbyTanks(cs);         break;
+        case kSendSelected: numSend = clientSimGetNumCheckedPlayers(cs);      break;
     }
     {
         MessageArgs args = {};
@@ -1032,10 +1024,10 @@ static void renderSendMsgContent(ClientSim *cs) {
 
     if (doSend && s_sendMsgBuf[0] != '\0') {
         switch (s_sendMsgRecipient) {
-            case kSendAll:      screenSendMessageAllPlayersCS(cs, s_sendMsgBuf);  break;
-            case kSendAllies:   screenSendMessageAllAlliesCS(cs, s_sendMsgBuf);   break;
-            case kSendNearby:   screenSendMessageAllNearbyCS(cs, s_sendMsgBuf);   break;
-            case kSendSelected: screenSendMessageAllSelectedCS(cs, s_sendMsgBuf); break;
+            case kSendAll:      clientSimSendMessageAllPlayers(cs, s_sendMsgBuf);  break;
+            case kSendAllies:   clientSimSendMessageAllAllies(cs, s_sendMsgBuf);   break;
+            case kSendNearby:   clientSimSendMessageAllNearby(cs, s_sendMsgBuf);   break;
+            case kSendSelected: clientSimSendMessageAllSelected(cs, s_sendMsgBuf); break;
         }
         s_sendMsgCooldownEnd = SDL_GetTicks() + SEND_MSG_WAIT_MS;
 #if BOLO_MOBILE
@@ -1110,13 +1102,13 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
 
     /* Selection helpers */
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    screenCheckAllNonePlayersCS(cs, true);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   screenCheckAllNonePlayersCS(cs, false);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   clientSimCheckAllNonePlayers(cs, false);
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) screenCheckAlliedPlayersCS(cs);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) clientSimCheckAlliedPlayers(cs);
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) screenCheckNearbyPlayersCS(cs);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) clientSimCheckNearbyPlayers(cs);
 
     ImGui::Separator();
 
@@ -1193,7 +1185,7 @@ static void renderPlayersPanel(ClientSim *cs) {
             snprintf(checkLabel, sizeof(checkLabel), "##chk%d", i);
             bool checked = s_playerChecked[i];
             if (ImGui::Checkbox(checkLabel, &checked)) {
-                screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
             }
             ImGui::SameLine();
         }
@@ -1204,7 +1196,7 @@ static void renderPlayersPanel(ClientSim *cs) {
                               ImGuiSelectableFlags_DontClosePopups,
                               ImVec2(fullWidth - pingWidth - spacing -
                                      (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
-            if (i != self) screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+            if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
 
         /* Right-aligned ping */
@@ -1243,11 +1235,11 @@ static void renderPlayersPanel(ClientSim *cs) {
                            SDL_GetTicks() < s_allianceReqCooldownEnd);
         if (hasAllies) {
             if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0)))
-                screenLeaveAllianceCS(cs);
+                clientSimLeaveAllianceSelf(cs);
         } else {
             if (!canRequest || inCooldown) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
-                screenRequestAllianceCS(cs);
+                clientSimRequestAllianceSelected(cs);
                 s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
             }
             if (!canRequest || inCooldown) ImGui::EndDisabled();
@@ -2095,8 +2087,8 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETSTATUS_MSGS),  nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 screenRequestAllianceCS(cs);
-        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 screenLeaveAllianceCS(cs);
+        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 clientSimRequestAllianceSelected(cs);
+        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 clientSimLeaveAllianceSelf(cs);
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
         ImGui::EndMenu();
@@ -2118,10 +2110,10 @@ static void renderMenuBar(ClientSim *cs) {
         }
 #endif
         ImGui::Separator();
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAllNonePlayersCS(cs, true);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAllNonePlayersCS(cs, false);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAlliedPlayersCS(cs);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckNearbyPlayersCS(cs);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, true);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
         /* Pre-compute alliance state for each player */
         players *plrs = &clientSimGetGameSim(cs)->plyrs;
         BYTE self = clientSimGetMyPlayerNum(cs);
@@ -2198,7 +2190,7 @@ static void renderMenuBar(ClientSim *cs) {
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups, ImVec2(fullWidth - rightWidth - spacing, 0))) {
-                    screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                    clientSimTogglePlayerCheckState(cs, (BYTE)i);
                 }
 
                 /* Right-aligned platform/WBN/Steam icons */
@@ -2234,12 +2226,12 @@ static void renderMenuBar(ClientSim *cs) {
             if (hasAllies) {
                 /* Already in an alliance — show Leave */
                 if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))
-                    screenLeaveAllianceCS(cs);
+                    clientSimLeaveAllianceSelf(cs);
             } else {
                 /* Not in an alliance — show Request */
                 if (!canRequest || inCooldown) ImGui::BeginDisabled();
                 if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE))) {
-                    screenRequestAllianceCS(cs);
+                    clientSimRequestAllianceSelected(cs);
                     s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
                 }
                 if (!canRequest || inCooldown) ImGui::EndDisabled();
@@ -2738,7 +2730,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowHideMainView_toggle();
                 continue;
             case SDL_SCANCODE_R:
-                screenRequestAllianceCS(cs);
+                clientSimRequestAllianceSelected(cs);
                 continue;
             case SDL_SCANCODE_T:
                 /* Cycle through device resolution presets */
