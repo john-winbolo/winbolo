@@ -1043,10 +1043,6 @@ void screenGetSubMapSquareOffset(int *xPos, int *yPos) {
 
 
 
-void screenSetAiTypeCS(ClientSim *csPtr, aiType value) {
-  clientSimSetAiType(csPtr, value);
-}
-
 
 /*********************************************************
 *NAME:          screenSetCursorPos
