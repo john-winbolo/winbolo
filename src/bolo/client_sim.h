@@ -455,6 +455,11 @@ tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum);
 pillAlliance clientSimGetPillAlliance(ClientSim *cs, BYTE pillNum);
 baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum);
 
+/* Map-position lookups for the frontend label/click overlays.
+ * mx/my are screen-relative; the accessors fold in viewport offsets. */
+BYTE         clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my);
+BYTE         clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my);
+
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);

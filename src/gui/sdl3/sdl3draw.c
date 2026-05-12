@@ -540,16 +540,16 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       /* Transform window coords to game coords */
       float gameX, gameY;
       if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
-        screenSetCursorPosCS(cs, 0, 0);
+        clientSimSetCursorPos(cs, 0, 0);
         break;
       }
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy)) {
         if (cx > 16 || cy > 16) cx = 100;
-        screenSetCursorPosCS(cs, cx, cy);
+        clientSimSetCursorPos(cs, cx, cy);
       } else {
-        screenSetCursorPosCS(cs, 0, 0);
+        clientSimSetCursorPos(cs, 0, 0);
       }
       break;
     }
@@ -558,7 +558,7 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal)) {
           clientMutexWaitFor();
-          screenManMoveCS(cs, getBuildCurrentSelectCS(cs));
+          clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
           clientMutexRelease();
         } else {
           /* Check if click landed on one of the 5 build-select buttons */
@@ -584,10 +584,10 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
                      yPos >= zf * BS_MINE_OFFSET_Y && yPos <= zf * (BS_MINE_OFFSET_Y + BS_ITEM_SIZE_Y)) {
             newSelect = BsMine;
           }
-          if (newSelect != NO_SELECT && newSelect != getBuildCurrentSelectCS(cs)) {
-            sdl3DrawSelectIndentsOff(getBuildCurrentSelectCS(cs), 0, 0);
+          if (newSelect != NO_SELECT && newSelect != clientSimGetCurrentBuildSelect(cs)) {
+            sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
             sdl3DrawSelectIndentsOn(newSelect, 0, 0);
-            setBuildCurrentSelectCS(cs, newSelect);
+            clientSimSetCurrentBuildSelect(cs, newSelect);
           }
         }
       }
@@ -1381,9 +1381,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           bool isBase = (pos == BASE_GOOD || pos == BASE_NEUTRAL || pos == BASE_EVIL);
           int labelNum = -1;
           if (isPill && showPillLabels) {
-            labelNum = screenPillNumPosCS(cs, lx, ly) - 1;
+            labelNum = clientSimGetPillNumPos(cs, lx, ly) - 1;
           } else if (isBase && showBaseLabels) {
-            labelNum = screenBaseNumPosCS(cs, lx, ly) - 1;
+            labelNum = clientSimGetBaseNumPos(cs, lx, ly) - 1;
           }
           if (labelNum >= 0) {
             SDL_FRect dest = {
@@ -1503,19 +1503,19 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     {
       BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBaseLabels);
+        sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), showBaseLabels);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
       BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillLabels);
+        sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), showPillLabels);
       }
     }
     sdl3DrawSetTanksStatusClear();
     for (BYTE i = 1; i <= MAX_TANKS; i++) {
-      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+      sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
     }
 
     sdl3RenderStatusPanels();
@@ -1654,19 +1654,19 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     {
       BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBasesStatus);
+        sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), showBasesStatus);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
       BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillsStatus);
+        sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), showPillsStatus);
       }
     }
     sdl3DrawSetTanksStatusClear();
     for (BYTE i = 1; i <= MAX_TANKS; i++) {
-      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+      sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
     }
 
     sdl3RenderStatusPanels();
@@ -1766,19 +1766,19 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
     {
       BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
+        sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), FALSE);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
       BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
+        sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), FALSE);
       }
     }
     sdl3DrawSetTanksStatusClear();
     for (BYTE i = 1; i <= MAX_TANKS; i++) {
-      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+      sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
     }
     sdl3RenderStatusPanels();
     sdl3RenderCachedText();
@@ -2085,18 +2085,18 @@ void sdl3DrawTabletStatusGrids(ClientSim *cs) {
   {
     BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
     for (BYTE i = 1; i <= total; i++) {
-      sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
+      sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), FALSE);
     }
   }
   sdl3DrawSetPillsStatusClear();
   {
     BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
     for (BYTE i = 1; i <= total; i++) {
-      sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
+      sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), FALSE);
     }
   }
   sdl3DrawSetTanksStatusClear();
   for (BYTE i = 1; i <= MAX_TANKS; i++) {
-    sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+    sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
   }
 }
