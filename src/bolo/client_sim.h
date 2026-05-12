@@ -429,4 +429,18 @@ InterpContext *clientSimGetInterpCtx(ClientSim *cs);
 screen        *clientSimGetView(ClientSim *cs);
 screenMines   *clientSimGetMineView(ClientSim *cs);
 
+/*********************************************************
+ * Mutators.
+ *
+ * Add a mutator here whenever a caller outside the
+ * marker-including files needs to write a ClientSim field
+ * that doesn't yet have a setter. Keep one mutator per
+ * field; coarse "do everything at once" calls don't belong
+ * here.
+ *********************************************************/
+
+void clientSimSetBalanceProposalActive(ClientSim *cs, bool active);
+void clientSimClearBalanceProposal(ClientSim *cs);
+void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote);
+
 #endif /* CLIENT_SIM_H */
