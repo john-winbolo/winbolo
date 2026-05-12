@@ -678,11 +678,14 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
 
-    /* Reset lobby ready state */
+    /* Reset lobby ready state. Bots stay permanently ready (no UI
+     * to click; set in botManagerAddBot). */
     {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
-            sim->lobbyPlayers[i].ready = FALSE;
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
         }
     }
 
@@ -2626,9 +2629,12 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         }
     }
 
-    /* Reset all lobby players' ready state */
+    /* Reset all lobby players' ready state. Bots stay permanently
+     * ready (they have no UI to click — set in botManagerAddBot). */
     for (i = 0; i < MAX_TANKS; i++) {
-        sim->lobbyPlayers[i].ready = FALSE;
+        if (!sim->lobbyPlayers[i].isBot) {
+            sim->lobbyPlayers[i].ready = FALSE;
+        }
     }
 
     return TRUE;

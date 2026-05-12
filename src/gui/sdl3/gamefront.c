@@ -728,6 +728,27 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
       clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
     }
   }
+  /* Mark humanSim as the active UI ClientSim so frontEnd*-gated writes
+   * from any in-process subscriber (bots that get added in the lobby
+   * each register their own ClientSim) get filtered out. Without this
+   * the bot's own identity events from the sync-on-register burst would
+   * leak into sdl3ImguiSetPlayer and show as "phantom" players in the
+   * in-game players panel. */
+  frontEndSetActiveClientSim(humanSim);
+  /* Register humanSim with the server's control-event dispatcher so it
+   * receives the same CTRL_LOBBY_SLOT / CTRL_LOBBY_SETTINGS / etc.
+   * stream that the multiplayer path goes through. Mirrors the legacy
+   * openSetup→openFinished branch below; without it humanSim falls
+   * out of date when bots publish identity events. The dispatcher's
+   * self-skip on identity-shaped events protects humanSim's own slot
+   * during the synchronous sync-on-register burst. */
+  if (spHumanSubHandle != SUBSCRIBER_HANDLE_INVALID) {
+    serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
+    spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+  }
+  spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
+                                                 humanDeliverControl,
+                                                 humanSim);
   if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
 
   /* Single-player networking marker. netSingle picks the local

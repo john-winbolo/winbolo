@@ -2206,9 +2206,16 @@ void transportUdpServerBroadcastLobbyBotConfigChg(ServerSim *sim, uint8_t slot) 
 void transportUdpServerBroadcastLobbyAutoUnready(ServerSim *sim) {
     uint8_t buf[PACKET_HEADER_SIZE];
     int i;
-    /* Authoritative: clear every ready flag. Originator included —
-     * any meaningful change forces a re-confirmation. */
+    /* Authoritative: clear every HUMAN ready flag. Originator included —
+     * any meaningful change forces a re-confirmation. Bots are kept
+     * permanently ready by definition (set in botManagerAddBot); without
+     * the isBot skip an auto-unready burst (which fires on every ADD_BOT
+     * / TEAM_META / BOT_CONFIG change) would leave bots stuck at
+     * ready=false and serverSimLobbyCheckAllReady would never start the
+     * countdown — the human's Ready click wouldn't launch a game with
+     * bots filling the other slots. */
     for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->lobbyPlayers[i].isBot) continue;
         if (sim->lobbyPlayers[i].ready) {
             sim->lobbyPlayers[i].ready = FALSE;
         }
