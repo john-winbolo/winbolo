@@ -812,6 +812,13 @@ InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
 screen        *clientSimGetView(ClientSim *cs)       { return &cs->view; }
 screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->mineView; }
 
+BYTE *clientSimGetXOffsetPtr(ClientSim *cs)          { return &cs->xOffset; }
+BYTE *clientSimGetYOffsetPtr(ClientSim *cs)          { return &cs->yOffset; }
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->pillViewX; }
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->pillViewY; }
+
+char *clientSimGetMapNameMutable(ClientSim *cs)      { return cs->mapName; }
+
 /* ================================================================
  * Mutators — see header for the contract.
  * ================================================================ */
@@ -826,4 +833,27 @@ void clientSimClearBalanceProposal(ClientSim *cs) {
 
 void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote) {
   cs->mapSkipMyVote = vote;
+}
+
+void clientSimSetXOffset(ClientSim *cs, BYTE v)            { cs->xOffset = v; }
+void clientSimSetYOffset(ClientSim *cs, BYTE v)            { cs->yOffset = v; }
+void clientSimSetCursorPosX(ClientSim *cs, int v)          { cs->cursorPosX = v; }
+void clientSimSetCursorPosY(ClientSim *cs, int v)          { cs->cursorPosY = v; }
+void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v)   { cs->needScreenReCalc = v; }
+void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->inPillView = v; }
+void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->pillViewX = v; }
+void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->pillViewY = v; }
+void clientSimSetView(ClientSim *cs, screen v)             { cs->view = v; }
+void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->mineView = v; }
+
+void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay = v; }
+void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }
+void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; }
+void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
+void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) { cs->currentBuildSelect = v; }
+
+void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y) {
+  cs->pendingBuildAction = action;
+  cs->pendingBuildX = x;
+  cs->pendingBuildY = y;
 }
